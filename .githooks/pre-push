@@ -19,4 +19,51 @@
 set -e
 
 echo "pre-push: npm run check"
-npm run check
+
+# ---------------------------------------------------------------------------
+# WHY THIS IS NOT SIMPLY `npm run check`
+# ---------------------------------------------------------------------------
+# On Windows, Node ships THREE npm entry points side by side:
+#
+#     npm        <- a BASH script, `#!/usr/bin/env bash`
+#     npm.cmd    <- a batch file, needs no shell at all
+#     npm.ps1
+#
+# Git runs hooks under its own POSIX shell, and a POSIX shell's PATH lookup
+# finds the extensionless `npm` first — the bash one. That is fine in Git Bash,
+# which has bash. It is NOT fine in GitHub Desktop, which bundles a stripped
+# git environment with no bash on PATH, so the hook starts, prints the line
+# above, and then dies with:
+#
+#     /usr/bin/env: 'bash': No such file or directory
+#
+# That message names neither npm nor this hook, appears only in a GUI push
+# dialog, and reads like a corrupt repository. It cost a real debugging session.
+#
+# So: prefer npm.cmd where it exists, which is exactly the Windows case, and
+# which also skips a pointless bash wrapper on the way to the same npm. Falls
+# through to plain `npm` on macOS and Linux, where npm.cmd does not exist.
+#
+# Located by FILE TEST, not by `command -v npm.cmd`. That lookup returns "not
+# found" under MinGit even when the file is right there and runs perfectly by
+# absolute path — MSYS does not treat .cmd as executable for PATH resolution.
+# `node` resolves fine (it is a real .exe), and npm.cmd always ships beside it,
+# including under nvm-windows and Volta.
+#
+# Builtins only below. MinGit has no coreutils: `ls`, `grep` and even `dirname`
+# are absent, so the directory is taken with ${VAR%/*} parameter expansion
+# rather than by calling out to anything.
+NODE_BIN="$(command -v node 2>/dev/null || true)"
+
+if [ -n "$NODE_BIN" ] && [ -f "${NODE_BIN%/*}/npm.cmd" ]; then
+	"${NODE_BIN%/*}/npm.cmd" run check
+elif command -v npm >/dev/null 2>&1; then
+	npm run check
+else
+	# Never fail silently or cryptically: a hook that blocks a push must say
+	# why, and say what to do about it.
+	echo "pre-push: npm is not on PATH, so the check gate cannot run." >&2
+	echo "          Install Node 24.12+, or push with --no-verify if you have" >&2
+	echo "          already run 'npm run check' yourself." >&2
+	exit 1
+fi
