@@ -1,0 +1,29 @@
+# Prettier does NOT read the gitignore file, so anything large or generated has
+# to be listed here or `prettier --check` walks a 330 MB ToME clone.
+
+node_modules/
+reference/
+data/
+logs/
+coverage/
+client/dist/
+client/public/assets/
+package-lock.json
+
+# Licence texts are verbatim upstream documents. Never reformat them.
+LICENSE
+COPYING
+NOTICE
+
+# The plan and the docs are hand-wrapped at ~100 chars with deliberate table
+# alignment and mermaid blocks. Reflowing ~250 KB of prose produces an enormous
+# diff and buys nothing.
+*.md
+
+# tsconfig files are JSONC with load-bearing comments explaining WHY each flag
+# is set. Prettier's JSON handling of comment placement is not worth the risk of
+# a red CI on a file nobody edits.
+tsconfig*.json
+
+# Workflow YAML is hand-aligned and read far more often than it is edited.
+.github/

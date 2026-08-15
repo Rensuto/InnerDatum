@@ -1,0 +1,221 @@
+Inner Datum
+Copyright (C) 2026 Dalton Barraclough
+===========
+
+SOFTWARE LICENCE: GNU General Public License, version 3 or (at your option)
+any later version.  SPDX-License-Identifier: GPL-3.0-or-later
+
+Full licence text:./COPYING, included verbatim in this repository (the
+unmodified 674-line FSF text).  Also at https://www.gnu.org/licenses/gpl-3.0.txt
+
+GPL-3.0 section 4 requires that we "give all recipients a copy of this License
+along with the Program."  A URL is not a copy — COPYING is.
+
+This file is the explanatory companion to COPYING: what is covered, what is
+not, and why the two can share one repository.  Where the two disagree, COPYING
+governs the software.
+
+  * Attribution and the derived-module list...... NOTICE
+  * The art carve-out, in full.................. ASSETS-LICENSE.md
+  * Kenney CC0 and the four OFL fonts........... THIRD_PARTY.md
+
+
+WHY THIS PROJECT IS GPL
+-----------------------
+
+Inner Datum's game engine contains code ported (translated from Lua to
+TypeScript) from **T-Engine4 / Tales of Maj'Eyal**:
+
+    Copyright (C) 2009 - 2018 Nicolas Casalini ("DarkGod")
+    https://te4.org/license
+
+T-Engine4 is licensed GPL-3.0-or-later.  Translating its source into another
+language produces a derivative work, which must carry the same licence when
+distributed.  We do that willingly and gratefully — ToME's combat model is the
+reason this game feels the way it does.
+
+Note the exact terms.  Every ToME source file carries this header:
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+That final clause is why the correct identifier is **GPL-3.0-or-later**, not
+"GPL-3.0-only".  Declaring the latter would silently strip a right upstream
+deliberately granted.
+
+Verified by counting, not by sampling: 1,652 of 1,655.lua files in the
+reference clone carry the grant.  The 3 that don't (data/lore/arena.lua,
+data/talents/spells/infusion.lua, data/zones/keepsake-meadow/zone.lua) carry no
+header at all and fall under the project-wide COPYING, which is the verbatim
+GPLv3.  No file in the tree mentions GPL version 2.  Upstream's CONTRIBUTING
+records that contributors assign copyright to Nicolas Casalini or grant him
+relicensing rights, so the grant is made by a single unified rights holder.
+
+Reference clone: https://github.com/vgawen/t-engine4.git
+                 commit 304327e0805ca3e2ecdd1c8a6ec2e154bee7411e (2018-09-21)
+
+
+WHAT THIS COVERS
+----------------
+
+Covered by the GPL (derivative of T-Engine4):
+
+  * The turn/energy scheduler
+  * Combat resolution: checkHit, rescaleCombatStats, the armour/hardiness
+    formula, resistance composition and penetration, the three saves,
+    talent-scaling helpers, partial-save duration scaling
+  * Status-effect and talent-cooldown machinery
+  * Anything else annotated with a `Ported from t-engine4 <path>:<lines>` comment
+
+Also GPL, though written from scratch, because they are part of this program:
+everything else under src/, tools/ and test/.  NOTICE § 1.2 and § 1.3 itemise
+which is which, so the boundary stays legible to anyone auditing the port.
+
+Per-file headers on ported files read:
+
+    // SPDX-License-Identifier: GPL-3.0-or-later
+    // Copyright (C) 2026 Dalton Barraclough
+    // Ported from t-engine4 game/modules/tome/class/interface/Combat.lua:1444-1462
+    // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
+
+
+WHAT THIS DOES *NOT* COVER
+--------------------------
+
+**The Outer Index artwork and first-party game content are the author's own
+separate work and are NOT licensed under the GPL.**  All Rights Reserved.
+
+That means everything under client/public/assets/ — sprites, tilesets, icons,
+UI frames — and the first-party writing under content/{monsters,zones,items,
+rules}/, plus the game's name, setting and fiction.  No licence to reuse them
+is granted here.
+
+It does NOT mean all of content/.  content/talents/, content/classes/,
+content/effects/ and content/maps/ hold values transcribed from T-Engine4's
+Lua ( and § 5, which routes TOME/data/timed_effects
+into content/effects/*.json, TOME/data/birth/classes into content/classes/
+*.json, and ToME's ASCII vaults into content/maps/*.txt — and which says of
+talent numbers, "Copy the numbers from the Lua").  Those are derivative works
+of a GPL work and are GPL-3.0-or-later.  They are itemised in NOTICE § 1.2.
+
+Claiming All Rights Reserved over transcribed GPL data would be a claim
+asserted against upstream's licence, not merely sloppy bookkeeping.  We don't.
+
+This arrangement is explicitly permitted by GPL-3.0 section 5, which provides
+that including a covered work in an *aggregate* alongside separate and
+independent works "which are not by their nature extensions of the covered
+work" does not cause the GPL to apply to those other parts.  Sprites are data
+the program consumes, not linked code, and are in no way derived from ToME.
+
+Upstream does exactly the same thing: ToME ships GPL code beside restricted
+artwork governed by its own COPYING-MEDIA.  See ASSETS-LICENSE.md for the
+asset-side statement.
+
+
+THE ONE WAY THIS ARRANGEMENT BREAKS
+-----------------------------------
+
+The aggregate argument holds only while the art stays in separate files.  If a
+build step embeds a PNG into a JavaScript chunk that also contains ported GPL
+logic, that chunk is a single combined work, and we would be conveying it under
+terms we are unwilling to honour — a violation against DarkGod's code, not
+against our own art.  The GPL cannot relicense the author's art; you cannot
+infringe your own copyright.  The harm runs upstream, and downstream recipients
+get a grant that contradicts itself.
+
+This is not hypothetical.  Vite's `build.assetsInlineLimit` defaults to 4096
+bytes; 120 of the 227 UI PNGs in the art source are smaller than that (min
+200 B, median 3,456 B).  A default configuration would base64 more than half
+the icon set directly into the bundle that carries shared/scale.ts and
+shared/checkhit.ts.
+
+Therefore: `build.assetsInlineLimit: 0` in vite.config.ts, and a build
+assertion that fails if `data:image` appears in any emitted chunk.  Treat both
+as licence compliance, not as build tuning.
+
+
+THIRD-PARTY ASSETS ACTUALLY IN USE
+----------------------------------
+
+  * Fonts — Alegreya Sans, Alegreya Sans SC, Cinzel, IM Fell English.
+    SIL Open Font License 1.1.  The OFL_*.txt files ship alongside them and
+    must continue to, in every build output.
+    None of the four notices declares a Reserved Font Name, so OFL § 3's
+    renaming rule does not apply and a modified font may keep its family name.
+    Subsetting and WOFF2 conversion are permitted — they produce a "Modified
+    Version", which under OFL § 2 must still carry the copyright notice and
+    licence, and under § 5 must stay entirely under OFL 1.1 and may not be sold
+    on its own.  "Permitted", not "unrestricted".
+  * Kenney asset packs — Creative Commons Zero (CC0 1.0).  Used only as
+    gap-filler.  Attribution is not required but is given in THIRD_PARTY.md.
+
+  * NOT SHIPPED: the 36 Outer Index music tracks.  The source project records
+    no licence file and no provenance note for any of them, and 12 of 26 SFX
+    rest on a blanket README claim with no traced original.  They stay out
+    until traced.  Do not add assets/audio/ to this repository — the paths are
+    gitignored so that re-adding them takes a deliberate override.
+
+See THIRD_PARTY.md for the full ledger.
+
+
+TALES OF MAJ'EYAL ART AND AUDIO ARE NEVER USED
+----------------------------------------------
+
+ToME's graphics, music and sound effects are NOT free.  reference/t-engine4/
+COPYING-MEDIA states, verbatim:
+
+    All the medias located in all the "/data/gfx" folders are granted to use
+    with the Tales of Maj'Eyal game only.
+
+The local reference clone is Lua source only; it is sparse and never fetches
+ToME's media directories, so the exclusion holds by construction rather than by
+discipline.  None of that material appears in this project.  All visual assets
+come from Outer Index or from the CC0 packs above.
+
+Do not copy anything out of reference/t-engine4 except *code logic*, and cite
+it when you do.
+
+
+TRADEMARKS
+----------
+
+The GPL grants rights over code, not names.  "Tales of Maj'Eyal", "T-Engine"
+and their logos belong to their owner.  Inner Datum is not affiliated with,
+endorsed by, or a product of te4.org.  "Discord" is a trademark of Discord
+Inc.; Inner Datum is an unofficial third-party Activity.
+
+
+OFFER OF SOURCE
+---------------
+
+The browser client bundle includes GPL-derived logic (the combat and scaling
+functions in shared/), so distributing it to players conveys covered code and
+carries the corresponding-source obligation.  It is satisfied by publishing
+this repository and linking it from the Activity's About panel.
+
+GPL-3.0 section 6(d) is the governing clause for a web app: offer equivalent
+access to the Corresponding Source "in the same way through the same place at
+no further charge", with "clear directions next to the object code saying where
+to find the Corresponding Source."  In practice that means three things:
+
+  1. A licence banner survives minification (esbuild `--banner:js` / Vite
+     `output.banner`) carrying the SPDX line, the upstream copyright and the
+     repo URL.
+  2. The About panel links the repository — using
+     discordSdk.commands.openExternalLink, because a plain <a target="_blank">
+     is blocked in the Activity sandbox.
+  3. The build's git SHA is embedded and shown, so the source offer points at
+     the version actually served rather than at a moving target.
+
+Section 6(d) also makes this durable: "you remain obligated to ensure that it
+is available for as long as needed to satisfy these requirements."  Archiving
+or privating the repository while friends still have the bundle cached would
+put you out of compliance.
+
+Note for the record: GPL-3.0 section 0 provides that "mere interaction with a
+user through a computer network, with no transfer of a copy, is not conveying."
+Running the server alone would therefore not trigger the obligation — shipping
+the client bundle does.  GPLv3 is not the AGPL.  See the design notes for
+the compliance checklist.

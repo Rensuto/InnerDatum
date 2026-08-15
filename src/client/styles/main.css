@@ -1,0 +1,150 @@
+/*
+ * Inner Datum — client shell styles.
+ *
+ * Deliberately tiny. This file owns four things and nothing else: the reset,
+ * the dark ground, the canvas fill rule, and the status line. Everything the
+ * player looks at is painted on the canvas by src/client/render/canvas.ts.
+ *
+ * SIZED FOR AN IFRAME. A Discord Activity runs in an iframe whose size is
+ * decided by the Discord client (and changes when someone pops out the window
+ * or resizes the sidebar). There is therefore not a single fixed pixel
+ * dimension below: the layout fills whatever viewport it is handed, and the
+ * renderer letterboxes inside it.
+ *
+ * The canvas is NOT scaled by CSS in any meaningful sense — its backing store
+ * is set to exactly cssPx * devicePixelRatio, so one backing pixel maps to one
+ * device pixel. `image-rendering: pixelated` is belt and braces for the case
+ * where a fractional dpr forces the browser to resample by a hair.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  /* No scrollbars, ever: an iframe that scrolls eats arrow keys. */
+  overflow: hidden;
+  background: #0a0813; /* INK */
+  color: #a4a4ab; /* SILVER */
+  font:
+    12px/1.5 ui-monospace,
+    'SFMono-Regular',
+    'Menlo',
+    'Consolas',
+    monospace;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  /* Rubber-band scroll, drag-select and touch panning are all noise inside an
+     activity where every keypress is a game input. */
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#game {
+  /* Fill the space the status line does not take. min-height: 0 is what lets a
+     flex child actually shrink below its intrinsic size — without it the canvas
+     stays 480px tall and the status line gets pushed off short viewports. */
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: block;
+  width: 100%;
+  background: #0a0813; /* INK — the letterbox bars */
+  image-rendering: pixelated;
+}
+
+#log {
+  flex: 0 0 auto;
+  min-height: 1.75rem;
+  padding: 5px 10px;
+  border-top: 1px solid #36303e; /* SLATE */
+  background: #312938; /* PANEL */
+  color: #ede6c2; /* PARCHMENT */
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+
+/*
+ * THE COMMAND LINE (M4).
+ *
+ * A real <input>, sitting under the canvas and above the status line. It is the
+ * only interactive DOM in the whole client, and it exists because `say` needs
+ * an IME, a caret and a clipboard, none of which a canvas has.
+ *
+ * IT IS ALWAYS VISIBLE, never a modal that opens on a key. This is a MUD: the
+ * prompt being there is what tells a new player that talking is a thing they
+ * can do at all, and a chat box that has to be summoned is one nobody uses. It
+ * costs one line of the viewport, which the renderer letterboxes around.
+ */
+#cmdrow {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid #36303e; /* SLATE */
+  background: #21082e; /* VOID */
+}
+
+#cmdlabel {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  color: #a670e0; /* VIOLET_HI — the Margin's own colour */
+  background: #312938; /* PANEL */
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  /* Not display:none — a <label> a screen reader can read is the field's name. */
+}
+
+#cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: #ede6c2; /* PARCHMENT */
+  font: inherit;
+  /* Text entry is the one place in this app where selection must work. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+#cmd::placeholder {
+  color: #5c5d63; /* GREY */
+}
+
+#cmd:focus {
+  outline: 1px solid #ffe479; /* GOLD — the same "you are here" signal as the map frame */
+  outline-offset: -1px;
+}
+
+/*
+ * The accessible copy of the Margin lane. One line, announced politely.
+ *
+ * Visible as well as announced: it doubles as the "somebody just said
+ * something" cue for a player whose eyes are on the far side of the map, which
+ * is the same reason the canvas lane exists.
+ */
+#margin {
+  flex: 0 0 auto;
+  min-height: 1.5rem;
+  padding: 3px 10px;
+  border-top: 1px solid #36303e; /* SLATE */
+  background: #0a0813; /* INK */
+  color: #a670e0; /* VIOLET_HI */
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

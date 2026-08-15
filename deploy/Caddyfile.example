@@ -1,0 +1,72 @@
+# Inner Datum — Caddy reverse proxy (example).
+#
+# Copy to `Caddyfile` (no extension), replace the two placeholders, and run:
+#     caddy run --config deploy/Caddyfile
+#
+# Your real Caddyfile is gitignored, because it names a host that resolves to
+# wherever you are running this.
+#
+# Caddy is the entire TLS story here: it obtains the Let's Encrypt certificate,
+# renews it, and terminates HTTPS. There is no ACME client to configure and no
+# renewal cron.
+#
+# THE CERTIFICATE STEP IS ALSO YOUR INBOUND-443 TEST. Plenty of residential ISPs
+# filter inbound 80/443 while leaving high game ports alone. If yours does,
+# issuance fails HERE, loudly, at setup — rather than silently at play time.
+
+{
+	# Let's Encrypt uses this only to warn you about expiry.
+	email you@example.com
+}
+
+your-host.example.com {
+	encode zstd gzip
+
+	# ---------------------------------------------------------------------
+	# THE GAME SOCKET
+	# ---------------------------------------------------------------------
+	# `read_timeout 0` is the single most important line in this file.
+	#
+	# Inner Datum is turn-based. A player reading a tooltip and arguing about
+	# tactics in voice chat for four minutes is NORMAL PLAY, not an idle
+	# connection. Any proxy timeout here disconnects people for thinking, and
+	# it presents as a game bug rather than an infrastructure one.
+	#
+	# This is also the concrete reason to prefer a direct reverse proxy over a
+	# tunnelling service: several close idle WebSockets after ~100 s and offer
+	# no way to opt out.
+	@ws path /ws
+	handle @ws {
+		reverse_proxy 127.0.0.1:3000 {
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	# ---------------------------------------------------------------------
+	# EVERYTHING ELSE — the client bundle, /assets/*, /healthz, /api/*
+	# ---------------------------------------------------------------------
+	# Caddy v2 forwards the WebSocket Upgrade transparently. The nginx-style
+	# `proxy_set_header Upgrade` / `Connection` incantation is unnecessary here,
+	# and copying one in from an nginx tutorial will not help.
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# ---------------------------------------------------------------------
+	# The ops panel is deliberately NOT proxied.
+	# ---------------------------------------------------------------------
+	# It binds 127.0.0.1:3001 and must never be internet-reachable. This repo is
+	# public, so an attacker already knows its routes; the only defence that
+	# survives that is not being reachable at all. Do not add a handle block for
+	# it, and do not forward 3001 on your router.
+
+	log {
+		output file ./logs/caddy-access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}

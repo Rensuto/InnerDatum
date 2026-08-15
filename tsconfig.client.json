@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // Client + shared.
+  //
+  // The lib asymmetry is deliberate. src/shared/ is compiled by ALL THREE
+  // configs, so its usable API surface is automatically the intersection:
+  // a shared file that reaches for `document` fails here AND under
+  // tsconfig.shared.json, and a shared file that reaches for `process` fails
+  // under tsconfig.shared.json. The environment boundary is enforced by
+  // arithmetic on include lists rather than by discipline.
+  //
+  // moduleResolution "bundler" because Vite resolves; the compiler therefore
+  // cannot force `.ts` extensions here. Write them anyway — shared/ requires
+  // them and mixed styles read as two codebases.
+
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"]
+  },
+  "include": ["src/shared/**/*.ts", "src/client/**/*.ts"],
+  "exclude": ["node_modules", "client/dist", "reference", "data", "coverage"]
+}

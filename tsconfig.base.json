@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // Inner Datum — shared compiler settings. Extended by tsconfig.shared.json,
+  // tsconfig.server.json and tsconfig.client.json. Never used directly.
+  //
+  // TypeScript is a CHECKER here, never a compiler: Node 24 type-strips
+  // src/**/*.ts directly and Vite builds the client. That is why noEmit is on
+  // and why it is not negotiable (see the three-flag note below).
+  //
+  // Pinned to typescript ^5.9.3 — NOT 7.x. Recorded as decision D6:
+  // typescript-eslint@8 declares peerDependencies.typescript ">=4.8.4 <6.1.0",
+  // so TS 7 silently disables every type-aware lint rule, which is where most
+  // of this project's enforcement lives.
+
+  "compilerOptions": {
+    "target": "ES2024",
+    "moduleDetection": "force",
+    "isolatedModules": true,
+
+    // --- The three flags the no-build-step architecture forces ---------------
+    // erasableSyntaxOnly: rejects enum / runtime namespace / parameter
+    //   properties / decorators AT EDIT TIME instead of at 2am when the server
+    //   will not boot.
+    // allowImportingTsExtensions: Node's ESM loader needs `./checkhit.ts`.
+    //   It is only legal alongside noEmit.
+    // noEmit: correct anyway — nothing here ever emits.
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    // Type-stripping erases ANNOTATIONS but preserves IMPORT STATEMENTS
+    // verbatim. `import { DamageType } from './ids.ts'` where DamageType is a
+    // type survives erasure and dies at ESM link time with a SyntaxError.
+    // This turns that boot crash into TS1484 in the editor.
+    "verbatimModuleSyntax": true,
+
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "useDefineForClassFields": true,
+
+    // Dev is Windows (case-insensitive); every fork and CI clone may not be.
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "allowJs": false,
+
+    // --- Strictness ---------------------------------------------------------
+    "strict": true,
+
+    // THE one flag that is brutal to retrofit. This is a tile-grid game:
+    // `level.tiles[y * w + x]` is the most-executed expression in the codebase,
+    // and FOV shadowcasting, A*, bresenham and the 8-direction neighbour walk
+    // all deliberately probe coordinates that may be off-grid. Without this,
+    // `tiles[i].blocked` type-checks and throws a TypeError inside the
+    // scheduler, which kills the process. Use must from src/shared/assert.ts
+    // rather than `!`.
+    "noUncheckedIndexedAccess": true,
+
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false
+
+    // DELIBERATELY ABSENT:
+    //   noUnusedLocals / noUnusedParameters — they paint the editor red while
+    //     you are mid-thought, which trains you to ignore red squiggles.
+    //     Enforced by @typescript-eslint/no-unused-vars instead, which runs on
+    //     save and on push rather than on keystroke.
+    //   exactOptionalPropertyTypes — recurring friction wherever a zod optional
+    //     meets an object spread, and the distinction it defends does not
+    //     survive JSON.stringify, which is how every save file and every wire
+    //     message in this project is produced.
+    //   noPropertyAccessFromIndexSignature — a keystroke tax with no bug to
+    //     its name in a one-author codebase.
+  }
+}

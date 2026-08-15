@@ -1,0 +1,49 @@
+# Inner Datum — line endings and diff behaviour.
+#
+# Development is on Windows; CI, every fork and every WSL clone are on Linux.
+# Without this file the first non-Windows clone produces a diff in which every
+# line of every file changed, and `prettier --check` (endOfLine: lf) passes
+# locally while failing in CI.
+#
+# COMMIT THIS IN THE FIRST COMMIT. Adding it later renormalises the whole tree
+# in one enormous diff.
+
+# Normalise everything to LF in the repository. Working-tree endings follow the
+# platform; what is COMMITTED is always LF.
+* text=auto eol=lf
+
+# Files that must keep CRLF in the working tree.
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary: never diffed, never munged.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.ogg   binary
+*.wav   binary
+*.zip   binary
+*.exe   binary
+
+# Keep generated lockfiles out of review diffs. They are still committed and
+# still enforced by `npm ci`.
+package-lock.json              linguist-generated=true -diff
+tools/assets.lock.json         linguist-generated=true -diff
+tools/sprite-sources.lock.json linguist-generated=true -diff
+
+# GitHub language stats: this is a TypeScript project, not a Markdown one.
+*.md         linguist-documentation
+docs/**      linguist-documentation
+reference/** linguist-vendored
+
+# NOTE: deliberately NO `export-ignore`. The tarball GitHub generates for a tag
+# is a distribution of a GPL work and must be complete corresponding source.

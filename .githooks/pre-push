@@ -1,0 +1,22 @@
+#!/bin/sh
+# Inner Datum — pre-push gate.
+#
+# Installed automatically: package.json's "prepare" script points
+# core.hooksPath at.githooks/, so `npm install` on a fresh clone wires this up
+# and nobody has to remember. No husky, no lint-staged, no extra dependencies
+# in a public repo.
+#
+# Pre-PUSH, not pre-commit, on purpose. You commit dozens of times a weekend and
+# push a handful; committing work-in-progress must stay instant, but nothing
+# should reach the public repo without passing the same command CI runs.
+# A hook slow enough to be annoying is a hook that gets --no-verify'd, after
+# which it protects nothing while everyone still believes it runs.
+#
+# `git push --no-verify` stays available and that is CORRECT: the hotfix path
+# during a live session must never be blocked. CI is the authority; this is
+# only lower latency — it catches the mistake while it is still free to fix.
+
+set -e
+
+echo "pre-push: npm run check"
+npm run check

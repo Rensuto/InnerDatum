@@ -1,0 +1,86 @@
+# Inner Datum — dependency updates, sized for a project touched on weekends.
+#
+# Design goal: never more than ~2 version PRs per ecosystem per month. An unread
+# PR becomes guilt; guilt becomes an ignored notifications tab; an ignored
+# notifications tab eventually hides a real security alert. Ungrouped Dependabot
+# on a JS repo produces roughly eight PRs a week and is muted within a month, at
+# which point you have LESS security than before because you believe something
+# is watching.
+#
+# Security updates ignore both `cooldown` and `open-pull-requests-limit`, so
+# throttling the version-update firehose does not slow down a real CVE fix.
+#
+# Never auto-merge these. A dependency-update PR is a supply-chain delivery
+# mechanism; the cooldown only helps if a human decides the window has passed.
+
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: monthly
+      day: saturday
+      time: '07:00'
+      timezone: 'Etc/UTC'
+
+    # Quarantine, mirroring the min-release-age setting in the npm config.
+    cooldown:
+      default-days: 14
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
+
+    open-pull-requests-limit: 3
+
+    groups:
+      # One PR. Read the diff, check CI, squash, done.
+      npm-minor-and-patch:
+        applies-to: version-updates
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+      # Majors bundled separately: they are the ones that need thought, and they
+      # must not be able to hide a routine patch bump behind them.
+      npm-major:
+        applies-to: version-updates
+        patterns: ['*']
+        update-types: ['major']
+      # On an advisory day this turns nine PRs into one.
+      npm-security:
+        applies-to: security-updates
+        patterns: ['*']
+
+    ignore:
+      # Recorded as decision D6. typescript-eslint@8 declares
+      # peerDependencies.typescript ">=4.8.4 <6.1.0"; TypeScript 7 is outside it
+      # and adopting it silently disables every type-aware lint rule — which is
+      # where most of this project's enforcement lives. Revisit deliberately
+      # when typescript-eslint widens the range, not because a bot opened a PR.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      # @types/node MUST track the Node runtime major or you get IntelliSense
+      # for APIs that do not exist at runtime. Bump it by hand alongside the
+      # node-version in ci.yml.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+
+    commit-message:
+      prefix: 'chore(deps)'
+      prefix-development: 'chore(dev-deps)'
+    labels: ['dependencies']
+
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: monthly
+      time: '07:00'
+      timezone: 'Etc/UTC'
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: 'chore(ci)'
+    labels: ['dependencies']

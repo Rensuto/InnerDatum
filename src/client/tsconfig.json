@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // Shim so the editor and typescript-eslint's projectService resolve client
+  // files against the DOM config rather than the server one. Settings live in
+  // the root tsconfig.client.json; `include` there is resolved relative to that
+  // file, so it still covers src/shared/ + src/client/.
+
+  "extends": "../../tsconfig.client.json"
+}

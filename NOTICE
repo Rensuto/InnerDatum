@@ -1,0 +1,187 @@
+Inner Datum
+Copyright (C) 2026 Dalton Barraclough
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See COPYING for the full text.
+
+SPDX-License-Identifier: GPL-3.0-or-later
+
+
+================================================================================
+1. DERIVED FROM T-ENGINE4 / TALES OF MAJ'EYAL
+================================================================================
+
+Inner Datum's simulation engine contains code translated from Lua to TypeScript
+from T-Engine4 and the Tales of Maj'Eyal game module.
+
+    T-Engine4 / Tales of Maj'Eyal
+    Copyright (C) 2009 - 2018 Nicolas Casalini ("DarkGod")
+    <darkgod@te4.org>  -  https://te4.org/  -  https://te4.org/license
+    Licensed GPL-3.0-or-later.
+
+Translating a program from one language to another produces a derivative work.
+This project is GPL because of that, willingly and gratefully: ToME's combat
+model is the reason this game feels the way it does.
+
+--------------------------------------------------------------------------------
+1.1  Upstream licence, verified against the source rather than assumed
+--------------------------------------------------------------------------------
+
+  * 1,652 of 1,655.lua files carry the header "either version 3 of the
+    License, or (at your option) any later version".
+  * The remaining 3 -- game/modules/tome/data/lore/arena.lua,
+    game/modules/tome/data/talents/spells/infusion.lua, and
+    game/modules/tome/data/zones/keepsake-meadow/zone.lua -- carry no per-file
+    header and fall under the project-wide COPYING, which is the verbatim GNU
+    General Public License version 3.
+  * No file in the tree references GPL version 2.
+  * Copyright lines present: "2009 - 2018 Nicolas Casalini" (1,626 files),
+    "2009, 2010, 2011, 2012, 2013 Nicolas Casalini" (14),
+    "2009 - 2014 Nicolas Casalini" (7).
+  * reference/t-engine4/CONTRIBUTING records that contributors assign copyright
+    to Nicolas Casalini or grant him relicensing rights, so the grant above is
+    made by a single unified rights holder. There is no fragmented-ownership
+    risk in the tree we are porting from.
+
+Therefore the correct SPDX identifier is GPL-3.0-or-later. Declaring
+GPL-3.0-only would strip a right upstream deliberately granted.
+
+Reference clone used for the port:
+    repository:  https://github.com/vgawen/t-engine4.git
+    commit:      304327e0805ca3e2ecdd1c8a6ec2e154bee7411e   (2018-09-21)
+    location:    reference/t-engine4/ -- read-only, gitignored, never edited.
+
+That commit is the anchor for every `file:line` citation in docs/ and in the
+per-file headers under src/. If the clone is recreated at a different commit,
+the citations silently shift.
+
+--------------------------------------------------------------------------------
+1.2  Files in this repository that are derived works of T-Engine4
+--------------------------------------------------------------------------------
+
+Each file below carries a per-file SPDX header naming its exact upstream source
+and line range. ENGINE/ = game/engines/default/engine/ ; TOME/ = game/modules/tome/
+
+  src/shared/energy.ts         ENGINE/GameEnergyBased.lua:34
+  src/shared/checkhit.ts       TOME/class/interface/Combat.lua:277-350
+  src/shared/scale.ts          TOME/class/interface/Combat.lua:1437-1619
+  src/shared/coords.ts         ENGINE/utils.lua:1869-1990 (subset)
+
+  src/server/engine/scheduler.ts  ENGINE/GameEnergyBased.lua:95-142
+                                  ENGINE/GameTurnBased.lua
+  src/server/engine/actor.ts      ENGINE/Actor.lua:472-485
+                                  TOME/class/Actor.lua:352-429, 476-608,
+                                  612-695, 3909-3914
+  src/server/engine/derived.ts    TOME/class/interface/Combat.lua:1216-1440,
+                                  2122-2277
+  src/server/engine/combat.ts     TOME/class/interface/Combat.lua:1661-1687,
+                                  1886-1959
+  src/server/engine/damage.ts     ENGINE/DamageType.lua
+                                  TOME/data/damage_types.lua:47-560
+  src/server/engine/effects.ts    ENGINE/interface/ActorTemporaryEffects.lua
+                                  TOME/class/Actor.lua:6993-7020
+  src/server/engine/talents.ts    ENGINE/interface/ActorTalents.lua
+  src/server/engine/stats.ts      ENGINE/interface/ActorStats.lua
+  src/server/engine/resources.ts  ENGINE/interface/ActorResource.lua
+  src/server/engine/life.ts       ENGINE/interface/ActorLife.lua
+  src/server/engine/tempvals.ts   ENGINE/Entity.lua:1118-1130 (attr)
+  src/server/engine/path.ts       ENGINE/Astar.lua
+  src/server/world/level.ts       ENGINE/Map.lua, ENGINE/Grid.lua, ENGINE/Level.lua
+  src/server/world/zone.ts        ENGINE/Zone.lua
+  src/server/world/gen/**         ENGINE/BSP.lua, ENGINE/Generator.lua,
+                                  ENGINE/generator/map/*
+  src/server/ai/npc.ts            TOME/class/NPC.lua
+
+Content data that is also derived, and is therefore GPL-3.0-or-later and NOT
+covered by ASSETS-LICENSE.md:
+
+  content/maps/*.txt        ToME's ASCII vault format (TOME/data/maps/**). Any
+                            individual vault transcribed from ToME carries a
+                            leading `#` SPDX comment identifying it.
+  content/effects/*.json    Values transcribed from TOME/data/timed_effects/*.lua
+  content/talents/*.json    Tuning values read from TOME/data/talents/**
+  content/classes/*.json    Structure and values read from TOME/data/birth/**
+
+--------------------------------------------------------------------------------
+1.3  Files that are NOT derived from T-Engine4
+--------------------------------------------------------------------------------
+
+Written from scratch. Still GPL-3.0-or-later, because they are part of this
+program -- but no upstream expression is present in them. Recorded so the
+boundary stays legible to anyone auditing the port.
+
+  src/shared/rng.ts                 PCG32. ToME's rng.* is native C and is
+                                    absent from the source distribution.
+  src/server/engine/fov.ts, los.ts  Shadowcasting. ToME's core.fov is native C
+                                    and is absent.
+  src/server/engine/barrier.ts      The Bell, quorum, Standing By. No ToME analogue.
+  src/server/engine/control.ts      Replaces TOME/class/Player.lua:401-411's
+                                    `game.paused` global with per-actor awaited
+                                    network commands.
+  src/server/world/party.ts         Design referenced from TOME/class/Party.lua;
+                                    no code translated.
+  src/server/talents/**             Original TypeScript. Balance NUMBERS were
+                                    read from TOME/data/talents/**; the
+                                    behaviour is ours.
+  src/server/{net,http,persist,view,gm,ops,content}/**
+  src/client/**
+  tools/**, test/**
+
+
+================================================================================
+2. NO TALES OF MAJ'EYAL ART OR AUDIO IS USED
+================================================================================
+
+reference/t-engine4/COPYING-MEDIA states, in full:
+
+    All the medias located in all the "/data/gfx" folders are granted to use
+    with the Tales of Maj'Eyal game only.
+
+    Please contact darkgod@te4.org for more informations.
+
+No file from any ToME media directory appears in this repository. The exclusion
+is satisfied by construction, not by discipline, and now by two independent
+mechanisms:
+
+  1. The reference clone is sparse and never fetches those paths at all, so
+     there is no local copy to reproduce from. It is retained for source
+     consultation only, and is gitignored.
+  2. NO MEDIA OF ANY KIND IS TRACKED IN THIS REPOSITORY. The art tree is
+     excluded wholesale (see ASSETS-LICENSE.md), so there is no tracked
+     directory for a media file to be committed into -- ToME's or anyone
+     else's.
+
+Copy code logic only, and cite it when you do.
+
+
+================================================================================
+3. WHAT IS NOT COVERED BY THE GPL
+================================================================================
+
+The Outer Index artwork and first-party game content are the author's own
+separate work, are NOT licensed under the GPL, and are NOT DISTRIBUTED WITH
+THIS REPOSITORY. All Rights Reserved. See ASSETS-LICENSE.md.
+
+No image, font, sound or music file is tracked here at all. The only
+third-party material you receive by cloning this repository is its npm
+dependencies. THIRD_PARTY.md records the provenance and terms of material the
+art pipeline draws on locally, so that the obligations are already written down
+if a fork ever distributes any of it.
+
+
+================================================================================
+4. TRADEMARKS
+================================================================================
+
+The GPL grants rights over code, not over names.
+
+"Tales of Maj'Eyal", "T-Engine", "ToME" and their logos belong to their owner.
+Inner Datum is not affiliated with, endorsed by, or a product of te4.org.
+
+"Discord" is a trademark of Discord Inc. Inner Datum is an unofficial
+third-party Activity, not affiliated with or endorsed by Discord Inc.
+
+"Kenney" is used in THIRD_PARTY.md solely to attribute CC0 works. CC0 waives
+copyright; it does not grant use of a name as endorsement.

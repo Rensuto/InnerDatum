@@ -1,0 +1,242 @@
+# ---------------------------------------------------------------------------
+# Inner Datum — .gitignore
+# This repo is PUBLIC. Everything below is either secret, huge, generated,
+# or licensed such that we must not redistribute it.
+# ---------------------------------------------------------------------------
+
+# --- Secrets. Never commit. --------------------------------------------------
+# The Discord client secret and OAuth tokens live here. A leaked client secret
+# lets anyone impersonate the activity; rotate immediately if it ever lands in
+# a commit (deleting the file later does NOT remove it from git history).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+config.local.json
+
+# --- Third-party reference source. Do NOT commit. ---------------------------
+# reference/t-engine4 is a ~330 MB sparse clone of T-Engine4/ToME (GPL-3.0),
+# kept locally as a porting reference only. It is upstream's code, not ours:
+# anyone who needs it should clone it themselves. See docs/tome-port.md.
+reference/
+
+# --- Player data. Contains Discord user IDs — personal data, not ours to publish.
+data/
+saves/
+*.save.json
+backups/
+
+# --- Node / build --------------------------------------------------------
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+coverage/
+.eslintcache
+
+# --- THE ART. Not published. ------------------------------------------------
+# The entire art tree is excluded: sprites, icons, atlases, the generated
+# manifest and the prop metadata alongside them. It is All Rights Reserved and
+# is NOT distributed with this repository. See ASSETS-LICENSE.md.
+#
+# The files stay on disk and the game keeps running locally. Only git is told
+# to look away.
+#
+# This is a whole-directory rule on purpose. A rule listing subfolders would
+# quietly start tracking the next folder someone adds, and the failure mode is
+# publishing art nobody meant to publish. If you need a file in here committed,
+# it is almost certainly in the wrong directory — move it, do not un-ignore it.
+#
+# What a clone does instead: `npm run assets` generates 64 of the 111 sprites
+# procedurally, and ASSETS-REQUIRED.md lists the other 47 with their exact
+# dimensions. Missing sprites draw as fallback boxes; nothing crashes.
+client/public/assets/
+
+# --- Logs / runtime --------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+pids/
+*.pid
+
+# --- OS / editor -----------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+
+# ===========================================================================
+# ADDED AFTER THE PUBLIC-RELEASE AUDIT
+# Everything above is unchanged and still correct. This section covers the
+# gaps that audit found. Rule of thumb: if you have to stop and think about
+# whether a file is safe to commit, it isn't — add it here first and argue
+# afterwards.
+# ===========================================================================
+
+# --- Other people's personal data (the biggest gap) ------------------------
+# docs/hosting.md § 8.4 tells you to create a file of ~10 friends' Discord
+# snowflakes. Nothing above was stopping it from being committed.
+# Ship config/allowlist.example.json instead.
+config/allowlist.json
+config/gm.json
+!config/*.example.json
+
+# architecture.md § 6 dumps a serialised world (every player in it) on
+# unhandledRejection; hosting.md § 7 writes an append-only action log.
+# Both carry Discord user IDs.
+crashdumps/
+snapshots/
+*.ndjson
+
+# --- Key material beyond *.pem / *.key -------------------------------------
+*.pfx
+*.p12
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+*.ppk
+secrets/
+*.local.json
+!*.example.json
+
+# --- Hosting credentials ---------------------------------------------------
+# These are supposed to live outside the repo entirely (hosting.md § 8.8).
+# This block is the seatbelt, not the plan.
+# Caddy's data dir holds the ACME account key and every issued private key.
+caddy/data/
+caddy/config/
+Caddyfile.local
+# cloudflared (fallback path). cert.pem is account-scoped: it can create
+# tunnels and DNS records across all your zones. Most dangerous file on the box.
+.cloudflared/
+cloudflared-config.yml
+*-tunnel.json
+cert.pem
+
+# --- Untraced audio. Do not "restore the missing music". -------------------
+# art-pipeline.md § 7: 36 tracks with no licence file and no provenance note.
+# On a public repo that is a liability, not a to-do. See ASSETS-LICENSE.md § 8.
+assets/audio/
+client/public/assets/audio/
+*.mp3
+*.m4a
+
+# --- Local agent / editor state --------------------------------------------
+# .claude/settings.json (project hooks) and CLAUDE.md ARE committed.
+# Anything machine-local is not — see NEXUS-PLAN.md § Task 0 for why this
+# matters more here than in most repos.
+.claude/settings.local.json
+.claude/logs/
+.claude/state/
+CLAUDE.local.md
+NEXUS/state/
+NEXUS/logs/
+NEXUS/changelog/
+
+# .vscode/settings.shared.json (negated above) is a name no tool reads —
+# VS Code only ever loads settings.json. Un-ignore the real one.
+!.vscode/settings.json
+!.vscode/launch.json
+
+# --- Local binaries --------------------------------------------------------
+# caddy.exe / cloudflared.exe / nssm.exe belong outside the repo. This catches
+# an accidental drop-in.
+bin/
+*.exe
+*.msi
+
+# --- Node, continued -------------------------------------------------------
+# NOTE: package-lock.json IS committed. Do not add it here.
+dist-ssr/
+.node_repl_history
+*.tgz
+.pnp.*
+.yarn/*
+!.yarn/releases
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Build reports ---------------------------------------------------------
+# Superseded: the art tree is now excluded wholesale further up this file, so
+# the assets are no longer committed and the "zero churn on rebuild" argument
+# for committing them no longer applies. The throwaway report stays ignored.
+tools/*-report.json
+
+# --- OS / editor, continued ------------------------------------------------
+.AppleDouble
+*~
+*.bak
+*.orig
+*.rej
+
+# ===========================================================================
+# PRIVATE DESIGN + PLANNING DOCS — local only, never published
+# ===========================================================================
+# Decision: the public repo carries CODE and LICENCE files only, plus a short
+# README and the two OSS furniture files. The planning and design material
+# stays on this machine.
+#
+# These files are NOT deleted and NOT secret — they are the working notes for
+# the project and remain the source of truth locally. They are simply not the
+# public face of the repo.
+#
+# If you add a new design doc, it lands in docs/ and is ignored automatically.
+
+/PLAN.md
+/DECISIONS.md
+/NEXUS-PLAN.md
+/CLAUDE.md
+/CLAUDE.local.md
+/AGENTS.md
+/GEMINI.md
+docs/
+tools/README.md
+NEXUS/
+
+# Explicitly committed, despite the rules above. Do not let a broad *.md rule
+# swallow these — they are licence files or required repo furniture:
+#   LICENSE  COPYING  NOTICE  ASSETS-LICENSE.md  THIRD_PARTY.md
+#   README.md  SECURITY.md  CONTRIBUTING.md
+!/ASSETS-LICENSE.md
+!/THIRD_PARTY.md
+!/README.md
+!/SECURITY.md
+!/CONTRIBUTING.md
+
+# Working scratch that accumulates next to the docs
+/contact_*.png
+/scratch_*.png
+*.contact.png
+
+# ===========================================================================
+# PERSONAL INFRASTRUCTURE — local only, never published
+# ===========================================================================
+# This repo is public and must contain CODE and LICENCES only. The files below
+# are this author's specific deployment: they name a home hostname that
+# resolves to a residential IP, a machine on a private LAN, a mapped drive, and
+# an absolute path carrying a Windows username. None of it is useful to anyone
+# else, and publishing it would hand a stranger the address of a PC in
+# somebody's house.
+#
+# They remain on disk and keep working. Only git is told to look away.
+
+tools/deploy-to-host.ps1
+.githooks/post-commit
+tools/discord/
+
+# The real Caddyfile names the live host. deploy/Caddyfile.example is the
+# published, generic one.
+deploy/Caddyfile

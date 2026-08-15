@@ -1,0 +1,75 @@
+name: ci
+
+# ONE job, on windows-latest, finishing in about two minutes.
+#
+# Why Windows and not the usual ubuntu (or a matrix): both the development box
+# and the deployment target are Windows. src/server/persist/atomic.ts is the
+# only module that branches on process.platform, and on Linux fs.rename NEVER
+# throws EPERM/EBUSY — so the retry loop that risk R9 exists for is dead code
+# there and the "no parent-dir fsync on win32" branch takes the wrong side.
+# Testing that on Linux tests the branch we do not ship. A second Linux leg
+# would mainly catch filename-case bugs for contributors CONTRIBUTING.md says
+# we are not recruiting.
+#
+# The single most valuable step here is the last one. A green typecheck on a
+# server that will not boot is the exact failure this project cannot afford —
+# working rule 1 is that every weekend ends with something runnable — and `tsc
+# --noEmit` does NOT prove Node can load the tree: it does not exercise ESM
+# specifier resolution or type-stripping.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege. Nothing here writes anything.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    # The GitHub default is SIX HOURS. One hung job would eat an afternoon of a
+    # weekend budgeted for building the game.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Leave no usable credential in the runner's git config.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          # Keys on package-lock.json. Biggest single time saving in the file.
+          cache: npm
+
+      - name: Install (locked)
+        # `npm ci` fails on lockfile drift; `npm install` silently resolves a
+        # different tree, which defeats the point of committing a lockfile.
+        run: npm ci --no-audit --no-fund
+        env:
+          # The npm config sets min-release-age=7, a RESOLUTION-time control and
+          # is meaningless against a committed lockfile; leaving it on here only
+          # produces confusing output.
+          NPM_CONFIG_MIN_RELEASE_AGE: '0'
+
+      # One command, identical to the pre-push hook and to what you run locally.
+      # If the local gate and the CI gate can differ, CI becomes a lottery and
+      # you learn to push-and-pray.
+      #
+      #   check = typecheck (shared -> server -> client) && lint && format:check && test
+      - name: Check
+        run: npm run check
+
+      # Boots the real entry point, hits /healthz, asserts the body is exactly
+      # {ok, version, uptime} (no player list, no paths, no hostnames), exits.
+      # The contract is in the engineering-standards doc under docs/.
+      - name: Boot smoke test
+        run: npm run smoke

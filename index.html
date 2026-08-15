@@ -1,0 +1,70 @@
+<!doctype html>
+<!--
+  Inner Datum — the entire client shell.
+
+  Vite serves this from the REPO ROOT (see vite.config.ts), so `./src/client/…`
+  below is a real path on disk in dev and gets rewritten to the hashed bundle at
+  build time.
+
+  EVERY url here is RELATIVE. Inside a Discord Activity the app is served from a
+  proxied origin and may sit under a path prefix; an absolute `/src/...` or
+  `/bundle/...` resolves against the proxy root and 404s. `base: './'` in
+  vite.config.ts is the other half of the same rule.
+
+  There is no markup for the game itself. The world is one <canvas>, and the
+  only DOM that changes is the status line — which is written with textContent,
+  never innerHTML, because it will eventually carry Discord nicknames and
+  in-game chat, neither of which Discord sanitises.
+
+  M4 ADDS THE COMMAND LINE, AND IT IS A REAL <input> ON PURPOSE. `say` could
+  have been a string assembled from keydowns and drawn on the canvas; a real
+  input gets the IME (which is not optional for anyone typing a non-Latin
+  script), the clipboard, the caret, undo, autocorrect suppression and screen
+  reader support for nothing. src/client/input/keys.ts has guarded against a
+  focused text field since M2 — `isTextEntry` — so no game key fires while
+  somebody is mid-sentence, which is the failure this element would otherwise
+  introduce: hitting space to put a word break in ends your turn.
+
+  `#margin` is the ACCESSIBLE COPY of the Case Log's Margin lane. The lane
+  itself is painted on the canvas, where no screen reader will ever find it, and
+  player speech is the one thing in this game that must be readable without
+  eyes. It carries the newest Margin line and nothing else — mirroring the
+  Record lane here would announce twenty lines of arithmetic per turn.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>Inner Datum</title>
+    <link rel="stylesheet" href="./src/client/styles/main.css" />
+  </head>
+  <body>
+    <!--
+      The width/height attributes are the backing-store size before the renderer
+      measures anything. They are overwritten on the first resize() — the real
+      value is computed from the element's CSS box times devicePixelRatio.
+    -->
+    <canvas id="game" width="640" height="480" aria-label="Inner Datum map"></canvas>
+    <!--
+      `maxlength` is set from SAY_MAX_CHARS in main.ts rather than written here,
+      so the input and the zod schema in src/shared/protocol.ts cannot drift.
+      Two numbers means the day they differ a player types a sentence, watches
+      the field accept it, and gets `bad_message` back.
+    -->
+    <div id="cmdrow">
+      <label id="cmdlabel" for="cmd">say</label>
+      <input
+        id="cmd"
+        type="text"
+        autocomplete="off"
+        autocapitalize="sentences"
+        spellcheck="false"
+        placeholder="T or / to talk · Enter sends · Esc back to the map"
+      />
+    </div>
+    <div id="margin" role="log" aria-live="polite"></div>
+    <div id="log" role="status" aria-live="polite">starting...</div>
+    <script type="module" src="./src/client/main.ts"></script>
+  </body>
+</html>

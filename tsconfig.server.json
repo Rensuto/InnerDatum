@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // Server + shared + tests + tools.
+  //
+  // `types: ["node"]` is explicit on purpose: TypeScript 6 changed the default
+  // for `types` from "everything in @types" to `[]`, so writing it out means
+  // this config keeps working across that upgrade instead of losing `process`
+  // and `Buffer` with a confusing error. @types/node must stay on the ^24 line
+  // to match the runtime major.
+  //
+  // moduleResolution "nodenext" is what makes the explicit `.ts` import
+  // extension a COMPILER error rather than a lint rule.
+
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2024"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/shared/**/*.ts",
+    "src/server/**/*.ts",
+    "test/**/*.ts",
+    "tools/**/*.ts",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["node_modules", "src/client/**", "client/dist", "reference", "data", "coverage"]
+}

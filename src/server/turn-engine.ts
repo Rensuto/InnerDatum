@@ -1,0 +1,1386 @@
+/**
+ * The adapter between the pure turn engine and the socket layer.
+ *
+ * WHY THIS FILE IS NOT UNDER src/server/engine/
+ *
+ * The engine is deliberately clock-free: ESLint bans `Date.now` there, and
+ * `setTimeout` is not in scope. `barrier.expire(actors, level, nowMs)` and
+ * `pump(world, { nowMs })` both take wall-clock as an argument precisely so the
+ * engine stays a pure state transition that a test can drive turn by turn.
+ *
+ * But the gateway's `TurnEngine` contract is clock-free in the OTHER direction:
+ * `bellExpired()` and `pump()` take no arguments, because the socket layer fires
+ * them from a real timer and should not have to thread time through.
+ *
+ * Something has to own the clock and close that gap. Putting it inside engine/
+ * would mean weakening the lint rule that keeps the engine deterministic — the
+ * single most valuable structural guarantee in the codebase. So the adapter
+ * lives one directory up, outside the engine glob, and `now()` is injected so
+ * tests can drive it without a real clock either.
+ *
+ * It also owns the Barrier instance, because the barrier's state (Standing By
+ * counters, the countdown's start time) must outlive any single pump.
+ */
+
+import { inBounds, step } from '../shared/coords.ts';
+import { ErasedReason, ErrorCode, PartyAction, TalentShape } from '../shared/protocol.ts';
+import type { Dir, TileXY } from '../shared/coords.ts';
+import type { LoadoutTalent, ResourceView, TurnEvent } from '../shared/protocol.ts';
+import { seedTestEncounter } from './content/encounter.ts';
+import { HOLD_INTENT, IntentKind, cooldownOf } from './engine/actor.ts';
+import type { Intent } from './engine/actor.ts';
+import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
+import { createBarrier } from './engine/barrier.ts';
+import { RespawnRefusal, respawn } from './engine/downed.ts';
+import type { DownedState } from './engine/downed.ts';
+import type { EffectLogLine } from './engine/effects.ts';
+import { combatDistance } from './engine/combat.ts';
+import {
+  MAX_PARTY_SIZE,
+  PartyRefusal,
+  accept as acceptInvite,
+  decline as declineInvite,
+  forgetActor as forgetParty,
+  invite as inviteToParty,
+  invitesFor,
+  kick as kickFromParty,
+  leave as leaveParty,
+  membersOf,
+  partyIdOf,
+  partyOf,
+} from './engine/party.ts';
+import type { PartyResult, PartyState } from './engine/party.ts';
+import type { GameEvent, SweepStep } from './engine/scheduler.ts';
+import { disconnectActor, pump, reconnectActor, submitIntent } from './engine/scheduler.ts';
+import type {
+  IntentResult,
+  PartyCommandResult,
+  PartySnapshot,
+  PumpResult,
+  TalentRefusal,
+  TalentResult,
+  TurnEngine,
+} from './net/gateway.ts';
+import { toDisplayName } from './view/projector.ts';
+import type { TurnState } from './view/projector.ts';
+import { hasLineOfSight } from './world/world.ts';
+import type { Actor, World } from './world/world.ts';
+
+/**
+ * WHAT AN ACTOR CAN DO, as authored content sees it.
+ *
+ * DECLARED HERE, SATISFIED ELSEWHERE — the same trick `TurnEngine` plays in
+ * net/gateway.ts. `src/server/talents/` may not import net/ (eslint blocks it)
+ * and this adapter may not be imported by the engine, so stating the contract
+ * structurally means the talent files satisfy it without importing anything,
+ * this file compiles without importing them, and a test can hand `submitTalent`
+ * a two-talent book with no content pipeline behind it.
+ *
+ * IT IS READ-ONLY, AND THAT IS THE DIVISION OF LABOUR. Everything here answers
+ * "may this be submitted?". SPENDING the resource and SETTING the cooldown
+ * happen at RESOLUTION, inside the scheduler, because an intent that goes
+ * illegal between submission and resolution must cost ZERO — the refund rule
+ * (docs/architecture.md § 2). Deducting a Reagent when the packet lands would
+ * charge for a cast that a wall, a death or a knockback then cancels.
+ */
+export type TalentBook = {
+  /**
+   * This actor's hotbar, in slot order. Empty for anything without one — every
+   * monster in M3, and a player before a class has been chosen.
+   */
+  loadoutOf(actor: Actor): readonly LoadoutTalent[];
+  /** This actor's class resource, or undefined for an actor that has none. */
+  resourceOf(actor: Actor): ResourceView | undefined;
+  /**
+   * THE AUTHORITATIVE LEGALITY CHECK, when one exists. Null means legal.
+   *
+   * OPTIONAL, AND THE REASON IS WORTH THE PARAGRAPH. `canUseTalent` in
+   * src/server/engine/talents.ts is the function the SCHEDULER calls at
+   * resolution, and it knows things this adapter cannot see: the AP and MP
+   * budgets, whether the body under the cursor is hostile, whether a Fog Step
+   * destination is occupied. When it is wired through here, `submitTalent`
+   * defers to it completely and there is exactly ONE implementation of
+   * "may this be used" in the process — which is the only way submission and
+   * resolution can be guaranteed to agree.
+   *
+   * When it is NOT supplied, `submitTalent` falls back to the subset it can
+   * decide from the catalogue alone: membership, cooldown, class resource,
+   * range, the dead zone and line of sight. That fallback calls the SAME
+   * `combatDistance` and `hasLineOfSight` the resolution-time checker calls, so
+   * the two can differ in what they check but never in how they measure.
+   */
+  check?(actor: Actor, talentId: string, target: TileXY | undefined): TalentRefusal | null;
+};
+
+/**
+ * The book a server with no talents wired in uses.
+ *
+ * Not a placeholder to be deleted: it is what makes `createTurnEngine({ world })`
+ * keep working unchanged, and it fails CLOSED — every talent id is unknown, so
+ * every `talent` frame is refused. A default that accepted everything would be a
+ * validation bypass that only shows up in production.
+ */
+export const EMPTY_TALENT_BOOK: TalentBook = {
+  loadoutOf: () => [],
+  resourceOf: () => undefined,
+};
+
+/**
+ * Structurally Fastify's `app.log`, exactly as persist/saves.ts's `SaveLogger`
+ * is, so main.ts hands over its own logger and a floor reset lands in the same
+ * stream as every request line.
+ *
+ * OPTIONAL HERE, unlike the save store's, and the difference is what each one
+ * guards. A save that silently discarded its warning would hide a lost
+ * character; a floor reset that cannot find a spawn tile is a worse POSITION,
+ * not a lost anything, and `createTurnEngine({ world })` has to keep working for
+ * the dozens of tests that describe the turn loop and have no logger to give it.
+ */
+export type TurnLogger = {
+  info: (context: Record<string, unknown>, message: string) => void;
+  warn: (context: Record<string, unknown>, message: string) => void;
+  error: (context: Record<string, unknown>, message: string) => void;
+};
+
+const SILENT_LOGGER: TurnLogger = {
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+
+/**
+ * How close together two of the SAME party's wipes have to be before it is
+ * churn rather than a hard floor — in GAME TURNS.
+ *
+ * TURNS, NOT PUMPS, and the unit is the whole point. A pump is not a thing
+ * anybody can reason about: the gateway drives one after every accepted frame,
+ * so a chat message between two wipes would break a "consecutive pumps" counter
+ * and hide the exact loop it exists to catch. A floor reset that worked buys the
+ * party a walk back across the room; wiping again inside two game turns means
+ * they never left the fight.
+ */
+const WIPE_CHURN_TURNS = 2;
+
+export type TurnEngineOptions = {
+  readonly world: World;
+  /**
+   * Injected so a test can step time deliberately instead of sleeping. Defaults
+   * to the real clock; this is the ONLY place in the turn path that reads one.
+   */
+  readonly now?: () => number;
+  /** Shared with the gateway so both agree on what "still connected" means. */
+  readonly barrier?: Barrier;
+  /** Authored talents. Defaults to `EMPTY_TALENT_BOOK`, which refuses everything. */
+  readonly talents?: TalentBook;
+  /**
+   * THE SURVIVAL TABLE (engine/downed.ts). Who is on the floor, and for how many
+   * more turns.
+   *
+   * OPTIONAL, AND ABSENT MEANS NOBODY IS EVER DOWN. It lives ACROSS pumps, like
+   * the barrier, because a five-turn countdown that reset every time the world
+   * advanced would never reach zero — so it is owned here and handed to `pump`
+   * rather than built inside it.
+   *
+   * Every survival branch in the scheduler is gated on it being supplied, which
+   * is what keeps a server with no `downed` wired in byte-for-byte the M3 game:
+   * a player who hits 0 hp is a corpse, exactly as before. That is a deliberate
+   * fail-closed default — the alternative, inventing a timer nobody is counting,
+   * would put "4 turns left" on a panel above a body that will never get up.
+   *
+   * The same instance must reach the gateway (for `projectParty`), which is why
+   * src/server/main.ts creates it and passes it to both.
+   */
+  readonly downed?: DownedState;
+  /**
+   * WHO IS PLAYING WITH WHOM (engine/party.ts).
+   *
+   * PRESENT → THE BARRIER IS PER-PARTY. Every question the barrier answers —
+   * the quorum, the commit count, the blocking set, the Bell's countdown and
+   * the wipe — is scoped to the asking player's party rather than to the level,
+   * which is the whole point: a solo player must never wait on somebody they
+   * never agreed to play with. Engagement is untouched and stays level-wide.
+   *
+   * ABSENT → the level-wide barrier, byte for byte, exactly as it behaved
+   * before parties existed. Optional for the same reason `downed` is: a test
+   * that builds `createTurnEngine({ world })` describes the same game it always
+   * did, and the party verbs answer honestly that this build has no party
+   * system rather than pretending.
+   *
+   * Owned by src/server/main.ts and handed to BOTH this and the gateway, like
+   * the survival table — two instances would be two answers to "who is in my
+   * party", one of them driving the barrier and the other drawing the pane.
+   */
+  readonly parties?: PartyState;
+  /**
+   * Where a floor reset's diagnostics go. Defaults to silence.
+   *
+   * There are exactly two lines and both are things a player would otherwise
+   * report as "the game broke": a level with no free spawn tile, and a party
+   * that wipes again within `WIPE_CHURN_TURNS` of its last wipe. See `resetFloor`.
+   */
+  readonly log?: TurnLogger;
+  /**
+   * PUT THE FLOOR'S MONSTERS BACK. Defaults to `seedTestEncounter`.
+   *
+   * A SEAM RATHER THAN A HARD-WIRED CALL, for the reason M5 is about to make
+   * obvious: today "the floor" is three hand-placed monsters in
+   * content/encounter.ts, and tomorrow it is whatever the zone generator built.
+   * A floor reset has to re-run WHATEVER made this floor, and this is the one
+   * line that has to change when that answer does.
+   *
+   * It must be IDEMPOTENT ON ID and it must place at AUTHORED positions.
+   * `resetFloor` removes every monster first, so what this call sees is an empty
+   * floor and the party already standing somewhere else.
+   */
+  readonly reseedFloor?: (world: World) => void;
+};
+
+const OK: IntentResult = { ok: true };
+
+function refuse(reason: string): IntentResult {
+  return { ok: false, reason };
+}
+
+/**
+ * A refused party command. SEPARATE FROM `refuse` ABOVE and not an alias for
+ * it: the two results are only the same shape on the failure arm, and letting
+ * one function serve both would mean the compiler could no longer tell a
+ * successful party command — which must carry `affected` and a notice — from a
+ * successful move, which carries neither.
+ */
+function refuseParty(reason: string): PartyCommandResult {
+  return { ok: false, reason };
+}
+
+const TALENT_OK: TalentResult = { ok: true };
+
+/**
+ * The intent, built from the CATALOGUE'S copy of the id and never the caller's
+ * string. The two are equal — the loadout lookup proved it — but this way the
+ * intent carries a key the server minted rather than 64 attacker-supplied
+ * characters, so nothing downstream is ever handed one it did not mint itself.
+ *
+ * A `self` shape queues no target at all rather than the caster's own tile: an
+ * absent target is a fact about the talent, whereas a coordinate would have to
+ * be re-checked at resolution against a caster who may since have been shoved.
+ */
+function talentIntent(talent: LoadoutTalent, target: TileXY | undefined): Intent {
+  if (target === undefined) return { kind: IntentKind.Talent, talentId: talent.id };
+  return { kind: IntentKind.Talent, talentId: talent.id, target: { x: target.x, y: target.y } };
+}
+
+/**
+ * `code` is what the CLIENT branches on; `reason` is for the player and the log.
+ * Both are needed and neither substitutes for the other — a client cannot flash
+ * the ring's hole for a sentence, and a player cannot act on `too_close` alone.
+ */
+function refuseTalent(code: TalentRefusal, reason: string): TalentResult {
+  return { ok: false, code, reason };
+}
+
+/**
+ * One `RespawnRefusal`, in the sentence the player reads.
+ *
+ * PROSE ONLY. The RULE is `respawn`'s in engine/downed.ts and this function does
+ * not re-decide any of it — it is the same division `submitRevive` keeps with
+ * `ReviveRefusal`, and it exists because the engine's vocabulary is a tag and
+ * the player's is a sentence. `Downed` gets the longest one on purpose: a player
+ * on the floor pressing this key needs to be told that somebody can still reach
+ * them, or they will read the refusal as the game being broken.
+ */
+/**
+ * One `PartyRefusal`, in the sentence the player reads.
+ *
+ * PROSE ONLY, exactly as `respawnRefusalText` below is. The RULES are
+ * engine/party.ts's and this function re-decides none of them; it exists
+ * because the engine's vocabulary is a tag and a player's is a sentence, and
+ * because "party is full" needs to name the number to be actionable.
+ */
+function partyRefusalText(reason: PartyRefusal, action: PartyAction): string {
+  switch (reason) {
+    case PartyRefusal.Self:
+      return action === PartyAction.Kick
+        ? 'to leave your own party, use leave'
+        : 'you cannot invite yourself';
+    case PartyRefusal.AlreadyTogether:
+      return 'you are already in the same party';
+    case PartyRefusal.AlreadyInvited:
+      return 'you have already invited them — the offer is still standing';
+    case PartyRefusal.PartyFull:
+      return `that party is full (${String(MAX_PARTY_SIZE)})`;
+    case PartyRefusal.NoInvite:
+      return 'there is no invitation waiting for you';
+    case PartyRefusal.NotLeader:
+      return 'only the party leader can remove somebody';
+    case PartyRefusal.NotAMember:
+      return 'they are not in your party';
+    case PartyRefusal.Solo:
+      return 'you are already on your own';
+  }
+}
+
+/**
+ * ONE CASE LOG LINE for a party command that succeeded.
+ *
+ * IT GOES IN THE RECORD LANE, not the Margin, and the distinction is the one
+ * protocol.ts draws: the Margin is what PEOPLE said, the Record is what the
+ * RULES did — and a party change is a rule change. It is the reason the barrier
+ * a player is standing at just moved, and six turns later "why did I stop
+ * waiting for Ren?" has to be answerable by scrolling back.
+ *
+ * NAMES, NOT IDS, and they go through the same display-name filter every other
+ * projection uses — a party notice is drawn from a Discord nickname and is read
+ * by everybody at the table.
+ */
+function partyNotice(action: PartyAction, actor: Actor, target: Actor | undefined): string {
+  const who = toDisplayName(actor.name);
+  const them = target === undefined ? 'them' : toDisplayName(target.name);
+  switch (action) {
+    case PartyAction.Invite:
+      return `${who} invites ${them} to their party.`;
+    case PartyAction.Accept:
+      return `${who} joins the party.`;
+    case PartyAction.Decline:
+      return `${who} declines the invitation.`;
+    case PartyAction.Leave:
+      return `${who} leaves the party.`;
+    case PartyAction.Kick:
+      return `${who} removes ${them} from the party.`;
+  }
+}
+
+function respawnRefusalText(reason: RespawnRefusal): string {
+  switch (reason) {
+    case RespawnRefusal.Up:
+      return 'you are already on your feet';
+    case RespawnRefusal.Downed:
+      return 'you are down, not erased — an ally can still reach you';
+    case RespawnRefusal.NotAPlayer:
+      return 'no_actor';
+  }
+}
+
+/** The Bell's inputs, read fresh each time — engagement changes every turn. */
+function levelOf(world: World): BarrierLevel {
+  return { engagement: world.turn.engagement, bossFloor: world.turn.bossFloor };
+}
+
+function playersOf(world: World): Actor[] {
+  return world.allActors().filter((a) => a.kind === 'player');
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OTHER HALF OF A FLOOR RESET — EVERYTHING THE ENGINE IS NOT ALLOWED TO DO
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `resetFloorParty` (engine/downed.ts) puts every body back on its feet at full
+ * hp with both clocks re-zeroed, AND IT DOES NOT MOVE ANYTHING — it may not, for
+ * the reason its own header gives: nothing in engine/ knows where a spawn tile
+ * is, and nothing in engine/ may re-seed content. Its checklist ends with *"the
+ * `party_wipe` event is the seam"*, and this function is what was on the far
+ * side of that seam and had never been written.
+ *
+ * WHAT THAT COST, VERBATIM FROM A LIVE SESSION'S CASE LOG:
+ *
+ *     Ren is erased — the party is down. The floor resets.
+ *     Index Wraith hits Ren.  3 damage.
+ *     Ren is DOWN — 5 turns to reach them.
+ *
+ * The floor "reset" and left Ren standing at full health one tile from the
+ * wraith that had just killed them, still in combat, still engaged. The wraith
+ * swung again, Ren went down again, the party wiped again. Two players spent an
+ * evening in that loop, and the operator's report — *"downing doesn't fully
+ * down, it seems to revive me"* — is exactly what an infinite reset looks like
+ * from inside the game.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ORDER IS THE FIX. NOTHING HOSTILE MAY ACT BETWEEN THE RESTORATION AND
+ * THE RELOCATION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This runs the instant `pump` returns and BEFORE any of the work that follows
+ * a pump: before the events are translated, before a single frame is broadcast,
+ * before the state resync, before the save. Turn resolution is synchronous — no
+ * `await` exists anywhere in this call graph — so "the instant it returns" is
+ * literal: no other socket's frame, no Bell timer and no other party's command
+ * can interleave. That is the whole reason this function is called where it is
+ * rather than from the gateway, which is the layer that would look natural.
+ *
+ * The three steps are ordered too, and each order is load-bearing:
+ *
+ *   1. MOVE THE PARTY FIRST. `world.placeAtSpawn` is the world's own free-tile
+ *      search — the same one `submitRespawn` uses for one body — so there is
+ *      exactly one rule in the process for "where does a body come back", and it
+ *      already guarantees the tile holds no living body. Moving first also frees
+ *      the tiles the fight was standing on, so step 2 finds the authored monster
+ *      positions empty instead of shuffling every spawn one ring outward.
+ *
+ *   2. THEN RESET THE HOSTILES — every monster removed, then the floor re-seeded
+ *      at its AUTHORED positions. Not "heal the survivors": a reset that leaves a
+ *      wounded wraith three tiles from the spawn cluster is the same bug with
+ *      extra steps, and the authored encounter is deliberately placed far from
+ *      the spawn corner (content/encounter.ts), which is what makes step 1's
+ *      tile safe rather than merely unoccupied.
+ *
+ *   3. THEN DROP ENGAGEMENT TO ZERO. The fight is over. Landing straight back
+ *      into a parked barrier is what made this read as "downing doesn't fully
+ *      down" — the party got up, the Bell was still ringing at them, and the
+ *      next monster turn arrived before anybody had moved. At zero, nobody
+ *      blocks, the pump idles, and the party gets the moment to breathe that a
+ *      floor reset is supposed to be. It re-arms on its own the moment a hostile
+ *      has line of sight again — `updateEngagement` recomputes it every turn, so
+ *      this is a reset and not an override.
+ *
+ * ═══ THE PATHOLOGICAL CASE IS ANSWERED, NOT LOOPED OVER ═══
+ * A level with no free tile at all takes more than 761 players, and the answer
+ * is a warning and a body left where it fell — never a retry loop. A hang is
+ * worse than an unfair position: an unfair position is one bad turn, a hang is
+ * a server that stops answering with four people in a voice channel.
+ */
+function resetFloor(
+  world: World,
+  restored: readonly string[],
+  reseedFloor: (world: World) => void,
+  log: TurnLogger,
+): void {
+  // 1 — the party, out of the fight.
+  for (const id of restored) {
+    if (world.placeAtSpawn(id) !== undefined) continue;
+    log.warn({ actorId: id }, 'floor reset: no free spawn tile — the body stays where it fell');
+  }
+
+  // 2 — the hostiles, back at their authored positions.
+  for (const actor of world.allActors()) {
+    if (actor.kind === 'monster') world.removeActor(actor.id);
+  }
+  reseedFloor(world);
+
+  // 3 — out of combat.
+  world.turn.engagement = 0;
+}
+
+/**
+ * Engine events -> wire events.
+ *
+ * The engine and the wire deliberately do NOT share an event type. The engine's
+ * vocabulary is about bookkeeping (`refunded`, `auto_passed`, `engagement`) and
+ * most of it is nobody's business on the client; the wire's is about what to
+ * draw. Translating here is what stops internal bookkeeping leaking into the
+ * protocol every time the scheduler grows a new event.
+ *
+ * Anything with no visual meaning maps to nothing and is dropped on purpose.
+ */
+function toWireEvents(
+  world: World,
+  events: readonly GameEvent[],
+  where: 'player' | 'sweep',
+): TurnEvent[] {
+  const out: TurnEvent[] = [];
+  for (const ev of events) {
+    switch (ev.t) {
+      case 'moved':
+        out.push({
+          k: 'move',
+          id: ev.id,
+          fromX: ev.from.x,
+          fromY: ev.from.y,
+          x: ev.to.x,
+          y: ev.to.y,
+        });
+        break;
+      case 'attacked':
+        out.push(...hitToWire(world, ev.id, ev.targetId, ev.damage, ev.killed, ev.hp, ev.at));
+        break;
+      case 'sweep':
+        // Only the sweep lane unpacks these; in the player lane a sweep event
+        // would mean the monster turn resolved inside a human's action, which
+        // is a scheduler bug rather than something to render.
+        if (where === 'sweep') out.push(...sweepStepsToWire(world, ev.steps));
+        break;
+      // M4 — the status system. `EffectLogLine` is the engine's own record of
+      // what happened to a body; `statusToWire` decides which of its six kinds
+      // has anything to DRAW.
+      case 'status':
+        out.push(...statusToWire(ev.note));
+        break;
+      // M4 — the survival system (engine/downed.ts, game-design.md § 9).
+      case 'downed':
+        out.push({ k: 'downed', id: ev.id, turns: ev.turnsLeft });
+        break;
+      case 'revived':
+        out.push({
+          k: 'revived',
+          id: ev.id,
+          byId: ev.byId,
+          hp: ev.hp,
+          // ABSOLUTE, like every other vital on the wire. Read from the world
+          // after the fact rather than carried through the engine, exactly as
+          // `hitToWire` reads the victim's hp: the maximum does not change
+          // during a revive, so there is nothing to snapshot.
+          maxHp: world.getActor(ev.id)?.maxHp ?? 0,
+        });
+        break;
+      case 'erased':
+        out.push({ k: 'erased', id: ev.id, reason: ErasedReason.Timer });
+        break;
+      /**
+       * A PARTY WIPE, narrated as what it is: everybody was erased, and the
+       * floor is about to be refiled.
+       *
+       * `restored` is the list the engine has ALREADY put back on its feet
+       * (`resetFloorParty`), which is why one `erased` per name is the honest
+       * account rather than a contradiction — the erasure is what happened, the
+       * restoration is the MVP's answer to it (§ 9: no permadeath, no loss, the
+       * floor resets and the party restarts it).
+       *
+       * The gateway follows these with a full `state` resync, because every
+       * body's hp and both its clocks have just been rewritten underneath the
+       * clients and a delta cannot express that.
+       */
+      case 'party_wipe':
+        for (const id of ev.restored) {
+          out.push({ k: 'erased', id, reason: ErasedReason.Wipe });
+        }
+        break;
+      // Bookkeeping. Real, logged server-side, and not drawable.
+      case 'held':
+      case 'refunded':
+      case 'auto_passed':
+      case 'turn_ended':
+      case 'engagement':
+        break;
+    }
+  }
+  return out;
+}
+
+/**
+ * One `EffectLogLine` -> the events a client can draw, which is not all of them.
+ *
+ * SIX KINDS IN, TWO OUT, and the four that produce nothing are the interesting
+ * half. `negated` (Actor.lua:7034-7037), `resisted` (:7038-7040) and `immune`
+ * (:6951-6978) all mean NOTHING LANDED — there is no badge to pop and no
+ * duration to time, so an event would be an animation of an absence. They are
+ * still real and still recorded: they go into the Case Log's Record lane as
+ * words, which is where "Dalt saves (phys 38 vs power 31, 68%)" belongs.
+ *
+ * `merged` produces an `effect_applied` because that is what it looks like from
+ * outside — the badge's number changed. Bleeding's merge conserves total damage
+ * rather than stacking it (physical.lua:133-141), and the client is shown the
+ * duration that survived, which is the only number the badge draws.
+ *
+ * `turns` FALLING BACK TO 0 is not a hidden failure: `EffectLogLine.dur` is
+ * populated for exactly the two kinds read here, so the `??` is a type-level
+ * formality that the engine's own contract already rules out.
+ */
+function statusToWire(note: EffectLogLine): TurnEvent[] {
+  switch (note.kind) {
+    case 'gained':
+    case 'merged':
+      return [
+        {
+          k: 'effect_applied',
+          id: note.actorId,
+          effectId: note.effectId,
+          turns: note.dur ?? 0,
+          // What was ASKED FOR. `turns < maximum` is the partial save, and it is
+          // the whole reason both numbers are on the wire — see protocol.ts.
+          maximum: note.maximum ?? note.dur ?? 0,
+        },
+      ];
+    case 'lost':
+      return [{ k: 'effect_expired', id: note.actorId, effectId: note.effectId }];
+    case 'negated':
+    case 'resisted':
+    case 'immune':
+      return [];
+  }
+}
+
+/**
+ * One landed blow, expanded into the three frames the client draws.
+ *
+ * `hp`/`maxHp` are ABSOLUTE, not deltas. That is the protocol's choice and a
+ * good one: a client that dropped a frame is corrected by the next hit rather
+ * than drifting forever.
+ *
+ * ═══ `hp` AND THE TILE ARE THE ENGINE'S SNAPSHOT; ONLY `maxHp` IS READ HERE ═══
+ * This function runs AFTER the pump, so anything it reads off a body is that
+ * body's state at the END of the call — and a floor reset rewrites every hp AND
+ * walks the whole party to the spawn cluster mid-pump. Reading the hp here
+ * produced a Case Log that said *"3 damage. Ren 60/60."* one line above *"Ren is
+ * unfiled."*, which is a log misreporting a death as a full-health hit; reading
+ * the tile here would flash the killing blow's marker thirty tiles from where it
+ * landed. `GameEvent.attacked` carries both from one line after the blow.
+ *
+ * It also retires the old limitation: a victim hit twice inside one sweep used
+ * to report the same final hp on both frames, and now each frame carries the hp
+ * that blow left them on. `maxHp` genuinely cannot change during a fight, so
+ * there is nothing to snapshot and the world is still the right place to ask.
+ */
+function hitToWire(
+  world: World,
+  attackerId: string,
+  targetId: string,
+  amount: number,
+  killed: boolean,
+  hp: number,
+  at: TileXY,
+): TurnEvent[] {
+  const victim = world.getActor(targetId);
+  const out: TurnEvent[] = [
+    {
+      k: 'attack',
+      id: attackerId,
+      targetId,
+      x: at.x,
+      y: at.y,
+      hit: true,
+    },
+    {
+      k: 'damage',
+      id: targetId,
+      amount,
+      hp,
+      maxHp: victim?.maxHp ?? 0,
+      sourceId: attackerId,
+    },
+  ];
+  if (killed) out.push({ k: 'death', id: targetId, killerId: attackerId });
+  return out;
+}
+
+function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[] {
+  const out: TurnEvent[] = [];
+  for (const step of steps) {
+    switch (step.t) {
+      case 'move':
+        out.push({
+          k: 'move',
+          id: step.id,
+          fromX: step.from.x,
+          fromY: step.from.y,
+          x: step.to.x,
+          y: step.to.y,
+        });
+        break;
+      case 'attack':
+        out.push(
+          ...hitToWire(world, step.id, step.targetId, step.damage, step.killed, step.hp, step.at),
+        );
+        break;
+      // A status that landed DURING the monster turn. It rides inside the batch
+      // rather than beside it because an ordinary event would close the batch and
+      // split one sweep into three — see `SweepStep` in engine/scheduler.ts.
+      case 'status':
+        out.push(...statusToWire(step.note));
+        break;
+      // A monster's blow put a detective on the floor, mid-sweep. The client
+      // paces this like any other step, so the countdown appears on the beat the
+      // blow landed rather than after the whole monster turn has played out.
+      case 'downed':
+        out.push({ k: 'downed', id: step.id, turns: step.turnsLeft });
+        break;
+      case 'hold':
+      case 'blocked':
+        break;
+    }
+  }
+  return out;
+}
+
+export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrier: Barrier } {
+  const { world } = opts;
+  const now = opts.now ?? (() => Date.now());
+  const barrier = opts.barrier ?? createBarrier();
+  const talents = opts.talents ?? EMPTY_TALENT_BOOK;
+  const log = opts.log ?? SILENT_LOGGER;
+  const reseedFloor = opts.reseedFloor ?? seedTestEncounter;
+
+  /**
+   * THE GAME TURN EACH PARTY LAST WIPED ON. The churn alarm, and nothing else.
+   *
+   * IT LIVES HERE BECAUSE IT HAS TO OUTLIVE A PUMP. The scheduler already
+   * refuses to reset the same party twice inside one call (`SurvivalRun.wiped`),
+   * which bounds a reset loop WITHIN a call — but a floor reset that fails to
+   * separate the party from what killed them produces one tidy wipe per call,
+   * forever, and from inside the engine that is indistinguishable from a party
+   * having a bad night. Only something that spans pumps can tell them apart.
+   *
+   * It is a diagnosis, not a brake: the reset still runs, because the right
+   * answer to "this is not working" is never "stop trying to put them back on
+   * their feet". What it buys is a log line naming the party and the turn,
+   * instead of an evening spent reading a Case Log that looks fine.
+   */
+  const lastWipeTurn = new Map<string, number>();
+
+  /**
+   * Built fresh rather than cached. The quorum depends on who is conscious and
+   * connected RIGHT NOW, and a stale snapshot here would show the wrong name
+   * next to the Bell — which game-design.md calls the known killer of co-op
+   * turn-based games.
+   */
+  /**
+   * WHICH BARRIER THIS PLAYER IS STANDING AT, or undefined for the level.
+   *
+   * Undefined in exactly two cases and both mean "the pre-party game": no party
+   * table was wired in, or no actor id was named (the gateway's level-wide
+   * bookkeeping — see `turnState` below).
+   *
+   * `partyOf` MINTS on demand, which is what makes "every player is always in a
+   * party" true without a join path that could forget to do it. It is
+   * idempotent, so asking on every frame costs one Map lookup.
+   */
+  const scopeFor = (actorId: string | undefined): PartyScope | undefined => {
+    const parties = opts.parties;
+    if (parties === undefined || actorId === undefined) return undefined;
+    return { id: partyIdOf(parties, actorId), members: membersOf(parties, actorId) };
+  };
+
+  /**
+   * EVERY BARRIER ON THIS LEVEL, one per party, in a deterministic order.
+   *
+   * Used by `bellExpired`, which is entered from ONE wall-clock timer in the
+   * gateway and therefore has to sweep them all: each `expire` reads its own
+   * party's deadline and returns nothing if that party still has time, so a
+   * single wake-up is safe for any number of countdowns.
+   */
+  const allScopes = (): readonly (PartyScope | undefined)[] => {
+    const parties = opts.parties;
+    if (parties === undefined) return [undefined];
+    const scopes: PartyScope[] = [];
+    const seen = new Set<string>();
+    for (const actor of playersOf(world)) {
+      const id = partyIdOf(parties, actor.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      scopes.push({ id, members: membersOf(parties, actor.id) });
+    }
+    return scopes;
+  };
+
+  /**
+   * @param viewerId whose party this snapshot is about. OMITTED means the whole
+   *   level, which is what the gateway's "has the barrier changed?" key is
+   *   built from — the level-wide blocking set is the exact union of every
+   *   party's, so one cheap comparison cannot miss a per-party change.
+   */
+  const turnState = (viewerId?: string): TurnState => {
+    const level = levelOf(world);
+    const scope = scopeFor(viewerId);
+    const snapshot = barrier.survey(playersOf(world), level, scope);
+    return {
+      gameTurn: world.turn.clock.gameTurn,
+      // THE COMBAT CLOCK, TAKEN FROM THE SAME `BarrierLevel` THE SURVEY WAS RUN
+      // AGAINST. `levelOf` read it once, at the top of this function, and both
+      // the blocking set below and this number come out of that one read — so
+      // the frame can never say "in combat" beside an empty quorum, or the
+      // reverse, because the two were decided from different instants.
+      //
+      // It is what the client has been missing entirely: 0 is free movement,
+      // above 0 is a fight, and the CROSSING is the moment somebody has to be
+      // told (see `turnKey` in net/gateway.ts).
+      engagement: level.engagement,
+      whoseTurn: snapshot.blocking,
+      committed: snapshot.blocking.length === 0 ? [] : [],
+      standingBy: snapshot.standingBy,
+      bellDurationMs:
+        snapshot.total === 0
+          ? null
+          : barrier.bell(playersOf(world), level, now(), scope).durationMs,
+      // THE MEMBERSHIP THE THREE ARRAYS ABOVE WERE COMPUTED AGAINST. Absent for
+      // the level-wide snapshot, which is what it has always meant. The
+      // projector filters the card strip on it so that one card can never be
+      // built from one party's blocking set over another party's roster.
+      party: scope?.members,
+    };
+  };
+
+  const requireLiveActor = (actorId: string): Actor | undefined => {
+    const actor = world.getActor(actorId);
+    if (actor === undefined || !actor.alive) return undefined;
+    return actor;
+  };
+
+  /**
+   * Hand a VALIDATED talent intent to the scheduler. The last line of
+   * `submitTalent`, factored out only so the `self` and targeted paths cannot
+   * drift apart on what "accepted" means.
+   *
+   * `submitIntent` can still say no — the actor died on another socket's frame
+   * between the checks above and this call, which is a real race in a co-op
+   * game where every accepted command pumps synchronously.
+   */
+  const queue = (actorId: string, intent: Intent): TalentResult => {
+    const accepted = submitIntent(world, barrier, actorId, intent);
+    return accepted ? TALENT_OK : refuseTalent(ErrorCode.NotYourTurn, 'no_actor');
+  };
+
+  return {
+    barrier,
+
+    join(actorId: string): void {
+      // Idempotent by construction: the world created the actor, and the
+      // barrier allocates its record lazily on first contact. Clearing any
+      // stale Standing By is the part that actually matters — a player who
+      // dropped and came back must rejoin the quorum, not stay excluded.
+      const actor = world.getActor(actorId);
+      if (actor !== undefined) barrier.reconnect(actor);
+    },
+
+    leave(actorId: string): void {
+      // A genuine departure, not a dropped socket. Drop the bookkeeping too,
+      // or a rejoining id inherits the old Standing By counters.
+      barrier.forget(actorId);
+      // AND THE PARTY, for the same reason: a party row pointing at a body that
+      // is no longer in the world would scope a barrier to somebody who cannot
+      // block, and the pane would draw a member nobody can reach. NOT the
+      // disconnect path — see `forgetActor`'s own note: a dropped socket keeps
+      // its seat at the table for the whole reconnect grace.
+      if (opts.parties !== undefined) forgetParty(opts.parties, actorId);
+      world.removePlayer(actorId);
+    },
+
+    setConnected(actorId: string, connected: boolean): void {
+      if (connected) {
+        reconnectActor(world, barrier, actorId);
+      } else {
+        // THE BODY STAYS IN THE WORLD. This is the M2 semantic change from M1.
+        disconnectActor(world, barrier, actorId, now());
+      }
+    },
+
+    submitMove(actorId: string, dir: Dir): IntentResult {
+      if (requireLiveActor(actorId) === undefined) return refuse('no_actor');
+      const accepted = submitIntent(world, barrier, actorId, { kind: IntentKind.Move, dir });
+      return accepted ? OK : refuse('no_actor');
+    },
+
+    loadoutOf(actorId: string): readonly LoadoutTalent[] {
+      const actor = world.getActor(actorId);
+      return actor === undefined ? [] : talents.loadoutOf(actor);
+    },
+
+    resourceOf(actorId: string): ResourceView | undefined {
+      const actor = world.getActor(actorId);
+      return actor === undefined ? undefined : talents.resourceOf(actor);
+    },
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE TALENT GATE. THE POINT OF THE WHOLE FEATURE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The client's range ring, `min_range` hole, LOS greying and cooldown wipe
+     * are a CONVENIENCE. This function is the rule. Everything the overlay draws
+     * is re-decided here from the server's own world, because the frame that
+     * matters is not the one a well-behaved renderer sends — it is the one typed
+     * into a devtools console by a friend who wants to know whether the Inspector
+     * really cannot shoot point blank.
+     *
+     * SEVEN CHECKS, IN THIS ORDER, EACH WITH ITS OWN CODE:
+     *
+     *   1. the actor is alive             -> not_your_turn
+     *   2. the talent is IN THEIR LOADOUT -> bad_message   (M3 loadouts are fixed)
+     *   3. it is off cooldown             -> on_cooldown
+     *   4. they can afford it             -> no_resource
+     *   5. the target is on the map       -> illegal_move
+     *   6. range, then THE DEAD ZONE      -> out_of_range / too_close
+     *   7. line of sight                  -> no_los
+     *
+     * ORDER 6 IS NOT ARBITRARY and it is the same order as `canAttack` in
+     * engine/combat.ts (:252-262), deliberately: two places that decide "can this
+     * reach that" must agree, or a talent and a weapon swing disagree about the
+     * same tile and the bug reads as the server cheating. `combatDistance` is
+     * imported from that file for the same reason — one Euclidean metric in the
+     * process, matching `core.fov.distance`, so a range-5 ring is a CIRCLE and
+     * not a square that reaches 7.07 tiles into its corners.
+     *
+     * TOO_CLOSE IS NEVER OUT_OF_RANGE. game-design.md § 2 calls `min_range 3`
+     * the single most important number in the Inspector, and the two failures
+     * carry opposite instructions: one says close in, the other says back away.
+     * Reporting the wrong one is how a positional class gets read as broken.
+     *
+     * WHAT IS DELIBERATELY *NOT* CHECKED HERE: whether a monster is standing on
+     * the target tile, whether it is still alive, and whether it is still
+     * hostile. Those are RESOLUTION questions — an intent that goes illegal
+     * between the packet and the tick costs zero energy and re-prompts
+     * (docs/architecture.md § 2), and that refund is what removes hesitation from
+     * a co-op turn. What is checked here is only what cannot change in between:
+     * terrain, the caster's own position at submission, the catalogue, and the
+     * bookkeeping the caster owns.
+     */
+    submitTalent(actorId: string, talentId: string, target?: TileXY): TalentResult {
+      const actor = requireLiveActor(actorId);
+      if (actor === undefined) {
+        // "Not now", not "not there" — the body is gone or it is a corpse.
+        return refuseTalent(ErrorCode.NotYourTurn, 'no_actor');
+      }
+
+      // MEMBERSHIP IS THE FIRST REAL CHECK. M3 loadouts are FIXED (PLAN.md § M3:
+      // zero trees, zero talent points), so "do you have this talent" is a
+      // lookup in your own four and a frame naming a thirteenth — or the
+      // Alchemist's heal on the Watchman — is a hand-crafted frame, not a UI
+      // slip. bad_message rather than a game-rule code says so.
+      const talent = talents.loadoutOf(actor).find((entry) => entry.id === talentId);
+      if (talent === undefined) {
+        return refuseTalent(ErrorCode.BadMessage, `no such talent in this loadout: ${talentId}`);
+      }
+
+      // WHEN THE REAL CHECKER IS WIRED IN, IT WINS OUTRIGHT. Everything below
+      // this branch is the catalogue-only fallback; running both would be two
+      // implementations of the same rule, and the second one is always the one
+      // that is wrong about a corner tile.
+      const authoritative = talents.check?.(actor, talent.id, target) ?? null;
+      if (authoritative !== null) {
+        return refuseTalent(authoritative, `${talent.name}: ${authoritative}`);
+      }
+      if (talents.check !== undefined) {
+        return queue(actorId, talentIntent(talent, target));
+      }
+
+      const cooling = cooldownOf(actor, talent.id);
+      if (cooling > 0) {
+        return refuseTalent(ErrorCode.OnCooldown, `${talent.name}: ${cooling} turn(s) left`);
+      }
+
+      if (talent.cost.resource > 0) {
+        const resource = talents.resourceOf(actor);
+        const have = resource?.current ?? 0;
+        if (have < talent.cost.resource) {
+          return refuseTalent(
+            ErrorCode.NoResource,
+            `${talent.name}: costs ${talent.cost.resource}, have ${have}`,
+          );
+        }
+      }
+
+      if (talent.shape === TalentShape.Self) {
+        // A self talent has no target. A frame that aims one somewhere else is
+        // refused rather than quietly ignored: silently dropping a field is how
+        // a client and a server start disagreeing about what was cast.
+        if (target !== undefined && (target.x !== actor.x || target.y !== actor.y)) {
+          return refuseTalent(ErrorCode.IllegalMove, `${talent.name} cannot be aimed`);
+        }
+        return queue(actorId, talentIntent(talent, undefined));
+      }
+
+      if (target === undefined) {
+        return refuseTalent(ErrorCode.BadMessage, `${talent.name} needs a target tile`);
+      }
+      if (!inBounds(target.x, target.y, world.level.w, world.level.h)) {
+        return refuseTalent(ErrorCode.IllegalMove, 'that tile is not on the map');
+      }
+
+      const distance = combatDistance(actor, target);
+      if (distance > talent.range) {
+        return refuseTalent(
+          ErrorCode.OutOfRange,
+          `${talent.name}: range ${talent.range}, target ${distance.toFixed(1)} away`,
+        );
+      }
+      // THE DEAD ZONE. `<` not `<=`, so min_range 3 makes 3 the closest LEGAL
+      // tile — and because the metric is Euclidean the hole is a CIRCLE: the
+      // diagonal at (3,3) is 2.83 away and sits inside it, exactly as
+      // test/server/combat.test.ts pins for a weapon.
+      if (talent.minRange > 0 && distance < talent.minRange) {
+        return refuseTalent(
+          ErrorCode.TooClose,
+          `${talent.name}: needs ${talent.minRange}, target ${distance.toFixed(1)} away`,
+        );
+      }
+      // Melee needs no sight check — you are standing on them. The guard mirrors
+      // `canAttack`; Bresenham excludes both endpoints, so an adjacent tile is
+      // always in sight anyway and the two agree by construction.
+      if (distance > 1 && !hasLineOfSight(world.level, actor, target)) {
+        return refuseTalent(ErrorCode.NoLos, `${talent.name}: no line of sight to that tile`);
+      }
+
+      return queue(actorId, talentIntent(talent, target));
+    },
+
+    commit(actorId: string): IntentResult {
+      const actor = requireLiveActor(actorId);
+      if (actor === undefined) return refuse('no_actor');
+      // Committing with nothing queued means "I am done" — which is a hold.
+      // Committing with a move queued just marks the existing intent final.
+      if (actor.pendingIntent === undefined || actor.pendingIntent === null) {
+        const accepted = submitIntent(world, barrier, actorId, HOLD_INTENT);
+        return accepted ? OK : refuse('no_actor');
+      }
+      barrier.noteCommand(actor);
+      return OK;
+    },
+
+    hold(actorId: string): IntentResult {
+      if (requireLiveActor(actorId) === undefined) return refuse('no_actor');
+      const accepted = submitIntent(world, barrier, actorId, HOLD_INTENT);
+      return accepted ? OK : refuse('no_actor');
+    },
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * GET TO THEM. The adapter between a DIRECTION on the wire and an ID in the
+     * engine — and the two are different on purpose.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * THE WIRE SAYS A DIRECTION because identity never travels client -> server
+     * (protocol.ts's missing-field note): a `revive` naming an ally id would be
+     * the first frame in the protocol that names somebody else's body, and the
+     * tile beside you is the only place a revive can happen anyway.
+     *
+     * THE ENGINE SAYS AN ID because of the refund rule. An intent submitted now
+     * resolves later, and between the two the party moves: a direction re-read at
+     * resolution would pick up whoever has since STEPPED INTO that tile, which is
+     * how you spend 4 AP standing up the wrong person — or the person who was
+     * never down. The subject of a revive has to be fixed at the moment the
+     * player pointed at it, and an id is what fixes it.
+     *
+     * So this function is where one becomes the other, and it is the ONLY place
+     * that conversion happens.
+     *
+     * IT CHECKS EXACTLY ONE THING: that there is a body on that tile. Everything
+     * else — is that body Downed, is it in reach, can the rescuer afford the 4 AP
+     * (game-design.md § 9) — belongs to `revive` in engine/downed.ts, which the
+     * scheduler calls at RESOLUTION, and the scheduler's own comment says why:
+     * one definition of "reaching you", so the rule and the log line cannot
+     * drift. A refusal there costs zero and re-prompts, which is what makes the
+     * button safe to press in the one moment a player must not hesitate.
+     *
+     * ═══ IT CANNOT USE `world.actorAt`, AND THAT IS THE WHOLE TRAP ═══
+     * `goDown` (engine/downed.ts) sets `alive = false` on the body it puts on
+     * the floor — deliberately, because that flag is what stops the scheduler
+     * ticking them and what stops them blocking the tile an ally has to step
+     * onto. `world.actorAt` skips exactly that, "corpses do not block". So the
+     * one lookup that reads as obviously correct here returns undefined for
+     * every body this verb exists to reach, and the symptom is a revive key that
+     * says "nobody is lying there" while somebody is lying there.
+     *
+     * Hence the scan over ALL actors, and hence the preference for a body that
+     * is NOT alive: a corpse does not block, so an ally may be standing on the
+     * same tile, and the one you are reaching for is the one on the floor.
+     */
+    submitRevive(actorId: string, dir: Dir): IntentResult {
+      const actor = requireLiveActor(actorId);
+      if (actor === undefined) return refuse('no_actor');
+
+      const tile = step(actor, dir);
+      const bodies = world.allActors().filter((a) => a.x === tile.x && a.y === tile.y);
+      if (bodies.length === 0) return refuse('nobody is lying there');
+
+      // A monster is not somebody to pick up. Refused here rather than at
+      // resolution because it is a fact about the CATEGORY of the thing, which
+      // cannot change between the packet and the tick.
+      const target =
+        bodies.find((a) => a.kind === 'player' && !a.alive) ??
+        bodies.find((a) => a.kind === 'player');
+      if (target === undefined) return refuse('nobody there to pick up');
+
+      const accepted = submitIntent(world, barrier, actorId, {
+        kind: IntentKind.Revive,
+        targetId: target.id,
+      });
+      return accepted ? OK : refuse('no_actor');
+    },
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * GET YOURSELF BACK ON YOUR FEET. The way out of Erased, and only out of it.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ═══ IT IS NOT AN INTENT, AND IT CANNOT BE ═══
+     * Every other verb here queues an intent for the scheduler to resolve on the
+     * actor's next turn. An ERASED body never gets one: `pump`'s `isActive` gate
+     * drops an erased player out of `tickLevel` entirely — that is exactly what
+     * makes the erased state cheap — so an intent queued on one would sit there
+     * until the heat death of the session. So the restoration is applied HERE,
+     * synchronously, in the same class of write as a GM command, and the pump
+     * that follows sees a body that is simply up again. `enrolCasualties` is the
+     * scheduler's own note that this class of between-pump change is expected.
+     *
+     * ═══ THE RULE LIVES IN ONE PLACE ═══
+     * Which stages may respawn is `respawn`'s decision in engine/downed.ts, not
+     * this file's: a copy of "Erased only, never Downed" written here is a copy
+     * that will one day disagree with the one the log prints. This function maps
+     * the typed refusal to a sentence and does nothing else with it — the same
+     * division `submitRevive` above keeps with `ReviveRefusal`.
+     *
+     * ═══ THE REFUSAL IS FREE, AND THE MOVE HAPPENS SECOND ═══
+     * `respawn` refuses an Up or Downed body without touching a single field, so
+     * asking it first costs a refused sender nothing — no teleport, no clock
+     * re-zeroed, no hp written. Only once it has said yes is the body walked to
+     * a spawn tile, and `world.placeAtSpawn` is what guarantees that tile has no
+     * living body already standing on it: an erased body does not block, so
+     * something may well be parked on the one it fell on.
+     */
+    submitRespawn(actorId: string): IntentResult {
+      const state = opts.downed;
+      // No survival system wired in means nobody is ever Erased, so there is
+      // nothing to come back from. Answered honestly rather than pretending.
+      if (state === undefined) return refuse('this server has no survival system');
+
+      const actor = world.getActor(actorId);
+      if (actor === undefined) return refuse('no_actor');
+
+      const result = respawn(state, actor);
+      if (!result.ok) return refuse(respawnRefusalText(result.reason));
+
+      // WHERE, not whether — and the answer is deliberately ignored. A level
+      // with no free tile at all (which takes more than 761 players) leaves them
+      // standing exactly where they fell: a worse spot, and still an enormous
+      // improvement on being stranded. Turning that into a failure would refuse
+      // the one verb a stuck player has, over the one detail they care least
+      // about.
+      world.placeAtSpawn(actorId);
+
+      // The barrier is told a human is present, exactly as `submitIntent` would
+      // have: somebody who just pressed a key is not Standing By, and a body
+      // that came back excluded from the quorum is a body nobody ever waits for.
+      barrier.noteCommand(actor);
+      return OK;
+    },
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * WHO YOU ARE PLAYING WITH. The five party verbs, and the world check.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ═══ THE ONLY THING THIS FUNCTION DECIDES IS WHETHER THE TARGET IS REAL ═══
+     * Every rule about parties — sizes, leadership, which offers are live, who
+     * lands where afterwards — belongs to engine/party.ts, which is pure and
+     * synchronous and has no idea what an actor is. What it cannot answer, and
+     * what has to be answered before it is called, is whether `targetId` names a
+     * living player rather than a husk, a corpse or sixty-four characters typed
+     * into a devtools console. That is a question about the WORLD, so it is
+     * answered here, once, and it is the whole of this function's authority.
+     *
+     * ═══ IT IS NOT AN INTENT, AND IT MUST NOT BE ═══
+     * Party membership is not a turn action. It costs no energy, it cannot be
+     * refused for being out of turn, and — the part that matters — it works
+     * while you are Downed and while you are Erased, exactly as `say` does. A
+     * player on the floor asking a friend to come and get them is precisely the
+     * moment this verb exists for, and routing it through the barrier would let
+     * the Bell time out a request for help.
+     *
+     * So it is applied SYNCHRONOUSLY between pumps, like `submitRespawn`, and
+     * the pump that follows simply sees a barrier with a different membership.
+     *
+     * ═══ A REFUSAL COSTS ZERO ═══
+     * Nothing is half-applied: no partial membership, no invite half-sent, no
+     * leader badge left on somebody who was not removed. The atomicity is
+     * engine/party.ts's (every operation checks before it writes), and this
+     * function adds nothing that could break it.
+     */
+    submitParty(actorId: string, action: PartyAction, targetId?: string): PartyCommandResult {
+      const parties = opts.parties;
+      // No party table wired in means everybody is already exactly where they
+      // would be — solo — so there is nothing here to change. Answered honestly
+      // rather than pretending the command worked.
+      if (parties === undefined) return refuseParty('this server has no party system');
+
+      const actor = world.getActor(actorId);
+      if (actor === undefined) return refuseParty('no_actor');
+
+      // THE ONE WORLD CHECK. A target is required for invite and kick, refused
+      // for leave (you can only leave your own party), and optional for accept
+      // and decline — where it names WHICH offer, and its absence means the
+      // oldest one, which is what a bare command has to mean.
+      let target: Actor | undefined;
+      if (targetId !== undefined) {
+        const named = world.getActor(targetId);
+        // A monster is not somebody to play with, and a body that is not in the
+        // world at all is a forged id or a very stale click. Both are refused
+        // in the same words: there is nobody there.
+        if (named === undefined || named.kind !== 'player') {
+          return refuseParty('there is nobody by that name here');
+        }
+        target = named;
+      }
+
+      const nowMs = now();
+      const result = ((): PartyResult => {
+        switch (action) {
+          case PartyAction.Invite:
+            return target === undefined
+              ? { ok: false, reason: PartyRefusal.NotAMember }
+              : inviteToParty(parties, actorId, target.id, nowMs);
+          case PartyAction.Accept:
+            return acceptInvite(parties, actorId, target?.id, nowMs);
+          case PartyAction.Decline:
+            return declineInvite(parties, actorId, target?.id, nowMs);
+          case PartyAction.Leave:
+            return leaveParty(parties, actorId);
+          case PartyAction.Kick:
+            return target === undefined
+              ? { ok: false, reason: PartyRefusal.NotAMember }
+              : kickFromParty(parties, actorId, target.id);
+        }
+      })();
+
+      if (!result.ok) {
+        return { ok: false, reason: partyRefusalText(result.reason, action) };
+      }
+
+      // ANY COMMAND CLEARS STANDING BY, exactly as `submitIntent` does: somebody
+      // who just organised a party is at the keyboard, and a body that stayed
+      // excluded from the quorum after joining one is a body nobody waits for.
+      barrier.noteCommand(actor);
+
+      return {
+        ok: true,
+        // Straight through from the engine. It is the union of BOTH parties,
+        // captured before the change, because after an accept one of them no
+        // longer exists to be asked about — which is exactly why the gateway
+        // cannot work this out for itself.
+        affected: result.affected,
+        notice: partyNotice(action, actor, target),
+      };
+    },
+
+    /**
+     * THIS PLAYER'S PARTY, WITH THE WALL CLOCK ALREADY APPLIED.
+     *
+     * The subtraction to `expiresInMs` happens HERE because this file owns the
+     * clock and neither engine/ nor view/ may read one — the same split
+     * `bellMs` travels through. Undefined for a server with no party table,
+     * which is what tells the gateway to send no pane at all rather than one
+     * with an invented party of one in it.
+     */
+    partySnapshot(actorId: string): PartySnapshot | undefined {
+      const parties = opts.parties;
+      if (parties === undefined) return undefined;
+
+      const party = partyOf(parties, actorId);
+      const nowMs = now();
+
+      return {
+        leaderId: party.leaderId,
+        members: [...party.members],
+        invites: invitesFor(parties, actorId, nowMs).map((offer) => ({
+          fromId: offer.fromId,
+          expiresInMs: Math.max(0, offer.expiresAtMs - nowMs),
+          // The size of the party being OFFERED, read from the invite's own
+          // `partyId` rather than from the inviter's current one: the two are
+          // the same thing today and would silently stop being so the moment an
+          // inviter could leave between asking and being answered.
+          size: parties.byId.get(offer.partyId)?.members.length ?? 0,
+        })),
+      };
+    },
+
+    bellExpired(): void {
+      const level = levelOf(world);
+      const nowMs = now();
+      // ONE TIMER, EVERY PARTY. The gateway holds a single wall-clock timer for
+      // the soonest deadline and re-enters here when it fires; each party's
+      // `expire` checks its own deadline and answers with nothing when that
+      // party still has time. So a party whose Bell has not run out is never
+      // rung early, and one whose Bell rang while another party's was still
+      // counting is not forgotten — the pump that follows reports the next
+      // deadline and the timer is re-armed for it.
+      for (const scope of allScopes()) {
+        const passes = barrier.expire(playersOf(world), level, nowMs, scope);
+        // The barrier decides WHO was too slow; installing the hold is the
+        // caller's job, because the barrier does not know what an intent is and
+        // deliberately must not learn.
+        //
+        // A forced pass is ALWAYS a hold — never a random attack. A stray attack
+        // on a timeout gets somebody killed and ends friendships.
+        for (const pass of passes) {
+          const actor = world.getActor(pass.id);
+          if (actor !== undefined && actor.alive) actor.pendingIntent = HOLD_INTENT;
+        }
+      }
+    },
+
+    pump(): PumpResult {
+      // `downed` is threaded in rather than created here because a five-turn
+      // countdown has to survive the pump that ticks it — see the option's note.
+      // Undefined switches every survival branch in the scheduler off, which is
+      // the M3 behaviour exactly.
+      const result = pump(world, {
+        nowMs: now(),
+        barrier,
+        downed: opts.downed,
+        // Threaded in for the same reason `downed` is: party membership lives
+        // across pumps, and it is what makes the barrier and the wipe per-party
+        // inside the tick loop rather than only at the frames around it.
+        parties: opts.parties,
+      });
+
+      // ═════════════════════════════════════════════════════════════════════
+      // THE OTHER HALF OF A FLOOR RESET, AND IT HAPPENS HERE — FIRST.
+      // ═════════════════════════════════════════════════════════════════════
+      //
+      // BEFORE the events are translated, before a frame goes out, before the
+      // state resync, before the save. `resetFloorParty` has already stood the
+      // party up IN PLACE, which means that at this instant they are alive, at
+      // full hp, and standing exactly where the thing that killed them is still
+      // standing. Nothing may act in between — and nothing can, because turn
+      // resolution is synchronous all the way up: there is no suspension point
+      // between `pump` returning and this line for another socket's frame, a
+      // Bell timer or another party's command to interleave at.
+      //
+      // Do this after the broadcast and the loop simply comes back with more
+      // steps: the clients would be told the floor reset, and the next pump
+      // would find the party still in the fight. Read `resetFloor`'s header.
+      const wipes: { readonly partyId: string; readonly restored: readonly string[] }[] = [];
+      for (const event of result.events) {
+        if (event.t !== 'party_wipe') continue;
+        wipes.push({ partyId: event.partyId, restored: event.restored });
+      }
+
+      for (const wipe of wipes) {
+        resetFloor(world, wipe.restored, reseedFloor, log);
+
+        // THE CHURN ALARM. See `lastWipeTurn` and `WIPE_CHURN_TURNS`: a party
+        // that wipes again this close to its last wipe never got out of the
+        // fight, so the reset above is not doing its job and somebody has to be
+        // told in words rather than left to read a Case Log that looks tidy.
+        const previous = lastWipeTurn.get(wipe.partyId);
+        if (previous !== undefined && result.gameTurn - previous <= WIPE_CHURN_TURNS) {
+          log.error(
+            { partyId: wipe.partyId, gameTurn: result.gameTurn, previousWipeTurn: previous },
+            'party wiped again within two turns — the floor reset is not separating them from what killed them',
+          );
+        }
+        lastWipeTurn.set(wipe.partyId, result.gameTurn);
+      }
+
+      // Split the one event list into the two lanes the gateway broadcasts.
+      // `sweep` events carry the whole monster turn as a single batch — that is
+      // why the client can render one settling pass instead of N pop-ins.
+      //
+      // ═══ A WIPE GOES IN THE LANE IT HAPPENED IN ═══
+      // The player lane is broadcast and narrated FIRST, so an event that landed
+      // during the monster turn must not be filed under it. A wipe caused by a
+      // monster's blow used to be, and the Case Log read:
+      //
+      //     Ren is erased — the party is down. The floor resets.
+      //     Index Wraith hits Ren.  3 damage.
+      //     Ren is DOWN — 5 turns to reach them.
+      //
+      // The reset announced two lines before the blow that caused it. A log that
+      // misreports causality costs an evening of debugging the wrong thing, so
+      // the engine stamps the lane on the event (`duringSweep`) and this is
+      // where it is honoured. Everything else keeps the old rule exactly.
+      const sweepEvents: GameEvent[] = [];
+      const playerEvents: GameEvent[] = [];
+      for (const event of result.events) {
+        const swept = event.t === 'sweep' || (event.t === 'party_wipe' && event.duringSweep);
+        if (swept) sweepEvents.push(event);
+        else playerEvents.push(event);
+      }
+
+      return {
+        status: result.status,
+        turn: turnState(),
+        playerEvents: toWireEvents(world, playerEvents, 'player'),
+        sweep: toWireEvents(world, sweepEvents, 'sweep'),
+      };
+    },
+
+    turnState,
+  };
+}

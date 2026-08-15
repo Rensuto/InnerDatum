@@ -1,0 +1,264 @@
+/**
+ * The panel skins: a 9-slice, a 3-sliced header strip, and the one text helper
+ * every panel in the client needs.
+ *
+ * WHY A 9-SLICE AT ALL. `ui_panel_9slice_case_file.png` and
+ * `ui_panel_9slice_inset.png` are 48x48 with 16-pixel corners, which is the
+ * whole point of them: the corners are drawn once and reused at every size, so
+ * the Case Log can be 172 pixels tall on one machine and 240 on another without
+ * anybody cutting a second PNG. The alternative — a fixed-size panel image —
+ * would make the dock's height a property of the art rather than of the
+ * viewport, and the viewport is decided by whatever size Discord felt like
+ * giving the iframe.
+ *
+ * THE EDGES ARE STRETCHED, NOT TILED, AND THAT IS A DELIBERATE TRADE. Tiling is
+ * the more correct answer for pixel art in general; it is also four to twelve
+ * extra `drawImage` calls per edge per panel per frame. With
+ * `imageSmoothingEnabled = false` — which the renderer sets on the backbuffer
+ * and every drawer here re-asserts — a stretch is nearest-neighbour, so it
+ * duplicates whole columns and rows of pixels rather than blurring between them.
+ * A 16-pixel border stretched to 176 is eleven copies of the same column, which
+ * is exactly what tiling would have produced for a border whose pattern does not
+ * repeat within its 16 pixels. It is visibly wrong only for an edge with texture
+ * along its length, and neither skin has one.
+ *
+ * IT DRAWS INTO THE BACKBUFFER, at logical scale, like every other `ui/` module
+ * — see the long note at the top of render/canvas.ts. So the panel sits on the
+ * same pixel grid as the world and is magnified by the same integer factor.
+ */
+
+import { PALETTE } from '../render/canvas.ts';
+import type { SpriteSource } from '../render/assets.ts';
+
+/** The 9-slice skins on disk. Both 48x48 with 16px corners. */
+export const PanelSkin = {
+  /** The outer dossier. Heavier border — the party panel wears this. */
+  CaseFile: 'ui_panel_9slice_case_file',
+  /** The recessed well. Lighter, reads as "sunk into" — the Case Log wears this. */
+  Inset: 'ui_panel_9slice_inset',
+} as const;
+export type PanelSkin = (typeof PanelSkin)[keyof typeof PanelSkin];
+
+/**
+ * Corner size, in source pixels. Must match how the PNGs were drawn; it is not a
+ * free parameter, and getting it wrong shows up as a border that grows a seam a
+ * third of the way along each edge.
+ */
+export const PANEL_CORNER = 16;
+/** Authored size of both 9-slice PNGs. */
+const PANEL_SRC = 48;
+/** Authored size of `ui_panel_header_strip`. 3-sliced horizontally. */
+const HEADER_SRC_W = 96;
+export const HEADER_H = 24;
+
+export type PanelRect = {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+};
+
+/** Standard inner padding, so two panels never disagree about their gutter. */
+export const PANEL_PAD = 5;
+
+/** The content box of a panel: the rect minus the border and the gutter. */
+export function panelInner(rect: PanelRect): PanelRect {
+  const inset = PANEL_PAD + 3;
+  return {
+    x: rect.x + inset,
+    y: rect.y + inset,
+    w: Math.max(0, rect.w - inset * 2),
+    h: Math.max(0, rect.h - inset * 2),
+  };
+}
+
+/**
+ * The fallback panel, used when the skin PNG is missing.
+ *
+ * A traced box rather than the renderer's loud violet "missing asset" marker,
+ * deliberately: the panel is the BACKGROUND of a surface people read, and a
+ * screaming placeholder behind the Case Log would make the log unreadable at
+ * exactly the moment the art pipeline regressed. The border is still drawn, so
+ * the panel keeps its shape and everything inside it still lands correctly.
+ */
+function tracePanel(ctx: CanvasRenderingContext2D, rect: PanelRect): void {
+  ctx.fillStyle = PALETTE.PANEL;
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.fillStyle = PALETTE.SLATE;
+  ctx.fillRect(rect.x, rect.y, rect.w, 1);
+  ctx.fillRect(rect.x, rect.y + rect.h - 1, rect.w, 1);
+  ctx.fillRect(rect.x, rect.y, 1, rect.h);
+  ctx.fillRect(rect.x + rect.w - 1, rect.y, 1, rect.h);
+}
+
+/**
+ * Paint one 9-slice panel.
+ *
+ * The four corners are blitted 1:1; the four edges stretch along one axis; the
+ * centre stretches along both. A rect smaller than two corners in either
+ * direction cannot be sliced at all — the corners would overlap and the middle
+ * would have negative width — so that case degrades to the traced box rather
+ * than drawing a `drawImage` with a negative source rectangle, which throws.
+ */
+export function drawPanel(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  skin: PanelSkin,
+  rect: PanelRect,
+): void {
+  const sprite = sprites.sprite(skin);
+  const c = PANEL_CORNER;
+  if (sprite === undefined || rect.w < c * 2 || rect.h < c * 2 || sprite.w !== PANEL_SRC) {
+    tracePanel(ctx, rect);
+    return;
+  }
+
+  const img = sprite.image;
+  const { x, y, w, h } = rect;
+  // Source and destination middles. `PANEL_SRC - c * 2` is 16 for a 48px skin.
+  const sm = PANEL_SRC - c * 2;
+  const dmW = w - c * 2;
+  const dmH = h - c * 2;
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+
+  // Corners, 1:1.
+  ctx.drawImage(img, 0, 0, c, c, x, y, c, c);
+  ctx.drawImage(img, PANEL_SRC - c, 0, c, c, x + w - c, y, c, c);
+  ctx.drawImage(img, 0, PANEL_SRC - c, c, c, x, y + h - c, c, c);
+  ctx.drawImage(img, PANEL_SRC - c, PANEL_SRC - c, c, c, x + w - c, y + h - c, c, c);
+
+  // Edges, stretched along their run.
+  ctx.drawImage(img, c, 0, sm, c, x + c, y, dmW, c);
+  ctx.drawImage(img, c, PANEL_SRC - c, sm, c, x + c, y + h - c, dmW, c);
+  ctx.drawImage(img, 0, c, c, sm, x, y + c, c, dmH);
+  ctx.drawImage(img, PANEL_SRC - c, c, c, sm, x + w - c, y + c, c, dmH);
+
+  // Centre.
+  ctx.drawImage(img, c, c, sm, sm, x + c, y + c, dmW, dmH);
+
+  ctx.restore();
+}
+
+/**
+ * A header strip with a title on it — the tab at the top of a panel.
+ *
+ * `ui_panel_header_strip` is 96x24, so it is 3-sliced horizontally with the same
+ * 16-pixel caps. Vertically it is used at its authored height and never scaled:
+ * a strip stretched to 12 pixels tall reads as a squashed bar rather than as a
+ * tab, and the one thing a header has to do is look like a different KIND of
+ * thing from the panel under it.
+ *
+ * Returns the y coordinate immediately below the strip, so callers stack rather
+ * than re-adding a constant that can drift.
+ */
+export function drawHeader(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  title: string,
+  rect: PanelRect,
+  font: string,
+): number {
+  const sprite = sprites.sprite('ui_panel_header_strip');
+  const c = PANEL_CORNER;
+  const { x, y, w } = rect;
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+
+  if (sprite !== undefined && w >= c * 2 && sprite.w === HEADER_SRC_W) {
+    const img = sprite.image;
+    const sm = HEADER_SRC_W - c * 2;
+    ctx.drawImage(img, 0, 0, c, HEADER_H, x, y, c, HEADER_H);
+    ctx.drawImage(img, c, 0, sm, HEADER_H, x + c, y, w - c * 2, HEADER_H);
+    ctx.drawImage(img, HEADER_SRC_W - c, 0, c, HEADER_H, x + w - c, y, c, HEADER_H);
+  } else {
+    ctx.fillStyle = PALETTE.SLATE;
+    ctx.fillRect(x, y, w, HEADER_H);
+    ctx.fillStyle = PALETTE.GREY;
+    ctx.fillRect(x, y + HEADER_H - 1, w, 1);
+  }
+
+  ctx.font = font;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = PALETTE.GOLD;
+  ctx.fillText(fitText(ctx, title, w - PANEL_PAD * 2), x + PANEL_PAD, y + HEADER_H / 2);
+  ctx.restore();
+
+  return y + HEADER_H;
+}
+
+/**
+ * Trim to fit, with an ellipsis.
+ *
+ * A fourth copy of this existed in turnbar.ts and hotbar.ts before this file
+ * did; both keep theirs (they are three lines and changing a working file to
+ * import a helper is churn), but every M4 panel takes it from here so the log,
+ * the party rows and the headers cannot disagree about what "too long" means.
+ *
+ * The caller must have set `ctx.font` — measurement is font-dependent and doing
+ * it here would mean either taking the font as a parameter or silently measuring
+ * against whatever the last drawer left behind.
+ */
+export function fitText(ctx: CanvasRenderingContext2D, text: string, maxPx: number): string {
+  if (maxPx <= 0) return '';
+  if (ctx.measureText(text).width <= maxPx) return text;
+  let cut = text;
+  while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxPx) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/**
+ * Break `text` into lines that each fit `maxPx`, on word boundaries where it can
+ * and mid-word where it must.
+ *
+ * WORD WRAPPING IS NOT OPTIONAL FOR THE CASE LOG. A Record line is a whole
+ * sentence — "Dalt saves (phys 38 vs power 31, 68%) — Slowed 1 turn, not 3" —
+ * and a 200-pixel column fits roughly thirty characters of it. Truncating with
+ * an ellipsis would throw away the half of every line that carries the numbers,
+ * which is the half people read the log for.
+ *
+ * The mid-word fallback exists because a Discord nickname can be 32 characters
+ * with no spaces in it, and a single unbreakable token must not produce an
+ * infinite loop or a line that overflows the panel.
+ */
+export function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxPx: number,
+): readonly string[] {
+  if (maxPx <= 0 || text === '') return [text];
+
+  const out: string[] = [];
+  let line = '';
+
+  const flush = (): void => {
+    out.push(line);
+    line = '';
+  };
+
+  for (const word of text.split(' ')) {
+    const candidate = line === '' ? word : `${line} ${word}`;
+    if (ctx.measureText(candidate).width <= maxPx) {
+      line = candidate;
+      continue;
+    }
+    if (line !== '') flush();
+
+    // The word alone still does not fit: chop it. One character at a time is
+    // O(n) measurements per line and n is at most a few dozen here.
+    let rest = word;
+    while (rest !== '' && ctx.measureText(rest).width > maxPx) {
+      let cut = rest.length - 1;
+      while (cut > 1 && ctx.measureText(rest.slice(0, cut)).width > maxPx) cut -= 1;
+      out.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    line = rest;
+  }
+
+  if (line !== '' || out.length === 0) out.push(line);
+  return out;
+}

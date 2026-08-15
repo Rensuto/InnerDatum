@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // Editor / typescript-eslint default project shim. The real configs are
+  // tsconfig.shared.json, tsconfig.server.json and tsconfig.client.json, and
+  // `npm run typecheck` runs all three.
+  //
+  // typescript-eslint's `projectService` asks TypeScript for the NEAREST
+  // tsconfig.json per file, which is why this file and src/client/tsconfig.json
+  // exist. Deleting either one produces "file is not included in any project"
+  // lint errors, not a compiler error — so the failure looks unrelated.
+  //
+  // Do NOT convert this into a solution-style config with "references":
+  // TypeScript rejects project references whose targets set noEmit (TS6310),
+  // and noEmit is mandatory here.
+
+  "extends": "./tsconfig.server.json"
+}

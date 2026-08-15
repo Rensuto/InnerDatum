@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // THE PURITY BOUNDARY — the single highest-value config file in the repo.
+  //
+  // `types: []` and `lib: ["ES2024"]` mean src/shared/ has NO Node types and NO
+  // DOM lib. So `process`, `fs`, `node:crypto`, `window`, `document`, `fetch`,
+  // `console`, `setTimeout`, `setInterval`, `queueMicrotask` and `Buffer` are
+  // not *banned* here — they DO NOT EXIST. Determinism stops being working
+  // rule #5 that you remember at 1am and becomes something tsc refuses to
+  // compile.
+  //
+  // What this canNOT catch: Date.now, new Date, Math.random,
+  // crypto.getRandomValues — those are ES built-ins present in lib ES2024.
+  // eslint.config.js closes exactly that gap, and nothing else.
+  //
+  // Run this config FIRST in `npm run typecheck`: it is the fastest and it
+  // fails on the thing that matters most.
+
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2024"],
+    "types": []
+  },
+  "include": ["src/shared/**/*.ts"]
+}

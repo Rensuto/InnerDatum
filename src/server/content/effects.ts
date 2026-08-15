@@ -1,0 +1,579 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Dalton Barraclough
+// Ported from t-engine4 game/modules/tome/data/timed_effects/physical.lua:480-511 (STUNNED)
+//                                                              :123-152 (CUT — "Bleeding")
+//                                                              :621-637 (SLOW)
+//             t-engine4 game/modules/tome/class/Actor.lua:606 (the no_talents_cooldown guard)
+//             t-engine4 game/modules/tome/data/damage_types.lua:150-153 (stunned ×0.4 outgoing)
+//             t-engine4 game/engines/default/engine/interface/ActorTemporaryEffects.lua:54
+// T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
+//
+// The badge art (ui/icons/status/icon_status_*.png) is the author's own and is NOT GPL.
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *                    THE THREE MVP STATUSES — DATA + BEHAVIOUR
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * game-design.md § 12 ships exactly three, and this is them:
+ *
+ *   STUNNED   physical save. FREEZES COOLDOWNS, ×0.4 outgoing damage, and puts
+ *             three ready talents on a 1-turn cooldown that cannot tick.
+ *   BLEEDING  physical save. Damage per turn on the BASE clock, no armour stage.
+ *   SLOWED    physical save. Fewer actions for a monster; fewer points for a
+ *             player. Those are two different mechanisms and § D1 is why.
+ *
+ * All three are `physical` because the MVP roster is a husk, a wraith and an
+ * elite husk swinging and shooting. The mental and magical channels exist in
+ * `SaveChannel` and are exercised by tests; nothing authored uses them yet, and
+ * inventing a mental status to "balance the table" would be content nobody asked
+ * for.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE EFFECT'S TYPE PICKS THE SAVE — NOT THE ATTACK THAT DELIVERED IT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Actor.lua:6981-6986. Ashwick Flare is a fire talent and the Bleeding it could
+ * apply is still resisted by the PHYSICAL save, because `type: 'physical'` is on
+ * the EFFECT. The caller passes `applyPower` — a power number — and never a
+ * channel. There is no parameter on `setEffect` that lets an attack choose the
+ * save; the only override is `applySave` on the effect's own params, which is
+ * ToME's `p.apply_save` and exists for the one-off "this poison is mental" case.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY THE BEHAVIOUR LIVES HERE AND NOT IN engine/effects.ts
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Same rule content/monsters.ts follows: the engine owns the MACHINERY (saves,
+ * durations, stacking, the tick) and content owns WHICH effects exist and what
+ * they do. `engine/effects.ts` names none of these three. The dependency runs
+ * `content → engine` and never back, which is what lets a fourth status be one
+ * new object in this file.
+ */
+
+import { DamageType, applyDamage } from '../engine/damage.ts';
+import {
+  EffectStatus,
+  SaveChannel,
+  StackMode,
+  createEffectState,
+  effectModifiers,
+  lockoutTalents,
+} from '../engine/effects.ts';
+import type { EffectDef, EffectHookArgs, EffectInstance, EffectState } from '../engine/effects.ts';
+
+// ---------------------------------------------------------------------------
+// Ids — namespaced, exactly like `talent:` (engine/talents.ts:171)
+// ---------------------------------------------------------------------------
+
+export const EFFECT_ID_PREFIX = 'effect:';
+
+/**
+ * The three ids, as constants rather than bare strings, so a typo is a compile
+ * error at every call site instead of an effect that silently never lands.
+ */
+export const EffectId = {
+  Stunned: 'effect:stunned',
+  Bleeding: 'effect:bleeding',
+  Slowed: 'effect:slowed',
+} as const;
+export type EffectId = (typeof EffectId)[keyof typeof EffectId];
+
+// ---------------------------------------------------------------------------
+// Authored numbers. Every one of them has a source.
+// ---------------------------------------------------------------------------
+
+/**
+ * ToME's SLOW default — physical.lua:628, `parameters = { power = 0.1 }`, used
+ * as `global_speed_add = -eff.power`.
+ *
+ * 0.3 rather than 0.1 because the MVP fight is three turns long (see the
+ * placeholder vitals in engine/actor.ts) and a 10% speed cut over three turns is
+ * invisible. AUTHORED DEVIATION, recorded rather than discovered in playtest.
+ */
+export const SLOW_POWER = 0.3;
+
+/**
+ * ToME's CUT default — physical.lua:130, `parameters = { power = 1 }`.
+ *
+ * 1 damage per turn is a ToME level-1 rat's bleed and it is not a threat here:
+ * a monster has 24 HP (engine/actor.ts) and a detective's swing already deals
+ * ~4.4 (test/server/derived.test.ts). 3 keeps a bleed worth applying without
+ * making it better than swinging again.
+ */
+export const BLEED_POWER = 3;
+
+/**
+ * physical.lua:500 — `for i = 1, 3 do ... end`. Three talents, not four.
+ *
+ * Paired with :503's 1-turn cooldown and the freeze: the lockout lasts exactly
+ * as long as the stun and releases on the turn it ends. Upstream's own comment
+ * at :503 explains it — "Just set cooldown to 1 since cooldown does not decrease
+ * while stunned".
+ */
+export const STUN_TALENT_LOCKOUT = 3;
+
+/** physical.lua:493 — `movement_speed`, −0.5. Carried as data; see the note below. */
+export const STUN_MOVEMENT_SPEED_ADD = -0.5;
+
+/**
+ * game-design.md § 7 — "Slowed (−1 MP)", and § 8's item note: "35% slow/2 s →
+ * −1 MP for 2 turns, because a percentage is illegible on a grid."
+ *
+ * A player cannot be slowed on the clock (D1), so this is the player-facing
+ * expression of the same effect. One movement point, which on a 30×30 room is
+ * the difference between reaching the downed ally this turn and not.
+ */
+export const SLOW_PLAYER_MP_PENALTY = 1;
+
+/**
+ * Slow costs a player NO action points by default.
+ *
+ * The AP budget is what a player spends on TALENTS, and taking a point of it
+ * would silently disable whichever talent sits at the top of their cost curve —
+ * a much larger and much less legible nerf than losing a tile of movement. The
+ * knob exists (`EffectModifiers.apPenalty`) and a future effect can use it; slow
+ * is not that effect.
+ */
+export const SLOW_PLAYER_AP_PENALTY = 0;
+
+// ---------------------------------------------------------------------------
+// STUNNED — physical.lua:480-511
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * STUNNED. THE FREEZE IS THE WHOLE POINT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEffect{
+ *   name = "STUNNED", image = "effects/stunned.png",
+ *   type = "physical", subtype = { stun=true }, status = "detrimental",
+ *   activate = function(self, eff)
+ *     eff.tmpid   = self:addTemporaryValue("stunned", 1)                -- :491
+ *     eff.tcdid   = self:addTemporaryValue("no_talents_cooldown", 1)    -- :492
+ *     eff.speedid = self:addTemporaryValue("movement_speed", -0.5)      -- :493
+ *     ...
+ *     for i = 1, 3 do
+ *       local t = rng.tableRemove(tids)
+ *       self:startTalentCooldown(t.id, 1)                              -- :503
+ *     end
+ *   end,
+ * }
+ * ```
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * `no_talents_cooldown` — line 492, and Actor.lua:606 is where it bites
+ * ───────────────────────────────────────────────────────────────────────────
+ * ```lua
+ * -- Cooldown talents after effects, because some of them involve breaking sustains.
+ * if not self:attr("no_talents_cooldown") then self:cooldownTalents() end
+ * ```
+ * A stunned actor's cooldowns DO NOT TICK. Miss this one line and stun is a
+ * damage debuff you wait out with a full bar of talents ready — which is a
+ * completely different game from the one where a 3-turn stun costs the victim
+ * three turns of cooldown progress on top of three turns of acting.
+ *
+ * It arrives here as `modifiers.noTalentsCooldown`, is aggregated by
+ * `noTalentsCooldown(state, actorId)`, and is consumed by
+ * `engine/actor.ts#actBase` via the `statusPass` callback. The read happens
+ * AFTER `timedEffects` (Actor.lua:597 before :606), so the turn a stun expires
+ * is a turn cooldowns tick normally.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * THE THREE-TALENT LOCKOUT AND THE 1-TURN COOLDOWN CONSPIRE
+ * ───────────────────────────────────────────────────────────────────────────
+ * :503 sets those three to cooldown 1 — a number that would normally clear on
+ * the very next base turn. It does not, because the freeze above stops it
+ * ticking. So the lockout is exactly as long as the stun, self-timing, with no
+ * second duration to keep in sync. It is a genuinely elegant trick and it only
+ * works if BOTH halves are ported.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * WHAT `stunned` DOES TO DAMAGE — damage_types.lua:150-153
+ * ───────────────────────────────────────────────────────────────────────────
+ * `if src:attr("stunned") then dam = dam * 0.4 end`. A flat ×0.4 on OUTGOING
+ * damage, applied in the projector, not in any getter. `recomputeAttributes`
+ * writes it to `StatusFlags.stunned`; combat.ts:356 reads it as `sourceStunned`;
+ * damage.ts applies it at step 5. Nothing needs to be added for that to work —
+ * derived.ts's `StatusFlags` was wired at M3 for precisely this moment.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * NOT PORTED: `movement_speed`, and it is declared anyway
+ * ───────────────────────────────────────────────────────────────────────────
+ * :493's −50% movement speed has nothing to multiply here — a move is one
+ * action, and there is no separate movement cost to halve. The number is
+ * carried as `movementSpeedAdd` so the port is complete on paper and so the day
+ * movement gets its own cost, the value is already sitting where it belongs.
+ * Deleting it would make the omission invisible.
+ */
+export const STUNNED: EffectDef = Object.freeze({
+  id: EffectId.Stunned,
+  displayName: 'Stunned',
+  description:
+    'Reeling. Deals 40% damage, and talent cooldowns do not tick while it lasts. ' +
+    'Three ready talents are locked out for the duration.',
+  // Actor.lua:6981-6986 — THIS is what picks the save. `physical` → combatPhysicalResist.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // physical.lua has no `on_merge` for STUNNED, so upstream's default applies:
+  // remove and re-add (ActorTemporaryEffects.lua:128). A re-stun REPLACES.
+  stackMode: StackMode.Refresh,
+  // physical.lua:485 — `subtype = { stun=true }`.
+  subtypes: ['stun'],
+  // ActorTemporaryEffects.lua:54 — the default.
+  decrease: 1,
+  icon: 'icon_status_stunned',
+  modifiers: {
+    // :491 — the ×0.4 outgoing damage flag (damage_types.lua:150-153).
+    stunned: true,
+    // :492 — THE FREEZE. Actor.lua:606.
+    noTalentsCooldown: true,
+    // :493 — carried, not yet read. See the header.
+    movementSpeedAdd: STUN_MOVEMENT_SPEED_ADD,
+  },
+  parameters: {},
+
+  activate: ({ actor, eff, rng, ctx }: EffectHookArgs): void => {
+    // physical.lua:495-504. `ctx.activatableTalents` is the seam: this file must
+    // not import the talent engine, and the talent engine must not know about
+    // statuses. The scheduler supplies the reader when it builds the context.
+    const candidates = ctx.activatableTalents?.(actor.id) ?? [];
+    const locked = lockoutTalents(
+      actor,
+      candidates,
+      STUN_TALENT_LOCKOUT,
+      rng,
+      `effects.stunned.lockout.${actor.id}`,
+    );
+    // Recorded on the instance so the Case Log can name the talents that went
+    // dark — "Bent Watchman is Stunned 2 turns (Gutting Strike, Lunge locked)".
+    eff.params.power = locked.length;
+  },
+} satisfies EffectDef);
+
+// ---------------------------------------------------------------------------
+// BLEEDING — physical.lua:123-152 (upstream's `CUT`)
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BLEEDING. DAMAGE ON THE BASE CLOCK, AND NO ARMOUR STAGE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream calls the effect `CUT` and displays it as "Bleeding"
+ * (physical.lua:124-125). The id here is `effect:bleeding` because that is the
+ * word on the badge and in the design doc; the citation keeps the trail.
+ *
+ * ```lua
+ * on_merge = function(self, old_eff, new_eff)                    -- :133-141
+ *   local olddam = old_eff.power * old_eff.dur
+ *   local newdam = new_eff.power * new_eff.dur
+ *   local dur = math.ceil((old_eff.dur + new_eff.dur) / 2)
+ *   old_eff.dur = dur
+ *   old_eff.power = (olddam + newdam) / dur
+ *   return old_eff
+ * end,
+ * on_timeout = function(self, eff)                               -- :149-151
+ *   DamageType:get(DamageType.PHYSICAL).projector(eff.src or self, self.x, self.y,
+ *                                                 DamageType.PHYSICAL, eff.power)
+ * end,
+ * ```
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * THE MERGE CONSERVES TOTAL DAMAGE. IT DOES NOT STACK IT.
+ * ───────────────────────────────────────────────────────────────────────────
+ * Two bleeds of 3 damage × 4 turns do not become 6 × 4. They become
+ * `dur = ceil(8/2) = 4`, `power = (12 + 12) / 4 = 6` — the same 24 total,
+ * delivered in the same window. Applying a bleed to something already bleeding
+ * FRONT-LOADS it; it never multiplies it. That is what stops a bleed class from
+ * being a stacking-DoT class, and it is four lines of arithmetic that look
+ * arbitrary until you multiply them out.
+ *
+ * Worked, and pinned in the test: old {power 3, dur 4} + new {power 3, dur 4} →
+ * `olddam 12`, `newdam 12`, `dur ceil(4) = 4`, `power 24/4 = 6`.
+ * Uneven: old {power 3, dur 1} + new {power 9, dur 5} → `3 + 45 = 48`,
+ * `dur = ceil(6/2) = 3`, `power = 16`.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * "IGNORES ARMOUR" IS FAITHFUL, NOT A DEVIATION
+ * ───────────────────────────────────────────────────────────────────────────
+ * game-design.md § 7 says Bleeding ignores armour, and so does ToME — but not by
+ * a special case. The DoT goes through the damage-type PROJECTOR, and the
+ * armour stage lives in `attackTargetWith`, never in the projector
+ * (engine/damage.ts's header says so: "a spell has never been reduced by armour
+ * in ToME's entire history"). Passing no `armour` in the spec below is therefore
+ * the port, not a shortcut. RESISTANCES still apply, because those ARE in the
+ * projector, so physical resistance shortens a bleed's total exactly as it
+ * shortens everything else.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * ON THE BASE CLOCK, WHICH IS THE ONLY REASON A DoT IS BALANCEABLE
+ * ───────────────────────────────────────────────────────────────────────────
+ * `on_timeout` is driven by `timedEffects`, which runs in `actBase`
+ * (Actor.lua:597) on `energyBase`. So "3 damage per turn for 4 turns" is 12
+ * damage at ANY speed. Put it on the act clock and a hasted target takes 40%
+ * more from the same bleed while a slowed one takes less — a DoT that rewards
+ * the victim for being slowed is the wrong direction on every axis.
+ *
+ * ZERO RNG DRAWS PER TICK: the spec below carries no `damageRange` and no
+ * `critChance`, so `resolveDamage` rolls nothing (engine/damage.ts steps 1 and
+ * 3 are both gated on presence). A bleed's damage is exact, which is what makes
+ * the merge arithmetic above mean anything.
+ */
+export const BLEEDING: EffectDef = Object.freeze({
+  id: EffectId.Bleeding,
+  displayName: 'Bleeding',
+  description: 'An open wound. Deals physical damage each turn, unreduced by armour.',
+  // physical.lua:127. The save is PHYSICAL because the EFFECT is physical —
+  // even when an Ashwick Flare put it there.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // physical.lua:133 declares `on_merge`, which is upstream's stacking path
+  // (ActorTemporaryEffects.lua:123-125).
+  stackMode: StackMode.Stack,
+  // physical.lua:128 — `subtype = { wound=true, cut=true, bleed=true }`. THREE
+  // keys, and `canBe` multiplies the actor's resistance to each of them.
+  subtypes: ['wound', 'cut', 'bleed'],
+  decrease: 1,
+  icon: 'icon_status_bleeding',
+  // physical.lua:130 — `parameters = { power = 1 }`. See BLEED_POWER.
+  parameters: { power: BLEED_POWER },
+
+  onTimeout: ({ actor, eff, rng, ctx }: EffectHookArgs): boolean => {
+    const power = eff.params.power ?? BLEED_POWER;
+    if (power <= 0) return false;
+
+    // physical.lua:150 — `eff.src or self`. The bleeder is blamed when it is
+    // still around; otherwise the wound blames its owner, so the Case Log always
+    // has a name and a kill is always attributable.
+    const srcId = eff.params.srcId;
+    const src = srcId === undefined ? undefined : ctx.getActor?.(srcId);
+    const blame = src ?? actor;
+
+    // damage_types.lua:146-153 — the projector applies the SOURCE's own daze and
+    // stun multipliers to every projected hit, DoTs included. Faithful and
+    // slightly surprising: stunning the thing that cut you weakens its bleed.
+    applyDamage(actor, power, DamageType.Physical, blame, rng, {
+      sourceDazed: src?.combat?.flags?.dazed,
+      sourceStunned: src?.combat?.flags?.stunned,
+      increase: src?.combat?.increase,
+      penetration: src?.combat?.penetration,
+    });
+
+    // ActorTemporaryEffects.lua:85 — returning true removes the effect. A bleed
+    // never self-terminates; it runs its duration out.
+    return false;
+  },
+
+  /**
+   * physical.lua:133-141, verbatim arithmetic.
+   *
+   * `Math.ceil` on the average duration matches `math.ceil` exactly for the
+   * positive values a duration can hold. `dur` is guaranteed ≥ 1 here because
+   * `setEffect` refuses a 0-duration application before it ever reaches a merge.
+   */
+  onMerge: ({ eff, incoming }: EffectHookArgs & { incoming: EffectInstance }): EffectInstance => {
+    const oldPower = eff.params.power ?? BLEED_POWER;
+    const newPower = incoming.params.power ?? BLEED_POWER;
+    const oldDam = oldPower * eff.dur; // :135
+    const newDam = newPower * incoming.dur; // :136
+    const dur = Math.ceil((eff.dur + incoming.dur) / 2); // :137
+    eff.dur = dur; // :138
+    eff.params.power = (oldDam + newDam) / dur; // :139
+    // Not upstream: `total_dur` is this codebase's UI bar denominator and a
+    // merge that left it stale would draw a bar longer than the effect.
+    eff.totalDur = Math.max(eff.totalDur, dur);
+    return eff; // :140
+  },
+} satisfies EffectDef);
+
+// ---------------------------------------------------------------------------
+// SLOWED — physical.lua:621-637 (upstream's `SLOW`)
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SLOWED. TWO MECHANISMS, ONE EFFECT, AND THE ASYMMETRY IS D1.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEffect{
+ *   name = "SLOW", image = "talents/slow.png",
+ *   type = "physical", subtype = { slow=true }, status = "detrimental",
+ *   parameters = { power = 0.1 },
+ *   activate   = function(self, eff) eff.tmpid = self:addTemporaryValue("global_speed_add", -eff.power) end,  -- :632
+ *   deactivate = function(self, eff) self:removeTemporaryValue("global_speed_add", eff.tmpid) end,            -- :635
+ * }
+ * ```
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * MONSTERS: `global_speed_add`, WHICH IS THE GAIN KNOB
+ * ───────────────────────────────────────────────────────────────────────────
+ * ToME subtracts from `global_speed`, the multiplier on energy GAINED per tick.
+ * engine/actor.ts names the same thing `globalSpeed`, so the port is direct:
+ * `globalSpeedAdd: -0.3` means a slowed monster accrues 70 energy per tick
+ * instead of 100 and acts roughly seven times in ten game turns.
+ *
+ * ═══ DO NOT REACH FOR `speedFactor` ═══
+ * `speedFactor` is the ACTION COST multiplier, and it runs the OTHER WAY:
+ * smaller is cheaper is FASTER. "Slow reduces speedFactor" is the single most
+ * plausible-sounding way to write this backwards, and the symptom is a slowed
+ * monster that acts MORE often — with no crash, no type error and no failing
+ * test. derived.ts issues the same warning about `combatSpeed` for the same
+ * reason. If a future effect must use the cost knob, it ADDS to it.
+ *
+ * The write goes through `recomputeAttributes`, which composes every live
+ * effect's `globalSpeedAdd` on top of a snapshot of the monster's own base
+ * speed and floors the result at 0.1 (mirroring Combat.lua:1409's floor) so a
+ * stacked slow can never stop the clock outright. Two slows landing and one
+ * expiring leaves the survivor's full value, which is exactly the case ToME's
+ * `addTemporaryValue`/`removeTemporaryValue` handle pairs exist to get right.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * PLAYERS: −1 MP, BECAUSE THE CLOCK IS NOT AVAILABLE (DECISIONS.md § D1)
+ * ───────────────────────────────────────────────────────────────────────────
+ * A player's `globalSpeed` is the literal type `1` and readonly. That is not
+ * fussiness — it is what keeps the party PHASE-LOCKED so the barrier parks once
+ * per turn at full quorum. Slow a player on the clock and four people drift out
+ * of phase: the scheduler starts parking with quorum 1, 2, 3, 2, 1, and the
+ * solo-Bell exemption fires on the single-player parks while three people sit
+ * frozen watching one person think. engine/actor.ts works the arithmetic.
+ *
+ * So a slowed player loses a MOVEMENT POINT instead — game-design.md § 7's
+ * "Slowed (−1 MP)", and § 8's item note spelling out the reasoning: "35%
+ * slow/2 s → −1 MP for 2 turns, because a percentage is illegible on a grid."
+ * One fewer tile of reach on a 30×30 room is a real cost with a legible number,
+ * and it costs the barrier nothing.
+ *
+ * ═══ THE PENALTY IS A QUERY, NOT A SUBTRACTION ═══
+ * `talentEngine.actBase` refills the budget every game turn
+ * (`sheet.ap = sheet.maxAp; sheet.mp = sheet.maxMp;`), so anything subtracted
+ * from `sheet.mp` when the effect LANDS is erased at the start of the next turn.
+ * The caller therefore applies `budgetPenalty(state, actorId)` immediately after
+ * that refill. That is the one integration line this effect needs, and it is
+ * stated here because it is the only place anyone will look for it:
+ *
+ * ```ts
+ * talents.actBase(actor.id, world);
+ * const { ap, mp } = budgetPenalty(effects, actor.id);
+ * sheet.ap = Math.max(0, sheet.ap - ap);
+ * sheet.mp = Math.max(0, sheet.mp - mp);
+ * ```
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * NO `activate` / `deactivate` HOOKS HERE, DELIBERATELY
+ * ───────────────────────────────────────────────────────────────────────────
+ * Upstream needs them because `addTemporaryValue` is a handle protocol.
+ * `recomputeAttributes` re-derives from a baseline after every state change
+ * instead, so the modifier below is the entire implementation — nothing to
+ * forget to reverse, and nothing that leaks if a hook throws mid-turn.
+ */
+export const SLOWED: EffectDef = Object.freeze({
+  id: EffectId.Slowed,
+  displayName: 'Slowed',
+  description: 'Dragging. Monsters act less often; detectives lose a point of movement.',
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // physical.lua declares no `on_merge` for SLOW → upstream replaces (:128).
+  stackMode: StackMode.Refresh,
+  // physical.lua:626 — `subtype = { slow=true }`.
+  subtypes: ['slow'],
+  decrease: 1,
+  icon: 'icon_status_slowed',
+  modifiers: {
+    // :632 — `addTemporaryValue("global_speed_add", -eff.power)`. NEGATIVE.
+    // Monsters only; `recomputeAttributes` refuses to write a player's clock.
+    globalSpeedAdd: -SLOW_POWER,
+    // The player half. See the asymmetry note above.
+    mpPenalty: SLOW_PLAYER_MP_PENALTY,
+    apPenalty: SLOW_PLAYER_AP_PENALTY,
+  },
+  // :628 — `parameters = { power = 0.1 }`. Kept so the log and the tooltip can
+  // print the fraction; the modifier above is what the engine reads.
+  parameters: { power: SLOW_POWER },
+} satisfies EffectDef);
+
+// ---------------------------------------------------------------------------
+// The roster
+// ---------------------------------------------------------------------------
+
+/** Every MVP status, in a fixed order — for iteration that must be reproducible. */
+export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([STUNNED, BLEEDING, SLOWED]);
+
+/** Effect ids, for a content-completeness check and for the client's badge atlas. */
+export const EFFECT_IDS: readonly string[] = Object.freeze(MVP_EFFECTS.map((def) => def.id));
+
+const BY_ID: ReadonlyMap<string, EffectDef> = new Map(MVP_EFFECTS.map((def) => [def.id, def]));
+
+export function effectById(id: string): EffectDef | undefined {
+  return BY_ID.get(id);
+}
+
+/** An `EffectState` with the three MVP statuses registered. What `createWorld` wants. */
+export function createMvpEffectState(): EffectState {
+  return createEffectState(MVP_EFFECTS);
+}
+
+// ---------------------------------------------------------------------------
+// Validation — the same shape content/monsters.ts uses
+// ---------------------------------------------------------------------------
+
+/**
+ * Prove a definition is internally consistent. Returns problems, empty when fine.
+ *
+ * These are the mistakes that produce a silently inert or silently unfair
+ * effect rather than a crash, which is why they are checked at all:
+ *
+ *   - a `Stack` mode with no `onMerge` falls back to plain duration extension,
+ *     which is almost never what an authored stacking effect wants;
+ *   - `decrease: 0` is a PERMANENT effect (ActorTemporaryEffects.lua:91 would
+ *     subtract nothing), legal for a sustain and a bug for a status;
+ *   - a `globalSpeedAdd` at or below −1 would stop a monster's clock, and the
+ *     0.1 floor in `recomputeAttributes` would silently absorb it instead of
+ *     letting anyone notice the number was wrong.
+ */
+export function validateEffect(def: EffectDef): readonly string[] {
+  const problems: string[] = [];
+
+  if (!def.id.startsWith(EFFECT_ID_PREFIX)) {
+    problems.push(`${def.id}: id must start with '${EFFECT_ID_PREFIX}'`);
+  }
+  if (def.subtypes.length === 0) {
+    problems.push(`${def.id}: no subtypes — nothing can ever grant immunity to it`);
+  }
+  if (def.decrease <= 0) {
+    problems.push(
+      `${def.id}: decrease ${def.decrease} never expires (ActorTemporaryEffects.lua:91)`,
+    );
+  }
+  if (def.stackMode === StackMode.Stack && def.onMerge === undefined) {
+    problems.push(`${def.id}: stackMode 'stack' without onMerge falls back to duration extension`);
+  }
+  if (def.stackMode !== StackMode.Stack && def.onMerge !== undefined) {
+    problems.push(`${def.id}: onMerge is only ever called by stackMode 'stack'`);
+  }
+
+  const speed = def.modifiers?.globalSpeedAdd ?? 0;
+  if (speed <= -1) {
+    problems.push(`${def.id}: globalSpeedAdd ${speed} would stop a monster's clock`);
+  }
+  if (speed > 0 && def.status === EffectStatus.Detrimental) {
+    problems.push(`${def.id}: a detrimental effect with a POSITIVE globalSpeedAdd is a haste`);
+  }
+
+  return problems;
+}
+
+/**
+ * Is this actor's stun freezing its cooldowns right now?
+ *
+ * A convenience over `effectModifiers` for the one query the scheduler, the
+ * projector and the Case Log all want to phrase the same way. Exported from
+ * CONTENT rather than the engine because "stunned" is a content concept; the
+ * engine only knows `no_talents_cooldown`.
+ */
+export function isStunned(state: EffectState, actorId: string): boolean {
+  return effectModifiers(state, actorId).stunned === true;
+}
