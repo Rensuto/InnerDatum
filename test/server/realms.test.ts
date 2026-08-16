@@ -20,8 +20,14 @@ import { describe, expect, it } from 'vitest';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { OVERWORLD_ID, RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
+import { makeTestMap } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import type { Realms, SiteDef } from '../../src/server/world/realms.ts';
+
+/** The towns, derived rather than restated so the table stays the one source. */
+const COMMON_SITES = [...SITES.values()]
+  .filter((s) => s.kind === RealmKind.Common)
+  .map((s) => s.id);
 
 function makeRealms(seed = 'test-seed'): Realms {
   return createRealms({
@@ -42,7 +48,16 @@ describe('the overworld', () => {
     expect(realms.overworld.id).toBe(OVERWORLD_ID);
     expect(realms.overworld.kind).toBe(RealmKind.Overworld);
     expect(realms.overworld.name).toBe('Alderbrook');
-    expect(realms.all()).toHaveLength(1);
+    expect(realms.all().filter((r) => r.kind === RealmKind.Overworld)).toHaveLength(1);
+  });
+
+  it('boots with the city plus every town, and no instances', () => {
+    // Common realms are built eagerly so `all()` is a stable set the pump can
+    // iterate, and so two people stepping through the office door in the same
+    // millisecond cannot create two offices.
+    const realms = makeRealms();
+    expect(realms.all()).toHaveLength(1 + COMMON_SITES.length);
+    expect(realms.all().filter((r) => r.kind === RealmKind.Inner)).toEqual([]);
   });
 
   it('holds the city, not the test level', () => {
@@ -77,14 +92,71 @@ describe('the overworld', () => {
   });
 });
 
+describe('a town is open to everybody', () => {
+  it('gives two unrelated parties the SAME office', () => {
+    // The rule: a common space has no combat, so there is nothing to
+    // coordinate, so there is no reason to keep anyone out. This is the half
+    // that makes the world feel populated rather than a set of private rooms.
+    const realms = makeRealms();
+    const mine = realms.open(site('site:office'), 'party_1');
+    const theirs = realms.open(site('site:office'), 'party_2');
+    expect(theirs.id).toBe(mine.id);
+    expect(mine.kind).toBe(RealmKind.Common);
+    expect(mine.partyId).toBeUndefined();
+  });
+
+  it('never spawns anything, which is what makes it shareable', () => {
+    const realms = makeRealms();
+    for (const id of COMMON_SITES) {
+      const town = realms.open(site(id), 'party_1');
+      expect(town.world.allActors().filter((a) => a.kind === ActorKind.Monster)).toEqual([]);
+      expect(town.world.turn.engagement).toBe(0);
+    }
+  });
+
+  it('refuses to be built with a population at all', () => {
+    // Not a warning. One monster in an open town lifts engagement above zero,
+    // and `isBlocking` then returns true for every unrelated player standing in
+    // it — they all start waiting on people they never agreed to play with,
+    // with a Bell running and nothing on screen explaining why.
+    expect(() =>
+      createRealms({
+        seed: 'x',
+        deps: { downed: createDownedState(), parties: createPartyState() },
+        sites: new Map([
+          [
+            'site:bad',
+            {
+              id: 'site:bad',
+              name: 'A town with monsters in it',
+              kind: RealmKind.Common,
+              map: makeTestMap,
+              populate: () => undefined,
+            },
+          ],
+        ]),
+      }),
+    ).toThrow(/shared\s+space cannot have hostiles/);
+  });
+
+  it('is never closed, empty or not', () => {
+    // A town is a place, not a session. Somebody walking back for the coat they
+    // dropped there must find it.
+    const realms = makeRealms();
+    const office = realms.open(site('site:office'), 'party_1');
+    expect(realms.empty()).toEqual([]);
+    expect(realms.close(office.id)).toBe(false);
+    expect(realms.get(office.id)).toBeDefined();
+  });
+});
+
 describe('instances are per party', () => {
   it('opens a fresh inner realm for a party', () => {
     const realms = makeRealms();
-    const inner = realms.open(site('site:threadneedle_row'), 'party_1');
+    const inner = realms.open(site('site:underworks'), 'party_1');
     expect(inner.kind).toBe(RealmKind.Inner);
     expect(inner.partyId).toBe('party_1');
-    expect(inner.siteId).toBe('site:threadneedle_row');
-    expect(realms.all()).toHaveLength(2);
+    expect(inner.siteId).toBe('site:underworks');
   });
 
   it('is idempotent on (party, site), so a declined prompt is recoverable', () => {
@@ -95,15 +167,18 @@ describe('instances are per party', () => {
     const first = realms.open(site('site:glass_archive'), 'party_1');
     const second = realms.open(site('site:glass_archive'), 'party_1');
     expect(second.id).toBe(first.id);
-    expect(realms.all()).toHaveLength(2);
+    expect(realms.all().filter((r) => r.kind === RealmKind.Inner)).toHaveLength(1);
   });
 
   it('gives two different parties two different instances of one site', () => {
+    // Stated as the requirement was: if someone from a different party enters
+    // the SAME space as someone already there, they get their own copy of it.
     const realms = makeRealms();
     const a = realms.open(site('site:underworks'), 'party_1');
     const b = realms.open(site('site:underworks'), 'party_2');
     expect(a.id).not.toBe(b.id);
-    expect(realms.all()).toHaveLength(3);
+    expect(a.world).not.toBe(b.world);
+    expect(realms.all().filter((r) => r.kind === RealmKind.Inner)).toHaveLength(2);
   });
 
   it('never recycles a realm id', () => {
@@ -124,7 +199,7 @@ describe('realms do not bleed into each other', () => {
     // instance from stepping there, because `actorAt` compared bare x/y across
     // every living actor with nothing on a body to say which map it was on.
     const realms = makeRealms();
-    const inner = realms.open(site('site:threadneedle_row'), 'party_1');
+    const inner = realms.open(site('site:underworks'), 'party_1');
 
     const outside = realms.overworld.world.addPlayer('p1', 'Outside');
     const inside = inner.world.addPlayer('p2', 'Inside');
@@ -140,14 +215,14 @@ describe('realms do not bleed into each other', () => {
     // clause of `isBlocking`; one number for the process meant one fight armed
     // the barrier for everyone, everywhere.
     const realms = makeRealms();
-    const inner = realms.open(site('site:threadneedle_row'), 'party_1');
+    const inner = realms.open(site('site:underworks'), 'party_1');
     inner.world.turn.engagement = 5;
     expect(realms.overworld.world.turn.engagement).toBe(0);
   });
 
   it('keeps clocks, floors and orbs per realm', () => {
     const realms = makeRealms();
-    const inner = realms.open(site('site:threadneedle_row'), 'party_1');
+    const inner = realms.open(site('site:underworks'), 'party_1');
 
     inner.world.addGroundItem({ x: 5, y: 5 }, 'item_iron_ingot');
     expect(inner.world.groundItems()).toHaveLength(1);

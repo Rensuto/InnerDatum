@@ -61,13 +61,47 @@ import type { AuthoredMap } from '../../shared/level.ts';
 import type { ReapingTurnEngine, TurnEngineOptions } from '../turn-engine.ts';
 import type { World } from './world.ts';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SHARED OR INSTANCED IS DECIDED BY ONE THING: IS THERE COMBAT HERE
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Not by size, not by whether it is indoors, not by how it is authored. The
+ * rule is mechanical and it falls out of the barrier:
+ *
+ *   NO COMBAT → nothing to coordinate → engagement stays 0 → nobody ever blocks
+ *   (barrier.ts:143-148, :304, :351) → any number of unrelated people can walk
+ *   around each other at their own pace. So the space can be OPEN.
+ *
+ *   COMBAT → every player present is dragged into lockstep by engagement, which
+ *   is a fact about the WORLD and not about a party. Open the space and N
+ *   unrelated parties share one barrier — which is exactly the bug parties were
+ *   introduced to fix: "a solo player waited on a stranger, and then on a
+ *   stranger who had closed the tab" (barrier.ts:171-174). So the space MUST be
+ *   instanced.
+ *
+ * That is why `assertNoCombatInSharedSpace` below is an assertion rather than a
+ * comment. A shared space that acquires a monster does not degrade gracefully;
+ * it silently recreates the worst multiplayer bug this project has had.
+ */
 export const RealmKind = {
-  /** Alderbrook. Shared by everybody, no hostiles, free-running movement. */
+  /** Alderbrook. One, shared by everybody, no hostiles, free-running. */
   Overworld: 'overworld',
+  /**
+   * A town: an interior or district you walk INTO from the overworld and which
+   * stays open to everyone. The office, a market row. One realm per site,
+   * shared by every party in it, and no hostiles — see the essay above.
+   */
+  Common: 'common',
   /** An instanced inner-world. One party, alone, with the monsters. */
   Inner: 'inner',
 } as const;
 export type RealmKind = (typeof RealmKind)[keyof typeof RealmKind];
+
+/** Is this realm open to everybody, or private to one party? */
+export function isShared(kind: RealmKind): boolean {
+  return kind === RealmKind.Overworld || kind === RealmKind.Common;
+}
 
 /** The one realm id that is a constant, because there is only ever one. */
 export const OVERWORLD_ID = 'realm:overworld';
@@ -101,16 +135,31 @@ export type Realm = {
 /**
  * A site: somewhere on the overworld you can walk into.
  *
- * Authored rather than generated, for the same reason the city is. The `map`
- * factory is called ONCE PER INSTANCE, so two parties in Threadneedle Row get
- * two independent copies of the same authored floor rather than one shared one.
+ * Authored rather than generated, for the same reason the city is. For an
+ * INSTANCED site the `map` factory is called once per instance, so two parties
+ * in the Underworks get two independent copies of the same authored floor
+ * rather than one shared one. For a COMMON site it is called exactly once, at
+ * boot, because there is only ever one of that place.
  */
 export type SiteDef = {
   readonly id: string;
   readonly name: string;
-  /** Builds a fresh map for one instance. */
+  /**
+   * SHARED, or PRIVATE TO A PARTY. The single most consequential field on a
+   * site, and it is not a matter of taste — see the essay on `RealmKind`.
+   * `Common` requires that nothing ever spawns here.
+   */
+  readonly kind: typeof RealmKind.Common | typeof RealmKind.Inner;
+  /** Builds a fresh map. */
   readonly map: () => AuthoredMap;
-  /** Seeds the population. Called once, after the world exists. */
+  /**
+   * Seeds the population. Called once, after the world exists.
+   *
+   * MUST BE ABSENT ON A `Common` SITE. Enforced at construction rather than
+   * documented, because the failure is silent: a town with one monster in it
+   * arms engagement for every unrelated person standing in it, and they all
+   * start waiting on each other's turns with no way to discover why.
+   */
   readonly populate?: (world: World) => void;
 };
 
@@ -156,7 +205,41 @@ export type RealmsOptions = {
   /** Qualified per realm. See `seedFor`. */
   readonly seed: string;
   readonly deps: RealmDeps;
+  /**
+   * Everywhere the overworld can lead. Defaults to the authored `SITES`.
+   *
+   * A parameter so a test can build a two-site world without inheriting the
+   * whole city, and so a common site's invariant can be tested by supplying a
+   * deliberately broken one.
+   */
+  readonly sites?: ReadonlyMap<string, SiteDef>;
 };
+
+/**
+ * A shared space may not spawn anything, and this throws rather than warns.
+ *
+ * The failure it prevents is silent and it is the worst one in the design. A
+ * town with a single monster in it lifts `engagement` above zero; `isBlocking`
+ * then returns true for EVERY player standing in that town, related or not
+ * (barrier.ts:293-306, and engagement is explicitly a fact about the world
+ * rather than about a party); and every one of them starts waiting on people
+ * they never agreed to play with, with a Bell counting down and nothing on
+ * screen that explains why. That is the exact bug parties were introduced to
+ * fix, reintroduced through the back door by one line of content.
+ *
+ * Throwing at construction means it is caught at boot, by `npm run check`, on
+ * the machine of whoever authored the site — not on a Friday night.
+ */
+function assertNoCombatInSharedSpace(site: SiteDef): void {
+  if (site.kind === RealmKind.Common && site.populate !== undefined) {
+    throw new Error(
+      `realms: site '${site.id}' is Common but carries a populate() — a shared ` +
+        `space cannot have hostiles. One monster in an open town puts every ` +
+        `unrelated player in it into a single barrier. Make it Inner, or drop ` +
+        `the population.`,
+    );
+  }
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -191,6 +274,7 @@ function seedFor(root: string, realmId: string): string {
 
 export function createRealms(opts: RealmsOptions): Realms {
   const realms = new Map<string, Realm>();
+  const sites = opts.sites ?? SITES;
 
   /**
    * Monotonic, never reused. Two parties can hold two instances of the same
@@ -226,6 +310,29 @@ export function createRealms(opts: RealmsOptions): Realms {
   const overworldMap = makeOverworld();
   const overworld = build(OVERWORLD_ID, RealmKind.Overworld, 'Alderbrook', overworldMap, {});
 
+  /**
+   * COMMON REALMS ARE BUILT AT BOOT, NOT ON FIRST ENTRY.
+   *
+   * There are a handful of them, they are small, and building them eagerly buys
+   * three things a lazy path would have to earn back:
+   *
+   *   - `all()` is stable, so the pump loop is a fixed set rather than one that
+   *     can grow underneath an iteration.
+   *   - There is no first-entry race: two people stepping through the office
+   *     door in the same millisecond cannot create two offices.
+   *   - A town keeps its floor. Close-when-empty would sweep the items somebody
+   *     dropped while they were walking back for them.
+   */
+  const commonBySite = new Map<string, Realm>();
+  for (const site of sites.values()) {
+    if (site.kind !== RealmKind.Common) continue;
+    assertNoCombatInSharedSpace(site);
+    const realm = build(`realm:${site.id}`, RealmKind.Common, site.name, site.map(), {
+      siteId: site.id,
+    });
+    commonBySite.set(site.id, realm);
+  }
+
   const realmOf = (actorId: string): Realm | undefined => {
     for (const realm of realms.values()) {
       if (realm.world.getActor(actorId) !== undefined) return realm;
@@ -234,10 +341,32 @@ export function createRealms(opts: RealmsOptions): Realms {
   };
 
   const open = (site: SiteDef, partyId: string): Realm => {
-    // IDEMPOTENT ON (partyId, siteId). This is what makes a declined follow
-    // prompt recoverable: walking onto the site yourself later joins the
-    // instance your party is already in rather than opening a second copy of
-    // the same floor beside them.
+    /**
+     * A COMMON SITE IGNORES THE PARTY ENTIRELY. There is one office, and
+     * everybody who walks through the door is in it — which is the whole point
+     * of a common space and the reason `partyId` is accepted and dropped here
+     * rather than being absent from the signature: the caller should not have
+     * to know which kind of place it is asking about in order to ask.
+     */
+    if (site.kind === RealmKind.Common) {
+      const shared = commonBySite.get(site.id);
+      if (shared !== undefined) return shared;
+      // A common site that was not built at boot means the SITES table and this
+      // registry disagree, which is a wiring bug rather than a runtime state.
+      assertNoCombatInSharedSpace(site);
+      const built = build(`realm:${site.id}`, RealmKind.Common, site.name, site.map(), {
+        siteId: site.id,
+      });
+      commonBySite.set(site.id, built);
+      return built;
+    }
+
+    // IDEMPOTENT ON (partyId, siteId), and this is the rule stated plainly:
+    // two different parties entering the SAME site get two different instances,
+    // and the same party entering twice gets the one it already has. That
+    // second half is what makes a declined follow prompt recoverable — walking
+    // onto the site yourself later joins your friends rather than opening a
+    // private second copy of the floor beside them.
     for (const realm of realms.values()) {
       if (realm.partyId === partyId && realm.siteId === site.id) return realm;
     }
@@ -253,9 +382,14 @@ export function createRealms(opts: RealmsOptions): Realms {
   };
 
   const close = (realmId: string): boolean => {
-    if (realmId === OVERWORLD_ID) return false;
     const realm = realms.get(realmId);
     if (realm === undefined) return false;
+    // A SHARED SPACE IS NEVER CLOSED, empty or not. It is a place rather than a
+    // session: somebody walking back for the coat they dropped in the office
+    // must find it there, and an office that is torn down the moment the last
+    // person leaves would also be a different office every time two people
+    // arrive from opposite directions.
+    if (isShared(realm.kind)) return false;
     // A realm reaped out from under a body would leave that socket rendering a
     // map the server no longer holds, and every subsequent frame about it would
     // be silently dropped. Refuse, and let the caller notice.
@@ -282,26 +416,43 @@ export function createRealms(opts: RealmsOptions): Realms {
 }
 
 /**
- * The sites Alderbrook opens onto.
+ * The sites Alderbrook opens onto, and whether each is a place or a delve.
  *
- * ALL EIGHT LEAD TO THE M1 TEST LEVEL TODAY, and that is deliberate rather than
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THREE OPEN, FIVE CLOSED, AND THE SPLIT IS THE CIVILISED / UNCIVILISED LINE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The rule from `RealmKind` decides every row mechanically — is there combat
+ * here — and the fiction happens to agree with it exactly, which is a good sign
+ * rather than a coincidence. The parts of Alderbrook that still work as a city
+ * are open: you meet people there. The parts the Index has got into are not.
+ *
+ * `game-design.md` § 5 already lists the Detective's Office as the hub with a
+ * dash in the enemies column; that dash is now load-bearing.
+ *
+ * EVERY MAP IS THE M1 TEST LEVEL TODAY, and that is deliberate rather than
  * unfinished. The floor behind a door is content; the door itself is plumbing,
  * and shipping the plumbing against one known-good floor is what makes a bad
  * transition debuggable — "the party ended up in the canal" cannot also be a
  * generation bug when there is no generator. Authored floors and the zone
- * generator both land on top of this table without changing it.
+ * generator both land on top of this table without changing its shape.
+ *
+ * The consequence worth stating out loud: the common maps are the test level
+ * MINUS its population, because `populate` is absent, and that is exactly what
+ * a town is for now — an empty room you can stand in with other people.
  */
 export const SITES: ReadonlyMap<string, SiteDef> = new Map(
   (
     [
-      ['site:office', "The Detective's Office"],
-      ['site:threadneedle_row', 'Threadneedle Row'],
-      ['site:ashwick_row', 'Ashwick Alchemy Row'],
-      ['site:blackwood_outskirts', 'Blackwood Outskirts'],
-      ['site:gearford_ward', 'Gearford Industrial Ward'],
-      ['site:underworks', 'The Underworks'],
-      ['site:glass_archive', 'The Glass Archive'],
-      ['site:watchers_altar', "The Watcher's Altar"],
+      // ─── open to everybody: no combat, so nothing to coordinate ───
+      ['site:office', "The Detective's Office", RealmKind.Common],
+      ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common],
+      ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common],
+      // ─── one party at a time: combat, so a shared barrier would be wrong ───
+      ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner],
+      ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner],
+      ['site:underworks', 'The Underworks', RealmKind.Inner],
+      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner],
+      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner],
     ] as const
-  ).map(([id, name]) => [id, { id, name, map: makeTestMap }]),
+  ).map(([id, name, kind]) => [id, { id, name, kind, map: makeTestMap }]),
 );
