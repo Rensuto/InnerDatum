@@ -53,6 +53,7 @@
  * only one in the file.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -68,12 +69,59 @@ import {
 } from '../engine/talents.ts';
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
+/** FROZEN. 4 of 6 AP: the heal is the turn you did not spend killing anything. */
 const AP_COST = 4;
+/**
+ * FROZEN AT 3 — the most expensive thing in the Alchemist's book, and it is
+ * three-eighths of the whole stock. That price is what makes the party's only
+ * real heal a genuine choice rather than a reflex, and a rank that discounted
+ * it would let the Alchemist heal on cooldown all evening.
+ */
 const REAGENT_COST = 3;
-/** game-design.md § 2, "rng 2". Centred on the caster (Bathe in Light, `range = 0`). */
+/**
+ * game-design.md § 2, "rng 2". Centred on the caster (Bathe in Light,
+ * `range = 0`).
+ *
+ * FROZEN, and this is the single most consequential frozen number in the
+ * twelve. The header spells out why: the heal is worth 20% to one person or 20%
+ * to four, so the party has a standing reason to be within two tiles of each
+ * other — the same two tiles that make the Watchman's Resolve tick and the same
+ * clustering that gets everyone killed by an Alchemic Vial. "Every co-op
+ * decision in the MVP is downstream of that tension." A radius that grew with
+ * rank would relax the tension exactly as the party gained the levels to
+ * exploit it, and the positioning game would quietly end. The rank buys HOW
+ * MUCH, never HOW FAR.
+ */
 const RADIUS = 2;
-/** `heal_pct: 0.20`, of each target's MAX hp. */
-const HEAL_FRACTION = 0.2;
+/** `heal_pct: 0.20`, of each target's MAX hp. Unchanged at talent level 1. */
+const HEAL_FRACTION_LOW = 0.2;
+/**
+ * TUNED HIGH, not ported, and this is the honest hard case of the twelve.
+ *
+ * Its cited source — Bathe in Light, light.lua:50-80 — is cited for SHAPE only
+ * (a ball of radius 2 centred on the caster that heals everyone in it). Its
+ * magnitude is `combatTalentSpellDamage`-shaped flat healing off spellpower,
+ * NOT a percentage of max life, so there is no upstream curve for a
+ * percentage-of-max heal to port. Nature's Touch (call.lua:90-130) is the same
+ * story. Neither can supply a high; both would have to be re-derived through a
+ * body-scale anchor, and an anchor-derived number presented as a port is
+ * exactly what resolvers.ts exists to stop.
+ *
+ * 0.32 is tuned against the fight it has to survive. At rank 1 a 10-turn
+ * cooldown returns 20% of one bar; at rank 5 it returns 32%, so a fully-trained
+ * Alchemist restores roughly a third of the party in one cast. Beyond that the
+ * heal starts outpacing the damage a 3-6 player fight puts out and Downed
+ * (§ 9) stops being a real state, which is the failure mode the header warns
+ * about from the other direction. If the first playtest says the healer is
+ * useless, the header is explicit that `TOME_COOLDOWN` is the constant to move
+ * — that judgement is unchanged and now applies at every rank.
+ */
+const HEAL_FRACTION_HIGH = 0.32;
+
+/** The one place this talent's curve is written. */
+function healFraction(talentLevel: number): number {
+  return combatTalentScale(talentLevel, HEAL_FRACTION_LOW, HEAL_FRACTION_HIGH);
+}
 /** Bathe in Light, light.lua:56 — `cooldown = 20` ToME actions. See the header. */
 const TOME_COOLDOWN = 20;
 
@@ -100,9 +148,10 @@ export const mendWounds: Talent = {
     const tiles = ballTiles({ x: self.x, y: self.y }, RADIUS);
     const allies = actorsInShape(ctx.world, self, tiles, Affinity.Ally);
 
+    const fraction = healFraction(ctx.talentLevel);
     const hits: TalentHit[] = [];
     for (const ally of allies) {
-      const healed = healActor(ally, Math.round(ally.maxHp * HEAL_FRACTION));
+      const healed = healActor(ally, Math.round(ally.maxHp * fraction));
       if (healed <= 0) continue;
       hits.push({
         targetId: ally.id,
@@ -121,7 +170,8 @@ export const mendWounds: Talent = {
     return talentDone(hits, [`Field kit opened. ${hits.length} bound.`]);
   },
 
-  describe: () =>
+  describe: (_self, level) =>
     `Bind every ally within ${RADIUS} tiles — yourself included — for ` +
-    `${percent(HEAL_FRACTION)} of their maximum health. ${AP_COST} AP, ${REAGENT_COST} Reagents.`,
+    `${percent(healFraction(level))} of their maximum health. ` +
+    `${AP_COST} AP, ${REAGENT_COST} Reagents.`,
 };

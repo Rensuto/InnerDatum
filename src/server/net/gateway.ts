@@ -58,6 +58,17 @@ import websocket from '@fastify/websocket';
 
 import { DIR_ORDER, dirVector, inBounds } from '../../shared/coords.ts';
 import { ErasedReason, ErrorCode, LogLane, parseClientMsg } from '../../shared/protocol.ts';
+/**
+ * THE PROGRESSION LEDGER, AND IT IS ARITHMETIC ONLY.
+ *
+ * src/shared/progression.ts imports nothing but protocol.ts — deliberately, not
+ * src/shared/scale.ts — so pulling it in here brings the exp curve and the point
+ * grant and NO combat maths. Three things are needed and all three are facts the
+ * gateway has to state rather than compute a second time: the level ceiling
+ * (`applyRestore` clamps a hand-edited file to it), the xp bar's denominator
+ * (`expChart`), and the ledger `unspentPoints` is reconciled against.
+ */
+import { MAX_CHARACTER_LEVEL, expChart, totalPointsAtLevel } from '../../shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 /**
  * THE ONE CONTENT IMPORT IN THIS FILE, AND IT IS DATA ONLY.
@@ -121,6 +132,7 @@ import type {
   ClientPoint,
   ClientRevive,
   ClientSay,
+  ClientSpendPoint,
   ClientTalent,
   LoadoutTalent,
   LogLine,
@@ -317,6 +329,16 @@ type Session = {
    * every game turn for the sake of one fewer field.
    */
   partyKey: string | null;
+  /**
+   * The last `progress` frame sent to THIS socket, as a comparison key.
+   *
+   * A THIRD KEY RATHER THAN A TERM IN `viewerKey`, for the same reason
+   * `partyKey` is separate: the three move on completely different schedules.
+   * The hotbar changes whenever a cooldown ticks — every game turn — and
+   * progress changes on a KILL, which is a handful of times a fight. Folding
+   * them together would resend the level readout on every turn of the game.
+   */
+  progressKey: string | null;
   /**
    * THE RATE LIMITER, per SOCKET rather than per actor.
    *
@@ -626,7 +648,34 @@ export type PumpResult = {
    * for one branch's benefit.
    */
   readonly reaped?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHO REACHED A NEW LEVEL IN THIS PUMP. ONE ENTRY PER LEVEL CROSSED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `broadcastRecord` turns each into one Record-lane line and nothing else.
+   * That is the ONLY SHARED signal in the game that anybody levelled: `progress`
+   * is viewer-private on purpose (points in hand are intent, and intent is not
+   * the party's business), so without this line four of five friends never learn
+   * that the fifth can spend a point, and the fifth only learns it by opening a
+   * panel nothing invited them to open.
+   *
+   * OPTIONAL, like `reaped` above and for the same reason: a hand-written test
+   * scheduler must not have to carry a field for one narration branch's benefit.
+   * Absent means "this engine does not report levels", which is a true statement
+   * about an engine with no progression in it.
+   */
+  readonly levelUps?: readonly LevelUpNote[];
 };
+
+/**
+ * One level crossed, addressed to nobody — it goes in the shared Record lane.
+ *
+ * Structural rather than imported, for the same reason `RefundedIntent` is: the
+ * dependency rule is one-way and this type states the contract without either
+ * side importing the other.
+ */
+export type LevelUpNote = { readonly id: string; readonly level: number };
 
 /**
  * One refunded intent, addressed to the actor that owed it.
@@ -679,6 +728,65 @@ export type TurnEngine = {
    */
   attachClass?(actorId: string, classId: string): void;
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * PUT ONE POINT INTO ONE TALENT. The only writer of a raw talent level.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * INJECTED FOR THE SAME REASON `attachClass` IS, and the precedent is that
+   * method exactly: raising a rank is `sheet.points.set(id, n + 1)`, and
+   * writing those five words HERE would put `engine/talents.ts` into net/'s
+   * import graph. This file knows WHICH talent a socket asked to raise; it must
+   * not learn what a talent sheet is.
+   *
+   * IT IS NOT THE AUTHORISATION. `handleSpendPoint` has already checked, from
+   * the per-actor `loadoutOf` view, that this talent is in this body's loadout
+   * and is below `maxLevel`, and that the body has a point to spend. This
+   * method is the WRITE — but it re-derives the level it returns from the sheet
+   * rather than echoing an argument, so a caller cannot make a rank up.
+   *
+   * @returns the NEW raw level, or null when there is no sheet or the talent is
+   *   not on it. Null must cost the caller nothing — the point is decremented
+   *   only after this has answered.
+   */
+  raiseTalentPoint?(actorId: string, talentId: string): number | null;
+  /**
+   * THIS BODY'S RAW TALENT SPREAD, for the save snapshot.
+   *
+   * `Record`, not `Map`: it goes straight into `CharacterSnapshot` and on to
+   * JSON, and a Map serialises as `{}` — silently, which would write every
+   * character back at rank 1 and look like nothing had happened.
+   *
+   * Undefined for a body with no sheet, which is the honest answer and is what
+   * keeps the field ABSENT from the snapshot rather than present and empty.
+   */
+  talentPointsOf?(actorId: string): Readonly<Record<string, number>> | undefined;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WRITE A SAVED SPREAD ONTO A FRESHLY-ATTACHED SHEET. THE RESTORE HALF.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * CALLED AFTER `attachClass`, NEVER BEFORE. `attachClass` ends in an
+   * unconditional `sheets.set` (engine/talents.ts), so a restore that ran first
+   * would be thrown away without a word.
+   *
+   * @returns the ids that could NOT be applied — a talent this build no longer
+   *   has, or one belonging to a class this character is no longer. Undefined
+   *   for a body with no sheet.
+   *
+   * ═══ THE DROPPED IDS ARE THE `refundPool` docs/data-schemas.md § 1 REQUIRES
+   * ═══ ("If a talent id disappears, the load path moves its points to a
+   * `refundPool` and logs it rather than throwing. Friends' saves must outlive
+   * your content edits.") The refund needs no arithmetic here and no pool
+   * object: `applyRestore` derives points-in-hand as `totalPointsAtLevel(level)`
+   * minus what is ACTUALLY on the sheet, so points that failed to land are
+   * never counted as spent and come straight back as unspent. This return value
+   * is what makes the event LOGGABLE rather than silent.
+   */
+  applyTalentPoints?(
+    actorId: string,
+    points: Readonly<Record<string, number>>,
+  ): readonly string[] | undefined;
+  /**
    * BURY ONE MONSTER — the full cleanup contract, ending with the world.
    *
    * Drain `PumpResult.reaped` through this and broadcast one `left` per body.
@@ -728,6 +836,37 @@ export type TurnEngine = {
   commit(actorId: string): IntentResult;
   /** "Pass this turn." */
   hold(actorId: string): IntentResult;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * "THIS PLAYER IS AT THE KEYBOARD." CLEARS STANDING BY AND NOTHING ELSE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `barrier.noteCommand` behind a seam. Every TURN verb already carries it
+   * implicitly — `submitIntent`, `commit`, `respawn` and every `party` verb all
+   * call it on the way through — but a non-pumping verb has no way to reach it,
+   * and `spend_point` is one.
+   *
+   * ═══ WHAT IT MUST NOT DO, AND WHY THAT MAKES IT SAFE TO CALL FREELY ═══
+   * IT DOES NOT PUMP, IT QUEUES NO INTENT, IT DRAWS NO RNG AND IT DOES NOT
+   * RESTART THE BELL. The Bell's key is the BLOCKING SET, and a spend does not
+   * change who owes a turn — so a straggler who spends a point buys themselves
+   * no extra time and the party is not made to wait a second longer. What they
+   * get back is the QUORUM: `expire` sets `standingBy` after two silent Bells
+   * and that flag removes a body from the barrier entirely, so a player who
+   * spent 45 seconds reading a current->next diff was auto-holding with no Bell
+   * delay for the rest of the fight while the server held two `spend_point`
+   * frames from them — each of which took a deliberate press on a `+` button.
+   *
+   * ═══ IT IS NOT A PARK AND IT IS NOT AN UNPARK ═══
+   * Two separate mechanisms that this file has confused once already. The park
+   * (`parkForClassChoice` / `unparkOnCommand`) is about a MODAL holding up the
+   * quorum; Standing By is about SILENCE. A spend has nothing to say about the
+   * first and is strong evidence about the second.
+   *
+   * OPTIONAL, like the seams above it: an engine that has no barrier answers
+   * nothing, and a hand-written test scheduler must not have to carry it.
+   */
+  notePresence?(actorId: string): void;
   /**
    * PICK UP THE DOWNED ALLY IN `dir` (game-design.md § 9).
    *
@@ -893,6 +1032,54 @@ export type CharacterSnapshot = {
    * still round-trips through this one.
    */
   readonly classId?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PROGRESSION — LEVEL, XP, POINTS IN HAND, AND THE RAW SPREAD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ALL FOUR OPTIONAL, FOR THE SAME REASON `classId` IS: a body without a class
+   * — a fixture, the e2e harness, a build with no content wired in — has no
+   * progression to report, and a required field would force every producer to
+   * invent one. `snapshotPlayers` writes them only for a `player` body, which
+   * is the only kind that carries them (`PlayerActor`, engine/actor.ts).
+   *
+   * ═══ AND A PROVISIONAL VALUE IS NOT A VALUE. THE `classChoiceOwed` RULE ═══
+   * The class sentinel a few lines above exists because writing a rotation's
+   * guess to disk answers a question nobody has been asked. Progression obeys
+   * the same rule and it is enforced in the same place: a body whose owner has
+   * not chosen a class is wearing a sheet it may be about to throw away, so its
+   * raw talent points are the PROVISIONAL class's four ids. `snapshotPlayers`
+   * omits `talentPoints` entirely for anybody in that set rather than filing a
+   * spread against a class they never picked.
+   *
+   * ═══ WHAT THE PERSIST LAYER DOES WITH THEM — THE LOOP IS CLOSED ═══
+   * `createCharacterBridge.fileFor` (persist/saves.ts) reads these four as
+   * `snapshot.x ?? binding.x` and writes them to the character file, and
+   * `openCharacter` hands all four back on `CharacterRestore`. This paragraph
+   * used to say the opposite — that `fileFor` wrote `binding.level` and ignored
+   * the snapshot — and while that was true the `level` on disk could never
+   * become anything but 1, because the binding echoed back what it read and
+   * nothing else ever wrote the field. Levels gained tonight now reach the disk
+   * and come back; test/server/persist-progression.test.ts walks the real bridge
+   * end to end and would fail if either half were reverted.
+   */
+  readonly level?: number;
+  /** PER-LEVEL xp, never a running total. See `PlayerActor.xp`. */
+  readonly xp?: number;
+  /**
+   * Points in hand. A CACHE of `totalPointsAtLevel(level)` minus every raw
+   * point spent — `applyRestore` recomputes it rather than trusting it, and the
+   * save layer does the same on the way in (`parseCharacterFile`). It is
+   * written down anyway because a save file is read by humans.
+   */
+  readonly unspentPoints?: number;
+  /**
+   * Namespaced talent id -> RAW points, 1..`TALENT_MAX_LEVEL`. THE ONLY THING
+   * HERE THAT IS GENUINELY THE TRUTH; everything else about progression is
+   * derivable from it and `level`. docs/data-schemas.md § 1: never persist a
+   * derived value.
+   */
+  readonly talentPoints?: Readonly<Record<string, number>>;
 };
 
 /**
@@ -939,6 +1126,40 @@ export type CharacterRestore = {
    * still let its owner play.
    */
   readonly classId: string | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PROGRESSION COMING BACK. THE OTHER HALF OF WHAT MUST NOT BE RE-DERIVED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The three absences at the head of this type — name, position, effects — are
+   * all things better re-derived than restored. Level, xp and the raw talent
+   * spread are the opposite, and more so than the class: a class can be picked
+   * again in four seconds, whereas an evening's kills cannot be re-earned.
+   *
+   * OPTIONAL, NOT NULLABLE, and the difference is deliberate. `hp` and
+   * `classId` are `| null` because the file always HAS those columns and null
+   * is a real answer in them. These four are `?` because an implementation of
+   * this port may predate them entirely, and because a character file may
+   * genuinely not carry them: every file written before progression shipped has
+   * no `level` key at all, and `parseCharacterFile` leaves the four absent
+   * rather than inventing them. Absent therefore means "this port cannot say",
+   * which is why a restore cannot silently downgrade a level-8 character to 1.
+   *
+   * THE SHIPPED BRIDGE DOES SAY. `createCharacterBridge.openCharacter` returns
+   * all four off the parsed file. This paragraph used to name it as the example
+   * of a port that returns `{hp, cooldowns, classId}` and nothing else; that was
+   * true, and it meant progression was never restored on any path.
+   *
+   * `applyRestore` treats `unspentPoints` as a CACHE and recomputes it from
+   * `level` and the raw spread wherever it can — see there.
+   */
+  readonly level?: number;
+  /** PER-LEVEL xp, never a running total. */
+  readonly xp?: number;
+  /** Points in hand, as the file claims. Reconciled, never trusted. */
+  readonly unspentPoints?: number;
+  /** Namespaced talent id -> RAW points. The only non-derived one of the four. */
+  readonly talentPoints?: Readonly<Record<string, number>>;
 };
 
 /**
@@ -1576,6 +1797,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * file a state the world really was in rather than whatever it happened to be
    * when a write finally landed.
    */
+  /**
+   * `{ talentPoints }` when there is a spread, `{}` when there is not.
+   *
+   * A body with no sheet must leave the field ABSENT rather than present and
+   * empty: `{}` is a claim ("this character has no ranks in anything") and
+   * absent is the truth ("this build cannot say"). The save layer's `??`
+   * chain reads the two completely differently.
+   */
+  const progressionPoints = (
+    points: Readonly<Record<string, number>> | undefined,
+  ): { talentPoints?: Readonly<Record<string, number>> } =>
+    points === undefined ? {} : { talentPoints: points };
+
   const snapshotPlayers = (): CharacterSnapshot[] => {
     const snapshots: CharacterSnapshot[] = [];
     for (const actor of world.allActors()) {
@@ -1617,6 +1851,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ...(actor.classId === undefined
           ? {}
           : { classId: classChoiceOwed.has(actor.id) ? UNASSIGNED_CLASS : actor.classId }),
+        // ═══ PROGRESSION, STRAIGHT OFF THE BODY ═══
+        // `level`, `xp` and `unspentPoints` are plain fields on `PlayerActor`
+        // precisely so that this pass can read them without asking the talent
+        // engine — the save layer knows about actors and not about sheets, and
+        // that is the reason those three live on the actor at all.
+        //
+        // `pendingLevels` is DELIBERATELY NOT HERE. It is scheduler bookkeeping:
+        // between a kill and the next base-clock pass it is briefly non-zero,
+        // and a save taken in that window would file a point that does not
+        // exist yet — which the next load would then reconcile away, silently,
+        // as a ledger mismatch.
+        level: actor.level,
+        xp: actor.xp,
+        unspentPoints: actor.unspentPoints,
+        // ═══ AND THE RAW SPREAD — BUT NOT WHILE THE CLASS IS PROVISIONAL ═══
+        // Same discipline as the class sentinel above, for the same reason and
+        // in the same breath. A body whose owner has not answered the chooser
+        // is wearing the ROTATION'S four talents; filing their ranks would
+        // write a spread against a class nobody picked, and the class field
+        // three lines up is simultaneously saying `unassigned`. A file that
+        // named no class and four Watchman talents would be internally
+        // inconsistent — so the field is omitted and the load path falls back
+        // to birth ranks, which is the truth about somebody who has not started.
+        ...(classChoiceOwed.has(actor.id)
+          ? {}
+          : progressionPoints(engine.talentPointsOf?.(actor.id))),
       });
     }
     return snapshots;
@@ -1879,13 +2139,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   // -------------------------------------------------------------------------
 
   /**
-   * The viewer's own loadout, unicast. Sent once, at `welcome`.
+   * The viewer's own loadout, unicast. RE-SENDABLE, AND RE-SENT.
    *
-   * Once, because M3 loadouts are FIXED (PLAN.md § M3: twelve talents, zero
-   * trees, zero talent points). When M6 lets a loadout change mid-session this
-   * is called again and the client replaces its hotbar wholesale — the frame is
-   * already shaped for that, which is why it carries the whole list rather than
-   * a slot delta.
+   * This used to read "sent once, at `welcome`, because M3 loadouts are FIXED
+   * (zero trees, zero talent points)". The talent points landed and that is no
+   * longer true of the CALL SITES, though it was never true of the function:
+   * `sendLoadout` has never carried a once-guard, which is exactly what
+   * `LoadoutMsg`'s own doc anticipated ("re-sendable at the milestone that
+   * brings talent points"). It is now called from three places — `welcome`,
+   * `handleChooseClass` and `handleSpendPoint` — and each time the client
+   * replaces its hotbar wholesale, which is why the frame carries the whole
+   * list rather than a slot delta.
+   *
+   * WHAT MAKES THE RESEND MANDATORY rather than tidy: three of the fields are
+   * PER-ACTOR AND PER-RANK. `range` is resolved at the caster's own talent level
+   * from v9 (Fog Step is 3 tiles at rank 1 and 7 at rank 5), and `desc` /
+   * `descNext` are the current->next diff. All three are stale the instant a
+   * point is spent, and a stale `range` is the one that misleads a player into
+   * clicking a tile the server would have accepted.
    */
   const sendLoadout = (session: Session): void => {
     const actorId = session.actorId;
@@ -1944,6 +2215,80 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE VIEWER'S OWN LEVEL, XP AND POINTS IN HAND. UNICAST, NEVER BROADCAST.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * UNICAST IS STRUCTURAL, not etiquette: `ProgressMsg` is a `ViewerMsg`, so
+   * `broadcast(progress)` does not compile — `BroadcastMsg` is `Exclude`-derived
+   * from `ServerMsg`. protocol.ts argues the reason at length and it is the same
+   * one that made cooldowns private: an UNSPENT POINT IS INTENT. "Ren is holding
+   * a point back" is a decision she has not made yet, and a HUD that showed it
+   * to the party would turn a private judgement into four people telling her
+   * what to buy.
+   *
+   * ═══ WHY IT IS BUILT HERE AND NOT IN view/projector.ts ═══
+   * Every other viewer-private frame is projected. This one is three fields off
+   * `PlayerActor` plus one call to `expChart`, and the projector may not read a
+   * clock or a curve — it is the layer that decides what a viewer may KNOW, and
+   * there is nothing to decide here: all four numbers are the viewer's own.
+   *
+   * ═══ `pendingLevels` IS DELIBERATELY NOT ON IT ═══
+   * Between a kill and the next base-clock pass it is briefly non-zero
+   * (engine/actor.ts). A panel drawing it would flicker a `+` for a point that
+   * does not exist yet and cannot be spent — and the spend handler would refuse
+   * it, which is the worst possible pairing.
+   *
+   * @returns whether a frame actually went out. Silent for a socket with no
+   *   body and for a monster, which cannot be a viewer anyway.
+   */
+  const sendProgress = (session: Session): boolean => {
+    const actorId = session.actorId;
+    if (actorId === null) return false;
+    const viewer = world.getActor(actorId);
+    if (viewer === undefined || viewer.kind !== 'player') return false;
+
+    // ═══ THE DENOMINATOR, AND THE CAP IS WHY IT TRAVELS AT ALL ═══
+    // Below the ceiling it is `expChart(level + 1)` — the very threshold
+    // `gainExp` compares against, so the bar fills exactly as the level does.
+    // AT THE CEILING THERE IS NO NEXT LEVEL and `xp` goes on accumulating
+    // (`gainExp` stops looping and keeps the remainder), so any positive
+    // denominator would draw a bar creeping towards a level that is never
+    // coming. ZERO IS THE SENTINEL for "there is no next" — the same shape
+    // `LoadoutTalent.descNext: null` uses, a fact the renderer must handle
+    // rather than a number it can divide by and be quietly wrong.
+    const atCap = viewer.level >= MAX_CHARACTER_LEVEL;
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'progress',
+      level: viewer.level,
+      xp: viewer.xp,
+      xpToNext: atCap ? 0 : expChart(viewer.level + 1),
+      unspent: viewer.unspentPoints,
+    });
+    session.progressKey = `${viewer.level}|${viewer.xp}|${viewer.unspentPoints}`;
+    return true;
+  };
+
+  /**
+   * The same frame, ON CHANGE, for the pump loop.
+   *
+   * "On change" is a bandwidth nicety and nothing more — but it is not nothing:
+   * `xp` moves on every kill and `level`/`unspent` a handful of times an
+   * evening, so without the memo this would be a frame per socket per pump
+   * saying what the client already believes.
+   */
+  const sendProgressIfChanged = (session: Session): void => {
+    const actorId = session.actorId;
+    if (actorId === null) return;
+    const viewer = world.getActor(actorId);
+    if (viewer === undefined || viewer.kind !== 'player') return;
+    const key = `${viewer.level}|${viewer.xp}|${viewer.unspentPoints}`;
+    if (key === session.progressKey) return;
+    sendProgress(session);
+  };
+
+  /**
    * Every attended body's own viewer-private frames, one socket at a time.
    *
    * The hotbar and the party pane travel together because both are memoised
@@ -1957,6 +2302,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (!session.helloDone) continue;
       sendHotbarIfChanged(session);
       sendPartyStateIfChanged(session);
+      // THE THIRD MEMOISED VIEWER FRAME, and it rides this loop for the same
+      // reason the party pane does: xp and points move under a pump that had
+      // nothing to do with the viewer — somebody else landed the killing blow,
+      // and `awardExperience` pays the whole party. Without this a level-up
+      // reaches nobody's panel until they spend a point, which they cannot,
+      // because the panel still says they have none.
+      sendProgressIfChanged(session);
     }
   };
 
@@ -2378,6 +2730,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * expects and which the party panel would draw as healthy. game-design.md § 9
    * has no permadeath: you come back on your feet, and one hit point is the most
    * grudging honest way to say so.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PROGRESSION IS NOT RESTORED HERE, AND THE SPLIT IS THE WHOLE REASON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * This function runs inside `resolveActor`, i.e. BEFORE the class sheet is
+   * attached — which is right for hp (a classless body's `maxHp` of 60 would
+   * file a restored Watchman's 70 down) and for cooldowns (they live on the
+   * body). It is WRONG for the raw talent spread: `attachClass` ends in an
+   * unconditional `sheets.set` (engine/talents.ts:872-875), so points written
+   * onto a sheet before the class lands are replaced by four birth ranks without
+   * a word — nothing throws, nothing logs, and the loss is invisible until
+   * somebody notices their Fog Step is three tiles again.
+   *
+   * So level, xp, points-in-hand and the spread are `restoreProgression`, called
+   * from `handleHello` immediately AFTER `engine.attachClass`. See there.
    */
   const applyRestore = (actor: Actor, restore: CharacterRestore | null): void => {
     if (restore === null) return;
@@ -2392,6 +2759,98 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       { actorId: actor.id, hp: actor.hp, cooldowns: actor.cooldowns.size },
       'restored a character from its file',
     );
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * LEVEL, XP AND THE RAW TALENT SPREAD, ONTO THE BODY AND ONTO THE SHEET.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * CALLED FROM `handleHello`, IMMEDIATELY AFTER `engine.attachClass`, AND
+   * NOWHERE ELSE. Not from `applyRestore`, which runs a beat too early — see
+   * the split argued there.
+   *
+   * ONE STEP RATHER THAN TWO, and that is not tidiness: a half-restore — the
+   * level set, the raw points not — is the exact state `unspentPoints` cannot be
+   * reconciled from, because the ledger would credit a level-8 character with
+   * every point they had already spent. `PlayerInit` deliberately carries no
+   * entries for these four for the same reason (engine/actor.ts).
+   *
+   * ═══ `unspentPoints` IS A CACHE AND IT IS RECOMPUTED, NEVER TRUSTED ═══
+   * The ledger is `totalPointsAtLevel(level)` minus every raw point SPENT, and
+   * "spent" is `raw - 1` per talent, because the first rank of each of the four
+   * is the birth grant and was never paid for. Deriving it rather than believing
+   * the file is what makes a future retune of `pointsForLevel` correct every
+   * existing character instead of stranding them.
+   *
+   * ═══ AND IT IS ALSO THE `refundPool` docs/data-schemas.md § 1 REQUIRES ═══
+   * *"If a talent id disappears, the load path moves its points to a
+   * `refundPool` and logs it rather than throwing. Friends' saves must outlive
+   * your content edits."* A vanished id never lands on the sheet, so it is never
+   * counted as spent, so the ledger hands its points straight back as unspent —
+   * no pool object and no second arithmetic. The log line below is the other
+   * half of what that paragraph asks for.
+   */
+  const restoreProgression = (actor: Actor, restore: CharacterRestore): void => {
+    // A monster has no progression. Narrowed rather than asserted: `level`,
+    // `xp` and `unspentPoints` live on `PlayerActor` alone.
+    if (actor.kind !== 'player') return;
+
+    // ABSENT MEANS "THIS PORT CANNOT SAY", so the birth defaults stand, and it
+    // must never be read as "this character is level 1". The shipped bridge DOES
+    // say now — see `CharacterRestore` — so this branch is reached by a file
+    // written before progression existed, or by a port that has no opinion.
+    if (restore.level !== undefined && Number.isFinite(restore.level)) {
+      actor.level = Math.max(1, Math.min(MAX_CHARACTER_LEVEL, Math.floor(restore.level)));
+    }
+    if (restore.xp !== undefined && Number.isFinite(restore.xp)) {
+      actor.xp = Math.max(0, restore.xp);
+    }
+
+    // THE SHEET, through the injected seam and never by importing the talent
+    // engine. An absent method and an absent sheet both answer undefined, which
+    // is what tells the ledger below that it cannot be run.
+    const dropped = engine.applyTalentPoints?.(actor.id, restore.talentPoints ?? {});
+    if (dropped !== undefined && dropped.length > 0) {
+      app.log.warn(
+        { actorId: actor.id, talentIds: dropped },
+        'character file names talents this body no longer has — their points are refunded',
+      );
+    }
+
+    const spread = engine.talentPointsOf?.(actor.id);
+    if (spread === undefined) {
+      // NO SHEET, SO NO LEDGER. Nothing here can work out what has been spent,
+      // and running `totalPointsAtLevel(level)` against an empty spread would
+      // hand a body with no hotbar eleven points to spend on nothing. The
+      // file's cached number is the only statement anybody has made, so it
+      // stands — which is also exactly the pre-progression behaviour.
+      actor.unspentPoints = Math.max(0, Math.floor(restore.unspentPoints ?? 0));
+      return;
+    }
+
+    let spent = 0;
+    for (const raw of Object.values(spread)) {
+      // `raw - 1`, never `raw`. Written in the same form as
+      // `spentTalentPoints` in persist/saves.ts so the two cannot disagree
+      // about how many points are in hand; the shorthand
+      // `totalPointsAtLevel(level) - sum(points)` that appears in two docblocks
+      // elsewhere hands a fresh level-1 character MINUS FOUR.
+      spent += Math.max(0, raw - 1);
+    }
+    const ledger = Math.max(0, totalPointsAtLevel(actor.level) - spent);
+    const claimed = restore.unspentPoints;
+    if (claimed !== undefined && Math.floor(claimed) !== ledger) {
+      // LOGGED RATHER THAN SILENTLY PREFERRED. A file that disagrees with its
+      // own raw spread is either hand-edited or evidence of a bug in whatever
+      // wrote it, and a repair nobody can see is a repair that happens every
+      // session forever.
+      app.log.warn(
+        { actorId: actor.id, claimed, ledger, level: actor.level },
+        'character file disagrees with the talent-point ledger — the ledger wins',
+      );
+    }
+    actor.unspentPoints = ledger;
   };
 
   /**
@@ -2843,6 +3302,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         engine.attachClass?.(actor.id, actor.classId);
       }
 
+      // ═══ AND ONLY NOW THE PROGRESSION — THE SHEET HAS TO EXIST FIRST ═══
+      // `applyRestore` (inside `resolveActor`, several lines above) deliberately
+      // does NOT do this. `attachClass` immediately above ends in an
+      // unconditional `sheets.set`, so a saved talent spread written before it
+      // is silently replaced by four birth ranks; and `unspentPoints` is
+      // recomputed from that spread, so restoring the level without it would
+      // hand the player back every point they had already spent. The two halves
+      // are done together, here, after the sheet exists.
+      if (restore !== null) restoreProgression(actor, restore);
+
       // ═══ AND DOES THIS BODY OWE US A CHOICE? A THREE-VALUED READ ═══
       // Three states of the character file mean "nobody has ever picked": there
       // is no file at all (a first-ever join, or an anonymous socket), the file
@@ -2906,6 +3375,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // whether the actor behind it is new.
     sendLoadout(session);
     sendHotbarIfChanged(session);
+
+    // PROGRESS, unconditionally, for the same reason the two above are
+    // unconditional: this socket has seen nothing. `sendProgressIfChanged` in
+    // the pump would suppress it for a returning player whose level has not
+    // moved since the last frame THIS SESSION was sent — which is every
+    // reconnect — and the panel would then draw an empty bar over a level-8
+    // detective until their next kill.
+    sendProgress(session);
 
     // THE PICKER, for the one player who owes a choice, and outside the
     // on-change rule for the same stated reason as everything around it: this
@@ -3341,6 +3818,41 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     for (const event of result.playerEvents) emit(event, false);
     for (const event of result.sweep) emit(event, true);
 
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND WHO LEVELLED — THE ONE SHARED SIGNAL THAT A TALENT POINT EXISTS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * AFTER BOTH LANES, because a level is caused by the last kill in the pump
+     * and must narrate after it. "Ren reaches level 5." above the blow that
+     * earned it is the same misreported causality `duringSweep` exists to
+     * prevent.
+     *
+     * ═══ WHY THIS IS IN THE RECORD LANE AND NOT ONLY ON THE PANEL ═══
+     * `ProgressMsg` is VIEWER-PRIVATE by design — points in hand are intent, and
+     * intent is nobody else's business. That is correct and it leaves a hole:
+     * before this line the Case Log, which reports every blow, every status and
+     * every death, said NOTHING when somebody levelled, so a party could cross
+     * three levels in its first fight and finish the evening with every talent
+     * at rank 1 because nothing ever suggested opening the panel. The level
+     * itself is not private — it is a fact about a body other people are
+     * standing next to — so it goes where the party can see it.
+     *
+     * ═══ AND IT IS FREE TEXT ON A FRAME THAT ALREADY EXISTS ═══
+     * No new `TurnEvent` variant, which src/shared/version.ts records would force
+     * a protocol bump on its own. A `LogLine` is text.
+     */
+    for (const note of result.levelUps ?? []) {
+      logSeq += 1;
+      lines.push({
+        seq: logSeq,
+        lane: LogLane.Record,
+        gameTurn,
+        text: `${nameOf(note.id)} reaches level ${note.level}.`,
+        depth: 0,
+      });
+    }
+
     if (lines.length === 0) return;
     broadcast({ v: PROTOCOL_VERSION, t: 'log', lines });
   };
@@ -3753,6 +4265,252 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `spend_point` — "PUT MY NEXT POINT INTO THIS TALENT." IRREVERSIBLE, SO
+   * EVERY CHECK HAPPENS BEFORE THE FIRST WRITE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Modelled step for step on `handleChooseClass`, which is this file's house
+   * pattern for an authenticated non-turn frame, and the resemblance is the
+   * point: both are one-way doors. There is no unlearn verb and no refund, so a
+   * point spent on the wrong talent is spent for the evening.
+   *
+   * IT READS NOTHING FROM THE FRAME BUT `talentId`. `SpendPointSchema` is a
+   * `strictObject` of `{v, t, talentId}`, so a smuggled `actorId` is REJECTED
+   * rather than stripped into a legal frame — which matters more here than
+   * almost anywhere, because a sanitised frame would permanently spend a
+   * stranger's point. Identity is `session.actorId`, exactly as with `move`.
+   *
+   * ═══ THE ORDER OF THE CHECKS, AND WHY EACH CODE IS THE ONE IT IS ═══
+   *   1. NO BODY IN THE WORLD -> `internal`, AND NOTHING IS TOUCHED. First,
+   *      not last, and that ordering is the same argument `handleChooseClass`
+   *      makes at its `reclothePlayer` call: nothing below this line is
+   *      undoable, so the one failure that means "your body was recalled
+   *      between the click and the frame" has to be answered before any state
+   *      is read, let alone written.
+   *   2. NOT ON YOUR FEET -> `not_your_turn`. `!alive` is Downed AND Erased
+   *      both (`goDown` sets `alive = false` beside `hp = 0`,
+   *      engine/downed.ts:401-402), so one read covers both without net/
+   *      learning the survival table's shape. It is a "not now" and not a
+   *      "never": the point is still in hand the moment somebody picks them up.
+   *      It is a CORRECTNESS check as well as a courtesy — a downed body
+   *      carries a `DownedRecord` that `revive`/`standUp` reads back, and
+   *      quietly rewriting what that body can do while it is on the floor is
+   *      the exact class of corruption check 3 of `handleChooseClass` exists
+   *      for.
+   *   3. A MONSTER -> `internal`. Unreachable (a socket owns a player body),
+   *      and it is what NARROWS the actor so `unspentPoints` is reachable at
+   *      all rather than being asserted away.
+   *   4. NOT IN YOUR LOADOUT -> `bad_message`. THE TALENT ID IS RESOLVED
+   *      SERVER-SIDE, against `engine.loadoutOf(actorId)` — which is built from
+   *      the REGISTRY through this body's own sheet (`createTalentBook`) — and
+   *      never against the string on the wire. That one lookup refuses three
+   *      different attacks at once: a talent no registry has ever heard of, a
+   *      talent belonging to somebody else's class (an Alchemist cannot buy the
+   *      Watchman's Iron Curtain), and a talent this body has not learned.
+   *      `bad_message` because no picker can produce any of them.
+   *   5. ALREADY AT `maxLevel` -> `bad_message`. Read off the SAME per-actor
+   *      view, so the cap the server enforces and the "3/5" the client drew are
+   *      the same two numbers. Nothing in engine/ enforces this — `scale.ts`
+   *      deliberately does not clamp the curve at 5 and `applyPendingLevels`
+   *      only ever grants — so the 1..5 cap is entirely this handler's.
+   *   6. NO POINT IN HAND -> `bad_message`.
+   *
+   * No new `ErrorCode` for any of them. version.ts records that a new code
+   * independently forces a protocol bump, and v9's argument is kept to one
+   * reason (`LoadoutTalent.range` narrowing) exactly as v8's was.
+   *
+   * ═══ NON-PUMPING, AND NOTHING IS PARKED. BOTH HALVES OF THE BARRIER ANSWER
+   * ═══
+   * It joins `inspect` and `choose_class` in the dispatch switch's non-pumping
+   * group: spending a point costs no energy, queues no intent and draws no RNG,
+   * and a frame that costs the sender nothing must not be a way to make the
+   * server advance the world.
+   *
+   * AND THERE IS DELIBERATELY NO `unparkOnCommand` HERE AND NO PARK ANYWHERE.
+   * Written down because the next reader will look for one: `parkForClassChoice`
+   * exists because the class picker is a MODAL and a player sitting in it
+   * stalled every other player at the barrier until the Bell. The talent panel
+   * is not a modal — it is a dock panel on the character sheet's pattern
+   * (src/client/ui/charsheet.ts), it swallows no keys and no turn verbs, and the
+   * server is never told it is open. So there is no quorum problem to solve:
+   * reading never stalls the world because the world does not know you are
+   * reading, and spending never stalls it because spending does not advance it.
+   * Parking a mid-session reader would be strictly WORSE than doing nothing —
+   * `parkForClassChoice`'s own note says the park "DOES NOT MAKE THEM SAFE", so
+   * a level-8 player would have monsters chewing on an unattended body while
+   * they chose a rank.
+   *
+   * And `unparkOnCommand` is absent for a matching reason, which is about the
+   * PARK and only the park: it exists to lift a standing Hold installed for the
+   * class picker, and there is no picker here to lift one for.
+   *
+   * ═══ STANDING BY IS A DIFFERENT MECHANISM, AND A SPEND DOES SPEAK TO IT ═══
+   * This paragraph used to run the two together and conclude that "a spend is
+   * not evidence about the barrier at all — a player who has not yet chosen a
+   * class has nothing to spend". Both halves were wrong. The premise is false:
+   * an anonymous socket in `classChoiceOwed` is handed a rotation class with a
+   * real loadout and a real sheet by `classFor(null, …)`, is a full party member
+   * for `awardExperience`, and can therefore bank points and spend them. And the
+   * conclusion is about `parkForClassChoice` while the question is about
+   * `barrier.noteCommand` — whose own doctrine is *"someone who is at the
+   * keyboard trying things is present, and that is the only thing Standing By is
+   * measuring"*, and which `submitIntent`, `commit`, `respawn` and every `party`
+   * verb all call.
+   *
+   * SO `notePresence` IS CALLED, ON A SUCCESSFUL SPEND. Consider the straggler:
+   * Ren levels mid-fight, opens the panel and reads four current->next diffs to
+   * decide where the point goes — call it 45 seconds. The 20s Bell rings and
+   * auto-passes her; a turn later it rings again and `expire` sets
+   * `standingBy = true`, which takes her out of the quorum entirely and
+   * auto-holds her with NO Bell delay for the rest of the fight. Meanwhile the
+   * server has received two `spend_point` frames from her, each requiring a
+   * deliberate press on a `+` button — the strongest presence evidence in the
+   * protocol short of a turn verb. (Contrast `inspect`, which the client fires
+   * automatically on pointer settle and genuinely is not evidence of a human;
+   * that is why it does not carry this call.)
+   *
+   * IT DOES NOT RESTART THE BELL, and that is correct rather than a compromise:
+   * the Bell's key is the blocking set, and a spend does not change who owes a
+   * turn. Ren rejoins the quorum without buying herself a second of extra time.
+   *
+   * AFTER THE SPEND SUCCEEDS, not before. A refused frame is somebody's client
+   * misbehaving or a stale button, and the six guards below are the definition
+   * of "this was a real press".
+   */
+  const handleSpendPoint = (session: Session, msg: ClientSpendPoint): void => {
+    // A NARROWING, NOT A GATE — the dispatch switch sits below the `helloDone`
+    // check, so this branch is unreachable without an actor. The compiler still
+    // needs the null gone, and answering honestly beats a non-null assertion.
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before spending a point');
+      return;
+    }
+
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+    if (!body.alive) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'spend refused: you are on the floor — get back on your feet first',
+      );
+      return;
+    }
+    if (body.kind !== 'player') {
+      sendError(session.socket, ErrorCode.Internal, 'that body cannot hold talent points');
+      return;
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * NOT WHILE A CLASS CHOICE IS OUTSTANDING. THE POINT WOULD BE DESTROYED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `handleChooseClass` ends in `engine.attachClass`, whose seam finishes with
+     * an unconditional `sheets.set` of a FRESH sheet — every talent back to rank
+     * 1 — and it credits nothing back to `unspentPoints`. So a point spent while
+     * the picker is still owed is spent twice over: the rank it bought is
+     * overwritten, and the point was already deducted.
+     *
+     * THIS IS REACHABLE FOR THE WHOLE SESSION, NOT JUST AT THE PICKER.
+     * `classChoiceOwed` is cleared only by answering, and `unparkOnCommand`
+     * deliberately releases the park while LEAVING the id in the set precisely so
+     * a player can start playing before finishing the paperwork. Such a body has
+     * a real rotation class, a real loadout, a real sheet, and is a full party
+     * member for `awardExperience` — so it genuinely banks points.
+     *
+     * A SERVER GATE, NOT A CLIENT ONE. The shipped client cannot send this — its
+     * input gates all return early while `classOptions !== null` — but
+     * CLAUDE.md's non-negotiable is "never trust the client", and this handler's
+     * own docblock assumed the state was unreachable for a reason that is false.
+     * One line makes the client's gate structural instead of incidental.
+     *
+     * `NotYourTurn`, WITH THE SERVER'S OWN SENTENCE, on the "not now, and the
+     * offer stands" shape the `!alive` branch above already uses. It is not a
+     * malformed frame and it is not a permanent no.
+     */
+    if (classChoiceOwed.has(actorId)) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'spend refused: choose a class before spending points',
+      );
+      return;
+    }
+
+    // THE REGISTRY'S ANSWER, THROUGH THIS BODY'S OWN SHEET. Never the string.
+    const talent = engine.loadoutOf(actorId).find((entry) => entry.id === msg.talentId);
+    if (talent === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'no such talent in this loadout');
+      return;
+    }
+    if (talent.level >= talent.maxLevel) {
+      sendError(
+        session.socket,
+        ErrorCode.BadMessage,
+        `${talent.name} is already at ${talent.maxLevel}`,
+      );
+      return;
+    }
+    if (body.unspentPoints <= 0) {
+      sendError(session.socket, ErrorCode.BadMessage, 'no talent points in hand');
+      return;
+    }
+
+    // ═══ THE WRITE, AND THE FALLIBLE HALF GOES FIRST ═══
+    // `raiseTalentPoint` is the injected seam (src/server/main.ts) because the
+    // sheet lives behind a boundary this file may not cross. It answers null
+    // for a build with no talent engine and for a sheet that does not have this
+    // talent — and because it is called BEFORE the point is deducted, that
+    // answer costs the player nothing. Doing it the other way round would spend
+    // a point on a rank that never happened.
+    const raised = engine.raiseTalentPoint?.(actorId, talent.id);
+    if (raised === undefined || raised === null) {
+      sendError(session.socket, ErrorCode.Internal, 'talent points are not wired into this build');
+      return;
+    }
+    body.unspentPoints -= 1;
+
+    // ═══ AND THE BARRIER IS TOLD SOMEBODY IS THERE ═══
+    // See this handler's docblock. Clears Standing By without restarting the
+    // Bell, so a player who spent forty-five seconds reading a current->next
+    // diff rejoins the quorum instead of being auto-held out of the fight —
+    // while the party waits not one second longer than it already was.
+    engine.notePresence?.(actorId);
+
+    // ═══ BOTH FRAMES, AND BOTH ARE STALE WITHOUT THE OTHER ═══
+    // `sendLoadout` carries no once-guard — it is sent once per connection only
+    // because that is a property of the CALL SITE in `hello` — so calling it
+    // again replaces the client's bar wholesale, which is exactly what the frame
+    // is shaped for. It has to be resent: `range` is per-actor from v9 and
+    // `desc`/`descNext` are the current->next diff, so all three are wrong the
+    // instant a rank changes.
+    sendLoadout(session);
+    // And the readout, because the point that was in hand is not any more.
+    sendProgress(session);
+
+    app.log.info(
+      { actorId, talentId: talent.id, level: raised, unspent: body.unspentPoints },
+      'talent point spent',
+    );
+
+    // ═══ IMMEDIATE, NOT THE 5s DEBOUNCE ═══
+    // The same argument `handleChooseClass` makes: a spend is irreversible and
+    // there is no way to re-derive it, so it must be on disk before the next
+    // thing that changes it is. The debounced path is worse than merely late
+    // here — `SaveStore.scheduleCharacter` holds its snapshot BY REFERENCE
+    // (persist/saves.ts), so a queued save is a promise about an object that is
+    // still moving, and `snapshotPlayers` builds a fresh `CharacterFile` on
+    // every call precisely so that neither path can file a half-written state.
+    saveNow('spend');
+  };
+
+  /**
    * `revive` — stand the ally in `dir` back up.
    *
    * The gateway decides NOTHING here, exactly as with `talent`: adjacency,
@@ -4034,6 +4792,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       case 'choose_class':
         handleChooseClass(session, msg);
         return;
+      // ALSO NON-PUMPING, and it is the third member of this group rather than
+      // an exception to it: a spend costs no energy, queues no intent and draws
+      // no RNG, so — in the group's own words — a frame that costs the sender
+      // nothing must not be a way to make the server advance the world.
+      //
+      // THAT IS ALSO HALF THE BARRIER ANSWER. Reading the panel never reaches
+      // the server at all and spending never advances the world, so neither can
+      // stall it. Nothing is parked and no `unparkOnCommand` is wired: the panel
+      // is not a modal, so there is no quorum problem to solve. See
+      // `handleSpendPoint`, where the reason there is no park is written out in
+      // full for the next person who goes looking for one.
+      case 'spend_point':
+        handleSpendPoint(session, msg);
+        return;
       case 'revive':
         handleRevive(session, msg);
         return;
@@ -4087,6 +4859,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       alive: true,
       viewerKey: null,
       partyKey: null,
+      progressKey: null,
       // A FULL BUCKET on connect, deliberately: the first thing a reconnecting
       // client does is replay a second's worth of frames, and starting it empty
       // would throttle exactly the case the resume path exists to make smooth.

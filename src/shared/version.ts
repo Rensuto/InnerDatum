@@ -195,8 +195,74 @@
  * to file. Both are already rendered by every shipped client, and this file
  * records at 2 -> 3 that a new `ErrorCode` independently forces a bump; reusing
  * two existing ones keeps the bump argument down to the single reason above.
+ *
+ * 8 -> 9 (LEVELS, AND THE PANEL THAT SPENDS THEM). The envelope gained
+ * `spend_point` inbound and `progress` outbound, and `LoadoutTalent` grew
+ * `level`, `maxLevel`, `desc` and `descNext`. NEITHER ADDITION FORCES THIS BUMP,
+ * and it is worth saying so first: by the rule this file has used since 2 -> 3,
+ * an inbound verb an old client never sends costs it nothing (`respawn` set that
+ * precedent at v5 without moving the number) and an outbound frame it cannot
+ * name is one it ignores. `LoadoutMsg` also stopped being a once-at-welcome
+ * frame and became re-sendable mid-session, which forces nothing either — its
+ * own docblock has always specified wholesale replacement and every shipped
+ * client already implements it that way.
+ *
+ * THE FORCING SHAPE IS AN EXISTING FIELD NARROWING. The same shape as 1 -> 2's
+ * `left`, 4 -> 5's `alive === false` and 5 -> 6's `TurnMsg` roster, and the same
+ * silent failure all four times: not a client with less UI, a client that keeps
+ * running while confidently drawing a game that is no longer true.
+ *
+ *   `LoadoutTalent.range` STOPPED BEING A CONSTANT OF THE CLASS AND BECAME A
+ *   FACT ABOUT ONE ACTOR. It used to be `talent.targeting.range` — one authored
+ *   number, identical on every Inspector's wire, and a v8 client is entitled to
+ *   cache it forever because it never changed. From v9 it is
+ *   `effectiveTalentRange(targeting, talentLevel)`, and Fog Step is the talent
+ *   that breaks the old reading: its ONLY number is its range, and it scales
+ *   3/4/5/6/7 across its five ranks on its own cited upstream curve
+ *   (`combatTalentLimit(t, 10, 3, 7)`, mobility.lua:40-62). A v8 client that
+ *   read the field once at `welcome` draws a THREE-tile ring around a talent
+ *   that now reaches six, and its targeting mode refuses the tiles the player
+ *   bought — so three spent points do visibly nothing, and the failure is on
+ *   the client, in a game whose server has already agreed to the longer step.
+ *   The ring is documented as a convenience and never a gate; this is the ring
+ *   being convenient in the wrong direction.
+ *
+ *   AND THE HOTBAR HAS NO FIELD IN WHICH TO SHOW A RANK. That half is a missing
+ *   ADDITION rather than a narrowing, so on its own it would not force this —
+ *   but it is what turns the narrowing above from a rendering bug into a lie
+ *   about the whole feature. A v8 client draws a level-4 talent exactly as it
+ *   draws a level-1 one: no `n/max` under the icon, no current -> next diff, no
+ *   panel. A player on a stale bundle spends eleven points into a screen that
+ *   never changes, which is precisely the trap this milestone exists to avoid —
+ *   a talent level that changes nothing is worse than no talent level at all.
+ *
+ * TWO SHAPES WERE DELIBERATELY AVOIDED, and naming them is how this entry keeps
+ * its argument down to the one reason above — the same discipline 7 -> 8 used.
+ *
+ *   NO NEW `TurnEvent` VARIANT. A level-up narrates as an ordinary Record `log`
+ *   line, not as a fourteenth member of the event union. This file records at
+ *   2 -> 3 and 3 -> 4 that a new variant independently forces a bump, because
+ *   events arrive INSIDE a batched `sweep` and an old client drops the ones it
+ *   cannot name — and a level-up is exactly the kind of thing that would be
+ *   dropped on the floor mid-monster-turn. A `log` line is a frame every client
+ *   since v4 already renders, so the narration survives.
+ *
+ *   NO NEW `ErrorCode` MEMBER. A `spend_point` naming a talent that is unknown,
+ *   not learned, or already at its cap is `bad_message`, and one from a player
+ *   with no points in hand is `bad_message` too; where the existing turn gate
+ *   applies, it is `not_your_turn`. Both codes are already rendered by every
+ *   shipped client. A `no_points` member would have been clearer to read in a
+ *   log and would have forced this bump a second time over for a refusal the
+ *   panel already prevents by greying the `+`, which is the same trade v8 made.
+ *
+ * `SCHEMA_VERSION` DOES NOT MOVE WITH THIS, and the two were considered
+ * separately rather than bumped together out of habit. The persisted character
+ * gains OPTIONAL fields only — level, xp and the RAW per-talent points — and
+ * docs/data-schemas.md:48-49 says an optional field needs no bump. Bumping it
+ * would make an older build QUARANTINE a friend's character rather than merely
+ * drop a level from it, and this game has no permadeath.
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

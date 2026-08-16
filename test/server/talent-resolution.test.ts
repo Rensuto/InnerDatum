@@ -13,7 +13,10 @@ import { MELEE_REACH } from '../../src/server/engine/combat.ts';
 import { Refusal, submitIntent } from '../../src/server/engine/scheduler.ts';
 import {
   FOCUS_ON_HELD_GROUND,
+  TalentEffect,
   TalentRefusal,
+  markMultiplier,
+  resolveGuardCounter,
   talentId,
   useTalent,
 } from '../../src/server/engine/talents.ts';
@@ -22,7 +25,7 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { TalentShape, TileCode } from '../../src/shared/protocol.ts';
 import type { EngineActor } from '../../src/server/engine/actor.ts';
 import type { TalentResolutionResult } from '../../src/server/engine/scheduler.ts';
-import type { TalentEngine, TalentSheet } from '../../src/server/engine/talents.ts';
+import type { GuardCounter, TalentEngine, TalentSheet } from '../../src/server/engine/talents.ts';
 import type { TalentRuntime } from '../../src/server/turn-engine.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import type { World } from '../../src/server/world/world.ts';
@@ -97,6 +100,12 @@ function runtimeFor(talents: TalentEngine, world: World): TalentRuntime {
     },
     noteKill: (actorId: string): void => talents.noteKill(actorId),
     noteStruck: (actorId: string): void => talents.noteStruck(actorId),
+    // THE TWO THAT MAKE A RANK VISIBLE ON THE BASIC SWING. Forwarded exactly as
+    // `talentRuntimeFor` (src/server/main.ts) forwards them, because this
+    // fixture's whole purpose is to be that adapter.
+    markMultiplier: (targetId: string): number => markMultiplier(talents, targetId),
+    guardCounter: (attackerId: string, victimId: string): GuardCounter | null =>
+      resolveGuardCounter({ engine: talents, world, rng: world.rng }, attackerId, victimId),
     forget: (actorId: string): void => talents.forget(actorId),
   };
 }
@@ -676,5 +685,198 @@ describe('the base-clock pass', () => {
 
     expect(table.talents.sheetOf('p1')).toBeUndefined();
     expect(table.world.getActor('p1')).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// The two seams that make a rank visible on the BASIC SWING
+// ===========================================================================
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A TALENT WHOSE LEVEL CHANGES NOTHING IS A LIE IN THE UI.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Both of these seams existed as exported engine functions with NO PRODUCTION
+ * CALLER, for as long as the scheduler had no way to reach them:
+ *
+ *   `markMultiplier`      was folded into `talentAttack`/`talentProject` only,
+ *                         so Sigil's whole scaled number (15% -> 30%) moved
+ *                         nothing on the WEAPON SWING — the party's free,
+ *                         at-will, most-used damage — while sigil.ts's
+ *                         `describe` promised "everyone — not just you — deals
+ *                         +N% damage to it".
+ *   `resolveGuardCounter` had ZERO call sites in `src/`, while iron_curtain.ts's
+ *                         `describe` advertised its per-rank counter curve
+ *                         (0.7 -> 1.2) in the panel's current->next diff.
+ *
+ * Both are wired through `TalentResolution` now. These tests drive the REAL
+ * scheduler through the REAL adapter and measure HIT POINTS — never the engine
+ * helpers directly, which is precisely what let the old tests stay green while
+ * the functions were unreachable from play.
+ */
+describe('the basic swing carries the mark — Sigil off the hotbar', () => {
+  /**
+   * One BUMP attack against the husk, with an optional mark already on it.
+   *
+   * Walking into it IS the attack, and that is the case worth measuring:
+   * `strike` serves both `IntentKind.Attack` and the move bump, so folding the
+   * mark in there covers what the party actually spends its turns doing.
+   *
+   * Same seed and same construction both ways, so the draw stream is identical
+   * and any difference in the result is the mark and nothing else.
+   */
+  const bumpDamage = (seed: string, markPower: number | null): number => {
+    const table = scene(seed);
+    // A WEAPON THAT ALWAYS LANDS. A miss reports 0 damage, and a test that
+    // compared 0 against 0 would pass for the wrong reason — which is the exact
+    // failure mode this whole file exists to catch.
+    const ren = table.world.getActor('p1');
+    if (ren !== undefined) ren.combat = { ...ren.combat, mods: { atk: 200 } };
+    if (markPower !== null) {
+      table.talents.addEffect('m_husk', {
+        kind: TalentEffect.Marked,
+        // WHO PAINTED IT. Ren stands in for the Inspector here: the mark is a
+        // fact about the TARGET and `markMultiplier` never reads this field, so
+        // any live id is honest — but the type requires one, because a Guarding
+        // instance genuinely needs it.
+        otherId: 'p1',
+        turns: 4,
+        power: markPower,
+      });
+    }
+    const before = table.world.getActor('m_husk')?.hp ?? 0;
+    expect(
+      submitIntent(table.world, table.engine.barrier, 'p1', { kind: IntentKind.Move, dir: 'e' }),
+    ).toBe(true);
+    table.engine.pump();
+    return before - (table.world.getActor('m_husk')?.hp ?? 0);
+  };
+
+  it('an unmarked bump is byte-identical to a zero-power one', () => {
+    // THE REGRESSION GUARD, and the reason `strike` OMITS the `mult` key at 1
+    // rather than passing 1: `applyDamage` guards on `spec.mult !== undefined`,
+    // and replay-from-seed needs the pipeline to take the same BRANCH rather
+    // than to multiply by an identity and argue about floats.
+    expect(bumpDamage('mark-none', null)).toBe(bumpDamage('mark-none', 0));
+  });
+
+  it('a marked husk takes MORE from the same bump, and more again at a higher rank', () => {
+    const plain = bumpDamage('mark-scale', null);
+    const rank1 = bumpDamage('mark-scale', 15);
+    const rank5 = bumpDamage('mark-scale', 30);
+
+    expect(plain).toBeGreaterThan(0);
+    // 15 and 30 are Sigil's own rank-1 and rank-5 `markPower` endpoints.
+    expect(rank1).toBeGreaterThan(plain);
+    expect(rank5).toBeGreaterThan(rank1);
+    // And the STEP is the mark's, not noise: the same blow, +15% and +30%.
+    expect(rank1).toBeCloseTo(plain * 1.15, 6);
+    expect(rank5).toBeCloseTo(plain * 1.3, 6);
+  });
+});
+
+describe('a guarded body strikes back — Iron Curtain off the hotbar', () => {
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE GUARD IS INSTALLED ON A MONSTER, DELIBERATELY, AND IT PROVES MORE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `resolveGuardCounter` knows nothing about Iron Curtain — it may not, or
+   * engine/talents.ts learns the string `talent:iron_curtain` and the registry
+   * cycle closes. It matches on the `Guarding` EFFECT and on `isEnemy`, and on
+   * nothing else. Putting the guard on a monster therefore exercises the
+   * identical code path while letting the PLAYER throw the blow that triggers
+   * it, which is deterministic and needs no AI turn to line up.
+   *
+   * test/server/talents.test.ts already pins the Watchman-guards-Inspector
+   * direction of the function itself. What was never pinned — and what was
+   * broken — is that the SCHEDULER calls it at all.
+   */
+  const withWarden = (seed: string, at: TileXY, power = 0.7): Scene => {
+    const table = scene(seed);
+    // Ren always lands, so that "no counter" can never be "Ren missed and there
+    // was nothing to punish". The warden below always lands for the matching
+    // reason: the counter is `talentAttack`, which rolls to hit like anything
+    // else, and a missed counter and an unwired counter look identical.
+    const ren = table.world.getActor('p1');
+    if (ren !== undefined) ren.combat = { ...ren.combat, mods: { atk: 200 } };
+    const warden = table.world.addMonster('m_guard', {
+      name: 'Index Warden',
+      sprite: HUSK_SPRITE,
+      x: at.x,
+      y: at.y,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 200,
+    });
+    warden.combat = { ...warden.combat, range: MELEE_REACH };
+    table.talents.addEffect('m_guard', {
+      kind: TalentEffect.Guarding,
+      otherId: 'm_husk',
+      turns: 5,
+      // Iron Curtain's counter multiplier, snapshotted onto the effect at cast
+      // time — the ONLY channel by which the talent's rank can reach a counter
+      // the scheduler triggers. 0.7 is rank 1 and 1.2 is rank 5.
+      power,
+    });
+    warden.combat = { ...warden.combat, mods: { atk: 200 } };
+    return table;
+  };
+
+  /** Ren swings at the guarded husk and the pump resolves. Her hp loss is the answer. */
+  const renLoses = (table: Scene): number => {
+    const before = table.world.getActor('p1')?.hp ?? 0;
+    expect(
+      submitIntent(table.world, table.engine.barrier, 'p1', {
+        kind: IntentKind.Attack,
+        targetId: 'm_husk',
+      }),
+    ).toBe(true);
+    table.engine.pump();
+    return before - (table.world.getActor('p1')?.hp ?? 0);
+  };
+
+  /**
+   * THE CONTROL. The same pump WITHOUT a warden anywhere.
+   *
+   * It is not zero, and that is why it has to exist: the pump runs the husk's
+   * own turn too, and the husk swings back. Every assertion below is against
+   * this number rather than against 0, so "she took damage" can never be
+   * satisfied by the blow she was always going to take.
+   */
+  const baseline = (seed: string): number => {
+    const table = scene(seed);
+    const ren = table.world.getActor('p1');
+    if (ren !== undefined) ren.combat = { ...ren.combat, mods: { atk: 200 } };
+    return renLoses(table);
+  };
+
+  it('the scheduler fires the counter when a blow lands on a guarded body', () => {
+    // REN TAKES DAMAGE SHE WAS NEVER SWUNG AT, over and above the husk's own
+    // reply. Both worlds share a seed and a construction order, so the extra is
+    // the counter and nothing else.
+    const plain = baseline('counter-wired');
+    expect(renLoses(withWarden('counter-wired', { x: 10, y: 11 }))).toBeGreaterThan(plain);
+  });
+
+  it('does not counter from across the room — the reach guard survives the wiring', () => {
+    // Four tiles off. `resolveGuardCounter` measures CHEBYSHEV against the
+    // guardian's own `attackRange`, so this one cannot punish anybody — and a
+    // counter that ignored reach would be a free hit from anywhere on the floor.
+    const plain = baseline('counter-reach');
+    expect(renLoses(withWarden('counter-reach', { x: 14, y: 14 }))).toBe(plain);
+  });
+
+  it('counters HARDER at a higher rank, all the way through the scheduler', () => {
+    // The panel diffs 0.7 -> 1.2 across Iron Curtain's five ranks. This is the
+    // end-to-end proof that the number a player reads is the number that lands:
+    // the effect's `power` is the only thing that differs between these two
+    // worlds, and it reaches `talentAttack` through the seam.
+    const low = withWarden('counter-rank', { x: 10, y: 11 }, 0.7);
+    const high = withWarden('counter-rank', { x: 10, y: 11 }, 1.2);
+
+    const atRank1 = renLoses(low);
+    expect(atRank1).toBeGreaterThan(baseline('counter-rank'));
+    expect(renLoses(high)).toBeGreaterThan(atRank1);
   });
 });

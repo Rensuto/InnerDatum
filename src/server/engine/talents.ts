@@ -72,15 +72,34 @@
  * second copy of a combat formula.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * WHAT IS DELIBERATELY NOT HERE
+ * TALENT POINTS ARE HERE NOW. TREES AND MASTERY ARE NOT, AND WILL NOT BE.
  * ───────────────────────────────────────────────────────────────────────────
- *  - TREES, TALENT POINTS, MASTERY, LEVELLING. PLAN.md § 5 caps MVP at 12
- *    talents / 0 trees / 0 points / fixed loadouts; M6 owns progression. With
- *    no points there is no curve to walk, so all twelve use the multipliers
- *    AUTHORED in `content/skills/*.json` — game-design.md § 2 says values in
- *    brackets are "the authored source numbers, ported verbatim", and 0.8 /
- *    1.65 / 1.3 are exactly those. `MVP_TALENT_LEVEL` and the ToME scaling
- *    helpers below are the seam for the day points land.
+ * The cap this docblock used to describe ("0 trees / 0 points / fixed
+ * loadouts") is LIFTED. `TalentSheet.points` holds one RAW point count per
+ * talent, 1..5, seeded at 1 for every loadout id, and `useTalent` computes
+ * `ctx.talentLevel` once and hands it to the body. All twelve talents walk a
+ * `combatTalentScale(level, low, high)` curve whose `low` is EXACTLY the number
+ * they shipped with, so nothing was re-based when the levels landed and every
+ * `NUMBERS:` citation in src/server/talents/ is still true verbatim at level 1.
+ *
+ * What is still deliberately absent, with the reason each:
+ *
+ *  - TREES. `Talent` has no category, no tier and no prerequisite field, and
+ *    `ClassDef.loadout` is exactly four talents enforced at import time. A
+ *    "tree" here would be one category holding four nodes with no edges — a
+ *    list wearing chrome. DECISIONS.md (d) settles it; ToME itself ships the
+ *    degenerate case (LevelupDialog.lua:737-755 builds a one-node
+ *    `TalentTrees` with `no_cross = true` for the stat column).
+ *  - MASTERY. ActorTalents.lua:824-834 multiplies raw points by a per-class,
+ *    per-TREE mastery so that a Berserker's 2h tree outranks an Arcane Blade's.
+ *    We have four talents per class and no shared trees, so there is nothing to
+ *    differentiate. Dropping it is what makes effective level == raw level,
+ *    1..5 — see `getTalentLevel`.
+ *  - LEVEL, XP AND UNSPENT POINTS. Those live on `PlayerActor`, not here. The
+ *    save layer cannot reach the talent engine (`PlayerActor.classId`'s own
+ *    docblock, engine/actor.ts, makes exactly that argument for exactly that
+ *    reason), so the sheet owns RAW POINTS ONLY and the actor owns the ledger.
+ *    Two owners for one number is how they disagree.
  *  - SUSTAINS. `mode: 'sustained'` needs cooldown-on-DEACTIVATE
  *    (docs/tome-mechanics.md § 9) and a passive-value stack. None of the twelve
  *    is a sustain.
@@ -277,25 +296,54 @@ export function tomeCooldownToTurns(tomeCooldown: number): number {
 }
 
 /**
- * The effective talent level every MVP talent resolves at.
+ * The talent level a MONSTER's ability resolves at. Not a player's.
  *
- * MVP has fixed loadouts and no talent points, so this is a constant rather
- * than a lookup. It is pinned at 1 and NOT at 5 because the ToME curves are
- * fitted with `y(1) = low`, and pretending a level-1 character has a
- * fully-trained talent would make the first playtest read as an easy game.
+ * ═══ IT WAS CALLED `MVP_TALENT_LEVEL` AND THE RENAME IS THE POINT ═══
+ * Players now carry real per-talent points (`TalentSheet.points`), so "the
+ * level everything resolves at" no longer exists as a concept. Monsters still
+ * have no sheet and no points — src/server/content/monsters.ts derives an
+ * orb's damage from `combatTalentSpellDamage(power, THIS, 15, 240)` — so the
+ * constant survives, narrowed to the one population it is still true for. A
+ * player level and a monster level sharing one symbol would mean the day
+ * monsters gain ranks, raising theirs silently raises everybody's.
  *
- * ═══ IT IS STILL PASSED THROUGH THE CURVES ═══
- * Every helper that takes a talent level takes THIS, rather than the curve
- * being collapsed to its `low` endpoint by hand. When M6 adds points, the call
- * sites already have the right shape and the numbers move on the right curve —
- * and `getTalentLevel` (ActorTalents.lua:824-826) multiplies raw points by
- * category mastery, so the value is NOT clamped at 5 when it lands.
+ * The docblock this replaced also claimed that "every helper that takes a
+ * talent level takes THIS". That was already false before points landed:
+ * `grep -rn MVP_TALENT_LEVEL src/server/talents/` found nothing, because all
+ * twelve had their curves collapsed to the `low` endpoint by hand. They are
+ * un-collapsed now and read `ctx.talentLevel`, which is never this constant.
  */
-export const MVP_TALENT_LEVEL = 1;
+export const MONSTER_TALENT_LEVEL = 1;
 
 // ---------------------------------------------------------------------------
 // Talent-level damage helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HELPER THE CITATIONS NAME IS NOT THE HELPER THE TWELVE CALL, ON PURPOSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Several of the twelve cite `combatTalentWeaponDamage` in their own headers
+ * (sniper_mark.ts:5-8 quotes `combatTalentWeaponDamage(t, 1.7, 3.5)` straight
+ * out of sniper.lua:260-289). Every one of them nevertheless calls
+ * `combatTalentScale`, and the reason is arithmetic rather than preference:
+ *
+ *     combatTalentScale(1, low, high)          === low       EXACTLY
+ *     combatTalentWeaponDamage(1, 1.65, 3.5)   === 2.4773…
+ *
+ * `combatTalentScale` is fitted with xLow = 1 (scale.ts:182-208), so level 1
+ * returns the `low` endpoint to the bit. `combatTalentWeaponDamage` is
+ * `base + (max-base)·sqrt(tl/5)`, which at tl = 1 is 45% of the way up the
+ * curve already. Adopting the helper the citation names would have silently
+ * re-based EVERY shipped number — Sniper's Mark off its authored 1.65, the
+ * Watchman's swing off 1.0 — and broken the level-1 assertions in
+ * test/server/talents.test.ts, which are the cheapest proof that the
+ * un-collapse changed nothing.
+ *
+ * So: SHAPE and HIGH may come from the Lua; LOW is whatever the file already
+ * shipped; and the helper is the one whose y(1) is that LOW. Each of the twelve
+ * says which is which next to its own pair.
+ */
 
 /**
  * `combatTalentSpellDamage` — Combat.lua:1774-1779.
@@ -494,7 +542,24 @@ export type TalentEffectInstance = {
   readonly otherId: string;
   /** GAME TURNS remaining. Decremented in `talentActBase`, never in `act`. */
   turns: number;
-  /** Magnitude, where the effect has one. Marked's bonus, in percent. */
+  /**
+   * Magnitude, where the effect has one. SNAPSHOT AT CAST TIME AND `readonly`
+   * — the number the caster had when the effect landed, not the number they
+   * have now. That is what lets a talent level move without retroactively
+   * changing a mark that is already burning on a monster.
+   *
+   * ═══ THE UNITS ARE PER-KIND, AND THERE ARE TWO ═══
+   *   Marked   — PERCENT extra damage the target takes. `markMultiplier` turns
+   *              it into `1 + power/100`.
+   *   Guarding — the counter-swing's weapon-damage MULTIPLIER, read straight by
+   *              `resolveGuardCounter`. Not a percent; 0.7 means 70%.
+   *   Taunted  — unused, written as 0.
+   *
+   * Two units on one field is a real wart. It is preferred to a second field
+   * that is `undefined` for two kinds out of three, and to a discriminated
+   * union that M4's `EffectDef` would have to absorb anyway — the whole reason
+   * this table is shaped like `EffectDef` is so M4 can adopt it by MOVING it.
+   */
   readonly power: number;
 };
 
@@ -590,8 +655,35 @@ export type TalentCost = {
 
 export type TalentTargeting = {
   readonly shape: TargetShape;
-  /** Tiles, EUCLIDEAN (`core.fov.distance`) — see combat.ts's note on metrics. */
+  /**
+   * Tiles, EUCLIDEAN (`core.fov.distance`) — see combat.ts's note on metrics.
+   *
+   * THE LEVEL-1 RANGE when `rangeAt` is present. Read it through
+   * `effectiveTalentRange`, never directly, or Fog Step is gated at 3 tiles for
+   * a character who bought it up to 7.
+   */
   readonly range: number;
+  /**
+   * OPTIONAL PER-ACTOR RANGE — the one talent number that is not damage.
+   *
+   * Fog Step's whole content is its distance, so its level has to move that or
+   * its level is cosmetic (`combatTalentLimit(t, 10, 3, 7)`, mobility.lua:40-62,
+   * floored: 3/4/5/6/7, one tile per level with no dead rank). Every other
+   * talent omits this and its range is frozen — see each file's own argument.
+   *
+   * ═══ WHY A FUNCTION ON THE TALENT AND NOT A TABLE IN THE ENGINE ═══
+   * The registry-cycle rule below (`Talent`'s docblock) is that engine/talents.ts
+   * must never import the talent files, and it must therefore never learn the
+   * string `talent:fog_step` either — a lookup table keyed by id would be that
+   * knowledge smuggled in as data. A closure the talent supplies keeps the
+   * curve in the file that cites it, which is also the file a balance pass
+   * opens.
+   *
+   * `canUseTalent` resolves it before `checkTargeting`; view/projector.ts is
+   * the other caller, so the number the client draws its ring at is the number
+   * the server refuses against.
+   */
+  readonly rangeAt?: (talentLevel: number) => number;
   /**
    * The dead zone. Closer than this and the talent is REFUSED, never missed.
    *
@@ -615,12 +707,36 @@ export type TalentTarget = {
   readonly actorId?: string;
 };
 
-/** Everything a talent body is handed. One object, so signatures stay short. */
-export type TalentCtx = {
+/**
+ * What a CALLER of `useTalent` supplies. Notably NOT `talentLevel`.
+ *
+ * The level is not the caller's to know: `useTalent` reads the sheet anyway (it
+ * has to, to spend AP), the talent id is already in its hand, and computing the
+ * level in one place is what stops the scheduler, the GM console and a test
+ * fixture from each having their own opinion about what level somebody's talent
+ * is. src/server/main.ts's `talentRuntimeFor` passes exactly these three.
+ */
+export type TalentCallCtx = {
   readonly engine: TalentEngine;
   readonly world: TalentWorld;
   /** The world's seeded stream. Every draw carries a label. */
   readonly rng: Rng;
+};
+
+/**
+ * Everything a talent BODY is handed. One object, so signatures stay short.
+ *
+ * ═══ `talentLevel` IS THE WHOLE SEAM ═══
+ * It is computed ONCE, in `useTalent`, from the caster's sheet, and injected
+ * beside the recording world. That is deliberately the only way a body learns
+ * its rank: no talent needs to know its own id, none reaches for the sheet, and
+ * none can be resolved at a level nobody wrote down. A body that wants a scaled
+ * number writes `combatTalentScale(ctx.talentLevel, LOW, HIGH)` and nothing
+ * else.
+ */
+export type TalentCtx = TalentCallCtx & {
+  /** Effective talent level, 1..5 for a player. See `getTalentLevel`. */
+  readonly talentLevel: number;
 };
 
 /** One actor's slice of what a talent did. The Record log prints these. */
@@ -633,6 +749,24 @@ export type TalentHit = {
   readonly crit: boolean;
   readonly killed: boolean;
   readonly type: DamageType;
+};
+
+/**
+ * A GUARDED ALLY WAS STRUCK AND WHOEVER IS GUARDING THEM SWUNG BACK — the
+ * second half of the Watchman's Iron Curtain, and `resolveGuardCounter`'s answer.
+ *
+ * `guardianId` is carried BESIDE the hit rather than folded into it because
+ * `TalentHit` names only the VICTIM, and the whole point of a counter is that
+ * somebody other than the actor whose turn it is dealt the damage. Without this
+ * field the scheduler would have to either attribute the `attacked` event to the
+ * monster that got hit, or walk the guard table a second time to find out who
+ * swung — a second answer to a question this function has already answered.
+ */
+export type GuardCounter = {
+  /** Who swung. Always a live body with a `Guarding` effect naming the victim. */
+  readonly guardianId: string;
+  /** The swing, ALREADY APPLIED to the world by the time this is returned. */
+  readonly hit: TalentHit;
 };
 
 /** Why a talent never happened. NEVER a miss — a miss is `hit: false`. */
@@ -713,13 +847,26 @@ export type Talent = {
   /** THE body. Synchronous — targeting already arrived with the command. */
   readonly onUse: (ctx: TalentCtx, self: TalentActor, target: TalentTarget) => TalentOutcome;
   /**
-   * One line for the hotbar tooltip, rendered SERVER-SIDE.
+   * One line for the hotbar tooltip, rendered SERVER-SIDE, AT A GIVEN LEVEL.
    *
    * The client never computes a displayed number — eslint's
    * `NO_COMBAT_MATH_PATTERNS` blocks it from even importing the formulas, and a
    * second copy of a formula always diverges.
+   *
+   * ═══ THE `level` PARAMETER IS WHAT MAKES THE PANEL HONEST ═══
+   * Called twice per talent — `describe(self, level)` and
+   * `describe(self, level + 1)` — to produce the current→next diff that ToME's
+   * levelup dialog puts on screen (LevelupDialog.lua:963-970). That diff is the
+   * single most valuable thing on that screen, and it is only possible because
+   * both strings are rendered where the formulas live.
+   *
+   * EVERY IMPLEMENTATION MUST RENDER ITS SCALED NUMBER. A `describe` that
+   * ignores its rank shows a player a level that changes nothing, which is
+   * worse than showing no level at all. test/server/talent-scaling.test.ts
+   * asserts `describe(self, n) !== describe(self, n + 1)` for all twelve at
+   * every rank, so a talent added later without a curve fails there.
    */
-  readonly describe: (self: TalentActor) => string;
+  readonly describe: (self: TalentActor, level: number) => string;
 };
 
 // ---------------------------------------------------------------------------
@@ -757,16 +904,50 @@ export function createTalentRegistry(): TalentRegistry {
 // ---------------------------------------------------------------------------
 
 /**
- * A player's class state: the FIXED loadout, the resource pool and the
- * intra-turn budget.
+ * A player's class state: the loadout, the RAW talent points, the resource pool
+ * and the intra-turn budget.
  *
- * ZERO talent points and ZERO trees (PLAN.md § 5's hard cap). `loadout` is
- * exactly four ids, chosen at character creation and never edited, which is why
- * it is `readonly` — M6 is where it stops being.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SHEET OWNS RAW POINTS. IT DOES NOT OWN LEVEL, XP OR UNSPENT POINTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Those three live on `PlayerActor` (engine/actor.ts), for the reason that
+ * type's `classId` docblock already spells out at length: the SAVE LAYER CANNOT
+ * REACH THE TALENT ENGINE. src/server/persist/ knows about actors and not about
+ * sheets, so anything it must write down has to be on the actor. The split is
+ * therefore not a style choice — put `level` here as well and there are two
+ * fields called level, one of which is the one that got saved.
+ *
+ * Stated once, here, so neither side ever claims authority over the other's:
+ *
+ *     TalentSheet.points   RAW points per talent, 1..5. THIS IS THE TRUTH about
+ *                          what a talent does. Persisted verbatim.
+ *     PlayerActor.level    character level. PlayerActor.xp, per-level xp.
+ *     unspent              DERIVED, never stored:
+ *                          totalPointsAtLevel(level) - sum(points.values()).
+ *
+ * `loadout` stays `readonly`: progression DEEPENS the four rather than adding a
+ * fifth, so nothing appends to it. `ClassDef.loadout` is arity-checked at four
+ * at import time, and a fifth talent would be a content change, not a level-up.
  */
 export type TalentSheet = {
   readonly classId: ClassId;
   readonly loadout: readonly string[];
+  /**
+   * Namespaced talent id -> RAW points spent on it, 1..5.
+   *
+   * KEYED EXACTLY LIKE `actor.cooldowns` — `talent:<id>`, the registry key,
+   * which `projectCooldowns` already sends verbatim for the client to match
+   * against `LoadoutTalent.id`. A second keying convention here would produce a
+   * panel where the `+` button and the cooldown pip disagree about which
+   * talent they are on, two modules apart.
+   *
+   * MUTABLE (`Map`, not `ReadonlyMap`) because the spend path writes it. The
+   * CAP is not enforced here — `TALENT_MAX_LEVEL` belongs to the spend path,
+   * which is the only thing that hands out points; see src/shared/scale.ts's
+   * "NEVER CLAMP THE TALENT LEVEL AT 5" for why the curve deliberately does not
+   * clamp either.
+   */
+  readonly points: Map<string, number>;
   readonly resource: ResourcePool;
   ap: number;
   readonly maxAp: number;
@@ -786,12 +967,40 @@ export type TalentSheetInit = {
   readonly resource: ResourceKind;
   readonly maxAp: number;
   readonly maxMp: number;
+  /**
+   * A RESTORED point spread. Omit it for a fresh character.
+   *
+   * Present so that a save restore feeds THE SAME CONSTRUCTOR a new character
+   * does, rather than building a sheet and then mutating it into shape — two
+   * ways to make a sheet is two places for the seeding rule below to be
+   * forgotten, and the one that forgets it hands a loaded character talents at
+   * level 0.
+   */
+  readonly points?: ReadonlyMap<string, number>;
 };
 
+/**
+ * BIRTH GRANTS THE FOUR AT LEVEL 1, and that seeding is the whole birth grant.
+ *
+ * ToME's own pattern: data/birth/classes/warrior.lua:80-86 hands a fresh
+ * Berserker five talents outright, already learned, before a single point is
+ * spent. Ours hands four — `ClassDef.loadout` — and `pointsForLevel` therefore
+ * drops upstream's separate 2-point birth grant (Actor.lua:171), because these
+ * four ARE that gift, paid in talents instead of points. See
+ * src/shared/progression.ts for the budget arithmetic that falls out of it.
+ *
+ * Seeding at 1 rather than 0 is load-bearing in a way that is easy to miss:
+ * `combatTalentScale` maps tl <= 0 to 0.1 (scale.ts:191), so a talent at level
+ * 0 does not refuse — it resolves, quietly, for a fraction of its damage.
+ */
 export function createTalentSheet(init: TalentSheetInit): TalentSheet {
+  const points = new Map<string, number>();
+  for (const id of init.loadout) points.set(id, init.points?.get(id) ?? 1);
+
   return {
     classId: init.classId,
     loadout: [...init.loadout],
+    points,
     resource: createResourcePool(init.resource),
     ap: init.maxAp,
     maxAp: init.maxAp,
@@ -799,6 +1008,63 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
     maxMp: init.maxMp,
     movedThisTurn: false,
   };
+}
+
+/**
+ * The EFFECTIVE talent level — `getTalentLevel`, ActorTalents.lua:824-834.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MASTERY IS DELIBERATELY DROPPED, AND THAT IS WHY THIS IS ONE LINE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Upstream reads, VERBATIM, at ActorTalents.lua:834:
+ *
+ *     return t and (self:getTalentLevelRaw(id)) * ((self.talents_types_mastery[t.type[1]] or 0) + 1) or 0
+ *
+ * (This block used to carry a PARAPHRASE — `self:getTalentTypeMastery(...) or 1`
+ * — set in this file's verbatim-quote style. `getTalentTypeMastery` is a real
+ * function at ActorTalents.lua:849 and it is `(x or 0) + 1`, but `getTalentLevel`
+ * does not call it; it inlines the table read. A paraphrase indented as a quote
+ * is the one thing a reader cannot check by grepping.)
+ *
+ * The mastery figure is authored PER CLASS PER TREE at birth, and what is
+ * authored is a BONUS rather than a multiplier — warrior.lua:68 and :72 give a
+ * Berserker
+ *
+ *     ["technique/2hweapon-assault"]={true, 0.3},
+ *     ["technique/combat-training"]={true, 0.3},
+ *
+ * where `true` is "start with this tree open" and 0.3 is the bonus.
+ * Birther.lua:408 ACCUMULATES it (`talents_types_mastery[t] = (existing or 0) +
+ * mastery`, so two descriptors contributing to one tree add up) and the `+ 1`
+ * above is what turns 0.3 into a 1.3 multiplier at read time. The distinction
+ * matters for anybody restoring this: store multipliers where ToME stores
+ * additive bonuses and a second contributor multiplies instead of accumulating.
+ *
+ * (This block also used to name the tree `technique/2hweapon` — the real one is
+ * `technique/2hweapon-assault` — and to attribute 1.2 to combat-training, which
+ * is 0.3/1.3 like its neighbour. The 0.2 that would read as 1.2 belongs to
+ * `["technique/bloodthirst"]={false, 0.2}` at warrior.lua:76.)
+ *
+ * Mastery's entire job is to make the same talent, in the same tree, stronger
+ * for the class that specialises in it.
+ * We have FOUR talents per class and NO SHARED TREES: every talent is reachable
+ * from exactly one loadout (test/server/talents.test.ts pins the whole 3x12
+ * grid), so there is no second owner to differentiate against and a mastery
+ * table would be twelve rows of 1.0.
+ *
+ * WHAT DROPPING IT BUYS, and it is not just brevity: effective level == raw
+ * level == 1..5, which is EXACTLY the interval `combatTalentScale` is fitted
+ * over (xLow = 1, xHigh = 5, scale.ts:193-194). Nothing extrapolates, nothing
+ * clamps, and the "4/5" a player reads in the panel is the same integer the
+ * damage formula receives. With mastery, 4 raw points at 1.3 is talent level
+ * 5.2 and the UI has to either lie or explain itself.
+ *
+ * @returns 0 for a talent this sheet has no points in. NOT 1 — a caller that
+ *   gets 0 asked about something the actor does not have, and `canUseTalent`
+ *   answers `NotLearned` for exactly that case before anything reaches here.
+ */
+export function getTalentLevel(sheet: TalentSheet, id: string): number {
+  return sheet.points.get(id) ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1008,11 +1274,35 @@ function regenResource(
 // ---------------------------------------------------------------------------
 
 /**
+ * This talent's range FOR A CHARACTER OF THIS LEVEL, in tiles.
+ *
+ * One line, exported, because three places need the same answer and two of them
+ * are on opposite sides of the wire: `canUseTalent` refuses against it,
+ * view/projector.ts sends it as `LoadoutTalent.range` so the client's ring is
+ * drawn at it, and the submission gate in turn-engine.ts re-checks it. A talent
+ * whose range scales and whose ring does not is a player clicking a legal tile
+ * and being told no.
+ *
+ * Everything without a `rangeAt` returns its static `range` — which is eleven
+ * of the twelve, each of which argues its own frozen number in its own file.
+ */
+export function effectiveTalentRange(targeting: TalentTargeting, talentLevel: number): number {
+  return targeting.rangeAt === undefined ? targeting.range : targeting.rangeAt(talentLevel);
+}
+
+/**
  * Can this actor use this talent on this target, RIGHT NOW?
  *
- * Pure: it reads the world and mutates nothing. That is what lets the scheduler
- * call it at resolution time (the refund rule) and the projector call it to
- * grey out a hotbar slot, with no chance of the two disagreeing.
+ * PURE — it reads the world and the actor's SHEET, and mutates neither. That is
+ * what lets the scheduler call it at resolution time (the refund rule) and the
+ * projector call it to grey out a hotbar slot, with no chance of the two
+ * disagreeing.
+ *
+ * ("Reads the sheet" is not new; it has read it since the `NotLearned` check
+ * below, and the AP/MP/resource checks are three more reads. It is restated
+ * because the sheet now also carries the TALENT POINTS, and the range it
+ * resolves for Fog Step is therefore per-actor rather than per-talent — a
+ * caller holding a `Talent` alone can no longer reproduce this answer.)
  *
  * @returns the refusal, or `null` when it is legal.
  */
@@ -1036,15 +1326,27 @@ export function canUseTalent(
   if (sheet.mp < (cost.mp ?? 0)) return TalentRefusal.NoMp;
   if (!hasResource(sheet.resource, cost.resource ?? 0)) return TalentRefusal.NoResource;
 
-  return checkTargeting(actor, talent.targeting, target, world);
+  // The sheet is already in hand, so the level costs nothing to resolve here —
+  // and resolving it HERE rather than inside `checkTargeting` keeps that
+  // function a function of numbers, testable without an engine.
+  const range = effectiveTalentRange(talent.targeting, getTalentLevel(sheet, talent.id));
+  return checkTargeting(actor, talent.targeting, target, world, range);
 }
 
-/** Range, dead zone, line of sight, and who is standing there. */
+/**
+ * Range, dead zone, line of sight, and who is standing there.
+ *
+ * `range` arrives as a PARAMETER rather than being read off `targeting`,
+ * because it is per-actor for anything carrying a `rangeAt` and this function
+ * has no actor sheet to resolve it from. Passing the resolved number is what
+ * keeps the resolution in exactly one place (`effectiveTalentRange`).
+ */
 function checkTargeting(
   actor: TalentActor,
   targeting: TalentTargeting,
   target: TalentTarget,
   world: TalentWorld,
+  range: number,
 ): TalentRefusal | null {
   if (targeting.shape === TargetShape.Self) return null;
 
@@ -1052,7 +1354,7 @@ function checkTargeting(
   // A Chebyshev ring is a square that reaches 7.07 tiles into its corners, and
   // the targeting UI draws a circle (combat.ts documents the two metrics).
   const distance = combatDistance(actor, target);
-  if (distance > targeting.range) return TalentRefusal.OutOfRange;
+  if (distance > range) return TalentRefusal.OutOfRange;
 
   // THE DEAD ZONE. `<` not `<=`: minRange 3 means 3 is the closest LEGAL tile,
   // which is how the authored `min_range` reads and how the ring's hole is cut.
@@ -1182,7 +1484,7 @@ export function useTalent(
   actor: TalentActor,
   talentId: string,
   target: TalentTarget,
-  ctx: TalentCtx,
+  ctx: TalentCallCtx,
 ): TalentUseResult {
   const talent = engine.registry.get(talentId);
   if (talent === undefined) return { ok: false, reason: TalentRefusal.UnknownTalent };
@@ -1209,8 +1511,20 @@ export function useTalent(
   // is the only one that refuses after calling a mover, and it refuses on
   // `moved === 0`, which is precisely the case where nothing was recorded. If a
   // future talent breaks that, it has to grow an `Effect` of its own anyway.
+  //
+  // ═══ AND AT A LEVEL THE BODY DOES NOT HAVE TO GO LOOKING FOR ═══
+  // Computed here, once, from the sheet re-read three lines above. The
+  // alternative — every body calling `getTalentLevel(engine.sheetOf(self.id),
+  // <its own id>)` — would put the talent's own id inside the talent twice
+  // (once in `id`, once in the lookup) and give twelve files a chance to look
+  // up the wrong one. There is no observable level anywhere else: what a talent
+  // resolved at is what this line said.
   const recorded = new Map<string, ActorMove>();
-  const scoped: TalentCtx = { ...ctx, world: recordingWorld(ctx.world, recorded) };
+  const scoped: TalentCtx = {
+    ...ctx,
+    world: recordingWorld(ctx.world, recorded),
+    talentLevel: getTalentLevel(sheet, talent.id),
+  };
   const outcome = talent.onUse(scoped, actor, target);
   if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
@@ -1287,10 +1601,28 @@ export function withinTiles(a: TileXY, b: TileXY, tiles: number): boolean {
  * The extra damage multiplier a Marked target eats — the Inspector's Sigil made
  * mechanical.
  *
- * Every talent that deals damage folds this in, so the mark is LIVE for all
- * talent damage today. Basic bump attacks go through the scheduler's own strike
- * path and will pick it up when M3 wiring replaces that placeholder with
- * `attackTarget`; that is one call site, not a system.
+ * Every talent that deals damage folds this in (`talentAttack`, `talentProject`)
+ * and so does the BASIC WEAPON SWING — `strike` in engine/scheduler.ts reads it
+ * through the `TalentResolution.markMultiplier` seam and folds it into
+ * `AttackOpts.mult`. That covers both the `Attack` intent and the move bump,
+ * which are the same function.
+ *
+ * ═══ IT DID NOT, AND SIGIL'S PANEL WAS LYING ABOUT IT ═══
+ * This note used to end "basic bump attacks ... will pick it up when M3 wiring
+ * replaces that placeholder with `attackTarget`; that is one call site, not a
+ * system." The placeholder WAS replaced and the mark was not carried over, so
+ * for the whole of that build a marked husk took byte-identical damage from a
+ * bump at every rank of Sigil — while sigil.ts's `describe` promised "everyone —
+ * not just you — deals +N% damage to it" and the panel diffed that number
+ * per-rank. The party's free, at-will, most-used damage was the one thing the
+ * mark did not touch.
+ *
+ * ═══ WHAT IT STILL DOES NOT COVER, STATED RATHER THAN LEFT TO BE FOUND ═══
+ * A TRAVELLING ORB. `fire`/`stepProjectile` freeze the damage integer at the
+ * muzzle (ActorProject.lua:353 does the same) and the impact never re-enters
+ * `attackTarget`, so a mark applied while the orb is in flight does not touch
+ * it. That is a consequence of the frozen-at-fire rule rather than an oversight,
+ * and the only shooter in the game is a monster.
  */
 export function markMultiplier(engine: TalentEngine, targetId: string): number {
   const mark = engine.effectOn(targetId, TalentEffect.Marked);
@@ -1450,7 +1782,11 @@ export function actorsInShape(
  * already asked", not "let me shoot through a wall".
  */
 export function talentAttack(
-  ctx: TalentCtx,
+  // `TalentCallCtx`, not `TalentCtx`: this helper multiplies whatever `mult` it
+  // is handed and never asks what level produced it. Typing it at the narrower
+  // shape is what lets `resolveGuardCounter` — which has no talent and
+  // therefore no level — call it without inventing one.
+  ctx: TalentCallCtx,
   self: TalentActor,
   victim: TalentActor,
   opts: { readonly mult: number; readonly damtype?: DamageType; readonly critBonus?: number },
@@ -1504,7 +1840,8 @@ export function talentAttack(
  * armour in the game's history (damage.ts's `DamageSpec` doc says so).
  */
 export function talentProject(
-  ctx: TalentCtx,
+  // See `talentAttack` — the level is already folded into `mult` by the caller.
+  ctx: TalentCallCtx,
   self: TalentActor,
   victim: TalentActor,
   base: number,
@@ -1577,33 +1914,55 @@ export function pullAggro(
  * ally. This function is the other half: given a blow that just landed on
  * somebody, it finds whoever is guarding them and swings back.
  *
- * WIRING — ONE CALL SITE, and it is not in this module. The scheduler applies
- * monster damage in `strike` (engine/scheduler.ts, still the M2 placeholder).
- * When M3 wiring replaces that placeholder with `attackTarget`, the counter
- * goes in immediately after the hit lands:
+ * WIRING — IT IS WIRED, and the call site is not in this module. This docblock
+ * used to describe the wiring as future work ("when M3 wiring replaces that
+ * placeholder with `attackTarget`") and that description outlived the
+ * placeholder: `strike` was rewritten onto `attackTarget` and the counter line
+ * was never added, so this function shipped with ZERO production callers while
+ * iron_curtain.ts's `describe` advertised its per-rank curve in the talent
+ * panel. One of the two things a point in Iron Curtain bought could not be
+ * observed by any means.
  *
- * ```ts
- * const counter = resolveGuardCounter(talentCtx, attacker.id, target.id);
- * if (counter !== null) sink.sweep(gameTurn, { t: 'attack', id: guardian, … });
- * ```
+ * TODAY: `noteGuardCounter` (engine/scheduler.ts) calls this through the
+ * `TalentResolution.guardCounter` seam, from BOTH lanes, immediately after a
+ * landed weapon blow — and re-enters `noteBlows`/`noteCasualty` with the
+ * GUARDIAN as the killer, so a counter that finishes a husk pays the Watchman's
+ * reagent and his party's experience rather than the husk's.
  *
  * It lives here rather than there because the guard table lives here, and
- * because engine/scheduler.ts must be able to add the line without learning
- * what a talent is.
+ * because engine/scheduler.ts adds its line without learning what a talent is.
  *
  * TWO GUARDS: the counter needs REACH (you cannot punish something on the far
  * side of the room) and the guardian must be alive. Both are checked here so
  * the call site stays one line.
  *
- * @returns the counter-swing, or null when nobody was guarding.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MULTIPLIER COMES OFF THE EFFECT, NOT OFF A CONSTANT IN THIS FILE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * It used to be `GUARD_COUNTER_MULT = 0.7`, a module constant, which was fine
+ * while every Iron Curtain in the game was identical. It no longer is: the
+ * talent has a level, and a counter that ignored it would be the one part of
+ * Iron Curtain that a talent point did nothing to.
+ *
+ * So iron_curtain.ts SNAPSHOTS its scaled multiplier onto the `Guarding`
+ * instance's `power` at cast time, and this reads it back. `markMultiplier`
+ * (above) is the precedent — the mark's bonus has always ridden on `power` for
+ * exactly this reason, and a mark already burning does not change when the
+ * Inspector levels.
+ *
+ * ═══ AND THIS FUNCTION STILL DOES NOT KNOW WHAT IRON CURTAIN IS ═══
+ * Deliberately no talent id anywhere in it, and no `registry.get`. This module
+ * must never learn the string `talent:iron_curtain` — see the registry-cycle
+ * note on `Talent` — so the effect instance is the ONLY channel by which a
+ * talent's numbers reach a counter the scheduler triggers.
+ *
+ * @returns the counter-swing and who threw it, or null when nobody was guarding.
  */
-export const GUARD_COUNTER_MULT = 0.7;
-
 export function resolveGuardCounter(
-  ctx: TalentCtx,
+  ctx: TalentCallCtx,
   attackerId: string,
   victimId: string,
-): TalentHit | null {
+): GuardCounter | null {
   const attacker = ctx.world.getActor(attackerId);
   if (attacker === undefined || !attacker.alive) return null;
 
@@ -1614,7 +1973,10 @@ export function resolveGuardCounter(
     if (!isEnemy(guardian, attacker)) continue;
     // Reach. `attackRange` is the M2 placeholder; a melee guardian is 1.
     if (chebyshev(guardian, attacker) > (guardian.attackRange ?? 1)) continue;
-    return talentAttack(ctx, guardian, attacker, { mult: GUARD_COUNTER_MULT });
+    return {
+      guardianId: guardian.id,
+      hit: talentAttack(ctx, guardian, attacker, { mult: guard.power }),
+    };
   }
   return null;
 }

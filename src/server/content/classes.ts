@@ -10,20 +10,28 @@
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *              THE THREE MVP CLASSES — FIXED LOADOUTS, NOTHING ELSE
+ *          THE THREE MVP CLASSES — FOUR TALENTS EACH, FIVE RANKS DEEP
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ZERO trees. ZERO talent points. ZERO levelling. Four talents each, chosen
- * here and never edited (PLAN.md § 5's hard cap: *MVP 3 classes / 12 talents /
- * 0 trees / 0 points; v1.0 ceiling 4 / 32 / 8 / per-level*). M6 owns
- * progression, and the shape of this file is what makes that a change rather
- * than a rewrite: `loadout` becomes mutable and gains a `points` sibling, and
- * nothing else here moves.
+ * ZERO trees. Four talents each, chosen here and never edited. TALENT POINTS
+ * EXIST NOW: each of the four is bought from rank 1 up to `TALENT_MAX_LEVEL`,
+ * so PLAN.md § 5's cap reads *3 classes / 12 talents / 0 trees* and the
+ * *0 points* clause is lifted (v1.0 ceiling 4 / 32 / 8 / per-level).
  *
- * Below ~15 talents per class the build-crafting evaporates — but you do not
- * GET build-crafting at MVP, because there are no talent points. You get four
- * buttons that each do something distinct, which is what the first four
- * sessions actually need (tome-port.md § 5).
+ * ═══ THE PREDICTION THIS HEADER USED TO MAKE WAS HALF RIGHT ═══
+ * It said "`loadout` becomes mutable and gains a `points` sibling, and nothing
+ * else here moves". A `points` sibling did land — on `TalentSheet`
+ * (engine/talents.ts), which is PER ACTOR, and not here, which is per CLASS.
+ * And `loadout` did NOT become mutable: progression DEEPENS the four rather
+ * than adding a fifth, so `_loadoutArityCheck` at the foot of this file
+ * survives the milestone intact rather than being widened. What did move here
+ * is `toLoadoutView`, which now needs an actor and a rank to build a wire view.
+ *
+ * Below ~15 talents per class the build-crafting evaporates. Four talents at
+ * five ranks is not build-crafting either — it is 11 points against 16
+ * purchasable steps (src/shared/progression.ts), so roughly five steps go
+ * unbought and WHICH five is the whole of the decision. That is what the first
+ * four sessions actually need (tome-port.md § 5).
  *
  * ───────────────────────────────────────────────────────────────────────────
  * WHAT EACH SLOT IS FOR (game-design.md § 2)
@@ -82,6 +90,8 @@ import {
   createTalentEngine,
   createTalentRegistry,
   createTalentSheet,
+  effectiveTalentRange,
+  getTalentLevel,
 } from '../engine/talents.ts';
 import { alchemicVial } from '../talents/alchemic_vial.ts';
 import { ashwickFlare } from '../talents/ashwick_flare.ts';
@@ -95,11 +105,18 @@ import { revolverShot, INSPECTOR_MIN_RANGE } from '../talents/revolver_shot.ts';
 import { sigil } from '../talents/sigil.ts';
 import { snipersMark } from '../talents/sniper_mark.ts';
 import { wardRush } from '../talents/ward_rush.ts';
-import { ErrorCode } from '../../shared/protocol.ts';
+import { ActorKind, ErrorCode } from '../../shared/protocol.ts';
+import { TALENT_MAX_LEVEL } from '../../shared/progression.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { LoadoutTalent, ResourceView } from '../../shared/protocol.ts';
 import type { CombatSheet } from '../engine/combat.ts';
-import type { Talent, TalentEngine, TalentRegistry, TalentSheet } from '../engine/talents.ts';
+import type {
+  Talent,
+  TalentActor,
+  TalentEngine,
+  TalentRegistry,
+  TalentSheet,
+} from '../engine/talents.ts';
 import type { Actor, World } from '../world/world.ts';
 
 /**
@@ -372,8 +389,22 @@ export function createContentTalentEngine(): TalentEngine {
  * resource pool, and the AP/MP budget.
  *
  * The caller attaches it: `engine.attach(actor.id, sheetForClass(WATCHMAN))`.
- * That is the one line character creation needs, and there is nothing else to
- * choose — which is the entire point of MVP loadouts being fixed.
+ * That is the one line character creation needs.
+ *
+ * ═══ IT ALWAYS BUILDS A BIRTH SHEET — THE FOUR AT RANK 1, NOTHING SPENT ═══
+ * This line used to end "and there is nothing else to choose — which is the
+ * entire point of MVP loadouts being fixed". There is something else to choose
+ * now: eleven talent points across sixteen upgrade steps. It does NOT belong
+ * here, and the omission is deliberate rather than an oversight.
+ *
+ * `TalentSheetInit.points` exists for a restored spread, and this function
+ * pointedly does not forward one, because a RESTORE never reaches a fresh
+ * sheet: `TalentEngine.attach` ends in an unconditional `sheets.set`
+ * (engine/talents.ts), so the class is always attached FIRST and the saved
+ * points are written onto the sheet afterwards, through the gateway's
+ * `applyTalentPoints` seam (src/server/main.ts). Threading them through here as
+ * well would be a second way to make a sheet, and the second way is the one
+ * that forgets a rule.
  */
 export function sheetForClass(definition: ClassDef): TalentSheet {
   return createTalentSheet({
@@ -388,6 +419,17 @@ export function sheetForClass(definition: ClassDef): TalentSheet {
 // ---------------------------------------------------------------------------
 // The wire bridge — engine shapes into view shapes, in one place
 // ---------------------------------------------------------------------------
+
+/**
+ * The rank every loadout talent is learned at. One, never zero.
+ *
+ * `combatTalentScale` maps a talent level of 0 to 0.1 (src/shared/scale.ts), so
+ * a talent previewed — or seeded — at 0 does not refuse: it quietly resolves for
+ * a tenth of its damage. Named rather than spelled `1` at three sites for
+ * exactly that reason; `createTalentSheet` states the same rule from the other
+ * side, where it seeds the map.
+ */
+const BIRTH_TALENT_LEVEL = 1;
 
 /**
  * A talent as the HOTBAR sees it — src/shared/protocol.ts's `LoadoutTalent`.
@@ -405,8 +447,35 @@ export function sheetForClass(definition: ClassDef): TalentSheet {
  *
  * `radius` defaults to 0 rather than being optional, because the wire type
  * declares it required so the renderer never writes `?? 0` at four call sites.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT IS PER-ACTOR NOW, AND `range` IS WHY THAT IS A CORRECTNESS RULE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Until v8 this took a bare `Talent` and sent `talent.targeting.range` — one
+ * authored number, the same on every Inspector's wire. Fog Step's ONLY number
+ * is its range and it scales 3/4/5/6/7 across its five ranks
+ * (`combatTalentLimit(t, 10, 3, 7)`, mobility.lua:40-62), so that constant is
+ * now a lie for anybody who has spent a point.
+ *
+ * ═══ THE INVARIANT: ONE LEVEL FEEDS BOTH THE RING AND THE RULE ═══
+ * `range` here and the range `canUseTalent`/`checkTargeting` refuses against
+ * MUST be resolved from the same rank, through the same
+ * `effectiveTalentRange(targeting, level)`. They are not two implementations
+ * that happen to agree — they are one exported function called from two sides
+ * of the wire. Send a level-1 range to a rank-3 Inspector and she draws a
+ * 3-tile ring around a talent the server would have let her step 5, so the
+ * points she spent do visibly nothing; send a rank-5 range to a level-1 body
+ * and she clicks a legal-looking tile and is told no. The same sentence is
+ * written at the enforcing end (`createTalentBook.check` below, and
+ * `canUseTalent` in engine/talents.ts).
+ *
+ * @param level the RAW talent level, 1..`TALENT_MAX_LEVEL`.
+ * @param self the caster, for `describe` — which is handed the body because a
+ *   description may legitimately read the combat sheet it will be computed
+ *   against. None of the twelve does today; the parameter is the talent's
+ *   contract, not this function's convenience.
  */
-export function toLoadoutView(talent: Talent): LoadoutTalent {
+export function toLoadoutView(talent: Talent, level: number, self: TalentActor): LoadoutTalent {
   return {
     // Already `talent:<id>` — the registry key IS the wire id, so the cooldown
     // map `projectCooldowns` sends verbatim matches these buttons by string.
@@ -419,19 +488,75 @@ export function toLoadoutView(talent: Talent): LoadoutTalent {
       resource: talent.cost.resource ?? 0,
     },
     cooldownTurns: talent.cooldownTurns,
-    range: talent.targeting.range,
+    // AT THIS RANK. See the invariant above — never `talent.targeting.range`.
+    range: effectiveTalentRange(talent.targeting, level),
     minRange: talent.targeting.minRange,
     // `TargetShape` and `TalentShape` are member-for-member identical by rule
     // (protocol.ts says so out loud). Two declarations because src/shared/ may
     // not reach into src/server/; the string values make them interchangeable.
     shape: talent.targeting.shape,
     radius: talent.targeting.radius ?? 0,
+    level,
+    // ON THE WIRE RATHER THAN ASSUMED BY THE RENDERER — protocol.ts argues it:
+    // a client that hard-coded 5 would keep drawing "3/5" and a live `+` the
+    // day the cap moved, on the one screen whose job is saying how much room a
+    // talent has left.
+    maxLevel: TALENT_MAX_LEVEL,
+    // THE CURRENT -> NEXT DIFF (LevelupDialog.lua:963-970). Rendered here
+    // because eslint blocks src/client/** from importing the combat formulas at
+    // all, so a server-rendered sentence is the only honest way to show what
+    // one point buys. Null at the cap is upstream's own at-cap branch (:971-975
+    // renders the current description alone).
+    descNext: level < TALENT_MAX_LEVEL ? talent.describe(self, level + 1) : null,
+    desc: talent.describe(self, level),
   };
 }
 
-/** The four buttons, in hotbar order. Slot 1 is `[0]`; the client must not sort. */
+/**
+ * A STAND-IN BODY FOR THE CLASS PICKER, which has no actor at all.
+ *
+ * `Talent.describe` takes the caster. The picker is shown to somebody who has
+ * not chosen yet, so there is no body wearing this class to hand it — and
+ * dressing the VIEWER's current provisional body in another class's numbers
+ * would be worse than a stand-in, because it would silently mix two classes'
+ * combat sheets.
+ *
+ * So the preview is the class as authored: its own combat sheet, its own hp,
+ * standing nowhere, alive, with nothing on cooldown. Every displayed number is
+ * therefore the number a freshly-created character of this class would see.
+ */
+function previewActorFor(definition: ClassDef): TalentActor {
+  return {
+    id: `preview:${definition.id}`,
+    name: definition.name,
+    kind: ActorKind.Player,
+    x: 0,
+    y: 0,
+    hp: definition.maxHp,
+    maxHp: definition.maxHp,
+    alive: true,
+    combat: definition.combat,
+    cooldowns: new Map<string, number>(),
+  };
+}
+
+/**
+ * The four buttons, in hotbar order. Slot 1 is `[0]`; the client must not sort.
+ *
+ * ═══ EVERY TALENT AT LEVEL 1, EXPLICITLY, BECAUSE THERE IS NO ACTOR ═══
+ * The one caller is the class picker (`projectClassOptions`, view/projector.ts)
+ * — a screen shown to somebody who has not chosen a class and therefore has no
+ * sheet, no points and no ranks. An UNLEARNED class is previewed at its BIRTH
+ * level, which is exactly what a picker should show: this is what you get if
+ * you take it, before you have spent anything. `createTalentSheet` seeds every
+ * loadout id at 1, so the card and the first real hotbar agree to the number.
+ *
+ * The `1` is written out rather than defaulted, so that a reader of the picker
+ * path sees the decision rather than inheriting it.
+ */
 export function loadoutViewFor(definition: ClassDef): readonly LoadoutTalent[] {
-  return definition.loadout.map(toLoadoutView);
+  const preview = previewActorFor(definition);
+  return definition.loadout.map((talent) => toLoadoutView(talent, BIRTH_TALENT_LEVEL, preview));
 }
 
 /**
@@ -585,7 +710,16 @@ export function createTalentBook(
         // not a reason to refuse the other three buttons. It cannot be USED
         // either — `canUseTalent` answers `unknown_talent` — so dropping it here
         // keeps the hotbar and the rule agreeing.
-        if (talent !== undefined) out.push(toLoadoutView(talent));
+        if (talent === undefined) continue;
+        // ═══ THE RANK COMES OFF THE SHEET, WHICH IS ALREADY IN HAND ═══
+        // `getTalentLevel` answers 0 for an id the sheet has no points in, and
+        // 0 is unreachable here by construction: `createTalentSheet` seeds
+        // every loadout id at `BIRTH_TALENT_LEVEL`. The floor is kept anyway
+        // because the wire type says `level` is NEVER 0 (protocol.ts) — a sheet
+        // built some other way must produce a wrong-but-legal button rather
+        // than a frame the protocol calls impossible.
+        const level = Math.max(BIRTH_TALENT_LEVEL, getTalentLevel(sheet, id));
+        out.push(toLoadoutView(talent, level, actor));
       }
       return out;
     },
@@ -595,6 +729,17 @@ export function createTalentBook(
       return sheet === undefined ? undefined : toResourceView(sheet);
     },
 
+    /**
+     * ═══ THE ENFORCING END OF `toLoadoutView`'s RANGE INVARIANT ═══
+     * `canUseTalent` resolves the range through
+     * `effectiveTalentRange(talent.targeting, getTalentLevel(sheet, id))` —
+     * the SAME function and the SAME rank `loadoutOf` above put on the wire as
+     * `LoadoutTalent.range`. The ring a client draws and the tile this function
+     * accepts therefore cannot disagree, because there is one implementation
+     * and both sides call it. If a future caller ever resolves a range from a
+     * `Talent` alone, the two ends part company and a levelled Inspector is
+     * told no on a tile her own overlay offered her.
+     */
     check: (actor: Actor, id: string, target: TileXY | undefined): RefusalCode | null => {
       const talent = engine.registry.get(id);
       if (talent === undefined) return ErrorCode.BadMessage;
@@ -620,13 +765,22 @@ export function createTalentBook(
 }
 
 /**
- * Compile-time proof that every class ships EXACTLY four talents.
+ * Compile-time proof that every class ships EXACTLY four STARTING talents.
  *
- * PLAN.md's cap is 12 talents / 4 per class / 0 trees / 0 points. A fifth
- * button added "just for this one idea" is how a 12-talent MVP becomes a
- * 40-talent one over three weekends, so the cap is enforced by the type system
- * rather than by remembering it. Widening this line is a deliberate act with a
- * diff, which is exactly what it should be.
+ * ═══ IT SURVIVES TALENT POINTS INTACT, AND THAT IS THE POINT OF RE-SCOPING IT
+ * ═══
+ * PLAN.md's cap used to read 12 talents / 4 per class / 0 trees / 0 points, and
+ * the "0 points" clause is now lifted. The ARITY clause is not, and progression
+ * did not weaken it: a point DEEPENS one of the four from rank 1 towards
+ * `TALENT_MAX_LEVEL`, it never appends a fifth. `TalentSheet.loadout` is
+ * `readonly` for the same reason, and `TalentSheet.points` is keyed by an id
+ * that must already be in it.
+ *
+ * So this reads "four at birth" rather than "four forever", and it still says
+ * the thing worth saying: a fifth button added "just for this one idea" is how
+ * a 12-talent MVP becomes a 40-talent one over three weekends, so the cap is
+ * enforced by the type system rather than by remembering it. Widening this line
+ * is a deliberate act with a diff, which is exactly what it should be.
  */
 const TALENTS_PER_CLASS = 4;
 type FourTalents = readonly [Talent, Talent, Talent, Talent];

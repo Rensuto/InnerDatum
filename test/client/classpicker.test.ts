@@ -10,6 +10,7 @@ import {
   drawClassPicker,
 } from '../../src/client/ui/classpicker.ts';
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
+import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { ClassOptionView, LoadoutTalent } from '../../src/shared/protocol.ts';
 
 /**
@@ -56,6 +57,13 @@ function talent(id: string, name: string): LoadoutTalent {
     minRange: 0,
     shape: TalentShape.Single,
     radius: 0,
+    // BIRTH RANK, because that is what a picker shows: `loadoutViewFor` has no
+    // actor to read a level from and passes 1 explicitly — an unlearned class is
+    // previewed at the level you would get if you took it.
+    level: 1,
+    maxLevel: TALENT_MAX_LEVEL,
+    desc: `${name} does something.`,
+    descNext: `${name} does something slightly better.`,
   };
 }
 

@@ -251,13 +251,14 @@ describe('the fillRect overlays stay art-free', () => {
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
-   * THE TWO v8 PANELS ASK FOR NO ART THAT IS NOT ALREADY ON THE WIRE
+   * THE THREE PANELS ASK FOR NO ART THAT IS NOT ALREADY ON THE WIRE
    * ═════════════════════════════════════════════════════════════════════════
    *
-   * ui/classpicker.ts is the FIRST SCREEN a new player ever sees, and
-   * ui/charsheet.ts is opened by a key on every floor. Both are full of
-   * pictures — three portraits, three map tokens, sixteen ability icons — and
-   * every one of those keys arrives on the wire (`ClassOptionView.sprite`,
+   * ui/classpicker.ts is the FIRST SCREEN a new player ever sees,
+   * ui/charsheet.ts is opened by a key on every floor, and ui/talents.ts (v9) is
+   * where a levelled detective spends an irreversible point. All three are full
+   * of pictures — three portraits, three map tokens, twenty-odd ability icons —
+   * and every one of those keys arrives on the wire (`ClassOptionView.sprite`,
    * `.portrait`, `LoadoutTalent.icon`). None is built here.
    *
    * The temptation these pin against is the one Birther.lua fell to and got
@@ -267,12 +268,18 @@ describe('the fillRect overlays stay art-free', () => {
    * client/public/assets/ is gitignored wholesale — so a derived key resolves to
    * the LOUD violet missing-asset box on a bare clone, on the chooser, on the
    * first screen. A comment cannot enforce that. This can.
+   *
+   * A NEW PANEL IS COVERED BY NEITHER GUARD UNTIL IT IS LISTED HERE, which is
+   * why ui/talents.ts joined this array in the same commit that created it: the
+   * panel draws four icon plates and a `+` control, and both of those are exactly
+   * the shape of a feature that reaches for a PNG on its second revision.
    */
   const sheetSrc = codeOf('src/client/ui/charsheet.ts');
   const pickerSrc = codeOf('src/client/ui/classpicker.ts');
   const panels: readonly (readonly [string, string])[] = [
     ['ui/charsheet.ts', sheetSrc],
     ['ui/classpicker.ts', pickerSrc],
+    ['ui/talents.ts', codeOf('src/client/ui/talents.ts')],
   ];
 
   it('asks the sprite source only for keys that came off the wire', () => {

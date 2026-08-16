@@ -800,7 +800,9 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   //   2. `combatTalentSpellDamage(6, 1, 15, 240)` = 24.9376. Combat.lua:1774-1779,
   //      ported and exported at engine/talents.ts; `base` 15 and `max` 240 are
   //      npcs.lua:739's own two arguments, and the talent level is
-  //      `MVP_TALENT_LEVEL` = 1.
+  //      `MONSTER_TALENT_LEVEL` = 1 (it was `MVP_TALENT_LEVEL` until players
+  //      grew real talent points; monsters still have no sheet and no points,
+  //      so the constant survives under the one name that is still true).
   //   3. THE UPSTREAM BODY SCALE, measured rather than assumed. ToME's level-1
   //      life bar is the class birth descriptor: 22 `max_life` entries across
   //      data/birth/classes/*.lua, values 90 / 100 / 110 / 120, MEAN 100.455 and

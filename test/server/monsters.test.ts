@@ -43,7 +43,7 @@ import {
   combatSpellpower,
 } from '../../src/server/engine/derived.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
-import { MVP_TALENT_LEVEL, combatTalentSpellDamage } from '../../src/server/engine/talents.ts';
+import { MONSTER_TALENT_LEVEL, combatTalentSpellDamage } from '../../src/server/engine/talents.ts';
 import { toActorView } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
@@ -594,10 +594,11 @@ describe('index_wraith, derived', () => {
     //       self:spellCrit(self:combatTalentSpellDamage(t, 15, 240)), …)
     //
     // `base` 15 and `max` 240 are npcs.lua:739's own two arguments; the talent
-    // level is MVP_TALENT_LEVEL = 1; the power is the creature's own spellpower.
+    // level is MONSTER_TALENT_LEVEL = 1 (players carry real points now; a
+    // monster has no sheet, so this is the one name still true); the power is the creature's own spellpower.
     const power = combatSpellpower(sheet);
     expect(power).toBe(6); // Magic 6 (losgoroth.lua:44), no spellPower mod.
-    const upstream = combatTalentSpellDamage(power, MVP_TALENT_LEVEL, 15, 240);
+    const upstream = combatTalentSpellDamage(power, MONSTER_TALENT_LEVEL, 15, 240);
     expect(upstream).toBeCloseTo(24.9376, 4);
 
     // ═══ THE BODY-SCALE CORRECTION, SPELLED OUT ═══

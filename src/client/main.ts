@@ -180,6 +180,14 @@ import {
 } from './ui/partypanel.ts';
 import { drawResource, RESOURCE_H, resourceLabel } from './ui/resource.ts';
 import {
+  TalentHitKind,
+  drawTalentPanel,
+  pressSpend,
+  talentPanelHitAt,
+  talentPanelRect,
+  talentPanelRows,
+} from './ui/talents.ts';
+import {
   drawRespawnPrompt,
   RESPAWN_PROMPT_SPEECH,
   respawnPromptHit,
@@ -212,6 +220,7 @@ import type {
   PartyInviteView,
   PartyMember,
   PartyStateMsg,
+  ProgressMsg,
   ProjectileView,
   ResourceView,
   ServerMsg,
@@ -590,15 +599,34 @@ let bellEndsAt: number | null = null;
 /**
  * THE VIEWER'S OWN FOUR TALENTS, in server order, NEVER re-sorted here.
  *
- * `loadout` arrives once (M3 loadouts are fixed), `cooldowns` is a COMPLETE
+ * `loadout` is RE-SENT WHENEVER A RANK CHANGES — this comment used to say it
+ * "arrives once (M3 loadouts are fixed)" and v9 made that false in two ways at
+ * once: choosing a class replaces it, and spending a talent point re-renders
+ * every talent's `range`, `desc` and `descNext` (protocol.ts's `LoadoutTalent`
+ * says the field is stale the instant a rank moves). `cooldowns` is a COMPLETE
  * absolute map of talent id -> game turns remaining — anything absent from it is
  * ready — and `resource` is the class pool. Three frames rather than one because
- * they change at wildly different rates: the loadout never, the cooldowns every
- * turn, the resource on every hit taken.
+ * they change at wildly different rates: the loadout on a spend, the cooldowns
+ * every turn, the resource on every hit taken.
  */
 let loadout: readonly LoadoutTalent[] = [];
 let cooldowns: Readonly<Record<string, number>> = {};
 let resource: ResourceView | null = null;
+
+/**
+ * THE VIEWER'S OWN LEDGER (v9): level, xp into it, the next threshold, and the
+ * talent points sitting unspent in their hand.
+ *
+ * VIEWER-PRIVATE BY CONSTRUCTION — `ProgressMsg` is in `ViewerMsg`, so the
+ * server cannot broadcast it and no other player's `unspent` can ever reach this
+ * variable. Null until the first frame, which arrives in the `hello` block and
+ * again whenever any of the four numbers changes during a pump.
+ *
+ * IT IS NOT A SECOND COPY OF ANYTHING. The talent RANKS live on `loadout`
+ * (`LoadoutTalent.level`) and the points in hand live here, because they change
+ * on different edges and the server sends them as two frames for that reason.
+ */
+let progress: ProgressMsg | null = null;
 
 /** Hotbar index under the pointer, or -1. Cosmetic; the keyboard is the real input. */
 let hoveredSlot = -1;
@@ -667,6 +695,39 @@ let partyVisible = true;
 let sheetVisible = false;
 /** True while the pointer is over the sheet's close control, so it reads pressable. */
 let sheetCloseHovered = false;
+/** True while the pointer is over the sheet's `[G]` control. Cosmetic. */
+let sheetTalentsHovered = false;
+
+/**
+ * THE TALENT PANEL, AND IT DEFAULTS OFF FOR THE SHEET'S OWN REASON.
+ *
+ * `g` opens it, `g` closes it, and the × on its header is the mouse's copy of
+ * that act. It is NOT in the Escape chain — see `onCancel`, which explains at
+ * length why no dock surface is.
+ *
+ * ═══ IT IS A PANEL AND THE SERVER IS NEVER TOLD IT IS OPEN ═══
+ * Nothing here parks a body, sets a standing order or touches the barrier, and
+ * none of the six keyboard gates below grows a condition for it. A player
+ * reading their talents can still walk, commit, hold and press 1-4, and the
+ * Warrant Clock auto-passes them like anyone else. That is the whole difference
+ * between this and the class chooser, and ui/talents.ts's header states the cost
+ * of getting it wrong: five people waiting on somebody who is reading a menu.
+ */
+let talentsVisible = false;
+/** True while the pointer is over the talent panel's close control. Cosmetic. */
+let talentsCloseHovered = false;
+/** Loadout index under the pointer on the talent panel, or null. Cosmetic. */
+let talentsHoveredRow: number | null = null;
+/**
+ * THE TALENT ONE PRESS FROM BEING BOUGHT, or null.
+ *
+ * The whole of the confirm-press deviation lives in `pressSpend`
+ * (ui/talents.ts); this is the single variable it reads and writes. It is
+ * cleared whenever the panel closes, whenever a `loadout` frame lands (the only
+ * acknowledgement a spend ever gets) and whenever the server refuses anything,
+ * so an arm can never outlive the screen that explained it.
+ */
+let talentsArmedId: string | null = null;
 
 /**
  * THE CLASS CHOOSER'S OPTIONS, or null when there is no choice owed.
@@ -1113,6 +1174,22 @@ type HudLayout = {
    */
   readonly sheet: PanelRect | null;
   /**
+   * The talent panel, or null when it is shut or the band is too small.
+   *
+   * FROM `panelBand` LIKE `sheet`, NOT FROM THE VIEWPORT LIKE `picker`, and that
+   * one line is the whole panel-not-modal decision made mechanical: clamped into
+   * the band it can never come to rest over the hotbar, the resource strip or
+   * the prose lines, so every control stays visible and pressable underneath it
+   * while a player reads. ui/talents.ts's header states the cost of the other
+   * choice — five people at the barrier waiting on somebody reading a menu.
+   *
+   * It is anchored to the TOP of the band while the sheet is centred in it, so
+   * the two miss each other on any band tall enough for both; where they do
+   * collide, the paint order in `paintHud` and the hit-test order in `mousedown`
+   * agree that this one is on top.
+   */
+  readonly talents: PanelRect | null;
+  /**
    * The class chooser, or null when no choice is owed.
    *
    * FROM THE FULL VIEWPORT, NOT `panelBand`, and it is the only member here that
@@ -1150,6 +1227,9 @@ function hudLayout(width: number, height: number): HudLayout {
     sheet: sheetVisible
       ? charSheetRect({ width, height, top: band.top, bottom: band.bottom })
       : null,
+    talents: talentsVisible
+      ? talentPanelRect({ width, height, top: band.top, bottom: band.bottom })
+      : null,
     picker: classOptions === null ? null : classPickerRect(width, height),
   };
 }
@@ -1170,13 +1250,30 @@ function charSheetView(): {
   resource: ResourceView | null;
   loadout: readonly LoadoutTalent[];
   cooldowns: Readonly<Record<string, number>>;
+  progress: ProgressMsg | null;
 } {
   return {
     view: selfId === null ? null : (inspectCache.get(selfId)?.view ?? null),
     resource,
     loadout,
     cooldowns,
+    // v9. The fifth frame: level, xp and the points in hand. It needs no join and
+    // no cache — it is unicast, absolute and replaced wholesale on arrival.
+    progress,
   };
+}
+
+/**
+ * THE TWO FRAMES THE TALENT PANEL IS BUILT FROM.
+ *
+ * DELIBERATELY NOT `charSheetView()` MINUS THREE FIELDS. The sheet's view is
+ * built around the `inspect` round trip and carries a cache read stamped with a
+ * game turn; this panel needs neither, because both of its inputs are absolute
+ * unicast frames that this file already holds. Sharing the accessor would tie a
+ * panel that is always correct to one that has a "gathering…" state.
+ */
+function talentPanelView(): { loadout: readonly LoadoutTalent[]; progress: ProgressMsg | null } {
+  return { loadout, progress };
 }
 
 function talentById(id: string | null): LoadoutTalent | null {
@@ -1360,6 +1457,41 @@ const paintHud: HudPainter = (ctx, width, height) => {
       rect: layout.sheet,
       rows: charSheetRows(charSheetView()),
       hoveredClose: sheetCloseHovered,
+      hoveredTalents: sheetTalentsHovered,
+      talentsOpen: talentsVisible,
+    });
+  }
+
+  // ═══ THE TALENT PANEL, IMMEDIATELY AFTER THE SHEET AND FOR THE SAME REASONS ═══
+  //
+  // AFTER the sheet because the two are the only surfaces here that are centred
+  // horizontally, and where they overlap the newer decision has to be the
+  // visible one — the player pressed `g` while `c` was already up, and a panel
+  // painted underneath the one it was opened from would look like the key did
+  // nothing. `mousedown`'s step 4 tests them in this same order, which is the
+  // rule this file has enforced since the sheet learned to cover the party pane:
+  // HIT-TEST ORDER MIRRORS PAINT ORDER, always.
+  //
+  // BEFORE the hotbar, the resource strip, the prose lines, the erased plate,
+  // the hover card, the combat banner and the token menu — every one of which is
+  // drawn later — and THAT ORDERING IS THE DESIGN, not an accident of where the
+  // call landed. A panel that covered the hotbar would be a modal wearing a
+  // panel's clothes: the player deciding which of four talents to improve could
+  // no longer see the four buttons they are deciding between, and every one of
+  // those buttons still works while this is open.
+  //
+  // `talentPanelRows` IS CALLED EXACTLY ONCE PER FRAME and the result handed to
+  // the drawer, which does not call it — the same split ui/charsheet.ts asks for
+  // and for the same reason.
+  if (layout.talents !== null) {
+    drawTalentPanel({
+      ctx,
+      sprites,
+      rect: layout.talents,
+      rows: talentPanelRows(talentPanelView()),
+      hoveredClose: talentsCloseHovered,
+      hovered: talentsHoveredRow,
+      armedId: talentsArmedId,
     });
   }
 
@@ -1972,6 +2104,35 @@ async function boot(): Promise<void> {
     // machine's clock is one the pane has already dropped and the server will
     // refuse, and a status line still announcing it would be the one surface
     // telling a screen-reader user to press a button that is no longer there.
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * POINTS IN HAND — THE ONE ALWAYS-VISIBLE PLACE THEY APPEAR.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Level, xp and unspent points were drawn ONLY inside two panels the player
+     * has to open by hand: the character sheet behind `c` and the talent tree
+     * behind `g`. Nothing on the permanent furniture carried any of the three,
+     * so a banked point was invisible to anybody who did not already know to go
+     * looking for it — and the whole talent tree is dead content for a party
+     * that never presses `g`.
+     *
+     * PERSISTENT, NOT AN EVENT, and that is the difference between this and the
+     * notice `case 'progress'` shows. The notice fires once at the crossing and
+     * clears itself after NOTICE_MS; a player who was reading the map at that
+     * moment has missed it forever. This line stays true for as long as the
+     * point is unspent, and it disappears the moment it is spent because
+     * `progress` is re-sent after every successful spend.
+     *
+     * IT IS ALSO THE HEARD COPY. `#log` is the aria-live region, so a screen
+     * reader announces "2 talent points — press g" once, at the change, exactly
+     * as it does for the revive affordance three blocks up. A canvas-only badge
+     * would have been silent for the players it matters most to.
+     */
+    if (progress !== null && progress.unspent > 0) {
+      parts.push(
+        `${progress.unspent} talent ${progress.unspent === 1 ? 'point' : 'points'} — press g`,
+      );
+    }
     const invite = liveInvites()[0];
     if (invite !== undefined) {
       parts.push(`${invite.fromName} invites you to a party`);
@@ -2582,6 +2743,66 @@ async function boot(): Promise<void> {
       // No level, or no body on it yet. Say so rather than eating the key.
       showNotice(`cannot aim ${talent.name} yet — waiting for the map`);
     }
+  }
+
+  // --- the talent panel ----------------------------------------------------
+
+  /**
+   * Open or put away the talent panel.
+   *
+   * THE ARM GOES WITH IT, always. `talentsArmedId` only means anything while the
+   * sentence explaining it is on screen — "press + again to spend, there is no
+   * refund" is drawn by the panel — so an arm that survived a close would be one
+   * press away from spending a point on a screen the player is not looking at.
+   *
+   * IT SENDS NOTHING. There is no "the panel is open" frame and there must not
+   * be one: the server is never told, which is the whole difference between this
+   * and the class chooser (ui/talents.ts's header, decision (g)).
+   */
+  function toggleTalentPanel(open?: boolean): void {
+    talentsVisible = open ?? !talentsVisible;
+    if (!talentsVisible) {
+      talentsCloseHovered = false;
+      talentsHoveredRow = null;
+    }
+    talentsArmedId = null;
+    requestDraw();
+  }
+
+  /**
+   * A press on a row's `+`. The ONLY place a `spend_point` frame is constructed.
+   *
+   * ═══ THE FIRST PRESS ARMS, THE SECOND SPENDS. THIS IS A DEVIATION ═══
+   * ui/talents.ts's header labels it as one and says why ToME's own approach —
+   * spend live against a cloned actor, commit at the Escape prompt
+   * (LevelupDialog.lua:38-53, :121-147, :161-164) — has no cheap server-side
+   * analogue here. The rule itself is `pressSpend`, which is pure and tested; all
+   * this function does is hold the variable and put the frame on the wire.
+   *
+   * ═══ IT DOES NOT CLOSE THE PANEL AND IT DOES NOT PATCH ANYTHING LOCALLY ═══
+   * The same rule `confirmClass` follows for the same reason. The server is
+   * authoritative and may refuse (`bad_message` for a capped talent or an empty
+   * hand, `not_your_turn` for a downed or erased body — and in that second case
+   * the POINT SURVIVES, so it is "not now" rather than "never"). The
+   * acknowledgement is the arrival of a fresh `loadout` and a fresh `progress`,
+   * which are the frames that could only exist because the spend landed.
+   *
+   * `{ v, t, talentId }` AND NOTHING ELSE. `SpendPointSchema` is a `strictObject`
+   * — an actorId smuggled alongside is REJECTED rather than stripped, which
+   * matters more here than almost anywhere, because a sanitised frame would
+   * permanently spend a stranger's point.
+   */
+  function pressTalentPlus(talentId: string): void {
+    const next = pressSpend(talentsArmedId, talentId);
+    talentsArmedId = next.armed;
+    if (next.spend === null) {
+      requestDraw();
+      return;
+    }
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'spend_point', talentId: next.spend })) {
+      showNotice('not connected — that did not go out');
+    }
+    requestDraw();
   }
 
   // --- the command line ----------------------------------------------------
@@ -3257,9 +3478,21 @@ async function boot(): Promise<void> {
           sheetVisible = !sheetVisible;
           // The hover state goes with it, or the × would come back highlighted
           // next time the panel opens under a pointer that has since moved.
-          if (!sheetVisible) sheetCloseHovered = false;
+          if (!sheetVisible) {
+            sheetCloseHovered = false;
+            sheetTalentsHovered = false;
+          }
           requestSelfSheet();
           requestDraw();
+          return;
+        case UiCommand.ShowTalents:
+          // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING. Unlike the sheet, both
+          // frames this panel is built from — `loadout` and `progress` — are
+          // already held here, absolute and unicast, and both are re-sent by the
+          // server whenever they change. There is no round trip to start, no
+          // cache to warm and no "gathering…" window: the panel is correct the
+          // instant it appears.
+          toggleTalentPanel();
           return;
         case UiCommand.ToggleLog:
           logVisible = !logVisible;
@@ -3367,10 +3600,18 @@ async function boot(): Promise<void> {
     // passes over, spending the socket's token bucket on a panel the pointer is
     // resting on. See HOVER_SETTLE_MS: an exhausted bucket answers `error`, which
     // cancels the player's aim.
+    // THE TALENT PANEL IS LISTED FOR THE SHEET'S OWN REASONS AND ONE MORE. Left
+    // out, hovering it would drag the targeting cursor across whatever tiles are
+    // underneath and send an `inspect` per settle for each body it passed over —
+    // and an exhausted token bucket answers `error`, which cancels the player's
+    // aim (see HOVER_SETTLE_MS). The extra reason is that this panel HAS a
+    // control: an unswallowed click beside the `+` would walk the party across
+    // the room while somebody was deciding where to put a point.
     return (
       inRect(layout.pane?.rect ?? null, point.x, point.y) ||
       inRect(layout.log, point.x, point.y) ||
-      inRect(layout.sheet, point.x, point.y)
+      inRect(layout.sheet, point.x, point.y) ||
+      inRect(layout.talents, point.x, point.y)
     );
   }
 
@@ -3402,10 +3643,39 @@ async function boot(): Promise<void> {
       // shape as the plate above and for the same reason — it reports whether
       // anything CHANGED, so a pointer crossing the panel cannot queue a draw per
       // pixel and turn this client's dirty-flag renderer into a 60 fps one.
-      const overClose =
-        layout.sheet !== null && charSheetHitAt(layout.sheet, point.x, point.y) === 'close';
+      const sheetHit =
+        layout.sheet === null ? null : charSheetHitAt(layout.sheet, point.x, point.y);
+      const overClose = sheetHit === 'close';
       if (overClose !== sheetCloseHovered) {
         sheetCloseHovered = overClose;
+        requestDraw();
+      }
+      // ...AND THE `[G]` CONTROL BESIDE IT, the sheet's ported route to the
+      // talent panel (ui/charsheet.ts, CharacterSheet.lua:99).
+      const overTalentsBtn = sheetHit === 'talents';
+      if (overTalentsBtn !== sheetTalentsHovered) {
+        sheetTalentsHovered = overTalentsBtn;
+        requestDraw();
+      }
+      // THE TALENT PANEL'S OWN TWO HOVERS: its × and whichever row the pointer is
+      // on. Same shape as every hover above and for the same reason — each
+      // reports whether anything CHANGED, so a pointer crossing the panel cannot
+      // queue a draw per pixel and turn this client's dirty-flag renderer into a
+      // 60 fps one. The row hover is what draws the 1px ring, which is the only
+      // thing on the panel that says a row is a thing you can press.
+      const talentHit =
+        layout.talents === null
+          ? null
+          : talentPanelHitAt(layout.talents, talentPanelRows(talentPanelView()), point.x, point.y);
+      const overTalentClose = talentHit?.kind === TalentHitKind.Close;
+      if (overTalentClose !== talentsCloseHovered) {
+        talentsCloseHovered = overTalentClose;
+        requestDraw();
+      }
+      const overTalentRow =
+        talentHit !== null && talentHit.kind !== TalentHitKind.Close ? talentHit.index : null;
+      if (overTalentRow !== talentsHoveredRow) {
+        talentsHoveredRow = overTalentRow;
         requestDraw();
       }
       // AND THE CARD UNDER THE POINTER, while the chooser is up. `null` when it
@@ -3457,11 +3727,22 @@ async function boot(): Promise<void> {
       // the scrim. The sheet is the second rule and the same one step 4 of
       // `mousedown` enforces: it is painted OVER the log and the two rects
       // overlap on ordinary windows, so the wheel must not reach through it.
+      //
+      // ═══ THE TALENT PANEL IS IN THIS GUARD, AND IT IS NOT A WHEEL GATE ═══
+      // It consumes nothing: the panel has no scroll position, no scrollbar and
+      // no hit test for one (ui/talents.ts, "NO SCROLLING"), and rolling the
+      // wheel over it does nothing at all. What this line stops is the wheel
+      // reaching a DIFFERENT panel drawn UNDERNEATH it, which is exactly the rule
+      // the sheet is here for and the two rects overlap on ordinary windows for
+      // exactly the same reason: both are centred on the assumption that the two
+      // docks own the sides, and neither consults the log's rect.
       if (classOptions !== null) return;
       const point = renderer.backbufferPoint(event.clientX, event.clientY);
       if (point === null || caseLog === null) return;
       const { logicalW, logicalH } = renderer.metrics();
-      if (inRect(hudLayout(logicalW, logicalH).sheet, point.x, point.y)) return;
+      const wheelLayout = hudLayout(logicalW, logicalH);
+      if (inRect(wheelLayout.sheet, point.x, point.y)) return;
+      if (inRect(wheelLayout.talents, point.x, point.y)) return;
       const lane = caseLog.laneAt(point.x, point.y);
       if (lane === null) return;
       event.preventDefault();
@@ -3601,7 +3882,12 @@ async function boot(): Promise<void> {
         // owns that; here the sheet merely has to STOP the pane from claiming a
         // click aimed at something drawn on top of it, and the `clearNotice()`
         // fall-through below is the right answer for a right-click on a panel.
-        const overSheet = inRect(layout.sheet, point.x, point.y);
+        // ...AND THE TALENT PANEL IS THE SAME OCCLUSION, for the same reason and
+        // over the same rows: it is centred like the sheet, it is painted after
+        // it, and a verb menu opened on a party member through two solid panels
+        // is the same bug twice.
+        const overSheet =
+          inRect(layout.sheet, point.x, point.y) || inRect(layout.talents, point.x, point.y);
         const paneHit =
           overSheet || layout.pane === null || layout.party === null
             ? null
@@ -3660,12 +3946,60 @@ async function boot(): Promise<void> {
     // on the panel, and those clicks are then eaten by the `overPanel` swallow
     // below — which already includes the sheet's rect, so the button has to be
     // tested above it either way.
+    // ═══ 4a. THE TALENT PANEL — TESTED BEFORE THE SHEET, BECAUSE IT IS DRAWN
+    //         OVER IT ═══
+    //
+    // HIT-TEST ORDER MIRRORS PAINT ORDER, the rule step 4 below states in full.
+    // `paintHud` paints the sheet and then this, so this gets first refusal on
+    // any click inside its rect. The two DO overlap: both are centred
+    // horizontally on the assumption that the docks own the sides, and on a
+    // short band the sheet's vertical centring brings it up into this panel's
+    // top-anchored rect.
+    //
+    // THREE OUTCOMES AND NO FOURTH. The × closes. A `+` goes through
+    // `pressTalentPlus`, which arms on the first press and spends on the second.
+    // Anything else on the panel — a row, the badge, bare panel — is SWALLOWED by
+    // the `overPanel` check further down, which already includes this rect. There
+    // is deliberately no right-click branch anywhere for this panel: there is no
+    // refund verb this pass, and a gesture that appeared to unlearn and did
+    // nothing would be worse than no gesture (ui/talents.ts's header).
+    if (point !== null && layout.talents !== null) {
+      const hit = talentPanelHitAt(
+        layout.talents,
+        talentPanelRows(talentPanelView()),
+        point.x,
+        point.y,
+      );
+      if (hit !== null && hit.kind === TalentHitKind.Close) {
+        event.preventDefault();
+        toggleTalentPanel(false);
+        return;
+      }
+      if (hit !== null && hit.kind === TalentHitKind.Spend) {
+        event.preventDefault();
+        pressTalentPlus(hit.talentId);
+        return;
+      }
+    }
+
     if (point !== null && layout.sheet !== null) {
-      if (charSheetHitAt(layout.sheet, point.x, point.y) === 'close') {
+      const hit = charSheetHitAt(layout.sheet, point.x, point.y);
+      if (hit === 'close') {
         event.preventDefault();
         sheetVisible = false;
         sheetCloseHovered = false;
+        sheetTalentsHovered = false;
         requestDraw();
+        return;
+      }
+      // THE PORTED ROUTE TO THE TALENT PANEL. ToME puts a "[L]evelup" button on
+      // its character sheet (CharacterSheet.lua:99) and that button is how a
+      // player who has learned one key discovers the other. It TOGGLES, so the
+      // control and the key mean the same thing, and the sheet stays open behind
+      // it — two dock panels at once is a supported state, not an accident.
+      if (hit === 'talents') {
+        event.preventDefault();
+        toggleTalentPanel();
         return;
       }
     }
@@ -3683,7 +4017,8 @@ async function boot(): Promise<void> {
       point !== null &&
       layout.pane !== null &&
       layout.party !== null &&
-      !inRect(layout.sheet, point.x, point.y)
+      !inRect(layout.sheet, point.x, point.y) &&
+      !inRect(layout.talents, point.x, point.y)
     ) {
       const hit = partyPaneHitAt(layout.party, layout.pane, point.x, point.y);
       if (hit !== null) {
@@ -3840,6 +4175,14 @@ function applyServerMessage(msg: ServerMsg): void {
       // rule that is no longer true.
       targeting?.cancel();
       pendingTalentId = null;
+      // The armed `+` belonged to a session that has just been replaced. The
+      // panel may stay open across a reconnect — it is local state and nothing
+      // about it is wrong — but an arm is one press from an irreversible spend
+      // and it must not survive a frame that says "here is the world again".
+      // `progress` itself is NOT cleared: the server re-sends it in this same
+      // `hello` block, and blanking the level for one frame would flicker the
+      // sheet's identity block on every reconnect.
+      talentsArmedId = null;
       // M4. A welcome is the reconnect path AND the floor reset after a party
       // wipe, so every snapshot-driven surface is emptied rather than carried
       // across: the badges, the party rows and the point markers all describe a
@@ -4043,9 +4386,72 @@ function applyServerMessage(msg: ServerMsg): void {
       // `setCommandLineReachable`.
       setCommandLineReachable(true);
       // Whatever was being aimed may not be in the new loadout, and its range
-      // ring certainly is not. M3 sends this once, but M6's talent points make
-      // it a mid-session frame and the cancel is what makes that safe.
+      // ring certainly is not — this frame is RE-SENT on every spend precisely
+      // because `range`, `desc` and `descNext` are stale the instant a rank
+      // moves (protocol.ts's `LoadoutTalent`), and Fog Step's ring genuinely
+      // grows a tile per rank. That mid-session re-send is what this cancel is
+      // for; the sentence here used to say it was a thing M6 would one day make
+      // true, and v9 made it true.
       targeting?.cancel();
+      // ═══ AND IT IS THE TALENT PANEL'S ONLY ACKNOWLEDGEMENT OF A SPEND ═══
+      // Exactly the shape the class chooser uses two paragraphs above: there is
+      // no "the point landed" frame, and a fresh `loadout` is the frame that
+      // could only exist because it did. Disarming here rather than on the click
+      // means a REFUSED spend leaves the row armed — which is correct, because
+      // the point is still in hand and the panel is still explaining itself.
+      talentsArmedId = null;
+      break;
+    case 'progress':
+      // ═══ v9 — THE VIEWER'S OWN LEDGER. UNICAST, ABSOLUTE, REPLACED WHOLESALE ═══
+      //
+      // A `ViewerMsg`, so it arrives only for this socket and there is nothing to
+      // filter — protocol.ts makes broadcasting it a compile error server-side,
+      // because `unspent` is INTENT and a party panel showing everyone's banked
+      // points would turn a private judgement into a queue of people telling each
+      // other what to buy.
+      //
+      // It arrives at `welcome`, again whenever any of its four numbers changes
+      // during a pump, and again after every successful spend — so this client
+      // never has to ask for one and never computes one. Nothing here arms a
+      // timer or sends anything; the redraw is `onMessage`'s, which calls
+      // `requestDraw()` after every applied frame.
+      //
+      // ═══ AND IT IS THE ONLY PLACE THIS CLIENT CAN NOTICE A LEVEL-UP ═══
+      // The old body was this one assignment. Because the frame is ABSOLUTE and
+      // replaced wholesale, a level-up looked exactly like every other progress
+      // frame: nothing on screen changed except two numbers inside two panels
+      // the player has to open by hand. Three friends could cross levels 2, 3
+      // and 4 in the first fight and finish the evening with every talent at
+      // rank 1 and three unspent points each, because nothing ever suggested
+      // pressing `g`.
+      //
+      // COMPARED AGAINST THE HELD FRAME, BEFORE THE ASSIGNMENT, which is the
+      // only moment the previous values still exist. `unspent` is checked as
+      // well as `level` and not instead of it, because the two do not always
+      // move together: a REFUND (a talent id that vanished from the loadout —
+      // the load path hands its points back) raises `unspent` with the level
+      // standing still, and that is a point in hand the player is equally
+      // entitled to be told about. The `>` is deliberate: a SPEND lowers
+      // `unspent` and must say nothing, because the player just watched
+      // themselves do it.
+      //
+      // A NOTICE RATHER THAN A SOUND OR A MODAL. A modal in a phase-locked game
+      // is the class picker's problem all over again — the barrier has no notion
+      // of "is reading a menu" — and this client has no audio. `onRefusal` is
+      // the module-scope notice hook, self-clearing after NOTICE_MS, and the
+      // shared half of the news is already in the Case Log where the whole party
+      // can read it.
+      {
+        const before = progress;
+        progress = msg;
+        if (before !== null && msg.level > before.level) {
+          onRefusal(`level ${msg.level} — press g to spend`);
+        } else if (before !== null && msg.unspent > before.unspent) {
+          onRefusal(
+            `${msg.unspent} talent ${msg.unspent === 1 ? 'point' : 'points'} in hand — press g`,
+          );
+        }
+      }
       break;
     case 'cooldowns':
       // COMPLETE AND ABSOLUTE, never a patch: anything in the loadout that is
@@ -4225,6 +4631,12 @@ function applyServerMessage(msg: ServerMsg): void {
       // can happen to a turn in a turn-based game.
       lastError = `${msg.code}: ${msg.message}`;
       onRefusal(refusalText(msg.code, msg.message));
+      // THE ARMED `+` IS DISARMED BY ANY REFUSAL AT ALL, and deliberately not
+      // only by a refused spend: nothing on this wire says which frame an
+      // `error` is about, and a row left armed under a refusal banner is one
+      // press from spending an irreversible point while the player is reading
+      // about something else entirely. Re-arming costs one click.
+      talentsArmedId = null;
       // The aim was refused, so the mode is over — reopening it on the same
       // talent is one keypress, and leaving a ring up after a "too close" makes
       // it look as though the shot is still pending.

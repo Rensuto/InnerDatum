@@ -4,11 +4,24 @@
  * ===========================================================================
  * FOUR SLOTS, AND THAT IS THE WHOLE UI
  * ===========================================================================
- * PLAN.md caps the MVP at twelve talents, four per class, with ZERO talent
- * trees, ZERO talent points and FIXED loadouts — M6 owns progression. So this is
- * not a container the player fills, it is the class itself, and there is
+ * PLAN.md capped the MVP at twelve talents, four per class, and this header
+ * used to go on to say "with ZERO talent trees, ZERO talent points and FIXED
+ * loadouts — M6 owns progression". THAT IS NO LONGER TRUE and the past tense is
+ * deliberate: talent points exist, are spent through `spend_point`, are
+ * persisted, and are on the wire. M6 shipped.
+ *
+ * WHAT DID NOT CHANGE FOR THIS FILE, WHICH IS WHY IT STILL DRAWS FOUR: a point
+ * DEEPENS one of the four rather than adding a fifth, so the bar is still the
+ * class itself rather than a container the player fills, and there is still
  * deliberately no drag-and-drop, no page 2, no empty-slot state and no binding
- * UI. `LoadoutMsg.talents` arrives in hotbar order and this file NEVER sorts it:
+ * UI.
+ *
+ * WHAT DID CHANGE, so the next reader does not file a rank indicator as blocked
+ * on a milestone that has already landed: `LoadoutTalent` gained REQUIRED
+ * `level` and `maxLevel` fields at protocol v9, both of them populated on every
+ * frame this file receives. A rank badge on a slot is a live option today; it is
+ * simply not drawn yet, because the talent panel behind `g` is where a rank is
+ * currently read. `LoadoutMsg.talents` arrives in hotbar order and this file NEVER sorts it:
  * muscle memory for which key is Ward Rush is worth more than any ordering a
  * renderer could impose, and a hotbar that re-sorted by cooldown would move the
  * buttons around mid-fight.

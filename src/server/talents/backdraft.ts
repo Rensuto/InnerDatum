@@ -39,6 +39,7 @@
  * refusal. The blast landed; pinning something against a wall is an outcome.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -57,12 +58,43 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
+/** FROZEN. See Ashwick Flare: 4 of 6 AP is one cast plus a step. */
 const AP_COST = 4;
+/** FROZEN AT 1. The Reagent is the gate; see Ashwick Flare's note. */
 const REAGENT_COST = 1;
+/** FROZEN, and SHORTER than the flare's 5 on purpose: the control button makes
+ * you come closer to use it, which is the risk the shove is paid for with. */
 const RANGE = 3;
-/** `damage_multiplier: 1.3`. */
-const DAMAGE_MULT = 1.3;
-/** `{ type: "push", cells: 1 }`. See the header for why not 3. */
+/** `damage_multiplier: 1.3`. Unchanged at talent level 1. */
+const DAMAGE_MULT_LOW = 1.3;
+/**
+ * TUNED HIGH, not ported — same argument as Ashwick Flare's: upstream's fire
+ * talents scale flat spell damage off spellpower and have no multiplier to
+ * copy.
+ *
+ * 2.2 is deliberately IDENTICAL to the flare's, because the two shipped
+ * identical at 1.3 and the difference between them is the shove and the
+ * cooldown, not the damage. Making the control button hit harder as well would
+ * mean an Alchemist with points to spend has no reason to keep the at-will one.
+ */
+const DAMAGE_MULT_HIGH = 2.2;
+
+/** The one place this talent's curve is written. */
+function damageMult(talentLevel: number): number {
+  return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
+}
+
+/**
+ * `{ type: "push", cells: 1 }`. See the header for why not 3.
+ *
+ * FROZEN, and the header's own sentence is the reason, restated here beside the
+ * constant so a later reader sees it was considered: "One tile is a lever;
+ * three is a solution." A shove that grew with rank would let the Alchemist
+ * hand out a clean firing lane through the Inspector's three-tile dead zone on
+ * demand, from range, which is the exact outcome R6's arbitration between the
+ * two source files already rejected once. When hazard tiles land, the same one
+ * tile becomes lethal and the number still does not need to move.
+ */
 const PUSH_TILES = 1;
 /** `content/abilities/backdraft.json` — `cooldown_sec: 4.5`. R2 rounds up: 5 turns. */
 const COOLDOWN_SEC = 4.5;
@@ -94,7 +126,7 @@ export const backdraft: Talent = {
       victim,
       talentBaseDamage(self),
       DamageType.Fire,
-      DAMAGE_MULT,
+      damageMult(ctx.talentLevel),
     );
 
     // Corpses do not get shoved. `alive` is checked after the projector so the
@@ -111,7 +143,8 @@ export const backdraft: Talent = {
     );
   },
 
-  describe: () =>
-    `Blast a target up to ${RANGE} tiles away for ${percent(DAMAGE_MULT)} fire damage and ` +
-    `shove it ${PUSH_TILES} tile directly away from you. ${AP_COST} AP, ${REAGENT_COST} Reagent.`,
+  describe: (_self, level) =>
+    `Blast a target up to ${RANGE} tiles away for ${percent(damageMult(level))} fire damage ` +
+    `and shove it ${PUSH_TILES} tile directly away from you. ` +
+    `${AP_COST} AP, ${REAGENT_COST} Reagent.`,
 };

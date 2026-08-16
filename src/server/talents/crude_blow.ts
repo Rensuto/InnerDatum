@@ -28,6 +28,7 @@
  * out of 6 this is exactly two swings a round, which is the intended rhythm.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
@@ -44,6 +45,7 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
+/** FROZEN. 3 of 6 AP is exactly two swings a round — see the header's rhythm. */
 const AP_COST = 3;
 /**
  * MELEE REACH — 1.5, NOT 1, AND THE ARITHMETIC IS THE WHOLE JUSTIFICATION.
@@ -60,8 +62,31 @@ const AP_COST = 3;
  * is a second definition of what melee means (engine/combat.ts `MELEE_REACH`).
  */
 const RANGE = MELEE_REACH;
-/** `damage_multiplier: 1.0` — the baseline every other multiplier is read against. */
-const DAMAGE_MULT = 1;
+/**
+ * `damage_multiplier: 1.0` — the baseline every other multiplier is read
+ * against, and still EXACTLY the number this talent deals at talent level 1.
+ * `combatTalentScale(1, low, high)` returns `low` to the bit (scale.ts:182-208),
+ * so un-collapsing this into a curve re-based nothing.
+ */
+const DAMAGE_MULT_LOW = 1;
+/**
+ * TUNED HIGH, not ported. There is no upstream Crude Blow to port from — the
+ * `SHAPE:` citation above is `attackTarget` itself, which carries no numbers.
+ *
+ * 1.8 is tuned against the two numbers that ARE authored in this class: Ward
+ * Rush's 0.8 (the cheap engage) and Iron Curtain's 1.4 (the heavy, 5 AP and 25
+ * Resolve). A fully-trained reliable swing landing at 1.8 sits ABOVE the
+ * untrained heavy and BELOW the trained one (2.4), which keeps the at-will
+ * button worth pressing all evening without letting it replace the two that
+ * cost a resource. Doubling the low would have put it at 2.0 and done exactly
+ * that.
+ */
+const DAMAGE_MULT_HIGH = 1.8;
+
+/** The one place this talent's curve is written. `describe` and `onUse` share it. */
+function damageMult(talentLevel: number): number {
+  return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
+}
 
 export const crudeBlow: Talent = {
   id: talentId('crude_blow'),
@@ -88,10 +113,10 @@ export const crudeBlow: Talent = {
     // trusting: a refusal here is refunded exactly like one from the predicate.
     if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
 
-    const hit = talentAttack(ctx, self, victim, { mult: DAMAGE_MULT });
+    const hit = talentAttack(ctx, self, victim, { mult: damageMult(ctx.talentLevel) });
     return talentDone([hit]);
   },
 
-  describe: () =>
-    `Swing at an adjacent enemy for ${percent(DAMAGE_MULT)} weapon damage. ${AP_COST} AP.`,
+  describe: (_self, level) =>
+    `Swing at an adjacent enemy for ${percent(damageMult(level))} weapon damage. ${AP_COST} AP.`,
 };

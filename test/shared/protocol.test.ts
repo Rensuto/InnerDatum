@@ -10,12 +10,15 @@ import {
   VoiceState,
   parseClientMsg,
 } from '../../src/shared/protocol.ts';
+import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type {
   BroadcastMsg,
   ClassOptionsMsg,
   CooldownsMsg,
   LoadoutMsg,
+  LoadoutTalent,
+  ProgressMsg,
   ResourceMsg,
   ServerMsg,
   ViewerMsg,
@@ -474,6 +477,7 @@ describe('the inspect pair at the trust boundary', () => {
       { t: 'revive', dir: 'n' },
       { t: 'respawn' },
       { t: 'choose_class', classId: 'watchman' },
+      { t: 'spend_point', talentId: 'talent:fog_step' },
       { t: 'party', action: 'invite', targetId: 'actor_b' },
       { t: 'inspect', targetId: 'actor_b' },
       { t: 'ping' },
@@ -721,5 +725,308 @@ describe('class_options is offered to one player, never to the room', () => {
     if (monster.t !== 'inspected' || self.t !== 'inspected') return;
     expect(monster.view?.className).toBeUndefined();
     expect(self.view?.className).toBe('The Watchman');
+  });
+});
+
+/**
+ * v9's PAIR — `spend_point` inbound, `progress` outbound.
+ *
+ * The inbound verb is one bounded string, like `choose_class` before it, and it
+ * is tested the same way: almost entirely by what it REFUSES. The reason to be
+ * strict here is that a SPEND IS IRREVERSIBLE — there is no refund verb and no
+ * unlearn — so a frame that got through carrying somebody else's actor id would
+ * permanently spend a stranger's scarce point on a talent they did not pick.
+ */
+describe('the spend_point frame at the trust boundary', () => {
+  /** The schema's own cap, deliberately restated rather than exported. */
+  const TALENT_ID_MAX_CHARS = 64;
+
+  it('accepts a well-formed spend and narrows it', () => {
+    const parsed = parseClientMsg({ v: V, t: 'spend_point', talentId: 'talent:fog_step' });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.msg.t).toBe('spend_point');
+    // The narrowing is the assertion: `talentId` is only reachable once `t` has
+    // discriminated the union, which is what makes the handler's signature safe.
+    if (parsed.msg.t !== 'spend_point') return;
+    expect(parsed.msg.talentId).toBe('talent:fog_step');
+  });
+
+  it('REFUSES a smuggled actorId rather than stripping it', () => {
+    // THE SECURITY PROPERTY, NOT A FORMALITY, AND THE REFUSAL IS THE ASSERTION.
+    // `strictObject` means an unknown key is a REJECTED frame, never a quietly
+    // sanitised one — so this is asserted as `ok === false` and never as "the
+    // parsed message has no actorId", which would pass just as happily under a
+    // permissive `z.object` that had thrown the key away. Identity never travels
+    // on this wire; whose sheet gains the level is the socket's session. A frame
+    // naming another actor is a client asking to spend somebody else's point,
+    // permanently, and it must fail loudly in the log.
+    for (const key of ['actorId', 'userId', 'playerId', 'charId', 'targetId']) {
+      const forged = parseClientMsg({
+        v: V,
+        t: 'spend_point',
+        talentId: 'talent:fog_step',
+        [key]: 'actor_someone_else',
+      });
+      expect(forged.ok, `${key} must be rejected`).toBe(false);
+    }
+  });
+
+  it('REFUSES a missing or non-string talentId', () => {
+    expect(parseClientMsg({ v: V, t: 'spend_point' }).ok).toBe(false);
+    // Not nullable either. An absent field and a null one would be two spellings
+    // of "I did not name a talent", and the second always turns up in a
+    // hand-rolled client — where the handler would have to invent a meaning for
+    // it, and the only meaning available is "spend it on something".
+    expect(parseClientMsg({ v: V, t: 'spend_point', talentId: null }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'spend_point', talentId: 3 }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'spend_point', talentId: ['talent:fog_step'] }).ok).toBe(
+      false,
+    );
+    // A talent SLOT index would be a second addressing scheme for the same
+    // thing, and the two would disagree the first time a loadout was reordered.
+    expect(parseClientMsg({ v: V, t: 'spend_point', slot: 1 }).ok).toBe(false);
+  });
+
+  it('REFUSES an empty or oversized talentId', () => {
+    expect(parseClientMsg({ v: V, t: 'spend_point', talentId: '' }).ok).toBe(false);
+    // 64 is the boundary and it is inclusive; 65 is a place to park a payload.
+    const atLimit = 'a'.repeat(TALENT_ID_MAX_CHARS);
+    expect(parseClientMsg({ v: V, t: 'spend_point', talentId: atLimit }).ok).toBe(true);
+    const overLimit = 'a'.repeat(TALENT_ID_MAX_CHARS + 1);
+    expect(parseClientMsg({ v: V, t: 'spend_point', talentId: overLimit }).ok).toBe(false);
+  });
+
+  it('accepts an id this build has never heard of — the LOOKUP refuses it, not zod', () => {
+    // `talentId` is a bounded string rather than a `z.enum` of the twelve ids,
+    // following `TalentSchema`'s stated precedent: baking the catalogue into the
+    // wire schema makes every content edit a protocol change. So a frame naming
+    // a talent that does not exist — or one the sender has not learned, or one
+    // already at its cap — is SHAPE-VALID here and is refused one step later
+    // with `bad_message`. This test pins the seam: swap the string for an enum
+    // and the coupling comes back, and this line is where you find out.
+    expect(parseClientMsg({ v: V, t: 'spend_point', talentId: 'talent:not_a_talent' }).ok).toBe(
+      true,
+    );
+  });
+
+  it('REFUSES a frame with no `v` at all', () => {
+    // `parseClientMsg`'s version check is guarded by `'v' in candidate`, so a
+    // frame that simply omits the field slips past it entirely — the `z.literal`
+    // in the schema is the only thing making the envelope mandatory. Drop it
+    // from this one schema and a client from any deploy ever shipped could spend
+    // a point against a talent whose levels it cannot even draw.
+    expect(parseClientMsg({ t: 'spend_point', talentId: 'talent:fog_step' }).ok).toBe(false);
+    const stale = parseClientMsg({ v: V - 1, t: 'spend_point', talentId: 'talent:fog_step' });
+    expect(stale.ok).toBe(false);
+    if (stale.ok) return;
+    expect(stale.error).toContain('protocol version mismatch');
+  });
+
+  it('adds NO ErrorCode member for a refused spend', () => {
+    // v9 KEPT ITS BUMP ARGUMENT TO ONE REASON, exactly as v8 did. An unknown,
+    // unlearned or already-capped talent is `bad_message`; a spend with no
+    // points in hand is `bad_message`; where the existing turn gate applies it
+    // is `not_your_turn`. src/shared/version.ts records at 2 -> 3 that a new
+    // `ErrorCode` independently forces a bump, so a `no_points` member would
+    // have forced this one a second time over for a refusal the panel already
+    // prevents by greying the `+`.
+    expect(Object.values(ErrorCode)).not.toContain('no_points');
+    expect(Object.values(ErrorCode)).not.toContain('talent_maxed');
+    expect(Object.values(ErrorCode)).toContain('bad_message');
+    expect(Object.values(ErrorCode)).toContain('not_your_turn');
+  });
+});
+
+describe('progress is told to one player, never to the room', () => {
+  const progress: ProgressMsg = {
+    v: V,
+    t: 'progress',
+    level: 4,
+    // PER-LEVEL, never cumulative: `gainExp` subtracts the threshold on the way
+    // past (ActorLevel.lua:104), so this is already the bar's numerator.
+    xp: 61,
+    // `expChart(5)` — the denominator, on the wire so the client never needs its
+    // own copy of MAX_CHARACTER_LEVEL to decide whether the bar is full.
+    xpToNext: 174,
+    unspent: 2,
+  };
+
+  it('is a ViewerMsg and is NOT assignable to BroadcastMsg', () => {
+    // THIS IS THE ENFORCEMENT, NOT A COMMENT ABOUT IT. The gateway's `broadcast`
+    // takes a `BroadcastMsg`, so the `@ts-expect-error` below is what fails to
+    // compile — in the direction that matters — if somebody removes `progress`
+    // from `ViewerMsg`.
+    //
+    // `unspent` IS INTENT. A banked talent point is a decision somebody has
+    // deliberately not made yet, and this union has withheld that class of fact
+    // since M3: it is the same argument that made `cooldowns` private, where
+    // "Mend Wounds is ready" tells you what an ally is saving for the boss.
+    // Broadcast it and every player's pending judgement becomes a queue of
+    // people telling each other what to buy.
+    const asViewer: ViewerMsg = progress;
+    const asServer: ServerMsg = progress;
+    expect(asViewer.t).toBe('progress');
+    expect(asServer.t).toBe('progress');
+
+    // @ts-expect-error `progress` is viewer-private: `BroadcastMsg` is
+    // `Exclude<ServerMsg, ViewerMsg>`, so this assignment must not compile. The
+    // suppression IS the assertion — delete it and the file stops building the
+    // day the frame becomes broadcastable.
+    const notBroadcastable: BroadcastMsg = progress;
+    expect(notBroadcastable).toBe(progress);
+  });
+
+  it('carries no pendingLevels and no cumulative total', () => {
+    // `pendingLevels` is internal scheduler bookkeeping: between a kill and the
+    // next base-clock pass it is briefly non-zero, and a panel drawing it would
+    // flicker a point that does not exist yet and cannot be spent. A cumulative
+    // xp total is absent for the opposite reason — it is not a second fact, it
+    // is the same one computed wrongly, and a client holding it would level a
+    // player every kill once they were past the sum of the chart.
+    expect(Object.keys(progress).sort()).toEqual(
+      ['level', 't', 'unspent', 'v', 'xp', 'xpToNext'].sort(),
+    );
+  });
+});
+
+/**
+ * THE FOUR FIELDS THAT MAKE A TALENT LEVEL VISIBLE.
+ *
+ * `level` and `maxLevel` are the `n/max` under the icon; `desc`/`descNext` are
+ * the current -> next diff ported in spirit from LevelupDialog.lua:963-970. A
+ * panel with the first pair and not the second shows a number that changes and
+ * never says what it bought, which is the one failure this milestone is defined
+ * against.
+ */
+describe('LoadoutTalent carries a rank the client cannot invent', () => {
+  const fogStep: LoadoutTalent = {
+    id: 'talent:fog_step',
+    name: 'Fog Step',
+    icon: 'icon_talent_fog_step',
+    cost: { ap: 0, mp: 3, resource: 10 },
+    cooldownTurns: 6,
+    // PER-ACTOR FROM v9, and the narrowing that forced the bump. `combatTalentLimit
+    // (t, 10, 3, 7)` (mobility.lua:40-62) floors to 3/4/5/6/7, so a rank-3
+    // detective genuinely reaches 5 where a rank-1 reaches 3.
+    range: 5,
+    minRange: 0,
+    shape: TalentShape.Tile,
+    radius: 0,
+    level: 3,
+    maxLevel: TALENT_MAX_LEVEL,
+    desc: 'Step to a free tile up to 5 tiles away.',
+    descNext: 'Step to a free tile up to 6 tiles away.',
+  };
+
+  it('takes its cap from the authored constant, never from a literal', () => {
+    // `maxLevel` IS ON THE WIRE FOR THE SAME REASON `radius` IS: the client must
+    // never hold a second copy of an authored number. This assertion is what
+    // says the value is `TALENT_MAX_LEVEL` (src/shared/progression.ts, which is
+    // ToME's `t.points`, ActorTalents.lua:71) rather than a 5 somebody typed —
+    // move the cap and a renderer with its own 5 keeps drawing "3/5" and keeps
+    // offering a `+` on a talent that has run out.
+    expect(fogStep.maxLevel).toBe(TALENT_MAX_LEVEL);
+    expect(TALENT_MAX_LEVEL).toBe(5);
+  });
+
+  it('holds a RAW level inside the cap, and the type cannot say so on its own', () => {
+    // WHAT IS ACTUALLY PINNED HERE, STATED PLAINLY RATHER THAN OVERSOLD.
+    // TypeScript has no dependent types: `level: number` and `maxLevel: number`
+    // cannot express `level <= maxLevel`, and the only way to make level 6 a
+    // COMPILE error would be a literal union `1|2|3|4|5` in this file — which is
+    // exactly the second copy of an authored number that `maxLevel` exists on
+    // the wire to prevent. Cure worse than the disease, so it is not done.
+    //
+    // The relation is therefore enforced where the points are handed out, and
+    // NOWHERE ELSE: the spend handler is the only thing that raises a raw level,
+    // and src/shared/scale.ts:165-170 argues at length that the CURVES must not
+    // clamp at 5 (a level above the cap has to extrapolate honestly rather than
+    // silently flatten). This assertion is the runtime half of that contract.
+    expect(fogStep.level).toBeGreaterThanOrEqual(1);
+    expect(fogStep.level).toBeLessThanOrEqual(fogStep.maxLevel);
+
+    // A talent on the hotbar is one this detective has LEARNED, so 0 is not a
+    // value this field takes — ToME's `traw == 0` branch (LevelupDialog.lua:956)
+    // is the unlearned case, and we have no unlearned talents to draw.
+    expect(fogStep.level).not.toBe(0);
+  });
+
+  it('makes the four fields REQUIRED — an old-shaped talent no longer compiles', () => {
+    // THIS IS THE HALF THE TYPE SYSTEM GENUINELY ENFORCES, and it is the half
+    // that matters for the bump: a v8-shaped `LoadoutTalent` is not a v9 one.
+    // Optional fields would have let `toLoadoutView` keep compiling while
+    // sending a hotbar with no ranks on it, which is a client drawing every
+    // talent as unlevelled forever with nothing failing anywhere.
+    const v8Shaped = {
+      id: 'talent:crude_blow',
+      name: 'Crude Blow',
+      icon: 'icon_talent_crude_blow',
+      cost: { ap: 5, mp: 0, resource: 0 },
+      cooldownTurns: 0,
+      range: 1,
+      minRange: 0,
+      shape: TalentShape.Single,
+      radius: 0,
+    };
+    // @ts-expect-error the v8 shape is missing `level`, `maxLevel`, `desc` and
+    // `descNext`. Delete this suppression and the file stops building the day
+    // somebody makes them optional to keep an old call site quiet.
+    const stale: LoadoutTalent = v8Shaped;
+    expect(stale.id).toBe('talent:crude_blow');
+
+    // @ts-expect-error `level` is a number, not the string a renderer would
+    // format it into. The formatting belongs on the panel, not on the wire.
+    const stringly: LoadoutTalent = { ...fogStep, level: '3' };
+    expect(stringly.name).toBe('Fog Step');
+  });
+
+  it('accepts null for descNext, and only null, at the cap', () => {
+    // THE AT-CAP BRANCH, LevelupDialog.lua:971-975: upstream renders the current
+    // description ALONE when `traw` has reached `getMaxTPoints(t)`, with no
+    // `[-> n+1]` header and no diff. `null` is that branch on the wire.
+    const capped: LoadoutTalent = {
+      ...fogStep,
+      level: TALENT_MAX_LEVEL,
+      range: 7,
+      desc: 'Step to a free tile up to 7 tiles away.',
+      descNext: null,
+    };
+    expect(capped.descNext).toBeNull();
+    expect(capped.level).toBe(capped.maxLevel);
+
+    // NULL RATHER THAN "" OR AN OMITTED KEY. Two spellings of "there is no next
+    // level" is how a renderer ends up drawing a blank row where the diff should
+    // be, and only one of the two spellings gets a case in the switch.
+    // @ts-expect-error `descNext` is required; absent is not a third spelling.
+    const omitted: LoadoutTalent = {
+      id: fogStep.id,
+      name: fogStep.name,
+      icon: fogStep.icon,
+      cost: fogStep.cost,
+      cooldownTurns: fogStep.cooldownTurns,
+      range: fogStep.range,
+      minRange: fogStep.minRange,
+      shape: fogStep.shape,
+      radius: fogStep.radius,
+      level: fogStep.level,
+      maxLevel: fogStep.maxLevel,
+      desc: fogStep.desc,
+    };
+    expect(omitted.desc).toBe(fogStep.desc);
+  });
+
+  it('renders both sentences server-side, because the client cannot compute one', () => {
+    // eslint's NO_COMBAT_MATH_PATTERNS blocks src/client/** from importing
+    // src/shared/scale.ts at all, so the browser cannot evaluate
+    // `combatTalentScale(level, low, high)` even if somebody wanted it to.
+    // Strings are not a shortcut here — they are the only honest shape, and
+    // `toLoadoutView`'s docblock states the same rule for every other number on
+    // this frame.
+    expect(typeof fogStep.desc).toBe('string');
+    expect(typeof fogStep.descNext).toBe('string');
+    // The pair is a DIFF: it is worth nothing if both halves say the same thing,
+    // which is what a stubbed `describe` that ignored its level would produce.
+    expect(fogStep.descNext).not.toBe(fogStep.desc);
   });
 });

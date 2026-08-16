@@ -38,6 +38,7 @@
  * hide. Twelve talents do not need two curves.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -54,11 +55,47 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
+/** FROZEN. 4 of 6 AP: one flare a round, with a step left over. */
 const AP_COST = 4;
+/**
+ * FROZEN AT 1, and this is the Alchemist's whole gate. Reagents are a countable
+ * stock of eight that only refills on a kill or at the stairs, so the cost IS
+ * the cooldown (see the `cooldownTurns: 0` note below). A rank that made casts
+ * cheaper would turn a finite stock into a bar, which engine/talents.ts's
+ * `RESOURCE_RULES` exists to make impossible.
+ */
 const REAGENT_COST = 1;
+/** FROZEN, and equal to the Inspector's reliable range on purpose: the two
+ * ranged classes hold the same line, and the difference between them is the
+ * die, not the distance. */
 const RANGE = 5;
-/** `damage_multiplier: 1.3`, `element: "fire"`. */
-const DAMAGE_MULT = 1.3;
+/** `damage_multiplier: 1.3`, `element: "fire"`. Unchanged at talent level 1. */
+const DAMAGE_MULT_LOW = 1.3;
+/**
+ * TUNED HIGH, not ported. ToME's Flame (fire.lua:20-50, the `SHAPE:` citation)
+ * carries no multiplier at all — it scales through
+ * `combatTalentSpellDamage(t, 25, 290)` (fire.lua:39, cited to the one line so
+ * the endpoints are greppable), a FLAT damage curve off spellpower, because
+ * upstream spells do not multiply a weapon. This line used to quote 28/270,
+ * which is neither Flame's pair nor anything else in the cited block; 28/280
+ * does exist at fire.lua:145 but belongs to a different talent, so the wrong
+ * number was also the most misleading possible wrong number. This talent
+ * deliberately
+ * runs on the one damage curve the whole game shares (see the header), so
+ * upstream's endpoints are in the wrong units to copy.
+ *
+ * 2.2 is tuned against the Inspector's Revolver Shot (0.9 -> 1.6), which is the
+ * fair comparison: both are the class's at-will ranged button. The flare is
+ * ~37% stronger at every rank because it CANNOT MISS and cannot be reduced by
+ * armour, and it is paid for out of eight objects rather than out of nothing.
+ * That premium is the class trade stated as a number.
+ */
+const DAMAGE_MULT_HIGH = 2.2;
+
+/** The one place this talent's curve is written. */
+function damageMult(talentLevel: number): number {
+  return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
+}
 
 export const ashwickFlare: Talent = {
   id: talentId('ashwick_flare'),
@@ -89,12 +126,12 @@ export const ashwickFlare: Talent = {
       victim,
       talentBaseDamage(self),
       DamageType.Fire,
-      DAMAGE_MULT,
+      damageMult(ctx.talentLevel),
     );
     return talentDone([hit]);
   },
 
-  describe: () =>
-    `Loose a flare at a target up to ${RANGE} tiles away for ${percent(DAMAGE_MULT)} fire ` +
-    `damage. It does not miss. ${AP_COST} AP, ${REAGENT_COST} Reagent.`,
+  describe: (_self, level) =>
+    `Loose a flare at a target up to ${RANGE} tiles away for ${percent(damageMult(level))} ` +
+    `fire damage. It does not miss. ${AP_COST} AP, ${REAGENT_COST} Reagent.`,
 };

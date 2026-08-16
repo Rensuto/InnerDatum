@@ -55,6 +55,7 @@ import type { GameEvent, SweepStep, TalentResolution } from './engine/scheduler.
 import { disconnectActor, pump, reconnectActor, submitIntent } from './engine/scheduler.ts';
 import type {
   IntentResult,
+  LevelUpNote,
   PartyCommandResult,
   PartySnapshot,
   PumpResult,
@@ -905,6 +906,29 @@ export type ReapingPumpResult = PumpResult & {
    * engine/scheduler.ts for why the deletion is the caller's and not the pump's.
    */
   readonly reaped: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * LEVELS CROSSED IN THIS PUMP — the one shared signal that a talent point
+   * exists.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A FOURTH LIST RATHER THAN A NEW `TurnEvent`, and for exactly the reason
+   * `refusals` above is one: src/shared/version.ts records that a new `TurnEvent`
+   * variant independently FORCES a protocol bump, and this needs none — the
+   * gateway turns each entry into an ordinary Record-lane `LogLine`, which is
+   * free text on a frame that already exists.
+   *
+   * ═══ WITHOUT IT A LEVEL-UP IS COMPLETELY SILENT, AND IT WAS ═══
+   * `PumpCtx.onLevelUp` (engine/scheduler.ts) was declared, documented at length
+   * as the Case Log narration seam, and invoked by `applyPendingLevels` — with
+   * NOTHING ANYWHERE CONSTRUCTING THE CLOSURE. So the Case Log, which reports
+   * every blow, every status and every death, said nothing at all when a player
+   * gained a level; and `ProgressMsg` is viewer-private by design, so the only
+   * other signal was a number behind a key the player had no reason to press.
+   * Three friends could cross levels 2, 3 and 4 in the first fight of the
+   * evening and finish it with every talent at rank 1.
+   */
+  readonly levelUps: readonly LevelUpNote[];
 };
 
 /**
@@ -1232,11 +1256,26 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         return refuseTalent(ErrorCode.NotYourTurn, 'no_actor');
       }
 
-      // MEMBERSHIP IS THE FIRST REAL CHECK. M3 loadouts are FIXED (PLAN.md § M3:
-      // zero trees, zero talent points), so "do you have this talent" is a
-      // lookup in your own four and a frame naming a thirteenth — or the
-      // Alchemist's heal on the Watchman — is a hand-crafted frame, not a UI
-      // slip. bad_message rather than a game-rule code says so.
+      // ═══════════════════════════════════════════════════════════════════
+      // MEMBERSHIP IS THE FIRST REAL CHECK, AND IT IS SHEET-DRIVEN.
+      // ═══════════════════════════════════════════════════════════════════
+      //
+      // This comment used to justify itself with "M3 loadouts are FIXED
+      // (PLAN.md § M3: zero trees, zero talent points)". THE POINTS LANDED and
+      // that clause is false — but the CODE was always right, because it has
+      // never read a `ClassDef`: `talents.loadoutOf(actor)` maps this BODY's
+      // own `TalentSheet.loadout` through the registry (`createTalentBook` in
+      // content/classes.ts), so it answers what this actor can actually use
+      // rather than what its class was authored with.
+      //
+      // What progression changed is the DEPTH of the four, never the count, so
+      // the claim underneath survives intact: "do you have this talent" is a
+      // lookup in your own four, and a frame naming a thirteenth — or the
+      // Alchemist's heal on the Watchman — is a hand-crafted frame rather than
+      // a UI slip. `bad_message` rather than a game-rule code says so.
+      //
+      // ═══ AND THE VIEW IT RETURNS IS PER-ACTOR, WHICH THE FALLBACK RELIES ON
+      // ═══ See the range check below.
       const talent = talents.loadoutOf(actor).find((entry) => entry.id === talentId);
       if (talent === undefined) {
         return refuseTalent(ErrorCode.BadMessage, `no such talent in this loadout: ${talentId}`);
@@ -1288,6 +1327,26 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       }
 
       const distance = combatDistance(actor, target);
+      // ═══════════════════════════════════════════════════════════════════
+      // `talent.range` IS THE CASTER'S OWN RANGE, NOT A CLASS CONSTANT.
+      // ═══════════════════════════════════════════════════════════════════
+      //
+      // This line is the catalogue-only fallback and it reads `range` /
+      // `minRange` straight off the `LoadoutTalent` view, which is CORRECT
+      // AUTOMATICALLY — but only because the view is built per-actor:
+      // `createTalentBook.loadoutOf` resolves
+      // `effectiveTalentRange(targeting, getTalentLevel(sheet, id))` for this
+      // body's own rank, which is the identical call `canUseTalent` makes on the
+      // authoritative path above.
+      //
+      // WHY IT IS CALLED OUT HERE RATHER THAN LEFT TO BE OBVIOUS: this is
+      // exactly where a class-constant range would sneak back in. A `TalentBook`
+      // that built its views from a `ClassDef` — the shape this file's own tests
+      // hand it, and the shape any hand-written two-talent book naturally takes
+      // — would refuse a rank-5 Inspector the 7-tile Fog Step her hotbar drew,
+      // and the bug would present as the server cheating. The rule is: whatever
+      // supplies `loadoutOf` must resolve the range at the actor's level, and
+      // nothing in this file may re-derive it from a talent definition.
       if (distance > talent.range) {
         return refuseTalent(
           ErrorCode.OutOfRange,
@@ -1331,6 +1390,21 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       if (requireLiveActor(actorId) === undefined) return refuse('no_actor');
       const accepted = submitIntent(world, barrier, actorId, HOLD_INTENT);
       return accepted ? OK : refuse('no_actor');
+    },
+
+    /**
+     * `TurnEngine.notePresence` — the barrier's "somebody is at the keyboard",
+     * reachable from a verb that does not pump.
+     *
+     * `requireLiveActor` rather than a bare lookup, so a body that is DOWNED is
+     * not credited with presence it may not have: the flag it clears only
+     * matters for a body that can take a turn. It is the same gate `commit`
+     * above uses before its own `noteCommand`.
+     */
+    notePresence(actorId: string): void {
+      const actor = requireLiveActor(actorId);
+      if (actor === undefined) return;
+      barrier.noteCommand(actor);
     },
 
     /**
@@ -1609,11 +1683,31 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     },
 
     pump(): ReapingPumpResult {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE CLOSURE `PumpCtx.onLevelUp` HAS BEEN WAITING FOR.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Built HERE, per pump, rather than once at construction, because the list
+       * is the pump's own answer and a shared array would leak one pump's levels
+       * into the next one's frame. Same shape as `wipes` and `refusals` below:
+       * the scheduler states the fact, this file collects it, the gateway says it
+       * in words.
+       *
+       * THE SCHEDULER CALLS THIS FROM THE BASE-CLOCK PASS, once per level
+       * crossed, in order — so pushing is the whole implementation and the order
+       * is already the order a player lived it.
+       */
+      const levelUps: LevelUpNote[] = [];
+
       // `downed` is threaded in rather than created here because a five-turn
       // countdown has to survive the pump that ticks it — see the option's note.
       // Undefined switches every survival branch in the scheduler off, which is
       // the M3 behaviour exactly.
       const result = pump(world, {
+        onLevelUp: (actorId: string, level: number): void => {
+          levelUps.push({ id: actorId, level });
+        },
         nowMs: now(),
         barrier,
         downed: opts.downed,
@@ -1759,6 +1853,11 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         reaped: enrolled
           .filter(([id, body]) => body === undefined || world.getActor(id) === body)
           .map(([id]) => id),
+        // NOT FILTERED AGAINST THE WORLD, unlike `reaped` directly above. A level
+        // was reached; that stays true of a body that has since been erased by a
+        // wipe on this same pump, and the Record lane re-resolves the name
+        // through `world.getActor` with `reapedNames` behind it anyway.
+        levelUps,
       };
     },
 

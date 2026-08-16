@@ -15,6 +15,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { tileIndex } from '../../src/shared/coords.ts';
 import { ErrorCode, ResourceKind, TalentShape, TileCode } from '../../src/shared/protocol.ts';
+import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { DownedState } from '../../src/server/engine/downed.ts';
 import type { TalentBook } from '../../src/server/turn-engine.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
@@ -61,6 +62,17 @@ function talent(id: string, over: Partial<LoadoutTalent> = {}): LoadoutTalent {
     minRange: 0,
     shape: TalentShape.Single satisfies Shape,
     radius: 0,
+    // ═══ THE RANK, AND WHY IT IS PART OF THE FIXTURE RATHER THAN A DEFAULT ═══
+    // `range` on a `LoadoutTalent` is PER-ACTOR from v9 — the caster's own
+    // talent level resolved through `effectiveTalentRange`. This file drives the
+    // CATALOGUE-ONLY fallback (a book with no `check`), which reads `range`
+    // straight off this view, so a test that overrides `range` is deliberately
+    // stating "this actor's range, at whatever rank they are" and the level
+    // beside it is what makes that readable rather than accidental.
+    level: 1,
+    maxLevel: TALENT_MAX_LEVEL,
+    desc: `${id} at rank 1.`,
+    descNext: `${id} at rank 2.`,
     ...over,
   };
 }

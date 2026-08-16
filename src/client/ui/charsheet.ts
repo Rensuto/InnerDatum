@@ -41,11 +41,30 @@
  *              :1316-1321 Physical/Spell/Mental)
  *   TALENTS   the talent tab
  *
- * Reduced to what this game has, that is: name -> class -> Life -> resource ->
- * the server's own stat/attack/defense rows -> talents. Everything ToME puts
- * there that we do not have — level, xp, gold, equipment, inventory, inscriptions
- * — is ABSENT rather than shown as an empty row, because a row reading "Gold: 0"
- * on a screen with no economy is a promise of a system that does not exist.
+ * Reduced to what this game has, that is: name -> class -> LEVEL -> EXPERIENCE
+ * -> Life -> resource -> the server's own stat/attack/defense rows -> talents.
+ *
+ * ═══ LEVEL AND EXPERIENCE ARE HERE NOW, AND THAT PARAGRAPH USED TO SAY THEY
+ *     COULD NOT BE ═══
+ * This header used to list "level, xp, gold, equipment, inventory, inscriptions"
+ * together as things ABSENT rather than shown as empty rows, on the grounds that
+ * a row reading "Gold: 0" on a screen with no economy is a promise of a system
+ * that does not exist. THAT PROMISE IS NOW KEPT for two of the six: v9 brought a
+ * real experience curve, a real level and real talent points (src/shared/
+ * progression.ts), so the rows describe a system a player can feel and are drawn
+ * exactly where ToME draws them — CharacterSheet.lua:614-615 prints "Level:" and
+ * "Exp  :" between the Class line at :606 and "Life" at :625, and the HUD frame
+ * prints "Lvl N" beside the name in the identity block
+ * (uiset/Minimalist.lua:1552-1560). Gold, equipment, inventory and inscriptions
+ * are still absent, still for the original reason, and this sentence is the
+ * reminder of what it takes to earn a row here.
+ *
+ * THE TALENT-POINTS ROW IS DIFFERENT IN KIND FROM BOTH and appears only while
+ * `unspent > 0`. It is not a stat, it is a CALL TO ACTION — so it names the key
+ * that answers it, and it goes away the moment there is nothing to answer. That
+ * conditionality is ToME's own: uiset/Minimalist.lua:1512-1516 draws the levelup
+ * glow, and :1587-1589 makes its hotspot clickable, only under
+ * `player.unused_talents > 0 or ...`.
  *
  * ATTACK AND DEFENSE COLLAPSE INTO ONE SECTION HERE, and it is not laziness. The
  * server sends `InspectView.rows` as one ordered list and protocol.ts is explicit
@@ -122,7 +141,12 @@ import {
   PANEL_PAD,
   PanelSkin,
 } from './panel.ts';
-import type { InspectView, LoadoutTalent, ResourceView } from '../../shared/protocol.ts';
+import type {
+  InspectView,
+  LoadoutTalent,
+  ProgressMsg,
+  ResourceView,
+} from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 
@@ -168,13 +192,41 @@ const TWO_COL_MIN_W = 22 * 2 * CHAR_W + COL_GAP;
 const SHEET_W = 328;
 const SHEET_MIN_W = 168;
 const SHEET_MAX_H = 268;
-/** A sheet shorter than a header plus the identity block is not worth drawing. */
-const SHEET_MIN_H = HEADER_H + INSET * 2 + SECTION_H + ROW_H * 3;
+/**
+ * A sheet shorter than a header plus the identity block is not worth drawing.
+ *
+ * ═══ IT IS DERIVED, AND LEAVING IT STALE IS A PANEL THAT NEVER OPENS ═══
+ * FIVE identity rows now, not three: Name, Class, Level, Experience, Life. The
+ * talent-points row is deliberately NOT counted — it is conditional, and sizing
+ * the minimum for a row that is usually absent would refuse to draw a perfectly
+ * good sheet on a short viewport. This number gates `charSheetRect`, so a copy
+ * left at three would let the panel open into a band that cannot hold what
+ * `charSheetRows` now returns; a copy left too large makes the sheet report null
+ * and never draw at all. Exported so the test can pin the bottom of the range
+ * instead of spelling the arithmetic a second time.
+ */
+export const SHEET_MIN_H = HEADER_H + INSET * 2 + SECTION_H + ROW_H * 5;
 /** Air between the panel and the edges of the band it is clamped into. */
 const SHEET_MARGIN = 6;
 
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
+/**
+ * The control that opens the talent panel, left of the close. THE PORTED HALF of
+ * decision (h): ToME's own discoverable route to its levelup screen is a BUTTON
+ * on the character sheet — `Button.new{text="[L]evelup", ...}` at
+ * dialogs/CharacterSheet.lua:99, whose `fct` triggers the LEVELUP virtual action
+ * — and the bracketed-letter grammar is the same one it uses for
+ * "Manage [I]nventory" at :95.
+ *
+ * OURS READS `[G]` BECAUSE `l` IS TAKEN. src/client/input/keys.ts:198 binds `l`
+ * to Dir.E and says at length why that cannot move; the label therefore names
+ * OUR key rather than ToME's, which is the whole point of a mnemonic.
+ */
+const TALENTS_BTN_W = 22;
+/** Air between the two header controls, so neither swallows the other's click. */
+const HEADER_BTN_GAP = 3;
+const TALENTS_BTN_LABEL = '[G]';
 
 const FONT_LABEL = '10px ui-monospace, Consolas, monospace';
 const FONT_VALUE = 'bold 10px ui-monospace, Consolas, monospace';
@@ -260,6 +312,13 @@ export type CharSheetView = {
   readonly loadout: readonly LoadoutTalent[];
   /** The `cooldowns` frame: talent id -> turns left. Absent means READY. */
   readonly cooldowns: Readonly<Record<string, number>>;
+  /**
+   * The `progress` frame (v9): level, xp into it, the next threshold, and the
+   * points in hand. NULL BEFORE THE FIRST ONE ARRIVES, which is a real window —
+   * it is sent in the `hello` block, so the sheet can be opened for one frame
+   * before it lands. Null means "no level line", never "level 0".
+   */
+  readonly progress: ProgressMsg | null;
 };
 
 /** The word for a pool. A switch, so a fourth `ResourceKind` is a compile error. */
@@ -329,6 +388,28 @@ function cooldownText(turns: number): string {
 }
 
 /**
+ * How far into this level, as a fraction — or the word for having run out of
+ * levels to be far into.
+ *
+ * `ProgressMsg.xpToNext` IS 0 AT THE CAP AND THAT IS A SENTINEL, NOT A NUMBER.
+ * The server's `sendProgress` documents it: at `MAX_CHARACTER_LEVEL` there is no
+ * next level and `xp` keeps accumulating, so any positive denominator would draw
+ * a fraction creeping towards a level that never arrives. It is the same shape as
+ * `descNext: null` — a fact the renderer must handle rather than divide by.
+ *
+ * ToME prints this as a PERCENTAGE (CharacterSheet.lua:615,
+ * `("Exp  : #00ff00#%2d%%"):format(100 * cur_exp / max_exp)`). We print the two
+ * numbers instead, because a percentage of a threshold nobody can see answers
+ * "how far along" and not "how much more" — and with roughly 145 kills in the
+ * whole ten levels (see progression.ts), "how much more" is the question.
+ */
+function experienceText(progress: ProgressMsg): string {
+  const xp = Math.max(0, Math.floor(progress.xp));
+  if (progress.xpToNext <= 0) return `${xp} — top level`;
+  return `${xp}/${Math.floor(progress.xpToNext)}`;
+}
+
+/**
  * THE SHEET, AS AN ORDERED LIST OF LINES. Pure, and the whole port lives here.
  *
  * The section order is the contract (see the header). Everything below it is
@@ -357,6 +438,45 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
     if (self.className !== undefined) {
       rows.push({ kind: SheetRowKind.Field, label: 'Class', value: self.className });
     }
+
+    // ═══ LEVEL AND EXPERIENCE, BETWEEN CLASS AND LIFE — ToME'S OWN PLACE ═══
+    // CharacterSheet.lua:614-615 draws "Level:" then "Exp  :" immediately after
+    // the Sex/Race/Class block at :604-606 and immediately before "Life" at
+    // :625. That ordering is not decoration: identity, then how far along that
+    // identity is, then what is keeping it alive.
+    //
+    // DRAWN ONLY WHEN THE FRAME HAS ARRIVED. `progress` is unicast in the `hello`
+    // block, so a null here is a one-frame window on connect and never a level-0
+    // character — and a row reading "Level: 0" in that window would be a wrong
+    // number stated confidently, which is worse than a row that is not there yet.
+    const progress = view.progress;
+    if (progress !== null) {
+      rows.push({ kind: SheetRowKind.Field, label: 'Level', value: `${progress.level}` });
+      rows.push({
+        kind: SheetRowKind.Field,
+        label: 'Experience',
+        value: experienceText(progress),
+      });
+      // ═══ ...AND THE POINTS ROW, WHICH IS NOT A STAT ═══
+      // ONLY WHILE THERE IS SOMETHING TO SPEND, mirroring ToME's own conditional
+      // (uiset/Minimalist.lua:1512-1516 draws the levelup glow, :1587-1589 makes
+      // its hotspot clickable, both only under `player.unused_talents > 0 or …`).
+      // An unspent point is a call to action rather than a number about the
+      // character, so the value NAMES THE KEY that answers it: a player who has
+      // never opened the talent panel learns it exists on the sheet they already
+      // know how to open, which is ToME's own discovery path
+      // (CharacterSheet.lua:99's "[L]evelup" button, ported as the [G] control
+      // on this panel's header).
+      if (progress.unspent > 0) {
+        const points = progress.unspent === 1 ? '1 point' : `${progress.unspent} points`;
+        rows.push({
+          kind: SheetRowKind.Field,
+          label: 'Talent points',
+          value: `${points} — press g`,
+        });
+      }
+    }
+
     // `ceil`, THE SAME ROUNDING ui/tooltip.ts:143-155, ui/partypanel.ts and
     // ui/turncards.ts use. Since the scheduler moved onto the real damage
     // pipeline `hp` is routinely fractional; rounding differently from the party
@@ -478,11 +598,57 @@ function closeRect(rect: PanelRect): PanelRect {
   };
 }
 
-/** What a LOGICAL backbuffer point is over. Only the close button is clickable. */
-export function charSheetHitAt(rect: PanelRect, px: number, py: number): 'close' | null {
+/**
+ * THE `[G]` CONTROL'S RECT, immediately left of the close and derived from it —
+ * the same one-copy rule, and derived rather than re-measured so the two can
+ * never overlap because `CLOSE_PX` changed.
+ */
+function talentsRect(rect: PanelRect): PanelRect {
   const close = closeRect(rect);
-  const on = px >= close.x && px < close.x + close.w && py >= close.y && py < close.y + close.h;
-  return on ? 'close' : null;
+  return {
+    x: close.x - HEADER_BTN_GAP - TALENTS_BTN_W,
+    y: rect.y + Math.floor((HEADER_H - CLOSE_PX) / 2),
+    w: TALENTS_BTN_W,
+    h: CLOSE_PX,
+  };
+}
+
+/**
+ * What a LOGICAL backbuffer point is over. Two controls, both in the header.
+ *
+ * THE BODY OF THE SHEET STILL ANSWERS NULL EVERYWHERE, and that is unchanged and
+ * load-bearing: main.ts eats those clicks with its `overPanel` swallow, and a
+ * sheet that started claiming its own rows would be a sheet that could be
+ * misclicked into doing something.
+ */
+export function charSheetHitAt(
+  rect: PanelRect,
+  px: number,
+  py: number,
+): 'close' | 'talents' | null {
+  const inside = (r: PanelRect): boolean =>
+    px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
+  if (inside(closeRect(rect))) return 'close';
+  // The `[G]` control is only offered when there is room for BOTH buttons and
+  // the title beside them. On a panel at `SHEET_MIN_W` the header is 168 pixels
+  // wide against a 54-pixel title, so this is comfortably true today — but a
+  // button drawn on top of the word CHARACTER would be worse than no button, and
+  // the painter tests the same expression.
+  if (headerHasTalentsButton(rect) && inside(talentsRect(rect))) return 'talents';
+  return null;
+}
+
+/**
+ * Is there room for the `[G]` control beside the close and the title?
+ *
+ * ONE expression, read by the painter and by the hit test, for the reason
+ * ui/partypanel.ts:93-99 records. `SHEET_TITLE` is nine characters at the
+ * CHAR_W estimate; the comparison is against a BOX size, and the title string
+ * itself is still clamped by `fitText` at paint time.
+ */
+function headerHasTalentsButton(rect: PanelRect): boolean {
+  const titleW = SHEET_TITLE.length * CHAR_W;
+  return rect.w - PANEL_PAD * 2 - CLOSE_PX - HEADER_BTN_GAP - TALENTS_BTN_W >= titleW;
 }
 
 /** How many vertical pixels one row wants. */
@@ -770,6 +936,14 @@ export type CharSheetDrawOptions = {
   readonly rows: readonly SheetRow[];
   /** Highlights the close control, so it reads as pressable. */
   readonly hoveredClose: boolean;
+  /** Highlights the `[G]` control. Optional so existing callers still compile. */
+  readonly hoveredTalents?: boolean;
+  /**
+   * True while the talent panel is already open, so the `[G]` control reads as a
+   * TOGGLE rather than as a button that appears to do nothing. Optional for the
+   * same reason as above.
+   */
+  readonly talentsOpen?: boolean;
 };
 
 /**
@@ -784,6 +958,8 @@ export type CharSheetDrawOptions = {
  */
 export function drawCharSheet(options: CharSheetDrawOptions): void {
   const { ctx, sprites, rect, rows, hoveredClose } = options;
+  const hoveredTalents = options.hoveredTalents ?? false;
+  const talentsOpen = options.talentsOpen ?? false;
   if (rect.w <= 0 || rect.h <= 0) return;
 
   ctx.save();
@@ -813,6 +989,18 @@ export function drawCharSheet(options: CharSheetDrawOptions): void {
   }
 
   for (const placed of geometry.placed) drawRow(ctx, sprites, placed);
+
+  // ═══ THE `[G]` CONTROL — ToME'S OWN ROUTE TO THE LEVELUP SCREEN ═══
+  // dialogs/CharacterSheet.lua:99 puts a "[L]evelup" button on the sheet, and
+  // that button is the DISCOVERABLE path: a player who has learned one key
+  // (`c`) is shown the other one rather than being expected to find it. The key
+  // is the fast path and this is the taught one. Drawn only when the header can
+  // hold it without landing on the title — see `headerHasTalentsButton`.
+  if (headerHasTalentsButton(rect)) {
+    drawButton(ctx, talentsRect(rect), TALENTS_BTN_LABEL, {
+      ink: talentsOpen || hoveredTalents ? PALETTE.GOLD : PALETTE.GREY_HI,
+    });
+  }
 
   // The close control. `c` closes it too and always will — this is the mouse's
   // way out, for the same reason the erased plate is also a button.

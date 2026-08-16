@@ -31,19 +31,55 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 8 — the class chooser', () => {
+  it('pins PROTOCOL_VERSION at 9 — levels, and the panel that spends them', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
-    // a revert would pass. v8 added `choose_class` inbound and `class_options`
-    // outbound. Neither half forces a bump by this file's usual rule — an
-    // inbound verb an old client never sends costs it nothing, and an optional
-    // `InspectView.className` is an addition it can ignore. What forces it is
-    // that THE FALLBACK IS A WRITE: a v7 client draws no picker, is assigned a
-    // class by rotation, and `saveNow('join')` persists it — after which the
-    // chooser never appears again, on any client, forever. A single connection
-    // on a stale bundle is a one-way door, and the version gate turns it into an
-    // honest refusal. The bump log in src/shared/version.ts is the long version.
-    expect(PROTOCOL_VERSION).toBe(8);
+    // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
+    // comment still argues the previous version is worse than no pin, because it
+    // reads as deliberate and is not.
+    //
+    // v9 added `spend_point` inbound, `progress` outbound, and four fields on
+    // `LoadoutTalent` (`level`, `maxLevel`, `desc`, `descNext`). NONE of those
+    // forces a bump by this file's usual rule: an inbound verb an old client
+    // never sends costs it nothing, an outbound frame it cannot name is one it
+    // ignores, and `loadout` becoming re-sendable is behaviour every shipped
+    // client already implements (its docblock always specified wholesale
+    // replacement).
+    //
+    // WHAT FORCES IT IS THAT `LoadoutTalent.range` NARROWED — the same shape as
+    // 1 -> 2's `left`, 4 -> 5's `alive` and 5 -> 6's TurnMsg roster. It was a
+    // constant of the class, safe to read once at `welcome`; it is now
+    // per-actor, because Fog Step's only number IS its range and it scales
+    // 3/4/5/6/7 across its ranks. A v8 client draws a three-tile ring around a
+    // talent that reaches six and its targeting mode refuses the tiles the
+    // player paid three points for — a stale bundle in which spending does
+    // visibly nothing, which is the exact trap this milestone exists to avoid.
+    // The bump log in src/shared/version.ts is the long version, including the
+    // two shapes deliberately avoided: no new `TurnEvent` variant (a level-up
+    // narrates as a Record `log` line) and no new `ErrorCode` (a refused spend
+    // is `bad_message`).
+    expect(PROTOCOL_VERSION).toBe(9);
+  });
+
+  it('leaves SCHEMA_VERSION at 1 — the two were considered separately', () => {
+    // ASSERTED IN THE SAME FILE AS THE BUMP ABOVE, ON PURPOSE. v9 is the first
+    // release where a protocol change and a save-file change land together, and
+    // the reflex is to move both numbers. They answer different questions.
+    //
+    // The persisted character gains OPTIONAL fields only — level, xp and the RAW
+    // per-talent points — and docs/data-schemas.md:48-49 reads verbatim: "Adding
+    // an *optional* field needs no bump; the bump is for renames, semantic
+    // changes, and new required fields." `migrateDoc` compares nothing but this
+    // integer, so an optional field cannot make a v1 file fail to load.
+    //
+    // AND THE ROLLBACK TRADE IS THE REASON TO BE SURE. Not bumping means an
+    // older build loads a new file and drops the fields it does not understand,
+    // costing a level. Bumping means an older build REFUSES the file and
+    // quarantines it, costing a friend an evening they cannot play at all. For a
+    // game whose game-design.md § 9 is "no permadeath, no loss", the first is
+    // strictly better — and the migration machinery stays a drill for the first
+    // genuinely breaking change instead of being spent on this one.
+    expect(SCHEMA_VERSION).toBe(1);
   });
 
   it('exposes versions as positive integers', () => {

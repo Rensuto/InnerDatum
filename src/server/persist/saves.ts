@@ -56,17 +56,56 @@
  * where it should be 80. The M4 brief agrees with the rule — "name + class +
  * position … hp, resource, effects, cooldowns".
  *
- * NOT PERSISTED AT M4, deliberately: level / xp / talent points (there is no
- * levelling — PLAN.md M4), inventory and equipment (there is no loot), and the
- * two energy clocks (a save happens at a session boundary, and mid-turn energy
- * means nothing across a reload). Each is an OPTIONAL field when it lands,
- * which docs/data-schemas.md § 1 says needs no version bump.
+ * ───────────────────────────────────────────────────────────────────────────
+ * PROGRESSION IS PERSISTED NOW, AND THE VERSION DELIBERATELY DID NOT BUMP
+ * ───────────────────────────────────────────────────────────────────────────
+ * This paragraph used to open "NOT PERSISTED AT M4, deliberately: level / xp /
+ * talent points (there is no levelling — PLAN.md M4)". There is levelling, so
+ * that sentence is gone rather than left to mislead. What it ended on was a
+ * PREDICTION — that each would land as an OPTIONAL field needing no version
+ * bump — and the prediction was CHECKED rather than inherited:
+ * docs/data-schemas.md:48-49 still reads, verbatim, "Adding an *optional* field
+ * needs no bump; the bump is for renames, semantic changes, and new required
+ * fields", and `migrateDoc` (migrate.ts:230-311) compares nothing but the
+ * integer. So `level`, `xp`, `unspentPoints` and `talentPoints` are four
+ * OPTIONAL fields, `SCHEMA_VERSION` stays 1, and `CHARACTER_MIGRATIONS` stays
+ * empty.
+ *
+ * THAT IS A DECISION TAKEN, not an omission, and both failure modes were on the
+ * table when it was taken:
+ *
+ *   NOT BUMPING — an older build opens a newer file, does not recognise the four
+ *   fields, drops them, and writes a v1 file back over it on the next autosave,
+ *   with the `.bak` overwritten by that same save. That is exactly the accident
+ *   migrate.ts:14-27 describes. THE COST IS ONE CHARACTER'S LEVELS.
+ *
+ *   BUMPING — an older build REFUSES the file (migrate.ts:259-271) and this file
+ *   turns the refusal into a PERMANENT QUARANTINE of the path (:963-980,
+ *   :818-829), so nothing further is ever written to it and the character stays
+ *   unplayable until a human moves the file aside by hand. THE COST IS A FRIEND
+ *   WHO CANNOT PLAY AT ALL TONIGHT.
+ *
+ * We chose the first. game-design.md § 9 is "no permadeath, no loss", and a lost
+ * level is strictly better than somebody sitting out the evening while the host
+ * reads a file path out of a log. The migration machinery stays a drill for the
+ * first genuinely breaking change — a rename, or a new REQUIRED field — which is
+ * the shape it was built for.
+ *
+ * STILL NOT PERSISTED, deliberately: inventory and equipment (there is no loot),
+ * and the two energy clocks (a save happens at a session boundary, and mid-turn
+ * energy means nothing across a reload). Both are optional fields when they
+ * land, on the same rule and with the same trade re-weighed at the time.
  */
 
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
 
+import {
+  MAX_CHARACTER_LEVEL,
+  TALENT_MAX_LEVEL,
+  totalPointsAtLevel,
+} from '../../shared/progression.ts';
 import { CURRENT_VERSIONS, MigrateOutcome, SchemaKind, migrateDoc } from './migrate.ts';
 import { backupPathFor, errorCode, writeFileAtomic } from './atomic.ts';
 import type { AtomicWarning, AtomicWriteOptions } from './atomic.ts';
@@ -242,6 +281,62 @@ export type CharacterFile = {
    * a persist layer that imports the class registry cannot let them.
    */
   readonly classId: string;
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // PROGRESSION. FOUR OPTIONAL FIELDS — see the header for why the version did
+  // not bump, and `parseCharacterFile` for what their ABSENCE is decided to
+  // mean. Optional in the TYPE because a file written before this milestone
+  // genuinely does not have them; always WRITTEN by `serialiseCharacter`,
+  // because a save a human opens should say what level the character is.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /** Character level, 1..`MAX_CHARACTER_LEVEL`. Absent means 1. */
+  readonly level?: number;
+  /**
+   * PER-LEVEL experience — progress into the current level, never a cumulative
+   * total. `gainExp` subtracts the threshold on the way past
+   * (src/shared/progression.ts, ActorLevel.lua:104).
+   *
+   * FRACTIONAL ON PURPOSE and never rounded on the way in or out: one kill pays
+   * `killerLevel × rankWorth × 4`, which is 3.2 against a normal at level 1.
+   * Flooring it here would silently shave a fifth of every early award.
+   */
+  readonly xp?: number;
+  /**
+   * Talent points earned and not yet spent.
+   *
+   * ═══ A CACHE OF A DERIVED NUMBER, AND THE LOADER TREATS IT AS ONE ═══
+   * docs/data-schemas.md:94-104 is unambiguous — "NEVER persist a derived
+   * value" — and unspent IS derived: `totalPointsAtLevel(level)` minus every
+   * raw point spent. It is written anyway because it is the one progression
+   * number a human reading the file cannot work out in their head, and because
+   * DECISIONS.md (e) names it as one of the four. `parseCharacterFile`
+   * therefore RECOMPUTES it from the ledger and records any disagreement as a
+   * repair, so retuning `pointsForLevel` corrects every existing character
+   * instead of stranding the ones whose file remembers the old grant.
+   */
+  readonly unspentPoints?: number;
+  /**
+   * Talent id → RAW points, 1..`TALENT_MAX_LEVEL`. THE ONLY PROGRESSION FIELD
+   * THAT IS A SOURCE OF TRUTH.
+   *
+   * RAW, never the effective level: mastery (and anything else that ever
+   * multiplies a rank) is applied at load, so a rebalance moves every existing
+   * character with it. Same rule that keeps every `max*` pool out of this file.
+   *
+   * A SOFT REFERENCE MAP, keyed exactly like `talentCooldowns` and for the same
+   * reason: a talent id that vanishes from content must not lock a friend out
+   * of their character. This layer keeps the entry verbatim — it cannot import
+   * the talent registry any more than it can import the class registry — and
+   * the restore path is where docs/data-schemas.md:51-52's refund happens ("if
+   * a talent id disappears, the load path moves its points to a `refundPool`
+   * and logs it rather than throwing").
+   *
+   * An id ABSENT from the map is a loadout talent at its birth rank of 1; see
+   * `createTalentSheet`, which seeds every loadout id it is not given.
+   */
+  readonly talentPoints?: Readonly<Record<string, number>>;
+
   readonly resources: SavedResources;
   /** Talent id → GAME TURNS remaining. Soft references, like `classId`. */
   readonly talentCooldowns: Readonly<Record<string, number>>;
@@ -278,11 +373,90 @@ function scrubName(raw: string): string {
   return out.trim();
 }
 
+// ---------------------------------------------------------------------------
+// WHAT ABSENCE MEANS. THIS IS A DECISION, NOT A FALLBACK.
+//
+// A character file with no `level`, no `xp`, no `unspentPoints` and no
+// `talentPoints` is A LEVEL-1 CHARACTER WITH ITS FOUR BIRTH TALENTS AT RANK 1
+// AND NOTHING SPENT. That is the right answer for the only two ways such a file
+// can exist — a save written before progression shipped, and a save written by
+// a build that never had any of the four to write — and it is the same state
+// `createPlayerActor` and `createTalentSheet` produce for a brand-new character,
+// so a pre-progression file and a first join land on identical bodies.
+//
+// The alternative — refuse, or guess a level from the xp — would either lock a
+// friend out of a character over a field that did not exist last week, or invent
+// progress nobody earned. Every constant below is therefore load-bearing enough
+// to be named and asserted (test/server/persist.test.ts), rather than being an
+// inline `?? 0` that reads like a typo guard.
+// ---------------------------------------------------------------------------
+
+/** Where a character starts. `MAX_CHARACTER_LEVEL` is the other end. */
+const BIRTH_LEVEL = 1;
+
+/** No progress into level 2 yet. Per-level xp, so this is a real zero. */
+const BIRTH_XP = 0;
+
+/**
+ * A birth rank of 1, and 1 rather than 0 is load-bearing: `combatTalentScale`
+ * maps a talent level of 0 to 0.1 (src/shared/scale.ts:191), so a talent stored
+ * at 0 would not refuse to fire — it would fire, quietly, for a tenth of its
+ * damage, for the rest of that character's life.
+ */
+const BIRTH_TALENT_POINTS = 1;
+
+/**
+ * How many points this spread REPRESENTS AS PURCHASES: `Σ (raw − 1)`.
+ *
+ * ═══ THE MINUS ONE IS THE BIRTH GRANT AND IT IS EASY TO DROP ═══
+ * Every loadout talent starts at rank 1 for free — those four ranks are the
+ * whole of our birth grant (`createTalentSheet`, and `pointsForLevel`'s docblock
+ * for why upstream's separate 2-point grant was dropped in exchange). A raw 3 is
+ * therefore TWO points spent, not three. Two docblocks state the ledger in the
+ * shorthand `totalPointsAtLevel(level) - sum(points.values())`
+ * (engine/talents.ts:908, engine/actor.ts:460); read literally that hands a
+ * fresh level-1 character MINUS FOUR points, which is the arithmetic this
+ * function exists to get right. protocol.ts:2700-2705 states it correctly —
+ * "every point ever granted at this level minus every raw point SPENT".
+ *
+ * `Math.max(0, …)` per entry so a repaired-to-1 entry can never subtract.
+ */
+function spentTalentPoints(talentPoints: Readonly<Record<string, number>>): number {
+  let spent = 0;
+  for (const raw of Object.values(talentPoints)) spent += Math.max(0, raw - BIRTH_TALENT_POINTS);
+  return spent;
+}
+
+/**
+ * THE LEDGER: every point a character of `level` was ever granted, minus every
+ * point the spread says was spent. Floored at zero.
+ *
+ * The floor is not paranoia — a class change, or a file carrying more talent ids
+ * than the current loadout, makes the subtraction go negative, and a negative
+ * "points in hand" would render as a `+` button that refuses to work with no
+ * explanation. Zero is the honest answer: no points, nothing owed.
+ *
+ * A VANISHED TALENT ID STILL COUNTS AS SPENT HERE, and it must: this layer
+ * cannot import the talent registry (the same rule that makes `classId` a soft
+ * reference), so it cannot tell a deleted talent from one it has simply never
+ * heard of. Giving the points back is the restore path's job —
+ * docs/data-schemas.md:51-52's refund — and it has the registry to do it with.
+ */
+function unspentFromLedger(level: number, talentPoints: Readonly<Record<string, number>>): number {
+  return Math.max(0, totalPointsAtLevel(level) - spentTalentPoints(talentPoints));
+}
+
 export type CharacterInit = {
   readonly id: string;
   readonly ownerId: string;
   readonly name: string;
   readonly classId: string;
+  /** Omit for a fresh character — see "WHAT ABSENCE MEANS" above. */
+  readonly level?: number;
+  readonly xp?: number;
+  readonly unspentPoints?: number;
+  /** RAW points per talent. Omit ids at their birth rank; absent means 1. */
+  readonly talentPoints?: Readonly<Record<string, number>>;
   readonly resources: SavedResources;
   readonly talentCooldowns?: Readonly<Record<string, number>>;
   readonly effects?: readonly SavedEffect[];
@@ -302,6 +476,8 @@ export type CharacterInit = {
  */
 export function createCharacterFile(init: CharacterInit): CharacterFile {
   const stamp = init.createdAt ?? new Date().toISOString();
+  const level = init.level ?? BIRTH_LEVEL;
+  const talentPoints = init.talentPoints ?? {};
   return {
     schemaVersion: CURRENT_VERSIONS[SchemaKind.Character],
     kind: SchemaKind.Character,
@@ -309,6 +485,19 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     ownerId: init.ownerId,
     name: init.name,
     classId: init.classId,
+    // FILLED IN EXPLICITLY rather than left undefined, so every file this build
+    // writes names all four and a human reading one never has to know what an
+    // absent field would have meant. The defaults are the decision recorded
+    // above; `parseCharacterFile` applies the identical ones on the way back.
+    level,
+    xp: init.xp ?? BIRTH_XP,
+    // DERIVED WHEN IT IS NOT SUPPLIED, from the same ledger the parser uses on
+    // the way back — so `serialiseCharacter(createCharacterFile(...))` reloads
+    // with zero repairs. A literal 0 here would look right (a fresh character
+    // does have none) and would write "0 points in hand" for a level-8
+    // character whose caller passed a level and nothing else.
+    unspentPoints: init.unspentPoints ?? unspentFromLedger(level, talentPoints),
+    talentPoints,
     resources: init.resources,
     talentCooldowns: init.talentCooldowns ?? {},
     effects: init.effects ?? [],
@@ -385,6 +574,149 @@ function parseCooldowns(value: unknown, problems: string[]): Record<string, numb
     out[talentId] = Math.floor(left);
   }
   return out;
+}
+
+/**
+ * REPAIR, NEVER REJECT — `scrubName`'s doctrine, applied to the level.
+ *
+ * Absent is the documented decision (level 1). Anything present and unusable is
+ * repaired loudly, because refusing the file would cost a character over a field
+ * that is, at worst, a cosmetic lie for one evening.
+ *
+ * THE UPPER CLAMP IS THE ONE THAT LOSES DATA, so it is here on purpose and not
+ * by reflex. A hand-edited `"level": 9999` would otherwise reach
+ * `totalPointsAtLevel` and hand out eleven thousand talent points; and if
+ * `MAX_CHARACTER_LEVEL` is ever RAISED and then rolled back, this clamp is the
+ * "older build drops what it does not recognise" cost the header already weighed
+ * and accepted. It is recorded in `problems` either way, which is the difference
+ * between a trade and an accident.
+ */
+function parseLevel(value: unknown, problems: string[]): number {
+  if (value === undefined || value === null) return BIRTH_LEVEL;
+  const raw = asFinite(value);
+  if (raw === null) {
+    problems.push(`level: not a finite number — treated as ${BIRTH_LEVEL}`);
+    return BIRTH_LEVEL;
+  }
+  const repaired = Math.min(MAX_CHARACTER_LEVEL, Math.max(BIRTH_LEVEL, Math.floor(raw)));
+  if (repaired !== raw) {
+    problems.push(
+      `level: ${raw} is not an integer in ${BIRTH_LEVEL}..${MAX_CHARACTER_LEVEL} — repaired to ${repaired}`,
+    );
+  }
+  return repaired;
+}
+
+/**
+ * Per-level xp. NOT FLOORED, and that is the whole comment worth having here:
+ * one kill against a normal pays `killerLevel × 0.8 × 4` = 3.2 at level 1
+ * (src/shared/progression.ts `worthExp`), so xp is genuinely fractional and
+ * rounding it on every load would quietly shave every award in the game.
+ *
+ * Negative is clamped rather than dropped, matching `gainExp`'s own
+ * `math.max(0, …)` (ActorLevel.lua:97): xp can be drained, never below zero.
+ * Not clamped from ABOVE — at `MAX_CHARACTER_LEVEL` the accumulation is
+ * deliberate, and it is what lets the panel draw a full bar that does not flick
+ * back to empty after every kill.
+ */
+function parseXp(value: unknown, problems: string[]): number {
+  if (value === undefined || value === null) return BIRTH_XP;
+  const raw = asFinite(value);
+  if (raw === null) {
+    problems.push(`xp: not a finite number — treated as ${BIRTH_XP}`);
+    return BIRTH_XP;
+  }
+  if (raw < 0) {
+    problems.push(`xp: ${raw} is negative — treated as ${BIRTH_XP}`);
+    return BIRTH_XP;
+  }
+  return raw;
+}
+
+/**
+ * RAW points per talent, repaired into 1..`TALENT_MAX_LEVEL`.
+ *
+ * ═══ WHY THIS REPAIRS WHERE `parseCooldowns` DROPS ═══
+ * A dropped cooldown means a talent is wrongly READY, which the player can see
+ * and which costs one fight. A dropped talent point means a talent the character
+ * bought is silently back at rank 1 — invisible, permanent from the next
+ * autosave, and exactly the loss this whole item exists to prevent. So a garbage
+ * entry becomes the birth rank and SAYS SO, rather than vanishing.
+ *
+ * The cap is applied HERE, on a file, which does not contradict
+ * src/shared/scale.ts:165-170 ("never clamp the talent level at 5") or the rule
+ * that the cap belongs to the spend path. Those are about the CURVE, which must
+ * extrapolate honestly for a monster or a buff above 5. This is about a number
+ * that arrived from a text editor: nothing in the game can legitimately produce
+ * a raw 6, so a raw 6 in a file is a hand-edit, not a talent level.
+ *
+ * The key is kept VERBATIM — a soft reference, like `talentCooldowns` and
+ * `classId`. See the field's docblock for who does the refund.
+ */
+function parseTalentPoints(value: unknown, problems: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (value === undefined || value === null) return out;
+  if (!isRecord(value)) {
+    problems.push('talentPoints: not an object — dropped, every talent back to its birth rank');
+    return out;
+  }
+  for (const [talentId, raw] of Object.entries(value)) {
+    const points = asFinite(raw);
+    if (points === null) {
+      problems.push(
+        `talentPoints.${talentId}: not a finite number — repaired to ${BIRTH_TALENT_POINTS}`,
+      );
+      out[talentId] = BIRTH_TALENT_POINTS;
+      continue;
+    }
+    const repaired = Math.min(TALENT_MAX_LEVEL, Math.max(BIRTH_TALENT_POINTS, Math.floor(points)));
+    if (repaired !== points) {
+      problems.push(
+        `talentPoints.${talentId}: ${points} is not a raw level in ` +
+          `${BIRTH_TALENT_POINTS}..${TALENT_MAX_LEVEL} — repaired to ${repaired}`,
+      );
+    }
+    out[talentId] = repaired;
+  }
+  return out;
+}
+
+/**
+ * RECOMPUTED, NEVER TRUSTED. The file's `unspentPoints` is a cache of
+ * `totalPointsAtLevel(level) − Σ (raw − 1)`, and this returns the ledger's
+ * answer whatever the file says.
+ *
+ * WHY RECOMPUTING IS THE SAFE DIRECTION: the two operands are themselves
+ * persisted (level, and the raw spread), so the ledger cannot disagree with the
+ * character it is describing — whereas a stored count goes stale the moment
+ * `pointsForLevel` is retuned, and the symptom is a party where the players who
+ * joined last week have a different budget from the ones who joined tonight. It
+ * is the same argument that keeps every `max*` pool out of this file.
+ *
+ * A DISAGREEMENT IS RECORDED rather than swallowed: it is either that retune, or
+ * a hand-edit, and both are things the host should be able to see in the log
+ * line the store already prints.
+ */
+function parseUnspentPoints(
+  value: unknown,
+  level: number,
+  talentPoints: Readonly<Record<string, number>>,
+  problems: string[],
+): number {
+  const ledger = unspentFromLedger(level, talentPoints);
+  if (value === undefined || value === null) return ledger;
+  const claimed = asFinite(value);
+  if (claimed === null) {
+    problems.push(`unspentPoints: not a finite number — recomputed from the ledger as ${ledger}`);
+    return ledger;
+  }
+  if (claimed !== ledger) {
+    problems.push(
+      `unspentPoints: the file says ${claimed}, the ledger says ${ledger} — recomputed ` +
+        '(level and the raw talent points are the source of truth)',
+    );
+  }
+  return ledger;
 }
 
 function parseEffects(value: unknown, problems: string[]): SavedEffect[] {
@@ -486,6 +818,14 @@ export function parseCharacterFile(doc: unknown): ParseResult {
   const createdAt = asString(doc.createdAt);
   if (createdAt === null) problems.push('createdAt: missing — recorded as unknown');
 
+  // ═══ ORDER MATTERS AMONG THESE THREE ═══
+  // `unspentPoints` is DERIVED from the other two, so both have to be repaired
+  // before the ledger is run — otherwise a hand-edited level of 9999 or a raw
+  // rank of 40 reaches `totalPointsAtLevel` before the clamp does.
+  const level = parseLevel(doc.level, problems);
+  const talentPoints = parseTalentPoints(doc.talentPoints, problems);
+  const unspentPoints = parseUnspentPoints(doc.unspentPoints, level, talentPoints, problems);
+
   return {
     ok: true,
     problems,
@@ -496,6 +836,14 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       ownerId,
       name,
       classId,
+      // NAMED HERE OR SILENTLY DELETED. This function copies nothing it does not
+      // name: a field on `CharacterFile` that is missing from this literal is
+      // dropped on every load and written away by the next autosave, with no
+      // error anywhere. Four fields, four lines, and a test that names each one.
+      level,
+      xp: parseXp(doc.xp, problems),
+      unspentPoints,
+      talentPoints,
       resources,
       talentCooldowns: parseCooldowns(doc.talentCooldowns, problems),
       effects: parseEffects(doc.effects, problems),
@@ -526,6 +874,15 @@ export function serialiseCharacter(file: CharacterFile): string {
     const turns = file.talentCooldowns[key];
     if (turns !== undefined) cooldowns[key] = turns;
   }
+  // Sorted for the same reason the cooldowns are: insertion order here follows
+  // whatever order the points happened to be SPENT in, so two identical
+  // characters would otherwise produce two different files.
+  const talentPoints: Record<string, number> = {};
+  const rawPoints = file.talentPoints ?? {};
+  for (const key of Object.keys(rawPoints).sort()) {
+    const points = rawPoints[key];
+    if (points !== undefined) talentPoints[key] = points;
+  }
   const canonical: CharacterFile = {
     schemaVersion: file.schemaVersion,
     kind: file.kind,
@@ -533,6 +890,18 @@ export function serialiseCharacter(file: CharacterFile): string {
     ownerId: file.ownerId,
     name: file.name,
     classId: file.classId,
+    // ═══ WRITTEN UNCONDITIONALLY, EVEN THOUGH THE TYPE SAYS OPTIONAL ═══
+    // A field missing from this literal is never written at ALL — the canonical
+    // object is rebuilt from scratch for byte-stability, so it silently drops
+    // anything it does not name. Emitting the defaults rather than omitting the
+    // keys also means every file on disk states the character's level in words a
+    // human can read, and `serialiseCharacter(parseCharacterFile(bytes))` is
+    // byte-identical to `bytes` for anything this build ever wrote — which is
+    // what the atomic writer's "same snapshot, same bytes" assumption rests on.
+    level: file.level ?? BIRTH_LEVEL,
+    xp: file.xp ?? BIRTH_XP,
+    unspentPoints: file.unspentPoints ?? unspentFromLedger(file.level ?? BIRTH_LEVEL, talentPoints),
+    talentPoints,
     resources: {
       hp: file.resources.hp,
       ap: file.resources.ap,
@@ -1146,6 +1515,37 @@ type Binding = {
   /** Carried forward from the file so "first played" survives every rewrite. */
   readonly createdAt: string;
   readonly classId: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PROGRESSION AS THE FILE HAD IT WHEN IT WAS OPENED — NOW ONLY THE FALLBACK.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * These four used to be the ONLY source `fileFor` had, because
+   * `CharacterSnapshot` could not carry progression: it was `name / hp /
+   * cooldowns / x / y / classId`. The binding remembered what the file said and
+   * wrote it back unchanged, on the reasoning that the first autosave of the
+   * evening would otherwise put the birth defaults over a level-8 character and
+   * the second would take the `.bak` with it. Frozen is recoverable;
+   * overwritten with 1 is not.
+   *
+   * THAT SEAM IS CLOSED. `CharacterSnapshot` grew `level` / `xp` /
+   * `unspentPoints` / `talentPoints` as optional fields and `snapshotPlayers`
+   * fills them off `PlayerActor`, so `fileFor` reads the snapshot FIRST and
+   * falls back to these — exactly as the `classId` line already did. The load
+   * half closed with it: `openCharacter` now returns all four on
+   * `CharacterRestore`.
+   *
+   * SO WHY ARE THEY STILL HERE? Because "the snapshot cannot say" is still a
+   * reachable answer and it is not the same answer as 1. A body whose class is
+   * provisional has its `talentPoints` DELIBERATELY omitted (a spread against a
+   * class nobody picked would be a lie), a test fixture builds snapshots by
+   * hand, and the e2e harness has no talent sheet at all. Every one of those
+   * must carry the file forward rather than reset it. The fallback is the
+   * defence; it is simply no longer the only path.
+   */
+  readonly level: number;
+  readonly xp: number;
+  readonly unspentPoints: number;
+  readonly talentPoints: Readonly<Record<string, number>>;
 };
 
 export type CharacterBridgeOptions = {
@@ -1187,6 +1587,27 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // downgrading a saved Watchman to `unassigned` because a fixture joined
       // without one.
       classId: snapshot.classId ?? binding.classId,
+      // ═══ THE SNAPSHOT WINS FOR THESE FOUR TOO, OR A LEVEL NEVER LANDS ═══
+      // These lines used to read `binding.level` and friends unconditionally,
+      // which froze the file at whatever it said when it was OPENED. That was
+      // the correct defensive choice while `CharacterSnapshot` could not carry
+      // progression — frozen is recoverable, overwritten with 1 is not. It CAN
+      // carry it now (`snapshotPlayers`, net/gateway.ts, fills all four straight
+      // off `PlayerActor` and through the `talentPointsOf` seam), and while the
+      // freeze stood the value on disk could never become anything but the birth
+      // default: the binding echoed back what it read and nothing else ever
+      // wrote the field. An evening's kills reached no file at all.
+      //
+      // THE `??` KEEPS THE OLD DEFENCE FOR ANY PRODUCER THAT STILL CANNOT SAY.
+      // A snapshot that omits a field — a test fixture, the e2e harness, a body
+      // whose class is still provisional, which is exactly why `snapshotPlayers`
+      // omits `talentPoints` for anyone in `classChoiceOwed` — falls back to
+      // what the file already held rather than to 1. Same shape, same reason, as
+      // the `classId` line above.
+      level: snapshot.level ?? binding.level,
+      xp: snapshot.xp ?? binding.xp,
+      unspentPoints: snapshot.unspentPoints ?? binding.unspentPoints,
+      talentPoints: snapshot.talentPoints ?? binding.talentPoints,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
       // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
       // are intra-turn budgets refilled from the class every turn, so a stored
@@ -1246,6 +1667,14 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       characterId: SOLO_CHARACTER_ID,
       createdAt: file?.createdAt === undefined || file.createdAt === '' ? now() : file.createdAt,
       classId: file?.classId ?? UNASSIGNED_CLASS,
+      // A file this build refused to bind never reaches here, and a file that is
+      // simply ABSENT is a brand-new character — the birth defaults are the
+      // right answer for both. `parseCharacterFile` has already applied the same
+      // ones to anything it did read, so these `??`s only ever fire on `null`.
+      level: file?.level ?? BIRTH_LEVEL,
+      xp: file?.xp ?? BIRTH_XP,
+      unspentPoints: file?.unspentPoints ?? 0,
+      talentPoints: file?.talentPoints ?? {},
     });
 
     if (file === null) {
@@ -1271,6 +1700,25 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // the only layer that knows what the three classes are. See
       // `classForJoin` in content/classes.ts.
       classId: file.classId,
+      // ═══ AND PROGRESSION COMING BACK, WHICH IS THE OTHER HALF OF THE LOOP ═══
+      // This return used to be `{hp, cooldowns, classId}` and nothing else, so
+      // `CharacterRestore.level` was ALWAYS undefined and the gateway's
+      // `restoreProgression` correctly took its "this port cannot say" branch on
+      // every single restore — leaving the birth defaults on a character who had
+      // spent an evening earning otherwise. With `fileFor` above now writing the
+      // live values, a load that still refused to read them would be a one-way
+      // valve: levels to disk, nothing back.
+      //
+      // HANDED OVER RAW, EXACTLY AS `parseCharacterFile` LEFT THEM. Every one of
+      // these has already been range-checked and repaired on the way in
+      // (`parseLevel` / `parseTalentPoints` / `parseUnspentPoints`), and
+      // `restoreProgression` re-derives `unspentPoints` from the ledger anyway
+      // rather than trusting the cached figure. Repairing again here would be a
+      // second opinion that can disagree with the first.
+      level: file.level,
+      xp: file.xp,
+      unspentPoints: file.unspentPoints,
+      talentPoints: file.talentPoints,
     };
   };
 

@@ -439,10 +439,10 @@ describe('the projectiles frame', () => {
     const rejoined = await connect(server.port);
     const welcome = await rejoined.hello();
 
-    // v8. The envelope is pinned here rather than in a version test of its own
+    // v9. The envelope is pinned here rather than in a version test of its own
     // because this is the file that drives a real socket end to end, so a client
-    // bundle that disagreed would fail here first. Both bumps that produced this
-    // number were forced by the same rule — an old client would be confidently
+    // bundle that disagreed would fail here first. Every bump that produced this
+    // number was forced by the same rule — an old client would be confidently
     // WRONG rather than merely missing something. 6 -> 7: `projectiles` is an
     // addition a v6 client cannot name, so it draws no orb while the damage
     // still lands three turns later out of nowhere. 7 -> 8: a v7 client cannot
@@ -450,7 +450,20 @@ describe('the projectiles frame', () => {
     // and that rotation is WRITTEN TO DISK on `saveNow('join')`, after which the
     // chooser never appears again. A one-way door, which is why the addition
     // forced a bump on its own.
-    expect(PROTOCOL_VERSION).toBe(8);
+    //
+    // 8 -> 9 IS THE "EXISTING FIELD NARROWS" SHAPE, the same one that forced
+    // 1 -> 2 (`left`) and 4 -> 5 (`alive`), and it is the ONE reason the bump
+    // rests on: `LoadoutTalent.range` stopped being a constant of the CLASS and
+    // became per-actor, resolved at the caster's own talent level. A v8 client
+    // reads Fog Step's 3 and draws a three-tile ring for a rank-5 Inspector the
+    // server would let step seven, so the points she spent do visibly nothing —
+    // a field it already knows how to read, now silently meaning something
+    // narrower. The v9 ADDITIONS (`level`/`maxLevel`/`desc`/`descNext`, the
+    // `progress` frame, the `spend_point` verb) are all things a v8 client can
+    // simply ignore and would NOT have forced this on their own;
+    // src/shared/version.ts keeps that argument to one reason on purpose, and
+    // no new `ErrorCode` was added for exactly the same discipline.
+    expect(PROTOCOL_VERSION).toBe(9);
     expect(welcome?.['v']).toBe(PROTOCOL_VERSION);
 
     const seen = await rejoined.waitFor('projectiles');

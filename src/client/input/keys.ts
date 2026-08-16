@@ -17,9 +17,13 @@
  *     movement ring, which is exactly what "stay put" means with a numpad.
  *
  * M3 ADDS THE HOTBAR AND ONE MODE KEY:
- *   - 1-4 fire the four talents of a FIXED loadout. Four because PLAN.md caps
- *     the MVP at four talents per class with no trees and no talent points, so
- *     the digit IS the talent and there is nothing to rebind.
+ *   - 1-4 fire the four talents of the loadout. FOUR BECAUSE A CLASS HAS FOUR —
+ *     `ClassDef.loadout` is exactly four talents and the arity is enforced at
+ *     import time (src/server/content/classes.ts) — so the digit IS the talent
+ *     and there is nothing to rebind. (This used to say "no trees and no talent
+ *     points"; v9 brought BOTH, and neither changed this line. A talent point
+ *     raises a talent's RANK, never the number of them, so the four digits mean
+ *     what they always did and the panel that spends the points is on `g`.)
  *   - ESCAPE cancels. It is the one key in the game that means "put that back",
  *     and it must never reach the server: cancelling a targeting mode is a
  *     decision about a UI that only this browser knows exists.
@@ -92,6 +96,14 @@
  *   The member name did not change — `ToggleLog` is still `ToggleLog`. Only its
  *   row moved, which is the whole point of naming actions rather than keys.
  *
+ * v9 ADDS ONE KEY, AND IT IS A CHOICE RATHER THAN A PORT:
+ *   - G OPENS THE TALENT PANEL, where a levelled detective spends a point. ToME
+ *     binds its levelup screen to a VIRTUAL action (Game.lua:2215) whose default
+ *     lives in /data/keybinds/*.lua, a directory absent from the reference clone
+ *     — the same missing-defaults problem M's entry above sets out, with the same
+ *     conclusion. See the comment on the row itself for why `l` is unavailable
+ *     even though CharacterSheet.lua prints "[L]evelup".
+ *
  * THE LETTERS ARE THE ONES vi MOVEMENT LEFT FREE. h/j/k/l and y/u/b/n are spoken
  * for and always will be; r, f, t, c, m and p are not, and picking anything
  * shifted would collide with the capitals a shift-holding player still means as
@@ -154,6 +166,16 @@ export const UiCommand = {
    * is the mouse's copy of the same act.
    */
   ShowSheet: 'show_sheet',
+  /**
+   * Open — or put away — the talent panel (v9).
+   *
+   * ONE KEY THAT TOGGLES, for exactly the reason `ShowSheet` above gives and
+   * with exactly the same consequence: the panel is a dock PANEL rather than a
+   * modal, main.ts's cancel chain backs out of one thing per press and no dock
+   * surface is in it, so the key that opened this one is the key that has to put
+   * it away. The × on its header is the mouse's copy of the same act.
+   */
+  ShowTalents: 'show_talents',
   ToggleLog: 'toggle_log',
   ToggleParty: 'toggle_party',
 } as const;
@@ -293,6 +315,36 @@ const KEY_TO_UI: ReadonlyMap<string, UiCommand> = new Map([
   // message key chosen in its place. The MEMBER did not change, only its row.
   ['m', UiCommand.ToggleLog],
   ['p', UiCommand.ToggleParty],
+  // v9 — THE TALENT PANEL. THE KEY IS CHOSEN, NOT PORTED, and this entry says so
+  // in the same words the Case Log's does above rather than dressing a guess as
+  // a citation.
+  //
+  // ═══ THERE IS NO ToME DEFAULT TO READ, AND THAT IS A FACT ABOUT THE CLONE ═══
+  // ToME's levelup screen is opened by a VIRTUAL action — `LEVELUP = function()
+  // ... playerLevelup(...)` at class/Game.lua:2215 — and the default key for
+  // every action lives in /data/keybinds/*.lua, loaded by name at
+  // engine/KeyBind.lua:44-53. That directory is not in the reference clone:
+  // `grep -rn defineAction reference/t-engine4` returns exactly two hits, both
+  // inside engine/KeyBind.lua's own definition of the function (:33 and the
+  // closure at :53 that forwards to it), and zero call sites. So the shipped
+  // binding is unrecoverable from this tree and must not be quoted as ported.
+  //
+  // ═══ AND `l` IS UNAVAILABLE ANYWAY ═══
+  // The only in-tree evidence for a letter is DIALOG-LOCAL: dialogs/
+  // CharacterSheet.lua:99 labels a button "[L]evelup" and :289's `c == 'l'`
+  // branch triggers the virtual action — both inside that one dialog's own key
+  // handler, not a keybind default. It is moot regardless: keys.ts:198 binds `l`
+  // to Dir.E and `directionFor` is consulted FIRST in the dispatch (:371-373),
+  // an order this file calls load-bearing. Shift cannot rescue it either — the
+  // handler lowercases everything and deliberately does not exclude Shift, so
+  // `L` is `l`.
+  //
+  // `g` IS CHOSEN ON THAT BASIS. It is one of the letters vi movement left free
+  // (h/j/k/l and y/u/b/n are spoken for and always will be) and the full taken
+  // set is arrows, those eight, '.', enter, r, f, t, /, c, m, p, 1-4, escape and
+  // the two page keys. The day data/keybinds is fetched, this line either earns
+  // a citation or gets corrected.
+  ['g', UiCommand.ShowTalents],
 ]);
 
 /**

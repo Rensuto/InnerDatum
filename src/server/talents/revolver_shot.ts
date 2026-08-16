@@ -37,6 +37,7 @@
  * before anything is spent, so being crowded costs zero AP.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -52,12 +53,37 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
+/** FROZEN. Two shots a round out of 6 AP, matching the Watchman's rhythm. */
 const AP_COST = 3;
+/**
+ * FROZEN, and it is the number the dead zone is measured against.
+ *
+ * A reliable shot with a growing range would eventually reach past Sniper's
+ * Mark's 7, at which point the signature is the cheap button with a bigger
+ * multiplier and the class has one gun instead of three. Fog Step is the only
+ * talent in the game whose level buys distance; see that file's argument.
+ */
 const RANGE = 5;
 /** THE class constant. See the header — it overrides the authored `min_range: 1`. */
 export const INSPECTOR_MIN_RANGE = 3;
-/** `damage_multiplier: 0.9`. */
-const DAMAGE_MULT = 0.9;
+/** `damage_multiplier: 0.9`. Unchanged at talent level 1. */
+const DAMAGE_MULT_LOW = 0.9;
+/**
+ * TUNED HIGH, not ported. `attackTargetWith` (the `SHAPE:` citation) carries no
+ * multiplier of its own, so there is nothing upstream to copy.
+ *
+ * 1.6 is tuned to hold the gap this talent was authored with: 0.9 against
+ * Sniper's Mark's 1.65 is 55%, and 1.6 against its 3.5 is 46%. The reliable
+ * shot therefore stays the cheap option rather than converging on the signature
+ * — the trade a fully-trained Inspector makes is still "twice for 6 AP, or once
+ * for 5 AP and 35 Focus", which is the decision the class is built on.
+ */
+const DAMAGE_MULT_HIGH = 1.6;
+
+/** The one place this talent's curve is written. */
+function damageMult(talentLevel: number): number {
+  return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
+}
 
 export const revolverShot: Talent = {
   id: talentId('revolver_shot'),
@@ -81,11 +107,12 @@ export const revolverShot: Talent = {
     const victim = targetActor(ctx.world, target);
     if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
 
-    const hit = talentAttack(ctx, self, victim, { mult: DAMAGE_MULT });
+    const hit = talentAttack(ctx, self, victim, { mult: damageMult(ctx.talentLevel) });
     return talentDone([hit]);
   },
 
-  describe: () =>
-    `Shoot a target ${INSPECTOR_MIN_RANGE}-${RANGE} tiles away for ${percent(DAMAGE_MULT)} ` +
-    `weapon damage. Cannot fire inside ${INSPECTOR_MIN_RANGE} tiles. ${AP_COST} AP.`,
+  describe: (_self, level) =>
+    `Shoot a target ${INSPECTOR_MIN_RANGE}-${RANGE} tiles away for ` +
+    `${percent(damageMult(level))} weapon damage. Cannot fire inside ` +
+    `${INSPECTOR_MIN_RANGE} tiles. ${AP_COST} AP.`,
 };

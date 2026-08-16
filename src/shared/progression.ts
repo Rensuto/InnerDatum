@@ -1,0 +1,474 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Dalton Barraclough
+// Ported from t-engine4 game/modules/tome/load.lua:192-206 (exp_chart, defineMaxLevel)
+//             t-engine4 game/engines/default/engine/interface/ActorLevel.lua:95-107 (gainExp)
+//             t-engine4 game/engines/default/engine/interface/ActorTalents.lua:71 (t.points)
+//             t-engine4 game/modules/tome/class/Actor.lua:171, 3747-3774, 6513-6531
+//             t-engine4 game/modules/tome/data/birth/classes/warrior.lua:80-86
+//             t-engine4 game/modules/tome/data/birth/descriptors.lua:73 (max_level = 50)
+// T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
+
+/**
+ * PROGRESSION: the experience curve, the level-up loop, and the talent-point
+ * budget. Pure arithmetic, no state, no dice.
+ *
+ * ===========================================================================
+ * WHY THIS IS IN src/shared/ AND NOT src/server/
+ * ===========================================================================
+ * The panel has to draw "1,240 / 2,700 to level 8". That is `expChart` run in
+ * the browser, and the alternative is either a second copy of the formula or a
+ * server round-trip for a number that never changes. Both are worse. This is
+ * the same argument that keeps the combat curves in src/shared/scale.ts, with
+ * one difference that matters: scale.ts is banned from the client bundle by
+ * eslint's `NO_COMBAT_MATH_PATTERNS` because a client-side hit-chance preview
+ * can DISAGREE with the server about whether something died. An xp bar cannot
+ * disagree about anything — the server sends `xp` and `level` as facts and this
+ * file only formats the denominator — so it is safe for both sides, and that
+ * asymmetry is the whole reason it gets to be shared rather than server-only.
+ *
+ * ═══ THE ONE IMPORT THAT IS DELIBERATELY NOT HERE ═══
+ * `bound` in src/shared/scale.ts is `util.bound` and `expChart` below wants it.
+ * It is NOT imported. `no-restricted-imports` only inspects the specifier a
+ * file writes, so importing scale.ts here would drag the entire combat-maths
+ * module into the client bundle through a back door that lints clean — the ban
+ * would still be enforced at every direct call site and silently defeated at
+ * this one. The clamp is written out inline instead, with the Lua beside it.
+ *
+ * PURITY (CLAUDE.md § 3)
+ *   No fs, no process, no DOM, no Date.now, no Math.random, no timers, and no
+ *   RNG of any kind. Experience is not a dice roll in ToME and is not one here:
+ *   `worthExp` is a product of three numbers. Every export is a pure function
+ *   of its arguments, so the tests pin exact integers rather than ranges.
+ *
+ * WHAT IS DELIBERATELY ABSENT
+ *   THE PARTY SHARE RULE IS NOT IN THIS FILE. It needs the party table and the
+ *   connection state, so it lives in the scheduler. It is also NOT A PORT —
+ *   ToME has no party experience rule at all (Party.lua contains zero `exp`,
+ *   Player.lua contains zero `gainExp`, and Actor.lua:2985-2987 is the only
+ *   combat award site in the module, paying exactly one actor). See DECISIONS.md
+ *   D12; nothing about it may ever carry a `Ported from` header.
+ */
+
+import { ActorRank } from './protocol.ts';
+
+/**
+ * The character cap.
+ *
+ * ═══ THIS IS A CONTENT CHANGE, NOT AN ENGINE DEVIATION ═══
+ * ToME's 50 is not an engine constant. load.lua:192 does the opposite of
+ * setting one:
+ *
+ *     ActorLevel:defineMaxLevel(nil)      -- "player is restricted to 50 but
+ *                                         --  npcs can go higher"
+ *
+ * The engine cap is switched OFF outright, and the 50 arrives from the other
+ * direction entirely — as `max_level = 50`, one field on a BIRTH DESCRIPTOR
+ * (data/birth/descriptors.lua:73), which is authored content in exactly the
+ * same sense our class definitions are. So choosing 10 is us authoring a
+ * descriptor, not us contradicting the engine, and the ported curve below is
+ * untouched by it.
+ *
+ * WHY 10. The audience is 3-6 friends playing ONE EVENING at a time, not a
+ * fifty-hour campaign. Ten levels against the verbatim chart is 2,700 xp, which
+ * the award side (see `worthExp`) turns into ~145 kills — a session with a
+ * visible top rather than a treadmill nobody finishes. It also sets the talent
+ * budget: 11 points against 16 purchasable upgrade steps, so a player leaves
+ * about five steps unbought and the panel stays a choice.
+ */
+export const MAX_CHARACTER_LEVEL = 10;
+
+/**
+ * The per-talent cap. One point buys one raw level, 1 through 5.
+ *
+ * `t.points` — ActorTalents.lua:71, inside `newTalent`, which defaults it to 1
+ * for talents that declare nothing. Essentially every real ToME talent declares
+ * 5: `grep -rho 'points = [0-9]*' data/talents/` over the reference tree counts
+ * 1,096 occurrences of `points = 5` against 144 of `points = 1` (the passives
+ * and the one-shot uniques) and a single `points = 6`.
+ *
+ * NOTE FOR THE NEXT READER, because the two lines are IDENTICAL and easy to
+ * confuse (they are seventeen lines apart, not adjacent — this note used to say
+ * one, which sends a reader scanning the wrong three lines for the second hit):
+ * ActorTalents.lua:54 is ALSO `t.points = t.points or 1`, but that one
+ * is in `newTalentType` and is the price of unlocking a whole CATEGORY. It is
+ * not this number and we do not have categories to unlock.
+ *
+ * Five is also what src/shared/scale.ts's curves are fitted to —
+ * `combatTalentScale` pins y(1) = low and y(5) = high (Combat.lua:1515-1536) —
+ * so this constant and the talent numbers are the same decision seen twice.
+ * Levels above 5 are not clamped by the curve on purpose (see that file's
+ * "NEVER CLAMP THE TALENT LEVEL AT 5"); the cap is enforced by the spend path,
+ * which is the only thing that hands out raw points.
+ */
+export const TALENT_MAX_LEVEL = 5;
+
+/**
+ * `ActorLevel.exp_chart(level)` — load.lua:193-206, VERBATIM.
+ *
+ *     ActorLevel.exp_chart = function(level)
+ *         local exp = 10
+ *         local mult = 8.5
+ *         local min = 3
+ *         for i = 2, level do
+ *             exp = exp + level * mult
+ *             if level < 30 then
+ *                 mult = util.bound(mult - 0.2, min, mult)
+ *             else
+ *                 mult = util.bound(mult - 0.1, min, mult)
+ *             end
+ *         end
+ *         return math.ceil(exp)
+ *     end
+ *
+ * ═══ IT MULTIPLIES BY `level`, NOT BY `i` ═══
+ * This is the line every reader "fixes". The accumulator adds `level * mult` —
+ * the TARGET level, a loop invariant — while the loop variable `i` is used for
+ * nothing but counting the iterations. It is not a typo upstream and it is what
+ * makes the curve quadratic-ish rather than linear: `expChart(4)` adds
+ * 4×8.5 + 4×8.3 + 4×8.1, three times, not 2×8.5 + 3×8.3 + 4×8.1. Change it to
+ * `i` and every number in test/shared/progression.test.ts's golden table moves.
+ *
+ * ═══ WHAT IS KEPT EVEN THOUGH IT IS DEAD CODE HERE ═══
+ * The `level < 30` branch, the 0.1 decay above it, and the floor of 3 are all
+ * unreachable at our cap of 10: `mult` only falls from 8.5 to 6.7 across the
+ * whole range and never approaches 3. They stay anyway. A verbatim port that a
+ * reader can diff character-for-character against the Lua is worth more than a
+ * trimmed one — the trimmed version is faster to read exactly once and then
+ * costs an hour every time somebody wants to know whether it was simplified
+ * correctly or simplified wrongly. If `MAX_CHARACTER_LEVEL` is ever raised, the
+ * curve above 30 is already right.
+ *
+ * ═══ IT IS PER-LEVEL, NOT CUMULATIVE ═══
+ * The return value is the xp needed to advance FROM `level - 1` TO `level`, and
+ * `gainExp` SUBTRACTS it on the way past. `expChart(10)` is 703, not 2,700; the
+ * 2,700 is the sum over 2..10 and appears nowhere in the game's arithmetic.
+ * `expChart(1)` runs zero iterations and returns 10, which is why the loop below
+ * — like the Lua's — is never asked about level 1 by `gainExp`.
+ *
+ * Values, and the test pins all of them: 27, 61, 110, 174, 254, 346, 453, 572,
+ * 703 for levels 2..10.
+ */
+export function expChart(level: number): number {
+  let exp = 10;
+  let mult = 8.5;
+  const min = 3;
+
+  for (let i = 2; i <= level; i++) {
+    // `level`, NOT `i`. See the docblock above before touching this line.
+    exp = exp + level * mult;
+
+    // `util.bound(mult - 0.2, min, mult)` — engine/utils.lua:1957-1961 clamps
+    // low first, then high. Written out rather than imported from scale.ts, so
+    // that including this file in the client bundle cannot smuggle the combat
+    // maths in with it (see the module docblock).
+    const decayed = level < 30 ? mult - 0.2 : mult - 0.1;
+    mult = Math.min(mult, Math.max(min, decayed));
+  }
+
+  // load.lua:205 — `math.ceil`. The chart is fractional internally (level 3 is
+  // 60.4) and integral on the way out. Drop it and every threshold is a hair
+  // low, which never fails anything and quietly shortens the game.
+  return Math.ceil(exp);
+}
+
+/**
+ * ToME's own farm-rate dial, `game.level.data.exp_worth_mult` (Actor.lua:6516),
+ * which defaults to 1 and is set per zone by GameState.lua:857
+ * (`zone.exp_worth_mult = self.farm_factor[kind]`) for exactly this purpose:
+ * turning the award rate up or down without touching the curve.
+ *
+ * We have one level and no zones, so it is a module constant rather than level
+ * data. Four is chosen, not ported — see `worthExp` for the arithmetic it
+ * produces. It is the ONE tuning knob for pacing: raising it shortens the
+ * evening proportionally and leaves ToME's per-level shape exactly intact,
+ * which is precisely what re-tuning the curve would destroy.
+ */
+export const XP_WORTH_MULT = 4;
+
+/**
+ * The rank ladder — Actor.lua:6520-6528. (NOT :6519-6527: :6519 is the
+ * `if not game.zone.infinite_dungeon then` guard, which is not part of the
+ * ladder, and the quoted block's own closing `end` is :6528. Copying the old
+ * range picks up the guard and drops the terminator.)
+ *
+ *     local mult = 0.6
+ *     if self.rank == 1 then mult = 0.6          -- critter
+ *     elseif self.rank == 2 then mult = 0.8      -- normal
+ *     elseif self.rank == 3 then mult = 3        -- elite
+ *     elseif self.rank == 3.2 then mult = 3      -- rare
+ *     elseif self.rank == 3.5 then mult = 11     -- unique
+ *     elseif self.rank == 4 then mult = 25       -- boss
+ *     elseif self.rank >= 5 then mult = 60       -- elite boss
+ *     end
+ *
+ * UPSTREAM HAS SEVEN ROWS AND WE PORT THREE. The other four are absent because
+ * THE RANKS ARE ABSENT, not because the numbers were rejected: `ActorRank` in
+ * src/shared/protocol.ts:240-244 has exactly three members, and its own comment
+ * says why ("MVP has no unique/rare/god tier to distinguish"). The day a rare
+ * or a unique lands, the row it needs is written above, unedited, ready to be
+ * copied down — which is the entire reason the dead rows are quoted here rather
+ * than deleted.
+ *
+ * The three we keep are upstream's values to the digit: normal 0.8, elite 3,
+ * boss 25. An elite is worth just under four normals and a boss worth
+ * thirty-one, and that ratio is fifteen years of somebody else's tuning.
+ */
+export const RANK_WORTH = {
+  [ActorRank.Normal]: 0.8,
+  [ActorRank.Elite]: 3,
+  [ActorRank.Boss]: 25,
+} as const satisfies Record<ActorRank, number>;
+
+/**
+ * The rank multiplier for one body. `satisfies Record<ActorRank, number>` above
+ * is what makes this total: add a member to `ActorRank` and the table fails to
+ * compile rather than this function returning `undefined` at runtime and paying
+ * out `NaN` xp.
+ */
+export function rankWorth(rank: ActorRank): number {
+  return RANK_WORTH[rank];
+}
+
+/**
+ * What one kill pays. `killerLevel × rankWorth(victimRank) × XP_WORTH_MULT`.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS IS A DEVIATION. UPSTREAM USES THE VICTIM'S LEVEL; WE USE THE KILLER'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Actor.lua:6513-6531 ends in:
+ *
+ *     return self.level * mult * self.exp_worth
+ *            * (target.exp_kill_multiplier or 1) * level_mult
+ *
+ * where `self` is the CORPSE. The award is linear in the VICTIM's level, and
+ * `exp_worth` (1 for everything ordinary) and `exp_kill_multiplier` are the two
+ * per-entity dials we have no content for.
+ *
+ * WHY THAT DOES NOT WORK HERE. In ToME the victim's level tracks the player's,
+ * because progress IS depth: you descend, the zone level rises, and the monsters
+ * rise with it. We have ONE hand-authored 30×30 map (src/shared/level.ts), no
+ * floors, no depth and no monster levels — every husk in the game is level 1 and
+ * stays level 1. Ported verbatim, every kill in the game pays a FLAT
+ * `1 × 0.8 = 0.8` xp forever, and 2,700 xp at 0.8 a kill is **3,375 kills** to
+ * reach level 10. That is not a long game; it is a broken one.
+ *
+ * THE SUBSTITUTION, AND ITS ARITHMETIC. Swap the victim's level for the
+ * KILLER'S and apply ToME's own `exp_worth_mult` at 4 (`XP_WORTH_MULT`). Award
+ * against a normal becomes `killerLevel × 3.2`, and kills-to-next-level runs:
+ *
+ *     level 1→2   8.4        level 4→5  13.6        level 7→8   20.2
+ *     level 2→3   9.5        level 5→6  15.9        level 8→9   22.3
+ *     level 3→4  11.5        level 6→7  18.0        level 9→10  24.4
+ *
+ * ≈144 kills (145 walked as whole kills, which is what the pacing test counts) —
+ * an evening for 3-6 friends. Note what it does NOT do: it reproduces ToME's
+ * per-level pacing RATIO exactly, because the chart is untouched and only a
+ * scalar changed. Re-tuning the curve instead would have been inventing one.
+ *
+ * ═══ THE WART, NAMED RATHER THAN HIDDEN ═══
+ * A level-9 player earns NINE TIMES what a level-1 player earns from the same
+ * husk. That is backwards on its face, and it is a real, observable property of
+ * this build rather than a rounding error.
+ *
+ * THIS PARAGRAPH USED TO CLAIM IT WAS UNOBSERVABLE, and the claim was wrong.
+ * The argument was: the full-share rule (DECISIONS.md D12) keeps everyone in the
+ * party at the same level, so nobody can compare. NOTHING ENFORCES THAT. Parties
+ * are invite/accept (src/server/engine/party.ts), so a fifth friend can join at
+ * level 1 at nine o'clock and stand next to four level-8 friends — at which
+ * point the premise is false and stays false for the rest of the evening. It was
+ * presented as a proof and it was a description of the only case anybody had
+ * tried.
+ *
+ * WHAT ACTUALLY CONTAINS IT NOW: `awardExperience` computes this function ONCE
+ * PER RECIPIENT, from the RECIPIENT'S OWN LEVEL, inside the payout loop. So the
+ * wart is confined to a single character's own rate — a level-9 player levels
+ * more slowly than the chart alone would suggest, which is a pacing choice —
+ * and it can no longer leak sideways into anybody else's progression or make the
+ * party's rate depend on who landed the last blow. The parameter is named
+ * `killerLevel` for its history; read it as "the level of the actor being paid",
+ * which is what the `@param` below has always said.
+ *
+ * **The day floors and monster levels land, this MUST be swapped back to the
+ * victim's level** — at that point the victim's level tracks progress again,
+ * which is the only thing upstream's version ever needed, the wart disappears
+ * entirely, and this comment becomes the changelog for doing it.
+ *
+ * ═══ THE LINE THAT IS DELIBERATELY NOT PORTED ═══
+ * Actor.lua:6514 is the anti-farming floor:
+ *
+ *     if not target.level or self.level < target.level - 7 then return 0 end
+ *
+ * "a corpse more than seven levels beneath you is worth nothing". Under the
+ * substitution `self.level` and `target.level` are the SAME NUMBER, so it reads
+ * `killerLevel < killerLevel - 7` and is never true — porting it would be
+ * porting a no-op and pretending it did something. Worse, porting it *against
+ * the victim's level* while the roster is uniformly level 1 would zero every
+ * award in the game the moment a player hit level 9, with no error, no log line
+ * and no way to tell it from a bug in the barrier. It goes back in the same
+ * commit the victim's level does, and not before.
+ *
+ * @param killerLevel the level of the actor being PAID. See above.
+ * @param victimRank the rank of the body that died.
+ */
+export function worthExp(killerLevel: number, victimRank: ActorRank): number {
+  return killerLevel * rankWorth(victimRank) * XP_WORTH_MULT;
+}
+
+/** What `gainExp` returns: the new level, the new PER-LEVEL xp, and the delta. */
+export type ExpGain = {
+  level: number;
+  xp: number;
+  levelsGained: number;
+};
+
+/**
+ * `ActorLevel:gainExp(value)` — ActorLevel.lua:95-107, ported.
+ *
+ *     function _M:gainExp(value)
+ *         self.changed = true
+ *         self.exp = math.max(0, self.exp + value)
+ *         while self:getExpChart(self.level + 1) and self.exp >= self:getExpChart(self.level + 1)
+ *               and (not self.actors_max_level or self.level < self.actors_max_level) do
+ *             ...
+ *             self.level = self.level + 1
+ *             self.exp = self.exp - self:getExpChart(self.level)
+ *             self:levelup()
+ *         end
+ *     end
+ *
+ * Pure rather than mutating: it takes the pair and returns a new pair, so the
+ * caller decides when the actor changes and the engine's synchronous turn
+ * resolution never has a half-levelled actor to observe. `levelup()` is the
+ * caller's job too — the points it would grant are `pointsForLevel`, below.
+ *
+ * ═══ TWO PROPERTIES THAT MUST SURVIVE THE PORT ═══
+ *
+ * 1. `xp` IS PER-LEVEL AND RESETS. Line 104 SUBTRACTS the threshold; it does not
+ *    remember a running total. So `xp` is always "progress into the current
+ *    level" and the panel's bar is `xp / expChart(level + 1)` with no
+ *    bookkeeping. A cumulative implementation type-checks, passes a single-level
+ *    test, and then levels a player every single kill once they are past 2,700.
+ *
+ * 2. ONE AWARD CAN CROSS SEVERAL LEVELS. It is a `while`, not an `if`. A boss at
+ *    100 xp a head takes a level-1 character to level 4 in one call, and the
+ *    remainder carries. `levelsGained` is returned so the caller can narrate all
+ *    of them rather than only the last.
+ *
+ * ═══ AT THE CAP, XP KEEPS ACCUMULATING ═══
+ * Upstream's guard is `self.level < self.actors_max_level`; ours is
+ * `MAX_CHARACTER_LEVEL`. When it stops the loop the leftover xp is KEPT, not
+ * zeroed — same as upstream, which simply stops looping. It is what the panel
+ * draws as a full bar at level 10, and zeroing it would make a capped character
+ * flicker back to an empty bar after every kill.
+ *
+ * A negative `award` is clamped at the bottom by `Math.max(0, ...)` (line 97):
+ * xp can be drained (damage_types.lua:2417 does exactly that) but never below
+ * zero, and draining never un-levels anybody.
+ *
+ * @param level current level.
+ * @param xp current PER-LEVEL xp — never a cumulative total.
+ * @param award xp to add. May be negative.
+ */
+export function gainExp(level: number, xp: number, award: number): ExpGain {
+  // ActorLevel.lua:97 — the floor is on the SUM, so a drain larger than the
+  // balance empties it rather than going negative.
+  let nextXp = Math.max(0, xp + award);
+  let nextLevel = level;
+  let levelsGained = 0;
+
+  // ActorLevel.lua:98-106. `while`, not `if` — see the docblock.
+  while (nextLevel < MAX_CHARACTER_LEVEL && nextXp >= expChart(nextLevel + 1)) {
+    nextLevel = nextLevel + 1;
+    // ActorLevel.lua:104 subtracts AFTER the increment, so the threshold spent
+    // is `expChart(newLevel)` — the same number the comparison just used.
+    nextXp = nextXp - expChart(nextLevel);
+    levelsGained = levelsGained + 1;
+  }
+
+  return { level: nextLevel, xp: nextXp, levelsGained };
+}
+
+/**
+ * Talent points granted on REACHING `level`. One per level, two on every fifth.
+ *
+ * Actor.lua:3749-3752, the surviving half of `Actor:levelup()`:
+ *
+ *     self.unused_talents = self.unused_talents + 1
+ *     self.unused_generics = self.unused_generics + 1
+ *     if self.level % 5 == 0 then self.unused_talents = self.unused_talents + 1 end
+ *     if self.level % 5 == 0 then self.unused_generics = self.unused_generics - 1 end
+ *
+ * ═══ WHAT WAS DROPPED, AND WHY EACH ═══
+ *
+ *   `unused_generics` AND ITS -1 SWAP (:3750, :3752). ToME runs TWO pools: class
+ *   points and generic points, and every fifth level moves one from the generic
+ *   pool to the class pool. That needs a generic/class TREE SPLIT to spend
+ *   against, and we have one book of four class talents. With no generic tree,
+ *   a generic pool is a currency with nothing to buy.
+ *
+ *   CATEGORY POINTS at levels 10, 20 and 36 (:3758-3760). They buy a NEW TREE.
+ *   There are no new trees; `ClassDef.loadout` is exactly four talents.
+ *
+ *   PRODIGIES at 30 and 42 (:3761-3766). Above our cap of 10 — unreachable, so
+ *   porting them would be porting dead code with a dialog attached.
+ *
+ *   STAT POINTS, `unused_stats + (stats_per_level or 3)` (:3748). A second spend
+ *   screen against six stats, and this pass ships one panel. Out of scope, not
+ *   rejected — when it lands it is one more line here.
+ *
+ *   THE LEVEL-50 BONUS (:3767-3774). Above the cap, same as prodigies.
+ *
+ * ═══ AND THE BIRTH GRANT OF 2 IS DROPPED TOO — Actor.lua:171 ═══
+ *     self.unused_talents = self.unused_talents or 2
+ * ToME hands a fresh character 2 spare points ON TOP of its free birth talents
+ * (data/birth/classes/warrior.lua:80-86 hands a Berserker five outright, at
+ * level 1, before the 2 points are counted). It can afford to, because it has
+ * DOZENS of talents to spend them on. **Our four loadout talents,
+ * already learned at level 1, ARE our birth grant** — the equivalent gift, paid
+ * in talents instead of points.
+ *
+ * The budget is why it matters and it is arithmetic, not taste: levels 2-10 give
+ * 9 points, levels 5 and 10 give 2 more, so 11 points against 4 talents × 4
+ * upgrade steps = 16 purchasable steps. 11/16 = 69%, so every player finishes an
+ * evening with about five steps unbought and had to CHOOSE which. Add the birth
+ * 2 and it is 13/16 = 81%, at which point there is nothing to decide and the
+ * panel is a checklist you tick until it is empty.
+ *
+ * @param level the level just REACHED. Level 1 grants nothing — it is where a
+ *   character starts, not somewhere it levelled up to.
+ */
+export function pointsForLevel(level: number): number {
+  if (level <= 1) return 0;
+
+  // Actor.lua:3749 — the flat point.
+  let points = 1;
+
+  // Actor.lua:3751 — and one more on every fifth level.
+  if (level % 5 === 0) points = points + 1;
+
+  return points;
+}
+
+/**
+ * Every point a character of `level` has ever been granted, spent or not: the
+ * sum of `pointsForLevel` over 2..level.
+ *
+ * Kept as a loop over the per-level function rather than a closed form, because
+ * the closed form (`(level - 1) + floor(level / 5)`) silently stops agreeing the
+ * moment `pointsForLevel` grows a clause, and it is nine iterations at most.
+ *
+ * This is the LEDGER, and it is what makes the persisted shape safe: saves store
+ * the RAW per-talent points, never the unspent count (docs/data-schemas.md § 1,
+ * "NEVER persist a derived value"), so unspent is recomputed on load as
+ * `totalPointsAtLevel(level) - (sum of raw points spent)`. Retuning this grant
+ * therefore corrects every existing character instead of stranding them.
+ *
+ * At `MAX_CHARACTER_LEVEL` it is 11 — 9 from levels 2-10, plus 1 each at 5 and 10.
+ */
+export function totalPointsAtLevel(level: number): number {
+  let total = 0;
+  for (let l = 2; l <= level; l++) {
+    total = total + pointsForLevel(l);
+  }
+  return total;
+}

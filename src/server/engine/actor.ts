@@ -414,6 +414,75 @@ export type PlayerActor = ActorCommon & {
    * on somebody's character.
    */
   classId?: string;
+
+  // --- progression ----------------------------------------------------------
+  /**
+   * CHARACTER LEVEL, 1..`MAX_CHARACTER_LEVEL`. Starts at 1.
+   *
+   * ═══ WHY THE FOUR PROGRESSION FIELDS ARE HERE AND NOT ON THE TalentSheet ═══
+   * The same argument `classId` above makes, and it is the same layer that
+   * forces it: `snapshotPlayers` (persist/saves.ts, which persists "name + class
+   * + position") RUNS IN A LAYER THAT CANNOT REACH THE TALENT ENGINE. Anything
+   * the save file must write down therefore has to be reachable from the actor,
+   * and a save that cannot name a level restores a level-8 detective as a
+   * level-1 one with eleven points quietly deleted.
+   *
+   * SO THE SPLIT IS STATED ONCE, IN BOTH FILES, AND NEITHER CLAIMS THE OTHER'S
+   * AUTHORITY (engine/talents.ts:892-912 is the other half, written verbatim to
+   * match):
+   *
+   *     THE ACTOR owns `level`, `xp`, `unspentPoints`, `pendingLevels`.
+   *     THE SHEET owns `points` — the per-talent map, 1..5, which is THE TRUTH
+   *                about what a talent does and the only thing persisted raw.
+   *
+   * Put `level` on the sheet as well and there are two fields called level, one
+   * of which is the one that got saved.
+   *
+   * NOTHING HERE IS BRANCHED ON FOR A COMBAT RULE. `getTalentLevel` reads the
+   * SHEET, never this; a character level does not scale a talent by itself, it
+   * buys the point that does. That indirection is what lets `level` change
+   * mid-pump (see `pendingLevels`) without moving a single RNG draw.
+   */
+  level: number;
+  /**
+   * PER-LEVEL experience, never a cumulative total.
+   *
+   * `gainExp` (src/shared/progression.ts) SUBTRACTS the threshold on the way
+   * past — ActorLevel.lua:104 — so this is always "progress into the current
+   * level" and the panel's bar is `xp / expChart(level + 1)` with no bookkeeping
+   * anywhere. A cumulative implementation type-checks, passes a one-level test,
+   * and then levels a character on every kill once they are past the total.
+   */
+  xp: number;
+  /**
+   * Talent points earned and not yet spent. Spending is the panel's job.
+   *
+   * A STORED NUMBER RATHER THAN `totalPointsAtLevel(level) - sum(points)`
+   * BECAUSE THE ENGINE CANNOT SEE THE SHEET — that sum lives in the talent
+   * engine and this file may not import it (the cycle `talents.ts` -> `actor.ts`
+   * is one-way). It is therefore a CACHE of a derived quantity, and the load
+   * path is what must reconcile it: docs/data-schemas.md § 1's "NEVER persist a
+   * derived value" is why the save stores raw per-talent points and recomputes
+   * this from `totalPointsAtLevel` rather than trusting whatever was written.
+   */
+  unspentPoints: number;
+  /**
+   * LEVELS CROSSED THIS PUMP WHOSE POINTS HAVE NOT BEEN HANDED OUT YET.
+   *
+   * ═══ THE REPLAY-DIVERGENCE SPLIT, IN ONE FIELD ═══
+   * The award happens the instant something dies, in the middle of a pump. `xp`
+   * and `level` may move there safely — neither is read by any dice roll. A
+   * TALENT POINT is different: it can be spent, spending raises a talent's raw
+   * level, and `combatTalentScale` turns that into damage. A point that appeared
+   * between the first and the third blow of one AoE would let the scaling change
+   * inside a single frozen-snapshot pump, which moves the labelled draw stream
+   * and breaks replay-from-seed (CLAUDE.md § 3).
+   *
+   * So the points WAIT here and are handed out on the BASE CLOCK, in the
+   * scheduler's own once-per-game-turn-per-actor pass beside `actBase`. Zero for
+   * the overwhelming majority of the game's life.
+   */
+  pendingLevels: number;
 };
 
 /** Everything the world drives. Full ToME speed model, both directions. */
@@ -670,6 +739,22 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     // half of one blended with the placeholder is a body nobody authored.
     combat: init.combat ?? DEFAULT_PLAYER_COMBAT,
     classId: init.classId,
+    // PROGRESSION STARTS AT THE BOTTOM AND EMPTY. Level 1 with no spare points
+    // is the whole birth grant argument: ToME hands a fresh character 2 unused
+    // points on top of its free birth talents (Actor.lua:171, warrior.lua:80-86),
+    // and OUR birth grant is the four loadout talents themselves, already
+    // learned at level 1 — see `pointsForLevel` in src/shared/progression.ts for
+    // the budget arithmetic that falls out of dropping the 2.
+    //
+    // A RESTORED CHARACTER OVERWRITES ALL FOUR. They are mutable and the save
+    // path assigns them after construction; there is deliberately no
+    // `PlayerInit` field for them, because a half-restored character (level set,
+    // raw talent points not) is the one state `unspentPoints` cannot be
+    // reconciled from — the restore has to do the sheet and the actor together.
+    level: 1,
+    xp: 0,
+    unspentPoints: 0,
+    pendingLevels: 0,
     cooldowns: new Map<string, number>(),
     pendingIntent: null,
     standingOrder: null,

@@ -286,6 +286,43 @@ describe('v8 puts the character sheet on C and the Case Log on M', () => {
 });
 
 // ---------------------------------------------------------------------------
+// v9: the talent panel's key
+// ---------------------------------------------------------------------------
+
+describe('v9 puts the talent panel on G, and takes nothing away', () => {
+  it('g opens the talent panel — CHOSEN, not ported (see keys.ts)', () => {
+    // ToME's LEVELUP is a VIRTUAL action (class/Game.lua:2215) whose default
+    // lives in /data/keybinds/*.lua (engine/KeyBind.lua:44-53), a directory
+    // absent from the reference clone — `grep -rn defineAction reference/t-engine4`
+    // finds only KeyBind.lua's own two lines and zero call sites. There is no
+    // default to read, so this key is a choice and this file says so rather than
+    // pinning a citation that does not exist.
+    expect(press({ key: 'g' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ShowTalents }]);
+  });
+
+  it('l is STILL Dir.E, which is why the talent panel could not have it', () => {
+    // The only in-tree evidence for `l` is dialog-local (CharacterSheet.lua:99's
+    // "[L]evelup" label and :289's `c == 'l'` branch), and it is moot regardless:
+    // KEY_TO_DIR binds `l` east and `directionFor` is consulted FIRST, an order
+    // keys.ts calls load-bearing. This is the assertion that would fail if
+    // somebody "fixed" the mnemonic by taking the letter.
+    expect(press({ key: 'l' }).calls).toEqual([{ kind: 'move', dir: Dir.E }]);
+    expect(press({ key: 'l' }).calls).not.toContainEqual({
+      kind: 'ui',
+      command: UiCommand.ShowTalents,
+    });
+    // Shift cannot rescue it either: the handler lowercases and deliberately does
+    // not exclude Shift, so a capital L is still a step east.
+    expect(press({ key: 'L', shiftKey: true }).calls).toEqual([{ kind: 'move', dir: Dir.E }]);
+  });
+
+  it('g takes nothing from the sheet or the Case Log', () => {
+    expect(press({ key: 'c' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ShowSheet }]);
+    expect(press({ key: 'm' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ToggleLog }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Every pre-existing row
 // ---------------------------------------------------------------------------
 
@@ -351,6 +388,7 @@ describe('every row that already worked still works', () => {
     ['t', UiCommand.Say],
     ['/', UiCommand.Say],
     ['c', UiCommand.ShowSheet],
+    ['g', UiCommand.ShowTalents],
     ['m', UiCommand.ToggleLog],
     ['p', UiCommand.ToggleParty],
   ];
@@ -381,7 +419,7 @@ describe('every row that already worked still works', () => {
     expect(press({ key: 'Escape' }).calls).toEqual([{ kind: 'cancel' }]);
   });
 
-  it('binds a key for every UiCommand member, so a seventh verb is considered here', () => {
+  it('binds a key for every UiCommand member, so an eighth verb is considered here', () => {
     expect(new Set(UI_ROWS.map(([, command]) => command))).toEqual(
       new Set(Object.values(UiCommand)),
     );
@@ -393,15 +431,17 @@ describe('every row that already worked still works', () => {
 // ---------------------------------------------------------------------------
 
 describe('what the keymap deliberately does NOT do', () => {
-  it('names exactly six UI verbs', () => {
-    // A seventh member has to be added here on purpose, which is the point: the
+  it('names exactly seven UI verbs', () => {
+    // An eighth member has to be added here on purpose, which is the point: the
     // exhaustive switch in main.ts breaks at lint time, and this breaks at test
-    // time with the list of what the game claims to have.
+    // time with the list of what the game claims to have. v9 added
+    // `show_talents` and that is the whole of the change to this list.
     expect(Object.values(UiCommand).slice().sort()).toEqual([
       'respawn',
       'revive',
       'say',
       'show_sheet',
+      'show_talents',
       'toggle_log',
       'toggle_party',
     ]);

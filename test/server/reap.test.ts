@@ -69,6 +69,10 @@ function spyTalents(): TalentRuntime & { readonly forgotten: string[] } {
     noteMoved: () => undefined,
     noteKill: () => undefined,
     noteStruck: () => undefined,
+    // The identity mark and "nobody is guarding" — this spy exists to record
+    // `forget` and must not change a single damage number on the way past.
+    markMultiplier: () => 1,
+    guardCounter: () => null,
     forget: (actorId: string) => forgotten.push(actorId),
   };
 }

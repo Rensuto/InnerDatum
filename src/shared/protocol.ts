@@ -164,6 +164,24 @@
  * picker is assigned a class by rotation and the join save persists it, after
  * which the chooser never appears again. src/shared/version.ts is the long
  * version.
+ *
+ * v9 ADDS LEVELS, AND THE BUMP IS FORCED BY A FIELD THAT STOPPED BEING A
+ * CONSTANT.
+ *
+ *   C -> S  `spend_point` — "put my next point into this talent."
+ *   S -> C  `progress`    — the viewer's level, xp into it, and points in hand.
+ *
+ * `LoadoutTalent` also grew `level`, `maxLevel`, `desc` and `descNext`, and
+ * `loadout` became a frame that arrives again mid-session rather than only at
+ * `welcome`. None of that forces a bump on its own — an inbound verb an old
+ * client never sends costs it nothing, an outbound frame it cannot name is one
+ * it ignores, and `LoadoutMsg` was always specified as a wholesale replacement.
+ * What forces it is that `LoadoutTalent.range` NARROWED from a class constant to
+ * a per-actor value: Fog Step's only number is its range and it now scales with
+ * the talent's level, so a v8 client draws a three-tile ring around a talent
+ * that reaches six and refuses the tiles the player paid for. src/shared/
+ * version.ts is the long version, including the two shapes deliberately avoided
+ * (no new `TurnEvent` variant, no new `ErrorCode`).
  */
 
 import { z } from 'zod';
@@ -451,7 +469,25 @@ export type LoadoutTalent = {
    * 0 means at-will. Used as the DENOMINATOR of the cooldown wipe.
    */
   cooldownTurns: number;
-  /** Maximum EUCLIDEAN distance in tiles. 0 for a `self` shape. */
+  /**
+   * Maximum EUCLIDEAN distance in tiles. 0 for a `self` shape.
+   *
+   * ═══ PER-ACTOR FROM v9. IT IS NO LONGER A CONSTANT OF THE CLASS ═══
+   * Until v8 this was `talent.targeting.range` — one authored number, the same
+   * on every Inspector's wire, safe to read once at `welcome` and cache for the
+   * session. It is now `effectiveTalentRange(targeting, talentLevel)`, computed
+   * per actor from the level below, and Fog Step is why: its ONLY number is its
+   * range, and it scales 3/4/5/6/7 across its five ranks on its own cited
+   * upstream curve (`combatTalentLimit(t, 10, 3, 7)`, mobility.lua:40-62). Two
+   * detectives of the same class legitimately receive different values here.
+   *
+   * THAT NARROWING IS WHAT FORCED PROTOCOL_VERSION 9. A client holding the old
+   * reading draws a ring three tiles wide around a talent the server will let it
+   * step six, so the points a player spent do visibly nothing — the ring is a
+   * convenience and never a gate, and this is the ring being convenient in the
+   * wrong direction. It is also why a `loadout` frame must be re-sent whenever a
+   * point is spent: this field is now stale the moment a rank changes.
+   */
   range: number;
   /**
    * THE DEAD ZONE. The closest legal distance; 0 means there is no hole.
@@ -477,6 +513,77 @@ export type LoadoutTalent = {
    * copy of authored data in the one place that must never hold one.
    */
   radius: number;
+  /**
+   * THE TALENT'S RAW LEVEL. 1 through `maxLevel`, and NEVER 0 — a talent on the
+   * hotbar is one this detective has already learned.
+   *
+   * ═══ RAW, NOT EFFECTIVE, AND THE DISTINCTION IS ToME'S ═══
+   * Upstream separates `getTalentLevelRaw` (points actually spent) from
+   * `getTalentLevel` (raw plus every bonus gear and effects contribute), and the
+   * number LevelupDialog puts under the icon is the raw one —
+   * `local traw = self.actor:getTalentLevelRaw(t.id)`, LevelupDialog.lua:952.
+   * It has to be: the panel spends POINTS, and a screen showing an effective 5
+   * on a talent with two points in it would offer to sell a rank that is already
+   * there. `desc` below is rendered from the level that actually applies; this
+   * field is the one the `n/max` under the icon counts.
+   */
+  level: number;
+  /**
+   * THE CAP — `TALENT_MAX_LEVEL` in src/shared/progression.ts, which is ToME's
+   * own `t.points` (ActorTalents.lua:71).
+   *
+   * ON THE WIRE RATHER THAN ASSUMED, for exactly the reason `radius` is: a
+   * client must never hold a second copy of an authored number. A renderer that
+   * hard-coded 5 to draw "3/5" would keep drawing "3/5" the day the cap moves,
+   * on the one screen whose whole job is telling a player how much room a talent
+   * has left — and it would keep drawing a `+` on a talent that had run out.
+   */
+  maxLevel: number;
+  /**
+   * WHAT THIS TALENT DOES AT `level`, AS A SENTENCE, RENDERED SERVER-SIDE.
+   *
+   * ═══ A STRING, NOT A BAG OF NUMBERS, AND NOT NEGOTIABLE ═══
+   * eslint's `NO_COMBAT_MATH_PATTERNS` blocks src/client/** from importing
+   * src/shared/scale.ts and src/shared/checkhit.ts AT ALL, so the browser cannot
+   * evaluate `combatTalentScale(level, low, high)` even if somebody wanted it
+   * to. `toLoadoutView`'s own docblock (src/server/content/classes.ts) already
+   * states the rule this follows: every displayed number is computed
+   * server-side, because a second copy of a formula in the browser always
+   * diverges and the divergence shows up as a monster that was already dead.
+   * Shipping the curve's endpoints instead and interpolating here would be that
+   * second copy wearing a hat.
+   */
+  desc: string;
+  /**
+   * THE SAME SENTENCE AT `level + 1`. NULL at the cap, where there is no next.
+   *
+   * ═══ THIS PAIR IS THE CURRENT -> NEXT DIFF, AND IT IS THE POINT OF THE PANEL
+   * ═══
+   * Ported in spirit from LevelupDialog.lua:963-970, the branch taken when a
+   * talent is learned and below its cap:
+   *
+   *     text:add({"font","bold"}, "Current talent level: ", tostring(traw),
+   *              " [-> ", tostring(traw + 1), "]", {"font","normal"})
+   *     text:merge(self.actor:getTalentFullDescription(t, 1)
+   *                :diffWith(self.actor:getTalentFullDescription(t), diff))
+   *
+   * ToME renders the description TWICE — once at the current level, once with
+   * `+1` — and shows the two side by side, green for the value you have and
+   * yellow-green for the value one point buys. The at-cap branch immediately
+   * below it (:971-975) renders the current description ALONE, which is exactly
+   * what `null` means here.
+   *
+   * WITHOUT THIS PAIR A TALENT LEVEL IS A LIE. A panel that shows "3/5" and a
+   * `+` button, with no statement of what the fourth point changes, asks a
+   * player to spend a scarce resource on a promise. Eleven points against
+   * sixteen upgrade steps means roughly five go unbought and the choice is the
+   * whole screen; a choice made blind is not a choice.
+   *
+   * NULL RATHER THAN AN EMPTY STRING OR AN OMITTED KEY: absent and "" would be
+   * two spellings of the same thing, and "" is the one that renders as a blank
+   * row where the diff should be. `null` is a fact the renderer must handle.
+   */
+  descNext: string | null;
 };
 
 /**
@@ -1162,6 +1269,18 @@ const TileSchema = z.strictObject({
 });
 
 /**
+ * Longest talent id a client may name. `talent:sniper_mark` is 18 characters and
+ * the longest of the twelve is `talent:alchemic_vial` at 20; 64 matches
+ * `ACTOR_ID_MAX_CHARS` and `CLASS_ID_MAX_CHARS` so there is one number to
+ * remember, and it is headroom rather than a place to park a payload.
+ *
+ * ONE CONSTANT SHARED BY `talent` AND `spend_point`, on purpose. They name the
+ * same namespace of ids, and two independent caps is how a talent whose id fits
+ * one frame and not the other eventually ships.
+ */
+const TALENT_ID_MAX_CHARS = 64;
+
+/**
  * "Use this talent, aimed here." The M3 verb.
  *
  * STILL NO IDENTITY FIELD, and `strictObject` means a frame carrying one is
@@ -1189,7 +1308,7 @@ const TileSchema = z.strictObject({
 const TalentSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('talent'),
-  talentId: z.string().min(1).max(64),
+  talentId: z.string().min(1).max(TALENT_ID_MAX_CHARS),
   target: TileSchema.optional(),
 });
 
@@ -1361,6 +1480,56 @@ const ChooseClassSchema = z.strictObject({
 });
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `spend_point` — "PUT MY NEXT POINT INTO THIS TALENT." The v9 verb.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * One point, one talent, one raw level. The panel's `+` button, and ToME's own
+ * `onUseTalent(item, inc)` reduced to the only case we have (LevelupDialog.lua
+ * :980-1000 — upstream also handles unlearning and category unlocks, and we have
+ * neither).
+ *
+ * ═══ IT NAMES NO ACTOR, AND `strictObject` IS WHAT MAKES THAT A REFUSAL ═══
+ * There is no `actorId` and no `playerId`, here or anywhere in this protocol
+ * (see the note at the head of this file). Whose sheet gains the level is the
+ * socket's business, resolved server-side from the session, exactly as with
+ * `move` and `choose_class`. A frame that smuggles one in is REJECTED rather
+ * than quietly stripped into a legal frame — see the note at the head of
+ * `HelloSchema` — so an attempt to level somebody else's talent fails loudly in
+ * the log instead of being sanitised away. That matters more here than almost
+ * anywhere: a spend is IRREVERSIBLE (there is no refund verb and no unlearn),
+ * so a sanitised frame would permanently spend a stranger's point.
+ *
+ * ═══ `talentId` IS A BOUNDED STRING, NOT A `z.enum` OF THE TWELVE IDS ═══
+ * Deliberately following `TalentSchema`'s stated precedent above, and
+ * `ChooseClassSchema`'s after it: the talent table is server-side authored
+ * content that reloads without a protocol bump, and baking the catalogue into
+ * the wire schema would make every content edit — a thirteenth talent, a renamed
+ * id — a PROTOCOL change requiring a version bump and a client redeploy.
+ *
+ * ═══ WHAT THIS SCHEMA DOES NOT CHECK, AND MUST NOT BE MISTAKEN FOR CHECKING ═══
+ * That the talent exists, that this detective has LEARNED it, that it is below
+ * `TALENT_MAX_LEVEL`, and that there is an unspent point to pay with. zod
+ * validates SHAPE; every one of those is a question about the world, they are
+ * answered in the spend handler, and each comes back as `bad_message`. No new
+ * `ErrorCode` member is added for any of them — src/shared/version.ts records
+ * that a new code independently forces a bump, and v8 kept its argument to one
+ * reason by reusing two existing codes. This does the same.
+ *
+ * ═══ IT DOES NOT PUMP THE WORLD ═══
+ * Spending a point costs no energy, consumes no RNG and advances no turn, so it
+ * belongs beside `inspect` and `choose_class` in the gateway's non-pumping
+ * group: a frame that costs the sender nothing must never be a way to make the
+ * server advance the world. What it DOES produce is a fresh `loadout` — `range`
+ * and `desc` are stale the instant a rank changes — and a fresh `progress`.
+ */
+const SpendPointSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('spend_point'),
+  talentId: z.string().min(1).max(TALENT_ID_MAX_CHARS),
+});
+
+/**
  * The five things a player may do about a party. A closed enum on the wire, so
  * an unknown verb is refused by zod rather than reaching a switch that has no
  * case for it.
@@ -1505,6 +1674,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   ReviveSchema,
   RespawnSchema,
   ChooseClassSchema,
+  SpendPointSchema,
   PartySchema,
   InspectSchema,
   PingSchema,
@@ -1522,6 +1692,7 @@ export type ClientPoint = z.infer<typeof PointSchema>;
 export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
 export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
+export type ClientSpendPoint = z.infer<typeof SpendPointSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
@@ -2276,12 +2447,24 @@ export type UsedMsg = {
 // ---------------------------------------------------------------------------
 
 /**
- * THE VIEWER'S OWN FOUR TALENTS. Sent once, with `welcome`.
+ * THE VIEWER'S OWN FOUR TALENTS. Sent with `welcome`, AND AGAIN AFTER A SPEND.
  *
- * Once rather than per-turn because M3 loadouts are FIXED (PLAN.md § M3: twelve
- * talents, four per class, zero trees, zero talent points). When M6 brings
- * talent points this becomes a frame that can arrive again mid-session, and the
- * client already treats it as a wholesale replacement, so nothing changes here.
+ * ═══ IT WAS A ONCE-PER-SESSION FRAME UNTIL v9, AND THIS DOCBLOCK PREDICTED
+ *     THE DAY IT STOPPED ═══
+ * At M3 the loadouts were FIXED — four talents, no trees, no talent points — so
+ * one frame at `welcome` said everything there was to say, and this comment
+ * recorded that talent points would make it re-sendable and that nothing would
+ * have to change when they did. They landed; nothing did. The client already
+ * treats the frame as a WHOLESALE REPLACEMENT of the hotbar, which is why an old
+ * client's handling of a second one is correct rather than merely tolerable, and
+ * why the re-send is not part of the v9 bump argument.
+ *
+ * IT MUST BE RE-SENT ON EVERY SPEND, not as a courtesy but because three fields
+ * on `LoadoutTalent` are STALE the instant a rank changes: `range` (per-actor
+ * from v9 — Fog Step's reach is its level), `level` itself, and the
+ * `desc`/`descNext` diff. A panel that spent a point and did not get a new
+ * loadout would draw the old ring and the old sentence over the new rank, which
+ * is the exact failure the version gate exists to refuse from an old client.
  *
  * `talents` is in HOTBAR ORDER and that order is the server's: slot 1 is
  * `talents[0]`. The client must not sort it. Muscle memory for which key is
@@ -2452,6 +2635,78 @@ export type ClassOptionsMsg = {
   options: readonly ClassOptionView[];
 };
 
+// ---------------------------------------------------------------------------
+// v9 — THE LEDGER, AND THE POINT NOBODY ELSE IS TOLD ABOUT
+// ---------------------------------------------------------------------------
+
+/**
+ * THE VIEWER'S OWN PROGRESS: what level they are, how far into it, and how many
+ * talent points are sitting unspent in their hand.
+ *
+ * ═══ IT IS A `ViewerMsg`, AND THAT IS ENFORCEMENT RATHER THAN ETIQUETTE ═══
+ * `unspent` IS INTENT. "Ren is holding a point back" is a statement about a
+ * decision somebody has not made yet, and this protocol has withheld exactly
+ * that class of fact since M3 — it is the same argument that made `cooldowns`
+ * viewer-private (see `ViewerMsg` below): another player's cooldowns tell you
+ * which button they are saving for the boss, and an unspent point tells you they
+ * are waiting to see which talent the next fight punishes. Talking about it in
+ * voice is the game. Reading it off a HUD is not, and a party panel that showed
+ * everyone's banked points would turn a private judgement into a queue of people
+ * telling each other what to buy.
+ *
+ * SO IT IS NOT A FIELD ON `TurnActor` AND NOT A FIELD ON `PartyStateMember`,
+ * which is where it would most naturally have gone. Both of those travel to the
+ * whole party by construction, and there is no version of `unspent` that is
+ * correct for two recipients. Membership of `ViewerMsg` makes
+ * `broadcast(progressMsg)` a BUILD FAILURE — `BroadcastMsg` is `Exclude`-derived
+ * — rather than a rule somebody has to remember at 1 a.m.
+ *
+ * ═══ WHY `xpToNext` TRAVELS EVEN THOUGH THE CLIENT COULD COMPUTE IT ═══
+ * `expChart` lives in src/shared/progression.ts and IS importable by the browser
+ * — deliberately, and that file's docblock argues it at length: an xp bar cannot
+ * disagree with the server about whether something died, which is what banished
+ * scale.ts from the client bundle. So the denominator is genuinely computable
+ * there. It is on the wire anyway for one reason: AT THE CAP THERE IS NO NEXT
+ * LEVEL, and a client deciding for itself whether to draw a full bar would need
+ * `MAX_CHARACTER_LEVEL` — a second copy of an authored number in the browser,
+ * the very thing `maxLevel` on `LoadoutTalent` exists to avoid. The server knows
+ * where the ceiling is; it says so here, and the renderer draws what it is told.
+ *
+ * ═══ WHAT IS DELIBERATELY ABSENT ═══
+ * NO `pendingLevels`. It is internal scheduler bookkeeping (see `PlayerActor` in
+ * src/server/engine/actor.ts): between a kill and the next base-clock pass it is
+ * briefly non-zero, and a panel drawing it would flicker a point that does not
+ * exist yet and cannot be spent. NO total/cumulative xp either — `xp` is
+ * PER-LEVEL, because `gainExp` subtracts the threshold on the way past
+ * (ActorLevel.lua:104), so it is already the bar's numerator with no arithmetic.
+ */
+export type ProgressMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'progress';
+  /** 1..`MAX_CHARACTER_LEVEL`. The character level, not a talent's. */
+  level: number;
+  /**
+   * XP INTO THE CURRENT LEVEL, never a running total. The bar's NUMERATOR.
+   * At the cap it keeps climbing rather than being zeroed, which is what lets a
+   * level-10 bar sit full instead of flicking back to empty after every kill.
+   */
+  xp: number;
+  /**
+   * The bar's DENOMINATOR: `expChart(level + 1)`. See the docblock for why this
+   * travels rather than being recomputed, and what the cap does to it.
+   */
+  xpToNext: number;
+  /**
+   * TALENT POINTS IN HAND. The `+` buttons are live exactly while this is > 0.
+   *
+   * It is a DERIVED number on the server — every point ever granted at this
+   * level minus every raw point spent (`totalPointsAtLevel` is the ledger) —
+   * and it is sent as a fact rather than as its two operands, because a client
+   * doing that subtraction itself would need the whole spend history.
+   */
+  unspent: number;
+};
+
 export type PongMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'pong';
@@ -2501,6 +2756,7 @@ export type ServerMsg =
   | ResourceMsg
   | InspectedMsg
   | ClassOptionsMsg
+  | ProgressMsg
   | PongMsg
   | ErrorMsg;
 
@@ -2554,6 +2810,17 @@ export type ServerMsg =
  * for two recipients, so `broadcast(classOptionsMsg)` must not compile: handed
  * to the room it puts a modal chooser over the map for four returning players
  * who already have a class, at the barrier, in the middle of a fight.
+ *
+ * `progress` JOINED AT v9 FOR THE FIRST REASON — THE LEAK — IN THE SAME FORM
+ * COOLDOWNS DID. `unspent` is INTENT: a banked talent point is a decision
+ * somebody has deliberately not made yet, and "Ren is holding one back" is
+ * exactly the class of fact this union has withheld since M3. `level` and `xp`
+ * are not secret in themselves, and under the full-share rule the party is
+ * always the same level anyway — but there is no shape of this frame that
+ * carries the level without the point, and splitting it in two to make half of
+ * it broadcastable would be building a leak a frame at a time. It is also why
+ * `unspent` is not a field on `TurnActor` or `PartyStateMember`, both of which
+ * go to the whole party by construction.
  */
 export type ViewerMsg =
   | LoadoutMsg
@@ -2562,7 +2829,8 @@ export type ViewerMsg =
   | TurnMsg
   | PartyStateMsg
   | InspectedMsg
-  | ClassOptionsMsg;
+  | ClassOptionsMsg
+  | ProgressMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

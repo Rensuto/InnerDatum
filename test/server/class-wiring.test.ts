@@ -9,6 +9,7 @@ import {
   INSPECTOR,
   WATCHMAN,
   createContentTalentEngine,
+  loadoutViewFor,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { downedSpriteFor } from '../../src/server/engine/downed.ts';
@@ -19,6 +20,7 @@ import { actorIdForUser, wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { projectClassOptions, projectTurn } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { CharacterRestore, IdentityPort, PersistPort } from '../../src/server/net/gateway.ts';
@@ -523,11 +525,80 @@ describe('AP and MP are structurally incapable of being short', () => {
     // That is only true while this holds. The day somebody authors a 7-AP
     // talent the BUILD fails here, instead of a button greying out in play with
     // nothing on the wire to explain why.
+    //
+    // ═══════════════════════════════════════════════════════════════════════
+    // TALENT POINTS DO NOT REACH THIS GUARD, AND THAT IS A DESIGN RULE.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // A rank buys ONE scaled number per talent and never a cost: every `AP_COST`
+    // and `MP_COST` in src/server/talents/ is a module constant, several of them
+    // labelled FROZEN in their own file with the reason (fog_step.ts: "a rank
+    // that made it cheaper would make it the first button pressed"). So
+    // `TalentCost` stays a property of the CATALOGUE while `range` and `desc`
+    // became properties of the ACTOR, which is why this guard can still be
+    // asked of a `ClassDef` rather than of a per-actor `LoadoutTalent` view.
+    //
+    // The day somebody scales a cost, this assertion stops being sufficient
+    // rather than stops being true: it would prove the RANK-1 cost fits the
+    // budget while a rank-5 Fog Step at 7 AP quietly did not. Whoever writes
+    // that curve owes this test a loop over 1..TALENT_MAX_LEVEL.
     const apCosts = CLASSES.flatMap((c) => c.loadout.map((talent) => talent.cost.ap ?? 0));
     const mpCosts = CLASSES.flatMap((c) => c.loadout.map((talent) => talent.cost.mp ?? 0));
 
     expect(Math.max(...apCosts)).toBeLessThanOrEqual(Math.min(...CLASSES.map((c) => c.maxAp)));
     expect(Math.max(...mpCosts)).toBeLessThanOrEqual(Math.min(...CLASSES.map((c) => c.maxMp)));
+
+    // And the wire view a PICKER builds agrees with the authored numbers it was
+    // built from, at every one of the twelve, so a future `toLoadoutView` that
+    // scaled a cost would fail here rather than three screens away.
+    const viewCosts = CLASSES.flatMap((c) => loadoutViewFor(c).map((talent) => talent.cost.ap));
+    expect(viewCosts).toEqual(apCosts);
+  });
+
+  it('previews an unlearned class at level 1, on every talent of every class', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE PICKER HAS NO ACTOR, SO IT HAS NO RANK TO READ — IT STATES ONE.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `loadoutViewFor(definition)` is the class-picker path
+    // (`projectClassOptions` -> `toClassOptionView`, view/projector.ts). It is
+    // shown to somebody who has not chosen a class, so there is no sheet, no
+    // points and no rank anywhere — and `toLoadoutView` needs a level. It passes
+    // 1 explicitly: an UNLEARNED class is previewed at its BIRTH level, which is
+    // exactly what a picker should show ("this is what you get if you take it,
+    // before you have spent anything").
+    //
+    // WHY THIS IS WORTH A TEST RATHER THAN BEING OBVIOUS: the alternative that
+    // would look tidier is reading the VIEWER's current provisional body, which
+    // is wearing a DIFFERENT class — every displayed number would then be
+    // computed against the wrong combat sheet, and nothing would fail. The
+    // assertion below is the whole of the guard against that, plus the guard
+    // against a future default of 0 (`combatTalentScale` maps 0 to a tenth of
+    // the damage rather than refusing, so a level-0 preview would silently
+    // under-sell every class).
+    for (const definition of CLASSES) {
+      const view = loadoutViewFor(definition);
+      expect(view).toHaveLength(definition.loadout.length);
+      for (const talent of view) {
+        expect(talent.level).toBe(1);
+        expect(talent.maxLevel).toBe(TALENT_MAX_LEVEL);
+        // A rendered sentence, not an empty string, and the rank-2 diff beside
+        // it — a picker card with a blank description is indistinguishable from
+        // a broken one, and `descNext` must not be null below the cap.
+        expect(talent.desc.length).toBeGreaterThan(0);
+        expect(talent.descNext).not.toBeNull();
+        expect(talent.descNext).not.toBe(talent.desc);
+      }
+    }
+
+    // AND THE RANGE IS THE LEVEL-1 RANGE, which is the one field where "level 1"
+    // is observable rather than merely stated. Fog Step is the only talent whose
+    // range scales (3/4/5/6/7 on `combatTalentLimit(t, 10, 3, 7)`,
+    // mobility.lua:40-62), so a picker that previewed it at any other rank would
+    // advertise a mobility the class does not start with.
+    const inspectorView = loadoutViewFor(INSPECTOR);
+    const fogStep = inspectorView.find((talent) => talent.id === 'talent:fog_step');
+    expect(fogStep?.range).toBe(3);
   });
 
   it('refills both on the next base turn, through the adapter main.ts ships', async () => {

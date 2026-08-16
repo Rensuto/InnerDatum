@@ -46,9 +46,42 @@
  * nothing to migrate FROM. What ships here is the machinery plus the refusal,
  * because the refusal has to be in the build BEFORE the first newer build
  * exists — retrofitting it is exactly the scenario it defends against.
- * docs/data-schemas.md § 7 puts "the first real migration" at M6; it will be
- * one entry in `CHARACTER_MIGRATIONS` and a fixture, and nothing else here
- * moves.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MILESTONE THIS HEADER USED TO POINT AT HAS BEEN REACHED, AND THE
+ * MIGRATION WAS CONSIDERED AND DELIBERATELY DECLINED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This paragraph used to end "docs/data-schemas.md § 7 puts 'the first real
+ * migration' at M6". M6 is here: progression landed, and `CharacterFile` grew
+ * `level`, `xp`, `unspentPoints` and `talentPoints`. The chain is STILL empty,
+ * and that is a decision rather than an oversight — without this note the next
+ * reader would reasonably assume the bump was forgotten in the rush.
+ *
+ * THE RULE SAYS NO BUMP IS NEEDED. docs/data-schemas.md:48-49: "Adding an
+ * *optional* field needs no bump; the bump is for renames, semantic changes,
+ * and new required fields." All four are optional, and `migrateDoc` below
+ * compares nothing but the integer, so a v1 file with none of them loads
+ * untouched and `parseCharacterFile` supplies the documented birth defaults.
+ *
+ * AND THE COST OF BUMPING ANYWAY IS NOT SYMMETRIC WITH THE COST OF NOT. Bumping
+ * makes every OLDER build refuse these files (THE REFUSAL, :259-271) and
+ * saves.ts turn that refusal into a permanent QUARANTINE of the path
+ * (saves.ts:963-980, :818-829) — the character is unplayable until a human
+ * moves the file by hand. Not bumping means an older build drops the four
+ * fields and writes them away, which costs one character's levels. For a game
+ * whose game-design.md § 9 is "no permadeath, no loss", a lost level beats a
+ * friend who cannot play at all. saves.ts's header states the same trade from
+ * the other side; neither file is the sole record of it.
+ *
+ * NOTE WHAT THE WORKED EXAMPLE BELOW SAYS. It has always read `from: 1, to: 2,
+ * note: 'talents split into raw points + refundPool'` — which is EXACTLY this
+ * change, written down before it happened. It was never needed: we store RAW
+ * per-talent points from the first file that has any, so there is no collapsed
+ * "effective level" for a later migration to split, and there is no persisted
+ * `refundPool` because a spend is irrevocable and the refund of a VANISHED
+ * talent id is computed at load from the raw spread. The example stays as an
+ * example — the day a rename or a new REQUIRED field lands, it is one entry in
+ * `CHARACTER_MIGRATIONS` and a fixture, and nothing else here moves.
  */
 
 import { SCHEMA_VERSION } from '../../shared/version.ts';
@@ -132,9 +165,14 @@ export function createMigrationRegistry(steps: readonly Migration[]): MigrationR
 }
 
 /**
- * THE CHARACTER CHAIN. Empty by design — see the header.
+ * THE CHARACTER CHAIN. Empty by design — see the header, which records that the
+ * progression fields were weighed against this array and deliberately added as
+ * OPTIONAL fields instead.
  *
- * When the first entry lands, it looks like this and nothing else changes:
+ * When the first entry lands, it looks like this and nothing else changes. The
+ * example is kept verbatim although the change it describes is the one we just
+ * declined to make — see the header for why raw points from day one mean there
+ * is nothing to split and no `refundPool` to create:
  *
  * ```ts
  * {

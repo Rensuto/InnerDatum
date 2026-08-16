@@ -7,13 +7,21 @@ import {
   charSheetRect,
   charSheetRows,
   drawCharSheet,
+  SHEET_MIN_H,
   SheetRowKind,
   SheetSection,
 } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H } from '../../src/client/ui/panel.ts';
+import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
+import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { CharSheetView, SheetRow } from '../../src/client/ui/charsheet.ts';
-import type { InspectView, LoadoutTalent, ResourceView } from '../../src/shared/protocol.ts';
+import type {
+  InspectView,
+  LoadoutTalent,
+  ProgressMsg,
+  ResourceView,
+} from '../../src/shared/protocol.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -98,6 +106,24 @@ function pool(over: Partial<ResourceView> = {}): ResourceView {
   return { kind: ResourceKind.Resolve, current: 40, max: 100, discrete: false, ...over };
 }
 
+/**
+ * The v9 `progress` frame. Level 4, part-way through, NOTHING IN HAND by
+ * default — an unspent point is the exceptional state and every test that cares
+ * about it says so, so the common fixture must not quietly enable the one
+ * conditional row on this sheet.
+ */
+function progressFrame(over: Partial<ProgressMsg> = {}): ProgressMsg {
+  return {
+    v: PROTOCOL_VERSION,
+    t: 'progress',
+    level: 4,
+    xp: 61,
+    xpToNext: 174,
+    unspent: 0,
+    ...over,
+  };
+}
+
 function talent(over: Partial<LoadoutTalent> & { id: string; name: string }): LoadoutTalent {
   return {
     icon: 'icon_active_ward_rush',
@@ -107,6 +133,13 @@ function talent(over: Partial<LoadoutTalent> & { id: string; name: string }): Lo
     minRange: 0,
     shape: TalentShape.Single,
     radius: 0,
+    // The four v9 progression fields. Defaulted to a birth-rank talent, which is
+    // what every one of this file's cases is about — the sheet draws a hotbar,
+    // not a levelup panel, so a rank is background rather than subject.
+    level: 1,
+    maxLevel: TALENT_MAX_LEVEL,
+    desc: 'A talent.',
+    descNext: 'A slightly better talent.',
     ...over,
   };
 }
@@ -142,6 +175,7 @@ function sheet(over: Partial<CharSheetView> = {}): CharSheetView {
     resource: pool(),
     loadout: LOADOUT,
     cooldowns: {},
+    progress: progressFrame(),
     ...over,
   };
 }
@@ -180,9 +214,17 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
 
   it('opens with identity, then Life, then the pool — never the numbers first', () => {
     const rows = charSheetRows(sheet());
-    // ToME prints Sex/Race/Class, then "Life", then the `resources_def` loop.
-    // Ours has no sex and no race, so: name, class, life, pool.
-    expect(fieldLabels(rows).slice(0, 4)).toEqual(['Name', 'Class', 'Life', 'Resolve']);
+    // ToME prints Sex/Race/Class (CharacterSheet.lua:604-606), then Level and
+    // Exp (:614-615), then "Life" (:625), then the `resources_def` loop. Ours has
+    // no sex and no race, so: name, class, level, experience, life, pool.
+    expect(fieldLabels(rows).slice(0, 6)).toEqual([
+      'Name',
+      'Class',
+      'Level',
+      'Experience',
+      'Life',
+      'Resolve',
+    ]);
   });
 
   it('draws the class from the top-level field and never from a row labelled Class', () => {
@@ -190,7 +232,7 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
     // hunting through `rows`. Absent means "no class line", never "unknown".
     const rows = charSheetRows(sheet({ view: selfView({ className: undefined }) }));
     expect(fieldLabels(rows)).not.toContain('Class');
-    expect(fieldLabels(rows).slice(0, 2)).toEqual(['Name', 'Life']);
+    expect(fieldLabels(rows).slice(0, 2)).toEqual(['Name', 'Level']);
   });
 
   it('keeps the server’s fifteen rows in the server’s order, unsorted', () => {
@@ -213,7 +255,14 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
 
   it('omits the pool entirely rather than drawing an empty row for it', () => {
     const rows = charSheetRows(sheet({ resource: null }));
-    expect(fieldLabels(rows)).toEqual(['Name', 'Class', 'Life', ...SELF_ROWS.map((r) => r.label)]);
+    expect(fieldLabels(rows)).toEqual([
+      'Name',
+      'Class',
+      'Level',
+      'Experience',
+      'Life',
+      ...SELF_ROWS.map((r) => r.label),
+    ]);
   });
 
   it('names the pool by its own name, as ToME labels each resource', () => {
@@ -223,6 +272,81 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
       }),
     );
     expect(rows).toContainEqual({ kind: SheetRowKind.Field, label: 'Reagents', value: '3/8' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v9 — LEVEL, EXPERIENCE, AND THE ROW THAT IS A CALL TO ACTION
+// ---------------------------------------------------------------------------
+
+describe('the progression rows', () => {
+  function labelled(rows: readonly SheetRow[], label: string) {
+    return rows.flatMap((row) =>
+      row.kind === SheetRowKind.Field && row.label === label ? [row] : [],
+    );
+  }
+
+  it('sits Level and Experience between Class and Life, where ToME puts them', () => {
+    // CharacterSheet.lua:606 draws the Class line, :614-615 Level then Exp, :625
+    // Life. That order is the port and it is what this assertion pins: identity,
+    // then how far along that identity is, then what keeps it alive.
+    const labels = fieldLabels(charSheetRows(sheet()));
+    expect(labels.indexOf('Level')).toBeGreaterThan(labels.indexOf('Class'));
+    expect(labels.indexOf('Experience')).toBe(labels.indexOf('Level') + 1);
+    expect(labels.indexOf('Life')).toBe(labels.indexOf('Experience') + 1);
+  });
+
+  it('prints the two xp numbers rather than ToME’s percentage', () => {
+    expect(labelled(charSheetRows(sheet()), 'Experience')[0]?.value).toBe('61/174');
+    expect(labelled(charSheetRows(sheet()), 'Level')[0]?.value).toBe('4');
+  });
+
+  it('says “top level” instead of dividing by the cap’s zero denominator', () => {
+    // `sendProgress` sends xpToNext = 0 at MAX_CHARACTER_LEVEL as a SENTINEL:
+    // there is no next level and xp keeps accumulating, so any positive
+    // denominator would draw a fraction creeping towards a level that never
+    // arrives. It is a fact to handle, never a number to divide by.
+    const rows = charSheetRows(
+      sheet({ progress: progressFrame({ level: 10, xp: 900, xpToNext: 0 }) }),
+    );
+    expect(labelled(rows, 'Experience')[0]?.value).toBe('900 — top level');
+  });
+
+  it('draws no level line at all before the first progress frame', () => {
+    // Null is a one-frame window on connect, not a level-0 character. A row
+    // reading "Level: 0" in that window is a wrong number stated confidently.
+    const labels = fieldLabels(charSheetRows(sheet({ progress: null })));
+    expect(labels).not.toContain('Level');
+    expect(labels).not.toContain('Experience');
+    expect(labels).not.toContain('Talent points');
+  });
+
+  it('hides the points row at zero and shows it above zero, naming the key', () => {
+    // ToME's own conditional: uiset/Minimalist.lua:1512-1516 draws the levelup
+    // glow and :1587-1589 makes its hotspot clickable only under
+    // `player.unused_talents > 0 or ...`. A row reading "0 points" on every open
+    // is furniture within one session.
+    expect(fieldLabels(charSheetRows(sheet()))).not.toContain('Talent points');
+
+    const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 3 }) }));
+    const points = labelled(rows, 'Talent points')[0];
+    expect(points).toBeDefined();
+    expect(points?.value).toContain('3 points');
+    // IT NAMES THE KEY. This row is the only place a player who has never opened
+    // the talent panel learns that it exists — an unspent point is a call to
+    // action, and a call to action with no instruction is a stat.
+    expect(points?.value).toContain('g');
+  });
+
+  it('says “1 point”, not “1 points”', () => {
+    const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 1 }) }));
+    expect(labelled(rows, 'Talent points')[0]?.value).toContain('1 point —');
+  });
+
+  it('puts the points row under Experience and still above Life', () => {
+    const labels = fieldLabels(charSheetRows(sheet({ progress: progressFrame({ unspent: 2 }) })));
+    expect(labels.indexOf('Talent points')).toBe(labels.indexOf('Experience') + 1);
+    expect(labels.indexOf('Life')).toBe(labels.indexOf('Talent points') + 1);
   });
 });
 
@@ -248,7 +372,13 @@ describe('charSheetRows while the round trip is out', () => {
   });
 
   it('still says something when literally nothing has arrived', () => {
-    const rows = charSheetRows({ view: null, resource: null, loadout: [], cooldowns: {} });
+    const rows = charSheetRows({
+      view: null,
+      resource: null,
+      loadout: [],
+      cooldowns: {},
+      progress: null,
+    });
     expect(rows).toEqual([
       { kind: SheetRowKind.Section, label: SheetSection.General },
       { kind: SheetRowKind.Note, text: 'gathering…' },
@@ -347,6 +477,25 @@ describe('charSheetRect', () => {
     expect(charSheetRect({ width: 640, height: 400, top: 20, bottom: 70 })).toBeNull();
     expect(charSheetRect({ width: 120, height: 400, top: 20, bottom: 360 })).toBeNull();
   });
+
+  it('still opens, and still draws every identity row, at exactly SHEET_MIN_H', () => {
+    // ═══ THE STALE-CONSTANT TEST ═══
+    // `SHEET_MIN_H` is DERIVED — header + inset*2 + one section + five identity
+    // rows — and v9 added two of those five. Left at three it would let the panel
+    // open into a band that cannot hold what `charSheetRows` now returns; the
+    // failure is a sheet that reports a rect and then silently drops its own
+    // COMBAT block on an ordinary short window. This finds either mistake by
+    // asking for the tightest legal band and checking the panel is both offered
+    // and tall enough for the block it promises.
+    const rect = charSheetRect({ width: 640, height: 400, top: 0, bottom: SHEET_MIN_H + 12 });
+    expect(rect).not.toBeNull();
+    if (rect === null) throw new Error('unreachable');
+    expect(rect.h).toBeGreaterThanOrEqual(SHEET_MIN_H);
+
+    // One pixel shorter and it must refuse, so the constant is a real edge
+    // rather than a number nothing reads.
+    expect(charSheetRect({ width: 640, height: 400, top: 0, bottom: SHEET_MIN_H + 11 })).toBeNull();
+  });
 });
 
 describe('charSheetHitAt', () => {
@@ -374,6 +523,27 @@ describe('charSheetHitAt', () => {
       expect(charSheetHitAt(rect, column, y)).toBeNull();
     }
     expect(charSheetHitAt(rect, rect.x + 4, rect.y + 4)).toBeNull();
+  });
+
+  it('offers the [G] control immediately left of the close, and never over it', () => {
+    // ToME's own discoverable route to its levelup screen is a button on the
+    // character sheet (CharacterSheet.lua:99's "[L]evelup"). A SCAN across the
+    // header describes what was found rather than asserting where it starts.
+    const y = rect.y + Math.floor(HEADER_H / 2);
+    const close: number[] = [];
+    const talents: number[] = [];
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+      const hit = charSheetHitAt(rect, x, y);
+      if (hit === 'close') close.push(x);
+      if (hit === 'talents') talents.push(x);
+    }
+    expect(talents.length).toBeGreaterThan(0);
+    expect(close.length).toBeGreaterThan(0);
+    // Contiguous, and strictly LEFT of the close with no overlap: two controls
+    // sharing a pixel is a click that closes the sheet when it meant to open the
+    // panel, which on this header is the two most similar-looking gestures.
+    expect(talents[talents.length - 1] ?? 0).toBe((talents[0] ?? 0) + talents.length - 1);
+    expect(talents[talents.length - 1] ?? 0).toBeLessThan(close[0] ?? 0);
   });
 
   it('does not answer for a point outside the panel', () => {

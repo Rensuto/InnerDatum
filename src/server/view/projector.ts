@@ -662,10 +662,24 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     icon: talent.icon,
     cost: talent.cost,
     cooldownTurns: talent.cooldownTurns,
+    // PER-ACTOR FROM v9 — `toLoadoutView` (content/classes.ts) resolved this at
+    // the caster's own rank. Copied verbatim: this function decides WHAT a
+    // client may know, never what the number is.
     range: talent.range,
     minRange: talent.minRange,
     shape: talent.shape,
     radius: talent.radius,
+    // ═══ THE FOUR v9 FIELDS. A FIELD MISSED HERE IS A FIELD THAT NEVER SHIPS
+    // ═══
+    // This is a hand-written copy rather than a spread (see the docblock), so
+    // adding a field upstream in `LoadoutTalent` silently drops it at this line
+    // unless it is named. The compiler catches the omission because every one
+    // of these is REQUIRED on the wire type — which is precisely why they are
+    // required rather than optional.
+    level: talent.level,
+    maxLevel: talent.maxLevel,
+    desc: talent.desc,
+    descNext: talent.descNext,
   };
 }
 

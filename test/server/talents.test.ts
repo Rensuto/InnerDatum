@@ -142,7 +142,11 @@ function fixture(
   };
 
   const engine = createContentTalentEngine();
-  const ctx: TalentCtx = { engine, world, rng };
+  // `talentLevel: 1` is the birth grant every loadout talent is seeded at
+  // (`createTalentSheet`). `useTalent` overwrites it from the caster's own
+  // sheet, so it only matters for the direct-call helpers — `resolveGuardCounter`
+  // below is the one that takes a ctx without going through `useTalent`.
+  const ctx: TalentCtx = { engine, world, rng, talentLevel: 1 };
 
   return {
     world,
@@ -1032,7 +1036,9 @@ describe('the Watchman anchors — guard, taunt, and the punish', () => {
     husk.y = 6;
     const counter = resolveGuardCounter(f.ctx, 'husk', 'sam');
     expect(counter).not.toBe(null);
-    expect(counter?.targetId).toBe('husk');
+    expect(counter?.hit.targetId).toBe('husk');
+    // AND WHO SWUNG, which is the field the scheduler attributes the event to.
+    expect(counter?.guardianId).toBe('dalt');
   });
 
   it('Lockdown drains a third of a turn and turns the target on the Watchman', () => {

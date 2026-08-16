@@ -42,6 +42,7 @@
  * source of an unreproducible bug.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -58,14 +59,47 @@ import {
 } from '../engine/talents.ts';
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
+/** FROZEN. 5 of 6 AP — the signature is the round. */
 const AP_COST = 5;
+/** FROZEN AT 2. A quarter of the whole stock for one throw is what makes an AoE
+ * a decision rather than the default opener; see Ashwick Flare on the gate. */
 const REAGENT_COST = 2;
+/** FROZEN, and shorter than the flare's 5: you step up to throw a vial. */
 const RANGE = 4;
-/** `damage_multiplier: 0.95` — per target, which is why an AoE is worth 2 Reagents. */
-const DAMAGE_MULT = 0.95;
+/** `damage_multiplier: 0.95` — per target, which is why an AoE is worth 2
+ * Reagents. Unchanged at talent level 1. */
+const DAMAGE_MULT_LOW = 0.95;
+/**
+ * TUNED HIGH, not ported. Throw Bomb (explosives.lua:20-50, the `SHAPE:`
+ * citation) donates the ball projector and `friendlyfire = false`; its own
+ * damage is `combatTalentSpellDamage(t, 28, 190)`, flat spell damage off
+ * spellpower, which is not in the same units as a weapon multiplier.
+ *
+ * 1.7 is the LOWEST high in the twelve, and deliberately: this is the only
+ * talent whose damage is PER TARGET across five tiles, so its real output at
+ * rank 5 against three bodies is 5.1x, more than any single-target talent in
+ * the game reaches. Tuning it level with the flare's 2.2 would make the
+ * Alchemist's signature strictly better than her at-will button in every fight
+ * with more than one enemy in it, which is most of them.
+ */
+const DAMAGE_MULT_HIGH = 1.7;
+
+/** The one place this talent's curve is written. */
+function damageMult(talentLevel: number): number {
+  return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
+}
+
 /** `content/abilities/alchemic_vial.json` — `cooldown_sec: 6.0`. R2 -> 6 turns. */
 const COOLDOWN_SEC = 6;
-/** The cross is centre + four orthogonals; the radius exists for the UI ring. */
+/**
+ * The cross is centre + four orthogonals; the radius exists for the UI ring.
+ *
+ * FROZEN AT 1. `crossTiles` takes the arm length so that the client's preview
+ * and the tiles that actually burn cannot disagree — a rank that grew the arms
+ * would need `targeting.radius` to be per-actor too, which is a second
+ * per-actor wire field for a shape whose whole virtue is that a player can
+ * count it at a glance on a 30x30 grid. The rank buys damage on five tiles.
+ */
 const RADIUS = 1;
 
 export const alchemicVial: Talent = {
@@ -96,16 +130,17 @@ export const alchemicVial: Talent = {
     // made a positioning bet and lost it, which is a legible outcome. The
     // refund rule covers intents that went ILLEGAL, not intents that went bad.
     const base = talentBaseDamage(self);
+    const mult = damageMult(ctx.talentLevel);
     const hits: TalentHit[] = [];
     for (const victim of victims) {
-      hits.push(talentProject(ctx, self, victim, base, DamageType.Fire, DAMAGE_MULT));
+      hits.push(talentProject(ctx, self, victim, base, DamageType.Fire, mult));
     }
 
     return talentDone(hits, [`Cross, radius ${RADIUS}. ${hits.length} caught.`]);
   },
 
-  describe: () =>
+  describe: (_self, level) =>
     `Hurl a vial up to ${RANGE} tiles. Every enemy on the target tile and its four ` +
-    `orthogonal neighbours takes ${percent(DAMAGE_MULT)} fire damage. Allies are never hit. ` +
-    `${AP_COST} AP, ${REAGENT_COST} Reagents.`,
+    `orthogonal neighbours takes ${percent(damageMult(level))} fire damage. Allies are ` +
+    `never hit. ${AP_COST} AP, ${REAGENT_COST} Reagents.`,
 };

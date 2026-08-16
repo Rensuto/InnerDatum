@@ -35,6 +35,7 @@
  * against a wall is a legitimate outcome the log should say out loud.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
@@ -54,6 +55,16 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
+/**
+ * FROZEN AT 2, and it is the entire identity of the talent.
+ *
+ * game-design.md § 2 calls this "the cheapest engage in the game". 2 of 6 AP is
+ * the only cost in the twelve that lets a player fire three times in one round;
+ * at 3 it is Crude Blow with a shove and the Watchman loses his opening move.
+ * A talent point buys damage, never a discount — a scaling cost would make the
+ * spend path a rebate, and `canUseTalent` would stop being a pure predicate
+ * over static data.
+ */
 const AP_COST = 2;
 /**
  * MELEE REACH — 1.5, NOT 1, AND THE ARITHMETIC IS THE WHOLE JUSTIFICATION.
@@ -70,8 +81,58 @@ const AP_COST = 2;
  * is a second definition of what melee means (engine/combat.ts `MELEE_REACH`).
  */
 const RANGE = MELEE_REACH;
-/** `damage_multiplier: 0.8`. Deliberately the weakest hit in the kit. */
-const DAMAGE_MULT = 0.8;
+/**
+ * ═══ THE CONTRADICTION THIS FILE HAS CARRIED SINCE IT SHIPPED, RESOLVED ═══
+ * The header cites TWO sources and they are not the same kind of source, which
+ * was never said out loud until the curve landed:
+ *
+ *   SHAPE  — Shield Pummel, weaponshield.lua:23-45. A shield strike that
+ *            follows through. It donates the STRUCTURE and the cooldown, and it
+ *            is where "shove, then take the ground" comes from.
+ *   LOW    — `content/skills/shield_bash.json`'s authored `damage_multiplier:
+ *            0.8`. AUTHORED, not ported, and it WINS at talent level 1 because
+ *            it is the shipped balance every existing test is pinned to.
+ *   HIGH   — TUNED, not ported. Shield Pummel swings TWICE, at
+ *            `combatTalentWeaponDamage(t, 1, 1.7)` and `(t, 1.2, 2.1)`
+ *            (weaponshield.lua:50-51), on a different curve with a different
+ *            base. Neither endpoint is ours and neither could be copied.
+ *
+ *            THIS BLOCK USED TO QUOTE `(t, 1, 1.5)` AT weaponshield.lua:33 and
+ *            warn against "copying its 1.5 as our high" as coincidence dressed
+ *            as provenance. That call does not exist: :33 is
+ *            `is_special_melee = true`, and `grep -n combatTalentWeaponDamage`
+ *            over the whole file returns 1/1.7, 1.2/2.1, 0.3/1, 0.8/1.3 and
+ *            1/2.5 — there is no 1.5 anywhere in it. The argument is STRONGER
+ *            for the correction, not weaker: since no upstream 1.5 exists, the
+ *            coincidence it warned about was never even available.
+ *
+ * 1.5 is tuned against Crude Blow, which is the comparison a Watchman actually
+ * makes: 0.8 vs 1.0 at rank 1 (80%) and 1.5 vs 1.8 at rank 5 (83%). The
+ * signature stays the WEAKEST hit in the kit at every rank — you buy it for the
+ * tile it takes, not the damage — while still being worth a point, because a
+ * button pressed three times a round compounds faster than the ratio suggests.
+ */
+const DAMAGE_MULT_LOW = 0.8;
+const DAMAGE_MULT_HIGH = 1.5;
+
+/** The one place this talent's curve is written. */
+function damageMult(talentLevel: number): number {
+  return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
+}
+
+/**
+ * FROZEN AT 1, and the header already argued it: "One tile is a lever; three is
+ * a solution."
+ *
+ * Restated here beside the constant so a later reader sees it was considered
+ * rather than missed. A knockback that grew with rank would let a trained
+ * Watchman open the Inspector's three-tile dead zone with one button, from
+ * melee, on a three-turn cooldown — which is the Alchemist's job (Backdraft,
+ * which is likewise frozen at 1 for the same reason). It would also break the
+ * talent's own second half: `stepToward` advances the Watchman exactly as far
+ * as the victim went, so a 3-tile shove is a 3-tile lunge into whatever was
+ * behind it.
+ */
 const KNOCKBACK_TILES = 1;
 /** Shield Pummel, weaponshield.lua:30 — `cooldown = 6` ToME actions. */
 const TOME_COOLDOWN = 6;
@@ -99,7 +160,7 @@ export const wardRush: Talent = {
     if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
 
     const origin = { x: self.x, y: self.y };
-    const hit = talentAttack(ctx, self, victim, { mult: DAMAGE_MULT });
+    const hit = talentAttack(ctx, self, victim, { mult: damageMult(ctx.talentLevel) });
 
     // The vacated tile is wherever the victim was standing when the shove
     // started, so this is read before the knockback and not after.
@@ -117,7 +178,7 @@ export const wardRush: Talent = {
     return talentDone([hit], notes);
   },
 
-  describe: () =>
-    `Slam an adjacent enemy for ${percent(DAMAGE_MULT)} weapon damage, drive it back ` +
+  describe: (_self, level) =>
+    `Slam an adjacent enemy for ${percent(damageMult(level))} weapon damage, drive it back ` +
     `${KNOCKBACK_TILES} tile and step into the space. ${AP_COST} AP.`,
 };

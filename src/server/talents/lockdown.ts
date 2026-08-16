@@ -40,6 +40,7 @@
  * was walking toward, and pointing it at the Watchman finishes the job.
  */
 
+import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
@@ -59,7 +60,14 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
+/** FROZEN. 5 of 6 AP — the tackle is the round. See Iron Curtain's note. */
 const AP_COST = 5;
+/**
+ * FROZEN, and it is the most expensive thing a Watchman can buy. Lockdown and
+ * Iron Curtain together are 55 Resolve, which is more than the bar holds at
+ * once, so the Watchman is always choosing between the guard and the tackle
+ * rather than doing both. A cost that fell with rank would delete that choice.
+ */
 const RESOLVE_COST = 30;
 /**
  * MELEE REACH — 1.5, NOT 1, AND THE ARITHMETIC IS THE WHOLE JUSTIFICATION.
@@ -76,8 +84,40 @@ const RESOLVE_COST = 30;
  * is a second definition of what melee means (engine/combat.ts `MELEE_REACH`).
  */
 const RANGE = MELEE_REACH;
-const DAMAGE_MULT = 1;
-/** `{ type: "debuff_ap", value: 2 }`. */
+/** `damage_multiplier: 1.0`. Unchanged at talent level 1. */
+const DAMAGE_MULT_LOW = 1;
+/**
+ * TUNED HIGH, not ported. ToME's Taunt (the `SHAPE:` citation) deals no damage,
+ * so there is nothing upstream to copy — the shape is the retarget, not a blow.
+ *
+ * 1.8 is deliberately IDENTICAL to Crude Blow's trained high, because the two
+ * shipped identical at 1.0 and the difference between them is what you pay for:
+ * this one costs 5 AP and 30 Resolve and comes with a stripped action and a
+ * taunt. Giving it a bigger multiplier as well would make the at-will swing
+ * pointless the moment the Watchman had Resolve in the bank; keeping them equal
+ * means the tackle is bought for its CONTROL, which is the slot it fills.
+ */
+const DAMAGE_MULT_HIGH = 1.8;
+
+/** The one place this talent's curve is written. */
+function damageMult(talentLevel: number): number {
+  return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
+}
+
+/**
+ * `{ type: "debuff_ap", value: 2 }`. FROZEN, and this one is an INTEGER OUT OF
+ * SIX.
+ *
+ * `drainActionBudget` converts it as `ENERGY_TO_ACT * AP_STRIPPED /
+ * PLAYER_MAX_AP` — two of six is a third of a monster's turn. Scaled to 6 it
+ * would delete a whole monster turn outright, which is not a stronger debuff
+ * but a DIFFERENT MECHANIC: a stun, with none of the typed-save machinery
+ * game-design.md § 7 says a stun needs (M4 owns that, and this file's header is
+ * explicit that it is not the status system). Four of six would be a stun most
+ * of the time and a debuff the rest, which is worse than either.
+ *
+ * The talent's rank is paid out in damage instead. See `DAMAGE_MULT_HIGH`.
+ */
 const AP_STRIPPED = 2;
 /** The 6-AP round (game-design.md § 6, from `city_watchman.json`'s `max_ap`). */
 const PLAYER_MAX_AP = 6;
@@ -106,7 +146,7 @@ export const lockdown: Talent = {
     const victim = targetActor(ctx.world, target);
     if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
 
-    const hit = talentAttack(ctx, self, victim, { mult: DAMAGE_MULT });
+    const hit = talentAttack(ctx, self, victim, { mult: damageMult(ctx.talentLevel) });
 
     // A corpse has no rhythm left to disrupt. The swing above still consumed
     // its RNG draws, so the stream does not depend on whether it died first
@@ -135,8 +175,8 @@ export const lockdown: Talent = {
     );
   },
 
-  describe: () =>
-    `Tackle an adjacent enemy for ${percent(DAMAGE_MULT)} weapon damage, strip ` +
+  describe: (_self, level) =>
+    `Tackle an adjacent enemy for ${percent(damageMult(level))} weapon damage, strip ` +
     `${AP_STRIPPED} AP from its next turn and force it onto you for ${TAUNT_TURNS} turns. ` +
     `${AP_COST} AP, ${RESOLVE_COST} Resolve.`,
 };

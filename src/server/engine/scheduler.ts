@@ -59,6 +59,11 @@
 import { chebyshev, step } from '../../shared/coords.ts';
 import { ActResult, tickLevel } from '../../shared/energy.ts';
 import { canWalk } from '../../shared/level.ts';
+// THE ONLY NEW IMPORT PROGRESSION NEEDS, AND IT IS FROM src/shared/ (CLAUDE.md
+// § 5: engine/** may not reach net/, persist/, ops/ or http/). progression.ts is
+// pure arithmetic over three numbers — no state, no dice, no clock — so it is
+// safe here for exactly the reasons scale.ts and energy.ts are.
+import { gainExp, pointsForLevel, worthExp } from '../../shared/progression.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { decideNpcAction } from '../ai/npc.ts';
 import { hasLineOfSight } from '../world/world.ts';
@@ -85,7 +90,7 @@ import type { TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
 import type { World } from '../world/world.ts';
 import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
-import type { ActorMove, TalentHit } from './talents.ts';
+import type { ActorMove, GuardCounter, TalentHit } from './talents.ts';
 import type { Projectile } from './projectile.ts';
 import type { Barrier, BellState, PartyScope } from './barrier.ts';
 import type { DownedState } from './downed.ts';
@@ -580,6 +585,59 @@ export type TalentResolution = {
    * A MISS DOES NOT COUNT and neither does a 0-damage blow: see `noteBlows`.
    */
   noteStruck(actorId: string): void;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MUCH HARDER A MARKED BODY IS HIT — the Inspector's Sigil, on the swing
+   * that is not a talent.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * 1 means no mark. Anything above it is folded straight into `AttackOpts.mult`
+   * by `strike`, which is the ONE basic-attack site in the process and serves
+   * BOTH the `Attack` intent and the move bump.
+   *
+   * ═══ WHY THIS EXISTS AT ALL, AND WHAT IT COST WHILE IT DID NOT ═══
+   * `markMultiplier` (engine/talents.ts) has always been folded into
+   * `talentAttack` and `talentProject`, so the mark was live for TALENT damage
+   * and only talent damage. Its own docblock said bump attacks "will pick it up
+   * when M3 wiring replaces that placeholder with `attackTarget`" — that
+   * placeholder was replaced and the mark was not carried over, so Sigil's one
+   * scaled number moved nothing on the party's free, at-will, most-used source
+   * of damage. Sigil's panel text promises "everyone — not just you — deals
+   * +N% damage to it"; before this seam that sentence was false for every
+   * weapon swing in the game.
+   *
+   * A SEAM RATHER THAN A DIRECT CALL for the same dependency reason as the four
+   * above: the multiplier is read off a talent EFFECT, and this file must not
+   * learn what a talent effect is.
+   */
+  markMultiplier(targetId: string): number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SOMETHING JUST HIT A BODY. IS ANYBODY GUARDING IT, AND DOES THE ATTACKER
+   * EAT A FREE SWING FOR IT? — the Watchman's Iron Curtain.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Null when nobody was guarding, when the guardian is down, or when the
+   * attacker is out of the guardian's reach. Every one of those is checked
+   * behind the seam (`resolveGuardCounter`, engine/talents.ts) so the call site
+   * stays one line and this file never learns the string `talent:iron_curtain`.
+   *
+   * ═══ THE DAMAGE IS ALREADY DONE WHEN THIS RETURNS ═══
+   * The counter is not a description of a swing to be made; it IS the swing,
+   * applied. The caller's job is only to narrate it and to run the ordinary
+   * casualty bookkeeping over it — which is why `noteGuardCounter` re-enters
+   * `noteBlows`/`noteCasualty` with the guardian as the killer rather than the
+   * monster whose turn it is.
+   *
+   * ═══ IT WAS DEAD CODE UNTIL NOW, AND THE PANEL WAS SELLING IT ═══
+   * `resolveGuardCounter` shipped with its wiring instructions in its own
+   * docblock ("when M3 wiring replaces that placeholder") and ZERO production
+   * call sites. Meanwhile the counter's multiplier became a per-rank curve
+   * (0.7 -> 1.2) that iron_curtain.ts's `describe` advertises in the talent
+   * panel's current->next diff. So one of the two things a point in Iron Curtain
+   * was advertised to buy could not be observed by any means.
+   */
+  guardCounter(attackerId: string, victimId: string): GuardCounter | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -678,6 +736,38 @@ export type PumpCtx = {
    * `Refusal.NoTalentEffect` and nothing else in this file behaves differently.
    */
   readonly talents?: TalentResolution;
+  /**
+   * SOMEBODY REACHED A NEW LEVEL, and their points have just been handed out.
+   *
+   * Called from the BASE-CLOCK pass, once per level crossed, with the level that
+   * was reached — so a boss that carried a character from 3 to 5 in one blow
+   * calls this twice, with 4 and then 5, in order.
+   *
+   * ═══ WHY A CALLBACK AND NOT AN EVENT ═══
+   * The level-up narrates as a Case Log RECORD LINE and nothing else. It is
+   * deliberately NOT a new `TurnEvent` variant, because src/shared/version.ts
+   * records that a new variant independently FORCES a protocol bump (that is
+   * what took 2->3 and 4->5), and the protocol item downstream of this one keeps
+   * its bump argument down to a single reason. It is not a new `GameEvent`
+   * variant either: `toWireEvents` in src/server/turn-engine.ts switches
+   * exhaustively over that union by lint rule, so a variant here is an edit
+   * there, and the Case Log is that file's to write anyway.
+   *
+   * So it is the same shape as `statusPass` and `drainStatusLog` above — the
+   * adapter that can see both the engine and the log supplies a closure, and
+   * this file never learns what a Record line is. Absent → the level still
+   * happens, the points are still granted, and nothing is narrated.
+   *
+   * ═══ WHO SUPPLIES IT, NAMED, BECAUSE FOR ONE BUILD NOBODY DID ═══
+   * `createTurnEngine.pump` (src/server/turn-engine.ts) collects the calls into
+   * `ReapingPumpResult.levelUps`, and the gateway's `broadcastRecord` turns each
+   * into "Ren reaches level 5." This hook shipped once with its full argument
+   * written out and ZERO producers — declared, invoked by `applyPendingLevels`,
+   * and connected to nothing — so a level-up was silent on every channel the
+   * party shares while the only other signal was viewer-private. A documented
+   * seam with no caller reads exactly like a wired one.
+   */
+  readonly onLevelUp?: (actorId: string, level: number) => void;
   /** Override the tick budget. Tests use it; production should not need to. */
   readonly maxTicks?: number;
 };
@@ -1105,6 +1195,12 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       // more often, which is a haste that shortens cooldowns by another name.
       // Absent seam → not called, and nothing about this pass changes.
       ctx.talents?.actBase(actor.id);
+      // AND THE LEVELS BANKED DURING THE PUMP ARE PAID OUT HERE, on the same
+      // once-per-game-turn-per-actor clock and for a related reason: a talent
+      // point that appeared mid-pump could be spent mid-pump, and a talent whose
+      // scaling changes between the first and third blow of one AoE moves the
+      // labelled draw stream. See `applyPendingLevels`.
+      applyPendingLevels(actor, run);
       drainStatus(ctx, sink, null);
       survivalPass(actor, run);
     },
@@ -1304,6 +1400,12 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     // `drainStatus` above is: a human just took their turn.
     noteBlows(outcome.effect, run);
     noteCasualty(outcome.effect, run, null, actor.id);
+    // AND ANYBODY GUARDING WHOEVER THIS PLAYER JUST HIT. Called in BOTH lanes
+    // rather than only the monster one, so the rule is a property of "a blow
+    // landed" rather than of "a monster's turn". It answers null for every
+    // player-on-player case today — `resolveGuardCounter` refuses a guardian who
+    // is not the attacker's enemy — and costs one Map miss to say so.
+    noteGuardCounter(outcome.effect, run, null, actor.id);
     // D1: exactly ENERGY_TO_ACT, always. `spendTurn` derives that from the
     // actor's kind so no call site can get it wrong.
     spendTurn(actor);
@@ -1372,6 +1474,13 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     // see `TalentResolution.noteStruck`.
     noteBlows(outcome.effect, run);
     noteCasualty(outcome.effect, run, gameTurn, actor.id);
+    // ═══ AND THE PUNISH — THE LANE IRON CURTAIN WAS WRITTEN FOR ═══
+    // A husk swings at the detective a Watchman is guarding and eats a free
+    // counter for it. AFTER `noteCasualty`, so that a blow which put the guarded
+    // ally on the floor narrates in that order and so that a guardian who was
+    // himself downed by the same pump cannot swing (`resolveGuardCounter`
+    // requires a live guardian, and a downed body is `alive === false`).
+    noteGuardCounter(outcome.effect, run, gameTurn, actor.id);
   }
 
   // ToME-native cost: ENERGY_TO_ACT * speedFactor (Actor.lua:1353-1360, 5863).
@@ -1582,7 +1691,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       if (actor.kind === ActorKind.Monster && actor.projSpeed !== undefined) {
         return { ok: true, effect: fire(actor, target, actor.projSpeed, world) };
       }
-      return { ok: true, effect: strike(actor, target, world) };
+      return { ok: true, effect: strike(actor, target, run) };
     }
 
     case IntentKind.Move: {
@@ -1628,7 +1737,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
          */
         const refusal = canAttack(actor, occupant, world);
         if (refusal !== null) return { ok: false, reason: attackRefusalToRefusal(refusal) };
-        return { ok: true, effect: strike(actor, occupant, world) };
+        return { ok: true, effect: strike(actor, occupant, run) };
       }
 
       // `tryMove` remains the ONLY thing in the process allowed to change a
@@ -1734,9 +1843,31 @@ function talentRefusalToRefusal(reason: TalentRefusal): Refusal {
  * outcome against a body that is already down, which is what the
  * `damage.ts `applyDamage`` row in engine/downed.ts's "what Downed changes"
  * table depends on.
+ *
+ * ═══ AND THE MARK IS FOLDED IN HERE, WHICH IS THE ONLY PLACE IT CAN BE ═══
+ * `TalentResolution.markMultiplier` has the full argument. In short: this is the
+ * one basic-attack site in the process, it serves both the `Attack` intent and
+ * the move bump, and until this line existed the Inspector's Sigil moved nothing
+ * on the party's most-used source of damage while her panel promised it did.
  */
-function strike(attacker: EngineActor, target: EngineActor, world: World): Effect {
-  const outcome = attackTarget(attacker, target, world, world.rng, { skipLegality: true });
+function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
+  const { world } = run;
+
+  /**
+   * ═══ AN UNMARKED SWING IS BYTE-FOR-BYTE WHAT IT WAS ═══
+   * The key is OMITTED at 1 rather than passed as 1. `applyDamage` guards on
+   * `spec.mult !== undefined` (damage.ts) and multiplying by 1 is identity in
+   * exact arithmetic — but "identity in exact arithmetic" is not the property
+   * this project needs. Replay-from-seed needs the pipeline to take the SAME
+   * BRANCH, and the absent key is the only way to promise that without arguing
+   * about floats. The seam being absent (a build with no talents wired in)
+   * answers 1 through the `??` and lands in the same branch.
+   */
+  const mark = run.ctx.talents?.markMultiplier(target.id) ?? 1;
+  const outcome = attackTarget(attacker, target, world, world.rng, {
+    skipLegality: true,
+    ...(mark === 1 ? {} : { mult: mark }),
+  });
 
   // UNREACHABLE BY CONSTRUCTION — `skipLegality` is the only thing that can make
   // `attackTarget` refuse, and it is set on the line above. Written out rather
@@ -2118,6 +2249,91 @@ function noteBlows(effect: Effect, run: Run): void {
   }
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PUNISH. SOMETHING HIT A GUARDED BODY, SO WHOEVER IS GUARDING IT SWINGS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Called from the two lanes that produce a landed weapon swing, right after the
+ * blow's own bookkeeping, with the lane's identity — the same shape and the same
+ * placement as `noteBlows` and `noteCasualty`, because a counter is exactly a
+ * blow's consequence and has to narrate inside the batch the client is pacing.
+ *
+ * ═══ WHAT MUST BE TRUE BEFORE ANYBODY SWINGS BACK ═══
+ * A LANDED BLOW WITH DAMAGE ON IT. A miss is not something to punish, and a
+ * fully-armoured 0 is the same non-event `noteBlows` already refuses to pay
+ * Resolve for. Using the same test in both places is deliberate: "the Watchman
+ * was hit" must mean one thing.
+ *
+ * ═══ THE GUARDIAN IS THE KILLER, NOT THE ACTOR WHOSE TURN IT IS ═══
+ * This is the whole reason the counter is not folded into the `attack` Effect.
+ * `noteCasualty` takes ONE `killerId` and spends it on `noteKill` (the
+ * Alchemist's reagent) and on `awardExperience`. A counter that killed the husk
+ * while riding on the monster's effect would have paid the MONSTER's kill credit
+ * and awarded the xp to the monster's party, which is nobody. So the counter is
+ * re-entered as its OWN one-blow effect with the guardian's id, and every rule
+ * downstream — the reap enrolment, the idempotence, the party share — applies to
+ * it unchanged and in exactly one place.
+ *
+ * ═══ IT DOES NOT RECURSE, AND THAT IS BY CONSTRUCTION ═══
+ * No call to `noteGuardCounter` from inside itself. A counter that could be
+ * countered is two Watchmen guarding each other swinging until one dies inside a
+ * single turn. `resolveGuardCounter`'s `isEnemy(guardian, attacker)` would stop
+ * the two-Watchman case anyway, but relying on that would make the recursion
+ * bound an accident of the faction rule rather than a decision.
+ *
+ * ═══ THE PROJECTILE LANE IS DELIBERATELY NOT WIRED ═══
+ * `actProjectile` also lands blows on players, and it does not call this. The
+ * reason is reach rather than tidiness: `resolveGuardCounter` requires the
+ * guardian to be within `attackRange` of the ATTACKER, and the only thing in the
+ * game that throws an orb is a `ranged_kiter` whose entire behaviour is staying
+ * out of exactly that reach. Wiring it would add a guaranteed-null call to the
+ * hottest lane in the pump. The day something shoots from two tiles away this
+ * line moves, and it is one line.
+ */
+function noteGuardCounter(
+  effect: Effect,
+  run: Run,
+  sweepTurn: number | null,
+  attackerId: string,
+): void {
+  if (effect.kind !== 'attack') return;
+  if (!effect.hit || effect.damage <= 0) return;
+
+  const talents = run.ctx.talents;
+  if (talents === undefined) return;
+
+  const counter = talents.guardCounter(attackerId, effect.targetId);
+  if (counter === null) return;
+
+  // `hp` and `at` are read HERE, one line after the counter landed, for the same
+  // reason `strike` reads them one line after its own blow: `Blow` snapshots the
+  // two things that stop being true immediately. The body is still in the world
+  // even if the counter killed it — `noteCasualty` ENROLS a dead monster and the
+  // caller buries it after the pump returns.
+  const victim = run.world.getActor(counter.hit.targetId);
+  const blow: Blow = {
+    targetId: counter.hit.targetId,
+    hit: counter.hit.hit,
+    crit: counter.hit.crit,
+    damage: counter.hit.damage,
+    killed: counter.hit.killed,
+    hp: victim?.hp ?? 0,
+    at: { x: victim?.x ?? 0, y: victim?.y ?? 0 },
+  };
+
+  // THE ORDINARY `attacked` EVENT, ATTRIBUTED TO THE GUARDIAN. No new event
+  // kind and therefore no protocol bump: src/shared/version.ts records that a
+  // new `TurnEvent` variant independently forces one, and a counter-swing is a
+  // swing. The client already draws it, and the Case Log already narrates it.
+  if (sweepTurn === null) run.sink.push(attackedEvent(counter.guardianId, blow));
+  else run.sink.sweep(sweepTurn, { t: 'attack', id: counter.guardianId, ...blow });
+
+  const counterEffect: Effect = { kind: 'attack', ...blow };
+  noteBlows(counterEffect, run);
+  noteCasualty(counterEffect, run, sweepTurn, counter.guardianId);
+}
+
 /** Every body this effect killed. Empty for anything that killed nothing. */
 function killedBy(effect: Effect): readonly string[] {
   if (effect.kind === 'attack') return effect.killed ? [effect.targetId] : [];
@@ -2190,6 +2406,9 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
        * guard: nothing pays for putting a PLAYER down, which is the arm below.
        */
       run.ctx.talents?.noteKill(killerId);
+      // AND THE EXPERIENCE, ON THE SAME LINE OF REASONING AND FOR THE SAME
+      // REASON IT IS HERE RATHER THAN IN A TALENT. See `awardExperience`.
+      awardExperience(run, killerId, victim);
       continue;
     }
 
@@ -2209,6 +2428,183 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
     // after that blow, and the caller cannot work out which lane it belongs to
     // once the event list has been split. See `GameEvent.party_wipe.duringSweep`.
     checkWipe(run, sweepTurn);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Experience — the award, the party share, and the level on the base clock
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE HUSK DIED. EVERY MEMBER OF THE KILLER'S PARTY BANKS THE FULL AWARD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THERE IS NO `Ported from` HEADER ON THIS FUNCTION AND THERE MUST NEVER BE
+ * ONE. ToME HAS NO PARTY EXPERIENCE RULE AT ALL. ═══
+ *
+ * The share rule below is an ORIGINAL DESIGN, recorded as DECISIONS.md D12, and
+ * the absence upstream was verified three ways rather than assumed:
+ * `modules/tome/class/Party.lua` contains ZERO occurrences of `exp` — no award,
+ * no split, no proximity check; `modules/tome/class/Player.lua` contains ZERO
+ * `gainExp`; and across the whole tome module there is exactly ONE combat award
+ * site, `class/Actor.lua:2985-2987`, which pays `src:resolveSource()` AND NOBODY
+ * ELSE. ToME is single-player: its party members level independently and only
+ * the actor that landed the blow is paid. Citing a Lua line here would be
+ * provenance for a mechanic that does not exist upstream, which is precisely the
+ * failure `src/server/content/resolvers.ts` was rewritten to prevent — and
+ * CLAUDE.md's THE LUA WINS rule cuts both ways: the Lua also wins when it is
+ * silent.
+ *
+ * THE RULE, AND THE ONE SENTENCE THAT DECIDES IT: division by headcount punishes
+ * inviting a fifth friend, and a proximity radius punishes the Inspector, whose
+ * `min_range 3` puts her out of any sensible radius while she is doing exactly
+ * her job. Everything else — the full award, the flat share, the absence of a
+ * last-hit bonus — follows from those two.
+ *
+ * ═══ A MEMBER WHO IS ON THE FLOOR STILL SHARES, AND THAT IS DELIBERATE ═══
+ * game-design.md § 9 is "no permadeath, no loss": in this game `alive === false`
+ * means DOWNED (or Erased, which the floor reset undoes on the same pump), not
+ * dead. A player being carried is still on the case, and taxing them a level for
+ * the crime of having been hit is the one thing § 9 rules out. D12's own wording
+ * says "living, connected" — it was written before this question had a site to
+ * be answered at, and its "dead players earn nothing" clause has no referent
+ * until Sworn permadeath lands at M7. The `connected` half goes for the same
+ * reason and D12's own consequences argue it: *"everyone is always the same
+ * level"* is the property the whole rule exists to produce, and a friend whose
+ * wifi blinked for twenty husks comes back a level short of it. A body that has
+ * genuinely left the game is not in the party table at all — `forgetActor`
+ * (party.ts:615-626) is what removes it.
+ *
+ * It has to be answered HERE and in a comment rather than by accident, because
+ * party.ts:79-91 is explicit that the party table knows nothing about actors:
+ * `membersOf` hands back ids and has no opinion about which of them are standing.
+ *
+ * THE GUARD ORDER IS LOAD-BEARING, EVERY STEP OF IT.
+ */
+function awardExperience(run: Run, killerId: string, victim: EngineActor): void {
+  /**
+   * 1. THE KILLER MAY NOT EXIST. The projectile lane freezes `sourceId` at the
+   *    muzzle and the shooter can be several game turns dead by the time the orb
+   *    lands — `PumpResult.reaped`'s own doc says the reap window "does not cover
+   *    an orb in flight" and never could. An exception raised here escapes
+   *    through `pump` into a ws handler and takes the process with it, so this is
+   *    a lookup and a return rather than a `!`.
+   */
+  const killer = run.world.getActor(killerId);
+  if (killer === undefined) return;
+
+  /**
+   * 2. AND IT MAY BE A MONSTER — BEFORE ANY party.ts CALL, WHICH IS THE WHOLE
+   *    POINT OF THE ORDER. Monster-kills-monster is representable (a stray orb,
+   *    a future charm) and `partyOf` MUTATES: it mints a party on demand and says
+   *    so at party.ts:275-290, "IT MUTATES, AND THAT IS THE CONTRACT". Both
+   *    `membersOf` and `partyIdOf` go through it. Touching the table with a
+   *    husk's id therefore leaves a party row for a body that only `forgetActor`
+   *    ever clears — a leak with no symptom, which is why the test for it asserts
+   *    on `state.byId.size` rather than on anything a player could see.
+   */
+  if (killer.kind !== ActorKind.Player) return;
+
+  /**
+   * 3. WHO IS PAID. `PumpCtx.parties` is already in scope through `run.ctx`, so
+   *    there is no new plumbing: with no party table wired in this is the
+   *    pre-party game exactly, one recipient, and with one it is the killer's
+   *    whole party INCLUDING the killer (`membersOf` returns them).
+   */
+  const recipients =
+    run.ctx.parties === undefined ? [killerId] : membersOf(run.ctx.parties, killerId);
+
+  for (const recipientId of recipients) {
+    // 5. Ids, not bodies (see the party.ts note above), so each is resolved and
+    //    anything that is not a player is skipped. NO DIVISION BY HEADCOUNT, NO
+    //    PROXIMITY CHECK, NO RADIUS, and no `alive`/`connected` filter.
+    const member = run.world.getActor(recipientId);
+    if (member === undefined || member.kind !== ActorKind.Player) continue;
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * 6. THE AWARD IS COMPUTED PER RECIPIENT, FROM THE RECIPIENT'S OWN LEVEL.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `worthExp` is `level × rankWorth(rank) × XP_WORTH_MULT`, and the `level`
+     * it wants is the level of THE ACTOR BEING PAID — which is what its own
+     * `@param` says, and which is a deliberate deviation from Actor.lua:6513-6531
+     * (upstream uses the victim's) argued at length in src/shared/progression.ts.
+     *
+     * ═══ IT USED TO BE COMPUTED ONCE, FROM THE KILLER, AND PAID TO EVERYBODY ═══
+     * The defence was that the difference is unobservable "because full-share
+     * keeps the party at one level". NOTHING ENFORCES THAT INVARIANT, and an
+     * ordinary multiplayer event falsifies it on the first kill: a fifth friend
+     * joins mid-session at level 1, accepts an invite, and from that moment the
+     * party's whole xp rate is set by WHOEVER HAPPENS TO LAND THE KILLING BLOW.
+     * Four level-8 players earned 25.6 a husk when one of them last-hit and 3.2
+     * when the newcomer did — an eightfold swing on identical work, with no log
+     * line and nothing in the UI to explain it, and a standing incentive to feed
+     * every last hit to the highest-level player.
+     *
+     * ONE LINE MOVED INSIDE THE LOOP REMOVES ALL OF IT. The killer's level is
+     * now irrelevant to everybody but the killer, each member's own progression
+     * is self-consistent whatever the party's composition, and the full share
+     * (DECISIONS.md D12 — no division by headcount, no proximity radius) is
+     * untouched: everybody is still paid for every kill, at their own rate.
+     *
+     * A LEVEL-HOMOGENEOUS PARTY — which is every party this has ever been tested
+     * with, and the only one the old claim was true for — sees byte-identical
+     * numbers, because every recipient's level IS the killer's.
+     */
+    const award = worthExp(member.level, victim.rank);
+
+    /**
+     * `gainExp` IS PURE AND RETURNS A NEW PAIR — it does not mutate, so the
+     * assignment is the moment the character changes and there is no window in
+     * which a half-levelled actor is observable by the synchronous turn loop.
+     *
+     * `level` and `xp` LAND NOW; the POINTS do not. Neither of these two numbers
+     * is read by any dice roll, so moving them mid-pump moves no draw. A talent
+     * point is the opposite: it can be spent, and a spent point changes
+     * `combatTalentScale`'s answer. See `applyPendingLevels`.
+     */
+    const gained = gainExp(member.level, member.xp, award);
+    member.level = gained.level;
+    member.xp = gained.xp;
+    member.pendingLevels += gained.levelsGained;
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PAY OUT THE BANKED LEVELS. ONCE PER GAME TURN PER ACTOR, ON THE BASE CLOCK.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The award side runs the instant something dies, which is the middle of a pump.
+ * The pump walks ONE FROZEN ACTOR SNAPSHOT and every RNG draw in it is labelled
+ * and ordered, so anything that can change a formula's answer between the first
+ * and the third blow of one AoE moves the stream and breaks replay-from-seed
+ * (CLAUDE.md § 3). A talent point can do exactly that — one point raises a raw
+ * talent level, and `combatTalentScale` reads raw talent levels — so the points
+ * are banked in `pendingLevels` and handed out HERE, beside `actBase`, which is
+ * the once-per-game-turn-per-actor hook everything speed-independent already uses
+ * (`TalentResolution.actBase`, and Actor.lua:476-609 for the pass itself).
+ *
+ * The levels being paid for are the TOP `pendingLevels` levels of the character:
+ * a second kill later in the same pump raises both numbers together, so the
+ * window never slides. `pointsForLevel` is what makes the fifth level worth two.
+ */
+function applyPendingLevels(actor: EngineActor, run: Run): void {
+  if (actor.kind !== ActorKind.Player || actor.pendingLevels <= 0) return;
+
+  const from = actor.level - actor.pendingLevels + 1;
+  actor.pendingLevels = 0;
+
+  for (let level = from; level <= actor.level; level += 1) {
+    // ONE GRANT PER LEVEL CROSSED, never one per award: a boss that carries a
+    // character from 4 to 6 owes the level-5 pair AND the level-6 single.
+    actor.unspentPoints += pointsForLevel(level);
+    // A RECORD LINE, NOT AN EVENT — see `PumpCtx.onLevelUp`. One call per level,
+    // in order, so the log reads "Ren reaches level 5. Ren reaches level 6."
+    // rather than silently swallowing the level nobody saw.
+    run.ctx.onLevelUp?.(actor.id, level);
   }
 }
 
@@ -2307,6 +2703,18 @@ function survivalPass(actor: EngineActor, run: Run): void {
  * restored IN PLACE stands up inside the same fight that just killed it, is
  * knocked down again on the next pump, and wipes forever. Read the ordering note
  * there before changing anything here.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A WIPE COSTS HIT POINTS AND POSITION. IT DOES NOT COST PROGRESSION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `resetFloorParty` restores hp, `alive`, the sprite and both clocks, and it
+ * touches NOTHING ELSE — `level`, `xp`, `unspentPoints` and `pendingLevels` all
+ * survive a wipe untouched, which is game-design.md § 9's "no permadeath, NO
+ * LOSS" read at its word. This is stated from both sides on purpose: a reset
+ * that quietly zeroed a level would look identical to a working one from in
+ * here, and would be found by a player at the end of an evening rather than by
+ * anything that fails. test/server/progression-award.test.ts pins it.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * A BODY NOBODY IS DRIVING DOES NOT COUNT AS A SURVIVOR

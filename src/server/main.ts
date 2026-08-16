@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 
+import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
 import {
   classById,
@@ -30,7 +31,12 @@ import {
 import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
-import { RESOURCE_RULES, useTalent } from './engine/talents.ts';
+import {
+  RESOURCE_RULES,
+  markMultiplier,
+  resolveGuardCounter,
+  useTalent,
+} from './engine/talents.ts';
 import { authRoutes, readAuthConfig } from './http/auth.ts';
 import { createSessionStore } from './http/session.ts';
 import { wsGateway } from './net/gateway.ts';
@@ -39,7 +45,7 @@ import { createTurnEngine } from './turn-engine.ts';
 import { createWorld } from './world/world.ts';
 import type { EngineActor } from './engine/actor.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
-import type { TalentEngine } from './engine/talents.ts';
+import type { GuardCounter, TalentEngine } from './engine/talents.ts';
 import type { TurnEngine } from './net/gateway.ts';
 import type { TalentRuntime } from './turn-engine.ts';
 import type { World } from './world/world.ts';
@@ -176,6 +182,26 @@ export function talentRuntimeFor(talents: TalentEngine, world: World): TalentRun
     noteStruck: (actorId: string): void => {
       talents.noteStruck(actorId);
     },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TWO THAT MAKE A TALENT POINT VISIBLE ON THE BASIC SWING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Both are pure forwards, and both existed as exported functions in
+     * engine/talents.ts with NO PRODUCTION CALLER for exactly as long as the
+     * scheduler had no way to reach them. `markMultiplier` was folded into
+     * `talentAttack`/`talentProject` only, so Sigil's scaled number moved
+     * nothing on the weapon swing; `resolveGuardCounter` had zero call sites
+     * anywhere in `src/` while Iron Curtain's panel advertised its per-rank
+     * curve. Both talents' levels were therefore partly cosmetic, which is the
+     * one thing a talent tree must never be.
+     *
+     * THE CTX IS THE SAME ONE `use` BUILDS, field for field. A second shape
+     * would be a second answer to "which world is this" — see `useTalent`.
+     */
+    markMultiplier: (targetId: string): number => markMultiplier(talents, targetId),
+    guardCounter: (attackerId: string, victimId: string): GuardCounter | null =>
+      resolveGuardCounter({ engine: talents, world, rng: world.rng }, attackerId, victimId),
     forget: (actorId: string): void => {
       talents.forget(actorId);
     },
@@ -502,6 +528,94 @@ export function buildServer() {
         sheet.resource.value = Math.max(0, sheet.resource.value - short);
       }
       talentEngine.attach(actorId, sheet);
+    },
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE THREE TALENT-POINT SEAMS — the same shape and the same reason as
+     * `attachClass` above.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A raw talent level lives in `TalentSheet.points`, and `net/**` may not
+     * import `engine/talents.ts` — it states its whole engine contract
+     * structurally so that the dependency arrow never points the wrong way
+     * through the module graph. This file is the only one that can see the
+     * talent registry, the world and the gateway at once, so the capability is
+     * declared as an optional method on the gateway's `TurnEngine` port and
+     * implemented here, exactly as `attachClass` and `talentRuntime` are.
+     *
+     * NONE OF THE THREE IS AN AUTHORISATION. `handleSpendPoint` has already
+     * decided, from the per-actor `loadoutOf` view, that the talent is in this
+     * body's loadout and below its cap and that there is a point to pay with.
+     * These are the WRITES and the READ — and `raiseTalentPoint` re-derives the
+     * level it reports from the sheet rather than echoing an argument, so a
+     * caller cannot invent a rank.
+     *
+     * THE 1..`TALENT_MAX_LEVEL` CAP IS ENFORCED IN BOTH, and the duplication is
+     * deliberate rather than sloppy: the gateway's check is about the PLAYER's
+     * request (with an error code the client can act on) and this one is about
+     * the SHEET's invariant (silently clamping is the only sane answer to a
+     * corrupt file). src/shared/scale.ts:165-170 explains why the curve itself
+     * must NOT clamp — a level above 5 has to extrapolate honestly — which is
+     * precisely why the cap has to live wherever a level is written.
+     */
+    raiseTalentPoint: (actorId: string, talentId: string): number | null => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return null;
+      // NOT IN THE LOADOUT IS NOT A RANK. `points` is keyed by an id that must
+      // already be in `loadout` (engine/talents.ts), and seeding a new key here
+      // would let a spend teach a body a talent it never learned.
+      const current = sheet.points.get(talentId);
+      if (current === undefined) return null;
+      if (current >= TALENT_MAX_LEVEL) return current;
+      const next = current + 1;
+      sheet.points.set(talentId, next);
+      return next;
+    },
+
+    talentPointsOf: (actorId: string): Readonly<Record<string, number>> | undefined => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return undefined;
+      // A PLAIN OBJECT, NEVER THE LIVE MAP. Two reasons and both bite: a Map
+      // serialises as `{}` through `JSON.stringify` — silently, which would
+      // write every character back at rank 1 — and the snapshot must be frozen
+      // in time, because the save layer holds it by reference across a debounce
+      // while the sheet goes on changing.
+      const out: Record<string, number> = {};
+      for (const [id, raw] of sheet.points) out[id] = raw;
+      return out;
+    },
+
+    applyTalentPoints: (
+      actorId: string,
+      points: Readonly<Record<string, number>>,
+    ): readonly string[] | undefined => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return undefined;
+
+      const dropped: string[] = [];
+      for (const [talentId, raw] of Object.entries(points)) {
+        // ═══ AN ID THIS SHEET DOES NOT HAVE IS REPORTED, NEVER SEEDED ═══
+        // Two ways to get here and the caller cannot tell them apart, which is
+        // fine because the answer is the same: a talent this build DELETED
+        // (docs/data-schemas.md § 1's refundPool case — "friends' saves must
+        // outlive your content edits"), or a talent belonging to a class this
+        // character no longer is. Either way the points did not land, so the
+        // gateway's ledger does not count them as spent and hands them back.
+        if (!sheet.points.has(talentId)) {
+          dropped.push(talentId);
+          continue;
+        }
+        if (!Number.isFinite(raw)) {
+          dropped.push(talentId);
+          continue;
+        }
+        // CLAMPED RATHER THAN REFUSED. A hand-edited `"crude_blow": 9999` is a
+        // file problem, not a reason somebody cannot play tonight — the same
+        // repair-never-reject doctrine `parseCharacterFile` applies upstream.
+        sheet.points.set(talentId, Math.max(1, Math.min(TALENT_MAX_LEVEL, Math.floor(raw))));
+      }
+      return dropped;
     },
   };
 
