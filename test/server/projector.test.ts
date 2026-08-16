@@ -8,11 +8,14 @@ import { stepProjectile } from '../../src/server/engine/projectile.ts';
 import {
   projectClassOptions,
   projectEffects,
+  projectGroundItems,
+  projectInventory,
   projectParty,
   projectProjectiles,
   projectTurn,
+  toActorView,
 } from '../../src/server/view/projector.ts';
-import { CLASSES } from '../../src/server/content/classes.ts';
+import { CLASSES, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import { RESOURCE_RULES } from '../../src/server/engine/talents.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
@@ -785,6 +788,329 @@ describe('projectClassOptions', () => {
     const [option] = projectClassOptions().options;
     expect(Object.keys(option ?? {}).sort()).toEqual(
       ['description', 'id', 'maxHp', 'name', 'portrait', 'resource', 'sprite', 'talents'].sort(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v10 — projectGroundItems and projectInventory
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TWO FRAMES THAT ARRIVED IN ONE RELEASE AND LANDED IN DIFFERENT UNIONS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A FLOOR ITEM IS A POSITION — world state, true for everybody, broadcast. AN
+ * INVENTORY IS A HOLDING — true for one person, and `CarriedItemView.compare` is
+ * a delta against THAT person's own paper doll, so a shared copy would not
+ * merely leak, it would be arithmetically wrong for everybody but its author.
+ *
+ * The three properties below are the ones a projection can get wrong silently.
+ *
+ *   COMPLETE AND ABSOLUTE. An emptied floor emits `[]`, never an omitted frame.
+ *   A patch stream would leave a coat drawn on a tile forever, and somebody
+ *   would walk the length of the map to pick up a thing that is not there.
+ *
+ *   ONE VIEWER'S BAG IS ONE VIEWER'S. There is no shape in `projectInventory`
+ *   that can carry a second player's row, which is the same structural guarantee
+ *   the three hotbar frames have.
+ *
+ *   `toActorView` GAINED NOTHING. Equipment stays off the broadcast actor row —
+ *   protocol.ts requires every new `ActorView` field to be re-argued against
+ *   "would this leak?", and buying a paper doll for other people is not worth
+ *   reopening that audit.
+ */
+
+/** A Watchman body with a real class sheet, so the fold has a baseline to fold onto. */
+function watchman(world: World, id = 'actor_a', name = 'Dalt') {
+  return world.addPlayer(id, name, {
+    sprite: WATCHMAN.sprite,
+    maxHp: WATCHMAN.maxHp,
+    hpRegen: WATCHMAN.hpRegen,
+    combat: WATCHMAN.combat,
+    classId: WATCHMAN.id,
+  });
+}
+
+describe('projectGroundItems', () => {
+  it('says the floor is clear rather than saying nothing at all', () => {
+    // AN EMPTY ARRAY IS A STATEMENT, and it is the one that takes the last
+    // marker off a client's map. The gateway's memo is seeded with this exact
+    // value so a server on which nothing has been dropped never SENDS it — but a
+    // floor that EMPTIES must, and it cannot if the frame is not well formed
+    // when there is nothing to say.
+    const world = room();
+    watchman(world);
+
+    const msg = projectGroundItems(world);
+    expect(msg.t).toBe('ground');
+    expect(msg.items).toEqual([]);
+  });
+
+  it('carries every item on the floor, in the world own insertion order', () => {
+    // INSERTION ORDER IS THE PICKUP ORDER. `itemsAt` filters this same table and
+    // world.ts:516-522 states the contract: PICKUP TAKES INDEX 0. Sorting here
+    // would make the top of the pile mean one thing to the client's prompt and
+    // another to the server's handler.
+    const world = room();
+    const first = world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_cap');
+    const second = world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_coat');
+    const elsewhere = world.addGroundItem({ x: 9, y: 2 }, 'item_watchmans_boots');
+
+    const items = projectGroundItems(world).items;
+    expect(items.map((row) => row.id)).toEqual([first, second, elsewhere]);
+    // THE WORLD'S id AND THE CATALOGUE'S id ARE NOT THE SAME KIND OF THING. Two
+    // identical caps on one tile are two rows with two `id`s and one `itemId`; a
+    // client that keyed on `itemId` would draw one marker and be one short
+    // forever.
+    expect(items[0]?.itemId).toBe('item_watchmans_cap');
+    expect(items[0]?.cell).toEqual([4, 4]);
+    // TIER COMES OFF THE CATALOGUE, never inferred by the client — it is what
+    // colours the floor marker, and a browser guessing at rarity would be a
+    // second copy of authored content.
+    expect(items[0]?.tier).toBe('uncommon');
+    expect(items[1]?.tier).toBe('rare');
+  });
+
+  it('is COMPLETE AND ABSOLUTE: an emptied floor emits [], not an omitted frame', () => {
+    // THE PROPERTY THAT MAKES THE FRAME SAFE TO DROP. The client replaces rather
+    // than merges, so the only way an item can leave a screen is a frame that
+    // does not list it. There is deliberately no "taken" message and there must
+    // never be one — see `projectGroundItems`, and `ProjectilesMsg`'s
+    // phantom-orb argument, of which this is the longer-lived version.
+    const world = room();
+    const dropped = world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_cap');
+    expect(projectGroundItems(world).items).toHaveLength(1);
+
+    world.removeGroundItem(dropped);
+    const after = projectGroundItems(world);
+    expect(after.t).toBe('ground');
+    expect(after.items).toEqual([]);
+  });
+
+  it('skips an id the catalogue no longer knows rather than drawing a violet box', () => {
+    // A content reload that deleted an authored item out from under a live
+    // floor. `tier` comes off the catalogue and there is nothing honest to
+    // colour a marker with, so the row is dropped — and the OTHER items on the
+    // floor are unaffected, which is the half that matters: one bad id must not
+    // cost the party the rest of the pile.
+    const world = room();
+    world.addGroundItem({ x: 4, y: 4 }, 'item_that_was_deleted');
+    world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_cap');
+
+    const items = projectGroundItems(world).items;
+    expect(items.map((row) => row.itemId)).toEqual(['item_watchmans_cap']);
+  });
+
+  it('puts nothing in the view that the client is not allowed to know', () => {
+    // THE `wielder` TABLE IS THE FIELD THIS KEY CHECK EXISTS FOR. An item's
+    // contribution is engine data, and a client holding it could work out what
+    // equipping the thing would do — which is precisely the arithmetic
+    // `CarriedItemView.compare` exists to have already done, on the server,
+    // against the recipient's own doll.
+    const world = room();
+    world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_cap');
+
+    const [row] = projectGroundItems(world).items;
+    expect(Object.keys(row ?? {}).sort()).toEqual(['cell', 'id', 'itemId', 'tier'].sort());
+  });
+});
+
+describe('projectInventory', () => {
+  it('carries an empty bag and an empty doll for a body that owns nothing', () => {
+    const world = room();
+    const msg = projectInventory(watchman(world));
+    expect(msg.t).toBe('inventory');
+    expect(msg.carried).toEqual([]);
+    expect(msg.equipped).toEqual({});
+  });
+
+  it('walks the doll in SLOT_ORDER, never in the order things were equipped', () => {
+    // A JSON object preserves insertion order, so without this the same two
+    // items would serialise differently for two players who put them on in
+    // different orders — and `equipped` is a `Partial<Record<Slot, string>>`
+    // built by a player pressing buttons. SLOT_ORDER is the gear FOLD's order
+    // (content/items.ts), reused so the panel and the fold cannot disagree.
+    const world = room();
+    const body = watchman(world);
+    // Deliberately the reverse of SLOT_ORDER's head/body/legs/feet.
+    body.equipped = { feet: 'item_watchmans_boots', body: 'item_watchmans_coat' };
+
+    expect(Object.keys(projectInventory(body).equipped)).toEqual(['body', 'feet']);
+  });
+
+  it('skips an unknown id and a wrong-slot entry, exactly as the fold does', () => {
+    // REPAIR, NEVER REJECT — and the same repairs `wornOf` makes, so the panel
+    // and the combat sheet cannot disagree about what is being worn. Both are
+    // reachable from a save written by a build that authored an item this one
+    // does not.
+    const world = room();
+    const body = watchman(world);
+    body.equipped = {
+      head: 'item_that_was_deleted',
+      // A body item filed under the legs slot.
+      legs: 'item_watchmans_coat',
+      feet: 'item_watchmans_boots',
+    };
+    body.carried = ['item_watchmans_cap', 'item_that_was_deleted'];
+
+    const msg = projectInventory(body);
+    expect(Object.keys(msg.equipped)).toEqual(['feet']);
+    expect(msg.carried.map((row) => row.itemId)).toEqual(['item_watchmans_cap']);
+  });
+
+  it('names the slot on a carried row and NOT on a worn one', () => {
+    // In `equipped` the map KEY is the slot, so a `slot` field in the value
+    // would be a second copy of the same fact that can disagree with the first.
+    // A bag has no key to read it off, so `CarriedItemView` names it.
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { feet: 'item_watchmans_boots' };
+    body.carried = ['item_watchmans_cap'];
+
+    const msg = projectInventory(body);
+    expect(Object.keys(msg.equipped['feet'] ?? {}).sort()).toEqual(
+      ['desc', 'icon', 'itemId', 'name', 'tier'].sort(),
+    );
+    expect(Object.keys(msg.carried[0] ?? {}).sort()).toEqual(
+      ['compare', 'desc', 'icon', 'itemId', 'name', 'slot', 'tier'].sort(),
+    );
+    expect(msg.carried[0]?.slot).toBe('head');
+  });
+
+  it('compares against an EMPTY slot as the item full contribution', () => {
+    // The Watchman's cap is `{ mods: { armour: 3 } }` and the Watchman's base
+    // armour is 6, so a bare body reads +3 — the threshold piece that clears the
+    // husk's apr 7. The row is the delta between the two numbers the CHARACTER
+    // SHEET prints, which is why it is rounded before subtracting.
+    const world = room();
+    const body = watchman(world);
+    body.carried = ['item_watchmans_cap'];
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    expect(rows).toContainEqual({ label: 'Armour', value: '+3' });
+  });
+
+  it('compares against an OCCUPIED slot as the DIFFERENCE, and it may be negative', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THIS IS THE WHOLE REASON `compare` IS COMPUTED ON THE SERVER.
+    // ═══════════════════════════════════════════════════════════════════════
+    // Ported in spirit from ShowEquipInven.lua:54's `compare_with`, which
+    // forwards to `compare_fields(..., "combat_armor", "%+d", "Armour: ")` at
+    // Object.lua:1285-1287 — a label and a signed number.
+    //
+    // A SWAP, NOT AN ADDITION: the Leather Chestpiece (+3 armour, +1 defence) is
+    // a DOWNGRADE for somebody already wearing the Watchman's Coat (+4 armour,
+    // +10 hardiness), and the panel has to say so rather than advertising the
+    // item's own contribution as if the slot were free.
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { body: 'item_watchmans_coat' };
+    body.carried = ['item_leather_chest'];
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    expect(rows).toContainEqual({ label: 'Armour', value: '-1' });
+    // HARDINESS IS ON THE COMPARISON TABLE AND NOT ON THE INSPECT SHEET, and
+    // this is why: it is the Watchman's coat's headline contribution, and an
+    // item whose headline had no row would read as an item that does nothing.
+    expect(rows).toContainEqual({ label: 'Hardiness', value: '-10%' });
+  });
+
+  it('measures the Damage row as the SHEET measures it — a truncated band, not a rounded scalar', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE REGRESSION THIS PINS: THE BIGGEST OFFENSIVE ITEM IN THE GAME READ AS
+    // INERT.
+    // ═══════════════════════════════════════════════════════════════════════
+    // The Inspector's Dossier is `{ mods: { dam: 4 } }` — her own class offhand
+    // and her ONLY offensive piece. It takes her damage 11.542 -> 12.430, which
+    // the character sheet prints as the band 11–13 -> 12–14: a full point on
+    // BOTH ends. Measured with `Math.round` on the scalar (as the other nine
+    // rows are, and as this row used to be) it is `12 - 12 = 0`, no row is
+    // emitted, and `compare` comes back EMPTY — which
+    // `CarriedItemView.compare` defines as "this changes nothing you can see"
+    // and ui/inventory.ts draws as a blank strip. The screen whose entire job
+    // is "should I put this on?" reported it as doing nothing.
+    const world = room();
+    const body = world.addPlayer('actor_i', 'Ren', {
+      sprite: INSPECTOR.sprite,
+      maxHp: INSPECTOR.maxHp,
+      hpRegen: INSPECTOR.hpRegen,
+      combat: INSPECTOR.combat,
+      classId: INSPECTOR.id,
+    });
+    body.carried = ['item_inspectors_dossier'];
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    expect(rows).toContainEqual({ label: 'Damage', value: '+1' });
+    // AND IT STAYS IN SHEET ORDER. The special case is applied in place in
+    // `COMPARE_ROWS`, not appended, so Damage cannot drift to the bottom.
+    expect(rows.map((row) => row.label)).toEqual(['Damage']);
+  });
+
+  it('says NOTHING at all when the swap moves no number a player can see', () => {
+    // AN EMPTY LIST IS A REAL ANSWER — two items that do the same thing compare
+    // to nothing. Drawing that as a blank row is the correct rendering;
+    // inventing a "no change" line is not the projection's job.
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { head: 'item_watchmans_cap' };
+    body.carried = ['item_watchmans_cap'];
+    // The same item in the slot and in the bag: the fold either way is identical.
+    expect(projectInventory(body).carried[0]?.compare).toEqual([]);
+  });
+
+  it('describes ONE viewer and has no shape that could carry a second', () => {
+    // The structural half of the privacy guarantee, and it is the same one the
+    // three hotbar frames have: the function takes an ACTOR, so there is nowhere
+    // in the returned frame for somebody else's row to go even if a caller
+    // wanted to put one there. `InventoryMsg` being a `ViewerMsg` is the other
+    // half — `broadcast(projectInventory(...))` does not compile.
+    const world = room();
+    const dalt = watchman(world, 'actor_a', 'Dalt');
+    const ren = watchman(world, 'actor_b', 'Ren');
+    dalt.carried = ['item_watchmans_cap'];
+
+    expect(projectInventory(dalt).carried).toHaveLength(1);
+    expect(projectInventory(ren).carried).toEqual([]);
+    expect(projectInventory(ren).equipped).toEqual({});
+  });
+
+  it('compares against nothing at all for a body with no combat sheet', () => {
+    // An M2-era fixture or a classless e2e body. An invented baseline would be a
+    // promise about numbers that body does not have, so the honest answer is an
+    // empty comparison — the item is still listed, still named, still drawable.
+    const world = room();
+    const bare = world.addPlayer('actor_bare', 'Nobody');
+    bare.baseCombat = undefined;
+    bare.combat = undefined;
+    bare.carried = ['item_watchmans_cap'];
+
+    const row = projectInventory(bare).carried[0];
+    expect(row?.itemId).toBe('item_watchmans_cap');
+    expect(row?.compare).toEqual([]);
+  });
+});
+
+describe('toActorView', () => {
+  it('gained NO field when equipment landed — the paper doll stays off the wire', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // `ActorView` IS BROADCAST. EVERY FIELD ON IT IS A FACT ABOUT SOMEBODY THAT
+    // EVERYONE ELSE IS TOLD, FOREVER.
+    // ═══════════════════════════════════════════════════════════════════════
+    // protocol.ts requires every new `ActorView` field to be re-argued against
+    // "would this leak?", and buying a paper-doll-for-other-people is not worth
+    // reopening that audit: the party already sees what somebody's gear DOES,
+    // through the hp bar and through `inspect`. This key check is what makes the
+    // decision hold — an `equipped` field added here would fail on this line
+    // rather than on somebody's first evening.
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { body: 'item_watchmans_coat' };
+    body.carried = ['item_watchmans_cap'];
+
+    expect(Object.keys(toActorView(body)).sort()).toEqual(
+      ['alive', 'hp', 'id', 'kind', 'maxHp', 'name', 'rank', 'sprite', 'x', 'y'].sort(),
     );
   });
 });

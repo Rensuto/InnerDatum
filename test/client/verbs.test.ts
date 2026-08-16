@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { MapVerb } from '../../src/client/ui/contextmenu.ts';
-import { verbsFor } from '../../src/client/ui/verbs.ts';
+import { TileLoot, verbsFor } from '../../src/client/ui/verbs.ts';
 import { ActorKind, ActorRank, PartyAction } from '../../src/shared/protocol.ts';
 import type { MenuItem } from '../../src/client/ui/contextmenu.ts';
 import type { VerbContext, VerbTarget } from '../../src/client/ui/verbs.ts';
@@ -166,6 +166,61 @@ describe('verbsFor — bare ground', () => {
   });
 });
 
+describe('verbsFor — loot on the floor', () => {
+  const tile = { x: 12, y: 7 };
+
+  it('offers Pick up, enabled, on the tile the viewer is standing on', () => {
+    const menu = verbsFor(ctxFor({ kind: 'tile', tile, walkable: true, loot: TileLoot.Underfoot }));
+
+    // FIRST IN THE LIST: it is the only row here that is about the world rather
+    // than about the pointer, and on the tile you are already standing on
+    // "Travel here" is a no-op that would otherwise sit under the cursor.
+    expect(actionsOf(menu.items)).toEqual([MapVerb.Pickup, MapVerb.Travel, MapVerb.Point]);
+    expect(menu.items.map((item) => item.enabled)).toEqual([true, true, true]);
+  });
+
+  it('still DRAWS Pick up on a pile out of reach, greyed', () => {
+    const menu = verbsFor(
+      ctxFor({ kind: 'tile', tile, walkable: true, loot: TileLoot.OutOfReach }),
+    );
+
+    // The Attack-at-range case exactly: greyed rather than dropped, because "there
+    // is something there, walk onto it" is the whole lesson. It cannot be enabled
+    // at range — `pickup` carries no coordinate, the server reads the sender's own
+    // live tile — so an enabled row would lie about what the click does.
+    expect(actionsOf(menu.items)).toEqual([MapVerb.Pickup, MapVerb.Travel, MapVerb.Point]);
+    expect(menu.items.map((item) => item.enabled)).toEqual([false, true, true]);
+  });
+
+  it('drops the row entirely on a tile with nothing on it', () => {
+    // NOT the greyed treatment, and the difference is deliberate: a permanently
+    // greyed Pick up on every square of the map would be furniture on the surface
+    // a player right-clicks most, and it would teach nothing about loot because it
+    // would never change.
+    const none = verbsFor(ctxFor({ kind: 'tile', tile, walkable: true, loot: TileLoot.None }));
+    expect(actionsOf(none.items)).toEqual([MapVerb.Travel, MapVerb.Point]);
+  });
+
+  it('drops the row when the caller cannot say, rather than guessing', () => {
+    // `loot` is optional and absent means "this caller does not read the `ground`
+    // frame yet" — main.ts, until the frame is wired up. Both readings drop the
+    // row, so an unwired caller offers nothing rather than promising something it
+    // cannot deliver.
+    const unwired = verbsFor(ctxFor({ kind: 'tile', tile, walkable: true }));
+    expect(actionsOf(unwired.items)).toEqual([MapVerb.Travel, MapVerb.Point]);
+  });
+
+  it('offers nothing at all on a wall, whatever it is told about loot', () => {
+    // Loot cannot be on a wall, but the menu must not be the thing that depends on
+    // that: a wall keeps right-click's older meaning over the two thirds of the map
+    // that is not walkable, and one contradictory field must not reopen it.
+    const wall = verbsFor(
+      ctxFor({ kind: 'tile', tile, walkable: false, loot: TileLoot.Underfoot }),
+    );
+    expect(wall.items).toHaveLength(0);
+  });
+});
+
 describe('verbsFor — every label fits the box', () => {
   it('keeps every label short enough for contextmenu.ts to draw whole', () => {
     const husk = actor('actor_m_01', 'index husk', ActorKind.Monster);
@@ -180,6 +235,9 @@ describe('verbsFor — every label fits the box', () => {
       ctxFor({ kind: 'hostile', actor: husk }, { adjacent: true }),
       ctxFor({ kind: 'body', actor: actor('actor_m_02', 'index husk', ActorKind.Monster, false) }),
       ctxFor({ kind: 'tile', tile: { x: 12, y: 7 }, walkable: true }),
+      // The loot row is in the sweep too, or the one label added at v10 would be
+      // the one label nothing measures.
+      ctxFor({ kind: 'tile', tile: { x: 12, y: 7 }, walkable: true, loot: TileLoot.Underfoot }),
     ];
 
     // MAX_W 184 less one border and one gutter each side is 172 pixels, and at

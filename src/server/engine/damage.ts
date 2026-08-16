@@ -593,6 +593,48 @@ export function applyDamage(
 
   if (target.hp <= 0) {
     target.hp = 0;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THIS IS THE MOMENT A MONSTER DIES, AND IT IS DELIBERATELY DRAW-FREE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * NOTHING FUNCTIONAL CHANGED HERE FOR THE DROP SYSTEM. This note exists
+     * because these three lines are the obvious place to put a drop roll, the
+     * obvious place is wrong, and there is no error anywhere to say so.
+     *
+     * `applyDamage` runs inside the pump on `world.rng` — the single linear
+     * stream that `combat.checkhit`, `combat.crit`, `combat.bump.damage`,
+     * `ai.fire.chance`, `ai.flee.side`, `ai.flee.hardside` and `ai.target.keep`
+     * all consume in turn order. shared/rng.ts:31-39 states the rule: renaming a
+     * label never alters a replay, ADDING OR REMOVING A DRAW ALWAYS DOES. So one
+     * `rng.percent(35)` on this line would shift every subsequent draw in this
+     * pump AND in every pump for the rest of the session — a monster that dies
+     * changes what the next monster rolls to hit.
+     *
+     * WHAT WOULD AND WOULD NOT HAVE CAUGHT IT, because it is not obvious and it
+     * decided the design: scheduler.test.ts:390 pins `damage` to a literal 4 and
+     * :395-396 requires both a hit and a miss across twelve turns — both would
+     * have gone red, eventually, in a file about something else. The assertion
+     * that LOOKS like the guard, :400-408's `rng.getState()` equality, would have
+     * passed: it tests replay CONSISTENCY, not absolute stream position. And the
+     * twelve files using test/helpers/scripted-rng.ts inject BELOW this level
+     * (into `attackTarget` / `applyDamage` / `rollCrit` directly), so its
+     * over-draw throw would not have fired either. Nothing in the suite would
+     * have gone red on the way to a broken replay.
+     *
+     * THE ROLL IS AT SPAWN INSTEAD — content/encounter.ts, on `world.lootRng`, a
+     * third fork off the root. That is not a workaround, it is what upstream
+     * does: `resolvers.calc.drops` resolves the drop at ENTITY RESOLUTION
+     * (modules/tome/resolvers.lua:427-450, `__resolve_last = true` at :421) and
+     * `Actor:die` spills an already-decided inventory
+     * (modules/tome/class/Actor.lua:3011-3060) with no drop-table draw in it. Our
+     * spill is `spillLoot` in engine/scheduler.ts, and it draws nothing either.
+     *
+     * If a future pass wants a first-refusal window for the killer, a rarity
+     * re-roll, or anything else that needs a random number when something dies:
+     * it does not go here. Take it on `world.lootRng` at a site that is not
+     * inside `applyDamage`, and say in the commit what it costs.
+     */
     target.alive = false;
     return { ...empty, dealt, killed: true };
   }

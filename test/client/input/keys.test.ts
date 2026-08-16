@@ -360,6 +360,12 @@ describe('every row that already worked still works', () => {
     // is why this row is keyed on the physical code.
     [{ key: '5', code: 'Numpad5' }, TurnCommand.Hold],
     [{ key: 'Clear', code: 'Numpad5' }, TurnCommand.Hold],
+    // v10. `,` PICKS UP, and it sits with the punctuation rather than with the
+    // letters because it spends a turn and because a comma does not move with the
+    // keyboard layout. CONVENTIONAL, not ported: ToME's own mnemonic is `g`
+    // (PICKUP_FLOOR, class/Game.lua:2169) and `g` has been the talent panel since
+    // v9. See the row in keys.ts, which says so at length.
+    [{ key: ',' }, TurnCommand.Pickup],
   ];
 
   for (const [init, command] of COMMANDS) {
@@ -367,6 +373,14 @@ describe('every row that already worked still works', () => {
       expect(press(init).calls).toEqual([{ kind: 'command', command }]);
     });
   }
+
+  it('binds a key for every TurnCommand member, so a fourth verb is considered here', () => {
+    // The counterpart of the UiCommand check below, added when `pickup` made this
+    // a set that could grow. A turn verb with no key is a rule nobody can invoke.
+    expect(new Set(COMMANDS.map(([, command]) => command))).toEqual(
+      new Set(Object.values(TurnCommand)),
+    );
+  });
 
   it('1-4 are the four hotbar slots, ZERO-BASED', () => {
     expect(press({ key: '1', code: 'Digit1' }).calls).toEqual([{ kind: 'slot', slot: 0 }]);
@@ -391,6 +405,12 @@ describe('every row that already worked still works', () => {
     ['g', UiCommand.ShowTalents],
     ['m', UiCommand.ToggleLog],
     ['p', UiCommand.ToggleParty],
+    // v10. THE INVENTORY, ON ToME'S OWN LETTER — a dialog-local mnemonic
+    // ("Manage [I]nventory", dialogs/CharacterSheet.lua:95-98, and the `c == 'i'`
+    // branch at :287-288) rather than a bindings table, because there is no
+    // bindings table in the reference clone. ONE key for one combined screen is
+    // the port: `SHOW_EQUIPMENT = "SHOW_INVENTORY"` (class/Game.lua:2192).
+    ['i', UiCommand.ShowInventory],
   ];
 
   for (const [key, command] of UI_ROWS) {
@@ -431,15 +451,18 @@ describe('every row that already worked still works', () => {
 // ---------------------------------------------------------------------------
 
 describe('what the keymap deliberately does NOT do', () => {
-  it('names exactly seven UI verbs', () => {
-    // An eighth member has to be added here on purpose, which is the point: the
+  it('names exactly eight UI verbs', () => {
+    // A ninth member has to be added here on purpose, which is the point: the
     // exhaustive switch in main.ts breaks at lint time, and this breaks at test
     // time with the list of what the game claims to have. v9 added
-    // `show_talents` and that is the whole of the change to this list.
+    // `show_talents`; v10 added `show_inventory` and that is the whole of the
+    // change to this list — `pickup` is deliberately NOT here, because it spends a
+    // turn and therefore lives on `TurnCommand` beside commit and hold.
     expect(Object.values(UiCommand).slice().sort()).toEqual([
       'respawn',
       'revive',
       'say',
+      'show_inventory',
       'show_sheet',
       'show_talents',
       'toggle_log',

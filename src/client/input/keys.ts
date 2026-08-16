@@ -104,8 +104,24 @@
  *     conclusion. See the comment on the row itself for why `l` is unavailable
  *     even though CharacterSheet.lua prints "[L]evelup".
  *
+ * v10 ADDS TWO KEYS, AND THEY ARE OF DIFFERENT KINDS:
+ *   - I OPENS THE INVENTORY, and it is the nearest thing to a port any key in
+ *     this file has short of C. `SHOW_INVENTORY` is a real virtual action and
+ *     `SHOW_EQUIPMENT` is literally an alias of it (class/Game.lua:2192), so ONE
+ *     key opening ONE combined screen is the upstream behaviour rather than a
+ *     simplification. The LETTER comes from a button label and a dialog-local
+ *     handler ("Manage [I]nventory", CharacterSheet.lua:95-98 and :287-288) and
+ *     not from a bindings table, because there is no bindings table in this
+ *     clone — see the row itself, which sets that out with the grep that proves
+ *     it.
+ *   - `,` PICKS UP THE THING YOU ARE STANDING ON, and it is CONVENTIONAL rather
+ *     than ported: ToME's own mnemonic is G (PICKUP_FLOOR, Game.lua:2169) and G
+ *     has been the talent panel since v9. It sits with space, enter and '.' in
+ *     KEY_TO_COMMAND because it SPENDS A TURN and because punctuation does not
+ *     move with the keyboard layout.
+ *
  * THE LETTERS ARE THE ONES vi MOVEMENT LEFT FREE. h/j/k/l and y/u/b/n are spoken
- * for and always will be; r, f, t, c, m and p are not, and picking anything
+ * for and always will be; r, f, t, c, m, p, g and i are not, and picking anything
  * shifted would collide with the capitals a shift-holding player still means as
  * moves.
  */
@@ -116,14 +132,34 @@ import { Dir } from '../../shared/coords.ts';
 export type MoveIntent = (dir: Dir) => void;
 
 /**
- * The two Warrant Clock verbs, as the client speaks them. They map one-to-one
- * onto the `commit` and `hold` frames in protocol.ts; the indirection exists so
- * that the key table names an ACTION rather than a wire tag, and a rebinding UI
- * (M5) never has to know what a frame looks like.
+ * The verbs that SPEND A TURN, as the client speaks them. They map one-to-one
+ * onto the `commit`, `hold` and `pickup` frames in protocol.ts; the indirection
+ * exists so that the key table names an ACTION rather than a wire tag, and a
+ * rebinding UI (M5) never has to know what a frame looks like.
+ *
+ * TWO OF THE THREE ARE THE WARRANT CLOCK'S and the third joined them at v10.
+ * `Pickup` belongs here rather than beside the panel toggles in `UiCommand`
+ * because of what it COSTS: it is an intent the server rules on, it pumps the
+ * scheduler, and pressing it out of turn earns exactly the same `not_your_turn`
+ * refusal `commit` does. Nothing in `UiCommand` moves the world's clock —
+ * `Revive` and `Respawn` are server verbs too, but they are answers to a body on
+ * the floor rather than ordinary turns, and they live on letters for the reason
+ * the table below gives.
  */
 export const TurnCommand = {
   Commit: 'commit',
   Hold: 'hold',
+  /**
+   * Take the top thing off the tile you are standing on (v10).
+   *
+   * IT CARRIES NO COORDINATE, HERE OR ON THE WIRE. The server reads the sender's
+   * own live x/y and takes index 0 of that tile (`GroundMsg` in
+   * shared/protocol.ts, and src/server/world/world.ts:516-522's "PICKUP TAKES
+   * INDEX 0"), which is strictly stronger than range-checking a tile a client
+   * supplied: there is no coordinate to forge. So this key means "here", always,
+   * and the right-click row on a distant pile is greyed rather than enabled.
+   */
+  Pickup: 'pickup',
 } as const;
 export type TurnCommand = (typeof TurnCommand)[keyof typeof TurnCommand];
 
@@ -176,6 +212,21 @@ export const UiCommand = {
    * it away. The × on its header is the mouse's copy of the same act.
    */
   ShowTalents: 'show_talents',
+  /**
+   * Open — or put away — the inventory panel (v10).
+   *
+   * ONE KEY THAT TOGGLES, for exactly the reason `ShowSheet` and `ShowTalents`
+   * above give and with exactly the same consequence: the panel is a dock PANEL
+   * rather than a modal, main.ts's cancel chain backs out of one thing per press
+   * and no dock surface is in it, so the key that opened this one is the key that
+   * has to put it away. The × on its header is the mouse's copy of the same act.
+   *
+   * ONE MEMBER FOR BOTH HALVES OF THE SCREEN, AND THAT IS THE PORT rather than a
+   * saving: `SHOW_EQUIPMENT = "SHOW_INVENTORY"` (modules/tome/class/Game.lua:2192)
+   * is an ALIAS, and both actions open the same combined `ShowEquipInven` dialog.
+   * A second member for equipment would be a deviation wearing a port's clothes.
+   */
+  ShowInventory: 'show_inventory',
   ToggleLog: 'toggle_log',
   ToggleParty: 'toggle_party',
 } as const;
@@ -251,11 +302,33 @@ const CODE_TO_COMMAND: ReadonlyMap<string, TurnCommand> = new Map([
   ['NumpadEnter', TurnCommand.Commit],
 ]);
 
-/** Layout-independent by nature — space, enter and full stop are where they are. */
+/**
+ * Layout-independent by nature — space, enter, full stop and comma are where
+ * they are, and none of them is a letter whose position moves with the layout.
+ * That is why the punctuation lives here and the mnemonics live in KEY_TO_UI.
+ */
 const KEY_TO_COMMAND: ReadonlyMap<string, TurnCommand> = new Map([
   [' ', TurnCommand.Commit],
   ['enter', TurnCommand.Commit],
   ['.', TurnCommand.Hold],
+  // ═══ v10 — `,` PICKS UP. CONVENTIONAL, NOT PORTED, AND IT SAYS SO ═══
+  // ToME's own mnemonic for this act is `g`: `PICKUP_FLOOR` is a real virtual
+  // action (modules/tome/class/Game.lua:2169-2172, calling `playerPickup`) and
+  // the letter G is the roguelike tradition it comes from. `g` IS ALREADY OURS
+  // FOR THE TALENT PANEL (see KEY_TO_UI below), and moving it would break a
+  // binding players have been using since v9 to spend a point.
+  //
+  // So `,` — the other roguelike convention for picking a thing up, and free.
+  // There is no citation for it and none is offered; the shipped ToME default
+  // for any action is not recoverable from this reference clone at all (the
+  // paragraph on `g` below sets out why, with the grep that proves it).
+  //
+  // ONE HONEST COLLISION, STATED RATHER THAN DISCOVERED: on the layouts where
+  // the numpad's decimal key reports `,` instead of `.` — German and French
+  // among them — that key now picks up rather than doing nothing, which is what
+  // it did before. The numpad's own hold is Numpad5 and is matched on
+  // `event.code`, so it is untouched either way.
+  [',', TurnCommand.Pickup],
 ]);
 
 /**
@@ -345,6 +418,40 @@ const KEY_TO_UI: ReadonlyMap<string, UiCommand> = new Map([
   // the two page keys. The day data/keybinds is fetched, this line either earns
   // a citation or gets corrected.
   ['g', UiCommand.ShowTalents],
+  // ═══ v10 — THE INVENTORY, ON ToME'S OWN LETTER. A DIALOG-LOCAL MNEMONIC ═══
+  //
+  // WHAT IS BEING CITED, AND WHAT IS NOT. `SHOW_INVENTORY` is a real virtual
+  // action (modules/tome/class/Game.lua:2177-2191) and `SHOW_EQUIPMENT` is
+  // literally an alias of it at :2192 — so one key opening one combined screen
+  // IS the upstream behaviour, and a second key for equipment would be an
+  // invention. But the DEFAULT KEY for any action lives in
+  // /data/keybinds/<name>.lua, loaded by name at engine/KeyBind.lua:44-53, and
+  // THAT DIRECTORY IS NOT IN THIS REFERENCE CLONE: `find reference/t-engine4
+  // -type d -name keybinds` returns nothing, and `grep -rn defineAction` returns
+  // exactly two hits — engine/KeyBind.lua:33, where the function is defined, and
+  // the closure at :53 that forwards to it — with zero call sites. There is no
+  // shipped default in this tree to read, and this line must not be quoted as
+  // one. It is the identical fact the M, G and C entries above already record.
+  //
+  // WHAT DOES EXIST IS DIALOG-LOCAL EVIDENCE OF EXACTLY THE CLASS THIS REPO HAS
+  // ALREADY ACCEPTED: dialogs/CharacterSheet.lua:95-98 is
+  // `Button.new{text="Manage [I]nventory", fct=function() self:showInventory() end}`
+  // and :287-288 is `elseif (c == 'i' or c == 'I') then self:showInventory()`.
+  // That is the same evidentiary class as :99's `Button.new{text="[L]evelup"}`
+  // plus :289-290, which src/client/ui/charsheet.ts:215-225 already cites as the
+  // reason our `[G]` control exists. A BUTTON LABEL IS AN INFERENCE, NOT A
+  // BINDING, and this comment is the whole of the argument for it.
+  //
+  // AND DO NOT READ `e` AS A SECOND KEY: CharacterSheet.lua:285-286's
+  // `c == 'e'` selects a TAB inside that dialog (`self.c_equipment:select()`),
+  // sitting beside the `g`/`a`/`d`/`t` tab selectors. It opens nothing.
+  //
+  // `i` IS FREE. The complete taken set is the arrows, k/j/h/l, y/u/b/n,
+  // Numpad1-9, Numpad5, NumpadEnter, space, enter, '.', ',', 1-4, r, f, t, /, c,
+  // m, p, g, pageup, pagedown and escape. Note that the handler lowercases
+  // without excluding Shift, so `I` resolves to `i` — which matches ToME, whose
+  // own branch is `c == 'i' or c == 'I'`.
+  ['i', UiCommand.ShowInventory],
 ]);
 
 /**

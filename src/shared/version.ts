@@ -261,8 +261,90 @@
  * docs/data-schemas.md:48-49 says an optional field needs no bump. Bumping it
  * would make an older build QUARANTINE a friend's character rather than merely
  * drop a level from it, and this game has no permadeath.
+ *
+ * 9 -> 10 (LOOT, EQUIPMENT, AND THE FLOOR IT LIES ON). The envelope gained four
+ * inbound verbs — `pickup`, `equip`, `unequip`, `drop` — and two outbound frames:
+ * `ground` (broadcast) and `inventory` (per-recipient).
+ *
+ * MOST OF THAT DOES NOT FORCE THIS BUMP, and saying so first is how this entry
+ * keeps its argument down to one reason — the discipline 7 -> 8 and 8 -> 9 both
+ * used.
+ *
+ *   THE FOUR INBOUND VERBS FORCE NOTHING. `respawn` set that precedent at v5 and
+ *   it has held at every bump since: a frame that travels client -> server is one
+ *   an old client simply never sends, and every frame it RECEIVES still means
+ *   exactly what it always did. What a v9 client loses is four keys, not the
+ *   meaning of anything on the wire.
+ *
+ *   `inventory` WOULD NOT FORCE ONE EITHER. An outbound frame an old client
+ *   cannot name is one it ignores — this file's rule since 2 -> 3 — and what it
+ *   would be ignoring is a panel it has no screen for. Nothing it already draws
+ *   becomes wrong.
+ *
+ *   NO NEW `TurnEvent` VARIANT. A drop, a pickup and a death's spilled items all
+ *   narrate as ordinary Record `log` lines, and the floor itself arrives as the
+ *   `ground` SNAPSHOT rather than as a fourteenth member of the event union. This
+ *   file records at 2 -> 3 and 3 -> 4 that a new variant independently forces a
+ *   bump, because events travel INSIDE a batched `sweep` and an old client drops
+ *   the ones it cannot name — so a monster dying mid-sweep would spill its coat
+ *   into a client that never heard about it. A snapshot has no such failure mode:
+ *   it is complete every time or it is not sent.
+ *
+ *   NO NEW `ErrorCode` MEMBER. Nothing on this tile, an item that is not in your
+ *   bag, an empty slot, an item you already own — all `bad_message`. A body that
+ *   may not act on the world at all is `illegal_move`. Both are already rendered
+ *   by every shipped client. This file records at 2 -> 3 that a new code forces a
+ *   bump on its own, and :192-197 and :250-256 are two earlier passes declining
+ *   for exactly this reason; a `no_such_item` member would have forced this bump
+ *   a second time over for a refusal the panel already prevents by only drawing
+ *   buttons for things the player is holding.
+ *
+ * THE FORCING ARGUMENT IS THE PERMANENTLY-STUCK SHAPE, THE SAME ONE 5 -> 6 USED.
+ *
+ *   A v9 CLIENT CANNOT NAME `ground`, SO IT DRAWS NO FLOOR ITEM — AND IT HAS NO
+ *   VERB WITH WHICH TO TAKE ONE. That is 6 -> 7's sentence with one noun changed
+ *   ("A v6 CLIENT CANNOT NAME THE FRAME, SO IT DRAWS NO ORB — AND THE DAMAGE
+ *   STILL LANDS"), and here BOTH halves fail at once rather than one. The orb at
+ *   least announced itself by hitting you; a coat on the floor announces itself to
+ *   nobody, and there is no second signal a v9 client could fall back on: the
+ *   drop is a `log` line it renders as prose it cannot act on, in a party that is
+ *   dividing loot around it in a voice channel. So the player is told, in words,
+ *   about an object their client will never draw and their keyboard can never
+ *   reach — the permanently-stuck shape 5 -> 6 refused for the party invite ("the
+ *   state it is misreading is also a state it can never leave"). Every item that
+ *   drops for that party is gone for the evening, silently, with the screen
+ *   looking entirely normal.
+ *
+ * AND INDEPENDENTLY, TWO EXISTING FIELDS NARROWED — the shape 8 -> 9 used for
+ * `LoadoutTalent.range`, and 1 -> 2, 4 -> 5 and 5 -> 6 before it.
+ *
+ *   `ActorView.maxHp` AND `InspectView.rows` STOPPED BEING FACTS ABOUT A CLASS
+ *   AND BECAME FACTS ABOUT A CLASS PLUS ITS GEAR. Until v9 every Watchman on the
+ *   wire had the same sheet: the numbers came from the authored `ClassDef` and
+ *   from levels, and a client was entitled to treat them as a property of the
+ *   class the way it once treated Fog Step's range. From v10 a worn coat is
+ *   folded onto the combat sheet before it is projected
+ *   (`recomposeCombat`, src/server/engine/effects.ts), so two detectives of the
+ *   same class and level legitimately show different armour, defence and damage —
+ *   and a client that cached, compared against, or explained those numbers by
+ *   class would be confidently wrong about why one of them is dying faster. It is
+ *   the same narrowing `LoadoutTalent.range` took at v9, in the frames every
+ *   player looks at rather than in one talent's ring.
+ *
+ * `SCHEMA_VERSION` STAYS 1, and the two were considered separately again rather
+ * than moved together out of habit — as the 8 -> 9 entry above did, for the same
+ * reasons and with the same trade. The persisted character gains OPTIONAL fields
+ * only — `carried` and `equipped` — and docs/data-schemas.md:48-49 reads verbatim:
+ * "Adding an *optional* field needs no bump; the bump is for renames, semantic
+ * changes, and new required fields." `migrateDoc` compares nothing but this
+ * integer, so a v1 file with neither key loads untouched. The rollback trade is
+ * even more lopsided here than it was at v9: not bumping means an older build
+ * drops an inventory and costs an evening's loot, while bumping would QUARANTINE
+ * the character outright and cost a friend the evening. Ground items are not
+ * persisted at all, so there is no second file and no second migration chain to
+ * version.
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

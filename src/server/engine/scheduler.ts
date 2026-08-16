@@ -257,7 +257,25 @@ export type SweepStep =
    */
   | { readonly t: 'status'; readonly id: string; readonly note: EffectLogLine }
   /** A monster's blow put a player on the floor. game-design.md § 9. */
-  | { readonly t: 'downed'; readonly id: string; readonly turnsLeft: number };
+  | { readonly t: 'downed'; readonly id: string; readonly turnsLeft: number }
+  /**
+   * A BODY THAT DIED MID-SWEEP LEFT SOMETHING ON THE FLOOR.
+   *
+   * Inside the batch for the reason every other step is: an ordinary event would
+   * CLOSE the open sweep (`createEventSink`), and a husk that dies to a guard
+   * counter halfway through a monster turn would split one sweep into three. Its
+   * player-lane twin is `GameEvent.spilled`; the two carry identical payloads.
+   *
+   * `id` is the BODY, matching `downed` and `status` above: every `SweepStep`
+   * carries an `id` so a renderer can ask "who is this about" without a type
+   * test, and here the answer is the corpse.
+   */
+  | {
+      readonly t: 'spill';
+      readonly id: string;
+      readonly at: TileXY;
+      readonly itemIds: readonly string[];
+    };
 
 /**
  * Everything `pump` observed, in the order it happened.
@@ -411,6 +429,42 @@ export type GameEvent =
    * turns start now; `turnsLeft` is what the countdown ring starts at.
    */
   | { readonly t: 'downed'; readonly id: string; readonly turnsLeft: number }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BODY SPILLED ITS GEAR ONTO THE TILE IT DIED ON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Raised once per corpse, immediately after the kill is recognised, and never
+   * for a body that was carrying nothing. `at` is the tile — snapshotted, for
+   * exactly the reason `attacked.at` is snapshotted one screen up: a floor reset
+   * walks bodies before the caller has translated a single event, and a position
+   * read afterwards points somewhere else entirely.
+   *
+   * `itemIds` are CATALOGUE ids (content/items.ts), in the order they were laid
+   * down, which is the order they will be picked up in. It is deliberately not
+   * the ground-item ids the world minted: those are the world's own handles, they
+   * change on every re-seed, and nothing outside the world may hold one and
+   * expect it to still resolve.
+   *
+   * ═══ IT REACHES NO CLIENT IN THIS BUILD, AND THAT IS NOT AN OVERSIGHT ═══
+   * `toWireEvents` (src/server/turn-engine.ts) maps this to NOTHING, exactly like
+   * `SweepStep.fired`. The floor is a SNAPSHOT frame's job — complete and
+   * absolute, so a client that dropped one patch is corrected by the next rather
+   * than showing a phantom coat forever — and that frame arrives with the wire
+   * item, which owns the protocol bump. A one-shot event would be the second
+   * source of truth for the same fact, which the client's own state rules forbid.
+   *
+   * It exists on the engine side because the server log, the Case Log's Record
+   * lane and every test in test/server/loot.test.ts need to be able to say WHEN
+   * something hit the floor and WHAT — and because a kill that silently produced
+   * an item is indistinguishable from a kill that produced none.
+   */
+  | {
+      readonly t: 'spilled';
+      readonly id: string;
+      readonly at: TileXY;
+      readonly itemIds: readonly string[];
+    }
   /** Somebody reached them in time. `byId` is who spent their turn. */
   | {
       readonly t: 'revived';
@@ -641,6 +695,63 @@ export type TalentResolution = {
 };
 
 // ---------------------------------------------------------------------------
+// The loot seam
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A CORPSE LEAVES BEHIND, IN THE ORDER IT LEAVES IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONE CLOSURE, SUPPLIED BY THE ADAPTER, for the same dependency reason
+ * `TalentResolution` above gives at length: this file may not import
+ * `src/server/content/**` (scheduler.ts:515-527 states the rule and routes the
+ * entire talent system around it), and the ORDER a body spills in is a content
+ * fact — `SLOT_ORDER` lives in content/items.ts, and only the catalogue can say
+ * which slot an id belongs to. So turn-engine.ts, which can see both, supplies
+ * the answer and this file never learns what an item is.
+ *
+ * ═══ WHY ONE AND NOT THREE ═══
+ * Everything else the spill needs is already legitimately in view. The tile is
+ * `victim.x/y`, the list of ids is `victim.carried` and `victim.equipped`
+ * (engine/actor.ts owns both), and `world.addGroundItem` is the world's, which
+ * the engine may import. Adding a `drop(cell, id)` closure would be a redirection
+ * with no boundary behind it, and a second closure that only re-exposes
+ * `world.groundItems()` would be worse — a seam with nothing on the far side of
+ * it reads like a wired one, which is precisely the failure `PumpCtx.onLevelUp`
+ * shipped with once.
+ *
+ * ═══ ABSENT MUST MEAN BYTE-IDENTICAL BEHAVIOUR. THAT IS THE CONTRACT. ═══
+ * Gated identically to `downed`, `parties`, `talents` and `statusPass`: with no
+ * loot seam wired in, `noteCasualty` runs exactly the code it ran before this
+ * type existed. No ground item is minted, no `spilled` event and no `spill` step
+ * is raised, no field on any actor is written, and — the half that actually
+ * matters — NOT ONE DRAW MOVES, because the spill takes no draws whether it runs
+ * or not. `pump(world, { nowMs, barrier })` is unchanged to the byte, which is
+ * what keeps the forty-odd two-argument `pump` call sites in the test suite
+ * describing the same game they always described.
+ */
+export type LootResolution = {
+  /**
+   * Every item id this body leaves on the floor, in a FIXED, CONTENT-DECIDED
+   * ORDER. Empty for a body carrying nothing, which is the common case.
+   *
+   * ═══ THE ORDER IS THE WHOLE REASON THIS IS A FUNCTION AND NOT A FIELD ═══
+   * `Actor:die` sorts the inventories explicitly before it spills them
+   * (class/Actor.lua:3038) and walks each one in reverse (:3040). It does that
+   * because emitting drops in hash-iteration order gives two replays of one seed
+   * the same items in a DIFFERENT floor order — and since a pickup takes the
+   * first item on the tile (`World.itemsAt`), a different floor order is a
+   * different item picked up. The bug presents as "the wrong thing got taken",
+   * which is a report nobody can act on.
+   *
+   * The implementation must therefore never iterate a Map or an object's keys.
+   * See `spillOrderOf` in src/server/turn-engine.ts for the one that ships.
+   */
+  spillOrder(actor: EngineActor): readonly string[];
+};
+
+// ---------------------------------------------------------------------------
 // pump
 // ---------------------------------------------------------------------------
 
@@ -736,6 +847,18 @@ export type PumpCtx = {
    * `Refusal.NoTalentEffect` and nothing else in this file behaves differently.
    */
   readonly talents?: TalentResolution;
+  /**
+   * THE LOOT SEAM (see `LootResolution`).
+   *
+   * Present → a monster that dies spills its decided drop onto the tile it fell
+   * on, and a `spilled` / `spill` step says so.
+   *
+   * ABSENT → the pre-drops game, byte for byte. Nothing is minted and NO DRAW
+   * MOVES — the spill is draw-free in both directions, because the roll happened
+   * at spawn in content/encounter.ts and death only moves an already-decided
+   * list. That is the property `test/server/loot.test.ts` pins first.
+   */
+  readonly loot?: LootResolution;
   /**
    * SOMEBODY REACHED A NEW LEVEL, and their points have just been handed out.
    *
@@ -2409,6 +2532,10 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
       // AND THE EXPERIENCE, ON THE SAME LINE OF REASONING AND FOR THE SAME
       // REASON IT IS HERE RATHER THAN IN A TALENT. See `awardExperience`.
       awardExperience(run, killerId, victim);
+      // ...AND THE BODY EMPTIES ITS POCKETS ONTO THE TILE IT FELL ON. See
+      // `spillLoot`: it takes NO DRAW, and it is here rather than at the kill
+      // site in damage.ts for exactly that reason.
+      spillLoot(run, victim, sweepTurn);
       continue;
     }
 
@@ -2429,6 +2556,86 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
     // once the event list has been split. See `GameEvent.party_wipe.duringSweep`.
     checkWipe(run, sweepTurn);
   }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CORPSE EMPTIES ITS POCKETS. NOT ONE RANDOM NUMBER IS DRAWN HERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHAT IT PORTS ═══
+ * `Actor:die`, modules/tome/class/Actor.lua:3011-3060. Upstream's death spill
+ * walks the creature's ALREADY-RESOLVED inventories and calls
+ * `game.level.map:addObject(dropx, dropy, o)` on each; the drop TABLE was rolled
+ * back at entity resolution (`resolvers.calc.drops`, resolvers.lua:427-450). The
+ * only draws anywhere in `Actor:die` are the cosmetic blood roll at :3008 and one
+ * boss-artifact refusal at :3044, and we have neither. So this function is
+ * upstream's shape and upstream's draw count: ZERO.
+ *
+ * ═══ WHY THAT IS THE ONE PROPERTY WORTH THE WHOLE DESIGN ═══
+ * This runs inside `noteCasualty`, inside the pump, on a stream (`world.rng`)
+ * consumed linearly by `combat.checkhit`, `combat.crit`, `combat.bump.damage`,
+ * `ai.fire.chance`, `ai.flee.side`, `ai.flee.hardside` and `ai.target.keep`. One
+ * new draw at the moment a monster dies moves every subsequent draw in that pump
+ * and in every pump after it — shared/rng.ts:31-39 states the rule outright:
+ * renaming a label never alters a replay, adding or removing a DRAW always does.
+ * A drop roll HERE would have been the single most expensive line in the feature.
+ * It is at spawn instead (content/encounter.ts), on a third forked stream.
+ *
+ * ═══ THE ORDER IS SORTED, NEVER MAP-INSERTION ORDER ═══
+ * Delegated to `LootResolution.spillOrder`, which is where the content-side
+ * SLOT_ORDER lives. Actor.lua:3038 sorts the inventories explicitly and :3040
+ * iterates each in reverse for exactly this reason: two runs from the same seed
+ * that produce the same items in a different FLOOR order have a different tile
+ * list, therefore a different pickup index, and the bug presents as "the wrong
+ * item got picked up".
+ *
+ * ═══ IDEMPOTENCE IS FREE, AND THEN BOLTED DOWN ANYWAY ═══
+ * `killedBy` reads the `killed` flag off the effect rather than re-checking
+ * `alive`, and `damage.ts:589` returns an EMPTY outcome against something already
+ * down — so `killed` is true exactly once per body and this runs exactly once per
+ * corpse. That is the same property that stops the reap list double-enrolling and
+ * `noteKill` double-paying. Clearing the two fields below is belt to that brace:
+ * even if a future path did re-enter, the second visit finds an empty body and
+ * `spillOrder` answers with an empty list.
+ *
+ * ═══ THE BODY IS STILL IN THE WORLD WHEN THIS RUNS ═══
+ * `noteCasualty` ENROLS a dead monster and the caller buries it after the pump
+ * returns (see `PumpResult.reaped`), so `victim.x/y` is still the tile it died
+ * on. Spilling after the reap would have nowhere to spill to.
+ */
+function spillLoot(run: Run, victim: EngineActor, sweepTurn: number | null): void {
+  const loot = run.ctx.loot;
+  if (loot === undefined) return;
+
+  const itemIds = loot.spillOrder(victim);
+  if (itemIds.length === 0) return;
+
+  // SNAPSHOTTED ONCE, BEFORE ANYTHING ELSE. Both the ground items and the event
+  // read this object rather than the body, so a coat and the log line that
+  // announces it can never disagree about where the body fell.
+  const at = { x: victim.x, y: victim.y };
+  for (const itemId of itemIds) run.world.addGroundItem(at, itemId);
+
+  // THE BODY IS EMPTY NOW, AND SAYING SO IS NOT COSMETIC. It is enrolled for
+  // reaping on this same pump, so nothing will read it again in practice — but
+  // "in practice" is how an item ends up existing twice, once on the floor and
+  // once on a corpse that a resync happened to ship first.
+  //
+  // `equipped` is cleared without recomposing the sheet, deliberately: the fold
+  // in engine/effects.ts#recomposeCombat needs the catalogue, which this file may
+  // not see, and a dead body's combat sheet has no reader — `combatDamage` is
+  // only ever asked of something that is about to swing.
+  victim.carried = [];
+  victim.equipped = {};
+
+  const step = { id: victim.id, at, itemIds } as const;
+  // THE SAME LANE SPLIT `downed` MAKES TWENTY LINES DOWN, and for the same
+  // reason: a push closes any open sweep batch (`createEventSink`), so a monster
+  // that dies to a guard counter halfway through the monster turn would fragment
+  // one sweep into three if this took the player lane unconditionally.
+  if (sweepTurn === null) run.sink.push({ t: 'spilled', ...step });
+  else run.sink.sweep(sweepTurn, { t: 'spill', ...step });
 }
 
 // ---------------------------------------------------------------------------

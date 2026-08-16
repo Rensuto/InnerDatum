@@ -172,6 +172,15 @@ import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts
 import { drawHotbar, HOTBAR_TOTAL_H, hotbarSlotAt } from './ui/hotbar.ts';
 import { createContextMenu, MapVerb } from './ui/contextmenu.ts';
 import {
+  drawInventoryPanel,
+  focusForHit,
+  InventoryHitKind,
+  InventoryTab,
+  inventoryPanelHitAt,
+  inventoryPanelRect,
+  inventoryPanelRows,
+} from './ui/inventory.ts';
+import {
   drawPartyPane,
   partyPaneHitAt,
   partyPaneLayout,
@@ -196,7 +205,7 @@ import {
 import { drawTooltip } from './ui/tooltip.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
-import { verbsFor } from './ui/verbs.ts';
+import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
   ActorKind,
   DownedStatus,
@@ -214,7 +223,10 @@ import type {
   ClassOptionView,
   DownedView,
   EffectView,
+  GroundItemView,
   InspectView,
+  InventoryMsg,
+  ItemTier,
   LevelView,
   LoadoutTalent,
   PartyInviteView,
@@ -224,6 +236,7 @@ import type {
   ProjectileView,
   ResourceView,
   ServerMsg,
+  Slot,
   TurnEvent,
   TurnMsg,
 } from '../shared/protocol.ts';
@@ -232,13 +245,14 @@ import type { Targeting, TargetingWorld } from './input/targeting.ts';
 import type { Travel, TravelWorld } from './input/travel.ts';
 import type { DiscordParticipant } from './net/discord.ts';
 import type { AssetEntry } from './render/assets.ts';
-import type { HudPainter, PingMarker, Scene } from './render/canvas.ts';
+import type { HudPainter, LootMarker, PingMarker, Scene } from './render/canvas.ts';
 import type { SweepPlayback } from './render/sweep.ts';
 import type { SpriteSource } from './render/assets.ts';
 import type { CaseLog } from './ui/caselog.ts';
 import type { CombatBanner } from './ui/combatbanner.ts';
 import type { ContextMenu, MenuItem } from './ui/contextmenu.ts';
 import type { HotbarSlot, HotbarView } from './ui/hotbar.ts';
+import type { InventoryFocus, InventoryPanelView } from './ui/inventory.ts';
 import type { PanelRect } from './ui/panel.ts';
 import type { PartyPaneLayout, PartyPaneView } from './ui/partypanel.ts';
 import type { TurnView } from './ui/turncards.ts';
@@ -282,6 +296,40 @@ const NEEDED_ASSET_PREFIXES = [
   'ui_panel_',
   'ui_marker_',
   'ui_icon_speaking',
+  // ═══ v10 — THREE PREFIXES FOR ART THAT IS ALREADY IN THE MANIFEST ═══
+  //
+  // THAT DISTINCTION IS THIS ARRAY'S ENTIRE PURPOSE and it is the one thing to
+  // check before adding a fourth. A prefix here does not CREATE art: `isNeeded`
+  // filters the manifest, so listing a family that exists loads it and listing
+  // one that does not is a no-op (`icon_ability_` above has been exactly that
+  // since M3, deliberately). What it must never be is a prefix invented FOR art
+  // that does not exist — that is how a feature ships demanding a PNG of every
+  // clone, and client/public/assets/ is gitignored wholesale so there is no
+  // fallback file to hide behind. render/canvas.ts's `paintLoot` refuses a
+  // `ui_tile_marker_loot` blit for precisely that reason, and the floor mark is
+  // drawn with `fillRect` instead.
+  //
+  // ALL THREE FAMILIES WERE VERIFIED PRESENT, as ids in
+  // client/public/assets/manifest.placeholders.json AND as PNGs on disk:
+  //   `item_*`             — 23 ids under items/ (22 authored items plus
+  //                          item_iron_ingot, which has an icon and no item).
+  //   `ui_item_frame_*`    — 5 ids under ui/chrome/ (common/uncommon/rare are
+  //                          drawn; epic and legendary are art waiting for a
+  //                          rarity that does not exist — ui/inventory.ts).
+  //   `ui_inventory_cell_` — 2 ids under ui/chrome/. Only `_empty` is drawn;
+  //                          hover is a drawn ring, not a swapped plate.
+  // Without these three, `isNeeded` filters every one of those entries out,
+  // `sprites.sprite()` answers undefined for all of them, and the panel silently
+  // draws letter plates and traced boxes forever — a SUPPORTED state (a bare
+  // clone has no art at all) and therefore one nothing would ever fail on.
+  //
+  // NOT ADDED, AND DELIBERATELY: any prefix for the four ids in
+  // client/public/assets/items/_aliases.json. That file's own `_comment` claims
+  // they resolve; it is wrong — no `icon_weapon_*` id is in the manifest and no
+  // such PNG is on disk. Listing them would be the invented-prefix case above.
+  'item_',
+  'ui_inventory_cell_',
+  'ui_item_frame_',
 ] as const;
 
 /**
@@ -730,6 +778,70 @@ let talentsHoveredRow: number | null = null;
 let talentsArmedId: string | null = null;
 
 /**
+ * THE INVENTORY PANEL (v10), AND IT DEFAULTS OFF FOR THE SHEET'S OWN REASON.
+ *
+ * `i` opens it, `i` closes it, and the × on its header is the mouse's copy of
+ * that act. It is NOT in the Escape chain — see `onCancel`, which explains at
+ * length why no dock surface is.
+ *
+ * ═══ IT IS A PANEL AND THE SERVER IS NEVER TOLD IT IS OPEN ═══
+ * Nothing here parks a body, sets a standing order or touches the barrier, and
+ * none of the six keyboard gates below grows a condition for it. A player
+ * deciding whether to swap a coat can still walk, commit, hold and press 1-4,
+ * and the Warrant Clock auto-passes them like anyone else. That is the whole
+ * difference between this and the class chooser, and ui/inventory.ts's header
+ * states the cost of getting it wrong in the same words ui/talents.ts does: five
+ * people waiting at the barrier on somebody who is reading a menu.
+ *
+ * THAT IS THE BARRIER ANSWER IN FULL. There is no mechanism to reuse here —
+ * decision (g) is a decision NOT to be a modal, and this block is where it is
+ * kept. The four loot verbs the panel sends (`equip`, `unequip`, `drop`, and
+ * `pickup` from the keyboard) each SPEND THE SENDER'S TURN server-side and then
+ * pump, which is what stops the panel becoming a free-action exploit in the
+ * other direction: a free pickup would let a player loot a room mid-fight while
+ * the monsters stood still, and a free equip would let one at 5 hp put on a
+ * whole kit between two swings. The charge is the server's and is not visible
+ * from here — gateway.ts's `spendLootTurn` submits the engine's own hold
+ * intent, so the turn is spent by the same `spendTurn` a move goes through.
+ * READING the panel is still free; ACTING from it is not, and that asymmetry is
+ * the entire design.
+ */
+let invVisible = false;
+/** True while the pointer is over the panel's close control. Cosmetic. */
+let invCloseHovered = false;
+/**
+ * WHAT THE COMPARISON STRIP IS ABOUT — the last cell the pointer was over.
+ *
+ * ═══ IT IS STICKY, AND IT IS NOT CLEARED WHEN THE POINTER LEAVES A CELL ═══
+ * ui/inventory.ts's `InventoryFocus` states the constraint and the reason: the
+ * DROP control lives INSIDE the strip, so the pointer has to travel from the
+ * cell to the strip to reach it. A focus that cleared on leave would empty the
+ * strip on the way there and make the control unreachable by construction.
+ *
+ * The literal instruction for this pass named a `number | null` cell index. That
+ * is not the shape ui/inventory.ts shipped: the panel has two grids with
+ * different lengths and a tab that swaps between them, so an index means
+ * different things a keypress apart, and the exported `focusForHit` answers a
+ * FOCUS. Deviating is what keeps hover and click reading the same function — two
+ * copies of "what is the strip about" would drift, and the one that drifted
+ * would be the one DROP reads.
+ */
+let invFocus: InventoryFocus | null = null;
+/** What is under the pointer RIGHT NOW, or null. Transient; clears on leave. */
+let invHovered: InventoryFocus | null = null;
+/** True while the pointer is over the strip's DROP control. Cosmetic. */
+let invDropHovered = false;
+/**
+ * WHICH HALF OF `ShowEquipInven` IS ON SCREEN. Client-local; nothing is sent
+ * when it changes.
+ *
+ * EQUIPPED OPENS, which is ToME's own choice for the doll dialog
+ * (dialogs/ShowEquipment.lua:54 — `self:setFocus(self.c_doll)`), and it is the
+ * only one of the two tabs that is never empty.
+ */
+let invTab: InventoryTab = InventoryTab.Equipped;
+
+/**
  * THE CLASS CHOOSER'S OPTIONS, or null when there is no choice owed.
  *
  * NULL IS THE WHOLE OF "THE PICKER IS DOWN", and there is deliberately no second
@@ -789,6 +901,58 @@ let pings: readonly Ping[] = [];
  * seven, and this feature is the reason it is worth counting.
  */
 let projectiles: readonly ProjectileView[] = [];
+
+/**
+ * WHAT IS LYING ON THE FLOOR (v10) — every item on every tile, from the `ground`
+ * frame.
+ *
+ * COMPLETE AND ABSOLUTE, REPLACED WHOLESALE, NEVER PATCHED, exactly like
+ * `effects` and `projectiles` above. An empty array means the floor is clear, and
+ * the ABSENCE of an id from a later frame is the only spelling of "somebody took
+ * it" — there is no taken event and there must not be one. protocol.ts's
+ * `GroundMsg` states the cost of the alternative in this feature's own terms: a
+ * phantom pile sends somebody walking the length of the map to a tile with
+ * nothing on it, and because the pile is UNOWNED what they will conclude is that
+ * a friend took it.
+ *
+ * IT IS HELD FLAT, THE WAY THE WIRE SENDS IT, and grouped by tile at the two
+ * places that ask a question about a tile (`lootMarkers` for the map mark and
+ * `lootAt` for the menu row). Storing it pre-grouped would mean this file held a
+ * second shape of the same fact and the regroup would have to be re-run on every
+ * frame anyway, since the frame replaces the whole table.
+ *
+ * AND IT ADDS NO TIMER. A pile is a standing fact about a tile — world.ts freezes
+ * the record with "a ground item is a fact about a tile, not a body: it never
+ * moves" — so it changes exactly when a frame arrives, and `onMessage` already
+ * calls `requestDraw()` after every applied frame. The bounded-timer list at the
+ * top of this file is unchanged by this whole feature, which is the same property
+ * `projectiles` above claims and for the same reason: a fact that only moves when
+ * a packet lands needs nothing to move it.
+ */
+let ground: readonly GroundItemView[] = [];
+
+/**
+ * THE VIEWER'S OWN BAG AND DOLL (v10), from the `inventory` frame.
+ *
+ * VIEWER-PRIVATE BY CONSTRUCTION — `InventoryMsg` is in `ViewerMsg`, so the
+ * server cannot broadcast it and nobody else's carried list can ever reach this
+ * variable. That is not only privacy: `CarriedItemView.compare` is a delta
+ * against THIS recipient's paper doll, so a shared copy would be arithmetically
+ * wrong for everybody but its author.
+ *
+ * NULL UNTIL THE FIRST FRAME, AND NULL IS THE ORDINARY STATE OF A BARE
+ * DETECTIVE. The server sends this on a memo seeded empty, so a player wearing
+ * and carrying nothing is never sent one at all — which is what keeps the
+ * pre-loot frame set byte-identical. ui/inventory.ts draws that as "nothing worn,
+ * nothing carried" rather than as a panel that failed to load.
+ *
+ * COMPLETE AND ABSOLUTE, both halves at once, replaced and never merged — one
+ * frame for the doll and the bag is the port (`SHOW_EQUIPMENT` is literally an
+ * alias of `SHOW_INVENTORY`, tome/class/Game.lua:2192), and two frames could
+ * arrive a pump apart and render a comparison against a slot whose contents had
+ * already changed.
+ */
+let inventory: InventoryMsg | null = null;
 
 /**
  * WAITING FOR A DIRECTION TO REVIVE IN.
@@ -1005,6 +1169,15 @@ let refreshPinnedInspect: () => void = () => {
  * budget HOVER_SETTLE_MS sets out: the socket's bucket is 20 frames a second and
  * a game turn is a human decision long, so this is comfortably below the hover
  * card's own one-per-turn allowance sitting beside it.
+ *
+ * ═══ AND ONE FRAME PER LOOT CHANGE, WHICH IS THE SECOND CALLER — v10 ═══
+ * The turn edge stopped being the whole rule the moment equipment could move a
+ * combat sheet. `case 'inventory'` deletes this viewer's own cache entry and
+ * calls this. A loot verb DOES spend the sender's turn server-side, so the clock
+ * usually advances — but `tickLevel` returns `parked` without advancing anything
+ * while another player still owes a decision, so "somebody got dressed while a
+ * teammate was thinking" is a real loadout change with no turn edge behind it.
+ * The delete is what makes the call do anything; see that call site.
  */
 let refreshSelfSheet: () => void = () => {
   // No socket yet.
@@ -1047,6 +1220,112 @@ function downedMap(): ReadonlyMap<string, DownedView> {
 /** The live pings, as the renderer wants them. */
 function pingMarkers(): readonly PingMarker[] {
   return pings.map((ping) => ({ x: ping.x, y: ping.y, label: ping.label }));
+}
+
+/**
+ * HOW GOOD A TIER IS, for picking the one a pile is marked with.
+ *
+ * A TABLE RATHER THAN AN ORDERING BAKED INTO A COMPARATOR, and it is exhaustive
+ * over `ItemTier` by its type, so a fourth rarity is a compile error here rather
+ * than a pile that silently marks itself common. The client is not allowed to
+ * decide which items are rare — `GroundItemView.tier` exists precisely so the
+ * browser holds no such table (protocol.ts's `ItemTier`) — and this is only a
+ * comparison BETWEEN two answers the server already gave.
+ */
+const TIER_RANK: Readonly<Record<ItemTier, number>> = { common: 0, uncommon: 1, rare: 2 };
+
+/**
+ * THE FLOOR, GROUPED INTO ONE MARK PER TILE.
+ *
+ * THE GROUPING IS THIS FILE'S JOB AND IS DONE ONCE, HERE. render/canvas.ts's
+ * `LootMarker` says why the renderer must not do it — it holds no game state and
+ * must not grow any — and ui/verbs.ts says why the menu must not either: a second
+ * place in the client that knows what a pile is would disagree with this one the
+ * first time either started filtering by what the viewer can see.
+ *
+ * `GroundItemView.cell` IS THE KEY, and it is a pair for exactly this reason:
+ * two identical pairs of trousers on one tile are two rows with two distinct
+ * world ids, and a client that grouped by `itemId` would draw one mark for two
+ * items and be permanently one short.
+ *
+ * THE MARK CARRIES THE BEST TIER ON THE TILE, not the top one. `pickup` takes
+ * index 0 whatever is underneath it, so a mark coloured by the top item would
+ * dim the moment somebody dropped a common thing on a rare one — and "there is
+ * something good here" is the only judgement this mark is trying to make.
+ */
+function lootMarkers(): readonly LootMarker[] {
+  const byTile = new Map<string, { x: number; y: number; count: number; tier: ItemTier }>();
+  for (const item of ground) {
+    const [x, y] = item.cell;
+    const key = `${String(x)},${String(y)}`;
+    const seen = byTile.get(key);
+    if (seen === undefined) {
+      byTile.set(key, { x, y, count: 1, tier: item.tier });
+      continue;
+    }
+    seen.count += 1;
+    if (TIER_RANK[item.tier] > TIER_RANK[seen.tier]) seen.tier = item.tier;
+  }
+  return [...byTile.values()];
+}
+
+/**
+ * WHAT THIS TILE'S LOOT MEANS TO THE VIEWER — the answer ui/verbs.ts asks for.
+ *
+ * THREE STATES AND NOT TWO, because `pickup` CARRIES NO COORDINATE: the server
+ * reads the sender's own live x/y and takes index 0 of that tile (protocol.ts's
+ * `PickupSchema`), so a row offered on a pile across the room would be a row
+ * that lies about what the click will do. `Underfoot` is live, `OutOfReach` is
+ * greyed and teaches "walk onto it", and `None` drops the row entirely rather
+ * than leaving a permanently dead entry on the surface players right-click most.
+ *
+ * `selfTile()` MAY BE NULL before `welcome` puts a body on the map, and a null
+ * self is `OutOfReach` rather than `Underfoot` — the honest answer, since a
+ * viewer with no body is standing nowhere.
+ */
+function lootAt(tile: TileXY): TileLoot {
+  const here = ground.some((item) => item.cell[0] === tile.x && item.cell[1] === tile.y);
+  if (!here) return TileLoot.None;
+  const me = selfTile();
+  return me !== null && sameTile(me, tile) ? TileLoot.Underfoot : TileLoot.OutOfReach;
+}
+
+/**
+ * THE ONE FRAME AND TWO PIECES OF LOCAL STATE THE INVENTORY PANEL IS BUILT FROM.
+ *
+ * DELIBERATELY NOT `charSheetView()`'S SHAPE. The sheet joins four frames through
+ * a cache stamped with a game turn and has a "gathering…" state; this panel's one
+ * input is absolute, unicast and re-sent by the server whenever it changes, so
+ * the panel is correct the instant it appears and asks the server for nothing —
+ * the same property `talentPanelView()` has and for the same reason.
+ */
+function inventoryPanelView(): InventoryPanelView {
+  return { inventory, tab: invTab, focus: invFocus };
+}
+
+/**
+ * DID THE FOCUS CHANGE? Used only to decide whether a pointer move is worth a
+ * redraw.
+ *
+ * NEAR-KIN TO ui/inventory.ts's PRIVATE `sameFocus` AND DELIBERATELY NOT A COPY
+ * OF IT, in one case: two NULLS are the same here and are NOT the same there.
+ * That difference is the whole reason it is written out rather than exported and
+ * shared. The panel's version answers "does this cell wear a ring", where a null
+ * focus must never match anything, so `null === null` returning true would ring
+ * every empty cell at once. This one answers "is this different from what I had",
+ * where two nulls are emphatically not different and a redraw per pixel of bare
+ * panel is the bug at the top of this file.
+ *
+ * NOTHING DECIDES AN ACT HERE. The click path reads the exported `focusForHit`,
+ * so the two answers to "what is the strip about" cannot disagree where it
+ * matters; the worst a drift in this function could cost is a frame drawn that
+ * did not need to be.
+ */
+function sameInvFocus(a: InventoryFocus | null, b: InventoryFocus | null): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.kind === 'item' && b.kind === 'item') return a.itemId === b.itemId;
+  if (a.kind === 'slot' && b.kind === 'slot') return a.slot === b.slot;
+  return false;
 }
 
 /**
@@ -1190,6 +1469,31 @@ type HudLayout = {
    */
   readonly talents: PanelRect | null;
   /**
+   * The inventory panel, or null when it is shut, the band is too short, or the
+   * viewport is too narrow for four item frames.
+   *
+   * FROM `panelBand` LIKE `sheet` AND `talents`, NOT FROM THE VIEWPORT LIKE
+   * `picker`, and that one line is what makes it a PANEL rather than a modal:
+   * clamped into the band it can never come to rest over the hotbar, the resource
+   * strip or the prose lines, so every control stays visible and pressable
+   * underneath it while a player decides whether to swap a coat. Deriving it from
+   * the full viewport would be decision (g) reversed in one argument.
+   *
+   * It is anchored to the BOTTOM of the band while the sheet is centred in it and
+   * the talent panel is pinned to the top — three independent toggles and three
+   * different anchors, so on a band tall enough all three miss each other. Where
+   * they do collide, the paint order in `paintHud` and the hit-test order in
+   * `mousedown` agree that this one is on top: it is the newest decision the
+   * player made, and a panel painted underneath the key that opened it looks like
+   * the key did nothing.
+   *
+   * NULL FOR A THIRD REASON THE OTHER TWO DO NOT HAVE: a cell is the size of a
+   * PNG, so `inventoryPanelRect` refuses a viewport too narrow for four columns
+   * rather than degrading to three (ui/inventory.ts). Pressing `i` there appears
+   * to do nothing, which is the honest outcome.
+   */
+  readonly inventory: PanelRect | null;
+  /**
    * The class chooser, or null when no choice is owed.
    *
    * FROM THE FULL VIEWPORT, NOT `panelBand`, and it is the only member here that
@@ -1229,6 +1533,11 @@ function hudLayout(width: number, height: number): HudLayout {
       : null,
     talents: talentsVisible
       ? talentPanelRect({ width, height, top: band.top, bottom: band.bottom })
+      : null,
+    // FROM THE BAND, exactly like the two above it and NOT like `picker`. See the
+    // field's own note: that is the panel-not-modal decision made mechanical.
+    inventory: invVisible
+      ? inventoryPanelRect({ width, height, top: band.top, bottom: band.bottom })
       : null,
     picker: classOptions === null ? null : classPickerRect(width, height),
   };
@@ -1495,6 +1804,45 @@ const paintHud: HudPainter = (ctx, width, height) => {
     });
   }
 
+  // ═══ THE INVENTORY PANEL, AFTER THE OTHER TWO AND FOR THEIR REASONS ═══
+  //
+  // AFTER the sheet and the talent panel because all three are centred
+  // horizontally and, where they overlap, the newer decision has to be the
+  // visible one — the player pressed `i` while `c` or `g` was already up, and a
+  // panel painted underneath the one it was opened from would look like the key
+  // did nothing. `mousedown`'s step 4 tests the three in the mirror of this
+  // order, which is the rule this file has enforced since the sheet learned to
+  // cover the party pane: HIT-TEST ORDER MIRRORS PAINT ORDER, always.
+  //
+  // BEFORE the hotbar, the resource strip, the prose lines, the erased plate, the
+  // hover card, the combat banner and the token menu — every one of which is
+  // drawn later — and THAT ORDERING IS THE DESIGN. A panel that covered the
+  // hotbar would be a modal wearing a panel's clothes: the player weighing a coat
+  // against the fight they are in could no longer see the four talents they are
+  // weighing it against, and every one of those buttons still works while this is
+  // open.
+  //
+  // `inventoryPanelRows` IS CALLED EXACTLY ONCE PER FRAME and the result handed
+  // to the drawer, which does not call it — the same split ui/charsheet.ts and
+  // ui/talents.ts both require, and it matters more here: the rows walk the
+  // carried list and the whole doll, and a column pass that rebuilt them would do
+  // that work per row.
+  if (layout.inventory !== null) {
+    drawInventoryPanel({
+      ctx,
+      sprites,
+      rect: layout.inventory,
+      rows: inventoryPanelRows(inventoryPanelView()),
+      hoveredClose: invCloseHovered,
+      // TWO RINGS, TWO MEANINGS. `focus` is sticky and survives the pointer
+      // leaving a cell (it is what the strip and DROP are about); `hovered` is
+      // transient and clears the moment the pointer moves off.
+      focus: invFocus,
+      hovered: invHovered,
+      hoveredDrop: invDropHovered,
+    });
+  }
+
   drawHotbar({ ctx, sprites, view: hotbarView(), width, height });
 
   const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;
@@ -1673,6 +2021,13 @@ function scene(): Scene {
     downed: downedMap(),
     effects,
     pings: pingMarkers(),
+    // WHAT IS ON THE FLOOR, grouped into one mark per TILE on the way out. The
+    // renderer holds no game state and must not learn what a pile is
+    // (render/canvas.ts's `LootMarker`), so the join happens here — once, in
+    // `lootMarkers`, which is also what the right-click menu's row reads through
+    // `lootAt`. An empty array and an absent one mean the same thing to the
+    // painter, so a floor being cleared needs nothing reset here.
+    loot: lootMarkers(),
     // PASSED STRAIGHT THROUGH, with no guard and no mapping. The list is already
     // exactly what the painter wants — a tile per orb — and an empty array and
     // an absent one mean the same thing to render/canvas.ts, so the sky clearing
@@ -2805,6 +3160,80 @@ async function boot(): Promise<void> {
     requestDraw();
   }
 
+  // --- the inventory panel --------------------------------------------------
+
+  /**
+   * Open or put away the inventory panel.
+   *
+   * IT SENDS NOTHING, AND NOT BECAUSE THERE IS NOTHING TO SEND. There is no "the
+   * panel is open" frame and there must not be one: the server is never told,
+   * which is the whole difference between this and the class chooser (decision
+   * (g), ui/inventory.ts's header). It also asks for nothing on the way open —
+   * unlike the character sheet, whose fourth input is an `inspect` round trip.
+   * The `inventory` frame is absolute, unicast and re-sent by the server whenever
+   * either id list moves, so the panel is correct the instant it appears.
+   *
+   * THE THREE HOVER FLAGS AND THE FOCUS GO WITH IT. Otherwise the × comes back
+   * highlighted next time the panel opens under a pointer that has since moved,
+   * and the comparison strip reopens describing an item the player stopped
+   * looking at some minutes ago. THE TAB DOES NOT: which half you were reading is
+   * a preference, and re-selecting it on every open would be the panel forgetting
+   * something the player told it.
+   */
+  function toggleInventoryPanel(open?: boolean): void {
+    invVisible = open ?? !invVisible;
+    if (!invVisible) {
+      invCloseHovered = false;
+      invHovered = null;
+      invDropHovered = false;
+      invFocus = null;
+    }
+    requestDraw();
+  }
+
+  /**
+   * THE FOUR LOOT VERBS. The ONLY place any of them is constructed.
+   *
+   * ALL FOUR ARE ORDINARY PUMPING INTENTS, exactly like a `move`, and that is
+   * decision (g)'s other half: a FREE pickup would let a player loot a whole room
+   * mid-fight while the monsters stood still, which is the mirror of the argument
+   * gateway-progression.test.ts makes for keeping `spend_point` non-pumping. So
+   * nothing here is special-cased against the barrier, and each verb runs
+   * `unparkOnCommand` on the server for free.
+   *
+   * EVERY FRAME NAMES AN OBJECT AND NEVER A SUBJECT. `pickup` carries nothing at
+   * all; `equip` and `drop` carry an item id resolved against the SENDER'S OWN
+   * bag; `unequip` carries a slot. There is no actor id on any of them and no
+   * field for one — protocol.ts:16-24 is explicit that an id on the wire is a
+   * request rather than an identity, and all four schemas are `strictObject`, so
+   * a smuggled `actorId` is REJECTED rather than quietly stripped.
+   *
+   * A SEND THAT DID NOT GO OUT IS SAID OUT LOUD, the same rule `sendParty` keeps.
+   * A pickup that vanished into a closed socket is indistinguishable from a
+   * pickup somebody else won by a tenth of a second, and the second of those is a
+   * thing this design deliberately allows.
+   */
+  function sendPickup(): void {
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'pickup' })) {
+      showNotice('not connected — that did not go out');
+    }
+  }
+  function sendEquip(itemId: string): void {
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'equip', itemId })) {
+      showNotice('not connected — that did not go out');
+    }
+  }
+  function sendUnequip(slot: Slot): void {
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'unequip', slot })) {
+      showNotice('not connected — that did not go out');
+    }
+  }
+  function sendDrop(itemId: string): void {
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'drop', itemId })) {
+      showNotice('not connected — that did not go out');
+    }
+  }
+
   // --- the command line ----------------------------------------------------
   // The one piece of interactive DOM in the client. See the note in index.html:
   // a real <input> exists so that `say` has an IME, a caret and a clipboard.
@@ -3108,7 +3537,19 @@ async function boot(): Promise<void> {
     // named predicate the future "has this tile been seen" clause lands behind.
     // Asking `canWalk` directly here would be the second site that still permits
     // travel into unexplored dark on the day the first one stops.
-    return { kind: 'tile', tile, walkable: level !== null && travelTargetAllowed(level, tile) };
+    //
+    // `loot` IS `walkable`'S SIBLING AND JOINS ON THE SAME TERMS: one classified
+    // answer, decided here, never re-derived by the menu (ui/verbs.ts's header
+    // says so from the other end). It is OPTIONAL on `VerbTarget` and absent
+    // means "this caller cannot say" — until this line existed the Pick up row
+    // did not exist at all and `,` was the only way to take anything, which is
+    // exactly the state W6 left behind and named.
+    return {
+      kind: 'tile',
+      tile,
+      walkable: level !== null && travelTargetAllowed(level, tile),
+      loot: lootAt(tile),
+    };
   }
 
   /**
@@ -3190,6 +3631,22 @@ async function boot(): Promise<void> {
         // The frame that has existed since M4 — shift+click's own verb, offered
         // a second way for the player who does not know the modifier exists.
         socket.send({ v: PROTOCOL_VERSION, t: 'point', x: targetTile.x, y: targetTile.y });
+        return;
+      case MapVerb.Pickup:
+        // ═══ `targetTile` IS DELIBERATELY NOT PUT ON THE FRAME, AND THAT IS THE
+        //     WHOLE SECURITY ARGUMENT ═══
+        // `pickup` carries NO ARGUMENTS AT ALL: the server reads the sender's own
+        // live x/y and takes index 0 of that tile (protocol.ts's `PickupSchema`).
+        // That is strictly stronger than range-checking a supplied coordinate,
+        // because there is no coordinate to forge — and `PickupSchema` is a
+        // `strictObject`, so a tile smuggled alongside is REJECTED rather than
+        // sanitised into a legal frame.
+        //
+        // The row is only ENABLED when `lootAt` answered `Underfoot`, so a click
+        // that gets here is already about the tile the player is standing on. A
+        // disabled row still closes the menu and does nothing else (step 1 of
+        // `mousedown`), so this cannot be reached from the greyed form.
+        sendPickup();
         return;
     }
   }
@@ -3368,6 +3825,26 @@ async function boot(): Promise<void> {
         case TurnCommand.Hold:
           socket.send({ v: PROTOCOL_VERSION, t: 'hold' });
           return;
+        case TurnCommand.Pickup:
+          // ═══ `,` — AND IT GOES OUT LIKE A MOVE, NOT LIKE AN `inspect` ═══
+          // It PUMPS, which is why keys.ts files it under `TurnCommand` rather
+          // than beside the panel toggles: it is an intent the server rules on,
+          // it moves the world's clock, and pressing it out of turn earns exactly
+          // the `not_your_turn` refusal `commit` does — with a sentence, through
+          // `case 'error'`, like every other refusal in this client.
+          //
+          // NOTHING IS CHECKED LOCALLY FIRST. This file knows what `lootAt` says
+          // about the tile and deliberately does not consult it: the M3 rule at
+          // the top of this file forbids swallowing an input on this client's own
+          // arithmetic, and "there is nothing here" is a sentence the server
+          // writes better than a guess made from a frame that may be one pump old.
+          //
+          // `,` IS CONVENTIONAL AND NOT A PORT. ToME's own mnemonic is `g`
+          // (PICKUP_FLOOR, tome/class/Game.lua:2169), and `g` has belonged to our
+          // talent panel since v9; keys.ts says so at the binding rather than
+          // inventing a citation for the comma.
+          sendPickup();
+          return;
       }
     },
     onSlot: (slot) => {
@@ -3494,6 +3971,28 @@ async function boot(): Promise<void> {
           // instant it appears.
           toggleTalentPanel();
           return;
+        case UiCommand.ShowInventory:
+          // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING — the talent panel's
+          // shape exactly, and for its reason: the one frame this panel is built
+          // from is absolute, unicast, and re-sent whenever the viewer's bag or
+          // doll changes. There is no round trip to start, no cache to warm and
+          // no "gathering…" window.
+          //
+          // AND THE SERVER IS NOT TOLD IT IS OPEN. No standing hold, no park, no
+          // barrier interaction of any kind — see `invVisible` for the whole of
+          // decision (g). This case is also NOT mirrored in `onCancel`: no dock
+          // surface is in the Escape chain, and that block explains why adding one
+          // would make the key's behaviour depend on which panel happened to be
+          // open.
+          //
+          // `i` IS PORTED AS A DIALOG-LOCAL MNEMONIC, not as a shipped binding.
+          // The default keybind tables are absent from this sparse clone of
+          // t-engine4 (keys.ts records the same fact for M and G), but
+          // dialogs/CharacterSheet.lua:95-98 draws a "Manage [I]nventory" button
+          // and :286-287 handles `c == 'i' or c == 'I'` — the same evidentiary
+          // class this repo already accepted for the sheet's `[G]` control.
+          toggleInventoryPanel();
+          return;
         case UiCommand.ToggleLog:
           logVisible = !logVisible;
           requestDraw();
@@ -3607,11 +4106,20 @@ async function boot(): Promise<void> {
     // aim (see HOVER_SETTLE_MS). The extra reason is that this panel HAS a
     // control: an unswallowed click beside the `+` would walk the party across
     // the room while somebody was deciding where to put a point.
+    // AND THE INVENTORY PANEL IS THE THIRD, FOR BOTH OF THOSE REASONS AT ONCE.
+    // Omitting it would drag the targeting cursor across whatever tiles are under
+    // a solid panel and fire an `inspect` per hover-settle for every body it
+    // passed over — and an exhausted token bucket answers `error`, which cancels
+    // the player's aim (the reason given verbatim above, and at HOVER_SETTLE_MS).
+    // It also has MORE controls than either sibling — two tabs, up to twelve
+    // cells, a DROP button — so an unswallowed click beside one of them would
+    // walk the party across the room while somebody was choosing a coat.
     return (
       inRect(layout.pane?.rect ?? null, point.x, point.y) ||
       inRect(layout.log, point.x, point.y) ||
       inRect(layout.sheet, point.x, point.y) ||
-      inRect(layout.talents, point.x, point.y)
+      inRect(layout.talents, point.x, point.y) ||
+      inRect(layout.inventory, point.x, point.y)
     );
   }
 
@@ -3676,6 +4184,56 @@ async function boot(): Promise<void> {
         talentHit !== null && talentHit.kind !== TalentHitKind.Close ? talentHit.index : null;
       if (overTalentRow !== talentsHoveredRow) {
         talentsHoveredRow = overTalentRow;
+        requestDraw();
+      }
+      // ═══ THE INVENTORY PANEL'S FOUR HOVERS, IN THE BLOCK ABOVE'S SHAPE ═══
+      // Its ×, its DROP control, the cell under the pointer, and the sticky focus
+      // the comparison strip is about. Every one of them compares against the
+      // stored value and redraws ONLY on a change, for the reason every hover in
+      // this handler does: an unconditional `requestDraw` per mousemove turns this
+      // client's dirty-flag renderer into a 60 fps one, which the header at the
+      // top of this file forbids at length — and this panel is the biggest target
+      // on the screen, so a pointer crossing it is the worst case.
+      //
+      // ONE HIT TEST FEEDS ALL FOUR. `inventoryPanelRows` walks the doll and the
+      // bag, so asking four times per pointer move would do that work four times.
+      const invHit =
+        layout.inventory === null
+          ? null
+          : inventoryPanelHitAt(
+              layout.inventory,
+              inventoryPanelRows(inventoryPanelView()),
+              point.x,
+              point.y,
+            );
+      const overInvClose = invHit?.kind === InventoryHitKind.Close;
+      if (overInvClose !== invCloseHovered) {
+        invCloseHovered = overInvClose;
+        requestDraw();
+      }
+      const overInvDrop = invHit?.kind === InventoryHitKind.Drop;
+      if (overInvDrop !== invDropHovered) {
+        invDropHovered = overInvDrop;
+        requestDraw();
+      }
+      // THE TRANSIENT RING — what is under the pointer right now. It clears when
+      // the pointer leaves a cell, which is the whole difference between it and
+      // the focus below.
+      const overInvCell = focusForHit(invHit);
+      if (!sameInvFocus(overInvCell, invHovered)) {
+        invHovered = overInvCell;
+        requestDraw();
+      }
+      // ═══ ...AND THE STICKY ONE, WHICH IS ONLY EVER *SET*, NEVER CLEARED ═══
+      // `if (overInvCell !== null)` is the entire mechanism and it is load-bearing:
+      // the DROP control lives INSIDE the comparison strip, so the pointer has to
+      // leave the cell to reach it. A focus that followed the pointer off the cell
+      // would empty the strip on the way there and make DROP unreachable by
+      // construction. ui/inventory.ts's `InventoryFocus` states the same rule from
+      // the other end, and `focusForHit` is imported rather than reimplemented so
+      // that hover and click cannot disagree about what the strip is about.
+      if (overInvCell !== null && !sameInvFocus(overInvCell, invFocus)) {
+        invFocus = overInvCell;
         requestDraw();
       }
       // AND THE CARD UNDER THE POINTER, while the chooser is up. `null` when it
@@ -3743,6 +4301,16 @@ async function boot(): Promise<void> {
       const wheelLayout = hudLayout(logicalW, logicalH);
       if (inRect(wheelLayout.sheet, point.x, point.y)) return;
       if (inRect(wheelLayout.talents, point.x, point.y)) return;
+      // AND THE INVENTORY PANEL, WHICH IS AN OCCLUSION GUARD AND NOT A SCROLL
+      // GATE — the same distinction the paragraph above draws for the talent
+      // panel. This panel consumes nothing: it has no scroll position, no
+      // scrollbar and no hit test for one (ui/inventory.ts, "NO SCROLLING", which
+      // is honest because the server caps a bag at twelve and twelve fits on one
+      // page). What this line stops is the wheel reaching a DIFFERENT panel drawn
+      // UNDERNEATH it, and the overlap is not exotic: this one is centred
+      // horizontally like the other two, on the same assumption that the docks own
+      // the sides.
+      if (inRect(wheelLayout.inventory, point.x, point.y)) return;
       const lane = caseLog.laneAt(point.x, point.y);
       if (lane === null) return;
       event.preventDefault();
@@ -3886,8 +4454,17 @@ async function boot(): Promise<void> {
         // over the same rows: it is centred like the sheet, it is painted after
         // it, and a verb menu opened on a party member through two solid panels
         // is the same bug twice.
+        // ...AND THE INVENTORY PANEL MAKES IT A THREE-WAY OVERLAP ON A SHORT
+        // BAND. All three are centred horizontally on the assumption that the two
+        // docks own the sides, none of them consults `pane.rect`, and this one is
+        // painted last of the three. Leaving it out of this guard reproduces the
+        // exact shipped bug recorded in step 4 below — "a click on the character
+        // sheet declined a party invite the player never saw" — with a different
+        // panel on top.
         const overSheet =
-          inRect(layout.sheet, point.x, point.y) || inRect(layout.talents, point.x, point.y);
+          inRect(layout.sheet, point.x, point.y) ||
+          inRect(layout.talents, point.x, point.y) ||
+          inRect(layout.inventory, point.x, point.y);
         const paneHit =
           overSheet || layout.pane === null || layout.party === null
             ? null
@@ -3963,7 +4540,96 @@ async function boot(): Promise<void> {
     // is deliberately no right-click branch anywhere for this panel: there is no
     // refund verb this pass, and a gesture that appeared to unlearn and did
     // nothing would be worse than no gesture (ui/talents.ts's header).
-    if (point !== null && layout.talents !== null) {
+    // ═══ 4b. THE INVENTORY PANEL — TESTED BEFORE BOTH, BECAUSE IT IS DRAWN OVER
+    //         BOTH ═══
+    //
+    // HIT-TEST ORDER MIRRORS PAINT ORDER, the rule step 4 below states in full.
+    // `paintHud` paints the sheet, then the talent panel, then this — so this
+    // gets first refusal on any click inside its rect. All three DO overlap: every
+    // one of them is centred horizontally on the assumption that the docks own the
+    // sides, and on a short band the sheet's vertical centring and this panel's
+    // bottom anchor bring them together.
+    //
+    // FIVE OUTCOMES AND NO SIXTH, and every one of them swallows the click:
+    //   × closes. A TAB switches, client-side, sending nothing. A FILLED CELL is
+    //   `equip` or `unequip` and `hit.worn` is the only thing that decides which —
+    //   the panel answers it so the caller never has to remember which tab it was
+    //   looking at. An EMPTY SLOT does nothing but take the focus, so the strip
+    //   names the slot (which is where a player learns `offhand` and `trinket`
+    //   exist). DROP sends `drop`.
+    // Anything else inside the rect — bare panel, a note line, the header — falls
+    // through to the `overPanel` swallow further down, which already includes this
+    // rect. There is deliberately no right-click branch: the right-click block
+    // above treats this panel as pure occlusion, exactly as it does the other two.
+    if (point !== null && layout.inventory !== null) {
+      const hit = inventoryPanelHitAt(
+        layout.inventory,
+        inventoryPanelRows(inventoryPanelView()),
+        point.x,
+        point.y,
+      );
+      if (hit !== null) {
+        event.preventDefault();
+        switch (hit.kind) {
+          case InventoryHitKind.Close:
+            toggleInventoryPanel(false);
+            return;
+          case InventoryHitKind.Tab:
+            // CLIENT-LOCAL AND NOTHING IS SENT. The frame already carries both
+            // halves — one `inventory` message is the doll AND the bag — so
+            // switching tabs is a question about which of two things already in
+            // hand is on screen.
+            if (invTab !== hit.tab) {
+              invTab = hit.tab;
+              requestDraw();
+            }
+            return;
+          case InventoryHitKind.Item:
+            // THE FOCUS IS SET FROM THE SAME FUNCTION THE HOVER USES, so a click
+            // that arrives without a preceding hover (a touch, a panel that moved
+            // under a still pointer) leaves the strip describing what was pressed.
+            invFocus = focusForHit(hit);
+            // `worn` DECIDES THE VERB AND NOTHING ELSE DOES. On the doll it is
+            // `unequip { slot }` — a slot rather than the item, because a client
+            // one frame behind would otherwise ask to remove something already
+            // gone, while emptying the slot the player is looking at is what they
+            // meant (protocol.ts's `UnequipSchema`). In the bag it is
+            // `equip { itemId }`, and the destination slot is authored content the
+            // server reads off the catalogue.
+            if (hit.worn) sendUnequip(hit.slot);
+            else sendEquip(hit.itemId);
+            requestDraw();
+            return;
+          case InventoryHitKind.EmptySlot:
+            // SWALLOWED, NEVER A FALL-THROUGH. There is nothing to send — you
+            // cannot put on a slot — but the focus makes the strip say which slot
+            // it is, which is the only place the seven slot names are ever
+            // written down for the player.
+            invFocus = focusForHit(hit);
+            requestDraw();
+            return;
+          case InventoryHitKind.Drop:
+            // ONE PRESS, NO CONFIRMATION, argued at the control itself
+            // (ui/inventory.ts): the item lands on the tile you are standing on
+            // and `pickup` takes it straight back for the price of a turn. The
+            // irreversible act near here is walking away from it, and no button
+            // can warn about that.
+            sendDrop(hit.itemId);
+            return;
+        }
+      }
+    }
+
+    // ═══ ...AND BOTH BLOCKS BELOW ARE SKIPPED UNDER IT, WHICH IS THE OTHER HALF
+    //     OF THE SAME RULE ═══
+    // A null hit above means "on the inventory panel, but not on a control", and
+    // the instruction for that case is to fall through to the `overPanel` swallow
+    // — NOT to the two hit tests in between. Without these guards a click on bare
+    // inventory panel would reach a `+` or a × drawn UNDERNEATH it, which is
+    // step 5's own bug ("a control the player cannot see must not be pressable")
+    // with two panels instead of one, and the `+` version of it spends an
+    // irreversible talent point.
+    if (point !== null && layout.talents !== null && !inRect(layout.inventory, point.x, point.y)) {
       const hit = talentPanelHitAt(
         layout.talents,
         talentPanelRows(talentPanelView()),
@@ -3982,7 +4648,7 @@ async function boot(): Promise<void> {
       }
     }
 
-    if (point !== null && layout.sheet !== null) {
+    if (point !== null && layout.sheet !== null && !inRect(layout.inventory, point.x, point.y)) {
       const hit = charSheetHitAt(layout.sheet, point.x, point.y);
       if (hit === 'close') {
         event.preventDefault();
@@ -4018,7 +4684,12 @@ async function boot(): Promise<void> {
       layout.pane !== null &&
       layout.party !== null &&
       !inRect(layout.sheet, point.x, point.y) &&
-      !inRect(layout.talents, point.x, point.y)
+      !inRect(layout.talents, point.x, point.y) &&
+      // THE THIRD PANEL, AND THE SAME RULE: a control the player cannot see must
+      // not be pressable. With an invite pending, DECLINE sits inside the overlap
+      // on ordinary windows — that is the bug this guard was written for, and a
+      // third centred panel is a third way to reproduce it.
+      !inRect(layout.inventory, point.x, point.y)
     ) {
       const hit = partyPaneHitAt(layout.party, layout.pane, point.x, point.y);
       if (hit !== null) {
@@ -4223,6 +4894,31 @@ function applyServerMessage(msg: ServerMsg): void {
       // a fresh `projectiles` frame on the welcome path when something really is
       // in the air, so nothing true is lost by dropping this.
       projectiles = clearProjectiles();
+      // ═══ AND THE FLOOR AND THE BAG WITH IT, ON THE SKY'S OWN ARGUMENT ═══
+      //
+      // A welcome replaces the board wholesale, so every pile in this list is a
+      // fact about a map that no longer exists — and unlike a stale badge, a stale
+      // pile is a thing a player will WALK ACROSS THE MAP FOR, conclude was taken
+      // by a friend, and say so out loud. `inventory` goes for the narrower
+      // reason: a resume builds a fresh session whose bag memo is seeded EMPTY, so
+      // whatever the body actually owns is re-sent a few frames later.
+      //
+      // THIS IS SAFE ONLY BECAUSE THE `hello` PATH RESTATES BOTH. It does:
+      // `sendGroundIfAny(session.socket)` and `sendInventoryIfChanged(session)`
+      // both run in the welcome block (src/server/net/gateway.ts), unicast and
+      // outside the on-change rule, precisely because this socket has seen
+      // nothing. The ground unicast does NOT touch the broadcast memo, so nothing
+      // suppresses it.
+      //
+      // ═══ AND THAT IS WHY `case 'state'` DELIBERATELY DOES *NOT* DO THIS ═══
+      // The sky is cleared there because all three `state` broadcast sites call
+      // `sendProjectilesIfAny` immediately afterwards. NONE of them carries the
+      // ground, and none needs to — a resync is about `ActorView` and a pile is
+      // not an actor. Clearing there would delete a real pile from every screen
+      // and `broadcastGroundIfChanged`'s memo would then actively suppress the
+      // correction, because the floor itself had not changed.
+      ground = [];
+      inventory = null;
       reviveArmed = false;
       caseLog?.clear();
       setMarginText(undefined, '');
@@ -4560,6 +5256,106 @@ function applyServerMessage(msg: ServerMsg): void {
       }
       break;
     }
+    case 'ground':
+      // ═══ v10 — WHAT IS ON THE FLOOR. COMPLETE, AND REPLACED RATHER THAN
+      //     MERGED ═══
+      //
+      // The identical rule `effects` and `projectiles` follow, applied to an
+      // object with a much LONGER fuse — which makes it worse rather than milder.
+      // An orb is a three-turn thing; a coat on the floor lasts the rest of the
+      // delve. protocol.ts's `GroundMsg` states the cost of a patch stream in this
+      // feature's own terms: a phantom pile sends somebody walking the length of
+      // the map, through a fight, to a tile with nothing on it — and because the
+      // pile is UNOWNED and first pickup wins, what they will conclude is that a
+      // friend took it. The one failure mode this design can least afford is the
+      // one that makes the party argue.
+      //
+      // AN EMPTY ARRAY IS A REAL AND COMMON ANSWER: the floor is clear. It is the
+      // ONLY spelling of "somebody took the last thing" — there is no taken event
+      // and there must not be one, for the reason `GroundMsg` gives: a drop is a
+      // standing fact about a tile, and the events lane is for instants.
+      //
+      // NOTHING IS DERIVED HERE. The grouping into one mark per tile happens in
+      // `lootMarkers`, once per frame, because the same join answers the menu's
+      // Pick up row through `lootAt`. The redraw is `onMessage`'s, which calls
+      // `requestDraw()` after every applied frame.
+      ground = msg.items;
+      break;
+    case 'inventory':
+      // ═══ v10 — YOUR BAG AND YOUR DOLL. UNICAST, ABSOLUTE, BOTH HALVES AT ONCE ═══
+      //
+      // A `ViewerMsg`, so it arrives only for this socket and there is nothing to
+      // filter — protocol.ts makes broadcasting it a compile error server-side.
+      // That is not only privacy: `CarriedItemView.compare` is a delta against the
+      // RECIPIENT'S own paper doll, so a shared copy would be arithmetically wrong
+      // for everybody but its author, and wrong in the direction that promises a
+      // player armour they will not get.
+      //
+      // REPLACED WHOLESALE, NEVER MERGED, and both halves together — one frame for
+      // the doll and the bag is the port (tome/class/Game.lua:2192 makes
+      // `SHOW_EQUIPMENT` an alias of `SHOW_INVENTORY`), and two frames could land
+      // a pump apart and draw a comparison against a slot whose contents had
+      // already changed.
+      //
+      // THE COMPARISON ROWS ARE DRAWN, NEVER COMPUTED. They arrive pre-formatted
+      // (`{label:'Armour', value:'+3'}`), and eslint blocks src/client/** from
+      // importing shared/checkhit, shared/scale and shared/energy so this file
+      // could not work them out — nor should it try: `rescaleCombatStats` FLOORS,
+      // so even the subtraction that looks safe is wrong.
+      //
+      // A BARE DETECTIVE NEVER RECEIVES THIS FRAME AT ALL. The server sends it on
+      // a memo seeded empty, which is what keeps the pre-loot frame set
+      // byte-identical — so `null` is the ordinary opening state and ui/inventory.ts
+      // draws it as "nothing worn, nothing carried" rather than as a failure.
+      inventory = msg;
+      // ═══════════════════════════════════════════════════════════════════════
+      // AND THE CHARACTER SHEET IS RE-ASKED HERE, BECAUSE A LOADOUT CHANGE IS NOT
+      // RELIABLY A GAME-TURN EDGE.
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // `inspectCache` is invalidated in exactly one other place — `case 'turn'`,
+      // under `msg.gameTurn !== turn?.gameTurn` — and that was a complete rule for
+      // as long as every number on the sheet was a consequence of somebody taking
+      // a turn. Equipment is the first thing that moves `actor.combat` without
+      // that being guaranteed.
+      //
+      // ═══ THE CASE THAT IS STILL LIVE, AND IT IS AN ORDINARY PARTY ═══
+      // A loot verb DOES spend the sender's turn server-side (gateway.ts's
+      // `spendLootTurn`), so most of the time the clock does advance and the
+      // `turn` frame arrives and clears the cache anyway. But `tickLevel` returns
+      // `parked` WITHOUT advancing anything while ANY player still owes a
+      // decision — so a player who gets dressed while a teammate is thinking has
+      // their submitted turn sit pending, the clock stand still, and `gameTurn`
+      // come back identical. `broadcastTurnIfChanged` then correctly suppresses
+      // the frame as a duplicate, and nothing else would clear this cache.
+      // Without these lines the sheet goes on printing Armour 6 for a body the
+      // server has already recomposed to Armour 10, and it does so until somebody
+      // else moves — closing and re-opening the panel does not help, because
+      // `requestSelfSheet` returns early on a cache entry stamped with this same
+      // game turn. That is Trap 1 exactly as a player meets it: equip, look at
+      // the sheet, and the sheet says the item did nothing.
+      //
+      // Hanging it on THE STATE CHANGE rather than on THE CLOCK is also simply
+      // the more honest edge: what invalidates a character sheet is the sheet
+      // changing, and this frame is sent exactly when it did.
+      //
+      // THE DELETE COMES FIRST AND THAT ORDER IS THE WHOLE FIX. `refreshSelfSheet`
+      // is `requestSelfSheet`, whose first act is that same-turn early return, so
+      // calling it against a live entry sends nothing at all.
+      //
+      // THIS FRAME IS THE RIGHT EDGE TO HANG IT ON: it is unicast, absolute, and
+      // sent by `refreshViewers` only when this viewer's own loadout actually
+      // changed — once per real change, and never for anybody else's.
+      if (selfId !== null) {
+        inspectCache.delete(selfId);
+        // THE PIN TAKES THE SAME TREATMENT AS ON THE TURN EDGE, and for the same
+        // reason: `tooltipView()` reads the pin BEFORE the cache, so clearing the
+        // cache alone leaves a card pinned to your own body quoting the armour
+        // you had before you got dressed.
+        if (pinnedInspectId === selfId) refreshPinnedInspect();
+      }
+      refreshSelfSheet();
+      break;
     case 'party':
       // COMPLETE, and low-frequency by construction — it changes when somebody
       // goes down, gets up, mutes or drops, not when they take a hit. Hit points

@@ -358,10 +358,35 @@ export type AttackOpts = {
  * ONE SWING — Combat.lua:380-608, condensed to the single-weapon case.
  *
  * ToME's `attackTarget` (:92) loops over every mainhand and offhand weapon and
- * calls `attackTargetWith` (:380) for each. MVP has fixed loadouts, no inventory
- * and no dual wielding (game-design.md § 8), so the loop has exactly one
- * iteration and is not written out. When inventory lands at M6 the loop wraps
- * this function; nothing inside it changes.
+ * calls `attackTargetWith` (:380) for each. The loop still has exactly one
+ * iteration here and is still not written out — but the REASON changed, and the
+ * old comment ("MVP has fixed loadouts, no inventory and no dual wielding") is
+ * now false in its middle clause and must not be left to mislead.
+ *
+ * THERE IS AN INVENTORY. content/items.ts authors 22 items across seven worn
+ * slots, `engine/equipment.ts` folds their `wielder` tables onto the actor's
+ * sheet, and every number this function reads off `combat` — accuracy, damage,
+ * apr, crit, and the defender's armour and defence — already includes them, for
+ * free, because gear lands in the SHEET rather than in a second place this file
+ * would have to consult.
+ *
+ * THERE IS STILL NO SECOND WEAPON, AND THAT IS NOW A DESIGN CHOICE RATHER THAN
+ * AN ABSENCE. `Slot` has no MAINHAND and no OFFHAND WEAPON: the offhand holds a
+ * buckler, a case file or a tome (content/items.ts), and a class's weapon is
+ * part of its authored `CombatSheet` (content/classes.ts). The immediate reason
+ * is that the art does not exist — `_aliases.json` claims four `item_*` weapon
+ * ids resolve onto `icon_weapon_*` art and it is wrong (content/items.ts:53-57
+ * names all four; no `icon_weapon_*` file is on disk or in the manifest), so
+ * authoring one would ship a violet fallback box — and the standing reason is
+ * that a second weapon means a second `atk`, a second `dam`, a second `damMod`
+ * and ToME's whole off-hand penalty table: `Combat.lua:1791-1816`
+ * (`_M:getOffHandMult`), applied by the off-hand weapon loop at
+ * `Combat.lua:194-209` (`local offmult = self:getOffHandMult(o.combat, mult)`
+ * at :200). Both re-verified in reference/t-engine4 at the lines given —
+ * Combat.lua:105-121 is `attackTarget`'s `feared`/`terrified` guards and its
+ * break-stealth block, and an earlier draft of this paragraph cited it here by
+ * mistake. When dual-wielding lands, the loop wraps this function; nothing
+ * inside it changes.
  *
  * RNG DISCIPLINE. A miss consumes exactly ONE draw (the to-hit d100) because
  * ToME's range roll lives inside the `if checkHit` branch at :511. A hit

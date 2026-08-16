@@ -68,6 +68,11 @@ import type { Dir, TileXY } from '../../shared/coords.ts';
 // plus the separate-type-imports lint rule), so the module graph is unchanged
 // and only the compiler ever sees the reference.
 import type { CombatSheet } from './combat.ts';
+// TYPE-ONLY, and for the same reason as the line above. `Slot` is a content
+// type; a VALUE import of it would put a runtime edge from the engine into
+// content/, and content/classes.ts already imports engine/combat.ts. An
+// `import type` is erased entirely, so the module graph is unchanged.
+import type { Slot } from '../content/items.ts';
 
 // ---------------------------------------------------------------------------
 // Intents — what an actor has decided to do with its turn
@@ -349,6 +354,62 @@ type ActorCommon = {
    * templates (content/monsters.ts) always supply one.
    */
   combat?: CombatSheet;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SHEET BEFORE GEAR AND BEFORE STATUSES. THE THING `combat` IS DERIVED
+   * FROM, AND THE ONLY ONE OF THE PAIR ANYTHING MAY WRITE DIRECTLY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combat` above is now a DERIVED value, recomposed by
+   * `engine/effects.ts#recomposeCombat` in a fixed order:
+   *
+   *     baseCombat  ->  composeSheet(worn gear)  ->  recomputeAttributes(flags)
+   *
+   * This field is stage zero: the class's own sheet exactly as
+   * content/classes.ts authored it (or a monster template's, or
+   * `DEFAULT_PLAYER_COMBAT`), never written to by the equipment or status
+   * systems and therefore always safe to recompose from. That is what makes
+   * "take the coat off" exact — it is not a subtraction, it is the same fold
+   * re-run over a smaller set.
+   *
+   * OPTIONAL, for the same reason `combat` is: an M2-era fixture has neither,
+   * and a body with no `baseCombat` recomposes from whatever `combat` holds,
+   * which is the pre-equipment behaviour unchanged.
+   */
+  baseCombat?: CombatSheet;
+
+  // --- items ----------------------------------------------------------------
+  /**
+   * WHAT IS BEING WORN: slot -> item id, at most one per slot.
+   *
+   * IDS, NOT ITEMS. The catalogue is content (content/items.ts) and this is the
+   * engine's actor; storing the resolved object here would put a content table
+   * inside every save file and inside every actor the projector walks. An id is
+   * also the only thing a save can honestly hold across a build that renamed a
+   * stat — `wornOf` drops an id it cannot resolve rather than refusing to load
+   * the character.
+   *
+   * ═══ ON THE ACTOR, NOT IN A SIDE TABLE, AND THE ARGUMENT IS ALREADY WRITTEN ═══
+   * See `PlayerActor.level` below: `snapshotPlayers` (persist/saves.ts) RUNS IN A
+   * LAYER THAT CANNOT REACH THE TALENT ENGINE, so anything the save file must
+   * write down has to be reachable from the actor. An inventory kept in an
+   * equipment-engine side table would be an inventory that survives exactly
+   * until somebody closes the tab. `classId`, `level`, `xp` and `unspentPoints`
+   * are all here for that reason and these two join them.
+   */
+  equipped?: Partial<Record<Slot, string>>;
+  /**
+   * THE BACKPACK: item ids held and not worn, in pickup order.
+   *
+   * ToME's `INVEN_INVEN` (descriptors.lua:56's `INVEN = 1000`), minus the cap —
+   * a 1000-slot limit is a limit nobody in a four-hour session will ever meet,
+   * and a cap that never binds is a rule that only exists to be got wrong.
+   *
+   * `readonly` array: it is REPLACED on every change rather than spliced, which
+   * is the same discipline `combat` follows and for the same reason — a live
+   * reference that somebody mutated is how two players end up sharing a coat.
+   */
+  carried?: readonly string[];
 
   // --- talents --------------------------------------------------------------
   /**
@@ -713,6 +774,13 @@ export type MonsterInit = {
  */
 export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
   const maxHp = init.maxHp ?? DEFAULT_PLAYER_MAX_HP;
+  // ONE EXPRESSION, TWO FIELDS, AND THEY MUST START IDENTICAL. `baseCombat` is
+  // what gear and statuses recompose FROM; `combat` is the composed result. A
+  // body wearing nothing and carrying no effect has them equal by identity,
+  // which is what keeps `expect(body.combat).toBe(WATCHMAN.combat)` true for a
+  // freshly joined player and keeps the classless fallback exactly as cheap as
+  // it was before this field existed.
+  const sheet = init.combat ?? DEFAULT_PLAYER_COMBAT;
   return {
     // The energy fields come from their owner in src/shared/energy.ts, so a
     // change to how a clock is initialised lands in one place.
@@ -737,7 +805,8 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     damageMax: init.damageMax ?? DEFAULT_PLAYER_DAMAGE_MAX,
     // WHOLESALE, never merged: a class sheet is a complete stat block and
     // half of one blended with the placeholder is a body nobody authored.
-    combat: init.combat ?? DEFAULT_PLAYER_COMBAT,
+    combat: sheet,
+    baseCombat: sheet,
     classId: init.classId,
     // PROGRESSION STARTS AT THE BOTTOM AND EMPTY. Level 1 with no spare points
     // is the whole birth grant argument: ToME hands a fresh character 2 unused
@@ -786,7 +855,14 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     attackRange: init.attackRange ?? Math.max(1, preferredRange),
     damageMin: init.damageMin ?? DEFAULT_MONSTER_DAMAGE_MIN,
     damageMax: init.damageMax ?? DEFAULT_MONSTER_DAMAGE_MAX,
+    // BOTH, and both possibly `undefined` — a monster template that authors no
+    // sheet keeps ToME's bare defaults on both halves, exactly as before. The
+    // pair is set here rather than only on players because a monster CAN carry
+    // items (its drop, decided at spawn) and because `recomposeCombat` must
+    // never find a body whose baseline is a sheet something else already
+    // composed onto.
     combat: init.combat,
+    baseCombat: init.combat,
     cooldowns: new Map<string, number>(),
     pendingIntent: null,
     standingOrder: null,

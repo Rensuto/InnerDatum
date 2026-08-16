@@ -439,7 +439,7 @@ describe('the projectiles frame', () => {
     const rejoined = await connect(server.port);
     const welcome = await rejoined.hello();
 
-    // v9. The envelope is pinned here rather than in a version test of its own
+    // v10. The envelope is pinned here rather than in a version test of its own
     // because this is the file that drives a real socket end to end, so a client
     // bundle that disagreed would fail here first. Every bump that produced this
     // number was forced by the same rule — an old client would be confidently
@@ -463,7 +463,29 @@ describe('the projectiles frame', () => {
     // simply ignore and would NOT have forced this on their own;
     // src/shared/version.ts keeps that argument to one reason on purpose, and
     // no new `ErrorCode` was added for exactly the same discipline.
-    expect(PROTOCOL_VERSION).toBe(9);
+    //
+    // ═══ 9 -> 10, AND THE JUSTIFICATION MOVES WITH THE NUMBER ═══
+    // This comment's own house rule, so it is restated rather than appended to.
+    // The v10 ADDITIONS force nothing on their own and are named here only to be
+    // ruled out: four inbound verbs (`pickup`/`equip`/`unequip`/`drop`) narrow
+    // nothing a v9 client sends — `respawn` set that precedent at v5 — and the
+    // `inventory` frame is one an old client cannot name and therefore ignores,
+    // which is the definition of an addition it can survive. No `TurnEvent`
+    // variant and no `ErrorCode` member were added either, and both of those
+    // would have forced a bump independently.
+    //
+    // WHAT FORCES IT IS THE `ground` FRAME, AND IT IS THE PERMANENTLY-STUCK
+    // SHAPE that forced 5 -> 6 rather than the merely-missing shape. A v9 client
+    // cannot name `ground`, so it draws no floor item — AND it has no verb to
+    // take one, so there is no way for the player to discover the frame is
+    // missing by acting. Both halves fail at once, and the party divides loot
+    // around them in voice while their screen says the floor is empty.
+    //
+    // Independently, and on the 8 -> 9 shape above: once gear composes onto the
+    // combat sheet, `ActorView.maxHp` and `InspectView.rows` stop being facts
+    // about a CLASS and become facts about a class PLUS its gear. A field a v9
+    // client already knows how to read, now silently meaning something narrower.
+    expect(PROTOCOL_VERSION).toBe(10);
     expect(welcome?.['v']).toBe(PROTOCOL_VERSION);
 
     const seen = await rejoined.waitFor('projectiles');

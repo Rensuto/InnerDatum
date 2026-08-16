@@ -82,6 +82,21 @@ import { PROTOCOL_VERSION } from '../../shared/version.ts';
  */
 import { classById, classForJoin } from '../content/classes.ts';
 /**
+ * THE SECOND CONTENT IMPORT, AND IT IS DATA ONLY — THE SAME TERMS AS THE FIRST.
+ *
+ * `itemById` says whether an id off the wire or out of a save file still names
+ * an authored item, `SLOT_ORDER` is what narrows a `string` key from a character
+ * file into a `Slot`, and `ITEM_CATALOGUE` is handed STRAIGHT THROUGH to
+ * `recomposeCombat` without this file reading a row out of it. What an item DOES
+ * — its `wielder` table, what it is worth, what it costs — is never read here,
+ * exactly as no class's sheet is.
+ *
+ * persist/saves.ts already took the same edge and argued it at its import site:
+ * an item id carries NOTHING on its own (slot, icon and wielder all live in the
+ * catalogue), so a layer that has to validate one has to be able to ask.
+ */
+import { ITEM_CATALOGUE, SLOT_ORDER, itemById } from '../content/items.ts';
+/**
  * THE ONE ENGINE VALUE THIS FILE IMPORTS, AND IT IS A VOCABULARY WORD.
  *
  * `TurnEngine` is stated structurally and injected precisely so that net/ never
@@ -96,6 +111,28 @@ import { classById, classForJoin } from '../content/classes.ts';
  * the field engine/barrier.ts:302-303 already reads to mean exactly that.
  */
 import { StandingOrder } from '../engine/actor.ts';
+/**
+ * THE SINGLE WRITER OF `actor.combat`, IMPORTED RATHER THAN INJECTED, AND THE
+ * ASYMMETRY WITH `attachClass` IS DELIBERATE.
+ *
+ * `TurnEngine.attachClass` is a seam because attaching a sheet means reaching
+ * `engine/talents.ts` — a talent book, a resource pool, four closures — and this
+ * file must not learn what a class DOES. `recomposeCombat` is the opposite kind
+ * of thing: it is a PURE RE-DERIVATION of one field from three inputs that are
+ * all already on the body (`baseCombat`, `equipped`, and the `EffectState` this
+ * plugin is handed in its own options), it returns void, it draws no RNG and it
+ * queues nothing. world/world.ts imports it directly for exactly the same
+ * reason at `reclothePlayer`, with the ownership split written out at both
+ * sites.
+ *
+ * IT MUST BE CALLED AFTER EVERY WRITE TO `equipped` IN THIS FILE. That is the
+ * whole of the equipment contract here: `equipped` is owned by the equipment
+ * VERBS (which is this file, now), `combat` is owned by `recomposeCombat` and by
+ * nothing else, and a verb that moved an id without recomposing would leave a
+ * player wearing a coat that changes no number — Trap 1, arriving through the
+ * one door the type system cannot close.
+ */
+import { recomposeCombat } from '../engine/effects.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
 // difference between "this file predates classes" and "this file names a class
@@ -109,6 +146,8 @@ import {
   projectClassOptions,
   projectCooldowns,
   projectEffects,
+  projectGroundItems,
+  projectInventory,
   projectLoadout,
   projectParty,
   projectPartyState,
@@ -125,6 +164,8 @@ import type { Dir, TileXY } from '../../shared/coords.ts';
 import type {
   BroadcastMsg,
   ClientChooseClass,
+  ClientDrop,
+  ClientEquip,
   ClientHello,
   ClientInspect,
   ClientMove,
@@ -134,6 +175,7 @@ import type {
   ClientSay,
   ClientSpendPoint,
   ClientTalent,
+  ClientUnequip,
   LoadoutTalent,
   LogLine,
   PartyAction,
@@ -142,6 +184,8 @@ import type {
   TurnEvent,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
+import type { Slot } from '../content/items.ts';
+import type { PlayerActor } from '../engine/actor.ts';
 import type { PartyOffer, TurnState } from '../view/projector.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
@@ -339,6 +383,22 @@ type Session = {
    * them together would resend the level readout on every turn of the game.
    */
   progressKey: string | null;
+  /**
+   * The last `inventory` frame sent to THIS socket, as a comparison key.
+   *
+   * A FOURTH KEY, for the reason `partyKey` and `progressKey` are the second and
+   * third: the four move on completely different schedules. The hotbar changes
+   * every game turn, the party pane a handful of times an evening, progress on a
+   * kill — and a bag changes only when its owner deliberately does something to
+   * it, which is a handful of times a delve. Folding it into `viewerKey` would
+   * resend the whole paper doll, comparison rows and all, on every turn of the
+   * game.
+   *
+   * SEEDED WITH THE EMPTY STATE rather than with null, unlike the three above.
+   * See `EMPTY_INVENTORY_KEY`: a player carrying nothing must never be sent a
+   * frame saying so, and a player who drops their last thing MUST be.
+   */
+  inventoryKey: string;
   /**
    * THE RATE LIMITER, per SOCKET rather than per actor.
    *
@@ -1060,8 +1120,14 @@ export type CharacterSnapshot = {
    * the snapshot — and while that was true the `level` on disk could never
    * become anything but 1, because the binding echoed back what it read and
    * nothing else ever wrote the field. Levels gained tonight now reach the disk
-   * and come back; test/server/persist-progression.test.ts walks the real bridge
-   * end to end and would fail if either half were reverted.
+   * and come back; test/server/persist.test.ts:1303 walks the real bridge end to
+   * end and would fail if either half were reverted.
+   *
+   * THAT PATH IS A CORRECTION. This line used to cite
+   * `test/server/persist-progression.test.ts`, which has never existed in this
+   * repository — `ls` returns nothing for it. A docblock that claims coverage
+   * must name a file somebody can open, or the claim is unfalsifiable and the
+   * next reader assumes a suite is watching a seam that nothing is watching.
    */
   readonly level?: number;
   /** PER-LEVEL xp, never a running total. See `PlayerActor.xp`. */
@@ -1080,6 +1146,40 @@ export type CharacterSnapshot = {
    * derived value.
    */
   readonly talentPoints?: Readonly<Record<string, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAG AND THE PAPER DOLL. IDS ONLY, AND ABSENT IS NOT EMPTY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `carried` is item ids in pickup order; `equipped` is slot name -> item id,
+   * at most one per slot. Both come straight off `PlayerActor.carried` /
+   * `.equipped`, which is why those fields live on the ACTOR at all: the save
+   * layer cannot reach the equipment engine, exactly as it cannot reach the
+   * talent engine, so anything a file must write down has to be readable from
+   * the body (engine/actor.ts says so at both fields).
+   *
+   * ═══ THE SHAPE IS THE ONE persist/saves.ts ALREADY DECLARED ═══
+   * `SavedLoadout` there is `{ carried?: readonly string[]; equipped?:
+   * Readonly<Record<string, string>> }` and `fileFor` takes
+   * `CharacterSnapshot & SavedLoadout`. These two declarations are that
+   * intersection's other half and are kept IDENTICAL by hand: a divergence is
+   * now a compile error at `fileFor`'s parameter rather than a silent
+   * disagreement about a field name. `Record<string, string>` and not
+   * `Partial<Record<Slot, string>>`, deliberately — a save file's slot key is a
+   * STRING until somebody checks it, and the checking happens on the way onto
+   * the body (`restoreProgression`), not in a type.
+   *
+   * ═══ ABSENT IS NOT EMPTY, AND THE `??` CHAIN READS THEM DIFFERENTLY ═══
+   * The identical discipline `progressionPoints` states for `talentPoints`:
+   * `[]`/`{}` is a CLAIM ("this character owns nothing"), `undefined` is "this
+   * build cannot say", and `fileFor`'s `snapshot.carried ?? binding.carried`
+   * turns the second into "leave the disk exactly as you found it". A producer
+   * that filled these unconditionally would empty a returning player's bag the
+   * first time a fixture snapshot was written.
+   */
+  readonly carried?: readonly string[];
+  /** Slot name -> item id. See `carried` above; the two travel together. */
+  readonly equipped?: Readonly<Record<string, string>>;
 };
 
 /**
@@ -1160,6 +1260,33 @@ export type CharacterRestore = {
   readonly unspentPoints?: number;
   /** Namespaced talent id -> RAW points. The only non-derived one of the four. */
   readonly talentPoints?: Readonly<Record<string, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAG AND THE PAPER DOLL, COMING BACK. THE OTHER HALF OF THE LOOP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * OPTIONAL, NOT NULLABLE, for the reason the four progression fields above
+   * are: a character file written before items existed has neither key,
+   * `parseCharacterFile` leaves both absent rather than inventing them, and
+   * absent therefore means "this port cannot say" — which is what stops a
+   * restore silently stripping a geared character down to nothing.
+   *
+   * ALREADY REPAIRED BY THE TIME THEY ARRIVE. `parseCarried` drops an id the
+   * catalogue does not know and drops later duplicates (`carried` IS A SET, not
+   * a bag — which is why `handlePickup` refuses an id the actor already owns);
+   * `parseEquipped` drops an entry whose id is not valid for its slot outright
+   * rather than re-filing or re-slotting it, and persist/saves.ts argues both
+   * repairs and both rejections in full. `restoreProgression` re-checks anyway,
+   * cheaply, because a `CharacterRestore` may come from any implementation of
+   * `PersistPort` and not only from the shipped bridge.
+   *
+   * THE SHAPE IS `SavedLoadout`'S, kept identical by hand — see
+   * `CharacterSnapshot.carried` for why that is a compile-time guarantee rather
+   * than a convention.
+   */
+  readonly carried?: readonly string[];
+  /** Slot name -> item id, as the file holds it. Validated on the way onto the body. */
+  readonly equipped?: Readonly<Record<string, string>>;
 };
 
 /**
@@ -1468,6 +1595,58 @@ function turnKey(state: TurnState, bellArmed: boolean): string {
  */
 const NO_PROJECTILES_KEY = '[]';
 
+/**
+ * THE FLOOR IS CLEAR. `JSON.stringify([])` written out as the literal it
+ * produces, for the reason `NO_PROJECTILES_KEY` gives directly above: the memo
+ * is SEEDED with it rather than with null, so a server on which nothing has been
+ * dropped sends byte-for-byte the frame set it sent before loot existed. An
+ * empty floor is what a client already believes before it is told anything, and
+ * `welcome` carries no item list precisely because absence is the default.
+ *
+ * A floor that EMPTIES still broadcasts, and that is the difference between
+ * seeding and gating: the key moves from a populated list to `'[]'`, which is a
+ * change, so `[]` goes out and the last marker comes off every screen. The frame
+ * is complete and absolute — see `projectGroundItems`.
+ */
+const NO_GROUND_KEY = '[]';
+
+/**
+ * AN EMPTY BAG AND AN EMPTY PAPER DOLL, as the per-session memo key spells them.
+ *
+ * Same seeding argument as `NO_PROJECTILES_KEY`, one level down: the key is
+ * per-SOCKET (like `viewerKey` and `progressKey`) because a resumed connection
+ * has seen nothing, and it is seeded with the empty state so that the
+ * overwhelmingly common player — carrying nothing, wearing nothing, for the
+ * whole first fight of a delve — is never sent an `inventory` frame saying so.
+ *
+ * The moment they pick something up the key moves and the frame goes; the moment
+ * they drop their last thing it moves BACK and an empty frame goes, which is
+ * what takes the row off their panel. Gating on "has items" instead of seeding
+ * would have been the bug: the last item would never be removed from the screen.
+ */
+const EMPTY_INVENTORY_KEY = '[[],{}]';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY THINGS A DETECTIVE MAY CARRY. TWELVE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A DEVIATION, AND IT IS LABELLED AS ONE. ToME's backpack is `INVEN = 1000`
+ * (data/birth/descriptors.lua:56) — a limit nobody meets in a four-hour session,
+ * which engine/actor.ts's own note on `carried` calls "a rule that only exists
+ * to be got wrong". Upstream can afford that because it has a vendor, a home
+ * chest and a hundred-hour campaign to fill a bag over. We have one floor, three
+ * monsters on it, at most three drops per delve and no shop.
+ *
+ * TWELVE IS CHOSEN, NOT PORTED. It is the smallest number that cannot bind in
+ * ordinary play — seven worn slots plus five in reserve is more than a full kit —
+ * so a player who hits it has been hoarding rather than playing, and the refusal
+ * they get is a nudge to leave something for a friend. The point of a cap that
+ * cannot bind is not the cap: it is that `pickup` has a bounded answer at all,
+ * so `carried` cannot grow without limit under a client in a loop.
+ */
+const INVENTORY_CAP = 12;
+
 export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts) => {
   const { world, engine } = opts;
   const disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULT_DISCONNECT_GRACE_MS;
@@ -1547,6 +1726,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * absence is the default rather than a fact that has to be transmitted.
    */
   let lastProjectilesKey = NO_PROJECTILES_KEY;
+
+  /**
+   * The last `ground` frame broadcast, as a key — SEEDED WITH THE EMPTY FLOOR
+   * for exactly the reason `lastProjectilesKey` is seeded with the empty sky.
+   * See `NO_GROUND_KEY`.
+   */
+  let lastGroundKey = NO_GROUND_KEY;
 
   /**
    * Actor id -> when that player last put a line in the Margin.
@@ -1746,6 +1932,122 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * EVERYTHING ON THE FLOOR, when it changed. The fourth memo of this shape.
+   *
+   * ═══ WHY IT IS A MEMO IN THE PUMP RATHER THAN A PUSH IN EACH VERB ═══
+   * The floor changes from FOUR directions and only two of them are a loot verb:
+   * a `pickup` takes one off, a `drop` puts one on, a MONSTER DYING spills its
+   * kit (scheduler.ts's `spill` step, which runs inside the pump), and a floor
+   * RESET clears the table wholesale (turn-engine.ts:536, on a party wipe). A
+   * push wired into the two verbs would be silently wrong for the other two, and
+   * the symptom would be a corpse's drop that nobody can see until somebody
+   * happens to pick something else up.
+   *
+   * BROADCAST, NOT UNICAST, and honestly so: the pile is unowned and shared, and
+   * it is not FOV-gated. `projectGroundItems` carries that argument in full and
+   * names it as an accepted leak riding `ProjectilesMsg`'s existing one.
+   *
+   * ═══ "ON CHANGE" IS SAFE BECAUSE THE FRAME IS ABSOLUTE ═══
+   * Suppressing a duplicate is only ever legal for a snapshot. A frame that DOES
+   * go out replaces the client's whole floor, so a suppressed one would have said
+   * precisely what the client already believes — and an item being TAKEN is a
+   * change like any other, so the pile shrinking broadcasts an absence rather
+   * than a "removed" patch.
+   */
+  const broadcastGroundIfChanged = (): void => {
+    const msg = projectGroundItems(world);
+    const key = JSON.stringify(msg.items);
+    if (key === lastGroundKey) return;
+    lastGroundKey = key;
+    broadcast(msg);
+  };
+
+  /**
+   * THE FLOOR, TO SOMEBODY WHO HAS SEEN NOTHING — `welcome` and a resume.
+   *
+   * The same shape and the same argument as `sendProjectilesIfAny` directly
+   * above, with one difference in the timescale that makes it matter MORE rather
+   * than less: an orb is a three-turn object, and a coat on the floor lasts for
+   * the rest of the delve. A player who reconnects after a fight would otherwise
+   * see a bare floor until the next time somebody dropped or took something,
+   * which out of combat can be the whole evening — and the thing they cannot see
+   * is the drop the party is standing around discussing.
+   *
+   * SILENT ON AN EMPTY FLOOR, because absence is the client's default and
+   * `welcome` deliberately carries no item list.
+   *
+   * @param socket the one recipient, or absent to tell the room. The broadcast
+   *   form updates the memo, so a `broadcastGroundIfChanged` later in the same
+   *   pump correctly sends nothing.
+   */
+  const sendGroundIfAny = (socket?: GatewaySocket): void => {
+    const msg = projectGroundItems(world);
+    if (msg.items.length === 0) return;
+    if (socket !== undefined) {
+      send(socket, msg);
+      return;
+    }
+    lastGroundKey = JSON.stringify(msg.items);
+    broadcast(msg);
+  };
+
+  /**
+   * A comparison key for "has this viewer's bag or doll changed?".
+   *
+   * The two ID LISTS and nothing derived from them. `compare` rows are a pure
+   * function of (`baseCombat`, `equipped`, the item) — so any change that could
+   * move a row moves one of these two fields FIRST, with the single exception of
+   * a class being chosen under a full bag, which `handleChooseClass` pushes
+   * explicitly for that reason.
+   *
+   * A string rather than a field-by-field compare, for `turnKey`'s stated
+   * reason: `carried` is replaced rather than spliced (engine/actor.ts says so),
+   * but `equipped` is a live object this file mutates, and a memo holding a
+   * reference to it would compare equal to itself forever.
+   */
+  const inventoryKeyOf = (actor: Actor): string =>
+    JSON.stringify([actor.carried ?? [], actor.equipped ?? {}]);
+
+  /**
+   * THIS VIEWER'S BAG AND DOLL, unconditionally, updating the memo.
+   *
+   * Silent for a socket with no body and for a monster, which cannot open a
+   * panel. Used where the CONTENT of a frame can change without either id list
+   * moving — see `handleChooseClass`.
+   */
+  const sendInventory = (session: Session): void => {
+    const actorId = session.actorId;
+    if (actorId === null) return;
+    const viewer = world.getActor(actorId);
+    if (viewer === undefined || viewer.kind !== 'player') return;
+    send(session.socket, projectInventory(viewer));
+    session.inventoryKey = inventoryKeyOf(viewer);
+  };
+
+  /**
+   * The same frame, ON CHANGE, for the pump loop and for `hello`.
+   *
+   * VIEWER-PRIVATE AND STRUCTURALLY SO: `InventoryMsg` is a `ViewerMsg`, so
+   * `broadcast(projectInventory(...))` does not compile. That is not only
+   * privacy — `CarriedItemView.compare` is a delta against the RECIPIENT'S own
+   * doll, so one shared copy would be arithmetically wrong for everybody but its
+   * author.
+   *
+   * It rides `refreshViewers` rather than being pushed from the four loot verbs,
+   * for the reason `broadcastGroundIfChanged` gives: a bag can also change under
+   * a pump the viewer had nothing to do with — a restore at join, and one day a
+   * monster that steals.
+   */
+  const sendInventoryIfChanged = (session: Session): void => {
+    const actorId = session.actorId;
+    if (actorId === null) return;
+    const viewer = world.getActor(actorId);
+    if (viewer === undefined || viewer.kind !== 'player') return;
+    if (inventoryKeyOf(viewer) === session.inventoryKey) return;
+    sendInventory(session);
+  };
+
+  /**
    * A LINE JUST WENT INTO THE MARGIN: light this player's dot and arrange for it
    * to go out again.
    *
@@ -1809,6 +2111,69 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     points: Readonly<Record<string, number>> | undefined,
   ): { talentPoints?: Readonly<Record<string, number>> } =>
     points === undefined ? {} : { talentPoints: points };
+
+  /**
+   * The paper doll as plain data, IN `SLOT_ORDER`, with the empty slots gone.
+   *
+   * COPIED, NOT ALIASED, and that is not defensive habit:
+   * `SaveStore.scheduleCharacter` holds its snapshot BY REFERENCE
+   * (persist/saves.ts), and `actor.equipped` is a live object the loot verbs in
+   * this file mutate in place. Handing over the live map would let a queued save
+   * file whatever the doll looked like when the disk got round to it rather than
+   * what it looked like when the snapshot was taken — which is the entire reason
+   * `CharacterSnapshot` is plain data at all.
+   *
+   * `SLOT_ORDER` RATHER THAN THE MAP'S OWN ITERATION, so two saves of the same
+   * character produce identical bytes. A `Partial<Record<Slot, string>>` built
+   * by a player pressing buttons has whatever key order that produced, and a
+   * JSON object preserves insertion order — so without this, equipping a coat
+   * then a cap and equipping a cap then a coat would write two different files
+   * for one identical character. saves.ts sorts on the way out for the same
+   * reason; doing it here as well costs nothing and means the snapshot a test
+   * inspects is already stable.
+   *
+   * The `| undefined` is dropped rather than emitted: `Partial<Record<Slot, …>>`
+   * makes every value optional, and a key present with `undefined` would survive
+   * into `JSON.stringify` as a missing key on disk but as a PRESENT key in the
+   * memo comparison — two spellings of empty, which is exactly what
+   * `InventoryMsg.equipped` refuses on the wire.
+   */
+  const wornRecord = (equipped: Partial<Record<Slot, string>>): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const slot of SLOT_ORDER) {
+      const id = equipped[slot];
+      if (id !== undefined) out[slot] = id;
+    }
+    return out;
+  };
+
+  /**
+   * `{ carried }` and `{ equipped }` when the body has something to say, and
+   * NOTHING AT ALL when it does not.
+   *
+   * THE SAME ABSENT-IS-NOT-EMPTY DISCIPLINE `progressionPoints` states, applied
+   * to the two fields where it bites hardest. `[]`/`{}` is a CLAIM — "this
+   * character owns nothing" — and `undefined` is "this build cannot say". The
+   * save layer reads them completely differently: `fileFor` writes
+   * `snapshot.carried ?? binding.carried`, so an absence leaves the disk exactly
+   * as it found it while an empty array OVERWRITES a returning player's bag with
+   * nothing.
+   *
+   * AN ABSENT FIELD IS THE ANSWER FOR AN M2-ERA BODY, not for an empty one. A
+   * player who genuinely dropped everything has `carried: []` on the actor — the
+   * loot verbs always write an array, never delete the field — so the claim is
+   * made and the disk is emptied, which is correct. The undefined case is a
+   * fixture, the e2e harness, and any body that has never touched an item.
+   *
+   * TWO SEPARATE SPREADS RATHER THAN ONE OBJECT, because the two are
+   * independently absent: a character can be wearing a coat and carrying nothing.
+   */
+  const loadoutFields = (
+    actor: Actor,
+  ): { carried?: readonly string[]; equipped?: Readonly<Record<string, string>> } => ({
+    ...(actor.carried === undefined ? {} : { carried: [...actor.carried] }),
+    ...(actor.equipped === undefined ? {} : { equipped: wornRecord(actor.equipped) }),
+  });
 
   const snapshotPlayers = (): CharacterSnapshot[] => {
     const snapshots: CharacterSnapshot[] = [];
@@ -1877,6 +2242,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ...(classChoiceOwed.has(actor.id)
           ? {}
           : progressionPoints(engine.talentPointsOf?.(actor.id))),
+        // ═══ AND THE BAG AND THE DOLL, UNDER THE SAME PROVISIONAL-CLASS RULE ═══
+        // Read straight off the body, for the reason engine/actor.ts gives at
+        // both fields: this pass cannot reach an equipment engine any more than
+        // it can reach the talent one, which is why `carried` and `equipped`
+        // live on `PlayerActor` at all.
+        //
+        // OMITTED ENTIRELY WHILE THE CLASS IS PROVISIONAL, exactly as
+        // `talentPoints` is three lines up and for a version of the same reason.
+        // A body in `classChoiceOwed` is filed with `classId: UNASSIGNED_CLASS`
+        // — the file is saying "nobody has chosen yet" — and a file that named
+        // no class and a full seven-piece kit would be internally inconsistent
+        // in the one direction that matters: `handleChooseClass` RECOMPOSES the
+        // sheet when the answer lands, so gear filed against a character who
+        // does not exist yet is gear whose contribution nothing has agreed to.
+        //
+        // WHAT THAT COSTS, PLAINLY: a verified player who picks something up
+        // BEFORE answering the chooser loses it if they reconnect before
+        // answering. The window is small by construction — the shipped client's
+        // input gates all return early while the picker is up — and the
+        // alternative is worse, because the absence is read as `?? binding` and
+        // therefore leaves the disk exactly as it found it rather than writing a
+        // claim. An ANONYMOUS body is in this set for its whole session and
+        // loses nothing at all: it has no binding and no file.
+        ...(classChoiceOwed.has(actor.id) ? {} : loadoutFields(actor)),
       });
     }
     return snapshots;
@@ -2309,6 +2698,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // reaches nobody's panel until they spend a point, which they cannot,
       // because the panel still says they have none.
       sendProgressIfChanged(session);
+      // THE FOURTH MEMOISED VIEWER FRAME, and it rides this loop for the same
+      // reason: a bag changes under a pump the viewer did not cause. A restore
+      // at join fills one before the first frame goes out, and the day something
+      // takes an item off a player it will do so mid-sweep. Cheap when nothing
+      // moved — one JSON of two small values and a string compare.
+      sendInventoryIfChanged(session);
     }
   };
 
@@ -2503,6 +2898,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // follow the `attack` step that says what it hit, or a client draws the
     // impact against a sky that has already been cleared.
     broadcastProjectilesIfChanged();
+    // THE FOURTH SNAPSHOT, and it moves for reasons that are not all verbs. A
+    // pickup and a drop change it directly, a monster dying SPILLS onto it
+    // inside this pump, and a party wipe clears the whole table
+    // (turn-engine.ts:536). Only a memo in the pump sees all four; a push wired
+    // into the two loot verbs would be silently blind to the other two, and the
+    // symptom would be a corpse's drop nobody can see. See
+    // `broadcastGroundIfChanged`.
+    broadcastGroundIfChanged();
 
     // Unicast, and each socket learns only about its own. This is deliberately
     // unconditional rather than gated on "did a talent happen": `actBase` ticks
@@ -2791,6 +3194,147 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * no pool object and no second arithmetic. The log line below is the other
    * half of what that paragraph asks for.
    */
+  /**
+   * One string off a character file, narrowed to a real slot, or undefined.
+   *
+   * `CharacterRestore.equipped` is `Record<string, string>` — the file's keys are
+   * whatever was written, and a build that renamed a slot leaves a key this one
+   * has never heard of. `SLOT_ORDER` is the whole of `Slot`
+   * (protocol.ts's `_MissingFromSlotOrder` proves it at compile time on the wire
+   * side and content/items.ts is the server's own copy), so membership in it is
+   * a sound narrowing rather than a cast.
+   */
+  const asSlot = (key: string): Slot | undefined =>
+    SLOT_ORDER.find((candidate) => candidate === key);
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE BAG AND THE PAPER DOLL, ONTO THE BODY, AND THEN THE SHEET RECOMPOSED.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * CALLED FROM `restoreProgression`, WHICH RUNS AFTER `engine.attachClass`, AND
+   * THAT ORDERING IS LOAD-BEARING FOR A DIFFERENT REASON THAN THE TALENT ONE.
+   * `attachClass` does not touch `baseCombat` — `world.addPlayer(overlay)`
+   * already set it — but `handleChooseClass` DOES, through
+   * `reclothePlayer`, which writes the baseline and recomposes. Restoring gear
+   * before the class is settled would compose a sheet against a baseline that is
+   * about to be replaced, and the replacement runs its own recompose, so the
+   * result would be right by accident. Doing it after means one composition,
+   * from the baseline the body will actually keep.
+   *
+   * ═══ WATCH `applyRestore`'S HP CLAMP, WHICH RUNS EARLIER AND CANNOT MOVE ═══
+   * `applyRestore` does `Math.min(actor.maxHp, …)` while the body is still wearing
+   * nothing. NO ITEM IN THIS CATALOGUE CONTRIBUTES `maxHp` — `AdditiveMods` is
+   * `CombatMods` and hp is not one of its fields, so an item cannot raise a
+   * ceiling even by accident — which is the only reason that clamp is safe where
+   * it is. THE DAY ONE DOES, that clamp runs against the BARE-CLASS ceiling and
+   * silently shaves hit points off a geared character on every single load, with
+   * nothing failing anywhere. The fix would be to move the clamp below this call,
+   * not to fix it up afterwards.
+   *
+   * ═══ REPAIR, NEVER REJECT — AND RE-CHECKED EVEN THOUGH THE BRIDGE CHECKED ═══
+   * persist/saves.ts's `parseCarried` and `parseEquipped` already drop unknown
+   * ids, wrong-slot entries and duplicates, and record each in `problems`. This
+   * re-checks anyway and cheaply, because `PersistPort` is an INTERFACE: a test
+   * double, the e2e harness or a future store may hand back anything, and a
+   * gateway that trusted it would put an id the catalogue has never heard of
+   * onto a live body — where `wornOf` would skip it in the fold while
+   * `projectInventory` drew it in the panel, so the two would disagree about what
+   * a character is wearing.
+   *
+   * ═══ THE CAP APPLIES ON THE WAY IN TOO ═══
+   * A file written by a build with a larger `INVENTORY_CAP` would otherwise put
+   * a body over the limit that `handleUnequip` then tests against, and the player
+   * would find they could take a coat off exactly never. The overflow is dropped
+   * and logged rather than refused; a character file must never be the reason
+   * somebody cannot play tonight.
+   */
+  const restoreLoadout = (actor: Actor, restore: CharacterRestore): void => {
+    // A monster has no file and no inventory. Narrowed rather than asserted, for
+    // the same reason `restoreProgression` narrows.
+    if (actor.kind !== 'player') return;
+    // ABSENT MEANS "THIS PORT CANNOT SAY", so the body keeps whatever it has —
+    // which for a fresh body is nothing. It must never be read as "this
+    // character owns nothing", because that is what `[]` and `{}` say.
+    if (restore.carried === undefined && restore.equipped === undefined) return;
+
+    const dropped: string[] = [];
+
+    // THE DOLL FIRST, so the bag can refuse an id that is already being worn.
+    // An id in both lists keeps the EQUIPPED copy — the same precedence
+    // persist/saves.ts applies on the way in, restated here rather than assumed.
+    const worn: Partial<Record<Slot, string>> = {};
+    const wornIds = new Set<string>();
+    for (const [key, id] of Object.entries(restore.equipped ?? {})) {
+      const slot = asSlot(key);
+      const item = itemById(id);
+      // A WRONG-SLOT ENTRY IS DROPPED, not demoted to the bag and not re-filed
+      // into the slot the catalogue names. persist/saves.ts's `parseEquipped`
+      // considered and rejected both repairs in writing: re-filing changes a
+      // character's stats without saying so, and re-slotting needs to know
+      // whether the target slot is free, which is a question about entries still
+      // being repaired in the same pass.
+      if (slot === undefined || item === undefined || item.slot !== slot) {
+        dropped.push(id);
+        continue;
+      }
+      if (worn[slot] !== undefined) {
+        dropped.push(id);
+        continue;
+      }
+      worn[slot] = id;
+      wornIds.add(id);
+    }
+
+    const bag: string[] = [];
+    for (const id of restore.carried ?? []) {
+      // `carried` IS A SET, not a bag of duplicates — persist/saves.ts keeps the
+      // first occurrence because a saved id carries no per-instance handle. The
+      // same rule is enforced here and in `handlePickup`, so a party that finds
+      // two identical pairs of trousers keeps one and learns that immediately
+      // rather than at the next reload.
+      if (itemById(id) === undefined || wornIds.has(id) || bag.includes(id)) {
+        dropped.push(id);
+        continue;
+      }
+      if (bag.length >= INVENTORY_CAP) {
+        dropped.push(id);
+        continue;
+      }
+      bag.push(id);
+    }
+
+    if (restore.carried !== undefined) actor.carried = bag;
+    if (restore.equipped !== undefined) actor.equipped = worn;
+
+    // ═══ AND THE SHEET, OR THE GEAR IS DECORATION ═══
+    // `equipped` is owned by the equipment verbs and `combat` by
+    // `recomposeCombat` — this is a write to the first, so the second has to
+    // run. Without it a restored Watchman wears a full kit on the panel and
+    // fights with the bare class sheet, which is Trap 1 arriving through the
+    // load path rather than through the catalogue.
+    //
+    // `opts.effects ?? null` because a server with no status system wired in
+    // genuinely cannot speak for stage three, and `null` carries the live flags
+    // across unchanged — which is exactly right, since nothing in stages one and
+    // two can alter a flag. Same argument world.ts makes at `reclothePlayer`.
+    recomposeCombat(actor, opts.effects ?? null, ITEM_CATALOGUE);
+
+    if (dropped.length > 0) {
+      // LOGGED RATHER THAN SILENT, on the shape `applyTalentPoints`'s refund
+      // warning uses: an id that did not survive the load is the only evidence
+      // that an item was renamed or deleted between two builds.
+      app.log.warn(
+        { actorId: actor.id, itemIds: dropped },
+        'character file names items this build cannot place — they are dropped',
+      );
+    }
+    app.log.info(
+      { actorId: actor.id, carried: bag.length, equipped: Object.keys(worn).length },
+      'restored a character’s inventory and equipment',
+    );
+  };
+
   const restoreProgression = (actor: Actor, restore: CharacterRestore): void => {
     // A monster has no progression. Narrowed rather than asserted: `level`,
     // `xp` and `unspentPoints` live on `PlayerActor` alone.
@@ -2806,6 +3350,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (restore.xp !== undefined && Number.isFinite(restore.xp)) {
       actor.xp = Math.max(0, restore.xp);
     }
+
+    // ═══ THE BAG AND THE DOLL, AND IT IS ABOVE THE TALENT LEDGER ON PURPOSE ═══
+    // Nothing about equipment depends on a talent sheet, and the branch below
+    // that handles "no sheet at all" RETURNS EARLY — so a build with no talent
+    // engine (the e2e harness, a fixture) would silently restore no gear if this
+    // sat under it. Level and xp are written first only because `restoreLoadout`
+    // logs against them.
+    restoreLoadout(actor, restore);
 
     // THE SHEET, through the injected seam and never by importing the talent
     // engine. An absent method and an absent sheet both answer undefined, which
@@ -3411,6 +3963,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // either: that frame is the level and the actors, and an orb is neither.
     // Silent when nothing is in the air — see `sendProjectilesIfAny`.
     sendProjectilesIfAny(session.socket);
+
+    // THE FLOOR, unicast, and for a longer-lived version of the reason directly
+    // above: an orb is a three-turn object and a coat on the floor lasts the
+    // rest of the delve. A player who reconnects after a fight would otherwise
+    // see a bare floor until the next time somebody dropped or took something,
+    // which out of combat can be the whole evening. `welcome` cannot carry it —
+    // that frame is the level and the actors, and a ground item is neither.
+    // Silent on an empty floor; see `sendGroundIfAny`.
+    sendGroundIfAny(session.socket);
+
+    // THEIR OWN BAG AND DOLL, on the memo, which is seeded EMPTY. So a
+    // brand-new character gets nothing (they own nothing, and the client already
+    // believes that) while a returning one whose file carried a kit gets the
+    // frame here — after `restoreProgression` has put the gear on the body and
+    // recomposed the sheet, which is the only order in which the comparison rows
+    // are computed against the sheet the player is actually wearing.
+    sendInventoryIfChanged(session);
 
     // THE PARTY PANE, unicast, outside the on-change rule for the same reason
     // as everything above it: this socket has seen nothing. A reconnecting
@@ -4212,6 +4781,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendLoadout(session);
     sendHotbarIfChanged(session);
 
+    // ═══ AND THE INVENTORY PANEL, WHICH IS THE ONE FRAME THE MEMO CANNOT SEE
+    // ═══
+    // `sendInventoryIfChanged` keys on the two ID LISTS, and a class choice
+    // moves NEITHER — the bag and the doll are exactly what they were a
+    // millisecond ago. What changed is `baseCombat`: `reclothePlayer` above
+    // wrote the chosen class's sheet and recomposed, so every
+    // `CarriedItemView.compare` row is now a delta against a different baseline.
+    // A Watchman's coat is +4 Armour on a Watchman and +4 Armour on an Alchemist
+    // too, but the six primaries and the three saves it moves are rescaled
+    // against different totals, and `rescaleCombatStats` FLOORS — so the numbers
+    // genuinely differ.
+    //
+    // GUARDED ON HAVING SOMETHING, so the common case — somebody finishing
+    // character creation with an empty bag — sends no frame at all and the
+    // pre-loot frame set for that path is byte-identical.
+    if ((body?.carried?.length ?? 0) > 0 || Object.keys(body?.equipped ?? {}).length > 0) {
+      sendInventory(session);
+    }
+
     // ═══ THE BOARD, BECAUSE `sprite` AND `maxHp` TRAVEL ONLY ON `ActorView` ═══
     // No delta carries either one. This is the same deliberately dumb answer
     // `needsFullResync` gives and the same one the rename path in `hello` gives
@@ -4508,6 +5096,607 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // still moving, and `snapshotPlayers` builds a fresh `CharacterFile` on
     // every call precisely so that neither path can file a half-written state.
     saveNow('spend');
+  };
+
+  // -------------------------------------------------------------------------
+  // v10 — THE FOUR LOOT VERBS
+  //
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ALL FOUR SPEND THE TURN, AND *THEN* PUMP. THE ORDER IS ToME'S.
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // `inspect`, `choose_class` and `spend_point` are deliberately non-pumping,
+  // and test/server/gateway-progression.test.ts states the reason: *"If it
+  // pumped, a player could bank a levelled talent AND a free monster turn from
+  // one click."* Loot is the case that line was drawing against. A FREE pickup
+  // lets a player loot a whole room mid-fight while every monster stands still —
+  // and unlike a talent point, which is at least bounded by levels earned, the
+  // floor can hold as many things as have died on it.
+  //
+  // ═══ PUMPING IS NOT CHARGING, AND CONFUSING THE TWO SHIPPED THE EXPLOIT ═══
+  // THIS COMMENT USED TO SAY "a pickup costs a turn" AND THE CODE DID NOT DO IT.
+  // Calling `engine.pump()` does not charge the caller: `actPlayer`
+  // (engine/scheduler.ts) only reaches `spendTurn` when `actor.pendingIntent`
+  // is non-null, and a verb that queues no intent queues nothing to resolve.
+  // Worse, mid-fight the pump did not even advance anything — a sender holding
+  // full energy with a null intent IS the blocking set (engine/barrier.ts
+  // `isBlocking`), so `tickLevel` returned `parked` at once and the verb cost
+  // nothing AND moved nothing. A player at 5 hp could put on a seven-piece kit
+  // between two swings of a wraith that never got to swing.
+  //
+  // `spendLootTurn` below is the fix, and it is four lines because the engine
+  // already had the seam: a loot action IS a turn spent, `TurnEngine.hold` is
+  // the engine's existing word for "spend this turn on something that is not a
+  // move and not an attack", and the resulting `held` event maps to NOTHING on
+  // the wire (turn-engine.ts's event bridge drops it), so the world advances,
+  // the barrier releases and no client learns a new vocabulary.
+  //
+  // Pumping also means each verb runs `unparkOnCommand` for free, on
+  // `handleMove`'s stated terms: somebody reaching for a coat is somebody at the
+  // keyboard, so the class-choice park comes off before the ruling rather than
+  // after it.
+  //
+  // ═══ THE PANEL IS NOT A MODAL AND NOTHING HERE IS PARKED ═══
+  // Written down because the next reader will look for a barrier interaction and
+  // there is none. src/client/ui/charsheet.ts:5-27 settled this shape twice
+  // already — *"IT IS A DOCK PANEL, NOT A MODAL, AND THAT IS THE WHOLE
+  // DESIGN… Five other people are at the barrier"* — and the talent panel
+  // followed it. The server is never told the inventory panel is open, so
+  // reading it cannot stall the world; the four verbs spend a turn and advance
+  // the world exactly as a move does (see `spendLootTurn`), so using it cannot
+  // be farmed — and a player who loots while the party waits RELEASES the
+  // barrier by doing so, rather than holding it. Both halves of the barrier
+  // question are answered without a single line of barrier code.
+  //
+  // ═══ THE REFUSAL PATH IS CHEAP, AND DELIBERATELY QUIET ═══
+  // The 20/s token bucket is per-SOCKET and does not distinguish a `pickup` from
+  // a `ping`, so spam-clicking a contested item is entirely inside budget. Every
+  // refusal below is therefore one `sendError` and a return: no `app.log.info`,
+  // no broadcast, no allocation beyond the message. The ONE exception is the
+  // full-bag notice, which is deliberately loud and is rate-limited by the game
+  // turn rather than by the socket — see `noteBagFull`.
+  // -------------------------------------------------------------------------
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * "WHOSE BODY IS THIS, AND MAY IT TOUCH AN ITEM AT ALL?" — the guard all four
+   * verbs share, in the order `handleSpendPoint` established.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE SENDER IS RESOLVED FROM THE SESSION AND NEVER FROM THE FRAME. None of
+   * the four schemas has a field that could name a person — `strictObject`
+   * REJECTS a smuggled `actorId` rather than sanitising it into a legal frame,
+   * which matters more here than almost anywhere: a sanitised `drop` would put
+   * somebody else's coat on the floor for the room to take.
+   *
+   * THE ORDER IS `handleSpendPoint`'S AND FOR ITS REASONS:
+   *   1. NO BODY -> `internal`, first, because nothing below it is undoable.
+   *   2. NOT ON YOUR FEET -> `not_your_turn`. `!alive` is Downed AND Erased both
+   *      (`goDown` sets `alive = false` beside `hp = 0`, engine/downed.ts), so
+   *      one read covers the pair without net/ learning the survival table's
+   *      shape. gateway.ts's class-chooser records the analogous ruling: a body
+   *      on the floor is not merely inconvenienced, it is carrying a
+   *      `DownedRecord` that `revive`/`standUp` will read back, and rewriting
+   *      what it is wearing while it lies there is the same class of corruption.
+   *      It is a "not now" and not a "never" — the coat is still on the tile the
+   *      moment somebody picks them up.
+   *   3. A MONSTER -> `internal`. Unreachable (a socket owns a player body), and
+   *      it is what NARROWS the union so `carried` is reachable as a player's
+   *      rather than being asserted away.
+   *
+   * @returns the body, or undefined when an error has ALREADY been sent.
+   */
+  const lootActor = (session: Session, verb: string): PlayerActor | undefined => {
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, `send hello before ${verb}`);
+      return undefined;
+    }
+    // See `handleMove`: reaching for a coat is somebody at the keyboard, so the
+    // class-choice park comes off BEFORE the ruling — a refused pickup is still
+    // presence.
+    unparkOnCommand(session);
+
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return undefined;
+    }
+    if (!body.alive) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        `${verb} refused: you are on the floor — get back on your feet first`,
+      );
+      return undefined;
+    }
+    if (body.kind !== 'player') {
+      sendError(session.socket, ErrorCode.Internal, 'that body cannot carry anything');
+      return undefined;
+    }
+    return body;
+  };
+
+  /** This body's bag as a plain array. Absent and empty are the same to a reader. */
+  const bagOf = (body: PlayerActor): readonly string[] => body.carried ?? [];
+
+  /** Is this id already on the body, worn or carried? `carried` IS A SET. */
+  const alreadyOwns = (body: PlayerActor, itemId: string): boolean =>
+    bagOf(body).includes(itemId) || SLOT_ORDER.some((slot) => body.equipped?.[slot] === itemId);
+
+  /**
+   * Which GAME TURN each player was last told their bag is full.
+   *
+   * ═══ THE ONE REFUSAL THAT IS DELIBERATELY LOUD, AND THEREFORE THE ONE THAT
+   *     NEEDS A BRAKE ═══
+   * A full bag is announced in the Case Log rather than answered privately,
+   * because the party is standing on the pile and the useful information is
+   * "somebody else take this" — the same social plumbing the pickup line itself
+   * is. But `broadcastRecordLine` goes to EVERYONE, and the token bucket is
+   * per-socket at 20/s, so a client in a loop would turn one refusal into twenty
+   * broadcasts a second: an amplifier, which is precisely what
+   * `RATE_NOTICE_INTERVAL_MS` exists to prevent one directory over.
+   *
+   * KEYED ON THE GAME TURN AND NOT ON A WALL CLOCK, and that is the better brake
+   * here: a refused pickup does not pump, so the turn cannot advance until the
+   * player does something that moves the world. One notice per full bag per
+   * turn is therefore exactly "tell them once, and again if the situation has
+   * genuinely changed".
+   */
+  const bagFullNoticeTurn = new Map<string, number>();
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A LOOT VERB IS A SAVE POINT — AND ONLY ONE OF THE FOUR IS A ONE-WAY DOOR.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `pickup` IS THE FORCING CASE AND IT IS THE ONLY IMMEDIATE FLUSH. GROUND
+   * ITEMS ARE DELIBERATELY NOT PERSISTED — decision (e) and gateway.ts's own
+   * `CharacterRestore` note rule the floor unrestorable, because the world is
+   * rebuilt from its seed at boot and a saved tile is a coordinate in a level
+   * that no longer exists in the same state. So an unsaved pickup does not put
+   * the coat back on the floor; it DESTROYS it. The item left a place that
+   * survives nothing and entered a place that survives only if the flush runs.
+   *
+   * ═══ THE OTHER THREE RIDE THE DEBOUNCE, AND THAT IS A CORRECTION ═══
+   * THIS USED TO FLUSH ALL FOUR, on the stated grounds that "the exposure is
+   * identical to `spend_point`'s … bounded by the same 20/s token bucket". That
+   * argument was wrong in its second half and the difference is the whole
+   * problem: the bucket bounds the RATE, not the TOTAL, and `spend_point`'s
+   * total is FINITE — a player has as many spends as they have earned levels.
+   * `equip`/`unequip` and `drop`/`pickup` are reversible pairs and can be
+   * alternated forever. `saveNow` snapshots EVERY player in the world and hands
+   * the array to `savePlayersNow`, which writes one file per bound player
+   * through `runExclusive` (persist/saves.ts) — a per-path promise chain that
+   * COALESCES NOTHING. Six bound players alternating equip/unequip is 120
+   * atomic write-plus-rename cycles a second, each also copying the previous
+   * file to `.bak`; on Windows with a scanner in the path a single rename can
+   * take the retry backoff into the hundreds of milliseconds, the chain grows
+   * without bound, and `flush()` then burns its pass budget at shutdown and logs
+   * *"flush: gave up draining"* — the last writes of an evening dropped by the
+   * very mechanism added to make loot durable.
+   *
+   * `scheduleCharacter` (the debounced path) REPLACES its pending snapshot per
+   * path, so the same loop collapses to one write per debounce window.
+   *
+   * ═══ WHY THE THREE ARE SAFE TO DEBOUNCE, ONE AT A TIME ═══
+   *   `equip` / `unequip` — an id moves between two PERSISTED places on the same
+   *     body. A crash inside the window restores the id where it was; the player
+   *     re-clicks.
+   *   `drop` — the id leaves a persisted place for an UNPERSISTED one. A crash
+   *     inside the window therefore leaves the character file still claiming the
+   *     item, which is a RECOVERY and not a loss: the ground copy dies with the
+   *     process either way (see the note below), so the un-flushed file is the
+   *     kinder of the two outcomes. Flushing immediately is what makes the loss
+   *     permanent, which is the opposite of what a flush is for.
+   *
+   * ═══ WHAT A DROPPED ITEM ACTUALLY COSTS, STATED PLAINLY ═══
+   * `World.addGroundItem` state is never persisted, and `resetFloor`
+   * (turn-engine.ts) re-rolls the ENCOUNTER's drops off `world.lootRng` — it
+   * does not restore anything a player put down. SO A DROPPED ITEM IS DESTROYED
+   * OUTRIGHT BY A SERVER RESTART AND BY A FLOOR RESET, and no flush on this path
+   * can prevent it. (An earlier draft of this docblock said `drop` "moves one
+   * into a place that regenerates"; it does not.) If that loss ever stops being
+   * acceptable, the smallest honest mitigation is to return ground items to
+   * their last owner's `carried` during shutdown, before `store.close()` —
+   * bounded, no new SchemaKind, and it still does not make the floor restorable.
+   *
+   * THE LABEL IS NOT IN `REASON_BY_LABEL` (persist/saves.ts) AND FALLS BACK TO
+   * `SaveReason.Manual`, which is honest: a player deliberately did something.
+   * Adding a member is an edit to saves.ts, which is outside this change's
+   * reach, and `join` set the precedent that a label is reused rather than
+   * multiplied.
+   */
+  const saveLoot = (verb: 'pickup' | 'equip' | 'unequip' | 'drop'): void => {
+    if (verb === 'pickup') saveNow('loot');
+    else queueSave('loot');
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE TURN THE VERB COSTS. ALL FOUR, AFTER THE CHANGE AND BEFORE THE PUMP.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ WHY IT IS `engine.hold` AND NOT A NEW INTENT KIND ═══
+   * D1 (DECISIONS.md) makes `spendTurn` in the scheduler the ONE spender of
+   * energy, so net/ cannot charge anybody directly and must not try. What it can
+   * do is what every other acting verb does: put an intent on the body and let
+   * the pump resolve it. `TurnEngine.hold` is exactly that seam — it submits the
+   * shared `HOLD_INTENT`, `actPlayer` resolves it, `spendTurn` charges
+   * ENERGY_TO_ACT, and the monsters get their turn. It is already required on
+   * the port, already implemented by every engine in the tree and already
+   * exercised by the `hold` verb, so this adds no new surface to get wrong.
+   *
+   * AND THE `held` EVENT IT PRODUCES IS INVISIBLE. turn-engine.ts's event bridge
+   * maps `held` to nothing at all (it sits in the same `break` arm as `spilled`
+   * and `refunded`), so nothing is narrated and no client learns a new word. The
+   * only observable consequence is the correct one: the world moved on.
+   *
+   * ═══ AFTER THE MUTATION, WHICH IS UPSTREAM'S OWN ORDER ═══
+   *   `Actor:doWear`    — `wearObject` then `useEnergy` (Actor.lua:7346-7352)
+   *   `Actor:doTakeoff` — `takeoffObject` then `useEnergy` (Actor.lua:7415-7420)
+   *   `Actor:doDrop`    — `dropFloor` then `useEnergy` (Actor.lua:7316-7323)
+   *   `Player:playerPickup` — `pickupFloor` then `useEnergy` (Player.lua:1313-1315)
+   * All four charge only on the SUCCESS path, and so does this: every refusal
+   * above returns before reaching here, so a refused pickup is free — which is
+   * the refund rule stated for a verb that never became an intent.
+   *
+   * ToME's ONE exemption is `quick_wear_takeoff` (Actor.lua:7352, :7420), an
+   * attribute that buys wear/takeoff back as free actions and costs a 1-turn
+   * `SWIFT_HANDS_CD` effect for it. We have no such attribute and no talent that
+   * grants one; when something wants it, this is the line it turns off, and it
+   * must be a property of the BODY (a talent, an item) rather than of the verb.
+   * Note that `doDrop` is NOT exempted even there — upstream charges for putting
+   * something down, and so do we.
+   *
+   * ═══ WHAT IT DOES NOT CLOSE, MEASURED AND WRITTEN DOWN ═══
+   * The charge lands on the SUBMIT and the resolution follows the barrier, so a
+   * player whose PARTY is parked on somebody else gets a narrow discount. Two
+   * players, engagement up, Alex still owing a decision: Ren equips, pays in
+   * full (energy 1000 -> 0) and the clock does not move (tick 20, gameTurn 2,
+   * identical before and after) because `tickLevel` returns `parked` while
+   * anybody blocks. Ren's SECOND and later swaps in that window then queue one
+   * shared pending hold — `pendingIntent` is a single slot — so N swaps behind a
+   * thinking teammate cost 2 turns rather than N. The world is frozen for the
+   * monsters too, so nothing is gained against them; what is gained is swaps per
+   * turn, and only while a friend is deliberating. Closing it means refusing a
+   * loot verb from a body that has already committed this turn, which is a
+   * game rule and therefore an ENGINE seam (`TurnEngine` has no "can this actor
+   * act now?" method today) rather than four `body.pendingIntent` reads in net/.
+   * Left open deliberately, stated rather than discovered.
+   *
+   * ═══ THE REFUSAL IS UNREACHABLE BY CONSTRUCTION, AND STILL NOT SWALLOWED ═══
+   * `hold` refuses only `no_actor`, and `lootActor` proved the body exists and is
+   * on its feet a few lines earlier. Nothing between the two can change that:
+   * non-negotiable 2 means there is no await anywhere in this path. It is logged
+   * rather than ignored because the day that stops being true, the symptom is a
+   * verb that has quietly gone free again — the exact bug this function exists
+   * to close, and the one that got shipped once already by being invisible.
+   */
+  const spendLootTurn = (body: PlayerActor, verb: string): void => {
+    const charged = engine.hold(body.id);
+    if (!charged.ok) {
+      app.log.warn({ actorId: body.id, verb, reason: charged.reason }, 'loot: turn not charged');
+    }
+  };
+
+  /** Say it once a turn, to the room. See `bagFullNoticeTurn`. */
+  const noteBagFull = (body: PlayerActor): void => {
+    const turn = world.turn.clock.gameTurn;
+    if (bagFullNoticeTurn.get(body.id) === turn) return;
+    bagFullNoticeTurn.set(body.id, turn);
+    broadcastRecordLine(`${nameOf(body.id)}'s evidence bag is full — nothing more will fit.`);
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `pickup` — THE FRAME WITH NO FIELDS AT ALL, AND THAT IS ITS WHOLE SECURITY
+   * MODEL.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `PickupSchema` is `{ v, t }` and `strictObject`. THERE IS NO COORDINATE ON
+   * THE WIRE, so there is no adjacency check to get wrong: the server reads the
+   * sender's OWN live x/y off the body it resolved from the session and takes
+   * index 0 of that tile's pile. protocol.ts:63-69 says a hand-crafted frame
+   * from a devtools console is the normal case to design for; here there is
+   * nothing to craft.
+   *
+   * A `groundId` WOULD HAVE BEEN THE SAME MISTAKE IN A NEW COSTUME. Every
+   * `GroundItemView.id` arrives in the `ground` BROADCAST, which is the whole
+   * floor, so it would read as safe by the same tests `party`'s `targetId`
+   * passes — and it would still let a patched client name a pile it is nowhere
+   * near. The floor frame is broadcast; the taking is not.
+   *
+   * ═══ INDEX 0, BECAUSE THE TOP OF THE PILE MUST MEAN ONE THING ═══
+   * `World.itemsAt` returns insertion order and world.ts:516-522 states the
+   * contract in its own words: PICKUP TAKES INDEX 0. `spillOrderOf`
+   * (turn-engine.ts) is the one implementation of "what order is a pile in", and
+   * the whole reason it exists is that a hash-ordered spill gives two replays of
+   * one seed the same items in a different floor order — and therefore a
+   * different item under the same keypress.
+   *
+   * ═══ THE TAKE IS ONE INDIVISIBLE SYNCHRONOUS STEP ═══
+   * Read the tile, remove from the floor, add to the bag — no await between any
+   * of them, which is what CLAUDE.md non-negotiable 2 buys and why DOUBLE-TAKE
+   * IS IMPOSSIBLE BY CONSTRUCTION rather than by a lock. Two players on one tile
+   * both sending `pickup` are two separate synchronous handler invocations: the
+   * second one finds the id gone and gets a cheap refusal. `removeGroundItem`'s
+   * boolean answer is checked rather than discarded precisely so that the day
+   * anything DOES interleave, the failure is a refusal and not a duplicated item.
+   *
+   * ═══ AND IT REFUSES AN ID THE BODY ALREADY OWNS ═══
+   * `carried` IS A SET. persist/saves.ts keeps the first occurrence of an id and
+   * drops later ones, because a saved id carries no per-instance handle — so
+   * without this check a party that finds two identical pairs of trousers would
+   * appear to keep both until the next reload, and the loss would present as "my
+   * second cap vanished when I relogged" with the bug looking like it is in
+   * persistence when it is here.
+   */
+  const handlePickup = (session: Session): void => {
+    const body = lootActor(session, 'pickup');
+    if (body === undefined) return;
+
+    // THE SENDER'S OWN TILE. Not a tile from the frame — there is none.
+    const pile = world.itemsAt(body.x, body.y);
+    const top = pile[0];
+    if (top === undefined) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'there is nothing to pick up here');
+      return;
+    }
+
+    const item = itemById(top.itemId);
+    if (item === undefined) {
+      // A content reload deleted an authored item out from under a live floor.
+      // Answered rather than swallowed, and the item is LEFT WHERE IT IS: a
+      // silent removal would delete somebody's drop to tidy up after a deploy.
+      sendError(session.socket, ErrorCode.Internal, 'that item is not in this build');
+      return;
+    }
+
+    if (alreadyOwns(body, top.itemId)) {
+      sendError(session.socket, ErrorCode.BadMessage, `you already have a ${item.name}`);
+      return;
+    }
+
+    const bag = bagOf(body);
+    if (bag.length >= INVENTORY_CAP) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'your evidence bag is full');
+      // THE LOUD HALF, once a game turn — see `noteBagFull`. Somebody else on
+      // this tile can take it, and the only way they learn that is if the
+      // transcript says so.
+      noteBagFull(body);
+      return;
+    }
+
+    // ═══ ONE STEP, NO AWAIT, NOTHING BETWEEN THEM ═══
+    if (!world.removeGroundItem(top.id)) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+      return;
+    }
+    // REPLACED, NEVER SPLICED. engine/actor.ts states the rule at the field: a
+    // live array somebody mutated is how two players end up sharing a coat.
+    body.carried = [...bag, top.itemId];
+
+    // ═══ THE TRANSCRIPT IS THE WHOLE OF THE OWNERSHIP RULE ═══
+    // The pile is unowned and the first pickup wins — a DEVIATION with no
+    // upstream citation, because ToME is single-player and `Actor:die` calls
+    // `game.level.map:addObject` with no owner and no party concept. What that
+    // rule costs is that an item can be sniped by the fastest clicker, and the
+    // answer is social rather than mechanical: a line naming who took what, so
+    // the transcript settles the argument afterwards. Without this line the rule
+    // is just a race nobody can audit.
+    broadcastRecordLine(`${nameOf(body.id)} picks up the ${item.name}.`);
+
+    // AND IT COSTS THE TURN — Player.lua:1313-1315 charges for exactly this, on
+    // exactly this path. See `spendLootTurn`.
+    spendLootTurn(body, 'pickup');
+    // IMMEDIATE, AND THIS IS THE ONE VERB THAT FORCES IT — see `saveLoot`: the
+    // floor is not persisted, so an unsaved take destroys the item rather than
+    // putting it back. The other three ride the debounce, for the reasons argued
+    // there. Before the pump, because what is worth keeping is the state the
+    // player just created and not whatever the barrier does about it.
+    saveLoot('pickup');
+    // The floor frame and the bag frame both ride the pump's memos — see
+    // `broadcastGroundIfChanged` and `refreshViewers`.
+    pumpAndBroadcast();
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `equip` — "PUT THIS ON." IT NAMES AN OBJECT, NEVER A SUBJECT, NEVER A SLOT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE ITEM IS RESOLVED AGAINST THIS ACTOR'S OWN `carried` AND NOTHING ELSE, so
+   * there is no cross-inventory lookup table for a forged id to reach into: an
+   * id the sender does not hold is simply not found in their own list, and the
+   * worst a made-up one achieves is a refusal. That is a stronger property than
+   * an ownership CHECK, because there is no query here that could be written to
+   * span two players.
+   *
+   * THE DESTINATION SLOT IS NOT ON THE WIRE. `Item.slot` is authored in
+   * content/items.ts — a coat goes on the body and there is nowhere else it
+   * could go — so a `slot` field would be a client asserting authored content
+   * and the only thing the server could do with a disagreement is ignore it.
+   * Upstream reaches the same place by another road: `Object:wornInven()`
+   * (engines/default/engine/Object.lua:104-107) derives the destination
+   * inventory FROM THE OBJECT, and the dialog never asks.
+   *
+   * ═══ A SWAP, NOT AN INSERT, AND THE OLD ITEM GOES BACK IN THE BAG ═══
+   * Ported from `Actor:wearObject` -> `ActorInventory:wearObject`, which takes
+   * off whatever occupies the slot and returns it to the inventory rather than
+   * refusing (ActorInventory.lua:563-572). The bag cannot overflow on this path
+   * by construction: one id leaves it and at most one enters, so the count never
+   * rises. That is worth stating because it is why there is no cap check here
+   * and there IS one in `handleUnequip`.
+   *
+   * ═══ AND THE SHEET IS RECOMPOSED, WHICH IS THE ONLY REASON ANY OF THIS
+   *     MATTERS ═══
+   * `equipped` is owned by these verbs; `combat` is owned by `recomposeCombat`
+   * and by nothing else. The recompose is not a subtraction and never can be —
+   * it is the same additive fold re-run over a different set, which is what
+   * makes equip/unequip exactly reversible by construction rather than by
+   * careful arithmetic. ToME's own removal path un-applies `mult` by division
+   * and `perc_inv` by `1-(1-b)/(1-v)` (Entity.lua:985-996), float round trips
+   * that drift; tome/class/Actor.lua:105-108 is upstream retrofitting four speed
+   * properties back to plain `add`, the second of them commented *"Prevent
+   * excessive attack speed compounding"*. We import the lesson instead of learning it twice.
+   */
+  const handleEquip = (session: Session, msg: ClientEquip): void => {
+    const body = lootActor(session, 'equip');
+    if (body === undefined) return;
+
+    const bag = bagOf(body);
+    if (!bag.includes(msg.itemId)) {
+      // ONE REFUSAL FOR "no such item" AND FOR "somebody else's item", and they
+      // are the same refusal because they are the same question: is this id in
+      // YOUR list? A separate "that belongs to Ren" would be an oracle over
+      // other people's bags, which is exactly what `InventoryMsg` being a
+      // `ViewerMsg` exists to prevent.
+      sendError(session.socket, ErrorCode.BadMessage, 'you are not carrying that');
+      return;
+    }
+    const item = itemById(msg.itemId);
+    if (item === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
+      return;
+    }
+
+    const previous = body.equipped?.[item.slot];
+    // The bag, with the incoming item out and the outgoing one in. Built as one
+    // new array rather than two splices — see engine/actor.ts on `carried`.
+    const bagAfter = bag.filter((id) => id !== msg.itemId);
+    if (previous !== undefined) bagAfter.push(previous);
+
+    body.equipped = { ...body.equipped, [item.slot]: msg.itemId };
+    body.carried = bagAfter;
+    recomposeCombat(body, opts.effects ?? null, ITEM_CATALOGUE);
+
+    // NO CASE LOG LINE, and the asymmetry with `pickup`/`drop` is deliberate:
+    // those two change the SHARED floor, which is the thing the party is
+    // arguing about and the thing a transcript has to settle. What somebody is
+    // wearing changes only their own numbers, and a line per equip would be a
+    // stream of noise on the one surface the party reads to work out what killed
+    // them. The party sees the effect where it belongs — on the hp bar and
+    // through `inspect`.
+
+    // AND IT COSTS THE TURN — Actor.lua:7352. Getting dressed mid-fight is the
+    // single most valuable free action this game could have handed out: a full
+    // kit is armour 6 -> 16 and hardiness 40% -> 50% (test/server/equipment.test.ts),
+    // and without this line a player at 5 hp bought all of it between two swings.
+    spendLootTurn(body, 'equip');
+    saveLoot('equip');
+    pumpAndBroadcast();
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `unequip` — "TAKE THIS OFF." A SLOT, and the only closed enum of the four.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * IT NAMES THE SLOT AND NOT THE ITEM, and the direction matters: there is
+   * exactly one item in a slot so the slot identifies it, but the reverse is not
+   * reliable in the presence of a client a frame behind. A stale
+   * `unequip { itemId }` would ask to remove something no longer worn and would
+   * have to be refused; a stale `unequip { slot }` empties the slot the player is
+   * looking at, which is what they meant.
+   *
+   * ═══ THIS IS THE ONE VERB THE CAP CAN REFUSE ═══
+   * `equip` swaps (count unchanged), `drop` removes, `pickup` checks before it
+   * takes. Only this one moves an item INTO the bag without taking one out, so a
+   * player wearing a full kit with twelve things in the bag genuinely cannot take
+   * their coat off until they drop something — and being told that plainly beats
+   * silently discarding a coat, which is the other way this could have gone.
+   */
+  const handleUnequip = (session: Session, msg: ClientUnequip): void => {
+    const body = lootActor(session, 'unequip');
+    if (body === undefined) return;
+
+    const worn = body.equipped?.[msg.slot];
+    if (worn === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'nothing is in that slot');
+      return;
+    }
+
+    const bag = bagOf(body);
+    if (bag.length >= INVENTORY_CAP) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'your evidence bag is full');
+      noteBagFull(body);
+      return;
+    }
+
+    // A FRESH OBJECT WITH THE KEY DELETED, never `equipped[slot] = undefined`.
+    // A present-but-undefined key is a second spelling of empty: `wornOf` would
+    // skip it, `projectInventory` would skip it, and `wornRecord` would drop it
+    // — but `inventoryKeyOf` stringifies the raw object, so the memo would see a
+    // change that no reader can see and resend the panel forever.
+    const next: Partial<Record<Slot, string>> = { ...body.equipped };
+    delete next[msg.slot];
+    body.equipped = next;
+    body.carried = [...bag, worn];
+    recomposeCombat(body, opts.effects ?? null, ITEM_CATALOGUE);
+
+    // AND IT COSTS THE TURN — Actor.lua:7420, the takeoff half of the same rule.
+    spendLootTurn(body, 'unequip');
+    saveLoot('unequip');
+    pumpAndBroadcast();
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `drop` — "LEAVE THIS HERE." The verb that gives something away.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * IT CARRIES NO DESTINATION TILE. The item lands on the SENDER'S OWN tile,
+   * read server-side — the same emptiness `pickup` relies on, in the other
+   * direction. A `{ x, y }` here would let a patched client post items into a
+   * room it cannot see, under a monster, or onto the tile a friend is about to
+   * step on, and the only defence would be an adjacency check on an
+   * attacker-supplied coordinate. There is no coordinate, so there is no check
+   * to get wrong.
+   *
+   * IT NAMES A CARRIED ITEM, NEVER A WORN ONE, so dropping something you are
+   * wearing is two verbs rather than one that quietly does both. That is not
+   * fastidiousness: an item leaving a slot RECOMPOSES the combat sheet, and a
+   * verb that silently changed a player's armour on the way to putting a coat on
+   * the floor is the kind of hidden write this protocol refuses everywhere else.
+   * It is also why this handler does NOT recompose — nothing it touches is worn,
+   * so `actor.combat` is already correct, and calling the recomposer here would
+   * teach the next reader that a bag can change a sheet.
+   *
+   * ═══ AND IT IS HOW "YOU TAKE IT, I'VE GOT A COAT" ACTUALLY HAPPENS ═══
+   * The floor pile is unowned; anything dropped is anybody's. That rule is a
+   * DEVIATION with no citation — see `handlePickup` — and this verb is the half
+   * of it that makes the social answer possible at all.
+   */
+  const handleDrop = (session: Session, msg: ClientDrop): void => {
+    const body = lootActor(session, 'drop');
+    if (body === undefined) return;
+
+    const bag = bagOf(body);
+    if (!bag.includes(msg.itemId)) {
+      sendError(session.socket, ErrorCode.BadMessage, 'you are not carrying that');
+      return;
+    }
+    const item = itemById(msg.itemId);
+    if (item === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
+      return;
+    }
+
+    body.carried = bag.filter((id) => id !== msg.itemId);
+    // THE SENDER'S OWN TILE, and no terrain check: world.ts's `addGroundItem`
+    // states why in its own words — a player drops onto the tile they are
+    // standing on, which is somewhere somebody was legally standing.
+    world.addGroundItem({ x: body.x, y: body.y }, msg.itemId);
+
+    broadcastRecordLine(`${nameOf(body.id)} puts down the ${item.name}.`);
+    // AND IT COSTS THE TURN — Actor.lua:7323. Upstream charges for putting
+    // something down and does NOT exempt it under `quick_wear_takeoff`, which is
+    // the right call for us too: a free drop is a free handover, and handing a
+    // coat to the person the wraith is standing next to is a real tactical act.
+    spendLootTurn(body, 'drop');
+    saveLoot('drop');
+    pumpAndBroadcast();
   };
 
   /**
@@ -4819,6 +6008,33 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       case 'party':
         handleParty(session, msg);
         return;
+      // ═══ THE FOUR v10 LOOT VERBS, AND ALL FOUR PUMP ═══
+      // They are the MIRROR of the non-pumping group three cases up. That
+      // group's rule is "a frame that costs the sender nothing must not be a way
+      // to make the server advance the world"; loot is the case where a frame
+      // that advanced NOTHING would be the exploit — a free pickup lets somebody
+      // clear a room's floor mid-fight while every monster stands still. A
+      // pickup costs a turn, exactly as a step does.
+      //
+      // Each therefore also runs `unparkOnCommand` for free, through the shared
+      // `lootActor` guard and BEFORE the ruling, on `handleMove`'s terms: a
+      // refused reach is still somebody at the keyboard.
+      //
+      // NONE OF THEM NAMES A SUBJECT. `pickup` carries no fields at all, `equip`
+      // and `drop` carry an item id resolved against the SENDER'S OWN bag, and
+      // `unequip` carries one of seven slots. See the four handlers.
+      case 'pickup':
+        handlePickup(session);
+        return;
+      case 'equip':
+        handleEquip(session, msg);
+        return;
+      case 'unequip':
+        handleUnequip(session, msg);
+        return;
+      case 'drop':
+        handleDrop(session, msg);
+        return;
       // Deliberately does NOT pump. A ping changes nothing, and a frame that
       // costs nothing must not be a way to make the server do work.
       case 'ping':
@@ -4860,6 +6076,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       viewerKey: null,
       partyKey: null,
       progressKey: null,
+      // NOT null — see `EMPTY_INVENTORY_KEY`. A fresh socket believes its bag is
+      // empty before it is told anything, so seeding with the empty state is
+      // what keeps a bare player's frame set byte-identical to the pre-loot one.
+      inventoryKey: EMPTY_INVENTORY_KEY,
       // A FULL BUCKET on connect, deliberately: the first thing a reconnecting
       // client does is replay a second's worth of frames, and starting it empty
       // would throttle exactly the case the resume path exists to make smooth.

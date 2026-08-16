@@ -189,6 +189,34 @@ describe('the fillRect overlays stay art-free', () => {
     expect(block).not.toBeNull();
     const prefixes = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE DISTINCTION THIS ASSERTION EXISTS TO DRAW, IN ONE SENTENCE:
+    // A PREFIX FOR ART THAT IS ALREADY IN THE MANIFEST IS FINE. A PREFIX
+    // INVENTED FOR ART THAT DOES NOT EXIST IS THE BUG.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // A prefix does not create a PNG. `isNeeded` FILTERS the manifest, so listing
+    // a family that exists loads it, and listing one that does not is a harmless
+    // no-op — `icon_ability_` has been exactly that since M3, on purpose, and is
+    // documented as such at the array. The failure this pin is for is the other
+    // direction: a feature that needs a picture nobody has cut, shipping a prefix
+    // to load it under. client/public/assets/ is gitignored wholesale, so there is
+    // no fallback file anywhere and `blitSprite` resolves the miss to the loud
+    // violet missing-asset box — on every clone, for a feature that works.
+    //
+    // The three v10 entries are the FIRST kind. Verified against the COMMITTED
+    // ASSETS-REQUIRED.md:84-109 (and, on this working tree, the files on disk —
+    // but `client/public/assets/` is gitignored whole, manifest included, so the
+    // markdown is the only half a clone can check): 23 `item_*` ids under items/,
+    // 5 `ui_item_frame_*` and 2 `ui_inventory_cell_*` under ui/chrome/. The v10 map mark, by contrast, is
+    // drawn with `fillRect` and asked for no prefix at all — see the `paintLoot`
+    // pin below, which is the same decision from the other side.
+    //
+    // DELIBERATELY ABSENT: anything covering the four ids in
+    // client/public/assets/items/_aliases.json. That file's `_comment` claims they
+    // resolve and it is WRONG — no `icon_weapon_*` id is in the manifest and no
+    // such PNG is on disk — so a prefix for them would be the invented case above,
+    // wearing a comment that says otherwise.
     expect(prefixes).toEqual([
       'chr_player_',
       'chr_npc_',
@@ -204,6 +232,9 @@ describe('the fillRect overlays stay art-free', () => {
       'ui_panel_',
       'ui_marker_',
       'ui_icon_speaking',
+      'item_',
+      'ui_inventory_cell_',
+      'ui_item_frame_',
     ]);
   });
 
@@ -239,14 +270,54 @@ describe('the fillRect overlays stay art-free', () => {
   });
 
   it('still paints the travel route with fillRect and never with blitSprite', () => {
+    // THE SLICE ENDS AT `paintLoot`, NOT AT `paintProjectiles`. v10 inserted a
+    // third fillRect overlay between the two, and a range that swallowed it would
+    // quietly make the pin below redundant while looking like it still had one
+    // job — the failure mode a range-based grep has and a named one does not.
     const from = canvasSrc.indexOf('function paintPath(');
-    const to = canvasSrc.indexOf('function paintProjectiles(');
+    const to = canvasSrc.indexOf('function paintLoot(');
     expect(from).toBeGreaterThan(-1);
     expect(to).toBeGreaterThan(from);
     const body = canvasSrc.slice(from, to);
 
     expect(body).not.toContain('blitSprite');
     expect(body).toContain('PALETTE.GOLD');
+  });
+
+  it('paints what is on the floor with fillRect and never with blitSprite', () => {
+    // ═══ THE v10 FLOOR MARK IS THE THIRD ART-FREE OVERLAY, AND IT HAD TWO
+    //     TEMPTATIONS RATHER THAN ONE ═══
+    // The first is `paintProjectiles`' own: a `MarkerKind.Loot` member and a
+    // `ui_tile_marker_loot` blit, which follows the shape of every other overlay
+    // in that file and demands a PNG of every clone. The MarkerKind pin above
+    // covers half of that; this covers the other half.
+    //
+    // The second is SPECIFIC to this overlay and is why it earns its own test:
+    // the item's own 64x64 icon IS in the manifest now — the three v10 prefixes
+    // put it there — so drawing it here would resolve, look almost right, and be
+    // wrong twice. A tile is 32x32, so it means either a downscale (the exact
+    // resampling the backbuffer exists to prevent) or a centre crop (a quarter of
+    // a picture, identifying nothing). The panel is where an icon is legible; the
+    // map gets a mark.
+    const from = canvasSrc.indexOf('function paintLoot(');
+    const to = canvasSrc.indexOf('function paintProjectiles(');
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const body = canvasSrc.slice(from, to);
+
+    expect(body).not.toContain('blitSprite');
+    expect(body).not.toContain('drawImage');
+    // The 1px INK surround, the same legibility trick the pips and the orb use: a
+    // pile sits on floor, beside a wall and under the lit top edge of a wall.
+    expect(body).toContain('PALETTE.INK');
+    // Never VIOLET_HI, which IS the missing-asset box — a floor mark painted in it
+    // is indistinguishable from the bug. Never CRIMSON, reserved for "hostiles are
+    // engaged". Never GOLD, this file's affirmative/cursor colour, already spent
+    // on the player's own route and targeting bracket: a pile in gold reads as
+    // your own aim, and the route is frequently drawn straight at the pile.
+    expect(body).not.toContain('PALETTE.VIOLET_HI');
+    expect(body).not.toContain('PALETTE.CRIMSON');
+    expect(body).not.toContain('PALETTE.GOLD');
   });
 
   /**
@@ -273,6 +344,14 @@ describe('the fillRect overlays stay art-free', () => {
    * why ui/talents.ts joined this array in the same commit that created it: the
    * panel draws four icon plates and a `+` control, and both of those are exactly
    * the shape of a feature that reaches for a PNG on its second revision.
+   *
+   * ui/inventory.ts (v10) joins on the same terms and is the heaviest user of art
+   * of the four: up to twelve 64x64 item icons, a rarity frame behind every one of
+   * them, and an empty-slot plate. It is also the FIRST panel here to name asset
+   * ids as literals in its own source — `frameIdFor` returns one of three
+   * `ui_item_frame_*` strings by an exhaustive switch precisely so a key is never
+   * assembled from a wire field — which is what the third assertion below exists
+   * to keep honest.
    */
   const sheetSrc = codeOf('src/client/ui/charsheet.ts');
   const pickerSrc = codeOf('src/client/ui/classpicker.ts');
@@ -280,6 +359,7 @@ describe('the fillRect overlays stay art-free', () => {
     ['ui/charsheet.ts', sheetSrc],
     ['ui/classpicker.ts', pickerSrc],
     ['ui/talents.ts', codeOf('src/client/ui/talents.ts')],
+    ['ui/inventory.ts', codeOf('src/client/ui/inventory.ts')],
   ];
 
   it('asks the sprite source only for keys that came off the wire', () => {
@@ -310,6 +390,47 @@ describe('the fillRect overlays stay art-free', () => {
         ).toBe(true);
       }
     }
+  });
+
+  it('names no asset id that is under no indexed prefix', () => {
+    // ═══ THE HALF THE ASSERTION ABOVE CANNOT SEE ═══
+    // All four panels reach the sprite source through a one-line helper
+    // (`const sprite = sprites.sprite(id)`), so the literal branch above matches
+    // nothing in any of them and only the "never assemble a key" half is live.
+    // The ids themselves are handed to that helper from somewhere ELSE in the
+    // file — `blitCentred(ctx, sprites, 'ui_item_frame_common', box)` — where a
+    // grep for `sprites.sprite(` will never find them.
+    //
+    // So this reads the ids directly: every string literal in a panel that LOOKS
+    // like an asset key must be under a prefix main.ts actually loads. It is the
+    // rule the prefix pin states from the manifest's end, checked from the
+    // drawing end, and it is what would have caught a `ui_tile_marker_loot` typed
+    // into a panel instead of into the renderer.
+    const block = /const NEEDED_ASSET_PREFIXES = \[([\s\S]*?)\] as const;/.exec(mainSrc);
+    const prefixes = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1] ?? '');
+    expect(prefixes.length).toBeGreaterThan(0);
+
+    // The families the pipeline emits (tools/build_asset_manifest.py). A literal
+    // that starts with one of these is an asset key by construction — no other
+    // kind of string in these files does.
+    const looksLikeAnAssetId = /^(chr_|enemy_|icon_|item_|ui_)[a-z0-9_]+$/;
+
+    let seen = 0;
+    for (const [name, src] of panels) {
+      for (const match of src.matchAll(/'([^']*)'/g)) {
+        const id = match[1] ?? '';
+        if (!looksLikeAnAssetId.test(id)) continue;
+        seen += 1;
+        expect(
+          prefixes.some((prefix) => id.startsWith(prefix)),
+          `${name} names '${id}', which is under no indexed prefix`,
+        ).toBe(true);
+      }
+    }
+    // A pin over zero literals passes forever and proves nothing. ui/inventory.ts
+    // has four (three rarity frames and the empty-slot plate); if that drops to
+    // zero, somebody has moved them somewhere this test cannot see.
+    expect(seen, 'no panel names an asset id at all?').toBeGreaterThan(0);
   });
 
   it('spends neither of the two reserved palette entries', () => {

@@ -27,6 +27,7 @@ import { ErasedReason, ErrorCode, PartyAction, TalentShape } from '../shared/pro
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type { LoadoutTalent, ResourceView, TurnEvent } from '../shared/protocol.ts';
 import { seedTestEncounter } from './content/encounter.ts';
+import { SLOT_ORDER, itemById } from './content/items.ts';
 import { HOLD_INTENT, IntentKind, cooldownOf } from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
 import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
@@ -516,10 +517,96 @@ function resetFloor(
   // the reason it is cleared HERE rather than in the engine is the same reason
   // step 2 exists at all: engine/ may not re-seed content.
   for (const proj of world.projectilesInFlight()) world.removeProjectile(proj.id);
+  // ...AND EVERYTHING LYING ON THE FLOOR. THE FOURTH TABLE, AND THE PREVIOUS
+  // THREE EACH COST A LIVE SESSION FIRST.
+  //
+  // Bodies, side tables, orbs and now items: every one of them was added to this
+  // function only after a party found the hole in a voice channel. This one is
+  // written down before it can be: a wipe re-seeds the encounter at its authored
+  // positions and hands the party a fresh fight, so LEAVING THE LOOT FROM THE
+  // FIGHT YOU JUST LOST IS A FREE CONSOLATION PRIZE FOR WIPING — and one the
+  // party can farm, because the reset costs them nothing but time
+  // (game-design.md § 9: no permadeath, no loss). Wiped with the floor, for the
+  // same stated reason the orbs directly above are: a reset means the fight did
+  // not happen.
+  //
+  // The drops are NOT lost, they are re-rolled: `reseedFloor` mints three new
+  // bodies that each take their own spawn-time roll (content/encounter.ts). The
+  // floor is worth the same as it was, and it is worth it again only by fighting.
+  for (const item of world.groundItems()) world.removeGroundItem(item.id);
   reseedFloor(world);
 
   // 3 — out of combat.
   world.turn.engagement = 0;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A CORPSE LEAVES BEHIND, IN THE ORDER IT LEAVES IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The one implementation of `LootResolution.spillOrder` (engine/scheduler.ts).
+ * It lives HERE, in the adapter, for the reason every other seam in that file
+ * lives here: the engine may not import `src/server/content/**`, and both halves
+ * of the answer — `SLOT_ORDER` and the catalogue — are content.
+ *
+ * ═══ WORN FIRST, IN SLOT ORDER; THEN CARRIED, IN CARRY ORDER ═══
+ * Ported from `Actor:die`, modules/tome/class/Actor.lua:3036-3040:
+ *
+ * ```lua
+ * local invens = {}
+ * for inven_id, inven in pairs(self.inven) do invens[#invens+1] = inven end
+ * table.sort(invens, function(a,b) if a.id == 1 then return false ... end)  -- :3038
+ * for _, inven in ipairs(invens) do
+ *     for i = #inven, 1, -1 do                                              -- :3040
+ * ```
+ *
+ * Upstream sorts the inventories and pushes `INVEN` (id 1 — the backpack) to the
+ * END, so worn gear hits the floor before loose items. Ours does the same thing
+ * with `SLOT_ORDER` and then `carried`. The reverse walk at :3040 is NOT ported
+ * and does not need to be: it is an artifact of Lua's `table.remove` shifting
+ * indices under an in-place loop, and we build a new array instead.
+ *
+ * THE POINT IS NOT ELEGANCE, IT IS THAT THE ORDER EXISTS AT ALL. `equipped` is a
+ * plain object and `Object.keys` would hand back whatever order a player happened
+ * to press buttons in — which differs between two replays of one seed. Since
+ * `World.itemsAt` hands the pile back in insertion order and a pickup takes index
+ * 0, a different spill order is literally a different item picked up, and the bug
+ * report reads "the wrong thing got taken".
+ *
+ * ═══ TWO FILTERS, BOTH DELIBERATE ═══
+ *   AN ID THE CATALOGUE DOES NOT KNOW IS DROPPED, not spilled. It would reach the
+ *     floor, ride the ground frame to every client, and render as the LOUD violet
+ *     fallback box — the one failure this project's asset rules exist to make
+ *     impossible. A build that deleted an item is the realistic way to get here.
+ *   A DUPLICATE IS SPILLED ONCE. `carried` is a SET, not a bag
+ *     (persist/saves.ts's `parseCarried` keeps the first occurrence and drops the
+ *     rest), and `equipped` wins over `carried` for the same id on load. Honouring
+ *     that here means a body cannot leave two of a thing it could only ever have
+ *     owned one of.
+ */
+function spillOrderOf(actor: Actor): readonly string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const take = (id: string | undefined): void => {
+    if (id === undefined || seen.has(id)) return;
+    // The catalogue is the only thing that can tell a live id from a stale one.
+    if (itemById(id) === undefined) return;
+    seen.add(id);
+    out.push(id);
+  };
+
+  // SLOT_ORDER, never `Object.keys(worn)`. See the header.
+  const worn = actor.equipped;
+  if (worn !== undefined) {
+    for (const slot of SLOT_ORDER) take(worn[slot]);
+  }
+  // ...then the backpack, in the order things went into it — which is upstream's
+  // `INVEN`-last rule and, for a monster, is just its one pre-rolled drop.
+  for (const id of actor.carried ?? []) take(id);
+
+  return out;
 }
 
 /**
@@ -645,7 +732,29 @@ function toWireEvents(
           out.push({ k: 'erased', id, reason: ErasedReason.Wipe });
         }
         break;
-      // Bookkeeping. Real, logged server-side, and not drawable.
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A CORPSE LEFT SOMETHING ON THE FLOOR — AND IT MAPS TO NOTHING, YET.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The same argument, verbatim, that `SweepStep.fired` makes below: the
+       * floor is carried by a SNAPSHOT frame — complete and absolute, so a client
+       * that dropped a patch is corrected by the next frame rather than showing a
+       * phantom coat forever. A phantom floor item sends somebody walking across
+       * the map to a thing that is not there.
+       *
+       * That frame does not exist yet. `PROTOCOL_VERSION` is 9, the wire has no
+       * `ground` message and no `pickup` verb, and adding either is a version
+       * bump — which src/shared/version.ts requires be argued on ONE stated
+       * reason, in its own commit. So this event is real, logged, tested
+       * (test/server/loot.test.ts) and deliberately not drawn. The drop lands on
+       * the floor either way; the pass that adds the frame will find it there.
+       *
+       * The five below it are the older bookkeeping group: real, logged
+       * server-side, and with nothing to draw. `spilled` joins them at the wire
+       * and leaves them the day the ground frame lands.
+       */
+      case 'spilled':
       case 'held':
       case 'refunded':
       case 'auto_passed':
@@ -880,6 +989,11 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
        * The IMPACT is not dropped: it arrives as an ordinary `attack` step from
        * `actProjectile`, attributed to the shooter, up to three turns after this.
        */
+      // A monster died mid-sweep and dropped something. Dropped at the wire for
+      // the identical reason `fired` directly above is, and for the identical
+      // reason its player-lane twin `GameEvent.spilled` is — the floor is a
+      // snapshot frame's job, and that frame arrives with the protocol bump.
+      case 'spill':
       case 'fired':
       case 'hold':
       case 'blocked':
@@ -1719,6 +1833,15 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         // sheets live across pumps. Absent switches every talent branch in the
         // scheduler off, which is the M3 behaviour exactly.
         talents: opts.talentRuntime,
+        // ═══ THE LOOT SEAM. UNCONDITIONAL, UNLIKE THE THREE ABOVE. ═══
+        // The other seams are threaded from `opts` because each owns state that
+        // must outlive a pump — a countdown, a party table, a talent sheet. This
+        // one owns nothing: `spillOrderOf` is a pure function of the body it is
+        // handed, so there is no instance to keep and nothing for a caller to
+        // supply. Every `createTurnEngine` gets it, which is what makes a drop
+        // reach the floor on the production path rather than only in a test that
+        // remembered to wire it up.
+        loot: { spillOrder: spillOrderOf },
       });
 
       /**

@@ -84,6 +84,26 @@ function pct(n: number): string {
  * `?? {}` is correct rather than lazy: derived.ts documents an absent sheet as
  * meaning ToME's own defaults, so a monster authored without one inspects as a
  * baseline creature instead of throwing at a hover.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS LINE NEEDED NO CHANGE WHEN EQUIPMENT LANDED, AND THAT IS THE PROOF THAT
+ * TRAP 1 IS CLOSED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `actor.combat` is now a DERIVED value with exactly one writer —
+ * `engine/effects.ts#recomposeCombat`, running `baseCombat` -> gear fold ->
+ * status flags in that fixed order. So the instant a coat lands in a slot, the
+ * Armour and Defence rows this file prints move, and the hit chance a hostile
+ * card advertises against a geared target moves with them. Nothing here reads
+ * `equipped`, nothing here knows what an item is, and nothing here had to be
+ * taught: the six existing readers of `actor.combat` (combat.ts, talents.ts,
+ * damage.ts, projectile.ts, effects.ts and this line) all inherited equipment
+ * for free.
+ *
+ * That is the whole test of "an item that changes nothing". An equipment system
+ * that had needed an edit HERE would be one whose numbers reached the character
+ * sheet through a second path — and a second path is a path that can disagree
+ * with the one the dice roll against.
  */
 function combatantOf(actor: Actor): Combatant {
   return actor.combat ?? {};
@@ -138,12 +158,32 @@ function whole(n: number): string {
  * came from.
  *
  * ═══ WHAT IS DELIBERATELY ABSENT ═══
- * Level, experience, gold, equipment, inventory, fatigue, the two speeds,
- * vision, inscriptions and times-died are all rows ToME prints and none of them
- * is emitted, because every one reads from a system this game does not have. An
- * empty row is worse than an absent one: "Level: —" invites a player to go
- * looking for the levelling screen, and there is not one. When those systems
- * land, the rows land with them.
+ * Gold, fatigue, the two speeds, vision, inscriptions and times-died are all
+ * rows ToME prints and none of them is emitted, because every one reads from a
+ * system this game does not have. An empty row is worse than an absent one:
+ * "Level: —" invites a player to go looking for the levelling screen, and until
+ * one existed there was not one. When those systems land, the rows land with
+ * them.
+ *
+ * ═══ AND TWO OF THEM HAVE LANDED SOMEWHERE ELSE, WHICH IS WHY THEY ARE STILL
+ *     NOT HERE ═══
+ * This list used to name "level, experience, equipment, inventory" and justify
+ * all four with "a system this game does not have". Both halves of that are now
+ * false: there is a levelling screen, and from v10 there is a paper doll and a
+ * bag. They are still absent from THIS frame, for a different and better
+ * reason — each has its own viewer-private frame that carries it whole.
+ * Progression rides `ProgressMsg` (level, xp, points in hand) and equipment
+ * rides `InventoryMsg` (the doll, the bag, and the server-computed swap
+ * comparison). Restating either as a row here would be a SECOND SOURCE OF TRUTH
+ * for a number four people are staring at, which is the failure this file's own
+ * header exists to prevent.
+ *
+ * It also could not be done safely at the same width. `inspectActor` has three
+ * branches and only the SELF one is entitled to a full sheet; adding equipped
+ * rows would mean re-arguing the ally branch's disclosure boundary — a party
+ * member's gear is theirs — for a fact the recipient already has in a frame
+ * shaped for it. Equipment therefore stays off `InspectView` for the same reason
+ * `protocol.ts` keeps it off `ActorView`.
  *
  * ═══ NO `emphasis` ANYWHERE ═══
  * `InspectRow.emphasis` is reserved for the number that decides whether to

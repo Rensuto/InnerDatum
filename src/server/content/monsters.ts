@@ -229,10 +229,35 @@
 import { AiProfile } from '../engine/actor.ts';
 import { DamageType } from '../engine/damage.ts';
 import { ActorRank } from '../../shared/protocol.ts';
+import { ITEMS, itemById } from './items.ts';
 import { resolveLevelup, resolveMBonus, resolveRngAvg } from './resolvers.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { MonsterInit } from '../engine/actor.ts';
 import type { CombatSheet } from '../engine/combat.ts';
+import type { ItemTier } from './items.ts';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A WHOLE DROP TABLE, WRITTEN AS ONE WORD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Item.tier` was authored to BE the drop table (content/items.ts's own header
+ * says so): common is every LEGS and FEET item plus the leather chest, uncommon
+ * is every HEAD, OFFHAND and TRINKET, rare is the three class BODY items and the
+ * three RINGs. Selecting on the tier rather than listing 22 ids again keeps the
+ * table in exactly ONE place — a second hand-written list is a second thing to
+ * forget when an item is added, and the failure mode is silent (a new item that
+ * can be worn and can never drop).
+ *
+ * ORDER IS `ITEMS` ORDER, WHICH IS FROZEN CATALOGUE ORDER, and that is
+ * load-bearing rather than tidy: the pick draw below is an INDEX into this array
+ * (resolvers.lua:434 `rng.range(1, #t)`), so re-ordering the catalogue would
+ * change which item every past seed produces. `Array.prototype.filter` preserves
+ * source order by specification, so this is stable as long as `ITEMS` is.
+ */
+function idsOfTier(tier: ItemTier): readonly string[] {
+  return Object.freeze(ITEMS.filter((item) => item.tier === tier).map((item) => item.id));
+}
 
 // ---------------------------------------------------------------------------
 // The template
@@ -241,11 +266,22 @@ import type { CombatSheet } from '../engine/combat.ts';
 /**
  * One authored creature.
  *
- * A subset of `MonsterDef` in docs/data-schemas.md § 4 — the fields M3 can
- * actually consume. `talentIds`, `lootTable`, `xpReward` and `saves` are all in
- * that schema and none of them have a consumer yet; adding them here would be
- * writing content for a system that does not exist (CLAUDE.md, "things that look
- * helpful and are not").
+ * A subset of `MonsterDef` in docs/data-schemas.md § 4 — the fields this build
+ * can actually consume.
+ *
+ * ═══ THIS PARAGRAPH USED TO SAY THERE WAS NO LOOT SYSTEM. THERE IS ONE NOW. ═══
+ * Verbatim, until this revision: *"`talentIds`, `lootTable`, `xpReward` and
+ * `saves` are all in that schema and none of them have a consumer yet; adding
+ * them here would be writing content for a system that does not exist."* That
+ * was true and it is now false for exactly one of the four. `drops` below has a
+ * consumer — `content/encounter.ts` rolls it at spawn and
+ * `engine/scheduler.ts#noteCasualty` spills the result — so it is authored here
+ * and the other three stay absent for the reason the old sentence gave.
+ *
+ * The field is called `drops` and not `lootTable` on purpose: it is a port of
+ * ToME's `resolvers.drops` (modules/tome/resolvers.lua:420-450) and keeping the
+ * upstream word is what makes `grep -rn 'resolvers.drops' reference/t-engine4`
+ * still find the source in six months (CLAUDE.md, "keep ported names verbatim").
  */
 export type MonsterTemplate = {
   /** Matches the Outer Index content id, so the two rosters stay greppable. */
@@ -365,6 +401,65 @@ export type MonsterTemplate = {
   /** As above. `validateTemplate` refuses a max below the min: `rng.int` throws. */
   readonly damageMax?: number;
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS CREATURE MIGHT BE CARRYING WHEN IT DIES — ROLLED AT SPAWN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * -- modules/tome/resolvers.lua:427-434, the whole mechanism
+   * function resolvers.calc.drops(t, e)
+   *     t = t[1]
+   *     if not rng.percent(t.chance or 100) then return nil end   -- :429
+   *     for i = 1, (t.nb or 1) do
+   *         local filter = table.clone(t[rng.range(1, #t)])       -- :434
+   * ```
+   *
+   * `chance` is a PERCENT, 0-100. `pick` is upstream's array of object filters,
+   * ours narrowed to item ids because our catalogue is 22 hand-authored rows and
+   * has nothing to filter over. `nb` is NOT ported: upstream defaults it to 1
+   * (:433) and the only rosters that raise it are money piles and bosses
+   * (ant.lua:220 `nb=12`, bird.lua:68 `nb=9`), neither of which we have. AT MOST
+   * ONE ITEM PER CREATURE, always.
+   *
+   * ═══ THE ROLL HAPPENS AT SPAWN, NOT AT DEATH, AND THAT IS THE PORT ═══
+   * `resolvers.drops` marks itself `__resolve_last = true` (:421) and runs during
+   * ENTITY RESOLUTION — it creates the object straight into the monster's own
+   * inventory (:441-446). `Actor:die` (class/Actor.lua:3011-3060) then spills
+   * that already-decided inventory and takes NO drop-table draw at all. So the
+   * faithful port and the determinism-safe port are the same port, which is the
+   * happiest possible outcome for a system whose draws sit inside a kill. See
+   * `content/encounter.ts` for where our two draws are taken and
+   * `engine/damage.ts` for why they are emphatically not taken at the kill site.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MONSTERS DROP. THEY NEVER WIELD. THIS IS NOT AN OVERSIGHT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * There is no `equips` field here and there must never be one. Upstream DOES
+   * equip its own npcs — `data/general/npcs/ghoul.lua:124` is
+   * `resolvers.equip{ {type="weapon", subtype="longsword", ...} }` — but it does
+   * so INSTEAD OF AUTHORING THE STATS: the risen corpse's swing comes from the
+   * longsword the resolver hands it. That is the exact opposite of what this file
+   * did. The rule at the top of this header is *"ToME SUPPLIES THE NUMBERS. WE
+   * SUPPLY THE IDENTITY"*, and every `dam`, `atk`, `apr`, `armour` and `def` on
+   * all three templates below is a cited port of a REAL UPSTREAM NPC'S FINISHED
+   * SHEET — a sheet that already has that creature's gear baked into it.
+   *
+   * Layering our own `wielder` tables on top would therefore double-count, and it
+   * would do it silently: the husk would quietly stop being the giant brown ant
+   * whose numbers the 230-line header above cites, every hp-per-player-turn
+   * figure in the balance tables would become fiction, and there would be no
+   * error anywhere. A creature that drops a coat it was never wearing is a
+   * smaller lie than a creature whose citations no longer describe it.
+   */
+  readonly drops?: {
+    /** Percent, 0-100. `rng.percent(t.chance or 100)`, resolvers.lua:429. */
+    readonly chance: number;
+    /** Item ids. The index draw's array — `t[rng.range(1, #t)]`, resolvers.lua:434. */
+    readonly pick: readonly string[];
+  };
+
   // --- combat ---------------------------------------------------------------
   /** Everything derived.ts, checkhit.ts and damage.ts read. THE MELEE WEAPON. */
   readonly combat: CombatSheet;
@@ -457,6 +552,45 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
   // upstream's ant acts every turn exactly as ours does. Declaring 1 would cost
   // a labelled draw per turn to answer a question with one possible answer, and
   // would shift the seeded stream for every husk in the game.
+
+  // THE COMMON TIER, ABOUT A THIRD OF THE TIME. Seven ids: every LEGS and FEET
+  // item plus the leather chest (content/items.ts). The baseline creature gives
+  // the baseline reward — trousers, boots, a salvaged chestpiece — and 35 is the
+  // number that makes clearing the first room usually worth something and never
+  // reliably worth something. Upstream's own low-tier rates sit in this band:
+  // construct.lua:30 is `chance=30`, elven-caster.lua:33 is `chance=20`,
+  // crystal.lua:32 is `chance=15`.
+  //
+  // WHAT IT IS WORTH, MEASURED AGAINST THIS CREATURE'S OWN BASELINE ROW ABOVE
+  // (4.378 hp per player turn against a Watchman or an Inspector, 4.875 against
+  // an Alchemist), because "a common drop" is an adjective. Every figure below is
+  // computed from the shipped formulas — `ceil(50 + 2.5*(atk-def))`
+  // (shared/checkhit.ts) and `max(dam*pres - max(0, armour-apr), 0) + dam*(1-pres)`
+  // (damage.ts:298-301) — not estimated:
+  //
+  //   boots / slacks   +2 mods.def   −5.7%  (4.378 → 4.129) for anybody
+  //   treads/breeches  +3 mods.def   −8.2%  on the Alchemist (4.875 → 4.475)
+  //   oxfords          +3 dex        −3.4% incoming AND +5.7% outgoing
+  //   leather chest    +3 armour     −35.6% ON A WATCHMAN (4.378 → 2.820)
+  //                    +1 def        −3.4% on an Inspector, −3.1% on an Alchemist
+  //
+  // THE SPREAD IS ENORMOUS AND IT IS THE APR RULE, NOT A BALANCE MISTAKE. Armour
+  // is subtracted FLAT from the hardiness-scaled slice of every blow, so the
+  // three points that finally clear this creature's apr 7 are worth more than
+  // everything else in the tier put together — to the one class that already had
+  // six. This file's own header has said as much since the re-base:
+  // `max(0, 6 - 7) = 0`.
+  //
+  // AND ONE PIECE IS WORTH LITERALLY NOTHING TO TWO OF THE THREE CLASSES.
+  // `item_watchmans_trousers` is +2 armour: on a Watchman that is armour 6 → 8,
+  // −16.7%; on an Inspector or an Alchemist it is `max(0, 2 - 7) = 0` and the
+  // measured change is 0.0%. It still moves `combatArmor` on the character sheet,
+  // which is what test/server/equipment.test.ts pins per item, and it is still a
+  // real upgrade for the class the kit belongs to. Written down rather than
+  // smoothed over: a shared floor pile means a cross-class drop is sometimes just
+  // somebody else's coat, and the fix for that is the pickup being free, not
+  // sprinkling +1s onto items until every number moves for everyone.
+  drops: { chance: 35, pick: idsOfTier('common') },
 
   combat: {
     // ant.lua:34 `stats = { str=12, dex=10, mag=3, con=13 }`, VERBATIM. ToME
@@ -845,6 +979,27 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   damageMin: 12,
   damageMax: 16,
 
+  // THE RARE TIER, EVERY TIME. Six ids: the three class BODY items and the three
+  // RINGs (content/items.ts). Chance 100 is upstream's own default — `t.chance or
+  // 100` at resolvers.lua:429 — and it is what most authored tables actually
+  // carry (ant.lua:220, bird.lua:67-68, canine.lua:157, cold-drake.lua:28 are all
+  // `chance=100`).
+  //
+  // ═══ WHY THE KITER AND NOT THE ELITE GETS THE GUARANTEED RARE ═══
+  // This creature is the one you have to solve rather than out-trade: it stands
+  // off at four tiles, fires on a coin flip, cannot be shot back at by the
+  // Inspector's own dead zone, and a lone Watchman trading with it at range
+  // LOSES (see `maxHp` above). It is also the roster's only optional fight —
+  // nothing forces a party to walk into the orb's line. A guaranteed rare is what
+  // pays for choosing to. The elite arrives whether you want it or not.
+  //
+  // AND THE DRAW COUNT IS THE POINT OF SAYING 100 RATHER THAN OMITTING IT: this
+  // template takes EXACTLY TWO loot draws every spawn, always, on every seed.
+  // Chance 35 on the husk takes one or two. Both are stated in
+  // test/server/loot.test.ts, because "how many draws" is the only property of a
+  // seeded stream that a later pass can break without any test going red.
+  drops: { chance: 100, pick: idsOfTier('rare') },
+
   combat: {
     // losgoroth.lua:44 `stats = { str=10, dex=8, mag=6, con=16 }`, VERBATIM.
     // Read it against the block it replaces — a hand-authored
@@ -1045,6 +1200,33 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   // coin flip and halve the damage of the roster's threat creature, which is the
   // exact opposite of what the upstream field does.
 
+  // THE UNCOMMON TIER, SEVEN TIMES IN TEN. Nine ids: every HEAD, OFFHAND and
+  // TRINKET item (content/items.ts). The ring under this creature is a warning,
+  // and 70 is the answer to it — the party that decides to take the fight it was
+  // warned about is usually paid for it.
+  //
+  // WHY THE TIER IS HEAD/OFFHAND/TRINKET AND NOT "BETTER VERSIONS OF THE COMMON
+  // ONES": these are the slots that carry the OFFENSIVE grants — the badge and
+  // the deerstalker are `mods.atk +3`, the dossier and the tome are `mods.dam +4`
+  // and `+5`, the cowl is `mag +4`. The common tier is defence and the uncommon
+  // tier is damage, so the elite's reward changes how fast you kill the next one
+  // rather than how long you survive it.
+  //
+  // MEASURED, one piece at a time, against each class's own bare `combatDamage`:
+  //   inquisitors_tome     +5 dam    9.660 → 10.500   +8.7%   (the largest)
+  //   inspectors_dossier   +4 dam   11.542 → 12.430   +7.7%
+  //   inquisitors_cowl     +4 mag    9.660 → 10.277   +6.4%
+  // The two `mods.atk +3` pieces — the badge and the deerstalker — move
+  // `combatDamage` by exactly ZERO, and that is correct rather than a hole: they
+  // buy 7.5 percentage points of hit chance, which no damage figure can show.
+  // Against the wraith's defence 19 that is where their entire value lives, and
+  // it is the reason the tier is judged on both numbers and not one.
+  //
+  // Not 100, deliberately. A guaranteed drop from the creature you MUST fight
+  // turns the elite into a vending machine and makes the wraith's guaranteed rare
+  // — which you may walk past — read as the same promise.
+  drops: { chance: 70, pick: idsOfTier('uncommon') },
+
   combat: {
     // The ghoul ladder moves no stat, so the delta is zero: the elite carries
     // BASE_NPC_ANT's own `stats = { str=12, dex=10, mag=3, con=13 }`
@@ -1144,6 +1326,34 @@ export function monsterById(id: string): MonsterTemplate | undefined {
  * would fall through to is never read. `undefined` is forwarded rather than
  * defaulted for exactly the same reason `projSpeed` and `talentIn` are — see the
  * comment on those two below.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `drops` IS DELIBERATELY NOT FORWARDED, AND THAT IS THE WHOLE DROP DESIGN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every other authored field arrives here and is copied onto the body. The drop
+ * table is the one that stops at this line, because it is not a fact about a
+ * body — it is a QUESTION, and somebody has to roll it.
+ *
+ * This function is PURE and RNG-FREE, and the file header promises it in as many
+ * words: *"Frozen literals and two total functions over them. Nothing here reads
+ * a clock, draws a random number, or touches the world."* Forwarding `drops`
+ * would leave exactly two places to answer the question and both are worse:
+ *
+ *   ROLL IT HERE — this function starts drawing, so the promise above is gone
+ *     and every caller of `monsterInit` (four test files among them) silently
+ *     starts consuming a random stream it never asked for.
+ *   ROLL IT IN `world.addMonster` — `MonsterInit` grows a table of item ids, so
+ *     src/server/world/ has to learn what a content catalogue is, and the world
+ *     starts drawing at placement time, which is the ONE stream (`world.spawn`)
+ *     that is driven by when somebody's laptop woke up.
+ *
+ * So the roll lives in `content/encounter.ts`, one layer up, where the loot
+ * stream and the catalogue are both legitimately in view, and the DECIDED id is
+ * written straight onto `actor.carried`. That is also upstream's own shape:
+ * `resolvers.calc.drops` puts the resolved object into the creature's inventory
+ * at resolution time (resolvers.lua:441-446) rather than storing the table on the
+ * creature for later.
  */
 export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit {
   return {
@@ -1299,6 +1509,51 @@ export function validateTemplate(template: MonsterTemplate): readonly string[] {
   if (template.talentIn !== undefined) {
     if (!Number.isInteger(template.talentIn) || template.talentIn < 1) {
       problems.push(`${where} talentIn ${template.talentIn} must be an integer >= 1`);
+    }
+  }
+
+  /**
+   * THE DROP TABLE. Four ways it can be wrong, and every one of them is quiet.
+   *
+   *   A NON-INTEGER OR OUT-OF-BAND `chance` is a percentage that means nothing:
+   *     the roll is `rng.int('loot.chance', 1, 100) <= chance` (encounter.ts,
+   *     porting `rng.percent`, resolvers.lua:429), so 35.5 rounds nowhere in
+   *     particular and 150 is a 100 written in a way that hides a typo.
+   *   AN EMPTY `pick` WOULD THROW MID-SPAWN. `rng.int(label, 0, -1)` is a
+   *     RangeError from src/shared/rng.ts:219, raised synchronously inside
+   *     `seedTestEncounter`, which runs at boot AND on every floor reset. A
+   *     content typo would take the server down in the middle of a wipe.
+   *   AN UNKNOWN ITEM ID reaches the floor and renders as the LOUD violet
+   *     fallback box on every client — the failure this project's whole asset
+   *     rule exists to make impossible. It is caught here rather than at the
+   *     drop, because at the drop it is one unlucky party's evening.
+   *   A DUPLICATE ID inside one `pick` silently doubles that item's weight. The
+   *     draw is a uniform index over the array (resolvers.lua:434), so a list
+   *     that names the same coat twice is a table that is 2/7 coat and reads as
+   *     1/7 to anyone who glances at it.
+   *
+   * `chance` 0 is LEGAL and is not a mistake worth refusing — it is how a
+   * template says "not yet, but the table is written". It still takes its one
+   * `loot.chance` draw, exactly as upstream still calls `rng.percent(0)` before
+   * returning (resolvers.lua:429), and the stream position stays put.
+   */
+  if (template.drops !== undefined) {
+    const { chance, pick } = template.drops;
+    if (!Number.isInteger(chance) || chance < 0 || chance > 100) {
+      problems.push(`${where} drops.chance ${chance} must be an integer 0..100`);
+    }
+    if (pick.length === 0) {
+      problems.push(`${where} drops.pick is empty — the index draw would throw at spawn`);
+    }
+    const seen = new Set<string>();
+    for (const itemId of pick) {
+      if (itemById(itemId) === undefined) {
+        problems.push(`${where} drops.pick names '${itemId}', which is not in the item catalogue`);
+      }
+      if (seen.has(itemId)) {
+        problems.push(`${where} drops.pick lists '${itemId}' twice — that doubles its weight`);
+      }
+      seen.add(itemId);
     }
   }
 

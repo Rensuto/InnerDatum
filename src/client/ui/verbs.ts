@@ -43,6 +43,13 @@
  * named predicate decision (f) put the future "has this tile been seen" clause
  * behind. Passing the answer in rather than the level is what keeps the fog-of-war
  * seam in a single place when M6 lands.
+ *
+ * `loot` (v10) joins them on the same terms and is the reason this paragraph is
+ * worth re-reading: the `ground` frame is a flat list of items with tiles on
+ * them, and grouping it by tile is main.ts's job because main.ts is where the
+ * frame lands. A menu that walked that list itself would be the second place in
+ * the client that knows what a pile is, and the two would disagree the first
+ * time one of them started filtering by what the viewer can see.
  */
 
 import { MapVerb } from './contextmenu.ts';
@@ -69,7 +76,43 @@ export type VerbTarget =
       readonly tile: TileXY;
       /** `travelTargetAllowed(level, tile)`. False for a wall AND for off-grid. */
       readonly walkable: boolean;
+      /**
+       * WHAT THIS TILE'S LOOT MEANS TO THE VIEWER (v10). `walkable`'s sibling:
+       * one classified answer, decided by the caller, never re-derived here.
+       *
+       * IT IS ONE FIELD AND NOT TWO because the two facts it carries — is there
+       * anything here, and am I standing on it — are only ever read together.
+       * `pickup` takes NO COORDINATE (the server reads the sender's own live x/y
+       * and takes index 0 of that tile), so "there is loot on that tile over
+       * there" and "there is loot under my feet" are different rows, not the same
+       * row with a different argument.
+       *
+       * OPTIONAL, AND ABSENT MEANS "THIS CALLER CANNOT SAY" rather than "there is
+       * nothing here" — the same distinction `CharacterSnapshot`'s optional
+       * fields draw on the save path. It is optional because the only caller is
+       * main.ts, which does not yet hold the `ground` frame; both readings drop
+       * the row, so a caller that has not been wired up yet offers nothing rather
+       * than promising something it cannot deliver. THE DAY main.ts HANDLES
+       * `ground` IT MUST PASS THIS, or the verb is reachable only from `,`.
+       */
+      readonly loot?: TileLoot;
     };
+
+/**
+ * The three answers to "is there something on this tile for me".
+ *
+ * A const object plus a derived type rather than an `enum`: `erasableSyntaxOnly`
+ * is on and an enum emits runtime code the type-stripping loader refuses.
+ */
+export const TileLoot = {
+  /** The `ground` frame lists nothing on this tile. */
+  None: 'none',
+  /** Something is here AND the viewer is standing on it. The row is live. */
+  Underfoot: 'underfoot',
+  /** Something is here and the viewer is somewhere else. The row is greyed. */
+  OutOfReach: 'out_of_reach',
+} as const;
+export type TileLoot = (typeof TileLoot)[keyof typeof TileLoot];
 
 /**
  * A SNAPSHOT, not a set of accessors.
@@ -113,6 +156,7 @@ const WALK_UP_TO = 'Walk up to';
 const INSPECT = 'Inspect';
 const TRAVEL_HERE = 'Travel here';
 const POINT_HERE = 'Point here';
+const PICK_UP = 'Pick up';
 
 /** No rows. Shared so every "nothing to offer" branch is visibly the same one. */
 const NO_ITEMS: readonly MenuItem[] = [];
@@ -187,13 +231,41 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
       // A WALL IS NOT A DEGRADED FLOOR. No rows at all, so right-click keeps its
       // older meaning over the two thirds of the map that is not walkable.
       if (!target.walkable) return { title, items: NO_ITEMS };
-      return {
-        title,
-        items: [
-          { action: MapVerb.Travel, label: TRAVEL_HERE, enabled: true },
-          { action: MapVerb.Point, label: POINT_HERE, enabled: true },
-        ],
-      };
+
+      const items: MenuItem[] = [
+        { action: MapVerb.Travel, label: TRAVEL_HERE, enabled: true },
+        { action: MapVerb.Point, label: POINT_HERE, enabled: true },
+      ];
+
+      // ═══ PICK UP: FIRST WHEN IT IS LIVE, GREYED WHEN IT IS NOT, ABSENT WHEN
+      //     THERE IS NOTHING TO TAKE ═══
+      // GREYED RATHER THAN DROPPED on a pile you are not standing on, which is
+      // exactly the Attack-at-range case above and the same argument
+      // `MenuItem.enabled` makes: a row that vanishes teaches nothing about why,
+      // and "there is something there, walk onto it" is the whole lesson. It
+      // cannot be enabled at range because `pickup` carries no coordinate — the
+      // server reads the sender's own live tile — so an enabled row would be a
+      // row that lies about what the click will do.
+      //
+      // ABSENT ON A TILE WITH NOTHING ON IT, and that is not the same decision
+      // inverted: a permanently greyed Pick up on every square of the map would
+      // be furniture on the surface a player right-clicks most, and it would say
+      // nothing at all about loot because it would never change.
+      //
+      // FIRST IN THE LIST because it is the only row here that is about the
+      // world rather than about the pointer, and because on the tile you are
+      // standing on "Travel here" is a no-op that would otherwise be the default
+      // thing under the cursor.
+      const loot = target.loot ?? TileLoot.None;
+      if (loot !== TileLoot.None) {
+        items.unshift({
+          action: MapVerb.Pickup,
+          label: PICK_UP,
+          enabled: loot === TileLoot.Underfoot,
+        });
+      }
+
+      return { title, items };
     }
   }
 }

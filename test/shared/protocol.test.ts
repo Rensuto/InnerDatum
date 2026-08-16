@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   DownedStatus,
   ErrorCode,
+  ItemTier,
   LogLane,
   ResourceKind,
   SAY_MAX_CHARS,
+  SLOT_ORDER,
+  Slot,
   TalentShape,
   VoiceState,
   parseClientMsg,
@@ -14,8 +17,11 @@ import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type {
   BroadcastMsg,
+  CarriedItemView,
   ClassOptionsMsg,
   CooldownsMsg,
+  GroundMsg,
+  InventoryMsg,
   LoadoutMsg,
   LoadoutTalent,
   ProgressMsg,
@@ -213,8 +219,16 @@ describe('viewer-private frames cannot be broadcast', () => {
       'used',
       'log',
       'effects',
+      'projectiles',
       'party',
       'pinged',
+      // `ground` JOINED THE BROADCASTABLE SET AT v10 and `inventory` did not.
+      // A floor item is a POSITION, which is world state and identical for
+      // everybody under shared party FOV; an inventory is a holding, and
+      // `CarriedItemView.compare` is a delta against the RECIPIENT'S OWN doll,
+      // so one shared copy would be arithmetically wrong for everybody but its
+      // author. See the v10 suites at the bottom of this file.
+      'ground',
       'pong',
       'error',
     ]);
@@ -478,6 +492,12 @@ describe('the inspect pair at the trust boundary', () => {
       { t: 'respawn' },
       { t: 'choose_class', classId: 'watchman' },
       { t: 'spend_point', talentId: 'talent:fog_step' },
+      // v10's four. `pickup` is the emptiest frame in the protocol; the other
+      // three name an OBJECT (an item, a slot) and never a subject.
+      { t: 'pickup' },
+      { t: 'equip', itemId: 'item_watchmans_coat' },
+      { t: 'unequip', slot: 'body' },
+      { t: 'drop', itemId: 'item_watchmans_coat' },
       { t: 'party', action: 'invite', targetId: 'actor_b' },
       { t: 'inspect', targetId: 'actor_b' },
       { t: 'ping' },
@@ -535,8 +555,16 @@ describe('the inspect pair at the trust boundary', () => {
       'used',
       'log',
       'effects',
+      'projectiles',
       'party',
       'pinged',
+      // `ground` JOINED THE BROADCASTABLE SET AT v10 and `inventory` did not.
+      // A floor item is a POSITION, which is world state and identical for
+      // everybody under shared party FOV; an inventory is a holding, and
+      // `CarriedItemView.compare` is a delta against the RECIPIENT'S OWN doll,
+      // so one shared copy would be arithmetically wrong for everybody but its
+      // author. See the v10 suites at the bottom of this file.
+      'ground',
       'pong',
       'error',
     ]);
@@ -1028,5 +1056,502 @@ describe('LoadoutTalent carries a rank the client cannot invent', () => {
     // The pair is a DIFF: it is worth nothing if both halves say the same thing,
     // which is what a stubbed `describe` that ignored its level would produce.
     expect(fogStep.descNext).not.toBe(fogStep.desc);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * v10 — THE FOUR LOOT VERBS AT THE TRUST BOUNDARY
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * All four are shaped by ONE rule, restated from the head of protocol.ts: a
+ * frame names the OBJECT of its verb and never the SUBJECT. `equip`, `unequip`
+ * and `drop` name an item or a slot — a thing, not a person — and `pickup` names
+ * nothing at all, which is the strongest form of the rule available: there is no
+ * coordinate to forge, so there is no adjacency check that can be got wrong.
+ *
+ * Everything below is about SHAPE. Whether the tile has anything on it, whether
+ * the item is in YOUR bag, whether the slot is occupied and whether the body is
+ * on its feet are all questions about the world; they are answered in the
+ * gateway and come back as `bad_message` or `illegal_move`, never as a new
+ * `ErrorCode` — see the last test in this block.
+ */
+describe('the four loot verbs at the trust boundary', () => {
+  /** The schema's own cap, deliberately restated rather than exported. */
+  const ITEM_ID_MAX_CHARS = 64;
+
+  /**
+   * EVERY WAY A CLIENT COULD TRY TO NAME A PERSON OR A PLACE, in one list.
+   *
+   * The first five are the protocol-wide banned set (the note at the head of
+   * protocol.ts). The rest are the ones THESE verbs specifically invite: a
+   * coordinate for `pickup`/`drop`, a ground id for `pickup`, a destination slot
+   * for `equip`, an owner for anything. `strictObject` must refuse all of them,
+   * and refuse them as REJECTIONS rather than silent strips — a permissive
+   * `z.object` that threw the key away would pass a test written as "the parsed
+   * message has no actorId" and fail this one.
+   */
+  const forbiddenKeys = [
+    'actorId',
+    'userId',
+    'playerId',
+    'charId',
+    'targetId',
+    'ownerId',
+    'x',
+    'y',
+    'cell',
+    'tile',
+    'groundId',
+    'slot',
+    'dir',
+  ] as const;
+
+  it('accepts `pickup` carrying exactly {t, v} and nothing else', () => {
+    const parsed = parseClientMsg({ v: V, t: 'pickup' });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.msg.t).toBe('pickup');
+    // THE EMPTINESS IS THE ASSERTION. Two keys, both envelope, no payload — so
+    // the parsed frame has nothing in it a handler could mistake for a request.
+    expect(Object.keys(parsed.msg).sort()).toEqual(['t', 'v']);
+  });
+
+  it('REFUSES every attempt to give `pickup` something to point at', () => {
+    // THE SECURITY PROPERTY, STATED AS A LIST. The server reads the sender's own
+    // live x/y and takes `world.itemsAt(x, y)[0]` (world.ts:516-522 — "PICKUP
+    // TAKES INDEX 0"). A supplied coordinate would need an adjacency check on an
+    // attacker-chosen number; a supplied `groundId` would name something the
+    // client was legitimately sent in the `ground` BROADCAST — the whole floor —
+    // and would therefore let a patched client reach across the map. Neither
+    // field exists, so neither failure is available.
+    for (const key of forbiddenKeys) {
+      const forged = parseClientMsg({ v: V, t: 'pickup', [key]: 'anything' });
+      expect(forged.ok, `pickup + ${key} must be rejected`).toBe(false);
+    }
+    // Including the shapes that look most innocent.
+    expect(parseClientMsg({ v: V, t: 'pickup', x: 12, y: 8 }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'pickup', itemId: 'item_watchmans_coat' }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'pickup', all: true }).ok).toBe(false);
+  });
+
+  it('accepts `equip` naming one item, and narrows it', () => {
+    const parsed = parseClientMsg({ v: V, t: 'equip', itemId: 'item_watchmans_coat' });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.msg.t).toBe('equip');
+    // The narrowing is the assertion: `itemId` is only reachable once `t` has
+    // discriminated the union, which is what makes the handler's signature safe.
+    if (parsed.msg.t !== 'equip') return;
+    expect(parsed.msg.itemId).toBe('item_watchmans_coat');
+  });
+
+  it('REFUSES a destination slot on `equip` — the catalogue decides that', () => {
+    // `Item.slot` is AUTHORED (src/server/content/items.ts): a coat goes on the
+    // body and there is nowhere else it could go, so a `slot` here would be a
+    // client asserting content and the only thing the server could do with a
+    // disagreement is ignore it. Upstream reaches the same place by a different
+    // road — `Object:wornInven()` (engines/default/engine/Object.lua:104-107)
+    // derives the destination FROM the object and the dialog never asks.
+    expect(
+      parseClientMsg({ v: V, t: 'equip', itemId: 'item_watchmans_coat', slot: 'body' }).ok,
+    ).toBe(false);
+    // Nor a second addressing scheme for the same item.
+    expect(parseClientMsg({ v: V, t: 'equip', index: 0 }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'equip', groundId: 'ground_1' }).ok).toBe(false);
+  });
+
+  it('accepts `drop` naming one item, and refuses a destination tile', () => {
+    const parsed = parseClientMsg({ v: V, t: 'drop', itemId: 'item_inspectors_locket' });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.msg.t !== 'drop') return;
+    expect(parsed.msg.itemId).toBe('item_inspectors_locket');
+
+    // A drop lands on the SENDER'S OWN tile, read server-side. A `{x, y}` here
+    // would let a patched client post items into a room it cannot see, and the
+    // only defence would be a range check on an attacker-supplied coordinate.
+    expect(
+      parseClientMsg({ v: V, t: 'drop', itemId: 'item_inspectors_locket', x: 12, y: 8 }).ok,
+    ).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'drop', itemId: 'item_inspectors_locket', dir: 'n' }).ok).toBe(
+      false,
+    );
+  });
+
+  it('REFUSES an identity field on any of the four, under any name', () => {
+    // THE WHOLE-VERB SWEEP for v10, in addition to the protocol-wide one above.
+    // Asserted as `ok === false` and never as "the parsed message has no
+    // actorId": a permissive `z.object` that stripped the key would pass the
+    // second phrasing and would be exactly the bug this is written against.
+    const withPayload: readonly Record<string, unknown>[] = [
+      { t: 'pickup' },
+      { t: 'equip', itemId: 'item_watchmans_coat' },
+      { t: 'unequip', slot: Slot.Body },
+      { t: 'drop', itemId: 'item_watchmans_coat' },
+    ];
+    for (const frame of withPayload) {
+      expect(parseClientMsg({ v: V, ...frame }).ok, `${String(frame.t)} must parse`).toBe(true);
+      for (const key of ['actorId', 'userId', 'playerId', 'charId', 'ownerId']) {
+        const forged = parseClientMsg({ v: V, ...frame, [key]: 'actor_someone_else' });
+        expect(forged.ok, `${String(frame.t)} + ${key} must be rejected`).toBe(false);
+      }
+    }
+  });
+
+  it('REFUSES a frame with no `v` at all, on all four', () => {
+    // THE ONE THAT IS EASY TO GET WRONG, and the reason every schema in
+    // protocol.ts carries `v` as a `z.literal`. `parseClientMsg`'s version check
+    // is guarded by `'v' in candidate` (protocol.ts's own note at the head of
+    // `InspectSchema`), so a frame that simply OMITS the field skips version
+    // enforcement ENTIRELY — the literal is the only thing making the envelope
+    // mandatory. Drop it from one of these and a client from any deploy ever
+    // shipped could loot a floor it cannot draw.
+    expect(parseClientMsg({ t: 'pickup' }).ok).toBe(false);
+    expect(parseClientMsg({ t: 'equip', itemId: 'item_watchmans_coat' }).ok).toBe(false);
+    expect(parseClientMsg({ t: 'unequip', slot: 'body' }).ok).toBe(false);
+    expect(parseClientMsg({ t: 'drop', itemId: 'item_watchmans_coat' }).ok).toBe(false);
+
+    // And a stale `v` reports the real problem rather than a complaint about a
+    // literal three screens down.
+    const stale = parseClientMsg({ v: V - 1, t: 'pickup' });
+    expect(stale.ok).toBe(false);
+    if (stale.ok) return;
+    expect(stale.error).toContain('protocol version mismatch');
+  });
+
+  it('bounds an item id, and refuses the empty and the oversized', () => {
+    expect(parseClientMsg({ v: V, t: 'equip', itemId: '' }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'equip' }).ok).toBe(false);
+    // Not nullable either — absent and null would be two spellings of "I did not
+    // name an item", and the second always turns up in a hand-rolled client.
+    expect(parseClientMsg({ v: V, t: 'equip', itemId: null }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'drop', itemId: ['item_watchmans_coat'] }).ok).toBe(false);
+    // 64 is the boundary and it is inclusive; 65 is a place to park a payload.
+    expect(parseClientMsg({ v: V, t: 'equip', itemId: 'a'.repeat(ITEM_ID_MAX_CHARS) }).ok).toBe(
+      true,
+    );
+    expect(parseClientMsg({ v: V, t: 'drop', itemId: 'a'.repeat(ITEM_ID_MAX_CHARS + 1) }).ok).toBe(
+      false,
+    );
+  });
+
+  it('accepts an item id this build has never heard of — the LOOKUP refuses it', () => {
+    // `itemId` is a bounded string rather than a `z.enum` of the 22 authored ids,
+    // following `TalentSchema`'s stated precedent and `ChooseClassSchema`'s after
+    // it: baking the catalogue into the wire schema makes every content edit a
+    // protocol change. So a frame naming an item that does not exist is
+    // SHAPE-VALID here and is refused one step later by the server's own
+    // `itemById` with `bad_message`. This test pins the seam: swap the string for
+    // an enum and the coupling comes back, and this line is where you find out.
+    //
+    // `item_iron_ingot` is the sharpest case — it is a real icon on disk that is
+    // DELIBERATELY not authored as an item (content/items.ts's note on
+    // `KNOWN_ICON_IDS`), so it is exactly the id a patched client would try.
+    expect(parseClientMsg({ v: V, t: 'equip', itemId: 'item_iron_ingot' }).ok).toBe(true);
+    expect(parseClientMsg({ v: V, t: 'drop', itemId: 'item_not_a_thing' }).ok).toBe(true);
+  });
+
+  it('accepts ONLY the seven slot literals for `unequip`', () => {
+    // A SLOT IS STRUCTURE, NOT CONTENT, which is why this one verb is a closed
+    // `z.enum` while `equip` is a bounded string. Content reloads without a
+    // protocol bump and must not be baked into the wire; the seven slots cannot
+    // change without a bump anyway, so the enum costs no coupling and buys a
+    // refusal one layer earlier.
+    expect(SLOT_ORDER).toHaveLength(7);
+    for (const slot of SLOT_ORDER) {
+      expect(parseClientMsg({ v: V, t: 'unequip', slot }).ok, `${slot} must parse`).toBe(true);
+    }
+    // The enum IS the union — a slot that exists on one side and not the other is
+    // a slot no client could ever take an item out of.
+    expect([...SLOT_ORDER].sort()).toEqual(Object.values(Slot).sort());
+
+    const bad: unknown[] = [
+      'mainhand', // there is no weapon slot; see `Slot`'s note on the missing art
+      'finger', // ToME's own name for what we call `ring`
+      'BODY', // upstream's casing; ours is lowercased
+      'inven',
+      '',
+      0,
+      null,
+      ['body'],
+    ];
+    for (const slot of bad) {
+      expect(
+        parseClientMsg({ v: V, t: 'unequip', slot }).ok,
+        `${JSON.stringify(slot)} must be rejected`,
+      ).toBe(false);
+    }
+    // And a slot is the only thing it takes.
+    expect(parseClientMsg({ v: V, t: 'unequip' }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'unequip', slot: 'body', itemId: 'item_x' }).ok).toBe(false);
+  });
+
+  it('adds NO ErrorCode member for a refused loot verb', () => {
+    // v10 KEPT ITS BUMP ARGUMENT TO ONE REASON, exactly as v8 and v9 did.
+    // Nothing on the tile, an item that is not in your bag, an empty slot, an
+    // item you already own: `bad_message`. A body that may not act on the world
+    // at all: `illegal_move`. Both are already rendered by every shipped client.
+    // src/shared/version.ts records at 2 -> 3 that a new `ErrorCode`
+    // INDEPENDENTLY forces a bump, so a `no_such_item` member would have forced
+    // this one a second time over for a refusal the panel already prevents by
+    // only drawing buttons for things the player is holding.
+    for (const invented of ['no_such_item', 'inventory_full', 'slot_empty', 'nothing_here']) {
+      expect(Object.values(ErrorCode)).not.toContain(invented);
+    }
+    expect(Object.values(ErrorCode)).toContain('bad_message');
+    expect(Object.values(ErrorCode)).toContain('illegal_move');
+  });
+});
+
+/**
+ * v10's TWO OUTBOUND FRAMES, AND THE SPLIT BETWEEN THEM.
+ *
+ * They landed in the same release and in DIFFERENT unions, which is the whole
+ * point: `broadcast(groundMsg)` is the correct call and `broadcast(inventoryMsg)`
+ * must be a COMPILE ERROR rather than a rule somebody has to remember at 1 a.m.
+ * `BroadcastMsg = Exclude<ServerMsg, ViewerMsg>` is what makes that mechanical.
+ */
+describe('the floor is broadcast and the bag is not', () => {
+  const ground: GroundMsg = {
+    v: V,
+    t: 'ground',
+    items: [
+      {
+        id: 'ground_1',
+        // ONE COMPOUND VALUE, not two loose numbers. A ground item never moves
+        // (world.ts:874 freezes the record with that note), so its tile is a
+        // key — and it is the key the client groups by to draw ONE pile marker
+        // on a tile holding three things.
+        cell: [12, 8],
+        itemId: 'item_watchmans_coat',
+        tier: ItemTier.Rare,
+      },
+      // TWO ROWS, ONE `itemId`, TWO `id`s — the case that proves why both fields
+      // exist. A client keying on `itemId` would draw one marker for two coats
+      // and be permanently one short.
+      { id: 'ground_2', cell: [12, 8], itemId: 'item_watchmans_coat', tier: ItemTier.Rare },
+    ],
+  };
+
+  const inventory: InventoryMsg = {
+    v: V,
+    t: 'inventory',
+    carried: [
+      {
+        itemId: 'item_watchmans_coat',
+        name: "Watchman's Coat",
+        icon: 'item_watchmans_coat',
+        tier: ItemTier.Rare,
+        desc: 'Heavy wool over a mail lining.',
+        slot: Slot.Body,
+        // PRE-FORMATTED, SERVER-SIDE. Ported in spirit from ShowEquipInven.lua:54,
+        // which passes the destination inventory into `getDesc` as `compare_with`
+        // (Object.lua:2074, forwarded at :2120), where `compare_fields(w,
+        // compare_with, field, "combat_armor", "%+d", "Armour: ")` at :1285-1287
+        // renders exactly a label and a signed number.
+        compare: [
+          { label: 'Armour', value: '+4', emphasis: true },
+          { label: 'Armour Hardiness', value: '+10%' },
+        ],
+      },
+    ],
+    equipped: {
+      [Slot.Head]: {
+        itemId: 'item_watchmans_cap',
+        name: "Watchman's Cap",
+        icon: 'item_watchmans_cap',
+        tier: ItemTier.Uncommon,
+        desc: 'Reinforced felt with a brass band.',
+      },
+    },
+  };
+
+  it('puts `ground` in ServerMsg and NOT in ViewerMsg', () => {
+    // THE ASSERTION IS THE `@ts-expect-error`, NOT THE `expect`. A floor item is
+    // a POSITION — world state, identical for everybody under shared party FOV —
+    // and `ProjectilesMsg` is the exact precedent, broadcast today with the
+    // written caveat that it moves to `ViewerMsg` the day per-player FOV lands.
+    // Ground items ride that same caveat and it is written on `GroundMsg`.
+    const asServer: ServerMsg = ground;
+    const asBroadcast: BroadcastMsg = ground;
+    expect(asServer.t).toBe('ground');
+    expect(asBroadcast.t).toBe('ground');
+
+    // @ts-expect-error `ground` is NOT viewer-private. Delete this suppression
+    // and the file stops building the day somebody moves it into `ViewerMsg`
+    // without also moving every `broadcast(groundMsg)` call site — which is the
+    // point of the Exclude, and is exactly the migration per-player FOV will one
+    // day require.
+    const notViewerPrivate: ViewerMsg = ground;
+    expect(notViewerPrivate).toBe(ground);
+  });
+
+  it('puts `inventory` in BOTH ServerMsg and ViewerMsg', () => {
+    // MEMBERSHIP OF `ViewerMsg` IS THE ENFORCEMENT. An inventory is what a player
+    // is carrying and holding back, which is the same class of fact as
+    // `progress.unspent` at v9 and `cooldowns` at M3 — a decision somebody has
+    // not made yet. And independently there is NO SHAPE OF THIS FRAME THAT IS
+    // CORRECT FOR TWO PEOPLE: `compare` is a delta against the recipient's own
+    // doll, so the same coat is "+4 Armour" for a bare Watchman and nothing at
+    // all for one already wearing it. A shared copy would not merely leak, it
+    // would be arithmetically wrong for everybody but its author.
+    const asViewer: ViewerMsg = inventory;
+    const asServer: ServerMsg = inventory;
+    expect(asViewer.t).toBe('inventory');
+    expect(asServer.t).toBe('inventory');
+
+    // @ts-expect-error `inventory` is viewer-private: `BroadcastMsg` is
+    // `Exclude<ServerMsg, ViewerMsg>`, so this assignment must not compile. The
+    // suppression IS the assertion — delete it and the file stops building the
+    // day the frame becomes broadcastable.
+    const notBroadcastable: BroadcastMsg = inventory;
+    expect(notBroadcastable).toBe(inventory);
+  });
+
+  it('derives the split from BroadcastMsg itself, so widening either union fails here', () => {
+    // NOT A HAND-TYPED LIST. The two tag sets earlier in this file are typed by a
+    // human and therefore cannot catch a frame that became wrongly broadcastable
+    // — the type would widen and the literal would simply be one tag short.
+    // These assignments are `Exclude`-derived: `broadcastable` accepts only tags
+    // that SURVIVE the Exclude, and `viewerOnly` only tags that do not.
+    const broadcastable: BroadcastMsg['t'] = 'ground';
+    const viewerOnly: Exclude<ServerMsg['t'], BroadcastMsg['t']> = 'inventory';
+    expect(broadcastable).toBe('ground');
+    expect(viewerOnly).toBe('inventory');
+
+    // @ts-expect-error `inventory` does not survive the Exclude. This is the
+    // assertion that fails at BUILD time if a future edit widens `BroadcastMsg`
+    // by dropping `inventory` out of `ViewerMsg`.
+    const wrongWay: BroadcastMsg['t'] = 'inventory';
+    expect(wrongWay).toBe('inventory');
+
+    // @ts-expect-error and `ground` is not viewer-only, in the other direction.
+    const alsoWrong: Exclude<ServerMsg['t'], BroadcastMsg['t']> = 'ground';
+    expect(alsoWrong).toBe('ground');
+  });
+
+  it('treats an empty `ground` array as a valid frame — the floor is CLEAR', () => {
+    // IT IS A CLAIM, NOT AN ABSENCE, and this is the whole contract of the frame.
+    // `ProjectilesMsg`'s own note is the wording it is copied from: the snapshot
+    // is COMPLETE AND ABSOLUTE, "a client that dropped one patch would otherwise
+    // show a phantom orb forever, and a phantom orb teaches the wrong
+    // counterplay." A phantom FLOOR ITEM is worse: it sends somebody walking the
+    // length of the map, through a fight, to a tile with nothing on it — and
+    // because the pile is unowned and first pickup wins, what they conclude is
+    // that a friend took it.
+    //
+    // So the frame is still SENT when the last item is taken, and it is still
+    // broadcastable when it says nothing is there.
+    const cleared: BroadcastMsg = { v: V, t: 'ground', items: [] };
+    expect(cleared.t).toBe('ground');
+    if (cleared.t !== 'ground') return;
+    expect(cleared.items).toEqual([]);
+
+    // An absent `items` key is NOT a third spelling of "clear" — the field is
+    // required, so a producer with nothing to report must say so explicitly.
+    // @ts-expect-error `items` is required; omitting it is not "the floor is
+    // clear", it is a frame that forgot to answer.
+    const omitted: GroundMsg = { v: V, t: 'ground' };
+    expect(omitted.t).toBe('ground');
+  });
+
+  it('lets an inventory be empty in both halves without being absent', () => {
+    // The normal state for most of a delve. `carried: []` and `equipped: {}` are
+    // real answers meaning "nothing" — as distinct from the frame never arriving,
+    // which means the server has not spoken about this player at all.
+    const bare: InventoryMsg = { v: V, t: 'inventory', carried: [], equipped: {} };
+    expect(bare.carried).toEqual([]);
+    expect(Object.keys(bare.equipped)).toEqual([]);
+  });
+
+  it('makes an empty slot ABSENT rather than present-and-null', () => {
+    // Two spellings of "empty" is how a renderer ends up drawing a blank paper
+    // doll cell for one of them and a broken one for the other, and only one of
+    // the two gets a case in the switch. `Partial<Record<Slot, ItemView>>` gives
+    // exactly one spelling.
+    expect(inventory.equipped[Slot.Head]?.name).toBe("Watchman's Cap");
+    expect(inventory.equipped[Slot.Body]).toBeUndefined();
+
+    // @ts-expect-error `null` is not a second way to say a slot is empty.
+    const nulled: InventoryMsg = { v: V, t: 'inventory', carried: [], equipped: { body: null } };
+    expect(nulled.t).toBe('inventory');
+  });
+
+  it('keeps the `wielder` table off the wire entirely', () => {
+    // WHAT AN ITEM DOES IS ENGINE DATA. A client holding
+    // `{ mods: { armour: 4 } }` could work out for itself what equipping the
+    // thing would do — which is precisely the arithmetic `compare` exists to have
+    // already done, and it would get it WRONG, because `rescaleCombatStats`
+    // floors (shared/scale.ts:116) so +3 Strength is worth a different number of
+    // points of damage depending on where the total already sits.
+    const worn = inventory.equipped[Slot.Head];
+    expect(worn).toBeDefined();
+    if (!worn) return;
+    expect(Object.keys(worn).sort()).toEqual(['desc', 'icon', 'itemId', 'name', 'tier'].sort());
+    expect('wielder' in worn).toBe(false);
+    expect('mods' in worn).toBe(false);
+  });
+
+  it('carries the comparison as rows the server already formatted', () => {
+    // THE ROWS ARE `InspectRow`s — REUSED, NOT REDECLARED, the same move
+    // `PartyStateMember.state` makes with `TurnActorState`: one shape means the
+    // inventory panel and the hover card draw a stat line the same way and
+    // cannot drift into two house styles on one screen.
+    const coat = inventory.carried[0];
+    expect(coat).toBeDefined();
+    if (!coat) return;
+    expect(coat.compare[0]).toEqual({ label: 'Armour', value: '+4', emphasis: true });
+
+    // STRINGS, NOT NUMBERS. eslint's NO_COMBAT_MATH_PATTERNS blocks src/client/**
+    // from importing shared/checkhit, shared/scale and shared/energy at all, so
+    // the browser could not format a delta correctly even if it wanted to — and
+    // src/client/ui/tooltip.ts:6-16 exists to keep the second copy of a combat
+    // formula out of it. A number here would be an invitation to do arithmetic.
+    for (const row of coat.compare) {
+      expect(typeof row.value).toBe('string');
+    }
+
+    // @ts-expect-error a raw number is not a formatted comparison row. Delete
+    // this suppression and the browser gets an operand instead of an answer.
+    const numeric: CarriedItemView = { ...coat, compare: [{ label: 'Armour', value: 4 }] };
+    expect(numeric.itemId).toBe('item_watchmans_coat');
+  });
+
+  it('names the slot on a carried item and NOT on a worn one', () => {
+    // In `equipped` the map KEY is the slot, so a `slot` field in the value would
+    // be a second copy of the same fact that can disagree with the first — the
+    // argument `PartyMember` makes about hp, in a smaller place. In `carried`
+    // there is no key to read it off, so it is named.
+    const coat = inventory.carried[0];
+    expect(coat?.slot).toBe(Slot.Body);
+    expect(Slot.Body).toBe('body');
+
+    const worn = inventory.equipped[Slot.Head];
+    expect(worn && 'slot' in worn).toBe(false);
+  });
+
+  it("names ToME's slots, lowercased, so a grep against upstream still lands", () => {
+    // `body`, `head` and `feet` are verbatim upstream (data/birth/descriptors.lua
+    // :56). The two deviations are argued in src/server/content/items.ts:
+    // FINGER=2 becomes RING=1, and there is one shared body table rather than one
+    // per class — because the floor pile is unowned and a drop only one class can
+    // wear is dead on arrival most of the time it appears.
+    expect(Object.values(Slot).sort()).toEqual(
+      ['body', 'feet', 'head', 'legs', 'offhand', 'ring', 'trinket'].sort(),
+    );
+    // THERE IS NO WEAPON SLOT, and that is a fact about the art rather than a
+    // design preference: no `icon_weapon_*` file exists, and an unresolved key
+    // renders as the LOUD violet missing-asset box on a bare clone.
+    expect(Object.values(Slot)).not.toContain('mainhand');
+    expect(Object.values(Slot)).not.toContain('finger');
+  });
+
+  it('names the three tiers the catalogue authors', () => {
+    // Member-for-member the server's `ItemTier` (src/server/content/items.ts),
+    // where the same three values ARE the drop tables. It is on the wire because
+    // it is the only thing that colours a floor marker or an inventory row, and
+    // a client inferring it would need a table of "which items are rare" — a
+    // second copy of authored content in the one place that must never hold one.
+    expect(Object.values(ItemTier).sort()).toEqual(['common', 'rare', 'uncommon'].sort());
   });
 });

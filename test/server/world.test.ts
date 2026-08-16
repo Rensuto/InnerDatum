@@ -5,6 +5,7 @@ import { MoveBlock, createWorld } from '../../src/server/world/world.ts';
 import { DIR_ORDER, dirVector } from '../../src/shared/coords.ts';
 import { TEST_LEVEL_SPAWNS, canWalk } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
+import { createRng } from '../../src/shared/rng.ts';
 import type { Dir, TileXY } from '../../src/shared/coords.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
@@ -517,5 +518,194 @@ describe('world determinism', () => {
     expect(b.allActors()).toEqual([]);
     expect(b.getActor('only-in-a')).toBeUndefined();
     expect(a.level.tiles).not.toBe(b.level.tiles);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE LOOT STREAM — a third fork, and it must have cost the other two nothing
+// ---------------------------------------------------------------------------
+
+describe('world.lootRng', () => {
+  it('is a stream of its own, not an alias of the play stream', () => {
+    // Sharing a cursor with `world.turn` would mean one drop roll shifting every
+    // to-hit, crit, damage and AI draw after it — for the rest of the session.
+    const world = createWorld('loot-distinct');
+    expect(world.lootRng).not.toBe(world.rng);
+    expect(world.lootRng.getState()).not.toEqual(world.rng.getState());
+  });
+
+  it('leaves the spawn and turn streams BYTE-IDENTICAL — provably, not probably', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // WHY THIS IS THE ONE THAT MATTERS.
+    // ═══════════════════════════════════════════════════════════════════════
+    // `fork` is a pure function of (state, inc, label) and DOES NOT ADVANCE THE
+    // PARENT (src/shared/rng.ts:261-274). That property is the entire reason a
+    // drop system could be added without moving a single seeded test: taking the
+    // loot draws on `spawnRng` or `playRng` instead would have shifted every
+    // subsequent draw in that stream, and rng.ts:31-39 states the rule — renaming
+    // a label never alters a replay, adding or removing a DRAW always does.
+    //
+    // The concrete exposure was scheduler.test.ts:390, which pins `damage` to a
+    // literal 4, and :395-396, which requires both a hit and a miss across twelve
+    // turns. Neither is a test of the loot system; both would have gone red, and
+    // the one assertion that LOOKS like it guards this (:400-408's `getState()`
+    // equality) would have survived, because it tests replay consistency rather
+    // than absolute stream position.
+    const root = createRng('fork-order');
+    const rootBefore = root.getState();
+
+    const spawn = root.fork('world.spawn');
+    const turn = root.fork('world.turn');
+    const spawnBefore = spawn.getState();
+    const turnBefore = turn.getState();
+
+    // The third fork, taken exactly where createWorld takes it.
+    const loot = root.fork('world.loot');
+
+    expect(root.getState()).toEqual(rootBefore);
+    expect(spawn.getState()).toEqual(spawnBefore);
+    expect(turn.getState()).toEqual(turnBefore);
+    // And it really is a distinct child rather than a re-derivation of one.
+    expect(loot.getState()).not.toEqual(spawnBefore);
+    expect(loot.getState()).not.toEqual(turnBefore);
+  });
+
+  it('gives a real world exactly the streams a two-fork world had', () => {
+    // The end-to-end version of the test above: the world's PLAY stream is still
+    // `root.fork('world.turn')` and nothing else, so every existing seeded test
+    // is reading the same numbers it always did.
+    const world = createWorld('fork-plumbing');
+    const root = createRng('fork-plumbing');
+    const spawn = root.fork('world.spawn');
+    const turn = root.fork('world.turn');
+
+    expect(world.rng.getState()).toEqual(turn.getState());
+    expect(world.lootRng.getState()).toEqual(root.fork('world.loot').getState());
+    // Placement still draws from `world.spawn`, which is why this is the third
+    // fork and not a rename of the second.
+    expect(spawn.getState()).not.toEqual(turn.getState());
+  });
+
+  it('draws reproducibly from the same seed and differently from another', () => {
+    const draws = (seed: string): number[] => {
+      const world = createWorld(seed);
+      return [0, 1, 2, 3].map(() => world.lootRng.int('loot.chance', 1, 100));
+    };
+    expect(draws('loot-seed')).toEqual(draws('loot-seed'));
+    expect(draws('loot-seed')).not.toEqual(draws('other-seed'));
+  });
+
+  it('does not shift the play stream however many loot draws are taken', () => {
+    // The property stated in the world's own comment — "neither stream can shift
+    // the other's numbers however many draws it takes" — now with three streams.
+    const quiet = createWorld('loot-independence');
+    const noisy = createWorld('loot-independence');
+    for (let i = 0; i < 50; i += 1) noisy.lootRng.int('loot.chance', 1, 100);
+
+    const quietPlay = [0, 1, 2].map(() => quiet.rng.int('combat.checkhit', 1, 100));
+    const noisyPlay = [0, 1, 2].map(() => noisy.rng.int('combat.checkhit', 1, 100));
+    expect(noisyPlay).toEqual(quietPlay);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GROUND ITEMS — the third table
+// ---------------------------------------------------------------------------
+
+describe('world ground items', () => {
+  it('adds, lists and removes, with ids the world alone gives out', () => {
+    const world = createWorld('ground-basics');
+    expect(world.groundItems()).toEqual([]);
+
+    const coat = world.addGroundItem({ x: 5, y: 6 }, 'item_watchmans_coat');
+    const cap = world.addGroundItem({ x: 5, y: 6 }, 'item_watchmans_cap');
+
+    expect(coat).not.toBe(cap);
+    expect(world.groundItems()).toEqual([
+      { id: coat, itemId: 'item_watchmans_coat', x: 5, y: 6 },
+      { id: cap, itemId: 'item_watchmans_cap', x: 5, y: 6 },
+    ]);
+
+    expect(world.removeGroundItem(coat)).toBe(true);
+    // …and it stays removed, and an unknown id is a refusal rather than a throw.
+    expect(world.removeGroundItem(coat)).toBe(false);
+    expect(world.removeGroundItem('ground_nope')).toBe(false);
+    expect(world.groundItems().map((entry) => entry.itemId)).toEqual(['item_watchmans_cap']);
+  });
+
+  it('lists one tile`s pile in a stable insertion order', () => {
+    // PICKUP TAKES INDEX 0, so "the top of the pile" has to mean the same thing
+    // to the server, to the client's prompt and to a replay. ToME sorts its
+    // inventories before spilling a corpse (Actor.lua:3038-3040) for exactly this
+    // reason: a hash-ordered spill gives two replays of one seed the same items
+    // in a different floor order, and a different floor order is a different
+    // item picked up.
+    const world = createWorld('ground-order');
+    world.addGroundItem({ x: 2, y: 2 }, 'item_watchmans_cap');
+    world.addGroundItem({ x: 9, y: 9 }, 'item_leather_chest');
+    world.addGroundItem({ x: 2, y: 2 }, 'item_watchmans_boots');
+    world.addGroundItem({ x: 2, y: 2 }, 'item_watchmans_badge');
+
+    expect(world.itemsAt(2, 2).map((entry) => entry.itemId)).toEqual([
+      'item_watchmans_cap',
+      'item_watchmans_boots',
+      'item_watchmans_badge',
+    ]);
+    expect(world.itemsAt(9, 9).map((entry) => entry.itemId)).toEqual(['item_leather_chest']);
+    expect(world.itemsAt(3, 3)).toEqual([]);
+
+    // Removing the top of the pile promotes the next one, and the tail keeps its
+    // relative order.
+    const top = must(world.itemsAt(2, 2)[0], 'the top of the pile');
+    expect(world.removeGroundItem(top.id)).toBe(true);
+    expect(world.itemsAt(2, 2).map((entry) => entry.itemId)).toEqual([
+      'item_watchmans_boots',
+      'item_watchmans_badge',
+    ]);
+  });
+
+  it('is a THIRD TABLE — loot is never an actor', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE FIVE THINGS THAT BREAK IF LOOT GOES IN `actors`, ASSERTED.
+    // ═══════════════════════════════════════════════════════════════════════
+    // `actorAt` would make loot BLOCK MOVEMENT — including onto the very tile
+    // you have to stand on to pick it up — and `isFree` would refuse to spawn
+    // anybody there. `allActors` / `actorsInTurnOrder` would hand it to the AI
+    // and to `decideNpcAction`. `tryMove` would treat it as an occupant to
+    // bump-attack. The projector would ship it as an `ActorView` with an hp bar
+    // and a rank ring. And the client's `ringIdFor` switches exhaustively over a
+    // TWO-MEMBER `ActorKind` to pick a `ui_token_ring_*` sprite that cannot be
+    // added, because the art is gitignored wholesale.
+    //
+    // The same argument the projectile table is written around, restated,
+    // because every one of the five failures is silent.
+    const world = createWorld('ground-not-actors');
+    const alice = world.addPlayer('a', 'Alice');
+    const empty = { x: alice.x + 1, y: alice.y };
+
+    world.addGroundItem(empty, 'item_watchmans_coat');
+    world.addGroundItem({ x: alice.x, y: alice.y }, 'item_watchmans_cap');
+
+    expect(world.actorAt(empty.x, empty.y)).toBeUndefined();
+    expect(world.allActors()).toEqual([alice]);
+    expect(world.actorsInTurnOrder()).toEqual([alice]);
+    // Standing on your own dropped cap does not make you two bodies.
+    expect(world.actorAt(alice.x, alice.y)).toBe(alice);
+
+    // And you can WALK onto a tile that has an item on it, if terrain allows —
+    // which is the whole reason loot is not an occupant.
+    if (canWalk(world.level, empty.x, empty.y)) {
+      const toward = must(dirFromTo({ x: alice.x, y: alice.y }, empty), 'a step onto the loot');
+      expect(world.tryMove('a', toward)).toEqual({ ok: true, x: empty.x, y: empty.y });
+      expect(world.itemsAt(empty.x, empty.y)).toHaveLength(1);
+    }
+  });
+
+  it("keeps each world's floor to itself", () => {
+    const a = createWorld('ground-session-a');
+    const b = createWorld('ground-session-b');
+    a.addGroundItem({ x: 4, y: 4 }, 'item_leather_chest');
+    expect(b.groundItems()).toEqual([]);
+    expect(b.itemsAt(4, 4)).toEqual([]);
   });
 });

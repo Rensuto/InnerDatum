@@ -34,6 +34,7 @@
 
 import type { TileXY } from '../../shared/coords.ts';
 import { canWalk } from '../../shared/level.ts';
+import type { Rng } from '../../shared/rng.ts';
 import type { World } from '../world/world.ts';
 import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
 import type { MonsterTemplate } from './monsters.ts';
@@ -75,7 +76,86 @@ export type SeededMonster = {
   readonly name: string;
   readonly at: TileXY;
   readonly intent: string;
+  /**
+   * What this body will leave on the floor when it dies, DECIDED NOW.
+   *
+   * `undefined` for a creature with no drop table and for one whose chance roll
+   * came up short. Returned so the boot log can say what the floor is worth,
+   * which is also the only way to notice a drop table that has quietly stopped
+   * producing anything.
+   */
+  readonly carrying?: string;
 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DROP ROLL. TWO DRAWS, TWO FROZEN LABELS, ON THE LOOT STREAM AND NOWHERE
+ * ELSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from `resolvers.calc.drops`, modules/tome/resolvers.lua:427-434:
+ *
+ * ```lua
+ * function resolvers.calc.drops(t, e)
+ *     t = t[1]
+ *     if not rng.percent(t.chance or 100) then return nil end   -- :429
+ *     for i = 1, (t.nb or 1) do
+ *         local filter = table.clone(t[rng.range(1, #t)])       -- :434
+ * ```
+ *
+ * Two lines, two draws, and the EARLY RETURN at :429 is ported exactly: a failed
+ * chance roll takes ONE draw and never reaches the pick. That is not a
+ * micro-optimisation, it is the stream contract — src/shared/rng.ts:31-39 states
+ * that renaming a label never alters a replay and adding or removing a DRAW
+ * always does, so "how many draws does a husk cost" is a number this function
+ * owes every future seed.
+ *
+ * ═══ THE TWO LABELS ARE FROZEN FROM THIS COMMIT ═══
+ * `loot.chance` then `loot.pick`. Labels are diagnostics and renaming one cannot
+ * change a replay (rng.ts:31-39), but these two are asserted by name in
+ * test/server/loot.test.ts against `RngState.lastLabel`, which is the only
+ * mechanism in the process that can prove a drop draw did not land on the wrong
+ * generator.
+ *
+ * ═══ `rng.percent` IS NATIVE C AND IS NOT IN THE REFERENCE CLONE ═══
+ * The clone holds 1,656 `.lua` files and zero `.c` (docs/tome-mechanics.md § 10),
+ * so this is a REIMPLEMENTATION of documented semantics rather than a
+ * translation: `rand_range(1, 100) <= v`, both ends inclusive. Identical to the
+ * `rollPercent` helpers already in src/shared/checkhit.ts:114 and
+ * engine/effects.ts:661, and deliberately spelled out here rather than imported
+ * from either — checkhit.ts's is private, and reaching into engine/ from content/
+ * for a two-line d100 would be a dependency edge bought very cheaply.
+ *
+ * `rng.range(1, #t)` is a 1-based INDEX draw over the filter array; ours is
+ * 0-based over `pick` because JavaScript arrays are. Same span, same uniformity,
+ * same number of draws.
+ *
+ * ═══ EXPORTED FOR ONE REASON: THE DRAW COUNT NEEDS A TEST OF ITS OWN ═══
+ * The three shipped templates can only demonstrate two of the three cases — the
+ * husk's 35 and the wraith's 100 — and the third, `chance: 0`, is the one whose
+ * behaviour is easiest to get wrong (short-circuiting it to zero draws would
+ * shift every drop after it on that seed). Pinning "0 costs one draw, 100 costs
+ * two, absent costs none" needs a template that does not exist in the roster, and
+ * a test cannot make one for a function it cannot call. Same reason
+ * `validateItems` and `validateTemplate` are exported.
+ */
+export function rollDrop(rng: Rng, drops: MonsterTemplate['drops']): string | undefined {
+  // A creature with no drop table never enters `resolvers.calc.drops` at all —
+  // the resolver is not on it. ZERO DRAWS, which is what keeps a roster of
+  // dropless monsters byte-identical to the world before this function existed.
+  if (drops === undefined) return undefined;
+
+  // resolvers.lua:429. Drawn UNCONDITIONALLY, even at chance 0 and chance 100
+  // where the outcome is already decided — the same rule and the same reason
+  // shared/checkhit.ts:108-112 gives: a short-circuit that skips a draw makes a
+  // guaranteed outcome desynchronise every roll after it.
+  if (rng.int('loot.chance', 1, 100) > drops.chance) return undefined;
+
+  // resolvers.lua:434. `validateTemplate` has already refused an empty `pick`,
+  // so the span is never negative; the `?? undefined` is `noUncheckedIndexedAccess`
+  // asking for a proof the type system cannot see rather than a real branch.
+  return drops.pick[rng.int('loot.pick', 0, drops.pick.length - 1)];
+}
 
 /**
  * Place the test encounter. Idempotent on id, like `addMonster` itself, so a
@@ -84,6 +164,42 @@ export type SeededMonster = {
  * Returns what it placed so the caller can log it — a server that quietly
  * spawned nothing because every tile was occupied is exactly the kind of
  * silence that costs an evening.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT DRAWS NOW. TWO LABELS, ON `world.lootRng`, IN THE ENCOUNTER'S AUTHORED
+ * ORDER, AND THAT ORDER IS PART OF THE SEED CONTRACT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This used to be a draw-free function and it is not one any more. Everything
+ * that follows is what makes that safe:
+ *
+ *   THE STREAM IS `world.lootRng` AND ONLY EVER `world.lootRng`. It is a third
+ *     fork off the root (world.ts), and `fork` is a pure function of (state,
+ *     inc, label) that DOES NOT ADVANCE ITS PARENT (shared/rng.ts:261-274) — so
+ *     `world.spawn` and `world.turn` are byte-identical to what they were before
+ *     drops existed, and not one seeded test in the suite moved. Taking these
+ *     draws on `world.rng` would shift every to-hit, crit, damage and AI roll in
+ *     the game; taking them on the spawn stream would shift placement, which
+ *     draws `world.spawn.overflow` at world.ts:524.
+ *   THE ORDER IS THE `ENCOUNTER` ARRAY'S ORDER, top to bottom, because that is
+ *     the only order in this file that a human wrote down. Iterating a Map or
+ *     sorting by id would give the same three monsters different drops on a
+ *     re-read of the same seed the first time somebody re-orders anything.
+ *   THE SKIPPED-TILE `continue` COMES FIRST, DELIBERATELY. A creature that was
+ *     never placed takes no draws, exactly as an entity that was never resolved
+ *     never reaches `resolvers.calc.drops`. The alternative — roll, then decide
+ *     whether to place — would make the drop stream depend on the level's wall
+ *     layout, which is a fact from a different file entirely.
+ *
+ * ═══ A RE-SEED IS A NEW ROLL, AND IT HAS TO BE ═══
+ * `resetFloor` (turn-engine.ts) reaps every monster and calls this again, so the
+ * husk that stands up after a party wipe is a BRAND NEW BODY that takes its own
+ * two draws off a stream that has moved on. It is very deliberately NOT the same
+ * drop the dead one carried. Upstream agrees, structurally: a re-seeded floor
+ * resolves new entities, and `resolvers.calc.drops` runs per entity. And the
+ * alternative is worse than untidy — remembering a per-id result would make the
+ * loot on the floor a function of how many times you have wiped, which is the
+ * one thing a floor reset is supposed to erase.
  */
 export function seedTestEncounter(world: World): SeededMonster[] {
   const placed: SeededMonster[] = [];
@@ -92,17 +208,55 @@ export function seedTestEncounter(world: World): SeededMonster[] {
     // Skip a tile that is solid rock rather than letting addMonster wander to
     // an arbitrary free one — a monster that silently relocated across the map
     // makes the encounter unreproducible, which defeats the point of a fixed
-    // table.
+    // table. NB this is ABOVE the roll on purpose; see the header.
     if (!canWalk(world.level, at.x, at.y)) {
       continue;
     }
     const id = `mon_${template.id}`;
     const actor = world.addMonster(id, monsterInit(template, at));
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE DROP IS DECIDED HERE AND WRITTEN ONTO THE BODY. DEATH TAKES NO DRAW.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `resolvers.calc.drops` creates the resolved object straight into the
+     * creature's own inventory (resolvers.lua:441-446) and `Actor:die` spills
+     * that already-decided inventory with no drop-table draw anywhere in it
+     * (class/Actor.lua:3011-3060). `actor.carried` is our inventory, so this is
+     * the same two lines of Lua with our nouns in them.
+     *
+     * WHAT THE ALTERNATIVE WOULD HAVE COST, since it is the obvious design and it
+     * is a trap: our kill site is `damage.ts:596-597`, deep inside `applyDamage`,
+     * inside the pump, on `world.rng` — the single linear stream that
+     * `combat.checkhit`, `combat.crit`, `combat.bump.damage`, `ai.fire.chance`,
+     * `ai.flee.side`, `ai.flee.hardside` and `ai.target.keep` all consume. One
+     * new draw at the moment a monster dies moves every subsequent draw in that
+     * pump and in every pump after it, forever.
+     *
+     * ═══ WHY THIS FILE MAY SEE BOTH THE CATALOGUE AND THE WORLD ═══
+     * `content/` is the layer that is allowed to know about both: the engine may
+     * not import content (scheduler.ts:515-527 states the rule and routes the
+     * whole talent system around it), and content/items.ts imports types only.
+     * The roll needs a random stream from the world and an id list from the
+     * catalogue, so this is the one place in the process where it can live at
+     * all.
+     *
+     * ASSIGNED ONLY WHEN SOMETHING DROPPED. `carried` stays `undefined` on a body
+     * that is carrying nothing rather than becoming `[]`, because absent and
+     * empty are read differently everywhere else in this system (persist/saves.ts
+     * is explicit: `[]` means "carries nothing", `undefined` means "this producer
+     * cannot say"), and a monster is a producer that genuinely said nothing.
+     */
+    const carrying = rollDrop(world.lootRng, template.drops);
+    if (carrying !== undefined) actor.carried = [carrying];
+
     placed.push({
       id: actor.id,
       name: template.displayName,
       at: { x: actor.x, y: actor.y },
       intent,
+      carrying,
     });
   }
 

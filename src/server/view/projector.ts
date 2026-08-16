@@ -10,15 +10,29 @@
  * this file as the sole producer of the future `Projected` brand for the same
  * reason.
  *
- * WHAT M1 DELIBERATELY DOES NOT DO.
+ * WHAT IS STILL UNFILTERED, AND IT IS NO LONGER TRUE THAT NOTHING IS HIDDEN.
  *
  * `projectLevel` returns the WHOLE 30x30 map and `projectActors` returns EVERY
- * actor, unfiltered. That is a deliberate M1 shortcut, not an oversight: M1's
- * definition of done is two people seeing each other move on a hand-authored
- * map, and there is no hidden information in the game yet — no monsters, no
- * traps, no loot. Sending the whole level is also the correct long-term answer
- * for the TERRAIN of an already-explored floor; it is the ACTORS on it that must
- * be filtered, and that is why the two are separate functions below.
+ * actor, unfiltered. That was a deliberate M1 shortcut when M1's definition of
+ * done was two people seeing each other move on a hand-authored map.
+ *
+ * THIS PARAGRAPH USED TO END "there is no hidden information in the game yet —
+ * no monsters, no traps, no loot". ALL THREE CLAUSES ARE NOW FALSE. There are
+ * monsters (content/monsters.ts), there are orbs in the air
+ * (`projectProjectiles`), and from v10 there are ITEMS ON THE FLOOR
+ * (`projectGroundItems` below). Every one of the three is broadcast to the whole
+ * room today, and that is an ACCEPTED LEAK rather than a gate: fog of war is
+ * still level-wide — one `LevelView`, one actor list for everybody
+ * (game-design.md § 12 makes per-player FOV an M6 refinement) — so a floor item
+ * leaks nothing `projectActors` does not already leak. It is written down as a
+ * leak rather than dressed up as a filter, because an unowned pile IS hidden
+ * information the moment FOV lands: a coat lying in an unexplored room says
+ * something died in it.
+ *
+ * Sending the whole level is also the correct long-term answer for the TERRAIN
+ * of an already-explored floor; it is the ACTORS on it — and the orbs, and the
+ * loot — that must be filtered, and that is why they are separate functions
+ * below.
  *
  * WHEN FOV LANDS (M3) both functions take the viewing `Actor` as a second
  * parameter and `projectActors` becomes
@@ -43,17 +57,39 @@ import {
 } from '../../shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
+import { ITEM_CATALOGUE, SLOT_ORDER, itemById } from '../content/items.ts';
+import {
+  combatAPR,
+  combatArmor,
+  combatArmorHardiness,
+  combatAttack,
+  combatCrit,
+  combatDamage,
+  combatDamageRange,
+  combatDefense,
+  combatMentalResist,
+  combatPhysicalResist,
+  combatSpellResist,
+  stat,
+} from '../engine/derived.ts';
 import { downedView } from '../engine/downed.ts';
 import { EffectStatus, effectDef, effectsOn } from '../engine/effects.ts';
+import { composeSheet, wornOf } from '../engine/equipment.ts';
 import { aimTile, currentTile, turnsToImpact } from '../engine/projectile.ts';
 import type {
   ActorEffects,
   ActorView,
+  CarriedItemView,
   ClassOptionView,
   ClassOptionsMsg,
   CooldownsMsg,
   EffectView,
   EffectsMsg,
+  GroundItemView,
+  GroundMsg,
+  InspectRow,
+  InventoryMsg,
+  ItemView,
   LevelView,
   LoadoutMsg,
   LoadoutTalent,
@@ -70,8 +106,11 @@ import type {
   TurnMsg,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
+import type { Item, Slot } from '../content/items.ts';
+import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
+import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
 
 /**
@@ -1014,6 +1053,379 @@ export function projectProjectiles(world: World): ProjectilesMsg {
   }
 
   return { v: PROTOCOL_VERSION, t: 'projectiles', projectiles };
+}
+
+// ---------------------------------------------------------------------------
+// v10 — THE FLOOR AND THE BAG. Two frames, two unions, and the split is the
+// point: a floor item is a POSITION and an inventory is a HOLDING.
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY ITEM ON THE FLOOR. COMPLETE AND ABSOLUTE, exactly like
+ * `projectProjectiles` directly above — and it is a BROADCAST, not a gate.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An empty array means the floor is clear, and a client REPLACES its list
+ * rather than merging into it. Same rule as the badge row and the sky, and the
+ * failure mode is the sharper version of the phantom-orb one: a client that
+ * dropped a patch would show a coat lying on a tile forever, and somebody would
+ * walk the length of the map to pick up a thing that is not there. NEVER A
+ * PATCH — there is no "taken" or "dropped" message and there must not be one.
+ *
+ * ═══ IT IS NOT FOV-GATED AND THIS COMMENT WILL NOT PRETEND OTHERWISE ═══
+ * Ground items go to the whole room, matching the accepted leak `ProjectilesMsg`
+ * already carries (protocol.ts:846-865 — broadcast today, with the written
+ * caveat that it moves to `ViewerMsg` the day per-player FOV lands). The caveat
+ * applies here VERBATIM and it is sharper: an orb crossing an unexplored room
+ * says something is shooting in it; a coat lying in one says something DIED in
+ * it, and it stays there for the rest of the delve. Fog of war is level-wide
+ * today (one `LevelView`, one actor list), so this leaks nothing
+ * `projectActors` does not already leak — but the day FOV lands, this function
+ * takes the viewer, admits only items on tiles `visible(viewer, cell)` allows,
+ * and `GroundMsg` moves from `BroadcastMsg` to `ViewerMsg` in the same commit.
+ * `BroadcastMsg` is `Exclude`-derived, so that is one line in protocol.ts plus a
+ * compile error at every site that was broadcasting it.
+ *
+ * ═══ IT IS BROADCAST FOR A SECOND, POSITIVE REASON TOO ═══
+ * The pile is UNOWNED and shared, first pickup wins (see `DropSchema`, which
+ * labels that rule a DEVIATION with no upstream citation — ToME is
+ * single-player and has no party to own anything). Per-player instancing would
+ * triple the effective drop rate and delete the sentence "you take it, I've got
+ * a coat", which is the entire social point of a game played in a voice
+ * channel. One floor, one frame, everybody looking at the same thing.
+ *
+ * ═══ INSERTION ORDER, AND IT IS THE PICKUP ORDER ═══
+ * `world.groundItems()` hands back the world's own stable insertion order, which
+ * is the order `itemsAt` filters and therefore the order `pickup` consumes
+ * (world.ts:516-522: "PICKUP TAKES INDEX 0"). Sorting here would make the top of
+ * the pile mean one thing to the client's prompt and another to the server.
+ *
+ * AN ITEM THE CATALOGUE NO LONGER KNOWS IS SKIPPED rather than drawn as a
+ * violet box: `tier` comes off the catalogue and there is nothing honest to
+ * colour a marker with. It is reachable only from a content reload that deleted
+ * an authored item out from under a live floor.
+ */
+export function projectGroundItems(world: World): GroundMsg {
+  const items: GroundItemView[] = [];
+
+  for (const dropped of world.groundItems()) {
+    const item = itemById(dropped.itemId);
+    if (item === undefined) continue;
+    items.push({
+      // THE WORLD'S id, not the catalogue's — see `GroundItemView`. Two
+      // identical pairs of trousers on one tile are two rows, and a client that
+      // keyed on `itemId` would draw one marker and be permanently one short.
+      id: dropped.id,
+      cell: [dropped.x, dropped.y],
+      itemId: dropped.itemId,
+      tier: item.tier,
+    });
+    // NOT COPIED, and the omission is the same field-by-field discipline
+    // `toActorView` and `projectProjectiles` keep: the catalogue row also holds
+    // the `wielder` table, which is what equipping the thing would DO. Shipping
+    // it would hand the client the arithmetic `CarriedItemView.compare` exists
+    // to have already done — and it would do it for an item nobody has picked
+    // up, which is a preview of a decision the player has not earned yet.
+  }
+
+  return { v: PROTOCOL_VERSION, t: 'ground', items };
+}
+
+/**
+ * One catalogue row, field by field. Never a spread — see `toActorView`.
+ *
+ * THE `wielder` TABLE IS THE FIELD THIS FUNCTION EXISTS TO WITHHOLD. `ItemView`
+ * says so on the wire; this is where the compiler enforces it, because the day
+ * `Item` grows a `dropWeight` or a `debugNotes` a spread would put it in front
+ * of every player and nothing would stop it.
+ */
+function toItemView(item: Item): ItemView {
+  return {
+    itemId: item.id,
+    name: item.name,
+    icon: item.icon,
+    tier: item.tier,
+    // Authored FOR this screen — `Item.desc` calls itself "one sentence, shown
+    // in the inventory" — and this frame is the only path to it.
+    desc: item.desc,
+  };
+}
+
+/**
+ * THE COMPARISON TABLE: which derived numbers a swap is allowed to talk about,
+ * and how each one reads.
+ *
+ * ═══ IT IS THE CHARACTER SHEET'S OWN VOCABULARY, IN THE CHARACTER SHEET'S OWN
+ *     ORDER ═══
+ * Six primaries in ToME's order (CharacterSheet.lua:815-820), then Attack
+ * (:935-1120), then Defense (:1304-1321) — the identical spine
+ * `view/inspect.ts#pushSelfSheet` prints, because the panel and the hover card
+ * are two windows onto one body and a player reading "+3 Armour" here and
+ * "Armour 9" there must be able to add them up. A second ordering would be a
+ * second house style on one screen.
+ *
+ * `Hardiness` is here and is NOT on the inspect sheet, and that asymmetry is
+ * deliberate rather than an oversight: `combatArmorHardiness` decides what
+ * FRACTION of a blow armour is allowed to bite (Combat.lua:1336), the Watchman's
+ * coat is the only item in the catalogue that moves it, and an item whose
+ * headline contribution had no row would read as an item that does nothing —
+ * Trap 1 arriving through the tooltip instead of through the maths.
+ *
+ * ═══ WHY THERE IS NO `Damage` BAND HERE ═══
+ * `inspect.ts#damageBand` prints "12–13" because both endpoints are real dice.
+ * A DELTA of a band is not a band, so this row carries the single number
+ * `combatDamage` returns and lets the sheet show the spread.
+ */
+const COMPARE_STATS: readonly (readonly [string, keyof PrimaryStats])[] = [
+  ['Strength', 'str'],
+  ['Dexterity', 'dex'],
+  ['Constitution', 'con'],
+  ['Magic', 'mag'],
+  ['Willpower', 'wil'],
+  ['Cunning', 'cun'],
+];
+
+/** A signed whole number — ToME's `"%+d"` (Object.lua:1285-1287). */
+function signed(n: number): string {
+  return n > 0 ? `+${String(n)}` : String(n);
+}
+
+/**
+ * HOW A ROW RENDERS A DIFFERENCE, AND WHY IT IS NOT ALWAYS `Math.round`.
+ *
+ * Every row here must equal the difference between the two numbers the
+ * CHARACTER SHEET PRINTS (see `compareRows`), so the shape of a row is decided
+ * by how the sheet prints that quantity — not by a house rounding rule.
+ * `inspect.ts#appendCombatRows` prints nine of these ten as `whole(...)`, a
+ * rounded scalar. It prints Damage as `damageBand`: a TRUNCATED pair,
+ * `trunc(dam)`–`trunc(dam × damRange)`. One `Scalar` and one `Band`, because
+ * there is exactly one row on the sheet that is not a rounded scalar.
+ */
+const CompareShape = {
+  /** The sheet prints one rounded number. Round both sides, then subtract. */
+  Scalar: 'scalar',
+  /** As `Scalar`, and the sheet prints a `%` after it. */
+  Percent: 'percent',
+  /** The sheet prints a truncated band. See `damageBandDelta`. */
+  Band: 'band',
+} as const;
+type CompareShape = (typeof CompareShape)[keyof typeof CompareShape];
+
+/** Derived getters a swap may move, in sheet order. */
+const COMPARE_ROWS: readonly (readonly [string, (c: Combatant) => number, CompareShape])[] = [
+  ['Accuracy', combatAttack, CompareShape.Scalar],
+  ['Damage', combatDamage, CompareShape.Band],
+  ['APR', combatAPR, CompareShape.Scalar],
+  ['Crit. chance', combatCrit, CompareShape.Percent],
+  ['Armour', combatArmor, CompareShape.Scalar],
+  ['Hardiness', combatArmorHardiness, CompareShape.Percent],
+  ['Defence', combatDefense, CompareShape.Scalar],
+  ['Physical save', combatPhysicalResist, CompareShape.Scalar],
+  ['Spell save', combatSpellResist, CompareShape.Scalar],
+  ['Mental save', combatMentalResist, CompareShape.Scalar],
+];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DAMAGE ROW, MEASURED THE WAY THE SHEET MEASURES IT — TRUNCATED, AND ON
+ * BOTH ENDPOINTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THIS ROW USED TO BE `Math.round(after) - Math.round(before)` LIKE THE OTHER
+ * NINE, AND IT SILENTLY ATE THE BIGGEST OFFENSIVE ITEMS IN THE GAME. An
+ * Inspector holding her own Dossier (`mods.dam 4`, her only offensive piece)
+ * went 11.542 -> 12.430: the sheet's band moves 11–13 -> 12–14, a full point on
+ * BOTH ends, but `round(12.430) - round(11.542)` is `12 - 12 = 0`, so no row was
+ * emitted and `compare` came back EMPTY — which `CarriedItemView.compare`
+ * defines as "this changes nothing you can see". Five class/item pairs measured
+ * the same way: inspector×dossier, inspector×tome, inspector×oxfords,
+ * alchemist×brass ring, alchemist×cowl.
+ *
+ * ═══ WHY THE RANGE IS READ OFF EACH COMPOSED SHEET AND NOT OFF `base` ═══
+ * `damRange` is a foldable mod (`AdditiveMods`, content/items.ts), so an item
+ * may move the high end WITHOUT moving `dam` at all. Reading the multiplier
+ * once off the base sheet would report such an item as inert for the same
+ * reason rounding did.
+ *
+ * ═══ WHY BOTH ENDPOINTS, AND WHY THEY ARE PRINTED APART WHEN THEY DISAGREE ═══
+ * `rollDamageRange` draws `rng.range(low, high)` over the truncated pair, so the
+ * two endpoints are independent facts about the dice: an item can lift the high
+ * end by 1 and leave the low end where it was. `+0–+1` is that item told
+ * honestly; collapsing it to `+0` would be the same lie in a smaller costume.
+ * When they agree — the usual case — one number is printed, exactly as
+ * `damageBand` collapses `9–9` to `9`.
+ *
+ * @returns the formatted delta, or null when neither endpoint moved.
+ */
+function damageBandDelta(
+  before: Combatant,
+  after: Combatant,
+  read: (c: Combatant) => number,
+): string | null {
+  // `Math.trunc`, not `Math.round` and not `Math.floor` — inspect.ts:250-259
+  // states the reason at the sheet: ToME's `rng.range` is native C taking its
+  // arguments through an `int`, so these are the numbers the dice can produce.
+  const lowDelta = Math.trunc(read(after)) - Math.trunc(read(before));
+  const highDelta =
+    Math.trunc(read(after) * combatDamageRange(after)) -
+    Math.trunc(read(before) * combatDamageRange(before));
+
+  if (lowDelta === 0 && highDelta === 0) return null;
+  return lowDelta === highDelta ? signed(lowDelta) : `${signed(lowDelta)}–${signed(highDelta)}`;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * "SHOULD I PUT THIS ON?" — ANSWERED ON THE SERVER, AGAINST THIS VIEWER'S OWN
+ * PAPER DOLL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported in spirit from tome/dialogs/ShowEquipInven.lua:54, which passes the
+ * destination inventory into `getDesc` as `compare_with`
+ * (tome/class/Object.lua:2074, forwarded at :2120 to `getTextualDesc` at :1157),
+ * where `compare_fields(w, compare_with, field, "combat_armor", "%+d",
+ * "Armour: ")` at :1285-1287 renders exactly a label and a signed number. Ours
+ * compares DERIVED getters rather than raw `combat_*` fields, and that is a
+ * deliberate improvement rather than a drift: `rescaleCombatStats` is concave
+ * and FLOORS (shared/scale.ts:116), so +3 Strength is worth a different number
+ * of points of damage depending on where the total already sits. Comparing the
+ * raw field would promise a player a number the server will not deliver.
+ *
+ * ═══ THE COMPARISON IS RUN OVER `baseCombat` + GEAR, NEVER OVER `actor.combat`
+ * ═══
+ * `actor.combat` is stage three of `recomposeCombat` — it carries live status
+ * flags. Diffing two sheets that both carry them cancels them out arithmetically
+ * today, but the day an effect writes a stat rather than a flag, a Stun would
+ * start changing what a coat appears to be worth. Both sides of this subtraction
+ * are stage-two sheets, which is the only pair that describes the swap and
+ * nothing else.
+ *
+ * ═══ AN EMPTY LIST IS A REAL ANSWER ═══
+ * "Equipping this moves nothing you can see", and it happens honestly:
+ * `max(0, armour - apr)` (engine/damage.ts:301) means an armour grant below the
+ * attacker's penetration measures as exactly zero, and two items that do the
+ * same thing compare to nothing. `CarriedItemView.compare` says an empty list is
+ * to be drawn as a blank row rather than as an invented "no change" line.
+ *
+ * ROUNDED BEFORE SUBTRACTING, not after. The row must equal the difference
+ * between the two numbers the character sheet PRINTS, or a player watching
+ * "Armour 6" become "Armour 9" would be told the swap was worth +2.6.
+ *
+ * AND "WHAT THE SHEET PRINTS" IS NOT ALWAYS A ROUNDED SCALAR. Damage is printed
+ * as a truncated BAND (inspect.ts#damageBand), so measuring it with `Math.round`
+ * satisfies the sentence above in letter and breaks it in fact. That is what
+ * `CompareShape` tags and what `damageBandDelta` measures.
+ */
+function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item): InspectRow[] {
+  // THE SWAP, NOT THE ADDITION. Whatever is already in this item's slot comes
+  // OFF — that is what `equip` will do — so the "after" set is the worn set with
+  // the occupant of `candidate.slot` replaced rather than joined.
+  const after = worn.filter((item) => item.slot !== candidate.slot);
+  after.push(candidate);
+
+  const before = composeSheet(base, worn);
+  const withIt = composeSheet(base, after);
+
+  const rows: InspectRow[] = [];
+  for (const [label, key] of COMPARE_STATS) {
+    const delta = Math.round(stat(withIt, key)) - Math.round(stat(before, key));
+    if (delta !== 0) rows.push({ label, value: signed(delta) });
+  }
+  for (const [label, read, shape] of COMPARE_ROWS) {
+    if (shape === CompareShape.Band) {
+      // The one row the sheet does not print as a rounded scalar. IN PLACE in
+      // the tuple rather than appended afterwards, so the panel keeps sheet
+      // order — Accuracy, Damage, APR — and the special case cannot silently
+      // move the row to the bottom of the list.
+      const value = damageBandDelta(before, withIt, read);
+      if (value !== null) rows.push({ label, value });
+      continue;
+    }
+    const delta = Math.round(read(withIt)) - Math.round(read(before));
+    if (delta !== 0) {
+      rows.push({
+        label,
+        value: shape === CompareShape.Percent ? `${signed(delta)}%` : signed(delta),
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE PLAYER'S BAG AND ONE PLAYER'S PAPER DOLL. A `ViewerMsg`, and there is no
+ * shape of this frame that is correct for two people.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONE FRAME FOR BOTH HALVES, WHICH IS THE PORT RATHER THAN A SIMPLIFICATION:
+ * ToME's `SHOW_EQUIPMENT` is literally an alias of `SHOW_INVENTORY`
+ * (tome/class/Game.lua:2192) and both open the same combined `ShowEquipInven`
+ * dialog. Two frames would let the doll and the bag arrive a pump apart and
+ * render a comparison against a slot whose contents had already changed.
+ *
+ * ═══ WHY IT CANNOT BE BROADCAST, AND IT IS NOT ONLY PRIVACY ═══
+ * `compare` is a DELTA AGAINST THE RECIPIENT'S OWN DOLL: the same coat is +4
+ * Armour to a bare Watchman and nothing at all to one already wearing it. A
+ * shared copy would not merely leak — it would be arithmetically WRONG for
+ * everybody but its author, on the one screen whose whole job is answering "is
+ * this better than what I have on?". The privacy half is `ViewerMsg`'s own
+ * argument: what somebody is carrying and has not put on is a decision they have
+ * not made yet, exactly like a banked talent point.
+ *
+ * ═══ SLOT ORDER, NEVER MAP ORDER ═══
+ * The doll is walked in `SLOT_ORDER` — the gear fold's own order
+ * (content/items.ts) — so the frame does not depend on which buttons a player
+ * happened to press. `equipped` is a `Partial<Record<Slot, string>>` built by
+ * hand, and a JSON object preserves insertion order, so without this the same
+ * two items would serialise differently for two players wearing them.
+ *
+ * ═══ REPAIR, NEVER REJECT ═══
+ * An id the catalogue does not know, and an id filed under a slot it does not
+ * belong in, are both SKIPPED — the same rule `wornOf` follows for the fold, and
+ * for the same reason: both are reachable from a save written by a build that
+ * authored an item this one does not, and neither is worth refusing to draw a
+ * panel over. What is skipped here is skipped there too, so the panel and the
+ * sheet cannot disagree about what is being worn.
+ *
+ * TAKES THE ACTOR, NOT THE WORLD, because everything it needs is on the body:
+ * `carried`, `equipped` and `baseCombat` are all fields on `ActorCommon` for the
+ * stated reason that the save layer cannot reach the talent engine.
+ */
+export function projectInventory(viewer: Actor): InventoryMsg {
+  const equipped: { [K in Slot]?: ItemView } = {};
+  for (const slot of SLOT_ORDER) {
+    const id = viewer.equipped?.[slot];
+    if (id === undefined) continue;
+    const item = itemById(id);
+    if (item === undefined || item.slot !== slot) continue;
+    equipped[slot] = toItemView(item);
+  }
+
+  // The same fold `recomposeCombat` ran to build `actor.combat`, re-run here so
+  // the "before" side of every comparison is the sheet the player is actually
+  // wearing rather than one this function guessed at.
+  const base = viewer.baseCombat ?? viewer.combat;
+  const worn = wornOf(viewer.equipped, ITEM_CATALOGUE);
+
+  const carried: CarriedItemView[] = [];
+  for (const id of viewer.carried ?? []) {
+    const item = itemById(id);
+    if (item === undefined) continue;
+    carried.push({
+      ...toItemView(item),
+      // NAMED HERE because a bag has no key to read it off — see `ItemView`,
+      // which deliberately omits `slot` for the doll where the key IS the slot.
+      slot: item.slot,
+      // A body with no sheet at all (an M2-era fixture, a classless e2e body)
+      // has nothing to compare against, and an invented baseline would be a
+      // promise about numbers that body does not have.
+      compare: base === undefined ? [] : compareRows(base, worn, item),
+    });
+  }
+
+  return { v: PROTOCOL_VERSION, t: 'inventory', carried, equipped };
 }
 
 /**

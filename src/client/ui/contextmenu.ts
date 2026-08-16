@@ -45,11 +45,22 @@ import type { PanelRect } from './panel.ts';
  * THE THINGS A RIGHT-CLICK CAN MEAN THAT ARE NOT ABOUT A PARTY.
  *
  * `PartyAction` is a WIRE verb — the client puts it in a frame and the server
- * decides what it means. These four are the opposite: every one of them is
- * resolved by the CLIENT and then expressed in verbs that already exist.
- * `Travel` and `Attack` both come out the far end as `{t:'move',dir}` (there is
- * no attack intent — walking into a hostile IS the attack), `Point` is the
- * existing `{t:'point',x,y}`, and `Inspect` is the one that adds a frame.
+ * decides what it means. Four of these five are the opposite: `Travel`,
+ * `Attack`, `Point` and `Inspect` are resolved by the CLIENT and then expressed
+ * in verbs that already exist. `Travel` and `Attack` both come out the far end as
+ * `{t:'move',dir}` (there is no attack intent — walking into a hostile IS the
+ * attack), `Point` is the existing `{t:'point',x,y}`, and `Inspect` is the one
+ * that adds a frame.
+ *
+ * ═══ `Pickup` (v10) IS THE EXCEPTION, AND IT IS WORTH SAYING WHY ═══
+ * Its value IS the wire tag — `{t:'pickup'}` goes out exactly as written — which
+ * makes it the first member of this object that behaves like a `PartyAction`
+ * rather than like its four neighbours. It stays here rather than moving to the
+ * protocol's own vocabulary because it is a row about a TILE, which is what this
+ * object is for, and because `pickup` has no arguments at all: the server reads
+ * the sender's own live position and takes index 0 of that tile, so there is
+ * nothing for the menu to name. The row's whole job is to say the verb exists and
+ * whether the viewer is standing in the right place to use it.
  *
  * A const object plus a derived type rather than an `enum`: `erasableSyntaxOnly`
  * is on, and an enum emits runtime code the type-stripping loader will not
@@ -60,6 +71,7 @@ export const MapVerb = {
   Attack: 'attack',
   Inspect: 'inspect',
   Point: 'point',
+  Pickup: 'pickup',
 } as const;
 export type MapVerb = (typeof MapVerb)[keyof typeof MapVerb];
 

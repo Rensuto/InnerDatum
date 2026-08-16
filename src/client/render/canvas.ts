@@ -87,6 +87,7 @@ import type {
   ActorView,
   DownedView,
   EffectView,
+  ItemTier,
   LevelView,
   ProjectileView,
 } from '../../shared/protocol.ts';
@@ -195,6 +196,31 @@ export type PingMarker = {
   readonly label: string;
 };
 
+/**
+ * A PILE ON THE FLOOR (v10). One mark per TILE, not one per item.
+ *
+ * The `ground` frame is a flat list of items each carrying its own `cell`, and
+ * `GroundItemView`'s own note says the tuple is "the value the client groups by
+ * to draw ONE pile marker on a tile holding three things". That grouping is the
+ * caller's, for the reason `PingMarker` above carries a name rather than an id:
+ * the renderer has no game state and must not grow any.
+ *
+ * `count` and `tier` are the two things the mark says, and both are drawn as
+ * SHAPE as well as colour — see `paintLoot`.
+ */
+export type LootMarker = {
+  readonly x: number;
+  readonly y: number;
+  /** How many items are on the tile. Two or more draws the pile's second edge. */
+  readonly count: number;
+  /**
+   * The best tier on the tile. IT COMES OFF THE WIRE AND IS NEVER INFERRED —
+   * `GroundItemView.tier` exists precisely so the browser does not hold a table
+   * of which items are rare (shared/protocol.ts's `ItemTier`).
+   */
+  readonly tier: ItemTier;
+};
+
 /** Everything one frame needs. The renderer holds no game state of its own. */
 export type Scene = {
   readonly level: LevelView | null;
@@ -262,6 +288,24 @@ export type Scene = {
   readonly effects?: ReadonlyMap<string, readonly EffectView[]>;
   /** M4 — live `point` markers. Emphasis, on top, with the pointer's name. */
   readonly pings?: readonly PingMarker[];
+  /**
+   * v10 — WHAT IS LYING ON THE FLOOR, one mark per tile, complete and absolute
+   * (shared/protocol.ts's `GroundMsg`): absent or empty both mean the floor is
+   * clear, and the frame is a REPLACEMENT rather than a patch.
+   *
+   * GROUND PAINT, AND SO IT IS PAINTED WITH THE GROUND — below the y-sorted
+   * tokens, in the same band as the targeting ring and the travel route, for the
+   * reason `TargetCell` gives at length. `Scene.projectiles` is the one overlay
+   * that argues its way ABOVE the tokens and the argument does not transfer: an
+   * orb is IN THE AIR and is the thing you are being asked to step out of the
+   * way of, while a coat is UNDER whoever is standing on it. A pile drawn over a
+   * body would hide the body, and the body is the thing that can kill you.
+   *
+   * It is painted AFTER the travel route rather than before, so a route drawn
+   * across a pile does not hide the pile — the pile is frequently what the route
+   * was drawn towards.
+   */
+  readonly loot?: readonly LootMarker[];
   /**
    * v7 — WHAT IS IN THE AIR. Every orb currently in flight, at the tile it is on
    * RIGHT NOW, complete and absolute (shared/protocol.ts's `ProjectilesMsg`):
@@ -401,6 +445,53 @@ const PATH_DOT_ALPHA = 0.7;
  */
 const ORB_DOT_PX = 8;
 const ORB_DOT_INSET = Math.round((TILE_PX - ORB_DOT_PX) / 2);
+
+/**
+ * A PILE ON THE FLOOR: how big the mark is, per tier.
+ *
+ * TIER IS ENCODED TWICE — AS SIZE AND AS BRIGHTNESS — AND THAT IS THE RULE
+ * RATHER THAN BELT AND BRACES. ui/partypanel.ts:78-92 states it: never colour
+ * alone. A four-pixel mark on a 32-pixel tile is at the limit of what a hue can
+ * carry anyway, and the two encodings are monotone in the same direction, so a
+ * rare drop is the biggest AND the brightest thing on the floor whether the
+ * player is red-green colourblind, is playing in greyscale, or is looking at the
+ * tile out of the corner of their eye.
+ *
+ * IT STAYS SMALL REGARDLESS. `paintTiles` puts a one-pixel SLATE grid on every
+ * floor tile because counting tiles is how a player measures a move, and a mark
+ * that filled the cell would take away the measurement — the same reason the
+ * route dot and the orb are small.
+ */
+const LOOT_DOT_PX: Readonly<Record<ItemTier, number>> = {
+  common: 5,
+  uncommon: 7,
+  rare: 9,
+};
+
+/**
+ * ...and what colour it is, on the same three-step ramp.
+ *
+ * A BRIGHTNESS RAMP OFF THE EXISTING PALETTE, chosen by elimination and stated
+ * so nobody re-litigates it. GOLD is this file's affirmative/cursor colour and is
+ * already spent on the player's own route and targeting bracket — a floor item in
+ * gold reads as your own aim. CRIMSON is reserved by `PALETTE` for the single
+ * fact "hostiles are engaged" and is spent on the playfield ring. VIOLET_HI *is*
+ * the missing-asset box, so a mark painted in it is indistinguishable from a
+ * broken manifest. ORANGE is the orb's, and an orb and a pile are the two things
+ * on the map that must never be confused for one another — one is arriving and
+ * one is waiting.
+ *
+ * That leaves the parchment ramp, which nothing on the MAP spends, and which is
+ * monotone: 0x99 -> 0xc5 -> 0xed.
+ */
+const LOOT_DOT_INK: Readonly<Record<ItemTier, string>> = {
+  common: PALETTE.GREY_HI,
+  uncommon: PALETTE.BONE,
+  rare: PALETTE.PARCHMENT,
+};
+
+/** How far the second edge of a pile of two or more is offset, in pixels. */
+const LOOT_PILE_OFFSET = 3;
 
 /**
  * STATUS PIPS OVER A TOKEN — the cap, the size and the spacing.
@@ -800,6 +891,72 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
+   * WHAT IS ON THE FLOOR. NO ART, DELIBERATELY — `fillRect` and nothing else,
+   * and written in the same shape as `paintPath` above for exactly its reasons.
+   *
+   * ═══ THE OBVIOUS IMPLEMENTATION IS WRONG TWICE OVER, SO BOTH ARE NAMED ═══
+   * FIRST: a new `MarkerKind` member and a `ui_tile_marker_loot` blit follows the
+   * shape of every other overlay in this file and fails loudly for EVERYONE —
+   * that id is in no manifest, client/public/assets/ is gitignored wholesale so a
+   * bare clone has no manifest at all, and `blitSprite` resolves a miss to the
+   * intentionally shouty violet fallback box. The broken-manifest alarm would be
+   * fired by a feature that works perfectly. test/client/assets.test.ts:210-218
+   * re-asserts the five-member pin for exactly this reason.
+   *
+   * SECOND, AND IT IS SPECIFIC TO THIS OVERLAY: the item's own 64x64 icon IS in
+   * the manifest and would be the tempting thing to draw. A tile is 32x32. Fitting
+   * one into the other means a downscale, which is precisely the resampling the
+   * backbuffer exists to prevent (see the header) — or a centre crop, which shows
+   * a quarter of a picture and identifies nothing. The panel is where an icon is
+   * legible; the map gets a mark that says "something is here, roughly how much of
+   * it, and roughly how good it is", and the player presses `,` or opens the
+   * panel for the rest.
+   *
+   * A ONE-PIXEL INK SURROUND, the legibility trick `paintStatusPips` and
+   * `paintProjectiles` both use: a pile sits on floor, beside a wall and under the
+   * lit top edge of a wall, and without the surround it disappears against
+   * exactly one of them.
+   *
+   * NO `globalAlpha`, so no save/restore is needed — and that is a reason to keep
+   * it that way rather than an accident. A leaked alpha makes every later sprite
+   * in the frame translucent, which reads as a broken PNG rather than as a missing
+   * restore; whoever adds a fade here must wrap it, as `paintPath` does.
+   */
+  function paintLoot(piles: readonly LootMarker[], camX: number, camY: number): void {
+    if (piles.length === 0) return;
+
+    for (const pile of piles) {
+      // The SAME cull the actors, the route preview and the orbs use, rather than
+      // a viewport test written fresh for this one painter.
+      const origin = pathCellOrigin({ x: pile.x, y: pile.y }, camX, camY);
+      if (!visible(origin.x, origin.y)) continue;
+
+      const size = LOOT_DOT_PX[pile.tier];
+      const ink = LOOT_DOT_INK[pile.tier];
+      const inset = Math.round((TILE_PX - size) / 2);
+
+      /** One square with its surround, at an offset from the tile's centre. */
+      const mark = (dx: number, dy: number): void => {
+        const x = origin.x + inset + dx;
+        const y = origin.y + inset + dy;
+        backCtx.fillStyle = PALETTE.INK;
+        backCtx.fillRect(x - 1, y - 1, size + 2, size + 2);
+        backCtx.fillStyle = ink;
+        backCtx.fillRect(x, y, size, size);
+      };
+
+      // A PILE OF TWO OR MORE IS TWO OVERLAPPING SQUARES, drawn back to front.
+      // The count is a SHAPE rather than a digit: a numeral at this size would be
+      // three pixels tall and unreadable, and the only question the map has to
+      // answer is "one thing or several" — the panel and the Case Log say which
+      // things. Beyond two it stops growing, deliberately: `pickup` takes the top
+      // of the pile one item at a time whether there are two or five.
+      if (pile.count > 1) mark(-LOOT_PILE_OFFSET, -LOOT_PILE_OFFSET);
+      mark(0, 0);
+    }
+  }
+
+  /**
    * WHAT IS IN THE AIR. NO ART, DELIBERATELY — `fillRect` and nothing else, and
    * written in the same shape as `paintPath` above for exactly its reasons.
    *
@@ -1031,6 +1188,12 @@ export function createRenderer(options: RendererOptions): Renderer {
       // The travel route, in the same band and for the same reason: ground
       // paint, above the floor and below the token rings. See `Scene.path`.
       if (scene.path !== undefined) paintPath(scene.path, camX, camY);
+
+      // WHAT IS ON THE FLOOR, still in the ground-paint band and last in it — so
+      // a route drawn across a pile does not hide the pile, which is frequently
+      // what the route was drawn towards. See `Scene.loot` for why this is not
+      // above the tokens the way the orbs are.
+      if (scene.loot !== undefined) paintLoot(scene.loot, camX, camY);
 
       // Y-SORT. Painter's algorithm down the screen, so an actor standing lower
       // (larger y, nearer the viewer) draws in front of one behind it — which

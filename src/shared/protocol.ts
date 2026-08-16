@@ -182,6 +182,52 @@
  * that reaches six and refuses the tiles the player paid for. src/shared/
  * version.ts is the long version, including the two shapes deliberately avoided
  * (no new `TurnEvent` variant, no new `ErrorCode`).
+ *
+ * v10 ADDS LOOT, AND THE BUMP IS FORCED BY A FRAME AN OLD CLIENT CANNOT NAME.
+ *
+ *   C -> S  `pickup`  — "take the thing I am standing on." NO ARGUMENTS AT ALL.
+ *           `equip`   — "put this on."   `unequip` — "take this off."
+ *           `drop`    — "leave this here."
+ *   S -> C  `ground`    — every item lying on the floor. BROADCAST, because a
+ *                         tile is world state and the pile is unowned.
+ *           `inventory` — what YOU are carrying, what you are wearing, and the
+ *                         server's own comparison of the two. Per-recipient.
+ *
+ * THE FOUR VERBS NAME THE OBJECT AND NEVER THE SUBJECT, which is the rule at the
+ * top of this file rather than a new one. `equip`, `unequip` and `drop` name an
+ * item or a slot — a thing, not a person — and the server requires that thing to
+ * be in THAT sender's own inventory, so a cross-inventory lookup table never
+ * exists to be abused. `pickup` goes further and carries NOTHING: the server
+ * reads the sender's own live x/y and takes the first item on that tile, which is
+ * strictly stronger than range-checking a coordinate the client supplied, because
+ * there is no coordinate to forge.
+ *
+ * THE COMPARISON ROWS ARE COMPUTED SERVER-SIDE AND THAT IS NOT NEGOTIABLE.
+ * ToME's item description is COMPARATIVE: tome/dialogs/ShowEquipInven.lua:54
+ * passes `self.equip_actor:getInven(item.object:wornInven())` — THE DESTINATION
+ * INVENTORY, i.e. whatever is already in that slot — as the second argument of
+ * `getDesc`, which is named `compare_with` at tome/class/Object.lua:2074 and
+ * forwarded at :2120 into `getTextualDesc` (:1157). What comes out is a list of
+ * LABEL-PLUS-SIGNED-NUMBER rows built by `compare_fields`, e.g.
+ * `compare_fields(w, compare_with, field, "combat_armor", "%+d", "Armour: ")`
+ * (:1285-1287, which does armour, hardiness and defence in three lines) — a
+ * label and a formatted value, which is exactly `InspectRow`.
+ *
+ * So the comparison has to arrive ALREADY FORMATTED. eslint's
+ * `NO_COMBAT_MATH_PATTERNS` blocks src/client/** from importing shared/checkhit,
+ * shared/scale and shared/energy at all, and src/client/ui/tooltip.ts:6-16
+ * states the rule this follows: a client that subtracted two armour numbers to
+ * draw "+4 Armour" would be exactly the second copy of a combat formula that
+ * file exists to prevent — and it would be wrong the first time, because
+ * `rescaleCombatStats` floors and a raw +3 Strength is not +3 of anything a
+ * player can see.
+ *
+ * A v9 CLIENT CANNOT NAME `ground`, SO IT DRAWS NO FLOOR ITEM AND HAS NO VERB TO
+ * TAKE ONE — the permanently-stuck shape src/shared/version.ts used at 5 -> 6,
+ * and the same argument it used at 6 -> 7 for the orb. That is the long version;
+ * it also records the independent narrowing, which is that gear moves the
+ * character sheet and `ActorView.maxHp` and `InspectView.rows` therefore stop
+ * being facts about a CLASS.
  */
 
 import { z } from 'zod';
@@ -1162,6 +1208,234 @@ export type PartyInviteView = {
 };
 
 // ---------------------------------------------------------------------------
+// v10 — LOOT. WHAT IS ON THE FLOOR AND WHAT IS IN YOUR HANDS.
+//
+// The VOCABULARY lives here, above the trust boundary, because `unequip` needs
+// `SLOT_ORDER` at module-evaluation time to build its `z.enum` — a `const`
+// declared four hundred lines further down would be a temporal dead zone error
+// at import, which in a project with no build step is a crash on boot rather
+// than a compile warning. The two MESSAGES that carry these shapes are with the
+// other outbound frames at the bottom, exactly as `InspectView` sits up here and
+// `InspectedMsg` sits down there.
+// ---------------------------------------------------------------------------
+
+/**
+ * THE SEVEN WORN SLOTS. One item each, and there is no weapon slot.
+ *
+ * DELIBERATELY IDENTICAL to the server's own `Slot` (src/server/content/items.ts),
+ * the same arrangement `ResourceKind` above has with the engine's: two
+ * declarations rather than one import, because src/shared/ may not reach into
+ * src/server/ — but the string values are the same seven, so the catalogue's
+ * value satisfies this type structurally and no mapping function exists to get
+ * out of step. Keeping the NAME verbatim is what makes `grep -rn "Slot"` find
+ * both ends of the seam in six months.
+ *
+ * The values are ToME's own slot names lowercased (`body`, `head`, `feet` are
+ * upstream's verbatim — data/birth/descriptors.lua:56), so a grep against
+ * reference/t-engine4 still lands on what this was ported from.
+ *
+ * THERE IS NO `mainhand`, AND THAT IS A FACT ABOUT THE ART RATHER THAN A DESIGN
+ * PREFERENCE. `client/public/assets/` is gitignored wholesale and an unresolved
+ * key renders as the LOUD violet missing-asset box; no `icon_weapon_*` file
+ * exists, so a weapon slot would ship a violet box to every player on a bare
+ * clone. A class's weapon stays part of its authored `CombatSheet`. See the head
+ * of src/server/content/items.ts for the four ids that look available and are not.
+ */
+export const Slot = {
+  Head: 'head',
+  Body: 'body',
+  Legs: 'legs',
+  Feet: 'feet',
+  Offhand: 'offhand',
+  Ring: 'ring',
+  Trinket: 'trinket',
+} as const;
+export type Slot = (typeof Slot)[keyof typeof Slot];
+
+/**
+ * THE CANONICAL SLOT ORDER, and it is the source of the `unequip` enum.
+ *
+ * Member-for-member `SLOT_ORDER` in src/server/content/items.ts, where the order
+ * is load-bearing for a different reason (it is the order gear is folded onto
+ * the combat sheet, so the fold never depends on a Map's insertion order and
+ * therefore never depends on which buttons a player happened to press first).
+ * Here it is simply the paper doll's top-to-bottom reading order and the tuple
+ * `z.enum` needs — but the two lists must stay identical, because a slot that
+ * exists on the server and not here is a slot no client can ever take an item
+ * out of.
+ *
+ * `as const satisfies readonly Slot[]` for the same reason `DIR_ORDER` carries
+ * it (src/shared/coords.ts:54-63): the `satisfies` proves every entry is a real
+ * slot while the `as const` keeps the literal tuple type that `z.enum` needs.
+ */
+export const SLOT_ORDER = [
+  'head',
+  'body',
+  'legs',
+  'feet',
+  'offhand',
+  'ring',
+  'trinket',
+] as const satisfies readonly Slot[];
+
+/**
+ * Compile-time proof that `SLOT_ORDER` lists every slot — the same device
+ * coords.ts:66-71 uses for directions. If an eighth slot is added to `Slot` and
+ * not to the list, this alias fails to satisfy `never` and the error NAMES the
+ * missing member. Zero runtime cost, and it is the only thing standing between a
+ * new slot and an `unequip` that silently cannot address it.
+ */
+type _Exhaustive<T extends never> = T;
+type _MissingFromSlotOrder = _Exhaustive<Exclude<Slot, (typeof SLOT_ORDER)[number]>>;
+
+/**
+ * RARITY. Three tiers, and by construction the drop table as well.
+ *
+ * DELIBERATELY IDENTICAL to the server's `ItemTier` (src/server/content/items.ts),
+ * on the same two-declarations terms as `Slot` above.
+ *
+ * IT IS ON THE WIRE BECAUSE IT IS THE ONLY THING THAT COLOURS A FLOOR MARKER OR
+ * AN INVENTORY ROW, and the client must not infer it. Inferring would mean a
+ * table of "which items are rare" in the browser — a second copy of authored
+ * content in the one place that must never hold one, and the copy that will be
+ * missing the next item somebody authors. ToME does the same thing with the
+ * bracket tags it stamps on a description (`[Unique]`, `[Legendary]` —
+ * tome/class/Object.lua:1164-1168): rarity is a property of the object, not
+ * something the renderer works out.
+ */
+export const ItemTier = {
+  Common: 'common',
+  Uncommon: 'uncommon',
+  Rare: 'rare',
+} as const;
+export type ItemTier = (typeof ItemTier)[keyof typeof ItemTier];
+
+/**
+ * ONE ITEM, AS MUCH AS IT TAKES TO DRAW IT AND NO MORE.
+ *
+ * WHAT IS NOT HERE, AND MUST NEVER BE: the `wielder` table. An item's actual
+ * contribution — `{ mods: { armour: 4, armourHardiness: 10 } }` — is engine data
+ * (src/server/content/items.ts), and a client holding it would immediately be
+ * able to work out what equipping the thing would do, which is precisely the
+ * arithmetic `compare` below exists to have already done on the server. Shipping
+ * the raw table and formatting it in the browser is the same mistake as shipping
+ * a talent's curve endpoints (see `LoadoutTalent.desc`): the second copy of a
+ * formula, wearing a hat.
+ *
+ * IT CARRIES NO `slot`, AND THE OMISSION IS DELIBERATE. In `InventoryMsg.equipped`
+ * the map KEY is the slot, so a `slot` field in the value would be a second copy
+ * of the same fact that can disagree with the first — the argument `PartyMember`
+ * makes about hp, in a smaller place. The carried list, where there is no key to
+ * read it off, names it on `CarriedItemView` instead.
+ *
+ * `itemId` and `icon` are two fields that currently hold the same string for all
+ * 22 authored items, and they stay two fields for the reason the catalogue gives:
+ * `itemId` is what the wire and the save file carry, `icon` is a key into a
+ * manifest the SERVER never reads. Collapsing them would make recutting a sprite
+ * a save migration.
+ */
+export type ItemView = {
+  /** A catalogue id — `item_watchmans_coat`. What `equip` and `drop` name. */
+  readonly itemId: string;
+  /** "Watchman's Coat". Authored, not derived from the id. */
+  readonly name: string;
+  /** An asset KEY, never a path — the same contract as `ActorView.sprite`. */
+  readonly icon: string;
+  readonly tier: ItemTier;
+  /**
+   * ONE SENTENCE OF FLAVOUR. It decides nothing, and it travels anyway.
+   *
+   * `Item.desc` in src/server/content/items.ts is declared, in its own words, as
+   * "one sentence, shown in the inventory" — so the field was authored FOR this
+   * screen and this frame is the only path to it. Leaving it off would mean the
+   * pass that draws the panel could not show the line the catalogue exists to
+   * carry without bumping the protocol a second time; adding it inside the bump
+   * that is already happening costs one string per item, on a frame that is sent
+   * when somebody's inventory changes rather than on every pump.
+   */
+  readonly desc: string;
+};
+
+/**
+ * ONE ITEM IN YOUR BAG, WITH THE SERVER'S OWN ANSWER TO "SHOULD I PUT THIS ON?".
+ *
+ * ═══ `compare` IS THE WHOLE REASON THIS TYPE EXISTS ═══
+ * It is the delta against WHATEVER IS ALREADY IN `slot`, already formatted:
+ * `{ label: 'Armour', value: '+4' }`. Against an empty slot it is the item's
+ * full contribution; against an occupied one it is the difference, which may be
+ * negative and may be empty (two items that do the same thing compare to
+ * nothing, and an empty list is the honest way to say "this changes nothing you
+ * are not already getting").
+ *
+ * Ported in spirit from tome/dialogs/ShowEquipInven.lua:54, which passes the
+ * destination inventory into `getDesc` as `compare_with`
+ * (tome/class/Object.lua:2074, forwarded at :2120 to `getTextualDesc` at :1157),
+ * where `compare_fields(w, compare_with, field, "combat_armor", "%+d",
+ * "Armour: ")` at :1285-1287 renders exactly a label and a signed number.
+ *
+ * REUSING `InspectRow` RATHER THAN DECLARING A FOURTH LABEL/VALUE PAIR is the
+ * same move `PartyStateMember.state` makes in reusing `TurnActorState`: one
+ * shape means the inventory panel and the hover card draw a stat line the same
+ * way and cannot drift into two house styles on one screen. `emphasis` is
+ * available and is meant for the row that decides the swap.
+ *
+ * THE CLIENT MAY NOT COMPUTE THIS. eslint blocks src/client/** from importing
+ * shared/checkhit, shared/scale and shared/energy, so it cannot — and even the
+ * subtraction that looks safe is not: `rescaleCombatStats` FLOORS
+ * (src/shared/scale.ts:116), so +3 Strength is worth a different number of
+ * points of damage depending on where the total already sits, and a browser
+ * doing plain arithmetic would confidently promise a player something the
+ * server will not deliver.
+ */
+export type CarriedItemView = ItemView & {
+  /** WHERE IT WOULD GO. Named here because a bag has no key to read it off. */
+  readonly slot: Slot;
+  /**
+   * THE DELTA AGAINST WHAT IS IN `slot` RIGHT NOW, PRE-FORMATTED.
+   *
+   * EMPTY IS A REAL ANSWER and means "equipping this moves nothing you can
+   * see" — which happens honestly, because armour below the attacker's armour
+   * penetration measures as exactly zero (`max(0, armour - apr)`,
+   * src/server/engine/damage.ts). Drawing an empty list as a blank row is the
+   * correct rendering; inventing a "no change" line is not this type's job.
+   */
+  readonly compare: readonly InspectRow[];
+};
+
+/**
+ * ONE ITEM LYING ON A TILE.
+ *
+ * ═══ `id` IS THE WORLD'S, `itemId` IS THE CATALOGUE'S, AND THEY ARE NOT THE
+ *     SAME KIND OF THING ═══
+ * `id` (`ground_7`) is minted per drop, never reused, and is what makes two
+ * identical pairs of trousers on one tile two distinct rows. `itemId`
+ * (`item_watchmans_trousers`) is what they have in common and what the icon
+ * comes from. A client that keyed on `itemId` would draw one marker for two
+ * items and would be permanently one short.
+ *
+ * ═══ `cell` IS A PAIR, NOT TWO FIELDS, AND THAT IS THE DIFFERENCE FROM
+ *     `ProjectileView` ═══
+ * An orb's x/y CHANGE every turn and the renderer interpolates between two
+ * readings, so two independently-read numbers are the right shape there. A
+ * ground item never moves at all — src/server/world/world.ts:874 freezes the
+ * record with the note "a ground item is a fact about a tile, not a body: it
+ * never moves" — so its tile is one immutable compound value, and it is the
+ * value the client groups by to draw ONE pile marker on a tile holding three
+ * things. A tuple is a key; two loose numbers are an invitation to read one of
+ * them without the other.
+ */
+export type GroundItemView = {
+  /** `ground_<n>`, from the world's monotonic counter. Never reused. */
+  readonly id: string;
+  /** `[x, y]`. See above for why this is one value and not two. */
+  readonly cell: readonly [number, number];
+  /** A catalogue id. Two items of the same kind share it; their `id`s differ. */
+  readonly itemId: string;
+  /** Colours the floor marker. The client must not infer it — see `ItemTier`. */
+  readonly tier: ItemTier;
+};
+
+// ---------------------------------------------------------------------------
 // CLIENT -> SERVER. Hostile input. zod is the only thing standing here.
 // ---------------------------------------------------------------------------
 
@@ -1530,6 +1804,187 @@ const SpendPointSchema = z.strictObject({
 });
 
 /**
+ * Longest item id a client may name. `item_inspectors_deerstalker` is 27
+ * characters and is the longest of the 22 authored; 64 matches
+ * `ACTOR_ID_MAX_CHARS`, `CLASS_ID_MAX_CHARS` and `TALENT_ID_MAX_CHARS` so there
+ * is ONE number to remember across the whole file, and it is headroom rather
+ * than a place to park a payload.
+ */
+const ITEM_ID_MAX_CHARS = 64;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `pickup` — "TAKE THE THING I AM STANDING ON." THE v10 VERB.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ IT CARRIES NOTHING AT ALL, AND THE EMPTINESS IS THE SECURITY PROPERTY ═══
+ * No tile, no ground id, no item id, no direction. The server reads the sender's
+ * OWN live x/y off the actor the session owns and takes `world.itemsAt(x, y)[0]`
+ * — index 0, which src/server/world/world.ts:516-522 already names as the pickup
+ * rule ("PICKUP TAKES INDEX 0. That is the whole reason the order is specified"). So this frame is in the family of `commit`, `hold` and `respawn`: a thing
+ * a socket DOES to itself, with no object to point anywhere else.
+ *
+ * ═══ WHY THAT IS STRICTLY STRONGER THAN RANGE-CHECKING A SUPPLIED TILE ═══
+ * The obvious alternative — `pickup { x, y }`, refused unless the tile is the
+ * sender's own — is a check that has to be right, on a coordinate an attacker
+ * chose, and the note at the head of this file (see `TileSchema`, and the M3
+ * paragraph about the range ring) says a hand-crafted frame from a devtools
+ * console is THE NORMAL CASE TO DESIGN FOR rather than the exotic one. Here there
+ * is nothing to check because there is nothing to forge: no coordinate arrives,
+ * so no off-by-one in an adjacency test can ever let somebody reach across the
+ * room and take the coat a friend is standing over. `respawn`'s docblock above
+ * makes the identical argument about a target field, and this is that argument
+ * applied to a position.
+ *
+ * A `groundId` WOULD BE THE SAME MISTAKE IN A NEW COSTUME. It names something the
+ * client was legitimately sent (every `GroundItemView.id` arrives in the `ground`
+ * broadcast, which is the whole floor), so it would read as safe by the same
+ * three tests `party`'s `targetId` passes — and it would still let a patched
+ * client name a pile it is nowhere near. The floor frame is broadcast; the taking
+ * is not. Carrying no id keeps those two facts apart.
+ *
+ * ═══ IT PUMPS THE WORLD, AND THAT IS DELIBERATE ═══
+ * A pickup costs a turn. Upstream charges for it too — the pickup is an action in
+ * ToME, not a free look — and the co-op reason is sharper: a FREE pickup lets a
+ * player loot a whole room mid-fight while the monsters stand still.
+ * test/server/gateway-progression.test.ts:70-71 argues the non-pumping group
+ * (`inspect`, `choose_class`, `spend_point`) on exactly the mirror of this
+ * ground — "if it pumped, a player could bank a levelled talent AND a free
+ * monster turn from one click" — and loot is the case that argument was drawing
+ * the line against.
+ *
+ * ═══ WHAT THIS SCHEMA DOES NOT CHECK ═══
+ * That there is anything on the tile at all, that the sender is on their feet,
+ * that their bag has room, and — the one W2 flagged — that they are not already
+ * carrying an item with this id, since `carried` is a SET and a duplicate would
+ * be silently dropped by the next save/reload and present as "my second cap
+ * vanished when I relogged". zod validates SHAPE; every one of those is a
+ * question about the world and each comes back as `bad_message` or
+ * `illegal_move`. NO NEW `ErrorCode` MEMBER IS ADDED FOR ANY OF THEM — see the
+ * note on `ErrorCode` below, and src/shared/version.ts, which records that a new
+ * code independently forces a bump.
+ */
+const PickupSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('pickup'),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `equip` — "PUT THIS ON." The v10 verb that names an OBJECT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ IT NAMES AN ITEM, NEVER AN ACTOR, AND NEVER A SLOT ═══
+ * The missing-field rule at the head of this file is about the SUBJECT of a verb.
+ * Whose body puts the coat on is the socket's session, exactly as with `move`;
+ * `strictObject` REJECTS a smuggled `actorId` rather than sanitising it into a
+ * legal frame, which is what stops a patched client dressing somebody else.
+ *
+ * THE DESTINATION SLOT IS NOT ON THE WIRE EITHER, and that is the part worth
+ * writing down. `Item.slot` is authored in src/server/content/items.ts — a coat
+ * goes on the body and there is nowhere else it could go — so a `slot` field here
+ * would be a client asserting authored content, and the only thing the server
+ * could do with a disagreement is ignore it. Upstream reaches the same place by a
+ * different road: `Object:wornInven()` (engines/default/engine/Object.lua:104-107)
+ * derives the destination inventory FROM THE OBJECT, and the dialog never asks.
+ *
+ * ═══ THE ITEM MUST BE IN THE SENDER'S OWN BAG ═══
+ * The server resolves `itemId` against THAT actor's `carried` and nothing else,
+ * so there is no cross-inventory lookup table for a forged id to reach into. The
+ * worst a made-up id achieves is a refusal.
+ *
+ * ═══ `itemId` IS A BOUNDED STRING, NOT A `z.enum` OF THE 22 IDS ═══
+ * Following `TalentSchema`'s stated precedent, and `ChooseClassSchema`'s and
+ * `SpendPointSchema`'s after it: the catalogue is server-side authored content,
+ * and baking it into the wire schema would make every content edit — a
+ * twenty-third item, a renamed id — a PROTOCOL change requiring a bump and a
+ * client redeploy. An unknown id is refused one step later by the server's own
+ * `itemById` lookup with `bad_message`, which is the same outcome and does not
+ * couple the two.
+ */
+const EquipSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('equip'),
+  itemId: z.string().min(1).max(ITEM_ID_MAX_CHARS),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `unequip` — "TAKE THIS OFF." A SLOT, and the only closed enum of the four.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHY THIS ONE IS A `z.enum` WHEN `equip` IS A BOUNDED STRING ═══
+ * The three items above all name AUTHORED CONTENT, which reloads without a
+ * protocol bump — so putting the catalogue in the wire schema would couple two
+ * things that are meant to move independently. A SLOT is not content: it is
+ * structure, it is on the wire already as `Slot`, and a v10 client and a v10
+ * server necessarily agree about all seven. Adding an eighth slot is a protocol
+ * change whatever this schema says, so there is nothing to decouple and the
+ * closed enum is free — it buys a refusal one layer earlier and a failure message
+ * that names the field.
+ *
+ * `z.enum(SLOT_ORDER)` rather than seven literals typed out here, so the wire
+ * enum and the paper doll's order cannot drift; `_MissingFromSlotOrder` above is
+ * what proves `SLOT_ORDER` is the whole of `Slot`.
+ *
+ * ═══ IT NAMES THE SLOT AND NOT THE ITEM, AND THE DIRECTION MATTERS ═══
+ * There is exactly one item in a slot, so the slot identifies it — but the
+ * reverse is not reliably true in the presence of a client that has fallen a
+ * frame behind. A stale `unequip { itemId }` would ask to remove something that
+ * is no longer worn and would have to be refused; a stale `unequip { slot }`
+ * empties the slot the player is looking at, which is what they meant. An empty
+ * slot is `bad_message` and nothing else happens.
+ */
+const UnequipSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('unequip'),
+  slot: z.enum(SLOT_ORDER),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `drop` — "LEAVE THIS HERE." The fourth v10 verb.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ IT CARRIES NO DESTINATION TILE, DELIBERATELY ═══
+ * A drop lands on the SENDER'S OWN tile, read server-side from the actor the
+ * session owns — the same emptiness `pickup` relies on, in the other direction.
+ * A `{ x, y }` here would let a patched client post items into a room it cannot
+ * see, or under a monster, or onto the tile a friend is about to step on, and the
+ * only defence would be an adjacency check on an attacker-supplied coordinate.
+ * There is no coordinate, so there is no check to get wrong.
+ *
+ * ═══ IT NAMES A CARRIED ITEM, NOT A WORN ONE ═══
+ * `itemId` is resolved against the sender's own `carried`, so dropping something
+ * that is being worn is two verbs — `unequip` then `drop` — rather than one that
+ * quietly does both. That is not fastidiousness: an item leaving a slot RECOMPOSES
+ * the combat sheet (src/server/engine/effects.ts's `recomposeCombat`), and a verb
+ * that silently changed a player's armour on the way to putting a coat on the
+ * floor is exactly the kind of hidden write this protocol refuses elsewhere.
+ *
+ * ═══ AND IT IS THE ONE VERB THAT GIVES SOMETHING AWAY ═══
+ * The floor pile is UNOWNED — any party member standing on the tile may take it,
+ * first pickup wins. src/server/content/items.ts:77-80 states the same fact from
+ * the other side ("loot on this game's floor is an UNOWNED pile that three to six
+ * players are standing around") and shapes the catalogue around it.
+ *
+ * THAT RULE IS A DEVIATION AND THERE IS NO CITATION FOR IT. ToME is
+ * single-player: `Actor:die` calls `game.level.map:addObject(dropx, dropy, o)`
+ * with no owner, no reservation and no party concept, because there is no party
+ * to have one. Citing that as authority for a co-op rule would be fabrication, so
+ * it is labelled here the way `awardExperience` labels the party-xp rule it also
+ * had to invent. What it costs, plainly: an item can be sniped by the fastest
+ * clicker, and the answer is social rather than mechanical — `drop` is how "you
+ * take it, I've got a coat" actually happens, and the Case Log line naming who
+ * took what is the transcript that settles the argument afterwards.
+ */
+const DropSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('drop'),
+  itemId: z.string().min(1).max(ITEM_ID_MAX_CHARS),
+});
+
+/**
  * The five things a player may do about a party. A closed enum on the wire, so
  * an unknown verb is refused by zod rather than reaching a switch that has no
  * case for it.
@@ -1675,6 +2130,10 @@ export const ClientMsg = z.discriminatedUnion('t', [
   RespawnSchema,
   ChooseClassSchema,
   SpendPointSchema,
+  PickupSchema,
+  EquipSchema,
+  UnequipSchema,
+  DropSchema,
   PartySchema,
   InspectSchema,
   PingSchema,
@@ -1693,6 +2152,10 @@ export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
 export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
 export type ClientSpendPoint = z.infer<typeof SpendPointSchema>;
+export type ClientPickup = z.infer<typeof PickupSchema>;
+export type ClientEquip = z.infer<typeof EquipSchema>;
+export type ClientUnequip = z.infer<typeof UnequipSchema>;
+export type ClientDrop = z.infer<typeof DropSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
@@ -1762,6 +2225,24 @@ export const ErrorCode = {
   NoResource: 'no_resource',
   /** A wall between the caster and the target tile. */
   NoLos: 'no_los',
+
+  // -------------------------------------------------------------------------
+  // v10 ADDED NO MEMBER HERE, AND THE ABSENCE IS DELIBERATE.
+  //
+  // Every way the four loot verbs are refused reuses one of the codes above.
+  // `bad_message`: nothing on this tile, an item id that is not in your bag, an
+  // empty slot, an item you already own, a bag that is full, an id this build
+  // has never heard of. `illegal_move`: a body that may not act on the world at
+  // all right now — Downed, Erased, or standing where a drop cannot land.
+  //
+  // src/shared/version.ts records at 2 -> 3 that a NEW `ErrorCode` INDEPENDENTLY
+  // FORCES A BUMP (a v2 client renders an unknown code as raw text), and :192-197
+  // and :250-256 are two later passes deliberately declining for that reason. The
+  // discipline is to keep a bump entry down to ONE stated reason; v10's reason is
+  // the `ground` frame, and a `no_such_item` member would have forced the same
+  // bump a second time over for a refusal the panel already prevents by only
+  // drawing buttons for things you are holding.
+  // -------------------------------------------------------------------------
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
@@ -2707,6 +3188,128 @@ export type ProgressMsg = {
   unspent: number;
 };
 
+// ---------------------------------------------------------------------------
+// v10 — THE FLOOR, AND THE BAG
+// ---------------------------------------------------------------------------
+
+/**
+ * EVERYTHING ON THE FLOOR. COMPLETE AND ABSOLUTE, exactly like `ProjectilesMsg`
+ * and `EffectsMsg`.
+ *
+ * AN EMPTY ARRAY MEANS THE FLOOR IS CLEAR. That is a CLAIM the server is making,
+ * not the absence of a claim — which is why the frame is still sent when the last
+ * item is taken, and why a client must replace its whole floor table on every one
+ * rather than merging.
+ *
+ * ═══ THE CONTRACT IS `ProjectilesMsg`'S, WORD FOR WORD ═══
+ * That frame's own note reads: "the orb is simply PRESENT in a frame that is
+ * COMPLETE AND ABSOLUTE, the same rule `EffectsMsg` follows and for the same
+ * reason: a client that dropped one patch would otherwise show a phantom orb
+ * forever, and a phantom orb teaches the wrong counterplay." Substitute the noun
+ * and the sentence is still true, and the consequence is worse rather than
+ * milder: a phantom floor item sends somebody walking the length of the map,
+ * through a fight, to a tile with nothing on it — and because the pile is UNOWNED
+ * and first pickup wins, what they will conclude is that a friend took it. The
+ * one failure mode this design is least able to afford is the one that makes the
+ * party argue.
+ *
+ * ═══ A SNAPSHOT, NOT AN EVENT, FOR `ProjectileView`'S REASON ═══
+ * There is no `TurnEvent` variant for a drop and there must not be one. Events
+ * are for INSTANTS: the client applies a whole sweep in one synchronous pass and
+ * clears its markers a quarter of a second later. A coat on the floor is a
+ * standing fact that outlives the turn that produced it, frequently outlives the
+ * monster that dropped it, and is still there three fights later. The engine
+ * already agrees — `GameEvent.spilled` and `SweepStep.spill` are dropped at the
+ * wire in two named switch arms in src/server/turn-engine.ts, each carrying the
+ * written argument that the floor is a snapshot frame's job.
+ *
+ * ═══ IT IS A BROADCAST TODAY AND MUST MOVE TO `ViewerMsg` WITH PER-PLAYER FOV ═══
+ * Verbatim the caveat `ProjectilesMsg` carries, and it applies here more sharply.
+ * A floor item's tile is a POSITION, and a position is exactly the class of fact
+ * the FOV projector exists to gate: a coat appearing in an unexplored room says
+ * something died in it. Fog of war is still level-wide (there is one `LevelView`
+ * and one actor list for everybody), so shipping this to the room leaks nothing
+ * that `ActorView` does not already leak. THE DAY PER-PLAYER FOV LANDS, THIS
+ * FRAME MOVES INTO `ViewerMsg` IN THE SAME COMMIT — `BroadcastMsg` is
+ * `Exclude`-derived, so that move is one line here and a compile error everywhere
+ * it was being broadcast. src/server/view/projector.ts's header states the same
+ * accepted-leak argument from the server's side, and names the three frames
+ * (actors, projectiles, ground) that move together when FOV lands.
+ *
+ * ═══ IT IS BROADCAST RATHER THAN PER-PLAYER FOR A SECOND, POSITIVE REASON ═══
+ * The pile is unowned and shared. Per-player instancing would triple the
+ * effective drop rate and delete the sentence "you take it, I've got a coat",
+ * which is the entire social point of a game played in a voice channel. One floor,
+ * one frame, everybody looking at the same thing.
+ */
+export type GroundMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'ground';
+  /**
+   * EVERY item on the floor, in the world's own stable insertion order — which is
+   * also the order `itemsAt` returns and therefore the order `pickup` consumes
+   * (src/server/world/world.ts:516-522: "PICKUP TAKES INDEX 0"). The client must
+   * not sort it: the top of the pile has to mean the same thing to the server, to
+   * the prompt the player reads, and to a replay.
+   */
+  items: readonly GroundItemView[];
+};
+
+/**
+ * WHAT YOU ARE CARRYING, WHAT YOU ARE WEARING, AND WHAT SWAPPING WOULD DO.
+ *
+ * ONE FRAME FOR BOTH HALVES, WHICH IS THE PORT AND NOT A SIMPLIFICATION. ToME's
+ * `SHOW_EQUIPMENT` is literally an ALIAS of `SHOW_INVENTORY`
+ * (tome/class/Game.lua:2192 — `SHOW_EQUIPMENT = "SHOW_INVENTORY"`), and both open
+ * the same combined `ShowEquipInven` dialog: a doll on one side, a bag on the
+ * other, and the comparison drawn between them. Two frames would let the two
+ * halves arrive a pump apart and render a comparison against a slot whose
+ * contents had already changed.
+ *
+ * ═══ THE COMPARISON ROWS ARE COMPUTED HERE, ON THE SERVER, AND THAT IS NOT
+ *     NEGOTIABLE ═══
+ * See `CarriedItemView.compare`, and the v10 paragraph at the head of this file
+ * for the upstream citation. The short version: eslint blocks src/client/** from
+ * importing shared/checkhit, shared/scale and shared/energy, and
+ * src/client/ui/tooltip.ts:6-16 exists to stop a second copy of a combat formula
+ * reaching the browser. A client subtracting two armour numbers would be that
+ * second copy, and it would be WRONG rather than merely redundant, because
+ * `rescaleCombatStats` floors.
+ *
+ * ═══ IT IS A `ViewerMsg`. See the note on that union below. ═══
+ * Sent when the sender's own bag or doll changes — a pickup, an equip, an
+ * unequip, a drop, a restore at join — and not on every pump. It is low-frequency
+ * by construction, which is what lets it be a wholesale replacement of both
+ * halves rather than a delta.
+ */
+export type InventoryMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'inventory';
+  /**
+   * THE BAG. Complete and absolute; an empty array means you are carrying
+   * nothing, which is the normal state for most of a delve.
+   *
+   * IT IS A SET, NOT A BAG OF DUPLICATES, and the constraint comes from
+   * persistence rather than from here: `carried` is saved as a list of ids with
+   * no per-instance handle, so src/server/persist/saves.ts keeps the first
+   * occurrence and drops later ones. The pickup verb refuses an id the actor
+   * already owns for that reason — otherwise the loss presents as "my second cap
+   * vanished when I relogged" and the bug looks like it is in persistence when it
+   * is in pickup.
+   */
+  carried: readonly CarriedItemView[];
+  /**
+   * THE PAPER DOLL. Slot -> what is in it; a slot with nothing in it is ABSENT
+   * rather than present-and-null, because absent and null would be two spellings
+   * of empty and the second one always turns up in a hand-rolled client.
+   *
+   * `Partial<Record<Slot, ...>>` is a mapped type over a finite literal union, so
+   * `noUncheckedIndexedAccess` is not what is adding the `| undefined` here — the
+   * `Partial` is, deliberately, and a renderer must handle it.
+   */
+  equipped: Readonly<Partial<Record<Slot, ItemView>>>;
+};
+
 export type PongMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'pong';
@@ -2757,6 +3360,8 @@ export type ServerMsg =
   | InspectedMsg
   | ClassOptionsMsg
   | ProgressMsg
+  | GroundMsg
+  | InventoryMsg
   | PongMsg
   | ErrorMsg;
 
@@ -2821,6 +3426,31 @@ export type ServerMsg =
  * it broadcastable would be building a leak a frame at a time. It is also why
  * `unspent` is not a field on `TurnActor` or `PartyStateMember`, both of which
  * go to the whole party by construction.
+ *
+ * `inventory` JOINED AT v10 FOR THE FIRST REASON, IN THE SAME FORM `progress`
+ * DID. AN INVENTORY IS WHAT A PLAYER IS CARRYING AND HOLDING BACK, which is the
+ * same class of fact as `unspent` at v9 and as `cooldowns` at M3: not a secret in
+ * the sense of a hidden monster, but a DECISION SOMEBODY HAS NOT MADE YET. "Ren
+ * is carrying a coat she has not put on" is exactly as much of a read as "Ren is
+ * holding a point back" and "Mend Wounds is ready" — it says which swap she is
+ * still thinking about, and under the unowned-pile rule it also says what she is
+ * about to be talked out of. Talking about it in voice is the game. Reading it
+ * off four HUDs is a queue of people telling each other what to wear.
+ *
+ * THERE IS ALSO NO SHAPE OF THIS FRAME THAT IS CORRECT FOR TWO PEOPLE, which is
+ * the `turn`/`class_options` half of the argument arriving independently.
+ * `CarriedItemView.compare` is a DELTA AGAINST THE RECIPIENT'S OWN DOLL: the same
+ * coat compares to +4 Armour for a bare Watchman and to nothing at all for one
+ * already wearing it. One shared copy would not merely leak — it would be
+ * arithmetically wrong for everybody but its author, on the one screen whose
+ * whole job is answering "is this better than what I have on?".
+ *
+ * `ground` DELIBERATELY DID NOT JOIN, AND THE SPLIT IS THE POINT. A floor item is
+ * a POSITION, which is world state and true for everybody; an inventory is a
+ * holding, which is true for one person. The two arrived in the same release and
+ * landed in different unions, so `broadcast(inventoryMsg)` is a COMPILE ERROR
+ * while `broadcast(groundMsg)` is the correct call — which is the whole reason
+ * `BroadcastMsg` is `Exclude`-derived rather than a second hand-written list.
  */
 export type ViewerMsg =
   | LoadoutMsg
@@ -2830,7 +3460,8 @@ export type ViewerMsg =
   | PartyStateMsg
   | InspectedMsg
   | ClassOptionsMsg
-  | ProgressMsg;
+  | ProgressMsg
+  | InventoryMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

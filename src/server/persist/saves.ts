@@ -91,10 +91,52 @@
  * first genuinely breaking change — a rename, or a new REQUIRED field — which is
  * the shape it was built for.
  *
- * STILL NOT PERSISTED, deliberately: inventory and equipment (there is no loot),
- * and the two energy clocks (a save happens at a session boundary, and mid-turn
- * energy means nothing across a reload). Both are optional fields when they
- * land, on the same rule and with the same trade re-weighed at the time.
+ * ───────────────────────────────────────────────────────────────────────────
+ * INVENTORY AND EQUIPMENT ARE PERSISTED NOW, AND THE VERSION DID NOT BUMP EITHER
+ * ───────────────────────────────────────────────────────────────────────────
+ * This paragraph used to read "STILL NOT PERSISTED, deliberately: inventory and
+ * equipment (there is no loot)". There is loot, so that sentence is GONE rather
+ * than left to mislead — the same treatment the progression sentence above it
+ * got, and for the same reason: a comment that describes a build from two
+ * milestones ago is worse than no comment, because it is believed.
+ *
+ * What it ended on was the same PREDICTION — that both would land as OPTIONAL
+ * fields needing no version bump — and it was CHECKED rather than inherited.
+ * docs/data-schemas.md:48-49 still reads, verbatim, "Adding an *optional* field
+ * needs no bump; the bump is for renames, semantic changes, and new required
+ * fields", and `migrateDoc` (migrate.ts:230-311) still compares nothing but the
+ * integer. So `carried` and `equipped` are two OPTIONAL fields, `SCHEMA_VERSION`
+ * stays 1, and `CHARACTER_MIGRATIONS` stays empty.
+ *
+ * THE TRADE WAS RE-WEIGHED FOR ITEMS SPECIFICALLY rather than carried over:
+ *
+ *   NOT BUMPING — an older build opens a newer file, does not recognise the two
+ *   keys, drops them, and writes a file without them back over it on the next
+ *   autosave. THE COST IS AN EVENING'S LOOT.
+ *
+ *   BUMPING — the older build REFUSES the file and this one turns the refusal
+ *   into a permanent quarantine of the path, exactly as described above. THE
+ *   COST IS A FRIEND WHO CANNOT PLAY AT ALL TONIGHT.
+ *
+ * The imbalance is STRICTLY MORE LOPSIDED here than it was for levels. A lost
+ * level is hours of play that can only be re-earned by playing them again; a
+ * lost coat is one delve's drops, and the floor is rebuilt from its seed at boot
+ * (net/gateway.ts:1094-1100), so the same coat is findable again tonight. If the
+ * levels case was worth not bumping for, this one is not close.
+ *
+ * STILL NOT PERSISTED, and the list is now short:
+ *
+ *   THE TWO ENERGY CLOCKS. A save happens at a session boundary and mid-turn
+ *   energy means nothing across a reload.
+ *
+ *   GROUND ITEMS. There is no second `SchemaKind` for the floor and there must
+ *   not be one: migrate.ts:98-101 has exactly ONE member, and a second file kind
+ *   costs a second version integer, a second migration chain, a second atomic
+ *   write path and a second quarantine story — all of it for state
+ *   net/gateway.ts:1094-1100 has ALREADY ruled unrestorable, because the world
+ *   is rebuilt from its seed at boot and a saved tile is a coordinate in a level
+ *   that no longer exists in the same state. An item a player cared about is in
+ *   their bag, and their bag is in this file.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -106,6 +148,37 @@ import {
   TALENT_MAX_LEVEL,
   totalPointsAtLevel,
 } from '../../shared/progression.ts';
+// ═══════════════════════════════════════════════════════════════════════════
+// THE ONE CONTENT REGISTRY THIS LAYER IMPORTS, AND IT IS A DELIBERATE EXCEPTION
+// ═══════════════════════════════════════════════════════════════════════════
+// `classId` and every talent id in this file are SOFT references, kept verbatim
+// precisely BECAUSE persist/ cannot import the registry that would validate them
+// (docs/data-schemas.md:51-52, and `CharacterFile.talentPoints`'s docblock).
+// Item ids are validated instead, and the difference is not a relaxation of that
+// rule — it is what the rule reduces to when the reference carries no payload:
+//
+//   A TALENT ID CARRIES A NUMBER. `{"talent:deleted_in_m7": 3}` still means
+//   "three raw points", which is meaningful, refundable and recoverable without
+//   ever knowing what the talent did. Keeping it verbatim keeps the points.
+//
+//   AN ITEM ID CARRIES NOTHING. It is a pure pointer: the slot, the icon and
+//   every stat live in the catalogue. An id this build cannot resolve names no
+//   slot (so `equipped` cannot say whether the entry is even coherent), no icon
+//   (so the panel draws the loud violet fallback box) and no `wielder` (so it
+//   moves no number). `engine/equipment.ts#wornOf` already drops an unresolvable
+//   id rather than refusing the character, so keeping one here would only mean
+//   the disk carrying a ghost that never appears in the game and is rewritten
+//   forever.
+//
+// THE COST IS REAL AND IS ACCEPTED: an item deleted from content and later
+// restored does not come back for a character saved in between. That is recorded
+// in `problems` every time it happens, which is the difference between a trade
+// and an accident.
+//
+// RUNTIME-SAFE: content/items.ts imports TYPES ONLY (from engine/derived.ts), so
+// this edge is persist -> content and stops there. It does not put engine code
+// on the save path and it closes no cycle.
+import { itemById } from '../content/items.ts';
 import { CURRENT_VERSIONS, MigrateOutcome, SchemaKind, migrateDoc } from './migrate.ts';
 import { backupPathFor, errorCode, writeFileAtomic } from './atomic.ts';
 import type { AtomicWarning, AtomicWriteOptions } from './atomic.ts';
@@ -337,6 +410,76 @@ export type CharacterFile = {
    */
   readonly talentPoints?: Readonly<Record<string, number>>;
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // ITEMS. TWO OPTIONAL FIELDS, AND AN ITEM IS NOTHING BUT ITS ID.
+  //
+  // ═══ THE `ItemInstance` SKETCH IS REJECTED, NOT OVERLOOKED ═══
+  // docs/data-schemas.md:126-136 sketches a per-instance record —
+  // `{ uid, defId, rolledStats, prefixId, suffixId, rarity, identified }` — with
+  // `equipment: Partial<Record<EquipSlot, number>>` INDEXING INTO the inventory
+  // array (:113-114). That is the save format for a game with a generator: egos,
+  // rolled ranges, and identification. This build has none of those. Every item
+  // is authored by hand in content/items.ts, its `wielder` table is a constant,
+  // and two coats with the same id are the same coat.
+  //
+  // So AN ITEM IS ITS ID, and three whole classes of bug do not exist:
+  //
+  //   NO `uid` MEANS NO DANGLING INDEX. The sketch's `equipment` names a
+  //   POSITION in `inventory`; delete one entry on load — a repair this file
+  //   does routinely — and every index after it now points at the wrong object,
+  //   silently. Ours names the item itself, so a repair cannot move it.
+  //
+  //   NO `rolledStats` MEANS NO RE-ROLL-ON-LOAD HAZARD. The sketch's own comment
+  //   is "Rolled at generation and FROZEN. Never re-roll on load, or an item
+  //   silently changes in a player's hands" — a warning about a mistake that is
+  //   only possible if the numbers are in the file at all. Ours are in the
+  //   catalogue, so a load reads the same table the fight did.
+  //
+  //   NO `identified` / `rarity` COLUMN TO GO STALE. `Item.tier` is content, and
+  //   a retune of it moves every existing character with it, exactly as the
+  //   `max*` pools and the raw talent ranks do.
+  //
+  // The day there IS a generator, `ItemInstance` is the right shape and it
+  // arrives as a REQUIRED field on a bumped schema, with a migration that mints a
+  // uid per id. That is the drill the machinery was built for.
+  //
+  // ═══ ABSENT IS NOT EMPTY, ALL THE WAY DOWN TO THE BYTES ═══
+  // `[]` / `{}` means "this character carries nothing". `undefined` means "the
+  // producer of this file could not say" — a save written before loot shipped, a
+  // fixture, the e2e harness. `fileFor`'s `?? binding` chain reads the two
+  // completely differently, and `JSON.stringify` omits an `undefined`-valued key
+  // outright, so the distinction survives onto the disk rather than being an
+  // in-memory nicety.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /**
+   * THE BACKPACK: item ids held and not worn, IN PICKUP ORDER.
+   *
+   * Order is DATA, not incidental — it is what the inventory panel draws — so
+   * this array is written out verbatim rather than sorted. It is already
+   * byte-stable for the reason `talentCooldowns` is not: an array has one
+   * order, whereas a `Record`'s key order follows whatever order things
+   * happened to be inserted in.
+   *
+   * A SET, NOT A BAG. Because an item is its id, two entries of the same id are
+   * indistinguishable, so `parseCarried` keeps the first and records the rest.
+   * That is the direct cost of rejecting `uid` above, and it is stated here so
+   * nobody has to rediscover it: a party that finds two identical pairs of
+   * trousers keeps one.
+   */
+  readonly carried?: readonly string[];
+  /**
+   * WHAT IS BEING WORN: SLOT NAME -> ITEM ID, at most one per slot.
+   *
+   * `Record<string, string>`, not `Record<Slot, ItemId>`, because this is a
+   * FILE: the key is whatever a JSON document happens to hold, and typing it as
+   * the union would be claiming a validation that has not happened yet.
+   * `parseEquipped` does that validation, against the catalogue, and an entry
+   * whose id does not belong in the slot it is filed under is dropped and
+   * recorded.
+   */
+  readonly equipped?: Readonly<Record<string, string>>;
+
   readonly resources: SavedResources;
   /** Talent id → GAME TURNS remaining. Soft references, like `classId`. */
   readonly talentCooldowns: Readonly<Record<string, number>>;
@@ -457,6 +600,18 @@ export type CharacterInit = {
   readonly unspentPoints?: number;
   /** RAW points per talent. Omit ids at their birth rank; absent means 1. */
   readonly talentPoints?: Readonly<Record<string, number>>;
+  /**
+   * ITEMS, PASSED STRAIGHT THROUGH — including the absence.
+   *
+   * Unlike the four progression fields, these are NOT defaulted on the way in.
+   * `createCharacterFile` fills a missing `level` with 1 because every character
+   * has a level; a missing `carried` is not "carries nothing", it is "the caller
+   * does not know", and the only caller that can tell the two apart is the
+   * bridge. Defaulting here would collapse the distinction one layer before the
+   * `?? binding` chain that depends on it.
+   */
+  readonly carried?: readonly string[];
+  readonly equipped?: Readonly<Record<string, string>>;
   readonly resources: SavedResources;
   readonly talentCooldowns?: Readonly<Record<string, number>>;
   readonly effects?: readonly SavedEffect[];
@@ -498,6 +653,14 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     // character whose caller passed a level and nothing else.
     unspentPoints: init.unspentPoints ?? unspentFromLedger(level, talentPoints),
     talentPoints,
+    // NO `??` ON THESE TWO, AND THAT IS THE POINT. An undefined here is written
+    // as an undefined, `JSON.stringify` omits the key, and a file that says
+    // nothing about items stays a file that says nothing about items. Compare
+    // the four lines above, every one of which supplies a default — because
+    // every character HAS a level, and not every character has an opinion about
+    // its bag.
+    carried: init.carried,
+    equipped: init.equipped,
     resources: init.resources,
     talentCooldowns: init.talentCooldowns ?? {},
     effects: init.effects ?? [],
@@ -747,6 +910,118 @@ function parseEffects(value: unknown, problems: string[]): SavedEffect[] {
   return out;
 }
 
+/**
+ * WHAT IS WORN, VALIDATED AGAINST THE CATALOGUE. Slot name -> item id.
+ *
+ * ═══ WHY THIS VALIDATES WHERE `parseTalentPoints` KEEPS THE KEY VERBATIM ═══
+ * See the note on the `itemById` import: a talent id carries a number that means
+ * something without the registry, an item id carries nothing at all. There is a
+ * second reason that is specific to this field — `equipped` is the only place in
+ * the file where TWO values have to AGREE. A slot key and an item id are
+ * coherent or they are not, and only the catalogue knows which. Storing the pair
+ * unchecked would push the same lookup into every consumer (the fold, the
+ * inventory panel, the wire) and let each one answer it differently.
+ *
+ * THREE OUTCOMES, ALL RECORDED, NONE FATAL:
+ *   - an id this build does not know      -> dropped
+ *   - an id that belongs in another slot  -> dropped
+ *   - a value that is not a string at all -> dropped
+ *
+ * A wrong-slot entry is DROPPED rather than re-filed into `carried` or moved to
+ * the slot the catalogue names. Both of those repairs are tempting and both
+ * would be this layer inventing a loadout: re-filing changes the character's
+ * stats without saying so, and re-slotting needs to know whether the target slot
+ * is free, which is a question about entries that are still being repaired in
+ * the same pass. Dropping is the one answer that is obviously what happened, and
+ * `problems` says so out loud.
+ *
+ * ABSENT IS NOT EMPTY, so a missing key returns `undefined` — but a key that is
+ * PRESENT and unreadable returns `{}`, because the file did speak and what it
+ * said is unusable. That is `parseCooldowns`'s rule, applied to a different
+ * field.
+ */
+function parseEquipped(value: unknown, problems: string[]): Record<string, string> | undefined {
+  if (value === undefined || value === null) return undefined;
+  const out: Record<string, string> = {};
+  if (!isRecord(value)) {
+    problems.push('equipped: not an object — dropped, nothing is worn');
+    return out;
+  }
+  for (const [slot, raw] of Object.entries(value)) {
+    const id = asString(raw);
+    if (id === null || id === '') {
+      problems.push(`equipped.${slot}: not an item id — dropped`);
+      continue;
+    }
+    const item = itemById(id);
+    if (item === undefined) {
+      problems.push(`equipped.${slot}: '${id}' is not an item this build knows — dropped`);
+      continue;
+    }
+    if (item.slot !== slot) {
+      problems.push(
+        `equipped.${slot}: '${id}' is worn in the '${item.slot}' slot, not '${slot}' — dropped`,
+      );
+      continue;
+    }
+    out[slot] = id;
+  }
+  return out;
+}
+
+/**
+ * THE BACKPACK, validated the same way and de-duplicated against what is worn.
+ *
+ * TAKES THE ALREADY-PARSED `equipped` because the two lists are one loadout and
+ * the rule between them has to live somewhere: AN ID IN BOTH KEEPS THE EQUIPPED
+ * COPY. Worn is the more specific claim — it names a slot and it is moving the
+ * character's numbers right now — and a duplicate in the bag would let a player
+ * re-equip the same coat into a second slot on some future build and quietly own
+ * two.
+ *
+ * DUPLICATES WITHIN THE BAG COLLAPSE TOO, for the reason the `carried` field's
+ * docblock states: with no `uid`, two entries of one id ARE one item as far as
+ * every consumer can tell. This is the honest cost of rejecting `ItemInstance`
+ * and it is recorded rather than hidden.
+ *
+ * ORDER IS PRESERVED — first occurrence wins — because pickup order is what the
+ * inventory panel draws.
+ */
+function parseCarried(
+  value: unknown,
+  equipped: Readonly<Record<string, string>> | undefined,
+  problems: string[],
+): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  const out: string[] = [];
+  if (!Array.isArray(value)) {
+    problems.push('carried: not an array — dropped, the bag is empty');
+    return out;
+  }
+  const seen = new Set<string>(Object.values(equipped ?? {}));
+  for (const [index, entry] of value.entries()) {
+    const id = asString(entry);
+    if (id === null || id === '') {
+      problems.push(`carried[${index}]: not an item id — dropped`);
+      continue;
+    }
+    if (itemById(id) === undefined) {
+      problems.push(`carried[${index}]: '${id}' is not an item this build knows — dropped`);
+      continue;
+    }
+    if (seen.has(id)) {
+      problems.push(
+        `carried[${index}]: '${id}' is already worn or already in the bag — dropped ` +
+          '(an item is its id, so a second copy is the same copy)',
+      );
+      continue;
+    }
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 function parsePosition(value: unknown, problems: string[]): SavedPosition | null {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) {
@@ -826,6 +1101,14 @@ export function parseCharacterFile(doc: unknown): ParseResult {
   const talentPoints = parseTalentPoints(doc.talentPoints, problems);
   const unspentPoints = parseUnspentPoints(doc.unspentPoints, level, talentPoints, problems);
 
+  // ═══ AND ORDER MATTERS BETWEEN THESE TWO, FOR A DIFFERENT REASON ═══
+  // `parseCarried` de-duplicates against what is WORN, so the equipped map has
+  // to be validated first — otherwise an id that is about to be dropped out of
+  // `equipped` (unknown, or filed under the wrong slot) would still suppress the
+  // bag's copy, and the character would lose the item twice over.
+  const equipped = parseEquipped(doc.equipped, problems);
+  const carried = parseCarried(doc.carried, equipped, problems);
+
   return {
     ok: true,
     problems,
@@ -839,11 +1122,20 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // NAMED HERE OR SILENTLY DELETED. This function copies nothing it does not
       // name: a field on `CharacterFile` that is missing from this literal is
       // dropped on every load and written away by the next autosave, with no
-      // error anywhere. Four fields, four lines, and a test that names each one.
+      // error anywhere. Six fields, six lines, and a test that names each one.
       level,
       xp: parseXp(doc.xp, problems),
       unspentPoints,
       talentPoints,
+      // NAMED WITH THEIR UNDEFINED INTACT. These two are the only fields here
+      // that may legitimately be `undefined`, and writing them anyway is what
+      // keeps the key SET identical between `createCharacterFile` and this
+      // function — which is what the "loses no field" test in
+      // test/server/persist.test.ts actually compares. `JSON.stringify` drops an
+      // undefined-valued key on the way out, so an absent field stays absent on
+      // disk and a pre-items file re-serialises byte-identically.
+      carried,
+      equipped,
       resources,
       talentCooldowns: parseCooldowns(doc.talentCooldowns, problems),
       effects: parseEffects(doc.effects, problems),
@@ -883,6 +1175,31 @@ export function serialiseCharacter(file: CharacterFile): string {
     const points = rawPoints[key];
     if (points !== undefined) talentPoints[key] = points;
   }
+  // ═══ THE WORN MAP IS SORTED. THE BAG IS NOT, AND THE ASYMMETRY IS THE POINT ═══
+  // `equipped` is a Record, so its key order follows whatever order the player
+  // happened to put things on in — the identical hazard the two sorts above
+  // exist for, and two saves of one character must be byte-identical or every
+  // autosave rewrites the file and steps the `.bak` a generation for nothing.
+  //
+  // `carried` is an ARRAY, and an array already has exactly one order. That
+  // order is PICKUP ORDER, which is what the inventory panel draws, so sorting
+  // it would not buy stability that is missing — it would destroy information
+  // that is there. Copied rather than passed through, so the canonical object
+  // never shares a live reference with the caller's.
+  //
+  // Sorted alphabetically rather than in `SLOT_ORDER` (content/items.ts): this
+  // is a file a human reads and diffs, and `SLOT_ORDER` is the order a body
+  // WEARS things in, which belongs to the fold and not to the bytes.
+  let equipped: Record<string, string> | undefined;
+  if (file.equipped !== undefined) {
+    equipped = {};
+    for (const slot of Object.keys(file.equipped).sort()) {
+      const id = file.equipped[slot];
+      if (id !== undefined) equipped[slot] = id;
+    }
+  }
+  const carried = file.carried === undefined ? undefined : [...file.carried];
+
   const canonical: CharacterFile = {
     schemaVersion: file.schemaVersion,
     kind: file.kind,
@@ -902,6 +1219,19 @@ export function serialiseCharacter(file: CharacterFile): string {
     xp: file.xp ?? BIRTH_XP,
     unspentPoints: file.unspentPoints ?? unspentFromLedger(file.level ?? BIRTH_LEVEL, talentPoints),
     talentPoints,
+    // ═══ AND THESE TWO ARE THE EXCEPTION TO THE PARAGRAPH ABOVE ═══
+    // The four progression fields are written UNCONDITIONALLY, defaults and all,
+    // because every character has a level and a file should say what it is.
+    // These are written ONLY IF THE FILE HAS THEM. `JSON.stringify` omits an
+    // undefined-valued key, so a character with no opinion about items produces
+    // no `carried` and no `equipped` key at all — which is what makes
+    // `serialiseCharacter(parseCharacterFile(bytes))` still byte-identical to
+    // every pre-items file on somebody's disk right now. Emitting `[]` and `{}`
+    // instead would rewrite every save in `data/characters/` on first load, and
+    // would make "carries nothing" indistinguishable from "cannot say" one layer
+    // below the bridge that needs to tell them apart.
+    carried,
+    equipped,
     resources: {
       hp: file.resources.hp,
       ap: file.resources.ap,
@@ -1508,6 +1838,36 @@ const REASON_BY_LABEL: Readonly<Record<string, SaveReason>> = {
   shutdown: SaveReason.Shutdown,
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO ITEM FIELDS AS THEY CROSS THE GATEWAY SEAM, DECLARED HERE ON PURPOSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `CharacterSnapshot` and `CharacterRestore` live in net/gateway.ts and are
+ * owned by the pass that wires the loot verbs to the wire. This file must read
+ * an inventory OFF a snapshot and hand one BACK on a restore today, so it states
+ * the two fields structurally and intersects them onto the gateway's types.
+ *
+ * WHY THAT IS SOUND RATHER THAN A WORKAROUND: both fields are OPTIONAL, so
+ * `CharacterSnapshot` is assignable to `CharacterSnapshot & SavedLoadout`
+ * unchanged, and a producer that has not been taught to fill them simply lands
+ * on the `?? binding` fallback — which is the documented meaning of an absence
+ * and exactly what the pre-progression producers already do for `level`. When
+ * the gateway declares the same two fields, this intersection becomes a
+ * redundant restatement of a type it already has, not a second definition to
+ * keep in sync: the shapes are identical, so a divergence is a compile error at
+ * the assignment below rather than a silent disagreement.
+ *
+ * EXPORTED so the gateway and the tests can name the same shape.
+ */
+export type SavedLoadout = {
+  readonly carried?: readonly string[];
+  readonly equipped?: Readonly<Record<string, string>>;
+};
+
+/** A snapshot from a producer that may or may not know about items. */
+type LoadoutSnapshot = CharacterSnapshot & SavedLoadout;
+
 /** One player's seat: which file their body writes to, and what it was created as. */
 type Binding = {
   readonly ownerId: string;
@@ -1546,6 +1906,23 @@ type Binding = {
   readonly xp: number;
   readonly unspentPoints: number;
   readonly talentPoints: Readonly<Record<string, number>>;
+  /**
+   * ═══ THE SAME FALLBACK, FOR THE SAME REASON, FOR THE BAG AND THE PAPER DOLL ═══
+   * Carried forward from the file exactly as the four above are, and joining
+   * them rather than being defaulted: a producer that cannot speak for a
+   * player's inventory — a fixture, the e2e harness, any build of the gateway
+   * that has not been taught to fill the snapshot — must write the file's own
+   * loadout back, not an empty bag.
+   *
+   * OPTIONAL HERE, WHERE THE FOUR ABOVE ARE REQUIRED, and the difference is the
+   * whole of ABSENT IS NOT EMPTY. There is a right default for a level (1) and
+   * there is none for an inventory: `[]` is a claim that the character owns
+   * nothing, which is a thing this layer is not entitled to say about a file
+   * that never mentioned items. So the absence is carried forward as an absence
+   * and the key stays off the disk.
+   */
+  readonly carried?: readonly string[];
+  readonly equipped?: Readonly<Record<string, string>>;
 };
 
 export type CharacterBridgeOptions = {
@@ -1570,7 +1947,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
   /** actor id -> the file it writes to. The whole of "who may be persisted". */
   const bindings = new Map<string, Binding>();
 
-  const fileFor = (snapshot: CharacterSnapshot, binding: Binding): CharacterFile =>
+  const fileFor = (snapshot: LoadoutSnapshot, binding: Binding): CharacterFile =>
     createCharacterFile({
       id: binding.characterId,
       ownerId: binding.ownerId,
@@ -1608,6 +1985,22 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: snapshot.xp ?? binding.xp,
       unspentPoints: snapshot.unspentPoints ?? binding.unspentPoints,
       talentPoints: snapshot.talentPoints ?? binding.talentPoints,
+      // ═══ AND THE SNAPSHOT WINS FOR THE LOADOUT, ON THE IDENTICAL ARGUMENT ═══
+      // Reading `binding.carried` unconditionally is the exact one-way-valve bug
+      // the four lines above were written to fix, restated for items: the
+      // binding holds what the file said when it was OPENED, so an evening's
+      // drops would reach no file at all and every autosave would write the
+      // morning's bag back over the evening's. Frozen is recoverable;
+      // this one is not even frozen — it is a bag that empties itself.
+      //
+      // AND THE `??` KEEPS THE DEFENCE, with one extra consequence worth naming:
+      // `undefined` here does not mean "empty", it means the whole key is left
+      // off the file (`createCharacterFile` does not default these two), so a
+      // producer that cannot say leaves the disk EXACTLY as it found it. A
+      // producer that CAN say and says `[]` writes `[]`, and that is a real
+      // statement: the player dropped everything.
+      carried: snapshot.carried ?? binding.carried,
+      equipped: snapshot.equipped ?? binding.equipped,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
       // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
       // are intra-turn budgets refilled from the class every turn, so a stored
@@ -1627,7 +2020,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
   const openCharacter = async (
     ownerId: string,
     actorId: string,
-  ): Promise<CharacterRestore | null> => {
+  ): Promise<(CharacterRestore & SavedLoadout) | null> => {
     const safeOwner = sanitiseId(ownerId);
     if (safeOwner === null) {
       // Not a data problem: a Discord id that is not [A-Za-z0-9_-]{1,64} either
@@ -1675,6 +2068,13 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: file?.xp ?? BIRTH_XP,
       unspentPoints: file?.unspentPoints ?? 0,
       talentPoints: file?.talentPoints ?? {},
+      // NO `??` AND NO DEFAULT: an absent inventory is carried forward AS an
+      // absence, so `fileFor` leaves the key off the file rather than asserting
+      // an empty bag on behalf of a file that never mentioned one. `file` being
+      // null (a brand-new character) lands in the same place, which is right —
+      // nobody has yet said anything about this character's items either.
+      carried: file?.carried,
+      equipped: file?.equipped,
     });
 
     if (file === null) {
@@ -1719,6 +2119,20 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: file.xp,
       unspentPoints: file.unspentPoints,
       talentPoints: file.talentPoints,
+      // ═══ AND THE LOADOUT COMING BACK — THE OTHER HALF, AGAIN ═══
+      // `fileFor` above now writes the live bag to disk. A load that did not
+      // read it back would be the identical one-way valve progression shipped
+      // and then fixed: items to disk, nothing returned, `CharacterRestore`'s
+      // fields forever undefined, and the restore path forever taking its "this
+      // port cannot say" branch on a file that says it perfectly clearly. The
+      // two halves are one fix and reverting either is the whole bug.
+      //
+      // HANDED OVER EXACTLY AS `parseCharacterFile` LEFT THEM, including the
+      // undefined. Every id has already been checked against the catalogue and
+      // every slot pairing already validated on the way in; re-checking here
+      // would be a second opinion that can disagree with the first.
+      carried: file.carried,
+      equipped: file.equipped,
     };
   };
 

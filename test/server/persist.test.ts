@@ -41,7 +41,13 @@ import {
 import type * as NodeFsPromises from 'node:fs/promises';
 import type { AtomicWarning } from '../../src/server/persist/atomic.ts';
 import type { Migration } from '../../src/server/persist/migrate.ts';
-import type { CharacterFile, SaveLogger, SaveStore } from '../../src/server/persist/saves.ts';
+import type { CharacterRestore, CharacterSnapshot } from '../../src/server/net/gateway.ts';
+import type {
+  CharacterFile,
+  SaveLogger,
+  SaveStore,
+  SavedLoadout,
+} from '../../src/server/persist/saves.ts';
 
 // ---------------------------------------------------------------------------
 // FAULT INJECTION FOR RISK R9
@@ -1278,6 +1284,288 @@ describe('character files: level, xp, unspent points and raw talent points', () 
 });
 
 // ===========================================================================
+// saves.ts — THE TWO ITEM FIELDS
+//
+// Identical hazard to the four above and it gets the identical treatment: a
+// field named on `CharacterFile` and missed by either `parseCharacterFile` or
+// `serialiseCharacter` is deleted on every load and written away by the next
+// autosave, with both halves consistently wrong and the gate green. Every test
+// below names its field and its value out loud.
+//
+// The one thing that is NOT like progression: absent is not empty. A character
+// file with no `carried` key is not a character with an empty bag, it is a file
+// written by something that could not say — and `fileFor`'s `?? binding` chain
+// reads the two completely differently. Both branches are asserted separately,
+// here and in the bridge suite at the bottom of the file.
+// ===========================================================================
+
+/** A full seven-slot Watchman kit, one real catalogue id per slot. */
+const WORN_KIT: Readonly<Record<string, string>> = {
+  head: 'item_watchmans_cap',
+  body: 'item_watchmans_coat',
+  legs: 'item_watchmans_trousers',
+  feet: 'item_watchmans_boots',
+  offhand: 'item_watchmans_buckler',
+  ring: 'item_watchmans_brass_ring',
+  trinket: 'item_watchmans_badge',
+};
+
+/** Three real ids in the bag, none of them worn above. */
+const IN_THE_BAG: readonly string[] = [
+  'item_leather_chest',
+  'item_inspectors_signet',
+  'item_inquisitors_tome',
+];
+
+describe('character files: the bag and the paper doll', () => {
+  /**
+   * THE GENERAL NET, EXTENDED. :1075's sibling — whatever `createCharacterFile`
+   * builds survives serialise and parse key for key — but with the two new names
+   * spelled out, because the general test passes vacuously for a field that is
+   * missing from BOTH halves.
+   */
+  it('loses no field between create, serialise and parse — including carried and equipped', () => {
+    const created = createCharacterFile({
+      id: CHAR,
+      ownerId: OWNER,
+      name: 'Sergeant Vell',
+      classId: 'watchman',
+      carried: IN_THE_BAG,
+      equipped: WORN_KIT,
+      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+      createdAt: '2026-08-15T00:00:00.000Z',
+    });
+
+    const parsed = parseCharacterFile(JSON.parse(serialiseCharacter(created)));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(Object.keys(parsed.file).sort()).toEqual(Object.keys(created).sort());
+    // Named, so that dropping one from the parser AND the serialiser together —
+    // the symmetric omission the key-set check cannot see — still fails here.
+    expect(Object.keys(parsed.file)).toContain('carried');
+    expect(Object.keys(parsed.file)).toContain('equipped');
+    expect(parsed.file.equipped).toEqual(WORN_KIT);
+    expect(parsed.file.carried).toEqual(IN_THE_BAG);
+    expect(parsed.problems).toEqual([]);
+  });
+
+  /**
+   * ═══ ABSENT IS NOT EMPTY, AT THE PARSER ═══
+   * Every save on disk today has neither key. It must load clean — no repair
+   * logged, because an absence is not damage — and it must load as UNDEFINED
+   * rather than as `[]`, or the bridge one layer up can no longer tell "this
+   * character owns nothing" from "this file never mentioned items" and will
+   * happily write an empty bag over a full one.
+   */
+  it('loads a file with neither key clean, with both fields undefined', () => {
+    const parsed = parseCharacterFile(V1_BEFORE_PROGRESSION);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.carried).toBeUndefined();
+    expect(parsed.file.equipped).toBeUndefined();
+    expect(parsed.problems).toEqual([]);
+  });
+
+  /**
+   * AND THE ABSENCE SURVIVES TO THE BYTES. `JSON.stringify` omits an
+   * undefined-valued key, which is what keeps a pre-items file byte-identical
+   * through a load-and-save cycle: emitting `"carried": []` instead would
+   * rewrite every file in `data/characters/` on first sight and step every
+   * `.bak` a generation for nothing.
+   */
+  it('writes no carried or equipped key for a character that has never had either', () => {
+    const text = serialiseCharacter(sampleCharacter());
+    expect(text).not.toContain('carried');
+    expect(text).not.toContain('equipped');
+
+    const once = `${JSON.stringify(V1_BEFORE_PROGRESSION, null, 2)}\n`;
+    const parsed = parseCharacterFile(JSON.parse(once));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // Not byte-identical to `once` — that file predates the four progression
+    // fields, which ARE written unconditionally — but it gains no item keys.
+    const rewritten = serialiseCharacter(parsed.file);
+    expect(rewritten).not.toContain('carried');
+    expect(rewritten).not.toContain('equipped');
+  });
+
+  /**
+   * ═══ BYTE STABILITY. THE WORN MAP IS SORTED BECAUSE ITS ORDER IS AN ACCIDENT ═══
+   * `Object.entries` follows insertion order, and insertion order here follows
+   * whichever order the player happened to put their gear on in. Two saves of
+   * one character must produce identical bytes or every autosave rewrites the
+   * file. Same reason the cooldown and talent-point sorts exist.
+   */
+  it('serialises the same loadout to the same bytes whatever order the slots were filled in', () => {
+    const dressedTopDown = sampleCharacter({
+      equipped: { head: WORN_KIT.head ?? '', body: WORN_KIT.body ?? '', ring: WORN_KIT.ring ?? '' },
+    });
+    const dressedInAPanic = sampleCharacter({
+      equipped: { ring: WORN_KIT.ring ?? '', head: WORN_KIT.head ?? '', body: WORN_KIT.body ?? '' },
+    });
+
+    const once = serialiseCharacter(dressedTopDown);
+    expect(once).toBe(serialiseCharacter(dressedTopDown));
+    expect(once).toBe(serialiseCharacter(dressedInAPanic));
+    // Sorted, spelled out: body, head, ring.
+    expect(once.indexOf('"body"')).toBeLessThan(once.indexOf('"head"'));
+    expect(once.indexOf('"head"')).toBeLessThan(once.indexOf('"ring"'));
+
+    // THE BAG IS NOT SORTED, and that is deliberate: an array already has one
+    // order, and that order is PICKUP order, which is what the panel draws.
+    const bagged = sampleCharacter({ carried: ['item_inquisitors_tome', 'item_leather_chest'] });
+    const bytes = serialiseCharacter(bagged);
+    expect(bytes).toBe(serialiseCharacter(bagged));
+    expect(bytes.indexOf('item_inquisitors_tome')).toBeLessThan(
+      bytes.indexOf('item_leather_chest'),
+    );
+  });
+
+  /**
+   * REPAIR, NEVER REJECT — `parseTalentPoints`'s doctrine, applied to a
+   * hand-edited or content-drifted loadout. Losing a character over a stray item
+   * id would be the whole layer failing at its one job; losing an ITEM silently
+   * would be this feature failing at its one job. So every drop is recorded.
+   */
+  it('drops an item id this build does not know, and says so', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      carried: ['item_leather_chest', 'item_deleted_in_m8', 'item_watchmans_boots'],
+      equipped: { head: 'item_watchmans_cap', ring: 'item_cut_before_ship' },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.carried).toEqual(['item_leather_chest', 'item_watchmans_boots']);
+    expect(parsed.file.equipped).toEqual({ head: 'item_watchmans_cap' });
+    expect(parsed.problems).toEqual([
+      "equipped.ring: 'item_cut_before_ship' is not an item this build knows — dropped",
+      "carried[1]: 'item_deleted_in_m8' is not an item this build knows — dropped",
+    ]);
+  });
+
+  /**
+   * A slot key and an item id are coherent together or not at all, and only the
+   * catalogue knows which. This is the one field in the file where two values
+   * have to AGREE, which is why it is validated where a talent id is kept
+   * verbatim.
+   */
+  it('drops an equipped entry filed under the wrong slot, and says so', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      // A cap is a HEAD item; a buckler is an OFFHAND one. Neither belongs where
+      // this file puts it. `wibble` is not a slot at all, which the same check
+      // catches — no item's slot is `wibble`.
+      equipped: {
+        feet: 'item_watchmans_cap',
+        offhand: 'item_watchmans_buckler',
+        wibble: 'item_watchmans_badge',
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.equipped).toEqual({ offhand: 'item_watchmans_buckler' });
+    expect(parsed.problems).toEqual([
+      "equipped.feet: 'item_watchmans_cap' is worn in the 'head' slot, not 'feet' — dropped",
+      "equipped.wibble: 'item_watchmans_badge' is worn in the 'trinket' slot, not 'wibble' — dropped",
+    ]);
+  });
+
+  /**
+   * ═══ ONE LOADOUT, NOT TWO LISTS ═══
+   * An id in both places keeps the WORN copy: it is the more specific claim, it
+   * names a slot, and it is moving the character's numbers right now. Duplicates
+   * inside the bag collapse for the same reason — with no `uid` (rejected in
+   * `CharacterFile`'s docblock, with the dangling-index bug it would have
+   * brought), two entries of one id are indistinguishable to every consumer.
+   */
+  it('keeps the equipped copy when an id is in both lists, and collapses bag duplicates', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      equipped: { head: 'item_watchmans_cap' },
+      carried: [
+        'item_watchmans_cap',
+        'item_leather_chest',
+        'item_leather_chest',
+        'item_inspectors_signet',
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.equipped).toEqual({ head: 'item_watchmans_cap' });
+    expect(parsed.file.carried).toEqual(['item_leather_chest', 'item_inspectors_signet']);
+    expect(parsed.problems).toHaveLength(2);
+    expect(parsed.problems.every((problem) => problem.startsWith('carried['))).toBe(true);
+  });
+
+  /**
+   * ORDER BETWEEN THE TWO PARSERS. `parseCarried` de-duplicates against what is
+   * WORN, so `equipped` has to be validated first: an id that is about to be
+   * dropped out of `equipped` must not still suppress the bag's copy, or the
+   * character loses the item twice over for one mistake.
+   */
+  it('does not let a REJECTED equipped entry suppress the same id in the bag', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      // The cap is filed under FEET, so the worn entry is dropped. The bag's copy
+      // is the only surviving record that this character owns a cap.
+      equipped: { feet: 'item_watchmans_cap' },
+      carried: ['item_watchmans_cap'],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.equipped).toEqual({});
+    expect(parsed.file.carried).toEqual(['item_watchmans_cap']);
+  });
+
+  /**
+   * PRESENT-BUT-UNREADABLE IS NOT ABSENT. The file did speak; what it said is
+   * unusable. `{}` / `[]` is the honest reading, and it is `parseCooldowns`'s
+   * rule applied to two more fields.
+   */
+  it('turns a present-but-garbage key into an empty loadout, not into an absent one', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      carried: 'my coat',
+      equipped: 42,
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.carried).toEqual([]);
+    expect(parsed.file.equipped).toEqual({});
+    expect(parsed.problems).toHaveLength(2);
+  });
+
+  it('survives the real store: a save and a load keep the kit and the bag', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+    const file = sampleCharacter({ equipped: WORN_KIT, carried: IN_THE_BAG });
+
+    expect((await store.saveCharacter(file, SaveReason.Manual)).outcome).toBe(SaveOutcome.Written);
+    const loaded = await store.loadCharacter(OWNER, CHAR);
+
+    expect(loaded.outcome).toBe(LoadOutcome.Loaded);
+    expect(loaded.file?.equipped).toEqual(WORN_KIT);
+    expect(loaded.file?.carried).toEqual(IN_THE_BAG);
+    // A clean load: nothing in a file this build just wrote should need repairing.
+    expect(loaded.problems.filter((problem) => problem.includes('item_'))).toEqual([]);
+
+    await store.close();
+  });
+});
+
+// ===========================================================================
 // saves.ts — THE BRIDGE, END TO END. `createCharacterBridge` and nothing faked.
 // ===========================================================================
 
@@ -1420,6 +1708,242 @@ describe('the character bridge carries progression in both directions', () => {
     // Carried forward, NOT overwritten with the birth defaults.
     expect(reopened?.level).toBe(8);
     expect(reopened?.talentPoints).toEqual({ 'talent:crude_blow': 1 });
+
+    await store.close();
+  });
+});
+
+// ===========================================================================
+// saves.ts — THE BRIDGE, FOR ITEMS. Same seam, same two half-failures.
+// ===========================================================================
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TEST THAT WOULD HAVE CAUGHT THE PROGRESSION BUG, WRITTEN FIRST THIS TIME.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The bridge has TWO independent halves and each one fails quietly on its own:
+ *
+ *   `fileFor` reading `binding.carried` unconditionally freezes the disk at
+ *   whatever the file said when it was OPENED, so an evening's drops reach no
+ *   file at all and every autosave writes the morning's bag back over them.
+ *
+ *   `openCharacter` not RETURNING the fields leaves `CharacterRestore.carried`
+ *   undefined forever, so the restore path correctly and permanently takes its
+ *   "this port cannot say" branch on a file that says it perfectly clearly.
+ *
+ * Both are individually defensible-looking, both were shipped once already for
+ * progression, and the 1,400-test gate was green through it. So this walks the
+ * REAL `createSaveStore` and the REAL `createCharacterBridge`, both directions,
+ * and BUILDS A FRESH BRIDGE for the second evening — reusing the first would let
+ * a broken build pass on its own in-memory copy.
+ */
+describe('the character bridge carries inventory and equipment in both directions', () => {
+  const ACTOR = 'act_ren';
+
+  const bridgeOver = (
+    store: SaveStore,
+    logger: SaveLogger,
+  ): ReturnType<typeof createCharacterBridge> =>
+    createCharacterBridge({ store, logger, now: () => '2026-08-15T12:00:00.000Z' });
+
+  /**
+   * ═══ THE GATEWAY SEAM, NAMED RATHER THAN CAST OVER ═══
+   * `CharacterSnapshot` and `CharacterRestore` are owned by the pass that wires
+   * the loot verbs to the wire; saves.ts states the two item fields structurally
+   * as `SavedLoadout` and intersects them on. These two helpers are the test
+   * saying the same thing: a producer that knows about items builds the richer
+   * shape, and the bridge takes it because both fields are optional.
+   *
+   * NEITHER IS A CAST. Both are identity functions with a declared parameter
+   * type, and TypeScript accepts the assignment in both directions precisely
+   * because every field `SavedLoadout` adds is optional — which is the same
+   * property that lets an untaught producer keep working. An `as` here would
+   * have hidden the day the two shapes stop lining up; this fails to compile
+   * instead.
+   */
+  const withLoadout = (snapshot: CharacterSnapshot & SavedLoadout): CharacterSnapshot => snapshot;
+  const restored = (
+    value: (CharacterRestore & SavedLoadout) | null | undefined,
+  ): (CharacterRestore & SavedLoadout) | null | undefined => value;
+
+  it('saves a full seven-slot kit and a bag, and hands both back on the next open', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    // ── EVENING ONE ────────────────────────────────────────────────────────
+    const first = bridgeOver(store, logger);
+    expect(await first.openCharacter?.(OWNER, ACTOR)).toBe(null);
+
+    // Ren ends the evening in a complete Watchman kit with three things in the
+    // bag. This is the shape `snapshotPlayers` builds straight off `PlayerActor`.
+    first.savePlayersNow?.(
+      [
+        withLoadout({
+          actorId: ACTOR,
+          name: 'Ren',
+          hp: 44,
+          cooldowns: { 'talent:crude_blow': 2 },
+          x: 12,
+          y: 7,
+          classId: 'watchman',
+          equipped: WORN_KIT,
+          carried: IN_THE_BAG,
+        }),
+      ],
+      'disconnect',
+    );
+    await store.flush();
+
+    // The bytes really did land, with the slot keys sorted.
+    const path = characterPath(root, OWNER, 'chr_main') ?? '';
+    const onDisk = await readFile(path, 'utf8');
+    expect(onDisk).toContain('item_watchmans_coat');
+    expect(onDisk.indexOf('"body"')).toBeLessThan(onDisk.indexOf('"feet"'));
+
+    // ── EVENING TWO ────────────────────────────────────────────────────────
+    // A FRESH BRIDGE. The bug being pinned is a binding that echoes back what it
+    // read, so the first bridge's memory must not be available to answer with.
+    const second = bridgeOver(store, logger);
+    const back = restored(await second.openCharacter?.(OWNER, ACTOR));
+
+    expect(back?.equipped).toEqual(WORN_KIT);
+    expect(back?.carried).toEqual(IN_THE_BAG);
+    // The fields that always worked, so a regression in the two new lines is told
+    // apart from a regression in the file format.
+    expect(back?.hp).toBe(44);
+    expect(back?.classId).toBe('watchman');
+
+    await store.close();
+  });
+
+  /**
+   * ═══ ABSENT IS NOT EMPTY, AT THE BRIDGE. BOTH BRANCHES, SEPARATELY. ═══
+   * BRANCH ONE: a snapshot that CANNOT SAY — a fixture, the e2e harness, any
+   * producer not yet taught to fill the two fields — falls back to the binding,
+   * which is what the file said. Reading it as "the bag is empty" would delete
+   * an evening's loot on the first autosave of the next session.
+   */
+  it('keeps the loadout when the snapshot cannot say — the `?? binding` fallback', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    await store.saveCharacter(
+      sampleCharacter({ id: 'chr_main', equipped: WORN_KIT, carried: IN_THE_BAG }),
+      SaveReason.Manual,
+    );
+
+    const bridge = bridgeOver(store, logger);
+    expect(restored(await bridge.openCharacter?.(OWNER, ACTOR))?.equipped).toEqual(WORN_KIT);
+
+    // A snapshot with no item fields at all — the pre-loot producer.
+    bridge.savePlayersNow?.(
+      [{ actorId: ACTOR, name: 'Ren', hp: 30, cooldowns: {}, x: 1, y: 1 }],
+      'disconnect',
+    );
+    await store.flush();
+
+    const again = bridgeOver(store, logger);
+    const back = restored(await again.openCharacter?.(OWNER, ACTOR));
+    expect(back?.equipped).toEqual(WORN_KIT);
+    expect(back?.carried).toEqual(IN_THE_BAG);
+
+    await store.close();
+  });
+
+  /**
+   * BRANCH TWO, AND IT IS THE ONE A `?? {}` DEFAULT WOULD BREAK: a snapshot that
+   * says EMPTY must WRITE empty. A player who dropped everything on the floor and
+   * logged off has an empty bag, and a bridge that treated `[]` as "no opinion"
+   * would hand them their old coat back every session — an item duplicator built
+   * out of a falsy check.
+   */
+  it('writes an EMPTY loadout when the snapshot says empty, rather than falling back', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    await store.saveCharacter(
+      sampleCharacter({ id: 'chr_main', equipped: WORN_KIT, carried: IN_THE_BAG }),
+      SaveReason.Manual,
+    );
+
+    const bridge = bridgeOver(store, logger);
+    await bridge.openCharacter?.(OWNER, ACTOR);
+
+    bridge.savePlayersNow?.(
+      [
+        withLoadout({
+          actorId: ACTOR,
+          name: 'Ren',
+          hp: 30,
+          cooldowns: {},
+          x: 1,
+          y: 1,
+          equipped: {},
+          carried: [],
+        }),
+      ],
+      'disconnect',
+    );
+    await store.flush();
+
+    const again = bridgeOver(store, logger);
+    const back = restored(await again.openCharacter?.(OWNER, ACTOR));
+    // EMPTY, and — the assertion that separates this from the branch above —
+    // NOT undefined. The file states it, so the next producer inherits a fact
+    // rather than an absence.
+    expect(back?.equipped).toEqual({});
+    expect(back?.carried).toEqual([]);
+    expect(back?.carried).not.toBeUndefined();
+
+    await store.close();
+  });
+
+  /**
+   * AND THE THIRD STATE, WHICH IS NEITHER: a character nobody has ever given an
+   * item writes NO KEYS AT ALL. This is what keeps every save already sitting in
+   * `data/characters/` byte-identical through a session that never touched loot.
+   */
+  it('leaves both keys off the file for a character that has never held anything', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    const bridge = bridgeOver(store, logger);
+    await bridge.openCharacter?.(OWNER, ACTOR);
+    bridge.savePlayersNow?.(
+      [{ actorId: ACTOR, name: 'Ren', hp: 30, cooldowns: {}, x: 1, y: 1 }],
+      'disconnect',
+    );
+    await store.flush();
+
+    const onDisk = await readFile(characterPath(root, OWNER, 'chr_main') ?? '', 'utf8');
+    expect(onDisk).not.toContain('carried');
+    expect(onDisk).not.toContain('equipped');
+
+    const again = bridgeOver(store, logger);
+    const back = restored(await again.openCharacter?.(OWNER, ACTOR));
+    expect(back?.carried).toBeUndefined();
+    expect(back?.equipped).toBeUndefined();
 
     await store.close();
   });

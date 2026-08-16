@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { seedTestEncounter } from '../../src/server/content/encounter.ts';
+import { ITEMS } from '../../src/server/content/items.ts';
 import { AiProfile, IntentKind } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
@@ -473,6 +474,110 @@ describe('a party that owes no decision is skipped, not waited on', () => {
     expect([...wipe.restored].sort()).toEqual(['p1', 'p2']);
     // Raised by `enrolCasualties` on the way in, which is the player lane.
     expect(wipe.duringSweep).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX D — the FOURTH table a reset has to know about
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ITEMS ARE WIPED WITH THE FLOOR, AND THE DROPS ARE RE-ROLLED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `resetFloor` now clears four tables: bodies, side tables, orbs and ground
+ * items. The first three were each added only after a party found the hole in a
+ * voice channel — a re-seeded monster still Marked, an orb that outlived the
+ * wipe and landed on a party standing at full health in the spawn cluster. This
+ * one is written down before it can be, because the failure is not a crash: it
+ * is that WIPING BECOMES PROFITABLE. A reset costs the party nothing but time
+ * (game-design.md § 9: no permadeath, no loss), so loot left on the floor from
+ * the fight they just lost is a farm with a re-seeded encounter attached to it.
+ *
+ * ═══ A RE-SEEDED MONSTER CARRIES A NEW ROLL, NOT THE OLD ONE ═══
+ * Stated here because it is the natural thing to assume and it is not true. The
+ * reset REAPS every monster and `seedTestEncounter` mints brand new bodies at the
+ * authored positions with the stable ids (`mon_<template.id>`,
+ * content/encounter.ts) — and each of those bodies takes its own two draws off a
+ * loot stream that has moved on. The wraith is `chance: 100`, so it always comes
+ * back carrying something; WHICH of the six rare items it carries is a fresh
+ * question every time.
+ *
+ * That is deliberate rather than incidental. Remembering a per-id result would
+ * make the loot on the floor a function of how many times the party has wiped —
+ * which is the one thing a floor reset exists to erase — and it would need a
+ * decided-drops table living somewhere across resets, which is a fourth source
+ * of truth about a floor that is supposed to be rebuilt from a seed.
+ */
+describe('a floor reset clears the floor of items too', () => {
+  it('CLEARS EVERY GROUND ITEM — loot from the fight you lost is not a consolation prize', () => {
+    const stuck = scene('reset-clears-ground');
+    stuck.world.addGroundItem({ x: 22, y: 20 }, 'item_watchmans_coat');
+    stuck.world.addGroundItem({ x: 5, y: 5 }, 'item_inspectors_signet');
+    expect(stuck.world.groundItems()).toHaveLength(2);
+
+    stuck.knockDown('p1');
+    stuck.engine.pump();
+
+    expect(stuck.world.groundItems()).toEqual([]);
+  });
+
+  it('leaves NO ground item surviving into the re-seeded floor', () => {
+    // The stronger form of the assertion above: the floor is not merely emptied
+    // at some point during the reset, it is empty AFTER `reseedFloor` has run.
+    // Clearing before the re-seed and clearing after it are different programs,
+    // and only one of them survives a re-seed that ever drops something itself.
+    const stuck = scene('reset-ground-after-reseed');
+    stuck.world.addGroundItem({ x: 22, y: 20 }, 'item_leather_chest');
+
+    stuck.knockDown('p1');
+    stuck.engine.pump();
+
+    expect(monsters(stuck.world).length).toBeGreaterThan(0);
+    expect(stuck.world.groundItems()).toEqual([]);
+  });
+
+  it('re-seeds a monster that is carrying a drop again — same id, fresh roll', () => {
+    // The encounter is seeded FIRST, so the reset happens with living monsters
+    // that already carry pre-rolled drops. The wraith is the one to assert on:
+    // `chance: 100` means it always carries exactly one rare item, so "did the
+    // re-seeded body get a drop" has a definite answer on every seed.
+    const stuck = scene('reset-rerolls-drops');
+    seedTestEncounter(stuck.world);
+
+    const before = stuck.world.getActor('mon_index_wraith');
+    expect(before?.carried).toHaveLength(1);
+    const rareIds = ITEMS.filter((item) => item.tier === 'rare').map((item) => item.id);
+    expect(rareIds).toContain(before?.carried?.[0]);
+
+    stuck.knockDown('p1');
+    stuck.engine.pump();
+
+    // Same id, because content/encounter.ts:99 mints stable ids...
+    const after = stuck.world.getActor('mon_index_wraith');
+    expect(after).toBeDefined();
+    // ...but a DIFFERENT BODY, which is exactly why the drop is a new roll.
+    expect(after).not.toBe(before);
+    expect(after?.carried).toHaveLength(1);
+    expect(rareIds).toContain(after?.carried?.[0]);
+  });
+
+  it('re-rolls reproducibly — two identical sessions reset to the identical floor', () => {
+    // The reset consumes loot draws (three chance rolls, one to three picks), so
+    // the stream position after a wipe is a function of how many wipes there have
+    // been. That is fine and it is deterministic, which is the property worth
+    // pinning: same seed plus same script equals same floor, wipes included.
+    const run = (): readonly (string | undefined)[] => {
+      const stuck = scene('reset-reroll-determinism');
+      seedTestEncounter(stuck.world);
+      stuck.knockDown('p1');
+      stuck.engine.pump();
+      return monsters(stuck.world)
+        .map((monster) => monster.carried?.[0])
+        .sort();
+    };
+    expect(run()).toEqual(run());
   });
 });
 

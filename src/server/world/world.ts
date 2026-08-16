@@ -25,11 +25,21 @@
  * turn state, and monsters exist. The scheduler in src/server/engine/ drives all
  * of it; nothing in this file knows what a turn is. Fog of war is still M3.
  *
- * DEPENDENCY DIRECTION. This file imports the actor MODEL from engine/actor.ts
- * and nothing else from engine/. The scheduler imports the world. One direction,
- * no cycle, and one actor type in the process rather than an engine copy that
- * has to be kept in sync with a world copy — the first field to drift would be
- * `hp`, and it would drift silently.
+ * DEPENDENCY DIRECTION. This file imports the actor MODEL from engine/actor.ts,
+ * the projectile model from engine/projectile.ts, and `recomposeCombat` from
+ * engine/effects.ts. The scheduler imports the world. One direction, no cycle,
+ * and one actor type in the process rather than an engine copy that has to be
+ * kept in sync with a world copy — the first field to drift would be `hp`, and
+ * it would drift silently.
+ *
+ * ═══ THE ONE CONTENT IMPORT, AND WHY IT IS NOT THE CYCLE THE OTHER ONE WOULD BE
+ * `content/items.ts` is imported for `ITEM_CATALOGUE`. `content/classes.ts` is
+ * still forbidden, and the note on `PLAYER_SPRITES` below says why:
+ * `world -> content/classes -> engine/talents -> world` is a real cycle, closed
+ * by engine/talents.ts:103's VALUE import of `hasLineOfSight` from this file,
+ * and a module cycle in a project with no build step is a ReferenceError at
+ * import time rather than a warning. `content/items.ts` imports TYPES ONLY and
+ * therefore sits at the bottom of the graph with nothing to close.
  */
 
 import { bresenham, step } from '../../shared/coords.ts';
@@ -37,8 +47,10 @@ import { createTurnClock } from '../../shared/energy.ts';
 import { TEST_LEVEL_SPAWNS, canWalk, makeTestLevel } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
+import { ITEM_CATALOGUE } from '../content/items.ts';
 import { createMonsterActor, createPlayerActor } from '../engine/actor.ts';
 import { createProjectile } from '../engine/projectile.ts';
+import { recomposeCombat } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { TurnClock } from '../../shared/energy.ts';
 import type { LevelView } from '../../shared/protocol.ts';
@@ -217,6 +229,42 @@ export type PlayerOverlay = Partial<
   Pick<PlayerInit, 'sprite' | 'maxHp' | 'hpRegen' | 'combat' | 'classId'>
 >;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN ITEM LYING ON THE FLOOR. A THIRD TABLE, NOT A ROW IN `actors`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The same split, for the same five reasons, that the projectile table is
+ * written around (see the block comment on `World.addProjectile`). Restated
+ * rather than cross-referenced, because the failure mode of each is silent:
+ *
+ *   `actorAt` WOULD MAKE LOOT BLOCK MOVEMENT. You could not walk onto the tile a
+ *     coat is lying on — which is also the tile you have to stand on to pick it
+ *     up — and `isFree` would refuse to spawn anybody there.
+ *   `allActors` / `actorsInTurnOrder` WOULD HAND IT TO THE AI. `decideNpcAction`
+ *     would consider a pair of boots as a target, and `visibleEnemies` would
+ *     count it toward the elite's isolation hunt.
+ *   `tryMove` WOULD TREAT IT AS AN OCCUPANT TO BUMP-ATTACK. Walking into your
+ *     own dropped ring would be an attack that costs a turn.
+ *   THE PROJECTOR WOULD SHIP IT AS AN `ActorView` with an hp bar and a rank
+ *     ring.
+ *   THE CLIENT'S `ringIdFor` SWITCHES EXHAUSTIVELY over a TWO-MEMBER
+ *     `ActorKind` to pick a `ui_token_ring_*` sprite, and the art is gitignored
+ *     wholesale, so the third case cannot be drawn at all.
+ *
+ * `id` is the world's to give and is never reused. `itemId` names a row in
+ * `content/items.ts` — an id, never the resolved object, for the same reason
+ * `actor.equipped` holds ids.
+ */
+export type GroundItem = {
+  /** Unique within this world, monotonic, never reused. */
+  readonly id: string;
+  /** A key into `ITEM_CATALOGUE`. */
+  readonly itemId: string;
+  readonly x: number;
+  readonly y: number;
+};
+
 export type World = {
   /**
    * The authoritative level. Mutable in type because M4 digs doors into it; in
@@ -234,6 +282,33 @@ export type World = {
    * stream with combat, a replay would depend on when somebody's laptop woke up.
    */
   readonly rng: Rng;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LOOT STREAM. A THIRD FORK OFF THE ROOT, AND IT IS NOT FASTIDIOUSNESS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every draw a drop rule takes comes from HERE and from nothing else.
+   *
+   * `fork` is a pure function of (state, inc, label) and DOES NOT ADVANCE THE
+   * PARENT (src/shared/rng.ts:261-274), so adding this third child leaves
+   * `world.spawn` and `world.turn` BYTE-IDENTICAL. That is not "probably zero
+   * effect on the existing seeded tests", it is provably zero, and it is the
+   * reason this is a fork rather than a couple of extra draws on an existing
+   * stream: `world.spawn` is consumed by `world.spawn.overflow` (below) and
+   * `world.turn` by `combat.checkhit`, `combat.crit`, `combat.bump.damage`,
+   * `ai.fire.chance`, `ai.flee.side`, `ai.flee.hardside` and `ai.target.keep`.
+   * ONE new draw on either of those moves every subsequent draw in that stream
+   * and in every pump after it — rng.ts:31-39 states the rule outright: renaming
+   * a label never alters a replay, adding or removing a DRAW always does.
+   *
+   * HONEST CAVEAT, so nobody reads more into this than it says: `grep -rn rng
+   * src/server/persist/` returns nothing. No RNG state is persisted anywhere, so
+   * replay-from-seed is a WITHIN-PROCESS guarantee today. A drop is reproducible
+   * across a restart of the same seed; it is not reproducible across a
+   * save/load, because nothing saves a cursor. This fork does not change that in
+   * either direction.
+   */
+  readonly lootRng: Rng;
   /**
    * Place a player on a free tile and return it.
    *
@@ -406,6 +481,45 @@ export type World = {
    * machine, and a Map preserves insertion order by specification.
    */
   projectilesInFlight(): readonly Projectile[];
+
+  // --- ground items ---------------------------------------------------------
+  // A THIRD TABLE, for the five reasons written out on `GroundItem` above. The
+  // shape is modelled line-for-line on the projectile table directly overhead,
+  // because the argument is identical and a second argument for the same
+  // decision is a second thing that can drift.
+
+  /**
+   * Drop an item onto a tile. The id is the world's to give.
+   *
+   * NO TERRAIN CHECK AND NO OCCUPANCY CHECK, deliberately. A corpse spills its
+   * gear where it fell and a player drops onto the tile they are standing on;
+   * both are places somebody was legally standing a moment ago. Adding a walk
+   * check here would mean a monster killed in a doorway loses its drop with no
+   * error anywhere, which is the worst of the three outcomes.
+   */
+  addGroundItem(cell: TileXY, itemId: string): string;
+  /** Somebody took it, or the floor reset. @returns false for an unknown id. */
+  removeGroundItem(id: string): boolean;
+  /**
+   * Everything on the floor, in INSERTION ORDER — a fresh array, live values.
+   *
+   * Insertion order rather than any other for exactly the reason
+   * `projectilesInFlight` gives: two items dropped on the same turn must be
+   * listed in the order they were dropped on every machine, and a Map preserves
+   * insertion order by specification. ToME sorts its inventories before spilling
+   * a corpse (Actor.lua:3038-3040) for the same reason — a hash-ordered spill
+   * gives two replays of one seed the same items in a different floor order, and
+   * since pickup takes the FIRST item on the tile, that is a different item.
+   */
+  groundItems(): readonly GroundItem[];
+  /**
+   * One tile's items, in that same stable order. Empty is the common case.
+   *
+   * PICKUP TAKES INDEX 0. That is the whole reason the order is specified: "the
+   * top of the pile" has to mean the same thing to the server, to the client's
+   * prompt, and to a replay.
+   */
+  itemsAt(x: number, y: number): readonly GroundItem[];
 };
 
 function spriteForJoinIndex(index: number): string {
@@ -425,12 +539,26 @@ export function createWorld(seed: number | string): World {
    */
   const projectiles = new Map<string, Projectile>();
   /**
+   * ITEMS ON THE FLOOR. Deliberately not in `actors` either — see the block
+   * comment on `GroundItem` for the five things that would silently break.
+   *
+   * Insertion order is the emission order, and `itemsAt` filters it rather than
+   * keeping a per-tile index. A second index would be a second source of truth
+   * that has to be updated in lockstep with every drop and every pickup, and the
+   * failure mode of a stale one is an item that can be taken twice — which is
+   * precisely the race an unowned shared pile is most exposed to. Same argument
+   * `actorAt` makes for its linear scan a few lines down.
+   */
+  const ground = new Map<string, GroundItem>();
+  /**
    * Monotonic, never reused, and the ONLY legal id source in this directory:
    * `Date.now` and `Math.random` are ESLint errors here (the determinism block
    * in eslint.config.js), which is exactly the point — an id derived from a
    * clock would make two replays of the same seed disagree about a name.
    */
   let projectileSeq = 0;
+  /** Same rule, its own counter, so a projectile id and an item id never collide. */
+  let groundSeq = 0;
 
   const turn: TurnState = {
     clock: createTurnClock(),
@@ -439,16 +567,25 @@ export function createWorld(seed: number | string): World {
   };
 
   /**
-   * TWO FORKED SUB-STREAMS, not the world's main generator.
+   * THREE FORKED SUB-STREAMS, not the world's main generator.
    *
    * `fork` is a pure function of (state, inc, label) and does not advance the
-   * parent, so neither stream can shift the other's numbers however many draws
-   * it takes. Placement is driven by connect timing; play is driven by the
-   * action log. They must not share a cursor.
+   * parent, so no stream can shift another's numbers however many draws it
+   * takes. Placement is driven by connect timing; play is driven by the action
+   * log; loot is drawn at spawn, at authored positions in an authored encounter
+   * list. They must not share a cursor.
+   *
+   * THE THIRD FORK IS WHY ADDING DROPS MOVED ZERO SEEDED TESTS — and it is
+   * required rather than tidy. `world.spawn` is drawn on by
+   * `world.spawn.overflow` below; `world.turn` is drawn on by every combat and
+   * AI roll in the game. Taking the loot draws on either would shift every
+   * subsequent draw in it. See the note on `World.lootRng` for the full
+   * argument, including what a DEATH-time roll would have cost instead.
    */
   const root = createRng(seed);
   const spawnRng = root.fork('world.spawn');
   const playRng = root.fork('world.turn');
+  const lootRng = root.fork('world.loot');
 
   /** Where the next join starts scanning the authored spawn cluster. */
   let spawnCursor = 0;
@@ -601,7 +738,42 @@ export function createWorld(seed: number | string): World {
     if (overlay.sprite !== undefined) actor.sprite = overlay.sprite;
     if (overlay.maxHp !== undefined) actor.maxHp = overlay.maxHp;
     if (overlay.hpRegen !== undefined) actor.hpRegen = overlay.hpRegen;
-    if (overlay.combat !== undefined) actor.combat = overlay.combat;
+    if (overlay.combat !== undefined) {
+      // ═══════════════════════════════════════════════════════════════════════
+      // IT WRITES THE BASELINE AND RECOMPOSES. IT USED TO WRITE `combat`
+      // DIRECTLY, AND THAT WAS A LIVE BUG THE MOMENT ITEMS EXISTED.
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // THE OWNERSHIP SPLIT, stated here and stated verbatim at the other site
+      // (engine/effects.ts#recomputeAttributes). Neither claims the other's
+      // authority:
+      //
+      //     `baseCombat` is OWNED BY THE THING THAT DRESSES THE BODY — which is
+      //         this function, `createPlayerActor` and `createMonsterActor`.
+      //     `equipped` is OWNED BY THE EQUIPMENT VERBS.
+      //     `combat` is OWNED BY `recomposeCombat`, and by nothing else. It is
+      //         DERIVED: baseCombat, then gear, then status flags.
+      //
+      // `actor.combat = overlay.combat` replaced the WHOLE sheet, so a player
+      // who had equipped anything and then finished character creation silently
+      // lost every contribution — the ids stayed in `equipped`, the inventory
+      // screen kept drawing them, and the armour was gone with nothing failing
+      // anywhere. Writing the baseline and recomposing is the fix, and it is
+      // also what makes the two writers of this field agree on where a sheet
+      // comes from.
+      //
+      // `null` FOR THE EFFECT STATE, and it is honest rather than lazy: this
+      // file may not import the status system (the dependency note at the top of
+      // the file), so it genuinely cannot speak for stage three. `null` tells
+      // `recomposeCombat` to carry the live flags across unchanged, which is
+      // exactly right — nothing in stages one and two can alter a flag.
+      //
+      // A BODY WEARING NOTHING GETS THE OVERLAY'S SHEET BY IDENTITY, not a copy,
+      // which is what keeps "the class was applied WHOLESALE, never blended"
+      // assertable with `toBe` in class-choice.test.ts and class-wiring.test.ts.
+      actor.baseCombat = overlay.combat;
+      recomposeCombat(actor, null, ITEM_CATALOGUE);
+    }
     if (overlay.classId !== undefined) actor.classId = overlay.classId;
 
     // AFTER `maxHp`, or a Watchman chosen over a provisional Alchemist starts at
@@ -696,10 +868,39 @@ export function createWorld(seed: number | string): World {
     return proj;
   };
 
+  const addGroundItem = (cell: TileXY, itemId: string): string => {
+    groundSeq += 1;
+    const id = `ground_${groundSeq}`;
+    // FROZEN. A ground item is a fact about a tile, not a body: it never moves,
+    // never takes damage, and is removed rather than edited. Freezing it means
+    // `groundItems()` can hand out the live values without the aliasing note
+    // `allActors` has to carry.
+    ground.set(id, Object.freeze({ id, itemId, x: cell.x, y: cell.y }));
+    return id;
+  };
+
+  /**
+   * One tile's pile, filtered out of the insertion-ordered table.
+   *
+   * A LINEAR SCAN, on purpose, and it is the same trade `actorAt` makes: a
+   * position -> item index would be a second source of truth updated in lockstep
+   * with every drop and pickup, and a stale one lets an item be taken twice.
+   * With at most three drops per floor (the encounter places three monsters)
+   * this walks a table of three.
+   */
+  const itemsAt = (x: number, y: number): readonly GroundItem[] => {
+    const out: GroundItem[] = [];
+    for (const item of ground.values()) {
+      if (item.x === x && item.y === y) out.push(item);
+    }
+    return out;
+  };
+
   return {
     level,
     turn,
     rng: playRng,
+    lootRng,
     addPlayer,
     reclothePlayer,
     addMonster,
@@ -715,5 +916,9 @@ export function createWorld(seed: number | string): World {
     removeProjectile: (id: string): boolean => projectiles.delete(id),
     getProjectile: (id: string): Projectile | undefined => projectiles.get(id),
     projectilesInFlight: (): readonly Projectile[] => [...projectiles.values()],
+    addGroundItem,
+    removeGroundItem: (id: string): boolean => ground.delete(id),
+    groundItems: (): readonly GroundItem[] => [...ground.values()],
+    itemsAt,
   };
 }

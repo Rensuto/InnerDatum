@@ -82,9 +82,11 @@ import { ActorKind } from '../../shared/protocol.ts';
 import { bound } from '../../shared/scale.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
 import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './derived.ts';
+import { composeSheet, wornOf } from './equipment.ts';
 import { setCooldown } from './actor.ts';
 import type { Combatant, StatusFlags } from './derived.ts';
 import type { CombatSheet } from './combat.ts';
+import type { ItemCatalogue, Slot } from '../content/items.ts';
 import type { Rng } from '../../shared/rng.ts';
 
 // ---------------------------------------------------------------------------
@@ -1348,7 +1350,29 @@ export function budgetPenalty(state: EffectState, actorId: string): BudgetPenalt
 }
 
 /**
- * Write the effect-derived attributes onto the actor.
+ * STAGE THREE OF THE SINGLE WRITER: the effect-derived attributes.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OWNERSHIP SPLIT, STATED HERE AND RESTATED VERBATIM AT THE OTHER SITE
+ * (world/world.ts#reclothePlayer). NEITHER CLAIMS THE OTHER'S AUTHORITY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     `actor.baseCombat` is OWNED BY THE THING THAT DRESSES THE BODY —
+ *         `createPlayerActor`, `createMonsterActor`, and `reclothePlayer`.
+ *         Nothing else writes it, ever.
+ *     `actor.equipped` is OWNED BY THE EQUIPMENT VERBS.
+ *     `actor.combat` is OWNED BY `recomposeCombat` BELOW, and by nothing else.
+ *         It is DERIVED — baseCombat, then gear, then these flags — and any
+ *         writer that skips a stage produces a body whose sheet cannot be
+ *         reproduced from its own fields.
+ *
+ * THIS FUNCTION IS THE LAST OF THE THREE STAGES and is deliberately still
+ * exported and still callable on its own: an effect landing or expiring changes
+ * flags and NOTHING ELSE, so re-running the gear fold on every tick of every DoT
+ * would be pure waste. Spreading the live sheet is safe precisely because the
+ * two earlier stages never touch `flags` — `Wielder` has no flag field to grant
+ * (content/items.ts) — so this cannot drop a gear contribution and the gear fold
+ * cannot drop a status.
  *
  * ═══ RECOMPUTE FROM A BASELINE, DO NOT PATCH INCREMENTALLY ═══
  * ToME uses `addTemporaryValue` / `removeTemporaryValue` handle pairs
@@ -1360,6 +1384,11 @@ export function budgetPenalty(state: EffectState, actorId: string): BudgetPenalt
  * `baseGlobalSpeed`) and the live set is re-composed on top of it after EVERY
  * state change. Idempotent, order-independent, and it cannot leak a modifier
  * when a hook throws. Same observable behaviour, no handles.
+ *
+ * engine/equipment.ts follows this same argument for gear, and cites this
+ * paragraph as the precedent. That is not decoration: the two systems both write
+ * one field, and they are only safe together because BOTH recompose from a
+ * baseline rather than patching each other's output.
  *
  * `flags` is rebuilt as a new object because `Combatant.flags` and every field
  * inside `StatusFlags` are readonly — which is the correct shape, since a
@@ -1379,6 +1408,10 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     breached: (base?.breached ?? false) || mods.breached === true,
     stunned: (base?.stunned ?? false) || mods.stunned === true,
   };
+  // A FRESH OBJECT, never a write into `sheet`. Stage two hands this stage a
+  // FROZEN sheet (`composeSheet` freezes its output), and an in-place write onto
+  // it would throw in strict mode — which is the correct outcome and also the
+  // reason it can never silently corrupt a shared `ClassDef.combat`.
   actor.combat = { ...sheet, flags };
 
   // --- the energy GAIN multiplier (MONSTERS ONLY — D1) ----------------------
@@ -1393,6 +1426,91 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     // The 0.1 floor mirrors `combatSpeed`'s (Combat.lua:1409): a stacked slow
     // must not reach zero, or the actor's clock stops and it never acts again.
     actor.globalSpeed = Math.max(0.1, baseSpeed + (mods.globalSpeedAdd ?? 0));
+  }
+}
+
+/**
+ * An actor that can wear things. `EffectActor` plus the three fields
+ * engine/actor.ts added to `ActorCommon`.
+ *
+ * Structural rather than `EngineActor`, like every other actor type in this
+ * directory: a bare test fixture with an id, a sheet and an `equipped` map is a
+ * valid input, and widening it to the real actor would drag the energy clocks
+ * and the barrier's control flags into every equipment unit test.
+ */
+export type EquippedActor = EffectActor & {
+  /** The sheet before gear and before statuses. See engine/actor.ts. */
+  baseCombat?: CombatSheet;
+  equipped?: Partial<Record<Slot, string>>;
+  carried?: readonly string[];
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *        THE SINGLE WRITER OF `actor.combat`. THE ORDER IS FIXED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     1. baseCombat                       — the class sheet, untouched
+ *     2. composeSheet(worn gear)          — engine/equipment.ts, additive
+ *     3. recomputeAttributes(flags)       — directly above
+ *
+ * Call it after ANY change to any of the three inputs: a class chosen, an item
+ * equipped or dropped, a save restored. It is idempotent — running it twice in a
+ * row produces an equal sheet — which is the property that makes it safe to call
+ * defensively rather than exactly once.
+ *
+ * ═══ WHY THIS FIXED A LIVE BUG RATHER THAN MERELY TIDYING ═══
+ * `actor.combat` had TWO competing writers before this function existed:
+ * `recomputeAttributes` above, which PRESERVES an earlier merge by spreading,
+ * and `world.ts#reclothePlayer`, which did `actor.combat = overlay.combat` and
+ * destroyed one wholesale. The second is the character-creation path. A player
+ * who picked up and equipped a coat and then finished choosing their class
+ * silently lost the coat's contribution — the id stayed in `equipped`, the
+ * inventory screen kept drawing it, and the armour it granted was gone with
+ * nothing failing anywhere.
+ *
+ * ═══ `state` MAY BE null, AND THAT IS NOT A CONVENIENCE ═══
+ * `world/world.ts` cannot see the status system — it imports the actor MODEL and
+ * nothing else from engine/, which is what keeps `world -> engine` one-way — so
+ * it genuinely has no `EffectState` to pass. `null` means "this caller cannot
+ * speak for stage three", and the honest answer is then to CARRY THE LIVE FLAGS
+ * FORWARD UNCHANGED: stages one and two cannot alter a flag (a `Wielder` has no
+ * flag field), so the flags that were on the sheet a line ago are still exactly
+ * right. Recomputing them from a baseline this caller cannot read would mean
+ * inventing one, and inventing one drops every live status the moment somebody
+ * chooses a class mid-fight.
+ *
+ * ═══ THE IDENTITY SHORT-CIRCUIT IS DELIBERATE ═══
+ * A body wearing nothing, carrying no status, gets `actor.combat = baseCombat`
+ * BY IDENTITY rather than a copy. `composeSheet` always allocates (that is its
+ * contract and its purity test), but allocating a copy of the class sheet for
+ * every classless body in the process would be noise — and it would break
+ * `expect(body.combat).toBe(ALCHEMIST.combat)`, which is the assertion two
+ * suites use to say "the class was applied WHOLESALE, not blended".
+ */
+export function recomposeCombat(
+  actor: EquippedActor,
+  state: EffectState | null,
+  catalogue: ItemCatalogue,
+): void {
+  // Read BEFORE stage two overwrites the sheet — see the `state === null` note.
+  const liveFlags = actor.combat?.flags;
+
+  // Stage one. A fixture with neither field is an M2-era actor and keeps ToME's
+  // bare defaults inside derived.ts, exactly as it did before this existed.
+  const base = actor.baseCombat ?? actor.combat;
+
+  // Stage two.
+  if (base !== undefined) {
+    const worn = wornOf(actor.equipped, catalogue);
+    actor.combat = worn.length === 0 ? base : composeSheet(base, worn);
+  }
+
+  // Stage three.
+  if (state !== null) {
+    recomputeAttributes(state, actor);
+  } else if (liveFlags !== undefined && actor.combat !== undefined) {
+    actor.combat = { ...actor.combat, flags: liveFlags };
   }
 }
 

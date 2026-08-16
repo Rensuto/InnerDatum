@@ -107,6 +107,30 @@ export type PrimaryStats = {
  * These are the SUM of gear, class base and buffs. They arrive pre-summed
  * because rescaling happens once at the end of the getter; a caller that
  * rescales per item has already lost.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS TYPE IS THE ITEM VOCABULARY, AND THREE OF ITS FIELDS ARE INERT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `content/items.ts` defines `AdditiveMods` as this type with `physSpeed`,
+ * `spellPower` and `mindPower` REMOVED, so an item cannot grant one. That is not
+ * taste — it is a grep result, and it is worth repeating here so the next author
+ * does not add a fourth by analogy:
+ *
+ *     grep -rn 'combatSpeed\|combatSpellpower\|combatMindpower' src/
+ *       -> COMMENTS ONLY. Zero call sites.
+ *
+ * Nothing in this game reads attack speed, spell power or mind power. Their
+ * getters are ported, correct and unused. An item granting one would type-check,
+ * persist, draw a tooltip and change no number a player can see — which is the
+ * worst failure an item system has, because it is invisible.
+ * content/classes.ts:295 already carries a dead `mods: { spellPower: 4 }` on the
+ * Alchemist, so this is a mistake that has already been made once here.
+ *
+ * IF YOU ADD A FIELD TO THIS TYPE, decide in the same commit whether an item may
+ * grant it, and if not, add it to the `Omit` in content/items.ts. If you add a
+ * CALL SITE for one of the three above, deleting its name from that `Omit` is
+ * the whole change.
  */
 export type CombatMods = {
   /** `combat_atk` — flat accuracy. */
