@@ -144,8 +144,59 @@
  *   the shooter — so there is no second signal a v6 client could fall back on
  *   and no way for it to infer that anything was ever in flight. It renders a
  *   complete, plausible, entirely wrong account of the fight.
+ *
+ * 7 -> 8 (CHOOSING WHO YOU ARE). The envelope gained `choose_class` inbound and
+ * `class_options` outbound, and `InspectView` gained an optional `className` for
+ * the character sheet's header. NEITHER HALF WOULD FORCE THIS BUMP ON ITS OWN,
+ * and it is worth writing down why, because the reason it happens anyway is a
+ * shape this file has not recorded before.
+ *
+ *   THE INBOUND VERB WOULD NOT FORCE ONE. `respawn` set the precedent at v5: a
+ *   frame that travels client -> server is one an old client simply never sends,
+ *   and every frame it RECEIVES still means exactly what it always did. What a
+ *   v7 client would lose is a key, not the meaning of anything on the wire.
+ *
+ *   THE CHARACTER SHEET WOULD NOT FORCE ONE EITHER. Everything it needs beyond
+ *   what is already on the wire arrives as extra `InspectRow`s, and an
+ *   `InspectRow` is a label/value pair that a client either renders or drops —
+ *   the type's own contract says a narrow viewport may drop rows. `className` is
+ *   optional, so an old client and a monster both ignore it. That is textbook
+ *   "an addition it can ignore", which by this file's rule since 2 -> 3 is
+ *   precisely what does NOT force a bump.
+ *
+ * THE FORCING ARGUMENT IS THAT THE ROTATION IS A WRITE.
+ *
+ *   A v7 client cannot name `class_options`, so it draws no picker and sends no
+ *   `choose_class`. The server must still give that body a class to stand up in,
+ *   and today's fallback is the join-order rotation over the three CLASSES. Then
+ *   the character file is written: `fileFor` persists `snapshot.classId ??
+ *   binding.classId` (src/server/persist/saves.ts:1189) and the gateway calls
+ *   `saveNow('join')` on every genuinely new character (net/gateway.ts:2662).
+ *
+ *   FROM THAT MOMENT THE FILE RESOLVES, SO THE CHOOSER NEVER APPEARS AGAIN. The
+ *   player is not merely missing a screen this session — a single connection on
+ *   a stale bundle silently and PERMANENTLY locks them out of the feature, on
+ *   every future connection, from any client, with no signal anywhere on screen
+ *   to infer it from. They were assigned a class they never agreed to and there
+ *   is no path back to the question. That is a one-way door, and it is the same
+ *   CONFIDENTLY WRONG UI shape this file used at 2 -> 3 and 6 -> 7: not "less
+ *   UI", but a client that keeps running while quietly committing the player to
+ *   something they were never asked about.
+ *
+ *   THE GATE IS WHAT TURNS IT INTO AN HONEST REFUSAL. `net/gateway.ts:3436-3445`
+ *   answers `version_mismatch` and closes the socket before any frame is
+ *   dispatched, so a stale bundle gets "update and reconnect" instead of a class
+ *   written to disk behind the player's back. A refused connection beats a
+ *   confusing one; here it also beats an irreversible one.
+ *
+ * NO `ErrorCode` MEMBER WAS ADDED, DELIBERATELY. A `choose_class` naming an
+ * unknown id is `bad_message` and one from a player who already has a class is
+ * `not_your_turn` — the same code `respawn` uses to refuse a body with nothing
+ * to file. Both are already rendered by every shipped client, and this file
+ * records at 2 -> 3 that a new `ErrorCode` independently forces a bump; reusing
+ * two existing ones keeps the bump argument down to the single reason above.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

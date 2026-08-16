@@ -149,6 +149,21 @@
  * roster fields therefore mean the recipient's party rather than the floor.
  * That is the narrowing, and it is why the version had to move — see
  * src/shared/version.ts for what a v5 client does with it.
+ *
+ * v8 ADDS THE CHOOSER, AND THE BUMP IS FORCED BY A WRITE RATHER THAN A READ.
+ *
+ *   C -> S  `choose_class`  — "I will be the Watchman." Once, at first join.
+ *   S -> C  `class_options` — the three classes, to the one player who owes a
+ *                             choice. Per-recipient.
+ *
+ * `InspectView` also grew `className`, for the character sheet's header. Neither
+ * half would force a bump on its own by this file's usual rule — an inbound verb
+ * an old client never sends costs it nothing (`respawn` added one at v5 without
+ * a bump) and an optional outbound field is an addition it can ignore. What
+ * forces it is that the FALLBACK IS A WRITE: a client that cannot draw the
+ * picker is assigned a class by rotation and the join save persists it, after
+ * which the chooser never appears again. src/shared/version.ts is the long
+ * version.
  */
 
 import { z } from 'zod';
@@ -307,6 +322,27 @@ export type InspectRow = {
 export type InspectView = {
   readonly id: string;
   readonly name: string;
+  /**
+   * THE CLASS, AS AN IDENTITY — "The Watchman". PRESENT ONLY WHEN THE VIEWER IS
+   * INSPECTING THEMSELVES.
+   *
+   * A FIELD RATHER THAN A ROW, and the distinction is the whole reason it is
+   * here. `rows` is an ORDERED, DROPPABLE list: a narrow viewport is explicitly
+   * allowed to drop rows it has no space for (see `InspectRow`), and the order
+   * is the server's to change. A character sheet whose HEADER had to find the
+   * class by scanning `rows` for the label 'Class' would break the moment a row
+   * was reordered, relabelled or dropped — and it would break by silently
+   * drawing a nameless detective, which is exactly the confidently-wrong shape
+   * this protocol refuses. A class is an identity, like `name`, so it sits
+   * beside `name`.
+   *
+   * OPTIONAL BECAUSE MOST INSPECTS HAVE NO HONEST ANSWER. A monster has no
+   * class; another player's is not the viewer's to read off a hover card (see
+   * inspect.ts's three-way split); and an old client that has never heard of the
+   * field ignores it. Absent is the normal case, and it means "do not draw a
+   * class line", never "unknown".
+   */
+  readonly className?: string;
   readonly kind: string;
   readonly hp: number;
   readonly maxHp: number;
@@ -1276,6 +1312,55 @@ const RespawnSchema = z.strictObject({
 const ACTOR_ID_MAX_CHARS = 64;
 
 /**
+ * Longest class id a client may name. `watchman` is 8 characters and the longest
+ * one MVP authors is `alchemist` at 9; 64 matches `ACTOR_ID_MAX_CHARS` and
+ * `TalentSchema`'s own cap so there is one number to remember, and it is headroom
+ * rather than a place to park a payload.
+ */
+const CLASS_ID_MAX_CHARS = 64;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `choose_class` — "I will be the Watchman." The v8 verb.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Sent once, by a player who has no class on file, in answer to the
+ * `class_options` frame below. A returning player never sends one and never sees
+ * the screen that produces it.
+ *
+ * ═══ IT CARRIES NO `actorId` AND NO TARGET FIELD OF ANY KIND ═══
+ * It is the same shape as `commit`, `hold` and `respawn` and it is in that
+ * family, NOT in `party`/`inspect`'s: those two name the OBJECT of their verb
+ * (who is being invited, what is being looked at) and this one has no object.
+ * Choosing a class is something a socket DOES to its own body. Identity is the
+ * server-side session, exactly as with `move`, and `strictObject` REJECTS a
+ * smuggled `actorId` rather than quietly stripping it into a legal frame
+ * (see the note at the head of `HelloSchema`) — so an attempt to pick somebody
+ * else's class fails loudly in the log instead of being sanitised.
+ *
+ * ═══ `classId` IS A BOUNDED STRING, NOT A `z.enum` OF THE THREE IDS ═══
+ * Deliberately following `TalentSchema`'s stated precedent above: the class
+ * table is server-side authored content, and baking the catalogue into the wire
+ * schema would make every content edit — a fourth class, a renamed id — a
+ * PROTOCOL change requiring a version bump and a client redeploy. An unknown id
+ * is refused one step later by the server's own `classById` lookup with
+ * `bad_message`, which is the same outcome and does not couple the two.
+ *
+ * ═══ WHAT THIS SCHEMA DOES NOT CHECK ═══
+ * That the sender is actually owed a choice. zod validates SHAPE; whether this
+ * socket has an unassigned character is a question about the world, and a player
+ * who already has a class gets `not_your_turn` from the handler — the same shape
+ * `respawn` uses to refuse a body that has nothing to file. No new `ErrorCode`
+ * member is added for it, because both codes already exist and every shipped
+ * client already renders them.
+ */
+const ChooseClassSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('choose_class'),
+  classId: z.string().min(1).max(CLASS_ID_MAX_CHARS),
+});
+
+/**
  * The five things a player may do about a party. A closed enum on the wire, so
  * an unknown verb is refused by zod rather than reaching a switch that has no
  * case for it.
@@ -1419,6 +1504,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   PointSchema,
   ReviveSchema,
   RespawnSchema,
+  ChooseClassSchema,
   PartySchema,
   InspectSchema,
   PingSchema,
@@ -1435,6 +1521,7 @@ export type ClientSay = z.infer<typeof SaySchema>;
 export type ClientPoint = z.infer<typeof PointSchema>;
 export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
+export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
@@ -2266,6 +2353,105 @@ export type InspectedMsg = {
   view: InspectView | null;
 };
 
+// ---------------------------------------------------------------------------
+// v8 — THE CHOOSER. WHO YOU ARE ABOUT TO BE.
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE CLASS ON THE PICKER, as a player deciding between three sees it.
+ *
+ * ═══ THE ORDER OF THE FIELDS IS ToME'S BIRTHER, REDUCED ═══
+ * `Birther.lua:131-143` builds the subclass list as `display_prop="name"` rows
+ * (:132) carrying a 32px icon merged by `on_drawitem` (:137-142) off
+ * `setSubclassIcon` (:46-55), and the list's own `select` callback (:135) pushes
+ * the highlighted item's `desc` into the side pane through `updateDesc`
+ * (:516-519). NOT `:123` — that line is the RACE TreeList's identical
+ * `display_prop` row (the list opens at :122), and races are precisely what the
+ * paragraph below says this frame leaves out. So: a face, a name, prose, and then
+ * the numbers that actually separate the three. Everything ToME puts there that
+ * this game does not have — stat rolls, races, difficulty, permadeath — is
+ * absent rather than sent empty.
+ *
+ * ═══ `sprite` AND `portrait` ARE ASSET KEYS THAT ALREADY EXIST ON DISK ═══
+ * The same contract as `ActorView.sprite`, `LoadoutTalent.icon` and
+ * `TurnActor.portrait`: a KEY, never a path, so re-cutting the art cannot
+ * invalidate anything and the server never learns a filename.
+ *
+ * NO KEY HERE MAY BE DERIVED FROM A CLASS NAME. ToME derives its own by
+ * mangling (`t.name:lower():gsub("[^a-z0-9]", "_")`, Birther.lua:47-48) and
+ * survives a miss because it ships `unknown_32_bg.png` as a fallback. This
+ * project has no such asset and cannot add one — client/public/assets/ is
+ * gitignored wholesale and an unresolved key renders as the LOUD violet
+ * missing-asset box, on a bare clone, on the first screen a new player sees. So
+ * both keys are carried from the authored `ClassDef` (its `sprite`) and from the
+ * projector's existing `PORTRAIT_BY_CLASS` table, which is keyed by exactly
+ * these ids. Renaming a class is then a content edit that breaks a lookup
+ * loudly, not one that silently starts asking for a file that was never cut.
+ *
+ * `talents` is the four-slot loadout IN HOTBAR ORDER, the same `LoadoutTalent`
+ * the hotbar already draws — reused rather than redeclared, so the icons on the
+ * card are the icons on the buttons and the two cannot drift into showing
+ * different talents for the same class.
+ */
+export type ClassOptionView = {
+  /** The authored class id. What a `choose_class` frame names. */
+  readonly id: string;
+  /** "The Watchman". The display name, already as the fiction spells it. */
+  readonly name: string;
+  /** One or two sentences of identity. `ClassDef.description`, verbatim. */
+  readonly description: string;
+  /** The map token, e.g. `chr_player_watchman_s`. An asset KEY. See above. */
+  readonly sprite: string;
+  /** The face, e.g. `icon_character_the_watchman`. An asset KEY. See above. */
+  readonly portrait: string;
+  /** Starting and maximum hit points. The first number anybody compares. */
+  readonly maxHp: number;
+  /** Which pool this class spends, and how much of it it starts with. */
+  readonly resource: ResourceView;
+  /** EXACTLY FOUR, in hotbar order. The same shape the hotbar already draws. */
+  readonly talents: readonly LoadoutTalent[];
+};
+
+/**
+ * "PICK ONE." Sent to a player who has no class on file, and to nobody else.
+ *
+ * ═══ IT IS A `ViewerMsg`, AND THAT IS THE ENFORCEMENT ═══
+ * WHETHER A GIVEN SOCKET OWES A CHOICE IS TRUE FOR EXACTLY ONE PERSON. This is
+ * the same argument that put `turn` in that union at v5 and `party_state` at v6:
+ * the CONTENT here is not secret — the three classes are public, and everyone
+ * will see all three eventually — but there is no shape of this frame that is
+ * correct for two recipients, because for everybody else the correct frame is no
+ * frame at all. Broadcast it and a table of four returning Watchmen is handed a
+ * modal chooser over the map, at the barrier, mid-fight.
+ *
+ * Membership of `ViewerMsg` is what makes `broadcast(classOptionsMsg)` a BUILD
+ * FAILURE rather than a rule somebody has to remember while adding the seventh
+ * viewer frame. `BroadcastMsg` is `Exclude`-derived, so this is one line here.
+ *
+ * ═══ IT IS AN OFFER, NEVER A COMMAND, AND IT IS NOT THE DECISION ═══
+ * The client draws it; the SERVER decides. A `choose_class` naming an id that is
+ * not in this list is refused by the server's own lookup, so a patched client
+ * that ignores the frame entirely gains nothing — the options are a courtesy to
+ * the renderer, not the validation.
+ *
+ * Sent in the `hello` block beside the loadout and the first `turn`, and sent
+ * exactly once: there is no "the chooser is closed now" frame, because the
+ * server's answer to a second choice is a refusal and the client's answer is to
+ * stop drawing the picker when its own `choose_class` is acknowledged by the
+ * class actually changing.
+ */
+export type ClassOptionsMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'class_options';
+  /**
+   * NEVER EMPTY. A player owed a choice with nothing to choose from is a server
+   * with no content loaded, which is a startup failure and not a frame.
+   * Authored order, and it is stable — a card that moves between two frames is a
+   * card somebody misclicks, and this one is irreversible.
+   */
+  options: readonly ClassOptionView[];
+};
+
 export type PongMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'pong';
@@ -2314,6 +2500,7 @@ export type ServerMsg =
   | CooldownsMsg
   | ResourceMsg
   | InspectedMsg
+  | ClassOptionsMsg
   | PongMsg
   | ErrorMsg;
 
@@ -2358,9 +2545,24 @@ export type ServerMsg =
  * else can see, which is the tile-grid leak the whole FOV seam exists to stop.
  * So `broadcast(inspected)` must be a compile error, and membership here is what
  * makes it one.
+ *
+ * `class_options` JOINED AT v8 FOR THE SAME REASON `turn` DID, IN ITS PUREST
+ * FORM. Nothing in it is secret — the three classes are public and every player
+ * will end up seeing all three. It is here because WHETHER A SOCKET OWES A
+ * CHOICE IS TRUE FOR EXACTLY ONE PERSON, and for everybody else the correct
+ * frame is NO FRAME AT ALL. There is no version of this message that is right
+ * for two recipients, so `broadcast(classOptionsMsg)` must not compile: handed
+ * to the room it puts a modal chooser over the map for four returning players
+ * who already have a class, at the barrier, in the middle of a fight.
  */
 export type ViewerMsg =
-  LoadoutMsg | CooldownsMsg | ResourceMsg | TurnMsg | PartyStateMsg | InspectedMsg;
+  | LoadoutMsg
+  | CooldownsMsg
+  | ResourceMsg
+  | TurnMsg
+  | PartyStateMsg
+  | InspectedMsg
+  | ClassOptionsMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

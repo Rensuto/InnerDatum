@@ -31,15 +31,19 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 7 — the travelling projectile', () => {
+  it('pins PROTOCOL_VERSION at 8 — the class chooser', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
-    // a revert would pass. v7 added the `projectiles` frame; a v6 client cannot
-    // name it, draws no orb, and takes the damage three turns later from an
-    // invisible source — the counterplay does not exist on that client, which is
-    // the CONFIDENTLY WRONG UI this constant exists to refuse. The bump log in
-    // src/shared/version.ts is the long version.
-    expect(PROTOCOL_VERSION).toBe(7);
+    // a revert would pass. v8 added `choose_class` inbound and `class_options`
+    // outbound. Neither half forces a bump by this file's usual rule — an
+    // inbound verb an old client never sends costs it nothing, and an optional
+    // `InspectView.className` is an addition it can ignore. What forces it is
+    // that THE FALLBACK IS A WRITE: a v7 client draws no picker, is assigned a
+    // class by rotation, and `saveNow('join')` persists it — after which the
+    // chooser never appears again, on any client, forever. A single connection
+    // on a stale bundle is a one-way door, and the version gate turns it into an
+    // honest refusal. The bump log in src/shared/version.ts is the long version.
+    expect(PROTOCOL_VERSION).toBe(8);
   });
 
   it('exposes versions as positive integers', () => {

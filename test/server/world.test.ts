@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { AiProfile } from '../../src/server/engine/actor.ts';
 import { MoveBlock, createWorld } from '../../src/server/world/world.ts';
 import { DIR_ORDER, dirVector } from '../../src/shared/coords.ts';
 import { TEST_LEVEL_SPAWNS, canWalk } from '../../src/shared/level.ts';
@@ -200,6 +201,162 @@ describe('world.addPlayer with a class overlay', () => {
     expect(again.hp).toBe(12);
     expect(again.maxHp).toBe(60);
     expect(again.classId).toBeUndefined();
+  });
+});
+
+describe('world.reclothePlayer', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE NARROW EXCEPTION TO "REATTACH, NEVER RE-CLOTHE".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `addPlayer` is idempotent on id precisely so a reconnecting socket cannot
+   * teleport or reset its own body (the test directly above this block). The
+   * class chooser needs the opposite of that exactly once: a body that was
+   * clothed provisionally by the join rotation, being replaced by the class its
+   * owner actually picked, seconds later, before it has done anything.
+   *
+   * So the two claims that keep the exception narrow are the ones with teeth
+   * here: it refuses everything that is not a living player's body, and it
+   * touches NOTHING but the class — a body that moved between joining and
+   * choosing must not be walked back to its spawn tile, and a name is Discord's.
+   */
+  it('dresses an existing body in a new class and fills it to the new maximum', () => {
+    const world = createWorld('reclothe-basic');
+    const sheet = { weapon: { dam: 33 }, range: 1.5, minRange: 0 } as const;
+    const alice = asPlayer(world.addPlayer('a', 'Alice', { maxHp: 55, classId: 'inspector' }));
+
+    expect(
+      world.reclothePlayer('a', {
+        sprite: 'chr_player_watchman_s',
+        maxHp: 72,
+        hpRegen: 0.5,
+        combat: sheet,
+        classId: 'watchman',
+      }),
+    ).toBe(true);
+
+    expect(alice.sprite).toBe('chr_player_watchman_s');
+    expect(alice.maxHp).toBe(72);
+    expect(alice.hpRegen).toBe(0.5);
+    // WHOLESALE, never merged — the same rule `addPlayer` follows.
+    expect(alice.combat).toBe(sheet);
+    expect(alice.classId).toBe('watchman');
+    // FULL, at the NEW ceiling — because this body was AT its old one. Not
+    // clamped to 55 and not carried across proportionally: a brand-new character
+    // starts full, and that is what the ordinary case has to keep meaning. The
+    // test below is the other half, and the two together are the whole rule.
+    expect(alice.hp).toBe(72);
+  });
+
+  it('does NOT fill a body that had already been hurt — it clamps', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE FILL USED TO BE UNCONDITIONAL, ON THE STRENGTH OF A COMMENT.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `reclothePlayer` set `hp = maxHp` outright and justified it with "the body
+    // is UNDAMAGED BY CONSTRUCTION at this moment, so every clever rule would be
+    // fiddly arithmetic that can only ever be asked to compute maxHp from
+    // maxHp". The premise was false twice over, and both cases reach this
+    // function through the shipped UI rather than through a crafted frame:
+    //
+    //   A RETURNING PLAYER is restored from their file and THEN offered the
+    //   chooser — every character file written before classes existed holds the
+    //   `unassigned` sentinel — so the commonest caller is a damaged body.
+    //
+    //   A BODY WHOSE OWNER IS READING THE MODAL is still in the world, and the
+    //   standing hold the gateway parks it on is a brace, not a shield.
+    //
+    // So finishing character creation was a free heal, once per character, for
+    // everybody. It is now arithmetic: full only if it was already full.
+    const world = createWorld('reclothe-hurt');
+    const alice = asPlayer(world.addPlayer('a', 'Alice', { maxHp: 55, classId: 'inspector' }));
+    alice.hp = 9;
+
+    expect(world.reclothePlayer('a', { classId: 'watchman', maxHp: 72 })).toBe(true);
+
+    expect(alice.maxHp).toBe(72);
+    // THE DAMAGE CAME WITH THEM. Not 72, and not 9/55 scaled up to 11.8 either —
+    // a proportion would invent hit points out of a ratio.
+    expect(alice.hp).toBe(9);
+  });
+
+  it('clamps a body whose hp is above the class it just put on', () => {
+    // The other direction, and it is why this is a clamp rather than a bare
+    // "leave it alone": choosing a class with a LOWER ceiling must not leave a
+    // body over its own maximum, which every bar in the game would draw as more
+    // than full and `hp >= maxHp` would then read as whole forever.
+    const world = createWorld('reclothe-overfull');
+    const alice = asPlayer(world.addPlayer('a', 'Alice', { maxHp: 72, classId: 'watchman' }));
+    alice.hp = 60;
+
+    expect(world.reclothePlayer('a', { classId: 'alchemist', maxHp: 40 })).toBe(true);
+
+    expect(alice.maxHp).toBe(40);
+    expect(alice.hp).toBe(40);
+  });
+
+  it('answers false for an id that is not in the world, rather than throwing', () => {
+    // The caller is a player pressing a button. An exception in a `ws` handler
+    // is a dead PROCESS, not a failed request.
+    const world = createWorld('reclothe-unknown');
+    expect(world.reclothePlayer('nobody', { classId: 'watchman', maxHp: 72 })).toBe(false);
+  });
+
+  it('answers false for a monster and leaves it exactly as it was', () => {
+    // A monster has no class and no `classId` field to write one into. The
+    // narrowing is what makes that unrepresentable rather than merely refused —
+    // but the world is the trust boundary's last line, and `handleChooseClass`
+    // resolves its target from `session.actorId`, which can only ever name a
+    // player's body. This is the belt to that braces.
+    const world = createWorld('reclothe-monster');
+    const husk = world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 10,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 40,
+    });
+    husk.hp = 11;
+
+    expect(world.reclothePlayer('m1', { sprite: 'chr_player_watchman_s', maxHp: 72 })).toBe(false);
+
+    expect(husk.sprite).toBe('enemy_index_husk_s');
+    expect(husk.maxHp).toBe(40);
+    // AND THE hp IS NOT TOPPED UP. The refusal has to happen before the fill, or
+    // the chooser would become a way to heal whatever a crafted frame named.
+    expect(husk.hp).toBe(11);
+  });
+
+  it('does not move the body and does not rename it', () => {
+    // Neither is a property of a class. Re-running placement would teleport a
+    // token four other people are already looking at, and the name is Discord's
+    // — `hello` is the only thing that ever writes it.
+    const world = createWorld('reclothe-inert');
+    const alice = asPlayer(world.addPlayer('a', 'Alice'));
+    alice.x = 12;
+    alice.y = 13;
+
+    expect(world.reclothePlayer('a', { classId: 'alchemist', maxHp: 52 })).toBe(true);
+
+    expect({ x: alice.x, y: alice.y }).toEqual({ x: 12, y: 13 });
+    expect(alice.name).toBe('Alice');
+  });
+
+  it('leaves a field the overlay did not name exactly where it was', () => {
+    // `PlayerOverlay` is a `Partial`, so a spread would write `undefined` over a
+    // real number — and writing `undefined` over `maxHp` takes the body's
+    // ceiling out with it, which `hp = maxHp` would then copy onto its health.
+    const world = createWorld('reclothe-partial');
+    const alice = asPlayer(world.addPlayer('a', 'Alice', { maxHp: 72, hpRegen: 0.5 }));
+
+    expect(world.reclothePlayer('a', { classId: 'watchman' })).toBe(true);
+
+    expect(alice.maxHp).toBe(72);
+    expect(alice.hpRegen).toBe(0.5);
+    expect(alice.hp).toBe(72);
+    expect(alice.classId).toBe('watchman');
   });
 });
 

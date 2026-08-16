@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import { AttackRefusal, canAttack, combatDistance } from '../../src/server/engine/combat.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -559,5 +560,182 @@ describe('`attackBlockedReason` asks exactly the question `canAttack` answers', 
 
     expect(canAttack(watchman, husk, world)).toBeNull();
     expect(attackBlockedReason(world, watchman, husk)).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// 9. THE CHARACTER SHEET — AND THE BOUNDARY IT SITS BEHIND
+// ===========================================================================
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ToME'S CharacterSheet.lua, REDUCED — AND THE ORDER IS THE PORTED CONTRACT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The six stats in ToME's own STR/DEX/CON/MAG/WIL/CUN sequence
+ * (CharacterSheet.lua:815-820), then Attack (:935-1120), then Defense
+ * (:1304-1321). The SEQUENCE is asserted rather than the membership, because
+ * the sequence is the thing the directive asked to be ported: a sheet with the
+ * right fifteen rows in a different order is a different screen.
+ *
+ * Nothing here is level, xp, gold, equipment, inventory, fatigue, speeds,
+ * vision, inscriptions or times-died. ToME prints all of those and every one
+ * reads from a system this game does not have; an empty row is worse than an
+ * absent one, because "Level: —" sends a player looking for a screen that does
+ * not exist.
+ */
+const SELF_SHEET_LABELS = [
+  'Strength',
+  'Dexterity',
+  'Constitution',
+  'Magic',
+  'Willpower',
+  'Cunning',
+  'Accuracy',
+  'Damage',
+  'APR',
+  'Crit. chance',
+  'Armour',
+  'Defence',
+  'Physical save',
+  'Spell save',
+  'Mental save',
+];
+
+/** Every row a HOSTILE or an ALLY card must never grow. */
+const SHEET_ONLY_LABELS = [
+  'Strength',
+  'Dexterity',
+  'Constitution',
+  'Magic',
+  'Willpower',
+  'Cunning',
+  'Accuracy',
+  'Damage',
+  'APR',
+  'Crit. chance',
+  'Spell save',
+  'Mental save',
+];
+
+describe('inspecting yourself', () => {
+  it('answers the reduced CharacterSheet, in ToME order', async () => {
+    const floor = await scene();
+    const view = viewOf(await floor.client.inspect(floor.viewer.id));
+
+    // THE CLASS IS A FIELD, NOT A ROW. `rows` is explicitly droppable by a
+    // narrow viewport and reorderable by the server, so a header that had to
+    // scan it for the label 'Class' would one day draw a nameless detective.
+    // The first fresh joiner takes rotation slot 0 — see `classForJoin`.
+    expect(view?.['className']).toBe(WATCHMAN.name);
+
+    // THE ORDER, ASSERTED AS A SEQUENCE. See the block above.
+    expect(rowsOf(view).map((row) => row['label'])).toEqual(SELF_SHEET_LABELS);
+
+    const value = (label: string): string =>
+      String(rowsOf(view).find((row) => row['label'] === label)?.['value']);
+
+    // ═══ THE ONE ASSERTION THAT PROVES THE SHEET IS THE ACTOR'S OWN ═══
+    // 24 is the Watchman's authored Strength (content/classes.ts). Read through
+    // the ACTOR instead of through `combatantOf` — which compiles only behind a
+    // double cast — every stat here would silently resolve to ToME's level-1
+    // default of 10, and the card would be confidently, uniformly wrong in a way
+    // that still looks entirely plausible.
+    expect(value('Strength')).toBe('24');
+    expect(value('Constitution')).toBe('20');
+    // …and a stat the class does not author still reads ToME's own default
+    // rather than a blank, because `stat()` supplies it.
+    expect(value('Magic')).toBe('10');
+
+    // A BAND, AND IT IS A MULTIPLIER RATHER THAN A SPREAD: Combat.lua:511 rolls
+    // `rng.range(dam, dam * damrange)`, and both endpoints TRUNCATE, so these
+    // are the exact two numbers the dice can produce.
+    expect(value('Damage')).toMatch(/^\d+–\d+$/);
+    expect(value('Crit. chance')).toMatch(/^\d+%$/);
+    // Whole numbers everywhere else — no `12.41804809108126` on a card.
+    for (const label of ['Accuracy', 'APR', 'Armour', 'Defence', 'Physical save']) {
+      expect(value(label)).toMatch(/^-?\d+$/);
+    }
+  });
+
+  it('emphasises nothing, because emphasis belongs to the hit chance', async () => {
+    // `InspectRow.emphasis` is reserved for the number that decides whether to
+    // commit. Fifteen emphasised rows emphasise none of them, and it would spend
+    // the one piece of formatting the hostile card depends on.
+    const floor = await scene();
+    const view = viewOf(await floor.client.inspect(floor.viewer.id));
+
+    for (const row of rowsOf(view)) expect(row['emphasis']).toBeUndefined();
+  });
+});
+
+describe('inspecting ANOTHER player', () => {
+  it('is two rows and no class — a party member sheet is theirs alone', async () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE LEAK TEST. `hostile` is false for ANY player target, so widening the
+    // old else-branch to carry the sheet would hand a teammate's stats,
+    // accuracy, damage band and three saves to anyone who moves a mouse over
+    // them. The same body is inspected by two people in the same instant here,
+    // which is the only honest way to state the property.
+    // ═══════════════════════════════════════════════════════════════════════
+    const floor = await scene();
+    const ally = await connect(server.port);
+    const allyId = String((await ally.hello())?.['selfId']);
+
+    // Diagonally adjacent to the viewer at (5,3), clear of the rows 4-7 block.
+    const allyBody = actorOf(allyId);
+    allyBody.x = 4;
+    allyBody.y = 2;
+
+    // THEIR OWN VIEW: everything. Second fresh joiner, so rotation slot 1.
+    const own = viewOf(await ally.inspect(allyId));
+    expect(own?.['className']).toBe(INSPECTOR.name);
+    expect(rowsOf(own).map((row) => row['label'])).toEqual(SELF_SHEET_LABELS);
+
+    // SOMEBODY ELSE'S VIEW OF THE SAME BODY: exactly what it has always been.
+    const seen = viewOf(await floor.client.inspect(allyId));
+    expect(rowsOf(seen).map((row) => row['label'])).toEqual(['Defence', 'Armour']);
+    // ABSENT, not present-and-empty — the key must not appear at all.
+    expect(Object.keys(seen ?? {})).not.toContain('className');
+    for (const label of SHEET_ONLY_LABELS) {
+      expect(rowsOf(seen).map((row) => row['label'])).not.toContain(label);
+    }
+    // ...and nothing about a teammate is ever the emphasised number.
+    for (const row of rowsOf(seen)) expect(row['emphasis']).toBeUndefined();
+  });
+
+  it('is still silence when a wall is in the way', async () => {
+    // The fog-of-war gate runs BEFORE the three-way split and is untouched by
+    // it: a party member across the floor is exactly who the FOV seam will one
+    // day withhold, and `view: null` must stay the answer rather than a
+    // stripped-down card that confirms where they are.
+    const floor = await scene();
+    const ally = await connect(server.port);
+    const allyId = String((await ally.hello())?.['selfId']);
+
+    const allyBody = actorOf(allyId);
+    allyBody.x = 5;
+    allyBody.y = 8;
+
+    expect((await floor.client.inspect(allyId))['view']).toBeNull();
+    // ...while their own sheet is still theirs to read, because the self path
+    // short-circuits the line-of-sight check.
+    expect(viewOf(await ally.inspect(allyId))?.['className']).toBe(INSPECTOR.name);
+  });
+});
+
+describe('inspecting a hostile', () => {
+  it('gained nothing from the split — the card is what it always was', async () => {
+    const floor = await scene();
+    const view = viewOf(await floor.client.inspect(floor.adjacent.id));
+    const labels = rowsOf(view).map((row) => row['label']);
+
+    // A monster has no class, and `className` means "draw a class line" rather
+    // than "unknown" — so the key is absent rather than empty.
+    expect(Object.keys(view ?? {})).not.toContain('className');
+    // The hit chance still leads, and the distance still closes.
+    expect(labels[0]).toBe('Chance to hit');
+    expect(labels[labels.length - 1]).toBe('Distance');
+    for (const label of SHEET_ONLY_LABELS) expect(labels).not.toContain(label);
   });
 });

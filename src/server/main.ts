@@ -30,7 +30,7 @@ import {
 import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
-import { useTalent } from './engine/talents.ts';
+import { RESOURCE_RULES, useTalent } from './engine/talents.ts';
 import { authRoutes, readAuthConfig } from './http/auth.ts';
 import { createSessionStore } from './http/session.ts';
 import { wsGateway } from './net/gateway.ts';
@@ -451,6 +451,40 @@ export function buildServer() {
    * A DANGLING id LOGS AND ATTACHES NOTHING. It cannot normally happen — the
    * gateway substitutes through `classForJoin` before it ever writes a label —
    * so reaching this branch means the two disagree, which is worth a line.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SECOND ATTACH CARRIES THE SPENT SHARE ACROSS. IT IS NOT A REFILL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `TalentEngine.attach` ends in an unconditional `sheets.set` — it does not
+   * merge and it does not ask whether a sheet is already there — so a second
+   * call replaces a spent pool with a freshly minted one at its starting value.
+   * That is exactly right for the FIRST attach (a brand-new body has spent
+   * nothing) and it is a free resource pool for every attach after it.
+   *
+   * There are two callers and only the first is a fresh body: `hello` attaches
+   * on a genuinely new join, and `handleChooseClass` attaches again when the
+   * class chooser is answered. The gateway's own note is blunt about why the
+   * first one is guarded — "a resumed body still holds the sheet it was given,
+   * with its spent Resolve and its running cooldowns, and re-attaching would
+   * hand a returning player a full resource pool for free" — and the chooser
+   * does precisely that re-attach. Nothing stops a body being acted on while
+   * its owner reads the modal, so "nothing has been spent yet" is an assumption,
+   * not a fact.
+   *
+   * THE DEFICIT IS CARRIED, NOT THE PROPORTION OR THE VALUE, AND IT IS MEASURED
+   * AGAINST THE POOL'S OWN AUTHORED START — never against `max`. The old pool
+   * and the new one are different RESOURCES with different maxima, so a ratio
+   * would invent points out of arithmetic and a raw value would be meaningless
+   * across kinds. "You are three below where you began; you still are" is the
+   * only reading under which nothing is created.
+   *
+   * IT IS HONESTLY A NO-OP FOR TWO OF THE THREE, and that is not a weakness in
+   * the rule. `RESOURCE_RULES` starts Resolve and Focus at 0 and Reagents at 8,
+   * so a Watchman or an Inspector can never be BELOW their start and there is
+   * nothing to carry — they were never handed anything to lose. The case this
+   * actually closes is the one that exists: an Alchemist who has spent vials and
+   * re-clothes, who would otherwise walk away with a full stock of eight.
    */
   const gatewayEngine: TurnEngine = {
     ...engine,
@@ -460,7 +494,14 @@ export function buildServer() {
         app.log.warn({ actorId, classId }, 'no such class — this body gets no hotbar');
         return;
       }
-      talentEngine.attach(actorId, sheetForClass(definition));
+      const previous = talentEngine.sheetOf(actorId);
+      const sheet = sheetForClass(definition);
+      if (previous !== undefined) {
+        const startedAt = RESOURCE_RULES[previous.resource.kind].start;
+        const short = Math.max(0, startedAt - previous.resource.value);
+        sheet.resource.value = Math.max(0, sheet.resource.value - short);
+      }
+      talentEngine.attach(actorId, sheet);
     },
   };
 

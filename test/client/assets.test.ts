@@ -248,4 +248,71 @@ describe('the fillRect overlays stay art-free', () => {
     expect(body).not.toContain('blitSprite');
     expect(body).toContain('PALETTE.GOLD');
   });
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE TWO v8 PANELS ASK FOR NO ART THAT IS NOT ALREADY ON THE WIRE
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * ui/classpicker.ts is the FIRST SCREEN a new player ever sees, and
+   * ui/charsheet.ts is opened by a key on every floor. Both are full of
+   * pictures — three portraits, three map tokens, sixteen ability icons — and
+   * every one of those keys arrives on the wire (`ClassOptionView.sprite`,
+   * `.portrait`, `LoadoutTalent.icon`). None is built here.
+   *
+   * The temptation these pin against is the one Birther.lua fell to and got
+   * away with: ToME MANGLES a class name into a filename
+   * (`t.name:lower():gsub("[^a-z0-9]", "_")`, Birther.lua:47-48) and survives a
+   * miss because it ships `unknown_32_bg.png`. We cannot ship that fallback —
+   * client/public/assets/ is gitignored wholesale — so a derived key resolves to
+   * the LOUD violet missing-asset box on a bare clone, on the chooser, on the
+   * first screen. A comment cannot enforce that. This can.
+   */
+  const sheetSrc = codeOf('src/client/ui/charsheet.ts');
+  const pickerSrc = codeOf('src/client/ui/classpicker.ts');
+  const panels: readonly (readonly [string, string])[] = [
+    ['ui/charsheet.ts', sheetSrc],
+    ['ui/classpicker.ts', pickerSrc],
+  ];
+
+  it('asks the sprite source only for keys that came off the wire', () => {
+    // The prefix list is READ FROM main.ts rather than spelled again here, so
+    // the two cannot drift: adding a prefix there is already pinned above.
+    const block = /const NEEDED_ASSET_PREFIXES = \[([\s\S]*?)\] as const;/.exec(mainSrc);
+    const prefixes = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1] ?? '');
+    expect(prefixes.length).toBeGreaterThan(0);
+
+    for (const [name, src] of panels) {
+      const args = [...src.matchAll(/sprites\.sprite\(([^)]*)\)/g)].map((m) => (m[1] ?? '').trim());
+      // Both files DO ask for sprites — a pin over zero call sites passes
+      // forever and proves nothing.
+      expect(args.length, `${name} draws no sprites at all?`).toBeGreaterThan(0);
+
+      for (const arg of args) {
+        const literal = /^['"`]/.test(arg);
+        if (!literal) {
+          // An expression: it is a wire field or a parameter carrying one.
+          // What it must NOT be is a key assembled from a name.
+          expect(arg, `${name} builds a sprite key: ${arg}`).not.toMatch(/[+`]/);
+          continue;
+        }
+        const id = arg.slice(1, -1);
+        expect(
+          prefixes.some((prefix) => id.startsWith(prefix)),
+          `${name} asks for '${id}', which is under no indexed prefix`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('spends neither of the two reserved palette entries', () => {
+    for (const [name, src] of panels) {
+      // CRIMSON means "hostiles are engaged" and nothing else; VIOLET_HI IS the
+      // missing-asset box. A selected class card is marked with a drawn border,
+      // the word SELECTED and GOLD — never a reserved colour, and never colour
+      // alone (ui/partypanel.ts:78-92).
+      expect(src, `${name} spends CRIMSON`).not.toContain('CRIMSON');
+      expect(src, `${name} spends VIOLET_HI`).not.toContain('VIOLET_HI');
+    }
+  });
 });

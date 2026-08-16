@@ -258,6 +258,64 @@ export type World = {
    */
   addPlayer(id: string, name: string, overlay?: PlayerOverlay): Actor;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * RE-CLOTHE AN ALREADY-PLACED BODY. THE CHOOSER'S PATH, AND NOTHING ELSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE NARROW, ONCE-PER-BODY EXCEPTION TO THE PARAGRAPH DIRECTLY ABOVE. The
+   * `overlay` note on `addPlayer` says a re-entrant id "comes back untouched —
+   * that is the resume path, and a reconnecting socket must reattach to its body
+   * rather than re-clothe it" (see :493-495 and its idempotency clause). That
+   * rule is intact and this method does not weaken it, because it is not the
+   * resume path: it is character creation finishing a step late.
+   *
+   * THE BODY IS NEVER CLASSLESS, which is why this exists at all. A joining
+   * player is clothed by the rotation the instant `addPlayer` runs — there is no
+   * moment where a token stands on the map with no sprite, no maxHp and no
+   * combat sheet, and there must not be, because the whole party can already see
+   * it. What the class chooser does is REPLACE a provisional assignment with the
+   * one its owner actually picked, a few seconds later, on a body that has done
+   * nothing yet.
+   *
+   * ═══ hp FILLS ONLY A BODY THAT WAS ALREADY FULL; ANYTHING ELSE IS CLAMPED ═══
+   * THIS FILE USED TO SAY THE BODY WAS "UNDAMAGED BY CONSTRUCTION" AND THAT THE
+   * FILL "CANNOT BECOME A HEAL". BOTH WERE FALSE, and each was false for its own
+   * reason:
+   *
+   *   A RETURNING PLAYER IS RESTORED DAMAGED AND *THEN* ASKED. Every character
+   *   file written before classes existed holds `UNASSIGNED_CLASS`
+   *   (persist/saves.ts), so `applyRestore` writes the file's hp onto the body
+   *   and the gateway's `owes` read then offers that same body the chooser. The
+   *   commonest caller is therefore a body at 30/60, not a body at 60/60.
+   *
+   *   THE BODY IS IN THE WORLD WHILE THE MODAL IS UP. Nothing stops a monster
+   *   acting on a player who has not answered yet — `net/gateway.ts` parks them
+   *   on a standing hold so they cannot FREEZE the floor, but a standing hold is
+   *   a brace, not a shield. A picker left open through a fight comes back to a
+   *   body that has been hit.
+   *
+   * So the rule is stated as arithmetic rather than as an assumption: a body at
+   * its old ceiling goes to the new ceiling (the brand-new-character case, which
+   * is still the ordinary one and still means "this character starts full"), and
+   * a body that is short of it keeps exactly the damage it had, clamped into the
+   * new maximum. Nobody is ever healed by finishing character creation.
+   *
+   * NOT A PROPORTION, deliberately. Carrying 50% across from a 34-hp Watchman to
+   * a 72-hp Alchemist would INVENT 19 hit points out of a ratio; keeping the
+   * deficit is the only reading under which no health is created.
+   *
+   * ═══ IT DOES NOT MOVE THE BODY AND DOES NOT RENAME IT ═══
+   * The tile is `addPlayer`'s own free-tile search and the name is Discord's —
+   * neither is a property of a class, and re-running placement would teleport a
+   * token that four other people are already looking at.
+   *
+   * @returns false for an unknown id and for a monster, which is the honest
+   * answer for both: a monster has no class, and an id that is not in the world
+   * cannot be dressed. It never throws — the caller is a player pressing a
+   * button.
+   */
+  reclothePlayer(id: string, overlay: PlayerOverlay): boolean;
+  /**
    * Place a monster, preferring the requested tile and settling for the nearest
    * free one. Idempotent on `id`, like `addPlayer`.
    */
@@ -517,6 +575,46 @@ export function createWorld(seed: number | string): World {
     return actor;
   };
 
+  /**
+   * The chooser's path. See `World.reclothePlayer` for why this is the one
+   * narrow exception to `addPlayer`'s "reattach, never re-clothe" rule, and why
+   * a body that is short of its ceiling keeps its damage instead of being filled.
+   */
+  const reclothePlayer = (id: string, overlay: PlayerOverlay): boolean => {
+    const actor = actors.get(id);
+    if (actor === undefined) return false;
+    // A monster has no class and no `classId` field to write one into. Answered
+    // rather than thrown, and narrowed rather than asserted, because the
+    // discriminant is what makes `classId` reachable at all.
+    if (actor.kind !== ActorKind.Player) return false;
+
+    // READ BEFORE `maxHp` MOVES. "Was this body full?" is a question about the
+    // ceiling it had a moment ago, and asking it after the write can only ever
+    // compare `maxHp` with `maxHp` — which is how the old unconditional fill
+    // read as obviously correct.
+    const wasWhole = actor.hp >= actor.maxHp;
+
+    // FIELD BY FIELD, and each one guarded on presence rather than spread: a
+    // `PlayerOverlay` is a `Partial`, so `actor.maxHp = overlay.maxHp` for an
+    // overlay that named only a sprite would write `undefined` over a real
+    // number and take the body's ceiling out with it.
+    if (overlay.sprite !== undefined) actor.sprite = overlay.sprite;
+    if (overlay.maxHp !== undefined) actor.maxHp = overlay.maxHp;
+    if (overlay.hpRegen !== undefined) actor.hpRegen = overlay.hpRegen;
+    if (overlay.combat !== undefined) actor.combat = overlay.combat;
+    if (overlay.classId !== undefined) actor.classId = overlay.classId;
+
+    // AFTER `maxHp`, or a Watchman chosen over a provisional Alchemist starts at
+    // the Alchemist's ceiling. See the doc block: a body that was whole a line
+    // ago is a brand-new character and starts full at the NEW ceiling; a body
+    // that had already been hurt keeps that hurt and is only clamped, so
+    // finishing character creation can never be a heal.
+    actor.hp = wasWhole ? actor.maxHp : Math.min(actor.hp, actor.maxHp);
+
+    // `x`, `y` and `name` are deliberately untouched — see the doc block.
+    return true;
+  };
+
   const addMonster = (id: string, init: MonsterInit): Actor => {
     const existing = actors.get(id);
     if (existing !== undefined) return existing;
@@ -603,6 +701,7 @@ export function createWorld(seed: number | string): World {
     turn,
     rng: playRng,
     addPlayer,
+    reclothePlayer,
     addMonster,
     placeAtSpawn,
     removePlayer: removeActor,

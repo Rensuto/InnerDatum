@@ -17,7 +17,7 @@ import { FOCUS_ON_HELD_GROUND, RESOLVE_ON_STRUCK } from '../../src/server/engine
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { actorIdForUser, wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { projectTurn } from '../../src/server/view/projector.ts';
+import { projectClassOptions, projectTurn } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -463,6 +463,44 @@ describe('every class sprite resolves to real art', () => {
     }
     const fallen = projectTurn(viewer, world, state, null).actors;
     expect(fallen.map((card) => card.portrait)).toEqual(expected);
+  });
+
+  it('has a portrait row of its own, so a fourth class cannot ship a generic face', async () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE TABLE MUST HAVE A ROW PER CLASS, AND THE FALLBACK MUST STAY UNUSED.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `PORTRAIT_BY_CLASS` (view/projector.ts) falls back to
+    // `icon_character_the_detective` for a body wearing a sprite no class
+    // authored — which is right for the classless rotation in world.ts and for
+    // a GM-dressed body, and WRONG for a real class, because it would mean a
+    // class shipped without a face and nothing anywhere would fail.
+    //
+    // Asked through `projectClassOptions` rather than by exporting the table:
+    // the claim is about what reaches a player on the picker, which is the one
+    // screen where a generic face is indistinguishable from a bug and the one
+    // screen a new player cannot skip. Adding a fourth `ClassDef` without a
+    // portrait row fails HERE, at the point the card is built.
+    //
+    // A server is booted although nothing here talks to one: this file's
+    // `afterEach` closes `server` unconditionally, so leaving it holding the
+    // previous test's already-closed handle is how a passing test breaks the
+    // next one.
+    server = await boot('class-portrait-rows');
+
+    const options = projectClassOptions().options;
+    expect(options.map((option) => option.id)).toEqual(CLASSES.map((c) => c.id));
+
+    for (const option of options) {
+      expect(option.portrait).not.toBe('icon_character_the_detective');
+      // An asset KEY from the family that exists on disk, never one derived
+      // from the class NAME — ToME mangles its birther icon names and gets away
+      // with it because it ships an `unknown_32_bg.png`; this repo gitignores
+      // client/public/assets/ wholesale and draws a violet box instead.
+      expect(option.portrait.startsWith('icon_character_')).toBe(true);
+    }
+    // One face per class, so two classes cannot quietly share a portrait row.
+    expect(new Set(options.map((option) => option.portrait)).size).toBe(CLASSES.length);
   });
 });
 

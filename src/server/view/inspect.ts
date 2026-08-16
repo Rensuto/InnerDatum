@@ -39,16 +39,23 @@
 import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { ActorKind } from '../../shared/protocol.ts';
+import { classById } from '../content/classes.ts';
 import { MELEE_REACH, combatDistance } from '../engine/combat.ts';
 import type { InspectRow, InspectView } from '../../shared/protocol.ts';
 import {
+  combatAPR,
   combatArmor,
   combatAttack,
   combatCrit,
+  combatDamage,
+  combatDamageRange,
   combatDefense,
+  combatMentalResist,
   combatPhysicalResist,
+  combatSpellResist,
+  stat,
 } from '../engine/derived.ts';
-import type { Combatant } from '../engine/derived.ts';
+import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { Actor, World } from '../world/world.ts';
 import { hasLineOfSight } from '../world/world.ts';
 
@@ -83,18 +90,175 @@ function combatantOf(actor: Actor): Combatant {
 }
 
 /**
+ * The class this body is, as the fiction spells it — "The Watchman".
+ *
+ * `classId` lives on `PlayerActor` alone (a monster has no class), so the kind
+ * check is what NARROWS the union rather than being a redundant guard. It is
+ * also a SOFT reference by design (persist/saves.ts): a body restored from a
+ * file naming a class this build no longer has answers undefined here, and
+ * `InspectView.className` is optional precisely so that absence means "draw no
+ * class line" instead of drawing the word "unknown" at a player.
+ */
+function classNameOf(actor: Actor): string | undefined {
+  if (actor.kind !== ActorKind.Player) return undefined;
+  return classById(actor.classId)?.name;
+}
+
+/**
+ * THE SIX PRIMARIES, IN ToME'S OWN ORDER — CharacterSheet.lua:815-820.
+ *
+ * STR / DEX / CON / MAG / WIL / CUN, which is neither alphabetical nor the order
+ * `PrimaryStats` declares. It is the order every ToME player has read for
+ * fifteen years, and the directive is explicit that the information ORDER is the
+ * thing being ported. A literal list rather than `Object.keys` over the stat
+ * table, for the reason derived.ts's own `STAT_KEYS` gives: key order on an
+ * authored object is whatever somebody typed.
+ */
+const SHEET_STATS: readonly (readonly [string, keyof PrimaryStats])[] = [
+  ['Strength', 'str'],
+  ['Dexterity', 'dex'],
+  ['Constitution', 'con'],
+  ['Magic', 'mag'],
+  ['Willpower', 'wil'],
+  ['Cunning', 'cun'],
+];
+
+/** A whole number in a label/value pair. ToME's `%3d`, without the padding. */
+function whole(n: number): string {
+  return String(Math.round(n));
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CHARACTER SHEET — ToME'S CharacterSheet.lua, REDUCED TO WHAT EXISTS HERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Three sections in ToME's own spine: the six stats (:815-820), then Attack
+ * (:935-1120), then Defense (:1304-1321). Each row below carries the line it
+ * came from.
+ *
+ * ═══ WHAT IS DELIBERATELY ABSENT ═══
+ * Level, experience, gold, equipment, inventory, fatigue, the two speeds,
+ * vision, inscriptions and times-died are all rows ToME prints and none of them
+ * is emitted, because every one reads from a system this game does not have. An
+ * empty row is worse than an absent one: "Level: —" invites a player to go
+ * looking for the levelling screen, and there is not one. When those systems
+ * land, the rows land with them.
+ *
+ * ═══ NO `emphasis` ANYWHERE ═══
+ * `InspectRow.emphasis` is reserved for the number that decides whether to
+ * commit — the hit chance on a hostile card, and one day a threat that can kill
+ * you this turn. A sheet with fifteen emphasised rows has emphasised none of
+ * them, and it would steal the one piece of formatting the hostile tooltip
+ * depends on.
+ *
+ * ═══ ROUNDING ═══
+ * Whole numbers everywhere except the damage band, which TRUNCATES because that
+ * is what the roll itself does (see the Damage row). ToME wraps the three saves
+ * in `math.floor` (:1316, :1318, :1320) and `whole` rounds them instead —
+ * deliberately, because this same file already rounds a target's Physical save
+ * on the hostile card below, and one module printing one quantity two ways is
+ * the "which of these is lying?" failure the header of this file exists to
+ * prevent. The disagreement with upstream is at most one display point and it
+ * is written down here rather than discovered.
+ */
+function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
+  // ═══ 1. THE SIX PRIMARIES — CharacterSheet.lua:815-820 ═══
+  for (const [label, key] of SHEET_STATS) {
+    rows.push({ label, value: whole(stat(c, key)) });
+  }
+
+  // ═══ 2. ATTACK — CharacterSheet.lua:935-1120 ═══
+  // "Accuracy" (:935), "Damage" (:941), "APR" (:1111), "Crit. chance" (:1113),
+  // in that order. ToME's own labels, in ToME's own sequence.
+  rows.push({ label: 'Accuracy', value: whole(combatAttack(c)) });
+  rows.push({ label: 'Damage', value: damageBand(c) });
+  rows.push({ label: 'APR', value: whole(combatAPR(c)) });
+  rows.push({ label: 'Crit. chance', value: pct(combatCrit(c)) });
+
+  // ═══ 3. DEFENSE — CharacterSheet.lua:1304-1321 ═══
+  // "Armor" (:1304), "Defense" (:1306), then the three saves under a "Saves:"
+  // heading (:1315) as bare "Physical" / "Spell" / "Mental" (:1317, :1319,
+  // :1321). `InspectRow` is a FLAT list with no section headings, so each save
+  // carries the word "save" in its own label — a bare "Physical" in a list that
+  // also contains "Damage" and "APR" reads as a damage type, which is the one
+  // thing it is not.
+  rows.push({ label: 'Armour', value: whole(combatArmor(c)) });
+  rows.push({ label: 'Defence', value: whole(combatDefense(c)) });
+  rows.push({ label: 'Physical save', value: whole(combatPhysicalResist(c)) });
+  rows.push({ label: 'Spell save', value: whole(combatSpellResist(c)) });
+  rows.push({ label: 'Mental save', value: whole(combatMentalResist(c)) });
+}
+
+/**
+ * THE DAMAGE BAND — "12–13", and both endpoints are the roll's own.
+ *
+ * ═══ `combatDamageRange` IS A MULTIPLIER, NOT A SPREAD ═══
+ * Combat.lua:1430-1433 returns 1.1 by default, and Combat.lua:511 spends it as
+ * `rng.range(dam, dam * damrange)`. So the band is `[base, base × range]` and
+ * NOT `base ± range`; read it as a spread and the Watchman's card would
+ * advertise "11–13" for a weapon that cannot roll 11.
+ *
+ * ═══ TRUNCATED, NOT ROUNDED, AND NOT CEILED ═══
+ * `rollDamageRange` (engine/damage.ts) truncates BOTH endpoints toward zero
+ * before drawing, because ToME's `rng.range` is native C taking its arguments
+ * through an `int`. These are therefore the exact two numbers the dice can
+ * actually produce. Rounding here would print a low end no swing can roll, and
+ * the ceil rule that governs every hp figure on this wire does not apply: this
+ * is a damage band, and the endpoints must match the roll rather than each
+ * other.
+ *
+ * ONE NUMBER WHEN THEY COLLAPSE, for the same reason `rollDamageRange` skips
+ * the draw when `low === high`: "9–9" is arithmetic showing its working.
+ */
+function damageBand(c: Combatant): string {
+  const base = combatDamage(c);
+  const low = Math.trunc(base);
+  const high = Math.trunc(base * combatDamageRange(c));
+  return low === high ? String(low) : `${String(low)}–${String(high)}`;
+}
+
+/**
  * What the viewer may know about `target` right now.
  *
  * Returns null when the target is not visible — see the fog-of-war note above.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THREE BRANCHES, NOT TWO, AND THE THIRD ONE IS A SECURITY BOUNDARY
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `hostile` is false for ANY player target — a teammate and yourself both land
+ * in the same else. So widening that else to carry the character sheet would
+ * hand a party member's full combat sheet to anyone who moves a mouse over
+ * them: their stats, their accuracy, their damage band, their three saves. That
+ * is the class of disclosure `toActorView` already withholds `energy` and
+ * `pendingIntent` for, arriving through a hover instead of through a frame.
+ *
+ * So:
+ *   SELF    — the reduced CharacterSheet, plus `className`. It is your own body
+ *             and nothing here is secret from you.
+ *   ALLY    — Defence and Armour, exactly as before. Two rows, unchanged, and
+ *             every existing test in test/server/inspect.test.ts still describes
+ *             the truth.
+ *   HOSTILE — the hit chance and its context, exactly as before.
+ *
+ * `InspectView.className` documents itself as SELF-ONLY and cites this split by
+ * name; the two must be edited together or that doc becomes a lie.
  */
 export function inspectActor(world: World, viewer: Actor, target: Actor): InspectView | null {
   if (!target.alive && target.kind !== ActorKind.Player) return null;
   if (target.id !== viewer.id && !hasLineOfSight(world.level, viewer, target)) return null;
 
   const rows: InspectRow[] = [];
-  const hostile = target.kind !== ActorKind.Player && target.id !== viewer.id;
+  const self = target.id === viewer.id;
+  const hostile = !self && target.kind !== ActorKind.Player;
 
-  if (hostile) {
+  if (self) {
+    // THE SHEET, NOT THE ACTOR — `combatantOf`, always. See its note: passing
+    // the actor compiles only behind a double cast and then every number on the
+    // character sheet silently resolves to ToME's level-1 default.
+    pushSelfSheet(rows, combatantOf(target));
+  } else if (hostile) {
     // THE NUMBER THE PLAYER IS ACTUALLY ASKING FOR. Everything else on the card
     // is context for this one.
     const atk = combatAttack(combatantOf(viewer));
@@ -112,13 +276,23 @@ export function inspectActor(world: World, viewer: Actor, target: Actor): Inspec
 
     rows.push({ label: 'Distance', value: `${chebyshev(viewer, target)} tiles` });
   } else {
+    // ALLY — BYTE FOR BYTE WHAT IT HAS ALWAYS BEEN. Two rows, and the reason it
+    // is only two is the block above: a party member's sheet is theirs.
     rows.push({ label: 'Defence', value: String(Math.round(combatDefense(combatantOf(target)))) });
     rows.push({ label: 'Armour', value: String(Math.round(combatArmor(combatantOf(target)))) });
   }
 
+  // SELF ONLY, and a CONDITIONAL SPREAD rather than `className: undefined`: the
+  // key must be genuinely ABSENT for an ally, not present-and-empty. It sits
+  // beside `name` because a class is an identity, exactly as the field's own
+  // doc on `InspectView` argues — a header must not have to scan `rows` for a
+  // label to find out who it is drawing.
+  const className = self ? classNameOf(target) : undefined;
+
   return {
     id: target.id,
     name: target.name,
+    ...(className === undefined ? {} : { className }),
     kind: target.kind,
     hp: target.hp,
     maxHp: target.maxHp,

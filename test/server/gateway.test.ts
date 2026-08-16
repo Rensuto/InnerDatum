@@ -439,11 +439,18 @@ describe('the projectiles frame', () => {
     const rejoined = await connect(server.port);
     const welcome = await rejoined.hello();
 
-    // v7. `projectiles` is an addition a v6 client cannot name, so it draws no
-    // orb while the damage still lands three turns later out of nowhere — which
-    // is not "less UI", it is confidently wrong UI, and it is what forced the
-    // bump.
-    expect(PROTOCOL_VERSION).toBe(7);
+    // v8. The envelope is pinned here rather than in a version test of its own
+    // because this is the file that drives a real socket end to end, so a client
+    // bundle that disagreed would fail here first. Both bumps that produced this
+    // number were forced by the same rule — an old client would be confidently
+    // WRONG rather than merely missing something. 6 -> 7: `projectiles` is an
+    // addition a v6 client cannot name, so it draws no orb while the damage
+    // still lands three turns later out of nowhere. 7 -> 8: a v7 client cannot
+    // name `class_options`, so it draws no picker, plays as the rotation class —
+    // and that rotation is WRITTEN TO DISK on `saveNow('join')`, after which the
+    // chooser never appears again. A one-way door, which is why the addition
+    // forced a bump on its own.
+    expect(PROTOCOL_VERSION).toBe(8);
     expect(welcome?.['v']).toBe(PROTOCOL_VERSION);
 
     const seen = await rejoined.waitFor('projectiles');

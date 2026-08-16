@@ -88,6 +88,12 @@ body {
  * prompt being there is what tells a new player that talking is a thing they
  * can do at all, and a chat box that has to be summoned is one nobody uses. It
  * costs one line of the viewport, which the renderer letterboxes around.
+ *
+ * ...WITH EXACTLY ONE EXCEPTION, AND IT NEEDS THE RULE BELOW TO WORK. The class
+ * chooser takes this row out of reach while it is up (`setCommandLineReachable`
+ * in main.ts): it is the only tabbable element on the page, so a single Tab or
+ * one click on a row that reads "T or / to talk" moved focus off the canvas, and
+ * from there keys.ts's `isTextEntry` dropped every key the modal advertises.
  */
 #cmdrow {
   flex: 0 0 auto;
@@ -95,6 +101,20 @@ body {
   align-items: stretch;
   border-top: 1px solid #36303e; /* SLATE */
   background: #21082e; /* VOID */
+}
+
+/*
+ * THE `hidden` ATTRIBUTE NEEDS THIS RULE, AND THAT IS NOT OBVIOUS.
+ *
+ * `[hidden]` is `display: none` in the USER-AGENT stylesheet, and the author
+ * `display: flex` directly above beats it — so toggling the attribute alone
+ * would leave the row on screen and this whole line would silently do nothing.
+ * The functional half of the gate (`disabled` + `tabIndex = -1` + `blur`) would
+ * still hold, which is exactly why the omission would never be noticed: the trap
+ * would be shut and the row would sit there inviting a click that did nothing.
+ */
+#cmdrow[hidden] {
+  display: none;
 }
 
 #cmdlabel {

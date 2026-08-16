@@ -262,3 +262,102 @@ export function wrapText(
   if (line !== '' || out.length === 0) out.push(line);
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Controls
+//
+// TAKING THE PRECEDENT `fitText` ALREADY SET ABOVE (see its note at the top of
+// this section of the file): the three-line helpers that existed once per panel
+// keep their private copies, and every panel added after this file existed takes
+// its version from here. The reason is the same one and it is worth restating
+// because a control is louder than a truncation: two panels that disagree about
+// what a BUTTON looks like teach a player that one of them is not pressable.
+// ---------------------------------------------------------------------------
+
+/**
+ * The face every button in this client wears. `bold 10px`, matching the meta
+ * text in ui/partypanel.ts, ui/turncards.ts and ui/caselog.ts.
+ *
+ * Exported so a caller that needs to measure a label BEFORE handing it to
+ * `drawButton` — a sizer deciding whether two buttons fit side by side — can
+ * measure against the face the button will actually use, rather than against
+ * whatever the last painter left on the context.
+ */
+export const FONT_BUTTON = 'bold 10px ui-monospace, Consolas, monospace';
+
+export type ButtonOptions = {
+  /** Border and label colour. The plate is always INK. */
+  readonly ink: string;
+  /** Override the face. Defaults to `FONT_BUTTON`; almost nothing should. */
+  readonly font?: string;
+};
+
+/**
+ * A button: an INK plate, a 1px border on four sides, and a centred label.
+ *
+ * LIFTED VERBATIM from the private copy in ui/partypanel.ts (its ACCEPT /
+ * DECLINE / `!` control), which keeps its own — changing a working file to
+ * import a helper is churn, and that file is the one place this shape has
+ * already been proven against a real click. What is NOT churn is a second panel
+ * inventing a second look, so the class picker's confirm button and the
+ * character sheet's close button both come from here.
+ *
+ * FOUR 1px `fillRect`s RATHER THAN A `strokeRect`: a stroke is centred on the
+ * path, so a 1px stroke at an integer coordinate lands half a pixel either side
+ * of it and the backbuffer's nearest-neighbour magnification turns that into a
+ * border that is two pixels thick on some edges and invisible on others.
+ *
+ * `save`/`restore` around the text because it sets `font`, `textAlign` and
+ * `fillStyle`; the four rects before it are deliberately outside, since the
+ * caller has already had to set `fillStyle` for its own plate anyway.
+ */
+export function drawButton(
+  ctx: CanvasRenderingContext2D,
+  rect: PanelRect,
+  label: string,
+  opts: ButtonOptions,
+): void {
+  if (rect.w <= 0 || rect.h <= 0) return;
+  ctx.fillStyle = PALETTE.INK;
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.fillStyle = opts.ink;
+  ctx.fillRect(rect.x, rect.y, rect.w, 1);
+  ctx.fillRect(rect.x, rect.y + rect.h - 1, rect.w, 1);
+  ctx.fillRect(rect.x, rect.y, 1, rect.h);
+  ctx.fillRect(rect.x + rect.w - 1, rect.y, 1, rect.h);
+  ctx.save();
+  ctx.font = opts.font ?? FONT_BUTTON;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = opts.ink;
+  ctx.fillText(fitText(ctx, label, rect.w - 6), rect.x + rect.w / 2, rect.y + rect.h / 2);
+  ctx.restore();
+}
+
+/**
+ * The dimmer a MODAL sits on: the whole viewport, INK, at 70%.
+ *
+ * ═══ THE save/restore IS INSIDE THIS FUNCTION AND IS NOT OPTIONAL ═══
+ * `globalAlpha` is context state, not a parameter, so an unwrapped assignment
+ * leaks to EVERY painter that runs later in the same frame — the hotbar, the
+ * turn cards, the map itself. It presents as translucent sprites across the
+ * whole screen, which is diagnosed as a broken PNG or a bad manifest long before
+ * anybody looks for a missing `restore`. ui/turncards.ts:786-790 records the
+ * identical trap for `ctx.filter`, where a leaked greyscale greys the world.
+ *
+ * Putting the pairing HERE rather than asking each caller to remember it means
+ * the trap can be sprung at most once, in one file, under one test.
+ *
+ * 70% rather than opaque: a modal that hides the map entirely reads as a scene
+ * change, and a player who cannot see their own body behind the chooser has no
+ * idea the game is still there. 70% is enough that no tile is legible enough to
+ * be acted on and enough that the world is visibly still underneath.
+ */
+export function drawScrim(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  if (w <= 0 || h <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = PALETTE.INK;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}

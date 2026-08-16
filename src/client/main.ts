@@ -156,6 +156,14 @@ import { createSweepPlayback } from './render/sweep.ts';
 // worth reaching.
 import { applyProjectilesFrame, clearProjectiles, orbsAimedAt } from './state/projectiles.ts';
 import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
+import { charSheetHitAt, charSheetRect, charSheetRows, drawCharSheet } from './ui/charsheet.ts';
+import {
+  ClassPickerHitKind,
+  classPickerCards,
+  classPickerHitAt,
+  classPickerRect,
+  drawClassPicker,
+} from './ui/classpicker.ts';
 import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts';
 // `isSlotDisabled` is deliberately NOT imported. Whether a slot looks dead is
 // the hotbar's business; whether a press is legal is the server's. Reading it
@@ -195,6 +203,7 @@ import { PROTOCOL_VERSION } from '../shared/version.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type {
   ActorView,
+  ClassOptionView,
   DownedView,
   EffectView,
   InspectView,
@@ -454,6 +463,57 @@ const canvas = requireCanvas('game');
 const logEl = document.getElementById('log');
 const marginEl = document.getElementById('margin');
 const cmdEl = optionalInput('cmd');
+/**
+ * The row `#cmd` sits in, so the whole thing can be hidden rather than leaving a
+ * disabled field visibly inviting a click. Nullable for the same reason `cmdEl`
+ * is: an index.html that predates M4 has neither, and losing the ability to talk
+ * must not stop the client booting. See `setCommandLineReachable`.
+ */
+const cmdRowEl = document.getElementById('cmdrow');
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════
+ * THE COMMAND LINE IS TAKEN OUT OF REACH WHILE THE CLASS CHOOSER IS UP.
+ * ═════════════════════════════════════════════════════════════════════════
+ *
+ * `onUi` returns early while the picker is open specifically so that `t`
+ * cannot focus this field — the note there spells the trap out: focus leaves
+ * the canvas, `isTextEntry` in keys.ts then drops EVERY subsequent keypress,
+ * and the arrows, the digits and Enter all stop reaching the one screen the
+ * player cannot dismiss. But that gate only covered the KEY. `#cmd` is a
+ * permanently visible, permanently focusable `<input>` — `#cmdrow` has no
+ * `display:none` in styles/main.css and it is the only tabbable element on the
+ * page — so a single Tab, or a click on the chat row (which is fully visible
+ * and reads "T or / to talk"), walked straight around it. And `mousedown`
+ * STEP 0 `preventDefault`s both buttons while the picker is up, which
+ * suppresses the browser's own focus change, so clicking the canvas could not
+ * take focus back either. The only way out was Escape — which the picker
+ * documents as swallowed, so nothing on screen suggested it.
+ *
+ * THREE THINGS, AND EACH COVERS A DIFFERENT ROUTE IN. `disabled` stops the
+ * click and the caret, `tabIndex = -1` stops the Tab (a disabled input is
+ * already skipped, but the two are set together so neither is load-bearing
+ * alone), and `blur()` covers the field that was ALREADY focused when the
+ * frame arrived — a player who was mid-sentence when they were asked to pick
+ * a class.
+ *
+ * `hidden` RATHER THAN A CLASS, on the ROW, so a reviewer has no class name to
+ * go looking for — but it is NOT self-sufficient: `[hidden]` is `display: none`
+ * in the user-agent stylesheet and `#cmdrow`'s author `display: flex` beats it,
+ * so styles/main.css carries an explicit `#cmdrow[hidden]` rule and says why.
+ * Without it this line is a no-op that nobody would notice, because the three
+ * lines above it would still have shut the trap.
+ *
+ * IT IS RESTORED IN `case 'loadout'`, which is where the modal is torn down and
+ * the only place that knows the choice actually landed.
+ */
+function setCommandLineReachable(reachable: boolean): void {
+  if (cmdEl === null) return;
+  cmdEl.disabled = !reachable;
+  cmdEl.tabIndex = reachable ? 0 : -1;
+  if (!reachable) cmdEl.blur();
+  cmdRowEl?.toggleAttribute('hidden', !reachable);
+}
 
 /** textContent, never innerHTML: actor names come from Discord nicknames. */
 function setStatusText(text: string): void {
@@ -591,9 +651,48 @@ let party: readonly PartyMember[] = [];
  */
 let partyState: PartyStateMsg | null = null;
 
-/** Panel visibility. Both default on; `c` and `p` toggle them. */
+/** Panel visibility. Both default on; `m` and `p` toggle them. */
 let logVisible = true;
 let partyVisible = true;
+
+/**
+ * THE CHARACTER SHEET, AND IT DEFAULTS OFF — the other two do not.
+ *
+ * The log and the pane answer questions that are live all session ("what just
+ * happened", "who am I with"); this one answers a reference question asked a few
+ * times an evening, and it sits in the middle of the map. So `c` opens it, `c`
+ * closes it, and the × on its header is the mouse's copy of the same act. It is
+ * NOT in the Escape chain — see `onCancel`.
+ */
+let sheetVisible = false;
+/** True while the pointer is over the sheet's close control, so it reads pressable. */
+let sheetCloseHovered = false;
+
+/**
+ * THE CLASS CHOOSER'S OPTIONS, or null when there is no choice owed.
+ *
+ * NULL IS THE WHOLE OF "THE PICKER IS DOWN", and there is deliberately no second
+ * flag beside it: the frame arrives once, unicast, for the one player who has no
+ * class on file (protocol.ts's `ClassOptionsMsg`), and it is cleared when the
+ * server's own follow-up says the choice landed. A `pickerVisible` boolean next
+ * to this would be a second answer to "is the modal up" and the first thing to
+ * desync would be the keyboard gate, which is what stands between a stray `t` and
+ * a DOM input taking focus behind a modal.
+ *
+ * IT IS NEVER CLEARED OPTIMISTICALLY. The server is authoritative and may refuse
+ * — an id this build does not have, or a second choice — and a modal torn down on
+ * the click would leave that player playing the provisional rotation class with
+ * no way back to the screen. See `case 'loadout'`.
+ */
+let classOptions: readonly ClassOptionView[] | null = null;
+/**
+ * Which card is picked, or null while nothing is. Null on purpose: this choice is
+ * written to a file and never offered again, so a card pre-selected by the client
+ * is one stray Enter away from choosing somebody's character for them.
+ */
+let selectedClass: number | null = null;
+/** Which card is under the pointer, or null. Cosmetic. */
+let pickerHovered: number | null = null;
 
 /**
  * Live `point` markers, oldest first, each with the wall-clock instant it dies.
@@ -829,6 +928,27 @@ let refreshPinnedInspect: () => void = () => {
   // No socket yet.
 };
 
+/**
+ * RE-ASK ABOUT YOURSELF, FOR THE OPEN CHARACTER SHEET. Replaced in boot(), which
+ * owns the socket; a no-op until then and a no-op while the sheet is shut.
+ *
+ * ═══ WITHOUT THIS THE SHEET GOES BLANK IN THE MIDDLE OF A FIGHT ═══
+ * `inspectCache` is invalidated WHOLESALE on every game-turn edge, for the reason
+ * the hover card's own header gives: hit points and hit chances are answers about
+ * one game turn. The sheet reads that cache, so the turn after it was opened it
+ * has nothing to draw and falls back to its "gathering…" row — permanently, on a
+ * panel nobody is hovering, because the only thing that re-asks is a pointer
+ * coming to rest on a token.
+ *
+ * ONE FRAME PER GAME TURN, and only while the panel is open. That is inside the
+ * budget HOVER_SETTLE_MS sets out: the socket's bucket is 20 frames a second and
+ * a game turn is a human decision long, so this is comfortably below the hover
+ * card's own one-per-turn allowance sitting beside it.
+ */
+let refreshSelfSheet: () => void = () => {
+  // No socket yet.
+};
+
 function bellRemainingMs(): number | null {
   return bellEndsAt === null ? null : Math.max(0, bellEndsAt - Date.now());
 }
@@ -983,6 +1103,24 @@ type HudLayout = {
   readonly log: PanelRect | null;
   /** The erased plate, or null when the viewer is on their feet. */
   readonly respawn: PanelRect | null;
+  /**
+   * The character sheet, or null when it is shut or the band is too small.
+   *
+   * CLAMPED INTO THE SAME BAND as the two dock panels, which is what keeps it off
+   * the hotbar, the resource strip and the prose lines — see ui/charsheet.ts's
+   * header for why a panel that could cover a control would be a different
+   * feature (a modal) with a different cost (five people at the barrier).
+   */
+  readonly sheet: PanelRect | null;
+  /**
+   * The class chooser, or null when no choice is owed.
+   *
+   * FROM THE FULL VIEWPORT, NOT `panelBand`, and it is the only member here that
+   * is: a modal is allowed to cover the hotbar because nothing under it is
+   * pressable while it is up. `classPickerRect` never answers null, so this is
+   * null for exactly one reason — there is no choice to make.
+   */
+  readonly picker: PanelRect | null;
 };
 
 function hudLayout(width: number, height: number): HudLayout {
@@ -1009,6 +1147,35 @@ function hudLayout(width: number, height: number): HudLayout {
     pane,
     log,
     respawn: selfErased() ? respawnPromptRect({ width, top: band.top, bottom: band.bottom }) : null,
+    sheet: sheetVisible
+      ? charSheetRect({ width, height, top: band.top, bottom: band.bottom })
+      : null,
+    picker: classOptions === null ? null : classPickerRect(width, height),
+  };
+}
+
+/**
+ * THE FOUR FRAMES THE CHARACTER SHEET IS BUILT FROM, joined in one place.
+ *
+ * `view` IS THE VIEWER'S OWN `inspected` ANSWER AND NOTHING ELSE. src/server/
+ * view/inspect.ts splits three ways and only the self branch carries the stat
+ * block and `className`; asking about a teammate comes back with exactly two rows
+ * and no class, so a sheet built from anybody else's answer would be an
+ * almost-empty panel with the wrong name at the top of it. The cache is read
+ * rather than a separate hold, so the sheet and the hover card cannot disagree
+ * about a number that is stamped with the same game turn.
+ */
+function charSheetView(): {
+  view: InspectView | null;
+  resource: ResourceView | null;
+  loadout: readonly LoadoutTalent[];
+  cooldowns: Readonly<Record<string, number>>;
+} {
+  return {
+    view: selfId === null ? null : (inspectCache.get(selfId)?.view ?? null),
+    resource,
+    loadout,
+    cooldowns,
   };
 }
 
@@ -1174,6 +1341,28 @@ const paintHud: HudPainter = (ctx, width, height) => {
     caseLog.draw({ ctx, sprites, rect: layout.log, gameTurn: turn?.gameTurn ?? -1 });
   }
 
+  // THE CHARACTER SHEET, WITH THE OTHER DOCK SURFACES AND BEFORE THE HOTBAR.
+  //
+  // It therefore loses to the hotbar, the resource strip, the prose lines, the
+  // erased plate, the hover card, the combat banner and the token menu — every
+  // one of which is drawn later — and that ordering IS the design. A sheet that
+  // covered the hotbar would be a modal wearing a panel's clothes: the player
+  // reading it could no longer see the four buttons they are reading it to
+  // choose between, and every one of those buttons still works while it is open.
+  //
+  // `charSheetRows` IS CALLED EXACTLY ONCE PER FRAME and the result handed to the
+  // drawer, which does not call it — ui/charsheet.ts asks for that split so the
+  // join of four frames happens once rather than once per column pass.
+  if (layout.sheet !== null) {
+    drawCharSheet({
+      ctx,
+      sprites,
+      rect: layout.sheet,
+      rows: charSheetRows(charSheetView()),
+      hoveredClose: sheetCloseHovered,
+    });
+  }
+
   drawHotbar({ ctx, sprites, view: hotbarView(), width, height });
 
   const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;
@@ -1275,6 +1464,30 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // a menu underneath a three-second announcement is a menu whose rows cannot be
   // read at the moment they are being aimed at.
   tokenMenu?.draw({ ctx, sprites });
+
+  // ═══ ...AND THE CLASS CHOOSER AFTER EVEN THAT. IT IS LAST, AND IT IS MODAL ═══
+  //
+  // Above the combat banner, above the token menu, above everything. Not because
+  // it is the most urgent thing on the screen but because it is the PRECONDITION
+  // for the screen: a player who owes a choice has no class, no talents and no
+  // business acting, so nothing painted behind it is actionable and a banner
+  // announcing a fight they cannot join would be drawn over the one control that
+  // gets them out of this state.
+  //
+  // `ctx` HERE IS THE BACKBUFFER, which is what `drawClassPicker` requires: it
+  // sizes its own scrim from `ctx.canvas.width/height`, and the backbuffer's size
+  // is exactly the logical viewport (render/canvas.ts) — the device-pixel canvas
+  // would scrim a fraction of the screen and leave the map showing round the edge.
+  if (layout.picker !== null && classOptions !== null) {
+    drawClassPicker({
+      ctx,
+      sprites,
+      rect: layout.picker,
+      options: classOptions,
+      selected: selectedClass,
+      hovered: pickerHovered,
+    });
+  }
 };
 
 /**
@@ -2099,6 +2312,40 @@ async function boot(): Promise<void> {
   };
 
   /**
+   * ASK THE SERVER ABOUT YOURSELF, FOR THE SHEET.
+   *
+   * Fired twice: when `c` opens the panel, and from the game-turn edge that
+   * clears the cache. Both go through here so there is one copy of the two rules
+   * below.
+   *
+   * IT ASKS ABOUT `selfId` AND NEVER ABOUT ANYBODY ELSE. inspect.ts answers a
+   * teammate with two rows and no class name, so a sheet built from that would be
+   * an almost-empty panel with somebody else's name on it.
+   *
+   * A CACHE HIT FOR THIS TURN SENDS NOTHING, the same rule `requestInspect`
+   * follows and for the same reason — the hover card may already have asked about
+   * this body, and opening a panel is not a reason to spend a token re-asking a
+   * question that has a fresh answer sitting in the map.
+   *
+   * IT DELIBERATELY DOES NOT CLAIM `inspectInFlight`. That slot belongs to the
+   * pointer, and a panel taking it would make the next hover think its own
+   * question was already out. The answer lands in `inspectCache` either way —
+   * `case 'inspected'` caches unconditionally — which is the only thing the sheet
+   * reads.
+   */
+  function requestSelfSheet(): void {
+    const id = selfId;
+    if (!sheetVisible || id === null) return;
+    const known = inspectCache.get(id);
+    if (known !== undefined && known.gameTurn === (turn?.gameTurn ?? -1)) {
+      requestDraw();
+      return;
+    }
+    socket.send({ v: PROTOCOL_VERSION, t: 'inspect', targetId: id });
+  }
+  refreshSelfSheet = requestSelfSheet;
+
+  /**
    * The pointer is over `tile` (or over nothing at all).
    *
    * GUARD ONE OF DECISION (d): the comparison is BY ACTOR ID. A pointer walking
@@ -2726,11 +2973,130 @@ async function boot(): Promise<void> {
     }
   }
 
+  // --- the class chooser ----------------------------------------------------
+  // The one genuinely modal surface in this client, and the only one that
+  // swallows the keyboard.
+  //
+  // ═══ WHY THAT IS SAFE, AND WHAT IT IS *NOT* SAFE BECAUSE OF ═══
+  // This used to argue: "a player seeing this screen has just connected and is a
+  // party of ONE (engine/party.ts), so the barrier's quorum, its commit count
+  // and the Bell are all scoped to them alone and nobody is waiting on them."
+  // THE QUORUM HALF IS TRUE AND THE CONCLUSION WAS FALSE. Parties scope the
+  // BARRIER; they do not scope the WORLD CLOCK. One player who owes a decision
+  // parks the level's tick loop, and every monster on the floor stops acting for
+  // everybody — thirty tiles away, in somebody else's fight, for two minutes at
+  // a time.
+  //
+  // What makes the swallow safe is a SERVER-SIDE fact, not a client-side one:
+  // src/server/net/gateway.ts parks a body that owes a class choice on a
+  // standing hold (`parkForClassChoice`), which is the field the barrier already
+  // reads to mean "this actor never blocks". A player reading three class
+  // descriptions costs nobody a turn. Nothing in this file may be relied on for
+  // that — a modal that swallowed the keyboard on the strength of a comment in
+  // the browser would be exactly one hostile client away from freezing a floor.
+
+  /** The cards, in the SERVER'S ORDER, from the geometry the pointer also hits. */
+  function pickerCards(): readonly PanelRect[] {
+    if (classOptions === null) return [];
+    const { logicalW, logicalH } = renderer.metrics();
+    return classPickerCards(classOptions, classPickerRect(logicalW, logicalH));
+  }
+
+  /**
+   * Pick card `index`, if there is one there.
+   *
+   * BOUNDED BY THE LAID-OUT CARDS rather than by `classOptions.length`, so the
+   * keyboard can never select something the pointer cannot reach: on a viewport
+   * with no room for the row at all `classPickerCards` answers with an empty list,
+   * and a keyboard selection into that would let somebody confirm a class that was
+   * never drawn. It also redraws only on a genuine change, like every other hover
+   * and selection in this file.
+   */
+  function selectCard(index: number): void {
+    if (index < 0 || index >= pickerCards().length) return;
+    if (selectedClass === index) return;
+    selectedClass = index;
+    requestDraw();
+  }
+
+  /**
+   * Move the selection with a direction key. ToME's dialog convention, PORTED.
+   *
+   * `dialogs/elements/TalentTrees.lua:148-151` binds MOVE_UP / MOVE_DOWN /
+   * MOVE_LEFT / MOVE_RIGHT to `moveSel` (inside the `addBinds` opened at :146,
+   * whose first entry at :147 is ACCEPT), and `moveSel` CLAMPS rather than
+   * wraps: `util.bound(self.sel_i + i, 1, #self.tree)` at :207. Both
+   * halves are ported. The clamp matters more than it looks — a wrap on a
+   * three-item choice that is written to a file and never offered again is how
+   * somebody ends up on card 1 while pressing away from card 3.
+   *
+   * WHICH WAY A DIAGONAL COUNTS COMES FROM `step`, never from a hand-rolled dx/dy
+   * table — the same rule `adjacentDowned` and the Attack verb follow, because
+   * the eight-way geometry exists once in src/shared/coords.ts. The cards are a
+   * ROW, so the horizontal component decides and a pure north/south key falls
+   * back to the vertical one: a player pressing down a list of three things means
+   * "next", and answering with nothing at all reads as a dead key.
+   */
+  function movePickerSelection(dir: Dir): void {
+    const cards = pickerCards();
+    if (cards.length === 0) return;
+    const delta = step({ x: 0, y: 0 }, dir);
+    const move = delta.x !== 0 ? delta.x : delta.y;
+    if (selectedClass === null) {
+      // Nothing picked yet: enter the row from the end the key came from.
+      selectCard(move > 0 ? 0 : cards.length - 1);
+      return;
+    }
+    selectCard(Math.min(cards.length - 1, Math.max(0, selectedClass + move)));
+  }
+
+  /**
+   * Send the choice. The ONLY place a `choose_class` frame is constructed.
+   *
+   * ═══ THE PICKER DOES NOT CLOSE HERE, AND THAT IS THE WHOLE RULE ═══
+   * The server is authoritative and may refuse this: an id this build does not
+   * have comes back `bad_message`, a second choice comes back `not_your_turn`. A
+   * modal torn down on the click would leave that player wearing the provisional
+   * rotation class, on a map they can play, with no way back to the one screen
+   * that changes it. The acknowledgement is the arrival of the new `loadout` —
+   * the frame that could only exist because the choice landed — and that is where
+   * the modal goes away. See `case 'loadout'`.
+   *
+   * `{ v, t, classId }` AND NOTHING ELSE. `ChooseClassSchema` is a `strictObject`,
+   * so an actorId or a slot index smuggled alongside is REJECTED rather than
+   * stripped; identity is taken from the session on the server's side and this
+   * wire has no field for it at all.
+   */
+  function confirmClass(): void {
+    if (classOptions === null || selectedClass === null) return;
+    // Nothing picked, or a selection that outlived its frame. The button is drawn
+    // grey in that state and the honest behaviour is that pressing it does
+    // nothing — ui/classpicker.ts states the same rule from its own side, which
+    // is why it answers the hit test regardless of the selection.
+    const option = classOptions[selectedClass];
+    if (option === undefined) return;
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'choose_class', classId: option.id })) {
+      showNotice('not connected — that did not go out');
+    }
+  }
+
   // --- input ---------------------------------------------------------------
   // Every key skips the sweep beat first. A player who has already decided must
   // never be made to watch a flourish finish, and settling is idempotent.
+  //
+  // ═══ ...AFTER THE CHOOSER'S GATE, WHICH IS THE FIRST LINE OF ALL SIX ═══
+  // The gate is an early return HERE and deliberately not a call to
+  // `bindGameKeys`'s disposer: keys.ts explains at length that dispose-then-rebind
+  // re-registers this handler AFTER the travel-cancel listener below and inverts
+  // an order that file and this one both document as load-bearing. The keys still
+  // arrive and still mean what keys.ts says they mean; what changes is what this
+  // caller does with them, exactly as targeting mode already does.
   bindGameKeys(window, {
     onMove: (dir) => {
+      if (classOptions !== null) {
+        movePickerSelection(dir);
+        return;
+      }
       sweep?.settle();
       // THE MODE ROUTES THE KEY, not the keymap. While a talent is being aimed
       // the movement keys steer the cursor and no frame is sent; keys.ts still
@@ -2754,6 +3120,16 @@ async function boot(): Promise<void> {
       socket.send({ v: PROTOCOL_VERSION, t: 'move', dir });
     },
     onCommand: (command) => {
+      if (classOptions !== null) {
+        // ENTER/SPACE CONFIRMS, and Hold ('.') does nothing at all. ToME's
+        // dialogs bind ACCEPT the same way (engine/ui/Dialog.lua:102 adds an
+        // ACCEPT bind beside the EXIT one at :101 on its list popup). There is
+        // no analogue for Hold on a dialog and inventing one — "pass on choosing
+        // a class" — would be a verb with nowhere to go: the screen cannot be
+        // left unanswered.
+        if (command === TurnCommand.Commit) confirmClass();
+        return;
+      }
       sweep?.settle();
       if (targeting !== null && targeting.active()) {
         // Enter/space confirms the aim. Hold ('.') backs out — it is the other
@@ -2774,10 +3150,32 @@ async function boot(): Promise<void> {
       }
     },
     onSlot: (slot) => {
+      if (classOptions !== null) {
+        // 1/2/3 PICK A CARD OUTRIGHT. CONVENTIONAL, not ported — ToME's birther
+        // has no digit shortcut — and it is advertised on the card itself as
+        // `[1]`, the grammar ToME uses for `[L]evelup` (CharacterSheet.lua:99),
+        // because a modal that swallows the keyboard owes the player a list of
+        // the keys it kept. `slot` is zero-based, so key 4 asks for a fourth card,
+        // finds none, and does nothing.
+        selectCard(slot);
+        return;
+      }
       sweep?.settle();
       activateSlot(slot);
     },
     onCancel: () => {
+      // ═══ THE CHOOSER SWALLOWS ESCAPE OUTRIGHT, ABOVE THE CHAIN ═══
+      //
+      // A REQUIRED SCREEN MUST NOT BE DISMISSIBLE. There is no second copy of the
+      // `class_options` frame — it is sent once, in the `hello` block — so a
+      // player who escaped out of it would be left on a map with a provisional
+      // class, no chooser, and nothing on screen saying what happened.
+      //
+      // AND IT IS ABOVE THE CHAIN RATHER THAN A SEVENTH LINK IN IT. Appending it
+      // would mean one press first closed a menu or cleared a notice and only a
+      // later press reached the swallow, which is a Escape that sometimes appears
+      // to do something on a screen where it must always do nothing.
+      if (classOptions !== null) return;
       sweep?.settle();
       // Escape backs out of ONE thing, in the order they were opened, so a
       // single key never does two things at once: the token menu, then a walk in
@@ -2786,6 +3184,17 @@ async function boot(): Promise<void> {
       //
       // THE MENU IS FIRST because it is the most recently opened and the most
       // modal-feeling: it sits over the map with the pointer already on it.
+      //
+      // ═══ AND THE CHARACTER SHEET IS NOT IN THIS CHAIN AT ALL ═══
+      // Deliberately, and for consistency over fidelity. ToME's sheet IS closed
+      // by Escape, but ToME's sheet is a registered modal dialog and ours is a
+      // panel; porting the dismissal without the modality is the half-port. Here
+      // the Case Log and the party pane both cover the map and neither answers to
+      // Escape, so adding only the sheet would make this key's behaviour depend on
+      // which panel happened to be open — and the contract below is that ONE
+      // press backs out of exactly ONE thing, in a fixed order. `c` toggles the
+      // sheet, symmetrically with `m` and `p`, and the × on its header is the
+      // mouse's copy of that key.
       if (tokenMenu?.close() === true) return;
       // TRAVEL INTERRUPT (3), AND IT IS INSIDE THE CHAIN RATHER THAN BESIDE IT.
       // Appending it after the chain would let one press stop a walk AND clear
@@ -2813,8 +3222,19 @@ async function boot(): Promise<void> {
       if (!record && !margin) clearNotice();
     },
     onUi: (command) => {
+      // ═══ EVERY UI VERB IS SWALLOWED WHILE THE CHOOSER IS UP, AND `t` IS WHY ═══
+      //
+      // The others would merely be untimely — toggling a panel behind a scrim, or
+      // a revive attempt from a body with no class. `Say` is different in kind:
+      // `openCommandLine` focuses a REAL DOM `<input>`, so an ungated `t` would
+      // move focus outside the canvas with the modal still painted over it. From
+      // there keys.ts's `isTextEntry` correctly drops every subsequent keypress,
+      // which means the arrows, the digits and Enter all stop reaching the picker
+      // — a player looking at a screen they cannot dismiss, typing into a field
+      // they cannot see, on the one screen with no way around it.
+      if (classOptions !== null) return;
       sweep?.settle();
-      // Exhaustive, no `default`: a fifth verb breaks here at lint time rather
+      // Exhaustive, no `default`: a seventh verb breaks here at lint time rather
       // than becoming a key that quietly does nothing.
       switch (command) {
         case UiCommand.Say:
@@ -2825,6 +3245,21 @@ async function boot(): Promise<void> {
           return;
         case UiCommand.Respawn:
           attemptRespawn();
+          return;
+        case UiCommand.ShowSheet:
+          // A TOGGLE, and the `inspect` goes out on the way OPEN only. The panel
+          // is built from four frames and three of them (`loadout`, `cooldowns`,
+          // `resource`) are already held here; the fourth is the viewer's own
+          // `inspected` answer, which is cached per game turn — so opening the
+          // sheet either draws from a fresh cache entry immediately or asks once
+          // and fills in a frame later, and ui/charsheet.ts draws "gathering…"
+          // rather than an empty box in that window.
+          sheetVisible = !sheetVisible;
+          // The hover state goes with it, or the × would come back highlighted
+          // next time the panel opens under a pointer that has since moved.
+          if (!sheetVisible) sheetCloseHovered = false;
+          requestSelfSheet();
+          requestDraw();
           return;
         case UiCommand.ToggleLog:
           logVisible = !logVisible;
@@ -2837,6 +3272,10 @@ async function boot(): Promise<void> {
       }
     },
     onScroll: (steps, alternate) => {
+      // Swallowed with the rest of the keyboard: the Case Log is behind the
+      // scrim, and scrolling a transcript nobody can read is a key that appears
+      // to do nothing, which is the same failure as a key that does nothing.
+      if (classOptions !== null) return;
       // SHIFT PICKS THE MARGIN. That mapping lives here and not in keys.ts,
       // because which lane a modifier selects is a fact about a panel and keys.ts
       // deliberately knows nothing about panels.
@@ -2910,15 +3349,28 @@ async function boot(): Promise<void> {
    * rather than pinging a tile behind the strip that nobody can see.
    */
   function overPanel(clientX: number, clientY: number): boolean {
-    const point = renderer.backbufferPoint(clientX, clientY);
-    if (point === null) return false;
     const { logicalW, logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
+    // ═══ THE CHOOSER ANSWERS TRUE FOR THE WHOLE SCREEN, LETTERBOX INCLUDED ═══
+    // Above the `point === null` guard on purpose: "not on the backbuffer" is not
+    // a reason to let a gesture through while a modal is up, and this is the one
+    // surface for which there is no tile underneath worth reaching.
+    if (layout.picker !== null) return true;
+    const point = renderer.backbufferPoint(clientX, clientY);
+    if (point === null) return false;
     if (point.y < layout.hudTop) return true;
     if (tokenMenu?.contains(point.x, point.y) === true) return true;
     if (respawnPromptHit(layout.respawn, point.x, point.y)) return true;
+    // THE CHARACTER SHEET IS A PANEL LIKE THE OTHER TWO, and it has to be listed
+    // here or hovering it drags the targeting cursor across whatever tiles are
+    // underneath — and worse, sends an `inspect` per settle for each body it
+    // passes over, spending the socket's token bucket on a panel the pointer is
+    // resting on. See HOVER_SETTLE_MS: an exhausted bucket answers `error`, which
+    // cancels the player's aim.
     return (
-      inRect(layout.pane?.rect ?? null, point.x, point.y) || inRect(layout.log, point.x, point.y)
+      inRect(layout.pane?.rect ?? null, point.x, point.y) ||
+      inRect(layout.log, point.x, point.y) ||
+      inRect(layout.sheet, point.x, point.y)
     );
   }
 
@@ -2940,9 +3392,32 @@ async function boot(): Promise<void> {
     if (point !== null) {
       tokenMenu?.hoverAt(point.x, point.y);
       const { logicalW, logicalH } = renderer.metrics();
-      const over = respawnPromptHit(hudLayout(logicalW, logicalH).respawn, point.x, point.y);
+      const layout = hudLayout(logicalW, logicalH);
+      const over = respawnPromptHit(layout.respawn, point.x, point.y);
       if (over !== respawnHovered) {
         respawnHovered = over;
+        requestDraw();
+      }
+      // THE THIRD HOVER THAT MEANS "THIS IS PRESSABLE": the sheet's × . Same
+      // shape as the plate above and for the same reason — it reports whether
+      // anything CHANGED, so a pointer crossing the panel cannot queue a draw per
+      // pixel and turn this client's dirty-flag renderer into a 60 fps one.
+      const overClose =
+        layout.sheet !== null && charSheetHitAt(layout.sheet, point.x, point.y) === 'close';
+      if (overClose !== sheetCloseHovered) {
+        sheetCloseHovered = overClose;
+        requestDraw();
+      }
+      // AND THE CARD UNDER THE POINTER, while the chooser is up. `null` when it
+      // is down, so nothing is left highlighted behind a modal that has closed.
+      const card =
+        layout.picker === null || classOptions === null
+          ? null
+          : classPickerHitAt(classOptions, layout.picker, point.x, point.y);
+      const hoveredCard =
+        card !== null && card.kind === ClassPickerHitKind.Card ? card.index : null;
+      if (hoveredCard !== pickerHovered) {
+        pickerHovered = hoveredCard;
         requestDraw();
       }
     }
@@ -2974,8 +3449,19 @@ async function boot(): Promise<void> {
   canvas.addEventListener(
     'wheel',
     (event: WheelEvent) => {
+      // ═══ THE MOUSE'S COPY OF `onScroll`, AND IT OBEYS THE SAME TWO RULES ═══
+      // The keyboard's scroll is gated on the chooser because "scrolling a
+      // transcript nobody can read is a key that appears to do nothing"; the
+      // wheel is the same act with a different input device and was left
+      // ungated, so rolling it over the log's rect scrolled the Case Log behind
+      // the scrim. The sheet is the second rule and the same one step 4 of
+      // `mousedown` enforces: it is painted OVER the log and the two rects
+      // overlap on ordinary windows, so the wheel must not reach through it.
+      if (classOptions !== null) return;
       const point = renderer.backbufferPoint(event.clientX, event.clientY);
       if (point === null || caseLog === null) return;
+      const { logicalW, logicalH } = renderer.metrics();
+      if (inRect(hudLayout(logicalW, logicalH).sheet, point.x, point.y)) return;
       const lane = caseLog.laneAt(point.x, point.y);
       if (lane === null) return;
       event.preventDefault();
@@ -3017,6 +3503,36 @@ async function boot(): Promise<void> {
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
     const { logicalW, logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
+
+    // ═══ 0. THE CLASS CHOOSER TAKES EVERY CLICK, BOTH BUTTONS, FIRST ═══
+    //
+    // ABOVE THE RIGHT-CLICK BRANCH AND THAT IS THE POINT. Below it, a right-click
+    // inside the modal would cancel an aim or open a verb menu on whatever tile
+    // is behind the scrim — a menu the player can see, drawn under a screen they
+    // cannot dismiss, about a body they have not met. `preventDefault` on both
+    // buttons; the `contextmenu` listener at the foot of this function suppresses
+    // the browser's own menu unconditionally, so it needs no separate guard.
+    //
+    // A CLICK THAT LANDS ON NO CONTROL IS STILL SWALLOWED. `classPickerHitAt`
+    // answering null means "on the modal, not on a control" and is never a
+    // fall-through — ui/classpicker.ts says the same from its side.
+    if (layout.picker !== null && classOptions !== null) {
+      event.preventDefault();
+      const hit =
+        point === null ? null : classPickerHitAt(classOptions, layout.picker, point.x, point.y);
+      if (hit === null) return;
+      switch (hit.kind) {
+        case ClassPickerHitKind.Card:
+          // SELECT, NEVER CONFIRM. One click is not enough for a decision that is
+          // written to a file and never offered again; CONFIRM is the second act,
+          // and the modal says so in its own hint line.
+          selectCard(hit.index);
+          return;
+        case ClassPickerHitKind.Confirm:
+          confirmClass();
+          return;
+      }
+    }
 
     // ═══ 1. AN OPEN MENU TAKES THE WHOLE CLICK ═══
     // Either button, anywhere: pick a row, or close. A menu that stayed open
@@ -3071,8 +3587,23 @@ async function boot(): Promise<void> {
         // A row in the party pane offers the same menu as the token does. It is
         // the only way to reach somebody who is off screen — which is most of
         // the party, most of the time.
+        //
+        // ═══ ...UNLESS THE CHARACTER SHEET IS DRAWN OVER THAT ROW ═══
+        // `paintHud` paints pane -> log -> SHEET, so wherever the two rects
+        // overlap the sheet is the thing the player can actually see, and a hit
+        // test that ignored it would open a verb menu on a party member through
+        // a solid panel. They DO overlap on ordinary windows: `charSheetRect`
+        // centres the sheet on the assumption that the two docks own the sides,
+        // but it never tests `pane.rect` — hide the Case Log on a 640-wide
+        // viewport and `partyPaneLayout` widens into Rows mode straight under it.
+        //
+        // OCCLUSION, NOT A HIT TEST. The sheet's only control is its × and step 5
+        // owns that; here the sheet merely has to STOP the pane from claiming a
+        // click aimed at something drawn on top of it, and the `clearNotice()`
+        // fall-through below is the right answer for a right-click on a panel.
+        const overSheet = inRect(layout.sheet, point.x, point.y);
         const paneHit =
-          layout.pane === null || layout.party === null
+          overSheet || layout.pane === null || layout.party === null
             ? null
             : partyPaneHitAt(layout.party, layout.pane, point.x, point.y);
         if (paneHit !== null && paneHit.kind === 'member') {
@@ -3109,11 +3640,51 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // ═══ 4. THE PARTY PANE'S OWN CONTROLS ═══
+    // ═══ 4. THE CHARACTER SHEET — TESTED BEFORE THE PANE, BECAUSE IT IS DRAWN
+    //        OVER IT ═══
+    //
+    // HIT-TEST ORDER MIRRORS PAINT ORDER, AND THAT IS THE WHOLE RULE. `paintHud`
+    // paints the party pane, then the log, then the SHEET, so the sheet is the
+    // topmost of the three and must get first refusal on any click inside its
+    // rect. Tested after the pane — which is where this block used to sit — the
+    // pane won every click in the overlap, and the overlap is not exotic:
+    // `charSheetRect` centres the panel on the assumption that the two docks own
+    // the sides but never consults `pane.rect`, so pressing `m` to hide the Case
+    // Log on a small window drops `rightReserved` to 0, `partyPaneLayout` picks
+    // Rows mode, and the two collide. A left-click there opened the token menu
+    // for whichever member happened to be under the sheet — and with an invite
+    // pending, DECLINE sat entirely inside the overlap, so a click on the
+    // character sheet declined a party invite the player never saw.
+    //
+    // THE × IS THE ONLY CONTROL. `charSheetHitAt` answers null everywhere else
+    // on the panel, and those clicks are then eaten by the `overPanel` swallow
+    // below — which already includes the sheet's rect, so the button has to be
+    // tested above it either way.
+    if (point !== null && layout.sheet !== null) {
+      if (charSheetHitAt(layout.sheet, point.x, point.y) === 'close') {
+        event.preventDefault();
+        sheetVisible = false;
+        sheetCloseHovered = false;
+        requestDraw();
+        return;
+      }
+    }
+
+    // ═══ 5. THE PARTY PANE'S OWN CONTROLS ═══
     // ACCEPT and DECLINE, and a row that opens the token menu. Hit-tested
     // through `partyPaneHitAt`, which reads the same geometry the painter drew
     // with, so a button can never be one row off where it appears.
-    if (point !== null && layout.pane !== null && layout.party !== null) {
+    //
+    // SKIPPED ENTIRELY UNDER THE SHEET, for the reason spelled out in step 4 and
+    // in the right-click branch above: a control the player cannot see must not
+    // be pressable. The click falls through to the `overPanel` swallow, which is
+    // the correct outcome for a click on a panel with nothing under the pointer.
+    if (
+      point !== null &&
+      layout.pane !== null &&
+      layout.party !== null &&
+      !inRect(layout.sheet, point.x, point.y)
+    ) {
       const hit = partyPaneHitAt(layout.party, layout.pane, point.x, point.y);
       if (hit !== null) {
         event.preventDefault();
@@ -3157,7 +3728,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // ═══ 5. AN OPEN AIM STILL TAKES THE PLAIN CLICK ═══
+    // ═══ 6. AN OPEN AIM STILL TAKES THE PLAIN CLICK ═══
     //
     // Written as a positive block rather than the bare guard it used to be, so
     // that the branch below can follow it: targeting keeps priority, and a player
@@ -3171,7 +3742,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // ═══ 6. THE PLAIN LEFT-CLICK: HIT THAT, OR WALK THERE ═══
+    // ═══ 7. THE PLAIN LEFT-CLICK: HIT THAT, OR WALK THERE ═══
     //
     // The LAST branch in this handler, and it has to be: every branch above
     // returns, and each one is a surface that overlays the map. Moved any higher
@@ -3218,6 +3789,12 @@ async function boot(): Promise<void> {
     }
   });
 
+  // THE CLASS CHOOSER NEEDS NO GUARD OF ITS OWN HERE, and that is worth stating
+  // rather than leaving to be re-derived: this listener suppresses the menu on
+  // the whole canvas unconditionally, and the modal is drawn on that canvas — so
+  // a right-click inside it is already silent, and mousedown step 0 above has
+  // already swallowed the press itself.
+  //
   // THE BROWSER'S OWN MENU IS SUPPRESSED ON THE CANVAS AND NOWHERE ELSE. The
   // listener is on `canvas`, not on `window` or `document`, so a right-click on
   // the command line still gets Paste and a right-click on the status line still
@@ -3370,6 +3947,12 @@ function applyServerMessage(msg: ServerMsg): void {
       if (msg.gameTurn !== turn?.gameTurn) {
         inspectCache.clear();
         refreshPinnedInspect();
+        // AND THE OPEN CHARACTER SHEET IS RE-ASKED ON THE SAME EDGE, for exactly
+        // the same reason the pin is: the sheet draws from that cache, so without
+        // this it goes blank one turn after it was opened and stays blank —
+        // nothing else re-asks about a body the pointer is not resting on. One
+        // frame per game turn while the panel is open; see `refreshSelfSheet`.
+        refreshSelfSheet();
       }
       turn = msg;
       bellEndsAt = msg.bellMs === null ? null : Date.now() + msg.bellMs;
@@ -3433,6 +4016,32 @@ function applyServerMessage(msg: ServerMsg): void {
       // `talents[0]` and muscle memory for which key is Ward Rush outranks any
       // ordering this renderer could impose.
       loadout = msg.talents;
+      // ═══ AND THIS FRAME IS THE CLASS CHOOSER'S ONLY ACKNOWLEDGEMENT ═══
+      //
+      // There deliberately is no "you are a Watchman now" frame. On a successful
+      // `choose_class` the server sends `loadout`, `cooldowns` and `resource` on
+      // this socket and then broadcasts `state` — and a NEW loadout is the frame
+      // that could only exist because the choice landed, which is what
+      // protocol.ts's `ClassOptionsMsg` asks the picker to wait for.
+      //
+      // NOTHING CLOSES IT OPTIMISTICALLY. A refusal (`bad_message` for an id this
+      // build does not have, `not_your_turn` for a second choice) leaves the modal
+      // exactly where it was, which is correct: the body is still wearing the
+      // provisional class and this screen is the only thing that changes that.
+      //
+      // The ordering in `hello` is what makes this safe on a first connection:
+      // the gateway sends `loadout` BEFORE `class_options`, so a fresh player's
+      // picker is put up after this line has already run with nothing to clear.
+      classOptions = null;
+      selectedClass = null;
+      pickerHovered = null;
+      // THE CHAT ROW COMES BACK HERE AND NOWHERE ELSE. This is the frame that
+      // could only exist because the choice landed, so it is the one place that
+      // knows the modal is genuinely gone — a refusal leaves the picker up, and
+      // handing the keyboard's only escape route back at that moment would undo
+      // the gate while the screen it protects is still on top. See
+      // `setCommandLineReachable`.
+      setCommandLineReachable(true);
       // Whatever was being aimed may not be in the new loadout, and its range
       // ring certainly is not. M3 sends this once, but M6's talent points make
       // it a mid-session frame and the cancel is what makes that safe.
@@ -3446,6 +4055,31 @@ function applyServerMessage(msg: ServerMsg): void {
       break;
     case 'resource':
       resource = msg.resource;
+      break;
+
+    case 'class_options':
+      // ═══ v8 — "PICK ONE", AND IT IS THE ONLY FRAME THAT PUTS UP A MODAL ═══
+      //
+      // A `ViewerMsg`, so it arrives unicast and only ever for the socket that
+      // owes a choice — there is nothing here to filter and no "is this for me?"
+      // test to build on top of it (protocol.ts makes broadcasting it a compile
+      // error server-side, which is where that guarantee is enforced).
+      //
+      // STORED WHOLESALE, IN THE SERVER'S ORDER, NEVER SORTED. protocol.ts asks
+      // for that order to be respected because "a card that moves between two
+      // frames is a card somebody misclicks, and this one is irreversible".
+      //
+      // The redraw is the caller's: `onMessage` calls `requestDraw()` after every
+      // applied frame, and the dirty flag folds this into that one callback.
+      // Nothing here arms a timer or sends anything — the picker is a screen, not
+      // a negotiation.
+      classOptions = msg.options;
+      // AND THE KEYBOARD IS GENUINELY TAKEN, NOT MERELY GATED. `onUi`'s early
+      // return stops the `t` KEY from focusing the command line; it cannot stop
+      // Tab or a mouse click on a row that is still sitting in the page. See
+      // `setCommandLineReachable` for the full route map — this is the edge that
+      // closes it, and `case 'loadout'` is the edge that opens it again.
+      setCommandLineReachable(false);
       break;
 
     // -----------------------------------------------------------------------

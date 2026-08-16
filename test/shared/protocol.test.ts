@@ -13,10 +13,12 @@ import {
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type {
   BroadcastMsg,
+  ClassOptionsMsg,
   CooldownsMsg,
   LoadoutMsg,
   ResourceMsg,
   ServerMsg,
+  ViewerMsg,
 } from '../../src/shared/protocol.ts';
 
 /**
@@ -471,6 +473,7 @@ describe('the inspect pair at the trust boundary', () => {
       { t: 'point', x: 3, y: 4 },
       { t: 'revive', dir: 'n' },
       { t: 'respawn' },
+      { t: 'choose_class', classId: 'watchman' },
       { t: 'party', action: 'invite', targetId: 'actor_b' },
       { t: 'inspect', targetId: 'actor_b' },
       { t: 'ping' },
@@ -547,5 +550,176 @@ describe('the inspect pair at the trust boundary', () => {
     const cannotSee: ServerMsg = { v: V, t: 'inspected', targetId: 'actor_b', view: null };
     expect(noSuchActor).toEqual({ ...cannotSee, targetId: 'actor_ghost' });
     expect(Object.values(ErrorCode)).not.toContain('not_visible');
+  });
+});
+
+/**
+ * v8's PAIR — `choose_class` inbound, `class_options` outbound.
+ *
+ * The inbound verb is the emptiest frame in the protocol after `respawn`: one
+ * bounded string and nothing else. Everything below is about what it REFUSES,
+ * because the choice it makes is IRREVERSIBLE — the accepted class is written to
+ * the character file on the next save and the chooser never appears again — so a
+ * frame that got through carrying somebody else's actor id would not just be
+ * wrong, it would be permanently wrong.
+ */
+describe('the choose_class frame at the trust boundary', () => {
+  /** The schema's own cap, deliberately restated rather than exported. */
+  const CLASS_ID_MAX_CHARS = 64;
+
+  it('accepts a well-formed choice and narrows it', () => {
+    const parsed = parseClientMsg({ v: V, t: 'choose_class', classId: 'watchman' });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.msg.t).toBe('choose_class');
+    // The narrowing is the assertion: `classId` is only reachable once `t` has
+    // discriminated the union, which is what makes the handler's signature safe.
+    if (parsed.msg.t !== 'choose_class') return;
+    expect(parsed.msg.classId).toBe('watchman');
+  });
+
+  it('accepts an id this build has never heard of — the LOOKUP refuses it, not zod', () => {
+    // `classId` is a bounded string rather than a `z.enum` of the three MVP ids,
+    // following `TalentSchema`'s stated precedent: baking the catalogue into the
+    // wire schema makes every content edit a protocol change. So a frame naming
+    // a class that does not exist is SHAPE-VALID here and is refused one step
+    // later by the server's own `classById` with `bad_message`. This test pins
+    // the seam: if somebody swaps the string for an enum, the coupling comes
+    // back and this line is where they find out.
+    expect(parseClientMsg({ v: V, t: 'choose_class', classId: 'enforcer' }).ok).toBe(true);
+  });
+
+  it('REFUSES a frame with no classId at all', () => {
+    expect(parseClientMsg({ v: V, t: 'choose_class' }).ok).toBe(false);
+    // Not nullable either. An absent field and a null one would be two spellings
+    // of "I did not choose", and the second always turns up in a hand-rolled
+    // client — where it would mean "assign me something", which is exactly the
+    // rotation this whole feature exists to replace.
+    expect(parseClientMsg({ v: V, t: 'choose_class', classId: null }).ok).toBe(false);
+  });
+
+  it('REFUSES an empty or oversized classId', () => {
+    expect(parseClientMsg({ v: V, t: 'choose_class', classId: '' }).ok).toBe(false);
+    // 64 is the boundary and it is inclusive; 65 is a place to park a payload.
+    const atLimit = 'a'.repeat(CLASS_ID_MAX_CHARS);
+    expect(parseClientMsg({ v: V, t: 'choose_class', classId: atLimit }).ok).toBe(true);
+    const overLimit = 'a'.repeat(CLASS_ID_MAX_CHARS + 1);
+    expect(parseClientMsg({ v: V, t: 'choose_class', classId: overLimit }).ok).toBe(false);
+  });
+
+  it('REFUSES a smuggled actorId rather than stripping it', () => {
+    // THE REFUSAL IS THE ASSERTION, NOT THE SHAPE. `strictObject` means an extra
+    // key is a rejected frame, not a quietly sanitised one — so this is asserted
+    // as `ok === false` and never as "the parsed message has no actorId", which
+    // would pass just as happily under a permissive `z.object` that had thrown
+    // the key away. A frame naming another actor is a client asking to choose
+    // somebody else's class, permanently, and it must fail loudly in the log.
+    for (const key of ['actorId', 'userId', 'playerId', 'charId', 'targetId']) {
+      const forged = parseClientMsg({
+        v: V,
+        t: 'choose_class',
+        classId: 'watchman',
+        [key]: 'actor_someone_else',
+      });
+      expect(forged.ok, `${key} must be rejected`).toBe(false);
+    }
+  });
+
+  it('REFUSES a frame with no `v` at all', () => {
+    // THE ONE THAT IS EASY TO GET WRONG, and the reason every schema in
+    // protocol.ts carries `v` as a `z.literal`. `parseClientMsg`'s version check
+    // is guarded by `'v' in candidate`, so a frame that simply omits the field
+    // slips past it entirely — the literal is the only thing making the envelope
+    // mandatory. Drop it from this one schema and a client from any deploy ever
+    // shipped could pick a class.
+    expect(parseClientMsg({ t: 'choose_class', classId: 'watchman' }).ok).toBe(false);
+    const stale = parseClientMsg({ v: V - 1, t: 'choose_class', classId: 'watchman' });
+    expect(stale.ok).toBe(false);
+    if (stale.ok) return;
+    expect(stale.error).toContain('protocol version mismatch');
+  });
+});
+
+describe('class_options is offered to one player, never to the room', () => {
+  const classOptions: ClassOptionsMsg = {
+    v: V,
+    t: 'class_options',
+    options: [
+      {
+        id: 'watchman',
+        name: 'The Watchman',
+        description: 'A serving constable on a long beat.',
+        // ASSET KEYS THAT ALREADY EXIST ON DISK, never derived from the name.
+        // ToME mangles its class name into a filename (Birther.lua:47-48) and
+        // survives a miss because it ships `unknown_32_bg.png`; this project has
+        // no fallback asset and an unresolved key is the LOUD violet box.
+        sprite: 'chr_player_watchman_s',
+        portrait: 'icon_character_the_watchman',
+        maxHp: 72,
+        resource: { kind: ResourceKind.Resolve, current: 0, max: 100, discrete: false },
+        talents: [],
+      },
+    ],
+  };
+
+  it('is a ViewerMsg and is NOT assignable to BroadcastMsg', () => {
+    // THIS IS THE ENFORCEMENT, NOT A COMMENT ABOUT IT. The gateway's
+    // `broadcast` takes a `BroadcastMsg`, so the `@ts-expect-error` below is
+    // what fails to compile — in the direction that matters — if somebody
+    // removes `class_options` from `ViewerMsg`. Whether a socket owes a choice
+    // is true for exactly one person; handed to the room, this frame puts a
+    // modal chooser over the map for four returning players who already have a
+    // class, at the barrier, mid-fight.
+    const asViewer: ViewerMsg = classOptions;
+    const asServer: ServerMsg = classOptions;
+    expect(asViewer.t).toBe('class_options');
+    expect(asServer.t).toBe('class_options');
+
+    // @ts-expect-error `class_options` is viewer-private: `BroadcastMsg` is
+    // `Exclude<ServerMsg, ViewerMsg>`, so this assignment must not compile. The
+    // suppression IS the assertion — delete it and the file stops building the
+    // day the frame becomes broadcastable.
+    const notBroadcastable: BroadcastMsg = classOptions;
+    expect(notBroadcastable).toBe(classOptions);
+  });
+
+  it('carries a className on InspectView only when it has an honest one', () => {
+    // `className` is a FIELD rather than a row because `rows` is an ordered,
+    // droppable list — a header that found the class by scanning rows for a
+    // label would break the moment a row was reordered, and it would break by
+    // silently drawing a nameless detective. Optional, so a monster's card and
+    // an old client both simply omit it.
+    const monster: ServerMsg = {
+      v: V,
+      t: 'inspected',
+      targetId: 'actor_b',
+      view: {
+        id: 'actor_b',
+        name: 'Husk',
+        kind: 'monster',
+        hp: 9,
+        maxHp: 14,
+        effects: [],
+        rows: [],
+      },
+    };
+    const self: ServerMsg = {
+      v: V,
+      t: 'inspected',
+      targetId: 'actor_a',
+      view: {
+        id: 'actor_a',
+        name: 'Dalt',
+        className: 'The Watchman',
+        kind: 'player',
+        hp: 72,
+        maxHp: 72,
+        effects: [],
+        rows: [{ label: 'Strength', value: '24' }],
+      },
+    };
+    if (monster.t !== 'inspected' || self.t !== 'inspected') return;
+    expect(monster.view?.className).toBeUndefined();
+    expect(self.view?.className).toBe('The Watchman');
   });
 });

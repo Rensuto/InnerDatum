@@ -42,12 +42,15 @@ import {
   VoiceState,
 } from '../../shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
+import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { downedView } from '../engine/downed.ts';
 import { EffectStatus, effectDef, effectsOn } from '../engine/effects.ts';
 import { aimTile, currentTile, turnsToImpact } from '../engine/projectile.ts';
 import type {
   ActorEffects,
   ActorView,
+  ClassOptionView,
+  ClassOptionsMsg,
   CooldownsMsg,
   EffectView,
   EffectsMsg,
@@ -66,6 +69,7 @@ import type {
   TurnActor,
   TurnMsg,
 } from '../../shared/protocol.ts';
+import type { ClassDef } from '../content/classes.ts';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { Actor, World } from '../world/world.ts';
@@ -709,6 +713,92 @@ export function projectResource(
       max: resource.max,
       discrete: resource.discrete,
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// v8 — THE PICKER. THE THREE CLASSES, TO THE ONE PLAYER WHO OWES A CHOICE
+// ---------------------------------------------------------------------------
+
+/*
+ * WHY THIS IS A PROJECTION AND NOT A CONSTANT.
+ *
+ * `CLASSES` is authored content and every field on it is server-side: the
+ * combat sheet, the `Talent` closures, the AP/MP budget, the downed sprite. A
+ * picker needs six of those fields and none of the rest, so the frame is built
+ * by the same field-by-field copy `toActorView` is — see its note. The day a
+ * `ClassDef` grows a `secretUnlockCondition` or an `aiHints`, the compiler stops
+ * at `toClassOptionView` and asks whether the client is allowed to know, instead
+ * of a spread putting it on the first screen a new player sees.
+ *
+ * IT IS A `ViewerMsg`, so `broadcast(projectClassOptions())` does not compile —
+ * see the note on `ClassOptionsMsg`. Handed to the room it puts a modal chooser
+ * over the map for four returning players who already have a class.
+ *
+ * NOTHING IS COMPOSED FRESH HERE. The four talents come through
+ * `loadoutViewFor`, which is the SAME function the hotbar's rows come from, so
+ * the icons on a card are the icons on the buttons. The resource comes through
+ * `toResourceView(sheetForClass(def))`, so `discrete` still arrives from
+ * `RESOURCE_RULES` and a resource cannot be pips on the picker and a bar in the
+ * HUD. The portrait comes from `PORTRAIT_BY_CLASS` above, which is already the
+ * turn card's and the party pane's table, so one face means one class on every
+ * surface in the game.
+ */
+
+/**
+ * "PICK ONE" — the three classes, in the order `content/classes.ts` authors them.
+ *
+ * AUTHORED ORDER, NEVER SORTED, and the client must not sort either
+ * (`ClassOptionsMsg.options` says so on the wire). A card that moves between two
+ * frames is a card somebody misclicks, and this choice is irreversible.
+ *
+ * TAKES NO VIEWER, deliberately: the three classes are public and the frame is
+ * byte-identical for everybody who receives one. What is per-viewer is WHETHER
+ * THEY RECEIVE ONE AT ALL, and that decision belongs to the gateway — it is a
+ * fact about a character file, which nothing in this directory may read.
+ */
+export function projectClassOptions(): ClassOptionsMsg {
+  return {
+    v: PROTOCOL_VERSION,
+    t: 'class_options',
+    options: CLASSES.map(toClassOptionView),
+  };
+}
+
+/**
+ * One class, field by field. Never a spread — see the block above.
+ *
+ * ═══ BOTH ASSET KEYS ARE CARRIED, NEITHER IS DERIVED FROM THE NAME ═══
+ * `sprite` is `ClassDef.sprite` verbatim and `portrait` is a lookup in the
+ * table this file already keeps. ToME derives its own birther icon by mangling
+ * the class name (`t.name:lower():gsub("[^a-z0-9]", "_")`, Birther.lua:47-48)
+ * and survives a miss because it ships `unknown_32_bg.png`. We have no such
+ * asset and cannot add one — client/public/assets/ is gitignored wholesale and
+ * an unresolved key renders as the LOUD violet missing-asset box, on a bare
+ * clone, on the first screen a new player ever sees.
+ *
+ * The `?? GENERIC_PORTRAIT` is the SAME fallback `portraitForPlayer` uses and
+ * not a second one, for exactly that reason: a class whose id is missing from
+ * the table must draw a real detective rather than a violet box. It is
+ * unreachable today — the table's keys are precisely the three `ClassId` values
+ * — and test/server/class-wiring.test.ts pins that it stays unreachable, so
+ * adding a fourth class cannot silently ship a generic face.
+ */
+function toClassOptionView(definition: ClassDef): ClassOptionView {
+  return {
+    id: definition.id,
+    name: definition.name,
+    description: definition.description,
+    sprite: definition.sprite,
+    portrait: PORTRAIT_BY_CLASS[definition.id] ?? GENERIC_PORTRAIT,
+    // The first number anybody compares. NOT rounded: `ClassDef.maxHp` is an
+    // authored integer, unlike a live actor's fractional `hp`.
+    maxHp: definition.maxHp,
+    // A FRESH sheet, so the pool reads as it will on the first turn — Reagents
+    // 8/8 because you walked in carrying eight vials, Resolve and Focus at 0
+    // because nothing in this game gives you a resource for existing.
+    resource: toResourceView(sheetForClass(definition)),
+    talents: loadoutViewFor(definition),
   };
 }
 

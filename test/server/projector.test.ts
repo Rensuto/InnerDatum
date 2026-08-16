@@ -6,14 +6,18 @@ import { BLEEDING, STUNNED } from '../../src/server/content/effects.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { stepProjectile } from '../../src/server/engine/projectile.ts';
 import {
+  projectClassOptions,
   projectEffects,
   projectParty,
   projectProjectiles,
   projectTurn,
 } from '../../src/server/view/projector.ts';
+import { CLASSES } from '../../src/server/content/classes.ts';
+import { RESOURCE_RULES } from '../../src/server/engine/talents.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { ActorRank, MONSTERS_TURN_ID } from '../../src/shared/protocol.ts';
+import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { TICKS_PER_GAME_TURN, energyGainPerTick, grantEnergy } from '../../src/shared/energy.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { Projectile } from '../../src/server/engine/projectile.ts';
@@ -668,6 +672,119 @@ describe('projectTurn', () => {
     const [card] = projectTurn(dalt, world, barrier(), null).actors;
     expect(Object.keys(card ?? {}).sort()).toEqual(
       ['downed', 'hp', 'id', 'isSelf', 'kind', 'maxHp', 'name', 'portrait', 'state'].sort(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// projectClassOptions — the picker
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FIRST SCREEN A NEW PLAYER EVER SEES, AND THE ONE THAT CANNOT BE UNDONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Two properties are load-bearing and neither is cosmetic.
+ *
+ *   THE ORDER IS THE AUTHORED ORDER. `ClassOptionsMsg` says on the wire that the
+ *   client must not sort, so the server has to be the thing that is stable. A
+ *   card that moves between two frames is a card somebody misclicks, and this
+ *   choice is irreversible.
+ *
+ *   EVERY ASSET KEY IS ONE THAT EXISTS. client/public/assets/ is gitignored
+ *   wholesale and an unresolved sprite id renders as the LOUD violet
+ *   missing-asset box. ToME derives its birther icons by mangling the class name
+ *   and survives a miss because it ships `unknown_32_bg.png`; this project has
+ *   no such asset and cannot add one. So the prefixes below are asserted as
+ *   LITERALS — a key derived from `definition.name` would fail here rather than
+ *   on somebody's first evening.
+ */
+describe('projectClassOptions', () => {
+  it('offers exactly the three authored classes, in the authored order', () => {
+    const msg = projectClassOptions();
+
+    expect(msg.t).toBe('class_options');
+    expect(msg.v).toBe(PROTOCOL_VERSION);
+    expect(msg.options).toHaveLength(CLASSES.length);
+    // Compared against `CLASSES` rather than against three string literals: the
+    // claim is "the picker's order IS the authored order", and a literal list
+    // would keep passing while the two silently drifted apart.
+    expect(msg.options.map((option) => option.id)).toEqual(CLASSES.map((c) => c.id));
+    expect(msg.options.map((option) => option.name)).toEqual(CLASSES.map((c) => c.name));
+    expect(msg.options.map((option) => option.maxHp)).toEqual(CLASSES.map((c) => c.maxHp));
+    // The prose is the `ClassDef`'s, verbatim — a picker that paraphrased would
+    // be a second copy of the fiction that nobody remembers to update.
+    expect(msg.options.map((option) => option.description)).toEqual(
+      CLASSES.map((c) => c.description),
+    );
+  });
+
+  it('carries only asset keys that already exist, never a derived one', () => {
+    for (const option of projectClassOptions().options) {
+      // LITERAL PREFIXES. `chr_player_` and `icon_character_` are both in
+      // src/client/main.ts's NEEDED_ASSET_PREFIXES; anything else is a request
+      // for a file nobody cut.
+      expect(option.sprite.startsWith('chr_player_')).toBe(true);
+      expect(option.portrait.startsWith('icon_character_')).toBe(true);
+      // ...and the sprite is the `ClassDef`'s own, not a rebuild of it.
+      const definition = CLASSES.find((c) => c.id === option.id);
+      expect(option.sprite).toBe(definition?.sprite);
+    }
+  });
+
+  it('shows every class its own face, never the generic detective', () => {
+    // `PORTRAIT_BY_CLASS` has a row per class and the projector falls back to
+    // `icon_character_the_detective` for anything missing. That fallback is
+    // correct for a body wearing a sprite no class authored — and WRONG on this
+    // screen, where it would mean a real class shipped without a portrait.
+    const portraits = projectClassOptions().options.map((option) => option.portrait);
+    expect(portraits).not.toContain('icon_character_the_detective');
+    expect(new Set(portraits).size).toBe(CLASSES.length);
+  });
+
+  it('shows exactly the four hotbar buttons, in hotbar order', () => {
+    // Slot 1 is `talents[0]` for the whole session, and the card must advertise
+    // the same four in the same order the hotbar will draw them — the icons on
+    // the card are the icons on the buttons because both come from
+    // `loadoutViewFor`.
+    for (const option of projectClassOptions().options) {
+      const definition = CLASSES.find((c) => c.id === option.id);
+      expect(option.talents).toHaveLength(4);
+      expect(option.talents.map((t) => t.id)).toEqual(definition?.loadout.map((t) => t.id));
+      expect(option.talents.map((t) => t.name)).toEqual(definition?.loadout.map((t) => t.name));
+      expect(option.talents.map((t) => t.icon)).toEqual(definition?.loadout.map((t) => t.iconId));
+    }
+  });
+
+  it('reads `discrete` from RESOURCE_RULES, so a pool cannot be pips here and a bar there', () => {
+    // game-design.md § 2 is emphatic that Reagents are a countable stock of 0-8
+    // rather than a bar: a bar makes 3-of-8 look like 37% of something
+    // continuous. If the picker decided `discrete` for itself, the Alchemist
+    // would be offered pips and then handed a bar — or the reverse.
+    for (const option of projectClassOptions().options) {
+      const definition = CLASSES.find((c) => c.id === option.id);
+      if (definition === undefined) throw new Error(`no ClassDef for ${option.id}`);
+      const rule = RESOURCE_RULES[definition.resource];
+
+      expect(option.resource.kind).toBe(definition.resource);
+      expect(option.resource.discrete).toBe(rule.discrete);
+      expect(option.resource.max).toBe(rule.max);
+      // The pool as it will read on the first turn — Reagents full because you
+      // walked in carrying eight vials, Resolve and Focus empty because nothing
+      // in this game gives you a resource for existing.
+      expect(option.resource.current).toBe(rule.start);
+    }
+  });
+
+  it('puts nothing on a card that the picker did not ask for', () => {
+    // The same key check `projectTurn` carries, and for the same reason: a
+    // `ClassDef` holds the combat sheet, the AP/MP budget, the downed sprite and
+    // twelve talent CLOSURES, and a spread would put the lot on the wire the day
+    // somebody stops copying field by field.
+    const [option] = projectClassOptions().options;
+    expect(Object.keys(option ?? {}).sort()).toEqual(
+      ['description', 'id', 'maxHp', 'name', 'portrait', 'resource', 'sprite', 'talents'].sort(),
     );
   });
 });

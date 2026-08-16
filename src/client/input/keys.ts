@@ -55,8 +55,11 @@
  *     caret and screen-reader support for free, and `isTextEntry` below has
  *     guarded against exactly this element since M2 (the comment there predicted
  *     it: "typing 'j' in the chat box walks your character south").
- *   - C toggles the Case Log and P the party panel. Both are dock surfaces that
- *     overlay the map; on a small window somebody will want the tiles back.
+ *   - M toggles the Case Log and P the party panel. Both are dock surfaces that
+ *     overlay the map; on a small window somebody will want the tiles back. (M4
+ *     put the log on C. v8 took C for the character sheet and moved it — see the
+ *     paragraph below, which says which of those two keys is a port and which is
+ *     a choice.)
  *   - PAGE UP / PAGE DOWN scroll the log, with SHIFT choosing the other lane.
  *
  * AND ONE MORE, ADDED AFTER REAL PLAY STRANDED SOMEBODY:
@@ -66,9 +69,33 @@
  *     server-side in every stage but Erased, so it cannot be used to skip the
  *     countdown that makes a rescue matter.
  *
+ * v8 ADDS ONE KEY AND MOVES ONE, AND THE TWO ARE THE SAME EVENT:
+ *   - C OPENS THE CHARACTER SHEET, AND IT IS A PORT. ToME's Classic HUD asks the
+ *     keybinding layer which key is bound to SHOW_CHARACTER_SHEET and prints the
+ *     mnemonic "#GOLD#C#LAST#haracter Sheet" only `if (key == "C")` — a branch
+ *     that is only meaningful for the shipped default (uiset/Classic.lua:270),
+ *     corroborated independently by the button text at
+ *     dialogs/debug/RandomObject.lua:417. That is the single ToME default with
+ *     hard in-source evidence which lands on a screen this game now has, so it
+ *     wins the letter and the Case Log moves.
+ *   - THE CASE LOG'S NEW KEY, M, IS A CHOICE AND NOT A PORT, and this file says
+ *     so rather than dressing it up. ToME does have a SHOW_MESSAGE_LOG action and
+ *     this same HUD triggers it (uiset/Classic.lua:238, with the tooltip branch
+ *     that would print its key at :281) — but the DEFAULT KEY for every action
+ *     lives in /data/keybinds/*.lua, and that directory was never fetched into
+ *     the reference clone: `grep -rn defineAction reference/t-engine4` returns
+ *     exactly two hits, both inside engine/KeyBind.lua's own definition of the
+ *     function, and zero call sites. There is nothing in the tree to read. M is
+ *     the conventional roguelike message key and it is chosen on that basis. The
+ *     day data/keybinds is fetched, this line either earns a citation or gets
+ *     corrected; until then it must not be quoted as ported.
+ *   The member name did not change — `ToggleLog` is still `ToggleLog`. Only its
+ *   row moved, which is the whole point of naming actions rather than keys.
+ *
  * THE LETTERS ARE THE ONES vi MOVEMENT LEFT FREE. h/j/k/l and y/u/b/n are spoken
- * for and always will be; r, f, t, c and p are not, and picking anything shifted
- * would collide with the capitals a shift-holding player still means as moves.
+ * for and always will be; r, f, t, c, m and p are not, and picking anything
+ * shifted would collide with the capitals a shift-holding player still means as
+ * moves.
  */
 
 import { Dir } from '../../shared/coords.ts';
@@ -116,6 +143,17 @@ export const UiCommand = {
    * only way to press it by accident is to already be erased.
    */
   Respawn: 'respawn',
+  /**
+   * Open — or put away — the character sheet (v8).
+   *
+   * ONE KEY THAT TOGGLES, not an open-here/close-there pair, and that follows
+   * from the sheet being a dock PANEL rather than a modal. main.ts's cancel chain
+   * backs out of exactly one thing per press and neither the Case Log nor the
+   * party pane is in it, so the sheet is not either — which leaves the key that
+   * opened it as the key that has to put it away. The close button on the panel
+   * is the mouse's copy of the same act.
+   */
+  ShowSheet: 'show_sheet',
   ToggleLog: 'toggle_log',
   ToggleParty: 'toggle_party',
 } as const;
@@ -235,7 +273,25 @@ const KEY_TO_UI: ReadonlyMap<string, UiCommand> = new Map([
   ['f', UiCommand.Respawn],
   ['t', UiCommand.Say],
   ['/', UiCommand.Say],
-  ['c', UiCommand.ToggleLog],
+  // v8 — THE CHARACTER SHEET, ON ToME'S OWN LETTER. PORTED, and the citation is
+  // a mnemonic rather than a bindings table: uiset/Classic.lua:270 asks which key
+  // is bound to SHOW_CHARACTER_SHEET and prints "#GOLD#C#LAST#haracter Sheet"
+  // only `if (key == "C")`, a branch that is only meaningful for the shipped
+  // default. Corroborated independently at dialogs/debug/RandomObject.lua:417,
+  // whose button reads "Show #GOLD#C#LAST#haracter Sheet".
+  ['c', UiCommand.ShowSheet],
+  // ...AND THAT IS WHY THE CASE LOG IS HERE NOW. THE KEY IS CHOSEN, NOT PORTED.
+  //
+  // ═══ SAID PLAINLY, BECAUSE A GUESS DRESSED AS A CITATION IS WORSE THAN A GUESS ═══
+  // ToME has a SHOW_MESSAGE_LOG action and this very HUD triggers it
+  // (uiset/Classic.lua:238, and the tooltip branch at :281 that would print
+  // whatever key it finds) — but the DEFAULT for every action lives in
+  // /data/keybinds/*.lua, which is not in the reference clone:
+  // `grep -rn defineAction reference/t-engine4` returns exactly two hits, both
+  // inside engine/KeyBind.lua's own definition of the function, and zero call
+  // sites. So there is no default to read, and M is the conventional roguelike
+  // message key chosen in its place. The MEMBER did not change, only its row.
+  ['m', UiCommand.ToggleLog],
   ['p', UiCommand.ToggleParty],
 ]);
 
@@ -288,8 +344,24 @@ function commandFor(event: KeyboardEvent): TurnCommand | undefined {
 /**
  * Bind the game keys on `target` (normally `window`).
  *
- * Returns a disposer so a future in-game modal can suspend input without this
- * module knowing that modals exist.
+ * ═══ THE DISPOSER IS FOR TEARDOWN. IT IS NOT HOW A MODAL SUSPENDS INPUT ═══
+ * This comment used to recommend exactly that, and following it breaks something
+ * real. main.ts registers `bindGameKeys` BEFORE its travel-cancel listener and
+ * documents that order as load-bearing: listeners on one target fire in
+ * registration order, so Escape reaches the ordered cancel chain with the walk
+ * STILL RUNNING and is consumed there. Dispose-then-rebind re-registers this
+ * handler AFTER the travel listener and inverts precisely that — one press then
+ * stops the walk and also cancels an aim, "one key doing two things, which is the
+ * one thing that chain exists to prevent". The bug needs travel, targeting and a
+ * modal alive in one session to reproduce, which is to say it would be found by a
+ * player and not by a test.
+ *
+ * A MODAL THEREFORE GATES IN main.ts's OWN HANDLERS, with an early return at the
+ * top of each. The v8 class chooser does that: every key still arrives here and
+ * still means what this file says it means, and the caller decides that while the
+ * chooser is up an arrow moves a card rather than a body. Which is the same
+ * division of labour targeting mode has had since M3 — the key names the ACTION,
+ * the caller owns the MODE.
  */
 export function bindGameKeys(target: EventTarget, handlers: KeyHandlers): KeyBinding {
   const handler = (event: Event): void => {

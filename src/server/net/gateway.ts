@@ -70,6 +70,21 @@ import { PROTOCOL_VERSION } from '../../shared/version.ts';
  * of a boundary this file may not reach across.
  */
 import { classById, classForJoin } from '../content/classes.ts';
+/**
+ * THE ONE ENGINE VALUE THIS FILE IMPORTS, AND IT IS A VOCABULARY WORD.
+ *
+ * `TurnEngine` is stated structurally and injected precisely so that net/ never
+ * calls into the scheduler — that rule is untouched. `StandingOrder` is not a
+ * capability, it is the name of a FIELD ALREADY ON THE BODY, and the body is
+ * something this file already writes (see `applyRestore`). Spelling it `'hold'`
+ * as a literal would typecheck identically and would be the one place in the
+ * process where the barrier's vocabulary was copied instead of shared.
+ *
+ * WHY THIS FILE NEEDS IT AT ALL: `parkForClassChoice` below. A player staring
+ * at the chooser owes no decision anybody may wait for, and `standingOrder` is
+ * the field engine/barrier.ts:302-303 already reads to mean exactly that.
+ */
+import { StandingOrder } from '../engine/actor.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
 // difference between "this file predates classes" and "this file names a class
@@ -80,6 +95,7 @@ import { UNASSIGNED_CLASS } from '../persist/saves.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   projectActors,
+  projectClassOptions,
   projectCooldowns,
   projectEffects,
   projectLoadout,
@@ -97,6 +113,7 @@ import type { EffectState } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type {
   BroadcastMsg,
+  ClientChooseClass,
   ClientHello,
   ClientInspect,
   ClientMove,
@@ -1581,7 +1598,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // would put `undefined` on the snapshot, and `snapshot.classId ??
         // binding.classId` in saves.ts would then do the right thing by
         // accident rather than by contract.
-        ...(actor.classId === undefined ? {} : { classId: actor.classId }),
+        //
+        // ═══ AND A PROVISIONAL CLASS IS NOT A CLASS. THE SENTINEL WINS ═══
+        // A body whose owner is still in `classChoiceOwed` is wearing whatever
+        // the rotation handed it four seconds ago, and `handleHello` flushes
+        // `saveNow('join')` immediately after building it. Writing that id would
+        // put an ANSWER on disk to a question nobody has been asked: the next
+        // `owes` read (`restore.classId === UNASSIGNED_CLASS`) would come back
+        // false, the chooser would never be offered again, and there is no other
+        // route to it in the whole protocol. So the file keeps saying "nobody
+        // has chosen" — which is the truth — until `handleChooseClass` lands a
+        // real one and deletes the id from the set.
+        //
+        // THE SENTINEL RATHER THAN OMITTING THE FIELD, because omitting falls
+        // back to `binding.classId`, and the binding is only `unassigned` by
+        // DEFAULT (saves.ts:1248). Saying it outright cannot be undone by a
+        // future change to that default.
+        ...(actor.classId === undefined
+          ? {}
+          : { classId: classChoiceOwed.has(actor.id) ? UNASSIGNED_CLASS : actor.classId }),
       });
     }
     return snapshots;
@@ -2201,7 +2236,35 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // is still IN the world — `snapshotPlayers` reads the actor table, so a save
     // queued after `removePlayer` would write nothing and the ten minutes this
     // character spent unattended would be the ten minutes that were lost.
+    //
+    // ═══ AND IT HAS TO HAPPEN BEFORE THE `classChoiceOwed` DELETE BELOW ═══
+    // NOT COSMETIC ORDERING. `snapshotPlayers` substitutes `UNASSIGNED_CLASS`
+    // for anybody still in that set, so this flush is what writes "nobody has
+    // chosen" for a player who never answered the screen. Delete first and the
+    // substitution does not fire, this save stamps the ROTATION'S class onto
+    // their file, and the choice they never made becomes permanent — which is
+    // precisely the bug the two lines below used to describe as correct.
     saveNow('recall');
+    // ═══ AND ONLY NOW DOES THE UNANSWERED CHOOSER GO ═══
+    // The body is gone for good, so the set entry has nothing left to be about,
+    // and without this it is the OTHER thing in the file that grows for the
+    // lifetime of the process (`spokeAtMs` above is the first).
+    //
+    // ═══ THE CHOICE IS NOT LOST WITH IT ═══
+    // This used to claim the opposite and call it correct: "by then
+    // `saveNow('join')` has written the PROVISIONAL class to their file, so
+    // `handleHello` correctly computes that they no longer owe a choice". That
+    // was the bug wearing a justification. `actorIdForUser` is a stable hash, so
+    // the same account gets this exact id back tomorrow — and a file naming a
+    // class the player never picked would close the screen forever, because
+    // `handleChooseClass` refuses anybody not in this set and nothing else in
+    // the protocol re-opens it. With the flush above writing the sentinel, the
+    // next `hello` re-offers the screen off the disk alone.
+    //
+    // A MERE DISCONNECT DOES NOT DO THIS, and the difference is the point: while
+    // the grace runs the body is still in the world, a reconnect RESUMES it, and
+    // somebody who dropped mid-chooser must find the screen where they left it.
+    classChoiceOwed.delete(actorId);
     opts.persist?.closeCharacter?.(actorId);
     try {
       engine.leave(actorId);
@@ -2348,13 +2411,200 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * or three friends who each reconnect once end up as three Watchmen. So the
    * increment is inside the branch that actually rolled for one.
    *
-   * ═══ THERE IS NO CHOOSER YET, AND THIS IS NOT ONE ═══
-   * The class-selection UI is the next job. This is the deterministic
-   * assignment that lets everything downstream — the hotbar, the save file, the
-   * portrait, the combat sheet — be wired and tested before there is a screen
-   * to pick from.
+   * ═══ THERE IS A CHOOSER NOW, AND THIS IS STILL NOT IT ═══
+   * `handleChooseClass` RE-CLOTHES a body this function already dressed; it
+   * never replaces this function and it never runs before it. THE BODY IS NEVER
+   * CLASSLESS — a token appears on four other screens the instant `addPlayer`
+   * returns, so it has to arrive wearing something, and "provisionally a
+   * Watchman for the four seconds it takes to pick" is a far smaller lie than a
+   * body with no sprite, no maxHp and no combat sheet.
+   *
+   * ═══ AND A CHOICE DOES NOT ADVANCE THE COUNTER ═══
+   * `handleChooseClass` deliberately leaves `classRotation` exactly where the
+   * fresh assignment above left it. The counter's own rule is two paragraphs up:
+   * it advances only on a fresh ASSIGNMENT, because it exists to spread the
+   * FALLBACK across joiners. A chosen class is not a rolled one, so advancing it
+   * would skew the fallback the next joiner gets — three friends who all pick
+   * Watchman would push the rotation to the Alchemist for a fourth who chose
+   * nothing at all, which is the opposite of what the counter is for.
    */
   let classRotation = 0;
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHO STILL OWES US A CHOICE. Actor ids, and nothing else in the process
+   * holds this.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Written once per body, in `handleHello`, and read in exactly two places:
+   * the unicast that offers the picker, and `handleChooseClass`, which uses
+   * membership as the whole of its authorisation check. Deleting the id IS the
+   * once-per-body guarantee — there is no flag on the actor and no field in the
+   * save file, because "has this socket been offered the screen yet" is a fact
+   * about a session and not about a character.
+   *
+   * PER-GATEWAY, LIKE `classRotation`. A restart clears it, and that is correct
+   * — but ONLY BECAUSE `snapshotPlayers` REFUSES TO WRITE THE PROVISIONAL CLASS
+   * WHILE AN ID IS IN HERE. That is not a detail, it is the whole reason this
+   * paragraph is true, and it used to be false in exactly the way that matters:
+   * `handleHello` flushes `saveNow('join')` for every genuinely new character,
+   * `fileFor` persists `snapshot.classId ?? binding.classId` (persist/saves.ts),
+   * and the body at that instant is already wearing the ROTATION'S class. The
+   * file therefore named a class seconds before the player had seen a single
+   * card, the next `owes` read came back false, and there is no other frame or
+   * command in the protocol that offers this screen — so a restart, or a recall,
+   * or a lid closing for eleven minutes, permanently assigned somebody's class
+   * for them. `snapshotPlayers` now writes `UNASSIGNED_CLASS` for anybody in
+   * this set, so the file keeps saying "nobody has chosen" until they have.
+   *
+   * A MERE DISCONNECT DOES NOT CLEAR IT. A player who closes the tab mid-chooser
+   * and comes back within the grace resumes the same body — `resolveActor`
+   * answers `{ resumed: true }` and the `hello` block that writes this set never
+   * runs — so if the id were dropped on the socket closing they would reconnect
+   * to a provisional class they never picked and no way to change it. Leaving it
+   * in is what makes the screen come back.
+   *
+   * THE RECALL DOES clear it, and that is a different event: the body is gone
+   * for good, and by then their file names the provisional class. See
+   * `recallBody`, where the reason is written out in full.
+   */
+  const classChoiceOwed = new Set<string>();
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A PLAYER READING THREE CLASS DESCRIPTIONS MUST NOT FREEZE THE FLOOR.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE BUG THIS EXISTS TO PREVENT, IN FULL, BECAUSE IT IS NOT OBVIOUS AND IT IS
+   * NOT PARTY-LOCAL. Parties scope the BARRIER — `surveyQuorum`, `bell` and
+   * `expire` all take a `PartyScope` — so it is tempting to argue that a joiner
+   * is a party of one and therefore nobody is waiting on them. The quorum half
+   * of that is true. The conclusion is false, because parties do not scope the
+   * WORLD CLOCK:
+   *
+   *   `isBlocking` (engine/barrier.ts:293-306) needs only `inQuorum` + energy at
+   *   the threshold + no pending intent + no standing order + `engagement > 0`,
+   *   and engagement is a LEVEL scalar — it does not care that the joiner is
+   *   thirty tiles from the fight. `tickLevel` then pushes them into `parked`,
+   *   and shared/energy.ts:647 makes every monster on the level `continue`
+   *   ("Nothing else gets to act after the first park … the world is just as
+   *   frozen as ToME's", :527-529). The party mid-fight next door can still move
+   *   and swing — `actsWhileBlocked` is true for players — so they spend the
+   *   whole of the joiner's Bell punching statues that never swing back. And the
+   *   party-of-one framing makes that WORSE rather than better: `bellDurationMs`
+   *   gives a lone straggler `BELL_MS.Solo` = two minutes, twice over before
+   *   Standing By finally lifts it.
+   *
+   * SO THE BODY IS PARKED ON A STANDING HOLD INSTEAD. `standingOrder` is the
+   * field the barrier already reads to mean "an order supplies this actor's
+   * action, so it never blocks" (engine/actor.ts:149-159, and `actPlayer` at
+   * engine/scheduler.ts:1316 auto-holds it). That is precisely the truth about
+   * somebody who has not started playing yet: present, in the world, bracing,
+   * and owing nobody a decision.
+   *
+   * NOT `standingBy`, and not `setConnected(false)`. The barrier is the ONLY
+   * writer of `standingBy` in the process (engine/barrier.ts:109-110) and this
+   * file must not become a second one; `setConnected(false)` would reach the
+   * same result by TELLING EVERY OTHER PLAYER THAT THIS ONE IS OFFLINE
+   * (`projectParty` sends `actor.connected` straight through), which is a lie
+   * about somebody who is sitting right there reading.
+   *
+   * IT DOES NOT MAKE THEM SAFE, and it is not meant to. Monsters still act on an
+   * unattended body — that is the same deliberate rule `recallBody` documents
+   * for a dropped socket. What it removes is the ability of one unanswered modal
+   * to stop the clock for everybody else.
+   *
+   * AND IT LASTS EXACTLY AS LONG AS THE SILENCE DOES. See `unparkOnCommand`: the
+   * FIRST turn verb off this socket takes it straight back off, because the park
+   * is a statement about somebody who has not started playing, not about
+   * somebody who has not finished the paperwork.
+   */
+  const parkForClassChoice = (actor: Actor): void => {
+    if (actor.kind !== 'player') return;
+    actor.standingOrder = StandingOrder.Hold;
+  };
+
+  /**
+   * They answered. Hand the body back to its owner.
+   *
+   * UNCONDITIONAL RATHER THAN PAIRED WITH A "DID WE PARK IT" FLAG: `hold` is the
+   * only standing order this build can issue and `parkForClassChoice` is its
+   * only writer, so clearing it here cannot cancel an order somebody else set.
+   * The day `travel`/`rest` become standing orders, this becomes a compare — and
+   * `StandingOrder` being a shared const rather than a literal is what will make
+   * that edit findable.
+   */
+  const releaseFromClassChoice = (actor: Actor): void => {
+    if (actor.kind !== 'player') return;
+    actor.standingOrder = null;
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A TURN VERB PROVES A HUMAN IS PLAYING. THE PARK COMES OFF, CHOICE OR NO.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE SAME DOCTRINE `barrier.noteCommand` ALREADY STATES, and deliberately the
+   * same wording: *"Any command clears it. Deliberately not 'any command that
+   * resolves legally' — someone who is at the keyboard trying things is present,
+   * and that is the only thing Standing By is measuring."* It is called BEFORE
+   * the engine rules on the frame, so a move into a wall counts.
+   *
+   * ═══ WHY THE PARK CANNOT SIMPLY LAST UNTIL THE CHOICE LANDS ═══
+   * "Owes a choice" and "is not playing" are not the same population. An
+   * ANONYMOUS socket owes one — `openCharacter` returns null with no verified
+   * identity, so `restore` is null and `owes` is true — and anonymous play is
+   * not a curiosity here: it is plain-browser development (docs/discord-activity
+   * .md § 7) and it is tools/e2e-m1.mjs, which sends a bare `hello` and then
+   * starts walking. Leaving those bodies parked would mean the barrier never
+   * waits for them, the world runs on past every command, and a shot fired at
+   * somebody standing still would land in the same pump that killed the shooter.
+   * That is not a hypothetical: it is what test/server/reap-broadcast.test.ts
+   * measures, and it caught this exact overreach.
+   *
+   * THE CHOICE IS STILL OWED. This clears the standing order and NOTHING else —
+   * the id stays in `classChoiceOwed`, the picker is still the only way out of
+   * it, and the file still keeps the sentinel. What it gives back is the
+   * barrier: from their first keypress on, the party waits for them like anybody
+   * else, which is the correct answer for somebody who is demonstrably there.
+   */
+  const unparkOnCommand = (session: Session): void => {
+    const actorId = session.actorId;
+    if (actorId === null || !classChoiceOwed.has(actorId)) return;
+    const body = world.getActor(actorId);
+    if (body !== undefined) releaseFromClassChoice(body);
+  };
+
+  /**
+   * THE PICKER, unicast, to the one player who owes a choice.
+   *
+   * ═══ IT IS A `ViewerMsg`, AND STRUCTURALLY SO ═══
+   * `broadcast(projectClassOptions())` does not compile. What is per-viewer is
+   * not the CONTENT — the frame is byte-identical for everybody, which is why
+   * `projectClassOptions` takes no arguments — but whether it arrives at all.
+   * Handed to the room, it would put a modal chooser in front of three people
+   * who are mid-fight and have had a class for a week.
+   *
+   * ═══ AN ANONYMOUS SOCKET IS OFFERED IT TOO, AND NOTHING IT PICKS PERSISTS ═══
+   * `openCharacter` returns null for a socket with no verified identity, so
+   * `restore` is null, so it owes a choice — and there is no file for the accept
+   * path to write to. That is deliberate and it is consistent with everything
+   * else an anonymous session gets: its hp does not persist, its cooldowns do
+   * not persist, its body is recalled when the grace expires. It is also the
+   * ONLY way the screen is reachable in plain-browser development and from
+   * tools/e2e-m1.mjs, where there is no Discord round trip to be verified by.
+   * The alternative — refusing the picker to anonymous play — would make the
+   * feature untestable by hand on the machine it is developed on.
+   */
+  const sendClassOptions = (session: Session): void => {
+    const actorId = session.actorId;
+    if (actorId === null) return;
+    // MEMBERSHIP IS THE WHOLE GUARD, here and in `handleChooseClass`. One
+    // predicate, asked in both places, so the screen can never be offered to
+    // somebody whose choice would then be refused.
+    if (!classChoiceOwed.has(actorId)) return;
+    send(session.socket, projectClassOptions());
+  };
 
   const classFor = (restore: CharacterRestore | null, who: string): ClassDef => {
     const saved = restore?.classId ?? null;
@@ -2592,6 +2842,43 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (actor.kind === 'player' && actor.classId !== undefined) {
         engine.attachClass?.(actor.id, actor.classId);
       }
+
+      // ═══ AND DOES THIS BODY OWE US A CHOICE? A THREE-VALUED READ ═══
+      // Three states of the character file mean "nobody has ever picked": there
+      // is no file at all (a first-ever join, or an anonymous socket), the file
+      // has no class field, or the file holds `UNASSIGNED_CLASS` — the sentinel
+      // `fileFor` wrote unconditionally before classes were wired in, which
+      // every character file already on disk therefore holds.
+      //
+      // ═══ `classById(saved) === undefined` IS THE WRONG PREDICATE, AND THIS
+      //     EXACT CONFUSION HAS ALREADY CAUSED ONE REAL INCIDENT ═══
+      // It answers `undefined` for BOTH `'unassigned'` AND a class this build
+      // deleted or renamed. persist/saves.ts:1110-1124 records what that cost
+      // the first time: the dangling-class warning — whose stated purpose is to
+      // be the ONLY evidence a class was renamed — fired for every returning
+      // player on the first evening after deploy, N false alarms drowning the
+      // one genuine case. Reusing it HERE would be the same mistake with far
+      // sharper teeth: the day a class id is renamed, every returning player
+      // would be shown the chooser, and the accept path would then OVERWRITE
+      // their file with whatever they picked. A save is not recoverable from a
+      // screen somebody was never supposed to see.
+      //
+      // So a DANGLING id does not owe a choice. It keeps `classFor`'s
+      // substitute-and-log path — its owner plays on tonight, wearing a
+      // stand-in, and the warn line is the evidence for whoever renamed the
+      // class. That is a decision for a deploy, not for the player.
+      const owes =
+        restore === null || restore.classId === null || restore.classId === UNASSIGNED_CLASS;
+      if (owes) {
+        classChoiceOwed.add(actor.id);
+        // AND THE BODY IS PARKED IN THE SAME BREATH. See `parkForClassChoice`:
+        // without this line one player reading three class descriptions stops
+        // every monster on the level for two minutes at a time, for everybody.
+        // The two writes belong together and are never made apart — the set says
+        // "we still owe them a screen" and the standing order says "so do not
+        // wait on them", and either one alone is a bug.
+        parkForClassChoice(actor);
+      }
     }
     engine.setConnected(actor.id, true);
 
@@ -2619,6 +2906,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // whether the actor behind it is new.
     sendLoadout(session);
     sendHotbarIfChanged(session);
+
+    // THE PICKER, for the one player who owes a choice, and outside the
+    // on-change rule for the same stated reason as everything around it: this
+    // socket has seen nothing yet. Silent for everybody else — see
+    // `sendClassOptions`, where the set membership is checked.
+    sendClassOptions(session);
 
     // THE TWO SNAPSHOTS, unicast, and again outside the on-change rule for the
     // same reason: this socket has seen nothing. The memo compares against the
@@ -2704,6 +2997,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before moving');
       return;
     }
+    // A KEY WAS PRESSED, SO THE BARRIER IS THEIRS AGAIN. See `unparkOnCommand`
+    // — and it goes above `submitMove` on purpose, because trying to walk into a
+    // wall is still somebody at the keyboard.
+    unparkOnCommand(session);
 
     const result = engine.submitMove(actorId, msg.dir);
     if (!result.ok) {
@@ -2745,6 +3042,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before using a talent');
       return;
     }
+    // See `handleMove`: a talent that is out of range still proves somebody is
+    // driving this body, so the class-choice park comes off before the ruling.
+    unparkOnCommand(session);
 
     const result = engine.submitTalent(actorId, msg.talentId, msg.target);
     if (!result.ok) {
@@ -2768,6 +3068,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.NotAuthenticated, `send hello before ${verb}`);
       return;
     }
+    // See `handleMove`. `commit` and `hold` are the two frames that exist ONLY
+    // to say "I am here and I have decided", so if any verb releases the
+    // class-choice park these two must.
+    unparkOnCommand(session);
 
     const result = verb === 'commit' ? engine.commit(actorId) : engine.hold(actorId);
     if (!result.ok) {
@@ -3242,6 +3546,213 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `choose_class` — "I will be the Watchman." ONCE PER BODY, AND THE SERVER
+   * DECIDES.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * IT READS NOTHING FROM THE FRAME BUT `classId`. There is nothing else on it
+   * to read: `ChooseClassSchema` is a `strictObject` of `{v, t, classId}`, so a
+   * smuggled `actorId` is REJECTED rather than stripped. Identity is
+   * `session.actorId`, exactly as with `move` and `respawn`.
+   *
+   * ═══ THE ORDER OF THE THREE CHECKS, AND WHY EACH CODE IS THE ONE IT IS ═══
+   *   1. `classById(msg.classId)` undefined -> `bad_message`. zod deliberately
+   *      accepts a well-formed frame naming a class this build has never heard
+   *      of (protocol.ts states the reason: baking the catalogue into the wire
+   *      schema would make every content edit a protocol change), so this lookup
+   *      is the ONLY thing refusing it. `bad_message` rather than a game-rule
+   *      code because nobody's picker can produce it — the ids came off the
+   *      `class_options` frame this same server sent.
+   *   2. Not in `classChoiceOwed` -> `not_your_turn`, with the server's own
+   *      sentence, in the shape `handleRespawn` uses. It means what that one
+   *      means: *not now*. You already have a class — either you picked one
+   *      moments ago or you walked in with one on file.
+   *   3. NOT ON YOUR FEET -> `not_your_turn`, AND THE OFFER STANDS. New, and it
+   *      is a correctness check rather than a nicety. A body that has not
+   *      answered the chooser is parked on a standing hold, NOT protected: a
+   *      monster can put it on the floor while the modal is up (see
+   *      `parkForClassChoice`). Re-clothing a Downed body would write the CHOSEN
+   *      class's sprite over one whose `DownedRecord.upSprite` still remembers
+   *      the PROVISIONAL one (engine/downed.ts:396), and `revive`/`standUp`
+   *      (:528, :690) would then put the wrong class back on its feet — for the
+   *      rest of the session, with `projectTurn`'s portrait derived from
+   *      `actor.sprite` and `inspect`'s `className` derived from `actor.classId`
+   *      disagreeing permanently. It would also broadcast a full green bar under
+   *      a Downed marker. The id STAYS in `classChoiceOwed`, so the screen is
+   *      still owed and still answerable the moment they are up again.
+   *   4. No fourth check. `helloDone` and the rate-limit bucket already gate
+   *      every non-hello branch above the dispatch switch, so an unauthenticated
+   *      socket never reaches this function at all.
+   *
+   * NO NEW `ErrorCode` MEMBER, deliberately. version.ts's 7 -> 8 entry now
+   * states in writing that reusing the two existing codes is what keeps the bump
+   * argument down to a single reason; adding a third would contradict a comment
+   * that is in the file.
+   *
+   * ═══ REFUSING THE SECOND CHOICE IS A GAME RULE, NOT TIDINESS ═══
+   * `engine.attachClass` ends in an unconditional `sheets.set`
+   * (engine/talents.ts:872-875) and `world.reclothePlayer` used to set
+   * `hp = maxHp` outright. Reachable a second time those are a FULL resource
+   * pool and a FULL health bar on demand: a free second wind, available to
+   * anyone with a devtools console, in the middle of a fight. The wire cannot
+   * express that rule (the frame is legal, the id is real), so this membership
+   * test is the whole of it.
+   *
+   * ═══ AND THE MEMBERSHIP TEST IS NO LONGER THE ONLY THING HOLDING IT ═══
+   * It used to be, and the argument underneath it — "the body is undamaged by
+   * construction, so the fill can only ever compute maxHp from maxHp" — was
+   * false in two ways this handler never checked. A RETURNING player is restored
+   * from their file (`applyRestore`) and THEN offered the chooser, because every
+   * character file written before classes existed holds `UNASSIGNED_CLASS`; and
+   * a body whose owner is reading the modal is still in the world, where things
+   * can hit it. Both halves are now closed where the value is actually minted
+   * rather than here: `reclothePlayer` fills only a body that was already at its
+   * ceiling and otherwise clamps, and the `attachClass` seam (src/server/main.ts)
+   * carries the spent share of the old pool into the new one. THE FIRST choice
+   * on a battered body is therefore not a heal either.
+   *
+   * NON-PUMPING, like `inspect` and `party`'s refusal path: choosing a class
+   * costs no energy, queues no intent and draws no RNG. A frame that costs the
+   * sender nothing must not be a way to make the server advance the world.
+   */
+  const handleChooseClass = (session: Session, msg: ClientChooseClass): void => {
+    // A NARROWING, NOT A GATE. The dispatch switch sits below the `helloDone`
+    // check, so this branch is unreachable without an actor; the compiler still
+    // needs the null gone, and answering honestly beats a non-null assertion.
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before choosing a class');
+      return;
+    }
+
+    const definition = classById(msg.classId);
+    if (definition === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'no such class');
+      return;
+    }
+
+    if (!classChoiceOwed.has(actorId)) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'class refused: this character already has a class',
+      );
+      return;
+    }
+
+    // ═══ ON YOUR FEET FIRST. THE OFFER SURVIVES THE REFUSAL ═══
+    // `!alive` is Downed AND Erased, both: `goDown` sets `alive = false` beside
+    // `hp = 0` (engine/downed.ts:401-402) and an erased body is not alive
+    // either, so one read covers both without net/ learning the survival table's
+    // shape. THE ID IS DELIBERATELY LEFT IN `classChoiceOwed` — this is "not
+    // now", not "never", and a player who is picked up or presses `f` out of
+    // Erased must find the screen still waiting. See check 3 in the doc block
+    // for why re-clothing a body on the floor corrupts its class permanently.
+    const body = world.getActor(actorId);
+    if (body !== undefined && !body.alive) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'class refused: you are on the floor — get back on your feet first',
+      );
+      return;
+    }
+
+    // THE BODY. `reclothePlayer` is the one narrow exception to `addPlayer`'s
+    // "reattach, never re-clothe" rule and its doc block says why.
+    //
+    // THE ANSWER IS CHECKED RATHER THAN DISCARDED, and the ORDER is the point:
+    // nothing below this line is undoable. If the body is not in the world (it
+    // was recalled between the frame being sent and being read), attaching a
+    // sheet would leave one keyed to a dead id, deleting the set entry would
+    // burn the one choice, and `saveNow` would write a class onto a body that no
+    // longer exists. Answering `internal` and changing NOTHING is the honest
+    // outcome — the same shape `handleInspect` uses for the same cause.
+    if (!world.reclothePlayer(actorId, overlayFor(definition))) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+    // THE SHEET, through the injected seam (`TurnEngine.attachClass`) and never
+    // by importing engine/talents.ts into net/. Same reason `hello` attaches it
+    // this way: this file knows WHICH class a body is and must not learn what a
+    // class DOES.
+    engine.attachClass?.(actorId, definition.id);
+    // ONCE PER BODY. Deleting the id is the whole of that guarantee; from here
+    // on this socket gets the `not_your_turn` above.
+    classChoiceOwed.delete(actorId);
+    // AND THE BODY IS HANDED BACK TO ITS OWNER, in the same breath the set entry
+    // goes — the two writes are made together in `hello` and undone together
+    // here. Left in, the standing hold would auto-hold this player every turn
+    // for the rest of the session (engine/scheduler.ts:1316): they would never
+    // block, the party would never wait for them, and every key they pressed
+    // would land on a body that had already braced.
+    if (body !== undefined) releaseFromClassChoice(body);
+
+    // THE HOTBAR IS DIFFERENT NOW, and both frames have to be resent. The
+    // loadout is normally sent exactly once per connection because M3 loadouts
+    // are fixed — but that is a property of the CALL SITE in `hello`, not of the
+    // function: `sendLoadout` carries no once-guard, so calling it again simply
+    // replaces the client's bar wholesale, which is exactly what the frame is
+    // shaped for. `sendHotbarIfChanged` follows because the resource pool the
+    // new sheet brought is a different pool with a different maximum, and its
+    // memo compares against what this socket was last sent.
+    sendLoadout(session);
+    sendHotbarIfChanged(session);
+
+    // ═══ THE BOARD, BECAUSE `sprite` AND `maxHp` TRAVEL ONLY ON `ActorView` ═══
+    // No delta carries either one. This is the same deliberately dumb answer
+    // `needsFullResync` gives and the same one the rename path in `hello` gives
+    // at :2669-2677 — resend the actor list and let it cost a few KB once.
+    broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
+    // ═══ AND THE SKY WITH IT — THE CLIENT CLEARS ITS ORBS ON `state` ═══
+    // src/client/main.ts's `case 'state'` runs `clearProjectiles()`, so the
+    // broadcast above wipes every orb from every screen that receives it, and
+    // the memo would then ACTIVELY SUPPRESS the correction:
+    // `broadcastProjectilesIfChanged` compares against the last thing broadcast
+    // and the orb list has not changed. The party would be dodging a shot they
+    // can no longer see because somebody in the next room finished character
+    // creation. This is not rediscovered reasoning — it is copied from the
+    // rename path, and every `state` broadcast in this file carries the sky.
+    sendProjectilesIfAny();
+
+    // ═══ AND THE TURN STRIP, FOR THE SAME REASON THE BOARD WENT ═══
+    // `TurnActor` carries its OWN hp, maxHp and portrait — protocol.ts justifies
+    // that redundancy with "this frame goes out on every barrier change, which is
+    // when those numbers change anyway, so the card cannot sit stale next to a
+    // fresher bar". `choose_class` is the one event that falsifies it: it is
+    // deliberately non-pumping, and even a later pump would not help, because
+    // `turnKey`'s six terms (gameTurn, engagement, whoseTurn, committed,
+    // standingBy, bellArmed) contain none of the three. `projectTurn` builds the
+    // portrait from `actor.sprite`, which the re-clothe just rewrote.
+    //
+    // WITHOUT THIS: a player who picks the Alchemist on a quiet floor sees an
+    // Alchemist hp bar and an Alchemist character sheet beside a turn card still
+    // reading the provisional Watchman's 34/34 and their portrait — until their
+    // first step, which out of combat can be minutes.
+    //
+    // THE MEMO IS CLEARED RATHER THAN BYPASSED, so the frame goes to EVERYBODY.
+    // Every other player's strip carries this card too, and a unicast would fix
+    // it for the one person who cannot see their own portrait anyway.
+    lastTurnKey = null;
+    broadcastTurnIfChanged(engine.turnState());
+
+    // ═══ IMMEDIATE, NOT THE 5s DEBOUNCE, AND THE LABEL IS `join` ═══
+    // For the reason `hello` flushes at :2656-2662: the file has to exist before
+    // the first thing that changes it does, and the five seconds a debounce
+    // would cost are precisely the window in which a brand-new character has no
+    // record of what it chose to be. The label is reused rather than added to
+    // `REASON_BY_LABEL` in persist/saves.ts because CHARACTER CREATION IS THE
+    // JOIN — it is the same event finishing, a few seconds later, and a second
+    // label would be two names for one moment.
+    saveNow('join');
+
+    // `classRotation` IS DELIBERATELY NOT ADVANCED HERE. See its own note: it
+    // spreads the FALLBACK across joiners, and a chosen class is not a rolled
+    // one.
+  };
+
+  /**
    * `revive` — stand the ally in `dir` back up.
    *
    * The gateway decides NOTHING here, exactly as with `talent`: adjacency,
@@ -3261,6 +3772,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before reviving');
       return;
     }
+    // See `handleMove`: reaching for a friend on the floor is the least
+    // ambiguous "I am here" in the game, so the class-choice park comes off.
+    unparkOnCommand(session);
 
     // Narrowed rather than lifted into a local: `const submit = engine.submitRevive`
     // detaches the method from its object, which is `@typescript-eslint/unbound-method`
@@ -3513,6 +4027,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // legitimately two different answers.
       case 'inspect':
         handleInspect(session, msg);
+        return;
+      // ALSO NON-PUMPING, and self-only: the frame names a class and nothing
+      // else, and the body it dresses is the one this socket owns. It is refused
+      // outright for anybody who already has a class — see `handleChooseClass`.
+      case 'choose_class':
+        handleChooseClass(session, msg);
         return;
       case 'revive':
         handleRevive(session, msg);
