@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// Stat-block SHAPE ported from t-engine4 game/modules/tome/data/general/npcs/vermin.lua:22-77
-//             (`combat = { dam=, atk=, apr= }`, `combat_armor`, `combat_def`, `stats`,
-//              `resists`, `global_speed_base`, `rank`, `ai_state = { ai_move = ... }`)
+// Ported from t-engine4 game/modules/tome/data/general/npcs/ant.lua:24-43 (BASE_NPC_ANT)
+//                                                              :53-60 (giant brown ant)
+//             t-engine4 game/modules/tome/data/general/npcs/losgoroth.lua:22-57 (BASE_NPC_LOSGOROTH)
+//                                                                        :59-70 (losgoroth)
+//             t-engine4 game/modules/tome/data/general/npcs/ghoul.lua:49-116 (the ghoul ladder)
+//             t-engine4 game/modules/tome/data/talents/misc/npcs.lua:723-747 (T_VOID_BLAST)
+//             t-engine4 game/engines/default/engine/ai/talented.lua:115-132 (ai_state.talent_in)
+//             t-engine4 game/engines/default/engine/interface/ActorTalents.lua:987-991
+//                                                              (getTalentProjectileSpeed)
 //             t-engine4 game/modules/tome/class/Actor.lua:1198-1204 (boss_rank_circles — the
 //             under-token ring keyed off `rank`, which is what ui_token_ring_elite.png is)
 //                                       :1701-1751 (the rank ladder: stat, level and life adjust)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
-//
-// The identity numbers (max_hp, attack_power, defense, move_speed, ai_profile) come from the
-// author's own Outer Index content, which is NOT GPL:
-//   outer-index-ren/outer-index-orthographic/outer-index-engine/content/enemies/{index_husk,
-//   index_wraith}.json
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -30,86 +31,133 @@
  * to say which numbers those two read, and where each number came from.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * WHERE THE NUMBERS COME FROM — THE MAPPING TABLE
+ * WHERE THE NUMBERS COME FROM — AND THIS FILE ONCE SAID SOMETHING ELSE
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The Outer Index enemy JSON is already turn-based shaped, and it is the
- * author's own canon, so it supplies IDENTITY. ToME supplies the CURVE. The two
- * meet field by field:
+ * READ THIS PARAGRAPH BEFORE TRUSTING ANY OLDER COMMENT YOU FIND IN GIT HISTORY
+ * FOR THIS FILE. Until this revision the header argued that the author's own
+ * Outer Index enemy JSON supplied IDENTITY and ToME supplied only the SHAPE —
+ * a mapping table with `max_hp` → `max_life`, `attack_power` → `combat.dam`,
+ * `move_speed` (px/s) → `global_speed_base`, and a row reading
+ * "`aggro_radius` — AUTHORED HERE: source is all 0". Every stat on all three
+ * creatures was then hand-authored under a rule about primaries staying at base
+ * 10 "unless the creature's own description demands otherwise".
  *
- * | Outer Index            | ToME                    | Where the shape is from        |
- * |------------------------|-------------------------|--------------------------------|
- * | `max_hp`               | `max_life`              | direct                         |
- * | `attack_power`         | `combat.dam` (rating)   | vermin.lua:50 `combat={dam=1,…}`|
- * | `defense`              | `combat_armor`          | vermin.lua:36 — SEE THE NOTE   |
- * | `crit_chance` 0.05     | `combat_physcrit` 5     | Combat.lua:1415-1427, pct points|
- * | `*_resistance_pct`     | `resists`               | vermin.lua:75, pct points      |
- * | `move_speed` (px/s)    | `global_speed_base`     | vermin.lua:36, normalised      |
- * | `melee_range` (px)     | reach in tiles          | ÷ TILE_PX (32)                 |
- * | `ai_profile`           | `AiProfile`             | the strings already match      |
- * | `aggro_radius`         | —                       | AUTHORED HERE: source is all 0 |
- * | —                      | `rank`                  | Actor.lua:1198, the ring       |
+ * That argument is now WITHDRAWN, not merely stale. Hand-authoring numbers on
+ * top of a faithfully ported formula engine is reinventing the wheel: ToME ships
+ * a bestiary that has been tuned against these exact formulas for fifteen years,
+ * and a hand-made mapping table cannot be tuned against anything. The direction
+ * is inverted:
  *
- * ───────────────────────────────────────────────────────────────────────────
- * `defense` IS PORTED AS `combat_armor`, AND THAT IS A DELIBERATE DEVIATION
- * ───────────────────────────────────────────────────────────────────────────
- * Structurally, Outer Index's `defense` is a FLAT subtraction applied AFTER the
- * percentage resistance —
+ *   ToME SUPPLIES THE NUMBERS. WE SUPPLY THE IDENTITY.
  *
- *     # systems/combat/combat_manager.gd:324, :342-344
- *     # Dofus-inspired formula: base * (1 + atk_pct) * (1 - res_pct) - flat_defense
- *     var resisted: float = base_damage * (1.0 - res_pct)
- *     var final_damage: int = maxi(1, int(floor(resisted)) - defense)
- *
- * — which is ToME's `flat_damage_armor` to the letter (damage_types.lua:404-409,
- * step 8 of the pipeline in damage.ts). The obvious port is therefore
- * `profile.flatDamageArmour`, and it is WRONG here, for one reason: that Godot
- * line floors at `maxi(1, …)` and ToME's floors at 0.
- *
- * Run the arithmetic. A default level-1 detective's swing is 4.408 damage
- * (test/server/derived.test.ts). Give the elite the flat 3 its `defense` would
- * imply and the blow lands for 4 − 3 = 1 through a floor ToME does not have, or
- * 0 through the floor it does. Outer Index survives this because its player
- * attack_power is 15-25 and its floor is 1; ToME level-1 numbers are 4-9 and its
- * floor is 0, so the same field deletes the hit.
- *
- * `combat_armor` is the stat ToME actually puts on its own low-level monsters
- * (vermin.lua:36, `combat_armor = 1, combat_def = 1`), and it is gated by
- * hardiness — base 30, so 70% of every blow lands no matter what (Combat.lua:1336
- * and the note in derived.ts). That is precisely the mechanism that lets armour
- * matter without making anything unkillable, which is the property `defense`
- * was carrying in the source engine. So: same intent, different stage, recorded
- * here rather than discovered in playtest.
- *
- * Consequence, stated so nobody "fixes" it: NOTHING in this roster sets
- * `flatDamageArmour`. Step 8 of the pipeline is unexercised by M3 content on
- * purpose. It is a gear stat, and gear is M6.
+ * The identity half is `id`, `displayName`, `description` and `sprite`, plus the
+ * damage TYPE where it carries meaning. Those four fields are byte-identical to
+ * what they were before this revision and they are the author's own; nothing in
+ * ToME's setting, naming or flavour text is copied (CLAUDE.md, the licensing
+ * note: take the NUMBERS and the BEHAVIOUR, the identity stays ours). Everything
+ * else — stats, armour, defence, weapon rating, accuracy, armour penetration,
+ * resists, speed, sight radius and AI cadence — is lifted from a real upstream
+ * NPC entry with a `file:line` citation and the upstream field name kept verbatim
+ * in the comment so `grep resolvers.mbonus reference/t-engine4` still finds the
+ * source in six months.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * `defense` IS ALSO NOT `combat_def`
+ * THE ADOPTION TABLE — WHICH UPSTREAM CREATURE EACH SLOT TOOK
  * ───────────────────────────────────────────────────────────────────────────
- * ToME's `combat_def` is DODGE — it moves the to-hit roll, not the damage. A
- * monster that carried `defense` there would be both hard to hit and, once the
- * party invested in accuracy, no tougher at all. Monster dodge in this port
- * comes from Dexterity alone (Combat.lua:1245, at 0.35/point), which is where
- * ToME puts it.
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * WHAT IS INVENTED, AND WHY EACH INVENTION EXISTS
- * ═══════════════════════════════════════════════════════════════════════════
+ * | ours              | upstream                | why that one                  |
+ * |-------------------|-------------------------|-------------------------------|
+ * | `index_husk`      | giant brown ant         | ToME's own first-floor melee  |
+ * |                   | ant.lua:53-60 on        | trash: `level_range = {1, 15}`,|
+ * |                   | BASE_NPC_ANT :24-43     | `rarity = 1`, rank 1, and     |
+ * |                   |                         | `global_speed_base = 0.9` —   |
+ * |                   |                         | upstream's own way to write   |
+ * |                   |                         | "slow and hollow".            |
+ * | `index_wraith`    | losgoroth               | a rank-2 void elemental that  |
+ * |                   | losgoroth.lua:59-70 on  | grants exactly one bolt talent|
+ * |                   | BASE_NPC_LOSGOROTH      | (T_VOID_BLAST) and buys its   |
+ * |                   | :22-57, plus            | survival with DODGE not       |
+ * |                   | misc/npcs.lua:723-747   | armour. `level_range = {1,nil}`|
+ * | `index_husk_elite`| the ghoul → ghast →     | ToME's cleanest three-tier    |
+ * |                   | ghoulking ladder        | ladder of the SAME creature,  |
+ * |                   | ghoul.lua:49-116        | which is what an elite is here|
  *
- * The Outer Index blocks carry no primary stats, no accuracy, and no aggro
- * radius (`aggro_radius` is 0 on every single file — docs/data-schemas.md:213
- * already records that the source value is dead). Those are authored here. The
- * rule they are authored under:
+ * ───────────────────────────────────────────────────────────────────────────
+ * THE ELITE IS A DELTA, NOT A COPY
+ * ───────────────────────────────────────────────────────────────────────────
+ * `index_husk_elite` does NOT adopt the ghoulking's absolute numbers — a
+ * level-15 rank-3 undead dropped onto floor one would be a different game. It
+ * adopts the ghoul→ghoulking DELTA and applies it to the husk's own block:
  *
- *   EVERY PRIMARY STAYS AT ToME's BASE 10 (load.lua:182-189) UNLESS THE
- *   CREATURE'S OWN DESCRIPTION DEMANDS OTHERWISE, AND THE DEVIATION IS WRITTEN
- *   DOWN NEXT TO IT.
+ *   | field   | ghoul (:63, :55) | ghoulking (:101, :93) | delta   | husk → elite |
+ *   |---------|------------------|-----------------------|---------|--------------|
+ *   | `dam`   | 10               | 30                    | ×3      | 5 → 15       |
+ *   | `atk`   | 5                | 8                     | +3      | 15 → 18      |
+ *   | `apr`   | 3                | 4                     | +1      | 7 → 8        |
+ *   | `armor` | 2                | 3                     | +1      | 1 → 2        |
+ *   | `def`   | 7                | 10                    | +3      | 1 → 4        |
  *
- * That keeps the sheets readable — a reader can see at a glance that a husk is
- * ±2 from a person in two stats and identical in the rest — and it keeps the
- * derived numbers close to the hand-traceable vectors in test/server/derived.test.ts.
+ * `dam` is a RATIO and the other four are ADDITIVE because that is how the two
+ * numbers actually relate upstream, not because it was convenient: 10 → 30 is a
+ * clean tripling while 5 → 8 is not a clean anything. Every field the ladder
+ * does NOT move — stats, `infravision`, `global_speed_base`, `max_life` — the
+ * elite inherits from the husk unchanged, which is why the elite is 0.9 speed
+ * and sight 10 exactly like the creature it upgrades.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * THE SIX DELIBERATE DEVIATIONS, ALL OF THEM LIVE FIELDS
+ * ───────────────────────────────────────────────────────────────────────────
+ * Numbered here so a reader can find all six in one place and so nobody has to
+ * grep for the word "invented" to know what is ours. THIS LIST USED TO SAY
+ * THREE, and the missing three were documented only at their own site — which is
+ * a trap for the next re-base pass, because a reader who trusts a short list
+ * takes upstream's numbers for everything it does not name and quietly restores
+ * an aggro of 10 and a reach of 10 on the creature this work item exists to calm
+ * down. Every field below deviates from a real upstream number:
+ *
+ *   1. EVERY `maxHp` IS HELD at 25 / 22 / 60 rather than ported. See the note on
+ *      each template. In one sentence: the damage sheet is not wired to the
+ *      scheduler yet, so porting the losgoroth's `rngavg(40,60)` = 50 onto the
+ *      wraith would make it a ten-hit kill for a party that currently kills it
+ *      in four — on the creature that was just reported as too strong.
+ *   2. THE WRAITH'S `globalSpeed` STAYS 0.84. Upstream's losgoroth has no
+ *      `global_speed_base` at all, i.e. 1.0.
+ *   3. THE WRAITH'S `minRange` 2 STAYS. ToME has no dead zone whatsoever; its
+ *      ranged tactic preset is `escape=3, closein=0` (tome/resolvers.lua:901)
+ *      and its bolt talents have `range` but no minimum. Citing upstream for a
+ *      dead zone would be a false citation.
+ *   4. THE WRAITH'S `aggroRange` IS HELD AT 8. Upstream is losgoroth.lua:34
+ *      `infravision = 10`. Full note at the field.
+ *   5. THE WRAITH'S `attackRange` IS HELD AT 6. T_VOID_BLAST authors `range = 10`
+ *      (misc/npcs.lua:730). Full note at the field — and read it, because the
+ *      number is a legality ceiling the AI never reaches.
+ *   6. THE WRAITH'S `Darkness: 50` RESIST IS OURS. Upstream's losgoroth.lua:46
+ *      is `ARCANE = 100` and carries no darkness row at all; we do not have
+ *      Arcane and would not ship a 100 on floor one if we did.
+ *
+ * A seventh deviation lives one file over and belongs in any reading of this
+ * roster: the orb `projSpeed` puts in the air is a `bolt` and T_VOID_BLAST is a
+ * `beam` (misc/npcs.lua:734, Target.lua:583-584). Ours stops on the first body
+ * in the line; upstream's clips everyone it passes and flies on. It is DEVIATION
+ * 1 in the header of src/server/engine/projectile.ts, with the reason.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * THE SHEET IS NOT WIRED TO THE SWING YET, AND THAT MATTERS FOR READING IT
+ * ───────────────────────────────────────────────────────────────────────────
+ * `monsterInit` below does NOT pass `damageMin`/`damageMax`, so every monster in
+ * this roster deals `DEFAULT_MONSTER_DAMAGE_MIN..MAX` = 3-6 through
+ * `scheduler.ts#strike`, with no to-hit roll, no armour and no resists. Every
+ * `weapon.dam` / `atk` / `apr` ported below is therefore INERT ON THE ATTACKER
+ * SIDE today; it is read by `derived.ts` for the inspect card, and by the TARGET
+ * side of the pipeline when a player talent hits this creature.
+ *
+ * That is recorded here rather than buried because it changes how the numbers
+ * read: an accuracy of 19 does not mean this creature never misses, it means
+ * this creature does not roll to hit at all — and neither does anything else.
+ * Moving the scheduler onto `combat.ts#attackTarget` is ONE change, not two (see
+ * the wiring note at the foot of engine/combat.ts: the Chebyshev range check and
+ * the Euclidean `canAttack` must move together), and it is out of scope here.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * TWO METRICS, AND WHY EACH TEMPLATE CARRIES TWO RANGES
@@ -137,12 +185,15 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * Frozen literals and two total functions over them. Nothing here reads a clock,
  * draws a random number, or touches the world; `monsterInit` returns a plain
- * `MonsterInit` so this module never has to import `world/`.
+ * `MonsterInit` so this module never has to import `world/`. The three
+ * `resolve*` helpers it calls are pure and RNG-free by construction — see the
+ * header of content/resolvers.ts for the half of each that was NOT ported.
  */
 
 import { AiProfile } from '../engine/actor.ts';
 import { DamageType } from '../engine/damage.ts';
 import { ActorRank } from '../../shared/protocol.ts';
+import { resolveLevelup, resolveMBonus, resolveRngAvg } from './resolvers.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { MonsterInit } from '../engine/actor.ts';
 import type { CombatSheet } from '../engine/combat.ts';
@@ -177,7 +228,7 @@ export type MonsterTemplate = {
   readonly hpRegen: number;
 
   // --- speed (both directions of ToME's model; D1 pins only players) ---------
-  /** Energy GAIN multiplier — `global_speed_base` (vermin.lua:36). */
+  /** Energy GAIN multiplier — `global_speed_base` (ant.lua:58). */
   readonly globalSpeed: number;
   /** Action COST multiplier. 1 for everything in M3. */
   readonly speedFactor: number;
@@ -197,29 +248,95 @@ export type MonsterTemplate = {
   /** ELITE: consecutive blocked turns before routing around its own kin. 0 = never. */
   readonly shoulderAfter: number;
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `proj_speed` — TILES PER GAME TURN, NOT ACTIONS PER TURN
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * How fast this creature's ranged attack TRAVELS. ABSENT MEANS INSTANTANEOUS,
+   * which is precisely what every attack in this game does today, so a template
+   * that omits it is byte-for-byte unchanged in behaviour. That is upstream's own
+   * design and not a compatibility shim — `proj_speed` is OPT-IN PER TALENT:
+   *
+   *     -- engines/default/engine/interface/ActorTalents.lua:987-991
+   *     function _M:getTalentProjectileSpeed(t)
+   *         if not t.proj_speed then return nil end
+   *         ...
+   *
+   * and tome/class/Actor.lua:6272-6274 prints the tooltip line as literally
+   * "Travel Speed: instantaneous" when the field is absent. Most bolts in ToME
+   * arrive the instant they are cast; the ones that travel say so.
+   *
+   * ═══ THE UNIT, WHICH IS THE ONE THING TO GET WRONG ═══
+   * NB this is the SAME MULTIPLIER as `EnergyActor.energyMod` and a DIFFERENT
+   * UNIT BY CONVENTION ONLY. `energyMod` 6 on a monster means six ACTIONS per
+   * game turn; `projSpeed` 6 on an orb means six TILES per game turn. The
+   * arithmetic underneath is identical — a projectile spends one action's worth
+   * of energy per tile it crosses (Projectile.lua:142, :168-172) — so
+   * tiles-per-turn falls out of the energy loop we already ported at
+   * src/shared/energy.ts:236-238 with no new maths. It is only the WORD for what
+   * one action buys that changes.
+   */
+  readonly projSpeed?: number;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `ai_state.talent_in` — A 1-IN-N CHANCE PER TURN, NOT A CADENCE
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     -- engines/default/engine/ai/talented.lua:122
+   *     if ... rng.chance(self.ai_state.talent_in or 6) ... then
+   *
+   * and upstream's own comment two lines above it, at :115:
+   * "Attempts to use a talent (chance in self.ai_state.talent_in <default 6)".
+   *
+   * ANYONE WHO READS THIS AS "ONE CAST EVERY N TURNS" MIS-PREDICTS DPS BY A
+   * FACTOR OF TWO in the tail and gets the feel completely wrong: a cadence is a
+   * metronome the player can count, and a 1-in-2 chance is a coin the player
+   * cannot. `talent_in = 2` fires twice in a row about a quarter of the time and
+   * goes quiet for three turns about an eighth of the time, and that unevenness
+   * is the thing that makes a ranged monster feel like a threat rather than like
+   * a timer.
+   *
+   * ABSENT means "every turn", which is both the current behaviour and the exact
+   * meaning of upstream's own `talent_in = 1` (`rng.chance(1)` is always true),
+   * so omitting it costs no draw and shifts no seeded stream.
+   */
+  readonly talentIn?: number;
+
   // --- combat ---------------------------------------------------------------
   /** Everything derived.ts, checkhit.ts and damage.ts read. */
   readonly combat: CombatSheet;
 };
 
 // ---------------------------------------------------------------------------
-// index_husk — THE MELEE CHASER
+// index_husk — THE MELEE CHASER, on ant.lua's giant brown ant
 // ---------------------------------------------------------------------------
 
 /**
  * "A half-erased citizen overwritten by Index pages bleeding through the Veil.
  * Slow, hollow, and hungry for contact."
  *
+ * ═══ WHY THE GIANT BROWN ANT ═══
+ * It is ToME's own answer to "what does a party meet on floor one": `rank = 1`
+ * (ant.lua:40), `level_range = {1, 15}` and `rarity = 1` (ant.lua:56-57), one
+ * weapon, no talents, no resists, no immunities. Of the three level-1 ants it is
+ * the one with `global_speed_base = 0.9` (ant.lua:58) — the white ant is 1.1 and
+ * the carpenter ant is faster still — and "slower than the party" is the same
+ * sentence as "slow, hollow" in our own description. The creature and the
+ * adjective arrived together rather than being fitted to each other.
+ *
  * The baseline. Every other number in this file is legible only as a comparison
  * against this one, so it is the one that must be plain.
  *
  * DERIVED NUMBERS (pinned in test/server/monsters.test.ts):
- *   accuracy 2 · defence 0 · damage 6.3637 → rolls 6-7 · crit 0.4% · armour 1
- *   vs a default detective it hits 55% of the time and is hit 60% of the time.
+ *   accuracy 19 · defence 1 · damage 5.9979 → rolls a flat 5 · crit 1% · armour 1
  *
- * Twenty-five life against a ~3-per-swing baseline detective is eight or nine
- * connected blows — a husk is a two-player problem or a four-turn one, which is
- * the right size for the thing you meet first.
+ * Those first two moved a long way in the re-base (from 2 and 0) and the reason
+ * is `atk = 15` on the ant's weapon: ToME gives its low-level trash real
+ * accuracy and then makes it survivable by giving it very little damage. The
+ * hand-authored version had that backwards. NB neither number is live yet — see
+ * the "not wired to the swing" note in the file header.
  */
 export const INDEX_HUSK: MonsterTemplate = Object.freeze({
   id: 'index_husk',
@@ -230,55 +347,79 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_husk_s',
   rank: ActorRank.Normal,
 
-  // index_husk.json `max_hp: 25`.
+  // DEVIATION 1 OF 6 (see the file header). Upstream is
+  // ant.lua:59 `max_life = resolvers.rngavg(15,30)`, i.e. a mean of 22.5 — so 25
+  // is INSIDE the giant brown ant's own band and needs no defence beyond this
+  // citation. It is held rather than ported only because the other two maxHp
+  // values are held and a roster that ports one life value and authors two is
+  // harder to reason about than one that authors all three.
   maxHp: 25,
   hpRegen: 0,
 
-  // index_husk.json `move_speed: 76` is the roster's reference walker, so it is
-  // the 1.0 every other creature's speed is quoted against.
-  globalSpeed: 1,
+  // ant.lua:58 `global_speed_base = 0.9`. Upstream's own way to say "slow", and
+  // it replaces the old 76px-per-second justification entirely. A monster below
+  // the party's speed is a monster you can disengage from, which is what makes
+  // the FIRST creature in the game a safe place to learn that disengaging works.
+  globalSpeed: 0.9,
   speedFactor: 1,
 
-  // index_husk.json `ai_profile: "melee_chaser"` — the string already matches.
+  // The Outer Index roster authored `ai_profile: "melee_chaser"` and ToME's
+  // BASE_NPC_ANT authors `ai = "dumb_talented_simple"` with
+  // `ai_state = { ai_move="move_complex" }` (ant.lua:33). Both name the same
+  // behaviour: walk at it, hit it.
   profile: AiProfile.MeleeChaser,
-  // INVENTED. `aggro_radius` is 0 on every Outer Index enemy (dead value —
-  // docs/data-schemas.md:213). Eight tiles is a quarter of the 30x30 test map:
-  // far enough that walking into a room wakes what is in it, near enough that
-  // the far corner is still yours to approach on your own terms.
-  aggroRange: 8,
+  // ant.lua:38 `infravision = 10`. This REPLACES an invented 8 whose comment
+  // began "INVENTED. `aggro_radius` is 0 on every Outer Index enemy" — there is
+  // now an upstream number for it, so the invention comes out. Ten tiles is a
+  // third of the 30x30 test map: walking into a room wakes what is in it.
+  aggroRange: 10,
   preferredRange: 1,
   minRange: 0,
-  // index_husk.json `melee_range: 28` px ÷ TILE_PX 32 → one tile.
   attackRange: 1,
   huntsIsolated: false,
   shoulderAfter: 0,
+  // No `projSpeed`: a melee bump has no travel time to have. No `talentIn`
+  // either, and that is a faithful port rather than an omission —
+  // ant.lua:33 authors `talent_in = 1`, and `rng.chance(1)` is always true, so
+  // upstream's ant acts every turn exactly as ours does. Declaring 1 would cost
+  // a labelled draw per turn to answer a question with one possible answer, and
+  // would shift the seeded stream for every husk in the game.
 
   combat: {
-    // INVENTED, from the description. "Hungry for contact" buys +2 Strength;
-    // "slow, hollow" costs 2 Dexterity, which is the one stat that pays twice —
-    // accuracy at 1.0/point (Combat.lua:1343) and dodge at 0.35 (Combat.lua:1245).
-    // A husk is therefore easy to hit AND bad at hitting, which is what makes it
-    // the creature you are allowed to fight in the open.
-    stats: { str: 12, dex: 8, con: 12, cun: 8 },
-    // index_husk.json `defense: 1` — see the header for why this is `armour`.
-    mods: { armour: 1 },
-    // index_husk.json `attack_power: 8` as the weapon's damage RATING, exactly
-    // the shape of vermin.lua:50 `combat = { dam=1, atk=0, apr=100 }`. The
-    // rating goes through a square root (Combat.lua:1682-1687), so it moves the
-    // result far less than Strength does — which is upstream's design, not a
-    // dilution of the authored number.
-    weapon: { dam: 8 },
-    profile: {
-      // INVENTED. Nothing in the source roster resists anything our six damage
-      // types cover (the authored resists are `earth`/`air`/`corruption`/`water`,
-      // which do not exist here). A husk is already half-erased, so a mind
-      // attack finds less to grip: 25%. It costs the Alchemist nothing and it
-      // gives the first creature in the game one fact worth learning.
-      resists: { [DamageType.Mind]: 25 },
-      // resistsCap deliberately absent — the ENGINE default is { all = 100 }
-      // (Actor.lua:211). The familiar 70 is a PLAYER birth descriptor
-      // (descriptors.lua:63) and monsters do not get it.
+    // ant.lua:34 `stats = { str=12, dex=10, mag=3, con=13 }`, VERBATIM. ToME
+    // authors no `cun` on the ant, so it takes the engine base of 10
+    // (load.lua:182-189) — which is why `cun` is absent below rather than 8.
+    // This replaces a hand-authored 12/8/12/8 that was reasoned from our own
+    // description ("hungry for contact buys +2 Strength"); the description now
+    // describes the numbers instead of generating them.
+    stats: { str: 12, dex: 10, con: 13, mag: 3 },
+    // ant.lua:36 `combat_armor = 1, combat_def = 1`. The `def` half is NEW: the
+    // old block carried armour alone, on an argument that a monster's dodge
+    // should come from Dexterity only. Upstream disagrees, and one point of
+    // dodge on the roster's baseline creature is what makes the elite's four
+    // legible as a step rather than as an absolute.
+    mods: { armour: 1, def: 1 },
+    // ant.lua:37, VERBATIM including the resolver nest:
+    //   combat = { dam=resolvers.levelup(resolvers.rngavg(5,5), 1, 1),
+    //              atk=15, apr=7, dammod={str=0.6} }
+    // The expression is written out rather than folded to 5 so it can be diffed
+    // against the Lua character by character. `resolvers.levelup` returns its
+    // base at level 1 and only RECORDS growth (engine/resolvers.lua:154-158),
+    // which is exactly what keeps autolevel out of scope — see content/resolvers.ts.
+    weapon: {
+      dam: resolveLevelup(resolveRngAvg(5, 5)),
+      atk: 15,
+      apr: 7,
+      damMod: { str: 0.6 },
     },
+    // NO `profile` AT ALL, and that is a deletion with a reason. The old block
+    // carried `resists { Mind: 25 }` tagged INVENTED, justified as "a husk is
+    // already half-erased, so a mind attack finds less to grip". BASE_NPC_ANT
+    // authors no `resists` table whatsoever — a giant brown ant resists nothing
+    // — so the invention comes out with the rest of them. `resistsCap` was
+    // already absent and stays absent: the ENGINE default is `{ all = 100 }`
+    // (Actor.lua:211) and the familiar 70 is a PLAYER birth descriptor
+    // (descriptors.lua:63) that monsters do not get.
     range: 1.5,
     minRange: 0,
     damageType: DamageType.Physical,
@@ -286,7 +427,7 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// index_wraith — THE RANGED KITER
+// index_wraith — THE RANGED KITER, on losgoroth.lua plus its own T_VOID_BLAST
 // ---------------------------------------------------------------------------
 
 /**
@@ -295,30 +436,73 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  *
  * ═══ WHY THE WRAITH AND NOT THE CAIRN ═══
  * PLAN.md's M3 line offers `index_cairn` or `index_wraith` for the ranged slot.
- * The source settles it: `index_cairn.json` is authored
- * `"ai_profile": "melee_chaser"` — it is the slow grinder that shoulders into
- * melee — while `index_wraith.json` is `"ai_profile": "kiter_caster"` and its
- * description says it "hangs at the outer ring". Taking the cairn would mean
- * overriding the author's own AI field to fill a slot the author already filled.
+ * The source settles it: `index_cairn` is authored as a melee chaser — it is the
+ * slow grinder that shoulders into melee — while the wraith "hangs at the outer
+ * ring". Taking the cairn would mean overriding the author's own AI field to
+ * fill a slot the author already filled.
+ *
+ * ═══ WHY THE LOSGOROTH ═══
+ * `level_range = {1, nil}` and `rarity = 1` (losgoroth.lua:61-62), so it is a
+ * creature ToME is willing to put in front of a level-1 character. It grants
+ * EXACTLY ONE talent (losgoroth.lua:67-69, `T_VOID_BLAST`), which is the whole
+ * creature the way the orb is the whole wraith, and that talent is the SLOWEST
+ * projectile in the game — `proj_speed = 2` at misc/npcs.lua:733. The creature
+ * and its orb come as one package, which is why this slot did not go shopping
+ * for a bolt from somewhere else.
+ *
+ * It also answers the report that started this work item. The old wraith fired
+ * from six tiles, every turn, with the damage landing instantly. This one fires
+ * from four, about half the time, with an orb that takes a game turn and a half
+ * to arrive. TWO of those three numbers are upstream's — `safe_range = 4`
+ * (tome/resolvers.lua:901) and `talent_in = 2` (losgoroth.lua:43). The flight
+ * time is NOT: `proj_speed = 2` is upstream's, but the DISTANCE it crosses is
+ * our own capped reach, so the turn-and-a-half is derived here and is stated
+ * here rather than dressed up as a port. See the `projSpeed` field below for the
+ * arithmetic at every distance the AI can actually shoot from.
  *
  * ═══ THE NUMBERS THAT MAKE IT A DIFFERENT PROBLEM ═══
- *   reach 6 · dead zone 2 · aggro 8 · globalSpeed 0.84
+ *   reach 6 (a ceiling; see `attackRange`) · stand-off 4 · dead zone 2
+ *   aggro 8 · globalSpeed 0.84 · orb speed 2 tiles/turn · fires on a 1-in-2
+ *
+ * ═══ WHAT IT IS AND IS NOT, MEASURED ═══
+ * It is a CHIP THREAT that has to be walked at, not a burst threat. Standing
+ * still is punished; so is charging straight down the line, because the orb
+ * tests its own tile on every act (engine/projectile.ts, DEVIATION 3) and a body
+ * that walks onto it eats it. Stepping SIDEWAYS off the frozen line still dodges
+ * cleanly, and that is the counterplay working rather than the creature failing.
+ *
+ * Its damage per player turn is small and the arithmetic is worth writing down
+ * so nobody re-derives it from the sheet: 0.84 globalSpeed × 0.5 (`talentIn` 2)
+ * × 4.5 avg = 1.89 hp, against the melee husk's 0.9 × 4.5 = 4.05. It is BELOW
+ * HALF the basic mob, and the reason is the file header's "not wired to the
+ * swing" note — `monsterInit` passes no `damageMin`/`damageMax`, so a landed orb
+ * deals `DEFAULT_MONSTER_DAMAGE_MIN..MAX` 3-6 and the ported `weapon.dam` of
+ * ~7.4 with `apr` 15 is inert. THE COMPENSATION FOR THREE STACKED NERFS —
+ * travel time, the 1-in-2 cadence, and the stand-off moving 6 → 4 — is
+ * therefore not in yet, and none of the upstream buffs that would pay for it
+ * (max_life 50, global_speed 1.0, range 10) is taken either; all three are in
+ * the deviation list above with their own reasons. Wiring the sheet to the swing
+ * is the one change that fixes this properly and it is one change, not two.
+ * Until then this creature is deliberately under-tuned rather than accidentally
+ * so, and that sentence is here so the next person does not "fix" it by
+ * un-porting `talent_in`.
  *
  * `minRange 2` is the whole class. A wraith CANNOT shoot something standing on
  * it, so a Watchman who closes the gap turns it off; `ai/npc.ts` retreats rather
  * than firing point-blank and `canAttack` refuses the shot if it ever tried.
  * That is the same lesson the Inspector's `min_range 3` teaches from the
  * player's side (game-design.md § 2: "the single most important number here"),
- * shown from the receiving end on the first floor.
- *
- * The dead zone is 2 and not 3 ON PURPOSE. The Inspector's is 3 and the ranged
- * class must be the range specialist: a monster with the player's own dead zone
- * and a shorter one is a better Inspector than the Inspector. Six reach against
- * the Inspector's seven says the same thing.
+ * shown from the receiving end on the first floor. It is DEVIATION 3 OF 6: ToME
+ * has no dead zone anywhere, so this one is ours and is labelled as ours.
  *
  * DERIVED NUMBERS (pinned in test/server/monsters.test.ts):
- *   accuracy 7 · defence 1 · damage 7.3832 → rolls 7-8 darkness · crit 1.6%
- *   armour 1 · darkness resist 50% · physical resist -20% (VULNERABLE)
+ *   accuracy 17 · defence 19 · damage 5.055 → rolls a flat 5 darkness · crit 1%
+ *   armour 0 · darkness resist 50% · physical resist −30% (VULNERABLE)
+ *
+ * The defence of 19 against armour 0 is the shape of the whole creature and it
+ * inverted the old sheet: this is not a sniper with a glass jaw, it is a slow
+ * tough floater that is HARD TO CONNECT WITH and takes a third more damage from
+ * anything physical that does connect. The "sniper" reading was invented.
  */
 export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   id: 'index_wraith',
@@ -329,68 +513,157 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_wraith_s',
   rank: ActorRank.Normal,
 
-  // index_wraith.json `max_hp: 22`. The most fragile thing in the roster, which
-  // is the reward for reaching it.
+  // DEVIATION 1 OF 6 (see the file header), and this is the sharp one.
+  // Upstream is losgoroth.lua:63 `max_life = resolvers.rngavg(40,60)` — a mean
+  // of 50, against our 22. It is NOT ported, for one measurable reason: a
+  // player's live damage is `DEFAULT_PLAYER_DAMAGE_MIN..MAX` = 4-7 through
+  // `scheduler.ts#strike` (avg 5.5), NOT the ~10-12 their combat SHEET says,
+  // because the sheet is not wired to the swing (see the file header). Fifty
+  // life is therefore a ten-hit kill where 22 is a four-hit kill: the same
+  // creature would take 2.3x longer to bring down, on the creature the user just
+  // reported as killing too fast. ADOPT 50 ON THE DAY the scheduler moves onto
+  // `combat.ts#attackTarget`, and not before.
   maxHp: 22,
   hpRegen: 0,
 
-  // index_wraith.json `move_speed: 64` ÷ the husk's 76 = 0.842, to 2dp.
-  // A kiter SLOWER than the party is not a mistake: it is the reason cornering
-  // one works at all. An equal-speed kiter retreats forever and the fight is a
-  // treadmill with no end state.
+  // DEVIATION 2 OF 6. Upstream's losgoroth authors no `global_speed_base`, so it
+  // is 1.0 — the same speed as the party. Ours stays at 0.84 and the reason is
+  // structural rather than aesthetic: an equal-speed kiter retreats forever and
+  // the fight is a treadmill with no end state. ToME can afford 1.0 because its
+  // player has movement talents, teleports and a `movement_speed` stat; ours has
+  // none of those yet. This is the number that makes cornering one WORK.
   globalSpeed: 0.84,
   speedFactor: 1,
 
-  // index_wraith.json `ai_profile: "kiter_caster"` → the closest MVP profile.
-  // The "caster" half is a talent, and M3 has twelve talents, none of them a
-  // monster's (PLAN.md).
+  // losgoroth.lua:43 `ai = "dumb_talented_simple", ai_state = { ai_move="move_complex" }`
+  // plus a granted attack talent — which is exactly "kiter caster". The M3
+  // profile is the closest one that exists; the "caster" half is `talentIn`
+  // below rather than a talent tree.
   profile: AiProfile.RangedKiter,
-  // INVENTED: two tiles past its own reach, so it notices you before you are in
-  // its band and has a turn to set up rather than being surprised at point six.
+  // DEVIATION 4 OF 6. HELD at 8. Upstream is losgoroth.lua:34 `infravision = 10`, the same as the
+  // ant's, and it is NOT adopted here: 10 would let the wraith open fire on
+  // something six tiles outside its own reach, which just means it spends four
+  // turns walking while the party watches. Eight is two tiles past its reach —
+  // enough to notice you and set up, not enough to start a fight it cannot
+  // reach. Written down as ours rather than dressed up as a port.
   aggroRange: 8,
-  // Equal to `attackRange` on purpose — see `validateTemplate`. The wraith wants
-  // to stand at the edge of its reach; anything less would be walking toward the
-  // party for no reason.
-  preferredRange: 6,
+  // tome/resolvers.lua:901 — the `ranged` tactic preset ships `safe_range = 4`,
+  // which is upstream's own answer to "how far away does a shooter want to
+  // stand". The old 6 was above every non-`survivor` value in that table (the
+  // only larger one is `survivor`'s 8, tome/resolvers.lua:903) and it is what
+  // made the creature un-closeable: it stood at the very edge of its reach, so
+  // every step the party took toward it was answered by a step back.
+  preferredRange: 4,
   minRange: 2,
-  // INVENTED, and capped deliberately. `cast_ability_range_px: 280` ÷ 32 is 8.75
-  // tiles, which out-ranges the Inspector's authored 7 (test/server/combat.test.ts)
-  // — a monster that outshoots the ranged class deletes that class's identity.
-  // Six.
+  // DEVIATION 5 OF 6. HELD at 6, and it is already a cut: T_VOID_BLAST authors
+  // `range = 10` (misc/npcs.lua:730). Six is capped deliberately — the
+  // Inspector's authored reach is 7 (test/server/combat.test.ts), and a monster
+  // that outshoots the ranged class deletes that class's identity.
+  //
+  // ═══ IT IS A LEGALITY CEILING. `preferredRange` IS THE OPERATIVE REACH. ═══
+  // `kite` (ai/npc.ts) returns `advance` for anything beyond `preferredRange`,
+  // so control only ever reaches its `distance <= self.attackRange` test with a
+  // distance already <= 4. THE AI CANNOT FIRE A SIX-TILE SHOT. What this number
+  // actually does is bound `canAttack` and `proj.range`, neither of which binds
+  // at four tiles either. Tuning it alone will therefore change NOTHING you can
+  // observe in play; the field to move is `preferredRange`, and the cap above is
+  // the reason it may not move past 6.
   attackRange: 6,
   huntsIsolated: false,
   shoulderAfter: 0,
 
+  // misc/npcs.lua:733 `proj_speed = 2` on T_VOID_BLAST — the slowest projectile
+  // in ToME, and the one the losgoroth actually grants (losgoroth.lua:67-69), so
+  // the creature and its orb arrive as one package. Two tiles per game turn: the
+  // orb is born holding a full turn of energy (Projectile.lua:37-38) so its
+  // first tile is free and every tile after it costs half a turn. Upstream's own
+  // tooltip calls it "a blast of void energies that slowly travel to their
+  // target" (misc/npcs.lua:744).
+  //
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE COUNTERPLAY WINDOW, MEASURED AT THE DISTANCES THE AI ACTUALLY FIRES
+  // ═══════════════════════════════════════════════════════════════════════
+  // THIS COMMENT USED TO CLAIM "two and a half game turns to cross the wraith's
+  // full reach" and "two whole decisions". BOTH WERE WRONG, and wrong in the
+  // reader's favour, which is the worse direction. The six-tile figure was
+  // computed from `attackRange`, and `kite` can never fire a six-tile shot (see
+  // the note on `attackRange` above). The real firing band is Euclidean 2 to 4:
+  //
+  //   distance   tiles   ticks to impact   player decisions in between
+  //   ────────   ─────   ───────────────   ───────────────────────────
+  //      4         4       5 × 3 = 15                  1
+  //      3         3       5 × 2 = 10                  1
+  //      2         2       5 × 1 =  5                  0
+  //
+  // (a tile is 5 ticks at `projSpeed` 2; a player at globalSpeed 1 acts every 10
+  // ticks — src/shared/energy.ts.) So ONE decision at the stand-off distance the
+  // wraith fights at, and NONE at the near edge of the band. That is still the
+  // counterplay — stepping off the frozen line or putting a wall on it makes the
+  // orb miss, and a body that walks onto the orb's own tile eats it (DEVIATION 3
+  // in engine/projectile.ts) — but it is one decision, not two. If two is the
+  // design target, the lever is `preferredRange`, not this field: 5 tiles would
+  // buy 20 ticks. That is a tuning decision with a playtest behind it and it has
+  // not been made.
+  projSpeed: 2,
+  // losgoroth.lua:43 `ai_state = { ..., talent_in = 2 }` — VERBATIM. A 1-in-2
+  // chance per turn, NOT one shot every two turns; see the field's own doc
+  // comment on `MonsterTemplate` for why that distinction is worth a paragraph.
+  // This is the second half of the fix: the old wraith fired every single turn.
+  talentIn: 2,
+
   combat: {
-    // INVENTED, from the description. It snipes, so Dexterity leads (+3, worth
-    // +3 accuracy and +1.05 dodge); it is "a cited absence", so Strength and
-    // Constitution give way (-2 each). Cunning +2 buys it the only meaningful
-    // crit chance in the normal roster.
-    stats: { str: 8, dex: 13, con: 8, cun: 12 },
-    // index_wraith.json `defense: 1`.
-    mods: { armour: 1 },
+    // losgoroth.lua:44 `stats = { str=10, dex=8, mag=6, con=16 }`, VERBATIM.
+    // Read it against the block it replaces — a hand-authored
+    // { str: 8, dex: 13, con: 8, cun: 12 } reasoned from "it snipes, so
+    // Dexterity leads". Upstream inverts every one of those: Dex is BELOW
+    // average, Con is the highest stat on the sheet, and the orb is thrown with
+    // Magic. `cun` is absent, so it takes the engine base of 10.
+    stats: { str: 10, dex: 8, mag: 6, con: 16 },
+    // losgoroth.lua:64 `combat_armor = 0, combat_def = 20`. A KITER BUYS
+    // SURVIVAL WITH DODGE, NOT ARMOUR, and that is a real design statement:
+    // armour would flatten the chip damage the party can reliably land, whereas
+    // 20 defence makes every individual swing a coin flip that a player can tilt
+    // with accuracy or with a talent. It also means the answer to a wraith is
+    // still to reach it — armour 0 with a −30 physical resist is the softest
+    // target in the roster once you are standing next to it.
+    mods: { armour: 0, def: 20 },
+    // losgoroth.lua:30, VERBATIM including the resolver nest:
+    //   combat = { dam=resolvers.levelup(resolvers.mbonus(40, 15), 1, 1.2),
+    //              atk=15, apr=15, dammod={mag=0.8}, damtype=DamageType.ARCANE }
+    // `resolveMBonus(40, 15)` is 15 at level 1 (see content/resolvers.ts for the
+    // ~0.4 the port drops and why), which lands within one point of the 14 this
+    // field was hand-authored at — a good sign that the old number was a decent
+    // guess at a curve somebody else had already tuned.
     weapon: {
-      // index_wraith.json `cast_ability_damage: 14`, not `attack_power: 8`. The
-      // wraith has both authored; the orb IS the creature ("lobs dark orbs"),
-      // and an MVP monster has exactly one attack.
-      dam: 14,
-      // INVENTED, in the shape of ToME's own ranged `dammod` (a bow is
-      // `{ dex = 0.7, str = 0.5 }`; the default is `{ str = 0.6 }` at
-      // Combat.lua:1625). The orb should be thrown by the stats that define the
-      // wraith, not by a Strength it does not have.
-      damMod: { dex: 0.5, cun: 0.4 },
+      dam: resolveLevelup(resolveMBonus(40, 15)),
+      atk: 15,
+      apr: 15,
+      // `dammod = {mag=0.8}` — the orb is thrown by Magic alone. The old
+      // { dex: 0.5, cun: 0.4 } was invented "in the shape of ToME's own ranged
+      // dammod"; this IS ToME's own ranged dammod, for this creature.
+      damMod: { mag: 0.8 },
     },
     profile: {
       resists: {
-        // INVENTED. It is made of the stuff, so half of it slides off.
+        // DEVIATION 6 OF 6 — OURS, KEPT. Upstream's equivalent is losgoroth.lua:46
+        // `[DamageType.ARCANE] = 100` — total immunity to its own element. We do
+        // not have Arcane and we would not want a 100 on the first floor
+        // regardless (`resistsCap` is absent, so the engine default of 100 makes
+        // that genuinely immune, Actor.lua:211). Darkness is our damage type and
+        // half of it sliding off is our identity, not a port.
         [DamageType.Darkness]: 50,
-        // INVENTED, and the interesting one: a NEGATIVE resist is a
-        // vulnerability, and it is idiomatic upstream (vermin.lua:75 ships
-        // `[DamageType.FIRE] = -50` on the carrion worm mass). A solid hit lands
-        // for 20% more on something that is barely there — so the answer to a
-        // wraith is to reach it, which is the same sentence as its `minRange`.
-        [DamageType.Physical]: -20,
+        // losgoroth.lua:46 `[DamageType.PHYSICAL] = -30`, VERBATIM. This field
+        // carried an INVENTED tag and a value of −20; the invention was RIGHT
+        // and the number was timid. A negative resist is a vulnerability and it
+        // multiplies rather than subtracts (damage_types.lua:345-352,
+        // `dam * (100 - res) / 100`), so a solid hit lands for 30% more on
+        // something that is barely there — which is the same sentence as its
+        // `minRange`: the answer to a wraith is to reach it.
+        [DamageType.Physical]: -30,
       },
+      // `resistsCap` deliberately absent — Actor.lua:211, the engine default is
+      // `{ all = 100 }`. The familiar 70 is a PLAYER birth descriptor
+      // (descriptors.lua:63) and monsters do not get it.
     },
     // EUCLIDEAN, and equal to `attackRange` because the AI's band arithmetic is
     // Euclidean too (ai/npc.ts `kite`). Equality means every shot the AI wants
@@ -400,13 +673,14 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
     // dead zones that disagree is a monster that walks to a tile it then refuses
     // to shoot from, every turn, forever.
     minRange: 2,
-    // damage_types.lua:856-875. `dark_orb`.
+    // OURS. damage_types.lua:856-875, `dark_orb`. Upstream's void blast is
+    // Arcane; the orb being made of ink and absence is the author's setting.
     damageType: DamageType.Darkness,
   },
 });
 
 // ---------------------------------------------------------------------------
-// index_husk_elite — THE ELITE
+// index_husk_elite — THE ELITE, on the ghoul → ghoulking delta
 // ---------------------------------------------------------------------------
 
 /**
@@ -414,19 +688,36 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
  * THE RING IS A WARNING ABOUT THE BEHAVIOUR, NOT ABOUT THE NUMBERS
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Both source games say the same thing independently, and it is the thing that
- * decides what an elite is here:
+ * ═══ A FACTUAL CORRECTION THAT USED TO LIVE HERE ═══
+ * This header used to claim that ToME's `getRankLifeAdjust` (Actor.lua:1740-1751)
+ * gives a rank-3 elite ×1.125 life against a rank-2 normal's ×0.925 at level 1,
+ * i.e. "an elite has 1.22× a normal's life", and a test asserted exactly that
+ * ratio. THAT IS A MIS-READ OF THE LUA AND BOTH ARE GONE.
  *
- *   - ToME. `getRankLifeAdjust` (Actor.lua:1740-1751) gives rank 2 (normal)
- *     ×(1 + lvl/40 − 0.1) and rank 3 (elite) ×(1 + lvl/40 + 0.1). At level 1
- *     that is ×0.925 against ×1.125 — an elite has **1.22× a normal's life**.
- *     `getRankLevelAdjust` adds one level. That is the entire numeric gap.
- *   - Outer Index. `NEXUS/knowledge/lessons.md:164-170`: "`is_elite` scales
- *     **visuals only** … it does **not** scale HP."
+ * `getRankLifeAdjust` does not scale a creature's life. It scales the per-level
+ * life GAIN, and it is consumed inside `levelup()` at Actor.lua:3822 — a
+ * function that runs once per level GAINED. `resolveLevel` (ActorLevel.lua:62-64)
+ * levels an NPC from its `start_level` up to the zone's level and therefore runs
+ * ZERO times for a level-1 creature on floor one. So at our tier, rank changes
+ * life by EXACTLY ZERO. There is no ×1.22 and there never was.
  *
- * So an elite that is only a bigger number is not an elite in either lineage;
- * it is a husk with a bigger number. What earns `ui_token_ring_elite.png` is in
- * `ai/npc.ts`, and this template turns exactly two behaviours on:
+ * That is not a footnote — it removes the last remaining argument for "an elite
+ * is the same creature with more life", and it agrees with what ToME's own
+ * three-tier ghoul ladder does: ghoul, ghast and ghoulking ALL hold
+ * `max_life = resolvers.rngavg(90,100)` (ghoul.lua:54, :71, :92). Every point of
+ * the ghoulking's threat is bought with `dam`, `atk`, `apr`, `def`, `armor`, a
+ * faster talent cadence and an AI swap. Not one point of it is life.
+ *
+ * ═══ WHY OURS STILL BUYS SOME OF IT WITH LIFE ═══
+ * We cannot spend the ghoulking's currency yet. `dam`/`atk`/`apr` are inert on
+ * the attacker side until the scheduler moves onto `combat.ts#attackTarget` (see
+ * the file header), and there is no monster talent system for a cadence to
+ * drive. Life and behaviour are the elite's only LIVE levers today, and an elite
+ * with neither is a husk. So 60 stays — as DEVIATION 1 OF 6, written down rather
+ * than justified by a ratio that does not exist.
+ *
+ * ═══ WHAT ACTUALLY EARNS THE RING ═══
+ * Two behaviours, both in `ai/npc.ts`:
  *
  *   `huntsIsolated`  it goes for whoever is standing ALONE, not whoever is
  *                    nearest. The ring means "close ranks".
@@ -434,20 +725,14 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
  *                    AROUND its own swarm (simple.lua:199-247). The ring means
  *                    "you cannot plug the door on this one".
  *
- * ═══ WHERE 60 LIFE COMES FROM ═══
- * Neither source ladder transfers. ToME's ×1.22 is sized for one player meeting
- * an elite every few floors; Outer Index's "tanky elite ~110" against "basic
- * 22-25" (lessons.md:170) is ×4.4 and sized for a real-time swarm where you kill
- * two hundred things a run. INVENTED by interpolating between them against the
- * fight this game actually runs: three to six detectives, one 30x30 room, and an
- * elite worth about five rounds of the party's whole attention. Four M3-shaped
- * detectives put roughly 13 damage a round through armour 3 / hardiness 35, so
- * 60. (It lands on `DEFAULT_PLAYER_MAX_HP` by coincidence, but it is a good
- * coincidence: the elite has exactly one detective's worth of life.)
+ * These two are OUR analogue of the ghoulking's third lever, which is an AI
+ * swap: `ai = "tactical", ai_tactic = resolvers.tactic"melee"` (ghoul.lua:98-99,
+ * and skeleton.lua:154-155 does the same for its own top tier). Upstream makes
+ * its elite think differently rather than hit harder; so do we, with the two
+ * behaviours a four-player game actually wants.
  *
  * DERIVED NUMBERS (pinned in test/server/monsters.test.ts):
- *   accuracy 6 · defence 0 · damage 8.15 → rolls a flat 8 · crit 6%
- *   armour 3 · hardiness 35 · physical resist 10% · mind resist 32.5%
+ *   accuracy 21 · defence 4 · damage 7.0964 → rolls a flat 7 · crit 1% · armour 2
  *
  * ═══ THE ART DOES NOT CARRY THE READ YET, WHICH IS WHY THE RING MUST ═══
  * docs/art-pipeline.md:234 and :362 record a real `FRAME_SIZE_MISMATCH`:
@@ -466,20 +751,29 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_husk_elite_s',
   rank: ActorRank.Elite,
 
-  // INVENTED — see the header for the interpolation and the arithmetic.
+  // DEVIATION 1 OF 6 — see this template's header. Upstream's ladder holds
+  // `max_life = resolvers.rngavg(90,100)` across ALL THREE ghoul tiers
+  // (ghoul.lua:54, :71, :92), i.e. the delta is ZERO and a faithful port would
+  // put this at 25. Held at 60 because life and behaviour are the only live
+  // levers an elite has until the damage sheet is wired, and an elite with
+  // neither is indistinguishable from the creature it upgrades.
   maxHp: 60,
   hpRegen: 0,
 
-  // Deliberately NOT faster than its base creature. Speed is a number, and the
-  // point of this template is that the upgrade is not a number. An elite you can
-  // outrun but cannot shake is a better fight than one that simply arrives sooner.
-  globalSpeed: 1,
+  // The ghoul ladder moves no speed field, so the delta is zero and the elite
+  // inherits the husk's `global_speed_base = 0.9` (ant.lua:58) unchanged. This
+  // used to be 1, i.e. FASTER than its own base creature, directly contradicting
+  // the note that used to sit here saying it deliberately was not. An elite you
+  // can outrun but cannot shake is a better fight than one that arrives sooner.
+  globalSpeed: 0.9,
   speedFactor: 1,
 
   profile: AiProfile.MeleeChaser,
-  // INVENTED: +1 over the husk. It notices the room a tile earlier, which is
-  // what "reads the room before it moves" has to mean mechanically.
-  aggroRange: 9,
+  // Also a zero delta: BASE_NPC_GHOUL's `infravision` is shared by all three
+  // tiers, so the elite sees exactly as far as the husk (ant.lua:38,
+  // `infravision = 10`). It used to be 9 — one MORE than the husk's invented 8,
+  // and now one LESS than its real 10, which is how a hand-authored +1 ages.
+  aggroRange: 10,
   preferredRange: 1,
   minRange: 0,
   attackRange: 1,
@@ -488,43 +782,51 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   // simple.lua:225 — "Wait at least 5 turns of not moving before switching to
   // blocked_astar". Upstream's own number, upstream's own reason.
   shoulderAfter: 5,
+  // No `projSpeed` (melee) and no `talentIn`. The ghoulking DOES tighten the
+  // cadence — `ai_state = { talent_in=2 }` at ghoul.lua:94 against the ghoul's
+  // 4 at :61 — but that is a cadence for GRANTED TALENTS, of which this creature
+  // has none. Setting it here would gate the elite's ordinary bump-attack on a
+  // coin flip and halve the damage of the roster's threat creature, which is the
+  // exact opposite of what the upstream field does.
 
   combat: {
-    // INVENTED: the husk's 12/8/12/8 with the ToME rank ladder's shape applied —
-    // `getRankStatAdjust` (Actor.lua:1701-1712) moves rank 2 → rank 3 by +0.5
-    // and `getRankLevelAdjust` (:1714-1725) by +1 level. Here that is +4 Str /
-    // +4 Con (it is the thing that has been overwritten most) and +2 Dex / +2 Cun
-    // (it has stopped being clumsy), leaving Dex and Cun exactly at a person's 10.
-    stats: { str: 16, dex: 10, con: 16, cun: 10 },
-    mods: {
-      // INVENTED: the husk's 1 → 3, and it is the roster's armour teacher. At
-      // hardiness 35 a 4-damage swing loses 1.4 to armour and the other 2.6
-      // lands untouched (Combat.lua:541) — heavy armour flattening chip damage
-      // without ever making the thing immune, which is the whole reason the base
-      // hardiness is 30 and not 100.
-      armour: 3,
-      armourHardiness: 5,
-      // Anchored, not invented from nothing: `city_watchman.json` authors
-      // `crit_chance: 0.05` for "an enemy that is meaningfully better than
-      // trash", and Combat.lua:1415-1427 takes that in percentage POINTS.
-      physCrit: 5,
-    },
-    // INVENTED: the husk's `attack_power: 8` × 1.5. The square root at
-    // Combat.lua:1682-1687 means +50% of rating is only +8% of damage — the
-    // elite hits for 8 where a husk hits for 6-7, and that gap is supposed to be
-    // small. `atk: 2` is invented too: without it the elite would connect no more
-    // often than the clumsy thing it upgrades.
-    weapon: { dam: 12, atk: 2 },
-    profile: {
-      resists: {
-        // INVENTED, and it is here to make the roster exercise the one resist
-        // rule that is easy to get wrong: `all` composes MULTIPLICATIVELY with
-        // the typed row (Combat.lua:2227-2228). 10 and 25 give 32.5%, NOT 35%.
-        // A test pins that exact number.
-        all: 10,
-        [DamageType.Mind]: 25,
-      },
-    },
+    // The ghoul ladder moves no stat, so the delta is zero: the elite carries
+    // BASE_NPC_ANT's own `stats = { str=12, dex=10, mag=3, con=13 }`
+    // (ant.lua:34), identical to the husk. It is the SAME CREATURE, edited — the
+    // difference is what it swings and how it thinks, not what it is made of.
+    // (The old block hand-authored 16/10/16/10 "with the ToME rank ladder's
+    // shape applied"; the rank ladder's stat adjust, Actor.lua:1701-1712, is
+    // consumed by autolevel, which is out of scope for the same reason
+    // `getRankLifeAdjust` is — see this template's header.)
+    stats: { str: 12, dex: 10, con: 13, mag: 3 },
+    // The husk's `combat_armor = 1, combat_def = 1` (ant.lua:36) plus the
+    // ghoul→ghoulking deltas: armour +1 (ghoul.lua:55 `combat_armor = 2` →
+    // ghoul.lua:93 `combat_armor = 3`) and def +3 (`combat_def` 7 → 10).
+    //
+    // `armourHardiness: 5` and `physCrit: 5` are DELETED. Both were invented —
+    // the hardiness to make the elite "the roster's armour teacher", the crit
+    // anchored on a `crit_chance: 0.05` from a different game's watchman — and
+    // the ghoulking authors neither. Rank-based resists and crit in ToME come
+    // from per-level rng draws inside `levelup()` (Actor.lua:3801-3806), which
+    // is autolevel and out of scope.
+    mods: { armour: 2, def: 4 },
+    // The husk's weapon with the ghoul→ghoulking deltas applied:
+    //   dam ×3  — ghoul.lua:63 `dam=resolvers.levelup(10,1,1)`
+    //           → ghoul.lua:101 `dam=resolvers.levelup(30,1,1.2)`;   5 → 15
+    //   atk +3  — :63 `atk=resolvers.levelup(5,1,1)` → :101 `atk=...(8,1,1)`; 15 → 18
+    //   apr +1  — :63 `apr=3` → :101 `apr=4`;                        7 → 8
+    // `dam` is the one ratio in the table because 10 → 30 is a clean tripling
+    // while 5 → 8 is not a clean anything; see the adoption table in the file
+    // header. `dammod` is unchanged at the ant's `{str=0.6}`, which is also the
+    // ghoul's (:63) and the engine default (Combat.lua:1625).
+    weapon: { dam: 15, atk: 18, apr: 8, damMod: { str: 0.6 } },
+    // NO `profile`. The old block carried `resists { all: 10, Mind: 25 }`, both
+    // invented, the pair chosen to exercise the multiplicative composition rule
+    // at Combat.lua:2227-2228 (10 and 25 give 32.5, not 35). THAT RULE STILL HAS
+    // A TEST — test/server/monsters.test.ts drives it from a synthetic profile
+    // declared in the test file, which is where a rule-exerciser belongs. It is
+    // not content, and it should never have been a creature's stat block. The
+    // ghoulking authors no `resists` of its own.
     range: 1.5,
     minRange: 0,
     damageType: DamageType.Physical,
@@ -566,6 +868,12 @@ export function monsterById(id: string): MonsterTemplate | undefined {
  * A function rather than a method on the template so this module never imports
  * `world/`: content is data, the world is state, and the day an encounter table
  * wants to spawn from a save file it should not have to construct a World first.
+ *
+ * NOTE WHAT IS STILL NOT PASSED: `damageMin` and `damageMax`. Every monster in
+ * this roster therefore deals `DEFAULT_MONSTER_DAMAGE_MIN..MAX` = 3-6 through
+ * `scheduler.ts#strike`, and every `weapon.dam`/`atk`/`apr` above is inert on
+ * the attacker side. See the file header; it is deliberate and it is one change
+ * away, not two.
  */
 export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit {
   return {
@@ -585,6 +893,13 @@ export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit 
     minRange: template.minRange,
     huntsIsolated: template.huntsIsolated,
     shoulderAfter: template.shoulderAfter,
+    // Both optional, and both pass `undefined` through as `undefined` on
+    // purpose: absent `projSpeed` is ToME's "instantaneous"
+    // (ActorTalents.lua:988) and absent `talentIn` is "every turn"
+    // (talented.lua:122, `rng.chance(1)`). Defaulting either here would silently
+    // change every melee monster in the roster.
+    projSpeed: template.projSpeed,
+    talentIn: template.talentIn,
     combat: template.combat,
   };
 }
@@ -663,6 +978,29 @@ export function validateTemplate(template: MonsterTemplate): readonly string[] {
   // ...and at melee reach it must contain the four diagonals. See the header.
   if (template.attackRange === 1 && reach < DIAGONAL_STEP) {
     problems.push(`${where} melee combat.range ${reach} excludes the diagonal ${DIAGONAL_STEP}`);
+  }
+
+  // A PROJECTILE THAT DOES NOT MOVE NEVER ARRIVES. `projSpeed` is tiles per game
+  // turn, so 0 is an orb that hangs in the air forever and a negative one flies
+  // backwards; NaN would make every energy comparison false, which reads as the
+  // orb silently vanishing. ABSENT is the legal way to say "instantaneous"
+  // (ActorTalents.lua:988), and absent is checked for separately here rather
+  // than being folded into a `?? 0` that would make every melee template fail.
+  if (template.projSpeed !== undefined) {
+    if (!Number.isFinite(template.projSpeed) || template.projSpeed <= 0) {
+      problems.push(`${where} projSpeed ${template.projSpeed} must be a positive finite number`);
+    }
+  }
+
+  // `talent_in` is the N in `rng.chance(N)` (talented.lua:122), which draws an
+  // integer in [1, N]. A 0 or a negative would make that range empty and a
+  // fraction would make "1 in 2.5" mean nothing anybody can reason about. 1 is
+  // legal and means "every turn", exactly as BASE_NPC_ANT authors it
+  // (ant.lua:33) — it is just an expensive way to spell absent.
+  if (template.talentIn !== undefined) {
+    if (!Number.isInteger(template.talentIn) || template.talentIn < 1) {
+      problems.push(`${where} talentIn ${template.talentIn} must be an integer >= 1`);
+    }
   }
 
   // A creature that behaves like an elite must LOOK like one. The ring is the

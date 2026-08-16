@@ -149,6 +149,12 @@ import { connectGameSocket, SocketStatus } from './net/socket.ts';
 import { loadAssetLibrary } from './render/assets.ts';
 import { createRenderer, PALETTE } from './render/canvas.ts';
 import { createSweepPlayback } from './render/sweep.ts';
+// v7 — THE ORB'S ONLY LOGIC, and it is three pure functions. It lives in its own
+// module rather than inline here for the reason state/projectiles.ts sets out:
+// vitest has no jsdom, so the half of this feature with a rule in it has to be
+// reachable from a node test, and the half that draws must have nothing in it
+// worth reaching.
+import { applyProjectilesFrame, clearProjectiles, orbsAimedAt } from './state/projectiles.ts';
 import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
 import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts';
 // `isSlotDisabled` is deliberately NOT imported. Whether a slot looks dead is
@@ -197,6 +203,7 @@ import type {
   PartyInviteView,
   PartyMember,
   PartyStateMsg,
+  ProjectileView,
   ResourceView,
   ServerMsg,
   TurnEvent,
@@ -603,6 +610,25 @@ type Ping = {
   readonly diesAt: number;
 };
 let pings: readonly Ping[] = [];
+
+/**
+ * WHAT IS IN THE AIR — every orb currently in flight, from the `projectiles`
+ * frame (v7).
+ *
+ * COMPLETE AND ABSOLUTE, replaced wholesale, never patched, exactly like
+ * `effects` above. An empty array means the sky is clear, and the ABSENCE of an
+ * id from a later frame is the only spelling of "it landed" — there is no landed
+ * event and there must not be one.
+ *
+ * AND IT ADDS NO TIMER, which is the whole reason it can be a plain variable
+ * next to `pings` rather than a machine like one. A `point` marker expires on
+ * wall-clock time, so it needs a deadline and something to fire it; an orb moves
+ * on the ENERGY clock, one step per resolved turn, so it changes exactly when a
+ * frame arrives — and `onMessage` already calls `requestDraw()` after every
+ * applied frame. The bounded-timer promise at the top of this file still counts
+ * seven, and this feature is the reason it is worth counting.
+ */
+let projectiles: readonly ProjectileView[] = [];
 
 /**
  * WAITING FOR A DIRECTION TO REVIVE IN.
@@ -1302,6 +1328,11 @@ function scene(): Scene {
     downed: downedMap(),
     effects,
     pings: pingMarkers(),
+    // PASSED STRAIGHT THROUGH, with no guard and no mapping. The list is already
+    // exactly what the painter wants — a tile per orb — and an empty array and
+    // an absent one mean the same thing to render/canvas.ts, so the sky clearing
+    // itself needs nothing reset here.
+    projectiles,
     hud: paintHud,
   };
 }
@@ -3221,6 +3252,13 @@ function applyServerMessage(msg: ServerMsg): void {
       // somebody else entirely on the new floor.
       forgetInspections();
       pings = [];
+      // ...and the sky is emptied with them. An orb carried across a welcome is
+      // aimed at a tile on a map that no longer exists and was fired by an id
+      // that may now belong to somebody else — and unlike a stale badge, a stale
+      // orb is a thing the player will get up and RUN from. The server unicasts
+      // a fresh `projectiles` frame on the welcome path when something really is
+      // in the air, so nothing true is lost by dropping this.
+      projectiles = clearProjectiles();
       reviveArmed = false;
       caseLog?.clear();
       setMarginText(undefined, '');
@@ -3233,6 +3271,20 @@ function applyServerMessage(msg: ServerMsg): void {
       // that was wrong. Silently, for the same reason as `welcome`.
       cancelTravel();
       forgetInspections();
+      // THE SAME EMPTYING AS `welcome`, and for the same half of the reason: a
+      // resync means this client and the server had drifted, so every orb in
+      // this list was drawn from a board that was wrong.
+      //
+      // THIS IS ONLY SAFE BECAUSE EVERY `state` SITE RESTATES THE SKY. All three
+      // of them do — the survival resync, the rename in `hello`, and the
+      // respawn — each calling `sendProjectilesIfAny` immediately after the
+      // broadcast (src/server/net/gateway.ts). The `projectiles` frame is
+      // complete and absolute (protocol.ts), so clearing here can only ever
+      // remove an orb that was already a lie. A fourth `state` site that forgot
+      // to carry the sky would silently delete a live orb from this screen and
+      // the server's own memo would suppress the correction, so the rule lives
+      // in a comment on both sides of the wire.
+      projectiles = clearProjectiles();
       break;
     case 'moved': {
       const actor = actors.get(msg.id);
@@ -3380,6 +3432,50 @@ function applyServerMessage(msg: ServerMsg): void {
       // that one still stunned?" is a question that gets somebody killed.
       effects = new Map(msg.actors.map((entry) => [entry.id, entry.effects]));
       break;
+    case 'projectiles': {
+      // ═══ v7 — WHAT IS IN THE AIR. COMPLETE, AND REPLACED RATHER THAN MERGED ═══
+      //
+      // The identical rule to `effects` above, applied to an object with a much
+      // shorter fuse. protocol.ts:634-646 states the cost of the alternative in
+      // general terms; here it is specific and worse. A patch stream leaves a
+      // PHANTOM ORB on the map forever after one dropped frame, and a phantom
+      // orb does not merely look wrong — it teaches the counterplay backwards.
+      // The player learns to step off a tile nothing is coming to, and having
+      // learnt that the picture lies, stands still for the one that is.
+      //
+      // AN EMPTY ARRAY IS A REAL AND COMMON ANSWER: the sky is clear. And the
+      // absence of an id from this frame is the ONLY spelling of "it landed" —
+      // there is no landed event, and `applyTurnEvent` is deliberately untouched
+      // by this feature. The impact arrives as the ordinary `attack` step the
+      // sweep already carries, attributed to the shooter.
+      projectiles = applyProjectilesFrame(msg);
+
+      // ═══ AND ONE SENTENCE, WHEN IT IS AIMED AT THE TILE YOU ARE ON ═══
+      //
+      // The orb does not re-aim (decision (c)): it flies to the tile its victim
+      // stood on at the instant of firing, so stepping off that tile is the
+      // whole of the counterplay. The dot on the map is the picture of that; this
+      // is the words, in the slot the eye is already on, and it is the only copy
+      // a player who is watching their hotbar will read.
+      //
+      // ONLY INTO AN EMPTY SLOT. `notice` is the REFUSAL line, and this file's
+      // header calls a refusal that never reaches the player the worst failure
+      // mode in a turn-based game. A `projectiles` frame arrives at the tail of
+      // every pump, so raising this unconditionally would silently wipe the
+      // "too close — Sniper's Mark needs 3 tiles" the server unicast half a pump
+      // earlier — every turn, for as long as anything was in the air. The
+      // refusal is the rarer and more urgent fact and it wins; the orb re-offers
+      // its sentence on the next pump, because it is still coming.
+      if (notice === null) {
+        const incoming = orbsAimedAt(projectiles, selfTile());
+        if (incoming === 1) {
+          onRefusal('an orb is aimed at this tile — move, or break line of sight');
+        } else if (incoming > 1) {
+          onRefusal(`${incoming} orbs are aimed at this tile — move`);
+        }
+      }
+      break;
+    }
     case 'party':
       // COMPLETE, and low-frequency by construction — it changes when somebody
       // goes down, gets up, mutes or drops, not when they take a hit. Hit points

@@ -11,6 +11,11 @@ import {
   validateTemplate,
 } from '../../src/server/content/monsters.ts';
 import {
+  resolveLevelup,
+  resolveMBonus,
+  resolveRngAvg,
+} from '../../src/server/content/resolvers.ts';
+import {
   IntentKind,
   createMonsterActor,
   createPlayerActor,
@@ -27,6 +32,7 @@ import {
   combatDefense,
 } from '../../src/server/engine/derived.ts';
 import { toActorView } from '../../src/server/view/projector.ts';
+import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
 import { hitChance } from '../../src/shared/checkhit.ts';
 import { ActorRank } from '../../src/shared/protocol.ts';
@@ -34,6 +40,7 @@ import { createRng } from '../../src/shared/rng.ts';
 import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
 import type { AiCtx } from '../../src/server/ai/npc.ts';
 import type { EngineActor, Intent, MonsterActor } from '../../src/server/engine/actor.ts';
+import type { DamageProfile } from '../../src/server/engine/damage.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
 import type { Rng } from '../../src/shared/rng.ts';
@@ -211,49 +218,159 @@ describe('the roster is well formed', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The mapping: authored identity in, ToME curve out
+// The mapping: ToME supplies the numbers, we supply the identity
 // ---------------------------------------------------------------------------
 
-describe('the authored Outer Index numbers survive the port', () => {
-  it('carries index_husk.json through field by field', () => {
-    // content/enemies/index_husk.json: max_hp 25, attack_power 8, defense 1,
-    // melee_range 28 (px, ÷ TILE_PX 32 → one tile), ai_profile "melee_chaser".
+describe('the adopted ToME entries survive the port', () => {
+  it('carries the giant brown ant onto index_husk, field by field', () => {
+    // ant.lua:53-60 (giant brown ant) on BASE_NPC_ANT ant.lua:24-43:
+    //   :34 stats = { str=12, dex=10, mag=3, con=13 }
+    //   :36 combat_armor = 1, combat_def = 1
+    //   :37 combat = { dam=resolvers.levelup(resolvers.rngavg(5,5),1,1),
+    //                  atk=15, apr=7, dammod={str=0.6} }
+    //   :38 infravision = 10
+    //   :58 global_speed_base = 0.9
     expect({
-      maxHp: INDEX_HUSK.maxHp,
-      weaponRating: INDEX_HUSK.combat.weapon?.dam,
+      stats: INDEX_HUSK.combat.stats,
       armour: INDEX_HUSK.combat.mods?.armour,
+      def: INDEX_HUSK.combat.mods?.def,
+      weapon: INDEX_HUSK.combat.weapon,
+      sight: INDEX_HUSK.aggroRange,
+      speed: INDEX_HUSK.globalSpeed,
       reach: INDEX_HUSK.attackRange,
       profile: INDEX_HUSK.profile,
-    }).toEqual({ maxHp: 25, weaponRating: 8, armour: 1, reach: 1, profile: 'melee_chaser' });
+    }).toEqual({
+      stats: { str: 12, dex: 10, con: 13, mag: 3 },
+      armour: 1,
+      def: 1,
+      weapon: { dam: 5, atk: 15, apr: 7, damMod: { str: 0.6 } },
+      sight: 10,
+      speed: 0.9,
+      reach: 1,
+      profile: 'melee_chaser',
+    });
+
+    // The weapon rating is the resolver nest run at level 1, not a magic 5 —
+    // `resolvers.levelup(resolvers.rngavg(5,5), 1, 1)`. Pinned against the
+    // functions themselves so that a change to either resolver moves this test
+    // rather than silently moving the creature.
+    expect(INDEX_HUSK.combat.weapon?.dam).toBe(resolveLevelup(resolveRngAvg(5, 5)));
+
+    // DEVIATION, WRITTEN DOWN. Upstream is ant.lua:59
+    // `max_life = resolvers.rngavg(15,30)`, a mean of 22.5 — so the held 25 is
+    // inside the giant brown ant's own band and needs no defence beyond that.
+    expect(INDEX_HUSK.maxHp).toBe(25);
+    expect(INDEX_HUSK.maxHp).toBeGreaterThanOrEqual(15);
+    expect(INDEX_HUSK.maxHp).toBeLessThanOrEqual(30);
   });
 
-  it('carries index_wraith.json, orb and all', () => {
-    // content/enemies/index_wraith.json: max_hp 22, defense 1,
-    // cast_ability_damage 14 (the orb IS the creature, so it is the weapon
-    // rating, not the `attack_power: 8` basic attack), move_speed 64.
+  it('carries the losgoroth onto index_wraith, orb and all', () => {
+    // losgoroth.lua:59-70 on BASE_NPC_LOSGOROTH losgoroth.lua:22-57:
+    //   :30 combat = { dam=resolvers.levelup(resolvers.mbonus(40,15),1,1.2),
+    //                  atk=15, apr=15, dammod={mag=0.8} }
+    //   :43 ai_state = { ..., talent_in = 2 }
+    //   :44 stats = { str=10, dex=8, mag=6, con=16 }
+    //   :46 resists = { [PHYSICAL] = -30, ... }
+    //   :64 combat_armor = 0, combat_def = 20
+    // plus misc/npcs.lua:733 `proj_speed = 2` on the T_VOID_BLAST it grants
+    // (losgoroth.lua:67-69) — the creature and its orb are one package.
     expect({
-      maxHp: INDEX_WRAITH.maxHp,
-      weaponRating: INDEX_WRAITH.combat.weapon?.dam,
+      stats: INDEX_WRAITH.combat.stats,
       armour: INDEX_WRAITH.combat.mods?.armour,
-      type: INDEX_WRAITH.combat.damageType,
-    }).toEqual({ maxHp: 22, weaponRating: 14, armour: 1, type: DamageType.Darkness });
+      def: INDEX_WRAITH.combat.mods?.def,
+      weapon: INDEX_WRAITH.combat.weapon,
+      projSpeed: INDEX_WRAITH.projSpeed,
+      talentIn: INDEX_WRAITH.talentIn,
+    }).toEqual({
+      stats: { str: 10, dex: 8, mag: 6, con: 16 },
+      armour: 0,
+      def: 20,
+      weapon: { dam: 15, atk: 15, apr: 15, damMod: { mag: 0.8 } },
+      projSpeed: 2,
+      talentIn: 2,
+    });
 
-    // move_speed 64 ÷ the husk's reference 76 = 0.842, to 2dp. A kiter SLOWER
-    // than the party is the reason cornering one works at all.
+    // The weapon rating is the resolver nest at level 1, not a magic 15.
+    expect(INDEX_WRAITH.combat.weapon?.dam).toBe(resolveLevelup(resolveMBonus(40, 15)));
+
+    // OURS, KEPT: upstream's own element resist is ARCANE 100, which is neither
+    // our damage type nor a number that belongs on floor one.
+    expect(INDEX_WRAITH.combat.damageType).toBe(DamageType.Darkness);
+
+    // TWO DELIBERATE DEVIATIONS, both live fields, both pinned so they cannot
+    // drift back to "port" silently. Upstream's losgoroth authors no
+    // `global_speed_base` (so 1.0) and ToME has no dead zone anywhere.
     expect(INDEX_WRAITH.globalSpeed).toBe(0.84);
-    expect(INDEX_WRAITH.globalSpeed).toBeCloseTo(64 / 76, 2);
-    expect(INDEX_HUSK.globalSpeed).toBe(1);
+    expect(INDEX_WRAITH.minRange).toBe(2);
+    // ...and the third: upstream is `max_life = resolvers.rngavg(40,60)` = 50.
+    expect(INDEX_WRAITH.maxHp).toBe(22);
+    expect(resolveRngAvg(40, 60)).toBe(50);
+
+    // tome/resolvers.lua:901 — the `ranged` tactic preset's `safe_range = 4` is
+    // upstream's answer to "how far away does a shooter want to stand". The old
+    // 6 sat at the very edge of its own reach, so every step the party took was
+    // answered by a step back.
+    expect(INDEX_WRAITH.preferredRange).toBe(4);
   });
 
-  it('does NOT put `defense` on the flat-damage stage, and that is deliberate', () => {
-    // Structurally, Outer Index's `defense` is a flat post-resist subtraction
-    // (systems/combat/combat_manager.gd:324, :342-344), which is ToME's
-    // `flat_damage_armor` to the letter. It is ported as `combat_armor` anyway,
-    // because that Godot line floors at `maxi(1, …)` and ToME's floors at 0: a
-    // default detective's 4.408-damage swing (test/server/derived.test.ts)
-    // against a flat 3 lands for ZERO. `combat_armor` is hardiness-gated, so 70%
-    // of every blow lands no matter what — which is the property `defense` was
-    // actually carrying. See the header of content/monsters.ts.
+  it('gives only the wraith a travelling orb and a fire cadence', () => {
+    // ActorTalents.lua:987-991 — `if not t.proj_speed then return nil end`.
+    // ABSENT IS INSTANTANEOUS, which is exactly what every attack in this game
+    // does today, so a melee template must never carry either field: adding one
+    // would change behaviour that nobody asked to change, and a `talentIn` on a
+    // melee creature would gate its bump-attack on a coin flip.
+    expect({ proj: INDEX_HUSK.projSpeed, talent: INDEX_HUSK.talentIn }).toEqual({
+      proj: undefined,
+      talent: undefined,
+    });
+    expect({ proj: INDEX_HUSK_ELITE.projSpeed, talent: INDEX_HUSK_ELITE.talentIn }).toEqual({
+      proj: undefined,
+      talent: undefined,
+    });
+    expect({ proj: INDEX_WRAITH.projSpeed, talent: INDEX_WRAITH.talentIn }).toEqual({
+      proj: 2,
+      talent: 2,
+    });
+  });
+
+  it('rejects an orb that would never arrive', () => {
+    // `projSpeed` is TILES PER GAME TURN. 0 hangs in the air forever, a negative
+    // flies backwards, and NaN makes every energy comparison false — which on
+    // screen reads as the orb silently vanishing, i.e. as damage from nowhere.
+    // Absent is the one legal way to say "instantaneous".
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const broken: MonsterTemplate = { ...INDEX_WRAITH, projSpeed: bad };
+      expect({ bad, problems: validateTemplate(broken) }).toEqual({
+        bad,
+        problems: [`index_wraith: projSpeed ${bad} must be a positive finite number`],
+      });
+    }
+    // ...and the absence itself is legal, on the creature that has one today.
+    const instant: MonsterTemplate = { ...INDEX_WRAITH, projSpeed: undefined };
+    expect(validateTemplate(instant)).toEqual([]);
+  });
+
+  it('rejects a talent cadence that is not a whole 1-in-N', () => {
+    // `talent_in` is the N in `rng.chance(N)` (talented.lua:122), which draws an
+    // integer in [1, N]. 0 makes that range empty; 2.5 makes "1 in 2.5" a
+    // sentence nobody can reason about.
+    for (const bad of [0, -3, 1.5]) {
+      const broken: MonsterTemplate = { ...INDEX_WRAITH, talentIn: bad };
+      expect({ bad, problems: validateTemplate(broken) }).toEqual({
+        bad,
+        problems: [`index_wraith: talentIn ${bad} must be an integer >= 1`],
+      });
+    }
+    // 1 is legal and means "every turn" — BASE_NPC_ANT authors exactly that
+    // (ant.lua:33). It is just an expensive way to spell absent.
+    expect(validateTemplate({ ...INDEX_WRAITH, talentIn: 1 })).toEqual([]);
+  });
+
+  it('leaves the flat-damage stage unexercised by M3 content', () => {
+    // NOTHING in this roster sets `flat_damage_armor`, and neither does any of
+    // the three upstream entries it is built from. Step 8 of the pipeline in
+    // damage.ts is therefore unexercised by content on purpose: it is a gear
+    // stat, and gear is M6. Recorded as a test so nobody "fixes" the gap.
     for (const template of MONSTER_TEMPLATES) {
       expect({
         id: template.id,
@@ -271,6 +388,32 @@ describe('the authored Outer Index numbers survive the port', () => {
       expect(template.combat.profile?.resistsCap).toBeUndefined();
     }
   });
+
+  it('keeps every identity field byte-identical across the re-base', () => {
+    // THE LINE THE RE-BASE MUST NOT CROSS. ToME supplies the numbers; the id,
+    // the display name, the description and the sprite are the author's own and
+    // none of them moved. Pinned literally rather than by reference, because a
+    // reference would still pass if all four were replaced together.
+    expect(MONSTER_TEMPLATES.map((t) => [t.id, t.displayName, t.sprite])).toEqual([
+      ['index_husk', 'Index Husk', 'enemy_index_husk_s'],
+      ['index_wraith', 'Index Wraith', 'enemy_index_wraith_s'],
+      ['index_husk_elite', 'Overwritten Husk', 'enemy_index_husk_elite_s'],
+    ]);
+    expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
+    expect(INDEX_WRAITH.description).toContain('A cited absence given shape');
+    expect(INDEX_HUSK_ELITE.description).toContain('A husk the Index kept editing');
+    // ...and no upstream creature NAME leaked into anything a player can read.
+    // CLAUDE.md's licensing note: take the numbers and the behaviour, the
+    // identity stays ours. Whole words only — a substring test would fail the
+    // day somebody writes "wants" and would teach nothing when it did.
+    const facing = MONSTER_TEMPLATES.map((t) => `${t.displayName} ${t.description}`)
+      .join(' ')
+      .toLowerCase();
+    for (const upstream of ['ant', 'ants', 'losgoroth', 'ghoul', 'ghast', 'ghoulking']) {
+      const leaked = new RegExp(`\\b${upstream}\\b`).test(facing);
+      expect({ upstream, leaked }).toEqual({ upstream, leaked: false });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -280,47 +423,64 @@ describe('the authored Outer Index numbers survive the port', () => {
 describe('index_husk, derived', () => {
   const sheet = INDEX_HUSK.combat;
 
-  it('is easy to hit and bad at hitting, which is what makes it the first monster', () => {
-    // Dex 8 pays twice: accuracy at 1.0/point (Combat.lua:1343, on top of the
-    // bare +4) and dodge at 0.35 (Combat.lua:1245). 4 + (8 − 10) = 2, and
-    // max(0, (8 − 10) × 0.35) floors the defence at 0 before the rescale.
-    expect(combatAttack(sheet)).toBe(2);
-    expect(combatDefense(sheet)).toBe(0);
+  it('is ACCURATE and hits for almost nothing, which is the ant all over', () => {
+    // THE LARGEST SINGLE CORRECTION IN THIS FILE: accuracy 2 → 19 and defence
+    // 0 → 1. The hand-authored husk had Dex 8 and an unarmed weapon, giving
+    // `4 + 0 + 0 + (8 − 10)` = 2; the ant has Dex 10 and `atk = 15` on its
+    // mandibles (ant.lua:37), giving `4 + 15 + (10 − 10)` = 19 before the
+    // rescale. ToME gives its floor-one trash real accuracy and then makes it
+    // harmless by giving it almost no damage — the authored version had that
+    // exactly backwards, and it is why the roster read as "everything misses".
+    expect(combatAttack(sheet)).toBe(19);
+    // ant.lua:36 `combat_def = 1`, and Dex 10 contributes nothing.
+    expect(combatDefense(sheet)).toBe(1);
 
     // checkHit is linear: ceil(50 + 2.5 × (atk − def)), Combat.lua:337-350.
-    expect(hitChance(combatAttack(sheet), 0)).toBe(55);
-    expect(hitChance(4, combatDefense(sheet))).toBe(60);
+    // NB none of this is live: `strike` takes no to-hit roll at all — see the
+    // note on DEFAULT_MONSTER_DAMAGE_MIN in engine/actor.ts.
+    expect(hitChance(combatAttack(sheet), 0)).toBe(98);
+    expect(hitChance(4, combatDefense(sheet))).toBe(58);
   });
 
-  it('swings for 6-7 from an authored attack_power of 8', () => {
-    // 0.3 × rescale(str 12 + totstat 7.2) × damagePower(8 + 7.2)
-    // = 0.3 × 19 × 1.15574 (Combat.lua:1661-1687).
-    expect(combatDamage(sheet)).toBeCloseTo(6.3637, 4);
+  it('swings for a flat 5 from a weapon rating of 5', () => {
+    // ant.lua:37 `dam=resolvers.levelup(resolvers.rngavg(5,5),1,1)` = 5, with
+    // `dammod={str=0.6}` → totstat 7.2, so
+    // 0.3 × rescale(str 12 + 7.2) × damagePower(5 + 7.2) (Combat.lua:1661-1687).
+    expect(combatDamage(sheet)).toBeCloseTo(5.9979, 4);
 
     // The range roll TRUNCATES both endpoints (damage.ts `rollDamageRange`), so
-    // the swing is a uniform integer in [6, 7].
+    // the swing collapses to a flat 5: 5.9979 × 1.1 = 6.5977, and both ends
+    // truncate to 5 and 6 respectively... except the LOW end truncates to 5.
     //
-    // WATCH THIS ONE. The high end is 7.000088 — eighty-eight millionths above
-    // the truncation boundary. A tweak to Strength or to the weapon rating that
-    // shaves 0.0001 off turns this monster into a flat 6, which is a 7% damage
-    // cut nobody will connect to the change that caused it.
+    // WATCH THIS ONE. The low end is 5.9979 — two thousandths BELOW the
+    // boundary. A tweak to Strength or the weapon rating that adds 0.003 turns
+    // this monster from "5 or 6" into "6", a 20% damage jump nobody will connect
+    // to the change that caused it.
     const high = combatDamage(sheet) * combatDamageRange(sheet);
-    expect(Math.trunc(combatDamage(sheet))).toBe(6);
-    expect(Math.trunc(high)).toBe(7);
-    expect(high).toBeGreaterThan(7);
-    expect(high).toBeLessThan(7.001);
+    expect(Math.trunc(combatDamage(sheet))).toBe(5);
+    expect(Math.trunc(high)).toBe(6);
+    expect(combatDamage(sheet)).toBeLessThan(6);
+    expect(combatDamage(sheet)).toBeGreaterThan(5.99);
   });
 
-  it('carries one point of armour and almost no crit', () => {
+  it('carries one point of armour and the bare minimum crit', () => {
     expect(combatArmor(sheet)).toBe(1);
     // Base 30 and nothing added — Combat.lua:1336. 70% of every blow bypasses it.
     expect(combatArmorHardiness(sheet)).toBe(30);
-    // Cun 8 → (8 − 10) × 0.3 = −0.6, plus the weaponless +1 at Combat.lua:1424.
-    expect(combatCrit(sheet)).toBeCloseTo(0.4, 10);
+    // Cun is absent, so it takes the engine base of 10 → (10 − 10) × 0.3 = 0,
+    // leaving only the weaponless +1 at Combat.lua:1424. The old 0.4 came from
+    // a hand-authored Cun 8; the ant authors no Cunning at all.
+    expect(combatCrit(sheet)).toBeCloseTo(1, 10);
   });
 
-  it('is 25% harder to reach with a mind attack and ordinary to everything else', () => {
-    expect(combatGetResist(sheet.profile ?? {}, DamageType.Mind)).toBe(25);
+  it('resists nothing whatsoever, because BASE_NPC_ANT resists nothing', () => {
+    // The old husk carried `resists { Mind: 25 }` tagged INVENTED, justified as
+    // "a husk is already half-erased, so a mind attack finds less to grip". A
+    // giant brown ant has no `resists` table at all, so the invention came out
+    // with the rest of them — and the roster's first creature now teaches the
+    // pipeline's default rather than a made-up exception to it.
+    expect(sheet.profile).toBeUndefined();
+    expect(combatGetResist(sheet.profile ?? {}, DamageType.Mind)).toBe(0);
     expect(combatGetResist(sheet.profile ?? {}, DamageType.Fire)).toBe(0);
   });
 });
@@ -328,35 +488,49 @@ describe('index_husk, derived', () => {
 describe('index_wraith, derived', () => {
   const sheet = INDEX_WRAITH.combat;
 
-  it('is the accurate one, because that is what a sniper is', () => {
-    // Dex 13 → 4 + 3 = 7 accuracy, and (13 − 10) × 0.35 = 1.05 → rescale floors
-    // to 1 defence (Combat.lua:1459, the floor).
-    expect(combatAttack(sheet)).toBe(7);
-    expect(combatDefense(sheet)).toBe(1);
-    expect(hitChance(combatAttack(sheet), 0)).toBe(68);
-    // It hits a detective more often than a detective hits it back — which is
-    // the whole argument for closing the distance rather than trading shots.
-    expect(hitChance(4, combatDefense(sheet))).toBe(58);
+  it('is HARD TO HIT rather than accurate, which inverts the old sheet', () => {
+    // losgoroth.lua:64 `combat_armor = 0, combat_def = 20`, and :44 Dex 8.
+    // Defence: max(0, 20 + (8 − 10) × 0.35) = 19.3, rescaled to 19. Accuracy:
+    // 4 + 15 (weapon atk, :30) + (8 − 10) = 17.
+    //
+    // Both moved a long way — accuracy 7 → 17 and defence 1 → 19 — and the
+    // second is the creature. The hand-authored wraith was a Dex-13 sniper with
+    // one point of dodge; the losgoroth is a slow tough floater that is hard to
+    // connect with and buys its survival with DODGE, not armour. The "sniper"
+    // reading was invented.
+    expect(combatAttack(sheet)).toBe(17);
+    expect(combatDefense(sheet)).toBe(19);
+    expect(combatArmor(sheet)).toBe(0);
+    // A default detective (accuracy 4) against 19 defence is a coin flip well
+    // below even, which is what a kiter's dodge is supposed to buy.
+    expect(hitChance(4, combatDefense(sheet))).toBe(13);
   });
 
-  it('throws the orb with Dexterity and Cunning, not with a Strength it lacks', () => {
-    // dammod { dex: 0.5, cun: 0.4 } in the shape of ToME's bow (Combat.lua:1625
-    // notes the `{ str = 0.6 }` default a bow overrides).
-    expect(combatDamage(sheet)).toBeCloseTo(7.3832, 4);
-    expect(Math.trunc(combatDamage(sheet))).toBe(7);
-    expect(Math.trunc(combatDamage(sheet) * combatDamageRange(sheet))).toBe(8);
+  it('throws the orb with Magic alone, which is what its own dammod says', () => {
+    // losgoroth.lua:30 `dammod={mag=0.8}` → totstat = 6 × 0.8 = 4.8, over a
+    // weapon rating of 15 (`resolvers.mbonus(40,15)` at level 1) and Str 10.
+    // The old { dex: 0.5, cun: 0.4 } was invented "in the shape of ToME's own
+    // ranged dammod"; this IS ToME's own ranged dammod, for this creature.
+    expect(combatDamage(sheet)).toBeCloseTo(5.055, 4);
+    expect(Math.trunc(combatDamage(sheet))).toBe(5);
+    // 5.055 × 1.1 = 5.56, which truncates back to 5 — the low-damage collapse
+    // ToME's `rng.range` has by construction. The orb hits for a flat 5.
+    expect(Math.trunc(combatDamage(sheet) * combatDamageRange(sheet))).toBe(5);
   });
 
   it('shrugs off darkness and is VULNERABLE to a solid hit', () => {
     const profile = sheet.profile ?? {};
+    // OURS: upstream's equivalent is `[DamageType.ARCANE] = 100`, which is
+    // neither our damage type nor a number that belongs on floor one.
     expect(combatGetResist(profile, DamageType.Darkness)).toBe(50);
 
-    // A NEGATIVE resist is a vulnerability, and it is idiomatic upstream
-    // (vermin.lua:75 ships `[DamageType.FIRE] = -50`). It multiplies rather than
-    // subtracts — damage_types.lua:345-352, `dam * (100 - res) / 100`.
+    // losgoroth.lua:46 `[DamageType.PHYSICAL] = -30`, VERBATIM. This field
+    // carried an INVENTED tag and a value of −20; the invention was RIGHT and
+    // the number was timid. A negative resist multiplies rather than subtracts
+    // — damage_types.lua:345-352, `dam * (100 - res) / 100`.
     const physical = combatGetResist(profile, DamageType.Physical);
-    expect(physical).toBeCloseTo(-20, 10);
-    expect(applyResists(10, physical, 0)).toBeCloseTo(12, 10);
+    expect(physical).toBeCloseTo(-30, 10);
+    expect(applyResists(10, physical, 0)).toBeCloseTo(13, 10);
 
     // The floor is −100, which caps vulnerability at exactly double damage
     // rather than letting it run away.
@@ -367,54 +541,114 @@ describe('index_wraith, derived', () => {
 describe('index_husk_elite, derived', () => {
   const sheet = INDEX_HUSK_ELITE.combat;
 
-  it('hits barely harder than the husk it upgrades, ON PURPOSE', () => {
-    // The weapon rating went 8 → 12 (+50%) and the damage went 6.36 → 8.15
-    // (+28%), because Combat.lua:1682-1687 puts the rating under a square root.
-    // ToME's own rank ladder says the same thing from the other direction:
-    // `getRankLifeAdjust` (Actor.lua:1740-1751) gives a rank-3 elite only 1.22×
-    // a rank-2 normal's life at level 1. An elite is not a bigger number.
-    expect(combatDamage(sheet)).toBeCloseTo(8.15, 4);
+  it('is the husk with the ghoul ladder DELTA on it, not a copy of a ghoulking', () => {
+    // ghoul.lua:63 → :101 is dam 10 → 30 (×3), atk 5 → 8 (+3), apr 3 → 4 (+1),
+    // applied to the ant's `dam=5, atk=15, apr=7` (ant.lua:37). `dam` is the one
+    // ratio in the table because 10 → 30 is a clean tripling and 5 → 8 is not a
+    // clean anything. Everything the ladder does not move — the stats — the
+    // elite inherits from the husk unchanged: it is the SAME CREATURE, edited.
+    expect(sheet.weapon).toEqual({ dam: 15, atk: 18, apr: 8, damMod: { str: 0.6 } });
+    expect(sheet.stats).toEqual(INDEX_HUSK.combat.stats);
+    // armour +1 (:55 → :93) and def +3 (7 → 10) on the ant's 1 / 1 (ant.lua:36).
+    expect(sheet.mods).toEqual({ armour: 2, def: 4 });
+  });
+
+  it('hits harder than the husk it upgrades, but only by the square root', () => {
+    // Tripling the weapon rating (5 → 15) moves the damage 5.9979 → 7.0964,
+    // which is +18%, because Combat.lua:1682-1687 puts the rating under a square
+    // root. An elite is not a bigger number; see this template's header for the
+    // 1.22× rank-life claim that used to sit here and was a mis-read of
+    // Actor.lua:1740-1751.
+    expect(combatDamage(sheet)).toBeCloseTo(7.0964, 4);
     expect(combatDamage(sheet)).toBeLessThan(combatDamage(INDEX_HUSK.combat) * 1.3);
 
-    // 8.15 × 1.1 = 8.965, which truncates back to 8 — the low-damage collapse
-    // ToME's `rng.range` has by construction. The elite hits for a flat 8.
-    expect(Math.trunc(combatDamage(sheet))).toBe(8);
-    expect(Math.trunc(combatDamage(sheet) * combatDamageRange(sheet))).toBe(8);
+    // 7.0964 × 1.1 = 7.806, which truncates back to 7 — the low-damage collapse
+    // ToME's `rng.range` has by construction. The elite hits for a flat 7.
+    expect(Math.trunc(combatDamage(sheet))).toBe(7);
+    expect(Math.trunc(combatDamage(sheet) * combatDamageRange(sheet))).toBe(7);
   });
 
-  it('is the one creature in the roster that teaches armour', () => {
-    expect(combatArmor(sheet)).toBe(3);
-    // 30 base + 5 authored (Combat.lua:1336). Still under half, so the majority
-    // of every blow lands untouched and nothing is ever unkillable.
-    expect(combatArmorHardiness(sheet)).toBe(35);
-    // Anchored on city_watchman.json's authored `crit_chance: 0.05`, taken in
-    // percentage POINTS (Combat.lua:1415-1427), plus the weaponless +1.
-    expect(combatCrit(sheet)).toBe(6);
-    expect(combatAttack(sheet)).toBe(6);
+  it('carries two points of armour at the BASE hardiness, and no invented crit', () => {
+    expect(combatArmor(sheet)).toBe(2);
+    // 30 base and nothing added — Combat.lua:1336. The old block authored
+    // `armourHardiness: 5` and `physCrit: 5`, both invented (the crit anchored
+    // on a `crit_chance: 0.05` from a different game entirely). The ghoulking
+    // authors neither: rank-based resists and crit in ToME come from per-level
+    // rng draws inside `levelup()` (Actor.lua:3801-3806), which is autolevel and
+    // out of scope.
+    expect(combatArmorHardiness(sheet)).toBe(30);
+    expect(sheet.mods?.armourHardiness).toBeUndefined();
+    expect(sheet.mods?.physCrit).toBeUndefined();
+    expect(combatCrit(sheet)).toBeCloseTo(1, 10);
+    // 4 + 18 (weapon atk) + (Dex 10 − 10) = 22 raw, rescaled to 21.
+    expect(combatAttack(sheet)).toBe(21);
   });
+
+  it('resists nothing, because the ghoulking authors no resists', () => {
+    // The old block carried `resists { all: 10, Mind: 25 }`, both invented, the
+    // pair chosen purely to exercise the multiplicative composition rule. That
+    // rule still has a test — the next one — driven from a synthetic profile,
+    // which is where a rule-exerciser belongs. It is not content.
+    expect(sheet.profile).toBeUndefined();
+    expect(combatGetResist(sheet.profile ?? {}, DamageType.Mind)).toBe(0);
+  });
+
+  it('costs a party about five rounds rather than a solo detective forty', () => {
+    // The sizing argument, written down so a future retune has something to
+    // argue with. Every monster in the roster deals 3-6 through `strike` and
+    // every detective deals 4-7 (engine/actor.ts), so four M3-shaped detectives
+    // put roughly 13 a round out, and 60 life is between four and five rounds.
+    //
+    // DEVIATION, WRITTEN DOWN. A faithful port would put this at 25: ToME's own
+    // three-tier ghoul ladder holds `max_life = resolvers.rngavg(90,100)` across
+    // ALL THREE tiers (ghoul.lua:54, :71, :92) and buys the top tier's threat
+    // entirely with dam/atk/apr/def/armour/cadence — none of which we can spend
+    // yet, because the damage sheet is not wired to the swing. Life and
+    // behaviour are the elite's only live levers today.
+    expect(INDEX_HUSK_ELITE.maxHp).toBe(60);
+    expect(resolveRngAvg(90, 100)).toBe(95);
+    // ...and it is genuinely a step up from the creature it upgrades, which is
+    // the property the deviation exists to preserve.
+    expect(INDEX_HUSK_ELITE.maxHp).toBeGreaterThan(INDEX_HUSK.maxHp);
+    expect(INDEX_HUSK_ELITE.maxHp).toBeLessThan(110);
+  });
+});
+
+describe('the resist composition rule, on a synthetic profile', () => {
+  /**
+   * `all: 10` × `Mind: 25` — DECLARED HERE, NOT ON A CREATURE.
+   *
+   * This pair used to live on `index_husk_elite`, invented for the sole purpose
+   * of exercising Combat.lua:2227-2228. The re-base deleted both (the ghoulking
+   * authors no resists), and deleting the exerciser with them would have quietly
+   * dropped coverage of a real rule that is invisible in review when it is
+   * wrong. So the pair moved into the test file, which is where a rule probe
+   * belongs: content should describe a creature, not a code path.
+   */
+  const SYNTHETIC: DamageProfile = {
+    resists: { all: 10, [DamageType.Mind]: 25 },
+  };
 
   it('composes `all` with the typed row MULTIPLICATIVELY: 32.5, not 35', () => {
     // Combat.lua:2220-2231 — `100 × (1 − (1 − a)(1 − b))`, WITH the clamps at
     // :2227-2228. all 10 and mind 25 give 100 × (1 − 0.9 × 0.75) = 32.5.
     // Addition would give 35, and that error is invisible in review and
     // compounds everywhere resistance sources stack.
-    const profile = sheet.profile ?? {};
-    expect(combatGetResist(profile, DamageType.Mind)).toBeCloseTo(32.5, 10);
-    expect(combatGetResist(profile, DamageType.Mind)).not.toBeCloseTo(35, 1);
+    expect(combatGetResist(SYNTHETIC, DamageType.Mind)).toBeCloseTo(32.5, 10);
+    expect(combatGetResist(SYNTHETIC, DamageType.Mind)).not.toBeCloseTo(35, 1);
     // The `all` row alone, for a type with no entry of its own.
-    expect(combatGetResist(profile, DamageType.Fire)).toBeCloseTo(10, 10);
+    expect(combatGetResist(SYNTHETIC, DamageType.Fire)).toBeCloseTo(10, 10);
   });
 
-  it('costs a party about five rounds rather than a solo detective forty', () => {
-    // The sizing argument, written down so a future retune has something to
-    // argue with. A detective's 4-damage swing loses 1.4 to hardiness-35 armour
-    // 3 and then 10% to `all`; four M3-shaped detectives put roughly 13 a round
-    // through that, and 60 life is between four and five rounds.
-    expect(INDEX_HUSK_ELITE.maxHp).toBe(60);
-    // ToME's elite would have been 25 × 1.22 ≈ 30 and Outer Index's ~110
-    // (NEXUS/knowledge/lessons.md:170). 60 is between them, and deliberately so.
-    expect(INDEX_HUSK_ELITE.maxHp).toBeGreaterThan(INDEX_HUSK.maxHp * 1.22);
-    expect(INDEX_HUSK_ELITE.maxHp).toBeLessThan(110);
+  it('is not a fact about any creature in the roster', () => {
+    // The counterpart assertion, so nobody re-adds the pair to a template to
+    // "make the test more realistic". No M3 creature composes two resist rows.
+    for (const template of MONSTER_TEMPLATES) {
+      expect({ id: template.id, all: template.combat.profile?.resists?.all }).toEqual({
+        id: template.id,
+        all: undefined,
+      });
+    }
   });
 });
 
@@ -514,9 +748,10 @@ describe('the wraith holds its lane', () => {
   ] as const;
   const passable = passableIn(ROOM);
 
-  it('closes when it is out of its band and stops the moment it is in', () => {
+  it('closes to its stand-off distance and stops there', () => {
     // Chebyshev 8 — exactly its `aggroRange`, so it can see the detective — and
-    // Euclidean 8, which is past its `preferredRange` of 6.
+    // Euclidean 8, which is past its `preferredRange` of 4
+    // (tome/resolvers.lua:901, `safe_range = 4`).
     const player = detective('p1', { x: 5, y: 4 });
     const wraith = spawn(INDEX_WRAITH, 'm1', { x: 13, y: 4 });
     const ctx = aiCtx(passable, [player, wraith], createRng('band'));
@@ -532,7 +767,77 @@ describe('the wraith holds its lane', () => {
       applyMove(wraith, intent);
     }
     expect(combatDistance(wraith, player)).toBeLessThanOrEqual(INDEX_WRAITH.preferredRange);
-    expect(decideNpcAction(wraith, ctx)).toEqual({ kind: IntentKind.Attack, targetId: 'p1' });
+    // ...and it stays there rather than drifting: from inside the band the only
+    // two things it will ever decide are "shoot" and "hold my aim", never
+    // another step. The `talentIn` gate makes which one a coin flip, so the
+    // assertion is over the SET of decisions across many turns.
+    const decisions = new Set<string>();
+    for (let turn = 0; turn < 20; turn += 1) {
+      decisions.add(decideNpcAction(wraith, ctx).kind);
+    }
+    expect([...decisions].sort()).toEqual([IntentKind.Attack, IntentKind.Hold].sort());
+  });
+
+  it('fires on a 1 and holds its aim on anything else — losgoroth.lua:43', () => {
+    // `ai_state = { talent_in = 2 }` is a 1-IN-2 CHANCE PER TURN
+    // (ai/talented.lua:122, `rng.chance(self.ai_state.talent_in or 6)`), NOT one
+    // shot every two turns. This is half the answer to "the wraith kills too
+    // fast": the old one fired every single turn from the edge of its reach.
+    //
+    // The script is [keep-roll, fire-roll]: the target-keep at simple.lua:253
+    // draws first and only when there is already a remembered target, so the
+    // FIRST call short-circuits it and needs one number, not two.
+    const board = (): { player: EngineActor; wraith: MonsterActor } => ({
+      player: detective('p1', { x: 5, y: 4 }),
+      wraith: spawn(INDEX_WRAITH, 'm1', { x: 9, y: 4 }),
+    });
+
+    const hot = board();
+    const fires = decideNpcAction(
+      hot.wraith,
+      aiCtx(passable, [hot.player, hot.wraith], scriptedRng([1])),
+    );
+    expect(fires).toEqual({ kind: IntentKind.Attack, targetId: 'p1' });
+
+    const cold = board();
+    const holds = decideNpcAction(
+      cold.wraith,
+      aiCtx(passable, [cold.player, cold.wraith], scriptedRng([2])),
+    );
+    expect(holds).toEqual({ kind: IntentKind.Hold });
+    // A held shot is not a blocked turn — it is standing exactly where it wants
+    // to stand — so nothing may accumulate toward the shoulder escalation a
+    // kiter must never run.
+    expect(cold.wraith.ai.blockedTurns).toBe(0);
+  });
+
+  it('takes the fire roll ONLY when it actually has a shot lined up', () => {
+    // The stream-position guarantee. A wraith that is out of its band,
+    // retreating or cornered must consume the seeded stream exactly as it did
+    // before the gate existed — otherwise the number of wraiths on a floor
+    // changes what every other actor rolls, which is the one thing
+    // replay-from-seed cannot survive.
+    //
+    // Nine tiles away: too far to see (aggroRange 8), so it does not even
+    // target. Zero draws of any kind.
+    const far = detective('p1', { x: 1, y: 4 });
+    const distant = spawn(INDEX_WRAITH, 'm1', { x: 13, y: 4 });
+    const noDraws = scriptedRng([]);
+    expect(decideNpcAction(distant, aiCtx(passable, [far, distant], noDraws))).toEqual({
+      kind: IntentKind.Hold,
+    });
+    expect(drawCount(noDraws)).toBe(0);
+
+    // Inside the dead zone: it retreats. Straight away from the target is open,
+    // so `flee_simple` never even reaches its sidestep coin flips — and it
+    // certainly never reaches `ai.fire.chance`. An empty script proves it: the
+    // scripted generator THROWS on any draw at all.
+    const near = detective('p2', { x: 6, y: 4 });
+    const pressed = spawn(INDEX_WRAITH, 'm1', { x: 7, y: 4 });
+    const fleeRng = scriptedRng([]);
+    const retreat = decideNpcAction(pressed, aiCtx(passable, [near, pressed], fleeRng));
+    expect(retreat).toEqual({ kind: IntentKind.Move, dir: 'e' });
+    expect(drawCount(fleeRng)).toBe(0);
   });
 
   it('gives ground the moment a detective steps inside the dead zone', () => {
@@ -889,18 +1194,42 @@ describe('the wire carries what the ring needs', () => {
       blocked: elite.ai.blockedTurns,
       shouldering: elite.ai.shoulderTurns,
       aggro: elite.ai.aggroRange,
+      // Both absent on a melee creature, and `undefined` must arrive as
+      // `undefined` rather than being defaulted anywhere along the way: absent
+      // `projSpeed` is ToME's "instantaneous" (ActorTalents.lua:988) and absent
+      // `talentIn` is "every turn" (talented.lua:122).
+      proj: elite.projSpeed,
+      talent: elite.talentIn,
     }).toEqual({
       rank: ActorRank.Elite,
       hp: 60,
       maxHp: 60,
       reach: 1,
-      speed: 1,
+      // The ghoul ladder moves no speed field, so the delta is zero and the
+      // elite inherits the husk's `global_speed_base = 0.9` (ant.lua:58). It
+      // used to be 1, i.e. FASTER than its own base creature.
+      speed: 0.9,
       sheet: INDEX_HUSK_ELITE.combat,
       hunts: true,
       shoulder: 5,
       blocked: 0,
       shouldering: 0,
-      aggro: 9,
+      // Also a zero delta: the elite sees exactly as far as the husk
+      // (ant.lua:38, `infravision = 10`).
+      aggro: 10,
+      proj: undefined,
+      talent: undefined,
     });
+  });
+
+  it('carries the wraith’s orb speed and fire cadence onto the live actor', () => {
+    // The two new fields are on the ACTOR, not inside `ai`: `ai` holds what this
+    // monster is thinking, and these are facts about the creature. Whatever
+    // creates a projectile will read `projSpeed` and has no business reaching
+    // into an AI state bag for it.
+    const wraith = spawn(INDEX_WRAITH, 'm1', { x: 4, y: 5 });
+    expect({ proj: wraith.projSpeed, talent: wraith.talentIn }).toEqual({ proj: 2, talent: 2 });
+    expect(Object.keys(wraith.ai)).not.toContain('projSpeed');
+    expect(Object.keys(wraith.ai)).not.toContain('talentIn');
   });
 });

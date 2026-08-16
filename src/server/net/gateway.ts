@@ -67,6 +67,7 @@ import {
   projectLoadout,
   projectParty,
   projectPartyState,
+  projectProjectiles,
   projectResource,
   projectTurn,
   projectWorld,
@@ -1104,6 +1105,15 @@ function turnKey(state: TurnState, bellArmed: boolean): string {
   ].join('|');
 }
 
+/**
+ * THE SKY IS CLEAR, as the `projectiles` memo spells it.
+ *
+ * `JSON.stringify([])`, written out as the literal it produces so that the
+ * seeded memo below reads as a statement rather than as a call whose result you
+ * have to work out. See `lastProjectilesKey` for why it is seeded at all.
+ */
+const NO_PROJECTILES_KEY = '[]';
+
 export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts) => {
   const { world, engine } = opts;
   const disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULT_DISCONNECT_GRACE_MS;
@@ -1169,6 +1179,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
   /** The last `effects` frame broadcast, as a key. */
   let lastEffectsKey: string | null = null;
+
+  /**
+   * The last `projectiles` frame broadcast, as a key — and SEEDED WITH THE
+   * EMPTY LIST rather than with null, which the other two memos use.
+   *
+   * That difference is deliberate and it is the whole reason a server that never
+   * fires an orb sends byte-for-byte the frame set it sent before this feature
+   * existed. `null` would make the very first pump of every session compare
+   * `'[]' !== null` and broadcast an empty `projectiles` frame to say nothing at
+   * all. An empty sky is not news: it is what a client already believes before
+   * it is told anything, and `welcome` carries no orb list precisely because
+   * absence is the default rather than a fact that has to be transmitted.
+   */
+  let lastProjectilesKey = NO_PROJECTILES_KEY;
 
   /**
    * Actor id -> when that player last put a line in the Margin.
@@ -1296,6 +1320,74 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const key = JSON.stringify(msg.actors);
     if (key === lastEffectsKey) return;
     lastEffectsKey = key;
+    broadcast(msg);
+  };
+
+  /**
+   * EVERYTHING IN THE AIR, when it changed. The same memo shape as the two
+   * above, and for the same three reasons.
+   *
+   * ═══ AN IDLE PUMP COSTS ONE STRING COMPARE AND SENDS NOTHING ═══
+   * This runs on every pump, including the ones where nobody did anything, and
+   * the overwhelmingly common state of the sky is EMPTY — no monster in the
+   * roster but the wraith has a `projSpeed` at all. So the hot path is
+   * `projectProjectiles` over an empty table, `JSON.stringify([])`, one compare
+   * against the seeded key, and a return.
+   *
+   * ═══ THE FRAME IS ABSOLUTE, WHICH IS WHY "ON CHANGE" IS SAFE ═══
+   * Suppressing a duplicate is only ever legal for a snapshot: the frame that
+   * does go out replaces the client's whole list, so a suppressed one would have
+   * said exactly what the client already believes. An orb LANDING is a change
+   * like any other — the list is shorter — so impact broadcasts an absence
+   * rather than a "removed" patch, and a client that missed the landing frame is
+   * corrected by the next one instead of holding a phantom orb forever.
+   *
+   * NO WALL CLOCK AND NO GAME STATE. It projects what the world already decided
+   * during the pump that just returned; it may not step, age or reap an orb.
+   * Flight happens on the energy clock inside `engine.pump`, and putting one
+   * line of it here would be a second scheduler in the file that owns the only
+   * `setTimeout` in the turn path.
+   */
+  const broadcastProjectilesIfChanged = (): void => {
+    const msg = projectProjectiles(world);
+    const key = JSON.stringify(msg.projectiles);
+    if (key === lastProjectilesKey) return;
+    lastProjectilesKey = key;
+    broadcast(msg);
+  };
+
+  /**
+   * THE SKY, TO SOMEBODY WHO HAS SEEN NOTHING — `welcome`, a resume, and the
+   * full board resync.
+   *
+   * ═══ WHY THE `state` FRAME CANNOT COVER THIS ═══
+   * `state` carries `ActorView` and only `ActorView` (protocol.ts), and an orb
+   * is deliberately NOT an actor — no `ActorKind` member, no hp bar, no rank
+   * ring. So the frame the gateway resends when a body has been rewritten says
+   * nothing whatever about what is in the air, and a player reconnecting
+   * mid-flight would see an empty sky until the next pump happened to change
+   * the list. Out of combat, with a party standing still deciding what to do,
+   * that can be minutes — and the orb they cannot see is the one they were
+   * given two turns to dodge.
+   *
+   * ═══ SILENT WHEN NOTHING IS IN THE AIR ═══
+   * Absence is the client's default, so an empty frame here would be a frame
+   * that says what its recipient already believes — on every join and every
+   * survival event, on a server whose roster has one creature that can fire.
+   * See `lastProjectilesKey`.
+   *
+   * @param socket the one recipient, or absent to tell the room. The broadcast
+   *   form also updates the memo, so the `broadcastProjectilesIfChanged` a few
+   *   lines later in the same pump correctly sends nothing.
+   */
+  const sendProjectilesIfAny = (socket?: GatewaySocket): void => {
+    const msg = projectProjectiles(world);
+    if (msg.projectiles.length === 0) return;
+    if (socket !== undefined) {
+      send(socket, msg);
+      return;
+    }
+    lastProjectilesKey = JSON.stringify(msg.projectiles);
     broadcast(msg);
   };
 
@@ -1799,6 +1891,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         app.log.warn({ gameTurn: result.turn.gameTurn }, 'party wipe — the floor resets');
       }
       broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
+      // ═══ AND THE SKY WITH IT — `state` CARRIES NO ORB ═══
+      // The resync above is the "the client's board may be out of step" hammer,
+      // and it swings over `ActorView` alone. An orb is not an actor, so a
+      // player being restored to their feet beside a shot that is still in the
+      // air would be handed a corrected board and an uncorrected sky. It rides
+      // the same event for the same few-KB-once reason, it is silent when
+      // nothing is flying, and it updates the memo so the snapshot band below
+      // does not say the same thing twice in one pump.
+      sendProjectilesIfAny();
     }
 
     syncBell(result.turn);
@@ -1815,6 +1916,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // a handful of small objects and sends nothing.
     broadcastEffectsIfChanged();
     broadcastPartyIfChanged(Date.now());
+    // THE THIRD SNAPSHOT, and the only one whose subject moved during the pump
+    // rather than because of it. It goes out AFTER the `sweep` above for the
+    // same reason the other two do: the frame that says an orb is gone must
+    // follow the `attack` step that says what it hit, or a client draws the
+    // impact against a sky that has already been cleared.
+    broadcastProjectilesIfChanged();
 
     // Unicast, and each socket learns only about its own. This is deliberately
     // unconditional rather than gated on "did a talent happen": `actBase` ticks
@@ -2223,6 +2330,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
     send(session.socket, projectParty(world, opts.downed, speakingNow(Date.now())));
 
+    // THE THIRD SNAPSHOT, unicast, and this one is not merely "outside the
+    // on-change rule" — the memo would actively suppress it. A player who
+    // reconnects mid-flight compares against the last thing BROADCAST, which
+    // already carried this exact orb to everybody else, so the pump at the end
+    // of this function would send them nothing at all and they would rejoin to
+    // a clear sky with a shot still coming at them. `welcome` cannot carry it
+    // either: that frame is the level and the actors, and an orb is neither.
+    // Silent when nothing is in the air — see `sendProjectilesIfAny`.
+    sendProjectilesIfAny(session.socket);
+
     // THE PARTY PANE, unicast, outside the on-change rule for the same reason
     // as everything above it: this socket has seen nothing. A reconnecting
     // player must find their party still standing where they left it — and a
@@ -2247,6 +2364,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // is resent — the same deliberately dumb answer `needsFullResync` gives,
       // for the same reason, and at the same cost of a few KB once.
       broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) }, session.connId);
+      // ═══ AND THE SKY WITH IT — THE CLIENT CLEARS ITS ORBS ON `state` ═══
+      // src/client/main.ts's `case 'state'` runs `clearProjectiles()`, so this
+      // broadcast wipes every orb from every OTHER player's screen. The memo
+      // would then actively suppress the correction: `broadcastProjectilesIfChanged`
+      // compares against the last thing BROADCAST and the list has not changed,
+      // so the pump at the foot of `hello` sends nothing. The whole party would
+      // be dodging a shot they can no longer see, because somebody else changed
+      // their Discord name.
+      //
+      // The `state` above excludes `session.connId` while this does not, and
+      // that is harmless: the frame is ABSOLUTE, and the rejoining socket
+      // already got its own unicast copy a few lines up.
+      sendProjectilesIfAny();
     }
 
     app.log.info(
@@ -2827,6 +2957,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // not block, so it may have been lying under somebody) and the hp. The same
     // deliberately dumb answer `needsFullResync` gives, for the same reason.
     broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
+    // ═══ AND THE SKY WITH IT, FOR THE THIRD AND LAST TIME IN THIS FILE ═══
+    // Every `state` broadcast clears the client's orb list (src/client/main.ts's
+    // `case 'state'`), and the memo suppresses the restate because the list
+    // itself did not change. Three sites broadcast `state`: the full resync in
+    // `pumpAndBroadcast`, the rename in `hello`, and this one. All three carry
+    // the sky. If a fourth is ever added it must too — an orb the party cannot
+    // see has no counterplay, which is the whole point of the feature.
+    sendProjectilesIfAny();
     // A CRITICAL EVENT, like a death and a disconnect: the state worth keeping
     // is the one that just changed, and it changed because somebody was stuck.
     saveNow('respawn');

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadManifest } from '../../src/client/render/assets.ts';
@@ -137,5 +138,114 @@ describe('loadManifest on a normal install', () => {
       h: 64,
     });
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A FEATURE THAT NEEDS NEW ART MUST NOT SHIP AS A NEW ASSET PREFIX
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The tests above defend "no art installed" at BOOT. These defend it at DRAW
+ * time, for the overlays that keep being tempted into art they cannot have.
+ *
+ * render/canvas.ts spells the trap out twice — once over `paintPath` and once
+ * over `paintProjectiles`: adding a `MarkerKind` member and blitting
+ * `ui_tile_marker_<it>` follows the shape of every other overlay in that file
+ * and fails loudly for EVERYONE, because the id is in no manifest, the art is
+ * gitignored wholesale so a bare clone has no manifest at all, and `blitSprite`
+ * resolves a miss to the intentionally shouty violet fallback box. The result is
+ * the broken-manifest alarm being fired by a feature that works perfectly, which
+ * is the one thing that alarm must never do.
+ *
+ * A COMMENT CANNOT ENFORCE THAT AND A CANVAS TEST CANNOT EITHER — there is no
+ * jsdom here, and mocking a 2D context to count `drawImage` calls would test the
+ * mock. So it is pinned by grep: the two overlays that draw with `fillRect`
+ * alone must not acquire a sprite, a marker kind, or a prefix to load one under.
+ */
+describe('the fillRect overlays stay art-free', () => {
+  const root = new URL('../../', import.meta.url);
+  /**
+   * CODE ONLY, COMMENTS STRIPPED, and both halves of that matter here. The
+   * prose in these files NAMES the sprite call and the marker ids it is
+   * forbidding — that is the comment doing its job — so a grep over the raw text
+   * would fail on the warning rather than on the violation, and the obvious fix
+   * (delete the warning) is the wrong one. It also keeps an apostrophe in a
+   * comment ("the turn cards' portraits") from being read as a string quote.
+   */
+  function codeOf(path: string): string {
+    return readFileSync(new URL(path, root), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+  }
+  const canvasSrc = codeOf('src/client/render/canvas.ts');
+  const mainSrc = codeOf('src/client/main.ts');
+
+  it('loads exactly the asset prefixes it loaded before the orb landed', () => {
+    // The v7 projectile is drawn as an ORANGE fillRect dot. If this list ever
+    // grows a `fx_`, a `ui_orb_` or a second `ui_tile_marker_`-shaped entry for
+    // it, somebody has reached for a PNG that does not exist.
+    const block = /const NEEDED_ASSET_PREFIXES = \[([\s\S]*?)\] as const;/.exec(mainSrc);
+    expect(block).not.toBeNull();
+    const prefixes = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+
+    expect(prefixes).toEqual([
+      'chr_player_',
+      'chr_npc_',
+      'enemy_',
+      'ui_token_ring_',
+      'ui_tile_marker_',
+      'ui_icon_turn_',
+      'ui_hotbar_slot_',
+      'ui_pip_',
+      'icon_ability_',
+      'icon_status_',
+      'icon_character_',
+      'ui_panel_',
+      'ui_marker_',
+      'ui_icon_speaking',
+    ]);
+  });
+
+  it('keeps MarkerKind at the five members that have manifest art', () => {
+    // `ui_tile_marker_${kind}` is blitted from this enum in two places, so a
+    // sixth member is a sixth PNG demanded of every clone.
+    const block = /export const MarkerKind = \{([\s\S]*?)\} as const;/.exec(canvasSrc);
+    expect(block).not.toBeNull();
+    const kinds = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+
+    expect(kinds).toEqual(['cursor', 'valid', 'invalid', 'aoe', 'minrange']);
+  });
+
+  it('paints projectiles with fillRect and never with blitSprite', () => {
+    const from = canvasSrc.indexOf('function paintProjectiles(');
+    const to = canvasSrc.indexOf('function cornerTicks(');
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const body = canvasSrc.slice(from, to);
+
+    expect(body).not.toContain('blitSprite');
+    expect(body).not.toContain('drawImage');
+    expect(body).toContain('PALETTE.ORANGE');
+    // The 1px INK surround, the legibility trick the status pips use: the orb
+    // crosses floor, wall and the lit top edge of a wall in one flight.
+    expect(body).toContain('PALETTE.INK');
+    // Never GOLD (the player's own route and cursor — an enemy orb in gold reads
+    // as your own aim), never CRIMSON (reserved for "hostiles are engaged"), and
+    // never VIOLET_HI, which IS the missing-asset box.
+    expect(body).not.toContain('PALETTE.GOLD');
+    expect(body).not.toContain('PALETTE.CRIMSON');
+    expect(body).not.toContain('PALETTE.VIOLET_HI');
+  });
+
+  it('still paints the travel route with fillRect and never with blitSprite', () => {
+    const from = canvasSrc.indexOf('function paintPath(');
+    const to = canvasSrc.indexOf('function paintProjectiles(');
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const body = canvasSrc.slice(from, to);
+
+    expect(body).not.toContain('blitSprite');
+    expect(body).toContain('PALETTE.GOLD');
   });
 });

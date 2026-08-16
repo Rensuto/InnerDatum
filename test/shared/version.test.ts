@@ -31,6 +31,17 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
+  it('pins PROTOCOL_VERSION at 7 — the travelling projectile', () => {
+    // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
+    // Everything above only asserts the constants are positive integers, which
+    // a revert would pass. v7 added the `projectiles` frame; a v6 client cannot
+    // name it, draws no orb, and takes the damage three turns later from an
+    // invisible source — the counterplay does not exist on that client, which is
+    // the CONFIDENTLY WRONG UI this constant exists to refuse. The bump log in
+    // src/shared/version.ts is the long version.
+    expect(PROTOCOL_VERSION).toBe(7);
+  });
+
   it('exposes versions as positive integers', () => {
     // A float or a zero here would serialise into a save file and make the
     // migration comparison (`saved < SCHEMA_VERSION`) behave unpredictably.

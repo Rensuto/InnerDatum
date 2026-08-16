@@ -44,6 +44,7 @@ import {
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { downedView } from '../engine/downed.ts';
 import { EffectStatus, effectDef, effectsOn } from '../engine/effects.ts';
+import { aimTile, currentTile, turnsToImpact } from '../engine/projectile.ts';
 import type {
   ActorEffects,
   ActorView,
@@ -58,6 +59,8 @@ import type {
   PartyMsg,
   PartyStateMember,
   PartyStateMsg,
+  ProjectileView,
+  ProjectilesMsg,
   ResourceMsg,
   ResourceView,
   TurnActor,
@@ -793,6 +796,110 @@ export function projectEffects(world: World, effects: EffectState): EffectsMsg {
   }
 
   return { v: PROTOCOL_VERSION, t: 'effects', actors };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERYTHING IN THE AIR. COMPLETE AND ABSOLUTE, exactly like `projectEffects`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An empty array means the sky is clear, and a client REPLACES its list rather
+ * than merging into it. That is the same rule the badge row follows and it is
+ * here for a sharper version of the same reason: an orb is a three-turn object
+ * with a tile, so a patch stream that dropped one frame would leave a PHANTOM
+ * ORB hanging over a tile forever — and a phantom orb does not merely look
+ * wrong, it teaches the wrong counterplay. Somebody steps around a threat that
+ * is not there, or stops trusting the ones that are.
+ *
+ * IT IS NOT AN EVENT, AND THAT IS WHY THIS FUNCTION EXISTS AT ALL. The launch
+ * is never announced: src/client/render/sweep.ts applies a whole sweep in one
+ * synchronous pass and clears its markers a quarter of a second later — exactly
+ * while the player is deciding whether to step out of the line. A snapshot is
+ * the only representation that survives a park, a reconnect and a resync, which
+ * are the three moments an orb is most likely to be in flight.
+ *
+ * ═══ FOV SEAM, AND IT IS THE ONE PLACE THE FILTER WILL GO (M6) ═══
+ *
+ * Upstream marks a projectile `display_on_seen = true`, `display_on_remember =
+ * false`, `display_on_unknown = false` (Projectile.lua:29-31): an orb is drawn
+ * on tiles you can SEE RIGHT NOW and is never remembered, because where a bolt
+ * was two turns ago is not where it is. Ours is level-wide today — there is one
+ * `LevelView` and one actor list for everybody — so shipping the whole sky
+ * leaks nothing `projectActors` does not already leak.
+ *
+ * THE DAY PER-PLAYER FOV LANDS, THE FILTER IS AN EDIT TO THIS BODY AND TO
+ * NOTHING ELSE: this function takes the viewer and admits only orbs whose
+ * CURRENT tile `visible(viewer, tile)` allows, with no remembered-tile fallback.
+ * An orb's tile is a POSITION, and an orb crossing an unexplored room says
+ * something is shooting in it and roughly where from — which is the shooter's
+ * position, arrived at by inference, and therefore exactly the class of leak
+ * CLAUDE.md non-negotiable 4 exists for. `ProjectilesMsg` moves from
+ * `BroadcastMsg` to `ViewerMsg` in the same commit; `BroadcastMsg` is
+ * `Exclude`-derived, so that move is one line in protocol.ts and a compile error
+ * at every site that was broadcasting it.
+ *
+ * ═══ TURNS, NEVER MILLISECONDS ═══
+ *
+ * `turnsToImpact` is GAME TURNS, computed by `engine/projectile.ts` from the
+ * tiles left and the orb's own `energyMod` — tiles per game turn, which is
+ * `proj_speed` exactly (Projectile.lua:304-305 into GameEnergyBased.lua:125).
+ * There is no deadline and no millisecond figure anywhere in the frame, and
+ * there could not be: nothing under src/server/view/** may call `Date.now` (see
+ * the note on `TurnState.bellDurationMs` above — the lint block that bans
+ * `await` here bans the clock too). The same unit as `EffectView.turns` and
+ * `CooldownsMsg`, and mixing the two would be the difference between "you have
+ * two turns to move" and "it lands before you can press a key".
+ *
+ * FIELD BY FIELD, never a spread, for the reason `toActorView` gives: the orb
+ * carries its frozen damage roll, its armour penetration, the whole `path` it
+ * will take and the id of a shooter whose body may be a corpse. A spread would
+ * put the flight plan — and therefore the shot's destination BEFORE it gets
+ * there, and the exact number it will deal — on the wire the day somebody adds a
+ * field. The compiler stopping here and asking whether the client is allowed to
+ * know IS the point.
+ */
+export function projectProjectiles(world: World): ProjectilesMsg {
+  const projectiles: ProjectileView[] = [];
+
+  for (const proj of world.projectilesInFlight()) {
+    // A DETONATED ORB IS NOT IN THE AIR. `actProjectile` drops a landed orb from
+    // the world in the same synchronous step it lands, so this is unreachable
+    // today and is written down anyway: the flag exists because the scheduler
+    // ticks a SNAPSHOT of the array (`Projectile.landed`), and the day anything
+    // defers the removal, drawing the orb would say a shot that has already
+    // been resolved is still coming.
+    if (proj.landed) continue;
+
+    const at = currentTile(proj);
+    const aim = aimTile(proj);
+
+    projectiles.push({
+      id: proj.id,
+      // WHERE IT IS RIGHT NOW — `path[cursor - 1]`, the tile it is standing on.
+      x: at.x,
+      y: at.y,
+      // WHO FIRED IT. May name a corpse: an orb outlives its shooter, upstream
+      // included (Projectile.lua holds a hard `src` reference with no liveness
+      // check, and attributes the kill to the dead shooter).
+      sourceId: proj.sourceId,
+      // THE TILE IT IS FLYING AT — the last tile of the frozen line, which is
+      // where the target was standing when it was fired and NOT where they are
+      // now. The orb does not re-aim, and this field is what lets a client draw
+      // that fact. Softening it into the target's current tile would delete the
+      // counterplay from the screen while leaving it in the engine.
+      targetX: aim.x,
+      targetY: aim.y,
+      turnsToImpact: turnsToImpact(proj),
+    });
+    // NOT COPIED, AND EACH IS A REASON THE SPREAD IS BANNED ABOVE: `damage` (the
+    // frozen roll, the apr and the resist penetration — a client that knew it
+    // could decide whether to bother dodging), `path` (every tile the shot will
+    // cross, i.e. the future), `range`, `origin`, and all four energy fields,
+    // which would let a client compute the exact tick of impact and therefore
+    // the whole turn order — the same disclosure `toActorView` withholds.
+  }
+
+  return { v: PROTOCOL_VERSION, t: 'projectiles', projectiles };
 }
 
 /**

@@ -70,9 +70,12 @@
  *     whoever happens to sit earlier in a hash table. The elite's isolation
  *     scan re-sorts that list without ever consulting the stream.
  *   - Every random draw goes through the world's seeded PCG32 with a LABEL.
- *     There are exactly three, all ported: the 90% target-keep at
- *     simple.lua:253, and the two coin flips that order the flanking sidesteps
- *     at simple.lua:79 and :85.
+ *     There are exactly four, all ported: the 90% target-keep at
+ *     simple.lua:253, the two coin flips that order the flanking sidesteps at
+ *     simple.lua:79 and :85, and the 1-in-`talent_in` fire roll at
+ *     ai/talented.lua:122. The fourth is CONDITIONAL on the creature declaring a
+ *     `talentIn` at all, so a monster that does not (every melee creature in the
+ *     roster) consumes the stream exactly as it did before that draw existed.
  *
  * SYNCHRONOUS — src/server/ai/** carries the engine's six anti-async selectors
  * and the bans on `Date.now`/`Math.random`.
@@ -396,7 +399,12 @@ function aroundKin(ctx: AiCtx, target: EngineActor): PassableFn {
  *
  *   inside minRange       -> RETREAT (`flee_simple`), and never a point-blank shot
  *   beyond preferredRange -> approach, the same A* as the chaser but floored
- *   in the band           -> shoot
+ *   in the band           -> shoot, subject to `talentIn` (ai/talented.lua:122)
+ *
+ * The `talentIn` gate on that last line is what stops a kiter being a metronome:
+ * a creature that declares one fires on a 1-in-N and otherwise holds its aim.
+ * `index_wraith` declares 2, from losgoroth.lua:43. A creature that declares
+ * nothing fires every turn, which is what every profile did before the gate.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * IT MUST NOT WALK INTO MELEE, AND THAT IS THREE SEPARATE GUARANTEES
@@ -445,7 +453,55 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
   }
 
   if (distance <= self.attackRange) {
+    // It is standing where it wants to stand, so it is not blocked by anything —
+    // whether or not it chooses to shoot this turn. Reset before the gate below,
+    // so "held fire" never accumulates toward an escalation the kiter must not
+    // run anyway (see guarantee 1 above).
     self.ai.blockedTurns = 0;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // `ai_state.talent_in` — ONE IN N, DRAWN ONLY HERE
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Ported from ai/talented.lua:117-132 (`dumb_talented_simple`), and the
+    // whole gate is the one condition at :122:
+    //
+    // ```lua
+    // -- One in "talent_in" chance of using a talent
+    // if (not self.ai_state.no_talents ...) and rng.chance(self.ai_state.talent_in or 6)
+    //    and self:reactionToward(self.ai_target.actor) < 0 then
+    //     used_talent = self:runAI("dumb_talented")
+    // end
+    // ```
+    //
+    // `rng.chance(N)` is a 1-in-N CHANCE PER TURN, not a metronome — see the
+    // long note on `MonsterTemplate.talentIn`. Upstream falls through to
+    // `move_simple` when the roll fails (:126-128); ours HOLDS instead, because
+    // this branch has already established that the monster is standing exactly
+    // where it wants to stand. Moving would undo the positioning it spent the
+    // previous turns achieving, and a kiter that shuffles on every failed roll
+    // reads as indecision rather than as taking aim.
+    //
+    // ═══ THE DRAW'S POSITION IN THE STREAM IS LOAD-BEARING ═══
+    // `ai.fire.chance` is taken ONLY inside this branch and ONLY when the
+    // creature actually declares a `talentIn`. That is two guarantees, not one:
+    //
+    //   - A monster with no `talentIn` — every husk and every elite in the
+    //     roster — takes ZERO draws here, so its consumption of the seeded
+    //     stream is byte-identical to what it was before this gate existed and
+    //     no replay from an older seed shifts.
+    //   - A wraith that is out of its band, retreating, or cornered also takes
+    //     zero draws, because those paths return above. Only a wraith with a
+    //     shot lined up pays for the roll, which is exactly when upstream pays
+    //     for it too.
+    //
+    // Losing either guarantee means the number of orbs, husks or corners on a
+    // floor changes what every other actor rolls — the one failure mode
+    // replay-from-seed cannot survive.
+    if (self.talentIn !== undefined && ctx.rng.int('ai.fire.chance', 1, self.talentIn) !== 1) {
+      return HOLD_INTENT;
+    }
+
     return { kind: IntentKind.Attack, targetId: target.id };
   }
 

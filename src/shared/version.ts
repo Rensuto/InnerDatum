@@ -118,8 +118,34 @@
  * reason for this bump. It is still the whole floor's roster: it drives the
  * downed markers and the revive prompt, and reviving a stranger is legal and
  * always was.
+ *
+ * 6 -> 7 (THE TRAVELLING PROJECTILE). The envelope gained exactly one frame:
+ * `projectiles` outbound, a complete-and-absolute snapshot of every orb in the
+ * air. Nothing inbound changed, no `TurnEvent` variant was added, no `ErrorCode`
+ * was added, and no existing field narrowed — which is normally the shape of an
+ * addition a bump does NOT force. It forces one anyway, for the reason this file
+ * has used since 2 -> 3: what a v6 client does is not "less UI", it is
+ * CONFIDENTLY WRONG UI, and here it is wrong about the only thing the feature
+ * exists to teach.
+ *
+ *   A v6 CLIENT CANNOT NAME THE FRAME, SO IT DRAWS NO ORB — AND THE DAMAGE
+ *   STILL LANDS. A wraith's shot now takes up to three game turns to cross the
+ *   room, and the whole point of the travel time is that the player can SEE it
+ *   coming and step out of the line or put a wall between. Drop the frame and
+ *   what is left is a monster that appears to do nothing for two turns and then
+ *   deals damage out of thin air, from a source that is by then usually dead or
+ *   somewhere else entirely. The counterplay does not merely go unrendered — it
+ *   DOES NOT EXIST on that client, because the information it depends on never
+ *   arrives. That is strictly worse than the instantaneous attack it replaced,
+ *   and a player on a v6 client would correctly report the game as broken.
+ *
+ *   AND THE IMPACT IS NARRATED AS AN ORDINARY ATTACK. The blow arrives as the
+ *   same `attack`/`damage`/`death` events every melee hit uses, attributed to
+ *   the shooter — so there is no second signal a v6 client could fall back on
+ *   and no way for it to infer that anything was ever in flight. It renders a
+ *   complete, plausible, entirely wrong account of the fight.
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

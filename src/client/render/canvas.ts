@@ -83,7 +83,13 @@ import { tileAt } from '../../shared/level.ts';
 import { ActorRank, TileCode } from '../../shared/protocol.ts';
 import { TILE_PX } from '../../shared/version.ts';
 import type { TileXY } from '../../shared/coords.ts';
-import type { ActorView, DownedView, EffectView, LevelView } from '../../shared/protocol.ts';
+import type {
+  ActorView,
+  DownedView,
+  EffectView,
+  LevelView,
+  ProjectileView,
+} from '../../shared/protocol.ts';
 import type { Sprite, SpriteSource } from './assets.ts';
 
 /** Sampled from the real art. The only colours this game is allowed to use. */
@@ -256,6 +262,24 @@ export type Scene = {
   readonly effects?: ReadonlyMap<string, readonly EffectView[]>;
   /** M4 — live `point` markers. Emphasis, on top, with the pointer's name. */
   readonly pings?: readonly PingMarker[];
+  /**
+   * v7 — WHAT IS IN THE AIR. Every orb currently in flight, at the tile it is on
+   * RIGHT NOW, complete and absolute (shared/protocol.ts's `ProjectilesMsg`):
+   * absent or empty both mean the sky is clear.
+   *
+   * ABOVE THE Y-SORTED TOKENS, which makes it the one overlay in this file that
+   * is neither ground paint nor emphasis. `TargetCell` and `Scene.path` both
+   * argue at length that an overlay drawn over a token hides the thing it is
+   * about — and both are right, because what those two are about is the monster
+   * standing there. THIS one is about the orb, and the orb is IN THE AIR: it is
+   * passing over the tile, not painted on it, and it is the only thing on screen
+   * the player is being asked to step out of the way of. An orb hidden behind
+   * the wraith that fired it is a counterplay that does not exist.
+   *
+   * Below the pings, which stay the topmost layer for the reason `paintPing`
+   * gives: a person pointing outranks the game.
+   */
+  readonly projectiles?: readonly ProjectileView[];
   readonly hud?: HudPainter;
 };
 
@@ -355,6 +379,28 @@ const CURSOR_TICK_THICK = 2;
 const PATH_DOT_PX = 6;
 const PATH_DOT_INSET = Math.round((TILE_PX - PATH_DOT_PX) / 2);
 const PATH_DOT_ALPHA = 0.7;
+
+/**
+ * AN ORB IN FLIGHT: size and its centring inset.
+ *
+ * TWO PIXELS BIGGER THAN THE ROUTE DOT, AND AT FULL OPACITY, which is the whole
+ * difference between the two and is deliberate in both directions. The route
+ * preview is advisory and translucent because it is a plan the player may drop;
+ * this is a thing that is going to land on somebody in two turns, and it is
+ * drawn over the token pass rather than under it. A translucent orb over a
+ * sprite would read as part of the sprite.
+ *
+ * It stays SMALL regardless: `paintTiles` puts a one-pixel SLATE grid on every
+ * floor tile because counting tiles is how a player measures a move, and a
+ * measurement is exactly what somebody works out when an orb is three tiles
+ * away. A dot that filled the cell would take away the thing it is asking for.
+ *
+ * The inset is ROUNDED rather than left as a division, for the same reason the
+ * route dot's is: an odd size would land the fill on a half pixel, which is the
+ * fractional sampling the backbuffer exists to prevent (see the header).
+ */
+const ORB_DOT_PX = 8;
+const ORB_DOT_INSET = Math.round((TILE_PX - ORB_DOT_PX) / 2);
 
 /**
  * STATUS PIPS OVER A TOKEN — the cap, the size and the spacing.
@@ -754,6 +800,71 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
+   * WHAT IS IN THE AIR. NO ART, DELIBERATELY — `fillRect` and nothing else, and
+   * written in the same shape as `paintPath` above for exactly its reasons.
+   *
+   * THE OBVIOUS IMPLEMENTATION IS THE SAME TRAP `paintPath` NAMES, so it is
+   * named again rather than left to be rediscovered. Adding a `MarkerKind.Orb`
+   * member and blitting `ui_tile_marker_orb` — or a `fx_projectile_*` sprite —
+   * would follow the shape of every other overlay in this file and would fail
+   * loudly for everyone: that id exists in no manifest, client/public/assets/ is
+   * gitignored WHOLESALE so a bare clone has no manifest at all, and
+   * `blitSprite` resolves a missing sprite to the intentionally shouty violet
+   * fallback box. The result would be a broken-manifest alarm fired by a feature
+   * that is working perfectly, on the one object the player most needs to read
+   * correctly. So: no `blitSprite`, no new `MarkerKind` member, no new
+   * NEEDED_ASSET_PREFIXES entry in main.ts, and the orb draws on a clone with
+   * zero PNGs in it.
+   *
+   * ORANGE BY ELIMINATION, and it is the codebase's existing word for "this is
+   * being done TO you" — `paintStatusPips` picks it for a HARMFUL badge and
+   * ui/tooltip.ts for a blocked reason. VIOLET_HI *is* the missing-asset box
+   * above, so an orb painted in it is indistinguishable from the bug. CRIMSON is
+   * reserved by `PALETTE` for the single fact "hostiles are engaged" and is
+   * spent on the playfield ring. GOLD is this file's affirmative/cursor colour
+   * and is already spent on the player's own route and targeting bracket — an
+   * ENEMY orb in gold reads as your own aim, which is the one misreading that
+   * would get somebody killed by standing still.
+   *
+   * A ONE-PIXEL INK SURROUND, the legibility trick `paintStatusPips` uses: the
+   * orb crosses floor, wall and the lit top edge of a wall within one flight,
+   * and without the surround it disappears against exactly one of them.
+   *
+   * NO `globalAlpha`, so no save/restore is needed — and that is a reason to
+   * keep it that way rather than an accident. A leaked alpha makes every later
+   * sprite in the frame translucent, which reads as a broken PNG rather than as
+   * a missing restore; whoever adds a fade here must wrap it, as `paintPath`
+   * does.
+   *
+   * `turnsToImpact`, `sourceId` and the frozen aim tile are deliberately NOT
+   * drawn. The dot answers "where is it and which way is it going"; how long you
+   * have is a sentence, not a pixel, and the client raises it on the notice line
+   * (main.ts) rather than stacking a number over a token.
+   */
+  function paintProjectiles(orbs: readonly ProjectileView[], camX: number, camY: number): void {
+    if (orbs.length === 0) return;
+
+    for (const orb of orbs) {
+      // The SAME cull the actors and the route preview use, rather than a
+      // viewport test written fresh for this one painter. It is deliberately
+      // generous — three tiles of slack — and the generosity is harmless: an orb
+      // just off screen paints into backbuffer coordinates the canvas clips.
+      const origin = pathCellOrigin({ x: orb.x, y: orb.y }, camX, camY);
+      if (!visible(origin.x, origin.y)) continue;
+
+      backCtx.fillStyle = PALETTE.INK;
+      backCtx.fillRect(
+        origin.x + ORB_DOT_INSET - 1,
+        origin.y + ORB_DOT_INSET - 1,
+        ORB_DOT_PX + 2,
+        ORB_DOT_PX + 2,
+      );
+      backCtx.fillStyle = PALETTE.ORANGE;
+      backCtx.fillRect(origin.x + ORB_DOT_INSET, origin.y + ORB_DOT_INSET, ORB_DOT_PX, ORB_DOT_PX);
+    }
+  }
+
+  /**
    * The eight rects of a corner bracket, at the current `fillStyle`.
    *
    * Factored out of `paintCursor` when the travel destination needed the same
@@ -961,6 +1072,15 @@ export function createRenderer(options: RendererOptions): Renderer {
           if (visible(cellX, cellY)) paintStatusPips(badges, cellX, cellY);
         }
       }
+
+      // WHAT IS IN THE AIR — the first thing in the band above the tokens, and
+      // the only WORLD object in it. See `Scene.projectiles`: everything else up
+      // here is either the player's own steering (the route bracket, the
+      // cursor), a quarter-second flash, or somebody pointing, and none of those
+      // can hide a centred dot because none of them fills a tile opaquely. What
+      // an orb must never sit behind is the MONSTER THAT FIRED IT, which is
+      // exactly what drawing it with the ground paint would do.
+      if (scene.projectiles !== undefined) paintProjectiles(scene.projectiles, camX, camY);
 
       // The travel destination, in the one band above the y-sorted tokens that
       // is not the sweep beat. BEFORE the cursor, so that in the rare frame

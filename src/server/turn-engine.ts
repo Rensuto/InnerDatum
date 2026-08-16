@@ -454,6 +454,16 @@ function resetFloor(
   for (const actor of world.allActors()) {
     if (actor.kind === 'monster') world.removeActor(actor.id);
   }
+  // ...AND EVERYTHING STILL IN THE AIR, BEFORE THE FLOOR IS RE-SEEDED.
+  // An orb outlives the body that fired it by design (engine/projectile.ts: the
+  // shooter may be a corpse), so removing the monsters does not remove their
+  // shots. One that survived this wipe would land two turns later on a party
+  // standing at the SPAWN CLUSTER at full health — which re-creates, exactly,
+  // the loop this function's own header records: down, reset, hit, down again.
+  // The projectile table is the third table `resetFloor` has to know about, and
+  // the reason it is cleared HERE rather than in the engine is the same reason
+  // step 2 exists at all: engine/ may not re-seed content.
+  for (const proj of world.projectilesInFlight()) world.removeProjectile(proj.id);
   reseedFloor(world);
 
   // 3 — out of combat.
@@ -682,6 +692,28 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
       case 'downed':
         out.push({ k: 'downed', id: step.id, turns: step.turnsLeft });
         break;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A SHOT LEFT THE MUZZLE — AND IT MAPS TO NOTHING, DELIBERATELY.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The orb is carried by the `projectiles` SNAPSHOT frame, which is the
+       * only representation that survives a park, a reconnect and a resync: it
+       * is complete and absolute, so a client that dropped a frame is corrected
+       * by the next one rather than drawing a phantom orb forever.
+       *
+       * A one-frame event for a THREE-TURN object would be a second source of
+       * truth for the same fact, which the client's own state rules forbid — and
+       * it would be the wrong shape besides: the client applies a whole sweep in
+       * one synchronous pass and clears its markers a quarter of a second later,
+       * which is precisely when the player is deciding whether to step out of
+       * the line. A three-turn threat rendered as a flash is the feature failing
+       * its own test.
+       *
+       * The IMPACT is not dropped: it arrives as an ordinary `attack` step from
+       * `actProjectile`, attributed to the shooter, up to three turns after this.
+       */
+      case 'fired':
       case 'hold':
       case 'blocked':
         break;

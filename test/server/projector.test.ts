@@ -3,13 +3,23 @@ import { describe, expect, it } from 'vitest';
 import { DOWNED_TURNS, createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
 import { BLEEDING, STUNNED } from '../../src/server/content/effects.ts';
-import { projectEffects, projectParty, projectTurn } from '../../src/server/view/projector.ts';
+import { DamageType } from '../../src/server/engine/damage.ts';
+import { stepProjectile } from '../../src/server/engine/projectile.ts';
+import {
+  projectEffects,
+  projectParty,
+  projectProjectiles,
+  projectTurn,
+} from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { ActorRank, MONSTERS_TURN_ID } from '../../src/shared/protocol.ts';
+import { TICKS_PER_GAME_TURN, energyGainPerTick, grantEnergy } from '../../src/shared/energy.ts';
 import { createRng } from '../../src/shared/rng.ts';
+import type { Projectile } from '../../src/server/engine/projectile.ts';
 import type { TurnState } from '../../src/server/view/projector.ts';
 import type { World } from '../../src/server/world/world.ts';
+import type { TileXY } from '../../src/shared/coords.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -135,6 +145,219 @@ describe('projectEffects', () => {
     husk.alive = false;
 
     expect(projectEffects(world, effects).actors).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// projectProjectiles — the orb the player is supposed to be able to see coming
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IF THE PLAYER CANNOT SEE THE ORB, THE COUNTERPLAY DOES NOT EXIST.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The whole feature is one sentence of play — *the orb flies to the tile you
+ * were standing on when it was fired, so stepping off it makes it miss, and you
+ * have two full turns to do it* — and this function is the only thing that puts
+ * that sentence on a screen. So the tests are about the three properties that
+ * decide whether it can be acted on:
+ *
+ *   COMPLETE. Every orb in the air appears and nothing else does, because the
+ *   frame REPLACES the client's list. One missing orb is an unseen shot; one
+ *   extra is a phantom that teaches the wrong lesson.
+ *
+ *   TURNS, NOT MILLISECONDS. `turnsToImpact` is how many decisions the player
+ *   has left. src/server/view/** may not call `Date.now` at all (eslint groups
+ *   2+3), so there is no deadline in the frame and could not be one.
+ *
+ *   NOTHING ELSE. The orb knows the frozen damage roll, the armour penetration
+ *   and every tile it is going to cross. None of it is the client's business.
+ */
+
+/** Row 17 of the test map is open floor from x=1 to x=28 — nothing to block a shot. */
+const LANE_Y = 17;
+
+/**
+ * One orb in the air, fired east along the open lane.
+ *
+ * Straight down a clear row on purpose: these tests are about the PROJECTION,
+ * and a wall or a body in the line would make them quietly about `blockPath`
+ * instead. Those five stops are pinned in test/server/projectile.test.ts.
+ */
+function fire(world: World, from: TileXY, to: TileXY, projSpeed = 2): Projectile {
+  return world.addProjectile({
+    sourceId: 'mon_a',
+    origin: from,
+    to,
+    projSpeed,
+    range: 10,
+    damage: { dam: 5, type: DamageType.Physical, apr: 0 },
+  });
+}
+
+/**
+ * ONE GAME TURN of the energy clock, for one orb — ten ticks of grant-then-act,
+ * which is `tickLevel`'s loop with everything that is not an orb removed.
+ *
+ * Written out rather than driven through the scheduler because the claim under
+ * test is arithmetic about the WIRE FIELD, not about scheduling: a real pump
+ * would also need a barrier, a party and an engagement clock, and the tick
+ * counts it produces are already pinned in test/server/projectile.test.ts. Ten
+ * ticks is `TICKS_PER_GAME_TURN` (energy.ts — ENERGY_TO_ACT / ENERGY_PER_TICK),
+ * and it is imported rather than written as `10` so this cannot drift.
+ */
+function flyOneGameTurn(proj: Projectile, world: World): void {
+  for (let tick = 0; tick < TICKS_PER_GAME_TURN; tick += 1) {
+    grantEnergy(proj, energyGainPerTick(proj));
+    stepProjectile(proj, world);
+  }
+}
+
+describe('projectProjectiles', () => {
+  it('says the sky is clear rather than saying nothing at all', () => {
+    // AN EMPTY ARRAY IS A STATEMENT, and it is the one that clears a client's
+    // list. `projectEffects` is silent about a world with no statuses because an
+    // absent ROW means "clean"; here the absent thing is the whole list, so the
+    // frame still has to be well formed when the gateway does choose to send it.
+    const world = room();
+    world.addPlayer('actor_a', 'Dalt');
+    monster(world, 'mon_a', 5, 5);
+
+    const msg = projectProjectiles(world);
+    expect(msg.t).toBe('projectiles');
+    expect(msg.projectiles).toEqual([]);
+  });
+
+  it('carries EVERY orb in the air, in the order they were fired, and nothing else', () => {
+    // COMPLETENESS IS THE PROPERTY THAT MAKES THE FRAME SAFE TO DROP. A list
+    // that omitted one orb would be a shot with no warning; the client replaces
+    // rather than merges, so anything missing here is invisible until impact.
+    const world = room();
+    world.addPlayer('actor_a', 'Dalt');
+    monster(world, 'mon_a', 5, 5);
+
+    const first = fire(world, { x: 2, y: LANE_Y }, { x: 8, y: LANE_Y });
+    const second = fire(world, { x: 3, y: LANE_Y - 1 }, { x: 9, y: LANE_Y - 1 });
+
+    // INSERTION ORDER, which is `projectilesInFlight`'s guarantee and what makes
+    // two replays of one seed agree about which orb is which.
+    expect(projectProjectiles(world).projectiles.map((p) => p.id)).toEqual([first.id, second.id]);
+
+    // AND NOTHING ELSE IS IN THE LIST. The world here holds a player and a
+    // monster, and neither is an orb — the split that keeps `ringIdFor` from
+    // ever being handed a third `ActorKind`.
+    expect(projectProjectiles(world).projectiles).toHaveLength(2);
+
+    // A DETONATED ORB IS NOT IN THE AIR. `actProjectile` drops it from the world
+    // in the same step it lands, so both spellings of "gone" are tested: the
+    // flag, and the removal.
+    second.landed = true;
+    expect(projectProjectiles(world).projectiles.map((p) => p.id)).toEqual([first.id]);
+
+    world.removeProjectile(first.id);
+    expect(projectProjectiles(world).projectiles).toEqual([]);
+  });
+
+  it('counts GAME TURNS to impact, and spends exactly projSpeed tiles a turn', () => {
+    // THE NUMBER IS HOW MANY DECISIONS THE PLAYER HAS LEFT. `proj_speed` is
+    // tiles per game turn exactly (Projectile.lua:304-305 into
+    // GameEnergyBased.lua:125), so a six-tile shot at speed 2 opens on 3 and
+    // must fall by one per turn — never by a fraction, and never in ticks.
+    const world = room();
+    const proj = fire(world, { x: 2, y: LANE_Y }, { x: 8, y: LANE_Y }, 2);
+
+    const seen: { x: number; y: number; turnsToImpact: number }[] = [];
+    const look = (): void => {
+      const view = projectProjectiles(world).projectiles[0];
+      expect(view).toBeDefined();
+      if (view === undefined) return;
+      expect(Number.isInteger(view.turnsToImpact)).toBe(true);
+      seen.push({ x: view.x, y: view.y, turnsToImpact: view.turnsToImpact });
+    };
+
+    look();
+    for (let turn = 0; turn < 3; turn += 1) {
+      flyOneGameTurn(proj, world);
+      look();
+    }
+
+    expect(seen).toEqual([
+      // Sitting on the muzzle with six tiles to cross: ceil(6 / 2).
+      { x: 2, y: LANE_Y, turnsToImpact: 3 },
+      { x: 4, y: LANE_Y, turnsToImpact: 2 },
+      { x: 6, y: LANE_Y, turnsToImpact: 1 },
+      // On the aim tile with nothing left to cross. It takes one further act to
+      // detonate — upstream's shape, and the reason 0 is a real value here.
+      { x: 8, y: LANE_Y, turnsToImpact: 0 },
+    ]);
+  });
+
+  it('is slower on the wire when the orb is slower in the world', () => {
+    // The same six tiles at speed 1 is six turns rather than three. Pinned
+    // because `turnsToImpact` reading `energyMod` (and not a constant, and not
+    // the path length) is the whole reason the field can be trusted.
+    const world = room();
+    fire(world, { x: 2, y: LANE_Y }, { x: 8, y: LANE_Y }, 1);
+    expect(projectProjectiles(world).projectiles[0]?.turnsToImpact).toBe(6);
+  });
+
+  it('aims at the tile the shot was fired at, never at the target now', () => {
+    // THE COUNTERPLAY, ON THE WIRE. The line is frozen at fire
+    // (ActorProject.lua:343-347 builds it once) and the orb does not re-aim, so
+    // the destination a client draws must keep pointing at the tile the player
+    // was standing on — including after they have stepped off it, which is the
+    // exact moment the drawing matters.
+    const world = room();
+    const proj = fire(world, { x: 2, y: LANE_Y }, { x: 8, y: LANE_Y });
+
+    const dodger = monster(world, 'mon_target', 8, LANE_Y);
+    dodger.x = 8;
+    dodger.y = LANE_Y;
+
+    const before = projectProjectiles(world).projectiles[0];
+    expect(before?.targetX).toBe(8);
+    expect(before?.targetY).toBe(LANE_Y);
+
+    // They step out of the line. The orb keeps flying at the tile they left.
+    dodger.x = 8;
+    dodger.y = LANE_Y - 3;
+    flyOneGameTurn(proj, world);
+
+    const after = projectProjectiles(world).projectiles[0];
+    expect(after?.targetX).toBe(8);
+    expect(after?.targetY).toBe(LANE_Y);
+    expect(after?.x).toBe(4);
+  });
+
+  it('names the shooter, and goes on naming them after the body has fallen', () => {
+    // An orb outlives its shooter — upstream holds a hard `src` reference with
+    // no liveness check and still attributes the kill. `sourceId` is a STRING
+    // for that reason, so nothing at impact or on the wire has to touch a body
+    // that may be a corpse.
+    const world = room();
+    const shooter = monster(world, 'mon_a', 5, 5);
+    fire(world, { x: 2, y: LANE_Y }, { x: 8, y: LANE_Y });
+
+    expect(projectProjectiles(world).projectiles[0]?.sourceId).toBe('mon_a');
+    shooter.alive = false;
+    expect(projectProjectiles(world).projectiles[0]?.sourceId).toBe('mon_a');
+  });
+
+  it('puts nothing in the view that the client is not allowed to know', () => {
+    // Spelled out as a key check because the failure mode is additive, exactly
+    // as it is for `toActorView` and the turn card. The orb carries the FROZEN
+    // DAMAGE ROLL, the armour penetration, the whole `path` it will cross and
+    // four energy fields; a spread would put the shot's exact number and its
+    // exact tick of arrival on the wire, and a client that knew both would never
+    // need to guess whether a dodge was worth a turn.
+    const world = room();
+    fire(world, { x: 2, y: LANE_Y }, { x: 8, y: LANE_Y });
+
+    const [view] = projectProjectiles(world).projectiles;
+    expect(Object.keys(view ?? {}).sort()).toEqual(
+      ['id', 'sourceId', 'targetX', 'targetY', 'turnsToImpact', 'x', 'y'].sort(),
+    );
   });
 });
 

@@ -376,6 +376,33 @@ export type MonsterActor = ActorCommon & {
   globalSpeed: number;
   /** Action COST multiplier (Actor.lua:5863). 0.5 is a half-turn action. */
   speedFactor: number;
+  /**
+   * How fast this creature's ranged attack TRAVELS, in TILES PER GAME TURN.
+   *
+   * `t.proj_speed` — ActorTalents.lua:987-991, and read the guard rather than
+   * the value: `if not t.proj_speed then return nil end`. ABSENT MEANS
+   * INSTANTANEOUS, which is exactly what every attack in this game does today,
+   * so a monster without this field behaves identically to one from before the
+   * field existed. Upstream's tooltip spells the two cases out at
+   * tome/class/Actor.lua:6272-6274 — "Travel Speed: N% of base" against
+   * "Travel Speed: instantaneous".
+   *
+   * SAME MULTIPLIER AS `energyMod`, DIFFERENT UNIT BY CONVENTION: `energyMod` 6
+   * is six actions per turn, `projSpeed` 6 is six tiles per turn, because a
+   * projectile spends one action's worth of energy per tile it crosses
+   * (Projectile.lua:142, :168-172).
+   */
+  projSpeed?: number;
+  /**
+   * `ai_state.talent_in` — a 1-IN-N CHANCE PER TURN of using an attack talent,
+   * NOT a cadence of one use every N turns (talented.lua:122,
+   * `rng.chance(self.ai_state.talent_in or 6)`).
+   *
+   * ABSENT means every turn, which is both the current behaviour and what
+   * upstream's own `talent_in = 1` means. Read by `ai/npc.ts#kite` and by
+   * nothing else.
+   */
+  talentIn?: number;
   readonly ai: MonsterAi;
 };
 
@@ -419,6 +446,35 @@ const DEFAULT_PLAYER_DAMAGE_MAX = 7;
 
 const DEFAULT_MONSTER_MAX_HP = 24;
 const DEFAULT_MONSTER_HP_REGEN = 0;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THESE TWO ARE WHAT THE ENTIRE ROSTER ACTUALLY DEALS. NOT A DEFAULT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Finding, recorded here because it is invisible from either end on its own:
+ * `content/monsters.ts#monsterInit` copies name, sprite, rank, profile, maxHp,
+ * hpRegen, both speeds, all four ranges and the whole `combat` sheet — and it
+ * NEVER passes `damageMin` or `damageMax`. So every authored monster falls
+ * through to the two constants below and hits for 3-6, whatever its stat block
+ * says.
+ *
+ * CONSEQUENCE, so nobody re-derives it from the sheet: `scheduler.ts` resolves
+ * `IntentKind.Attack` through `strike`, which is
+ * `world.rng.int('combat.bump.damage', min, max)` straight into `applyDamage` —
+ * no `checkHit`, no armour, no armour penetration, no resists, no crit. Every
+ * `weapon.dam` / `weapon.atk` / `weapon.apr` ported into the roster from ToME is
+ * therefore INERT ON THE ATTACKER SIDE. Those numbers are live in exactly two
+ * places: `derived.ts` computing the inspect card, and the TARGET half of the
+ * pipeline when a player talent (the only caller of `combat.ts#attackTarget`)
+ * lands on the creature.
+ *
+ * The fix is to move the scheduler onto `attackTarget`, and it is ONE change,
+ * not two — the scheduler's Chebyshev range check and `canAttack`'s Euclidean
+ * one must move together or attacks pass legality and then quietly do nothing
+ * (see the wiring note at the foot of engine/combat.ts). Until that lands, an
+ * accuracy of 19 on a husk does not mean it never misses; it means nothing at
+ * all rolls to hit.
+ */
 const DEFAULT_MONSTER_DAMAGE_MIN = 3;
 const DEFAULT_MONSTER_DAMAGE_MAX = 6;
 
@@ -470,6 +526,17 @@ export type MonsterInit = {
   readonly huntsIsolated?: boolean;
   /** ELITE: consecutive blocked turns before routing around its own kin. */
   readonly shoulderAfter?: number;
+  /**
+   * Ranged-attack travel speed in TILES PER GAME TURN. Absent = instantaneous,
+   * which is what every attack does today (ActorTalents.lua:988). See
+   * `MonsterActor.projSpeed`.
+   */
+  readonly projSpeed?: number;
+  /**
+   * `ai_state.talent_in` — a 1-in-N CHANCE per turn, not a cadence
+   * (talented.lua:122). Absent = every turn. See `MonsterActor.talentIn`.
+   */
+  readonly talentIn?: number;
   /** The real combat sheet. content/monsters.ts always supplies one. */
   readonly combat?: CombatSheet;
 };
@@ -543,6 +610,20 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     standingOrder: null,
     connected: true,
     standingBy: false,
+    // NOT INSIDE `ai` BELOW, and the split is the same one `ai` already makes:
+    // `ai` holds what this monster is THINKING (its target, its blocked-turn
+    // counters), while these two are facts about the creature that outlive any
+    // decision. `projSpeed` will also be read by whatever creates a projectile,
+    // which has no business reaching into an AI state bag.
+    //
+    // Both are copied through as `undefined` when absent rather than defaulted.
+    // Absent `projSpeed` is ToME's "instantaneous" (ActorTalents.lua:988) and
+    // absent `talentIn` is "every turn" (talented.lua:122) — defaulting either
+    // would change the behaviour of every monster that never asked for one, and
+    // a defaulted `talentIn` in particular would put an rng draw into every
+    // melee monster's turn and shift the seeded stream for the whole roster.
+    projSpeed: init.projSpeed,
+    talentIn: init.talentIn,
     ai: {
       profile: init.profile,
       targetId: null,

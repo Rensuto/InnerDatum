@@ -75,11 +75,14 @@ import {
   tickDowned,
 } from './downed.ts';
 import { membersOf, partyIdOf } from './party.ts';
+import { combatAPR } from './derived.ts';
+import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
 import type { AiCtx } from '../ai/npc.ts';
 import type { World } from '../world/world.ts';
 import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
+import type { Projectile } from './projectile.ts';
 import type { Barrier, BellState, PartyScope } from './barrier.ts';
 import type { DownedState } from './downed.ts';
 import type { EffectLogLine } from './effects.ts';
@@ -192,6 +195,21 @@ export type SweepStep =
     }
   | { readonly t: 'hold'; readonly id: string }
   | { readonly t: 'blocked'; readonly id: string; readonly reason: Refusal }
+  /**
+   * A TRAVELLING SHOT LEFT THE MUZZLE. `id` is the shooter, `to` the tile it is
+   * aimed at (the target's tile at this instant — the orb does not re-aim).
+   *
+   * ═══ IT IS DROPPED AT THE WIRE, ON PURPOSE ═══
+   * `sweepStepsToWire` (src/server/turn-engine.ts) maps this to NOTHING. The
+   * launch is carried by the `projectiles` SNAPSHOT frame, which is the only
+   * representation that survives a park, a reconnect and a resync — and a
+   * one-frame event for a three-turn object would be the second source of truth
+   * the client's own state rules forbid. It exists on the engine side because
+   * tests, the server log and any future Record-lane prose all need to be able
+   * to say WHEN the shot was fired, and because a monster's turn that produced
+   * no step at all would read as a monster that did nothing.
+   */
+  | { readonly t: 'fired'; readonly id: string; readonly to: TileXY }
   /**
    * A status landed, expired or was saved against DURING the sweep.
    *
@@ -634,6 +652,33 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   const aiCtx = makeAiCtx(world, actors);
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SAME SNAPSHOT RULE, EXTENDED TO ORBS — AND TWO NAMES, ONE ARRAY EACH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `actors` stays exactly what it was and is what `makeAiCtx`,
+   * `updateEngagement`, `applyBellExpiry`, `enrolCasualties` and `partyScopes`
+   * all read: every one of them asks a question only a BODY can answer. This
+   * second array — actors first, then everything in flight, in insertion order —
+   * is handed to `tickLevel` and to nothing else.
+   *
+   * PROJECTILES GO LAST, AND THAT IS WHAT MAKES THE PHASE LOCK WORK FOR FREE.
+   * `actorsInTurnOrder` puts the party first; energy.ts:647 skips every actor
+   * after the first park unless `actsWhileBlocked`, which only a Player gets. So
+   * by the time the sweep reaches an orb, `parked` is already non-empty and the
+   * orb is skipped — it hangs in the air for exactly as long as the human takes
+   * to decide, and advances when the turn resolves. That freeze is the feature,
+   * not a workaround, and it needs no new mechanism.
+   *
+   * AN ORB FIRED DURING THIS PUMP THEREFORE STARTS MOVING ON THE NEXT ONE. That
+   * is deliberate and it is what keeps us clear of the mid-sweep array mutation
+   * upstream survives only with explicit index fixups (Level.lua:111-113,
+   * :141-143). It also preserves the guarantee stated above `actors`: nothing
+   * joins or leaves the sweep halfway through it.
+   */
+  const ticking: readonly EnergyActor[] = [...actors, ...world.projectilesInFlight()];
+
+  /**
    * Everything the resolution path needs, in one object, built once per call.
    *
    * The same idiom `TalentCtx` and `EffectHookArgs` use, and for the same
@@ -675,7 +720,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   // twice with two different `nowMs` values and no timers at all.
   for (const scope of scopes) applyBellExpiry(world, actors, ctx, sink, scope);
 
-  const result = tickLevel(actors, {
+  const result = tickLevel(ticking, {
     clock: world.turn.clock,
 
     // engine/Actor.lua:59 — a dead actor does not act. The body stays in the
@@ -697,6 +742,25 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     // (`applyDamage` returns 0). An ERASED body falls out and stops being ticked
     // at all, which is what makes the erased state cheap.
     isActive: (energyActor) => {
+      // ═══ THE ORB NEEDS AN EXPLICIT BRANCH OR IT IS NEVER TICKED AT ALL ═══
+      // `resolveActor` answers undefined for a projectile and the line below
+      // returns FALSE on undefined, so without this the orb would sit in the
+      // array accruing nothing, forever, with nothing failing anywhere. A landed
+      // orb falls out here, which is what makes `landed` cheap: the world has
+      // already dropped it, but the snapshot this sweep is walking still holds it.
+      //
+      // ═══ `landed` IS THE WHOLE TEST. "STILL HAS PATH LEFT" IS NOT A CLAUSE ═══
+      // An orb that has stepped onto the LAST tile of its line has no path left
+      // and has not detonated: `projectDoMove` reaches ActorProject.lua:403 —
+      // `if (not lx and not ly)` — only on the NEXT act, because upstream's
+      // `line_function:step()` has to be called once more to answer nil. Gate on
+      // the cursor as well and that act never happens: the orb hangs on its final
+      // tile forever, is never removed from the world, and rejoins the ticking
+      // array on every pump for the rest of the session. Termination is
+      // guaranteed by the cursor anyway — every act either advances it or lands.
+      const proj = world.getProjectile(energyActor.id);
+      if (proj !== undefined) return !proj.landed;
+
       const actor = resolveActor(world, energyActor);
       if (actor === undefined) return false;
       if (actor.alive) return true;
@@ -707,6 +771,14 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     // The barrier, tested before acting and WITHOUT side effects, so the whole
     // blocking set is discovered within one tick instead of one park at a time.
     isBlocking: (energyActor) => {
+      // EXPLICITLY FALSE FOR AN ORB, rather than false by accident through the
+      // undefined path below. Nothing in flight owes anybody a decision, and
+      // `inQuorum` (engine/barrier.ts) opens with `kind === ActorKind.Player`
+      // anyway — so there is no field an orb could ever set to get into the
+      // blocking set. Writing it down is what keeps that true the day the
+      // undefined path changes shape.
+      if (world.getProjectile(energyActor.id) !== undefined) return false;
+
       const actor = resolveActor(world, energyActor);
       return actor !== undefined && isBlocking(actor, world.turn);
     },
@@ -715,7 +787,13 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     // not wait on the rest of the party. Monsters do — the world freezes while
     // a human still owes a decision, which is what ToME gets for free by
     // breaking out of the loop on `game.paused`.
-    actsWhileBlocked: (energyActor) => resolveActor(world, energyActor)?.kind === ActorKind.Player,
+    // ...and an orb is EXPLICITLY not one of them: it is not a Player, so the
+    // expression already answers false, but "the world freezes while a human
+    // decides" is the phase-lock constraint itself and must not depend on an
+    // undefined lookup happening to land the right way.
+    actsWhileBlocked: (energyActor) =>
+      world.getProjectile(energyActor.id) === undefined &&
+      resolveActor(world, energyActor)?.kind === ActorKind.Player,
 
     /**
      * THE SPEED-INDEPENDENT PASS. Once per game turn per actor, at any speed.
@@ -742,6 +820,12 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
      * logged before "you are down", which is the order it happened in.
      */
     actBase: (energyActor) => {
+      // AN ORB HAS NO BASE CLOCK — GameEnergyBased.lua:113-114 guards the whole
+      // base-clock block on `e.actBase and e.energyBase`, so an entity without
+      // them is ticked for `act` only. It regenerates nothing, carries no
+      // cooldowns and holds no statuses; returning here immediately is the port.
+      if (world.getProjectile(energyActor.id) !== undefined) return;
+
       const actor = resolveActor(world, energyActor);
       if (actor === undefined) return;
       actBase(actor, ctx.statusPass);
@@ -749,8 +833,12 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       survivalPass(actor, run);
     },
 
-    // THE SPEED-DEPENDENT PASS. A hasted monster arrives here more often.
+    // THE SPEED-DEPENDENT PASS. A hasted monster arrives here more often, and
+    // so does a fast orb — that is the whole of `projSpeed`.
     act: (energyActor) => {
+      const proj = world.getProjectile(energyActor.id);
+      if (proj !== undefined) return actProjectile(proj, run);
+
       const actor = resolveActor(world, energyActor);
       if (actor === undefined) return ActResult.Done;
       // PRONE. A downed body reaches here only because its base clock is still
@@ -1024,6 +1112,15 @@ type Effect =
       readonly at: TileXY;
     }
   | { readonly kind: 'hold' }
+  /**
+   * A TRAVELLING SHOT WAS FIRED. Nothing has been hit yet, and may never be.
+   *
+   * The damage was rolled and FROZEN at this instant (see `fire`); everything
+   * after this is the orb's own business on the energy clock. `to` is the tile
+   * it is aimed at, which is the target's tile RIGHT NOW — it does not re-aim,
+   * and that is the counterplay.
+   */
+  | { readonly kind: 'fired'; readonly to: TileXY; readonly projectileId: string }
   /** An ally was picked up off the floor. engine/downed.ts owns the arithmetic. */
   | {
       readonly kind: 'revive';
@@ -1105,6 +1202,25 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       if (distance > 1 && !hasLineOfSight(world.level, actor, target)) {
         return { ok: false, reason: Refusal.NoLineOfSight };
       }
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE FORK. ABSENT `projSpeed` IS THE OLD PATH, BYTE FOR BYTE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ActorTalents.lua:988 — `if not t.proj_speed then return nil end`. That
+       * one guard is the entire safety property of this feature: every attack
+       * that existed before travelling orbs did still runs `strike`, at the same
+       * stream position, producing the same Effect and the same events. A test
+       * in test/server/scheduler.test.ts pins exactly that.
+       *
+       * `projSpeed` lives on `MonsterActor` only, which is why the kind test is
+       * here rather than a bare field read: no player talent declares one, so
+       * the fired branch is reachable from the monster lane alone.
+       */
+      if (actor.kind === ActorKind.Monster && actor.projSpeed !== undefined) {
+        return { ok: true, effect: fire(actor, target, actor.projSpeed, world) };
+      }
       return { ok: true, effect: strike(actor, target, world) };
     }
 
@@ -1152,6 +1268,132 @@ function strike(attacker: EngineActor, target: EngineActor, world: World): Effec
   };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME SWING, PUT IN THE AIR INSTEAD OF ON THE BODY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE DRAW IS IDENTICAL TO `strike`'S, IN EVERY RESPECT THAT MATTERS TO A
+ * REPLAY: same generator, same label, same bounds, same position in the stream.
+ * The only difference is that the integer is FROZEN onto the orb instead of
+ * being handed to a body — which is exactly the split ToME uses, where
+ * T_VOID_BLAST computes its damage at cast (misc/npcs.lua:723-747) and
+ * `ActorProject.lua:353` stores that fixed number in `project.def.dam` for the
+ * projectile to carry.
+ *
+ * THERE IS NO TO-HIT ROLL, AT FIRE OR AT IMPACT, AND THERE NEVER WILL BE. There
+ * is none on this path upstream either — `projectile()` routes straight to the
+ * DamageType projector with no `checkHit` anywhere — and there is none to move,
+ * because `combat.ts#attackTarget` (the only `checkHit` caller) is not on the
+ * scheduler's path at all. Rolling to hit at fire would make dodging cosmetic;
+ * rolling at impact would be an unlabelled mid-flight draw whose position in the
+ * stream depends on how many orbs are in the air. Counterplay is 100%
+ * POSITIONAL, which is upstream's answer and the better one.
+ *
+ * Every attacker-side number is snapshotted HERE, at fire, so impact never has
+ * to touch the shooter's body — see `ProjectileDamage`, and the fact that the
+ * shooter may be a corpse three turns from now.
+ */
+function fire(
+  attacker: MonsterActor,
+  target: EngineActor,
+  projSpeed: number,
+  world: World,
+): Effect {
+  // THE SAME DRAW `strike` TAKES, AT THE SAME STREAM POSITION.
+  const rolled = world.rng.int('combat.bump.damage', attacker.damageMin, attacker.damageMax);
+  const sheet = attacker.combat;
+
+  const proj = world.addProjectile({
+    sourceId: attacker.id,
+    origin: { x: attacker.x, y: attacker.y },
+    // THE TARGET'S TILE, NOT THE TARGET. The line is built once, from the two
+    // endpoints at this instant (ActorProject.lua:343-347), and never rebuilt.
+    to: { x: target.x, y: target.y },
+    projSpeed,
+    // The same reach the legality check above measured with, and with the same
+    // metric — see the deviation note on `blockPath` in engine/projectile.ts.
+    range: attacker.attackRange,
+    damage: {
+      dam: rolled,
+      type: sheet?.damageType ?? DEFAULT_PROJECTILE_DAMAGE_TYPE,
+      apr: sheet === undefined ? 0 : combatAPR(sheet),
+      increase: sheet?.increase,
+      penetration: sheet?.penetration,
+    },
+  });
+
+  return { kind: 'fired', to: { x: target.x, y: target.y }, projectileId: proj.id };
+}
+
+/**
+ * ONE ORB'S TURN. Projectile.lua:210-230 does the flying; this does the paperwork.
+ *
+ * IT RETURNS `Done` UNCONDITIONALLY, and that is the one line in this file that
+ * can hang the barrier if it is ever written otherwise: energy.ts:653 pushes an
+ * actor into `parked` on a `Park` return and :659 returns the moment `parked` is
+ * non-empty. An orb that parked would be a permanent member of a quorum nobody
+ * can satisfy — four people staring at a Bell that never rings.
+ */
+function actProjectile(proj: Projectile, run: Run): ActResult {
+  const { world, sink } = run;
+  const gameTurn = world.turn.clock.gameTurn;
+
+  const outcome = stepProjectile(proj, world);
+  if (!outcome.landed) return ActResult.Done;
+
+  // It detonated. Out of the air before anything else looks at the world.
+  world.removeProjectile(proj.id);
+
+  const impact = outcome.impact;
+  // Landed on empty floor: the target died, or stepped off the tile it was
+  // aimed at. THAT IS THE COUNTERPLAY and it costs the shooter its shot.
+  if (impact === null) return ActResult.Done;
+
+  /**
+   * THE IMPACT IS A SWEEP STEP, NOT AN ORDINARY EVENT, and it is attributed to
+   * the SHOOTER'S ID even if that body is now a corpse (tome/class/Game.lua:1713
+   * does the same).
+   *
+   * An ordinary `push` here would CLOSE the open batch (see `createEventSink`),
+   * splitting one monster turn into three because an orb happened to land in the
+   * middle of it — the exact fragmentation the batching exists to prevent.
+   */
+  sink.sweep(gameTurn, {
+    t: 'attack',
+    id: proj.sourceId,
+    targetId: impact.targetId,
+    damage: impact.damage,
+    killed: impact.killed,
+    hp: impact.hp,
+    at: impact.at,
+  });
+
+  /**
+   * AND IT MUST GO THROUGH `noteCasualty`. This is the only place a killed
+   * player becomes a `DownedRecord` IN THE LANE IT HAPPENED IN. `enrolCasualties`
+   * would eventually catch the body on the NEXT pump — it is the safety net for
+   * anything that falls outside the loop — but it files in the PLAYER lane, so a
+   * detective killed by an orb would be narrated after the floor reset rather
+   * than before it. See `GameEvent.party_wipe.duringSweep` for the evening that
+   * cost.
+   */
+  noteCasualty(
+    {
+      kind: 'attack',
+      targetId: impact.targetId,
+      damage: impact.damage,
+      killed: impact.killed,
+      hp: impact.hp,
+      at: impact.at,
+    },
+    run,
+    gameTurn,
+  );
+
+  return ActResult.Done;
+}
+
 function emitPlayerEffect(actor: PlayerActor, effect: Effect, sink: EventSink): void {
   switch (effect.kind) {
     case 'move':
@@ -1170,6 +1412,17 @@ function emitPlayerEffect(actor: PlayerActor, effect: Effect, sink: EventSink): 
       return;
     case 'hold':
       sink.push({ t: 'held', id: actor.id, reason: HoldReason.Chosen });
+      return;
+    case 'fired':
+      // UNREACHABLE TODAY, AND NOT A LIE — the same shape as `revive` in
+      // `sweepStepFor` below. `projSpeed` lives on `MonsterActor` alone and no
+      // player talent declares one, so a human cannot produce this effect. The
+      // arm exists because both lanes share the `Effect` union.
+      //
+      // AND IT WOULD STILL EMIT NOTHING IF IT COULD. The launch is carried by
+      // the `projectiles` snapshot frame, which is the only representation that
+      // survives a park, a reconnect and a resync; an event here would be the
+      // second source of truth for the same fact.
       return;
     case 'revive':
       // `id` is the person who got up, `byId` the person who spent their turn —
@@ -1202,6 +1455,11 @@ function sweepStepFor(actor: MonsterActor, effect: Effect): SweepStep {
       };
     case 'hold':
       return { t: 'hold', id: actor.id };
+    case 'fired':
+      // The shot left the muzzle. Nothing has been hit — the impact arrives as
+      // its own `attack` step, up to three turns later, from `actProjectile`.
+      // This step is dropped at the wire on purpose; see `SweepStep.fired`.
+      return { t: 'fired', id: actor.id, to: effect.to };
     case 'revive':
       // UNREACHABLE TODAY, AND NOT A LIE. `decideNpcAction` (ai/npc.ts) emits
       // Move, Attack and Hold and nothing else, so no monster can ever produce a

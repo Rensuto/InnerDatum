@@ -233,7 +233,11 @@ NEXUS/
 #
 # They remain on disk and keep working. Only git is told to look away.
 
-tools/deploy-to-host.ps1
+# A GLOB, not a list of filenames. Every deploy script names the host it
+# deploys to — an address, a drive, a machine on a LAN — so the rule has to
+# cover the one somebody writes next, not just the two that exist today.
+# Getting this wrong publishes a home address, and it only has to happen once.
+tools/deploy-*.ps1
 .githooks/post-commit
 tools/discord/
 

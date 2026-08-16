@@ -651,6 +651,77 @@ export type EffectsMsg = {
 };
 
 /**
+ * ONE ORB IN FLIGHT, as the client draws it.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT IS NOT AN ACTOR, AND IT MUST NEVER BECOME ONE
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * There is no new `ActorKind` member and there is no new `TurnEvent` variant.
+ * `ActorKind` is switched on exhaustively by the renderer to pick a
+ * `ui_token_ring_*` sprite, and the art is gitignored wholesale — a third member
+ * would demand an asset that cannot be added and would fire the broken-manifest
+ * alarm for every player, including on a bare clone. Upstream draws the same
+ * line: `Projectile` inherits Entity, not Actor, and lives in `Map.PROJECTILE`.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND IT IS A SNAPSHOT, NOT AN EVENT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An orb is a three-turn object. Events are for instants: the client applies a
+ * whole sweep in one synchronous pass and clears its markers a quarter of a
+ * second later — exactly while the player is deciding whether to step out of the
+ * line. So the launch is not announced; the orb is simply PRESENT in a frame
+ * that is COMPLETE AND ABSOLUTE, the same rule `EffectsMsg` follows and for the
+ * same reason: a client that dropped one patch would otherwise show a phantom
+ * orb forever, and a phantom orb teaches the wrong counterplay.
+ */
+export type ProjectileView = {
+  /** `proj_<n>`, from the world's monotonic counter. Stable for the whole flight. */
+  id: string;
+  /** Where it is RIGHT NOW. */
+  x: number;
+  y: number;
+  /** WHO FIRED IT. May name a body that is already a corpse — an orb outlives its shooter. */
+  sourceId: string;
+  /**
+   * THE TILE IT IS FLYING AT — the target's tile at the instant of firing, not
+   * the target's tile now. It does not re-aim, and the whole counterplay is that
+   * stepping off this tile makes it miss.
+   */
+  targetX: number;
+  targetY: number;
+  /**
+   * GAME TURNS until it arrives, never milliseconds. The same unit as
+   * `EffectView.turns` and `CooldownsMsg`, and for the same reason — mixing the
+   * two is a factor-of-ten bug, and here it would be the difference between "you
+   * have two turns to move" and "it lands before you can press a key".
+   */
+  turnsToImpact: number;
+};
+
+/**
+ * EVERYTHING IN THE AIR. COMPLETE AND ABSOLUTE, exactly like `EffectsMsg`.
+ *
+ * An empty array means the sky is clear. Never a patch — see `ProjectileView`.
+ *
+ * ═══ IT IS A BROADCAST TODAY AND MUST MOVE TO `ViewerMsg` WITH PER-PLAYER FOV ═══
+ * A projectile's tile is a POSITION, and a position is exactly the class of fact
+ * the FOV projector exists to gate: an orb crossing an unexplored room tells you
+ * something is shooting in it and roughly where from. Fog of war is still level-
+ * wide (there is one `LevelView` and one actor list for everybody), so shipping
+ * this to the room leaks nothing that `ActorView` does not already leak. THE DAY
+ * PER-PLAYER FOV LANDS, THIS FRAME MOVES INTO `ViewerMsg` IN THE SAME COMMIT —
+ * `BroadcastMsg` is `Exclude`-derived, so that move is one line here and a
+ * compile error everywhere it was being broadcast.
+ */
+export type ProjectilesMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'projectiles';
+  projectiles: readonly ProjectileView[];
+};
+
+/**
  * The two stages a body can be in below zero (game-design.md § 9).
  *
  * `up` is deliberately absent: a member who is on their feet carries `downed:
@@ -2205,6 +2276,7 @@ export type ServerMsg =
   | UsedMsg
   | LogMsg
   | EffectsMsg
+  | ProjectilesMsg
   | PartyMsg
   | PartyStateMsg
   | PingedMsg

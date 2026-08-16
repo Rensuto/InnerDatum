@@ -38,11 +38,13 @@ import { TEST_LEVEL_SPAWNS, canWalk, makeTestLevel } from '../../shared/level.ts
 import { ActorKind } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
 import { createMonsterActor, createPlayerActor } from '../engine/actor.ts';
+import { createProjectile } from '../engine/projectile.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { TurnClock } from '../../shared/energy.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { EngineActor, MonsterInit } from '../engine/actor.ts';
+import type { Projectile, ProjectileInit } from '../engine/projectile.ts';
 
 /**
  * An actor as the SERVER holds it — deliberately not an `ActorView`.
@@ -239,6 +241,42 @@ export type World = {
   actorAt(x: number, y: number): Actor | undefined;
   /** The one legal way to change a position. */
   tryMove(id: string, dir: Dir): MoveResult;
+
+  // --- projectiles ----------------------------------------------------------
+  // ═══════════════════════════════════════════════════════════════════════════
+  // A SECOND TABLE, NOT A ROW IN `actors`. Projectile.lua:27, :32, :96.
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // Upstream's `Projectile` inherits Entity rather than Actor (:27), declares
+  // `__is_projectile` (:32) and writes itself into `Map.PROJECTILE`, never
+  // `Map.ACTOR` (:96). The same split is load-bearing HERE for reasons that are
+  // all silent breakages rather than style:
+  //
+  //   `actorAt` would make an orb BLOCK MOVEMENT, so you could not walk through
+  //   the tile a bolt is passing over — and `isFree` would refuse to spawn on it.
+  //   `allActors` / `actorsInTurnOrder` would hand it to the AI and to
+  //   `decideNpcAction`. `tryMove` would treat it as an occupant to bump-attack.
+  //   The projector would ship it to the client as an `ActorView` with an hp bar
+  //   and a rank ring, and the client's `ringIdFor` switches exhaustively over a
+  //   TWO-MEMBER `ActorKind` to pick a `ui_token_ring_*` sprite that cannot be
+  //   added, because the art is gitignored wholesale.
+  //
+  // So: its own table, its own accessors, and the scheduler concatenates the two
+  // at exactly ONE call site (the array it hands `tickLevel`).
+
+  /** Mint an orb and put it in the air. The id is the world's to give. */
+  addProjectile(init: ProjectileInit): Projectile;
+  /** It landed, or the floor reset under it. @returns false for an unknown id. */
+  removeProjectile(id: string): boolean;
+  getProjectile(id: string): Projectile | undefined;
+  /**
+   * Everything in the air, in INSERTION ORDER — a fresh array, live references.
+   *
+   * Insertion order rather than any other is what makes replay stable: two orbs
+   * fired on the same turn must step in the order they were fired on every
+   * machine, and a Map preserves insertion order by specification.
+   */
+  projectilesInFlight(): readonly Projectile[];
 };
 
 function spriteForJoinIndex(index: number): string {
@@ -252,6 +290,18 @@ function spriteForJoinIndex(index: number): string {
 export function createWorld(seed: number | string): World {
   const level = makeTestLevel();
   const actors = new Map<string, Actor>();
+  /**
+   * ORBS IN FLIGHT. Deliberately not in `actors` — see the block comment on
+   * `World.addProjectile` for the five things that would silently break.
+   */
+  const projectiles = new Map<string, Projectile>();
+  /**
+   * Monotonic, never reused, and the ONLY legal id source in this directory:
+   * `Date.now` and `Math.random` are ESLint errors here (the determinism block
+   * in eslint.config.js), which is exactly the point — an id derived from a
+   * clock would make two replays of the same seed disagree about a name.
+   */
+  let projectileSeq = 0;
 
   const turn: TurnState = {
     clock: createTurnClock(),
@@ -451,6 +501,13 @@ export function createWorld(seed: number | string): World {
 
   const removeActor = (id: string): boolean => actors.delete(id);
 
+  const addProjectile = (init: ProjectileInit): Projectile => {
+    projectileSeq += 1;
+    const proj = createProjectile(`proj_${projectileSeq}`, init);
+    projectiles.set(proj.id, proj);
+    return proj;
+  };
+
   return {
     level,
     turn,
@@ -465,5 +522,9 @@ export function createWorld(seed: number | string): World {
     actorsInTurnOrder,
     actorAt,
     tryMove,
+    addProjectile,
+    removeProjectile: (id: string): boolean => projectiles.delete(id),
+    getProjectile: (id: string): Projectile | undefined => projectiles.get(id),
+    projectilesInFlight: (): readonly Projectile[] => [...projectiles.values()],
   };
 }

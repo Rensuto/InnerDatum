@@ -8,12 +8,15 @@ import {
   setCooldown,
 } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
+import { DamageType } from '../../src/server/engine/damage.ts';
+import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import {
   disconnectActor,
   pump,
   reconnectActor,
   submitIntent,
 } from '../../src/server/engine/scheduler.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { TICKS_PER_GAME_TURN } from '../../src/shared/energy.ts';
 import type { EngineActor, Intent } from '../../src/server/engine/actor.ts';
@@ -329,6 +332,100 @@ describe('determinism', () => {
     expect(alpha.length).toBeGreaterThan(0);
     expect(beta.length).toBeGreaterThan(0);
     expect(alpha).not.toEqual(beta);
+  });
+});
+
+describe('the travelling projectile leaves the instant attack alone', () => {
+  /** Hold for twelve turns and let the husks come. Returns what the run produced. */
+  function instantRun(seed: string): {
+    readonly table: Session;
+    readonly steps: SweepStep[];
+    readonly events: GameEvent[];
+  } {
+    const table = session(seed, 1, 3);
+    const steps: SweepStep[] = [];
+    const events: GameEvent[] = [];
+    let last = table.advance(0);
+    for (let turn = 0; turn < 12; turn += 1) {
+      steps.push(...sweepSteps(last.events));
+      events.push(...last.events);
+      // NOTHING IS EVER IN THE AIR on this path — not for a single tick.
+      expect(table.world.projectilesInFlight()).toEqual([]);
+      last = table.commit('p1', HOLD_INTENT, (turn + 1) * 1_000);
+    }
+    steps.push(...sweepSteps(last.events));
+    events.push(...last.events);
+    return { table, steps, events };
+  }
+
+  it('AN ATTACKER WITH NO projSpeed IS UNCHANGED — same step, same events, same stream', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE SAFETY PROPERTY OF THE WHOLE FEATURE, IN ONE TEST.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // ActorTalents.lua:988 — `if not t.proj_speed then return nil end`. ABSENT
+    // MEANS INSTANTANEOUS, so every attack that existed before travelling orbs
+    // did must still take the `strike` path: the same single
+    // `combat.bump.damage` draw at the same position in the stream, the same
+    // `attack` sweep step, and no orb anywhere. A husk has no `projSpeed` and
+    // neither does the elite; only the wraith carries one.
+    const first = instantRun('no-projspeed');
+
+    // Blows landed, instantly, exactly as they always did...
+    const attacks = first.steps.filter((step) => step.t === 'attack');
+    expect(attacks.length).toBeGreaterThan(0);
+    for (const hit of attacks) {
+      if (hit.t !== 'attack') throw new Error('unreachable');
+      // The M2 placeholder range, straight from `strike`.
+      expect(hit.damage).toBeGreaterThanOrEqual(3);
+      expect(hit.damage).toBeLessThanOrEqual(6);
+    }
+    // ...and not one of them was a launch.
+    expect(first.steps.some((step) => step.t === 'fired')).toBe(false);
+
+    // AND THE STREAM IS IN THE SAME PLACE IT WOULD HAVE BEEN. The fork must not
+    // add, remove or re-order a single draw on this path: the same seed and the
+    // same script leave the generator on the same cursor, with the same draw
+    // count and the same last label. Anything the fork did to `strike` — an
+    // extra roll, a moved roll, a relabelled one — lands here.
+    const second = instantRun('no-projspeed');
+    expect(second.table.world.rng.getState()).toEqual(first.table.world.rng.getState());
+    expect(JSON.stringify(second.events)).toEqual(JSON.stringify(first.events));
+    expect(first.table.world.rng.getState().count).toBeGreaterThan(0);
+  });
+
+  it('A FLOOR RESET TAKES EVERYTHING OUT OF THE AIR — the loop, closed again', () => {
+    // `resetFloor`'s own header records the evening this cost: a party restored
+    // in place, one tile from the thing that killed them, knocked down again on
+    // the next pump, forever. An orb that survived the wipe is that bug with a
+    // three-turn fuse — it lands on the restored party standing on the spawn
+    // cluster at full health, and re-creates the loop exactly. The projectile
+    // table is cleared in step 2, before the floor is re-seeded.
+    const world = createWorld('reset-projectiles');
+    const downed = createDownedState();
+    const ren = world.addPlayer('p1', 'Ren');
+    ren.x = 22;
+    ren.y = 20;
+
+    world.addProjectile({
+      sourceId: 'm_gone',
+      origin: { x: 16, y: 20 },
+      to: { x: 22, y: 20 },
+      projSpeed: 2,
+      range: 6,
+      damage: { dam: 40, type: DamageType.Physical, apr: 0 },
+    });
+    expect(world.projectilesInFlight()).toHaveLength(1);
+
+    const engine = createTurnEngine({ world, downed, now: () => 0 });
+    ren.hp = 0;
+    ren.alive = false;
+    goDown(downed, ren, world.turn.clock.gameTurn);
+    engine.pump();
+
+    // The party is up, the floor is re-seeded, and the sky is clear.
+    expect(world.getActor('p1')?.alive).toBe(true);
+    expect(world.projectilesInFlight()).toEqual([]);
   });
 });
 
