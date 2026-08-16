@@ -686,3 +686,128 @@ describe('pump reports the intents it refunded', () => {
     expect(result.playerEvents.some((ev) => ev.k === 'move')).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// hitToWire — A MISS IS AN OUTCOME, NOT AN ABSENCE
+// ---------------------------------------------------------------------------
+
+/**
+ * `AttackEvent.hit` has been on the wire since M2 and both READERS were already
+ * finished — `client/render/sweep.ts`'s `case 'attack'` picks the marker off
+ * `event.hit`, and the gateway's `recordFor` `case 'attack'` narrates
+ * "Watchman misses Bent Husk." (by symbol: both line numbers drifted, and
+ * gateway.ts:2563 is now a `sendTurn` call). The producer was the
+ * only liar: `hitToWire` hard-coded `true`, because nothing upstream of it could
+ * miss until `strike` moved onto `combat.ts#attackTarget`.
+ *
+ * These tests drive it end to end through a real pump rather than calling the
+ * private function, because the claim is about what the GATEWAY is handed.
+ */
+describe('a miss on the wire', () => {
+  /**
+   * One player and one husk, adjacent, with the fight already armed.
+   *
+   * `defence` is what decides the outcome, and it is pinned rather than seeded:
+   * `checkHit` bounds its chance to [0, 100], so a defence far past any
+   * achievable accuracy is a guaranteed miss and an accuracy far past any
+   * defence is a guaranteed hit. Seeds are not used to steer an outcome anywhere
+   * in this file — a seed chosen because it passed is a coincidence, not a test.
+   */
+  function brawl(
+    seed: string,
+    who: 'hits' | 'misses',
+  ): { readonly world: World; readonly engine: ReturnType<typeof createTurnEngine> } {
+    const world = createWorld(seed);
+    world.level.tiles.fill(TileCode.FLOOR);
+
+    const ren = world.addPlayer('actor_ren', 'Ren');
+    ren.x = 10;
+    ren.y = 10;
+    ren.hpRegen = 0;
+    // Enough accuracy to beat any defence below, so "did it land" is decided by
+    // the husk's sheet alone.
+    ren.combat = { mods: { atk: 30 } };
+
+    world.addMonster('m_husk', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 11,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 40,
+      combat: who === 'misses' ? { mods: { def: 400 } } : {},
+    });
+
+    const engine = createTurnEngine({ world });
+    engine.join('actor_ren');
+    world.turn.engagement = 3;
+    return { world, engine };
+  }
+
+  it('emits exactly ONE frame on a miss — no damage, no death', () => {
+    const { engine } = brawl('wire-miss', 'misses');
+    expect(engine.submitMove('actor_ren', 'e').ok).toBe(true);
+
+    const mine = engine.pump().playerEvents;
+
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toEqual({
+      k: 'attack',
+      id: 'actor_ren',
+      targetId: 'm_husk',
+      x: 11,
+      y: 10,
+      hit: false,
+    });
+    // A `damage` frame here would remove hp from a blow that never landed, and a
+    // `death` frame would kill somebody with it.
+    expect(mine.some((ev) => ev.k === 'damage')).toBe(false);
+    expect(mine.some((ev) => ev.k === 'death')).toBe(false);
+  });
+
+  it('emits attack + damage on a hit, and adds death when it kills', () => {
+    const { world, engine } = brawl('wire-hit', 'hits');
+    expect(engine.submitMove('actor_ren', 'e').ok).toBe(true);
+
+    const landed = engine.pump().playerEvents;
+    expect(landed.map((ev) => ev.k)).toEqual(['attack', 'damage']);
+    const [swing, harm] = landed;
+    expect(swing?.k === 'attack' ? swing.hit : undefined).toBe(true);
+    expect(harm?.k === 'damage' ? harm.amount : 0).toBeGreaterThan(0);
+
+    // ...and the killing blow adds the third frame.
+    const husk = world.getActor('m_husk');
+    if (husk === undefined) throw new Error('fixture: husk missing');
+    husk.hp = 1;
+    expect(engine.submitMove('actor_ren', 'e').ok).toBe(true);
+    const killing = engine.pump().playerEvents;
+    expect(killing.map((ev) => ev.k)).toEqual(['attack', 'damage', 'death']);
+  });
+
+  it('still reports a NON-ZERO maxHp on the frame that killed the body', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE REASON THE REAP IS THE CALLER'S JOB AND NOT THE PUMP'S.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `hitToWire` reads `maxHp` off the world AFTER the pump has returned —
+    // legitimately, because nothing in a fight changes it, so there is nothing
+    // to snapshot. Remove the corpse inside the pump and that lookup answers
+    // undefined, the frame ships `maxHp: 0`, and the Case Log narrates
+    // "5 damage. someone 0/0." Nothing throws; the log simply starts lying.
+    const { world, engine } = brawl('wire-kill-maxhp', 'hits');
+    const husk = world.getActor('m_husk');
+    if (husk === undefined) throw new Error('fixture: husk missing');
+    husk.hp = 1;
+
+    expect(engine.submitMove('actor_ren', 'e').ok).toBe(true);
+    const result = engine.pump();
+
+    const harm = result.playerEvents.find((ev) => ev.k === 'damage');
+    expect(harm?.k === 'damage' ? harm.maxHp : 0).toBe(40);
+    expect(harm?.k === 'damage' ? harm.hp : -1).toBe(0);
+    // The body is NAMED, not buried: it is on the reap list and still in the
+    // world, which is exactly what let the frame above be honest.
+    expect(result.reaped).toEqual(['m_husk']);
+    expect(world.getActor('m_husk')).toBeDefined();
+  });
+});

@@ -7,12 +7,15 @@ import {
   createMonsterActor,
   createPlayerActor,
 } from '../../src/server/engine/actor.ts';
+import { AttackRefusal, canAttack } from '../../src/server/engine/combat.ts';
 import { DIR_VECTORS, chebyshev } from '../../src/shared/coords.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import type { AiCtx } from '../../src/server/ai/npc.ts';
 import type { EngineActor, Intent, MonsterActor } from '../../src/server/engine/actor.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
+import type { LevelView } from '../../src/shared/protocol.ts';
 import type { Rng } from '../../src/shared/rng.ts';
 
 /**
@@ -457,5 +460,180 @@ describe('determinism', () => {
 
     expect(beta).toEqual(alpha);
     expect(alpha.length).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE AI ASKS THE QUESTION THE LEGALITY CHECK WILL ASK
+// ---------------------------------------------------------------------------
+
+/** The wall/floor grid these rooms are drawn in, as the `LevelView` combat.ts wants. */
+function levelFor(rows: readonly string[]): LevelView {
+  const w = Math.max(...rows.map((row) => row.length));
+  const tiles = new Array<number>(w * rows.length).fill(TileCode.FLOOR);
+  for (const [y, row] of rows.entries()) {
+    for (let x = 0; x < row.length; x += 1) {
+      if (row.charAt(x) !== '.') tiles[y * w + x] = TileCode.WALL;
+    }
+  }
+  return { w, h: rows.length, tiles };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN AI BAND WIDER THAN `canAttack` IS AN AI FREEZE, NOT A RANGE BUG.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `chase` used to test `chebyshev(self, target) <= self.attackRange` while
+ * `canAttack` refused on EUCLIDEAN. For the current roster the two agree, so
+ * nothing was visibly wrong — but a creature whose band is one tile wider than
+ * its reach submits an attack that is refused EVERY TURN. A monster is not
+ * refunded: the intent costs the turn and comes back as a `blocked` sweep step,
+ * forever, with nothing failing anywhere. From outside that is an AI that has
+ * stopped working.
+ *
+ * Both profiles now ask `rangeRefusal`, which IS the reach-and-dead-zone half of
+ * `canAttack`. These tests assert the property rather than the call: for every
+ * intent the AI produces, the scheduler must agree it is legal.
+ */
+describe('the AI never submits an attack canAttack would refuse', () => {
+  const OPEN_ROOM = [
+    '...........',
+    '...........',
+    '...........',
+    '...........',
+    '...........',
+    '...........',
+    '...........',
+  ] as const;
+
+  it('agrees with canAttack on every tile a CHASER can stand on', () => {
+    // Swept rather than sampled, because the disagreement this guards against is
+    // precisely a corner case: the four DIAGONALS, which are Chebyshev 1 and
+    // Euclidean 1.4142. A reach fed in raw as a Euclidean radius refuses all
+    // four, and the AI would keep asking for them.
+    const world = { level: levelFor(OPEN_ROOM) };
+    const player = detective('p1', { x: 5, y: 3 });
+    let swings = 0;
+
+    for (let y = 0; y < OPEN_ROOM.length; y += 1) {
+      for (let x = 0; x < 11; x += 1) {
+        if (x === player.x && y === player.y) continue;
+        const monster = husk('m1', { x, y });
+        const intent = decideNpcAction(
+          monster,
+          aiCtx(OPEN_ROOM, [player, monster], createRng('sweep')),
+        );
+        if (intent.kind !== IntentKind.Attack) continue;
+        swings += 1;
+        expect({ x, y, refusal: canAttack(monster, player, world) }).toEqual({
+          x,
+          y,
+          refusal: null,
+        });
+      }
+    }
+
+    // The eight neighbours, and nothing else — otherwise the loop above proved
+    // nothing because it never found an attack to check.
+    expect(swings).toBe(8);
+  });
+
+  it('agrees with canAttack on every tile a KITER can stand on, dead zone included', () => {
+    // The kiter is the profile with something to get wrong: it has a HOLE in the
+    // middle of its band, and `ai.minRange` and `combat.minRange` are two
+    // separate numbers that `validateTemplate` only proves equal for AUTHORED
+    // creatures. A profile-default kiter is min 3, preferred 5, reach 5.
+    const world = { level: levelFor(OPEN_ROOM) };
+    const player = detective('p1', { x: 5, y: 3 });
+    let shots = 0;
+
+    for (let y = 0; y < OPEN_ROOM.length; y += 1) {
+      for (let x = 0; x < 11; x += 1) {
+        if (x === player.x && y === player.y) continue;
+        const monster = kiter('m1', { x, y });
+        // Authored to match the profile, exactly as content/monsters.ts pairs
+        // them and exactly as `validateTemplate` proves.
+        monster.combat = { range: 5, minRange: 3 };
+        const intent = decideNpcAction(
+          monster,
+          aiCtx(OPEN_ROOM, [player, monster], createRng('sweep')),
+        );
+        if (intent.kind !== IntentKind.Attack) continue;
+        shots += 1;
+        expect({ x, y, refusal: canAttack(monster, player, world) }).toEqual({
+          x,
+          y,
+          refusal: null,
+        });
+      }
+    }
+
+    expect(shots).toBeGreaterThan(0);
+  });
+});
+
+describe('a CORNERED kiter does something legible', () => {
+  /**
+   * A one-tile alcove with the only way out blocked by the detective standing in
+   * it. The kiter is at (1,2); (2,1) is the detective, and every retreat from
+   * there is either rock or nearer to them.
+   *
+   * ```
+   * #####
+   * #.p.#
+   * #k..#
+   * #####
+   * ```
+   */
+  const ALCOVE = ['#####', '#...#', '#...#', '#####'] as const;
+
+  function pinned(): { readonly player: EngineActor; readonly monster: MonsterActor } {
+    const monster = kiter('m1', { x: 1, y: 2 });
+    monster.combat = { range: 5, minRange: 3 };
+    return { player: detective('p1', { x: 2, y: 1 }), monster };
+  }
+
+  it('HOLDS rather than asking for a shot the scheduler would refuse', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE PAYOFF FOR WALKING IT INTO A WALL — AND IT MUST NOT BE SILENT.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // A hold is a real sweep step: the client draws the monster bracing and the
+    // Case Log says so. A refused ATTACK is a `blocked` step carrying a reason
+    // nobody asked for, repeated every turn for the rest of the fight, which
+    // reads as the AI having frozen. Pinning the wraith is the single clearest
+    // argument for having a Watchman in the party, and it has to LOOK like it
+    // worked.
+    const world = { level: levelFor(ALCOVE) };
+    const { player, monster } = pinned();
+
+    for (let turn = 0; turn < 10; turn += 1) {
+      const intent = decideNpcAction(monster, aiCtx(ALCOVE, [player, monster], createRng('pin')));
+      expect(intent).toEqual({ kind: IntentKind.Hold });
+      // ...and the shot it did not take would indeed have been refused, which is
+      // why holding is correct rather than merely tidy.
+      expect(canAttack(monster, player, world)).toBe(AttackRefusal.MinRange);
+      // It never crept forward either — the dead zone is a wall in both
+      // directions.
+      expect({ x: monster.x, y: monster.y }).toEqual({ x: 1, y: 2 });
+    }
+  });
+
+  it('never arms the shoulder escalation, which would push it the wrong way', () => {
+    // `advance`'s escalation exists to CLOSE distance, so a pinned kiter running
+    // it would shoulder FORWARD — the one thing it must never do. `kite` holds
+    // directly instead of calling `advance` when the retreat fails.
+    const { player, monster } = pinned();
+
+    for (let turn = 0; turn < 6; turn += 1) {
+      decideNpcAction(monster, aiCtx(ALCOVE, [player, monster], createRng('pin-escalate')));
+    }
+
+    // The blocked turns were counted, which is honest bookkeeping...
+    expect(monster.ai.blockedTurns).toBeGreaterThan(0);
+    // ...but the manoeuvre was never armed and never went on cooldown, so
+    // nothing here can ever produce a step toward the target.
+    expect(monster.ai.shoulderTurns).toBe(0);
   });
 });

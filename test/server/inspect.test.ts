@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { AttackRefusal, canAttack, combatDistance } from '../../src/server/engine/combat.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import { attackBlockedReason } from '../../src/server/view/inspect.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { chebyshev } from '../../src/shared/coords.ts';
 import { ErrorCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
@@ -364,9 +367,14 @@ describe('`blockedReason` is asked with the viewer’s own reach', () => {
     const floor = await scene();
     const view = viewOf(await floor.client.inspect(floor.twoAway.id));
 
-    // The viewer carries no combat sheet, so `viewer.combat?.range ?? 1` is 1 —
-    // which IS bump-attack reach, and bump-attack is the only attack there is.
+    // The viewer is a WATCHMAN now — every joining body gets a class sheet — so
+    // the reach is `MELEE_REACH` 1.5, which contains the four diagonals at √2
+    // and excludes this body at 2.0. The sentence still says "reaches 1",
+    // because 1.5 is the radius that makes the circle the eight-neighbourhood
+    // and a fractional reach in a player-facing string is arithmetic, not advice.
     expect(String(view?.['blockedReason'])).toContain('out of range');
+    expect(String(view?.['blockedReason'])).toContain('reaches 1');
+    expect(String(view?.['blockedReason'])).not.toContain('1.5');
     // The card still arrives: "I can see it and cannot reach it" is exactly the
     // thing a tooltip exists to say.
     expect(view?.['id']).toBe(floor.twoAway.id);
@@ -454,5 +462,102 @@ describe('before `hello`', () => {
     expect(refusal?.['code']).toBe(ErrorCode.NotAuthenticated);
     // No card leaked past the refusal, not even a null one.
     expect(await client.waitFor('inspected', 200)).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// 8. THE CARD AND THE SERVER MEASURE WITH THE SAME RULER
+// ===========================================================================
+
+describe('`attackBlockedReason` asks exactly the question `canAttack` answers', () => {
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE DIAGONAL RIM: THE BAND WHERE THE CARD USED TO SAY YES AND MEAN NO.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `attackBlockedReason` measured with CHEBYSHEV and compared against
+   * `combat.range`, which is a EUCLIDEAN radius. That agreed by accident while
+   * no player carried a combat sheet at all. Now the Inspector carries range 5
+   * and the two disagree along the whole diagonal rim of her ring: Chebyshev 4
+   * passes, Euclid 5.657 does not, so the card advertised a shootable target
+   * that the server refused on click. combat.ts's wiring note is explicit that
+   * the metrics must move together.
+   *
+   * Driven directly rather than over a socket because the property is about the
+   * two functions AGREEING, and the only honest way to assert that is to call
+   * both with the same pair of bodies.
+   */
+  it('agrees with `canAttack` on the diagonal rim of a ranged sheet', () => {
+    const world = createWorld('inspect-euclid');
+    const shooter = world.addPlayer('p_inspector', 'Wren', {
+      // The Inspector's band, verbatim from content/classes.ts.
+      combat: { range: 5, minRange: 3 },
+    });
+    shooter.x = 10;
+    shooter.y = 10;
+
+    const husk = world.addMonster('m_diag', {
+      name: 'Bent Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 14,
+      y: 14,
+      profile: AiProfile.MeleeChaser,
+    });
+    husk.x = 14;
+    husk.y = 14;
+
+    // Chebyshev 4 — inside the old square. Euclid 5.657 — outside the circle.
+    expect(chebyshev(shooter, husk)).toBe(4);
+    expect(combatDistance(shooter, husk)).toBeGreaterThan(5);
+
+    expect(canAttack(shooter, husk, world)).toBe(AttackRefusal.OutOfRange);
+    expect(attackBlockedReason(world, shooter, husk)).toContain('out of range');
+  });
+
+  it('reports the dead zone as `too close`, never as out of range', () => {
+    // The two carry OPPOSITE instructions — one says close in, the other says
+    // back away — and a positional class reads as broken the moment they are
+    // confused. Same rule, same words, both layers.
+    const world = createWorld('inspect-deadzone');
+    const shooter = world.addPlayer('p_inspector', 'Wren', {
+      combat: { range: 5, minRange: 3 },
+    });
+    shooter.x = 10;
+    shooter.y = 10;
+
+    const husk = world.addMonster('m_close', {
+      name: 'Bent Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 11,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+    });
+    husk.x = 11;
+    husk.y = 10;
+
+    expect(canAttack(shooter, husk, world)).toBe(AttackRefusal.MinRange);
+    expect(attackBlockedReason(world, shooter, husk)).toContain('too close');
+  });
+
+  it('lets a melee body swing on the diagonal, exactly as the scheduler does', () => {
+    // `MELEE_REACH` 1.5 contains √2. A raw Euclidean 1 here would have the card
+    // refuse the four diagonals that bump-attack has always allowed.
+    const world = createWorld('inspect-diagonal-melee');
+    const watchman = world.addPlayer('p_watchman', 'Ren', { combat: { range: 1.5 } });
+    watchman.x = 10;
+    watchman.y = 10;
+
+    const husk = world.addMonster('m_ne', {
+      name: 'Bent Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 11,
+      y: 11,
+      profile: AiProfile.MeleeChaser,
+    });
+    husk.x = 11;
+    husk.y = 11;
+
+    expect(canAttack(watchman, husk, world)).toBeNull();
+    expect(attackBlockedReason(world, watchman, husk)).toBeUndefined();
   });
 });

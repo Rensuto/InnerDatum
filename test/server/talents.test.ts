@@ -46,6 +46,7 @@ import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import type { ClassDef } from '../../src/server/content/classes.ts';
 import type {
+  Talent,
   TalentActor,
   TalentCtx,
   TalentEngine,
@@ -349,6 +350,129 @@ describe('the loadout cap — PLAN.md § 5', () => {
     expect(mark.cost).toEqual({ ap: 5, mp: 0, resource: 35 });
   });
 });
+
+describe('MELEE REACH — the Watchman can swing on a DIAGONAL', () => {
+  it('lets all four melee talents reach a husk standing corner to corner', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE √2 REGRESSION. THREE OF THE WATCHMAN'S FOUR BUTTONS DID NOT WORK.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `checkTargeting` here and `submitTalent` in turn-engine.ts both measure
+    // with `combatDistance`, which is EUCLIDEAN — `core.fov.distance`, the same
+    // metric every range and radius in the game uses, because a Chebyshev ring
+    // is a square that reaches 7.07 tiles into its corners.
+    //
+    // All four Watchman talents authored `range: 1`. The four diagonal
+    // neighbours sit at √2 = 1.4142…, which is GREATER THAN 1 — so a Watchman
+    // standing corner to corner with a husk was told `out_of_range` on Crude
+    // Blow, Ward Rush, Iron Curtain and Lockdown. Only the orthogonal
+    // neighbours worked, on the one class whose entire job is to be standing on
+    // top of something.
+    //
+    // 1.5 is the only round number between √2 and the nearest NON-neighbour at
+    // 2.0, so a circle of that radius holds exactly the eight tiles around you.
+    // That is `MELEE_REACH`, and it is what all four now author.
+    const f = fixture(PLENTY);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    refill(f.engine, 'dalt');
+    // (6,6) — one step diagonally. Chebyshev 1, EUCLIDEAN 1.4142…
+    const husk = f.addMonster('husk', 6, 6);
+    expect(Math.hypot(husk.x - watchman.x, husk.y - watchman.y)).toBeCloseTo(Math.SQRT2, 5);
+
+    for (const talent of WATCHMAN.loadout) {
+      refill(f.engine, 'dalt');
+      const refusal = canUseTalent(
+        f.engine,
+        watchman,
+        talent,
+        { x: husk.x, y: husk.y, actorId: husk.id },
+        f.world,
+      );
+      expect({ talent: talent.id, refusal }).toEqual({ talent: talent.id, refusal: null });
+    }
+
+    // …and the ORTHOGONAL neighbour still works, which is what makes this a
+    // widening rather than a swap.
+    const straight = f.addMonster('straight', 6, 5);
+    expect(
+      canUseTalent(
+        f.engine,
+        watchman,
+        crudeBlowOf(f),
+        { x: straight.x, y: straight.y, actorId: straight.id },
+        f.world,
+      ),
+    ).toBe(null);
+  });
+
+  it('still refuses the tile two steps away — the circle did not become a square', () => {
+    // 1.5 has to stay BELOW 2.0 or melee quietly gains a tile of reach in every
+    // direction, which is the other half of why the constant is not simply "2".
+    const f = fixture(PLENTY);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    refill(f.engine, 'dalt');
+
+    const far = f.addMonster('far', 7, 5); // two tiles orthogonally -> 2.0
+    expect(
+      canUseTalent(
+        f.engine,
+        watchman,
+        crudeBlowOf(f),
+        { x: far.x, y: far.y, actorId: far.id },
+        f.world,
+      ),
+    ).toBe(TalentRefusal.OutOfRange);
+
+    // …and the knight's-move tile at (7,6) is 2.236 away, which is outside it
+    // too even though it is only two steps.
+    const knight = f.addMonster('knight', 7, 6);
+    expect(
+      canUseTalent(
+        f.engine,
+        watchman,
+        crudeBlowOf(f),
+        { x: knight.x, y: knight.y, actorId: knight.id },
+        f.world,
+      ),
+    ).toBe(TalentRefusal.OutOfRange);
+  });
+
+  it('leaves the Inspector’s dead zone exactly where it was', () => {
+    // The widening is MELEE only. INSPECTOR authors range 5 / minRange 3 and
+    // ALCHEMIST range 5, and neither goes anywhere near `MELEE_REACH` — a
+    // "fix" that had loosened the dead zone would have deleted the one number
+    // game-design.md § 2 calls the most important in the class.
+    const f = fixture(PLENTY);
+    const inspector = f.add(INSPECTOR, 'sam', 5, 5);
+    refill(f.engine, 'sam');
+    const shot = f.engine.registry.get(talentId('revolver_shot'));
+    expect(shot).toBeDefined();
+    if (shot === undefined) return;
+
+    // The diagonal neighbour that the Watchman can now reach is still INSIDE
+    // her hole, and it is `too close` rather than `out of range`.
+    const adjacent = f.addMonster('adjacent', 6, 6);
+    expect(
+      canUseTalent(
+        f.engine,
+        inspector,
+        shot,
+        { x: adjacent.x, y: adjacent.y, actorId: adjacent.id },
+        f.world,
+      ),
+    ).toBe(TalentRefusal.MinRange);
+    expect(INSPECTOR.combat.minRange).toBe(3);
+    expect(INSPECTOR.combat.range).toBe(5);
+    expect(ALCHEMIST.combat.range).toBe(5);
+  });
+});
+
+/** Crude Blow off the registry, narrowed once so three tests need not each do it. */
+function crudeBlowOf(f: Fixture): Talent {
+  const talent = f.engine.registry.get(talentId('crude_blow'));
+  if (talent === undefined) throw new Error('test fixture: crude_blow is not registered');
+  return talent;
+}
 
 describe('THE DEAD ZONE — the Inspector cannot shoot adjacent', () => {
   it('refuses at 1 and 2, allows at exactly 3', () => {

@@ -43,7 +43,7 @@ import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { TurnClock } from '../../shared/energy.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
-import type { EngineActor, MonsterInit } from '../engine/actor.ts';
+import type { EngineActor, MonsterInit, PlayerInit } from '../engine/actor.ts';
 import type { Projectile, ProjectileInit } from '../engine/projectile.ts';
 
 /**
@@ -104,9 +104,33 @@ export type MoveResult =
   | { readonly ok: false; readonly reason: MoveBlock };
 
 /**
- * The six playable classes, in the order the art was cut. Handed out with the
- * spawn tiles so the first two players in a session are visibly different
- * sprites standing next to each other.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CLASSLESS FALLBACK, AND NOTHING ELSE ANY MORE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONLY THE FIRST THREE ARE REAL CLASSES. `chr_player_watchman_s`,
+ * `chr_player_inspector_s` and `chr_player_alchemist_s` are the Watchman, the
+ * Inspector and the Alchemist of Ashwick Row (content/classes.ts). The other
+ * three are art for classes that do not exist: there is no Enforcer, no
+ * Voidling and no Cipher Clerk in `CLASSES`, they have no `_downed_s` variant
+ * (engine/downed.ts derives that key by appending the infix) and no portrait
+ * (view/projector.ts falls back to the generic detective for them).
+ *
+ * WHICH IS WHY THIS ROTATION NO LONGER DECIDES ANYTHING. A joining player's
+ * class is picked by `classForJoin` in content/classes.ts and PUSHED DOWN from
+ * the gateway as the `PlayerOverlay` below, sprite included, so that "a Watchman
+ * drawn as an Alchemist" is unrepresentable rather than merely avoided. This
+ * list is what a body gets when nobody supplied one — a test fixture, the e2e
+ * harness, a plain-browser session against a build with no content wired in.
+ *
+ * IT STAYS SIX WIDE. Shrinking it to three would be a second, silent copy of
+ * "which classes exist" living in the layer that must not know: world.ts MAY NOT
+ * import content/classes.ts, because that closes
+ * `world -> content/classes -> engine/talents -> world`. The closing edge is
+ * engine/talents.ts:103, which VALUE-imports `hasLineOfSight` from this file —
+ * cited as the edge rather than as a paragraph, because the note that used to
+ * be cited here (engine/talents.ts's `engine -> talents -> engine` warning) is
+ * about the twelve talent FILES and says nothing about world.ts at all.
  */
 const PLAYER_SPRITES = [
   'chr_player_watchman_s',
@@ -156,6 +180,43 @@ export function hasLineOfSight(level: LevelView, from: TileXY, to: TileXY): bool
   return true;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A CLASS PUTS ON A JOINING BODY. PUSHED DOWN, NEVER PULLED UP.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every field is one the caller read off a `ClassDef` (content/classes.ts) and
+ * is forwarded verbatim to `createPlayerActor`, which has accepted all of them
+ * since the class sheet landed (engine/actor.ts's `PlayerInit`). It is a
+ * `Partial<Pick<…>>` of that type rather than a hand-written twin so the two
+ * cannot drift: rename a field on `PlayerInit` and this stops compiling.
+ *
+ * ═══ WHY IT IS AN ARGUMENT AND NOT A LATER MUTATION ═══
+ * `applyRestore` (net/gateway.ts) clamps a restored hp to `actor.maxHp`, and a
+ * classless body defaults to 60. Apply the class AFTER `addPlayer` and every
+ * returning Watchman — maxHp 72 — silently loses up to 12 hp per resume, once
+ * per evening, with nothing failing anywhere.
+ *
+ * ═══ WHY THE WORLD DOES NOT JUST ASK FOR THE CLASS ═══
+ * Because it may not know what one is. `world -> content/classes ->
+ * engine/talents -> world` is a real cycle — engine/talents.ts:103 value-imports
+ * `hasLineOfSight` from this file, which is the edge that closes it — and a
+ * module cycle in a project with no build step is a
+ * ReferenceError at import time rather than a warning. So the layer that can see
+ * both — the gateway — reads the `ClassDef` and hands the pieces down.
+ *
+ * ═══ `downedSprite` IS DELIBERATELY ABSENT ═══
+ * `ClassDef` authors one, but nothing on an actor stores it: `downedSpriteFor`
+ * (engine/downed.ts) DERIVES `chr_player_watchman_downed_s` from the standing
+ * key by appending an infix, which is what keeps the engine free of the content
+ * layer. Carrying the authored value here as well would be a second source of
+ * truth for one string; test/server/downed.test.ts and class-wiring.test.ts both
+ * pin the derivation against all three authored values instead.
+ */
+export type PlayerOverlay = Partial<
+  Pick<PlayerInit, 'sprite' | 'maxHp' | 'hpRegen' | 'combat' | 'classId'>
+>;
+
 export type World = {
   /**
    * The authoritative level. Mutable in type because M4 digs doors into it; in
@@ -184,8 +245,18 @@ export type World = {
    * ten players that is unreachable, but silently stacking two bodies on one
    * tile would corrupt the invariant the rest of this file depends on. The
    * caller (the gateway) catches it and answers `internal`.
+   *
+   * @param overlay the class this body is, already read off a `ClassDef` — see
+   * `PlayerOverlay`. OPTIONAL, AND THAT IS LOAD-BEARING RATHER THAN POLITE:
+   * roughly forty two-argument call sites exist across the test suite and every
+   * one of them describes the same game it always did. Absent means a classless
+   * body: the sprite rotation above, 60 hp, and `DEFAULT_PLAYER_COMBAT`.
+   *
+   * IGNORED ON THE IDEMPOTENT PATH, like every other argument. An id that is
+   * already in the world comes back untouched — that is the resume path, and a
+   * reconnecting socket must reattach to its body rather than re-clothe it.
    */
-  addPlayer(id: string, name: string): Actor;
+  addPlayer(id: string, name: string, overlay?: PlayerOverlay): Actor;
   /**
    * Place a monster, preferring the requested tile and settling for the nearest
    * free one. Idempotent on `id`, like `addPlayer`.
@@ -323,7 +394,18 @@ export function createWorld(seed: number | string): World {
 
   /** Where the next join starts scanning the authored spawn cluster. */
   let spawnCursor = 0;
-  /** Monotonic join counter, used only to rotate through the class sprites. */
+  /**
+   * Monotonic join counter, and the ONLY thing it still rotates is the
+   * CLASSLESS fallback sprite — see `PLAYER_SPRITES`. A body that arrives with
+   * a `PlayerOverlay` never reads it, because its class already named the
+   * sprite, and the class rotation that decides which class a joining player
+   * gets is the gateway's (it has to survive across worlds and be suppressed on
+   * a resume, neither of which this counter can express).
+   *
+   * NEVER DECREMENTED, which is the other half of why it cannot decide a class:
+   * it is per-process, so the fourth person to connect this evening is the
+   * fourth even if the first three left an hour ago.
+   */
   let joinIndex = 0;
 
   /**
@@ -408,7 +490,7 @@ export function createWorld(seed: number | string): World {
     return undefined;
   };
 
-  const addPlayer = (id: string, name: string): Actor => {
+  const addPlayer = (id: string, name: string, overlay?: PlayerOverlay): Actor => {
     const existing = actors.get(id);
     if (existing !== undefined) return existing;
 
@@ -417,8 +499,16 @@ export function createWorld(seed: number | string): World {
       throw new Error('world.addPlayer: the level has no free tile');
     }
     const actor = createPlayerActor(id, {
+      // SPREAD FIRST, so that the three fields below cannot be overridden by a
+      // caller: `name` is Discord's, and the tile is this function's own
+      // free-tile search, which is the one invariant the whole file is written
+      // around. Everything the overlay legitimately carries — the sprite, the
+      // vitals, the combat sheet, the class label — is optional on `PlayerInit`
+      // and falls back to the documented placeholder when absent, so an overlay
+      // that names only a sprite is not half a class.
+      ...overlay,
       name,
-      sprite: spriteForJoinIndex(joinIndex),
+      sprite: overlay?.sprite ?? spriteForJoinIndex(joinIndex),
       x: tile.x,
       y: tile.y,
     });

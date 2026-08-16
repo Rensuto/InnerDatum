@@ -35,6 +35,7 @@
  * against a wall is a legitimate outcome the log should say out loud.
  */
 
+import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -54,7 +55,21 @@ import {
 import type { Talent } from '../engine/talents.ts';
 
 const AP_COST = 2;
-const RANGE = 1;
+/**
+ * MELEE REACH — 1.5, NOT 1, AND THE ARITHMETIC IS THE WHOLE JUSTIFICATION.
+ *
+ * `checkTargeting` (engine/talents.ts) and `submitTalent` (turn-engine.ts) both
+ * measure with `combatDistance`, which is EUCLIDEAN — `core.fov.distance`. The
+ * four diagonal neighbours sit at √2 = 1.4142…, so a range of exactly 1 refuses
+ * every one of them: a Watchman standing corner-to-corner with a husk is told
+ * OutOfRange on a talent whose whole point is that he is standing on it. 1.5 is
+ * the only round number between √2 and the nearest non-neighbour at 2.0, so a
+ * circle of that radius holds exactly the eight tiles around you.
+ *
+ * Imported rather than written as 1.5, because a second literal somewhere else
+ * is a second definition of what melee means (engine/combat.ts `MELEE_REACH`).
+ */
+const RANGE = MELEE_REACH;
 /** `damage_multiplier: 0.8`. Deliberately the weakest hit in the kit. */
 const DAMAGE_MULT = 0.8;
 const KNOCKBACK_TILES = 1;

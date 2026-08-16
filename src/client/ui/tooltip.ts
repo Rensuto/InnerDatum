@@ -140,7 +140,19 @@ function clamp(value: number, min: number, max: number): number {
  */
 function tipLines(view: InspectView): readonly TipLine[] {
   return [
-    { label: view.kind, value: `${view.hp}/${view.maxHp}`, emphasis: false },
+    // ═══ `ceil`, THE SAME ROUNDING partypanel.ts AND turncards.ts USE ═══
+    // `InspectView.hp` is the raw server-side number, and since the scheduler
+    // moved onto the real damage pipeline that number is routinely fractional
+    // (`dam * pres - armour + dam * (1 - pres)` does not land on integers).
+    // Printed raw this row read "14.000000000000002/25". Rounding differently
+    // from the party panel would be worse than not rounding: one body would
+    // read 14 in one widget and 15 in another, and a player would reasonably
+    // conclude one of them is lying.
+    {
+      label: view.kind,
+      value: `${Math.max(0, Math.ceil(view.hp))}/${view.maxHp}`,
+      emphasis: false,
+    },
     ...view.rows.map((row) => ({
       label: row.label,
       value: row.value,

@@ -39,6 +39,7 @@
 import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { ActorKind } from '../../shared/protocol.ts';
+import { MELEE_REACH, combatDistance } from '../engine/combat.ts';
 import type { InspectRow, InspectView } from '../../shared/protocol.ts';
 import {
   combatArmor,
@@ -140,15 +141,54 @@ export function attackBlockedReason(
   target: Actor,
   opts: { readonly minRange?: number; readonly maxRange?: number } = {},
 ): string | undefined {
-  const dist = chebyshev(viewer, target);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EUCLIDEAN, BECAUSE THAT IS THE METRIC THE SERVER WILL ANSWER WITH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This measured with CHEBYSHEV and compared against `viewer.combat.range`,
+   * which is a EUCLIDEAN radius. That agreed by ACCIDENT while no player had a
+   * combat sheet at all — the `?? 1` fallback happened to match the old
+   * Chebyshev-1 scheduler. Now every player carries a class sheet and the two
+   * disagree along the whole diagonal:
+   *
+   *   Inspector (range 5) at (10,10), husk at (14,14). Chebyshev 4 ≤ 5, so this
+   *   returned `undefined` and the card advertised a shootable target. Euclid is
+   *   5.657, so `canAttack` answers `out_of_range` and the shot is refused on
+   *   click. The whole diagonal rim of her range ring said yes and meant no.
+   *
+   * combat.ts's own wiring note is the argument: the metrics must move together
+   * or "attacks pass the legality check and then quietly do nothing". The
+   * scheduler and `canAttack` were moved; this third reader was missed.
+   *
+   * ═══ AND IT ASKS THE QUESTION THROUGH `rangeRefusal` ═══
+   * Not a re-implementation of the band — `rangeRefusal` is exported from
+   * engine/combat.ts precisely so a caller can ask the IDENTICAL question the
+   * scheduler will ask, including the `Math.max(attackRange, MELEE_REACH)` floor
+   * that makes a diagonal melee swing legal. This function's own promise is that
+   * it "mirrors the server's own resolution-time refusals rather than inventing
+   * a parallel set of rules"; it now does that literally.
+   */
+  const dist = combatDistance(viewer, target);
   // Reach and the dead zone belong to the ATTACKER's sheet. `opts` overrides
   // only so a talent with its own range can ask the same question.
   const minRange = opts.minRange ?? viewer.combat?.minRange ?? 0;
-  const maxRange = opts.maxRange ?? viewer.combat?.range ?? 1;
+  const maxRange =
+    opts.maxRange ?? viewer.combat?.range ?? Math.max(viewer.attackRange ?? 1, MELEE_REACH);
 
   if (!target.alive) return 'already down';
   if (!hasLineOfSight(world.level, viewer, target)) return 'no line of sight';
   if (minRange > 0 && dist < minRange) return `too close: needs ${minRange} tiles`;
-  if (dist > maxRange) return `out of range: ${dist} tiles, reaches ${maxRange}`;
+  if (dist > maxRange) {
+    // ═══ WHOLE TILES IN A SENTENCE A PLAYER READS ═══
+    // The metric is a real-valued radius, but "out of range: 5.66 tiles,
+    // reaches 1.5" is arithmetic, not advice. `round` on the distance is the
+    // number of squares between them; `floor` on the reach is what the circle
+    // actually CONTAINS — `MELEE_REACH` is 1.5 exactly so that the eight
+    // neighbours at √2 are inside it, and "reaches 1" is what that means to
+    // somebody looking at a grid. Last week this sentence said "reaches 1" and
+    // it must keep saying so.
+    return `out of range: ${Math.round(dist)} tiles, reaches ${Math.floor(maxRange)}`;
+  }
   return undefined;
 }

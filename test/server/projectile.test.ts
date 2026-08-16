@@ -566,9 +566,17 @@ describe('mid-flight', () => {
   });
 
   it('clears a killed body s pending intent, exactly as the melee path does', () => {
-    // engine/actor.ts's `applyDamage` does this and damage.ts's does not, because
+    // engine/actor.ts's `applyDamage` did this and damage.ts's does not, because
     // damage.ts knows nothing about intents. A body that went down holding one
     // would resolve it the moment an ally picked them up — a turn nobody took.
+    //
+    // ═══ "AS THE MELEE PATH DOES" IS NOW LITERALLY TRUE ═══
+    // It was not when this test was written: the orb path carried the manual fix
+    // alone, because `scheduler.ts#strike` was still routing through
+    // engine/actor.ts's own `applyDamage`, which cleared the intent for it. That
+    // function is gone and `strike` now carries the identical two lines. The
+    // matching melee test lives beside it, in test/server/scheduler.test.ts
+    // ("clears a killed body's pendingIntent, exactly as the orb path does").
     const victim = body('victim', 7, 1, 5);
     victim.pendingIntent = HOLD_INTENT;
     const scene = arena(CORRIDOR, [victim]);

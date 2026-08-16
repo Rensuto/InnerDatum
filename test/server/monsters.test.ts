@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { decideNpcAction } from '../../src/server/ai/npc.ts';
+import { ALCHEMIST, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import {
   INDEX_HUSK,
   INDEX_HUSK_ELITE,
@@ -20,18 +21,31 @@ import {
   createMonsterActor,
   createPlayerActor,
 } from '../../src/server/engine/actor.ts';
+import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { AttackRefusal, canAttack, combatDistance } from '../../src/server/engine/combat.ts';
-import { DamageType, applyResists, combatGetResist } from '../../src/server/engine/damage.ts';
 import {
+  DamageType,
+  applyArmour,
+  applyResists,
+  combatGetDamageIncrease,
+  combatGetResist,
+} from '../../src/server/engine/damage.ts';
+import {
+  combatAPR,
   combatArmor,
   combatArmorHardiness,
   combatAttack,
   combatCrit,
+  combatCritPower,
   combatDamage,
   combatDamageRange,
   combatDefense,
+  combatSpellpower,
 } from '../../src/server/engine/derived.ts';
+import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
+import { MVP_TALENT_LEVEL, combatTalentSpellDamage } from '../../src/server/engine/talents.ts';
 import { toActorView } from '../../src/server/view/projector.ts';
+import { createWorld } from '../../src/server/world/world.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
 import { hitChance } from '../../src/shared/checkhit.ts';
@@ -40,6 +54,7 @@ import { createRng } from '../../src/shared/rng.ts';
 import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
 import type { AiCtx } from '../../src/server/ai/npc.ts';
 import type { EngineActor, Intent, MonsterActor } from '../../src/server/engine/actor.ts';
+import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { DamageProfile } from '../../src/server/engine/damage.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
@@ -132,6 +147,29 @@ function aiCtx(
     rng,
   };
 }
+
+/**
+ * THE WRAITH'S AUTHORED ORB BAND, NARROWED ONCE.
+ *
+ * `damageMin` / `damageMax` are OPTIONAL on `MonsterTemplate` because a melee
+ * creature must not carry them — it can never reach `scheduler.ts#fire`, so a
+ * pair on a husk would be a number with no reader. That optionality is correct
+ * content design and a nuisance in a balance test, where every read would
+ * otherwise be `number | undefined` and every assertion would be half about
+ * optionality.
+ *
+ * So it is narrowed here, exactly once, and the throw IS an assertion rather
+ * than a convenience: the roster's one ranged creature must author a band, and
+ * if it stops doing so this file should fail loudly at import rather than
+ * quietly compare `undefined` to a target.
+ */
+const ORB = ((): { readonly min: number; readonly max: number; readonly mean: number } => {
+  const { damageMin, damageMax } = INDEX_WRAITH;
+  if (damageMin === undefined || damageMax === undefined) {
+    throw new Error('index_wraith must author damageMin and damageMax — see monsters.ts');
+  }
+  return { min: damageMin, max: damageMax, mean: (damageMin + damageMax) / 2 };
+})();
 
 /** Apply a move intent the way the world would. Anything else leaves the tile alone. */
 function applyMove(actor: { x: number; y: number }, intent: Intent): void {
@@ -302,8 +340,13 @@ describe('the adopted ToME entries survive the port', () => {
     // `global_speed_base` (so 1.0) and ToME has no dead zone anywhere.
     expect(INDEX_WRAITH.globalSpeed).toBe(0.84);
     expect(INDEX_WRAITH.minRange).toBe(2);
-    // ...and the third: upstream is `max_life = resolvers.rngavg(40,60)` = 50.
-    expect(INDEX_WRAITH.maxHp).toBe(22);
+    // ...and the LIFE IS NOW A PORT rather than the third deviation. This used
+    // to assert 22 with the line below sitting under it as the declined
+    // upstream value; the swing is live, the creature's damage is authored from
+    // its own talent, and `resolvers.rngavg(40,60)` = 50 is simply what
+    // losgoroth.lua:63 says. The two assertions stayed in this order on purpose:
+    // the citation is one line below the number it produced.
+    expect(INDEX_WRAITH.maxHp).toBe(50);
     expect(resolveRngAvg(40, 60)).toBe(50);
 
     // tome/resolvers.lua:901 — the `ranged` tactic preset's `safe_range = 4` is
@@ -436,10 +479,17 @@ describe('index_husk, derived', () => {
     expect(combatDefense(sheet)).toBe(1);
 
     // checkHit is linear: ceil(50 + 2.5 × (atk − def)), Combat.lua:337-350.
-    // NB none of this is live: `strike` takes no to-hit roll at all — see the
-    // note on DEFAULT_MONSTER_DAMAGE_MIN in engine/actor.ts.
+    // AND IT IS NOW LIVE — `scheduler.ts#strike` resolves through
+    // `combat.ts#attackTarget`, so this accuracy is what a husk actually rolls.
+    // It used to be inert; see the note on DEFAULT_MONSTER_DAMAGE_MIN in
+    // engine/actor.ts for what that cost and when it was fixed.
     expect(hitChance(combatAttack(sheet), 0)).toBe(98);
+    // 4 is ToME's BARE unarmed accuracy (Combat.lua:1343) — a sheet-less actor,
+    // which since the swing moved onto `attackTarget` means a test fixture and
+    // nothing else. A classless detective carries `DEFAULT_PLAYER_COMBAT` and
+    // rolls 19 against this defence, for 95%.
     expect(hitChance(4, combatDefense(sheet))).toBe(58);
+    expect(hitChance(19, combatDefense(sheet))).toBe(95);
   });
 
   it('swings for a flat 5 from a weapon rating of 5', () => {
@@ -501,21 +551,126 @@ describe('index_wraith, derived', () => {
     expect(combatAttack(sheet)).toBe(17);
     expect(combatDefense(sheet)).toBe(19);
     expect(combatArmor(sheet)).toBe(0);
-    // A default detective (accuracy 4) against 19 defence is a coin flip well
-    // below even, which is what a kiter's dodge is supposed to buy.
+    // A sheet-less fixture (ToME's bare accuracy 4) against 19 defence is a
+    // coin flip well below even, and a classless detective's placeholder 19 is
+    // an exact coin flip — which is what a kiter's dodge is supposed to buy.
     expect(hitChance(4, combatDefense(sheet))).toBe(13);
+    expect(hitChance(19, combatDefense(sheet))).toBe(50);
   });
 
-  it('throws the orb with Magic alone, which is what its own dammod says', () => {
+  it('swings its MELEE weapon with Magic alone, which its own dammod says', () => {
     // losgoroth.lua:30 `dammod={mag=0.8}` → totstat = 6 × 0.8 = 4.8, over a
     // weapon rating of 15 (`resolvers.mbonus(40,15)` at level 1) and Str 10.
     // The old { dex: 0.5, cun: 0.4 } was invented "in the shape of ToME's own
-    // ranged dammod"; this IS ToME's own ranged dammod, for this creature.
+    // ranged dammod"; this IS ToME's own dammod, for this creature.
+    //
+    // THIS BLOCK'S COMMENT USED TO END "The orb hits for a flat 5" AND THAT WAS
+    // FALSE. losgoroth.lua:30's `combat` is the creature's MELEE weapon — it
+    // carries `atk`, `apr` and a `dammod` — and the orb is a talent
+    // (T_VOID_BLAST, misc/npcs.lua:739) whose damage lives on `damageMin` /
+    // `damageMax` and is pinned in the next test. The three assertions below
+    // were always true and stay verbatim; only what they are ABOUT changed.
+    //
+    // Nothing routes this creature into `attackTarget` today — `resolveIntent`
+    // forks to `fire` first — so these three describe the weapon it would swing,
+    // and the `apr` on it, which the orb's impact really does read.
     expect(combatDamage(sheet)).toBeCloseTo(5.055, 4);
     expect(Math.trunc(combatDamage(sheet))).toBe(5);
     // 5.055 × 1.1 = 5.56, which truncates back to 5 — the low-damage collapse
-    // ToME's `rng.range` has by construction. The orb hits for a flat 5.
+    // ToME's `rng.range` has by construction. A melee swing would be a flat 5,
+    // and `damage.ts` would take NO range draw for it (both endpoints agree),
+    // which is precisely why `fire` was NOT rewritten to compute the orb this
+    // way: it would delete a draw from the middle of every wraith turn.
     expect(Math.trunc(combatDamage(sheet) * combatDamageRange(sheet))).toBe(5);
+  });
+
+  it('throws an orb derived from T_VOID_BLAST, not from that melee block', () => {
+    // ═══ THE PORTING ERROR THIS TEST EXISTS TO PIN ═══
+    // The orb is NOT losgoroth.lua:30's `combat`. It is the one talent the
+    // creature is granted (losgoroth.lua:67-69):
+    //
+    //   -- game/modules/tome/data/talents/misc/npcs.lua:739 (T_VOID_BLAST)
+    //   self:projectile(tg, x, y, DamageType.VOID_BLAST,
+    //       self:spellCrit(self:combatTalentSpellDamage(t, 15, 240)), …)
+    //
+    // `base` 15 and `max` 240 are npcs.lua:739's own two arguments; the talent
+    // level is MVP_TALENT_LEVEL = 1; the power is the creature's own spellpower.
+    const power = combatSpellpower(sheet);
+    expect(power).toBe(6); // Magic 6 (losgoroth.lua:44), no spellPower mod.
+    const upstream = combatTalentSpellDamage(power, MVP_TALENT_LEVEL, 15, 240);
+    expect(upstream).toBeCloseTo(24.9376, 4);
+
+    // ═══ THE BODY-SCALE CORRECTION, SPELLED OUT ═══
+    // ToME's level-1 life bar, MEASURED rather than assumed: the 22 `max_life`
+    // entries in data/birth/classes/*.lua mean 100.455, plus Constitution's
+    // 4 life per point over the engine base of 10 (Actor.lua:3884) at the
+    // class-granted mean of 0.714 points = +2.86. Anchor 103.31, which EXCLUDES
+    // race Con and the free birth points and is therefore the low end.
+    const UPSTREAM_LEVEL_1_BAR = 103.31;
+    // Ours: Watchman 72, Inspector 60, Alchemist 54 — median 60.
+    const ourBars = [WATCHMAN.maxHp, INSPECTOR.maxHp, ALCHEMIST.maxHp].sort((a, b) => a - b);
+    expect(ourBars).toEqual([54, 60, 72]);
+    const OUR_MEDIAN_BAR = ourBars[1] ?? 0;
+    const scaled = (upstream / UPSTREAM_LEVEL_1_BAR) * OUR_MEDIAN_BAR;
+    expect(scaled).toBeCloseTo(14.48, 2);
+
+    // Shipped: the derived integer, with a ±2 spread that is OURS — upstream's
+    // orb is one number wrapped in `spellCrit`, and our `fire` path never rolls
+    // a crit at all, so the band stands in for that variance. Symmetric, so the
+    // mean is exactly the derived number.
+    expect({ min: ORB.min, max: ORB.max, mean: ORB.mean }).toEqual({
+      min: 12,
+      max: 16,
+      mean: 14,
+    });
+    expect(Math.round(scaled)).toBe(ORB.mean);
+    // ...and it is nowhere near the melee block it was mistakenly taken from.
+    expect(ORB.mean).toBeGreaterThan(combatDamage(sheet) * 2);
+  });
+
+  it('is the ONLY creature in the roster that authors orb damage', () => {
+    // A melee template must leave both absent: it never reaches `fire`
+    // (scheduler.ts forks on `projSpeed`), so authoring a pair would be a number
+    // with no reader — and a reader who found it would reasonably assume the
+    // creature had a ranged attack somewhere.
+    for (const template of MONSTER_TEMPLATES) {
+      const authored = template.damageMin !== undefined;
+      expect({ id: template.id, authored }).toEqual({
+        id: template.id,
+        authored: template.projSpeed !== undefined,
+      });
+    }
+  });
+
+  it('refuses a damage band rng.int would throw on, or would half-inherit', () => {
+    // `rng.int` throws a RangeError when max < min (src/shared/rng.ts), and it
+    // would throw SYNCHRONOUSLY inside a pump — so a content typo would take a
+    // turn down mid-resolution. Caught here instead.
+    const inverted: MonsterTemplate = { ...INDEX_WRAITH, damageMin: 16, damageMax: 12 };
+    expect(validateTemplate(inverted)).toEqual(['index_wraith: damageMax 12 < damageMin 16']);
+
+    // Half-authored is the subtler bug: the missing half falls through to
+    // `DEFAULT_MONSTER_DAMAGE_*` in engine/actor.ts — a number in another file
+    // chosen for another purpose — and the result reads as a tuning decision.
+    const halfA: MonsterTemplate = { ...INDEX_WRAITH, damageMax: undefined };
+    const halfB: MonsterTemplate = { ...INDEX_WRAITH, damageMin: undefined };
+    for (const half of [halfA, halfB]) {
+      expect(validateTemplate(half)).toEqual([
+        'index_wraith: damageMin and damageMax must be authored together',
+      ]);
+    }
+
+    // A fraction cannot be a bound of an integer draw, and a negative minimum is
+    // an orb that heals.
+    expect(validateTemplate({ ...INDEX_WRAITH, damageMin: 12.5 })).toEqual([
+      'index_wraith: damage bounds must be integers — rng.int refuses a fraction',
+    ]);
+    expect(validateTemplate({ ...INDEX_WRAITH, damageMin: -1 })).toEqual([
+      'index_wraith: damageMin -1 must not be negative',
+    ]);
+    // Equal endpoints are legal: `rng.int` still takes its one draw, so a flat
+    // orb costs the stream exactly what a banded one does.
+    expect(validateTemplate({ ...INDEX_WRAITH, damageMin: 14, damageMax: 14 })).toEqual([]);
   });
 
   it('shrugs off darkness and is VULNERABLE to a solid hit', () => {
@@ -595,22 +750,340 @@ describe('index_husk_elite, derived', () => {
 
   it('costs a party about five rounds rather than a solo detective forty', () => {
     // The sizing argument, written down so a future retune has something to
-    // argue with. Every monster in the roster deals 3-6 through `strike` and
-    // every detective deals 4-7 (engine/actor.ts), so four M3-shaped detectives
-    // put roughly 13 a round out, and 60 life is between four and five rounds.
+    // argue with, and RE-MEASURED now that the swing runs the real pipeline.
+    // A classless detective carries `DEFAULT_PLAYER_COMBAT` (engine/actor.ts):
+    // accuracy 19 against this creature's defence 4 is 88%, and a [6, 7] roll
+    // through armour 2 at hardiness 30 lands as [4.2, 5.0] — call it 4.6. Four
+    // of them put about 16 a round out, so 60 life is a little under four
+    // rounds, which is what "a party, not a solo detective" is meant to mean.
     //
-    // DEVIATION, WRITTEN DOWN. A faithful port would put this at 25: ToME's own
+    // DEVIATION, WRITTEN DOWN. A faithful port would put this at 95: ToME's own
     // three-tier ghoul ladder holds `max_life = resolvers.rngavg(90,100)` across
     // ALL THREE tiers (ghoul.lua:54, :71, :92) and buys the top tier's threat
-    // entirely with dam/atk/apr/def/armour/cadence — none of which we can spend
-    // yet, because the damage sheet is not wired to the swing. Life and
-    // behaviour are the elite's only live levers today.
+    // entirely with dam/atk/apr/def/armour/cadence. Those levers ARE live now —
+    // the swing moved onto `attackTarget` — so this deviation is due a re-argue
+    // the next time the elite is tuned; it is left alone here because retuning
+    // is a separate job with its own measurements.
     expect(INDEX_HUSK_ELITE.maxHp).toBe(60);
     expect(resolveRngAvg(90, 100)).toBe(95);
     // ...and it is genuinely a step up from the creature it upgrades, which is
     // the property the deviation exists to preserve.
     expect(INDEX_HUSK_ELITE.maxHp).toBeGreaterThan(INDEX_HUSK.maxHp);
     expect(INDEX_HUSK_ELITE.maxHp).toBeLessThan(110);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The balance table — the claim in content/monsters.ts, asserted
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY THIS SECTION EXISTS AT ALL
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The wraith's header in content/monsters.ts carries a table of hp per player
+ * turn for all three creatures against all three classes, and the whole argument
+ * for `maxHp: 50` and for a 12-16 orb rests on it. A table in a comment rots the
+ * first time somebody moves a Strength.
+ *
+ * So the table is recomputed here FROM THE REAL MODULES — `hitChance` out of
+ * src/shared/checkhit.ts, `applyArmour` and `applyResists` out of
+ * engine/damage.ts, the derived stats out of engine/derived.ts — and asserted
+ * against the numbers written in the comment. It is an EXPECTATION rather than a
+ * simulation: an expectation is exact, and a simulation of a 1% crit needs a
+ * hundred thousand samples to be worth reading.
+ */
+
+/** Every stage of one LANDED melee blow, expected over the damage-range roll. */
+function meanBlow(attacker: CombatSheet, defender: CombatSheet): number {
+  const base = combatDamage(attacker);
+  // damage.ts:273-277 — BOTH endpoints truncate, and the roll is a uniform
+  // integer between them. Enumerated rather than sampled.
+  const low = Math.trunc(base);
+  const high = Math.trunc(base * combatDamageRange(attacker));
+  const lo = Math.min(low, high);
+  const hi = Math.max(low, high);
+
+  const armour = combatArmor(defender);
+  const hardiness = combatArmorHardiness(defender);
+  const apr = combatAPR(attacker);
+  // rollCrit clamps the chance itself (damage.ts:332-340), which is why the
+  // clamp is here rather than inside `combatCrit`.
+  const critChance = Math.min(Math.max(combatCrit(attacker), 0), 100) / 100;
+  const critPower = combatCritPower(attacker);
+  const type = attacker.damageType ?? DamageType.Physical;
+
+  let total = 0;
+  for (let rolled = lo; rolled <= hi; rolled += 1) {
+    // Step 2, then step 3 — armour BEFORE crit, which is the ordering that IS
+    // the balance (damage.ts's numbered pipeline).
+    const afterArmour = applyArmour(rolled, armour, apr, hardiness);
+    let dam = afterArmour * (1 - critChance) + afterArmour * critPower * critChance;
+    const inc = combatGetDamageIncrease(attacker.increase, type);
+    if (inc !== 0) dam = dam + (dam * inc) / 100;
+    dam = applyResists(dam, combatGetResist(defender.profile ?? {}, type), 0);
+    total += dam;
+  }
+  return total / (hi - lo + 1);
+}
+
+/** hp per PLAYER turn: what a monster takes off a body that is standing still. */
+function damagePerPlayerTurn(template: MonsterTemplate, victim: CombatSheet): number {
+  // THE ORB. No to-hit roll at fire or at impact, no damage-range roll, no crit
+  // — see `fire` in engine/scheduler.ts. Armour with the SHOOTER's apr, and the
+  // 1-in-N cadence gate on top.
+  if (template.projSpeed !== undefined) {
+    const min = template.damageMin ?? 0;
+    const max = template.damageMax ?? 0;
+    const apr = combatAPR(template.combat);
+    const type = template.combat.damageType ?? DamageType.Physical;
+    let total = 0;
+    for (let rolled = min; rolled <= max; rolled += 1) {
+      const afterArmour = applyArmour(
+        rolled,
+        combatArmor(victim),
+        apr,
+        combatArmorHardiness(victim),
+      );
+      total += applyResists(afterArmour, combatGetResist(victim.profile ?? {}, type), 0);
+    }
+    const perShot = total / (max - min + 1);
+    return perShot * template.globalSpeed * (1 / (template.talentIn ?? 1));
+  }
+
+  // THE SWING. One `checkHit`, then the pipeline on a hit.
+  const chance = hitChance(combatAttack(template.combat), combatDefense(victim)) / 100;
+  return chance * meanBlow(template.combat, victim) * template.globalSpeed;
+}
+
+describe('the balance table the wraith’s retune rests on', () => {
+  const SHEETS = [
+    ['Watchman', WATCHMAN.combat],
+    ['Inspector', INSPECTOR.combat],
+    ['Alchemist', ALCHEMIST.combat],
+  ] as const;
+
+  it('reproduces the hp-per-player-turn table written into content/monsters.ts', () => {
+    const table = MONSTER_TEMPLATES.map((template) => [
+      template.id,
+      ...SHEETS.map(([, sheet]) => Number(damagePerPlayerTurn(template, sheet).toFixed(3))),
+    ]);
+
+    // Copied out of the comment block on INDEX_WRAITH, deliberately by hand: if
+    // this test ever generated the expectation it would assert nothing.
+    // In `MONSTER_TEMPLATES` order, which is roster order, not alphabetical.
+    //                       Watchman  Inspector  Alchemist
+    expect(table).toEqual([
+      ['index_husk', 4.378, 4.378, 4.875],
+      ['index_wraith', 5.88, 5.88, 5.88],
+      ['index_husk_elite', 5.888, 5.888, 6.332],
+    ]);
+  });
+
+  it('is one number for the orb and three for a swing, and apr is why', () => {
+    // The wraith's row is flat across all three classes and the husks' rows are
+    // not. That is not a rounding accident: `fire` passes `combatAPR(sheet)` —
+    // losgoroth.lua:30's `apr = 15` — into the impact's armour stage, and 15
+    // exceeds every class's armour, so `applyArmour` removes exactly nothing.
+    expect(combatAPR(INDEX_WRAITH.combat)).toBe(15);
+    for (const [, sheet] of SHEETS) {
+      expect(combatArmor(sheet)).toBeLessThan(combatAPR(INDEX_WRAITH.combat));
+      expect(applyArmour(14, combatArmor(sheet), 15, combatArmorHardiness(sheet))).toBe(14);
+    }
+    // ...and no class carries a Darkness resist to take the rest off.
+    for (const [, sheet] of SHEETS) {
+      expect(combatGetResist(sheet.profile ?? {}, DamageType.Darkness)).toBe(0);
+    }
+  });
+
+  it('turns the ranged threat from half the husk into a third more than it', () => {
+    // THE FINDING THAT STARTED THIS WORK ITEM, pinned as a ratio so it cannot
+    // regress quietly. The wraith used to deal 1.890 against the husk's 4.050 —
+    // the designated ranged threat was less than half as dangerous as the
+    // baseline mob, because its orb was frozen at the 3-6 placeholder.
+    const husk = damagePerPlayerTurn(INDEX_HUSK, WATCHMAN.combat);
+    const wraith = damagePerPlayerTurn(INDEX_WRAITH, WATCHMAN.combat);
+    expect(wraith / husk).toBeCloseTo(1.343, 3);
+
+    // BEFORE, recomputed rather than quoted: 3-6 through the placeholder path
+    // was a flat mean of 4.5 with no roll, no armour and no resists.
+    const PLACEHOLDER_MEAN = (3 + 6) / 2;
+    const before = PLACEHOLDER_MEAN * INDEX_WRAITH.globalSpeed * 0.5;
+    expect(before).toBeCloseTo(1.89, 3);
+    expect(before / (PLACEHOLDER_MEAN * INDEX_HUSK.globalSpeed)).toBeCloseTo(0.467, 3);
+
+    // The band the retune was aimed at, stated so a future pass can argue with a
+    // number instead of a feeling.
+    expect(wraith).toBeGreaterThanOrEqual(5.5);
+    expect(wraith).toBeLessThanOrEqual(7);
+
+    // It sits one hair UNDER the elite, which is the top of the roster and is
+    // meant to stay the top of the roster: the elite's damage is unavoidable
+    // once it has reached you, and every point of the wraith's can be dodged.
+    expect(wraith).toBeLessThan(damagePerPlayerTurn(INDEX_HUSK_ELITE, WATCHMAN.combat));
+  });
+
+  it('costs one to two orbs of a bar, never a bar', () => {
+    // "Memorable, never lethal from full." One orb against 72 / 60 / 54.
+    const bars = [WATCHMAN.maxHp, INSPECTOR.maxHp, ALCHEMIST.maxHp];
+    for (const bar of bars) {
+      expect(ORB.max / bar).toBeLessThan(0.32);
+      expect(ORB.min / bar).toBeGreaterThan(0.16);
+    }
+    // ...and the squishiest body still needs four average orbs to go down, so no
+    // single unlucky moment removes a player from the fight.
+    expect(Math.ceil(ALCHEMIST.maxHp / ORB.mean)).toBe(4);
+  });
+
+  it('justifies 50 life in the party frame, and reports the solo frame honestly', () => {
+    // THE FRAME, STATED: three detectives, one of each class, each spending
+    // their turn on their slot-1 reliable talent — which is what the live game
+    // is now that content/classes.ts is wired into the running server.
+    //
+    //   crude_blow      mult 1.0 through `attackTarget` (talents/crude_blow.ts)
+    //   revolver_shot   mult 0.9 through `attackTarget` (talents/revolver_shot.ts)
+    //   ashwick_flare   mult 1.3, NO to-hit and NO armour stage — a ToME spell
+    //                   never touches `attackTargetWith` — plus the Alchemist's
+    //                   `increase: { fire: 10 }` (talents/ashwick_flare.ts)
+    const wraith = INDEX_WRAITH.combat;
+    const swing = (sheet: CombatSheet, mult: number): number =>
+      (hitChance(combatAttack(sheet), combatDefense(wraith)) / 100) *
+      meanBlow(sheet, wraith) *
+      mult;
+
+    const crudeBlowDpt = swing(WATCHMAN.combat, 1);
+    const revolverDpt = swing(INSPECTOR.combat, 0.9);
+    let flareDpt = combatDamage(ALCHEMIST.combat) * 1.3;
+    flareDpt =
+      flareDpt +
+      (flareDpt * combatGetDamageIncrease(ALCHEMIST.combat.increase, DamageType.Fire)) / 100;
+    flareDpt = applyResists(flareDpt, combatGetResist(wraith.profile ?? {}, DamageType.Fire), 0);
+
+    expect(crudeBlowDpt).toBeCloseTo(3.786, 3);
+    expect(revolverDpt).toBeCloseTo(8.108, 3);
+    expect(flareDpt).toBeCloseTo(13.814, 3);
+
+    const party = crudeBlowDpt + revolverDpt + flareDpt;
+    // At 22 the creature died in under one party turn, while its orb needs 1.5
+    // GAME turns to cross the stand-off — so it usually died before its first
+    // orb ever landed. That is the argument for 50, and it is about time to
+    // kill, not about how hard players hit.
+    expect(22 / party).toBeCloseTo(0.856, 3);
+    expect(INDEX_WRAITH.maxHp / party).toBeCloseTo(1.945, 3);
+    expect(INDEX_WRAITH.maxHp / party).toBeGreaterThan(1.5);
+
+    // OUT OF FRAME, REPORTED ANYWAY. A solo Watchman needs 13.206 player turns,
+    // during which a wraith standing off at four tiles deals more than his whole
+    // bar. A lone Watchman trading shots at range LOSES; his answer is to close,
+    // because the creature cannot fire inside two tiles at all.
+    expect(INDEX_WRAITH.maxHp / crudeBlowDpt).toBeCloseTo(13.206, 3);
+    const takenSolo =
+      (INDEX_WRAITH.maxHp / crudeBlowDpt) * damagePerPlayerTurn(INDEX_WRAITH, WATCHMAN.combat);
+    expect(takenSolo).toBeGreaterThan(WATCHMAN.maxHp);
+
+    // ...and the refuted premise, kept as an assertion so nobody restores the
+    // old note. It claimed player damage rises "from 4-7 to the sheet's 10-12"
+    // and that 50 life would therefore be a ten-hit kill. Both classes that can
+    // swing at this creature land BELOW the old flat 5.5 against defence 19.
+    const OLD_FLAT_PLAYER_DAMAGE = 5.5;
+    expect(crudeBlowDpt).toBeLessThan(OLD_FLAT_PLAYER_DAMAGE);
+    expect(swing(ALCHEMIST.combat, 1)).toBeLessThan(OLD_FLAT_PLAYER_DAMAGE);
+    // The Inspector cannot swing at it at all: her sheet's dead zone refuses a
+    // bump, which is why her row of the party frame is the revolver and not a
+    // basic attack.
+    expect(INSPECTOR.combat.minRange).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The orb, fired for real
+// ---------------------------------------------------------------------------
+
+describe('a fired orb carries the authored damage and costs one draw', () => {
+  /**
+   * A live world, a detective who holds, and a wraith already standing at its
+   * stand-off distance. Driven through the REAL scheduler rather than through a
+   * hand-rolled `fire`, because the property being pinned is about where in the
+   * seeded stream the draw happens, and only the real pump can be wrong about
+   * that.
+   */
+  function encounter(seed: string) {
+    const world = createWorld(seed);
+    const player = world.addPlayer('p1', 'Detective');
+    // Big enough that nothing dies mid-measurement — scheduler.test.ts's rule.
+    player.maxHp = 10_000;
+    player.hp = 10_000;
+    player.x = 5;
+    player.y = 2;
+    const wraith = world.addMonster('m1', monsterInit(INDEX_WRAITH, { x: 9, y: 2 }));
+    const barrier = createBarrier();
+    // First pump parks on the human; the wraith has not acted yet.
+    pump(world, { nowMs: 0, barrier });
+    const before = world.rng.getState();
+    expect(submitIntent(world, barrier, 'p1', { kind: IntentKind.Hold })).toBe(true);
+    pump(world, { nowMs: 1, barrier });
+    const after = world.rng.getState();
+    return { world, wraith, draws: after.count - before.count, lastLabel: after.lastLabel };
+  }
+
+  // Two real seeds, chosen because the 1-in-2 coin lands each way on the first
+  // act. Neither number is tuned for an outcome — the pair IS the measurement.
+  const FIRES = 'b';
+  const HOLDS = 'a';
+
+  it('freezes 12-16 onto the orb, not the 3-6 placeholder', () => {
+    const shot = encounter(FIRES);
+    const orbs = shot.world.projectilesInFlight();
+    expect(orbs.length).toBe(1);
+    const orb = orbs[0];
+    if (orb === undefined) throw new Error('the wraith did not fire');
+
+    // The whole point of the field. Before it was authored, `monsterInit` passed
+    // nothing and every orb this creature ever threw carried
+    // `DEFAULT_MONSTER_DAMAGE_MIN..MAX` = 3-6 from engine/actor.ts.
+    expect(orb.damage.dam).toBeGreaterThanOrEqual(ORB.min);
+    expect(orb.damage.dam).toBeLessThanOrEqual(ORB.max);
+    expect(orb.damage.dam).toBeGreaterThan(6);
+    // Darkness is ours (upstream's void blast is Arcane), and the apr rides
+    // along off the MELEE block, which is the one thing the orb still takes
+    // from it.
+    expect(orb.damage.type).toBe(DamageType.Darkness);
+    expect(orb.damage.apr).toBe(combatAPR(INDEX_WRAITH.combat));
+    expect(orb.sourceId).toBe('m1');
+  });
+
+  it('takes EXACTLY ONE `combat.bump.damage` draw, at the same stream position', () => {
+    // THE DETERMINISM PROPERTY, ISOLATED BY SUBTRACTION rather than asserted by
+    // reading the source. A wraith that holds its aim spends one draw — the
+    // `ai.fire.chance` coin. A wraith that fires spends that same coin and then
+    // exactly one more, and the last label in the stream is the damage roll.
+    //
+    // This is what forbids rewriting `fire` to call `rollDamageRange`:
+    // `combatDamage` 5.055 × `damRange` 1.1 truncates to [5, 5], where
+    // damage.ts:276 returns EARLY and takes no draw at all — which would delete
+    // a draw from the middle of every wraith turn and shift every replay after.
+    const held = encounter(HOLDS);
+    expect(held.world.projectilesInFlight().length).toBe(0);
+    expect(held.draws).toBe(1);
+    expect(held.lastLabel).toBe('ai.fire.chance');
+
+    const fired = encounter(FIRES);
+    expect(fired.world.projectilesInFlight().length).toBe(1);
+    expect(fired.draws).toBe(2);
+    expect(fired.lastLabel).toBe('combat.bump.damage');
+
+    expect(fired.draws - held.draws).toBe(1);
+  });
+
+  it('replays byte for byte from the same seed', () => {
+    // The property the draw-count assertion above exists to protect.
+    const a = encounter(FIRES);
+    const b = encounter(FIRES);
+    expect(JSON.stringify(a.world.projectilesInFlight())).toEqual(
+      JSON.stringify(b.world.projectilesInFlight()),
+    );
+    expect(a.world.rng.getState()).toEqual(b.world.rng.getState());
   });
 });
 

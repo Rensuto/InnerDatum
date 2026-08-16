@@ -326,10 +326,20 @@ export function projectWorld(world: World): WorldView {
 const MONSTERS_DISPLAY_NAME = 'The Filed';
 
 /**
- * Class icon per player sprite family. `icon_character_the_detective` is the
- * generic and it is a real portrait rather than a placeholder — three of the six
- * playable sprites have no cut icon yet (enforcer, voidling, cipher-clerk), and
- * "a detective" is what the fiction calls all of them anyway.
+ * Class icon per player sprite family — KEYED OFF THE THREE REAL CLASSES.
+ *
+ * These three rows are exactly `CLASSES` in content/classes.ts: the Watchman,
+ * the Inspector and the Alchemist of Ashwick Row, which is every class a joining
+ * body can now be handed (`classForJoin`). A player who has a class always finds
+ * their own face here, because the sprite came off the same `ClassDef`.
+ *
+ * `icon_character_the_detective` is the generic and it is a REAL portrait rather
+ * than a placeholder. It still has work to do: `world.ts#PLAYER_SPRITES` keeps
+ * three sprites for classes that do not exist (enforcer, voidling, cipher-clerk)
+ * as the CLASSLESS fallback — a fixture, the e2e harness, a build with no
+ * content wired in — and "a detective" is what the fiction calls all of them
+ * anyway. A key for art that is not on disk would draw a missing-asset box in
+ * the middle of the most-looked-at UI in the game.
  */
 const PORTRAIT_BY_CLASS: Record<string, string> = {
   watchman: 'icon_character_the_watchman',

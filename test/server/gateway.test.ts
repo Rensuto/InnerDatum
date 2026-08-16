@@ -3,10 +3,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import Fastify from 'fastify';
 
+import {
+  WATCHMAN,
+  classById,
+  createContentTalentEngine,
+  createTalentBook,
+  sheetForClass,
+} from '../../src/server/content/classes.ts';
+import { AiProfile } from '../../src/server/engine/actor.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { stepProjectile } from '../../src/server/engine/projectile.ts';
+import { talentId } from '../../src/server/engine/talents.ts';
+import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Projectile } from '../../src/server/engine/projectile.ts';
 import type { PumpResult, TurnEngine } from '../../src/server/net/gateway.ts';
@@ -60,6 +72,10 @@ const FRAME_TIMEOUT_MS = 2_000;
 
 /** Row 17 of the test map is open floor from x=1 to x=28 — nothing blocks a shot. */
 const LANE_Y = 17;
+
+/** The Watchman's at-will swing, and the Alchemist's heal he must not be able to press. */
+const CRUDE_BLOW = talentId('crude_blow');
+const MEND_WOUNDS = talentId('mend_wounds');
 
 // ---------------------------------------------------------------------------
 // The socket harness
@@ -508,5 +524,150 @@ describe('the projectiles frame', () => {
     await client.pump();
 
     expect(client.all('projectiles')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ═══════════════════════════════════════════════════════════════════════════
+//   THE HOTBAR ARRIVES, AND THE BUTTONS DO SOMETHING.
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Everything above this line runs against a stub scheduler on purpose. These
+// two claims cannot: they are about a joining body getting a CLASS and a
+// `talent` frame reaching a real talent, which is the whole of what this
+// milestone wired up. So this block builds what src/server/main.ts builds — a
+// real turn engine, the content talent book, the resolution runtime and the
+// class attacher — and asks the same questions from a socket.
+//
+// WHAT WAS BROKEN, PRECISELY. `main.ts` called `createTurnEngine({ world,
+// downed, parties, log })` with no `talents` option, so the book defaulted to
+// `EMPTY_TALENT_BOOK` — `loadoutOf: () => []`. `sendLoadout` returns early on an
+// empty loadout ("an actor with no talents gets no hotbar rather than an empty
+// one"), so the welcome frame set carried no `loadout`, no `cooldowns` and no
+// `resource`, and every `talent` frame was refused as "no such talent in this
+// loadout". Twelve written, cited, unit-tested talents, unreachable in play.
+// ---------------------------------------------------------------------------
+
+/** The real thing: the gateway that ships, wired the way main.ts wires it. */
+async function bootLive(seed: string): Promise<Harness> {
+  const app = Fastify({ logger: false });
+  const world = createWorld(seed);
+  world.level.tiles.fill(TileCode.FLOOR);
+
+  const talents = createContentTalentEngine();
+  const engine = createTurnEngine({
+    world,
+    now: () => 0,
+    talents: createTalentBook(talents, world),
+    talentRuntime: talentRuntimeFor(talents, world),
+  });
+
+  await app.register(wsGateway, {
+    world,
+    engine: {
+      ...engine,
+      // The two lines main.ts writes. The gateway may not import
+      // engine/talents.ts — it states its engine contract structurally — so the
+      // capability is injected by whoever can see both sides.
+      attachClass: (actorId: string, classId: string): void => {
+        const definition = classById(classId);
+        if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
+      },
+    },
+    disconnectGraceMs: 30_000,
+  });
+  await app.listen({ host: '127.0.0.1', port: 0 });
+
+  const address = app.server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port was bound');
+
+  return {
+    port: address.port,
+    world,
+    pending: { events: [] },
+    close: async (): Promise<void> => {
+      await app.close();
+    },
+  };
+}
+
+describe('the hotbar, on a server with the talent book wired in', () => {
+  it('arrives in the welcome frame set instead of being skipped', async () => {
+    server = await bootLive('gateway-hotbar');
+    const client = await connect(server.port);
+    await client.hello();
+
+    // The loadout is unicast ONCE per connection, at `welcome`, because M3
+    // loadouts are fixed. Nothing resends it — so a class attached one line
+    // after `sendLoadout` would leave this socket with no hotbar until it
+    // reconnected.
+    const loadout = await client.waitFor('loadout');
+    const talents = loadout?.['talents'];
+    if (!Array.isArray(talents)) throw new Error('the loadout frame carried no talents');
+
+    // The first fresh join takes the first place in the rotation.
+    expect(talents.map((row: { id?: unknown }) => String(row.id))).toEqual(
+      WATCHMAN.loadout.map((talent) => talent.id),
+    );
+
+    // …and the two viewer-private frames that keep it honest come with it: the
+    // cooldown map the buttons grey out from, and the resource the cost readout
+    // turns orange against.
+    expect(await client.waitFor('cooldowns')).toBeDefined();
+    const resource = await client.waitFor('resource');
+    expect((resource?.['resource'] as { kind?: unknown } | undefined)?.kind).toBe('resolve');
+  });
+
+  it('resolves a `talent` frame into a `used` event for the whole room', async () => {
+    // ═══ THE FRAME THE WHOLE MILESTONE HANGS OFF ═══
+    // `handleTalent` decides nothing: it hands the request to `submitTalent`,
+    // which defers to the book's `check` (the one implementation of "may this be
+    // used"), and the pump resolves it through the runtime. What comes back out
+    // is the FX stamp — public, because everyone watching should see the
+    // Watchman swing — followed by the ordinary attack/damage triple.
+    server = await bootLive('gateway-talent');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+
+    const ren = server.world.getActor(String(welcome?.['selfId']));
+    if (ren === undefined) throw new Error('the welcome named no body');
+    ren.x = 10;
+    ren.y = 10;
+    server.world.addMonster('m_husk', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 11,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 200,
+    });
+    client.clear();
+
+    client.send({ t: 'talent', talentId: CRUDE_BLOW, target: { x: 11, y: 10 } });
+    const used = await client.waitFor('used');
+
+    expect(used).toBeDefined();
+    const event = used?.['ev'];
+    expect((event as { talentId?: unknown } | undefined)?.talentId).toBe(CRUDE_BLOW);
+    expect((event as { id?: unknown } | undefined)?.id).toBe(ren.id);
+    // No refusal came back on the same socket — the submission gate accepted it.
+    expect(client.all('error')).toEqual([]);
+  });
+
+  it('refuses a talent that is not in this body’s four, with `bad_message`', async () => {
+    // M3 loadouts are FIXED, so a frame naming the Alchemist's heal on a
+    // Watchman was hand-crafted rather than clicked — and `bad_message` says
+    // exactly that rather than dressing it up as a game rule. The refusal is
+    // UNICAST: the room does not need to know what somebody tried to press.
+    server = await bootLive('gateway-talent-refused');
+    const client = await connect(server.port);
+    await client.hello();
+    client.clear();
+
+    client.send({ t: 'talent', talentId: MEND_WOUNDS });
+    const error = await client.waitFor('error');
+
+    expect(error?.['code']).toBe('bad_message');
+    expect(client.all('used')).toEqual([]);
   });
 });

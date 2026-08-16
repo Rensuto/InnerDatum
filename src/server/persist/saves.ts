@@ -1095,16 +1095,33 @@ export function createSaveStore(options: SaveStoreOptions): SaveStore {
 export const SOLO_CHARACTER_ID = 'chr_main';
 
 /**
- * The class a character is filed under before classes are handed out.
+ * The class a character is filed under BEFORE ITS FIRST SAVE, and nothing else.
  *
- * A SOFT reference, exactly as `CharacterFile.classId` documents: not a member
- * of `ClassId`, deliberately, so that when class selection lands the loader sees
- * a name it does not recognise, substitutes, and logs — which is the same path
- * a save from before a class was renamed takes. A file claiming to be a Watchman
- * when nobody ever chose Watchman would be worse than a file that admits it does
- * not know.
+ * IT IS NO LONGER ASPIRATIONAL. Classes are handed out now: the gateway picks
+ * one before `world.addPlayer` (`classForJoin` in content/classes.ts), puts it
+ * on the body as `PlayerActor.classId`, and every snapshot carries it — so
+ * `fileFor` writes the real name from the first save onwards. This constant is
+ * the value a BINDING holds in the window between `openCharacter` (which reads
+ * a file that does not exist yet) and that first save, plus the value carried
+ * forward for a body that genuinely has no class at all: a test fixture, the
+ * e2e harness, a build with no content wired in.
+ *
+ * IT REMAINS A SOFT reference, exactly as `CharacterFile.classId` documents: not
+ * a member of `ClassId`, deliberately, so that a file naming a class this build
+ * no longer has is substituted and logged rather than refused. A file claiming
+ * to be a Watchman when nobody ever chose Watchman would be worse than a file
+ * that admits it does not know.
+ *
+ * EXPORTED so net/gateway.ts can tell "this file predates classes" apart from
+ * "this file names a class that was deleted". Those look identical to
+ * `classById`, which answers `undefined` to both — and since every character
+ * file written before this milestone holds this exact string, the dangling-class
+ * warning fired for EVERY returning player on the first evening. That line's
+ * stated purpose is to be the only evidence a class was renamed, so drowning it
+ * in N false alarms costs the one thing it was added for. A second literal
+ * `'unassigned'` in the gateway would go stale the day this one changes.
  */
-const UNASSIGNED_CLASS = 'unassigned';
+export const UNASSIGNED_CLASS = 'unassigned';
 
 /**
  * The one level there is. `SavedPosition` is per-zone because zones are coming;
@@ -1158,7 +1175,18 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       id: binding.characterId,
       ownerId: binding.ownerId,
       name: snapshot.name,
-      classId: binding.classId,
+      // ═══ THE SNAPSHOT WINS, OR A NEW CLASS IS NEVER WRITTEN DOWN ═══
+      // The binding's `classId` is whatever the file said when it was OPENED,
+      // and on a first-ever join that is `unassigned` — so reading it alone
+      // rewrote `unassigned` forever, and every session re-rolled the player's
+      // class off a per-process rotation counter. The snapshot is the live body,
+      // which is where the class actually is.
+      //
+      // THE BINDING IS STILL THE FALLBACK, for a body that has no class at all:
+      // it carries forward whatever the file already held rather than
+      // downgrading a saved Watchman to `unassigned` because a fixture joined
+      // without one.
+      classId: snapshot.classId ?? binding.classId,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
       // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
       // are intra-turn budgets refilled from the class every turn, so a stored
@@ -1235,6 +1263,14 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
     return {
       hp: file.resources.hp,
       cooldowns: file.talentCooldowns,
+      // ═══ THE ONE FIELD THAT DECIDES WHO THE PLAYER IS TONIGHT ═══
+      // There is no class-selection screen yet, so this string is the ONLY
+      // record that this account plays the Watchman. Handed back VERBATIM —
+      // including `unassigned` and including a name this build no longer has —
+      // because the substitute-and-log decision belongs to the caller, which is
+      // the only layer that knows what the three classes are. See
+      // `classForJoin` in content/classes.ts.
+      classId: file.classId,
     };
   };
 

@@ -59,6 +59,24 @@ import websocket from '@fastify/websocket';
 import { DIR_ORDER, dirVector, inBounds } from '../../shared/coords.ts';
 import { ErasedReason, ErrorCode, LogLane, parseClientMsg } from '../../shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
+/**
+ * THE ONE CONTENT IMPORT IN THIS FILE, AND IT IS DATA ONLY.
+ *
+ * `classForJoin` decides which of the three classes a joining body gets and
+ * `classById` says whether a saved id still names one. Nothing else about a
+ * class is read here — the SHEET (the loadout, the resource pool, the AP/MP
+ * budget) is attached through `TurnEngine.attachClass`, injected exactly like
+ * every other engine capability, because `engine/talents.ts` is on the far side
+ * of a boundary this file may not reach across.
+ */
+import { classById, classForJoin } from '../content/classes.ts';
+// The sentinel a character file carries before it has ever been told what class
+// it is. Imported rather than re-typed as a literal — see `classFor`, where the
+// difference between "this file predates classes" and "this file names a class
+// that was deleted" decides whether a warn-level line is a false alarm.
+// saves.ts's only reference back to this file is `import type`, so this arrow
+// adds no runtime cycle.
+import { UNASSIGNED_CLASS } from '../persist/saves.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   projectActors,
@@ -94,8 +112,9 @@ import type {
   ServerMsg,
   TurnEvent,
 } from '../../shared/protocol.ts';
+import type { ClassDef } from '../content/classes.ts';
 import type { PartyOffer, TurnState } from '../view/projector.ts';
-import type { Actor, World } from '../world/world.ts';
+import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
 /**
  * Frames larger than this are refused. A `move` is about sixty bytes and the
@@ -561,6 +580,35 @@ export type PumpResult = {
    * phase-locked the whole floor then waits on it until the Bell rings.
    */
   readonly refusals: readonly RefundedIntent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MONSTERS THAT DIED IN THIS PUMP AND ARE STILL IN THE WORLD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE ENGINE ENROLS; THIS FILE BURIES. `pumpAndBroadcast` drains this list
+   * through `TurnEngine.reap` in the one window where it is safe — after the
+   * Record lane has narrated the kill and before the resync ships the actor
+   * list. Reap any earlier and two readers degrade silently: `hitToWire` ships
+   * `maxHp: 0` and `nameOf` narrates "someone is unfiled".
+   *
+   * IT DOES NOT SAVE AN ORB IN FLIGHT, whatever this note used to say. The
+   * window is one pump wide and the wraith's shot arrives two or three game
+   * turns later; `reapedNames` below is what keeps that impact attributable.
+   *
+   * ═══ AND THE LIST IS PRE-FILTERED AGAINST A FLOOR RESET ═══
+   * `createTurnEngine.pump` drops any id whose body was replaced by
+   * `reseedFloor` inside the same pump — see `enrolled` in turn-engine.ts.
+   * Without that, a wipe that happened on the same turn as a kill had the
+   * gateway delete the FRESHLY re-seeded monster wearing the dead one's id.
+   *
+   * OPTIONAL, LIKE `submitRevive` AND `submitRespawn` ABOVE, and it travels with
+   * `TurnEngine.reap`: an engine that supplies neither is the pre-reaping
+   * engine, where a corpse stays on the map. That was the shipped behaviour
+   * until this milestone, so it has to remain expressible — and a required
+   * field here would be a field every hand-written test scheduler has to carry
+   * for one branch's benefit.
+   */
+  readonly reaped?: readonly string[];
 };
 
 /**
@@ -589,6 +637,40 @@ export type RefundedIntent = { readonly id: string; readonly reason: string };
 export type TurnEngine = {
   /** Enrol a newly-created actor in the scheduler. Idempotent. */
   join(actorId: string): void;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * GIVE THIS BODY A CLASS — the loadout, the resource pool, the AP/MP budget.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * INJECTED, NOT IMPORTED, and this one is worth stating plainly because the
+   * alternative looks so easy: attaching a sheet is two lines
+   * (`talents.attach(id, sheetForClass(def))`) and writing them HERE would put
+   * `engine/talents.ts` into net/'s import graph. This file's whole contract
+   * with the engine is structural for that reason — see the note above.
+   *
+   * The gateway already knows the class: it picked it, it is on the body as
+   * `PlayerActor.classId`, and it is in the save file. What it does not know,
+   * and must not learn, is what a class DOES.
+   *
+   * OPTIONAL. An engine with no talent book has no sheets to attach, and a
+   * method that was always present and did nothing would leave this file unable
+   * to tell "this build has no classes" from "the attach silently failed".
+   *
+   * IDEMPOTENT AND CALLED ONCE — beside `engine.join`, on a FRESH body only. A
+   * resumed body still has its sheet, with the cooldowns and the resource it
+   * left with; re-attaching would hand a returning player a full Resolve bar.
+   */
+  attachClass?(actorId: string, classId: string): void;
+  /**
+   * BURY ONE MONSTER — the full cleanup contract, ending with the world.
+   *
+   * Drain `PumpResult.reaped` through this and broadcast one `left` per body.
+   * Answers false for a player, for an unknown id and for anything already
+   * reaped, so calling it twice is free.
+   *
+   * OPTIONAL, and it travels with `PumpResult.reaped` — see that field.
+   */
+  reap?(actorId: string): boolean;
   /** Remove an actor entirely — the body is gone, not merely unattended. */
   leave(actorId: string): void;
   /**
@@ -779,6 +861,21 @@ export type CharacterSnapshot = {
   readonly cooldowns: Readonly<Record<string, number>>;
   readonly x: number;
   readonly y: number;
+  /**
+   * WHICH CLASS THIS BODY IS, as the label the file is filed under.
+   *
+   * OPTIONAL, AND THE OPTIONALITY IS THE HONEST SHAPE rather than a
+   * convenience. `PlayerActor.classId` is itself optional — a classless body is
+   * a real thing (a fixture, the e2e harness, a build with no content wired in)
+   * — so a required field here would force every producer to invent a class for
+   * a body that has none. The bridge answers the absence with the binding's own
+   * value, which is `unassigned` until a class is genuinely assigned.
+   *
+   * A PLAIN STRING, never `ClassId`: it is a SOFT reference all the way to the
+   * disk (persist/saves.ts), so a save written by a build with a fourth class
+   * still round-trips through this one.
+   */
+  readonly classId?: string;
 };
 
 /**
@@ -806,6 +903,25 @@ export type CharacterRestore = {
   /** Null when the file had no usable figure; the class default then stands. */
   readonly hp: number | null;
   readonly cooldowns: Readonly<Record<string, number>>;
+  /**
+   * ═══ THE CLASS DOES COME BACK, AND IT IS THE ONE THING THAT MUST ═══
+   *
+   * The three absences above are all things that are better re-derived than
+   * restored. A class is the opposite: there is no chooser yet, so the ONLY
+   * record that this account plays the Watchman is this string, and losing it
+   * would re-roll somebody's character off a per-process rotation counter every
+   * time they reconnected.
+   *
+   * NULL ON FIRST SIGHT, and null is a real answer rather than a failure: an
+   * account with no file, an anonymous socket, a file this build refused to
+   * bind. All of them mean "pick one" — see `classForJoin`.
+   *
+   * A DANGLING id IS NOT AN ERROR EITHER. It is carried through verbatim, and
+   * the caller substitutes and logs; `classById` answering undefined is the
+   * whole of the check. A file naming a class this build no longer has must
+   * still let its owner play.
+   */
+  readonly classId: string | null;
 };
 
 /**
@@ -1458,6 +1574,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         cooldowns,
         x: actor.x,
         y: actor.y,
+        // ═══ THE CLASS, OR THE FIELD IS ABSENT — NEVER AN INVENTED ONE ═══
+        // `classId` is optional on both sides precisely so that a classless
+        // body writes nothing here and the bridge keeps whatever the file
+        // already said. Spreading `classId: actor.classId` unconditionally
+        // would put `undefined` on the snapshot, and `snapshot.classId ??
+        // binding.classId` in saves.ts would then do the right thing by
+        // accident rather than by contract.
+        ...(actor.classId === undefined ? {} : { classId: actor.classId }),
       });
     }
     return snapshots;
@@ -1882,6 +2006,76 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // idle pump, so a client spamming frames cannot farm log traffic either.
     broadcastRecord(result);
 
+    // ═════════════════════════════════════════════════════════════════════
+    // THE REAP WINDOW. DEAD MONSTERS LEAVE THE MAP, AND THIS IS THE ONE
+    // PLACE THEY MAY — AFTER THE NARRATION, BEFORE THE RESYNC.
+    // ═════════════════════════════════════════════════════════════════════
+    //
+    // Ported from engines/default/engine/interface/ActorLife.lua:86-94, called
+    // from tome/class/Actor.lua:2975 — `if game.level:hasEntity(self) then
+    // game.level:removeEntity(self) end`. Upstream removes BEFORE its log line
+    // because it still holds the object reference; we re-resolve every id
+    // through `world.getActor` after the pump has returned, so we remove AFTER.
+    //
+    // THE ORDER IS A CONTRACT WITH THE TWO NEIGHBOURS, exactly as the
+    // sweep/snapshot rules below are:
+    //
+    //   `broadcastRecord` MUST HAVE RUN. `nameOf` reads the name off the live
+    //   body and `hitToWire` read its `maxHp` — reap first and the Case Log
+    //   says "5 damage. someone 0/0." above "someone is unfiled.", which is a
+    //   log that has lost the only two facts the line was for. Nothing throws;
+    //   it simply starts lying.
+    //
+    //   `projectActors` MUST NOT HAVE RUN. The resync below ships the whole
+    //   actor list, and a corpse still in it is a husk drawn with its LIVE
+    //   sprite, indistinguishable from a living one. That is the bug a player
+    //   reported and the reason this window exists at all.
+    //
+    // `left` IS THE FRAME, AND IT IS PRESENCE-REMOVAL STATED. client/main.ts's
+    // `case 'death'` forbids inferring death FROM ABSENCE — deleting a body on
+    // absence would make a kill look identical to an actor walking out of view,
+    // and would delete a Downed player. An explicit frame is the exception that
+    // comment allows, and `case 'left'` is one already-written line.
+    //
+    // NOT ROUTED THROUGH `needsFullResync`. That path also runs the client's
+    // `state` collateral — `cancelTravel`, `forgetInspections`,
+    // `clearProjectiles` (client/main.ts) — so somebody else's kill would
+    // silently stop your auto-walk halfway down a corridor.
+    //
+    // BROADCAST EVEN WHEN `reap` ANSWERS FALSE. False means the body was
+    // already gone — a party wipe in this same pump, where `resetFloor` buried
+    // every monster before this loop could. The `left` is still true of the body
+    // that died, and the resync immediately below (a wipe always triggers one)
+    // re-creates the floor on every client.
+    //
+    // ═══ AND THE LIST HAS ALREADY BEEN FILTERED FOR US ═══
+    // This comment used to say the id "may now belong to a freshly-placed husk"
+    // and treat that as harmless. IT WAS NOT: `reseedFloor` re-mints the
+    // encounter with STABLE IDS, so `reap` answered TRUE and deleted the brand
+    // new body, and the resync below then shipped a reset floor permanently one
+    // monster short. `createTurnEngine.pump` now identity-checks every enrolled
+    // id against the body it named BEFORE the wipe loop ran and drops the ones a
+    // reset replaced — read `enrolled` in turn-engine.ts. Nothing here may
+    // assume an id is still the body that died.
+    for (const id of result.reaped ?? []) {
+      // ═══ TAKE THE NAME BEFORE TAKING THE BODY ═══
+      // The last instant it is readable. See `reapedNames`: an orb this creature
+      // fired can land two or three GAME TURNS from now, and its impact is
+      // attributed to this id — without this the Case Log narrates the biggest
+      // hit in the game as "someone hits Wren."
+      const name = world.getActor(id)?.name;
+      if (name !== undefined) reapedNames.set(id, name);
+
+      engine.reap?.(id);
+      broadcast({ v: PROTOCOL_VERSION, t: 'left', id });
+    }
+
+    // ...and the memo lives exactly as long as the sky does. Its only reader is
+    // a projectile impact, so an empty sky means nothing can reference a buried
+    // id and the Map may go back to nothing. This is the bound; there is no cap
+    // and no eviction policy to get wrong.
+    if (reapedNames.size > 0 && world.projectilesInFlight().length === 0) reapedNames.clear();
+
     // ═══ SURVIVAL REWRITES BODIES, SO THE BOARD IS RESENT ═══
     // Down, up or erased: each of the three swaps a SPRITE, and `sprite` travels
     // only on `ActorView`. See `needsFullResync` — without this a detective on
@@ -2138,6 +2332,71 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHICH CLASS A BODY IS BUILT AS. THE FILE WINS; THE ROTATION IS THE
+   * FALLBACK; A DANGLING id SUBSTITUTES AND SAYS SO.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The RULE is `classForJoin`'s in content/classes.ts and this function
+   * re-decides none of it — the same division `respawnRefusalText` keeps with
+   * `RespawnRefusal`. What lives here is the two things content cannot know:
+   * where the rotation counter is (per-process, per-gateway) and where a log
+   * line goes.
+   *
+   * ═══ THE COUNTER ADVANCES ONLY ON A FRESH ASSIGNMENT ═══
+   * A returning Watchman must not consume the Inspector's turn in the rotation,
+   * or three friends who each reconnect once end up as three Watchmen. So the
+   * increment is inside the branch that actually rolled for one.
+   *
+   * ═══ THERE IS NO CHOOSER YET, AND THIS IS NOT ONE ═══
+   * The class-selection UI is the next job. This is the deterministic
+   * assignment that lets everything downstream — the hotbar, the save file, the
+   * portrait, the combat sheet — be wired and tested before there is a screen
+   * to pick from.
+   */
+  let classRotation = 0;
+
+  const classFor = (restore: CharacterRestore | null, who: string): ClassDef => {
+    const saved = restore?.classId ?? null;
+    const definition = classForJoin(saved, classRotation);
+
+    if (saved !== null && saved !== UNASSIGNED_CLASS && classById(saved) === undefined) {
+      // A SOFT REFERENCE THAT NO LONGER RESOLVES — a save from a build that had
+      // a class this one does not. Substituted rather than refused: a character
+      // file must never be the reason somebody cannot play tonight. Logged
+      // because it is also the only evidence that a class was renamed.
+      //
+      // ═══ THE SENTINEL IS EXEMPT, AND THAT IS THE ORDINARY CASE ═══
+      // `UNASSIGNED_CLASS` is what `fileFor` wrote unconditionally before this
+      // milestone, so EVERY character file already on disk holds it and
+      // `classById` answers `undefined` to it exactly as it does to a deleted
+      // class. Without this clause the first evening after deploy logs a
+      // warn-level "your save names a class this build does not have" for every
+      // returning player — N false alarms, indistinguishable from the one
+      // genuine dangling id this line exists to surface. The BEHAVIOUR was
+      // always right (the rotation assigns one and the first save writes it);
+      // only the diagnosis was wrong.
+      app.log.warn(
+        { actorId: who, savedClassId: saved, substituted: definition.id },
+        'character file names a class this build does not have — substituting',
+      );
+    }
+    if (saved === null || classById(saved) === undefined) {
+      classRotation += 1;
+    }
+    return definition;
+  };
+
+  /** A `ClassDef` as `world.addPlayer` takes it. See `PlayerOverlay`. */
+  const overlayFor = (definition: ClassDef): PlayerOverlay => ({
+    sprite: definition.sprite,
+    maxHp: definition.maxHp,
+    hpRegen: definition.hpRegen,
+    combat: definition.combat,
+    classId: definition.id,
+  });
+
+  /**
    * Resolve which actor a `hello` belongs to.
    *
    * THREE PATHS, IN THIS ORDER, AND THE ORDER IS THE POINT:
@@ -2173,10 +2432,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // showing the old name on four other screens.
         const renamed = existing.name !== verified.displayName;
         existing.name = verified.displayName;
+        // ═══ NOTHING ELSE IS RE-ATTACHED HERE, AND THAT IS THE RESUME RULE ═══
+        // This body never left the world. It is standing on its tile with its
+        // live hp, its live cooldowns and its talent sheet — the class was
+        // attached when it was created. Re-applying either the file or the
+        // ClassDef would roll the session back to the last save, which is what
+        // `applyRestore`'s own header calls out for hp and is just as true for
+        // a resource pool.
         return { actor: existing, resumed: true, renamed };
       }
-      const actor = world.addPlayer(verified.actorId, verified.displayName);
+      const definition = classFor(restore, verified.actorId);
+      const actor = world.addPlayer(verified.actorId, verified.displayName, overlayFor(definition));
       connByActor.set(actor.id, session.connId);
+      // AFTER the class, never before: `applyRestore` clamps the saved hp to
+      // `actor.maxHp`, so a Watchman restored at 70 would be filed down to 60
+      // if the body were still classless when the file landed on it.
       applyRestore(actor, restore);
       return { actor, resumed: false, renamed: false };
     }
@@ -2186,12 +2456,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       const existing = actorId === undefined ? undefined : world.getActor(actorId);
       if (existing !== undefined) {
         claimActor(session, existing.id, 'resume');
+        // Same as the identity re-attach above: the body kept its class.
         return { actor: existing, resumed: true, renamed: false };
       }
     }
 
     joinCount += 1;
-    const actor = world.addPlayer(`actor_${randomUUID()}`, `Player ${joinCount}`);
+    // AN ANONYMOUS BODY IS STILL SOMEBODY'S EVENING. There is no file to read a
+    // class out of and there never will be for this socket, so it takes the
+    // rotation — plain-browser development and tools/e2e-m1.mjs get a real
+    // hotbar rather than the four blank buttons a classless body would produce.
+    const definition = classFor(null, `actor_${String(joinCount)}`);
+    const actor = world.addPlayer(
+      `actor_${randomUUID()}`,
+      `Player ${joinCount}`,
+      overlayFor(definition),
+    );
     connByActor.set(actor.id, session.connId);
     return { actor, resumed: false, renamed: false };
   };
@@ -2290,7 +2570,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // matters — an actor that is back in the quorum must not still have a timer
     // pointing at `recallBody`.
     cancelGrace(actor.id);
-    if (!resolved.resumed) engine.join(actor.id);
+    if (!resolved.resumed) {
+      engine.join(actor.id);
+      // ═══ THE SHEET, AND IT HAS TO HAPPEN HERE — NOT A LINE LATER ═══
+      // `sendLoadout` and `sendHotbarIfChanged` are ~25 lines below and both
+      // return early on an empty loadout. Attach the class after them and the
+      // welcome frame set carries no hotbar at all, and NOTHING RESENDS IT:
+      // `sendHotbarIfChanged` is memoised per socket and the loadout frame is
+      // sent exactly once per connection by design (M3 loadouts are fixed). The
+      // player would sit there with four buttons' worth of talents and no bar
+      // until they reconnected.
+      //
+      // FRESH BODIES ONLY. A resumed body still holds the sheet it was given —
+      // with its spent Resolve and its running cooldowns — and re-attaching
+      // would hand a returning player a full resource pool for free.
+      //
+      // READ OFF THE BODY rather than threaded down from `resolveActor`,
+      // because the body is where it will still be tomorrow: `snapshotPlayers`
+      // writes the same field to the save file, so the sheet and the file can
+      // never be attached from two different answers to "what class is this".
+      if (actor.kind === 'player' && actor.classId !== undefined) {
+        engine.attachClass?.(actor.id, actor.classId);
+      }
+    }
     engine.setConnected(actor.id, true);
 
     const view = projectWorld(world);
@@ -2511,7 +2813,42 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       .join(' ');
   };
 
-  const nameOf = (id: string): string => world.getActor(id)?.name ?? 'someone';
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE NAMES OF BODIES THAT HAVE BEEN BURIED WHILE A SHOT OF THEIRS IS STILL
+   * IN THE AIR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `reap` deliberately does NOT clear projectiles — engine/projectile.ts is
+   * explicit that the shooter may be a corpse three turns later and the orb
+   * carries everything it needs to resolve. It carries everything except the one
+   * thing THIS lane needs: a name. `actProjectile` emits the impact as
+   * `{t:'attack', id: proj.sourceId}`, `nameOf` resolves that through
+   * `world.getActor`, and once the body is gone the Case Log prints
+   * "someone hits Wren." for the single biggest hit in the game.
+   *
+   * That was invisible before this milestone because a dead monster was never
+   * removed at all. The reap window's ordering (narrate, THEN bury) only
+   * protects the pump the shooter died IN — and the wraith authors
+   * `projSpeed 2` over `attackRange 6`, so an orb takes two to three GAME TURNS
+   * to arrive. The cross-pump case is the normal one.
+   *
+   * ═══ IT IS BOUNDED BY THE SKY, NOT BY A MAGIC NUMBER ═══
+   * The only reader is a projectile impact, so the memo is emptied the moment
+   * nothing is in flight — see the reap window. A session that never fires
+   * carries an empty Map forever.
+   */
+  const reapedNames = new Map<string, string>();
+
+  /**
+   * A body's display name. The world first, then the memo above.
+   *
+   * `'someone'` remains the last resort and it is still reachable — an id from
+   * before a restart, a fixture with no body — but it is no longer what a dead
+   * wraith's orb narrates as.
+   */
+  const nameOf = (id: string): string =>
+    world.getActor(id)?.name ?? reapedNames.get(id) ?? 'someone';
 
   /**
    * A talent's display name, from the CASTER'S OWN BOOK where there is one.
@@ -2564,16 +2901,58 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             depth: 0,
           },
         ];
-      case 'damage':
+      case 'damage': {
+        // ═══ THE SAME FRAME, THE OPPOSITE VERB ═══
+        // A heal rides the `damage` frame (see `DamageEvent.healed`: one
+        // implementation of "an actor's hp changed"), and this is where the two
+        // part company in words. Without it the party's only heal narrated as
+        // "0 damage. Ren 41.5/54." under a line saying the Alchemist hit herself.
+        const healed = event.healed ?? 0;
+        if (healed > 0) {
+          return [
+            {
+              text: `${nameOf(event.id)} is patched up. ${Math.round(healed)} healed, now ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
+              depth: 1,
+            },
+          ];
+        }
         return [
           {
-            // No damage TYPE on the wire yet (`DamageEvent` carries the amount
-            // and the absolute vitals). When it lands, "19 physical" goes here
-            // and nothing else in this function changes.
-            text: `${event.amount} damage. ${nameOf(event.id)} ${event.hp}/${event.maxHp}.`,
+            /**
+             * ═══════════════════════════════════════════════════════════════
+             * ROUNDED HERE, AT THE DISPLAY, AND NOWHERE NEAR THE ENGINE.
+             * ═══════════════════════════════════════════════════════════════
+             *
+             * Moving the scheduler onto `combat.ts#attackTarget` replaced the
+             * old integer `rng.int` with ToME's real pipeline, which is
+             * fractional and float-noisy by construction — `dam * pres -
+             * armour + dam * (1 - pres)` (damage.ts) does not land on integers.
+             * MEASURED over 20k landed blows per matchup: 39-100% of a player's
+             * blows and about half of a husk's are non-integers, so this line
+             * was printing things like "10.999999999999998 damage. Index Husk
+             * 14.000000000000002/25." in the game's most-read UI. Every number
+             * a player saw before this milestone was an integer.
+             *
+             * THE ENGINE KEEPS FULL PRECISION. Rounding in damage.ts would
+             * change the armour arithmetic and every replay-from-seed after it;
+             * this is a string, and a string is the right place to lie.
+             *
+             * `ceil` FOR HP, `round` FOR THE BLOW, matching partypanel.ts and
+             * turncards.ts — a body on 14.2 reads 15 everywhere or the party
+             * panel and the Case Log disagree about the same creature. `maxHp`
+             * is authored and integral, so it is left alone.
+             *
+             * No damage TYPE on the wire yet (`DamageEvent` carries the amount
+             * and the absolute vitals). When it lands, "19 physical" goes here
+             * and nothing else in this function changes.
+             */
+            text:
+              `${Math.round(event.amount)} damage. ` +
+              `${nameOf(event.id)} ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
             depth: 1,
           },
         ];
+      }
       case 'death':
         // "Unfiled" is the game's own word for it — game-design.md § 11's sample
         // log reads "Index Wraith is unfiled", and using the fiction's noun in

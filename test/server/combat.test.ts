@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AttackRefusal,
+  MELEE_REACH,
   attackTarget,
   canAttack,
   combatDistance,
@@ -79,6 +80,83 @@ describe('combatDistance — EUCLIDEAN, matching core.fov.distance', () => {
     // A Chebyshev range 5 is a SQUARE that reaches 7.07 tiles into the corners.
     expect(combatDistance({ x: 0, y: 0 }, { x: 3, y: 0 })).toBe(3);
     expect(combatDistance({ x: 0, y: 0 }, { x: 3, y: 3 })).toBeCloseTo(4.2426, 4);
+  });
+});
+
+describe('MELEE_REACH — the Euclidean radius that equals the Moore neighbourhood', () => {
+  it('is 1.5, and the arithmetic is the whole justification', () => {
+    // The four diagonals sit at √2; the nearest NON-neighbour sits at 2.0.
+    // 1.5 is the radius whose circle contains the first and excludes the second.
+    expect(MELEE_REACH).toBe(1.5);
+    expect(MELEE_REACH).toBeGreaterThan(Math.SQRT2);
+    expect(MELEE_REACH).toBeLessThan(2);
+  });
+
+  it('lets a SHEET-LESS melee attacker reach all four diagonals', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE BUG THIS CONSTANT EXISTS TO PREVENT, PINNED FROM BOTH SIDES.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `attackRange` is CHEBYSHEV (engine/actor.ts:299-309): 1 means the eight
+    // neighbours, which is what makes bump-attack work on a diagonal. Feed that
+    // 1 into `canAttack` RAW, as a Euclidean radius, and every diagonal swing in
+    // the game is refused as `OutOfRange` — while the scheduler's own Chebyshev
+    // check happily accepted it. That is the exact failure the wiring note at
+    // the head of engine/combat.ts warns about: legality passes, the swing does
+    // nothing, and nothing fails anywhere.
+    const w = world();
+    const brawler = actor('b', 5, 5, { attackRange: 1 });
+
+    for (const [dx, dy] of [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ] as const) {
+      expect(canAttack(brawler, actor('t', 5 + dx, 5 + dy), w)).toBeNull();
+    }
+    // ...and the four orthogonals, which were never in doubt.
+    for (const [dx, dy] of [
+      [0, -1],
+      [0, 1],
+      [-1, 0],
+      [1, 0],
+    ] as const) {
+      expect(canAttack(brawler, actor('t', 5 + dx, 5 + dy), w)).toBeNull();
+    }
+  });
+
+  it('and stops there — 2.0 is out of reach, so the circle IS the neighbourhood', () => {
+    const w = world();
+    const brawler = actor('b', 5, 5, { attackRange: 1 });
+    // Two tiles orthogonally: distance 2.0, the nearest non-neighbour.
+    expect(canAttack(brawler, actor('t', 7, 5), w)).toBe(AttackRefusal.OutOfRange);
+    // A knight's move: 2.24. Also out, and not adjacent by any metric.
+    expect(canAttack(brawler, actor('t', 7, 6), w)).toBe(AttackRefusal.OutOfRange);
+  });
+
+  it('does NOT shrink a ranged fixture that declares only attackRange', () => {
+    // `Math.max`, not a blanket 1.5. Roughly forty fixtures across the suite set
+    // `attackRange` and no sheet; flooring them all at melee would silently turn
+    // every one of them into a brawler.
+    const w = world();
+    const archer = actor('a', 1, 1, { attackRange: 5 });
+    expect(canAttack(archer, actor('t', 5, 4), w)).toBeNull(); // 5.0 exactly
+    expect(canAttack(archer, actor('t', 7, 1), w)).toBe(AttackRefusal.OutOfRange); // 6.0
+  });
+
+  it('is overridden outright by an authored combat.range, in both directions', () => {
+    // The sheet is the authority when it speaks. A melee template authors 1.5
+    // explicitly (content/monsters.ts) and a template that authors LESS gets
+    // less — data can be wrong, and silently correcting it upward would hide it.
+    const w = world();
+    const pinned = actor('p', 5, 5, { attackRange: 9, combat: { range: 1.5 } });
+    expect(canAttack(pinned, actor('t', 6, 6), w)).toBeNull();
+    expect(canAttack(pinned, actor('t', 7, 5), w)).toBe(AttackRefusal.OutOfRange);
+
+    const stunted = actor('s', 5, 5, { attackRange: 1, combat: { range: 1 } });
+    expect(canAttack(stunted, actor('t', 6, 5), w)).toBeNull();
+    expect(canAttack(stunted, actor('t', 6, 6), w)).toBe(AttackRefusal.OutOfRange);
   });
 });
 

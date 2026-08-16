@@ -1514,6 +1514,26 @@ function applyTurnEvent(event: TurnEvent): void {
     case 'attack':
       // No swing art in M2. The sweep marks the struck tile for a beat instead,
       // and M5's hit flashes hang off this case.
+      //
+      // ═══════════════════════════════════════════════════════════════════════
+      // TRAVEL INTERRUPT (5), MOVED HERE: A SWING AT YOU IS THE SIGNAL, LANDED
+      // OR NOT.
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // It used to hang off the `damage` frame alone, which was sound while
+      // every swing landed — the producer hard-coded `hit: true` because nothing
+      // upstream of it could miss. Now `hitToWire` emits the `attack` frame
+      // ALONE on a miss, so the interrupt became probabilistic: a husk swinging
+      // at a Watchman (atk 19 vs def 4, ~88%) misses about one swing in eight,
+      // and on those the auto-walk took another step deeper into the encounter.
+      // travel.ts's own comment names the damage frame as the acknowledged last
+      // line of defence — its 'newly visible hostile' arm cannot fire for a
+      // monster that was already inside the radius, and arm 1 has no crossing to
+      // detect when `inCombat` is already true.
+      //
+      // `targetId`, not `id`: `id` is the ATTACKER on this frame. Somebody
+      // ELSE's swing is not your business; one aimed at you is.
+      if (event.targetId === selfId) cancelTravel('you were swung at — travel stopped');
       break;
     case 'damage': {
       const actor = actors.get(event.id);
@@ -1527,7 +1547,16 @@ function applyTurnEvent(event: TurnEvent): void {
       // player dies to a fight they never saw start — and it is worth stopping
       // for even when the source is a trap or a friend's misfire, because in
       // every one of those cases the plan the player agreed to is stale.
-      if (event.id === selfId) cancelTravel('you were hit — travel stopped');
+      //
+      // KEPT ALONGSIDE the `attack` arm above rather than replaced by it: a
+      // source that produces no swing at all — a trap, a projector, an
+      // over-time tick — still has to stop the walk. A HEAL is the one thing on
+      // this frame that must NOT (see `DamageEvent.healed`): being patched up by
+      // the Alchemist is the opposite of a reason to stop walking, and reporting
+      // it as "you were hit" would be a lie in the status line.
+      if (event.id === selfId && (event.healed ?? 0) === 0) {
+        cancelTravel('you were hit — travel stopped');
+      }
       break;
     }
     case 'death': {
@@ -1535,6 +1564,21 @@ function applyTurnEvent(event: TurnEvent): void {
       // acting and stops blocking, but absence is never the death signal —
       // deleting it here would make a kill look identical to an actor walking
       // out of view, and would delete a Downed player in M4.
+      //
+      // ═══ AND THE CORPSE IS STILL NOT IMMORTAL — `left` IS WHAT REMOVES IT ═══
+      // A dead MONSTER really does leave the map, one frame later: the server
+      // reaps it after the Case Log has narrated the kill and before the next
+      // resync, and broadcasts `{t:'left'}` for it (see the reap window in
+      // src/server/net/gateway.ts). That case is a few hundred lines below and
+      // is one line — `actors.delete`.
+      //
+      // The two frames are not redundant and neither can do the other's job.
+      // `death` is what HAPPENED, and it is what flips the flag on a body that
+      // has to stay: a downed or erased PLAYER is never reaped, because
+      // engine/downed.ts depends on the body being there for an ally to walk to.
+      // `left` is presence-removal STATED — which is the exact exception the
+      // paragraph above allows, since it forbids inferring death from absence,
+      // not an explicit frame that says the body is gone.
       const actor = actors.get(event.id);
       if (actor === undefined) break;
       actors.set(event.id, { ...actor, alive: false, hp: 0 });

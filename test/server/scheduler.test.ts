@@ -11,6 +11,7 @@ import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import {
+  Refusal,
   disconnectActor,
   pump,
   reconnectActor,
@@ -21,6 +22,7 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { TICKS_PER_GAME_TURN } from '../../src/shared/energy.ts';
 import type { EngineActor, Intent } from '../../src/server/engine/actor.ts';
 import type { Barrier } from '../../src/server/engine/barrier.ts';
+import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { GameEvent, PumpResult, SweepStep } from '../../src/server/engine/scheduler.ts';
 import type { World } from '../../src/server/world/world.ts';
 
@@ -376,10 +378,22 @@ describe('the travelling projectile leaves the instant attack alone', () => {
     expect(attacks.length).toBeGreaterThan(0);
     for (const hit of attacks) {
       if (hit.t !== 'attack') throw new Error('unreachable');
-      // The M2 placeholder range, straight from `strike`.
-      expect(hit.damage).toBeGreaterThanOrEqual(3);
-      expect(hit.damage).toBeLessThanOrEqual(6);
+      // ═══ RE-PINNED WHEN THE SWING MOVED ONTO `attackTarget` ═══
+      // This used to read 3-6, the M2 placeholder's `rng.int('combat.bump.
+      // damage', damageMin, damageMax)`. `strike` now runs the ordered pipeline,
+      // and these husks are TEST fixtures with no combat sheet, so they fall
+      // through to ToME's own bare level-1 defaults: `combatDamage({}) = 4.408`
+      // at `damRange` 1.1, whose endpoints BOTH truncate to 4 — so the range
+      // roll takes no draw at all (damage.ts:276) and a landed blow is a flat 4
+      // through the target's zero armour. A MISS is 0 damage and no `damage`
+      // frame, which is the new outcome this file did not have before.
+      expect(hit.hit ? hit.damage : 0).toBe(hit.hit ? 4 : 0);
+      expect(hit.killed).toBe(false);
     }
+    // Both outcomes occurred across twelve turns at 60% to hit — otherwise the
+    // line above is a claim about a constant rather than about the pipeline.
+    expect(attacks.some((step) => step.t === 'attack' && step.hit)).toBe(true);
+    expect(attacks.some((step) => step.t === 'attack' && !step.hit)).toBe(true);
     // ...and not one of them was a launch.
     expect(first.steps.some((step) => step.t === 'fired')).toBe(false);
 
@@ -426,6 +440,259 @@ describe('the travelling projectile leaves the instant attack alone', () => {
     // The party is up, the floor is re-seeded, and the sky is clear.
     expect(world.getActor('p1')?.alive).toBe(true);
     expect(world.projectilesInFlight()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE SWING MOVED ONTO combat.ts#attackTarget
+// ---------------------------------------------------------------------------
+
+/**
+ * A bump used to be `rng.int('combat.bump.damage', damageMin, damageMax)`
+ * straight into a flat `applyDamage`. It is now the whole ordered pipeline, and
+ * these tests pin the three things that changed shape: WHICH draws are taken and
+ * under what labels, that a MISS is now a possible outcome, and that the two
+ * range refusals stayed distinguishable.
+ */
+describe('a bump is now a real swing', () => {
+  /** A one-tile arena: a player, and a husk standing east of them. */
+  function duel(
+    seed: string,
+    options: { readonly monster?: CombatSheet; readonly player?: CombatSheet } = {},
+  ): { readonly world: World; readonly barrier: Barrier } {
+    const world = createWorld(seed);
+    const player = world.addPlayer('p1', 'Ren');
+    player.x = 20;
+    player.y = 18;
+    player.hpRegen = 0;
+    if (options.player !== undefined) player.combat = options.player;
+
+    world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: HUSK_SPRITE,
+      x: 21,
+      y: 18,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 1_000,
+      ...(options.monster === undefined ? {} : { combat: options.monster }),
+    });
+
+    return { world, barrier: createBarrier() };
+  }
+
+  it('takes the checkhit / damage-range / crit draws, under those exact labels', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE STREAM'S SHAPE, WHICH IS WHAT REPLAY-FROM-SEED IS ABOUT.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Not the draw COUNT — that is data-dependent on the attacker's stat block,
+    // which is fine because it is a pure function of state (damage.ts:276 takes
+    // no range draw when the truncated endpoints agree). What must hold is that
+    // every draw is LABELLED and that the labels are the pipeline's, so a replay
+    // divergence names the stage it happened in.
+    const table = duel('bump-labels', {
+      // A spread wide enough that the range roll genuinely happens (dam 6.27 at
+      // damRange 1.2 -> [6, 7], endpoints differ) and accuracy 27 against a
+      // sheet-less husk's defence 0, so the hit is certain rather than seeded.
+      player: { mods: { atk: 30 }, weapon: { dam: 20, damRange: 1.2 } },
+    });
+    const labels: string[] = [];
+    const spy = table.world.rng.int.bind(table.world.rng);
+    table.world.rng.int = (label: string, lo: number, hi: number): number => {
+      labels.push(label);
+      return spy(label, lo, hi);
+    };
+
+    table.world.turn.engagement = 3;
+    expect(
+      submitIntent(table.world, table.barrier, 'p1', { kind: IntentKind.Move, dir: 'e' }),
+    ).toBe(true);
+    pump(table.world, { nowMs: 0, barrier: table.barrier });
+
+    // The to-hit roll is unconditional (checkhit.ts:114-116 draws even at 0% and
+    // 100%, precisely so the stream never depends on the outcome).
+    // ...and on a hit, the range roll and then the crit, in that order —
+    // Combat.lua:511 then :544. NOT the other way round: crit before armour
+    // makes armour a rounding error on every critical hit. Only the PLAYER's
+    // three are asserted; the husk takes its own turn later in the same pump.
+    expect(labels.slice(0, 3)).toEqual([
+      'combat.checkhit',
+      'combat.damage.physical.range',
+      'combat.damage.physical.crit',
+    ]);
+    // The M2 label is gone from the melee path entirely. It survives on ONE
+    // path only — `fire`, where the orb's damage is frozen at the muzzle.
+    expect(labels).not.toContain('combat.bump.damage');
+  });
+
+  it('a MISS is hit:false, damage 0, no death — and it still costs the turn', () => {
+    // combat.ts:157: "Never a miss — a miss is `ok: true, hit: false`". The blow
+    // is REPORTED either way, because protocol.ts:1543-1545 is explicit that a
+    // miss would otherwise be invisible: a monster that steps up and does
+    // nothing reads as a bug rather than as a dodge.
+    //
+    // Accuracy 0 against defence 0 is ceil(50 + 2.5 × (0 − 0)) = 50... so it is
+    // pinned by DEFENCE instead: `mods.def` 200 rescales past anything the
+    // attacker can roll, and checkHit bounds the chance at 0.
+    const table = duel('bump-miss', { monster: { mods: { def: 200 } } });
+    table.world.turn.engagement = 3;
+    const husk = must(table.world.getActor('m1'), 'm1');
+    const before = husk.hp;
+
+    expect(
+      submitIntent(table.world, table.barrier, 'p1', { kind: IntentKind.Move, dir: 'e' }),
+    ).toBe(true);
+    const result = pump(table.world, { nowMs: 0, barrier: table.barrier });
+
+    const attacks = result.events.filter((event) => event.t === 'attacked');
+    expect(attacks).toHaveLength(1);
+    const [blow] = attacks;
+    if (blow?.t !== 'attacked') throw new Error('expected one attack event');
+    expect(blow.hit).toBe(false);
+    expect(blow.damage).toBe(0);
+    expect(blow.killed).toBe(false);
+    // The numbers the Case Log prints, present even on a miss — that is what
+    // makes a miss read as arithmetic rather than as the server being unfair.
+    expect(blow.chance).toBe(0);
+    expect(blow.atk).toBeGreaterThan(0);
+    expect(blow.def).toBeGreaterThan(blow.atk ?? 0);
+
+    // Not a scratch on it, and the player's turn is gone: a miss is not a
+    // refusal, and only a refusal is refunded.
+    expect(husk.hp).toBe(before);
+    expect(result.events.some((event) => event.t === 'refunded')).toBe(false);
+  });
+
+  it('clears a killed body’s pendingIntent, exactly as the orb path does', () => {
+    // engine/actor.ts's old `applyDamage` did this and damage.ts's does not,
+    // because damage.ts knows nothing about intents. Until now only the
+    // PROJECTILE path carried the manual fix (projectile.test.ts:568-580); the
+    // melee path lost it the moment `strike` moved onto `attackTarget`. A body
+    // that goes down holding an intent would resolve it the instant an ally
+    // picks it up — a turn nobody took.
+    const table = duel('bump-kills-intent', {
+      player: { mods: { atk: 18, dam: 2000 } },
+    });
+    const husk = must(table.world.getActor('m1'), 'm1');
+    husk.hp = 1;
+    husk.pendingIntent = HOLD_INTENT;
+    table.world.turn.engagement = 3;
+
+    expect(
+      submitIntent(table.world, table.barrier, 'p1', { kind: IntentKind.Move, dir: 'e' }),
+    ).toBe(true);
+    pump(table.world, { nowMs: 0, barrier: table.barrier });
+
+    expect(husk.alive).toBe(false);
+    expect(husk.pendingIntent).toBeNull();
+  });
+
+  it('refuses INSIDE the dead zone with too_close and BEYOND reach with out_of_range', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE TWO REFUSALS CARRY OPPOSITE INSTRUCTIONS AND MUST STAY APART.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // One says close in, the other says back off. game-design.md § 2 calls the
+    // Inspector's `min_range 3` the single most important number in the class,
+    // and a player told "out of range" while standing on the target concludes
+    // the class is broken.
+    const table = duel('bump-refusals', {
+      player: { range: 7, minRange: 3 },
+    });
+    table.world.turn.engagement = 3;
+    const husk = must(table.world.getActor('m1'), 'm1');
+
+    const refuse = (): string | undefined => {
+      expect(
+        submitIntent(table.world, table.barrier, 'p1', { kind: 'attack', targetId: 'm1' }),
+      ).toBe(true);
+      const events = pump(table.world, { nowMs: 0, barrier: table.barrier }).events;
+      const refusal = events.find((event) => event.t === 'refunded');
+      return refusal?.t === 'refunded' ? refusal.reason : undefined;
+    };
+
+    // Adjacent: inside the hole.
+    expect(refuse()).toBe(Refusal.TooClose);
+    // Nine tiles east: outside the reach of 7.
+    husk.x = 29;
+    expect(refuse()).toBe(Refusal.OutOfRange);
+    // Four east: legal, so no refusal at all.
+    husk.x = 24;
+    expect(refuse()).toBeUndefined();
+  });
+
+  it('refuses the whole MOVE when the bump lands in the dead zone — never Occupied', () => {
+    // Walking into a hostile IS the attack input, so a bump obeys the attack's
+    // rules. Falling through to `tryMove` would refuse with `Occupied`, which
+    // names the wrong reason: the player is told a body is in the way when what
+    // actually happened is that their weapon will not fire this close.
+    const table = duel('bump-dead-zone', { player: { range: 7, minRange: 3 } });
+    table.world.turn.engagement = 3;
+    const player = must(table.world.getActor('p1'), 'p1');
+    const at = { x: player.x, y: player.y };
+
+    expect(
+      submitIntent(table.world, table.barrier, 'p1', { kind: IntentKind.Move, dir: 'e' }),
+    ).toBe(true);
+    const result = pump(table.world, { nowMs: 0, barrier: table.barrier });
+
+    const refusal = result.events.find((event) => event.t === 'refunded');
+    expect(refusal?.t === 'refunded' ? refusal.reason : undefined).toBe(Refusal.TooClose);
+    expect(Refusal.TooClose).not.toBe(Refusal.Occupied);
+    // The refund rule: zero energy, nothing moved, and the actor still owes a
+    // decision.
+    expect({ x: player.x, y: player.y }).toEqual(at);
+    expect(result.parked).toEqual(['p1']);
+  });
+
+  it('a monster’s projSpeed fork still runs AFTER the legality check, not before', () => {
+    // ActorTalents.lua:988 — `if not t.proj_speed then return nil end`. The fork
+    // sits one line below the legality check and must stay there: an orb fired
+    // from a tile the shooter was not allowed to shoot from is a legality check
+    // that has been bypassed rather than moved.
+    const world = createWorld('fork-after-legality');
+    const player = world.addPlayer('p1', 'Ren');
+    player.x = 20;
+    player.y = 18;
+    const barrier = createBarrier();
+
+    // A DELIBERATELY INCONSISTENT FIXTURE, and it has to be: `validateTemplate`
+    // rejects a creature whose AI dead zone disagrees with its weapon's, and
+    // `kite` now asks `rangeRefusal` before it fires, so no legal roster monster
+    // can submit a shot the scheduler will refuse. This one chases like a husk
+    // (no AI dead zone at all) while its WEAPON has minRange 3 — which is the
+    // one board state that puts an illegal attack intent on the fork's doorstep.
+    world.addMonster('m_kiter', {
+      name: 'Index Wraith',
+      sprite: 'enemy_index_wraith_s',
+      x: 21,
+      y: 18,
+      profile: AiProfile.MeleeChaser,
+      projSpeed: 2,
+      attackRange: 6,
+      aggroRange: 9,
+      combat: { range: 6, minRange: 3 },
+    });
+
+    const kiter = must(world.getActor('m_kiter'), 'm_kiter');
+    world.turn.engagement = 3;
+    expect(submitIntent(world, barrier, 'p1', HOLD_INTENT)).toBe(true);
+    const result = pump(world, { nowMs: 0, barrier });
+
+    // NOT ONE ORB. If `fire` ran before the legality check, the shot would be in
+    // the air from a tile its own weapon forbids — a check bypassed, not moved.
+    const steps = sweepSteps(result.events);
+    expect(steps.some((step) => step.t === 'fired')).toBe(false);
+    expect(world.projectilesInFlight()).toEqual([]);
+    const blocked = steps.find((step) => step.t === 'blocked');
+    expect(blocked?.t === 'blocked' ? blocked.reason : undefined).toBe(Refusal.TooClose);
+
+    // ...and from a legal tile the very same monster DOES fire, so the test
+    // above is about the ORDER and not about the fork being dead.
+    kiter.x = 25;
+    expect(submitIntent(world, barrier, 'p1', HOLD_INTENT)).toBe(true);
+    const armed = pump(world, { nowMs: 1, barrier });
+    expect(sweepSteps(armed.events).some((step) => step.t === 'fired')).toBe(true);
   });
 });
 

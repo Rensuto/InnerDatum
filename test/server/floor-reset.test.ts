@@ -10,6 +10,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
 import { ErasedReason, TileCode } from '../../src/shared/protocol.ts';
+import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { DownedState } from '../../src/server/engine/downed.ts';
 import type { TurnLogger } from '../../src/server/turn-engine.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
@@ -47,6 +48,25 @@ import type { TurnEvent } from '../../src/shared/protocol.ts';
  */
 
 const WRAITH_SPRITE = 'enemy_index_wraith_s';
+
+/**
+ * A COMBAT SHEET WHOSE BLOW ALWAYS LANDS.
+ *
+ * Every test below turns on a monster actually hitting the detective: the hp the
+ * blow left, the tile it landed on, the lane the wipe was filed in. Since
+ * `scheduler.ts#strike` moved onto `combat.ts#attackTarget` a swing ROLLS TO
+ * HIT, and a sheet-less monster falls through to ToME's bare level-1 defaults —
+ * `combatAttack({}) = 4` against a classless detective's `combatDefense` 0, so
+ * ceil(50 + 2.5 × 4) = 60%. Two in five seeds would produce a miss, no `damage`
+ * frame, no death, and a test failure that reads as a regression in the floor
+ * reset.
+ *
+ * `mods.atk` 18 rescales to `combatAttack` 21, so the chance is ceil(50 + 52.5)
+ * = 103, bounded to 100. FIXED BY ACCURACY, NOT BY RE-ROLLING THE SEED: a seed
+ * chosen because it happened to pass converts a structural guarantee into a
+ * coincidence that stops holding the next time anything upstream draws.
+ */
+const NEVER_MISSES: CombatSheet = { mods: { atk: 18 } };
 
 /** A logger that records, so "it warned" and "it did not" are both assertable. */
 function spyLogger(): TurnLogger & {
@@ -98,6 +118,7 @@ function scene(seed: string, options: { readonly reseed?: (world: World) => void
     x: 23,
     y: 20,
     profile: AiProfile.MeleeChaser,
+    combat: NEVER_MISSES,
   });
 
   const actor = (id: string): Actor => {

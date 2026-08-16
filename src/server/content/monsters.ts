@@ -6,6 +6,15 @@
 //                                                                        :59-70 (losgoroth)
 //             t-engine4 game/modules/tome/data/general/npcs/ghoul.lua:49-116 (the ghoul ladder)
 //             t-engine4 game/modules/tome/data/talents/misc/npcs.lua:723-747 (T_VOID_BLAST)
+//                                                              :739 (the orb's own damage —
+//                                                              `combatTalentSpellDamage(t, 15, 240)`,
+//                                                              which is NOT losgoroth.lua:30)
+//             t-engine4 game/modules/tome/class/interface/Combat.lua:1774-1779
+//                                                              (combatTalentSpellDamage)
+//             t-engine4 game/modules/tome/data/birth/classes/*.lua (22 `max_life` entries — the
+//             level-1 body scale the orb's damage is normalised against)
+//             t-engine4 game/modules/tome/class/Actor.lua:3881-3885 (Constitution's +4 life/point,
+//             the other half of that anchor)
 //             t-engine4 game/engines/default/engine/ai/talented.lua:115-132 (ai_state.talent_in)
 //             t-engine4 game/engines/default/engine/interface/ActorTalents.lua:987-991
 //                                                              (getTalentProjectileSpeed)
@@ -106,9 +115,9 @@
  * and sight 10 exactly like the creature it upgrades.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * THE SIX DELIBERATE DEVIATIONS, ALL OF THEM LIVE FIELDS
+ * THE SEVEN DELIBERATE DEVIATIONS, ALL OF THEM LIVE FIELDS
  * ───────────────────────────────────────────────────────────────────────────
- * Numbered here so a reader can find all six in one place and so nobody has to
+ * Numbered here so a reader can find all seven in one place and so nobody has to
  * grep for the word "invented" to know what is ours. THIS LIST USED TO SAY
  * THREE, and the missing three were documented only at their own site — which is
  * a trap for the next re-base pass, because a reader who trusts a short list
@@ -116,13 +125,15 @@
  * an aggro of 10 and a reach of 10 on the creature this work item exists to calm
  * down. Every field below deviates from a real upstream number:
  *
- *   1. EVERY `maxHp` IS HELD at 25 / 22 / 60 rather than ported. See the note on
- *      each template. In one sentence: the damage sheet is not wired to the
- *      scheduler yet, so porting the losgoroth's `rngavg(40,60)` = 50 onto the
- *      wraith would make it a ten-hit kill for a party that currently kills it
- *      in four — on the creature that was just reported as too strong.
+ *   1. `maxHp` ON TWO OF THE THREE, NOT ALL THREE ANY MORE. THE WRAITH'S IS NOW
+ *      A PORT: 50, from losgoroth.lua:63 `max_life = resolvers.rngavg(40,60)`.
+ *      The husk's 25 sits INSIDE ant.lua:59's own `rngavg(15,30)` band, so it
+ *      needs no defence beyond the citation. The elite's 60 is the only one that
+ *      contradicts its source (the ghoul ladder holds `rngavg(90,100)` across
+ *      all three tiers) and it is argued at that template's header.
  *   2. THE WRAITH'S `globalSpeed` STAYS 0.84. Upstream's losgoroth has no
- *      `global_speed_base` at all, i.e. 1.0.
+ *      `global_speed_base` at all, i.e. 1.0. HELD, with the measurement, at the
+ *      field: 1.0 buys +19% damage and costs the "you can corner it" property.
  *   3. THE WRAITH'S `minRange` 2 STAYS. ToME has no dead zone whatsoever; its
  *      ranged tactic preset is `escape=3, closein=0` (tome/resolvers.lua:901)
  *      and its bolt talents have `range` but no minimum. Citing upstream for a
@@ -131,33 +142,58 @@
  *      `infravision = 10`. Full note at the field.
  *   5. THE WRAITH'S `attackRange` IS HELD AT 6. T_VOID_BLAST authors `range = 10`
  *      (misc/npcs.lua:730). Full note at the field — and read it, because the
- *      number is a legality ceiling the AI never reaches.
+ *      number is a legality ceiling the AI provably never reaches.
  *   6. THE WRAITH'S `Darkness: 50` RESIST IS OURS. Upstream's losgoroth.lua:46
  *      is `ARCANE = 100` and carries no darkness row at all; we do not have
  *      Arcane and would not ship a 100 on floor one if we did.
+ *   7. THE WRAITH'S ORB DAMAGE — `damageMin`/`damageMax` 12-16 — IS OURS BY
+ *      ARITHMETIC, and it is a CORRECTION rather than an invention. It is
+ *      derived from T_VOID_BLAST at misc/npcs.lua:739 and explicitly NOT from
+ *      losgoroth.lua:30's `combat` block: that block is the creature's MELEE
+ *      weapon (it carries `atk`, `apr` and a `dammod`, and it is what
+ *      `attackTarget` would swing), and a previous pass wired the orb to it by
+ *      mistake. The whole derivation, with both citations and the body-scale
+ *      factor, is written out at the field.
  *
- * A seventh deviation lives one file over and belongs in any reading of this
+ * One more deviation lives one file over and belongs in any reading of this
  * roster: the orb `projSpeed` puts in the air is a `bolt` and T_VOID_BLAST is a
  * `beam` (misc/npcs.lua:734, Target.lua:583-584). Ours stops on the first body
  * in the line; upstream's clips everyone it passes and flies on. It is DEVIATION
  * 1 in the header of src/server/engine/projectile.ts, with the reason.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * THE SHEET IS NOT WIRED TO THE SWING YET, AND THAT MATTERS FOR READING IT
+ * THE MELEE SHEET IS LIVE. THE ORB'S DAMAGE IS A DIFFERENT FIELD, FOR GOOD
  * ───────────────────────────────────────────────────────────────────────────
- * `monsterInit` below does NOT pass `damageMin`/`damageMax`, so every monster in
- * this roster deals `DEFAULT_MONSTER_DAMAGE_MIN..MAX` = 3-6 through
- * `scheduler.ts#strike`, with no to-hit roll, no armour and no resists. Every
- * `weapon.dam` / `atk` / `apr` ported below is therefore INERT ON THE ATTACKER
- * SIDE today; it is read by `derived.ts` for the inspect card, and by the TARGET
- * side of the pipeline when a player talent hits this creature.
+ * THIS BLOCK USED TO SAY "THE SHEET IS NOT WIRED TO THE SWING YET" AND THAT IS
+ * NO LONGER TRUE OF THE MELEE HALF. `scheduler.ts#strike` resolves through
+ * `combat.ts#attackTarget`, so `checkHit`, armour, armour penetration, resists
+ * and crit all run for a monster: every `weapon.dam` / `atk` / `apr` ported
+ * below is LIVE on the attacker side, and an accuracy of 19 on the husk now
+ * means the husk actually rolls it. (That was ONE change and not two — the
+ * Chebyshev range check in the scheduler and the Euclidean `canAttack` had to
+ * move together; the wiring note at the head of engine/combat.ts is the record.)
  *
- * That is recorded here rather than buried because it changes how the numbers
- * read: an accuracy of 19 does not mean this creature never misses, it means
- * this creature does not roll to hit at all — and neither does anything else.
- * Moving the scheduler onto `combat.ts#attackTarget` is ONE change, not two (see
- * the wiring note at the foot of engine/combat.ts: the Chebyshev range check and
- * the Euclidean `canAttack` must move together), and it is out of scope here.
+ * THE PROJECTILE HALF IS NOT ON THAT FUNCTION AND IS NOT GOING TO BE, which is
+ * why this roster's one ranged creature reads its damage out of two different
+ * places. `resolveIntent` forks at scheduler.ts:1501-1502 — a monster carrying a
+ * `projSpeed` returns `fire(...)` one line BEFORE `strike` is reachable — and
+ * `fire` (scheduler.ts:1722) freezes `rng.int('combat.bump.damage', damageMin,
+ * damageMax)` onto the orb at the muzzle. There is no to-hit roll at fire or at
+ * impact and there never will be (scheduler.ts:1709): upstream's `projectile()`
+ * routes straight to the DamageType projector with no `checkHit` anywhere in the
+ * call graph, so counterplay against a travelling shot is 100% POSITIONAL. So:
+ *
+ *   `combat`                  the MELEE weapon, swung by `attackTarget`
+ *   `damageMin`/`damageMax`   the ORB, frozen by `fire`
+ *
+ * The one thing the orb still takes off the sheet is armour penetration — `fire`
+ * passes `combatAPR(sheet)` into the impact's armour stage, and for the wraith
+ * that is losgoroth.lua:30's `apr = 15`. Fifteen exceeds every class's armour
+ * (Watchman 6, Inspector 0, Alchemist 0 — content/classes.ts), so an orb arrives
+ * UNMITIGATED against all three and the damage table on the wraith below is one
+ * number rather than three. That lands on upstream's shape with room to spare
+ * rather than by luck: a ToME spell is never reduced by armour at all, because
+ * `attackTargetWith` is the only function in the game that applies it.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * TWO METRICS, AND WHY EACH TEMPLATE CARRIES TWO RANGES
@@ -304,8 +340,33 @@ export type MonsterTemplate = {
    */
   readonly talentIn?: number;
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ORB'S FROZEN DAMAGE. NOT THE MELEE SWING'S — SEE THE FILE HEADER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The inclusive bounds of the ONE labelled draw `scheduler.ts#fire` takes at
+   * the muzzle: `rng.int('combat.bump.damage', damageMin, damageMax)`, frozen
+   * onto the projectile and carried to impact whatever happens to the shooter in
+   * between. `combat` below drives the MELEE swing and has nothing to do with
+   * these two.
+   *
+   * ONLY A CREATURE WITH A `projSpeed` EVER READS THEM, and only that creature
+   * should author them. Absent → `actor.ts`'s `DEFAULT_MONSTER_DAMAGE_MIN..MAX`
+   * 3-6, which is a placeholder and is documented there as one. A melee template
+   * leaving both absent is therefore correct and costs nothing: `fire` is
+   * unreachable for it (scheduler.ts:1501).
+   *
+   * BOTH OR NEITHER, and `validateTemplate` enforces it — a template with only a
+   * minimum would silently inherit a maximum of 6 from a constant in another
+   * file, which is exactly the class of bug the whole re-base exists to remove.
+   */
+  readonly damageMin?: number;
+  /** As above. `validateTemplate` refuses a max below the min: `rng.int` throws. */
+  readonly damageMax?: number;
+
   // --- combat ---------------------------------------------------------------
-  /** Everything derived.ts, checkhit.ts and damage.ts read. */
+  /** Everything derived.ts, checkhit.ts and damage.ts read. THE MELEE WEAPON. */
   readonly combat: CombatSheet;
 };
 
@@ -335,8 +396,20 @@ export type MonsterTemplate = {
  * Those first two moved a long way in the re-base (from 2 and 0) and the reason
  * is `atk = 15` on the ant's weapon: ToME gives its low-level trash real
  * accuracy and then makes it survivable by giving it very little damage. The
- * hand-authored version had that backwards. NB neither number is live yet — see
- * the "not wired to the swing" note in the file header.
+ * hand-authored version had that backwards. BOTH NUMBERS ARE LIVE — `strike`
+ * runs `attackTarget` now — and they are what the whole roster is measured
+ * against, so they are also the top row of the balance table on the wraith:
+ *
+ *   hp PER PLAYER TURN, adjacent, standing still, after the swing went live
+ *   ─────────────────────────────────────────────────────────────────────────
+ *     vs Watchman (def 4, armour 6 @ 40% hardiness)   88% × 5.527 × 0.9 = 4.378
+ *     vs Inspector (def 4, armour 0)                  88% × 5.527 × 0.9 = 4.378
+ *     vs Alchemist (def 0, armour 0)                  98% × 5.527 × 0.9 = 4.875
+ *
+ * It used to be a flat 4.050 against everybody (3-6 with no roll, × 0.9), so the
+ * baseline moved by +8% to +20% depending on who is standing there — which is
+ * the first time in this game's history that who you are has changed how hard
+ * you are hit.
  */
 export const INDEX_HUSK: MonsterTemplate = Object.freeze({
   id: 'index_husk',
@@ -347,12 +420,12 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_husk_s',
   rank: ActorRank.Normal,
 
-  // DEVIATION 1 OF 6 (see the file header). Upstream is
+  // DEVIATION 1 OF 7 (see the file header). Upstream is
   // ant.lua:59 `max_life = resolvers.rngavg(15,30)`, i.e. a mean of 22.5 — so 25
   // is INSIDE the giant brown ant's own band and needs no defence beyond this
-  // citation. It is held rather than ported only because the other two maxHp
-  // values are held and a roster that ports one life value and authors two is
-  // harder to reason about than one that authors all three.
+  // citation. The old note here added "and the other two maxHp values are held
+  // too"; that is no longer true — the wraith's is a port now — so the argument
+  // stands on the band alone, which is where it should always have stood.
   maxHp: 25,
   hpRegen: 0,
 
@@ -463,6 +536,7 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  * ═══ THE NUMBERS THAT MAKE IT A DIFFERENT PROBLEM ═══
  *   reach 6 (a ceiling; see `attackRange`) · stand-off 4 · dead zone 2
  *   aggro 8 · globalSpeed 0.84 · orb speed 2 tiles/turn · fires on a 1-in-2
+ *   orb 12-16 · 50 life
  *
  * ═══ WHAT IT IS AND IS NOT, MEASURED ═══
  * It is a CHIP THREAT that has to be walked at, not a burst threat. Standing
@@ -471,33 +545,68 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  * that walks onto it eats it. Stepping SIDEWAYS off the frozen line still dodges
  * cleanly, and that is the counterplay working rather than the creature failing.
  *
- * Its damage per player turn is small and the arithmetic is worth writing down
- * so nobody re-derives it from the sheet: 0.84 globalSpeed × 0.5 (`talentIn` 2)
- * × 4.5 avg = 1.89 hp, against the melee husk's 0.9 × 4.5 = 4.05. It is BELOW
- * HALF the basic mob, and the reason is the file header's "not wired to the
- * swing" note — `monsterInit` passes no `damageMin`/`damageMax`, so a landed orb
- * deals `DEFAULT_MONSTER_DAMAGE_MIN..MAX` 3-6 and the ported `weapon.dam` of
- * ~7.4 with `apr` 15 is inert. THE COMPENSATION FOR THREE STACKED NERFS —
- * travel time, the 1-in-2 cadence, and the stand-off moving 6 → 4 — is
- * therefore not in yet, and none of the upstream buffs that would pay for it
- * (max_life 50, global_speed 1.0, range 10) is taken either; all three are in
- * the deviation list above with their own reasons. Wiring the sheet to the swing
- * is the one change that fixes this properly and it is one change, not two.
- * Until then this creature is deliberately under-tuned rather than accidentally
- * so, and that sentence is here so the next person does not "fix" it by
- * un-porting `talent_in`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BALANCE TABLE. MEASURED AGAINST THE REAL SHEETS, NOT ESTIMATED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS BLOCK USED TO READ "0.84 × 0.5 × 4.5 avg = 1.89 hp … BELOW HALF the basic
+ * mob", and that was a true measurement of a creature that had its orb wired to
+ * a placeholder constant. It is replaced rather than edited, because every input
+ * to it moved. Hp PER PLAYER TURN, against a body standing still inside the
+ * band, computed over the shipped class sheets in content/classes.ts — the same
+ * arithmetic is asserted in test/server/monsters.test.ts so this table cannot
+ * silently rot:
+ *
+ *   creature            state      Watchman   Inspector   Alchemist
+ *   ─────────────────   ────────   ────────   ─────────   ─────────
+ *   index_husk          before        4.050       4.050       4.050
+ *   index_husk          NOW           4.378       4.378       4.875
+ *   index_husk_elite    before        4.050       4.050       4.050
+ *   index_husk_elite    NOW           5.888       5.888       6.332
+ *   index_wraith        before        1.890       1.890       1.890
+ *   index_wraith        NOW           5.880       5.880       5.880
+ *
+ * "before" is the placeholder path: `rng.int(3, 6)` with no to-hit roll, no
+ * armour and no resists, × `globalSpeed`, × the 1-in-2 cadence for the wraith.
+ * The wraith is ONE number across all three classes and the husks are not,
+ * because `combatAPR` of losgoroth.lua:30's `apr = 15` swallows every class's
+ * armour whole — see the file header.
+ *
+ * WHAT THAT BUYS. The wraith:husk ratio goes 0.467 → 1.343: the designated
+ * ranged threat stops being less than half as dangerous as the baseline mob and
+ * becomes a third more dangerous than it. It lands one hair under the ELITE
+ * (5.880 against 5.888), which is deliberate and is the top of the band rather
+ * than an accident — the elite's damage is unavoidable once it has reached you
+ * and it carries 60 life, while every point of the wraith's is dodgeable by
+ * stepping off the line and it cannot shoot at all inside two tiles. A creature
+ * whose damage is 100% positional may sit level with one whose damage is not.
+ *
+ * One orb is 12-16 against bars of 72 / 60 / 54, i.e. 17-22% of a Watchman,
+ * 20-27% of an Inspector and 22-30% of an Alchemist: memorable, never lethal
+ * from full, and four average orbs put an Alchemist on the floor. THE THREE
+ * STACKED NERFS this creature took when it was re-based — travel time, the
+ * 1-in-2 cadence, and the stand-off moving 6 → 4 — are now paid for, and they
+ * are paid for out of the orb and the life bar rather than by un-porting any of
+ * them. Do not "fix" this creature by touching `talent_in`.
  *
  * `minRange 2` is the whole class. A wraith CANNOT shoot something standing on
  * it, so a Watchman who closes the gap turns it off; `ai/npc.ts` retreats rather
  * than firing point-blank and `canAttack` refuses the shot if it ever tried.
  * That is the same lesson the Inspector's `min_range 3` teaches from the
  * player's side (game-design.md § 2: "the single most important number here"),
- * shown from the receiving end on the first floor. It is DEVIATION 3 OF 6: ToME
+ * shown from the receiving end on the first floor. It is DEVIATION 3 OF 7: ToME
  * has no dead zone anywhere, so this one is ours and is labelled as ours.
  *
  * DERIVED NUMBERS (pinned in test/server/monsters.test.ts):
- *   accuracy 17 · defence 19 · damage 5.055 → rolls a flat 5 darkness · crit 1%
+ *   accuracy 17 · defence 19 · MELEE damage 5.055 → a flat 5 · crit 1%
  *   armour 0 · darkness resist 50% · physical resist −30% (VULNERABLE)
+ *   ORB damage 12-16 — a DIFFERENT FIELD; see `damageMin` and the file header
+ *
+ * READ THAT SECOND-TO-LAST LINE AS A MELEE WEAPON, because it is one. The 5.055
+ * is `combatDamage` over losgoroth.lua:30's `combat` block, which is what
+ * `attackTarget` would swing if anything ever routed this creature into it —
+ * and nothing does, because `resolveIntent` forks to `fire` first
+ * (scheduler.ts:1501). It is live on the RECEIVING side (the inspect card reads
+ * it, and so does anyone reading this file) and it is not what hits you.
  *
  * The defence of 19 against armour 0 is the shape of the whole creature and it
  * inverted the old sheet: this is not a sniper with a glass jaw, it is a slow
@@ -513,25 +622,61 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_wraith_s',
   rank: ActorRank.Normal,
 
-  // DEVIATION 1 OF 6 (see the file header), and this is the sharp one.
-  // Upstream is losgoroth.lua:63 `max_life = resolvers.rngavg(40,60)` — a mean
-  // of 50, against our 22. It is NOT ported, for one measurable reason: a
-  // player's live damage is `DEFAULT_PLAYER_DAMAGE_MIN..MAX` = 4-7 through
-  // `scheduler.ts#strike` (avg 5.5), NOT the ~10-12 their combat SHEET says,
-  // because the sheet is not wired to the swing (see the file header). Fifty
-  // life is therefore a ten-hit kill where 22 is a four-hit kill: the same
-  // creature would take 2.3x longer to bring down, on the creature the user just
-  // reported as killing too fast. ADOPT 50 ON THE DAY the scheduler moves onto
-  // `combat.ts#attackTarget`, and not before.
-  maxHp: 22,
+  // ═══════════════════════════════════════════════════════════════════════
+  // PORTED. losgoroth.lua:63 `max_life = resolvers.rngavg(40,60)` = 50.
+  // ═══════════════════════════════════════════════════════════════════════
+  // THIS WAS 22 AND THE NOTE THAT HELD IT THERE IS DELETED, NOT REUSED. Its
+  // stated premise was that "a player's live damage is 4-7 through
+  // `scheduler.ts#strike`, NOT the ~10-12 their combat SHEET says", so 50 life
+  // would be a ten-hit kill where 22 is a four-hit kill. THE PREMISE IS REFUTED
+  // BY MEASUREMENT. Now that the swing runs the real pipeline and players carry
+  // real class sheets, a basic swing at THIS creature's live defence of 19 is:
+  //
+  //   Watchman    23% to hit × 16.461 on a hit = 3.786 hp per player turn
+  //   Alchemist   18% to hit × 11.187          = 2.014
+  //   Inspector   REFUSED — `combat.minRange` 3 forbids her bump entirely
+  //
+  // Both of the two who can swing are BELOW the old flat 5.5, not above it. The
+  // sheet did not make players hit harder; it made this creature harder to hit.
+  //
+  // ═══ THE FRAME THE NUMBER WAS CHOSEN IN: A PARTY OF THREE, WITH TALENTS ═══
+  // Stated explicitly because a life total is meaningless without one. Three
+  // detectives, one of each class, each spending their turn on their slot-1
+  // reliable talent — which is the live game now that content/classes.ts is
+  // wired into the running server — put out 25.708 hp per PARTY TURN at this
+  // creature: crude_blow 3.786 + revolver_shot 8.108 + ashwick_flare 13.814.
+  //
+  //   at 22 life:  0.856 party turns to kill
+  //   at 50 life:  1.945 party turns to kill
+  //
+  // The orb needs 1.5 GAME TURNS to cross the stand-off (15 ticks at `projSpeed`
+  // 2 from four tiles — see the table on `projSpeed` below). So at 22 the wraith
+  // reliably DIED BEFORE ITS FIRST ORB LANDED: the designated ranged threat was
+  // a creature most parties never saw attack. At 50 it lives one to two acts and
+  // lands one or two orbs, 12-32 hp onto one player. That is the whole argument.
+  //
+  // ═══ REPORTED HONESTLY, OUT OF FRAME ═══
+  // A SOLO WATCHMAN needs 13.206 player turns of basic swings, during which a
+  // wraith standing off at four tiles deals 13.206 × 5.880 = 77.7 against his 72
+  // hp bar. A lone Watchman trading shots with a wraith at range LOSES, and that
+  // is not the frame: his answer is to close, because the creature cannot fire
+  // inside two tiles at all and gives ground instead. If solo play ever becomes
+  // a frame this game supports, this number is the first one to re-argue.
+  maxHp: 50,
   hpRegen: 0,
 
-  // DEVIATION 2 OF 6. Upstream's losgoroth authors no `global_speed_base`, so it
-  // is 1.0 — the same speed as the party. Ours stays at 0.84 and the reason is
-  // structural rather than aesthetic: an equal-speed kiter retreats forever and
-  // the fight is a treadmill with no end state. ToME can afford 1.0 because its
-  // player has movement talents, teleports and a `movement_speed` stat; ours has
-  // none of those yet. This is the number that makes cornering one WORK.
+  // DEVIATION 2 OF 7, HELD AGAIN AND THIS TIME WITH THE MEASUREMENT. Upstream's
+  // losgoroth authors no `global_speed_base`, so it is 1.0 — the same speed as
+  // the party. Ours stays at 0.84 for a structural reason: an equal-speed kiter
+  // retreats forever and the fight is a treadmill with no end state. ToME can
+  // afford 1.0 because its player has movement talents, teleports and a
+  // `movement_speed` stat; ours has none of those yet.
+  //
+  // PRICED, so the hold is a decision rather than an omission: 1.0 would move
+  // this creature from 5.880 to 7.000 hp per player turn — +19% — and would
+  // spend the ONE property that lets a kiter fight end. The retune needed 3.99
+  // more hp per turn and the orb supplied it; buying the last 1.12 by making the
+  // creature un-cornerable is the worst available trade on this sheet.
   globalSpeed: 0.84,
   speedFactor: 1,
 
@@ -540,7 +685,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // profile is the closest one that exists; the "caster" half is `talentIn`
   // below rather than a talent tree.
   profile: AiProfile.RangedKiter,
-  // DEVIATION 4 OF 6. HELD at 8. Upstream is losgoroth.lua:34 `infravision = 10`, the same as the
+  // DEVIATION 4 OF 7. HELD at 8. Upstream is losgoroth.lua:34 `infravision = 10`, the same as the
   // ant's, and it is NOT adopted here: 10 would let the wraith open fire on
   // something six tiles outside its own reach, which just means it spends four
   // turns walking while the party watches. Eight is two tiles past its reach —
@@ -553,9 +698,15 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // only larger one is `survivor`'s 8, tome/resolvers.lua:903) and it is what
   // made the creature un-closeable: it stood at the very edge of its reach, so
   // every step the party took toward it was answered by a step back.
+  //
+  // HELD, AND IT IS A PORT RATHER THAN A DEVIATION, which is why it is not in
+  // the numbered list. It was re-examined during the retune anyway because it is
+  // the field that sets the counterplay window (5 tiles would buy a second
+  // player decision per orb, see `projSpeed`) — and it stays, because moving it
+  // would mean citing `safe_range = 4` in the comment while shipping a 5.
   preferredRange: 4,
   minRange: 2,
-  // DEVIATION 5 OF 6. HELD at 6, and it is already a cut: T_VOID_BLAST authors
+  // DEVIATION 5 OF 7. HELD at 6, and it is already a cut: T_VOID_BLAST authors
   // `range = 10` (misc/npcs.lua:730). Six is capped deliberately — the
   // Inspector's authored reach is 7 (test/server/combat.test.ts), and a monster
   // that outshoots the ranged class deletes that class's identity.
@@ -568,6 +719,12 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // at four tiles either. Tuning it alone will therefore change NOTHING you can
   // observe in play; the field to move is `preferredRange`, and the cap above is
   // the reason it may not move past 6.
+  //
+  // SO UPSTREAM'S 10 IS NOT DECLINED FOR TASTE, IT IS DECLINED AS INERT. It was
+  // re-offered during the retune as one of the three upstream buffs that could
+  // pay for the creature's nerfs, and it pays nothing: the AI cannot reach the
+  // test that would consume it. Restoring it would move zero numbers in the
+  // balance table above while deleting the sentence that protects the Inspector.
   attackRange: 6,
   huntsIsolated: false,
   shoulderAfter: 0,
@@ -609,7 +766,82 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // chance per turn, NOT one shot every two turns; see the field's own doc
   // comment on `MonsterTemplate` for why that distinction is worth a paragraph.
   // This is the second half of the fix: the old wraith fired every single turn.
+  //
+  // HELD AT 2 AND PRICED, because it is the single biggest lever on this sheet
+  // and somebody will reach for it: `talentIn: 1` DOUBLES the damage per player
+  // turn, 5.880 → 11.760, straight past the top of the band and past the elite.
+  // It is declined on two counts and either would be enough. It deviates from a
+  // verbatim port for the first time on this field, and it turns the coin the
+  // whole creature is designed around into a metronome — see the paragraph on
+  // `MonsterTemplate.talentIn`, which is there precisely because a cadence is
+  // something a player counts and a coin is something a player cannot.
   talentIn: 2,
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE ORB. DERIVED FROM T_VOID_BLAST, NOT FROM THE MELEE BLOCK BELOW.
+  // ═══════════════════════════════════════════════════════════════════════
+  // DEVIATION 7 OF 7, and it is a CORRECTION of a porting error rather than an
+  // invention. The previous pass left these absent, so `monsterInit` passed
+  // nothing, so `actor.ts`'s `DEFAULT_MONSTER_DAMAGE_MIN..MAX` = 3-6 was frozen
+  // onto every orb this creature has ever thrown. The fix is not to point `fire`
+  // at the `combat` block below — that block is the creature's MELEE weapon
+  // (losgoroth.lua:30, and it carries `atk`, `apr` and a `dammod`, which is what
+  // a weapon is). THE ORB IS A TALENT:
+  //
+  //     -- game/modules/tome/data/talents/misc/npcs.lua:739 (T_VOID_BLAST)
+  //     self:projectile(tg, x, y, DamageType.VOID_BLAST,
+  //         self:spellCrit(self:combatTalentSpellDamage(t, 15, 240)), …)
+  //
+  // ═══ THE DERIVATION, IN FIVE STEPS, EVERY INPUT MEASURED ═══
+  //
+  //   1. `combatSpellpower(INDEX_WRAITH.combat)` = 6. Combat.lua:1744-1771, and
+  //      it is Magic 6 (losgoroth.lua:44) with no `spellPower` mod, which the
+  //      stat rescale leaves alone at 6.
+  //   2. `combatTalentSpellDamage(6, 1, 15, 240)` = 24.9376. Combat.lua:1774-1779,
+  //      ported and exported at engine/talents.ts; `base` 15 and `max` 240 are
+  //      npcs.lua:739's own two arguments, and the talent level is
+  //      `MVP_TALENT_LEVEL` = 1.
+  //   3. THE UPSTREAM BODY SCALE, measured rather than assumed. ToME's level-1
+  //      life bar is the class birth descriptor: 22 `max_life` entries across
+  //      data/birth/classes/*.lua, values 90 / 100 / 110 / 120, MEAN 100.455 and
+  //      median 100. Constitution adds 4 life per point over the engine base of
+  //      10 (Actor.lua:3884, `local multi_life = 4`), and the class-granted mean
+  //      across the 28 subclass `stats` blocks in the same files is 0.714 points
+  //      of Con, i.e. +2.86 life. ANCHOR = 103.31.
+  //      IT EXCLUDES race Constitution and the free birth points, both of which
+  //      RAISE the anchor and therefore LOWER the orb — so this anchor is the low
+  //      end and the number falling out of it is the high end.
+  //   4. 24.9376 / 103.31 = 24.14% of an upstream level-1 bar. Our own median
+  //      class bar is 60 (Watchman 72, Inspector 60, Alchemist 54 —
+  //      content/classes.ts), and 24.14% of 60 is 14.48 → 14, rounded toward the
+  //      conservative side of the anchor's known omission.
+  //   5. THE ±2 SPREAD IS OURS and is labelled as ours. Upstream's orb is a
+  //      single number wrapped in `spellCrit` (npcs.lua:739); our `fire` path
+  //      never rolls a crit, at the muzzle or at impact (scheduler.ts:1709), so
+  //      the band stands in for the variance that crit would have supplied. It
+  //      is symmetric, so the mean is exactly the derived integer.
+  //
+  // ═══ DETERMINISM: THE DRAW DOES NOT MOVE, ONLY ITS BOUNDS ═══
+  // `fire` keeps EXACTLY ONE labelled `combat.bump.damage` draw at EXACTLY the
+  // stream position it has always occupied. The alternative — rewriting `fire`
+  // to `rollDamageRange(combatDamage(sheet), …)` — was rejected on two counts:
+  // it sources the orb from the melee block, which is the error this field
+  // exists to correct, and `combatDamage` 5.055 × `damRange` 1.1 truncates to
+  // [5, 5], where damage.ts:276 returns EARLY and takes no draw at all. That
+  // would delete a draw from the middle of every wraith's turn and shift every
+  // replay after it.
+  //
+  // ═══ AND NO, THE ORB DOES NOT GET A BLAST RADIUS ═══
+  // Written down so it is not re-litigated: `ProjectileOutcome.impact`
+  // (projectile.ts:444-453) is exactly ONE victim, so a real radius means
+  // widening that type to a list, the `Effect` variant that carries it, the
+  // sweep step the client paces off, and the client playback — the same price
+  // list DEVIATION 1 in projectile.ts already prices for turning the bolt into
+  // upstream's beam. And there is nothing upstream to port it FROM:
+  // T_VOID_BLAST authors no radius whatsoever (npcs.lua:723-747), so it would be
+  // an invention bought at the cost of four files.
+  damageMin: 12,
+  damageMax: 16,
 
   combat: {
     // losgoroth.lua:44 `stats = { str=10, dex=8, mag=6, con=16 }`, VERBATIM.
@@ -627,6 +859,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
     // still to reach it — armour 0 with a −30 physical resist is the softest
     // target in the roster once you are standing next to it.
     mods: { armour: 0, def: 20 },
+    // ═══ THIS IS THE MELEE WEAPON. THE ORB IS `damageMin`/`damageMax` ABOVE. ═══
     // losgoroth.lua:30, VERBATIM including the resolver nest:
     //   combat = { dam=resolvers.levelup(resolvers.mbonus(40, 15), 1, 1.2),
     //              atk=15, apr=15, dammod={mag=0.8}, damtype=DamageType.ARCANE }
@@ -634,18 +867,26 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
     // ~0.4 the port drops and why), which lands within one point of the 14 this
     // field was hand-authored at — a good sign that the old number was a decent
     // guess at a curve somebody else had already tuned.
+    //
+    // WHAT IT ACTUALLY DRIVES TODAY: `atk` and `apr` and nothing else. `apr` 15
+    // is passed to the orb's impact by `scheduler.ts#fire` and swallows every
+    // class's armour; `atk` and `dam` feed the inspect card and would feed
+    // `attackTarget` if anything ever routed this creature into it, which
+    // nothing does — the `projSpeed` fork at scheduler.ts:1501 returns first.
     weapon: {
       dam: resolveLevelup(resolveMBonus(40, 15)),
       atk: 15,
       apr: 15,
-      // `dammod = {mag=0.8}` — the orb is thrown by Magic alone. The old
-      // { dex: 0.5, cun: 0.4 } was invented "in the shape of ToME's own ranged
-      // dammod"; this IS ToME's own ranged dammod, for this creature.
+      // `dammod = {mag=0.8}` — swung with Magic alone. The old { dex: 0.5,
+      // cun: 0.4 } was invented "in the shape of ToME's own ranged dammod"; this
+      // IS ToME's own dammod, for this creature. NB it is `mag` because the
+      // losgoroth is a caster, not because this line has anything to do with the
+      // orb: the orb's Magic scaling went through `combatSpellpower` instead.
       damMod: { mag: 0.8 },
     },
     profile: {
       resists: {
-        // DEVIATION 6 OF 6 — OURS, KEPT. Upstream's equivalent is losgoroth.lua:46
+        // DEVIATION 6 OF 7 — OURS, KEPT. Upstream's equivalent is losgoroth.lua:46
         // `[DamageType.ARCANE] = 100` — total immunity to its own element. We do
         // not have Arcane and we would not want a 100 on the first floor
         // regardless (`resistsCap` is absent, so the engine default of 100 makes
@@ -709,12 +950,23 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
  * faster talent cadence and an AI swap. Not one point of it is life.
  *
  * ═══ WHY OURS STILL BUYS SOME OF IT WITH LIFE ═══
- * We cannot spend the ghoulking's currency yet. `dam`/`atk`/`apr` are inert on
- * the attacker side until the scheduler moves onto `combat.ts#attackTarget` (see
- * the file header), and there is no monster talent system for a cadence to
- * drive. Life and behaviour are the elite's only LIVE levers today, and an elite
- * with neither is a husk. So 60 stays — as DEVIATION 1 OF 6, written down rather
- * than justified by a ratio that does not exist.
+ * THE OLD ANSWER HERE WAS "we cannot spend the ghoulking's currency yet — dam,
+ * atk and apr are inert until the scheduler moves onto combat.ts#attackTarget".
+ * THAT HAS RESOLVED. The scheduler moved, and this creature's currency is now
+ * live and measurably spent: `dam` 15 / `atk` 18 / `apr` 8 / `def` 4 / armour 2
+ * put it at 5.888 hp per player turn against a Watchman or an Inspector and
+ * 6.332 against an Alchemist, where the husk it upgrades is 4.378 / 4.378 /
+ * 4.875. THE ELITE ALREADY HITS 34% HARDER THAN THE HUSK WITHOUT SPENDING ONE
+ * POINT OF LIFE — which is the ghoulking's own argument, arriving on our side of
+ * the port at last.
+ *
+ * So the 60 is now a genuinely open question rather than a forced one, and it is
+ * DELIBERATELY LEFT ALONE THIS PASS. Retuning the elite means re-deriving its
+ * whole fight — party turns to kill, how the two elite behaviours change who is
+ * being hit, and whether a 25-life elite reads as an elite at all — and that is
+ * a measurement job with its own scope. This pass retuned exactly one creature
+ * and said so. It stays DEVIATION 1 OF 7, and the note that used to excuse it is
+ * replaced by the one that dates it.
  *
  * ═══ WHAT ACTUALLY EARNS THE RING ═══
  * Two behaviours, both in `ai/npc.ts`:
@@ -751,12 +1003,14 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_husk_elite_s',
   rank: ActorRank.Elite,
 
-  // DEVIATION 1 OF 6 — see this template's header. Upstream's ladder holds
+  // DEVIATION 1 OF 7 — see this template's header. Upstream's ladder holds
   // `max_life = resolvers.rngavg(90,100)` across ALL THREE ghoul tiers
   // (ghoul.lua:54, :71, :92), i.e. the delta is ZERO and a faithful port would
-  // put this at 25. Held at 60 because life and behaviour are the only live
-  // levers an elite has until the damage sheet is wired, and an elite with
-  // neither is indistinguishable from the creature it upgrades.
+  // put this at 25. The reason that used to sit here — "life and behaviour are
+  // the only live levers an elite has until the damage sheet is wired" — has
+  // expired: the sheet is wired and this creature spends it (5.888 hp per player
+  // turn against 4.378 for the husk). 60 is HELD here only because retuning the
+  // elite is not this pass's job; the argument for moving it is in the header.
   maxHp: 60,
   hpRegen: 0,
 
@@ -869,11 +1123,25 @@ export function monsterById(id: string): MonsterTemplate | undefined {
  * `world/`: content is data, the world is state, and the day an encounter table
  * wants to spawn from a save file it should not have to construct a World first.
  *
- * NOTE WHAT IS STILL NOT PASSED: `damageMin` and `damageMax`. Every monster in
- * this roster therefore deals `DEFAULT_MONSTER_DAMAGE_MIN..MAX` = 3-6 through
- * `scheduler.ts#strike`, and every `weapon.dam`/`atk`/`apr` above is inert on
- * the attacker side. See the file header; it is deliberate and it is one change
- * away, not two.
+ * ═══ TWO FIELDS, TWO DIFFERENT ATTACKS. THIS IS THE EASY ONE TO GET WRONG. ═══
+ * THIS NOTE USED TO READ "NOTE WHAT IS STILL NOT PASSED: `damageMin` and
+ * `damageMax`", and the omission was the whole reason a wraith's orb hit for the
+ * placeholder 3-6 no matter what its stat block said. Both are passed now, and
+ * what each of the two damage inputs drives is worth stating once:
+ *
+ *   `combat`                  THE MELEE SWING. `scheduler.ts#strike` hands the
+ *                             whole sheet to `combat.ts#attackTarget`, which
+ *                             runs checkHit, the damage-range roll, armour,
+ *                             armour penetration, crit and resists off it.
+ *   `damageMin`/`damageMax`   THE TRAVELLING ORB. `scheduler.ts#fire` rolls one
+ *                             labelled `combat.bump.damage` draw between them
+ *                             and freezes the integer onto the projectile.
+ *
+ * A melee template passes `undefined` for both and that is correct: `fire` is
+ * unreachable without a `projSpeed` (scheduler.ts:1501), so the fallback they
+ * would fall through to is never read. `undefined` is forwarded rather than
+ * defaulted for exactly the same reason `projSpeed` and `talentIn` are — see the
+ * comment on those two below.
  */
 export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit {
   return {
@@ -893,6 +1161,11 @@ export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit 
     minRange: template.minRange,
     huntsIsolated: template.huntsIsolated,
     shoulderAfter: template.shoulderAfter,
+    // THE ORB'S FROZEN DAMAGE, authored per template. Absent on both melee
+    // creatures, and absent is not "3-6" here — it is "this creature never
+    // reaches `fire`". See the note above.
+    damageMin: template.damageMin,
+    damageMax: template.damageMax,
     // Both optional, and both pass `undefined` through as `undefined` on
     // purpose: absent `projSpeed` is ToME's "instantaneous"
     // (ActorTalents.lua:988) and absent `talentIn` is "every turn"
@@ -989,6 +1262,30 @@ export function validateTemplate(template: MonsterTemplate): readonly string[] {
   if (template.projSpeed !== undefined) {
     if (!Number.isFinite(template.projSpeed) || template.projSpeed <= 0) {
       problems.push(`${where} projSpeed ${template.projSpeed} must be a positive finite number`);
+    }
+  }
+
+  // THE ORB'S BOUNDS. `scheduler.ts#fire` calls `rng.int('combat.bump.damage',
+  // damageMin, damageMax)`, and `rng.int` THROWS a RangeError when the max is
+  // below the min (src/shared/rng.ts) — which would take down a turn mid-pump,
+  // synchronously, on a content typo. That is exactly the class of failure this
+  // function exists to move to a test run.
+  //
+  // BOTH OR NEITHER. A template with only one of the two silently inherits the
+  // other from `DEFAULT_MONSTER_DAMAGE_*` in engine/actor.ts, which is a number
+  // in a different file chosen for a different purpose — a 12..6 or a 3..16 orb
+  // is a bug that reads as a tuning decision.
+  const hasMin = template.damageMin !== undefined;
+  const hasMax = template.damageMax !== undefined;
+  if (hasMin !== hasMax) {
+    problems.push(`${where} damageMin and damageMax must be authored together`);
+  } else if (template.damageMin !== undefined && template.damageMax !== undefined) {
+    if (!Number.isInteger(template.damageMin) || !Number.isInteger(template.damageMax)) {
+      problems.push(`${where} damage bounds must be integers — rng.int refuses a fraction`);
+    } else if (template.damageMin < 0) {
+      problems.push(`${where} damageMin ${template.damageMin} must not be negative`);
+    } else if (template.damageMax < template.damageMin) {
+      problems.push(`${where} damageMax ${template.damageMax} < damageMin ${template.damageMin}`);
     }
   }
 

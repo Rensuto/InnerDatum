@@ -1570,6 +1570,26 @@ export type DamageEvent = {
   maxHp: number;
   /** Who dealt it, when there is an actor to blame. */
   sourceId?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BLOW WENT THE OTHER WAY: HP RESTORED, NOT REMOVED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A heal reaches the client on THIS frame rather than a `heal` frame of its
+   * own, for the reason `TalentEvent` gives for not carrying a victim list: the
+   * client's job on both is identical — set `hp` to the absolute number in the
+   * frame — and a second frame kind for "an actor's hp changed" is a second
+   * implementation of the same fact that will eventually disagree about which
+   * one wins.
+   *
+   * WHEN IT IS SET, `amount` IS 0 AND NO `attack` FRAME PRECEDES THIS ONE. The
+   * Alchemist's Mend Wounds used to arrive as a blow with `damage: 0, hit: true`
+   * because the engine's `TalentHit.healed` was dropped on the way to the wire:
+   * the Case Log read "Ren hits Ren. / 0 damage. Ren 41.5/54." for the party's
+   * only heal, and render/sweep.ts stamped the STRUCK-TILE marker on every
+   * healed ally. Absent means damage, exactly as it always did.
+   */
+  healed?: number;
 };
 
 export type DeathEvent = {
@@ -1788,6 +1808,16 @@ export type JoinedMsg = {
  * token for a ten-minute grace. So a disconnect now shows up as a `turn` frame
  * with that id under `standingBy`, and `left` means only "the body is gone" —
  * the grace expired, or the player genuinely left.
+ *
+ * M4 ADDED THE SECOND SENDER, AND IT IS NOT A PLAYER: a REAPED MONSTER. A
+ * corpse is removed from the world once its death has been narrated
+ * (`ActorLife.lua:86-94`), and THIS FRAME IS HOW THE CLIENT IS TOLD — explicit
+ * removal, stated, which is exactly the exception client/main.ts:1533-1542
+ * carves out. That comment forbids inferring a death FROM ABSENCE (an actor
+ * missing from a snapshot is usually an actor who walked out of view, and
+ * deleting on absence makes every step through a doorway look like a death); it
+ * does not forbid an explicit `left`. `death` keeps its body-stays semantics
+ * verbatim — the two frames say different things and both are needed.
  */
 export type LeftMsg = {
   v: typeof PROTOCOL_VERSION;

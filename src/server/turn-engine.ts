@@ -31,9 +31,10 @@ import { HOLD_INTENT, IntentKind, cooldownOf } from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
 import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
-import { RespawnRefusal, respawn } from './engine/downed.ts';
+import { RespawnRefusal, forgetActor as forgetDowned, respawn } from './engine/downed.ts';
 import type { DownedState } from './engine/downed.ts';
-import type { EffectLogLine } from './engine/effects.ts';
+import { forgetActor as forgetEffects } from './engine/effects.ts';
+import type { EffectLogLine, EffectState } from './engine/effects.ts';
 import { combatDistance } from './engine/combat.ts';
 import {
   MAX_PARTY_SIZE,
@@ -50,7 +51,7 @@ import {
   partyOf,
 } from './engine/party.ts';
 import type { PartyResult, PartyState } from './engine/party.ts';
-import type { GameEvent, SweepStep } from './engine/scheduler.ts';
+import type { GameEvent, SweepStep, TalentResolution } from './engine/scheduler.ts';
 import { disconnectActor, pump, reconnectActor, submitIntent } from './engine/scheduler.ts';
 import type {
   IntentResult,
@@ -161,6 +162,21 @@ const SILENT_LOGGER: TurnLogger = {
  */
 const WIPE_CHURN_TURNS = 2;
 
+/**
+ * THE TALENT RUNTIME, from this layer's side.
+ *
+ * `TalentResolution` is the three callbacks the SCHEDULER needs (resolve a cast,
+ * refill the budget on the base clock, note a move). `forget` is the fourth, and
+ * it belongs to this file rather than to the scheduler because the two callers
+ * are both here: a player genuinely leaving (`leave`) and a reaped monster
+ * (`reap`). engine/talents.ts's own note — *"`forget()` is called from the one
+ * place actors are removed"* — is the contract this satisfies.
+ */
+export type TalentRuntime = TalentResolution & {
+  /** Drop this actor's sheet and every talent effect keyed to it. */
+  forget(actorId: string): void;
+};
+
 export type TurnEngineOptions = {
   readonly world: World;
   /**
@@ -233,6 +249,32 @@ export type TurnEngineOptions = {
    * floor and the party already standing somewhere else.
    */
   readonly reseedFloor?: (world: World) => void;
+  /**
+   * THE TALENT RUNTIME (see `TalentRuntime` and `TalentResolution`).
+   *
+   * Present → `IntentKind.Talent` resolves for real inside the pump, the AP/MP
+   * budget refills on the base clock, `movedThisTurn` gets its writer, and a
+   * body that leaves the world takes its sheet with it.
+   *
+   * ABSENT → M3 exactly: every talent intent is refused with `no_talent_effect`
+   * and nothing else changes. Optional for the same reason `downed` and
+   * `parties` are — a test that builds `createTurnEngine({ world })` describes
+   * the same game it always did.
+   *
+   * SEPARATE FROM `talents` ABOVE, and both are needed. `TalentBook` is the
+   * READ-ONLY submission gate (what is in your hotbar, may this be sent); this
+   * is the RESOLUTION half (what actually happens, what it costs). Splitting
+   * them is what makes the refund rule free: nothing is deducted at submission.
+   */
+  readonly talentRuntime?: TalentRuntime;
+  /**
+   * THE STATUS TABLE (engine/effects.ts). Who is bleeding, stunned, slowed.
+   *
+   * Read here for ONE purpose: `reap` has to clear it, and it is the first entry
+   * on the cleanup contract. A server with no status system wired in passes
+   * nothing and the reap simply has one fewer table to empty.
+   */
+  readonly effects?: EffectState;
 };
 
 const OK: IntentResult = { ok: true };
@@ -443,6 +485,7 @@ function resetFloor(
   restored: readonly string[],
   reseedFloor: (world: World) => void,
   log: TurnLogger,
+  reap: (actorId: string) => boolean,
 ): void {
   // 1 — the party, out of the fight.
   for (const id of restored) {
@@ -451,8 +494,16 @@ function resetFloor(
   }
 
   // 2 — the hostiles, back at their authored positions.
+  //
+  // ═══ THROUGH `reap`, NOT `world.removeActor` DIRECTLY, AND IT MATTERS ═══
+  // content/encounter.ts:99 re-seeds with STABLE IDS, so the husk that stands up
+  // after a reset carries the same key every side table used. Delete it from the
+  // world alone and the new body inherits the old one's talent effects — a
+  // re-seeded monster that is still Marked, still Taunted, still counting down a
+  // Guard it never received. `reap` is the one function that empties all five
+  // tables in the one correct order.
   for (const actor of world.allActors()) {
-    if (actor.kind === 'monster') world.removeActor(actor.id);
+    if (actor.kind === 'monster') reap(actor.id);
   }
   // ...AND EVERYTHING STILL IN THE AIR, BEFORE THE FLOOR IS RE-SEEDED.
   // An orb outlives the body that fired it by design (engine/projectile.ts: the
@@ -500,7 +551,47 @@ function toWireEvents(
         });
         break;
       case 'attacked':
-        out.push(...hitToWire(world, ev.id, ev.targetId, ev.damage, ev.killed, ev.hp, ev.at));
+        out.push(
+          ...hitToWire(
+            world,
+            ev.id,
+            ev.targetId,
+            ev.hit,
+            ev.damage,
+            ev.killed,
+            ev.hp,
+            ev.at,
+            ev.healed,
+          ),
+        );
+        break;
+      /**
+       * THE TALENT STAMP. One frame; the victims arrive as their own `attacked`
+       * events immediately after this, exactly as a weapon swing's do.
+       *
+       * The whole receiving half was written and waiting: protocol.ts:1599-1616
+       * declares the frame (`TalentEvent`, protocol.ts:1619), the gateway's
+       * `case 'talent': return { …t: 'used', ev: event }` fans it out, and the
+       * client's `case 'used':` in `applyServerMsg` draws it. This `case` is the
+       * producer that was missing.
+       *
+       * CITED BY SYMBOL. The two line numbers that used to be here — gateway.ts:
+       * 996-997 and client/main.ts:3376 — both drifted the moment anything above
+       * them grew, and 996-997 landed on a `persist?: PersistPort` doc comment,
+       * which reads as "the gateway never forwards a talent" and invites a
+       * SECOND fan-out path beside the one that already works.
+       */
+      case 'talent_used':
+        out.push({
+          k: 'talent',
+          id: ev.id,
+          talentId: ev.talentId,
+          x: ev.at.x,
+          y: ev.at.y,
+          shape: ev.shape,
+          radius: ev.radius,
+          ...(ev.targetId === undefined ? {} : { targetId: ev.targetId }),
+        });
         break;
       case 'sweep':
         // Only the sweep lane unpacks these; in the player lane a sweep event
@@ -633,12 +724,55 @@ function hitToWire(
   world: World,
   attackerId: string,
   targetId: string,
+  hit: boolean,
   amount: number,
   killed: boolean,
   hp: number,
   at: TileXY,
+  /**
+   * HP PUT BACK. Trailing and defaulted because exactly one of the three callers
+   * can produce it — the player lane's talent blows — and a monster sweep or a
+   * travelling orb has nothing to say here. See `Blow.healed`.
+   */
+  healed = 0,
 ): TurnEvent[] {
-  const victim = world.getActor(targetId);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A HEAL IS NOT A SWING: NO `attack` FRAME, AND THEREFORE NO SWING ANYWHERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `TalentHit.healed` was dropped in the `Blow` mapping, so Mend Wounds arrived
+   * as `hit: true, damage: 0` and the whole room read:
+   *
+   *     Ren uses Mend Wounds.
+   *     Ren hits Ren.       0 damage. Ren 41.5/54.
+   *     Ren hits Alex.      0 damage. Alex 31/54.
+   *
+   * ...with render/sweep.ts stamping the STRUCK-TILE marker on both allies,
+   * because that marker hangs off the `attack` frame. Suppressing the frame
+   * removes the verb, the marker and the miss/hit read in one line — nothing
+   * downstream needed a new case.
+   *
+   * THE `damage` FRAME STILL GOES OUT, because the client's hp is corrected from
+   * the absolute number on it and a heal nobody is told about is a health bar
+   * that stays wrong until the next resync. It carries `healed` so the Case Log
+   * can say "patches up" instead of "0 damage" — see `DamageEvent.healed`.
+   */
+  if (healed > 0) {
+    const healedVictim = world.getActor(targetId);
+    return [
+      {
+        k: 'damage',
+        id: targetId,
+        amount: 0,
+        healed,
+        hp,
+        maxHp: healedVictim?.maxHp ?? 0,
+        sourceId: attackerId,
+      },
+    ];
+  }
+
   const out: TurnEvent[] = [
     {
       k: 'attack',
@@ -646,17 +780,40 @@ function hitToWire(
       targetId,
       x: at.x,
       y: at.y,
-      hit: true,
-    },
-    {
-      k: 'damage',
-      id: targetId,
-      amount,
-      hp,
-      maxHp: victim?.maxHp ?? 0,
-      sourceId: attackerId,
+      hit,
     },
   ];
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A MISS EMITS THE `attack` FRAME ALONE. NO DAMAGE, NO DEATH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `AttackEvent.hit` has been on the wire since M2 and both readers were
+   * already finished — `client/render/sweep.ts`'s `case 'attack'` picks the
+   * marker off `event.hit`, and the gateway's `recordFor` `case 'attack'`
+   * narrates "Watchman misses Bent Husk." Both by symbol: gateway.ts:2563 is a
+   * `sendTurn(...)` call today, and a reader who follows it concludes no miss
+   * narration exists and writes a second one.
+   * The PRODUCER was the only liar: it hard-coded `true` because nothing
+   * upstream of it could miss.
+   *
+   * Emitting a `damage` frame here would apply hp from a blow that never landed,
+   * and a `death` frame would kill somebody with it. A miss is not a refusal
+   * either: a refusal produces no `attack` frame at all, costs zero energy and
+   * re-prompts (`PumpResult.refusals`).
+   */
+  if (!hit) return out;
+
+  const victim = world.getActor(targetId);
+  out.push({
+    k: 'damage',
+    id: targetId,
+    amount,
+    hp,
+    maxHp: victim?.maxHp ?? 0,
+    sourceId: attackerId,
+  });
   if (killed) out.push({ k: 'death', id: targetId, killerId: attackerId });
   return out;
 }
@@ -677,7 +834,16 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
         break;
       case 'attack':
         out.push(
-          ...hitToWire(world, step.id, step.targetId, step.damage, step.killed, step.hp, step.at),
+          ...hitToWire(
+            world,
+            step.id,
+            step.targetId,
+            step.hit,
+            step.damage,
+            step.killed,
+            step.hp,
+            step.at,
+          ),
         );
         break;
       // A status that landed DURING the monster turn. It rides inside the batch
@@ -722,7 +888,43 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
   return out;
 }
 
-export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrier: Barrier } {
+/**
+ * What one pump produced, plus THE BODIES THAT ARE READY TO BE BURIED.
+ *
+ * A WIDENING OF the gateway's `PumpResult` rather than an edit to it, for the
+ * reason that type's own header gives: the contract is INJECTED, NOT IMPORTED —
+ * eslint bans `engine/** -> net/**` and net/ does not import the engine, so each
+ * side states the shape it needs and the compiler proves they meet. A caller
+ * still typed as the narrower `PumpResult` simply cannot see `reaped`, which is
+ * correct: it has no `reap` to call either.
+ */
+export type ReapingPumpResult = PumpResult & {
+  /**
+   * Monsters that died during this pump, in the order they fell. STILL IN THE
+   * WORLD — see `createTurnEngine`'s `reap`, and `PumpResult.reaped` in
+   * engine/scheduler.ts for why the deletion is the caller's and not the pump's.
+   */
+  readonly reaped: readonly string[];
+};
+
+/**
+ * The adapter, plus the two things the gateway needs that the narrow port does
+ * not declare: the barrier instance (shared, because its Standing By counters
+ * outlive every pump) and `reap`.
+ */
+export type ReapingTurnEngine = Omit<TurnEngine, 'pump'> & {
+  readonly barrier: Barrier;
+  pump(): ReapingPumpResult;
+  /**
+   * BURY ONE MONSTER — the full cleanup contract, in order, ending with the
+   * world. Answers false for a player and for an unknown id; calling it twice is
+   * free. Drain `ReapingPumpResult.reaped` through this and broadcast one
+   * `{t:'left', id}` per body.
+   */
+  reap(actorId: string): boolean;
+};
+
+export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
   const { world } = opts;
   const now = opts.now ?? (() => Date.now());
   const barrier = opts.barrier ?? createBarrier();
@@ -746,6 +948,81 @@ export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrie
    * instead of an evening spent reading a Case Log that looks fine.
    */
   const lastWipeTurn = new Map<string, number>();
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * BURY A MONSTER. THE ONE FUNCTION THAT REMOVES A BODY FROM THE WORLD.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * ToME ends a death at `Actor.lua:2975`, which calls
+   * `engines/default/engine/interface/ActorLife.lua:86-94`:
+   *
+   * ```lua
+   * if game.level:hasEntity(self) then game.level:removeEntity(self) end
+   * ```
+   *
+   * DELIBERATE DEVIATION, RECORDED SO IT IS NOT RE-LITIGATED: upstream removes
+   * BEFORE its log line because it still holds the object reference. Our Record
+   * lane re-resolves every id through `world.getActor` after the pump has
+   * returned, so we remove AFTER the narration — the caller drains
+   * `PumpResult.reaped` in the window between broadcasting the record and the
+   * resync. Reap inside the pump and two readers degrade silently: `hitToWire`
+   * ships `maxHp: 0` and the Case Log narrates "someone 0/0".
+   *
+   * ═══ AND ONE READER THE WINDOW DOES *NOT* SAVE, STATED SO NOBODY RELIES ON
+   * IT ═══
+   * An orb in flight is attributed to `proj.sourceId`, and the window only
+   * covers the pump the shooter died in. The wraith authors `projSpeed 2` over
+   * `attackRange 6`, so its orb arrives two or three GAME TURNS later, in a pump
+   * where this body is long gone. Ordering cannot fix that — the gateway keeps a
+   * name memo for exactly as long as something is in the air (`reapedNames` in
+   * net/gateway.ts). Do not add "and an orb keeps its shooter" to the list
+   * above; it does not.
+   *
+   * ALSO DECLINED, IN THE SAME BREATH: `bloodyDeath` (Actor.lua:3008,
+   * BloodyDeath.lua:29-51). It is a terrain tint needing a per-tile layer the
+   * renderer does not have, and it injects `1 + 2n` UNLABELLED draws into the
+   * middle of every kill — which is exactly the thing replay-from-seed cannot
+   * survive.
+   *
+   * ═══ THE ORDER IS THE CONTRACT, AND `world.removeActor` IS LAST ═══
+   * Once the body is out of the world there is no way left to enumerate which
+   * side tables still hold its id: every one of them is keyed by a string and
+   * none of them can be walked backwards. So the world deletion is the last
+   * line, always.
+   *
+   * ═══ THE GUARD IS POSITIVE. `kind === 'monster'`, NEVER "not a player" ═══
+   * `world.removePlayer` IS `world.removeActor` — the same closure, the
+   * `removePlayer: removeActor` row in world.ts's returned literal, cited by
+   * symbol because a line number there drifts every time the file grows — so
+   * there is no type-level protection here at all. A DOWNED body is
+   * `alive === false` by design and an ERASED one still has to be there for an
+   * ally to walk to; engine/downed.ts:20-36 is explicit that M4 ships no
+   * permadeath and that deleting a body loses somebody's character. A negative
+   * guard would quietly delete both the first time an unexpected `kind` appears.
+   *
+   * ═══ TWO THINGS ARE DELIBERATELY NOT CLEANED ═══
+   * ORBS IN FLIGHT — engine/projectile.ts is explicit that the shooter may be a
+   * corpse three turns later; the orb carries everything it needs, and the sky
+   * is cleared separately and deliberately by `resetFloor`.
+   * OTHER MONSTERS' `ai.targetId` — npc.ts:186-196 self-heals: a target that is
+   * no longer visible simply fails the `find` and a new one is acquired.
+   *
+   * @returns whether a body was actually removed. False for a player, for an
+   * unknown id, and for anything already reaped — so calling it twice is free.
+   */
+  const reap = (actorId: string): boolean => {
+    const actor = world.getActor(actorId);
+    if (actor === undefined) return false;
+    if (actor.kind !== 'monster') return false;
+
+    if (opts.effects !== undefined) forgetEffects(opts.effects, actorId);
+    opts.talentRuntime?.forget(actorId);
+    if (opts.downed !== undefined) forgetDowned(opts.downed, actorId);
+    if (opts.parties !== undefined) forgetParty(opts.parties, actorId);
+    barrier.forget(actorId);
+    return world.removeActor(actorId);
+  };
 
   /**
    * Built fresh rather than cached. The quorum depends on who is conscious and
@@ -865,6 +1142,11 @@ export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrie
       // A genuine departure, not a dropped socket. Drop the bookkeeping too,
       // or a rejoining id inherits the old Standing By counters.
       barrier.forget(actorId);
+      // AND THE TALENT SHEET, beside it: engine/talents.ts keys its sheets and
+      // its Guard/Taunt/Mark table by actor id, and an id that comes back —
+      // `actorIdForUser` is a stable hash, so the same player returning tomorrow
+      // IS the same id — would inherit whatever was left on it.
+      opts.talentRuntime?.forget(actorId);
       // AND THE PARTY, for the same reason: a party row pointing at a body that
       // is no longer in the world would scope a barrier to somebody who cannot
       // block, and the pane would draw a member nobody can reach. NOT the
@@ -1326,7 +1608,7 @@ export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrie
       }
     },
 
-    pump(): PumpResult {
+    pump(): ReapingPumpResult {
       // `downed` is threaded in rather than created here because a five-turn
       // countdown has to survive the pump that ticks it — see the option's note.
       // Undefined switches every survival branch in the scheduler off, which is
@@ -1339,7 +1621,46 @@ export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrie
         // across pumps, and it is what makes the barrier and the wipe per-party
         // inside the tick loop rather than only at the frames around it.
         parties: opts.parties,
+        // ...and the talent seam, for the third time and the same reason: the
+        // sheets live across pumps. Absent switches every talent branch in the
+        // scheduler off, which is the M3 behaviour exactly.
+        talents: opts.talentRuntime,
       });
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WHICH BODY EACH ENROLLED id NAMED, CAPTURED BEFORE THE FLOOR CAN MOVE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ═══ THE BUG THIS EXISTS TO CLOSE — VERIFIED BY RUNNING IT ═══
+       * The caller drains `reaped` by BARE ID after this method returns. On a
+       * pump where a monster died AND the party wiped, `resetFloor` below has
+       * already buried every monster and `reseedFloor` has already re-minted the
+       * encounter with STABLE IDS (`mon_<template.id>`, content/encounter.ts).
+       * So by the time the gateway calls `reap('mon_index_husk')` the id names a
+       * BRAND NEW, FULL-HEALTH husk — and `reap` finds it, passes its
+       * `kind === 'monster'` guard, and deletes it. The gateway's own comment
+       * asserted the opposite ("False means the body was already gone"); `reap`
+       * answered TRUE. The resync immediately after then faithfully shipped a
+       * reset floor that was permanently one monster short, and every later
+       * wipe-with-a-kill drained one more. From inside the game: "the husk just
+       * didn't come back."
+       *
+       * ═══ IDENTITY, NOT PRESENCE ═══
+       * `world.getActor(id) === body` is the whole test, and it has to be the
+       * OBJECT and not merely "is something there", because the re-seeded body
+       * answers to the same string. An id that resolves to `undefined` after the
+       * reset is kept: `resetFloor` buried it, `reap` will answer false, and the
+       * `left` frame is still true of the body that died.
+       *
+       * ═══ WHY HERE AND NOT INSIDE `resetFloor` ═══
+       * `resetFloor` runs once per wiping PARTY and reaps every monster on the
+       * floor — it cannot tell which of those ids the scheduler enrolled, and
+       * clearing the whole list there would also drop the bodies a surviving
+       * party legitimately killed in the same pump. The identity check answers
+       * both cases with one rule.
+       */
+      const enrolled = result.reaped.map((id) => [id, world.getActor(id)] as const);
 
       // ═════════════════════════════════════════════════════════════════════
       // THE OTHER HALF OF A FLOOR RESET, AND IT HAPPENS HERE — FIRST.
@@ -1364,7 +1685,7 @@ export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrie
       }
 
       for (const wipe of wipes) {
-        resetFloor(world, wipe.restored, reseedFloor, log);
+        resetFloor(world, wipe.restored, reseedFloor, log, reap);
 
         // THE CHURN ALARM. See `lastWipeTurn` and `WIPE_CHURN_TURNS`: a party
         // that wipes again this close to its last wipe never got out of the
@@ -1424,8 +1745,24 @@ export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrie
         playerEvents: toWireEvents(world, playerEvents, 'player'),
         sweep: toWireEvents(world, sweepEvents, 'sweep'),
         refusals,
+        // ═══ STRAIGHT THROUGH, AND STILL IN THE WORLD — EXCEPT THE ONES A
+        // FLOOR RESET ALREADY REPLACED ═══
+        // The bodies are named, not buried. The caller reaps them AFTER it has
+        // broadcast the record and BEFORE the resync — see `reap`, and
+        // `PumpResult.reaped` in engine/scheduler.ts for what breaks if the
+        // deletion happens any earlier.
+        //
+        // The filter is the identity check taken above: an id whose body was
+        // replaced by `reseedFloor` in this same pump names a LIVING monster
+        // now, and forwarding it would have the caller delete the fresh one.
+        // Read `enrolled`'s note — this was reproduced end to end.
+        reaped: enrolled
+          .filter(([id, body]) => body === undefined || world.getActor(id) === body)
+          .map(([id]) => id),
       };
     },
+
+    reap,
 
     turnState,
   };

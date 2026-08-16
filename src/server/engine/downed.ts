@@ -54,8 +54,14 @@
  *                             a body and go for whoever is still standing.
  *   world.ts `actorAt`       → skips ⇒ prone, does not block the tile, so a
  *                             rescuer can stand on top of you in a doorway.
- *   actor.ts `applyDamage`   → returns 0 ⇒ a downed body cannot be corpse-camped
+ *   damage.ts `applyDamage`  → returns 0 ⇒ a downed body cannot be corpse-camped
  *                             to death, which would make the countdown a lie.
+ *                             THE GUARD IS damage.ts:589, `if (!target.alive ||
+ *                             resolved.amount <= 0) return empty;`. This row read
+ *                             `actor.ts applyDamage` until the scheduler moved
+ *                             onto the real pipeline and that function was
+ *                             deleted; a reader who greps actor.ts for it now
+ *                             finds only a tombstone.
  *   actor.ts `actBase`       → returns early ⇒ no regeneration, no status ticks
  *                             and NO COOLDOWN TICKS while down. The wound you
  *                             fell with is the wound you get up with, and a

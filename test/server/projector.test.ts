@@ -624,16 +624,31 @@ describe('projectTurn', () => {
   });
 
   it('falls back to the generic portrait rather than inventing an asset name', () => {
-    // `addPlayer` rotates the six class sprites; the fourth is the Enforcer,
-    // which has no cut icon. A key for art that is not on disk would draw a
-    // missing-asset box in the middle of the most-looked-at UI in the game.
+    // ═══ THE THREE REAL CLASSES HAVE FACES; NOTHING ELSE IS PROMISED ONE ═══
+    //
+    // `PORTRAIT_BY_CLASS` is keyed off the three sprite families in
+    // content/classes.ts, which is every class `classForJoin` can hand out. A
+    // body can still arrive with a sprite outside that set: `world.ts`'s
+    // classless fallback rotation is six wide (three of them are art for classes
+    // that do not exist), a GM command can dress a body as anything, and M6's
+    // fourth class will exist as a sprite before it exists as a portrait.
+    //
+    // The answer must be a REAL asset key. `icon_character_the_detective` is a
+    // cut portrait rather than a placeholder, and "a detective" is what the
+    // fiction calls all of them anyway. A key for art that is not on disk draws
+    // a violet fallback box in the middle of the most-looked-at UI in the game.
+    //
+    // THE SPRITE IS NAMED EXPLICITLY rather than reached by counting joins: what
+    // is under test is the LOOKUP, and a test that depended on the join
+    // rotation would be measuring `world.ts` instead — and would start passing
+    // for the wrong reason the day that rotation changed width.
     const world = room();
-    world.addPlayer('actor_a', 'Ann');
-    world.addPlayer('actor_b', 'Bo');
-    world.addPlayer('actor_c', 'Cy');
-    const dee = world.addPlayer('actor_d', 'Dee');
+    const ann = world.addPlayer('actor_a', 'Ann', { sprite: 'chr_player_watchman_s' });
+    world.addPlayer('actor_b', 'Bo', { sprite: 'chr_player_inspector_s' });
+    world.addPlayer('actor_c', 'Cy', { sprite: 'chr_player_alchemist_s' });
+    world.addPlayer('actor_d', 'Dee', { sprite: 'chr_player_enforcer_s' });
 
-    const msg = projectTurn(dee, world, barrier(), null);
+    const msg = projectTurn(ann, world, barrier(), null);
     expect(msg.actors.map((c) => c.portrait)).toEqual([
       'icon_character_the_watchman',
       'icon_character_the_inspector',

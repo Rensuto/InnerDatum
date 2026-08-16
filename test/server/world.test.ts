@@ -5,7 +5,8 @@ import { DIR_ORDER, dirVector } from '../../src/shared/coords.ts';
 import { TEST_LEVEL_SPAWNS, canWalk } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import type { Dir, TileXY } from '../../src/shared/coords.ts';
-import type { World } from '../../src/server/world/world.ts';
+import type { PlayerActor } from '../../src/server/engine/actor.ts';
+import type { Actor, World } from '../../src/server/world/world.ts';
 
 /**
  * `tryMove` is the server's authority in one function: the client sends a
@@ -33,6 +34,19 @@ function dirFromTo(from: TileXY, to: TileXY): Dir | undefined {
     const v = dirVector(dir);
     return from.x + v.dx === to.x && from.y + v.dy === to.y;
   });
+}
+
+/**
+ * A body, narrowed to a PLAYER.
+ *
+ * `addPlayer` returns the `Actor` union, and `classId` lives on `PlayerActor`
+ * alone — a monster has no class, so the discriminant is what makes the field
+ * reachable at all. Throwing is correct here: a monster coming back out of
+ * `addPlayer` is a broken world, not a failed assertion.
+ */
+function asPlayer(actor: Actor): PlayerActor {
+  if (actor.kind !== ActorKind.Player) throw new Error(`test fixture: ${actor.id} is not a player`);
+  return actor;
 }
 
 /** The world's stored position, read back rather than trusted from a closure. */
@@ -102,6 +116,90 @@ describe('world.addPlayer', () => {
     expect(rejoined).toBe(original);
     expect(positionOf(world, 'a')).toEqual(afterMoving);
     expect(world.allActors()).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CLASS OVERLAY — pushed down from the gateway, never pulled up
+// ---------------------------------------------------------------------------
+
+describe('world.addPlayer with a class overlay', () => {
+  it('is unchanged with two arguments — a classless body, exactly as before', () => {
+    // ═══ THE OPTIONALITY IS LOAD-BEARING, NOT POLITE ═══
+    // Roughly forty two-argument call sites exist across this suite and each one
+    // describes the same game it always did: the rotating fallback sprite, the
+    // 60 hp default, `DEFAULT_PLAYER_COMBAT`, and NO class label at all. A body
+    // that quietly acquired a class here would change every fixture's damage.
+    const world = createWorld('overlay-absent');
+    const alice = asPlayer(world.addPlayer('a', 'Alice'));
+
+    expect(alice.sprite).toBe('chr_player_watchman_s');
+    expect(alice.maxHp).toBe(60);
+    expect(alice.hp).toBe(60);
+    expect(alice.classId).toBeUndefined();
+    // The classless fallback still rotates through all six sprite families, and
+    // that is what makes it the fallback rather than a class list — see
+    // `PLAYER_SPRITES`.
+    expect(world.addPlayer('b', 'Bob').sprite).toBe('chr_player_inspector_s');
+  });
+
+  it('applies every field it is given, and takes its hp from the overlay', () => {
+    // The gateway reads these five off a `ClassDef` and hands them down; world.ts
+    // may not import content/classes.ts, because that closes
+    // `world -> content/classes -> engine/talents -> world`.
+    //
+    // `maxHp` matters most: `applyRestore` clamps a restored hp to it, so a body
+    // that got its class one line late is a Watchman filed down to 60.
+    const world = createWorld('overlay-present');
+    const sheet = { weapon: { dam: 33 }, range: 1.5, minRange: 0 } as const;
+
+    const watchman = asPlayer(
+      world.addPlayer('a', 'Alice', {
+        sprite: 'chr_player_watchman_s',
+        maxHp: 72,
+        hpRegen: 0.25,
+        combat: sheet,
+        classId: 'watchman',
+      }),
+    );
+
+    expect(watchman.sprite).toBe('chr_player_watchman_s');
+    expect(watchman.maxHp).toBe(72);
+    // A NEW body starts full, and full is the overlay's maximum rather than the
+    // placeholder's.
+    expect(watchman.hp).toBe(72);
+    expect(watchman.hpRegen).toBe(0.25);
+    // WHOLESALE, never merged with the placeholder: half a class sheet blended
+    // with `DEFAULT_PLAYER_COMBAT` is a body nobody authored.
+    expect(watchman.combat).toBe(sheet);
+    expect(watchman.classId).toBe('watchman');
+  });
+
+  it('takes a partial overlay without inventing the rest of a class', () => {
+    // An overlay that names only a sprite is not half a class: every other field
+    // is optional on `PlayerInit` and falls back to its documented placeholder.
+    const world = createWorld('overlay-partial');
+    const actor = asPlayer(world.addPlayer('a', 'Alice', { sprite: 'chr_player_alchemist_s' }));
+
+    expect(actor.sprite).toBe('chr_player_alchemist_s');
+    expect(actor.maxHp).toBe(60);
+    expect(actor.classId).toBeUndefined();
+  });
+
+  it('is IGNORED on the resume path, like every other argument', () => {
+    // `addPlayer` is idempotent on id — that is the resume path, and a
+    // reconnecting socket must reattach to its body rather than re-clothe it.
+    // Re-applying a class here would reset a returning player to full health.
+    const world = createWorld('overlay-idempotent');
+    const first = world.addPlayer('a', 'Alice');
+    first.hp = 12;
+
+    const again = asPlayer(world.addPlayer('a', 'Alice', { maxHp: 72, classId: 'watchman' }));
+
+    expect(again).toBe(first);
+    expect(again.hp).toBe(12);
+    expect(again.maxHp).toBe(60);
+    expect(again.classId).toBeUndefined();
   });
 });
 

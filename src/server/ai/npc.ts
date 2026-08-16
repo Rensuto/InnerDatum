@@ -42,19 +42,23 @@
  * header of engine/combat.ts). This file keeps both, and the split is not
  * arbitrary:
  *
- *   `chase`  asks a MOVEMENT question — "can I touch it from here?" — so it uses
- *            CHEBYSHEV against `attackRange`. Chebyshev 1 IS the Moore
- *            neighbourhood, which is what makes bump-attack work on a diagonal,
- *            and it is what the scheduler's own legality check uses today.
- *   `kite`   asks a RANGE question — "am I in my band?" — so it uses
- *            `combatDistance`, the same Euclidean function `canAttack` refuses
- *            on. Importing it rather than re-deriving it is the point: a second
- *            copy of a distance rule is how you get a monster that walks to a
- *            tile it then refuses to shoot from.
+ *   MOVEMENT — `approach`, `backAway` and the flanking sides are all Chebyshev
+ *            steps, because a diagonal step costs what an orthogonal one does.
+ *   RANGE  — every "may I attack from here?" goes through `rangeRefusal`, which
+ *            is the reach-and-dead-zone half of `canAttack` itself, exported
+ *            from engine/combat.ts for exactly this call.
  *
- * Because Euclidean >= Chebyshev everywhere, a kiter that thinks it is in range
- * is in range under BOTH checks. The AI is conservative in the only direction
- * that never produces a refused intent.
+ * ═══ THE AI MUST ASK THE QUESTION THE LEGALITY CHECK WILL ASK ═══
+ * `chase` used to test `chebyshev(self, target) <= self.attackRange` while
+ * `canAttack` refused on EUCLIDEAN. For the current roster the two agree — a
+ * husk's `attackRange` 1 against `combat.range` 1.5, and the wraith's
+ * `preferredRange` 4 gates long before its `attackRange` 6 — so nothing was
+ * visibly wrong. But a creature whose AI band is one tile WIDER than its reach
+ * submits an attack that is refused every single turn: the intent costs the
+ * turn (a monster does not get refunded), and the sweep shows a `blocked` step,
+ * forever. From outside that is an AI freeze, not a range bug, and nothing fails
+ * anywhere. Asking one function removes the class of bug rather than the
+ * instance.
  *
  * ===========================================================================
  * DETERMINISM
@@ -81,10 +85,10 @@
  * and the bans on `Date.now`/`Math.random`.
  */
 
-import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
+import { DIR_ORDER, DIR_VECTORS } from '../../shared/coords.ts';
 import { findPath } from '../../shared/path.ts';
 import { AiProfile, HOLD_INTENT, IntentKind } from '../engine/actor.ts';
-import { combatDistance } from '../engine/combat.ts';
+import { combatDistance, rangeRefusal } from '../engine/combat.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { PassableFn } from '../../shared/path.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -264,11 +268,13 @@ function supportOf(actor: EngineActor, ctx: AiCtx): number {
  * straight step is usually still progress, and a monster that freezes because
  * A* gave up looks broken in a way a monster that shuffles does not.
  *
- * CHEBYSHEV, deliberately: see the two-metrics note in the file header. Reach 1
- * is the eight-neighbourhood, and bump-attack is a movement rule.
+ * `rangeRefusal` and not Chebyshev: see the two-metrics note in the file header.
+ * For a melee creature it answers over a circle of radius `MELEE_REACH`, which
+ * IS the eight-neighbourhood — so bump-attack on a diagonal is unchanged — but
+ * it is the same function the scheduler will refuse on, which is the point.
  */
 function chase(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
-  if (chebyshev(self, target) <= self.attackRange) {
+  if (rangeRefusal(self, target) === null) {
     self.ai.blockedTurns = 0;
     return { kind: IntentKind.Attack, targetId: target.id };
   }
@@ -452,7 +458,12 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
     return advance(self, target, ctx, self.ai.minRange);
   }
 
-  if (distance <= self.attackRange) {
+  // THE SAME FUNCTION THE SCHEDULER WILL REFUSE ON. It re-tests the dead zone
+  // as well as the reach, which is redundant with the branch above and
+  // deliberately so: the two numbers (`ai.minRange` and `combat.minRange`) are
+  // proved equal by `validateTemplate`, and this is the line that stays correct
+  // if one of them ever drifts.
+  if (rangeRefusal(self, target) === null) {
     // It is standing where it wants to stand, so it is not blocked by anything —
     // whether or not it chooses to shoot this turn. Reset before the gate below,
     // so "held fire" never accumulates toward an escalation the kiter must not

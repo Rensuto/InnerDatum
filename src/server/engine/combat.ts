@@ -67,20 +67,23 @@
  *    zero of them interceptors (PLAN.md).
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * WIRING NOTE FOR WHOEVER CONNECTS THIS TO THE SCHEDULER
+ * THE SCHEDULER IS NOW ON THIS PATH — WHAT THAT COST AND WHY IT WAS ONE CHANGE
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `scheduler.ts#strike` is still the M2 placeholder (`rng.int(damageMin,
- * damageMax)` straight into `actor.ts#applyDamage`) and it range-checks with
- * CHEBYSHEV. This file uses EUCLIDEAN distance, because that is what ToME's
- * `core.fov.distance` is and it is what every range and radius in the game is
- * measured with (docs/tome-mechanics.md § 10) — a Chebyshev range ring is a
- * square, and the M3 targeting UI draws a circle.
+ * HISTORY, KEPT BECAUSE IT IS THE REASON `MELEE_REACH` EXISTS. `scheduler.ts#
+ * strike` used to be the M2 placeholder — `rng.int(damageMin, damageMax)`
+ * straight into `actor.ts#applyDamage` — and it range-checked with CHEBYSHEV,
+ * while this file measures in EUCLIDEAN because that is what ToME's
+ * `core.fov.distance` is and what every range and radius in the game is measured
+ * with (docs/tome-mechanics.md § 10). A Chebyshev range ring is a square; the
+ * targeting UI draws a circle.
  *
- * Swapping the scheduler over is therefore ONE change, not two: the range check
- * and the resolution must move together. Leaving `strike` on Chebyshev while
- * `attackTarget` refuses on Euclidean produces attacks that pass the scheduler's
- * legality check and then quietly do nothing.
+ * Swapping the scheduler over was therefore ONE change, not two: the range check
+ * and the resolution had to move together. Leaving `strike` on Chebyshev while
+ * `attackTarget` refused on Euclidean produced attacks that passed the
+ * scheduler's legality check and then quietly did nothing — and the first thing
+ * that fell out of moving them together was that a Euclidean reach of exactly 1
+ * refuses every diagonal melee swing in the game. Hence `MELEE_REACH`.
  */
 
 import { checkHit } from '../../shared/checkhit.ts';
@@ -204,6 +207,40 @@ export type AttackResult =
 const DEFAULT_SHEET: CombatSheet = {};
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE EUCLIDEAN RADIUS THAT EQUALS THE MOORE NEIGHBOURHOOD. 1.5, AND THE
+ * ARITHMETIC IS THE WHOLE JUSTIFICATION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   the four diagonal neighbours sit at √2 = 1.4142…
+ *   the nearest NON-neighbour (two tiles orthogonally) sits at 2.0
+ *   1.5 is the only round number between them
+ *
+ * So a circle of radius 1.5 contains exactly the eight tiles around you and
+ * nothing else, which is what "melee" has to mean when the metric is Euclidean.
+ * content/monsters.ts:210-220 states the same argument from the content side —
+ * the √2 = 1.4142 two-metrics paragraph — and `validateTemplate`
+ * (content/monsters.ts:1207, against its `DIAGONAL_STEP = Math.SQRT2` at
+ * content/monsters.ts:1184) refuses any melee template whose `combat.range`
+ * excludes the diagonal.
+ *
+ * ═══ WHY A CONSTANT AND NOT A LITERAL, AND WHY `Math.max` BELOW ═══
+ * `EngineActor.attackRange` is CHEBYSHEV (engine/actor.ts:299-309): 1 means the
+ * eight-neighbourhood, which is what makes bump-attack work on a diagonal.
+ * Feeding that 1 into `canAttack` RAW, as a Euclidean radius, is precisely what
+ * refuses every diagonal melee attack in the game — the swing passes the
+ * scheduler and then quietly does nothing, which is the failure the wiring note
+ * at the top of this file warns about. `Math.max(attackRange, MELEE_REACH)`
+ * fixes every melee actor while leaving a ranged fixture that sets only
+ * `attackRange: 5` with the reach it asked for.
+ *
+ * It is EXPORTED because the class sheets (content/classes.ts) and every melee
+ * talent need the same number, and a second literal 1.5 somewhere else is a
+ * second definition of what melee means.
+ */
+export const MELEE_REACH = 1.5;
+
+/**
  * `core.fov.distance` — EUCLIDEAN.
  *
  * REIMPLEMENTED, not translated: `core.fov.*` is native C and absent from the
@@ -244,8 +281,46 @@ export function canAttack(
   if (!attacker.alive) return AttackRefusal.Dead;
   if (!target.alive) return AttackRefusal.TargetDead;
 
+  const outOfBand = rangeRefusal(attacker, target);
+  if (outOfBand !== null) return outOfBand;
+
+  // Melee needs no sight check — you are standing on them. Anything with reach
+  // does, or it shoots through the wall it is standing behind.
+  if (combatDistance(attacker, target) > 1 && !hasLineOfSight(world.level, attacker, target)) {
+    return AttackRefusal.NoLineOfSight;
+  }
+
+  return null;
+}
+
+/**
+ * THE BAND, AND NOTHING ELSE: too far, too close, or fine.
+ *
+ * Split out of `canAttack` so that `ai/npc.ts` can ask EXACTLY the question the
+ * legality check will ask, from a context that holds no level and therefore
+ * cannot answer the sight half. That is not a convenience — a monster whose AI
+ * band is wider than `canAttack`'s submits an attack that is refused every
+ * single turn, and a refused monster intent costs the turn and emits a `blocked`
+ * sweep step. From outside it reads as an AI freeze rather than as a range bug,
+ * forever, with nothing failing anywhere.
+ *
+ * The AI is safe to skip the sight clause because `visibleEnemies` (the
+ * scheduler's) only ever hands it targets it already has a clear line to.
+ *
+ * @param target anything with a position. It does NOT have to be an actor: the
+ * dead-zone half is also how a kiter tests a tile it is considering stepping on.
+ */
+export function rangeRefusal(
+  attacker: CombatActor,
+  target: { readonly x: number; readonly y: number },
+): AttackRefusal | null {
   const sheet = sheetOf(attacker);
-  const reach = sheet.range ?? attacker.attackRange ?? 1;
+  // `attackRange` IS CHEBYSHEV (engine/actor.ts:299-309) and this is a
+  // EUCLIDEAN radius, so it is floored at `MELEE_REACH` rather than used raw —
+  // read that constant's note, because a raw 1 here refuses all four diagonals.
+  // `Math.max` and not a blanket 1.5: a ranged fixture that sets only
+  // `attackRange: 5` keeps the five tiles it asked for.
+  const reach = sheet.range ?? Math.max(attacker.attackRange ?? 1, MELEE_REACH);
   const minRange = sheet.minRange ?? 0;
   const distance = combatDistance(attacker, target);
 
@@ -255,12 +330,6 @@ export function canAttack(
   // matching how the authored `min_range` reads in content/skills/*.json and how
   // the targeting ring's hole must be drawn.
   if (minRange > 0 && distance < minRange) return AttackRefusal.MinRange;
-
-  // Melee needs no sight check — you are standing on them. Anything with reach
-  // does, or it shoots through the wall it is standing behind.
-  if (distance > 1 && !hasLineOfSight(world.level, attacker, target)) {
-    return AttackRefusal.NoLineOfSight;
-  }
 
   return null;
 }

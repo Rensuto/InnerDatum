@@ -59,17 +59,26 @@
  * for each — verified present under client/public/assets/characters/. These are
  * asset KEYS, never paths; the client owns the manifest.
  *
- * PURE DATA + ONE REGISTRAR. No I/O, no clock, no randomness. This file is the
- * only thing that imports all twelve talent modules, which is what keeps
- * `engine/talents.ts` from importing them and turning the module graph into a
- * cycle.
+ * PURE DATA + ONE REGISTRAR + THE TWO SEAMS THAT NEED BOTH. No I/O, no clock,
+ * no randomness. This file is the only thing that imports all twelve talent
+ * modules, which is what keeps `engine/talents.ts` from importing them and
+ * turning the module graph into a cycle.
+ *
+ * The two seams are `classForJoin` (which class a joining body gets — the one
+ * place that decision is made) and `createTalentBook` (the read-only submission
+ * gate the turn adapter validates against). Both live here for the same reason
+ * the registrar does: they need the class definitions AND the engine, and this
+ * is the only layer allowed to see both.
  */
 
+import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   ClassId,
   RESOURCE_RULES,
   ResourceKind,
+  TalentRefusal,
+  canUseTalent,
   createTalentEngine,
   createTalentRegistry,
   createTalentSheet,
@@ -86,9 +95,12 @@ import { revolverShot, INSPECTOR_MIN_RANGE } from '../talents/revolver_shot.ts';
 import { sigil } from '../talents/sigil.ts';
 import { snipersMark } from '../talents/sniper_mark.ts';
 import { wardRush } from '../talents/ward_rush.ts';
+import { ErrorCode } from '../../shared/protocol.ts';
+import type { TileXY } from '../../shared/coords.ts';
 import type { LoadoutTalent, ResourceView } from '../../shared/protocol.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Talent, TalentEngine, TalentRegistry, TalentSheet } from '../engine/talents.ts';
+import type { Actor, World } from '../world/world.ts';
 
 /**
  * The 6-AP / 3-MP round, from `city_watchman.json`'s `max_ap: 6` / `max_mp: 3`
@@ -157,7 +169,22 @@ export const WATCHMAN: ClassDef = {
       damRange: 1.1,
       damMod: { str: 0.6 },
     },
-    range: 1,
+    /**
+     * ═══ MELEE_REACH, NOT 1, AND THE ARITHMETIC IS THE WHOLE REASON ═══
+     *
+     * `CombatSheet.range` is a EUCLIDEAN radius — `canAttack` measures with
+     * `combatDistance`, which is `core.fov.distance` (engine/combat.ts). The
+     * four diagonal neighbours sit at √2 = 1.4142…, so a reach of exactly 1
+     * REFUSES ALL FOUR DIAGONALS: the Watchman standing corner-to-corner with a
+     * husk passes the scheduler's legality check and then quietly does nothing.
+     * 1.5 is the only round number between √2 and the nearest non-neighbour at
+     * 2.0, which is what makes a circle of that radius exactly the eight tiles
+     * around you.
+     *
+     * Imported rather than written as 1.5 here, because a second literal is a
+     * second definition of what melee means — see the constant's own note.
+     */
+    range: MELEE_REACH,
     minRange: 0,
     damageType: DamageType.Physical,
   },
@@ -271,12 +298,53 @@ export const ALCHEMIST: ClassDef = {
 /** The three, in the order the art was cut and the order the picker shows them. */
 export const CLASSES: readonly ClassDef[] = [WATCHMAN, INSPECTOR, ALCHEMIST];
 
-const BY_ID: ReadonlyMap<ClassId, ClassDef> = new Map(
-  CLASSES.map((definition) => [definition.id, definition]),
+/**
+ * KEYED BY `string`, NOT BY `ClassId`, AND THAT IS THE POINT OF THE LOOKUP.
+ *
+ * Every id that reaches `classById` came off a DISK: `CharacterFile.classId` is
+ * a SOFT reference (persist/saves.ts) precisely so that a save written before a
+ * class was renamed — or by a build that had a fourth class — still parses. A
+ * map that could only be asked about ids this build already has would need the
+ * caller to narrow first, and the only way to narrow is to ask.
+ */
+const BY_ID: ReadonlyMap<string, ClassDef> = new Map(
+  CLASSES.map((definition) => [definition.id as string, definition]),
 );
 
-export function classById(id: ClassId): ClassDef | undefined {
-  return BY_ID.get(id);
+/** The class with this id, or undefined for one this build no longer has. */
+export function classById(id: string | null | undefined): ClassDef | undefined {
+  return id === null || id === undefined ? undefined : BY_ID.get(id);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH CLASS A JOINING BODY GETS. THE DECISION, IN EXACTLY ONE PLACE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE FILE WINS, ROTATION IS THE FALLBACK. `actorIdForUser` is a stable hash of
+ * the Discord snowflake (net/gateway.ts), so the same person returning tomorrow
+ * IS the same actor id — and a rotation counter is per-PROCESS and never
+ * decremented, so rotation alone would make somebody a different class every
+ * evening. Their character file is the only thing that remembers.
+ *
+ * A DANGLING id SUBSTITUTES RATHER THAN THROWS. `classById` answers undefined
+ * for a class this build no longer has, which is exactly the substitute-and-log
+ * path persist/saves.ts describes for a soft reference. The caller logs it; a
+ * player whose file names a deleted class gets a playable body rather than a
+ * refused connection.
+ *
+ * ROTATION RATHER THAN A FIXED DEFAULT, because three friends joining on the
+ * first evening the feature exists must not all be handed the same four
+ * buttons. There is no chooser yet — that is the next job — and this is the
+ * one line it replaces.
+ */
+export function classForJoin(savedClassId: string | null, rotation: number): ClassDef {
+  const saved = classById(savedClassId);
+  if (saved !== undefined) return saved;
+  // `CLASSES` is non-empty by construction (the arity check at the foot of this
+  // file throws at import time otherwise), but the index still needs a value
+  // under noUncheckedIndexedAccess and `!` is banned project-wide.
+  return CLASSES[((rotation % CLASSES.length) + CLASSES.length) % CLASSES.length] ?? WATCHMAN;
 }
 
 /**
@@ -382,6 +450,172 @@ export function toResourceView(sheet: TalentSheet): ResourceView {
     current: sheet.resource.value,
     max: sheet.resource.max,
     discrete: RESOURCE_RULES[sheet.resource.kind].discrete,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE TALENT BOOK — what the SUBMISSION GATE is allowed to ask
+// ---------------------------------------------------------------------------
+
+/**
+ * The refusal codes a talent submission may answer with.
+ *
+ * WRITTEN OUT RATHER THAN IMPORTED, and the duplication is deliberate: this is
+ * the same `Extract` net/gateway.ts declares as `TalentRefusal`, so the two
+ * unions are the identical type and the compiler proves they meet — but
+ * `src/server/content/**` importing `net/**` would be a runtime edge pointing
+ * the wrong way through the module graph.
+ */
+type RefusalCode = Extract<
+  ErrorCode,
+  | 'bad_message'
+  | 'not_your_turn'
+  | 'illegal_move'
+  | 'out_of_range'
+  | 'too_close'
+  | 'on_cooldown'
+  | 'no_resource'
+  | 'no_los'
+>;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ENGINE'S REFUSAL VOCABULARY -> THE CLIENT'S. FIFTEEN INTO EIGHT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `TalentRefusal` (engine/talents.ts) is about the RULE that said no;
+ * `ErrorCode` is about what the player is supposed to DO about it. The
+ * collapsing is where the meaning is:
+ *
+ *   TOO_CLOSE IS NEVER OUT_OF_RANGE. The two carry OPPOSITE instructions — one
+ *   says close in, the other says back away — and turn-engine.ts:317 calls
+ *   mislabelling them the documented way a positional class reads as broken.
+ *   The ordered check that produces the two is turn-engine.ts:1128 and the
+ *   emit sites are :1218 and :1228; the range cited here used to point at
+ *   `reap`'s doc block, which is about orbs in flight.
+ *   game-design.md § 2 makes `min_range 3` the single most important number in
+ *   the Inspector; this row is what keeps it legible.
+ *
+ *   THE THREE BUDGETS COLLAPSE. `no_ap`, `no_mp` and `no_resource` are one
+ *   sentence to a player: you cannot pay for that yet. AP and MP are
+ *   deliberately not on the wire (they are structurally incapable of being
+ *   short — see test/server/talent-resolution.ts's AP-cap guard), so a distinct
+ *   code would name a bar the client cannot draw.
+ *
+ *   "YOU DO NOT HAVE THAT TALENT" IS A BAD FRAME, NOT A GAME RULE. M3 loadouts
+ *   are FIXED, so a frame naming a talent that is not in your four — or one no
+ *   registry has ever heard of — was hand-crafted rather than clicked.
+ *
+ *   `dead` IS `not_your_turn`. "Not now", not "not there": the body is a corpse
+ *   or on the floor, and no amount of re-aiming will help.
+ *
+ *   THE FIVE TARGETING REFUSALS ARE ALL `illegal_move`. Blocked terrain, an
+ *   empty tile, yourself, an ally under a hostile talent, a hostile under an
+ *   ally talent — every one of them means "not at THAT", which is the one thing
+ *   a targeting UI can act on by asking for another tile.
+ */
+const REFUSAL_TO_CODE: Readonly<Record<TalentRefusal, RefusalCode>> = {
+  [TalentRefusal.MinRange]: ErrorCode.TooClose,
+  [TalentRefusal.OutOfRange]: ErrorCode.OutOfRange,
+  [TalentRefusal.NoLineOfSight]: ErrorCode.NoLos,
+  [TalentRefusal.OnCooldown]: ErrorCode.OnCooldown,
+  [TalentRefusal.NoAp]: ErrorCode.NoResource,
+  [TalentRefusal.NoMp]: ErrorCode.NoResource,
+  [TalentRefusal.NoResource]: ErrorCode.NoResource,
+  [TalentRefusal.NotLearned]: ErrorCode.BadMessage,
+  [TalentRefusal.UnknownTalent]: ErrorCode.BadMessage,
+  [TalentRefusal.Dead]: ErrorCode.NotYourTurn,
+  [TalentRefusal.Blocked]: ErrorCode.IllegalMove,
+  [TalentRefusal.NoTarget]: ErrorCode.IllegalMove,
+  [TalentRefusal.Self]: ErrorCode.IllegalMove,
+  [TalentRefusal.NotHostile]: ErrorCode.IllegalMove,
+  [TalentRefusal.NotAlly]: ErrorCode.IllegalMove,
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HOTBAR, THE RESOURCE AND THE LEGALITY CHECK, AS THE ADAPTER SEES THEM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * STRUCTURAL, NOT NOMINAL. The return value satisfies `TalentBook`
+ * (src/server/turn-engine.ts) by SHAPE, which is the same trick that file plays
+ * with the gateway's `TurnEngine`: the adapter declares the contract, this file
+ * meets it, and neither imports the other. `createTurnEngine({ talents: … })`
+ * type-checks against it at the one call site that has both — src/server/main.ts.
+ *
+ * ═══ THE SHEET IS AUTHORITATIVE, NOT THE `ClassDef` ═══
+ * `loadoutOf` maps `sheet.loadout` (the per-ACTOR ids) through the registry
+ * rather than reading `definition.loadout`. The two are the same four talents
+ * today and would stop being so the moment anything ever edits a sheet — and on
+ * that day the hotbar has to show what this body can actually use, not what its
+ * class was authored with. It is also what makes an actor with no sheet answer
+ * an empty hotbar rather than one belonging to a class it does not have.
+ *
+ * ═══ SUPPLYING `check` MAKES THE CATALOGUE FALLBACK DEAD CODE IN PRODUCTION ═══
+ * ...BY DESIGN, and turn-engine.ts:1171 says so out loud — "this branch is the
+ * catalogue-only fallback; running both would be two…", with the port doc at
+ * turn-engine.ts:108-109: when the real
+ * checker is wired in it wins outright, because running both would be two
+ * implementations of one rule and the second is always the one that is wrong
+ * about a corner tile. The fallback must NOT be deleted — turn-engine.test.ts
+ * still covers it through a book with no `check`, which is exactly the shape a
+ * server with a hand-written two-talent book has.
+ *
+ * IT IS READ-ONLY. Nothing here spends AP, a resource or a cooldown: an intent
+ * that goes illegal between submission and resolution must cost ZERO (the
+ * refund rule, docs/architecture.md § 2), so the deduction happens at
+ * RESOLUTION and `canUseTalent` is a pure predicate over the world.
+ */
+export function createTalentBook(
+  engine: TalentEngine,
+  world: World,
+): {
+  loadoutOf(actor: Actor): readonly LoadoutTalent[];
+  resourceOf(actor: Actor): ResourceView | undefined;
+  check(actor: Actor, talentId: string, target: TileXY | undefined): RefusalCode | null;
+} {
+  return {
+    loadoutOf: (actor: Actor): readonly LoadoutTalent[] => {
+      const sheet = engine.sheetOf(actor.id);
+      if (sheet === undefined) return [];
+      const out: LoadoutTalent[] = [];
+      for (const id of sheet.loadout) {
+        const talent = engine.registry.get(id);
+        // A sheet naming a talent this registry does not have is a content bug,
+        // not a reason to refuse the other three buttons. It cannot be USED
+        // either — `canUseTalent` answers `unknown_talent` — so dropping it here
+        // keeps the hotbar and the rule agreeing.
+        if (talent !== undefined) out.push(toLoadoutView(talent));
+      }
+      return out;
+    },
+
+    resourceOf: (actor: Actor): ResourceView | undefined => {
+      const sheet = engine.sheetOf(actor.id);
+      return sheet === undefined ? undefined : toResourceView(sheet);
+    },
+
+    check: (actor: Actor, id: string, target: TileXY | undefined): RefusalCode | null => {
+      const talent = engine.registry.get(id);
+      if (talent === undefined) return ErrorCode.BadMessage;
+
+      // A `self` shape has no target tile, and `checkTargeting` returns before
+      // it reads one — but the argument is not optional, and the caster's own
+      // tile is the honest origin rather than a sentinel.
+      const at = target ?? { x: actor.x, y: actor.y };
+      // WHO IS STANDING THERE, resolved HERE rather than carried on the wire:
+      // the client sends a TILE (that is what an AoE needs and what the player
+      // clicked), and `Affinity` is checked against whatever body is on it.
+      const standing = world.actorAt(at.x, at.y);
+      const refusal = canUseTalent(
+        engine,
+        actor,
+        talent,
+        { x: at.x, y: at.y, ...(standing === undefined ? {} : { actorId: standing.id }) },
+        world,
+      );
+      return refusal === null ? null : REFUSAL_TO_CODE[refusal];
+    },
   };
 }
 

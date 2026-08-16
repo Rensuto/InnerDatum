@@ -21,15 +21,29 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 
 import { PROTOCOL_VERSION } from '../shared/version.ts';
+import {
+  classById,
+  createContentTalentEngine,
+  createTalentBook,
+  sheetForClass,
+} from './content/classes.ts';
 import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
+import { useTalent } from './engine/talents.ts';
 import { authRoutes, readAuthConfig } from './http/auth.ts';
 import { createSessionStore } from './http/session.ts';
 import { wsGateway } from './net/gateway.ts';
 import { createCharacterBridge, createSaveStore } from './persist/saves.ts';
 import { createTurnEngine } from './turn-engine.ts';
 import { createWorld } from './world/world.ts';
+import type { EngineActor } from './engine/actor.ts';
+import type { TalentResolutionResult } from './engine/scheduler.ts';
+import type { TalentEngine } from './engine/talents.ts';
+import type { TurnEngine } from './net/gateway.ts';
+import type { TalentRuntime } from './turn-engine.ts';
+import type { World } from './world/world.ts';
+import type { TileXY } from '../shared/coords.ts';
 
 /** Bound to loopback on purpose: Caddy is the only thing that should reach it. */
 const HOST = env['HOST'] ?? '127.0.0.1';
@@ -75,6 +89,98 @@ const CLIENT_DIST_ASSETS = join(CLIENT_DIST, 'assets');
 const PUBLIC_ASSETS = join(REPO_ROOT, 'client', 'public', 'assets');
 
 const startedAt = hrtime.bigint();
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TALENT RESOLUTION ADAPTER — FOUR LINES, AND THE ONLY PLACE THEY FIT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `TalentResolution` (engine/scheduler.ts) is three narrow callbacks rather
+ * than the `TalentEngine` itself for a dependency reason, not a taste one:
+ * resolving a talent needs the REGISTRY, the registry is built from
+ * `content/classes.ts`, and eslint bans `engine/** -> content/**`. So the layer
+ * that can see both writes these. That used to be nowhere, which is why every
+ * `talent` intent took `Refusal.NoTalentEffect` — the refund path — and twelve
+ * finished talents were unreachable in play.
+ *
+ * `forget` is the fourth callback and belongs to `TalentRuntime` rather than to
+ * the scheduler, because its two callers are a player genuinely leaving and a
+ * reaped monster — both in turn-engine.ts.
+ *
+ * WHAT IS DELIBERATELY NOT HERE: nothing spends energy (D1 — the scheduler's
+ * `spendTurn` is the only spender) and nothing emits an event (only the
+ * scheduler knows whether this was a player's action or part of a batched
+ * monster sweep).
+ *
+ * EXPORTED FOR ONE REASON: so that test/server/class-wiring.test.ts asserts the
+ * AP/MP refill and the Inspector's Focus rule against THE ADAPTER THAT SHIPS,
+ * rather than against a copy of it written in a test file. A copy would keep
+ * passing on the day this one stopped calling `actBase`.
+ */
+export function talentRuntimeFor(talents: TalentEngine, world: World): TalentRuntime {
+  return {
+    use: (actor: EngineActor, id: string, target: TileXY | undefined): TalentResolutionResult => {
+      const talent = talents.registry.get(id);
+      if (talent === undefined) return { ok: false, reason: 'unknown_talent' };
+
+      // A `self` shape carries no target tile; the caster's own is the honest
+      // origin for the FX stamp (protocol.ts: never a sentinel — a -1 would be
+      // drawn). Who is STANDING there is resolved here rather than sent, because
+      // the client aims at a TILE and the affinity check reads the body on it.
+      const at = target ?? { x: actor.x, y: actor.y };
+      const standing = world.actorAt(at.x, at.y);
+      const result = useTalent(
+        talents,
+        actor,
+        id,
+        { x: at.x, y: at.y, ...(standing === undefined ? {} : { actorId: standing.id }) },
+        { engine: talents, world, rng: world.rng },
+      );
+      if (!result.ok) return { ok: false, reason: result.reason };
+
+      return {
+        ok: true,
+        landing: {
+          talentId: result.talentId,
+          at,
+          shape: talent.targeting.shape,
+          radius: talent.targeting.radius ?? 0,
+          ...(standing === undefined ? {} : { targetId: standing.id }),
+          hits: result.hits,
+          // ═══ AND WHO IT MOVED ═══
+          // Fog Step, Ward Rush and Backdraft all reposition a body. Straight
+          // through: `useTalent` recorded it at the one function that can move
+          // anybody, and `emitPlayerEffect` turns each entry into the ordinary
+          // `moved` event. Drop it here and the caster is drawn on the tile she
+          // left, permanently — see `ActorMove` in engine/talents.ts.
+          moved: result.moved,
+        },
+      };
+    },
+    actBase: (actorId: string): void => {
+      talents.actBase(actorId, world);
+    },
+    noteMoved: (actorId: string): void => {
+      const sheet = talents.sheetOf(actorId);
+      if (sheet !== undefined) sheet.movedThisTurn = true;
+    },
+    // The two class-resource hooks, forwarded verbatim. Both are no-ops for a
+    // body with no sheet and for the two resources they do not own, so the
+    // scheduler may call them on every blow without asking who anybody is.
+    // See `TalentResolution.noteKill` / `.noteStruck` for the two dead ends
+    // — the Alchemist's permanently empty hotbar and the Watchman's Resolve
+    // that never moved off 0 — that the absent wiring produced.
+    noteKill: (actorId: string): void => {
+      talents.noteKill(actorId);
+    },
+    noteStruck: (actorId: string): void => {
+      talents.noteStruck(actorId);
+    },
+    forget: (actorId: string): void => {
+      talents.forget(actorId);
+    },
+  };
+}
 
 export function buildServer() {
   const app = Fastify({
@@ -279,14 +385,86 @@ export function buildServer() {
   });
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TWELVE TALENTS. THE LINE BELOW IS WHY THIS WHOLE MILESTONE EXISTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every one of the twelve in `src/server/talents/` was written, cited against
+   * the Lua and unit-tested — AND NONE OF THEM WAS REACHABLE IN PLAY. This file
+   * built the engine as `createTurnEngine({ world, downed, parties, log })` with
+   * no `talents` option, so the book defaulted to `EMPTY_TALENT_BOOK`, whose
+   * entire body is `loadoutOf: () => [], resourceOf: () => undefined`. Every
+   * `talent` frame was refused as "no such talent in this loadout", and
+   * `sendLoadout` returned early rather than sending a hotbar, so nobody ever
+   * saw a button to press. Three files of finished content, wired to nothing.
+   *
+   * ═══ THE ORDER THE TWO SEAMS HAD TO LAND IN ═══
+   * `talents` is the READ-ONLY SUBMISSION GATE (what is in your hotbar, may this
+   * be sent) and `talentRuntime` is RESOLUTION (what actually happens, what it
+   * costs). Supplying the book alone would have been worse than supplying
+   * neither: the hotbar would have appeared, every button would have passed
+   * validation, and every one of them would have taken a turn and done nothing —
+   * `resolveIntent` answers `Refusal.NoTalentEffect` with no runtime behind it.
+   * That is why the resolution seam is a prerequisite rather than a follow-up.
+   *
+   * It is a lifetime this file owns, exactly like the world, the survival table,
+   * the party table and the save store: the sheets live across pumps (AP refills
+   * on the base clock, a resource regenerates, cooldowns tick), and an engine
+   * that built its own each time would hand every player a full Resolve bar on
+   * every frame.
+   */
+  const talentEngine = createContentTalentEngine();
+
+  /**
    * `log` is what makes a floor reset diagnosable. A party wipe restores
    * everybody and then hands the adapter the half the engine may not do — walk
    * the party to a spawn tile, re-seed this encounter, drop engagement — and the
    * two ways that can go wrong (no free tile at all; the same party wiping again
    * two turns later) are both invisible from inside the game. See `resetFloor`.
    */
-  const engine = createTurnEngine({ world, downed, parties, log: app.log });
-  app.register(wsGateway, { world, engine, downed, sessions, persist });
+  const engine = createTurnEngine({
+    world,
+    downed,
+    parties,
+    talents: createTalentBook(talentEngine, world),
+    talentRuntime: talentRuntimeFor(talentEngine, world),
+    log: app.log,
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CLASS ON EVERY BODY — the gateway's half of the same seam.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The gateway PICKS the class (it owns the rotation counter and it is the only
+   * layer that has read the save file) and puts the label on the body. It may
+   * not attach the SHEET, because that means calling `engine/talents.ts` and
+   * net/ states its engine contract structurally rather than importing one.
+   * So the capability is injected here, in the one file that already imports
+   * both sides — the same shape `reseedFloor` and `talentRuntime` take.
+   *
+   * SPREAD RATHER THAN MUTATED. `createTurnEngine` returns a fresh object
+   * literal of closures, so a copy of it with one more method is the same engine
+   * with one more method; assigning onto the original would mean the type the
+   * adapter returns and the value it returns had quietly stopped matching.
+   *
+   * A DANGLING id LOGS AND ATTACHES NOTHING. It cannot normally happen — the
+   * gateway substitutes through `classForJoin` before it ever writes a label —
+   * so reaching this branch means the two disagree, which is worth a line.
+   */
+  const gatewayEngine: TurnEngine = {
+    ...engine,
+    attachClass: (actorId: string, classId: string): void => {
+      const definition = classById(classId);
+      if (definition === undefined) {
+        app.log.warn({ actorId, classId }, 'no such class — this body gets no hotbar');
+        return;
+      }
+      talentEngine.attach(actorId, sheetForClass(definition));
+    },
+  };
+
+  app.register(wsGateway, { world, engine: gatewayEngine, downed, sessions, persist });
 
   return app;
 }

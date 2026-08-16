@@ -168,6 +168,79 @@ describe('a verified player rejoins', () => {
     await later.close();
   });
 
+  it('writes the class assigned at the first join, and hands it back next session', async () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // WITHOUT THIS THE CLASS IS RE-ROLLED EVERY EVENING.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // There is no chooser yet, so the gateway assigns a class off a rotation
+    // counter that is PER-PROCESS and never decremented — while `actorIdForUser`
+    // is a stable hash, so the same person coming back is the same actor id. The
+    // file is therefore the only thing in the system that remembers that this
+    // account plays the Watchman.
+    //
+    // `fileFor` used to write `binding.classId`, which is whatever the file said
+    // when it was OPENED — `unassigned` on a first-ever join. So a brand-new
+    // character was filed as `unassigned` and rewrote that value forever: the
+    // class went round the rotation again on every reconnect, and a player's
+    // hotbar changed under them between sessions.
+    const actorId = actorIdForUser(REN_ID);
+
+    const first = bridgeOn();
+    expect(await first.openCharacter?.(REN_ID, actorId)).toBeNull(); // first sight
+    first.savePlayersNow?.([snapshot(actorId, { classId: 'watchman' })], 'join');
+    await store.flush();
+
+    const onDisk: unknown = JSON.parse(
+      await readFile(join(root, 'characters', REN_ID, `${SOLO_CHARACTER_ID}.json`), 'utf8'),
+    );
+    expect(onDisk).toMatchObject({ classId: 'watchman' });
+
+    // --- a restart: a new store and a new bridge, same directory -------------
+    const later = createSaveStore({ root, logger, now: (): string => FIXED_NOW });
+    const second = bridgeOn(later);
+    const restored = await second.openCharacter?.(REN_ID, actorId);
+    expect(restored?.classId).toBe('watchman');
+
+    // …and a save from a body that has NO class does not downgrade the file.
+    // The binding carries the loaded value forward, which is what makes the
+    // snapshot's absence mean "unchanged" rather than "unassign me".
+    second.savePlayersNow?.([snapshot(actorId, { hp: 9 })], 'disconnect');
+    await later.flush();
+    const again: unknown = JSON.parse(
+      await readFile(join(root, 'characters', REN_ID, `${SOLO_CHARACTER_ID}.json`), 'utf8'),
+    );
+    expect(again).toMatchObject({ classId: 'watchman', resources: { hp: 9 } });
+    await later.close();
+  });
+
+  it('files a body that never had a class as `unassigned`, not as a guess', async () => {
+    // ═══ `CharacterSnapshot.classId` IS OPTIONAL, AND ON PURPOSE ═══
+    // `PlayerActor.classId` is itself optional — a classless body is a real
+    // thing (a fixture, tools/e2e-m1.mjs, a build with no content wired in) — so
+    // a REQUIRED field here would force every producer to invent a class for a
+    // body that has none, and this file's own `snapshot` helper (which omits it,
+    // as every other test in this file does) would not compile.
+    //
+    // The honest answer is a soft reference that admits it does not know: a file
+    // claiming to be a Watchman when nobody ever chose Watchman is worse.
+    const actorId = actorIdForUser(ALEX_ID);
+    const bridge = bridgeOn();
+    await bridge.openCharacter?.(ALEX_ID, actorId);
+
+    bridge.savePlayersNow?.([snapshot(actorId, { name: 'Alex' })], 'disconnect');
+    await store.flush();
+
+    const onDisk: unknown = JSON.parse(
+      await readFile(join(root, 'characters', ALEX_ID, `${SOLO_CHARACTER_ID}.json`), 'utf8'),
+    );
+    expect(onDisk).toMatchObject({ classId: 'unassigned' });
+    // …and it comes back as that string rather than as null, so the caller
+    // takes the same substitute-and-log path a renamed class would.
+    const restored = await bridge.openCharacter?.(ALEX_ID, actorId);
+    expect(restored?.classId).toBe('unassigned');
+  });
+
   it('gives a different account a different file, and neither can see the other', async () => {
     const renActor = actorIdForUser(REN_ID);
     const alexActor = actorIdForUser(ALEX_ID);

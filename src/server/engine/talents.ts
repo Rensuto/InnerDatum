@@ -374,10 +374,19 @@ export const RESOURCE_RULES: Readonly<
 /**
  * Resolve builds when struck (game-design.md § 2).
  *
- * WIRING: the scheduler calls `gainResolveOnStruck` from the same place it
- * applies damage to a player. Until that lands the Watchman still builds from
- * the adjacency clause below, which is the half that rewards standing with the
- * party — the co-op half.
+ * WIRING, NOW REAL: `TalentEngine.noteStruck` is the entry point, the scheduler
+ * calls it through `TalentResolution.noteStruck` from `noteBlows` — the one
+ * place a landed blow is recognised — and `talentRuntimeFor` (server/main.ts)
+ * is the adapter in between. It used to say "the scheduler calls
+ * `gainResolveOnStruck`" and NOTHING CALLED ANYTHING: the function did not
+ * exist, so a Watchman's only income was the adjacency clause below, and a solo
+ * Watchman sat at 0 Resolve forever with Iron Curtain (25) and Lockdown (30)
+ * permanently unaffordable. That is half a class's buttons, greyed out for the
+ * whole session, with nothing failing anywhere.
+ *
+ * The adjacency clause is still the co-op half and still matters: the Inspector
+ * standing three tiles back does NOT feed the tank, so being struck is what
+ * pays a Watchman who is doing his job alone at the choke.
  */
 export const RESOLVE_ON_STRUCK = 6;
 /** …and when adjacent to an ally, per ally, per game turn. */
@@ -417,6 +426,21 @@ export function gainResource(pool: ResourcePool, amount: number): number {
   const before = pool.value;
   pool.value = bound(pool.value + amount, 0, pool.max);
   return pool.value - before;
+}
+
+/**
+ * "Resolve builds when struck" — the half of the rule that had no code at all.
+ *
+ * A FREE FUNCTION AS WELL AS AN ENGINE METHOD because the sheet is the whole
+ * input: `TalentEngine.noteStruck` resolves an id to a sheet and delegates here,
+ * and a test can drive the arithmetic without standing up an engine. It does NOT
+ * check the resource kind — its one caller does, and re-checking in two places
+ * is how the two eventually disagree about who earns Resolve.
+ *
+ * @returns what was actually added, which is 0 at the cap.
+ */
+export function gainResolveOnStruck(sheet: TalentSheet): number {
+  return gainResource(sheet.resource, RESOLVE_ON_STRUCK);
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +529,33 @@ export type TalentActor = {
   readonly ai?: { targetId: string | null };
   /** The ACT clock. Read-modify-written ONLY by Lockdown; see the note there. */
   energy?: number;
+};
+
+/**
+ * ONE BODY THAT A TALENT PUT SOMEWHERE ELSE — net, not per step.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY THIS TYPE EXISTS: THREE TALENTS MOVED PEOPLE AND NOBODY WAS TOLD
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Fog Step blinks the caster up to three tiles, Ward Rush knocks the victim back
+ * and advances the caster into the vacated square, and Backdraft shoves. All
+ * three go through `world.tryMove`, so the SERVER's positions were always right
+ * — but `Effect.talent` carried only `{landing, blows}`, `toWireEvents` emitted
+ * a single `{k:'talent'}` FX stamp, and the client's `case 'talent'` is
+ * deliberately NO STATE CHANGE. So no `move` frame was ever produced and every
+ * client, the caster's own included, kept drawing her on the tile she left, with
+ * the camera, the targeting cursor and travel pathing all anchored there. There
+ * is no client-initiated resync in the protocol and `needsFullResync` fires only
+ * on downed/revived/erased, so the desync was PERMANENT until somebody wiped.
+ *
+ * `from` and `to` are the NET displacement — `stepToward` walks up to three
+ * single steps and the wire wants one hop, exactly as `GameEvent.moved` carries
+ * one for an ordinary walk.
+ */
+export type ActorMove = {
+  readonly id: string;
+  readonly from: TileXY;
+  readonly to: TileXY;
 };
 
 /** Just enough world. `World` satisfies it — proven below. */
@@ -777,8 +828,33 @@ export type TalentEngine = {
    */
   actBase(actorId: string, world: TalentWorld): void;
 
-  /** A kill happened. Reagents are a stock and this is half of how it refills. */
+  /**
+   * A kill happened. Reagents are a stock and this is half of how it refills.
+   *
+   * ═══ EXACTLY ONE CALLER, AND IT IS THE SCHEDULER ═══
+   * `noteCasualty` (engine/scheduler.ts) is the one place a death is recognised
+   * — for the weapon swing, for a talent, and for an orb landing three turns
+   * after it was fired — so it is the one place that pays. `talentAttack` and
+   * `talentProject` used to call this themselves, which paid the talent path
+   * and left the basic swing paying nothing: an Alchemist who killed with her
+   * bump swing (the majority of kills) got no reagent, spent her eight, and
+   * every button on her hotbar answered `no_resource` for the rest of the
+   * session with no way back. Two payment sites would ALSO double-pay a talent
+   * kill once the scheduler seam existed, so the two calls were removed rather
+   * than a third added.
+   */
   noteKill(killerId: string): void;
+  /**
+   * A blow LANDED on this actor. Resolve's other half (`RESOLVE_ON_STRUCK`).
+   *
+   * Guarded on `ResourceKind.Resolve` for exactly the reason `noteKill` guards
+   * on Reagents: paying the Inspector's Focus for being hit would reward the one
+   * thing her class exists to avoid.
+   *
+   * Called for a LANDED blow with damage on it, never for a miss and never for
+   * a refusal — see `noteBlows` in engine/scheduler.ts.
+   */
+  noteStruck(victimId: string): void;
   /** The party took the stairs. The other half: every Alchemist tops up. */
   noteStairs(): void;
 };
@@ -845,6 +921,16 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       // the Watchman for stealing the Inspector's shot.
       if (sheet.resource.kind === ResourceKind.Reagents) {
         gainResource(sheet.resource, REAGENTS_PER_KILL);
+      }
+    },
+
+    noteStruck: (victimId: string): void => {
+      const sheet = sheets.get(victimId);
+      if (sheet === undefined) return;
+      // RESOLVE ONLY. See `RESOLVE_ON_STRUCK`: this is the half of the rule
+      // that pays a Watchman who is holding a choke with nobody beside him.
+      if (sheet.resource.kind === ResourceKind.Resolve) {
+        gainResolveOnStruck(sheet);
       }
     },
 
@@ -1008,11 +1094,71 @@ export type TalentUseResult =
       readonly talentId: string;
       readonly hits: readonly TalentHit[];
       readonly notes: readonly string[];
+      /**
+       * EVERY BODY THIS CAST PUT SOMEWHERE ELSE. See `ActorMove` for the bug.
+       *
+       * Empty for the nine talents that move nobody, so the caller's loop over
+       * it costs nothing.
+       */
+      readonly moved: readonly ActorMove[];
       readonly apSpent: number;
       readonly mpSpent: number;
       readonly resourceSpent: number;
       readonly cooldownTurns: number;
     };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A `TalentWorld` THAT REMEMBERS WHO IT MOVED. THE ONLY NEW MOVER IS NOBODY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tryMove` is delegated verbatim — world.ts is emphatic that it is "the ONLY
+ * thing in the process allowed to change a position", and this wrapper does not
+ * become a second one: it reads the tile before, calls the real thing, and
+ * writes down what happened. Every other method is passed straight through.
+ *
+ * ═══ WHY AN INTERCEPTOR AND NOT A RETURN VALUE FROM EACH TALENT ═══
+ * `stepToward` and `knockback` already return a step COUNT, and threading a
+ * `moved` list out of all twelve `onUse` bodies would mean the tenth talent to
+ * be written is the one that forgets — and forgetting is SILENT, because the
+ * server's position is right and only the drawing is wrong. Recording at the one
+ * function that can move anybody makes the report structural: a talent added
+ * next year that shoves somebody is reported without touching this file.
+ *
+ * NET, NOT PER STEP: three consecutive `tryMove`s for one body collapse into one
+ * `from`→`to`, because the wire's `move` frame is one hop and the client sets an
+ * absolute destination. A body walked back to where it started reports nothing.
+ */
+function recordingWorld(world: TalentWorld, into: Map<string, ActorMove>): TalentWorld {
+  return {
+    level: world.level,
+    getActor: (id) => world.getActor(id),
+    actorAt: (x, y) => world.actorAt(x, y),
+    allActors: () => world.allActors(),
+    tryMove: (id, dir) => {
+      const before = world.getActor(id);
+      const from = before === undefined ? undefined : { x: before.x, y: before.y };
+      const result = world.tryMove(id, dir);
+      if (!result.ok || from === undefined) return result;
+
+      // First step wins the `from`; every later step only advances `to`. The
+      // caster of Fog Step takes three steps and the client is told one hop.
+      const seen = into.get(id);
+      into.set(id, { id, from: seen?.from ?? from, to: { x: result.x, y: result.y } });
+      return result;
+    },
+  };
+}
+
+/** Drop the round trips: a body that ended where it began did not move. */
+function netMoves(recorded: Map<string, ActorMove>): readonly ActorMove[] {
+  const out: ActorMove[] = [];
+  for (const move of recorded.values()) {
+    if (move.from.x === move.to.x && move.from.y === move.to.y) continue;
+    out.push(move);
+  }
+  return out;
+}
 
 /**
  * Resolve one talent activation.
@@ -1050,7 +1196,22 @@ export function useTalent(
   const sheet = engine.sheetOf(actor.id);
   if (sheet === undefined) return { ok: false, reason: TalentRefusal.NotLearned };
 
-  const outcome = talent.onUse(ctx, actor, target);
+  // ═══ THE BODY RUNS AGAINST A WORLD THAT WRITES DOWN WHO IT MOVED ═══
+  // `recordingWorld` delegates every method, `tryMove` included, so this is not
+  // a second mover — it is the same one with a notebook. See `ActorMove`: three
+  // talents reposition bodies and the wire was never told, so the caster of Fog
+  // Step was drawn on the tile she left, permanently.
+  //
+  // ═══ A REFUSAL CARRIES NO `moved`, AND THAT IS CHECKED, NOT ASSUMED ═══
+  // The refusal shape stays exactly what it was, because a refusal takes the
+  // refund path and emits no `Effect` for a move to ride on. That is only safe
+  // while no talent shoves somebody and THEN refuses — and none does: Fog Step
+  // is the only one that refuses after calling a mover, and it refuses on
+  // `moved === 0`, which is precisely the case where nothing was recorded. If a
+  // future talent breaks that, it has to grow an `Effect` of its own anyway.
+  const recorded = new Map<string, ActorMove>();
+  const scoped: TalentCtx = { ...ctx, world: recordingWorld(ctx.world, recorded) };
+  const outcome = talent.onUse(scoped, actor, target);
   if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
   // --- past this line nothing can fail, so now we pay -----------------------
@@ -1068,6 +1229,7 @@ export function useTalent(
     talentId: talent.id,
     hits: outcome.hits,
     notes: outcome.notes,
+    moved: netMoves(recorded),
     apSpent,
     mpSpent,
     resourceSpent,
@@ -1312,7 +1474,11 @@ export function talentAttack(
     };
   }
 
-  if (result.killed) ctx.engine.noteKill(self.id);
+  // NO `noteKill` HERE — see `TalentEngine.noteKill`. The scheduler's
+  // `noteCasualty` pays for every kill in the game from one place; paying here
+  // as well would hand an Alchemist two reagents for one body the moment the
+  // scheduler seam was wired, and paying ONLY here is what left her basic swing
+  // earning nothing.
   return {
     targetId: victim.id,
     hit: result.hit,
@@ -1350,7 +1516,7 @@ export function talentProject(
     increase: combatOf(self).increase,
     penetration: combatOf(self).penetration,
   });
-  if (outcome.killed) ctx.engine.noteKill(self.id);
+  // NO `noteKill` HERE either, for the reason on `talentAttack` above.
   return {
     targetId: victim.id,
     hit: true,

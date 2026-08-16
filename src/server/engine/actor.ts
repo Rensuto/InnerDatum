@@ -307,9 +307,37 @@ type ActorCommon = {
    * — see the two-metrics note in content/monsters.ts.
    */
   attackRange: number;
-  /** PLACEHOLDER, for `scheduler.ts#strike` until it moves onto `attackTarget`. */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PROJECTILE PATH'S FROZEN DAMAGE. THE MELEE PATH NO LONGER READS THEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * They were the M2 bump-damage placeholder. `scheduler.ts#strike` now resolves
+   * through `combat.ts#attackTarget` and reads the `combat` sheet below, so the
+   * ONLY surviving reader of these two fields is `scheduler.ts#fire`: the roll
+   * that is taken at the muzzle and FROZEN onto the orb (`ActorProject.lua:353`
+   * stores exactly that fixed number in `project.def.dam`).
+   *
+   * They were NOT deleted along with the melee use, and that is deliberate. The
+   * alternative was to have `fire` compute `rollDamageRange(combatDamage(sheet),
+   * …)`, which loses twice: it sources the orb's damage from the creature's
+   * MELEE weapon block (the wraith's orb is T_VOID_BLAST, misc/npcs.lua:739 — the
+   * `self:projectile(tg, x, y, DamageType.VOID_BLAST, …)` line; :735 is the bare
+   * `action = function(self, t)` header and carries no damage expression, which
+   * is what content/monsters.ts corrects it to in five places — not
+   * losgoroth.lua:30's `combat`), and for the wraith it collapses to a flat 5 —
+   * `damage.ts:276` takes NO draw when the truncated endpoints agree, which
+   * deletes a draw from the middle of every wraith's turn and shifts every
+   * replay after it. Keeping them template-authored keeps EXACTLY ONE labelled
+   * `combat.bump.damage` draw at EXACTLY the stream position it has always
+   * occupied, which is the property scheduler.ts#fire insists on.
+   *
+   * So: two fields that used to mean "placeholder melee damage" now mean "orb
+   * damage, authored per template". They are the tuning lever for a ranged
+   * creature and they belong in content/monsters.ts.
+   */
   damageMin: number;
-  /** PLACEHOLDER, as above. */
+  /** As above: the PROJECTILE path's frozen damage, authored per template. */
   damageMax: number;
   /**
    * THE REAL SHEET: stats, mods, weapon, resistances, reach and dead zone.
@@ -367,6 +395,25 @@ export type PlayerActor = ActorCommon & {
   readonly globalSpeed: 1;
   /** Pinned. Action COST multiplier; every player action costs exactly one turn. */
   readonly speedFactor: 1;
+  /**
+   * WHICH CLASS THIS BODY IS, AS A LABEL. Absent for a classless body.
+   *
+   * ═══ SOFT ON PURPOSE — A PLAIN STRING, NOT `ClassId` ═══
+   * The AUTHORITATIVE record of what a class can DO is the `TalentSheet` held by
+   * `engine/talents.ts`, keyed by actor id: the loadout, the resource pool, the
+   * AP/MP budget and every rule that reads them. This field decides nothing and
+   * must never be branched on for a rule. It exists for exactly one reason:
+   * `snapshotPlayers` (persist/saves.ts:239-244, which persists "name + class +
+   * position") runs in a layer that cannot reach the talent engine, and a save
+   * that cannot name the class restores a Watchman as a classless body with the
+   * Watchman's 72 hp clamped back to 60.
+   *
+   * A plain `string` rather than the enum for the same reason the save file uses
+   * one: a save written by an older build may name a class this build no longer
+   * has, and a load path that cannot represent that is a load path that throws
+   * on somebody's character.
+   */
+  classId?: string;
 };
 
 /** Everything the world drives. Full ToME speed model, both directions. */
@@ -448,35 +495,77 @@ const DEFAULT_MONSTER_MAX_HP = 24;
 const DEFAULT_MONSTER_HP_REGEN = 0;
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THESE TWO ARE WHAT THE ENTIRE ROSTER ACTUALLY DEALS. NOT A DEFAULT.
+ * THE ORB'S FALLBACK DAMAGE. NOT THE MELEE SWING'S — NOT ANY MORE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Finding, recorded here because it is invisible from either end on its own:
  * `content/monsters.ts#monsterInit` copies name, sprite, rank, profile, maxHp,
  * hpRegen, both speeds, all four ranges and the whole `combat` sheet — and it
- * NEVER passes `damageMin` or `damageMax`. So every authored monster falls
- * through to the two constants below and hits for 3-6, whatever its stat block
- * says.
+ * never passed `damageMin` or `damageMax`, so every authored monster fell
+ * through to the two constants below and hit for 3-6 whatever its stat block
+ * said. `scheduler.ts#strike` was `world.rng.int('combat.bump.damage', min,
+ * max)` straight into a placeholder `applyDamage`: no `checkHit`, no armour, no
+ * armour penetration, no resists, no crit, and therefore every `weapon.dam` /
+ * `weapon.atk` / `weapon.apr` ported into the roster from ToME was INERT on the
+ * attacker side.
  *
- * CONSEQUENCE, so nobody re-derives it from the sheet: `scheduler.ts` resolves
- * `IntentKind.Attack` through `strike`, which is
- * `world.rng.int('combat.bump.damage', min, max)` straight into `applyDamage` —
- * no `checkHit`, no armour, no armour penetration, no resists, no crit. Every
- * `weapon.dam` / `weapon.atk` / `weapon.apr` ported into the roster from ToME is
- * therefore INERT ON THE ATTACKER SIDE. Those numbers are live in exactly two
- * places: `derived.ts` computing the inspect card, and the TARGET half of the
- * pipeline when a player talent (the only caller of `combat.ts#attackTarget`)
- * lands on the creature.
+ * THAT IS FIXED. `strike` now resolves through `combat.ts#attackTarget`, which
+ * was one change and not two — the scheduler's Chebyshev range check and
+ * `canAttack`'s Euclidean one had to move together or attacks pass legality and
+ * then quietly do nothing (see the wiring note at the head of engine/combat.ts).
+ * An accuracy of 19 on a husk now means what it says.
  *
- * The fix is to move the scheduler onto `attackTarget`, and it is ONE change,
- * not two — the scheduler's Chebyshev range check and `canAttack`'s Euclidean
- * one must move together or attacks pass legality and then quietly do nothing
- * (see the wiring note at the foot of engine/combat.ts). Until that lands, an
- * accuracy of 19 on a husk does not mean it never misses; it means nothing at
- * all rolls to hit.
+ * WHAT THESE TWO STILL DO, and it is a smaller job: they are the fallback for
+ * `scheduler.ts#fire`, the frozen damage a TRAVELLING orb carries. Only a
+ * creature with a `projSpeed` ever reads them, and the roster's one such
+ * creature should author its own pair rather than inherit 3-6 — see the note on
+ * `ActorCommon.damageMin`.
  */
 const DEFAULT_MONSTER_DAMAGE_MIN = 3;
 const DEFAULT_MONSTER_DAMAGE_MAX = 6;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FLOOR UNDER A CLASSLESS BODY. A PLACEHOLDER, SAID OUT LOUD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * WHY IT HAS TO EXIST AT ALL. `strike` now runs the full pipeline, and a
+ * SHEET-LESS attacker collapses to ToME's own bare level-1 defaults inside
+ * derived.ts: accuracy 4, `combatDamage({}) = 4.408`, damRange 1.1 — and 4.408
+ * and 4.849 both truncate to 4, so the roll is a FLAT 4 (damage.ts:276 takes no
+ * draw when the endpoints agree) at 58% against a husk's defence 1. That is
+ * 2.3 hp per turn against the 5.5 the M2 bump dealt: a 25 hp husk goes from
+ * about four and a half player turns to eleven, and the difficulty of the game
+ * inverts in one commit while every monster simultaneously gets its real sheet.
+ *
+ * So this sheet is tuned to hold TODAY'S behaviour rather than to be good:
+ *
+ *   `weapon.atk` 15  -> `combatAttack` 19  -> ceil(50 + 2.5 × (19 − 1)) = 95%
+ *                       against `index_husk`'s defence 1. The M2 bump never
+ *                       missed; 95% is the closest honest thing to "never".
+ *   `weapon.dam` 20  -> `combatDamage` 6.270, × damRange 1.2 = 7.524
+ *                    -> the range roll is [6, 7], mean 6.5.
+ *                       Through a husk's armour 1 at hardiness 30 that is
+ *                       max(6.5×0.3 − 1, 0) + 6.5×0.7 = 5.5 — the exact mean of
+ *                       the M2 roll of 4-7, which is the point.
+ *
+ * NO `range` FIELD, AND THAT IS NOT AN OMISSION. `canAttack` floors a missing
+ * `combat.range` at `MELEE_REACH` (`Math.max(attackRange ?? 1, MELEE_REACH)`),
+ * so a classless player already reaches its eight neighbours and no further.
+ * Importing `MELEE_REACH` here to say so twice would add a VALUE import from
+ * this file to engine/combat.ts, and combat.ts imports world/world.ts, which
+ * imports this file — see the note on the type-only import at the top. A
+ * module-level constant built from the far side of that cycle is a
+ * ReferenceError the first time a test imports combat.ts before world.ts.
+ *
+ * IT IS REPLACED WHOLESALE, NOT MERGED. `createPlayerActor` takes `init.combat`
+ * in preference to this, and content/classes.ts's real class sheet is what
+ * arrives there. A body that has a class never reads a byte of this.
+ */
+export const DEFAULT_PLAYER_COMBAT: CombatSheet = Object.freeze({
+  weapon: Object.freeze({ dam: 20, atk: 15, damRange: 1.2 }),
+  minRange: 0,
+});
 
 /** Per-profile defaults, so a spawn only names what makes this monster unusual. */
 const PROFILE_RANGES: Readonly<
@@ -498,8 +587,13 @@ export type PlayerInit = {
   readonly hpRegen?: number;
   readonly damageMin?: number;
   readonly damageMax?: number;
-  /** The real combat sheet. Absent → ToME's own level-1 defaults (derived.ts). */
+  /**
+   * The real combat sheet — content/classes.ts's, when a class has been
+   * assigned. Absent → `DEFAULT_PLAYER_COMBAT`, the documented placeholder.
+   */
   readonly combat?: CombatSheet;
+  /** Which class this is, as a LABEL for the save file. See `PlayerActor.classId`. */
+  readonly classId?: string;
 };
 
 export type MonsterInit = {
@@ -572,7 +666,10 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     attackRange: 1,
     damageMin: init.damageMin ?? DEFAULT_PLAYER_DAMAGE_MIN,
     damageMax: init.damageMax ?? DEFAULT_PLAYER_DAMAGE_MAX,
-    combat: init.combat,
+    // WHOLESALE, never merged: a class sheet is a complete stat block and
+    // half of one blended with the placeholder is a body nobody authored.
+    combat: init.combat ?? DEFAULT_PLAYER_COMBAT,
+    classId: init.classId,
     cooldowns: new Map<string, number>(),
     pendingIntent: null,
     standingOrder: null,
@@ -764,35 +861,16 @@ export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
 }
 
 // ---------------------------------------------------------------------------
-// Damage — placeholder until M3
+// Damage — MOVED
 // ---------------------------------------------------------------------------
 
-/**
- * Apply damage and kill at zero.
- *
- * PLACEHOLDER. M3 replaces every caller with the ordered pipeline in
- * docs/tome-mechanics.md — checkHit, roll the weapon range BEFORE armour, then
- * armour/hardiness, then the crit, then the multiplier, then the damage-type
- * projector. The ordering there is load-bearing and none of it is here. What IS
- * here is the part M2 needs: hp goes down, `alive` goes false, and the body
- * stays in the world.
- *
- * @returns the damage actually applied, which is 0 against something already
- * dead — so a monster that swings at a corpse still visibly wasted its turn.
- */
-export function applyDamage(target: EngineActor, amount: number): number {
-  if (!target.alive || amount <= 0) return 0;
-  const dealt = Math.min(target.hp, amount);
-  target.hp -= dealt;
-  if (target.hp <= 0) {
-    target.hp = 0;
-    target.alive = false;
-    // A dead body holds no decisions. Leaving a pending intent on a corpse
-    // would let it resolve if it were ever revived mid-turn.
-    target.pendingIntent = null;
-  }
-  return dealt;
-}
+// `applyDamage` lived here as the M2 placeholder and is GONE; the one that
+// applies damage is `engine/damage.ts#applyDamage`, at the end of the ordered
+// pipeline. The corpse-camp guard moved with it — damage.ts:589 still returns an
+// empty outcome against a body that is already down, which is the property
+// the `damage.ts `applyDamage`` row in engine/downed.ts's "what Downed changes"
+// table depends on. That row named THIS file until the move; it now names the
+// function that actually holds the guard.
 
 /**
  * Hostility, M2 edition: players and monsters, nothing else.

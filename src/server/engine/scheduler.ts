@@ -62,7 +62,9 @@ import { canWalk } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { decideNpcAction } from '../ai/npc.ts';
 import { hasLineOfSight } from '../world/world.ts';
-import { HOLD_INTENT, IntentKind, actBase, applyDamage, isHostile, spendTurn } from './actor.ts';
+import { HOLD_INTENT, IntentKind, actBase, isHostile, spendTurn } from './actor.ts';
+import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
+import { TalentRefusal } from './talents.ts';
 import { inQuorum, isBlocking } from './barrier.ts';
 import {
   DownedTick,
@@ -79,9 +81,11 @@ import { combatAPR } from './derived.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
+import type { TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
 import type { World } from '../world/world.ts';
 import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
+import type { ActorMove, TalentHit } from './talents.ts';
 import type { Projectile } from './projectile.ts';
 import type { Barrier, BellState, PartyScope } from './barrier.ts';
 import type { DownedState } from './downed.ts';
@@ -151,6 +155,21 @@ export const Refusal = {
   NoTarget: 'no_target',
   NotHostile: 'not_hostile',
   OutOfRange: 'out_of_range',
+  /**
+   * INSIDE THE DEAD ZONE — nearer than the attacker's `combat.minRange`.
+   *
+   * The Inspector cannot shoot what is standing on her (game-design.md § 2,
+   * "the single most important number here"), and this is what says so. NEVER
+   * folded into `OutOfRange`: the two carry OPPOSITE instructions — one says
+   * close in, the other says back away — and a player told "out of range" while
+   * standing on the target concludes the class is broken. combat.ts:52 requires
+   * the refusal be distinguishable so the log can say "too close".
+   *
+   * The string matches `ErrorCode.TooClose` (protocol.ts:1500) deliberately: a
+   * refusal reaches the client as a BARE STRING (turn-engine.ts:1418 ->
+   * gateway.ts:573), so nothing downstream needed changing to understand it.
+   */
+  TooClose: 'too_close',
   NoLineOfSight: 'no_los',
   /**
    * A revive named somebody who is not on the floor — already picked up, never
@@ -183,6 +202,13 @@ export type SweepStep =
       readonly t: 'attack';
       readonly id: string;
       readonly targetId: string;
+      /** Did it connect? See `GameEvent.attacked.hit` — a miss is not a refusal. */
+      readonly hit: boolean;
+      readonly crit: boolean;
+      /** The three numbers the Record lane prints. See `GameEvent.attacked`. */
+      readonly atk?: number;
+      readonly def?: number;
+      readonly chance?: number;
       readonly damage: number;
       readonly killed: boolean;
       /**
@@ -242,7 +268,46 @@ export type GameEvent =
       readonly t: 'attacked';
       readonly id: string;
       readonly targetId: string;
+      /**
+       * ═══ DID IT CONNECT? A MISS IS AN OUTCOME, NOT AN ABSENCE ═══
+       *
+       * `combat.ts:157` is explicit — "Never a miss — a miss is `ok: true, hit:
+       * false`" — and protocol.ts:1543-1545 says a miss produces no damage event
+       * "and would otherwise be invisible": a monster that steps up and does
+       * nothing reads as a bug rather than as a dodge. So the swing is reported
+       * either way, and `hitToWire` (turn-engine.ts) emits the `attack` frame
+       * ALONE when this is false — no `damage`, no `death`.
+       *
+       * A REFUSAL IS A DIFFERENT THING AND STAYS DIFFERENT: it produces no
+       * `attacked` event at all, costs zero energy and re-prompts.
+       */
+      readonly hit: boolean;
+      readonly crit: boolean;
+      /**
+       * THE ARITHMETIC THE CASE LOG PRINTS VERBATIM — "Hits Bent Watchman (acc
+       * 41 vs def 33, 70%)" (game-design.md § 11, combat.ts:174-181). They are
+       * what make a miss feel like arithmetic rather than the server being
+       * unfair, and `attackTarget` computes all three for free.
+       *
+       * OPTIONAL because two paths genuinely have no to-hit roll to report and
+       * inventing numbers for them would be the lie this field exists to
+       * prevent: a travelling orb (there is no roll at fire or at impact, and
+       * there never will be — see `fire`), and a talent that projects damage
+       * without a weapon swing.
+       */
+      readonly atk?: number;
+      readonly def?: number;
+      readonly chance?: number;
       readonly damage: number;
+      /**
+       * HP PUT BACK rather than taken — see `Blow.healed`.
+       *
+       * It rides the SAME event as damage because the client's job is identical
+       * on both (set hp to the absolute number) and because it is produced by
+       * the same `TalentHit`. `hitToWire` is where the two part company: a
+       * healing blow emits no `attack` frame at all, so nothing draws a swing.
+       */
+      readonly healed?: number;
       readonly killed: boolean;
       /**
        * ═══ THE TARGET'S HP THE INSTANT THIS BLOW LANDED ═══
@@ -277,6 +342,36 @@ export type GameEvent =
       readonly at: TileXY;
     }
   | { readonly t: 'held'; readonly id: string; readonly reason: HoldReason }
+  /**
+   * A TALENT WENT OFF. THE STAMP, AND NOTHING ELSE.
+   *
+   * It carries no damage and no hit flag on purpose, because protocol.ts:
+   * 1582-1592 requires exactly this shape: a talent that hurts three things
+   * emits ONE of these and then one `attacked` per victim, in resolution order,
+   * exactly as a weapon swing does. That is what keeps the client's
+   * `applyTurnEvent` a single function — an AoE is not a special case of
+   * damage, it is one stamp followed by the same damage events as everything
+   * else. Folding a victim list in here would be a second, parallel
+   * implementation of "an actor took damage", and two of those always end up
+   * disagreeing about whether something died.
+   *
+   * `shape` and `radius` ride along rather than being looked up because a
+   * SPECTATOR receives this for a talent that is not in their own loadout and
+   * has no table to resolve it from.
+   */
+  | {
+      readonly t: 'talent_used';
+      /** THE CASTER. */
+      readonly id: string;
+      readonly talentId: string;
+      /** Where it landed. The caster's own tile for a `self` shape, never a sentinel. */
+      readonly at: TileXY;
+      readonly shape: TalentShape;
+      /** Arms for `cross`, radius for `ball`, 0 otherwise. */
+      readonly radius: number;
+      /** Set when the talent named an ACTOR rather than a bare tile. */
+      readonly targetId?: string;
+    }
   | { readonly t: 'refunded'; readonly id: string; readonly reason: Refusal }
   /**
    * The Bell ran out on a straggler; they have been forced to hold. NEVER a
@@ -369,6 +464,125 @@ export type GameEvent =
     };
 
 // ---------------------------------------------------------------------------
+// The talent resolution seam
+// ---------------------------------------------------------------------------
+
+/**
+ * WHERE A TALENT ACTUALLY HAPPENED. Everything the scheduler needs to turn one
+ * resolved activation into events.
+ *
+ * `hits` is `engine/talents.ts`'s own `TalentHit[]`, unchanged, because the one
+ * definition of "what a talent did to somebody" is that type. The scheduler
+ * snapshots each victim's hp and tile the instant this returns — see `Effect`.
+ */
+export type TalentLanding = {
+  /** Namespaced `talent:<id>` — the registry key, which IS the wire id. */
+  readonly talentId: string;
+  /** The centre of the stamp. The caster's own tile for a `self` shape. */
+  readonly at: TileXY;
+  readonly shape: TalentShape;
+  /** Arms for `cross`, radius for `ball`, 0 otherwise. */
+  readonly radius: number;
+  /** Set when the talent named an ACTOR rather than a bare tile. */
+  readonly targetId?: string;
+  readonly hits: readonly TalentHit[];
+  /**
+   * EVERY BODY THE CAST PUT SOMEWHERE ELSE — see `ActorMove` in
+   * engine/talents.ts for the desync this exists to close.
+   *
+   * Carried on the LANDING rather than derived here because the scheduler
+   * cannot derive it: by the time this returns the bodies are already standing
+   * on their new tiles and there is nothing left to compare against. Empty for
+   * the nine talents that move nobody.
+   */
+  readonly moved: readonly ActorMove[];
+};
+
+export type TalentResolutionResult =
+  | { readonly ok: true; readonly landing: TalentLanding }
+  | { readonly ok: false; readonly reason: TalentRefusal };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SEAM `Refusal.NoTalentEffect` HAS BEEN HOLDING OPEN SINCE M3.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THREE NARROW CALLBACKS, NOT THE `TalentEngine` ITSELF, and the reason is the
+ * dependency rule rather than taste: resolving a talent needs the REGISTRY, the
+ * registry is built from `src/server/content/classes.ts`, and eslint bans
+ * `engine/** -> content/**`. So the adapter that can see both (turn-engine.ts)
+ * supplies these three closures, exactly as `statusPass` is supplied for exactly
+ * the same reason, and this file never learns what a talent is.
+ *
+ * ═══ ABSENT IS BYTE-FOR-BYTE TODAY'S BEHAVIOUR ═══
+ * Gated identically to `downed` and `parties`: with no seam wired in, a `talent`
+ * intent takes `Refusal.NoTalentEffect` — the refund path, zero energy, cleared,
+ * re-prompt — no AP is refilled, no resource regenerates, and not one draw moves
+ * in the stream. `pump(world, { nowMs, barrier })` is unchanged to the byte.
+ */
+export type TalentResolution = {
+  /**
+   * Resolve one activation. `target` is a TILE and is absent for a `self` shape.
+   *
+   * It may REFUSE, and refusing is the point: the submission gate ran when the
+   * packet arrived and this runs at resolution, so the target may have died, the
+   * caster may have been shoved out of range, and the refund rule says that
+   * costs exactly zero (docs/architecture.md § 2).
+   */
+  use(actor: EngineActor, talentId: string, target: TileXY | undefined): TalentResolutionResult;
+  /**
+   * ONCE PER GAME TURN PER ACTOR, on the BASE clock — the AP/MP refill and the
+   * class resource's regeneration.
+   *
+   * NOT OPTIONAL WHEN A SHEET EXISTS, and the failure mode is silent: sheets are
+   * created FULL (talents.ts:744-747) and are only ever decremented, so a class
+   * attached without this call drains AP monotonically from the first cast and
+   * never refills. The Inspector's Focus — her entire class mechanic — never
+   * regenerates at all.
+   */
+  actBase(actorId: string): void;
+  /**
+   * This actor changed tiles this turn. `TalentSheet.movedThisTurn`, which is
+   * what Focus regen reads ("Focus builds by not moving"): before this call
+   * existed the flag had no writer anywhere in src/, so the Inspector regained
+   * Focus every turn whatever she did.
+   */
+  noteMoved(actorId: string): void;
+  /**
+   * THIS ACTOR JUST KILLED SOMETHING. Reagents are a stock and this is how it
+   * refills.
+   *
+   * ═══ IT IS CALLED FROM `noteCasualty`, WHICH IS THE ONE PLACE A DEATH IS
+   * RECOGNISED ═══
+   * `TalentEngine.noteKill` existed and had exactly two callers, both inside
+   * engine/talents.ts's own damage helpers — so a talent kill paid and the BASIC
+   * WEAPON SWING paid nothing. An Alchemist starts at 8 reagents, every one of
+   * her four talents costs some, and the majority of her kills come from the
+   * bump swing: she drained to 0 over about eight actions and then every button
+   * on her hotbar answered `no_resource` for the rest of the session, with
+   * `noteStairs` unreachable because M4 has no stairs. Wiring it here fixes the
+   * swing, the orb and the talent in one place, and the two calls inside
+   * talents.ts were REMOVED rather than left to double-pay.
+   */
+  noteKill(actorId: string): void;
+  /**
+   * A BLOW LANDED ON THIS ACTOR. The Watchman's Resolve, which had no writer.
+   *
+   * engine/talents.ts documented "the scheduler calls `gainResolveOnStruck` from
+   * the same place it applies damage to a player" and the function did not
+   * exist. His only income was the adjacency clause — and the Inspector's
+   * `minRange 3` puts her three tiles off the enemy while he is in contact,
+   * which is two tiles from him and NOT adjacent — so the party formation the
+   * classes were designed around paid the tank nothing, and solo paid him
+   * nothing at all. Iron Curtain (25) and Lockdown (30) were unaffordable
+   * forever.
+   *
+   * A MISS DOES NOT COUNT and neither does a 0-damage blow: see `noteBlows`.
+   */
+  noteStruck(actorId: string): void;
+};
+
+// ---------------------------------------------------------------------------
 // pump
 // ---------------------------------------------------------------------------
 
@@ -454,6 +668,16 @@ export type PumpCtx = {
    * behaved. Every branch below is gated on it, for the same reason `downed` is.
    */
   readonly parties?: PartyState;
+  /**
+   * THE TALENT RESOLUTION SEAM (see `TalentResolution`).
+   *
+   * Present → `IntentKind.Talent` resolves for real, the AP/MP budget refills on
+   * the base clock and `movedThisTurn` gets its writer.
+   *
+   * ABSENT → M3 exactly: every talent intent is refused with
+   * `Refusal.NoTalentEffect` and nothing else in this file behaves differently.
+   */
+  readonly talents?: TalentResolution;
   /** Override the tick budget. Tests use it; production should not need to. */
   readonly maxTicks?: number;
 };
@@ -599,6 +823,11 @@ type Run = {
    * which is what makes that safe.
    */
   readonly scopes: readonly (PartyScope | undefined)[];
+  /**
+   * MONSTERS THAT DIED IN THIS CALL, in the order they fell. See
+   * `PumpResult.reaped` — the engine ENROLS, and the caller removes.
+   */
+  readonly reaped: string[];
 };
 
 export type PumpResult = {
@@ -616,6 +845,44 @@ export type PumpResult = {
   readonly parked: readonly string[];
   /** In order. The caller broadcasts these; the engine never sends anything. */
   readonly events: readonly GameEvent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MONSTERS THAT DIED IN THIS CALL. THE ENGINE ENROLS; THE CALLER REMOVES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Actor.lua:2975` ends a death by calling `ActorLife.lua:86-94`, whose first
+   * line is `if game.level:hasEntity(self) then game.level:removeEntity(self)
+   * end` — a dead monster leaves the map. Ours does too, but NOT FROM IN HERE,
+   * and the deviation is deliberate and recorded: upstream removes BEFORE its
+   * log line because it still holds the object reference, while our Record lane
+   * re-resolves every id through `world.getActor` after the pump has returned.
+   * Remove inside the pump and two readers degrade silently, neither of them
+   * throwing — `hitToWire` ships `maxHp: 0` and the Case Log narrates "someone
+   * 0/0". So the pump names the bodies and the caller buries them, in the one
+   * window between broadcasting the record and the resync.
+   *
+   * ═══ THE WINDOW DOES NOT COVER AN ORB IN FLIGHT, AND NEVER COULD ═══
+   * This note used to claim a third reader — "an orb's impact is attributed to a
+   * `sourceId` the world no longer knows" — as an argument for reaping LATE. It
+   * is a real failure but a different one, and late reaping does nothing about
+   * it: the window is one pump wide and the wraith's orb (`projSpeed 2` over
+   * `attackRange 6`) lands two or three GAME TURNS after it was fired, in a pump
+   * where the shooter is long buried. The gateway keeps a name memo for as long
+   * as anything is in the air instead — `reapedNames` in net/gateway.ts.
+   *
+   * PLAYERS ARE NEVER ON THIS LIST. The guard is POSITIVE (`kind === Monster`),
+   * never "not a player" and never `alive === false`: `world.removePlayer` IS
+   * `world.removeActor` (the `removePlayer: removeActor` row in world.ts's
+   * returned literal — cited by symbol because the line number drifts every
+   * time anything above it grows), a DOWNED body is `alive === false`
+   * by design, and engine/downed.ts:20-36 is explicit that deleting one loses
+   * somebody's character.
+   *
+   * Each id appears exactly ONCE per body, for free: enrolment reads the
+   * outcome's `killed`, which damage.ts:594-597 sets only on the blow that
+   * crossed zero.
+   */
+  readonly reaped: readonly string[];
   readonly ticks: number;
   readonly gameTurns: number;
   /** Completed game turns since the world began. */
@@ -640,6 +907,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
 
   const events: GameEvent[] = [];
   const sink = createEventSink(events);
+  const reaped: string[] = [];
 
   /**
    * ONE SNAPSHOT of the actor array for the whole call — ToME's `tickLevel` is
@@ -697,6 +965,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     sink,
     survival: ctx.downed === undefined ? null : { state: ctx.downed, wiped: new Set<string>() },
     scopes,
+    reaped,
   };
 
   // Anything the caller applied BETWEEN pumps — a GM command, a status handed
@@ -829,6 +1098,13 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       const actor = resolveActor(world, energyActor);
       if (actor === undefined) return;
       actBase(actor, ctx.statusPass);
+      // THE TALENT HALF OF THE SAME PASS, and it goes here rather than anywhere
+      // else for the reason `actBase` itself does: it is the AP/MP refill and
+      // the class resource's regeneration, both of which must fire exactly ONCE
+      // PER GAME TURN AT ANY SPEED. On the act clock a hasted body would refill
+      // more often, which is a haste that shortens cooldowns by another name.
+      // Absent seam → not called, and nothing about this pass changes.
+      ctx.talents?.actBase(actor.id);
       drainStatus(ctx, sink, null);
       survivalPass(actor, run);
     },
@@ -863,6 +1139,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     status: result.status,
     parked: result.parked,
     events,
+    reaped,
     ticks: result.ticks,
     gameTurns: result.gameTurns,
     gameTurn: world.turn.clock.gameTurn,
@@ -1022,7 +1299,11 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     // Statuses this action applied, then anybody it put on the floor. Both in
     // the PLAYER lane rather than the sweep, because this was a human's turn.
     drainStatus(ctx, sink, null);
-    noteCasualty(outcome.effect, run, null);
+    // Resolve for anybody this action hurt, then the reap/downed enrolment and
+    // the killer's reagent. Both in the PLAYER lane, for the same reason
+    // `drainStatus` above is: a human just took their turn.
+    noteBlows(outcome.effect, run);
+    noteCasualty(outcome.effect, run, null, actor.id);
     // D1: exactly ENERGY_TO_ACT, always. `spendTurn` derives that from the
     // actor's kind so no call site can get it wrong.
     spendTurn(actor);
@@ -1087,7 +1368,10 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     // part of the monster turn the client is pacing, and pushing them as
     // ordinary events would close the batch mid-sweep — see `createEventSink`.
     drainStatus(ctx, sink, gameTurn);
-    noteCasualty(outcome.effect, run, gameTurn);
+    // A monster's blow is the commonest way a Watchman earns Resolve at all —
+    // see `TalentResolution.noteStruck`.
+    noteBlows(outcome.effect, run);
+    noteCasualty(outcome.effect, run, gameTurn, actor.id);
   }
 
   // ToME-native cost: ENERGY_TO_ACT * speedFactor (Actor.lua:1353-1360, 5863).
@@ -1099,17 +1383,54 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
 // Resolution — one path for players and monsters alike
 // ---------------------------------------------------------------------------
 
+/**
+ * ONE VICTIM OF ONE BLOW, with the two things that stop being true a line later.
+ *
+ * Shared by the weapon swing and by every hit a talent produced, so that
+ * "somebody got hit" has exactly one shape in this file no matter which verb
+ * produced it.
+ */
+type Blow = {
+  readonly targetId: string;
+  /** False is a MISS. See `GameEvent.attacked.hit`. */
+  readonly hit: boolean;
+  readonly crit: boolean;
+  /** Absent when no to-hit roll happened. See `GameEvent.attacked.atk`. */
+  readonly atk?: number;
+  readonly def?: number;
+  readonly chance?: number;
+  readonly damage: number;
+  /**
+   * HP PUT BACK, for the one talent that does. See `DamageEvent.healed`.
+   *
+   * `TalentHit` has carried this since the talent engine was written and the
+   * `Blow` mapping DROPPED IT, so Mend Wounds became a blow with `damage: 0,
+   * hit: true` and the party's only heal was narrated to the whole room as the
+   * Alchemist attacking herself and her friend for nothing, with struck-tile
+   * markers drawn on both. Absent (and 0) is a damaging blow.
+   */
+  readonly healed?: number;
+  readonly killed: boolean;
+  /** The victim's hp and tile the instant this landed. See `GameEvent.attacked`. */
+  readonly hp: number;
+  readonly at: TileXY;
+};
+
 /** What actually happened, once an intent survived its legality check. */
 type Effect =
   | { readonly kind: 'move'; readonly from: TileXY; readonly to: TileXY }
+  | ({ readonly kind: 'attack' } & Blow)
+  /**
+   * A TALENT LANDED. One stamp, plus one `Blow` per victim.
+   *
+   * The victim list is carried here rather than being folded into a single
+   * event because the wire requires the split (protocol.ts:1582-1592) — see
+   * `GameEvent.talent_used`.
+   */
   | {
-      readonly kind: 'attack';
-      readonly targetId: string;
-      readonly damage: number;
-      readonly killed: boolean;
-      /** The victim's hp and tile the instant this landed. See `GameEvent.attacked`. */
-      readonly hp: number;
-      readonly at: TileXY;
+      readonly kind: 'talent';
+      readonly landing: TalentLanding;
+      readonly blows: readonly Blow[];
     }
   | { readonly kind: 'hold' }
   /**
@@ -1179,29 +1500,69 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
     }
 
     /**
-     * THE TALENT SEAM. See `Refusal.NoTalentEffect`.
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE TALENT SEAM, NOW WITH SOMETHING BEHIND IT. See `TalentResolution`.
+     * ═════════════════════════════════════════════════════════════════════════
      *
-     * The submission path is complete — src/server/turn-engine.ts checks range,
-     * the `min_range` dead zone, line of sight, the cooldown and the resource
-     * before this intent is ever queued — so what lands here is a LEGAL request
-     * with no effect attached yet. The talent files own the other half: this
-     * case grows a lookup into them and an `Effect` variant, and nothing else in
-     * this function changes.
+     * The submission path was already complete — src/server/turn-engine.ts
+     * checks range, the `min_range` dead zone, line of sight, the cooldown and
+     * the resource before this intent is ever queued — so what lands here is a
+     * request that WAS legal when the packet arrived. Whether it still is, is
+     * this line's question, and `use` re-decides all of it: that is the refund
+     * rule (docs/architecture.md § 2), and it is why the resource is spent and
+     * the cooldown set THERE rather than at submission.
+     *
+     * NO SEAM → `Refusal.NoTalentEffect`, exactly as before. Not a stub that
+     * pretends to work: a silent success would spend the turn and show the
+     * player nothing.
      */
-    case IntentKind.Talent:
-      return { ok: false, reason: Refusal.NoTalentEffect };
+    case IntentKind.Talent: {
+      const talents = run.ctx.talents;
+      if (talents === undefined) return { ok: false, reason: Refusal.NoTalentEffect };
+
+      const used = talents.use(actor, intent.talentId, intent.target);
+      if (!used.ok) return { ok: false, reason: talentRefusalToRefusal(used.reason) };
+
+      // The victims' hp and tiles are read HERE, one line after the talent
+      // resolved, and never again — the same rule `strike` follows and for the
+      // same reason: a floor reset later in this pump rewrites every hp and
+      // walks the whole party to the spawn cluster. See `GameEvent.attacked`.
+      const blows = used.landing.hits.map((hit): Blow => {
+        const victim = world.getActor(hit.targetId);
+        return {
+          targetId: hit.targetId,
+          hit: hit.hit,
+          crit: hit.crit,
+          damage: hit.damage,
+          // CARRIED, NOT DROPPED. This mapping used to keep `damage` alone, and
+          // a heal became a blow with `damage: 0, hit: true` — see `Blow.healed`.
+          ...(hit.healed > 0 ? { healed: hit.healed } : {}),
+          killed: hit.killed,
+          hp: victim?.hp ?? 0,
+          at: victim === undefined ? used.landing.at : { x: victim.x, y: victim.y },
+        };
+      });
+      return { ok: true, effect: { kind: 'talent', landing: used.landing, blows } };
+    }
 
     case IntentKind.Attack: {
       const target = world.getActor(intent.targetId);
+      // KEPT HERE RATHER THAN DELEGATED, both of them: `canAttack` answers
+      // `TargetDead` for the first, which is the same refusal in different
+      // words, and it has no faction concept at all for the second — hostility
+      // is `engine/actor.ts`'s question and combat.ts must not learn it.
       if (target === undefined || !target.alive) return { ok: false, reason: Refusal.NoTarget };
       if (!isHostile(actor, target)) return { ok: false, reason: Refusal.NotHostile };
-      const distance = chebyshev(actor, target);
-      if (distance > actor.attackRange) return { ok: false, reason: Refusal.OutOfRange };
-      // Melee needs no sight check; anything with reach does, or it shoots
-      // through the wall it is standing behind.
-      if (distance > 1 && !hasLineOfSight(world.level, actor, target)) {
-        return { ok: false, reason: Refusal.NoLineOfSight };
-      }
+
+      // ═══ ONE LEGALITY CHECK, AND IT IS THE ONE THE SWING WILL USE ═══
+      // This used to be a Chebyshev reach test plus a line-of-sight test written
+      // out here, while `attackTarget` refused on EUCLIDEAN — so an attack could
+      // pass this check and then quietly do nothing. The two had to move
+      // together; the wiring note at the head of engine/combat.ts is the whole
+      // argument, and `strike` below passes `skipLegality` precisely because
+      // this line already asked.
+      const refusal = canAttack(actor, target, world);
+      if (refusal !== null) return { ok: false, reason: attackRefusalToRefusal(refusal) };
 
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -1233,6 +1594,40 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       // rather than politely route around them.
       const occupant = world.actorAt(to.x, to.y);
       if (occupant !== undefined && isHostile(actor, occupant)) {
+        /**
+         * ═════════════════════════════════════════════════════════════════════
+         * A BUMP IS AN ATTACK, SO IT OBEYS THE ATTACK'S RULES — INCLUDING THE
+         * DEAD ZONE. THE WHOLE INTENT IS REFUSED.
+         * ═════════════════════════════════════════════════════════════════════
+         *
+         * The bump used to be an UNCONDITIONAL `strike`, which was harmless
+         * while nothing had a `minRange`. It is not harmless now: an Inspector
+         * (minRange 3) walking into an adjacent husk is `AttackRefusal.MinRange`,
+         * and the question is what her turn does.
+         *
+         * IT IS REFUSED, WITH `TooClose`, for zero energy and a re-prompt — and
+         * neither of the two alternatives is acceptable:
+         *
+         *   FALL THROUGH TO `tryMove`. It would fail with `Occupied`, which
+         *   NAMES THE WRONG REASON. The player is told a body is in the way when
+         *   what actually happened is that their weapon will not fire this
+         *   close, and combat.ts:52 exists precisely so the log can say "too
+         *   close" instead of eating the turn silently.
+         *
+         *   EXEMPT THE BUMP FROM THE DEAD ZONE. That contradicts game-design.md
+         *   § 2 outright: the Inspector cannot shoot what is standing on her, and
+         *   a melee exemption is the whole class's counterplay deleted by
+         *   accident. What she should do is back away, and `TooClose` is the
+         *   only refusal that tells her so.
+         *
+         * A MONSTER inherits this too — a refused monster intent still costs the
+         * turn (`actMonster`) and shows up as a `blocked` sweep step. That is
+         * correct: it bumped into something it cannot swing at. The one profile
+         * with a dead zone (`ranged_kiter`) can never reach this line anyway,
+         * because `intentForStep` rejects any step ending inside `keepAway`.
+         */
+        const refusal = canAttack(actor, occupant, world);
+        if (refusal !== null) return { ok: false, reason: attackRefusalToRefusal(refusal) };
         return { ok: true, effect: strike(actor, occupant, world) };
       }
 
@@ -1240,29 +1635,141 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       // position, so terrain and occupancy are decided in exactly one place.
       const moved = world.tryMove(actor.id, intent.dir);
       if (!moved.ok) return { ok: false, reason: moved.reason };
+      // `TalentSheet.movedThisTurn` — the flag Focus regen reads, set from the
+      // one place in the process where an actor's tile actually changes. Cleared
+      // by the talent `actBase` pass at the top of the next game turn.
+      run.ctx.talents?.noteMoved(actor.id);
       return { ok: true, effect: { kind: 'move', from, to: { x: moved.x, y: moved.y } } };
     }
   }
 }
 
 /**
- * PLACEHOLDER COMBAT. M3 replaces this with the ordered pipeline from
- * docs/tome-mechanics.md — `checkHit`, then the weapon range rolled BEFORE
- * armour, then armour/hardiness, then the crit, then the multiplier, then the
- * damage-type projector. The order there is load-bearing and none of it is
- * here; what is here is enough to make a turn have consequences.
+ * `AttackRefusal` -> `Refusal`. The engine has two refusal vocabularies because
+ * combat.ts is structural and knows nothing about intents; this is the one place
+ * they meet.
+ *
+ * `MinRange` -> `TooClose` is the only interesting row and it is the reason this
+ * function is not an identity: see `Refusal.TooClose`. The three degenerate
+ * targets collapse onto `NoTarget` because from the intent's point of view they
+ * are the same fact — there is nobody there to hit.
+ */
+function attackRefusalToRefusal(reason: AttackRefusal): Refusal {
+  switch (reason) {
+    case AttackRefusal.OutOfRange:
+      return Refusal.OutOfRange;
+    case AttackRefusal.NoLineOfSight:
+      return Refusal.NoLineOfSight;
+    case AttackRefusal.MinRange:
+      return Refusal.TooClose;
+    case AttackRefusal.TargetDead:
+    case AttackRefusal.Dead:
+    case AttackRefusal.Self:
+      return Refusal.NoTarget;
+  }
+}
+
+/**
+ * `TalentRefusal` -> `Refusal`, for the same reason as above.
+ *
+ * The rows that carry an INSTRUCTION are kept apart — out of range says close
+ * in, too close says back off, no line of sight says move — and everything that
+ * is really "this build cannot do that with this talent right now" (cooldown,
+ * budget, resource, an unknown id, a blocked destination) collapses onto
+ * `NoTalentEffect`, which is the refund path either way.
+ */
+function talentRefusalToRefusal(reason: TalentRefusal): Refusal {
+  switch (reason) {
+    case TalentRefusal.OutOfRange:
+      return Refusal.OutOfRange;
+    case TalentRefusal.MinRange:
+      return Refusal.TooClose;
+    case TalentRefusal.NoLineOfSight:
+      return Refusal.NoLineOfSight;
+    case TalentRefusal.NoTarget:
+    case TalentRefusal.Dead:
+    case TalentRefusal.Self:
+      return Refusal.NoTarget;
+    case TalentRefusal.NotHostile:
+    case TalentRefusal.NotAlly:
+      return Refusal.NotHostile;
+    case TalentRefusal.Blocked:
+      return Refusal.Occupied;
+    case TalentRefusal.UnknownTalent:
+    case TalentRefusal.NotLearned:
+    case TalentRefusal.OnCooldown:
+    case TalentRefusal.NoAp:
+    case TalentRefusal.NoMp:
+    case TalentRefusal.NoResource:
+      return Refusal.NoTalentEffect;
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE SWING, THROUGH THE REAL PIPELINE — combat.ts#attackTarget.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was the M2 placeholder: `rng.int('combat.bump.damage', damageMin,
+ * damageMax)` straight into a flat `applyDamage`, with no `checkHit`, no
+ * armour, no armour penetration, no resists and no crit. Every `weapon.dam` /
+ * `atk` / `apr` ported into content/monsters.ts from ToME was inert because of
+ * this one function.
+ *
+ * TWO CALLERS INHERIT EVERYTHING BELOW: `IntentKind.Attack` and the Move bump.
+ *
+ * ═══ `skipLegality`, AND WHY IT IS NOT A HOLE ═══
+ * `resolveIntent` has already run `canAttack` for both callers, because it needs
+ * the refusal as a REFUND REASON before it commits. Asking twice would be two
+ * chances to disagree about the same tile.
+ *
+ * ═══ THE ONE THING THE NEW PATH DROPS, AND THE ONE LINE THAT PUTS IT BACK ═══
+ * `engine/actor.ts`'s old `applyDamage` cleared `pendingIntent` on a killing
+ * blow; `damage.ts`'s does not, because damage.ts knows nothing about intents. A
+ * body that goes down holding one would resolve it the moment an ally picks them
+ * up — a turn nobody took. engine/projectile.ts:619-623 carries the identical
+ * two lines for the identical reason.
+ *
+ * THE CORPSE-CAMP GUARD SURVIVED THE MOVE: damage.ts:589 still returns an empty
+ * outcome against a body that is already down, which is what the
+ * `damage.ts `applyDamage`` row in engine/downed.ts's "what Downed changes"
+ * table depends on.
  */
 function strike(attacker: EngineActor, target: EngineActor, world: World): Effect {
-  const rolled = world.rng.int('combat.bump.damage', attacker.damageMin, attacker.damageMax);
-  const damage = applyDamage(target, rolled);
+  const outcome = attackTarget(attacker, target, world, world.rng, { skipLegality: true });
+
+  // UNREACHABLE BY CONSTRUCTION — `skipLegality` is the only thing that can make
+  // `attackTarget` refuse, and it is set on the line above. Written out rather
+  // than asserted away because the alternative is a cast, and the honest answer
+  // to "the swing did not happen" is a swing that did nothing.
+  if (!outcome.ok) {
+    return {
+      kind: 'attack',
+      targetId: target.id,
+      hit: false,
+      crit: false,
+      damage: 0,
+      killed: false,
+      hp: target.hp,
+      at: { x: target.x, y: target.y },
+    };
+  }
+
+  if (outcome.killed) target.pendingIntent = null;
+
   // `hp` and `at` are read HERE, one line after the blow, and never again. A
   // floor reset later in the same pump rewrites the first to full and walks the
   // body to the spawn cluster — see `GameEvent.attacked`.
   return {
     kind: 'attack',
     targetId: target.id,
-    damage,
-    killed: !target.alive,
+    hit: outcome.hit,
+    crit: outcome.crit,
+    atk: outcome.atk,
+    def: outcome.def,
+    chance: outcome.chance,
+    damage: outcome.damage,
+    killed: outcome.killed,
     hp: target.hp,
     at: { x: target.x, y: target.y },
   };
@@ -1359,15 +1866,28 @@ function actProjectile(proj: Projectile, run: Run): ActResult {
    * splitting one monster turn into three because an orb happened to land in the
    * middle of it — the exact fragmentation the batching exists to prevent.
    */
-  sink.sweep(gameTurn, {
-    t: 'attack',
-    id: proj.sourceId,
+  /**
+   * `hit: true`, ALWAYS, AND `atk`/`def`/`chance` ABSENT.
+   *
+   * There is no to-hit roll on this path, at fire or at impact, and there never
+   * will be — see `fire`. An orb that reached a body HIT it, so reporting
+   * anything else would make the client draw a miss marker over a blow that
+   * landed. The three accuracy numbers are omitted rather than zeroed, because
+   * "acc 0 vs def 0, 0%" beside 14 damage is a lie the Case Log would print.
+   * `crit` is false for the same reason: the orb's damage was frozen at the
+   * muzzle and no crit was ever rolled.
+   */
+  const blow: Blow = {
     targetId: impact.targetId,
+    hit: true,
+    crit: false,
     damage: impact.damage,
     killed: impact.killed,
     hp: impact.hp,
     at: impact.at,
-  });
+  };
+
+  sink.sweep(gameTurn, { t: 'attack', id: proj.sourceId, ...blow });
 
   /**
    * AND IT MUST GO THROUGH `noteCasualty`. This is the only place a killed
@@ -1378,18 +1898,12 @@ function actProjectile(proj: Projectile, run: Run): ActResult {
    * than before it. See `GameEvent.party_wipe.duringSweep` for the evening that
    * cost.
    */
-  noteCasualty(
-    {
-      kind: 'attack',
-      targetId: impact.targetId,
-      damage: impact.damage,
-      killed: impact.killed,
-      hp: impact.hp,
-      at: impact.at,
-    },
-    run,
-    gameTurn,
-  );
+  // THE SHOOTER IS STILL THE KILLER, THREE TURNS LATER AND POSSIBLY A CORPSE.
+  // `proj.sourceId` is the attribution the orb has carried since the muzzle;
+  // `noteKill`/`noteStruck` both no-op for a body with no sheet, so a shooter
+  // that has since been reaped costs one Map miss rather than a branch.
+  noteBlows({ kind: 'attack', ...blow }, run);
+  noteCasualty({ kind: 'attack', ...blow }, run, gameTurn, proj.sourceId);
 
   return ActResult.Done;
 }
@@ -1400,15 +1914,55 @@ function emitPlayerEffect(actor: PlayerActor, effect: Effect, sink: EventSink): 
       sink.push({ t: 'moved', id: actor.id, from: effect.from, to: effect.to });
       return;
     case 'attack':
+      sink.push(attackedEvent(actor.id, effect));
+      return;
+    /**
+     * ONE STAMP, THEN ONE `attacked` PER VICTIM, IN RESOLUTION ORDER.
+     *
+     * That split is protocol.ts:1582-1592's requirement, not a style: it is
+     * what keeps the client's `applyTurnEvent` a single function, because an
+     * AoE is one stamp followed by exactly the same damage events a weapon
+     * swing produces. A talent that hit nothing still emits its stamp — the FX
+     * happened, and a cast that vanished would read as the button being broken.
+     */
+    case 'talent':
       sink.push({
-        t: 'attacked',
+        t: 'talent_used',
         id: actor.id,
-        targetId: effect.targetId,
-        damage: effect.damage,
-        killed: effect.killed,
-        hp: effect.hp,
-        at: effect.at,
+        talentId: effect.landing.talentId,
+        at: effect.landing.at,
+        shape: effect.landing.shape,
+        radius: effect.landing.radius,
+        ...(effect.landing.targetId === undefined ? {} : { targetId: effect.landing.targetId }),
       });
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THEN EVERY BODY THE CAST MOVED — BEFORE THE DAMAGE, NOT AFTER.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Three talents reposition somebody (`ActorMove` in engine/talents.ts) and
+       * NOTHING TOLD THE CLIENT. The stamp is drawn and then explicitly changes
+       * no state; there is no client-initiated resync in the protocol; and
+       * `needsFullResync` fires only on downed/revived/erased. So an Inspector
+       * who spent her turn, her AP, her MP and a ten-turn cooldown on Fog Step
+       * was drawn on the tile she had left — with the camera, the targeting
+       * cursor and travel pathing all anchored there — until the party wiped.
+       *
+       * BEFORE THE BLOWS, because `Blow.at` is the victim's tile snapshotted
+       * AFTER the talent resolved: Ward Rush knocks the husk back and the
+       * `attacked` event's marker belongs on the tile it was knocked TO. Emit
+       * the moves after and the client draws the hit marker on the old square
+       * for one frame and then teleports the body under it.
+       *
+       * The ordinary `moved` event, not a new kind: `toWireEvents` already turns
+       * it into `{k:'move'}` and the client already has the one reader. A second
+       * event kind for the same fact is the second source of truth the client's
+       * own state rules forbid.
+       */
+      for (const move of effect.landing.moved) {
+        sink.push({ t: 'moved', id: move.id, from: move.from, to: move.to });
+      }
+      for (const blow of effect.blows) sink.push(attackedEvent(actor.id, blow));
       return;
     case 'hold':
       sink.push({ t: 'held', id: actor.id, reason: HoldReason.Chosen });
@@ -1439,20 +1993,26 @@ function emitPlayerEffect(actor: PlayerActor, effect: Effect, sink: EventSink): 
   }
 }
 
+/** One `Blow` as the event a human's lane emits. The one place the two align. */
+function attackedEvent(attackerId: string, blow: Blow): GameEvent {
+  return { t: 'attacked', id: attackerId, ...blow };
+}
+
 function sweepStepFor(actor: MonsterActor, effect: Effect): SweepStep {
   switch (effect.kind) {
     case 'move':
       return { t: 'move', id: actor.id, from: effect.from, to: effect.to };
     case 'attack':
-      return {
-        t: 'attack',
-        id: actor.id,
-        targetId: effect.targetId,
-        damage: effect.damage,
-        killed: effect.killed,
-        hp: effect.hp,
-        at: effect.at,
-      };
+      return { t: 'attack', id: actor.id, ...effect };
+    case 'talent':
+      // UNREACHABLE TODAY, AND NOT A LIE — the same shape as `revive` below.
+      // `decideNpcAction` (ai/npc.ts) emits Move, Attack and Hold and nothing
+      // else, so no monster can produce a Talent intent; the wraith's orb is an
+      // ATTACK with a `projSpeed`, not a talent. The arm exists because both
+      // lanes share the `Effect` union. The day a monster casts, this grows a
+      // `SweepStep` of its own — one step per victim would split the stamp from
+      // its damage, which is the one thing `GameEvent.talent_used` forbids.
+      return { t: 'hold', id: actor.id };
     case 'hold':
       return { t: 'hold', id: actor.id };
     case 'fired':
@@ -1521,36 +2081,135 @@ function isPresent(actor: EngineActor): boolean {
   return actor.connected && !actor.standingBy;
 }
 
+/** Every `Blow` this effect carries — one for a swing, N for an AoE, none else. */
+function blowsOf(effect: Effect): readonly Blow[] {
+  if (effect.kind === 'attack') return [effect];
+  if (effect.kind === 'talent') return effect.blows;
+  return [];
+}
+
 /**
- * A blow landed and somebody stopped moving. PLAYERS GO DOWN; MONSTERS DIE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CLASS-RESOURCE BOOKKEEPING FOR ONE RESOLVED ACTION.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * The one place a casualty is turned into an event, called from both lanes with
- * the lane's identity, so a detective hitting the floor mid-sweep stays inside
- * the batch the client is already pacing.
+ * Called from all three lanes beside `noteCasualty` (player, sweep, projectile)
+ * and for the same reason it is: this is where a blow's consequences are known
+ * exactly once. Both members are no-ops for a body with no sheet and for the
+ * two resources they do not own, so a monster swinging at a monster costs one
+ * Map miss and changes nothing.
+ *
+ * ═══ ONLY LANDED, ONLY WITH DAMAGE ON IT ═══
+ * `hit === false` is a MISS and pays no Resolve — the Watchman is rewarded for
+ * absorbing a blow, not for being swung at. `damage <= 0` covers the fully
+ * armoured hit and, importantly, the HEAL: `TalentHit` reports a heal as a blow
+ * with `damage: 0`, and paying the Watchman Resolve for being bandaged would be
+ * a free 6 per turn from a friendly Alchemist.
+ *
+ * `noteKill` is NOT here — it belongs with `noteCasualty`, which already walks
+ * exactly the bodies that died and already knows the monster/player split.
+ */
+function noteBlows(effect: Effect, run: Run): void {
+  const talents = run.ctx.talents;
+  if (talents === undefined) return;
+  for (const blow of blowsOf(effect)) {
+    if (!blow.hit || blow.damage <= 0) continue;
+    talents.noteStruck(blow.targetId);
+  }
+}
+
+/** Every body this effect killed. Empty for anything that killed nothing. */
+function killedBy(effect: Effect): readonly string[] {
+  if (effect.kind === 'attack') return effect.killed ? [effect.targetId] : [];
+  if (effect.kind !== 'talent') return [];
+  const dead: string[] = [];
+  for (const blow of effect.blows) {
+    if (blow.killed) dead.push(blow.targetId);
+  }
+  return dead;
+}
+
+/**
+ * A blow landed and somebody stopped moving. PLAYERS GO DOWN; MONSTERS ARE REAPED.
+ *
+ * The one place a casualty is turned into an event, called from all three lanes
+ * (player, sweep, projectile) with the lane's identity, so a detective hitting
+ * the floor mid-sweep stays inside the batch the client is already pacing.
  *
  * Reading `killed` off the effect rather than re-checking `alive` is deliberate:
- * `applyDamage` returns 0 against something already down (engine/actor.ts), so
- * `killed` is true exactly once per body and a second blow on the same turn
- * cannot re-enrol it or re-fire the wipe check.
+ * `damage.ts:589` returns an empty outcome against something already down, so
+ * `killed` is true exactly once per body — which is what makes both branches
+ * below idempotent for free. A victim hit twice inside one sweep cannot be
+ * re-enrolled, cannot re-fire the wipe check, and cannot appear on the reap list
+ * twice.
  */
-function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null): void {
-  const survival = run.survival;
-  if (survival === null || effect.kind !== 'attack' || !effect.killed) return;
+function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killerId: string): void {
+  for (const targetId of killedBy(effect)) {
+    const victim = run.world.getActor(targetId);
+    if (victim === undefined) continue;
 
-  const victim = run.world.getActor(effect.targetId);
-  if (victim === undefined) return;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * A MONSTER JOINS THE REAP LIST. IT IS NOT REMOVED HERE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `Actor.lua:2975` -> `ActorLife.lua:86-94` removes the entity as the last
+     * act of dying. We enrol instead and let the caller bury the body, because
+     * the Record lane still has to NAME it: it re-resolves ids through
+     * `world.getActor` after the pump has returned, so a body deleted here
+     * narrates as "someone 0/0" and an orb in flight loses its shooter. See
+     * `PumpResult.reaped`.
+     *
+     * THE GUARD IS POSITIVE. Not "not a player", not `!alive`: a DOWNED body is
+     * `alive === false` on purpose and deleting one loses somebody's character
+     * (engine/downed.ts:20-36), and `world.removePlayer` is literally the same
+     * closure as `world.removeActor` (the `removePlayer: removeActor` row in
+     * world.ts's returned literal), so a mistake here is
+     * unrecoverable rather than merely wrong.
+     */
+    if (victim.kind === ActorKind.Monster) {
+      run.reaped.push(victim.id);
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * AND THE KILLER IS PAID. THE ONE PLACE IN THE GAME THAT DOES.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * `TalentResolution.noteKill` has the full argument. In short: the only
+       * two callers of `TalentEngine.noteKill` were inside engine/talents.ts's
+       * own damage helpers, so the basic weapon swing — which is where most of
+       * an Alchemist's kills come from — paid nothing, her eight reagents
+       * drained monotonically, and her whole hotbar answered `no_resource`
+       * permanently with `noteStairs` unreachable in a floor that has no stairs.
+       *
+       * HERE, because `killed` is true exactly once per body (damage.ts:589
+       * returns an empty outcome against something already down), so this cannot
+       * double-pay a party of four racing the same husk — the same property that
+       * makes the reap enrolment above idempotent.
+       *
+       * MONSTERS ONLY, and that falls out of the branch rather than needing a
+       * guard: nothing pays for putting a PLAYER down, which is the arm below.
+       */
+      run.ctx.talents?.noteKill(killerId);
+      continue;
+    }
 
-  const record = goDown(survival.state, victim, run.world.turn.clock.gameTurn);
-  if (record === null) return; // a monster, or a body already on the floor
+    const survival = run.survival;
+    // No survival system wired in: M3 exactly — a player at 0 hp is a corpse,
+    // and a corpse is not reaped either. See `PumpCtx.downed`.
+    if (survival === null) continue;
 
-  const step = { t: 'downed', id: victim.id, turnsLeft: record.turnsLeft } as const;
-  if (sweepTurn === null) run.sink.push(step);
-  else run.sink.sweep(sweepTurn, step);
+    const record = goDown(survival.state, victim, run.world.turn.clock.gameTurn);
+    if (record === null) continue; // already on the floor
 
-  // THE LANE TRAVELS WITH IT. A wipe caused by a monster's blow must narrate
-  // after that blow, and the caller cannot work out which lane it belongs to
-  // once the event list has been split. See `GameEvent.party_wipe.duringSweep`.
-  checkWipe(run, sweepTurn);
+    const step = { t: 'downed', id: victim.id, turnsLeft: record.turnsLeft } as const;
+    if (sweepTurn === null) run.sink.push(step);
+    else run.sink.sweep(sweepTurn, step);
+
+    // THE LANE TRAVELS WITH IT. A wipe caused by a monster's blow must narrate
+    // after that blow, and the caller cannot work out which lane it belongs to
+    // once the event list has been split. See `GameEvent.party_wipe.duringSweep`.
+    checkWipe(run, sweepTurn);
+  }
 }
 
 /**

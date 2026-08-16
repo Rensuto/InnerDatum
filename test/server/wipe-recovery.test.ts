@@ -10,6 +10,7 @@ import { chebyshev } from '../../src/shared/coords.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind, ErasedReason, TileCode } from '../../src/shared/protocol.ts';
 import type { MonsterActor } from '../../src/server/engine/actor.ts';
+import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { DownedState } from '../../src/server/engine/downed.ts';
 import type { PumpResult } from '../../src/server/net/gateway.ts';
 import type { TurnLogger } from '../../src/server/turn-engine.ts';
@@ -67,7 +68,7 @@ const BEHIND_THEM = { x: 19, y: 18 } as const;
 const HUSK_SPRITE = 'enemy_index_husk_s';
 
 /**
- * Enough damage to put a whole detective on the floor in one blow.
+ * A COMBAT SHEET THAT LANDS EVERY BLOW AND PUTS A WHOLE DETECTIVE ON THE FLOOR.
  *
  * A COMPRESSION OF THE REPORT, NOT A DEPARTURE FROM IT. The wraith in the
  * transcript hit for 3 and a restored detective comes back with 60, so the real
@@ -76,8 +77,37 @@ const HUSK_SPRITE = 'enemy_index_husk_s';
  * and why it survived an evening of play. One blow per cycle makes the same loop
  * visible in the same turn, and nothing else about it changes: the party is
  * still restored in place, still inside the fight, still in reach.
+ *
+ * ═══ IT IS A SHEET, NOT `damageMin`/`damageMax`, AND THAT IS THE MIGRATION ═══
+ * This fixture used to be the bare number 999 handed to `damageMin`/`damageMax`.
+ * Those two fields no longer steer a melee swing at all — `scheduler.ts#strike`
+ * resolves through `combat.ts#attackTarget` and reads the `combat` sheet, and
+ * what is left of the old pair is the frozen damage a travelling orb carries
+ * (engine/actor.ts). A fixture left on the old fields would silently fall back
+ * to ToME's bare level-1 defaults and hit for 4 at 60%, which is not a killing
+ * blow and is not a reliable one either.
+ *
+ * ═══ ACCURACY, NOT A LUCKY SEED ═══
+ * `mods.atk` 18 rescales to `combatAttack` 21 against a classless detective's
+ * `combatDefense` 0, so the to-hit chance is ceil(50 + 2.5 × 21) = 103, bounded
+ * to 100. The blow ALWAYS lands. Re-rolling seeds until a 60% swing happened to
+ * connect would convert a structural test into one that fails again in six
+ * months for a reason nobody can reconstruct.
+ *
+ * `mods.dam` 2000 rescales to a damage roll of [75, 83] — comfortably past a
+ * detective's 60, which is what "in one blow" has to mean.
  */
-const PUTS_YOU_DOWN_IN_ONE = 999;
+const PUTS_YOU_DOWN_IN_ONE: CombatSheet = { mods: { atk: 18, dam: 2000 } };
+
+/**
+ * The same guaranteed accuracy, and ORDINARY damage.
+ *
+ * For the second pair of hands in the causal-order test, which has to land a
+ * blow AFTER the restoration and leave the detective standing to prove it: at
+ * `mods.dam` 0 the roll is `combatDamage({}) = 4.408` truncating to a flat 4,
+ * so a restored 60 hp body takes the hit and is demonstrably still up.
+ */
+const LANDS_EVERY_BLOW: CombatSheet = { mods: { atk: 18 } };
 
 /** A logger that records, so "it warned" and "it stayed quiet" are both assertable. */
 function spyLogger(): TurnLogger & {
@@ -134,8 +164,7 @@ function scene(seed: string): Scene {
     x: ON_TOP_OF_THEM.x,
     y: ON_TOP_OF_THEM.y,
     profile: AiProfile.MeleeChaser,
-    damageMin: PUTS_YOU_DOWN_IN_ONE,
-    damageMax: PUTS_YOU_DOWN_IN_ONE,
+    combat: PUTS_YOU_DOWN_IN_ONE,
   });
 
   const actor = (id: string): Actor => {
@@ -504,12 +533,17 @@ describe('the events are broadcast in causal order', () => {
     // A second pair of hands on the far side, so that something demonstrably
     // happens AFTER the restoration and inside the same monster turn. Without
     // it, "before the blow that follows it" would be vacuous.
+    // THE SAME GUARANTEED ACCURACY, ORDINARY DAMAGE. Its swing has to connect
+    // on every seed — a sheet-less monster is a 60% coin flip, which would make
+    // this test flaky rather than wrong, the worst kind to debug — and it has to
+    // leave the restored detective STANDING, which is the last assertion below.
     stuck.world.addMonster('m_witness', {
       name: 'Index Husk',
       sprite: HUSK_SPRITE,
       x: BEHIND_THEM.x,
       y: BEHIND_THEM.y,
       profile: AiProfile.MeleeChaser,
+      combat: LANDS_EVERY_BLOW,
     });
 
     const narration = narrationOf(stuck.takeTheKillingBlow());
