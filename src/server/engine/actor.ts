@@ -411,6 +411,53 @@ type ActorCommon = {
    */
   carried?: readonly string[];
 
+  // --- preferences ----------------------------------------------------------
+  /**
+   * WHICH KEYS THIS PLAYER HAS REBOUND: action id -> key strings, in slot order.
+   *
+   * ═══ INERT DATA. NO ENGINE RULE READS IT, AND NONE EVER MAY ═══
+   * This is the only field on an actor that the WORLD has no opinion about. It
+   * decides nothing, it is never branched on, it costs no energy and it takes no
+   * RNG draw — a keymap is a fact about a person's keyboard, not about a body on
+   * a floor. `tickLevel`, `actBase`, the barrier, the scheduler and every talent
+   * are all unchanged by its presence, which is exactly what keeps replay from a
+   * seed deterministic: two runs whose only difference is a rebind must produce
+   * byte-identical worlds. Anything in engine/ that ever reads this is a bug.
+   *
+   * ═══ SO WHY IS IT ON THE ACTOR AT ALL? THE `carried`/`equipped` ARGUMENT ═══
+   * Verbatim the one those two fields make immediately above, and the one
+   * `PlayerActor.classId` and `level` make below: `snapshotPlayers`
+   * (net/gateway.ts) RUNS IN A LAYER THAT CANNOT REACH ANYTHING BUT THE ACTOR
+   * TABLE, so anything the save file must write down has to be readable from the
+   * body. A keymap kept in a side table beside the sockets would be a keymap
+   * that survives exactly until somebody closes the tab — which is the one
+   * failure the whole feature exists to prevent ("no one likes to reconfigure
+   * keybinds").
+   *
+   * IT ALSO HAS TO LIVE HERE RATHER THAN ON THE SESSION FOR A SECOND REASON. Two
+   * browser tabs are ONE player: the second resolves to the same actor id,
+   * claims the same body, and the older socket is hung up on with close code
+   * 4001. There is exactly one body, therefore exactly one map, therefore no
+   * last-writer-wins between windows. Cached on a `Session` it would be one file
+   * with two writers.
+   *
+   * ABSENT IS NOT EMPTY, and the two must never be collapsed. `undefined` is
+   * "this player has never opened the Keys screen"; `{}` is "they pressed RESET
+   * ALL". The save layer reads them completely differently — an absence leaves
+   * the disk exactly as it found it, an empty object overwrites a returning
+   * player's binds with nothing.
+   *
+   * A PLAIN `string` KEY, never a union of the authored action ids. The action
+   * table is CLIENT content (src/client/input/keys.ts) and the server may not
+   * import it, so an id this build no longer binds is carried verbatim and the
+   * client drops what it cannot bind — the same soft-reference treatment
+   * `classId` documents below.
+   *
+   * `readonly` values, REPLACED wholesale on every change rather than mutated,
+   * which is the same discipline `carried` follows and for the same reason.
+   */
+  keybinds?: Readonly<Record<string, readonly string[]>>;
+
   // --- talents --------------------------------------------------------------
   /**
    * Talent id -> GAME TURNS remaining. Ticked by `actBase`, so it is immune to

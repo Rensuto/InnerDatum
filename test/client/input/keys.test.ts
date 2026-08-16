@@ -2,9 +2,15 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { TurnCommand, UiCommand, bindGameKeys } from '../../../src/client/input/keys.ts';
+import {
+  TurnCommand,
+  UiCommand,
+  bindGameKeys,
+  createLiveKeymap,
+  setKeymap,
+} from '../../../src/client/input/keys.ts';
 import { Dir } from '../../../src/shared/coords.ts';
-import type { KeyHandlers } from '../../../src/client/input/keys.ts';
+import type { KeyHandlers, LiveKeymap } from '../../../src/client/input/keys.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -50,6 +56,17 @@ import type { KeyHandlers } from '../../../src/client/input/keys.ts';
  * fakes here: the binding, the dispatch, the listener order and the
  * `preventDefault` are all Node's own, so what is under test is the real
  * handler and not a re-implementation of it.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * v11 MOVED THE SEVEN TABLES OUT, AND EVERY ASSERTION BELOW IS UNCHANGED
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The tables now live in src/client/input/keymap.ts and `bindGameKeys` reads a
+ * compiled keymap it dereferences per press. THAT THE LITERAL-KEY ASSERTIONS IN
+ * THIS FILE STILL PASS, WORD FOR WORD, IS THE PROOF THE EXTRACTION IS
+ * BEHAVIOUR-PRESERVING — not a happy accident, and the reason nothing in this
+ * file was rewritten to go through the registry. The registry has its own suite
+ * in test/client/input/keymap.test.ts; this one keeps asking the question a
+ * keypress asks.
  *
  * THE `reference lib="dom"` ON LINE 1 IS REQUIRED and its cost is documented in
  * test/client/turncards.test.ts:52-63: tests compile under tsconfig.server.json,
@@ -171,11 +188,37 @@ function recorder(calls: Call[]): KeyHandlers {
 function press(init: KeyInit, on?: EventTarget): { calls: Call[]; prevented: boolean } {
   const calls: Call[] = [];
   const target = on ?? new EventTarget();
+  // NO KEYMAP ARGUMENT, deliberately: this is main.ts's call shape, so every
+  // assertion below is also a check that the module's own `gameKeymap` is what a
+  // caller who knows nothing about rebinding gets.
   const binding = bindGameKeys(target, recorder(calls));
   const event = new FakeKeyboardEvent(init);
   target.dispatchEvent(event);
   binding.dispose();
   return { calls, prevented: event.defaultPrevented };
+}
+
+/**
+ * A binding that stays alive across several presses, over a PRIVATE keymap.
+ *
+ * The private box is what keeps a rebind test from leaking into the fifty-odd
+ * literal-key assertions above, which all read the module singleton.
+ */
+function session(live: LiveKeymap): {
+  calls: Call[];
+  send: (init: KeyInit) => void;
+  dispose: () => void;
+} {
+  const calls: Call[] = [];
+  const target = new EventTarget();
+  const binding = bindGameKeys(target, recorder(calls), live);
+  return {
+    calls,
+    send: (init) => {
+      target.dispatchEvent(new FakeKeyboardEvent(init));
+    },
+    dispose: binding.dispose,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -486,5 +529,118 @@ describe('what the keymap deliberately does NOT do', () => {
     bindGameKeys(target, recorder(calls)).dispose();
     target.dispatchEvent(new FakeKeyboardEvent({ key: 'j' }));
     expect(calls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v11: THE LIVE KEYMAP
+// ---------------------------------------------------------------------------
+
+describe('a rebind reaches an already-registered listener', () => {
+  /**
+   * ═══ WITHOUT RE-REGISTERING, AND THAT IS THE WHOLE ASSERTION ═══
+   * `bindGameKeys` runs on main.ts's boot path, before the socket has said hello
+   * and therefore before any frame carrying a player's persisted keys can have
+   * arrived. If the handler had closed over its tables, those tables would be the
+   * ones it used for the rest of the session and the feature could not work at
+   * all.
+   *
+   * AND DISPOSE-THEN-REBIND IS NOT THE ALTERNATIVE. keys.ts's disposer docblock
+   * sets out why: re-registering moves this handler AFTER main.ts's travel-cancel
+   * listener and inverts an Escape precedence that two files independently call
+   * load-bearing — one press would then stop a walk AND cancel an aim. `binding`
+   * is never touched here, and `send` keeps using the same EventTarget, so the
+   * registration order this test does not disturb is the one it is protecting.
+   */
+  it('the same listener dispatches to the new action after setKeymap', () => {
+    const live = createLiveKeymap();
+    const run = session(live);
+
+    run.send({ key: 'v', code: 'KeyV' });
+    expect(run.calls).toEqual([]);
+
+    setKeymap({ show_inventory: ['key:v'] }, live);
+
+    run.send({ key: 'v', code: 'KeyV' });
+    expect(run.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowInventory }]);
+    run.dispose();
+  });
+
+  it('the old key stops answering, so a rebind is a MOVE and not a second key', () => {
+    const live = createLiveKeymap();
+    const run = session(live);
+    setKeymap({ show_inventory: ['key:v'] }, live);
+    run.send({ key: 'i' });
+    expect(run.calls).toEqual([]);
+    run.dispose();
+  });
+
+  it('an empty remap is RESET ALL, and it is a real value rather than a no-op', () => {
+    const live = createLiveKeymap({ show_inventory: ['key:v'] });
+    const run = session(live);
+    setKeymap({}, live);
+    run.send({ key: 'i' });
+    run.send({ key: 'v', code: 'KeyV' });
+    expect(run.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowInventory }]);
+    run.dispose();
+  });
+
+  it('a capital captured key still matches, because the compile lowercases', () => {
+    // A capture field reads `event.key` raw, so a player with capslock on binds
+    // 'V'. Every key-side lookup in this file lowercases first, so a stored
+    // capital that was not lowered at compile time would be a key no press could
+    // ever match — the rebind takes, the row draws, and nothing happens.
+    const live = createLiveKeymap({ show_inventory: ['key:V'] });
+    const run = session(live);
+    run.send({ key: 'v', code: 'KeyV' });
+    run.send({ key: 'V', shiftKey: true, code: 'KeyV' });
+    expect(run.calls).toEqual([
+      { kind: 'ui', command: UiCommand.ShowInventory },
+      { kind: 'ui', command: UiCommand.ShowInventory },
+    ]);
+    run.dispose();
+  });
+
+  it('the frozen floor survives a rebind of the mnemonic key', () => {
+    // Decision (c)'s permanent movement floor, seen from the dispatcher: the vi
+    // letter moves, the arrows and the numpad do not, so "I bound every movement
+    // key to the same key" is unreachable rather than merely refused.
+    const live = createLiveKeymap({ move_north: ['key:w'] });
+    const run = session(live);
+    run.send({ key: 'w', code: 'KeyW' });
+    run.send({ key: 'k' });
+    run.send({ key: 'ArrowUp' });
+    run.send({ key: '8', code: 'Numpad8' });
+    expect(run.calls).toEqual([
+      { kind: 'move', dir: Dir.N },
+      { kind: 'move', dir: Dir.N },
+      { kind: 'move', dir: Dir.N },
+    ]);
+    run.dispose();
+  });
+
+  it('Escape cannot be rebound away, so the menu is always one press off', () => {
+    const live = createLiveKeymap({ cancel: ['key:z'], toggle_log: ['key:escape'] });
+    const run = session(live);
+    run.send({ key: 'Escape' });
+    expect(run.calls).toEqual([{ kind: 'cancel' }]);
+    run.dispose();
+  });
+
+  it('the dispatch order still arbitrates a rebind, not the other way round', () => {
+    // The numpad rule at the head of this file, under a remap: binding the log to
+    // '1' cannot take Numpad1 away from the south-west step, because
+    // `directionFor` reads `event.code` and runs first.
+    const live = createLiveKeymap({ toggle_log: ['key:1'] });
+    const run = session(live);
+    run.send({ key: '1', code: 'Numpad1' });
+    run.send({ key: '1', code: 'Digit1' });
+    expect(run.calls).toEqual([
+      { kind: 'move', dir: Dir.SW },
+      // ...and the hotbar still beats the log, for the same reason: `slotByKey`
+      // is step two and the UI table is step five.
+      { kind: 'slot', slot: 0 },
+    ]);
+    run.dispose();
   });
 });

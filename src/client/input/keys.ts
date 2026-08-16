@@ -124,9 +124,34 @@
  * for and always will be; r, f, t, c, m, p, g and i are not, and picking anything
  * shifted would collide with the capitals a shift-holding player still means as
  * moves.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * v11: THE SEVEN TABLES HAVE MOVED, AND THIS FILE NO LONGER OWNS ANY KEY
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Every paragraph above still describes the DEFAULTS, and every one of those
+ * arguments — the citation for `c`, the grep that proves `g` is a choice, the
+ * reason `l` could never be the levelup key — has moved VERBATIM onto the action
+ * row it justifies in `src/client/input/keymap.ts`. What is left here is the
+ * dispatch: the eight-step order, the modifier policy and the text-entry guard.
+ *
+ * WHAT THIS FILE READS IS NOW A LIVE OBJECT, DEREFERENCED PER PRESS. A rebind
+ * arrives long after boot — `bindGameKeys` runs on main.ts's boot path, before
+ * any frame carrying persisted preferences can have been received — so the only
+ * mechanism that can work at all is mutating the object this handler already
+ * holds. NOT dispose-and-rebind: the disposer's own docblock below sets out, at
+ * length, why re-registering inverts a listener order two files independently
+ * call load-bearing.
+ *
+ * THE ACTION NAMES BELOW DID NOT CHANGE, and that is the whole point of having
+ * named actions rather than keys since M2: `UiCommand.ToggleLog` is still
+ * `ToggleLog` whether it is on `m`, on `c` or on whatever its owner rebound it
+ * to this evening. Nothing downstream of this file knows which key anything is
+ * on, and after v11 nothing downstream may assume it.
  */
 
-import { Dir } from '../../shared/coords.ts';
+import { compileKeymap, ACTIONS, type Keymap, type KeyRemap } from './keymap.ts';
+
+import type { Dir } from '../../shared/coords.ts';
 
 /** Called with the direction the player asked to move in. */
 export type MoveIntent = (dir: Dir) => void;
@@ -256,218 +281,55 @@ export type KeyBinding = {
 };
 
 /**
- * Matched on `event.key`, lowercased. `key` rather than `code` so the binding
- * follows the player's keyboard layout: on AZERTY the physical KeyH is not
- * where an H is printed, and the vi keys are muscle memory about letters.
- */
-const KEY_TO_DIR: ReadonlyMap<string, Dir> = new Map([
-  ['arrowup', Dir.N],
-  ['arrowdown', Dir.S],
-  ['arrowleft', Dir.W],
-  ['arrowright', Dir.E],
-  ['k', Dir.N],
-  ['j', Dir.S],
-  ['h', Dir.W],
-  ['l', Dir.E],
-  ['y', Dir.NW],
-  ['u', Dir.NE],
-  ['b', Dir.SW],
-  ['n', Dir.SE],
-]);
-
-/**
- * The numpad is matched on `event.code` instead, and it has to be: with NumLock
- * on, `event.key` for Numpad8 is the string '8', indistinguishable from the
- * number row; with NumLock off it is 'ArrowUp'. The physical key is the only
- * stable identity here.
- */
-const CODE_TO_DIR: ReadonlyMap<string, Dir> = new Map([
-  ['Numpad8', Dir.N],
-  ['Numpad2', Dir.S],
-  ['Numpad4', Dir.W],
-  ['Numpad6', Dir.E],
-  ['Numpad7', Dir.NW],
-  ['Numpad9', Dir.NE],
-  ['Numpad1', Dir.SW],
-  ['Numpad3', Dir.SE],
-]);
-
-/**
- * Numpad-5 is the reason this table is keyed on `code`: NumLock on reports the
- * key as '5' and NumLock off reports 'Clear', and neither is something to bind.
- * NumpadEnter is here so the numpad hand can commit without leaving the pad.
- */
-const CODE_TO_COMMAND: ReadonlyMap<string, TurnCommand> = new Map([
-  ['Numpad5', TurnCommand.Hold],
-  ['NumpadEnter', TurnCommand.Commit],
-]);
-
-/**
- * Layout-independent by nature — space, enter, full stop and comma are where
- * they are, and none of them is a letter whose position moves with the layout.
- * That is why the punctuation lives here and the mnemonics live in KEY_TO_UI.
- */
-const KEY_TO_COMMAND: ReadonlyMap<string, TurnCommand> = new Map([
-  [' ', TurnCommand.Commit],
-  ['enter', TurnCommand.Commit],
-  ['.', TurnCommand.Hold],
-  // ═══ v10 — `,` PICKS UP. CONVENTIONAL, NOT PORTED, AND IT SAYS SO ═══
-  // ToME's own mnemonic for this act is `g`: `PICKUP_FLOOR` is a real virtual
-  // action (modules/tome/class/Game.lua:2169-2172, calling `playerPickup`) and
-  // the letter G is the roguelike tradition it comes from. `g` IS ALREADY OURS
-  // FOR THE TALENT PANEL (see KEY_TO_UI below), and moving it would break a
-  // binding players have been using since v9 to spend a point.
-  //
-  // So `,` — the other roguelike convention for picking a thing up, and free.
-  // There is no citation for it and none is offered; the shipped ToME default
-  // for any action is not recoverable from this reference clone at all (the
-  // paragraph on `g` below sets out why, with the grep that proves it).
-  //
-  // ONE HONEST COLLISION, STATED RATHER THAN DISCOVERED: on the layouts where
-  // the numpad's decimal key reports `,` instead of `.` — German and French
-  // among them — that key now picks up rather than doing nothing, which is what
-  // it did before. The numpad's own hold is Numpad5 and is matched on
-  // `event.code`, so it is untouched either way.
-  [',', TurnCommand.Pickup],
-]);
-
-/**
- * The hotbar digits, matched on `event.key`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LIVE KEYMAP: ONE BOX, MUTATED IN PLACE, DEREFERENCED ON EVERY PRESS
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A box rather than the compiled object itself, because the compiled object is
+ * frozen-by-convention: `setKeymap` REPLACES `current` and the already-registered
+ * handler picks the new tables up on the very next keydown, with no listener
+ * touched and no ordering disturbed.
  *
- * KEY AND NOT CODE, so that a French AZERTY player — where the number row is
- * shifted — still presses what is printed on the cap. The counterpart risk is
- * the numpad: with NumLock on, Numpad1 reports `key === '1'` and would fire
- * slot 1 instead of stepping south-west. That is why `directionFor` is consulted
- * FIRST in the handler below and why it checks `event.code`; the numpad claims
- * its four diagonal keys before this table is ever read. Reordering those two
- * lookups silently breaks numpad movement, which is why the order carries this
- * comment rather than a passing mention.
- */
-const KEY_TO_SLOT: ReadonlyMap<string, number> = new Map([
-  ['1', 0],
-  ['2', 1],
-  ['3', 2],
-  ['4', 3],
-]);
-
-/**
- * The M4 verbs, on `event.key` for the same layout reason as the vi keys: these
- * are muscle memory about LETTERS, and on AZERTY the physical KeyR is not where
- * an R is printed.
+ * THIS IS THE ONLY MECHANISM THAT CAN WORK, and the reason is timing rather
+ * than taste. `bindGameKeys(window, {...})` runs on main.ts's boot path, before
+ * the socket has said hello and therefore before any frame carrying a player's
+ * persisted keymap can have arrived. Whatever tables the handler closed over at
+ * registration would be the tables it used for the rest of the session.
  *
- * `/` is here beside `t` because it is the chat key in every MUD, every IRC
- * client and Discord itself, and half the table will reach for it first.
+ * AND DISPOSE-AND-REBIND IS FORBIDDEN OUTRIGHT — see the disposer's docblock
+ * below, which explains that re-registering this handler moves it AFTER
+ * main.ts's travel-cancel listener and inverts an Escape precedence two files
+ * independently call load-bearing.
  */
-const KEY_TO_UI: ReadonlyMap<string, UiCommand> = new Map([
-  ['r', UiCommand.Revive],
-  // F FOR REFILE — the game's own word for coming back (a body at 0 hp is
-  // *Unfiled*, a body whose countdown ran out is *erased*). It is a letter vi
-  // movement never claimed, it is nowhere near R, and it is the only key in the
-  // game a player will look for while reading a prompt rather than from memory:
-  // the HUD names it, and it only ever appears while they are Erased.
-  ['f', UiCommand.Respawn],
-  ['t', UiCommand.Say],
-  ['/', UiCommand.Say],
-  // v8 — THE CHARACTER SHEET, ON ToME'S OWN LETTER. PORTED, and the citation is
-  // a mnemonic rather than a bindings table: uiset/Classic.lua:270 asks which key
-  // is bound to SHOW_CHARACTER_SHEET and prints "#GOLD#C#LAST#haracter Sheet"
-  // only `if (key == "C")`, a branch that is only meaningful for the shipped
-  // default. Corroborated independently at dialogs/debug/RandomObject.lua:417,
-  // whose button reads "Show #GOLD#C#LAST#haracter Sheet".
-  ['c', UiCommand.ShowSheet],
-  // ...AND THAT IS WHY THE CASE LOG IS HERE NOW. THE KEY IS CHOSEN, NOT PORTED.
-  //
-  // ═══ SAID PLAINLY, BECAUSE A GUESS DRESSED AS A CITATION IS WORSE THAN A GUESS ═══
-  // ToME has a SHOW_MESSAGE_LOG action and this very HUD triggers it
-  // (uiset/Classic.lua:238, and the tooltip branch at :281 that would print
-  // whatever key it finds) — but the DEFAULT for every action lives in
-  // /data/keybinds/*.lua, which is not in the reference clone:
-  // `grep -rn defineAction reference/t-engine4` returns exactly two hits, both
-  // inside engine/KeyBind.lua's own definition of the function, and zero call
-  // sites. So there is no default to read, and M is the conventional roguelike
-  // message key chosen in its place. The MEMBER did not change, only its row.
-  ['m', UiCommand.ToggleLog],
-  ['p', UiCommand.ToggleParty],
-  // v9 — THE TALENT PANEL. THE KEY IS CHOSEN, NOT PORTED, and this entry says so
-  // in the same words the Case Log's does above rather than dressing a guess as
-  // a citation.
-  //
-  // ═══ THERE IS NO ToME DEFAULT TO READ, AND THAT IS A FACT ABOUT THE CLONE ═══
-  // ToME's levelup screen is opened by a VIRTUAL action — `LEVELUP = function()
-  // ... playerLevelup(...)` at class/Game.lua:2215 — and the default key for
-  // every action lives in /data/keybinds/*.lua, loaded by name at
-  // engine/KeyBind.lua:44-53. That directory is not in the reference clone:
-  // `grep -rn defineAction reference/t-engine4` returns exactly two hits, both
-  // inside engine/KeyBind.lua's own definition of the function (:33 and the
-  // closure at :53 that forwards to it), and zero call sites. So the shipped
-  // binding is unrecoverable from this tree and must not be quoted as ported.
-  //
-  // ═══ AND `l` IS UNAVAILABLE ANYWAY ═══
-  // The only in-tree evidence for a letter is DIALOG-LOCAL: dialogs/
-  // CharacterSheet.lua:99 labels a button "[L]evelup" and :289's `c == 'l'`
-  // branch triggers the virtual action — both inside that one dialog's own key
-  // handler, not a keybind default. It is moot regardless: keys.ts:198 binds `l`
-  // to Dir.E and `directionFor` is consulted FIRST in the dispatch (:371-373),
-  // an order this file calls load-bearing. Shift cannot rescue it either — the
-  // handler lowercases everything and deliberately does not exclude Shift, so
-  // `L` is `l`.
-  //
-  // `g` IS CHOSEN ON THAT BASIS. It is one of the letters vi movement left free
-  // (h/j/k/l and y/u/b/n are spoken for and always will be) and the full taken
-  // set is arrows, those eight, '.', enter, r, f, t, /, c, m, p, 1-4, escape and
-  // the two page keys. The day data/keybinds is fetched, this line either earns
-  // a citation or gets corrected.
-  ['g', UiCommand.ShowTalents],
-  // ═══ v10 — THE INVENTORY, ON ToME'S OWN LETTER. A DIALOG-LOCAL MNEMONIC ═══
-  //
-  // WHAT IS BEING CITED, AND WHAT IS NOT. `SHOW_INVENTORY` is a real virtual
-  // action (modules/tome/class/Game.lua:2177-2191) and `SHOW_EQUIPMENT` is
-  // literally an alias of it at :2192 — so one key opening one combined screen
-  // IS the upstream behaviour, and a second key for equipment would be an
-  // invention. But the DEFAULT KEY for any action lives in
-  // /data/keybinds/<name>.lua, loaded by name at engine/KeyBind.lua:44-53, and
-  // THAT DIRECTORY IS NOT IN THIS REFERENCE CLONE: `find reference/t-engine4
-  // -type d -name keybinds` returns nothing, and `grep -rn defineAction` returns
-  // exactly two hits — engine/KeyBind.lua:33, where the function is defined, and
-  // the closure at :53 that forwards to it — with zero call sites. There is no
-  // shipped default in this tree to read, and this line must not be quoted as
-  // one. It is the identical fact the M, G and C entries above already record.
-  //
-  // WHAT DOES EXIST IS DIALOG-LOCAL EVIDENCE OF EXACTLY THE CLASS THIS REPO HAS
-  // ALREADY ACCEPTED: dialogs/CharacterSheet.lua:95-98 is
-  // `Button.new{text="Manage [I]nventory", fct=function() self:showInventory() end}`
-  // and :287-288 is `elseif (c == 'i' or c == 'I') then self:showInventory()`.
-  // That is the same evidentiary class as :99's `Button.new{text="[L]evelup"}`
-  // plus :289-290, which src/client/ui/charsheet.ts:215-225 already cites as the
-  // reason our `[G]` control exists. A BUTTON LABEL IS AN INFERENCE, NOT A
-  // BINDING, and this comment is the whole of the argument for it.
-  //
-  // AND DO NOT READ `e` AS A SECOND KEY: CharacterSheet.lua:285-286's
-  // `c == 'e'` selects a TAB inside that dialog (`self.c_equipment:select()`),
-  // sitting beside the `g`/`a`/`d`/`t` tab selectors. It opens nothing.
-  //
-  // `i` IS FREE. The complete taken set is the arrows, k/j/h/l, y/u/b/n,
-  // Numpad1-9, Numpad5, NumpadEnter, space, enter, '.', ',', 1-4, r, f, t, /, c,
-  // m, p, g, pageup, pagedown and escape. Note that the handler lowercases
-  // without excluding Shift, so `I` resolves to `i` — which matches ToME, whose
-  // own branch is `c == 'i' or c == 'I'`.
-  ['i', UiCommand.ShowInventory],
-]);
+export type LiveKeymap = {
+  current: Keymap;
+};
 
 /**
- * Log scrolling. `+1` is back in time, matching what Page Up does in every
- * document ever written.
+ * The one the game uses. `bindGameKeys` takes it by default so main.ts's call
+ * site did not have to learn about any of this, and W5's `keybinds` frame
+ * handler hands its map straight to `setKeymap`.
  */
-const KEY_TO_SCROLL: ReadonlyMap<string, number> = new Map([
-  ['pageup', 1],
-  ['pagedown', -1],
-]);
+export const gameKeymap: LiveKeymap = { current: compileKeymap(ACTIONS, {}) };
 
 /**
- * The universal "put that back" key. Never sent to the server: it cancels a
- * targeting mode, which is a thing that exists only in this browser.
+ * Adopt a player's overlay. `{}` is RESET ALL and is a real value, not a
+ * missing field.
+ *
+ * The compile happens HERE — once per frame that changes the keys — rather than
+ * on any keypress. An unknown action id in `remap` is ignored rather than
+ * thrown: the compile walks `ACTIONS`, so an id this build no longer binds
+ * simply never matches anything. THE CLIENT OWNS THAT DROP, exactly as
+ * `createTalentSheet` drops a talent id the class no longer has; persist and the
+ * wire both keep it verbatim so a renamed-then-restored action comes back.
  */
-const CANCEL_KEY = 'escape';
+export function setKeymap(remap: KeyRemap, live: LiveKeymap = gameKeymap): void {
+  live.current = compileKeymap(ACTIONS, remap);
+}
+
+/** A private keymap, for a test or a preview that must not touch the game's. */
+export function createLiveKeymap(remap: KeyRemap = {}): LiveKeymap {
+  return { current: compileKeymap(ACTIONS, remap) };
+}
 
 /**
  * Shift is deliberately NOT excluded — a capslocked or shift-holding player
@@ -492,12 +354,21 @@ function isTextEntry(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
 
-function directionFor(event: KeyboardEvent): Dir | undefined {
-  return CODE_TO_DIR.get(event.code) ?? KEY_TO_DIR.get(event.key.toLowerCase());
+/**
+ * `code` FIRST, THEN LOWERCASED `key`, and the order inside this one line is as
+ * load-bearing as the order of the eight steps below: the numpad is the only
+ * thing in the `code` namespace and it has to claim its own keys before the
+ * digits NumLock reports them as are read as anything else.
+ *
+ * ToME matches its two key-string forms in exactly this shape — `sym:` first,
+ * then the layout `sym:=` form (KeyBind.lua:227-244).
+ */
+function directionFor(event: KeyboardEvent, keymap: Keymap): Dir | undefined {
+  return keymap.dirByCode.get(event.code) ?? keymap.dirByKey.get(event.key.toLowerCase());
 }
 
-function commandFor(event: KeyboardEvent): TurnCommand | undefined {
-  return CODE_TO_COMMAND.get(event.code) ?? KEY_TO_COMMAND.get(event.key.toLowerCase());
+function commandFor(event: KeyboardEvent, keymap: Keymap): TurnCommand | undefined {
+  return keymap.commandByCode.get(event.code) ?? keymap.commandByKey.get(event.key.toLowerCase());
 }
 
 /**
@@ -521,16 +392,30 @@ function commandFor(event: KeyboardEvent): TurnCommand | undefined {
  * chooser is up an arrow moves a card rather than a body. Which is the same
  * division of labour targeting mode has had since M3 — the key names the ACTION,
  * the caller owns the MODE.
+ *
+ * ═══ `live` IS READ ON EVERY PRESS, WHICH IS WHAT MAKES REBINDING POSSIBLE ═══
+ * It defaults to the module's own `gameKeymap` so main.ts's boot-path call did
+ * not change; `setKeymap` swaps the compiled tables inside it and the very next
+ * keydown uses them. A test that wants isolation passes its own box.
  */
-export function bindGameKeys(target: EventTarget, handlers: KeyHandlers): KeyBinding {
+export function bindGameKeys(
+  target: EventTarget,
+  handlers: KeyHandlers,
+  live: LiveKeymap = gameKeymap,
+): KeyBinding {
   const handler = (event: Event): void => {
     if (!(event instanceof KeyboardEvent)) return;
     if (hasCommandModifier(event) || isTextEntry(event.target)) return;
 
+    // DEREFERENCED HERE, ONCE PER PRESS AND NOT ONCE PER REGISTRATION. Reading it
+    // into a local also means a `setKeymap` that lands mid-dispatch cannot make
+    // one press consult two different keymaps.
+    const keymap = live.current;
+
     // FIRST, and it must stay first: this is the lookup that reads `event.code`,
-    // so it claims Numpad1/3/7/9 as diagonals before KEY_TO_SLOT can see them as
+    // so it claims Numpad1/3/7/9 as diagonals before `slotByKey` can see them as
     // the digits NumLock reports them to be.
-    const dir = directionFor(event);
+    const dir = directionFor(event, keymap);
     if (dir !== undefined) {
       // Only for keys we actually consumed. The arrows are the reason this call
       // exists: unprevented, they scroll the activity iframe, and the canvas
@@ -541,14 +426,19 @@ export function bindGameKeys(target: EventTarget, handlers: KeyHandlers): KeyBin
       return;
     }
 
-    const slot = KEY_TO_SLOT.get(event.key);
+    // LOWERCASED, WHERE IT USED TO READ `event.key` RAW. Harmless for the four
+    // digits this table has held since M3 — a digit has no case — but the table
+    // is rebindable now, and it was the ONE key-side lookup in this file that did
+    // not lower. A capture field reporting 'H' would have bound a hotbar slot to
+    // a key no press could ever match.
+    const slot = keymap.slotByKey.get(event.key.toLowerCase());
     if (slot !== undefined) {
       event.preventDefault();
       handlers.onSlot(slot);
       return;
     }
 
-    if (event.key.toLowerCase() === CANCEL_KEY) {
+    if (keymap.cancelKeys.has(event.key.toLowerCase())) {
       event.preventDefault();
       handlers.onCancel();
       return;
@@ -560,7 +450,7 @@ export function bindGameKeys(target: EventTarget, handlers: KeyHandlers): KeyBin
     // nothing here is a digit and the order is only load-bearing for the numpad;
     // before the verbs because `commandFor` reads `event.code` and must not get
     // the chance to claim a letter under some exotic layout.
-    const scroll = KEY_TO_SCROLL.get(lower);
+    const scroll = keymap.scrollByKey.get(lower);
     if (scroll !== undefined) {
       // Page Up scrolls the activity iframe if it is not swallowed, which drags
       // the canvas out of view — the same failure the arrow keys have.
@@ -569,14 +459,14 @@ export function bindGameKeys(target: EventTarget, handlers: KeyHandlers): KeyBin
       return;
     }
 
-    const ui = KEY_TO_UI.get(lower);
+    const ui = keymap.uiByKey.get(lower);
     if (ui !== undefined) {
       event.preventDefault();
       handlers.onUi(ui);
       return;
     }
 
-    const command = commandFor(event);
+    const command = commandFor(event, keymap);
     if (command === undefined) return;
     event.preventDefault();
     handlers.onCommand(command);

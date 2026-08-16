@@ -200,6 +200,48 @@ describe('/leave', () => {
   });
 });
 
+describe('/keys — the pointer-only escape hatch', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS IS THE ONE THAT SURVIVES A COMPLETELY SCRAMBLED KEYBOARD
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Every other route into the rebinding screen goes through a key. Escape is
+   * frozen so that can never fail — but "frozen" is a promise about OUR table,
+   * and a player whose keyboard has genuinely stopped answering has no key at
+   * all. `#cmd` is "a permanently visible, permanently focusable <input>" whose
+   * row reads "T or / to talk" (main.ts:540-544), so the player CLICKS it and
+   * types, and RESET ALL is two clicks from there with no keypress involved.
+   */
+  it('opens the keys screen, and carries nothing', () => {
+    expect(parseCommand('/keys', context())).toEqual({ kind: 'keys' });
+  });
+
+  it('answers /menu the same way, because a stuck player should not have to guess', () => {
+    expect(parseCommand('/menu', context())).toEqual({ kind: 'keys' });
+  });
+
+  it('is case-insensitive and ignores anything typed after it', () => {
+    expect(parseCommand('/KEYS', context())).toEqual({ kind: 'keys' });
+    expect(parseCommand('/keys please', context())).toEqual({ kind: 'keys' });
+  });
+
+  it('is named in the help line, so it can be found by somebody who needs it', () => {
+    // A recovery hatch nobody can discover is not a hatch, and the player who
+    // needs this one is the one who cannot type the name of the thing they are
+    // looking for.
+    expect(PARTY_USAGE).toContain('/keys');
+    expect(parseCommand('/help', context())).toEqual({ kind: 'notice', text: PARTY_USAGE });
+  });
+
+  it('is still speech when it is not a command', () => {
+    // The default matters more than the verb: this is a chat box first.
+    expect(parseCommand('keys are hard', context())).toEqual({
+      kind: 'say',
+      text: 'keys are hard',
+    });
+  });
+});
+
 describe('resolveName', () => {
   it('answers rather than throwing when the roster is empty', () => {
     const found = resolveName('anyone', []);

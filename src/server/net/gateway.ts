@@ -173,6 +173,7 @@ import type {
   ClientPoint,
   ClientRevive,
   ClientSay,
+  ClientSetKeybinds,
   ClientSpendPoint,
   ClientTalent,
   ClientUnequip,
@@ -1180,6 +1181,39 @@ export type CharacterSnapshot = {
   readonly carried?: readonly string[];
   /** Slot name -> item id. See `carried` above; the two travel together. */
   readonly equipped?: Readonly<Record<string, string>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PLAYER'S KEYS. THE ONE FIELD HERE THAT THE WORLD NEVER TOUCHES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Action id -> key strings, in slot order — ToME's `binds_remap[virtual] =
+   * {k1, k2}` (engines/default/engine/KeyBind.lua:78, :88-103), read straight off
+   * `PlayerActor.keybinds`, which is why that field lives on the actor at all:
+   * this pass cannot reach a preferences store any more than it can reach the
+   * talent engine (engine/actor.ts says so at the field).
+   *
+   * ═══ THE SHAPE IS `SavedPrefs`'S, KEPT IDENTICAL BY HAND ═══
+   * persist/saves.ts declares `SavedPrefs = { keybinds?: Readonly<Record<string,
+   * readonly string[]>> }` and `fileFor` takes `CharacterSnapshot & SavedLoadout
+   * & SavedPrefs`. This declaration is that intersection's other half and is the
+   * arrangement `carried` documents twenty lines up: a divergence is a COMPILE
+   * ERROR at `fileFor`'s parameter rather than a silent disagreement about a
+   * field name. `Record<string, readonly string[]>` and not a union of action ids,
+   * deliberately — a save file's action key is a STRING, the action table is
+   * client-side, and this layer has nothing to check membership against.
+   *
+   * ═══ OPTIONAL, NEVER NULLABLE, AND ABSENT IS NOT EMPTY ═══
+   * `?` means "this port cannot say" and `{}` means "the player pressed RESET
+   * ALL". `fileFor`'s `snapshot.keybinds ?? binding.keybinds` turns the first
+   * into "leave the disk exactly as you found it" and writes the second. A
+   * producer that filled this unconditionally would wipe a returning player's
+   * rebinds the first time a fixture-shaped snapshot was taken — which is the
+   * one-way valve progression and items each shipped once.
+   *
+   * ═══ AND IT IS NOT UNDER THE `classChoiceOwed` RULE, UNLIKE `talentPoints` ═══
+   * See `snapshotPlayers`. A keymap is not a claim about a class.
+   */
+  readonly keybinds?: Readonly<Record<string, readonly string[]>>;
 };
 
 /**
@@ -1287,6 +1321,37 @@ export type CharacterRestore = {
   readonly carried?: readonly string[];
   /** Slot name -> item id, as the file holds it. Validated on the way onto the body. */
   readonly equipped?: Readonly<Record<string, string>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE KEYS, COMING BACK. THE HALF THAT IS THE ENTIRE REQUEST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * "No one likes to reconfigure keybinds" is the whole of the feature, and this
+   * is the field that answers it. `fileFor` writes the live map to disk; a
+   * restore that did not read it back would be the identical one-way valve
+   * progression and items each shipped and each had to have fixed — keys to the
+   * file, nothing returned, and the Keys screen showing defaults forever over a
+   * file that states the player's choices perfectly clearly.
+   *
+   * OPTIONAL, NOT NULLABLE, for the reason `carried` above is: a character file
+   * written before this shipped has no `keybinds` key at all, `parseCharacterFile`
+   * leaves it absent rather than inventing one, and absent therefore means "this
+   * port cannot say" — which is what stops a restore silently clearing the binds
+   * of somebody who spent a session getting them right.
+   *
+   * ALREADY REPAIRED BY THE TIME IT ARRIVES, and repaired rather than REFUSED:
+   * `parseKeybinds` drops a non-array value, an empty or over-long key string and
+   * anything past the caps, records each in `problems` under a per-action budget,
+   * and keeps an action whose keys all dropped as `[]` rather than deleting it.
+   * It deliberately does NOT check membership — this build's action table lives
+   * in src/client/input/keys.ts and neither persist/ nor net/ may import it — so
+   * an id this build no longer binds comes through verbatim and the CLIENT owns
+   * the drop.
+   *
+   * THE SHAPE IS `SavedPrefs`'S, kept identical by hand — see
+   * `CharacterSnapshot.keybinds` for why that is a compile-time guarantee.
+   */
+  readonly keybinds?: Readonly<Record<string, readonly string[]>>;
 };
 
 /**
@@ -1347,6 +1412,29 @@ export type PersistPort = {
   openCharacter?(ownerId: string, actorId: string): Promise<CharacterRestore | null>;
   /** The body is gone for good (the grace expired). Drop the binding. */
   closeCharacter?(actorId: string): void;
+  /**
+   * IS ANYTHING THIS ACTOR DOES TONIGHT ACTUALLY GOING TO REACH A FILE?
+   *
+   * ═══ ONE BOOLEAN, ONE SCREEN, AND IT IS NOT A SECOND SOURCE OF TRUTH ═══
+   * The gateway holds no copy of the binding table and must not grow one — a
+   * second answer to "who may be persisted" is how one player's save ends up in
+   * another's directory. This is the opposite shape: the port that OWNS the
+   * bindings answers the question, and the gateway only relays it.
+   *
+   * IT EXISTS BECAUSE `persisted: session.ownerId !== null && persist !== undefined`
+   * OVERSTATES. A verified player whose file came back `too_new` or `corrupt` is
+   * deliberately NOT bound (persist/saves.ts refuses so the bytes stay where a
+   * human can look at them), `owned()` then drops every snapshot they generate,
+   * and nothing they do all evening reaches disk — while the Keys screen's
+   * `persisted: true` told them the opposite and suppressed the one warning whose
+   * whole job is to say otherwise. Ten minutes of rebinding, silently discarded,
+   * with no signal but a line in the host's log.
+   *
+   * SYNCHRONOUS AND OPTIONAL. It is a map lookup; a port with no binding table
+   * omits it and the old, wider answer stands, which is right for a recording
+   * double in a test that has no notion of ownership at all.
+   */
+  isBound?(actorId: string): boolean;
 };
 
 export type WsGatewayOptions = {
@@ -2175,6 +2263,56 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     ...(actor.equipped === undefined ? {} : { equipped: wornRecord(actor.equipped) }),
   });
 
+  /**
+   * The keymap as plain data, KEYS SORTED and every slot array copied.
+   *
+   * COPIED, NOT ALIASED, for `wornRecord`'s stated reason:
+   * `SaveStore.scheduleCharacter` holds its snapshot BY REFERENCE, so handing
+   * over the live object would let a queued save file whatever the map looked
+   * like when the disk got round to it rather than what it looked like when the
+   * snapshot was taken. `handleSetKeybinds` replaces the map wholesale rather
+   * than mutating it, so today the alias would be harmless — which is exactly the
+   * kind of "harmless today" that stops being true the first time somebody adds
+   * a per-action write.
+   *
+   * SORTED for `wornRecord`'s other reason: two saves of the same character must
+   * produce identical bytes, and a map built by a player pressing buttons has
+   * whatever key order that produced. persist/saves.ts sorts again on the way
+   * out; doing it here as well costs nothing and means the snapshot a test
+   * inspects is already stable.
+   */
+  const keybindsRecord = (
+    binds: Readonly<Record<string, readonly string[]>>,
+  ): Record<string, readonly string[]> => {
+    const out: Record<string, readonly string[]> = {};
+    for (const action of Object.keys(binds).sort()) {
+      const keys = binds[action];
+      if (keys !== undefined) out[action] = [...keys];
+    }
+    return out;
+  };
+
+  /**
+   * `{ keybinds }` when the player has ever opened the Keys screen, and NOTHING
+   * AT ALL when they have not.
+   *
+   * THE SAME ABSENT-IS-NOT-EMPTY DISCIPLINE `progressionPoints` and
+   * `loadoutFields` state, and it bites harder here than in either of them
+   * because the field is the whole of a feature whose one promise is that the
+   * player never has to do this twice. `undefined` is "this build cannot say" and
+   * leaves the disk exactly as it found it; `{}` is "the player pressed RESET
+   * ALL" and is a claim worth writing down. A `?? {}` anywhere on this path hands
+   * somebody their old keymap back every session.
+   *
+   * A SEPARATE SPREAD FROM `loadoutFields` RATHER THAN A FIELD IN IT, mirroring
+   * `SavedPrefs` being a sibling of `SavedLoadout` rather than a member: a
+   * loadout is state the WORLD gave the character, and this is a setting the
+   * PLAYER chose. Folding them together would mean a future producer that fills
+   * "the loadout" reasonably believing it had said something about the keymap.
+   */
+  const prefsFields = (actor: Actor): { keybinds?: Readonly<Record<string, readonly string[]>> } =>
+    actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) };
+
   const snapshotPlayers = (): CharacterSnapshot[] => {
     const snapshots: CharacterSnapshot[] = [];
     for (const actor of world.allActors()) {
@@ -2266,6 +2404,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // claim. An ANONYMOUS body is in this set for its whole session and
         // loses nothing at all: it has no binding and no file.
         ...(classChoiceOwed.has(actor.id) ? {} : loadoutFields(actor)),
+        // ═══ AND THE KEYS — DELIBERATELY OUTSIDE THE PROVISIONAL-CLASS RULE ═══
+        // Every other optional field above is omitted while the owner still owes
+        // a class choice, and this one is NOT. That is a decision, not an
+        // oversight, and it is worth the four lines.
+        //
+        // THE RULE THOSE THREE OBEY IS ABOUT INTERNAL CONSISTENCY: a file saying
+        // `classId: unassigned` alongside a Watchman's talent spread and a
+        // Watchman's kit would be claiming things about a character nobody has
+        // agreed to be yet, and `handleChooseClass` RECOMPOSES the sheet when the
+        // answer lands. A KEYMAP MAKES NO CLAIM ABOUT A CLASS. It is a fact about
+        // a keyboard; it is true before the chooser, during it and after it, and
+        // no answer to "which class" can make it inconsistent with anything.
+        //
+        // AND THE COST OF GETTING IT WRONG RUNS THE OTHER WAY. `loadoutFields`
+        // names what its omission costs — a pickup made before answering is lost
+        // on a reconnect — and the equivalent here would be worse, because the
+        // player most likely to rebind before choosing a class is a NEW player
+        // sitting on the very first screen the game shows them. Losing the keys
+        // they just set, at that exact moment, is the feature failing on its
+        // first use.
+        ...prefsFields(actor),
       });
     }
     return snapshots;
@@ -3335,6 +3494,52 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     );
   };
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE PLAYER'S KEYS, ONTO THE BODY. THE SHORTEST RESTORE IN THIS FILE, AND
+   * THE ONE WHOSE ABSENCE THE PLAYER WOULD NOTICE FIRST.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `restoreLoadout` has to validate ids, de-duplicate a bag, re-slot a doll and
+   * recompose a combat sheet. This one assigns a field, because nothing in the
+   * world reads it (engine/actor.ts:`keybinds` — "inert data") and because the
+   * shape has already been repaired by `parseKeybinds` on the way in.
+   *
+   * ═══ ABSENT MEANS "THIS PORT CANNOT SAY", SO THE BODY KEEPS WHAT IT HAS ═══
+   * Which for a fresh body is nothing at all, i.e. the compiled defaults. It must
+   * never be read as "this player has no overrides", because that is what `{}`
+   * says — and `{}` IS assigned, deliberately, because RESET ALL is a real thing
+   * a player did and a restore that ignored it would hand back the map they just
+   * cleared.
+   *
+   * ═══ NO MEMBERSHIP CHECK, AND NO PER-ACTION WARNING. BOTH ARE DECISIONS ═══
+   * `restoreLoadout` re-checks every item id against the catalogue even though
+   * the bridge already did, because a `PersistPort` is an INTERFACE and a bad id
+   * on a live body would make `wornOf` and `projectInventory` disagree. There is
+   * no equivalent check available here and there must not be one invented: THE
+   * ACTION TABLE IS `src/client/input/keys.ts` AND net/ MAY NOT IMPORT THE
+   * CLIENT. This layer genuinely cannot tell a deleted action from one that ships
+   * next week, so the map is carried verbatim and the CLIENT owns the drop —
+   * exactly as `createTalentSheet` drops a talent id the class no longer has.
+   *
+   * SO THE LOG LINE IS A COUNT, ONCE PER LOAD, AND NEVER ONE PER ACTION. That is
+   * `classFor`'s lesson banked rather than re-learned: `classById(saved) ===
+   * undefined` answered undefined for both a genuinely deleted class AND the
+   * `unassigned` sentinel every file already held, and the resulting false-alarm
+   * storm drowned the one real signal on the first evening after deploy. A
+   * warning that fired per unknown action per player per join would be that
+   * incident with more rows — and it would fire on a state files are legitimately
+   * in. One info line with a number is what a human actually wants at 1 a.m.
+   */
+  const restoreKeybinds = (actor: Actor, restore: CharacterRestore): void => {
+    if (restore.keybinds === undefined) return;
+    actor.keybinds = keybindsRecord(restore.keybinds);
+    app.log.info(
+      { actorId: actor.id, actions: Object.keys(actor.keybinds).length },
+      'restored a character’s key bindings',
+    );
+  };
+
   const restoreProgression = (actor: Actor, restore: CharacterRestore): void => {
     // A monster has no progression. Narrowed rather than asserted: `level`,
     // `xp` and `unspentPoints` live on `PlayerActor` alone.
@@ -3358,6 +3563,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // sat under it. Level and xp are written first only because `restoreLoadout`
     // logs against them.
     restoreLoadout(actor, restore);
+
+    // ═══ AND THE KEYS, WHICH DEPEND ON NOTHING AND ARE THEREFORE SAFE HERE ═══
+    // Above the talent ledger for `restoreLoadout`'s reason and a stronger
+    // version of it: the branch below that handles "no sheet at all" RETURNS
+    // EARLY, so anything under it is silently skipped on a build with no talent
+    // engine — the e2e harness, a fixture — and a player's keys must survive
+    // both. Nothing about a keymap depends on a class, a sheet or a level.
+    restoreKeybinds(actor, restore);
 
     // THE SHEET, through the injected seam and never by importing the talent
     // engine. An absent method and an absent sheet both answer undefined, which
@@ -3615,6 +3828,65 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // somebody whose choice would then be refused.
     if (!classChoiceOwed.has(actorId)) return;
     send(session.socket, projectClassOptions());
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE KEYMAP, UNICAST, READ OFF THE BODY AND NEVER OFF THE FRAME THAT SET IT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Called from two places and no others: the `hello` block, unconditionally,
+   * beside `progress` / `class_options` / `party_state` / `inventory` and for the
+   * same stated reason — THIS SOCKET HAS SEEN NOTHING YET — and again as the echo
+   * at the end of `handleSetKeybinds`.
+   *
+   * ═══ IT READS `body.keybinds`, WHICH IS THE WHOLE VALUE OF THE ECHO ═══
+   * Answering with `msg.binds` would be the server agreeing with the client about
+   * something only the server knows. The Keys screen renders THIS frame, so a map
+   * that was trimmed, refused or never arrived shows up on the screen that set it
+   * rather than on a reconnect three hours later.
+   *
+   * ═══ IT IS A `ViewerMsg`, SO `send` IS THE ONLY THING THAT COMPILES ═══
+   * `broadcast` takes a `BroadcastMsg` and `BroadcastMsg` is `Exclude<ServerMsg,
+   * ViewerMsg>`, so `broadcast(keybindsMsg)` is a build failure. A keymap is true
+   * for exactly one person — see the frame's own docblock in protocol.ts.
+   *
+   * ═══ `persisted` IS ASKED OF THE LAYER THAT ACTUALLY DECIDES ═══
+   * It used to be `session.ownerId !== null && opts.persist !== undefined` — "is
+   * there an owner and is there a save layer" — and that OVERSTATED in a way the
+   * screen could not survive. A verified player whose file came back `too_new` or
+   * `corrupt` is deliberately NOT bound (persist/saves.ts refuses so the bytes
+   * stay where a human can look at them); `owned()` then drops every snapshot
+   * they produce, so nothing they do all evening reaches disk. The Keys screen
+   * shows its NOT SAVED warning only when `!persisted`, so the one line whose
+   * whole job is to say "this will not be kept" said nothing, and then made way
+   * for the quiet hint. Ten minutes of rebinding, discarded, with no signal
+   * anywhere the player was looking.
+   *
+   * SO THE PORT IS ASKED — `isBound`, which the bridge answers off the very map
+   * `owned()` reads. That is NOT a second source of truth about ownership; it is
+   * the one source, queried instead of guessed at. The gateway still holds no
+   * binding table of its own, which is the rule that mattered.
+   *
+   * AND THE OLD ANSWER IS STILL THE FALLBACK, for a port that does not implement
+   * it: `?? opts.persist !== undefined`. A recording double in a test has no
+   * notion of ownership and the wider answer is right for it.
+   */
+  const sendKeybinds = (session: Session): void => {
+    const actorId = session.actorId;
+    const body = actorId === null ? undefined : world.getActor(actorId);
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'keybinds',
+      // `{}` FOR A BODY WITH NO OVERRIDES, and that is the honest wire value: the
+      // frame is complete and absolute, so an empty map means "every action on
+      // its default" rather than "the server declined to say".
+      binds: body?.keybinds ?? {},
+      persisted:
+        session.ownerId !== null &&
+        opts.persist !== undefined &&
+        (actorId === null ? false : (opts.persist.isBound?.(actorId) ?? true)),
+    });
   };
 
   const classFor = (restore: CharacterRestore | null, who: string): ClassDef => {
@@ -3941,6 +4213,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // socket has seen nothing yet. Silent for everybody else — see
     // `sendClassOptions`, where the set membership is checked.
     sendClassOptions(session);
+
+    // THEIR KEYS, unicast and UNCONDITIONAL, for the same reason as everything
+    // around it: this socket has seen nothing yet. There is no on-change memo to
+    // sit outside of — the frame is sent exactly twice, here and as the echo
+    // after a rebind — because a keymap changes when a player changes it and at
+    // no other moment.
+    //
+    // AND IT IS SENT EVEN WHEN THE MAP IS EMPTY, unlike `sendProjectilesIfAny`
+    // and `sendGroundIfAny` above. `{}` is a real answer here: it tells a
+    // returning player's Keys screen that the server holds no overrides, which is
+    // exactly what a client that drew its defaults and waited would never learn.
+    // The `persisted` flag rides along, and for an anonymous socket it is the
+    // only place the truth ("this session is not signed in") appears at all.
+    sendKeybinds(session);
 
     // THE TWO SNAPSHOTS, unicast, and again outside the on-change rule for the
     // same reason: this socket has seen nothing. The memo compares against the
@@ -5880,6 +6166,157 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     pumpAndBroadcast();
   };
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `set_keybinds` — "THESE ARE MY KEYS." STORE THEM, FLUSH THEM, ECHO THEM.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The fourth member of the non-pumping, self-only group, beside `inspect`,
+   * `choose_class` and `spend_point`, and it is in that group for the group's own
+   * stated rule: a rebind costs no energy, queues no intent and draws no RNG, so
+   * a frame that costs the sender nothing must never be a way to make the server
+   * advance the world. Routing it through anything that calls `pumpAndBroadcast`
+   * would let a patched client farm monster turns off a free frame.
+   *
+   * ═══ IT READS NOTHING FROM THE FRAME BUT `binds` ═══
+   * `SetKeybindsSchema` is a `strictObject` of `{v, t, binds}`, so a smuggled
+   * `actorId` is REJECTED rather than stripped into a legal frame — which here
+   * would mean rewriting the SENDER's own keyboard on somebody else's behalf,
+   * silently, with the screen showing what they asked for. Identity is
+   * `session.actorId`, exactly as with `move`.
+   *
+   * ═══ WHOLESALE REPLACEMENT, NEVER A MERGE ═══
+   * The frame carries the player's complete remap, so `binds: {}` IS the RESET
+   * ALL button and needs no second verb. Merging would make "clear this action"
+   * unexpressible and would leave a stale override behind every time the client's
+   * idea of the map got ahead of the server's.
+   *
+   * ═══ NO NEW `ErrorCode`, AND NO REFUSAL THIS HANDLER CAN INVENT ═══
+   * Shape, size and emptiness are zod's (`bad_message`, before this is entered).
+   * MEMBERSHIP is nobody's on this side of the wire — the action table lives in
+   * src/client/input/keys.ts and net/ may not import the client — so an id this
+   * build no longer binds is stored verbatim, and CONFLICTS are refused at the
+   * capture field where the screen can name which action already holds the key. A
+   * refusal here would be one with nothing to point at. src/shared/version.ts
+   * records that a new code independently forces a protocol bump.
+   *
+   * ═══ AND IT IS AN IMMEDIATE FLUSH, NOT THE 5s DEBOUNCE ═══
+   * `saveNow('keybinds')` for `join`'s reason: the interesting window is exactly
+   * the seconds after a player finishes a rebind and closes the tab, which is
+   * precisely when somebody who has just spent two minutes on the Keys screen
+   * does close it. The label is not in `REASON_BY_LABEL`, so persist/saves.ts
+   * files it as `SaveReason.Manual` through its own `??` — which is the honest
+   * category: a rebind is a deliberate act by a person, not a world event.
+   *
+   * ═══ NOTHING IS PARKED AND NO PRESENCE IS NOTED ═══
+   * The Keys screen is a PANEL on the character sheet's pattern, not a modal: the
+   * server is never told it is open, and the Warrant Clock auto-passes a reader
+   * like anybody else. So there is no quorum problem to solve and
+   * `parkForClassChoice`'s machinery — whose first version stranded anonymous
+   * sockets forever — is deliberately not reached for.
+   *
+   * ═══ AND THIS PARAGRAPH ONCE CLAIMED MORE THAN THE CLIENT DELIVERED ═══
+   * It used to add that "the player can still walk, commit, hold and press 1-4
+   * with it up". Three of those four were false against the shipped client: the
+   * escape menu's `onMove` and `onCommand` gates swallowed the direction keys,
+   * Commit, Hold AND Pickup outright. With two readers the Bell could not even
+   * bound it — `bell()` arms only at `committed >= total - 1`, i.e. for at most
+   * ONE straggler — so the level parked with no timer that ends it. The CLIENT
+   * was fixed (src/client/main.ts's `onCommand` now swallows Enter only when a
+   * row is genuinely lit, and never Hold or Pickup), which is where the fix
+   * belongs, because a park here "DOES NOT MAKE THEM SAFE" and would leave a body
+   * being chewed on while its owner reads. This sentence is now a description of
+   * behaviour that exists rather than a premise this file was relying on.
+   *
+   * `notePresence` is left alone too, unlike
+   * `spend_point`: a rebind is not evidence about the barrier the way a `+` press
+   * is, because the client sends this frame when a SCREEN closes rather than when
+   * a decision is made, and a straggler must not be able to hold the party by
+   * leaving a menu open.
+   */
+  const handleSetKeybinds = (session: Session, msg: ClientSetKeybinds): void => {
+    // A NARROWING, NOT A GATE — `handleChooseClass`'s shape. The dispatch switch
+    // sits below the `helloDone` check so this branch is unreachable without an
+    // actor; the compiler still needs the null gone, and answering honestly beats
+    // a non-null assertion.
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(
+        session.socket,
+        ErrorCode.NotAuthenticated,
+        'send hello before setting key bindings',
+      );
+      return;
+    }
+
+    // THE BODY, CHECKED RATHER THAN ASSUMED, and answered `internal` when it is
+    // gone — `handleChooseClass`'s honest-outcome shape. It was recalled between
+    // the frame being sent and being read, so there is nothing to store the map
+    // on and nothing to save; changing NOTHING and saying so beats writing a
+    // keymap onto a body that no longer exists.
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+
+    // ON THE BODY, NOT ON THE SESSION. Two tabs are one player — the second
+    // claims the same actor and the older socket is closed with 4001 — so one
+    // body means one map means no last-writer-wins between windows. Cached per
+    // session it would be one file with two writers. Normalised on the way in so
+    // what is stored is what a snapshot would have written anyway.
+    const next = keybindsRecord(msg.binds);
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // AN IDEMPOTENCE CHECK, AND IT IS THE PRECONDITION THIS HANDLER WAS MISSING.
+    // ═════════════════════════════════════════════════════════════════════════
+    // Every other `saveNow` path in this file is self-limiting. `spend_point`
+    // gates on `body.unspentPoints <= 0` AND on `raiseTalentPoint` succeeding
+    // before it flushes; `pickup` needs a real ground item and spends the turn;
+    // `death`, `recall`, `join` and `disconnect` are world events a client cannot
+    // repeat. This one had NO precondition at all — it wrote and flushed on every
+    // accepted frame — and `saveNow` -> `savePlayersNow` writes EVERY bound
+    // player's character file, not just the sender's, each one a full
+    // `writeFileAtomic`: open + write + fsync + `copyFile` for the `.bak` +
+    // rename. Nothing downstream could dedupe it either, because `saveCharacter`
+    // stamps a fresh `updatedAt` before serialising, so the bytes differ every
+    // time.
+    //
+    // A LOOPING CLIENT SUSTAINS 20 FRAMES A SECOND (`COMMAND_RATE_PER_SEC`) —
+    // `set_keybinds` is charged one token like every non-`hello` frame and
+    // nothing refused it, because the map is always shape-valid. At a party of
+    // five that was 100 fsync'd writes a second driven by one socket, rewriting
+    // and rotating the backups of four people who did nothing, with `runExclusive`
+    // growing an unbounded per-path promise chain — each queued closure retaining
+    // its serialised text — for `flush()` to drain at shutdown.
+    //
+    // BOTH SIDES ARE ALREADY SORTED AND CANONICAL (`keybindsRecord` sorts the
+    // action keys and copies the arrays), so `JSON.stringify` equality is exact
+    // rather than approximate. THE ECHO STILL GOES OUT: the frame's contract is
+    // that the screen renders what the SERVER holds, and a client that resent an
+    // unchanged map is still owed that answer.
+    //
+    // `saveNow` RATHER THAN `queueSave` SURVIVES THIS, and deliberately — the
+    // interesting window really is the seconds between a rebind and a closed tab
+    // (see this handler's docblock). What was wrong was that a NO-OP could drive
+    // it; a genuine change flushing immediately is the behaviour that was asked
+    // for, and a human cannot generate more than a few of those a minute.
+    if (JSON.stringify(body.keybinds ?? null) === JSON.stringify(next)) {
+      sendKeybinds(session);
+      return;
+    }
+
+    body.keybinds = next;
+
+    saveNow('keybinds');
+
+    // AND THE ECHO, TO THE SENDER ALONE, READ BACK OFF THE BODY. Never
+    // `broadcast` — the type system agrees, since `KeybindsMsg` is a `ViewerMsg`
+    // — and never `msg.binds`, because the whole point is that the screen renders
+    // what the SERVER stored.
+    sendKeybinds(session);
+  };
+
   const handleFrame = (session: Session, raw: WsFrame): void => {
     if (frameBytes(raw) > MAX_FRAME_BYTES) {
       sendError(session.socket, ErrorCode.BadMessage, `frame exceeds ${MAX_FRAME_BYTES} bytes`);
@@ -5994,6 +6431,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // full for the next person who goes looking for one.
       case 'spend_point':
         handleSpendPoint(session, msg);
+        return;
+      // ALSO NON-PUMPING, and the FOURTH member of this group rather than an
+      // exception to it — the group's own rule, stated once more because this is
+      // the frame most likely to be mistaken for a settings write that could
+      // safely go anywhere: a rebind costs no energy, queues no intent and draws
+      // no RNG, so a frame that costs the sender nothing must not be a way to
+      // make the server advance the world. Routed through anything that pumps, a
+      // patched client would farm a monster turn per keystroke off the Keys
+      // screen.
+      //
+      // AND SELF-ONLY, like the three above it: the frame names a keymap and
+      // nothing else, and the body it lands on is the one this socket owns. The
+      // echo goes back with `send` and never `broadcast` — `KeybindsMsg` is a
+      // `ViewerMsg`, so the compiler enforces it. See `handleSetKeybinds`, where
+      // the absence of a park is written out for the next person who looks.
+      case 'set_keybinds':
+        handleSetKeybinds(session, msg);
         return;
       case 'revive':
         handleRevive(session, msg);

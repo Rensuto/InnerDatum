@@ -355,11 +355,33 @@ describe('the fillRect overlays stay art-free', () => {
    */
   const sheetSrc = codeOf('src/client/ui/charsheet.ts');
   const pickerSrc = codeOf('src/client/ui/classpicker.ts');
-  const panels: readonly (readonly [string, string])[] = [
-    ['ui/charsheet.ts', sheetSrc],
-    ['ui/classpicker.ts', pickerSrc],
-    ['ui/talents.ts', codeOf('src/client/ui/talents.ts')],
-    ['ui/inventory.ts', codeOf('src/client/ui/inventory.ts')],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE THIRD COLUMN IS "DOES THIS PANEL REACH THE SPRITE SOURCE AT ALL", AND IT
+   * IS DATA BECAUSE THE ALTERNATIVE WAS WEAKENING THE GUARD FOR ALL FIVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Adding ui/escapemenu.ts first turned the per-file `expect(args.length)
+   * .toBeGreaterThan(0)` into a single aggregate sum, which passes as long as ANY
+   * ONE entry in this array asks for a sprite. That gives up exactly the thing
+   * the assertion exists for: route ui/inventory.ts's `sprites.sprite(...)`
+   * through a shared helper in another module and its own `args.length` drops to
+   * zero, the literal/assembled-key audit for that file silently covers no call
+   * sites, and the aggregate stays green on the strength of the other three —
+   * "a pin over zero call sites passes forever and proves nothing", restated.
+   *
+   * So the exemption is named per file instead. `false` means "this panel reaches
+   * art ONLY through ui/panel.ts's `drawPanel` / `drawHeader` / `drawButton`",
+   * which is true of ui/escapemenu.ts by design: there is no gear, keyboard,
+   * settings or scrollbar in the manifest and it must not invent one for a test.
+   * A panel that later STARTS drawing sprites, or one that stops, now fails
+   * loudly in the row that made the claim.
+   */
+  const panels: readonly (readonly [string, string, boolean])[] = [
+    ['ui/charsheet.ts', sheetSrc, true],
+    ['ui/classpicker.ts', pickerSrc, true],
+    ['ui/talents.ts', codeOf('src/client/ui/talents.ts'), true],
+    ['ui/inventory.ts', codeOf('src/client/ui/inventory.ts'), true],
+    ['ui/escapemenu.ts', codeOf('src/client/ui/escapemenu.ts'), false],
   ];
 
   it('asks the sprite source only for keys that came off the wire', () => {
@@ -369,11 +391,18 @@ describe('the fillRect overlays stay art-free', () => {
     const prefixes = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1] ?? '');
     expect(prefixes.length).toBeGreaterThan(0);
 
-    for (const [name, src] of panels) {
+    // A pin over zero call sites passes forever and proves nothing, so every
+    // panel that claims to draw art is checked to still be doing it — PER FILE,
+    // against the third column, so one panel's call sites cannot vouch for
+    // another's. See the array's own note.
+    for (const [name, src, drawsSprites] of panels) {
       const args = [...src.matchAll(/sprites\.sprite\(([^)]*)\)/g)].map((m) => (m[1] ?? '').trim());
-      // Both files DO ask for sprites — a pin over zero call sites passes
-      // forever and proves nothing.
-      expect(args.length, `${name} draws no sprites at all?`).toBeGreaterThan(0);
+      expect(
+        args.length > 0,
+        drawsSprites
+          ? `${name} draws no sprites at all any more — this audit now covers zero call sites`
+          : `${name} has started drawing sprites; flip its column to true so it is audited`,
+      ).toBe(drawsSprites);
 
       for (const arg of args) {
         const literal = /^['"`]/.test(arg);
@@ -394,7 +423,7 @@ describe('the fillRect overlays stay art-free', () => {
 
   it('names no asset id that is under no indexed prefix', () => {
     // ═══ THE HALF THE ASSERTION ABOVE CANNOT SEE ═══
-    // All four panels reach the sprite source through a one-line helper
+    // The four panels that draw art reach the sprite source through a one-line helper
     // (`const sprite = sprites.sprite(id)`), so the literal branch above matches
     // nothing in any of them and only the "never assemble a key" half is live.
     // The ids themselves are handed to that helper from somewhere ELSE in the

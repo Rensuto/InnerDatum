@@ -2111,6 +2111,155 @@ const InspectSchema = z.strictObject({
   targetId: z.string().min(1).max(ACTOR_ID_MAX_CHARS),
 });
 
+// ---------------------------------------------------------------------------
+// THE KEYMAP'S BOUNDS — EXPORTED, BECAUSE THREE LAYERS HAVE TO AGREE ON THEM
+//
+// The `SAY_MAX_CHARS` discipline at :1594-1605, applied to four numbers instead
+// of one: *"Exported so the command line's `maxlength` and this schema are ONE
+// number. Two numbers means the day they drift a player types a sentence,
+// watches the input accept it, and gets `bad_message` back."* Here the input is
+// the Keys screen's capture field and the drift is worse than a refused
+// sentence — a rebind the capture field accepted and the server refused leaves
+// the player looking at a key that does nothing.
+//
+// THERE IS A THIRD READER AND IT IS NOT ON THIS WIRE AT ALL. A hand-edited
+// character file never passes through zod (:6-14 — "CLIENT -> SERVER is zod. It
+// is the single trust boundary"), so src/server/persist/saves.ts:1112-1126
+// declares the identical four numbers for the disk. THE DISK CAP MUST NEVER BE
+// TIGHTER THAN THESE: a map the server ACCEPTED over the wire would then come
+// back repaired after a reconnect, and the player watches a binding they set
+// change by itself. test/server/keybinds-wire.test.ts pins the two sets equal
+// by running a map built at exactly these caps through `parseCharacterFile`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ceiling on how many distinct actions one remap may name.
+ *
+ * A REAL BOUND WITH ONE RELEASE OF HEADROOM, NOT A SHRUG. The action namespace
+ * is CLOSED and countable — eight directions, three turn commands, eight UI
+ * commands, four hotbar slots, two scroll steps and cancel is 26 — so 40 is a
+ * number somebody worked out rather than a round one somebody picked. A map
+ * naming 41 actions is naming actions that do not exist.
+ */
+export const KEYBIND_MAX_ACTIONS = 40;
+
+/** `move_northeast` is 14. 48 is a ceiling, not a fit. */
+export const KEYBIND_ACTION_MAX_CHARS = 48;
+
+/**
+ * TWO SLOTS PER ACTION, WHERE ToME HAS THREE.
+ *
+ * `KeyBind:saveRemap` writes k1/k2/k3 (engines/default/engine/KeyBind.lua:88-103)
+ * and `binds_remap[virtual]` is a three-element table. THE THIRD IS A MOUSE
+ * GESTURE: KeyBinder.lua:134-184 captures it with a `GetText.new` box whose
+ * strokes arrive through `d.mouse:registerZone` at :166 — not through the key
+ * handler — and this project binds the mouse in src/client/input/mouseintent.ts,
+ * which no keymap reaches.
+ *
+ * ═══ AND THE DEVIATION IS WIDER THAN "THREE SLOTS BECOME TWO" ═══
+ * Upstream also accepts a MOUSE BUTTON into slots 1 and 2: the
+ * `curcol == 1 or curcol == 2` branch installs `d:mouseZones` at
+ * KeyBinder.lua:109-128 and writes `KeyBind:makeMouseString(button, …)` straight
+ * into `binds_remap[t.type][curcol]` at :124. So ours is two slots rather than
+ * three AND no mouse in any of them. That second half is not a shortfall of this
+ * constant — src/client/input/mouseintent.ts argues the whole mouse vocabulary
+ * separately — but a reader weighing "what does dropping to two slots cost"
+ * deserves the true answer rather than one that makes the mouse sound confined
+ * to the slot we dropped. A DELIBERATE DEVIATION, and a slot that could never be
+ * filled would be worse than absent.
+ */
+export const KEYBIND_KEYS_PER_ACTION = 2;
+
+/**
+ * Longest single key string. `code:NumpadDecimal` is 18.
+ *
+ * A key string is one of the two tagged forms the dispatcher understands —
+ * `key:h` (the layout-dependent character, so a binding follows a player's
+ * keyboard) or `code:Numpad8` (the physical key, so numpad movement survives
+ * NumLock). ToME makes the identical distinction and matches its two forms in
+ * order (KeyBind.lua:146-148, :227-244).
+ */
+export const KEYBIND_KEYSTRING_MAX_CHARS = 32;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `set_keybinds` — "THESE ARE MY KEYS." The Keys screen's only verb.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * WHOLESALE, NEVER A DELTA. The frame carries the player's COMPLETE remap and
+ * replaces whatever the server held, so RESET ALL is `binds: {}` and needs no
+ * second verb. A per-action delta would need a "forget this one" spelling, and
+ * two spellings of empty is the thing this protocol refuses everywhere else.
+ *
+ * ═══ IT NAMES NO ACTOR, AND `strictObject` IS WHAT MAKES THAT A REFUSAL ═══
+ * The missing-field rule at the head of this file, unbroken: whose keyboard this
+ * is is the socket's business, resolved server-side from the session exactly as
+ * with `move`. A smuggled `actorId` is REJECTED rather than quietly stripped
+ * into a legal frame (see the note at the head of `HelloSchema`) — so an attempt
+ * to rewrite somebody else's keys fails loudly in the log instead of being
+ * sanitised into a rewrite of the sender's own.
+ *
+ * ═══ `v` IS NOT OPTIONAL HERE, FOR `InspectSchema`'S REASON (:2101-2107) ═══
+ * `parseClientMsg`'s version check is guarded by `'v' in candidate` and the
+ * gateway's `wireVersion` returns undefined for a frame without one, so a frame
+ * that simply OMITS the field would skip version enforcement entirely. The
+ * `z.literal` is the whole of what makes it mandatory.
+ *
+ * ═══ THE MAP IS `Record<string, string[]>`, NOT AN ENUM OF THE 26 ACTIONS ═══
+ * `TalentSchema`'s stated precedent, and `ChooseClassSchema`'s and
+ * `EquipSchema`'s after it. The action table is CLIENT-side (src/client/input/
+ * keys.ts) and the server has no copy of it — net/ cannot import the browser —
+ * so there is nothing here to validate membership against, and baking the table
+ * into the wire schema would make renaming one action a protocol change. An id
+ * this build no longer binds is kept verbatim all the way to the disk and the
+ * CLIENT drops what it cannot bind, exactly as `createTalentSheet` drops a
+ * talent id the class no longer has.
+ *
+ * ═══ WHAT THIS SCHEMA DOES NOT CHECK ═══
+ * That any of these actions exists, that a key string is one the dispatcher can
+ * ever deliver, and — the one that matters to a player — that two actions are
+ * not fighting over one key. zod validates SHAPE. Conflicts are refused at the
+ * CAPTURE FIELD, where the screen can name which action already holds the key;
+ * refusing them here would be a refusal with nothing to point at. NO NEW
+ * `ErrorCode` MEMBER IS ADDED for any of it: a malformed or oversized map is
+ * `bad_message`, exactly as v10 refused every loot failure, and src/shared/
+ * version.ts records that a new code independently forces a protocol bump.
+ *
+ * ═══ IT DOES NOT PUMP THE WORLD ═══
+ * A rebind costs no energy, queues no intent and draws no RNG, so it joins
+ * `inspect`, `choose_class` and `spend_point` in the gateway's non-pumping
+ * group: a frame that costs the sender nothing must never be a way to make the
+ * server advance the world.
+ */
+const SetKeybindsSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('set_keybinds'),
+  /**
+   * ACTION ID -> KEY STRINGS, in slot order. ToME's `binds_remap[virtual] =
+   * {key1, key2, key3}` (KeyBind.lua:78, :88-103) with one slot removed.
+   *
+   * SPARSE: only actions the player actually changed appear, which is upstream's
+   * own shape (`saveRemap` writes only remapped virtuals) and is what lets a
+   * shipped change to a DEFAULT reach every player who never touched it.
+   *
+   * AN EMPTY ARRAY IS A REAL VALUE — "cleared, both slots" — and is NOT the same
+   * as the action being absent. `.min(1)` on the key string rather than on the
+   * array is deliberate: an empty STRING is not a key anybody pressed, an empty
+   * LIST is a decision somebody made.
+   */
+  binds: z
+    .record(
+      z.string().min(1).max(KEYBIND_ACTION_MAX_CHARS),
+      z.array(z.string().min(1).max(KEYBIND_KEYSTRING_MAX_CHARS)).max(KEYBIND_KEYS_PER_ACTION),
+    )
+    // The COUNT cap cannot be expressed in `z.record` itself, so it is a refine
+    // rather than a builder call. It is the bound that stops a 16 KB frame full
+    // of one-character action ids from becoming 16 KB of character file.
+    .refine((map) => Object.keys(map).length <= KEYBIND_MAX_ACTIONS, {
+      message: `at most ${String(KEYBIND_MAX_ACTIONS)} actions`,
+    }),
+});
+
 /**
  * The complete set of things a client may say.
  *
@@ -2136,6 +2285,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   DropSchema,
   PartySchema,
   InspectSchema,
+  SetKeybindsSchema,
   PingSchema,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
@@ -2158,6 +2308,7 @@ export type ClientUnequip = z.infer<typeof UnequipSchema>;
 export type ClientDrop = z.infer<typeof DropSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
+export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
 
 // ---------------------------------------------------------------------------
@@ -3310,6 +3461,75 @@ export type InventoryMsg = {
   equipped: Readonly<Partial<Record<Slot, ItemView>>>;
 };
 
+// ---------------------------------------------------------------------------
+// THE KEYMAP, COMING BACK
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT THE SERVER HAS STORED FOR THIS PLAYER'S KEYS, AND WHETHER IT WILL LAST.
+ *
+ * Sent twice and only twice: unconditionally in the `hello` block, beside
+ * `progress` / `class_options` / `party_state` / `inventory`, for the reason
+ * every frame in that block is unconditional — this socket has seen nothing yet
+ * — and again as an ECHO after every accepted `set_keybinds`.
+ *
+ * ═══ THE ECHO IS THE POINT, NOT AN ACKNOWLEDGEMENT ═══
+ * The Keys screen renders THIS frame rather than the map the client just sent,
+ * so what a player sees is what the SERVER stored. Without it a screen would be
+ * drawing its own optimism: a map the server bounced, trimmed or never received
+ * would still be on display, and the next reconnect is where the player would
+ * find out. The server is authoritative (CLAUDE.md non-negotiable 4) about
+ * preferences too.
+ *
+ * ═══ `persisted` IS THE FRAME TELLING AN ANONYMOUS PLAYER THE TRUTH ═══
+ * A body with no verified owner has no character file — `openCharacter` binds
+ * only somebody a server-side `GET /users/@me` has named, and net/gateway.ts
+ * spells out why minting an id for the purpose would scatter orphan directories
+ * nobody can reclaim. So an anonymous socket's rebinds live on its body for as
+ * long as the body lives and are lost at recall. THAT IS THE SAME TREATMENT
+ * anonymous play already gets for hp, cooldowns and the class picker, and
+ * refusing rebinds instead would break plain-browser development and
+ * tools/e2e-m1.mjs. `false` here is what lets the screen say "not saved: this
+ * session is not signed in" instead of leaving the first developer to discover
+ * a working feature looks broken.
+ *
+ * ═══ IT IS A `ViewerMsg`, AND THE REASON IS `class_options`' ═══
+ * See the note on that union below. Nothing here is secret — a keymap is not
+ * intent the way a cooldown is — but THERE IS NO VERSION OF THIS FRAME THAT IS
+ * CORRECT FOR TWO RECIPIENTS, because a keymap is true for exactly one person.
+ * Membership makes `broadcast(keybindsMsg)` a build failure.
+ *
+ * ═══ AND IT MUST NOT RIDE `welcome`, WHICH IS THE TEMPTING WRONG MOVE ═══
+ * `WelcomeMsg` is absent from `ViewerMsg` and is therefore a `BroadcastMsg`.
+ * Hanging a private preference off it would make `broadcast(welcome)` type-legal
+ * for a frame that now carries one player's keys — silently disarming the exact
+ * enforcement `BroadcastMsg = Exclude<ServerMsg, ViewerMsg>` exists to provide.
+ * A separate frame costs one `send` and keeps the type system doing the work.
+ */
+export type KeybindsMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'keybinds';
+  /**
+   * ACTION ID -> KEY STRINGS. Complete and absolute, exactly as the client sent
+   * it and exactly as the disk holds it; an empty object means "no overrides,
+   * every action on its default".
+   *
+   * ACTION IDS THIS BUILD NO LONGER BINDS SURVIVE IN HERE. Neither the wire nor
+   * the persist layer has an action table to check against — the table is
+   * src/client/input/keys.ts — so a renamed-then-restored action comes back with
+   * its keys, and THE CLIENT OWNS THE DROP: it must ignore an id it cannot bind
+   * rather than expecting the server to have filtered it.
+   */
+  binds: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Will these binds still be here tomorrow? True for a verified player on a
+   * server with persistence wired in; false for an anonymous socket and for a
+   * build with no save layer. See the docblock — this is the field that stops a
+   * working feature reading as broken.
+   */
+  persisted: boolean;
+};
+
 export type PongMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'pong';
@@ -3362,6 +3582,7 @@ export type ServerMsg =
   | ProgressMsg
   | GroundMsg
   | InventoryMsg
+  | KeybindsMsg
   | PongMsg
   | ErrorMsg;
 
@@ -3445,6 +3666,28 @@ export type ServerMsg =
  * arithmetically wrong for everybody but its author, on the one screen whose
  * whole job is answering "is this better than what I have on?".
  *
+ * `keybinds` JOINED FOR THE SECOND REASON ALONE, IN `class_options`' FORM. Of
+ * the two faults this union guards against, only one applies: a keymap IS NOT A
+ * LEAK. It says nothing about what anybody is holding for the boss, nothing
+ * about a decision they have not made, and a player who reads out their own
+ * bindings in voice has given nothing away — which is exactly why this entry
+ * names the reason instead of gesturing at the union.
+ *
+ * IT IS HERE BECAUSE THERE IS NO VERSION OF THIS FRAME THAT IS CORRECT FOR TWO
+ * RECIPIENTS. A keymap is true for exactly one person, in the same sense
+ * `class_options` is a question owed to exactly one person and `TurnActor.isSelf`
+ * is true for exactly one person. Handed to the room it would tell three other
+ * players that their `w` is bound to something they never chose — and the screen
+ * it lands on is the one whose whole job is answering "what does MY keyboard
+ * do?". `broadcast(keybindsMsg)` must not compile.
+ *
+ * AND IT IS A SEPARATE FRAME RATHER THAN A FIELD ON `welcome` FOR THAT EXACT
+ * MECHANISM. `WelcomeMsg` is absent from this union, so it is a `BroadcastMsg`;
+ * hanging one player's preferences off it would make `broadcast(welcome)`
+ * type-legal for a frame carrying per-viewer data and would quietly disarm the
+ * `Exclude` below. The enforcement only works while every viewer-private fact
+ * lives in a frame that is in this list.
+ *
  * `ground` DELIBERATELY DID NOT JOIN, AND THE SPLIT IS THE POINT. A floor item is
  * a POSITION, which is world state and true for everybody; an inventory is a
  * holding, which is true for one person. The two arrived in the same release and
@@ -3461,7 +3704,8 @@ export type ViewerMsg =
   | InspectedMsg
   | ClassOptionsMsg
   | ProgressMsg
-  | InventoryMsg;
+  | InventoryMsg
+  | KeybindsMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

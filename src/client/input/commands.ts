@@ -105,11 +105,42 @@ export type CommandOutcome =
       readonly targetName: string | null;
     }
   | { readonly kind: 'notice'; readonly text: string }
+  | {
+      /**
+       * OPEN THE KEY BINDINGS SCREEN. `/keys`, and `/menu` for the people who
+       * type the other word.
+       *
+       * ═══ THIS IS THE POINTER-ONLY ESCAPE HATCH, AND IT IS THE ONE THAT
+       *     SURVIVES A COMPLETELY SCRAMBLED KEYBOARD ═══
+       * Every other way into the rebinding screen goes through a key. Escape is
+       * frozen (src/client/input/keymap.ts's `cancel` row) precisely so that can
+       * never fail — but "frozen" is a promise about OUR table, and a player
+       * whose keyboard has genuinely stopped answering, or who has just bound
+       * something to a key their layout cannot produce, has no key at all.
+       *
+       * `#cmd` is the way back in with no keyboard rules involved: main.ts
+       * :540-544 describes it as "a permanently visible, permanently focusable
+       * <input>" whose row "is fully visible and reads T or / to talk". The
+       * player CLICKS that row and types. From there RESET ALL is two more
+       * clicks, and no keypress was required to reach either.
+       *
+       * It carries nothing. Like every other outcome here it is parsed and
+       * resolved but never SENT — main.ts opens the screen.
+       */
+      readonly kind: 'keys';
+    }
   | { readonly kind: 'none' };
 
-/** Printed by `/party` on its own and by anything this file does not recognise. */
+/**
+ * Printed by `/party` on its own and by anything this file does not recognise.
+ *
+ * IT IS THE WHOLE HELP LINE DESPITE ITS NAME. `/keys` joins it because this
+ * string is what `/help` answers with, and a recovery hatch nobody can find is
+ * not a hatch — the player who needs it most is the one who cannot type the name
+ * of the thing they are looking for.
+ */
 export const PARTY_USAGE =
-  '/party invite <name> · /accept · /decline · /leave · /kick <name> — or right-click a token';
+  '/party invite <name> · /accept · /decline · /leave · /kick <name> · /keys — or right-click a token';
 
 /** What a name lookup came back with. Three outcomes, and two of them are answers. */
 type Resolution =
@@ -256,6 +287,14 @@ export function parseCommand(raw: string, context: CommandContext): CommandOutco
       // refuse, and this sentence is better than that round trip.
       if (!context.inParty) return notice('you are already on your own — nobody to leave');
       return party(PartyAction.Leave, null);
+
+    // TWO SPELLINGS, ONE OUTCOME. `/keys` is what it does and `/menu` is what
+    // ToME calls the screen it hangs off (GameMenu.lua:31, "Game Menu"); a
+    // player reaching for this is by definition having trouble, and refusing
+    // them over which of the two words they picked would be a joke.
+    case 'keys':
+    case 'menu':
+      return { kind: 'keys' };
 
     case 'help':
     case '?':

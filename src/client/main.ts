@@ -134,7 +134,12 @@
 
 import { DIR_ORDER, chebyshev, sameTile, step } from '../shared/coords.ts';
 import { parseCommand } from './input/commands.ts';
-import { bindGameKeys, TurnCommand, UiCommand } from './input/keys.ts';
+import { bindGameKeys, gameKeymap, setKeymap, TurnCommand, UiCommand } from './input/keys.ts';
+// v11 — THE KEYMAP'S OWN VERBS. `labelFor` is why no key mnemonic in this file
+// is a hard-coded letter any more: a printed "press g" is a lie the moment
+// somebody rebinds, and the three of them here had already been written twice.
+// The three mutators are the menu's buttons and nothing else reaches them.
+import { clearBinding, labelFor, resetAll, resetOne, SLOTS_PER_ACTION } from './input/keymap.ts';
 import { MouseIntentKind, mouseIntentAt, travelTargetAllowed } from './input/mouseintent.ts';
 import { createTargeting } from './input/targeting.ts';
 import {
@@ -171,6 +176,21 @@ import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts
 // silent no-op this file's header forbids.
 import { drawHotbar, HOTBAR_TOTAL_H, hotbarSlotAt } from './ui/hotbar.ts';
 import { createContextMenu, MapVerb } from './ui/contextmenu.ts';
+// v11 — THE ESCAPE MENU. Every rule it has is in that module and is pure: the
+// rows, the capture state machine, the geometry and the hit test. What is here
+// is wiring — where the panel goes, when it is painted, and what a hit means.
+import {
+  CaptureKind,
+  drawEscapeMenu,
+  escapeMenuHitAt,
+  escapeMenuPaging,
+  escapeMenuRect,
+  escapeMenuRows,
+  MenuHitKind,
+  MenuRowKind,
+  MenuScreen,
+  applyCapture,
+} from './ui/escapemenu.ts';
 import {
   drawInventoryPanel,
   focusForHit,
@@ -198,9 +218,9 @@ import {
 } from './ui/talents.ts';
 import {
   drawRespawnPrompt,
-  RESPAWN_PROMPT_SPEECH,
   respawnPromptHit,
   respawnPromptRect,
+  respawnPromptSpeech,
 } from './ui/respawnprompt.ts';
 import { drawTooltip } from './ui/tooltip.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
@@ -241,6 +261,14 @@ import type {
   TurnMsg,
 } from '../shared/protocol.ts';
 import type { CommandContext, RosterEntry } from './input/commands.ts';
+import type { KeyRemap } from './input/keymap.ts';
+import type {
+  ArmedCapture,
+  EscapeMenuView,
+  MenuEffect,
+  MenuHit,
+  MenuRow,
+} from './ui/escapemenu.ts';
 import type { Targeting, TargetingWorld } from './input/targeting.ts';
 import type { Travel, TravelWorld } from './input/travel.ts';
 import type { DiscordParticipant } from './net/discord.ts';
@@ -563,6 +591,16 @@ const cmdRowEl = document.getElementById('cmdrow');
  *
  * IT IS RESTORED IN `case 'loadout'`, which is where the modal is torn down and
  * the only place that knows the choice actually landed.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * v11: PRIVATE, AND CALLED FROM `syncCommandLineReach` ONLY. IT IS NOT A TOGGLE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * There are now TWO independent surfaces that need this row out of reach, and a
+ * bare boolean with two owners is a hole rather than a gate: the escape menu
+ * calling `(true)` on close while the class chooser was still up would reopen
+ * the exact trap this function was written to shut. So the ANSWER is computed
+ * from the two facts rather than asserted by whichever surface acted last —
+ * see `syncCommandLineReach`, which is the only caller.
  */
 function setCommandLineReachable(reachable: boolean): void {
   if (cmdEl === null) return;
@@ -570,6 +608,49 @@ function setCommandLineReachable(reachable: boolean): void {
   cmdEl.tabIndex = reachable ? 0 : -1;
   if (!reachable) cmdEl.blur();
   cmdRowEl?.toggleAttribute('hidden', !reachable);
+}
+
+/**
+ * RECOMPUTE whether `#cmd` may be reached, from every reason it may not be.
+ *
+ * ═══ A RECOMPUTE AND NOT A SECOND TOGGLE, AND THAT IS THE WHOLE POINT ═══
+ * `setCommandLineReachable` had exactly two callers, both the class chooser's
+ * (`case 'class_options'` shuts it, `case 'loadout'` opens it). The escape menu
+ * needs the same thing for a different reason — Tab is a legitimate key to BIND,
+ * and `#cmd` is the only tabbable element on the page, so a capture field would
+ * otherwise be one Tab away from moving focus off the canvas and into a field
+ * whose keystrokes keys.ts correctly drops. Adding a third independent caller
+ * that asserted `true` would mean the LAST surface to close decided for both:
+ * open the menu while the chooser is up, close the menu, and the row comes back
+ * in front of a modal that is still on screen.
+ *
+ * TWO TERMS, AND EVERY NEW SURFACE ADDS ONE HERE RATHER THAN A CALL SITE.
+ *
+ * IT IS NEEDED WHENEVER THE MENU IS OPEN AND NOT ONLY WHILE A CAPTURE IS ARMED.
+ * The arm lasts one keypress; the hazard is Tab, which is not a key anyone holds
+ * down to press deliberately — a player reaching for it to BIND it must not
+ * discover that the first press moved their focus instead.
+ */
+function syncCommandLineReach(): void {
+  setCommandLineReachable(classOptions === null && !menuOpen);
+}
+
+/**
+ * THE ROW'S PLACEHOLDER, WITH THE LIVE KEY IN IT.
+ *
+ * index.html carries a fallback spelling in markup — a build whose script never
+ * runs still says something useful — but the key it names is REBINDABLE, so the
+ * markup is overwritten from here for exactly the reason `maxLength` is: two
+ * copies of a fact drift, and the day they do a player reads an instruction that
+ * does not work. Enter and Escape are NOT read off the keymap because the
+ * command line handles those two itself, on the DOM event, outside the keymap
+ * entirely (see the `#cmd` keydown listener).
+ *
+ * Re-run on every `keybinds` frame, so rebinding `say` rewrites the row.
+ */
+function syncCommandLinePlaceholder(): void {
+  if (cmdEl === null) return;
+  cmdEl.placeholder = `${labelFor('say', gameKeymap.current)} to talk · Enter sends · Esc back to the map`;
 }
 
 /** textContent, never innerHTML: actor names come from Discord nicknames. */
@@ -840,6 +921,114 @@ let invDropHovered = false;
  * only one of the two tabs that is never empty.
  */
 let invTab: InventoryTab = InventoryTab.Equipped;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * v11 — THE ESCAPE MENU, AND IT IS A PANEL. THE SERVER IS NEVER TOLD IT IS OPEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Escape opens it when the cancel chain is otherwise empty, Escape closes it,
+ * and the × on its header is the mouse's copy of that act. It is the FOURTH
+ * surface built the way ui/talents.ts and ui/inventory.ts are, and it inherits
+ * their whole barrier answer verbatim:
+ *
+ *   Nothing here parks a body, sets a standing order or touches the barrier.
+ *   There is no protocol verb that says "a menu is open" and there must not be
+ *   one. A player reading this menu is counted in the quorum exactly like
+ *   anybody else and the Warrant Clock auto-passes them exactly like anybody
+ *   else — which is the difference between this and the class chooser, and
+ *   `layout.menu`'s field note is where that decision is made mechanical.
+ *
+ * ═══ AND THE SWALLOW IS BOUNDED, WHICH IS THE HALF THAT ACTUALLY MATTERED ═══
+ * The shipped CRITICAL was not caused by a surface being modal; it was caused by
+ * one holding the keyboard for an UNBOUNDED time while `isBlocking` still
+ * counted the player in the quorum. Two things bound it here. The menu is one
+ * Escape press from being gone, and Escape is FROZEN (keymap.ts's `cancel` row
+ * is `rebindable: false`), so that press cannot be edited away. And a key
+ * CAPTURE is exactly ONE keypress wide — `applyCapture` disarms on every outcome
+ * but a bare modifier — which is ui/talents.ts's `pressSpend` arm/confirm shape
+ * reused rather than reinvented.
+ */
+let menuOpen = false;
+/** Which of the two screens the ONE surface is showing. See `MenuScreen`. */
+let menuScreen: MenuScreen = MenuScreen.Root;
+/**
+ * Which page of the Keys screen. Any integer is safe — the geometry clamps it —
+ * but it is clamped HERE as well when the pager moves it, or a player leaning on
+ * NEXT would walk `page` off to a number no screen size can reach back from.
+ */
+let menuPage = 0;
+/**
+ * WHICH SLOT THE NEXT KEYPRESS LANDS IN, or null.
+ *
+ * ═══ THE ONLY STATE IN THIS CLIENT THAT TAKES A KEY AWAY FROM THE KEYMAP ═══
+ * The window listener registered with `{capture: true}` reads this and nothing
+ * else. While it is null that listener returns on its first line and is
+ * completely inert; while it is set, ONE keypress is consumed and it goes back
+ * to null. There is no third state and no way to reach one: every `applyCapture`
+ * outcome but `Ignored` (a bare modifier) clears it.
+ */
+let menuArmed: ArmedCapture | null = null;
+/**
+ * THE LAST THING THE CAPTURE SAID — a refusal, a conflict, or what was bound.
+ *
+ * Cleared when the screen changes and when the menu closes, or a "Tab is already
+ * Toggle Party" would outlive the row it was about and be read as being about
+ * whatever the player did next.
+ */
+let menuMessage: string | null = null;
+/** True while the pointer is over the menu's close control. Cosmetic. */
+let menuCloseHovered = false;
+/**
+ * WHICH ROOT ENTRY IS LIT — BY THE POINTER *OR* BY THE ARROW KEYS. ONE VARIABLE.
+ *
+ * Two would draw two highlights on one screen and the player would have to work
+ * out which one Enter was about. Sharing it means a mouse that moves takes the
+ * selection with it, which is what every menu that supports both inputs does.
+ */
+let menuHovered: number | null = null;
+/**
+ * WILL THESE BINDS STILL BE HERE TOMORROW? Off the `keybinds` frame, never
+ * guessed.
+ *
+ * False until the server has said otherwise, which is the honest opening state:
+ * a client that assumed `true` would tell an anonymous player their keys were
+ * saved for the whole window between connecting and the first frame.
+ *
+ * ═══ AND THE BINDS THEMSELVES ARE NOT HELD HERE ═══
+ * They travel ON the compiled keymap (`gameKeymap.current.remap`), which is the
+ * one thing the dispatcher, the labels and the Keys screen all read. A second
+ * copy in this file would be the copy that drifts, and it would drift first in
+ * the direction that matters: the screen would draw what this client hoped it
+ * sent rather than what the server echoed back.
+ */
+let keybindsPersisted = false;
+
+/**
+ * PUT EVERY PIECE OF THE MENU'S STATE BACK, AND NOTHING ELSE.
+ *
+ * ═══ WHY THIS IS MODULE SCOPE WHEN `closeMenu` IS NOT ═══
+ * `closeMenu` lives inside `boot()` because it also calls `requestDraw`, which
+ * is the renderer's dirty flag and belongs to that closure. `applyServerMessage`
+ * is module scope and cannot see either — but it has ONE frame that must tear
+ * this surface down (`class_options`), and the redraw there is already the
+ * caller's. So the state reset is here, shared, and the two callers add what only
+ * they need: `closeMenu` adds the recompute and the draw, and the frame adds the
+ * recompute it was already making.
+ *
+ * THE ARM MOST OF ALL. It is the one thing in this client that takes a key away
+ * from the keymap, and an arm that outlived the screen explaining it would
+ * swallow the next keypress with nothing on screen to say why.
+ */
+function resetMenuState(): void {
+  menuOpen = false;
+  menuScreen = MenuScreen.Root;
+  menuPage = 0;
+  menuArmed = null;
+  menuMessage = null;
+  menuHovered = null;
+  menuCloseHovered = false;
+}
 
 /**
  * THE CLASS CHOOSER'S OPTIONS, or null when there is no choice owed.
@@ -1427,6 +1616,44 @@ function selfLeads(): boolean {
 }
 
 /**
+ * IS THERE A PARTY TO LEAVE? ONE ANSWER, READ BY BOTH SURFACES THAT OFFER IT.
+ *
+ * A party of one is not "in a party" as far as `leave` is concerned — there is
+ * nothing to leave and the server refuses it in the same words. `/leave` asks
+ * this through `commandContext`, and the escape menu's LEAVE PARTY row asks it
+ * directly to decide whether to draw itself greyed; two copies of the
+ * comparison would grey a row for a state the command line still accepted.
+ *
+ * The `?? 1` is what makes a pane that has not spoken yet answer "you are
+ * alone" rather than offering a verb the server has no party for.
+ */
+function inParty(): boolean {
+  return (partyState?.members.length ?? 1) > 1;
+}
+
+/**
+ * EVERYTHING THE ESCAPE MENU IS DRAWN FROM, joined in one place.
+ *
+ * `keymap` IS THE COMPILED OBJECT rather than a remap, because the overlay
+ * travels on it — one value, not two that can disagree — and because `labelFor`
+ * needs the whole thing to show a row the PERMANENT floor beside its two slots.
+ * It is read live off `gameKeymap`, the same box the already-registered key
+ * handler dereferences on every press, so what the screen says a key does and
+ * what the key does are the same fact and not two.
+ */
+function escapeMenuView(): EscapeMenuView {
+  return {
+    screen: menuScreen,
+    keymap: gameKeymap.current,
+    persisted: keybindsPersisted,
+    inParty: inParty(),
+    page: menuPage,
+    armed: menuArmed,
+    message: menuMessage,
+  };
+}
+
+/**
  * EVERY OVERLAY'S GEOMETRY, IN ONE PLACE.
  *
  * The painter draws from this and every hit test reads it, which is the same
@@ -1494,6 +1721,34 @@ type HudLayout = {
    */
   readonly inventory: PanelRect | null;
   /**
+   * The escape menu, or null when it is shut or the band is too small.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * FROM `panelBand` LIKE `sheet`, `talents` AND `inventory`, AND *NOT* FROM THE
+   * VIEWPORT LIKE `picker`. THAT ONE LINE IS THE WHOLE BARRIER ANSWER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Clamped into the band it can never come to rest over the hotbar, the
+   * resource strip or the prose lines — so every control stays visible and
+   * pressable underneath it while a player reads, and the four talent keys still
+   * work with the menu open. That is what makes this a PANEL: the server is
+   * never told it is up, nothing parks a body, no standing order is set, and the
+   * quorum counts the reader exactly as it counts everybody else. Deriving it
+   * from the full viewport would be that decision reversed in one argument, and
+   * the cost of the other choice is already recorded twice in this file — five
+   * people waiting at a barrier on somebody who is reading a menu.
+   *
+   * IT IS CENTRED IN THE BAND, WHICH IS THE SHEET'S ANCHOR RATHER THAN A FOURTH.
+   * There is no fourth left: the sheet centres, the talent panel pins to the top
+   * and the inventory panel pins to the bottom. This panel is WIDER than all
+   * three (it carries a name, two key columns and two controls on one row), so
+   * no anchor could make it miss them on a short band anyway — which is why
+   * ui/escapemenu.ts picks the anchor and this file does not. Where they collide
+   * the paint order in `paintHud` and the hit-test order in `mousedown` agree
+   * that this one is on top: it is the most recently opened surface, and a panel
+   * painted underneath the key that opened it looks like the key did nothing.
+   */
+  readonly menu: PanelRect | null;
+  /**
    * The class chooser, or null when no choice is owed.
    *
    * FROM THE FULL VIEWPORT, NOT `panelBand`, and it is the only member here that
@@ -1527,7 +1782,27 @@ function hudLayout(width: number, height: number): HudLayout {
     party: view,
     pane,
     log,
-    respawn: selfErased() ? respawnPromptRect({ width, top: band.top, bottom: band.bottom }) : null,
+    // ═══ AND IT STANDS DOWN WHILE THE ESCAPE MENU IS OPEN ═══
+    // Both rects are centred in the SAME band — the plate is 304x48 at
+    // `top + (band-48)/3` and the panel is 360x252 at `top + (band-252)/2` — so
+    // the plate always lands INSIDE the menu and never beside it. Worse, it is
+    // painted after the menu AND hit-tested before it (step 3 of `mousedown`,
+    // above step 3a), so a click on where CHARACTER SHEET, TALENTS or INVENTORY
+    // is drawn used to fire `attemptRespawn()` instead; on the Keys screen the
+    // same 48px strip hid four consecutive action rows and their controls, in
+    // exactly the state — dead, everything else refused — where a player is most
+    // likely to open the menu at all.
+    //
+    // SUPPRESSED RATHER THAN REORDERED, and nothing is lost: the plate's own key
+    // (`respawn`, `f` by default) is let through by `onUi` with the menu open,
+    // the notice line still says so, and this menu carries no respawn row for the
+    // plate to be shadowing. The rule at `paintHud` and at `mousedown` step 4 —
+    // HIT-TEST ORDER MIRRORS PAINT ORDER — is kept by removing the overlap
+    // instead of adding a fifth exception to it.
+    respawn:
+      selfErased() && !menuOpen
+        ? respawnPromptRect({ width, top: band.top, bottom: band.bottom })
+        : null,
     sheet: sheetVisible
       ? charSheetRect({ width, height, top: band.top, bottom: band.bottom })
       : null,
@@ -1539,6 +1814,10 @@ function hudLayout(width: number, height: number): HudLayout {
     inventory: invVisible
       ? inventoryPanelRect({ width, height, top: band.top, bottom: band.bottom })
       : null,
+    // FROM THE BAND, exactly like the three above it and NOT like `picker`. See
+    // the field's own note: this is the panel-not-modal decision, and therefore
+    // the barrier answer, made mechanical in one line.
+    menu: menuOpen ? escapeMenuRect({ width, height, top: band.top, bottom: band.bottom }) : null,
     picker: classOptions === null ? null : classPickerRect(width, height),
   };
 }
@@ -1673,6 +1952,30 @@ function targetingWorld(): TargetingWorld {
       .filter((actor) => actor.alive)
       .map((actor) => ({ x: actor.x, y: actor.y })),
   };
+}
+
+/**
+ * WHAT TO CALL A KEY IN A SENTENCE THE PLAYER READS.
+ *
+ * ═══ EVERY MNEMONIC IN THIS FILE GOES THROUGH HERE, AND THAT IS v11's POINT ═══
+ * "press g", "R — revive", "F — refile yourself": five hard-coded letters were
+ * printed on the canvas and into the aria-live region, and every one of them
+ * became a lie the moment the Keys screen let somebody rebind. A wrong
+ * instruction is worse than none — it sends a player who is already stuck to
+ * press a key that does nothing.
+ *
+ * IT NAMES EVERY BINDING THE ACTION ANSWERS TO, including the permanent floor,
+ * because `labelFor` without a slot is the answer to "what does this respond
+ * to". A player who rewrote one of the two keys still sees the other, which is
+ * exactly the state that would otherwise be reported as the rebind having broken
+ * the game.
+ *
+ * READ LIVE OFF `gameKeymap`, never off a copy: this is called from inside the
+ * painter, so the sentence is rebuilt on the first frame after a `keybinds`
+ * frame lands, with nothing to invalidate.
+ */
+function keyHint(actionId: string): string {
+  return labelFor(actionId, gameKeymap.current);
 }
 
 /**
@@ -1843,6 +2146,42 @@ const paintHud: HudPainter = (ctx, width, height) => {
     });
   }
 
+  // ═══ THE ESCAPE MENU, AFTER ALL THREE AND FOR THEIR REASONS ═══
+  //
+  // AFTER the sheet, the talent panel and the inventory panel because all four
+  // are centred horizontally and, where they overlap, the newer decision has to
+  // be the visible one — the player pressed Escape while `c`, `g` or `i` was
+  // already up. It overlaps them more than they overlap each other: this panel
+  // is wider than all three, so no anchor could have kept it clear (see
+  // `layout.menu`). `mousedown` tests the four in the mirror of this order,
+  // which is the rule this file has enforced since the sheet learned to cover
+  // the party pane: HIT-TEST ORDER MIRRORS PAINT ORDER, always.
+  //
+  // BEFORE the hotbar, the resource strip, the prose lines, the erased plate,
+  // the hover card, the combat banner and the token menu — every one of which is
+  // drawn later — and THAT ORDERING IS THE DESIGN, not an accident of where the
+  // call landed. A menu that covered the hotbar would be a modal wearing a
+  // panel's clothes, and the whole barrier answer for this surface is that it is
+  // not one: the four talent keys still work while it is open, and they have to
+  // still be VISIBLE for that to be true.
+  //
+  // `escapeMenuRows` IS CALLED EXACTLY ONCE PER FRAME and the result handed to
+  // the drawer, which does not call it — the same split ui/charsheet.ts,
+  // ui/talents.ts and ui/inventory.ts all require. It matters here for the
+  // reason it matters for the inventory: the rows walk the whole action table
+  // and format four strings per row, and the geometry pass would redo that.
+  if (layout.menu !== null) {
+    drawEscapeMenu({
+      ctx,
+      sprites,
+      rect: layout.menu,
+      screen: menuScreen,
+      rows: escapeMenuRows(escapeMenuView()),
+      hoveredClose: menuCloseHovered,
+      hovered: menuHovered,
+    });
+  }
+
   drawHotbar({ ctx, sprites, view: hotbarView(), width, height });
 
   const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;
@@ -1867,7 +2206,18 @@ const paintHud: HudPainter = (ctx, width, height) => {
     // This is the fix for "I was stuck": the player who has run out of turns is
     // now told, on the canvas, in the slot their eyes are already on, that there
     // is a way back.
-    drawLine(ctx, 'F — refile yourself and get back up', PALETTE.GOLD, width, hintY);
+    //
+    // v11: THE KEY IS READ OFF THE LIVE KEYMAP. A hard-coded 'F' is a lie the
+    // moment somebody rebinds, and it is the cruellest possible lie in this
+    // exact state — the player it is written for is already stuck and pressing
+    // keys that are all being refused.
+    drawLine(
+      ctx,
+      `${keyHint('respawn')} — refile yourself and get back up`,
+      PALETTE.GOLD,
+      width,
+      hintY,
+    );
   } else {
     // THE REVIVE PROMPT, in the hint's slot when nothing is being aimed.
     //
@@ -1881,7 +2231,8 @@ const paintHud: HudPainter = (ctx, width, height) => {
     const first = reachable[0];
     if (first !== undefined) {
       const who = reachable.length === 1 ? first.name : `${reachable.length} allies`;
-      drawLine(ctx, `R — revive ${who}`, PALETTE.GOLD, width, hintY);
+      // The live key, for the reason the respawn line above gives.
+      drawLine(ctx, `${keyHint('revive')} — revive ${who}`, PALETTE.GOLD, width, hintY);
     }
   }
 
@@ -2437,15 +2788,23 @@ async function boot(): Promise<void> {
       // (ui/respawnprompt.ts). The plate is the seen one, this is the heard one,
       // and a screen reader and a canvas disagreeing about the way out would be
       // the cruellest possible bug in this particular state.
-      parts.push(RESPAWN_PROMPT_SPEECH);
+      //
+      // v11: CALLED rather than read off the frozen `RESPAWN_PROMPT_SPEECH`
+      // constant. That constant is the SHIPPED-DEFAULT spelling by construction
+      // — a string cannot follow a rebind — so leaving it here would have made
+      // the heard copy the one surface that still named the old key.
+      parts.push(respawnPromptSpeech());
     } else {
       const reachable = adjacentDowned();
       const firstDown = reachable[0];
       if (firstDown !== undefined) {
+        // The live key, exactly as the canvas prompt draws it — the seen and the
+        // heard copy must not disagree about which key rescues somebody.
+        const key = keyHint('revive');
         parts.push(
           reachable.length === 1
-            ? `R: revive ${firstDown.name}`
-            : `R: revive (${reachable.length} down)`,
+            ? `${key}: revive ${firstDown.name}`
+            : `${key}: revive (${reachable.length} down)`,
         );
       }
     }
@@ -2484,8 +2843,11 @@ async function boot(): Promise<void> {
      * would have been silent for the players it matters most to.
      */
     if (progress !== null && progress.unspent > 0) {
+      // v11: `press g` was written out three times in this file and every one of
+      // them went through `keyHint` — the talent panel's key is rebindable, and
+      // this is the line that teaches a player the panel exists at all.
       parts.push(
-        `${progress.unspent} talent ${progress.unspent === 1 ? 'point' : 'points'} — press g`,
+        `${progress.unspent} talent ${progress.unspent === 1 ? 'point' : 'points'} — press ${keyHint('show_talents')}`,
       );
     }
     const invite = liveInvites()[0];
@@ -2959,6 +3321,29 @@ async function boot(): Promise<void> {
     // resize() returns false when nothing moved, so a resize storm (dragging a
     // window edge fires continuously) does not queue a draw per event.
     if (renderer.resize()) requestDraw();
+    // ═══════════════════════════════════════════════════════════════════════
+    // AND THE MENU'S OWN REFUSAL IS RE-APPLIED, BECAUSE THIS IS THE OTHER
+    // MOMENT ITS RECT CAN DISAPPEAR.
+    // ═══════════════════════════════════════════════════════════════════════
+    // `openMenu` refuses to open a menu the band cannot hold, and says why at
+    // length: this surface ROUTES THE ARROWS AND ENTER while it is open, so an
+    // open-but-undrawable one is an invisible thing swallowing the movement
+    // keys. Nothing re-asked that question after the window MOVED. `hudLayout`
+    // simply answers `menu: null` on a band that has become too short, so the
+    // panel stopped being painted and stopped being hit-tested while every
+    // keyboard gate kept firing — arrows walking an invisible list, and one
+    // Enter away from LEAVE PARTY at the bottom of it, with nothing on screen.
+    //
+    // THE SAME SENTENCE `openMenu` USES, for the same reason it uses one:
+    // "nothing happened" is indistinguishable from a dropped input, and here the
+    // player did not even press a key — they dragged a window edge.
+    if (menuOpen) {
+      const { logicalW, logicalH } = renderer.metrics();
+      if (hudLayout(logicalW, logicalH).menu === null) {
+        closeMenu();
+        showNotice('no room for the menu — make the window taller');
+      }
+    }
     updateStatus();
   }
   window.addEventListener('resize', onViewportChange);
@@ -3243,6 +3628,12 @@ async function boot(): Promise<void> {
   // they drift a player types a sentence, watches the field accept it, and gets
   // `bad_message` back.
   if (cmdEl !== null) cmdEl.maxLength = SAY_MAX_CHARS;
+  // ...AND THE PLACEHOLDER FOR THE SAME REASON, ONE STEP FURTHER. The markup
+  // named THREE keys in a string no TypeScript could see, and one of them is
+  // rebindable — so a player who moved `say` off `t` was left reading an
+  // instruction that did not work, in the row that exists to teach them the
+  // feature. See `syncCommandLinePlaceholder`; `case 'keybinds'` re-runs it.
+  syncCommandLinePlaceholder();
 
   function openCommandLine(): void {
     if (cmdEl === null) {
@@ -3279,7 +3670,12 @@ async function boot(): Promise<void> {
       })),
       // A party of one is not "in a party" as far as `/leave` is concerned —
       // there is nothing to leave, and the server refuses it in the same words.
-      inParty: (partyState?.members.length ?? 1) > 1,
+      //
+      // v11: through the shared `inParty()`, because the escape menu's LEAVE
+      // PARTY row asks the identical question to decide whether to draw itself
+      // greyed. Two copies of the comparison would grey a row for a state the
+      // command line still accepted, on the same screen, in the same second.
+      inParty: inParty(),
     };
   }
 
@@ -3330,6 +3726,26 @@ async function boot(): Promise<void> {
           cmdEl.select();
         }
         showNotice(outcome.text);
+        return;
+      case 'keys':
+        // ═══ `/keys` — DECISION (c)'S POINTER-ONLY RECOVERY HATCH ═══
+        //
+        // The one route into the rebinding screen that needs no game key to
+        // work: the player CLICKS the chat row — which is permanently visible
+        // and says what it is for — and types. From here RESET ALL is two more
+        // clicks and no keypress was required to reach either, which is what
+        // makes this the hatch that survives a keyboard the player has genuinely
+        // broken (or a binding to a key their layout cannot produce).
+        //
+        // IT OPENS ON THE KEYS SCREEN AND NOT ON THE ROOT. Somebody who typed
+        // the name of the screen has already said which one they want, and the
+        // extra click would be one more thing between a stuck player and the
+        // button that unsticks them.
+        //
+        // NOTHING IS SENT. Like every other outcome here it is parsed and
+        // resolved locally; `input/commands.ts` deliberately carries no payload
+        // on this one.
+        openMenu(MenuScreen.Keys);
         return;
       case 'none':
         return;
@@ -3758,6 +4174,526 @@ async function boot(): Promise<void> {
     }
   }
 
+  // --- the escape menu ------------------------------------------------------
+  // v11. Six root entries, a nested Keys screen, and not one line of decision:
+  // ui/escapemenu.ts owns the rows, the capture rule, the geometry and the hit
+  // test, and every one of them is pure and tested with nothing drawn. What is
+  // here is what this file is allowed to be — wiring.
+
+  /**
+   * DO ONE UI VERB. Extracted from `onUi` so the MENU ROW AND THE KEY ARE ONE
+   * CODE PATH.
+   *
+   * ═══ THIS IS THE PORT, AND IT IS THE PORT'S WHOLE POINT ═══
+   * `tome/class/Game.lua:2307-2308` does not open a second inventory from its
+   * escape menu: it calls `key:triggerVirtual("SHOW_INVENTORY")` — the entry
+   * fires the ordinary keybinding. A row that reimplemented `toggleInventoryPanel`
+   * would be a second copy of a toggle, and the first thing to drift would be the
+   * hover flags it clears on the way shut.
+   *
+   * Exhaustive, no `default`: an eighth verb breaks here at lint time rather than
+   * becoming a key AND a menu row that both quietly do nothing.
+   */
+  function runUiCommand(command: UiCommand): void {
+    switch (command) {
+      case UiCommand.Say:
+        openCommandLine();
+        return;
+      case UiCommand.Revive:
+        attemptRevive();
+        return;
+      case UiCommand.Respawn:
+        attemptRespawn();
+        return;
+      case UiCommand.ShowSheet:
+        // A TOGGLE, and the `inspect` goes out on the way OPEN only. The panel
+        // is built from four frames and three of them (`loadout`, `cooldowns`,
+        // `resource`) are already held here; the fourth is the viewer's own
+        // `inspected` answer, which is cached per game turn — so opening the
+        // sheet either draws from a fresh cache entry immediately or asks once
+        // and fills in a frame later, and ui/charsheet.ts draws "gathering…"
+        // rather than an empty box in that window.
+        sheetVisible = !sheetVisible;
+        // The hover state goes with it, or the × would come back highlighted
+        // next time the panel opens under a pointer that has since moved.
+        if (!sheetVisible) {
+          sheetCloseHovered = false;
+          sheetTalentsHovered = false;
+        }
+        requestSelfSheet();
+        requestDraw();
+        return;
+      case UiCommand.ShowTalents:
+        // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING. Unlike the sheet, both
+        // frames this panel is built from — `loadout` and `progress` — are
+        // already held here, absolute and unicast, and both are re-sent by the
+        // server whenever they change. There is no round trip to start, no
+        // cache to warm and no "gathering…" window: the panel is correct the
+        // instant it appears.
+        toggleTalentPanel();
+        return;
+      case UiCommand.ShowInventory:
+        // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING — the talent panel's
+        // shape exactly, and for its reason: the one frame this panel is built
+        // from is absolute, unicast, and re-sent whenever the viewer's bag or
+        // doll changes. There is no round trip to start, no cache to warm and
+        // no "gathering…" window.
+        //
+        // AND THE SERVER IS NOT TOLD IT IS OPEN. No standing hold, no park, no
+        // barrier interaction of any kind — see `invVisible` for the whole of
+        // decision (g). This case is also NOT mirrored in `onCancel`: no dock
+        // surface is in the Escape chain, and that block explains why adding one
+        // would make the key's behaviour depend on which panel happened to be
+        // open.
+        //
+        // `i` IS PORTED AS A DIALOG-LOCAL MNEMONIC, not as a shipped binding.
+        // The default keybind tables are absent from this sparse clone of
+        // t-engine4 (keys.ts records the same fact for M and G), but
+        // dialogs/CharacterSheet.lua:95-98 draws a "Manage [I]nventory" button
+        // and :286-287 handles `c == 'i' or c == 'I'` — the same evidentiary
+        // class this repo already accepted for the sheet's `[G]` control.
+        toggleInventoryPanel();
+        return;
+      case UiCommand.ToggleLog:
+        logVisible = !logVisible;
+        requestDraw();
+        return;
+      case UiCommand.ToggleParty:
+        partyVisible = !partyVisible;
+        requestDraw();
+        return;
+    }
+  }
+
+  /** The rows, as the painter builds them. One call, one answer, no cache. */
+  function menuRows(): readonly MenuRow[] {
+    return escapeMenuRows(escapeMenuView());
+  }
+
+  /**
+   * Open the menu, on `Root` unless somebody asked for a screen by name.
+   *
+   * TWO CALLERS AND THEY ARE NOT THE SAME GESTURE. Escape at the tail of the
+   * cancel chain opens the root; `/keys` typed into the command line opens the
+   * Keys screen directly, because a player who typed the name of the screen has
+   * already told us which one they want — and that path is decision (c)'s
+   * pointer-only recovery hatch, the one that survives a keyboard the player has
+   * genuinely broken.
+   */
+  function openMenu(screen: MenuScreen = MenuScreen.Root): void {
+    // ═══════════════════════════════════════════════════════════════════════
+    // A MENU WITH NOWHERE TO GO IS REFUSED OUT LOUD, AND NEVER OPENED BLIND.
+    // ═══════════════════════════════════════════════════════════════════════
+    // `escapeMenuRect` answers null when the band between the top HUD and the
+    // bottom strips cannot hold a panel — the same refusal `inventoryPanelRect`
+    // makes on a viewport too narrow for four item frames. But this surface
+    // ROUTES THE ARROWS AND ENTER while it is open, so an open-but-undrawable
+    // menu would be an invisible thing swallowing the movement keys, and the
+    // player would report that walking had stopped working.
+    //
+    // A SENTENCE RATHER THAN SILENCE, because "nothing happened" is
+    // indistinguishable from a dropped input (this file's header, at length) —
+    // and unlike the inventory panel's case, the player did not press a key that
+    // obviously names a panel: they pressed Escape.
+    //
+    // THE FLAG IS SET AND ROLLED BACK RATHER THAN THE RECT BEING RECOMPUTED
+    // HERE, because `hudLayout` answers null for a menu that is SHUT — one
+    // function owns that arithmetic and every hit test reads it, which is the
+    // rule `slotRect` established in ui/hotbar.ts. A second copy of the band sums
+    // in this function is how a panel ends up drawn in one place and clicked in
+    // another.
+    //
+    // A WINDOW SHRUNK *WHILE* THE MENU IS OPEN IS NOT COVERED HERE and does not
+    // need to be: the three head links in `onCancel` do not consult the rect, so
+    // Escape still closes it, and Escape is frozen against rebinding.
+    menuOpen = true;
+    const { logicalW, logicalH } = renderer.metrics();
+    if (hudLayout(logicalW, logicalH).menu === null) {
+      menuOpen = false;
+      showNotice('no room for the menu — make the window taller');
+      return;
+    }
+    menuScreen = screen;
+    menuPage = 0;
+    menuArmed = null;
+    menuMessage = null;
+    menuHovered = null;
+    menuCloseHovered = false;
+    // THE CHAT ROW GOES OUT OF REACH WHILE THIS IS UP. Tab is a legitimate key
+    // to bind and `#cmd` is the only tabbable element on the page — see
+    // `syncCommandLineReach`, which recomputes rather than asserting.
+    syncCommandLineReach();
+    requestDraw();
+  }
+
+  /**
+   * Put the menu away. EVERY piece of its state goes with it.
+   *
+   * The arm most of all: it is the one thing in this client that takes a key
+   * away from the keymap, and an arm that outlived the screen explaining it
+   * would swallow the next keypress on a map with nothing on it to say why.
+   * `menuMessage` goes for the smaller version of the same reason — a refusal
+   * that survived a close would reappear, stale, on the next open.
+   */
+  function closeMenu(): void {
+    if (!menuOpen) return;
+    // ONE COPY OF THE RESET, shared with `case 'class_options'` — see
+    // `resetMenuState`. A second spelling of "every piece of its state goes with
+    // it" is how the arm survives one of the two exits.
+    resetMenuState();
+    syncCommandLineReach();
+    requestDraw();
+  }
+
+  /** Swap screens inside the one surface. Not a way out — see `onCancel`. */
+  function showMenuScreen(screen: MenuScreen): void {
+    menuScreen = screen;
+    menuPage = 0;
+    menuArmed = null;
+    menuMessage = null;
+    menuHovered = null;
+    requestDraw();
+  }
+
+  /**
+   * THE WIRE WANTS MUTABLE ARRAYS AND THE KEYMAP HANDS OUT READONLY ONES.
+   *
+   * A copy rather than a cast: `KeyRemap`'s arrays are `readonly` precisely
+   * because nothing outside keymap.ts may write through them, and casting that
+   * away to satisfy `z.infer` would hand the serialiser a live reference to the
+   * table the dispatcher is compiled from.
+   */
+  function wireBinds(remap: KeyRemap): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const [actionId, keys] of Object.entries(remap)) out[actionId] = [...keys];
+    return out;
+  }
+
+  /**
+   * ADOPT A NEW OVERLAY, LOCALLY AND ON THE WIRE. The ONLY place a
+   * `set_keybinds` frame is constructed.
+   *
+   * ═══ ONE FRAME PER ACCEPTED CHANGE, AND DELIBERATELY NOT ONE PER CLOSE ═══
+   * ToME saves only when the binder dialog is dismissed (`KeyBinder.lua:64-70`
+   * calls `KeyBind:saveRemap()` from its `unload`), and a crash or a quit while
+   * that dialog is open silently discards the lot. That is a bad trade here and
+   * a worse one: the connection can drop at any moment, and a player who
+   * reconnects does not necessarily come back on the same socket — so a batch
+   * held until close is a batch that can vanish with nothing on screen ever
+   * having said it might.
+   *
+   * `setKeymap` FIRST, so the change is live on the very next keypress rather
+   * than after a round trip. It MUTATES THE BOX and never re-registers the
+   * handler: keys.ts forbids dispose-then-rebind outright, because re-registering
+   * moves `bindGameKeys` after the travel-cancel listener below and inverts an
+   * Escape precedence two files independently call load-bearing.
+   *
+   * ...AND THE SCREEN STILL RENDERS THE ECHO. `case 'keybinds'` calls `setKeymap`
+   * again with whatever the SERVER stored, so a map the server trimmed or
+   * bounced corrects itself here rather than leaving the panel drawing this
+   * client's optimism (protocol.ts's `KeybindsMsg`: "the echo is the point").
+   */
+  function commitRemap(remap: KeyRemap): void {
+    // The arm belonged to the slot that has just changed. Every capture outcome
+    // clears it too; this is the button path's copy of the same rule.
+    menuArmed = null;
+    setKeymap(remap);
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_keybinds', binds: wireBinds(remap) })) {
+      // SAID OUT LOUD, the rule every send in this file keeps. A rebind that
+      // vanished into a closed socket looks exactly like one that was saved, and
+      // the player finds out on their next session.
+      showNotice('not connected — that keybinding was not saved');
+    }
+    requestDraw();
+  }
+
+  /**
+   * Turn the Keys screen's pages. CLAMPED HERE AS WELL AS BY THE GEOMETRY.
+   *
+   * The geometry clamps what it DRAWS; without a clamp on the variable a player
+   * leaning on NEXT would walk `page` up to a number that takes as many presses
+   * to come back from, on a screen that stopped moving several presses ago.
+   */
+  function pageMenu(delta: number): void {
+    const { logicalW, logicalH } = renderer.metrics();
+    const rect = hudLayout(logicalW, logicalH).menu;
+    if (rect === null) return;
+    const paging = escapeMenuPaging(rect, menuRows());
+    const next = Math.min(Math.max(0, menuPage + delta), Math.max(0, paging.pageCount - 1));
+    if (next === menuPage) return;
+    menuPage = next;
+    requestDraw();
+  }
+
+  /** The root entries a keypress may land on, in reading order. */
+  function enabledEntryIndices(rows: readonly MenuRow[]): readonly number[] {
+    const out: number[] = [];
+    for (const row of rows) {
+      if (row.kind === MenuRowKind.Entry && row.enabled) out.push(row.index);
+    }
+    return out;
+  }
+
+  /**
+   * Move the lit entry with a direction key. ToME's dialog convention, and the
+   * same CLAMP `movePickerSelection` ports from `TalentTrees.lua:207`
+   * (`util.bound`, which does not wrap).
+   *
+   * THE ROWS ARE A COLUMN, so the vertical component decides and a pure east or
+   * west key falls back to it — the mirror of the picker, whose cards are a ROW.
+   * A player pressing along a list of six things means "next", and answering
+   * with nothing at all reads as a dead key.
+   *
+   * ON THE KEYS SCREEN IT PAGES INSTEAD, and that is not a fudge: that screen
+   * has no selectable row to move — every control on it is a per-row button and
+   * ui/escapemenu.ts deliberately offers no keyboard selection for them — so the
+   * only honest thing a direction key can mean there is the thing PREV and NEXT
+   * already mean. A key that did nothing on one of the two screens would be the
+   * dead entry this whole feature was told to avoid, one level down.
+   */
+  function moveMenuSelection(dir: Dir): void {
+    if (menuScreen === MenuScreen.Keys) {
+      const delta = step({ x: 0, y: 0 }, dir);
+      pageMenu((delta.y !== 0 ? delta.y : delta.x) > 0 ? 1 : -1);
+      return;
+    }
+    const order = enabledEntryIndices(menuRows());
+    if (order.length === 0) return;
+    const delta = step({ x: 0, y: 0 }, dir);
+    const move = delta.y !== 0 ? delta.y : delta.x;
+    const at = menuHovered === null ? -1 : order.indexOf(menuHovered);
+    // Nothing lit yet: enter the list from the end the key came from.
+    const next =
+      at < 0
+        ? move > 0
+          ? 0
+          : order.length - 1
+        : Math.min(order.length - 1, Math.max(0, at + move));
+    const chosen = order[next];
+    if (chosen === undefined || chosen === menuHovered) return;
+    menuHovered = chosen;
+    requestDraw();
+  }
+
+  /**
+   * Do whatever a menu row says. The ONE place a menu entry becomes an act.
+   *
+   * A `switch` over the effect union with no `default`, so a fifth kind of entry
+   * breaks here at lint time rather than becoming a row that quietly does
+   * nothing — which is precisely `GameMenu.lua:125-133`'s failure, where a name
+   * the table cannot resolve is silently dropped and upstream ships a dead
+   * "highscores" row as a result.
+   */
+  function runMenuEffect(effect: MenuEffect): void {
+    switch (effect.kind) {
+      case 'resume':
+        closeMenu();
+        return;
+      case 'keys':
+        showMenuScreen(MenuScreen.Keys);
+        return;
+      case 'ui':
+        // ═══ THE MENU GOES AWAY FIRST, AND THEN THE VERB FIRES. PORTED ═══
+        // `tome/class/Game.lua:2307-2308` is literally
+        // `function() self:unregisterDialog(menu) self.key:triggerVirtual(
+        // "SHOW_CHARACTER_SHEET") end` — close, then trigger — and the order is
+        // not decoration.
+        //
+        // THE LINE NUMBERS ARE :2308 FOR THE SHEET AND :2307 FOR THE INVENTORY,
+        // which is what ui/escapemenu.ts:54-56 has always cited. This comment
+        // said :2306-2307, and :2306 is the bare string `"highscores"` — the dead
+        // entry ui/escapemenu.ts holds up as its demonstration, not a function at
+        // all. Two files disagreeing about three lines of the file they are
+        // porting from is exactly the kind of citation CLAUDE.md forbids.
+        //
+        // This panel is painted LAST and is WIDER than the sheet,
+        // the talent panel and the inventory panel, so a row that opened one of
+        // them and stayed up would draw itself straight over the thing the player
+        // just asked for. The row would look broken while working perfectly.
+        closeMenu();
+        // THE EXISTING TOGGLE, not a second copy of it. See `runUiCommand`.
+        runUiCommand(effect.command);
+        return;
+      case 'party':
+        // Closed first for the reason above and one of its own: after this the
+        // row is greyed ("you are a party of one"), and a button that answers by
+        // disabling itself under the pointer is a button nobody trusts.
+        closeMenu();
+        // `null` TARGET, ALWAYS. You leave a party, you do not leave a PERSON —
+        // a `leave` naming a target is refused as `bad_message` — and Leave is
+        // the only party verb this menu offers, because it is the only one that
+        // needs no name typed at it.
+        sendParty(effect.action, null);
+        return;
+    }
+  }
+
+  /**
+   * Fire the lit entry, if there is one. The keyboard's copy of a click.
+   *
+   * ═══ IT REPORTS, AND THE BOOLEAN IS LOAD-BEARING AT ITS ONE CALL SITE ═══
+   * `onCommand` only swallows Enter when this answers true. A row can be lit and
+   * then go disabled underneath the selection — LEAVE PARTY greys the moment you
+   * are a party of one, and that can happen while the pointer is resting on it —
+   * so a void return here would put a silent no-op back in front of the one key
+   * that ends a turn. False means "nothing was activated", and the caller lets
+   * the press through to the commit it would otherwise have been.
+   */
+  function pressMenuSelection(): boolean {
+    if (menuHovered === null) return false;
+    for (const row of menuRows()) {
+      if (row.kind === MenuRowKind.Entry && row.index === menuHovered && row.enabled) {
+        runMenuEffect(row.effect);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Do what a hit says. The mouse's whole vocabulary on this surface.
+   *
+   * Exhaustive over `MenuHitKind` with no `default`, for `runMenuItem`'s reason:
+   * a ninth control must break the build rather than becoming a button that is
+   * drawn, hit-tested and then ignored.
+   *
+   * ═══ EVERY CONTROL HERE IS POINTER-REACHABLE, WHICH IS THE RECOVERY STORY ═══
+   * decision (c) names four hatches out of a keymap somebody regrets, and this
+   * function is two of them: RESET ALL and the per-row `[D]`. They must never
+   * acquire a keyboard-only path or a confirmation step that needs one — the
+   * player who needs them may have no working key at all.
+   */
+  function runMenuHit(hit: MenuHit): void {
+    switch (hit.kind) {
+      case MenuHitKind.Close:
+        closeMenu();
+        return;
+      case MenuHitKind.Entry:
+        runMenuEffect(hit.effect);
+        return;
+      case MenuHitKind.Rebind:
+        // ARM, AND SWALLOW NOTHING YET. The capture is exactly one keypress wide
+        // and it begins on the NEXT key — ui/talents.ts's `pressSpend` shape.
+        menuArmed = { actionId: hit.actionId, slot: hit.slot };
+        menuMessage = null;
+        requestDraw();
+        return;
+      case MenuHitKind.Clear: {
+        // `[X]` CLEARS BOTH SLOTS. The per-slot clear is Backspace during a
+        // capture; this is the whole-action one, and it is `clearBinding` rather
+        // than `resetOne` because they mean opposite things — cleared is
+        // "deliberately empty, do not fall back", reset is "forget I touched it".
+        let next = gameKeymap.current.remap;
+        for (let slot = 0; slot < SLOTS_PER_ACTION; slot += 1) {
+          next = clearBinding(next, hit.actionId, slot);
+        }
+        menuMessage = null;
+        commitRemap(next);
+        return;
+      }
+      case MenuHitKind.Reset:
+        menuMessage = null;
+        commitRemap(resetOne(gameKeymap.current.remap, hit.actionId));
+        return;
+      case MenuHitKind.ResetAll:
+        // `{}` IS A REAL VALUE AND NOT A MISSING FIELD (protocol.ts). It is the
+        // whole overlay gone, which is exactly what the button says.
+        //
+        // NO CONFIRMATION STEP. The talent panel's `+` has one because a spent
+        // point is irreversible; this is the opposite — it is the button that
+        // UNDOES things, and putting a second press in front of the recovery
+        // hatch is how a player with a broken keymap fails to reach it.
+        menuMessage = 'every key is back to its default';
+        commitRemap(resetAll());
+        return;
+      case MenuHitKind.Back:
+        // BACK IS NOT THE WAY OUT OF THE MENU, it is the way out of the SCREEN.
+        // Escape does both, one level per press — see `onCancel`.
+        showMenuScreen(MenuScreen.Root);
+        return;
+      case MenuHitKind.Page:
+        pageMenu(hit.delta);
+        return;
+    }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE KEY CAPTURE. ONE `window` LISTENER, CAPTURE PHASE, GATED ON THE ARM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ IT CANNOT BE A `KeyHandlers` MEMBER, AND THAT IS PROVABLE ═══
+   * `bindGameKeys` dispatches only keys it has a meaning for: its terminal
+   * `if (command === undefined) return;` drops an unmapped key on the floor, and
+   * test/client/input/keys.test.ts asserts exactly that. Tab, F1, q and every
+   * other unbound key never reach a handler — so a capture field riding the
+   * keymap could only ever capture keys that were already bound, which is not a
+   * capture field.
+   *
+   * ═══ CAPTURE PHASE, WHICH IS THE ONLY PLACEMENT THAT WORKS ═══
+   * It runs before BOTH bubble-phase listeners on this target without changing
+   * their relative order — and that order is load-bearing (see the travel-cancel
+   * listener below: registered first it would stop a walk AND let the same press
+   * cancel an aim). `stopImmediatePropagation` then reaches Tab, F1, q, Enter and
+   * Escape and stops the keymap AND the travel cancel together, so a captured key
+   * cannot end somebody's walk as a side effect of being bound.
+   *
+   * IT IS ALSO REGISTERED FIRST, which the phase makes redundant in a browser and
+   * is worth having anyway: `EventTarget` outside the DOM — Node's, which is what
+   * the tests run on — has no propagation path and honours registration order
+   * alone. Belt and braces, and it costs one line's placement.
+   *
+   * ═══ AND IT IS COMPLETELY INERT WHILE NOTHING IS ARMED ═══
+   * One comparison on the first line, then a return. It is registered once, for
+   * the life of the page, and never disposed — for keys.ts's reason: a listener
+   * that comes and goes is a listener whose ORDER comes and goes with it.
+   *
+   * `applyCapture` takes a plain record and a real `KeyboardEvent` is
+   * structurally assignable to it, so the event goes straight in — which is what
+   * keeps the whole rule testable in node with no DOM.
+   */
+  window.addEventListener(
+    'keydown',
+    (event: KeyboardEvent) => {
+      if (menuArmed === null) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      const outcome = applyCapture(menuArmed, event, gameKeymap.current);
+      switch (outcome.kind) {
+        case CaptureKind.Ignored:
+          // A BARE MODIFIER. The capture stays armed, which is
+          // `KeyBinder.lua:88-93` verbatim: the player is still reaching for the
+          // key they actually meant, and closing on the Shift they pressed on
+          // the way to it would be a binder nobody can use.
+          return;
+        case CaptureKind.Disarmed:
+          // Escape. Binds nothing. `KeyBinder.lua:98` compares the RAW sym for
+          // this and it is the single reason upstream's binder is not
+          // self-bricking.
+          menuArmed = null;
+          menuMessage = null;
+          requestDraw();
+          return;
+        case CaptureKind.Cleared:
+        case CaptureKind.Bound:
+          menuMessage = outcome.message;
+          commitRemap(outcome.remap);
+          return;
+        case CaptureKind.Conflict:
+        case CaptureKind.Refused:
+          // THE ROW IS UNCHANGED AND THE HOLDER IS NAMED. Not a swap (a second
+          // edit nobody asked for) and not a silent shadow (upstream's hash-order
+          // lottery, KeyBind.lua:227-232). Nothing is sent: nothing changed.
+          menuArmed = null;
+          menuMessage = outcome.message;
+          requestDraw();
+          return;
+      }
+    },
+    { capture: true },
+  );
+
   // --- input ---------------------------------------------------------------
   // Every key skips the sweep beat first. A player who has already decided must
   // never be made to watch a flourish finish, and settling is idempotent.
@@ -3773,6 +4709,34 @@ async function boot(): Promise<void> {
     onMove: (dir) => {
       if (classOptions !== null) {
         movePickerSelection(dir);
+        return;
+      }
+      // ═══ THE MENU IS SECOND, AND IT IS TARGETING MODE'S SHAPE, NOT A MODAL'S ═══
+      //
+      // BELOW THE PICKER IN ALL SIX HANDLERS, always: that is a screen which
+      // cannot be dismissed, and this is one that can — one press of a key that
+      // is frozen against rebinding.
+      //
+      // A MODE ROUTES THE KEY, EXACTLY AS AN OPEN AIM ALREADY DOES three lines
+      // below. Targeting has steered the arrows for an unbounded time since M3
+      // and nobody calls that a barrier problem, for the reason that applies
+      // here word for word: the player can leave at any moment with one press,
+      // the server is never told the mode is open, no body is parked and no
+      // standing order is set, so the Warrant Clock auto-passes a reader exactly
+      // as it auto-passes anybody who has walked away from the keyboard.
+      //
+      // ═══ ...EXCEPT WHEN A REVIVE IS WAITING FOR ITS DIRECTION ═══
+      // `onUi` lets `Revive` through with this panel open ON PURPOSE — "revive
+      // and respawn are ordinary play, and this is a panel". But a revive with
+      // more than one downed ally adjacent is a TWO-STAGE verb: `attemptRevive`
+      // arms and the notice says "press a direction". Swallowing that direction
+      // here made the menu advertise a verb and then deliver half of it, during
+      // the one countdown in the game where a wasted turn costs somebody their
+      // body. So the arm outranks the selection, and the key falls through to
+      // the `reviveArmed` branch below — which is still UNDER targeting, so an
+      // open aim keeps the precedence it has had since M3.
+      if (menuOpen && !reviveArmed) {
+        moveMenuSelection(dir);
         return;
       }
       sweep?.settle();
@@ -3807,6 +4771,44 @@ async function boot(): Promise<void> {
         // left unanswered.
         if (command === TurnCommand.Commit) confirmClass();
         return;
+      }
+      // ═══════════════════════════════════════════════════════════════════════
+      // THE MENU TAKES ENTER *ONLY WHEN A ROW IS LIT*. IT TAKES NOTHING ELSE.
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // THE MISFIRE THIS GATE IS FOR is narrow and it is the whole of it: a
+      // player who has arrowed down to a row and presses Enter means "do the lit
+      // row", and an ungated press would go out as `{t:'commit'}` and END THEIR
+      // TURN invisibly, from behind a panel, in a phase-locked game.
+      //
+      // ═══ AND IT USED TO SWALLOW COMMIT, HOLD *AND* PICKUP UNCONDITIONALLY,
+      //     WHICH IS THE CLASS-PICKER CRITICAL WEARING A PANEL'S CLOTHES ═══
+      // With all three eaten, a player with this surface open genuinely COULD
+      // NOT ACT: `surveyQuorum` counts a live, connected body with no pending
+      // intent and no standing order as BLOCKING, and nothing about a menu is
+      // ever told to the server. One reader was survivable — `bell()` arms only
+      // when `committed >= total - 1`, so the Warrant Clock can bound exactly ONE
+      // straggler. TWO readers and the Bell never arms at all: `tickLevel`
+      // returns `parked`, shared/energy.ts stops every monster on the level, and
+      // the world clock stops with no timer that ends it. That is the class
+      // picker's CRITICAL reproduced with two players and no backstop, and
+      // `panelBand` does not answer it — keeping the hotbar VISIBLE says nothing
+      // about the two handlers that were gated.
+      //
+      // SO THE THREE VERBS GO THROUGH. Hold and Pickup are never swallowed here
+      // at all; Commit is swallowed only when there is genuinely a lit row for it
+      // to mean, and `pressMenuSelection` REPORTS whether it fired so that a row
+      // which went disabled between the hover and the press falls through to the
+      // commit rather than becoming the silent no-op this file's header calls the
+      // worst failure mode there is.
+      //
+      // On the Keys screen `menuHovered` is null by construction — every control
+      // there is a per-row button and ui/escapemenu.ts offers no keyboard
+      // selection for them — so Enter commits the turn from that screen, which is
+      // exactly what a player watching the turn bar go gold above the panel means
+      // by it.
+      if (menuOpen && command === TurnCommand.Commit && menuHovered !== null) {
+        if (pressMenuSelection()) return;
       }
       sweep?.settle();
       if (targeting !== null && targeting.active()) {
@@ -3858,6 +4860,51 @@ async function boot(): Promise<void> {
         selectCard(slot);
         return;
       }
+      // ═══════════════════════════════════════════════════════════════════════
+      // THE DIGITS ARE NEVER REFUSED HERE. THE MENU GETS OUT OF THEIR WAY.
+      // ═══════════════════════════════════════════════════════════════════════
+      // `layout.menu` comes from `panelBand`, which is what keeps this surface
+      // off the hotbar — and the stated reason for that is precisely so that the
+      // four talent keys still work while somebody is reading the menu. A GATE
+      // here would take them back and leave the geometry arguing for a property
+      // the keyboard no longer had, which is the difference between a panel and
+      // a modal wearing a panel's clothes. So there is no gate, and there must
+      // never be one.
+      //
+      // ═══ BUT "UNGATED" WAS NOT THE SAME AS "WORKS", AND FOR THREE TALENTS IN
+      //     FOUR IT WAS NOT EVEN CLOSE ═══
+      // `activateSlot` sends immediately only for `TalentShape.Self`. Everything
+      // else opens an AIM — and an aim under an open menu was unreachable from
+      // the keyboard in every direction at once: `onMove`'s menu gate sits above
+      // `targeting.moveCursor`, `onCommand`'s sits above `targeting.confirm()`
+      // and `targeting.cancel()`, and the three menu head links in `onCancel`
+      // consume Escape before it can reach the ring either. The player was left
+      // with a live targeting cursor, half of it behind the panel, that the
+      // keyboard could neither steer, fire nor put away — while the hint line
+      // below the panel cheerfully told them to use the arrows and Enter.
+      //
+      // SO THE MENU CLOSES FIRST AND THEN THE VERB FIRES, which is not a new
+      // rule: it is `runMenuEffect`'s `'ui'` case, ported from
+      // tome/class/Game.lua:2307-2308's `self:unregisterDialog(menu)` followed by
+      // `self.key:triggerVirtual(...)`. The menu's own rows already act this way,
+      // so the digit and the row it sits beside now behave identically.
+      //
+      // UNCONDITIONALLY, AND NOT ONLY FOR A TARGETED SHAPE. Reading
+      // `TalentShape` here would put a second copy of `activateSlot`'s branch in
+      // front of `activateSlot`, and a key whose effect on the menu depended on
+      // which talent happened to be in the slot is a key nobody can predict.
+      //
+      // NOR COULD THE DIGITS MEAN ANYTHING ELSE HERE. The root screen has SIX
+      // entries and `onSlot` only ever reports four, so digits-pick-a-row would
+      // reach two thirds of a list — and the rows carry no `[1]` label to
+      // advertise it with, unlike the class chooser's cards, because
+      // ui/hotbar.ts is already painting those digits on four buttons that mean
+      // something else.
+      //
+      // test/client/keybindwiring.test.ts asserts BOTH halves — that the digit is
+      // never refused, and that the close happens before the act — so a later
+      // pass cannot undo either without reading this paragraph.
+      if (menuOpen) closeMenu();
       sweep?.settle();
       activateSlot(slot);
     },
@@ -3875,13 +4922,55 @@ async function boot(): Promise<void> {
       // to do something on a screen where it must always do nothing.
       if (classOptions !== null) return;
       sweep?.settle();
-      // Escape backs out of ONE thing, in the order they were opened, so a
-      // single key never does two things at once: the token menu, then a walk in
-      // progress, then the targeting ring, then the armed revive, then a
-      // scrolled-back log, then the notice.
+      // ═══════════════════════════════════════════════════════════════════════
+      // THE ESCAPE MENU'S THREE HEAD LINKS, INNERMOST FIRST — v11.
+      // ═══════════════════════════════════════════════════════════════════════
       //
-      // THE MENU IS FIRST because it is the most recently opened and the most
-      // modal-feeling: it sits over the map with the pointer already on it.
+      // BELOW THE PICKER SWALLOW, because a required screen must stay
+      // undismissible (see the block above). ABOVE the token menu on the
+      // IDENTICAL argument the token menu already makes for itself two
+      // paragraphs down: the most recently opened, most modal-feeling surface
+      // goes first. Nothing between here and the notice moves by one line.
+      //
+      // THREE LINKS AND NOT ONE, because the surface genuinely has three depths
+      // and the contract is one press per depth. ToME pops exactly one dialog
+      // per Escape too — its KeyBinder is pushed OVER GameMenu and
+      // `GameMenu.lua:41-43`'s EXIT is a single `unregisterDialog(self)` — so
+      // this is upstream's shape as well as ours.
+      //
+      // THE ARM IS INNERMOST AND IT BINDS NOTHING ON THE WAY OUT. This is the
+      // only path that reaches it: while a capture is armed the capture-phase
+      // listener consumes every key including this one, so an Escape pressed
+      // while armed never arrives here at all — it is answered by `applyCapture`
+      // as `Disarmed` (`KeyBinder.lua:98`'s raw-sym compare). The line below is
+      // the belt to that listener's braces, and it is what makes "an armed
+      // capture cannot outlive one press" true no matter which of the two paths
+      // the press took.
+      if (menuArmed !== null) {
+        menuArmed = null;
+        menuMessage = null;
+        requestDraw();
+        return;
+      }
+      if (menuOpen && menuScreen === MenuScreen.Keys) {
+        // BACK TO THE ROOT, not out of the menu. One press, one level — the same
+        // rule the two links below it keep.
+        showMenuScreen(MenuScreen.Root);
+        return;
+      }
+      if (menuOpen) {
+        closeMenu();
+        return;
+      }
+      // Escape backs out of ONE thing, in the order they were opened, so a
+      // single key never does two things at once: an armed key capture, the Keys
+      // screen, the escape menu, the token menu, then a walk in progress, then
+      // the targeting ring, then the armed revive, then a scrolled-back log,
+      // then the notice — and, when every one of those is empty, the menu opens.
+      //
+      // THE TOKEN MENU IS FIRST OF THE OLDER LINKS because it is the most
+      // recently opened of them and the most modal-feeling: it sits over the map
+      // with the pointer already on it.
       //
       // ═══ AND THE CHARACTER SHEET IS NOT IN THIS CHAIN AT ALL ═══
       // Deliberately, and for consistency over fidelity. ToME's sheet IS closed
@@ -3917,7 +5006,30 @@ async function boot(): Promise<void> {
       // key feel like it half worked.
       const record = caseLog?.toBottom(LogLane.Record) ?? false;
       const margin = caseLog?.toBottom(LogLane.Margin) ?? false;
-      if (!record && !margin) clearNotice();
+      if (record || margin) return;
+      // ═══════════════════════════════════════════════════════════════════════
+      // THE TAIL LINK: WITH THE CHAIN GENUINELY EMPTY, ESCAPE OPENS THE MENU.
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // ═══ AND `clearNotice()` HAD TO BECOME AN EXPLICIT TEST TO GET HERE ═══
+      // This used to read `if (!record && !margin) clearNotice();`, and simply
+      // appending `openMenu()` after it would have BROKEN the one-thing-per-press
+      // contract this whole chain exists to keep — `clearNotice` EARLY-RETURNS
+      // when `notice === null`, so it reports nothing about whether it did
+      // anything, and one press would have both wiped a refusal off the screen
+      // and opened a menu over the map. The test is spelled out here instead;
+      // `notice` is module scope and is the same variable `showNotice` writes.
+      //
+      // THIS IS RECOVERY HATCH (i), AND IT IS A GUARANTEE RATHER THAN A DEFAULT.
+      // `cancel` is `rebindable: false` in keymap.ts and its key is compiled in
+      // from the permanent floor, so no remap — and no hand-edited character
+      // file — can take this route away. That is what lets every other part of
+      // this feature assume the menu is always exactly one press from the map.
+      if (notice !== null) {
+        clearNotice();
+        return;
+      }
+      openMenu();
     },
     onUi: (command) => {
       // ═══ EVERY UI VERB IS SWALLOWED WHILE THE CHOOSER IS UP, AND `t` IS WHY ═══
@@ -3931,83 +5043,57 @@ async function boot(): Promise<void> {
       // — a player looking at a screen they cannot dismiss, typing into a field
       // they cannot see, on the one screen with no way around it.
       if (classOptions !== null) return;
-      sweep?.settle();
-      // Exhaustive, no `default`: a seventh verb breaks here at lint time rather
-      // than becoming a key that quietly does nothing.
-      switch (command) {
-        case UiCommand.Say:
-          openCommandLine();
-          return;
-        case UiCommand.Revive:
-          attemptRevive();
-          return;
-        case UiCommand.Respawn:
-          attemptRespawn();
-          return;
-        case UiCommand.ShowSheet:
-          // A TOGGLE, and the `inspect` goes out on the way OPEN only. The panel
-          // is built from four frames and three of them (`loadout`, `cooldowns`,
-          // `resource`) are already held here; the fourth is the viewer's own
-          // `inspected` answer, which is cached per game turn — so opening the
-          // sheet either draws from a fresh cache entry immediately or asks once
-          // and fills in a frame later, and ui/charsheet.ts draws "gathering…"
-          // rather than an empty box in that window.
-          sheetVisible = !sheetVisible;
-          // The hover state goes with it, or the × would come back highlighted
-          // next time the panel opens under a pointer that has since moved.
-          if (!sheetVisible) {
-            sheetCloseHovered = false;
-            sheetTalentsHovered = false;
-          }
-          requestSelfSheet();
-          requestDraw();
-          return;
-        case UiCommand.ShowTalents:
-          // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING. Unlike the sheet, both
-          // frames this panel is built from — `loadout` and `progress` — are
-          // already held here, absolute and unicast, and both are re-sent by the
-          // server whenever they change. There is no round trip to start, no
-          // cache to warm and no "gathering…" window: the panel is correct the
-          // instant it appears.
-          toggleTalentPanel();
-          return;
-        case UiCommand.ShowInventory:
-          // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING — the talent panel's
-          // shape exactly, and for its reason: the one frame this panel is built
-          // from is absolute, unicast, and re-sent whenever the viewer's bag or
-          // doll changes. There is no round trip to start, no cache to warm and
-          // no "gathering…" window.
-          //
-          // AND THE SERVER IS NOT TOLD IT IS OPEN. No standing hold, no park, no
-          // barrier interaction of any kind — see `invVisible` for the whole of
-          // decision (g). This case is also NOT mirrored in `onCancel`: no dock
-          // surface is in the Escape chain, and that block explains why adding one
-          // would make the key's behaviour depend on which panel happened to be
-          // open.
-          //
-          // `i` IS PORTED AS A DIALOG-LOCAL MNEMONIC, not as a shipped binding.
-          // The default keybind tables are absent from this sparse clone of
-          // t-engine4 (keys.ts records the same fact for M and G), but
-          // dialogs/CharacterSheet.lua:95-98 draws a "Manage [I]nventory" button
-          // and :286-287 handles `c == 'i' or c == 'I'` — the same evidentiary
-          // class this repo already accepted for the sheet's `[G]` control.
-          toggleInventoryPanel();
-          return;
-        case UiCommand.ToggleLog:
-          logVisible = !logVisible;
-          requestDraw();
-          return;
-        case UiCommand.ToggleParty:
-          partyVisible = !partyVisible;
-          requestDraw();
-          return;
+      // ═══ THE MENU TAKES `Say` AND NOTHING ELSE, AND THAT IS NOT ASYMMETRY ═══
+      //
+      // `#cmd` IS OUT OF REACH WHILE THE MENU IS OPEN (`syncCommandLineReach`),
+      // so `openCommandLine` would call `focus()` on a disabled input and the
+      // key would do exactly nothing — the silent no-op this file's header calls
+      // the worst failure mode there is, arriving through the one verb that
+      // reaches outside the canvas.
+      //
+      // EVERY OTHER UI VERB IS LET THROUGH ON PURPOSE. `c`, `g` and `i` toggle
+      // their panels while the menu is open — they are the same act the menu's
+      // own rows perform, so swallowing them would make three keys dead in front
+      // of a screen advertising exactly those three things. `m`, `p`, revive and
+      // respawn are ordinary play, and this is a panel: play does not stop
+      // because somebody opened it.
+      if (menuOpen && command === UiCommand.Say) {
+        showNotice('close the menu first — Escape');
+        return;
       }
+      sweep?.settle();
+      // ONE COPY OF THE SEVEN VERBS, shared with the menu's rows. See
+      // `runUiCommand`: a row that reimplemented a toggle is `Game.lua:2307`'s
+      // own mistake, and upstream does not make it either.
+      runUiCommand(command);
     },
     onScroll: (steps, alternate) => {
       // Swallowed with the rest of the keyboard: the Case Log is behind the
       // scrim, and scrolling a transcript nobody can read is a key that appears
       // to do nothing, which is the same failure as a key that does nothing.
       if (classOptions !== null) return;
+      // ═══ THE KEYS SCREEN TAKES THE SCROLL KEYS AS ITS PAGER ═══
+      //
+      // It is the only surface in this client with more rows than fit, and PREV
+      // and NEXT are drawn on its footer — so the keys that mean "further back"
+      // and "further forward" everywhere else mean the same thing here, and the
+      // mouse and the keyboard reach one pager rather than two.
+      //
+      // ROOT IS DELIBERATELY NOT GATED: six entries always fit, there is no
+      // footer and therefore nothing to page, so the Case Log keeps the keys and
+      // a player can still scroll the transcript with the root menu up. A gate
+      // there would be a key that visibly did nothing, which is what the
+      // chooser's own gate three lines above exists to prevent.
+      //
+      // THE SIGN IS FLIPPED ON PURPOSE. `+1` from keymap.ts is BACK IN TIME —
+      // Page Up — and back in a paged list is the EARLIER page, so the key that
+      // scrolls a transcript upwards moves this screen upwards too. Reading the
+      // number straight through would have made Page Up mean "later", which is
+      // the one thing no Page Up has ever meant.
+      if (menuOpen && menuScreen === MenuScreen.Keys) {
+        pageMenu(steps > 0 ? -1 : 1);
+        return;
+      }
       // SHIFT PICKS THE MARGIN. That mapping lives here and not in keys.ts,
       // because which lane a modifier selects is a fact about a panel and keys.ts
       // deliberately knows nothing about panels.
@@ -4018,9 +5104,10 @@ async function boot(): Promise<void> {
   // ═══ TRAVEL INTERRUPT (2): ANY KEY AT ALL STOPS THE WALK ═══
   //
   // AND IT IS NOT A `KeyHandlers` MEMBER, WHICH LOOKS LIKE AN OVERSIGHT AND IS
-  // NOT. `bindGameKeys` dispatches only keys it has a meaning for: keys.ts:348-351
-  // drops an unmapped key on the floor, and :297 drops EVERY key while a text
-  // entry has focus. So a rule phrased as "any keyboard input cancels travel" is
+  // NOT. `bindGameKeys` dispatches only keys it has a meaning for: its terminal
+  // `if (command === undefined) return;` drops an unmapped key on the floor, and
+  // its `isTextEntry(event.target)` guard drops EVERY key while a text entry has
+  // focus. So a rule phrased as "any keyboard input cancels travel" is
   // literally unreachable through the keymap — q, w, e, Tab, F1 and every other
   // unbound key would sail past while the player's token kept walking, which is
   // the exact moment somebody reaches for a key they are not sure about.
@@ -4114,12 +5201,23 @@ async function boot(): Promise<void> {
     // It also has MORE controls than either sibling — two tabs, up to twelve
     // cells, a DROP button — so an unswallowed click beside one of them would
     // walk the party across the room while somebody was choosing a coat.
+    // ...AND THE ESCAPE MENU IS THE FOURTH, FOR ALL OF THOSE REASONS AT ONCE AND
+    // MORE OF THEM. Omitting it would drag the targeting cursor across whatever
+    // tiles are under a solid panel and fire an `inspect` per hover-settle for
+    // every body it passed over — and an exhausted token bucket answers `error`,
+    // which cancels the player's aim (the reason given verbatim above, and at
+    // HOVER_SETTLE_MS). It also carries MORE controls than any sibling: a close
+    // ×, six entries, two key columns and two buttons on every one of
+    // twenty-six rows, RESET ALL, BACK and a pager. An unswallowed click beside
+    // any of them would walk the party across the room while somebody was
+    // fixing their keyboard.
     return (
       inRect(layout.pane?.rect ?? null, point.x, point.y) ||
       inRect(layout.log, point.x, point.y) ||
       inRect(layout.sheet, point.x, point.y) ||
       inRect(layout.talents, point.x, point.y) ||
-      inRect(layout.inventory, point.x, point.y)
+      inRect(layout.inventory, point.x, point.y) ||
+      inRect(layout.menu, point.x, point.y)
     );
   }
 
@@ -4236,6 +5334,44 @@ async function boot(): Promise<void> {
         invFocus = overInvCell;
         requestDraw();
       }
+      // ═══ THE ESCAPE MENU'S TWO HOVERS, IN THE HOUSE SHAPE ═══
+      // Its × and whichever ROOT ENTRY the pointer is on. ONE hit test feeds
+      // both — `escapeMenuRows` walks the whole action table and formats four
+      // strings per row, so asking twice per pointer move would do that work
+      // twice — and each compares against the stored value and redraws ONLY on a
+      // change, for the reason every hover in this handler does: an
+      // unconditional `requestDraw` per mousemove turns this client's dirty-flag
+      // renderer into a 60 fps one, which the header at the top of this file
+      // forbids at length.
+      //
+      // `menuHovered` IS ALSO THE ARROW KEYS' SELECTION (see its declaration),
+      // so this line is what makes a mouse that moves take the keyboard's
+      // selection with it — which is the behaviour of every menu that answers to
+      // both, and the alternative is two lit rows and no way to tell which one
+      // Enter is about.
+      // THE HIT TEST IS SKIPPED ENTIRELY WHEN THE POINTER IS NOT ON THE PANEL,
+      // and that is two things at once. It is the cheap half — a pointer crossing
+      // the map must not rebuild twenty-six rows per event — and it is what stops
+      // a mouse that merely twitched somewhere else from wiping out a selection
+      // the ARROW KEYS made. Inside the panel the pointer owns the highlight;
+      // outside it, it leaves it alone.
+      const overMenu = inRect(layout.menu, point.x, point.y);
+      const menuHit =
+        layout.menu === null || !overMenu
+          ? null
+          : escapeMenuHitAt(layout.menu, menuRows(), point.x, point.y);
+      const overMenuClose = menuHit?.kind === MenuHitKind.Close;
+      if (overMenuClose !== menuCloseHovered) {
+        menuCloseHovered = overMenuClose;
+        requestDraw();
+      }
+      if (overMenu) {
+        const overMenuEntry = menuHit?.kind === MenuHitKind.Entry ? menuHit.index : null;
+        if (overMenuEntry !== menuHovered) {
+          menuHovered = overMenuEntry;
+          requestDraw();
+        }
+      }
       // AND THE CARD UNDER THE POINTER, while the chooser is up. `null` when it
       // is down, so nothing is left highlighted behind a modal that has closed.
       const card =
@@ -4299,6 +5435,23 @@ async function boot(): Promise<void> {
       if (point === null || caseLog === null) return;
       const { logicalW, logicalH } = renderer.metrics();
       const wheelLayout = hudLayout(logicalW, logicalH);
+      // ═══ THE ESCAPE MENU FIRST, MIRRORING THE PAINT ORDER, AND IT IS AN
+      //     OCCLUSION GUARD RATHER THAN A SCROLL GATE ═══
+      // The same distinction the two paragraphs above draw for the talent and
+      // inventory panels. It consumes NO wheel: the Keys screen pages with its
+      // own PREV/NEXT buttons and with the scroll KEYS, and a wheel that also
+      // paged would be a third way to move one list — the kind of duplication
+      // that ends with two of the three disagreeing about the clamp. What this
+      // line stops is the wheel reaching a DIFFERENT panel drawn UNDERNEATH it,
+      // and the overlap is not exotic: this panel is centred like the other
+      // three and is WIDER than all of them.
+      //
+      // NO `preventDefault` HERE, deliberately, because nothing is consumed —
+      // the call below is reached only when the wheel lands on a log lane, and
+      // that is the branch that owns the suppression. If paging is ever wheeled,
+      // this line must gain one, or the activity iframe scrolls and drags the
+      // canvas out of view.
+      if (inRect(wheelLayout.menu, point.x, point.y)) return;
       if (inRect(wheelLayout.sheet, point.x, point.y)) return;
       if (inRect(wheelLayout.talents, point.x, point.y)) return;
       // AND THE INVENTORY PANEL, WHICH IS AN OCCLUSION GUARD AND NOT A SCROLL
@@ -4432,7 +5585,25 @@ async function boot(): Promise<void> {
         return;
       }
 
-      if (point !== null) {
+      // ═══════════════════════════════════════════════════════════════════════
+      // NO TOKEN MENU WHILE THE ESCAPE MENU IS UP, AND THAT IS THE CANCEL
+      // CHAIN'S ORDER DEFENDED FROM THE OTHER END.
+      // ═══════════════════════════════════════════════════════════════════════
+      // `onCancel` puts the three escape-menu head links ABOVE `tokenMenu.close()`
+      // on the rule that the most recently opened, most modal-feeling surface
+      // answers first. That rule was not invariant: the occlusion guard below
+      // only refuses a right-click landing INSIDE `layout.menu`, so a right-click
+      // on bare map still opened a token menu OVER the escape menu — painted
+      // last of everything — and Escape then closed the big panel underneath the
+      // little one the player was actually looking at.
+      //
+      // REFUSED HERE RATHER THAN REORDERED THERE, because the chain's order is
+      // right and the reachable state is what was wrong: two stacked menus is
+      // one more surface than this client has ever had, and the escape menu
+      // already offers every verb a right-click could mean on your own token.
+      // The right-click still does its OLDEST job — `clearNotice()` below — so
+      // the button is not dead, it just does not stack a second menu.
+      if (point !== null && !menuOpen) {
         // A row in the party pane offers the same menu as the token does. It is
         // the only way to reach somebody who is off screen — which is most of
         // the party, most of the time.
@@ -4461,10 +5632,16 @@ async function boot(): Promise<void> {
         // exact shipped bug recorded in step 4 below — "a click on the character
         // sheet declined a party invite the player never saw" — with a different
         // panel on top.
+        // ...AND THE ESCAPE MENU IS THE FOURTH AND THE WIDEST. It is painted last
+        // of the four and it is wider than all of them, so it covers MORE of the
+        // pane than any of its siblings can. Same treatment, same reason: pure
+        // occlusion, no right-click branch of its own — there is no verb this
+        // panel offers that a right-click could mean.
         const overSheet =
           inRect(layout.sheet, point.x, point.y) ||
           inRect(layout.talents, point.x, point.y) ||
-          inRect(layout.inventory, point.x, point.y);
+          inRect(layout.inventory, point.x, point.y) ||
+          inRect(layout.menu, point.x, point.y);
         const paneHit =
           overSheet || layout.pane === null || layout.party === null
             ? null
@@ -4501,6 +5678,41 @@ async function boot(): Promise<void> {
       event.preventDefault();
       activateSlot(slot);
       return;
+    }
+
+    // ═══ 3a. THE ESCAPE MENU — TESTED BEFORE ALL THREE PANELS, BECAUSE IT IS
+    //         DRAWN OVER ALL THREE ═══
+    //
+    // HIT-TEST ORDER MIRRORS PAINT ORDER, the rule step 4 below states in full.
+    // `paintHud` paints the sheet, the talent panel, the inventory panel and
+    // then this, so this gets first refusal on any click inside its rect — and
+    // it overlaps them more than they overlap each other, because it is wider
+    // than all three and centred like all three.
+    //
+    // BELOW THE ERASED PLATE AND THE HOTBAR, which is the same order the paint
+    // pass uses in reverse and is deliberate on both counts. The plate is the
+    // one click that has to work while everything else is being refused, and the
+    // hotbar is the thing this panel's whole geometry exists to stay off — a
+    // menu that ate a talent key by hit test after `panelBand` had carefully
+    // kept it out of the way would be the panel promise broken in the one place
+    // nobody would look.
+    //
+    // EVERY OUTCOME SWALLOWS THE CLICK, and a null hit — "on the menu, but not
+    // on a control" — falls through to the `overPanel` swallow at the foot of
+    // this handler, which already includes this rect. `escapeMenuHitAt` answers
+    // null for a greyed entry and for a locked key row as well, so a row drawn
+    // as unpressable is unpressable by construction rather than by a check
+    // somebody has to remember to write here.
+    //
+    // `escapeMenuRows` IS CALLED ONCE and handed to the hit test, which is the
+    // same split the painter uses.
+    if (point !== null && layout.menu !== null) {
+      const hit = escapeMenuHitAt(layout.menu, menuRows(), point.x, point.y);
+      if (hit !== null) {
+        event.preventDefault();
+        runMenuHit(hit);
+        return;
+      }
     }
 
     // ═══ 4. THE CHARACTER SHEET — TESTED BEFORE THE PANE, BECAUSE IT IS DRAWN
@@ -4561,7 +5773,14 @@ async function boot(): Promise<void> {
     // through to the `overPanel` swallow further down, which already includes this
     // rect. There is deliberately no right-click branch: the right-click block
     // above treats this panel as pure occlusion, exactly as it does the other two.
-    if (point !== null && layout.inventory !== null) {
+    //
+    // ═══ ...AND IT IS SKIPPED UNDER THE ESCAPE MENU, WHICH IS NEW AND IS THE
+    //     SAME BUG AS THE ONE RECORDED THREE BLOCKS DOWN ═══
+    // This block used to need no guard because nothing was drawn over it. The
+    // menu is, and it is wider than this panel — so without this line a click on
+    // BARE MENU would reach a cell, a tab or the DROP control underneath it, and
+    // DROP puts a coat on the floor of a room the player is about to leave.
+    if (point !== null && layout.inventory !== null && !inRect(layout.menu, point.x, point.y)) {
       const hit = inventoryPanelHitAt(
         layout.inventory,
         inventoryPanelRows(inventoryPanelView()),
@@ -4629,7 +5848,17 @@ async function boot(): Promise<void> {
     // step 5's own bug ("a control the player cannot see must not be pressable")
     // with two panels instead of one, and the `+` version of it spends an
     // irreversible talent point.
-    if (point !== null && layout.talents !== null && !inRect(layout.inventory, point.x, point.y)) {
+    //
+    // THE ESCAPE MENU IS THE FOURTH TWIN ON EVERY ONE OF THESE GUARDS, and it is
+    // the one most likely to reproduce the bug: it is painted over all three and
+    // is wider than all three, so "bare menu" covers more `+` controls than bare
+    // inventory panel ever did.
+    if (
+      point !== null &&
+      layout.talents !== null &&
+      !inRect(layout.inventory, point.x, point.y) &&
+      !inRect(layout.menu, point.x, point.y)
+    ) {
       const hit = talentPanelHitAt(
         layout.talents,
         talentPanelRows(talentPanelView()),
@@ -4648,7 +5877,12 @@ async function boot(): Promise<void> {
       }
     }
 
-    if (point !== null && layout.sheet !== null && !inRect(layout.inventory, point.x, point.y)) {
+    if (
+      point !== null &&
+      layout.sheet !== null &&
+      !inRect(layout.inventory, point.x, point.y) &&
+      !inRect(layout.menu, point.x, point.y)
+    ) {
       const hit = charSheetHitAt(layout.sheet, point.x, point.y);
       if (hit === 'close') {
         event.preventDefault();
@@ -4689,7 +5923,12 @@ async function boot(): Promise<void> {
       // not be pressable. With an invite pending, DECLINE sits inside the overlap
       // on ordinary windows — that is the bug this guard was written for, and a
       // third centred panel is a third way to reproduce it.
-      !inRect(layout.inventory, point.x, point.y)
+      !inRect(layout.inventory, point.x, point.y) &&
+      // AND THE FOURTH, WHICH COVERS MORE OF THE PANE THAN ANY OF THE OTHER
+      // THREE — it is the widest surface in this client. Same rule, same bug:
+      // DECLINE inside the overlap is a party invite refused by a click the
+      // player thought was landing on a key row.
+      !inRect(layout.menu, point.x, point.y)
     ) {
       const hit = partyPaneHitAt(layout.party, layout.pane, point.x, point.y);
       if (hit !== null) {
@@ -5080,7 +6319,14 @@ function applyServerMessage(msg: ServerMsg): void {
       // handing the keyboard's only escape route back at that moment would undo
       // the gate while the screen it protects is still on top. See
       // `setCommandLineReachable`.
-      setCommandLineReachable(true);
+      //
+      // v11: A RECOMPUTE, NOT AN ASSERTION OF `true`. There is a second surface
+      // that needs this row out of reach now (the escape menu, so Tab can be
+      // bound), and a `true` here would hand the keyboard's only escape route
+      // back while that surface was still up. `syncCommandLineReach` evaluates
+      // both reasons; adding a third means editing one function rather than
+      // finding every call site.
+      syncCommandLineReach();
       // Whatever was being aimed may not be in the new loadout, and its range
       // ring certainly is not — this frame is RE-SENT on every spend precisely
       // because `range`, `desc` and `descNext` are stale the instant a rank
@@ -5140,11 +6386,17 @@ function applyServerMessage(msg: ServerMsg): void {
       {
         const before = progress;
         progress = msg;
+        // THE KEY IS READ OFF THE LIVE KEYMAP, like every other mnemonic in this
+        // file since v11 — see `keyHint`. This notice is one of the two places a
+        // player ever learns the talent panel exists, so naming a key they have
+        // rebound away would make the whole tree dead content for exactly the
+        // player who took the trouble to rebind.
+        const talentKey = keyHint('show_talents');
         if (before !== null && msg.level > before.level) {
-          onRefusal(`level ${msg.level} — press g to spend`);
+          onRefusal(`level ${msg.level} — press ${talentKey} to spend`);
         } else if (before !== null && msg.unspent > before.unspent) {
           onRefusal(
-            `${msg.unspent} talent ${msg.unspent === 1 ? 'point' : 'points'} in hand — press g`,
+            `${msg.unspent} talent ${msg.unspent === 1 ? 'point' : 'points'} in hand — press ${talentKey}`,
           );
         }
       }
@@ -5176,12 +6428,25 @@ function applyServerMessage(msg: ServerMsg): void {
       // Nothing here arms a timer or sends anything — the picker is a screen, not
       // a negotiation.
       classOptions = msg.options;
+      // ═══ AND THE OPTIONAL SCREEN UNDERNEATH IS TORN DOWN ═══
+      // A required screen arriving must dismiss the one it is covering.
+      // `onCancel` returns unconditionally while `classOptions !== null` and the
+      // picker is painted last of everything with `overPanel` answering true for
+      // the whole viewport — so an escape menu that was open when this frame
+      // landed (a reconnect re-sends `class_options` in the `hello` block) had no
+      // keyboard route out and no pointer route out either. It sat behind the
+      // chooser until a class was picked and then reappeared over the map,
+      // unannounced, with whatever was armed on it still armed.
+      resetMenuState();
       // AND THE KEYBOARD IS GENUINELY TAKEN, NOT MERELY GATED. `onUi`'s early
       // return stops the `t` KEY from focusing the command line; it cannot stop
       // Tab or a mouse click on a row that is still sitting in the page. See
       // `setCommandLineReachable` for the full route map — this is the edge that
       // closes it, and `case 'loadout'` is the edge that opens it again.
-      setCommandLineReachable(false);
+      //
+      // v11: through the recompute, like every other site. `classOptions` has
+      // just been set above, so this reads the fact rather than restating it.
+      syncCommandLineReach();
       break;
 
     // -----------------------------------------------------------------------
@@ -5412,6 +6677,49 @@ function applyServerMessage(msg: ServerMsg): void {
         // cannot change back into anything this card may draw.
         if (msg.view === null) pinnedInspectId = null;
       }
+      break;
+
+    case 'keybinds':
+      // ═══════════════════════════════════════════════════════════════════════
+      // v11 — THE KEYS THE SERVER IS HOLDING FOR THIS PLAYER. UNICAST, ABSOLUTE,
+      // AND IT IS AN ECHO RATHER THAN AN ACKNOWLEDGEMENT.
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // A `ViewerMsg`, so it arrives only for this socket — protocol.ts makes
+      // `broadcast(keybindsMsg)` a compile error server-side, because there is
+      // no version of this frame that is correct for two recipients.
+      //
+      // ═══ THE SCREEN RENDERS *THIS*, NEVER WHAT THIS CLIENT HOPED IT SENT ═══
+      // `commitRemap` calls `setKeymap` for the instant local effect and puts the
+      // map on the wire; this line calls it AGAIN with whatever the server
+      // actually stored. A map that was trimmed, bounced or never received
+      // corrects itself here — which is the whole reason the frame exists
+      // (protocol.ts: "the echo is the point"). The server is authoritative
+      // about preferences too.
+      //
+      // `setKeymap` MUTATES THE LIVE BOX and re-registers nothing: keys.ts
+      // forbids dispose-then-rebind outright, because it would move
+      // `bindGameKeys` after the travel-cancel listener and invert an Escape
+      // precedence two files call load-bearing. The very next keydown uses the
+      // new tables.
+      //
+      // AN ACTION ID THIS BUILD NO LONGER BINDS IS DROPPED *HERE*, silently and
+      // on purpose — `compileKeymap` walks `ACTIONS`, so an id that matches
+      // nothing simply never lands in a table. THE CLIENT OWNS THAT DROP: neither
+      // the wire nor the disk has an action table to check against, both keep it
+      // verbatim so a renamed-then-restored action comes back, and this is
+      // exactly what `createTalentSheet` does with a talent id the class no
+      // longer has.
+      setKeymap(msg.binds);
+      keybindsPersisted = msg.persisted;
+      // ...AND THE CHAT ROW'S PLACEHOLDER, because `say` is rebindable and that
+      // string names its key. See `syncCommandLinePlaceholder`.
+      syncCommandLinePlaceholder();
+      // The redraw is the caller's: `onMessage` calls `requestDraw()` after every
+      // applied frame and the dirty flag folds this into that one callback. Every
+      // sentence this frame can change — the Keys screen's rows, the hint lines,
+      // the aria-live copies — is rebuilt from `gameKeymap` when it is next
+      // drawn, so there is nothing to invalidate here.
       break;
 
     case 'pong':

@@ -480,6 +480,64 @@ export type CharacterFile = {
    */
   readonly equipped?: Readonly<Record<string, string>>;
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE KEYMAP: ACTION ID -> ORDERED KEY STRINGS. ONE OPTIONAL FIELD.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The model is ToME's verbatim: `binds_remap[virtual] = {k1,k2,k3}` — a
+   * VIRTUAL ACTION maps to an ordered list of key strings, and the defaults are
+   * a separate table the remap overlays (KeyBind.lua:73 loads exactly that
+   * shape, :88-103 writes it back, and :131 falls back to `t.default` for any
+   * virtual the remap does not name). SPARSE, for the reason :131 makes it
+   * worth being: only actions the player actually changed appear here, so
+   * shipping a new default reaches every player who never touched that action.
+   *
+   * ═══ THE ACTION ID IS A SOFT REFERENCE — THE `classId` RULE, NOT `equipped`'s ═══
+   * The note on the `itemById` import (:151-181) draws the line and this field
+   * lands on the talent side of it. A TALENT ID CARRIES A NUMBER; AN ITEM ID
+   * CARRIES NOTHING. A key string carries a MEANING — `key:h`, `code:Numpad8`
+   * is a physical press, readable and restorable with no registry anywhere in
+   * the process — so an action id this build no longer binds is kept VERBATIM
+   * and a renamed-then-restored action comes back with its keys. The CLIENT
+   * drops what it cannot bind, exactly as `createTalentSheet` drops a talent id
+   * the class no longer has. This layer could not validate it in any case: the
+   * action table lives in src/client/input/keys.ts and persist/ cannot import
+   * the client any more than it can import the talent registry.
+   *
+   * ═══ ABSENT IS NOT EMPTY, AND THE TWO MUST STAY DISTINGUISHABLE FOREVER ═══
+   * ABSENT means "this player uses the defaults" — every save on disk today,
+   * plus every player who never opens the Keys screen. `{}` means "I RESET
+   * EVERYTHING", which is a thing a player can deliberately do and which the
+   * next producer must inherit as a fact rather than as an absence. A `?? {}`
+   * anywhere on this path collapses the two and hands a player their old keymap
+   * back every session; the mirror mistake (defaulting on the way IN) writes
+   * "reset everything" over a returning player's binds on the first fixture-
+   * shaped save. That is the same shape as the item-duplicator bug argued at
+   * :446-452 and :1222-1233, and it survives onto the BYTES: `JSON.stringify`
+   * omits an undefined-valued key, so an absent keymap leaves no key on disk.
+   *
+   * ═══ TYPED AS A `Record<string, ...>`, NOT AS THE CLIENT'S ACTION UNION ═══
+   * The `equipped` docblock's rule, for the same reason: this is a FILE, the
+   * key is whatever a JSON document happens to hold, and typing it as the union
+   * would be claiming a validation that has not happened. `parseKeybinds` does
+   * the validation there is to do — shape, size and sanity — and deliberately
+   * not membership, which only the client can answer.
+   *
+   * ═══ NO SCHEMA BUMP, AND THIS IS THE THIRD PASS TO TAKE THE DECISION ═══
+   * `SCHEMA_VERSION` stays `1 as const` (version.ts:356) and
+   * `CHARACTER_MIGRATIONS` stays empty (migrate.ts:185).
+   * docs/data-schemas.md:48-49 verbatim: "Adding an *optional* field needs no
+   * bump; the bump is for renames, semantic changes, and new required fields."
+   * `migrateDoc` compares nothing but the integer, so a v1 file with no
+   * `keybinds` loads untouched. The trade is MORE lopsided here than it was for
+   * levels or loot: NOT bumping costs one rebind if somebody rolls a build
+   * back, while BUMPING quarantines the character file in every older build
+   * (migrate.ts:297-309 → :1517-1528 here) and costs a friend the whole
+   * evening. Written down here rather than re-litigated a fourth time.
+   */
+  readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+
   readonly resources: SavedResources;
   /** Talent id → GAME TURNS remaining. Soft references, like `classId`. */
   readonly talentCooldowns: Readonly<Record<string, number>>;
@@ -612,6 +670,17 @@ export type CharacterInit = {
    */
   readonly carried?: readonly string[];
   readonly equipped?: Readonly<Record<string, string>>;
+  /**
+   * THE KEYMAP, PASSED STRAIGHT THROUGH — INCLUDING THE ABSENCE, for the reason
+   * the two item fields above are. There is a right default for a level (1) and
+   * there is none for a keymap: `{}` is the claim "this player reset every
+   * binding", which this layer is not entitled to make on behalf of a caller
+   * that simply did not mention keys. Defaulting here would collapse absent
+   * into empty one layer before the `?? binding` chain that has to tell them
+   * apart, and the symptom is a returning player's rebinds gone after the first
+   * save written by a fixture-shaped producer.
+   */
+  readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   readonly resources: SavedResources;
   readonly talentCooldowns?: Readonly<Record<string, number>>;
   readonly effects?: readonly SavedEffect[];
@@ -653,14 +722,15 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     // character whose caller passed a level and nothing else.
     unspentPoints: init.unspentPoints ?? unspentFromLedger(level, talentPoints),
     talentPoints,
-    // NO `??` ON THESE TWO, AND THAT IS THE POINT. An undefined here is written
-    // as an undefined, `JSON.stringify` omits the key, and a file that says
-    // nothing about items stays a file that says nothing about items. Compare
-    // the four lines above, every one of which supplies a default — because
-    // every character HAS a level, and not every character has an opinion about
-    // its bag.
+    // NO `??` ON THESE THREE, AND THAT IS THE POINT. An undefined here is
+    // written as an undefined, `JSON.stringify` omits the key, and a file that
+    // says nothing about items stays a file that says nothing about items.
+    // Compare the four lines above, every one of which supplies a default —
+    // because every character HAS a level, and not every character has an
+    // opinion about its bag or about which key means "walk north-east".
     carried: init.carried,
     equipped: init.equipped,
+    keybinds: init.keybinds,
     resources: init.resources,
     talentCooldowns: init.talentCooldowns ?? {},
     effects: init.effects ?? [],
@@ -1022,6 +1092,180 @@ function parseCarried(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// THE KEYMAP'S BOUNDS, AND WHY A FILE NEEDS ITS OWN SET
+//
+// A hand-edited character file never passes through the wire's `zod` schema —
+// protocol.ts:6-14 is explicit that "CLIENT -> SERVER is zod, it is the single
+// trust boundary", and a file arrives from a text editor, not from a socket. So
+// the disk gets its own caps, and they are the SAME NUMBERS the wire schema
+// exports (`KEYBIND_MAX_ACTIONS` and friends), on purpose: a map the server
+// ACCEPTED over the wire must survive a save-and-load cycle unrepaired, or the
+// player watches a binding they just set come back changed after a reconnect.
+//
+// The action namespace is CLOSED and countable rather than open-ended — eight
+// directions, three turn commands, eight UI commands, four hotbar slots, two
+// scroll steps and cancel is 26 — so 40 is a real bound with one release's
+// growth in it, not headroom for its own sake.
+// ---------------------------------------------------------------------------
+
+/** Ceiling on distinct actions in one remap. See the note above: 26 exist. */
+const KEYBIND_MAX_ACTIONS = 40;
+
+/** `move_northeast` is 14. 48 is a ceiling, not a fit. */
+const KEYBIND_ACTION_MAX_CHARS = 48;
+
+/**
+ * TWO SLOTS PER ACTION, WHERE ToME HAS THREE (KeyBind.lua:88-103 writes k1/k2/
+ * k3). A DELIBERATE DEVIATION: upstream's third slot is a MOUSE GESTURE
+ * (KeyBinder.lua:134-184) and this project binds the mouse elsewhere entirely.
+ */
+const KEYBIND_KEYS_PER_ACTION = 2;
+
+/** `code:NumpadDecimal` is 18. Long enough for any real key string. */
+const KEYBIND_KEYSTRING_MAX_CHARS = 32;
+
+/**
+ * How many individual key-string complaints one action may file before the rest
+ * are summarised. `problems` is LOGGED, and a file whose keymap is a megabyte of
+ * junk must not turn one bad load into a hundred thousand log lines — the same
+ * lesson the dangling-class warning learned the expensive way (see
+ * `UNASSIGNED_CLASS`: a false-alarm storm drowns the one real signal).
+ */
+const KEYBIND_PROBLEMS_PER_ACTION = 2;
+
+/**
+ * THE REBOUND KEYS, REPAIRED AND NEVER REJECTED.
+ *
+ * ═══ THE ONE UPSTREAM BEHAVIOUR THAT IS EXPLICITLY REFUSED ═══
+ * `KeyBind:loadRemap` does `local f, err = loadfile(file); if not f and err then
+ * error(err) end` (KeyBind.lua:64-66) — a truncated `keybinds2.cfg` is a parse
+ * error RAISED inside engine boot, with no fallback. It then `setfenv`s the file
+ * and EXECUTES it, copying every global it set with no validation at all
+ * (:71-74): the value is never checked to be a table, never length-checked, and
+ * the key strings are never checked against any grammar. Neither half is
+ * acceptable here. A corrupt keymap inside a character record must degrade THAT
+ * ACTION to its default and must never fail the load of the character — losing a
+ * friend's character over a keymap would be this layer failing at its one job.
+ *
+ * ═══ WHAT THIS DOES NOT CHECK, AND BOTH ARE DECISIONS ═══
+ *   MEMBERSHIP. An action id this build no longer binds is kept VERBATIM — see
+ *   the field's docblock. This layer has no action table to check against and a
+ *   renamed-then-restored action must come back with its keys.
+ *
+ *   DUPLICATE ASSIGNMENTS. Two actions sharing one key string is a CONFLICT, and
+ *   conflicts are refused at the capture field where the player can see which
+ *   action already holds the key. Rejecting one here would lock a player out of
+ *   a character over a keymap, which is exactly backwards.
+ *
+ * ABSENT IS NOT EMPTY, so a missing key returns `undefined` — but a key that is
+ * PRESENT and unreadable returns `{}`, because the file did speak and what it
+ * said is unusable. `parseCooldowns`' rule (:943-948 states it for `equipped`),
+ * applied to one more field.
+ */
+function parseKeybinds(
+  value: unknown,
+  problems: string[],
+): Record<string, readonly string[]> | undefined {
+  if (value === undefined || value === null) return undefined;
+  const out: Record<string, readonly string[]> = {};
+  if (!isRecord(value)) {
+    problems.push('keybinds: not an object — dropped, every action back to its default key');
+    return out;
+  }
+
+  let overCap = 0;
+  let seen = 0;
+  for (const [actionId, raw] of Object.entries(value)) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE CAP COUNTS ENTRIES *VISITED*, NEVER ENTRIES *KEPT*.
+    // ═══════════════════════════════════════════════════════════════════════
+    // The count cap is summarised rather than reported per entry, for the reason
+    // `KEYBIND_PROBLEMS_PER_ACTION` exists: a hostile file must not be able to
+    // choose how many log lines a load prints.
+    //
+    // IT USED TO READ `Object.keys(out).length >= KEYBIND_MAX_ACTIONS`, AND THAT
+    // BOUNDED ONLY THE SHAPE THAT DID NOT NEED BOUNDING. `out` gains a key on the
+    // LAST line of this loop body, so every entry rejected EARLIER — a non-array
+    // value, an over-long action id — left the counter where it was, the cap never
+    // tripped, and each one pushed its own `problems` line. Measured against the
+    // real parser: 50,000 well-formed junk entries correctly yielded 3 lines;
+    // 50,000 entries with non-array values yielded 50,000, and 50,000 over-long
+    // ids the same. `loadCharacter` then re-allocates every one of those strings
+    // with a `${source.label}: ` prefix and hands the whole array to pino as a
+    // structured field — one synchronous log record, on the join path, on the
+    // QUIET 'loaded with repairs' branch where nothing looks wrong.
+    //
+    // Counting visits fires the cap after 40 entries whatever they contain, which
+    // is what the two docblocks above already promise in as many words, and `out`
+    // stays bounded exactly as it was.
+    seen += 1;
+    if (seen > KEYBIND_MAX_ACTIONS) {
+      overCap += 1;
+      continue;
+    }
+    if (actionId.length > KEYBIND_ACTION_MAX_CHARS) {
+      problems.push(
+        `keybinds: an action id of ${actionId.length} characters is over the ` +
+          `${KEYBIND_ACTION_MAX_CHARS}-character cap — dropped`,
+      );
+      continue;
+    }
+    if (!Array.isArray(raw)) {
+      problems.push(`keybinds.${actionId}: not an array of key strings — dropped`);
+      continue;
+    }
+
+    const keys: string[] = [];
+    let extra = 0;
+    let unusable = 0;
+    let told = 0;
+    for (const [index, entry] of raw.entries()) {
+      if (keys.length >= KEYBIND_KEYS_PER_ACTION) {
+        extra += 1;
+        continue;
+      }
+      const key = asString(entry);
+      if (key === null || key === '' || key.length > KEYBIND_KEYSTRING_MAX_CHARS) {
+        unusable += 1;
+        if (told < KEYBIND_PROBLEMS_PER_ACTION) {
+          told += 1;
+          problems.push(`keybinds.${actionId}[${index}]: not a usable key string — dropped`);
+        }
+        continue;
+      }
+      keys.push(key);
+    }
+    if (unusable > told) {
+      problems.push(
+        `keybinds.${actionId}: ${unusable - told} further unusable key strings dropped`,
+      );
+    }
+    if (extra > 0) {
+      problems.push(
+        `keybinds.${actionId}: more than ${KEYBIND_KEYS_PER_ACTION} keys — ${extra} dropped`,
+      );
+    }
+
+    // AN ACTION WHOSE KEYS ALL DROPPED IS KEPT AS AN EMPTY ARRAY, not deleted.
+    // The KEYS of this map are data too — they are the set of actions the player
+    // has touched at all — and deleting the entry would silently turn "the
+    // player cleared this" into "the player never opened the screen", which is
+    // the same absent-is-not-empty collapse the field's docblock forbids one
+    // level up. `[]` is also what the resolver reads as "no override in either
+    // slot", so the action falls back to its default and nothing is bricked.
+    out[actionId] = keys;
+  }
+
+  if (overCap > 0) {
+    problems.push(
+      `keybinds: more than ${KEYBIND_MAX_ACTIONS} actions — ${overCap} dropped ` +
+        '(the action namespace is closed and smaller than that)',
+    );
+  }
+  return out;
+}
+
 function parsePosition(value: unknown, problems: string[]): SavedPosition | null {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) {
@@ -1127,7 +1371,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       xp: parseXp(doc.xp, problems),
       unspentPoints,
       talentPoints,
-      // NAMED WITH THEIR UNDEFINED INTACT. These two are the only fields here
+      // NAMED WITH THEIR UNDEFINED INTACT. These three are the only fields here
       // that may legitimately be `undefined`, and writing them anyway is what
       // keeps the key SET identical between `createCharacterFile` and this
       // function — which is what the "loses no field" test in
@@ -1136,6 +1380,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // disk and a pre-items file re-serialises byte-identically.
       carried,
       equipped,
+      keybinds: parseKeybinds(doc.keybinds, problems),
       resources,
       talentCooldowns: parseCooldowns(doc.talentCooldowns, problems),
       effects: parseEffects(doc.effects, problems),
@@ -1199,6 +1444,27 @@ export function serialiseCharacter(file: CharacterFile): string {
     }
   }
   const carried = file.carried === undefined ? undefined : [...file.carried];
+  // ═══ THE ACTION KEYS ARE SORTED; THE KEY STRINGS INSIDE ONE ARE NOT ═══
+  // Exactly the asymmetry `equipped` and `carried` have, and for the identical
+  // reasons. The MAP's key order follows whichever order the player happened to
+  // rebind things in, which is an accident, so it is sorted — two saves of one
+  // character must be byte-identical or every autosave rewrites the file and
+  // steps the `.bak` a generation for nothing. The ARRAY's order is DATA: it is
+  // slot 1 then slot 2, ToME's `{k1,k2,k3}` (KeyBind.lua:88-103), and the
+  // resolver reads position, so sorting it would silently swap a player's
+  // primary and secondary keys.
+  //
+  // COPIED, not shared: the canonical object must never hold a live reference
+  // into the caller's map, or a later edit to the binding reaches bytes that
+  // were supposed to have been frozen when they were serialised.
+  let keybinds: Record<string, readonly string[]> | undefined;
+  if (file.keybinds !== undefined) {
+    keybinds = {};
+    for (const action of Object.keys(file.keybinds).sort()) {
+      const keys = file.keybinds[action];
+      if (keys !== undefined) keybinds[action] = [...keys];
+    }
+  }
 
   const canonical: CharacterFile = {
     schemaVersion: file.schemaVersion,
@@ -1232,6 +1498,12 @@ export function serialiseCharacter(file: CharacterFile): string {
     // below the bridge that needs to tell them apart.
     carried,
     equipped,
+    // THE THIRD MEMBER OF THAT EXCEPTION, and the cost of getting it wrong is
+    // the same one restated: writing `{}` for a character who has never opened
+    // the Keys screen rewrites every save in `data/characters/` on first load,
+    // steps every `.bak` a generation for nothing, and asserts "this player
+    // reset every binding" about somebody who did not.
+    keybinds,
     resources: {
       hp: file.resources.hp,
       ap: file.resources.ap,
@@ -1865,8 +2137,31 @@ export type SavedLoadout = {
   readonly equipped?: Readonly<Record<string, string>>;
 };
 
-/** A snapshot from a producer that may or may not know about items. */
-type LoadoutSnapshot = CharacterSnapshot & SavedLoadout;
+/**
+ * THE PLAYER'S PREFERENCES ACROSS THE SAME SEAM, DECLARED AS A SIBLING RATHER
+ * THAN BOLTED ONTO `SavedLoadout`.
+ *
+ * Every word of the argument above applies unchanged — the field is OPTIONAL, so
+ * `CharacterSnapshot` is assignable to the intersection untouched, an untaught
+ * producer lands on the `?? binding` fallback, and the day the gateway declares
+ * the same field a divergence becomes a compile error at `fileFor`'s parameter
+ * rather than a silent disagreement.
+ *
+ * A SEPARATE TYPE BECAUSE A KEYMAP IS NOT A LOADOUT. `SavedLoadout` is state the
+ * WORLD gave the character and the engine can change under them; this is a
+ * setting the PLAYER chose, which nothing in the world may touch. Merging them
+ * would mean a future producer that fills "the loadout" reasonably believing it
+ * had said something about the keymap, which is precisely the collapse
+ * `keybinds`'s own docblock spends a paragraph forbidding.
+ *
+ * EXPORTED so the gateway and the tests can name the same shape.
+ */
+export type SavedPrefs = {
+  readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+};
+
+/** A snapshot from a producer that may or may not know about items or keys. */
+type LoadoutSnapshot = CharacterSnapshot & SavedLoadout & SavedPrefs;
 
 /** One player's seat: which file their body writes to, and what it was created as. */
 type Binding = {
@@ -1923,6 +2218,18 @@ type Binding = {
    */
   readonly carried?: readonly string[];
   readonly equipped?: Readonly<Record<string, string>>;
+  /**
+   * ═══ AND THE SAME FALLBACK ONE MORE TIME, FOR THE KEYMAP ═══
+   * OPTIONAL, joining the two above rather than the four required ones, and the
+   * reason is the stronger version of theirs: there is a right default for a
+   * level (1) and there is none at all for a keymap. `{}` is the claim "this
+   * player reset every binding", so a required field would force this layer to
+   * make that claim on behalf of every producer that has nothing to say — and
+   * the producers that have nothing to say are the common case, since only the
+   * Keys screen ever fills it. The absence is carried forward AS an absence and
+   * the key stays off the disk.
+   */
+  readonly keybinds?: Readonly<Record<string, readonly string[]>>;
 };
 
 export type CharacterBridgeOptions = {
@@ -2001,6 +2308,19 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // statement: the player dropped everything.
       carried: snapshot.carried ?? binding.carried,
       equipped: snapshot.equipped ?? binding.equipped,
+      // ═══ AND THE KEYMAP, WITH THE `?? binding` THAT IS THE WHOLE BUG TWICE ═══
+      // The missing half of this line is the one-way valve that shipped for
+      // progression and then again for items: read the binding unconditionally
+      // and tonight's rebind reaches no file, read the SNAPSHOT unconditionally
+      // and a producer that cannot speak for the player's keys — a fixture, the
+      // e2e harness, any build of the gateway not yet taught to fill it — wipes
+      // the rebinds of somebody who has spent a session getting them right.
+      //
+      // AND `undefined` HERE IS NOT `{}`: `createCharacterFile` does not default
+      // this field, so a producer that cannot say leaves the disk EXACTLY as it
+      // found it. A producer that CAN say and says `{}` writes `{}`, and that is
+      // a real statement — the player pressed RESET ALL.
+      keybinds: snapshot.keybinds ?? binding.keybinds,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
       // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
       // are intra-turn budgets refilled from the class every turn, so a stored
@@ -2020,7 +2340,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
   const openCharacter = async (
     ownerId: string,
     actorId: string,
-  ): Promise<(CharacterRestore & SavedLoadout) | null> => {
+  ): Promise<(CharacterRestore & SavedLoadout & SavedPrefs) | null> => {
     const safeOwner = sanitiseId(ownerId);
     if (safeOwner === null) {
       // Not a data problem: a Discord id that is not [A-Za-z0-9_-]{1,64} either
@@ -2075,6 +2395,11 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // nobody has yet said anything about this character's items either.
       carried: file?.carried,
       equipped: file?.equipped,
+      // NO `??` HERE EITHER, and the same sentence covers it: an absent keymap
+      // is carried forward AS an absence, so `fileFor` leaves the key off the
+      // file rather than asserting "this player reset every binding" on behalf
+      // of a file that never mentioned keys.
+      keybinds: file?.keybinds,
     });
 
     if (file === null) {
@@ -2133,6 +2458,20 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // would be a second opinion that can disagree with the first.
       carried: file.carried,
       equipped: file.equipped,
+      // ═══ AND THE KEYMAP COMING BACK — THE HALF THAT IS THE ENTIRE FEATURE ═══
+      // "No one likes to reconfigure keybinds" is the whole of the request, and
+      // it is this one line that answers it: `fileFor` above now writes the
+      // player's binds to disk, and a load that did not read them back would be
+      // the identical one-way valve progression and items each shipped once —
+      // keys to disk, nothing returned, the Keys screen showing the defaults
+      // forever on a file that states the player's choices perfectly clearly.
+      // The two halves are one fix and reverting either is the whole bug.
+      //
+      // HANDED OVER EXACTLY AS `parseCharacterFile` LEFT THEM, including the
+      // undefined and including any action id this build no longer binds: the
+      // shape and the size have already been checked on the way in, and the
+      // MEMBERSHIP question is one only the client can answer.
+      keybinds: file.keybinds,
     };
   };
 
@@ -2169,6 +2508,21 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
 
     closeCharacter(actorId: string): void {
       bindings.delete(actorId);
+    },
+
+    /**
+     * THE ONE-LINE ANSWER TO "WILL TONIGHT BE SAVED?", FROM THE MAP THAT DECIDES.
+     *
+     * `owned()` two functions up is the only gate between a snapshot and a file,
+     * and it reads exactly this map — so this is not a second opinion about
+     * ownership, it is the same one asked out loud. The gateway needs it for the
+     * Keys screen's `persisted` flag, which was previously computed from "is
+     * there an owner and is there a port" and therefore said `true` for the
+     * verified player whose `too_new` or `corrupt` file `openCharacter` refused
+     * to bind (see the error branch there). Their whole evening reached nothing.
+     */
+    isBound(actorId: string): boolean {
+      return bindings.has(actorId);
     },
   };
 }

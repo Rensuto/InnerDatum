@@ -299,16 +299,44 @@ describe('the seven interrupts main.ts cancels for', () => {
   });
 
   it('(2) any keydown reaching the window', () => {
-    // main.ts: a dedicated window listener beside `bindGameKeys`, NOT a
-    // `KeyHandlers` member — keys.ts:348-351 drops unmapped keys and :297 drops
-    // everything while a text entry is focused, so q/w/e/Tab/F1 would otherwise
-    // never reach a cancel.
+    // main.ts: a dedicated BUBBLE-phase window listener beside `bindGameKeys`,
+    // NOT a `KeyHandlers` member — keys.ts's terminal
+    // `if (command === undefined) return;` drops unmapped keys and its
+    // `isTextEntry(event.target)` guard drops everything while a text entry is
+    // focused, so q/w/e/Tab/F1 would otherwise never reach a cancel.
+    //
+    // CITED BY NAME RATHER THAN BY LINE, and that is deliberate: the numbers
+    // that used to be here (:348-351 and :297) had gone stale by two rewrites of
+    // that file, and a wrong citation costs more than none — it sends the next
+    // reader to a line that says something else entirely.
+    //
+    // v11 ADDS A THIRD LISTENER ON THIS TARGET, in the CAPTURE phase, and it
+    // does not disturb the two above: capture runs before both bubble listeners
+    // without changing their order relative to each other. It is inert unless
+    // the escape menu has a key capture armed, and when it is not inert it
+    // `stopImmediatePropagation`s — so a key being BOUND cannot also cancel a
+    // walk. test/client/keybindwiring.test.ts owns that half.
     expectStoppedForGood(cancelledAfterAStep());
   });
 
   it('(3) Escape, from inside the ordered cancel chain', () => {
     // main.ts: `if (cancelTravelIfActive()) return;` after the token menu and
     // BEFORE targeting, because one press backs out of exactly one thing.
+    //
+    // ═══ THE CHAIN IS NINE LINKS LONG NOW AND THIS ONE DID NOT MOVE ═══
+    // v11 hung the escape menu off both ENDS of it and touched nothing in
+    // between. In order: an armed key capture (disarm, bind nothing), the Keys
+    // screen (back to the menu's root), the menu itself (close) — all three
+    // above the token menu, on the identical "most recently opened surface goes
+    // first" argument the token menu already makes — then THIS link, then
+    // targeting, the armed revive, the two log lanes, the notice, and finally,
+    // when every one of those is empty, Escape OPENS the menu.
+    //
+    // THE TAIL IS AN EXPLICIT `notice !== null` TEST rather than an appended
+    // `openMenu()`, because `clearNotice()` early-returns on a null notice and
+    // reports nothing — so appending would have let ONE press both wipe a
+    // refusal and open a menu, which is the exact contract this chain exists to
+    // keep. test/client/keybindwiring.test.ts asserts both ends structurally.
     expectStoppedForGood(cancelledAfterAStep());
   });
 

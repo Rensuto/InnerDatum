@@ -132,6 +132,8 @@
 
 import { ResourceKind, TalentShape } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
+import { gameKeymap } from '../input/keys.ts';
+import { labelFor } from '../input/keymap.ts';
 import {
   drawButton,
   drawHeader,
@@ -147,6 +149,7 @@ import type {
   ProgressMsg,
   ResourceView,
 } from '../../shared/protocol.ts';
+import type { Keymap } from '../input/keymap.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 
@@ -219,14 +222,37 @@ const CLOSE_PX = 13;
  * — and the bracketed-letter grammar is the same one it uses for
  * "Manage [I]nventory" at :95.
  *
- * OURS READS `[G]` BECAUSE `l` IS TAKEN. src/client/input/keys.ts:198 binds `l`
- * to Dir.E and says at length why that cannot move; the label therefore names
- * OUR key rather than ToME's, which is the whole point of a mnemonic.
+ * OURS NAMES OUR KEY RATHER THAN ToME'S, WHICH IS THE WHOLE POINT OF A MNEMONIC:
+ * `l` is Dir.E in this game and the keymap's `move_east` row says at length why
+ * that cannot move.
+ *
+ * ═══ AND IT IS READ LIVE, BECAUSE IT USED TO BE THE LITERAL '[G]' ═══
+ * The letter is a DEFAULT now, not a fact: `show_talents` is rebindable, so a
+ * hard-coded `[G]` becomes a lie the first time somebody uses the Keys screen —
+ * and a mnemonic that names the wrong key is worse than no mnemonic at all,
+ * because the player believes it and presses it. `keyMnemonic` reads the live
+ * keymap on every frame, and answers `--` when the player has genuinely left the
+ * panel with no key, which is a truth they need rather than a blank.
+ *
+ * WIDE ENOUGH FOR FOUR CHARACTERS, since the label is no longer known at compile
+ * time: `[G]` is three, `[--]` is four, and anything longer is trimmed by
+ * `drawButton`'s own `fitText`.
  */
-const TALENTS_BTN_W = 22;
+const TALENTS_BTN_W = 30;
 /** Air between the two header controls, so neither swallows the other's click. */
 const HEADER_BTN_GAP = 3;
-const TALENTS_BTN_LABEL = '[G]';
+
+/**
+ * THE KEY AN ACTION ANSWERS TO, AS ONE SHORT LABEL FOR A BUTTON OR A SENTENCE.
+ *
+ * `labelFor` gives EVERY binding including the frozen floor — "K / Up / Num8" —
+ * which is right on a row of the Keys screen and far too long for a 30-pixel
+ * button, so this takes the first. It is already '--' when the action has no key
+ * at all (KeyBind.lua:158-160's own first line, ported in keymap.ts).
+ */
+function keyMnemonic(actionId: string, keymap: Keymap): string {
+  return labelFor(actionId, keymap).split(' / ')[0] ?? '--';
+}
 
 const FONT_LABEL = '10px ui-monospace, Consolas, monospace';
 const FONT_VALUE = 'bold 10px ui-monospace, Consolas, monospace';
@@ -319,6 +345,16 @@ export type CharSheetView = {
    * before it lands. Null means "no level line", never "level 0".
    */
   readonly progress: ProgressMsg | null;
+  /**
+   * The player's compiled keymap, for the two places this sheet names a KEY.
+   *
+   * OPTIONAL, AND IT DEFAULTS TO THE LIVE ONE. `gameKeymap` is the box
+   * `bindGameKeys` already dereferences on every press, so the sheet and the
+   * dispatcher cannot disagree about which key opens the talent panel, and
+   * main.ts's existing call site needed no change at all. A caller with a
+   * private keymap — a preview, a test — passes that instead.
+   */
+  readonly keymap?: Keymap;
 };
 
 /** The word for a pool. A switch, so a fourth `ResourceKind` is a compile error. */
@@ -467,12 +503,18 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
       // know how to open, which is ToME's own discovery path
       // (CharacterSheet.lua:99's "[L]evelup" button, ported as the [G] control
       // on this panel's header).
+      //
+      // THE KEY IS READ OFF THE LIVE KEYMAP AND WAS ONCE THE LITERAL 'g'. This
+      // row is the one place a player who has never opened the talent panel
+      // learns that it exists, so it is the worst possible place for a stale
+      // mnemonic: they would press the letter it names, nothing would happen,
+      // and the sheet would have taught them the feature is broken.
       if (progress.unspent > 0) {
         const points = progress.unspent === 1 ? '1 point' : `${progress.unspent} points`;
         rows.push({
           kind: SheetRowKind.Field,
           label: 'Talent points',
-          value: `${points} — press g`,
+          value: `${points} — press ${keyMnemonic('show_talents', view.keymap ?? gameKeymap.current)}`,
         });
       }
     }
@@ -944,6 +986,12 @@ export type CharSheetDrawOptions = {
    * same reason as above.
    */
   readonly talentsOpen?: boolean;
+  /**
+   * The player's compiled keymap, so the `[G]` control names the LIVE key.
+   * Optional and defaulted to `gameKeymap.current` for the reason
+   * `CharSheetView.keymap` gives.
+   */
+  readonly keymap?: Keymap;
 };
 
 /**
@@ -997,7 +1045,8 @@ export function drawCharSheet(options: CharSheetDrawOptions): void {
   // is the fast path and this is the taught one. Drawn only when the header can
   // hold it without landing on the title — see `headerHasTalentsButton`.
   if (headerHasTalentsButton(rect)) {
-    drawButton(ctx, talentsRect(rect), TALENTS_BTN_LABEL, {
+    const keymap = options.keymap ?? gameKeymap.current;
+    drawButton(ctx, talentsRect(rect), `[${keyMnemonic('show_talents', keymap)}]`, {
       ink: talentsOpen || hoveredTalents ? PALETTE.GOLD : PALETTE.GREY_HI,
     });
   }

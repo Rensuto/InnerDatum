@@ -47,6 +47,7 @@ import type {
   SaveLogger,
   SaveStore,
   SavedLoadout,
+  SavedPrefs,
 } from '../../src/server/persist/saves.ts';
 
 // ---------------------------------------------------------------------------
@@ -1317,14 +1318,38 @@ const IN_THE_BAG: readonly string[] = [
   'item_inquisitors_tome',
 ];
 
+/**
+ * A REBOUND KEYMAP, in the wire form the Keys screen produces: an action id
+ * mapped to its ordered key strings, tagged `key:` or `code:` because the
+ * dispatcher matches some bindings on the player's LAYOUT and some on the
+ * PHYSICAL key (src/client/input/keys.ts keys five tables on `event.key` and two
+ * on `event.code`, deliberately). SPARSE, exactly as ToME's `saveRemap` writes
+ * it (KeyBind.lua:88-103): only actions the player actually changed appear.
+ *
+ * TWO KEYS ON ONE ACTION AND ONE ON ANOTHER, on purpose — the per-action array
+ * is ORDERED (slot 1, then slot 2), so a fixture where every entry had the same
+ * length could not catch a serialiser that sorted or truncated it.
+ */
+const REBOUND_KEYS: Readonly<Record<string, readonly string[]>> = {
+  move_north: ['key:w', 'code:Numpad8'],
+  move_south: ['key:s'],
+  toggle_inventory: ['key:i'],
+};
+
 describe('character files: the bag and the paper doll', () => {
   /**
    * THE GENERAL NET, EXTENDED. :1075's sibling — whatever `createCharacterFile`
-   * builds survives serialise and parse key for key — but with the two new names
-   * spelled out, because the general test passes vacuously for a field that is
-   * missing from BOTH halves.
+   * builds survives serialise and parse key for key — but with the three new
+   * names spelled out, because the general test passes vacuously for a field
+   * that is missing from BOTH halves.
+   *
+   * `keybinds` rides along here rather than getting its own copy of this test
+   * for one reason: the hazard is not per-field, it is per-LITERAL. There are
+   * exactly two literals that silently delete what they do not name —
+   * `parseCharacterFile`'s result and `serialiseCharacter`'s canonical — and one
+   * test that names every optional field pins both of them at once.
    */
-  it('loses no field between create, serialise and parse — including carried and equipped', () => {
+  it('loses no field between create, serialise and parse — carried, equipped and keybinds', () => {
     const created = createCharacterFile({
       id: CHAR,
       ownerId: OWNER,
@@ -1332,6 +1357,7 @@ describe('character files: the bag and the paper doll', () => {
       classId: 'watchman',
       carried: IN_THE_BAG,
       equipped: WORN_KIT,
+      keybinds: REBOUND_KEYS,
       resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
       createdAt: '2026-08-15T00:00:00.000Z',
     });
@@ -1345,8 +1371,10 @@ describe('character files: the bag and the paper doll', () => {
     // the symmetric omission the key-set check cannot see — still fails here.
     expect(Object.keys(parsed.file)).toContain('carried');
     expect(Object.keys(parsed.file)).toContain('equipped');
+    expect(Object.keys(parsed.file)).toContain('keybinds');
     expect(parsed.file.equipped).toEqual(WORN_KIT);
     expect(parsed.file.carried).toEqual(IN_THE_BAG);
+    expect(parsed.file.keybinds).toEqual(REBOUND_KEYS);
     expect(parsed.problems).toEqual([]);
   });
 
@@ -1560,6 +1588,316 @@ describe('character files: the bag and the paper doll', () => {
     expect(loaded.file?.carried).toEqual(IN_THE_BAG);
     // A clean load: nothing in a file this build just wrote should need repairing.
     expect(loaded.problems.filter((problem) => problem.includes('item_'))).toEqual([]);
+
+    await store.close();
+  });
+});
+
+// ===========================================================================
+// saves.ts — THE KEYMAP
+//
+// A third field with the identical literal hazard — named by
+// `parseCharacterFile` and `serialiseCharacter` or silently deleted on every
+// load — and one property the other two do not have: the value is a SETTING THE
+// PLAYER CHOSE, so losing it is not a rollback to a defensible default, it is
+// making somebody reconfigure their keyboard again. Every test below names its
+// value out loud.
+//
+// The action id is a SOFT reference (the `classId` / `talentPoints` rule, not
+// the `equipped` rule): a key string carries a MEANING without any registry, and
+// this layer has no action table to check membership against in any case.
+// ===========================================================================
+
+describe('character files: the rebound keymap', () => {
+  /**
+   * ═══ ABSENT IS NOT EMPTY, AT THE PARSER ═══
+   * Every save on disk today has no `keybinds` key at all. It must load clean —
+   * an absence is not damage, and a `problems` entry here would make the store
+   * log a repair for every returning player on the first evening — and it must
+   * load as UNDEFINED rather than as `{}`, or the bridge one layer up can no
+   * longer tell "this player reset every binding" from "this file never
+   * mentioned keys" and will write the first over the second.
+   */
+  it('loads a file with no keybinds key clean, with the field undefined', () => {
+    const parsed = parseCharacterFile(V1_BEFORE_PROGRESSION);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.keybinds).toBeUndefined();
+    expect(parsed.problems).toEqual([]);
+  });
+
+  /**
+   * AND THE ABSENCE SURVIVES TO THE BYTES, which is what keeps every existing
+   * save byte-identical through a session nobody rebound anything in. Emitting
+   * `"keybinds": {}` instead would rewrite every file in `data/characters/` on
+   * first sight and step every `.bak` a generation for nothing.
+   */
+  it('writes no keybinds key for a character that has never rebound anything', () => {
+    expect(serialiseCharacter(sampleCharacter())).not.toContain('keybinds');
+
+    const parsed = parseCharacterFile(JSON.parse(`${JSON.stringify(V1_BEFORE_PROGRESSION)}\n`));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(serialiseCharacter(parsed.file)).not.toContain('keybinds');
+  });
+
+  /**
+   * ═══ AND `{}` IS WRITTEN, BECAUSE IT IS A CLAIM ═══
+   * The other half of the same distinction. A player who pressed RESET ALL has
+   * an empty remap, and that is a fact the next producer must inherit rather
+   * than an absence it has to guess at.
+   */
+  it('writes an empty keybinds object when the file really has one', () => {
+    const text = serialiseCharacter(sampleCharacter({ keybinds: {} }));
+    expect(text).toContain('"keybinds": {}');
+
+    const parsed = parseCharacterFile(JSON.parse(text));
+    expect(parsed.ok && parsed.file.keybinds).toEqual({});
+    expect(parsed.ok && parsed.file.keybinds).not.toBeUndefined();
+  });
+
+  /**
+   * ═══ BYTE STABILITY: THE ACTION KEYS SORT, THE KEY STRINGS DO NOT ═══
+   * The map's key order follows whichever order the player happened to rebind
+   * things in, which is an accident, so it is sorted — the same hazard the
+   * cooldown, talent-point and slot sorts exist for. The ARRAY's order is DATA:
+   * it is slot 1 then slot 2 (ToME's `{k1,k2,k3}`, KeyBind.lua:88-103) and the
+   * resolver reads position, so sorting it would silently swap a player's
+   * primary and secondary keys.
+   */
+  it('serialises the same keymap to the same bytes, whatever order it was rebound in', () => {
+    const topDown = sampleCharacter({
+      keybinds: { attack_hold: ['key:h'], move_north: ['key:w'], zoom_out: ['key:-'] },
+    });
+    const inAPanic = sampleCharacter({
+      keybinds: { zoom_out: ['key:-'], attack_hold: ['key:h'], move_north: ['key:w'] },
+    });
+
+    const once = serialiseCharacter(topDown);
+    expect(once).toBe(serialiseCharacter(topDown));
+    expect(once).toBe(serialiseCharacter(inAPanic));
+    expect(once.indexOf('attack_hold')).toBeLessThan(once.indexOf('move_north'));
+    expect(once.indexOf('move_north')).toBeLessThan(once.indexOf('zoom_out'));
+
+    // THE SLOTS ARE NOT SORTED. `code:Numpad8` before `key:w` alphabetically;
+    // the file must keep the player's own order.
+    const ordered = sampleCharacter({ keybinds: { move_north: ['key:w', 'code:Numpad8'] } });
+    const bytes = serialiseCharacter(ordered);
+    expect(bytes.indexOf('key:w')).toBeLessThan(bytes.indexOf('code:Numpad8'));
+  });
+
+  /**
+   * COPIED, NOT ALIASED. `parseCharacterFile` hands its result to the bridge,
+   * which stores it on a binding that outlives the parse by a whole session; a
+   * result that aliased the freshly-`JSON.parse`d document would give two owners
+   * one array. The serialiser copies for the mirror reason, though only this
+   * half is observable from outside — `serialiseCharacter` returns a string, so
+   * its canonical object is unreachable by the time it could be mutated.
+   */
+  it('hands back its own arrays rather than aliasing the parsed document', () => {
+    const doc = JSON.parse(
+      JSON.stringify({ ...V1_BEFORE_PROGRESSION, keybinds: { move_north: ['key:w'] } }),
+    ) as Record<string, unknown>;
+
+    const parsed = parseCharacterFile(doc);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.keybinds).toEqual({ move_north: ['key:w'] });
+
+    const fromDoc = (doc.keybinds as Record<string, unknown>).move_north;
+    expect(parsed.file.keybinds?.move_north).not.toBe(fromDoc);
+    expect(parsed.file.keybinds).not.toBe(doc.keybinds);
+  });
+
+  /**
+   * ═══ THE SOFT REFERENCE. `classId`'s RULE, NOT `equipped`'s. ═══
+   * saves.ts:151-181 draws the line: A TALENT ID CARRIES A NUMBER, AN ITEM ID
+   * CARRIES NOTHING. A key string carries a MEANING — `code:Numpad8` is a
+   * physical press, readable with no registry anywhere — so an action id this
+   * build no longer binds is kept VERBATIM and comes back if the action is ever
+   * restored. Kept SILENTLY, with no `problems` entry, for the reason
+   * `UNASSIGNED_CLASS` records at length: a warning that fires for a state half
+   * the files are legitimately in drowns the one real signal it was added for.
+   */
+  it('keeps an action id this build no longer binds, verbatim and without complaint', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      keybinds: { move_north: ['key:w'], ui_toggle_lore: ['key:l', 'code:F4'] },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.keybinds).toEqual({
+      move_north: ['key:w'],
+      ui_toggle_lore: ['key:l', 'code:F4'],
+    });
+    expect(parsed.problems).toEqual([]);
+  });
+
+  /**
+   * ═══ REPAIR, NEVER REJECT — AND UPSTREAM'S BEHAVIOUR IS THE COUNTEREXAMPLE ═══
+   * `KeyBind:loadRemap` raises on a corrupt file (`error(err)`,
+   * KeyBind.lua:64-66) from inside engine boot, then executes the file and
+   * copies every global it set with no validation at all (:71-74). Neither is
+   * acceptable inside a character record: a keymap somebody hand-edited must
+   * degrade THAT ACTION and never cost the character.
+   *
+   * A DUPLICATE ASSIGNMENT IS NOT A LOAD ERROR. `move_south` and
+   * `toggle_inventory` both holding `key:s` is a CONFLICT, refused at the
+   * capture field where the player can see which action already owns the key —
+   * rejecting it here would lock somebody out of a character over a keymap.
+   */
+  it('repairs a hand-edited keymap entry by entry instead of refusing the file', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      keybinds: {
+        move_north: ['key:w', 42, 'code:Numpad8'],
+        move_south: 'key:s',
+        toggle_inventory: [''],
+        commit_turn: ['key:s'],
+        zoom_in: ['a', 'b', 'c', 'd'],
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.keybinds).toEqual({
+      // The 42 is dropped; the two real key strings on either side of it are not.
+      move_north: ['key:w', 'code:Numpad8'],
+      // Present but not an array: the whole entry goes.
+      // (`move_south` is absent from the result entirely.)
+      toggle_inventory: [],
+      // A duplicate of `move_south`'s intended key, kept: conflicts are the
+      // capture field's business, not the loader's.
+      commit_turn: ['key:s'],
+      // Two slots, so the third and fourth are dropped.
+      zoom_in: ['a', 'b'],
+    });
+    expect(Object.keys(parsed.file.keybinds ?? {})).not.toContain('move_south');
+
+    expect(parsed.problems).toEqual([
+      'keybinds.move_north[1]: not a usable key string — dropped',
+      'keybinds.move_south: not an array of key strings — dropped',
+      'keybinds.toggle_inventory[0]: not a usable key string — dropped',
+      'keybinds.zoom_in: more than 2 keys — 2 dropped',
+    ]);
+  });
+
+  /**
+   * PRESENT-BUT-UNREADABLE IS NOT ABSENT. The file did speak; what it said is
+   * unusable. `{}` is the honest reading — `parseCooldowns`' rule, applied to one
+   * more field — and it matters here because `undefined` would mean "use the
+   * defaults and leave the disk alone", which is a different claim.
+   */
+  it('turns a present-but-garbage keybinds key into an empty remap, not into an absent one', () => {
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, keybinds: 'wasd' });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.keybinds).toEqual({});
+    expect(parsed.file.keybinds).not.toBeUndefined();
+    expect(parsed.problems).toHaveLength(1);
+  });
+
+  /**
+   * A FILE IS NOT A WIRE FRAME, so the caps live on both sides: a hand-edited
+   * document never passes through the gateway's `zod` schema. The action
+   * namespace is CLOSED and countable (26 actions exist), so the count cap is a
+   * real bound rather than a shrug — and a megabyte of junk must not be able to
+   * choose how many lines one load prints into the host's log.
+   */
+  it('bounds a hostile keymap without throwing, and summarises rather than flooding the log', () => {
+    // INSERTION ORDER IS LOAD-BEARING IN THIS FIXTURE: the count cap stops the
+    // walk, so the three specific hazards are put in front of the 500 filler
+    // actions or they would never be reached and this test would pass vacuously.
+    const hostile: Record<string, unknown> = {};
+    hostile.move_north = Array.from({ length: 2000 }, () => 12);
+    hostile.move_south = ['k'.repeat(400)];
+    hostile['x'.repeat(200)] = ['key:z'];
+    for (let i = 0; i < 500; i += 1) hostile[`action_${i}`] = ['key:a'];
+
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, keybinds: hostile });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(Object.keys(parsed.file.keybinds ?? {}).length).toBeLessThanOrEqual(40);
+    // Two complaints for the 2,000 junk entries, then one summary line — not
+    // 2,000 log lines chosen by whoever wrote the file.
+    expect(parsed.problems.length).toBeLessThan(20);
+    expect(parsed.problems.some((problem) => problem.includes('further unusable'))).toBe(true);
+    expect(parsed.problems.some((problem) => problem.includes('character cap'))).toBe(true);
+    expect(parsed.problems.some((problem) => problem.includes('more than 40 actions'))).toBe(true);
+  });
+
+  it('bounds the log for the shapes that are REJECTED, which is where the budget failed', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE BUDGET USED TO WORK ONLY FOR THE SHAPE THAT DID NOT NEED IT.
+     * ═════════════════════════════════════════════════════════════════════════
+     * The cap test read `Object.keys(out).length >= KEYBIND_MAX_ACTIONS`, and
+     * `out` gains a key on the LAST line of the loop body — so every entry
+     * rejected EARLIER never advanced the counter, the cap never tripped, and
+     * each one pushed its own `problems` line. `KEYBIND_PROBLEMS_PER_ACTION`
+     * budgets only complaints WITHIN an accepted action's key array, which was
+     * already bounded at two keys.
+     *
+     * The test above is written entirely in the accepted shape (2,000 junk keys
+     * inside ONE well-formed action, then 500 well-formed fillers), so it passed
+     * against the broken budget. These two shapes are the ones that did not:
+     * measured against the real parser, 50,000 non-array values produced 50,000
+     * problem lines and 50,000 over-long ids produced 50,000 — while the two
+     * docblocks promised "a hostile file must not be able to choose how many log
+     * lines a load prints".
+     *
+     * It matters because `loadCharacter` re-allocates every one of those strings
+     * with a `${source.label}: ` prefix and hands the whole array to pino as a
+     * structured field: one synchronous record, on the join path, on the QUIET
+     * 'loaded with repairs' branch where nothing looks wrong.
+     */
+    const nonArrays: Record<string, unknown> = {};
+    for (let i = 0; i < 5_000; i += 1) nonArrays[`action_${i}`] = 'key:a';
+    const a = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, keybinds: nonArrays });
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    // 40 visits, 40 complaints, one summary — never 5,000.
+    expect(a.problems.length).toBeLessThan(50);
+    expect(a.file.keybinds).toEqual({});
+    expect(a.problems.some((problem) => problem.includes('more than 40 actions'))).toBe(true);
+
+    const longIds: Record<string, unknown> = {};
+    for (let i = 0; i < 5_000; i += 1) longIds[`${'x'.repeat(200)}${String(i)}`] = ['key:a'];
+    const b = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, keybinds: longIds });
+    expect(b.ok).toBe(true);
+    if (!b.ok) return;
+    expect(b.problems.length).toBeLessThan(50);
+    expect(b.file.keybinds).toEqual({});
+
+    // AND THE CAP STILL ADMITS EXACTLY FORTY GOOD ONES — counting visits must
+    // not have made it tighter for a file that is merely large and legal.
+    const good: Record<string, unknown> = {};
+    for (let i = 0; i < 41; i += 1) good[`action_${i}`] = ['key:a'];
+    const c = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, keybinds: good });
+    expect(c.ok && Object.keys(c.file.keybinds ?? {})).toHaveLength(40);
+  });
+
+  it('survives the real store: a save and a load keep the rebound keys', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    const file = sampleCharacter({ keybinds: REBOUND_KEYS });
+    expect((await store.saveCharacter(file, SaveReason.Manual)).outcome).toBe(SaveOutcome.Written);
+    const loaded = await store.loadCharacter(OWNER, CHAR);
+
+    expect(loaded.outcome).toBe(LoadOutcome.Loaded);
+    expect(loaded.file?.keybinds).toEqual(REBOUND_KEYS);
+    // A clean load: nothing in a file this build just wrote should need repairing.
+    expect(loaded.problems.filter((problem) => problem.startsWith('keybinds'))).toEqual([]);
 
     await store.close();
   });
@@ -1944,6 +2282,295 @@ describe('the character bridge carries inventory and equipment in both direction
     const back = restored(await again.openCharacter?.(OWNER, ACTOR));
     expect(back?.carried).toBeUndefined();
     expect(back?.equipped).toBeUndefined();
+
+    await store.close();
+  });
+});
+
+// ===========================================================================
+// saves.ts — THE BRIDGE, FOR THE KEYMAP. Same seam, same two half-failures,
+// third time of asking.
+// ===========================================================================
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ONE FEATURE WHERE A SILENT FAILURE IS THE WHOLE FEATURE FAILING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * "No one likes to reconfigure keybinds" is the entire request, so a keymap that
+ * does not survive the evening is not a degraded feature — it is the feature
+ * doing nothing while every screen claims it worked. The bridge has the same TWO
+ * independent halves it has for progression and for items, and each one fails
+ * quietly on its own:
+ *
+ *   `fileFor` reading `binding.keybinds` unconditionally freezes the disk at
+ *   whatever the file said when it was OPENED, so tonight's rebind reaches no
+ *   file and every autosave writes this morning's keymap back over it.
+ *
+ *   `openCharacter` not RETURNING the field leaves `CharacterRestore.keybinds`
+ *   undefined forever, so the Keys screen shows the compiled defaults on a file
+ *   that states the player's choices perfectly clearly.
+ *
+ * Both are individually defensible-looking, both have now shipped twice, and the
+ * gate was green through both. So every test here drives the REAL
+ * `createSaveStore` and the REAL `createCharacterBridge`, asserts the BYTES off
+ * disk, and BUILDS A FRESH BRIDGE for the second evening — reusing the first
+ * would let a broken build pass on its own in-memory copy.
+ */
+describe('the character bridge carries keybindings in both directions', () => {
+  const ACTOR = 'act_ren';
+
+  const bridgeOver = (
+    store: SaveStore,
+    logger: SaveLogger,
+  ): ReturnType<typeof createCharacterBridge> =>
+    createCharacterBridge({ store, logger, now: () => '2026-08-15T12:00:00.000Z' });
+
+  /**
+   * ═══ THE GATEWAY SEAM, NAMED RATHER THAN CAST OVER ═══
+   * `SavedPrefs` is saves.ts's structural statement of the one field, intersected
+   * onto the gateway's `CharacterSnapshot` / `CharacterRestore`. These two
+   * helpers are the test saying the same thing, and NEITHER IS A CAST: both are
+   * identity functions with a declared parameter type, and TypeScript accepts
+   * the assignment in both directions precisely because the field is optional —
+   * the same property that lets an untaught producer keep working. An `as` here
+   * would hide the day the two shapes stop lining up; this fails to compile.
+   */
+  const withPrefs = (snapshot: CharacterSnapshot & SavedPrefs): CharacterSnapshot => snapshot;
+  const restored = (
+    value: (CharacterRestore & SavedPrefs) | null | undefined,
+  ): (CharacterRestore & SavedPrefs) | null | undefined => value;
+
+  it('saves a rebound keymap and hands it back on the next open', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    // ── EVENING ONE ────────────────────────────────────────────────────────
+    // A brand-new account: `openCharacter` answers null (there is no file yet)
+    // but STILL BINDS, which is what makes the save below legal at all.
+    const first = bridgeOver(store, logger);
+    expect(await first.openCharacter?.(OWNER, ACTOR)).toBe(null);
+
+    // Ren spends ten minutes moving movement onto WASD and inventory onto `i`.
+    first.savePlayersNow?.(
+      [
+        withPrefs({
+          actorId: ACTOR,
+          name: 'Ren',
+          hp: 44,
+          cooldowns: { 'talent:crude_blow': 2 },
+          x: 12,
+          y: 7,
+          classId: 'watchman',
+          keybinds: REBOUND_KEYS,
+        }),
+      ],
+      'disconnect',
+    );
+    await store.flush();
+
+    // THE BYTES REALLY DID LAND, with the action keys sorted and the slot order
+    // inside one action left exactly as the player set it.
+    const path = characterPath(root, OWNER, 'chr_main') ?? '';
+    const onDisk = await readFile(path, 'utf8');
+    expect(onDisk).toContain('code:Numpad8');
+    expect(onDisk.indexOf('move_north')).toBeLessThan(onDisk.indexOf('move_south'));
+    expect(onDisk.indexOf('move_south')).toBeLessThan(onDisk.indexOf('toggle_inventory'));
+    expect(onDisk.indexOf('key:w')).toBeLessThan(onDisk.indexOf('code:Numpad8'));
+
+    // ── EVENING TWO ────────────────────────────────────────────────────────
+    // A FRESH BRIDGE. The bug being pinned is a binding that echoes back what it
+    // read, so the first bridge's memory must not be available to answer with.
+    const second = bridgeOver(store, logger);
+    const back = restored(await second.openCharacter?.(OWNER, ACTOR));
+
+    expect(back?.keybinds).toEqual(REBOUND_KEYS);
+    // The fields that always worked, so a regression in the two new lines is told
+    // apart from a regression in the file format.
+    expect(back?.hp).toBe(44);
+    expect(back?.classId).toBe('watchman');
+
+    await store.close();
+  });
+
+  /**
+   * ═══ ABSENT IS NOT EMPTY, AT THE BRIDGE. BOTH BRANCHES, SEPARATELY. ═══
+   * BRANCH ONE: a snapshot that CANNOT SAY — a fixture, the e2e harness, any
+   * producer not yet taught to fill the field, which is nearly all of them since
+   * only the Keys screen ever sets it — falls back to the binding, which is what
+   * the file said. Reading it as "this player uses the defaults" would throw
+   * away the rebinds on the first autosave of the next session, which is the
+   * exact experience the request exists to prevent.
+   */
+  it('keeps the binds when the snapshot cannot say — the `?? binding` fallback', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    await store.saveCharacter(
+      sampleCharacter({ id: 'chr_main', keybinds: REBOUND_KEYS }),
+      SaveReason.Manual,
+    );
+
+    const bridge = bridgeOver(store, logger);
+    expect(restored(await bridge.openCharacter?.(OWNER, ACTOR))?.keybinds).toEqual(REBOUND_KEYS);
+
+    // A snapshot with no keybinds field at all — the producer that cannot say.
+    bridge.savePlayersNow?.(
+      [{ actorId: ACTOR, name: 'Ren', hp: 30, cooldowns: {}, x: 1, y: 1 }],
+      'disconnect',
+    );
+    await store.flush();
+
+    // Still on the disk, unchanged — not merely still in the bridge's memory.
+    const onDisk = await readFile(characterPath(root, OWNER, 'chr_main') ?? '', 'utf8');
+    expect(onDisk).toContain('code:Numpad8');
+
+    const again = bridgeOver(store, logger);
+    expect(restored(await again.openCharacter?.(OWNER, ACTOR))?.keybinds).toEqual(REBOUND_KEYS);
+
+    await store.close();
+  });
+
+  /**
+   * BRANCH TWO, AND IT IS THE ONE A `?? {}` DEFAULT WOULD BREAK: a snapshot that
+   * says EMPTY must WRITE empty. A player who pressed RESET ALL has an empty
+   * remap, and a bridge that treated `{}` as "no opinion" would hand them their
+   * old keymap back every single session — with the Keys screen showing the
+   * defaults it had just drawn, so nothing on screen would explain it.
+   */
+  it('writes an EMPTY remap when the snapshot says empty, rather than falling back', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    await store.saveCharacter(
+      sampleCharacter({ id: 'chr_main', keybinds: REBOUND_KEYS }),
+      SaveReason.Manual,
+    );
+
+    const bridge = bridgeOver(store, logger);
+    await bridge.openCharacter?.(OWNER, ACTOR);
+
+    bridge.savePlayersNow?.(
+      [
+        withPrefs({
+          actorId: ACTOR,
+          name: 'Ren',
+          hp: 30,
+          cooldowns: {},
+          x: 1,
+          y: 1,
+          keybinds: {},
+        }),
+      ],
+      'disconnect',
+    );
+    await store.flush();
+
+    // THE BYTES: the key is present and empty. Not gone, and not the old map.
+    const onDisk = await readFile(characterPath(root, OWNER, 'chr_main') ?? '', 'utf8');
+    expect(onDisk).toContain('"keybinds": {}');
+    expect(onDisk).not.toContain('code:Numpad8');
+
+    const again = bridgeOver(store, logger);
+    const back = restored(await again.openCharacter?.(OWNER, ACTOR));
+    // EMPTY, and — the assertion that separates this from the branch above —
+    // NOT undefined. The file states it, so the next producer inherits a fact
+    // rather than an absence.
+    expect(back?.keybinds).toEqual({});
+    expect(back?.keybinds).not.toBeUndefined();
+
+    await store.close();
+  });
+
+  /**
+   * ═══ THE SOFT REFERENCE, ACROSS A WHOLE SESSION BOUNDARY ═══
+   * An action id this build no longer binds is kept VERBATIM on disk, so a
+   * renamed-then-restored action comes back with its keys — the `classId` /
+   * `talentPoints` rule, because a key string carries a MEANING without any
+   * registry (saves.ts:151-181: A TALENT ID CARRIES A NUMBER, AN ITEM ID CARRIES
+   * NOTHING). Dropping it would be this layer deciding, on no evidence, that an
+   * id it has no table to check is dead.
+   *
+   * AND THE LOADER SAYS NOTHING ABOUT IT, which is the half worth asserting out
+   * loud: `problems` is what the store logs, and a line that fires for a state
+   * files are legitimately in is the false-alarm storm `UNASSIGNED_CLASS`
+   * records. The genuinely unusable entry alongside it IS recorded, so the
+   * silence is a decision rather than the parser not looking.
+   */
+  it('keeps an action id this build no longer binds, verbatim, and says so', async () => {
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+
+    const bridge = bridgeOver(store, logger);
+    await bridge.openCharacter?.(OWNER, ACTOR);
+    bridge.savePlayersNow?.(
+      [
+        withPrefs({
+          actorId: ACTOR,
+          name: 'Ren',
+          hp: 30,
+          cooldowns: {},
+          x: 1,
+          y: 1,
+          keybinds: {
+            move_north: ['key:w'],
+            // An action from a build that had a lore screen. Nothing in this
+            // process can tell it from an action added next week.
+            ui_toggle_lore: ['key:l'],
+            // And one entry that really is damaged, so the silence above is
+            // visibly a decision and not the parser failing to look.
+            zoom_in: ['', 'key:='],
+          },
+        }),
+      ],
+      'disconnect',
+    );
+    await store.flush();
+
+    // THE BYTES: the unknown id is on the disk, spelled exactly as it arrived.
+    const onDisk = await readFile(characterPath(root, OWNER, 'chr_main') ?? '', 'utf8');
+    expect(onDisk).toContain('ui_toggle_lore');
+    expect(onDisk).toContain('key:l');
+
+    // THE PROBLEMS: the store's own load, since that is where the host's log
+    // line comes from. Silent about the unknown action, loud about the damage.
+    const loaded = await store.loadCharacter(OWNER, 'chr_main');
+    expect(loaded.outcome).toBe(LoadOutcome.Loaded);
+    expect(loaded.problems.filter((problem) => problem.includes('ui_toggle_lore'))).toEqual([]);
+    // Prefixed with the source the store read it from, exactly as every other
+    // repair on a load is — the `primary:` / `backup:` label at saves.ts:1884.
+    expect(loaded.problems.filter((problem) => problem.includes('keybinds'))).toEqual([
+      'primary: keybinds.zoom_in[0]: not a usable key string — dropped',
+    ]);
+
+    // AND IT COMES BACK, through a fresh bridge, still verbatim.
+    const again = bridgeOver(store, logger);
+    const back = restored(await again.openCharacter?.(OWNER, ACTOR));
+    expect(back?.keybinds).toEqual({
+      move_north: ['key:w'],
+      ui_toggle_lore: ['key:l'],
+      zoom_in: ['key:='],
+    });
 
     await store.close();
   });

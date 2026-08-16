@@ -343,6 +343,91 @@
  * the character outright and cost a friend the evening. Ground items are not
  * persisted at all, so there is no second file and no second migration chain to
  * version.
+ *
+ * AFTER v10: REBINDABLE KEYS, AND THE NUMBER DOES NOT MOVE.
+ *
+ *   C -> S  `set_keybinds` — "these are my keys." The Keys screen's only verb.
+ *   S -> C  `keybinds`     — what the SERVER has stored, plus whether it will
+ *                            outlive the session. Per-recipient.
+ *
+ * This is the second entry in this file for a change that did NOT force a bump —
+ * `respawn` at v5 was the first — and it is written down for the same reason
+ * that one was: the argument for standing still has to be as legible as the six
+ * arguments for moving, or the next reader bumps out of caution and quarantines
+ * a friend's character over a keyboard preference.
+ *
+ * THE RULE, restated from protocol.ts:127-128: a bump is forced by what an OLD
+ * CLIENT would silently get WRONG, never by an addition it can ignore. Both
+ * halves here are additions it can ignore, and this is the first change since
+ * v5 where BOTH halves are.
+ *
+ *   THE INBOUND VERB IS `respawn`'S PRECEDENT EXACTLY. A frame that travels
+ *   client -> server is one an old client simply never sends, and every frame it
+ *   RECEIVES still means what it always did. What a v10 client loses is a
+ *   screen, not the meaning of anything on the wire.
+ *
+ *   THE OUTBOUND FRAME IS ONE AN OLD CLIENT DROPS ON THE FLOOR, AND DROPPING IT
+ *   COSTS IT NOTHING PERMANENT. `applyServerMessage` in src/client/main.ts has
+ *   NO `default:` arm — deliberately, so that adding a `ServerMsg` member breaks
+ *   every switch at lint time — so an unnameable frame falls through and does
+ *   nothing at all. Compare 6 -> 7 and 9 -> 10, where an unnameable frame was
+ *   exactly what forced the bump: there the client could not draw an orb that
+ *   still hit it, or a coat it was being told about in prose and could never
+ *   reach. Here the frame carries the player's own preferences, the client that
+ *   cannot read them keeps its compiled defaults, and every key on that keyboard
+ *   goes on doing what it did yesterday. Nothing it draws becomes wrong.
+ *
+ * AND THE FOUR SHAPES THAT WOULD HAVE FORCED ONE ANYWAY ARE ALL ABSENT. Naming
+ * them is how this entry keeps its argument honest, the discipline 7 -> 8, 8 -> 9
+ * and 9 -> 10 each used.
+ *
+ *   NO EXISTING FIELD NARROWED. Not `left`, not `alive === false`, not
+ *   `TurnMsg`'s roster, not `LoadoutTalent.range`, not `ActorView.maxHp` — the
+ *   five narrowings this file has bumped for. `keybinds` is a new frame carrying
+ *   a new fact and no frame already on the wire means anything different because
+ *   of it.
+ *
+ *   NO NEW `TurnEvent` VARIANT. A rebind is not an instant inside a batched
+ *   sweep — it is not an instant in the WORLD at all — so there is nothing for
+ *   an old client to drop mid-monster-turn. This file records at 2 -> 3 and
+ *   3 -> 4 that a new variant independently forces a bump.
+ *
+ *   NO NEW `ErrorCode` MEMBER. :36-44 records that a new code forces a bump ON
+ *   ITS OWN, because a v2 client renders an unknown code as raw text. A
+ *   malformed keymap, an over-cap one, an unknown action id and a socket that
+ *   never said `hello` are refused with `bad_message` and `not_authenticated`,
+ *   both of which every shipped client already renders — exactly as v10 refused
+ *   every loot failure and v9 every spend failure. A `bad_keybind` member would
+ *   have been clearer in a log and would have forced this bump on its own, for a
+ *   refusal the capture field already prevents by only offering keys the
+ *   dispatcher can deliver. Three earlier passes made this trade; this is the
+ *   fourth.
+ *
+ *   AND THE LOAD-BEARING ONE: NOTHING WRITES A KEYBIND MAP ON BEHALF OF A CLIENT
+ *   THAT DID NOT SEND ONE. This is the v8 one-way door restated (:167-190), and
+ *   it is a CONDITION rather than an observation — the no-bump answer depends on
+ *   it and would be wrong without it. v8 had to bump because a v7 client drew no
+ *   picker, the server assigned a class by rotation ANYWAY, and the join save
+ *   wrote it — after which the chooser never appeared again, from any client,
+ *   with nothing on screen to infer it from. The mirror here would be joining
+ *   writing a default map: a single connection from a stale bundle would stamp
+ *   the compiled defaults permanently over a returning player's binds. So the
+ *   server never invents one. `handleSetKeybinds` is the only writer, an absent
+ *   field is carried forward AS an absence all the way to the disk
+ *   (`snapshot.keybinds ?? binding.keybinds`), and a v10 client that never sends
+ *   the verb keeps whatever it had. There is no door to be locked out of.
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered separately rather than moved along out of
+ * habit — as the 8 -> 9 and 9 -> 10 entries above both did. The persisted
+ * character gains ONE OPTIONAL field, `keybinds`, and docs/data-schemas.md:48-49
+ * reads verbatim: "Adding an *optional* field needs no bump; the bump is for
+ * renames, semantic changes, and new required fields." `migrateDoc` compares
+ * nothing but this integer, so a v1 file with no `keybinds` key loads untouched.
+ * The rollback trade is the most lopsided of the three: not bumping costs a
+ * player their rebinds if somebody rolls back a build, while bumping would
+ * QUARANTINE the character file in every older build and cost a friend the
+ * evening. Two prior passes reached this decision and wrote the argument down; a
+ * third must not undo it out of tidiness.
  */
 export const PROTOCOL_VERSION = 10;
 

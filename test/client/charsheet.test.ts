@@ -12,6 +12,7 @@ import {
   SheetSection,
 } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H } from '../../src/client/ui/panel.ts';
+import { ACTIONS, compileKeymap, DEFAULT_KEYMAP, labelFor } from '../../src/client/input/keymap.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
@@ -332,10 +333,21 @@ describe('the progression rows', () => {
     const points = labelled(rows, 'Talent points')[0];
     expect(points).toBeDefined();
     expect(points?.value).toContain('3 points');
-    // IT NAMES THE KEY. This row is the only place a player who has never opened
-    // the talent panel learns that it exists — an unspent point is a call to
-    // action, and a call to action with no instruction is a stat.
-    expect(points?.value).toContain('g');
+    // IT NAMES THE KEY, AND IT NAMES THE LIVE ONE. This row is the only place a
+    // player who has never opened the talent panel learns that it exists — an
+    // unspent point is a call to action, and a call to action with no
+    // instruction is a stat. The letter used to be written into this file as
+    // 'g'; `show_talents` is rebindable now, so a hard-coded mnemonic tells a
+    // player to press something that does nothing.
+    expect(points?.value).toContain(labelFor('show_talents', DEFAULT_KEYMAP));
+  });
+
+  it('follows a rebound talent key rather than repeating the shipped letter', () => {
+    // The assertion above would pass forever against a hard-coded 'G'. This is
+    // the one that cannot: the same row, the same view, a different keymap.
+    const rebound = compileKeymap(ACTIONS, { show_talents: ['key:z'] });
+    const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 2 }), keymap: rebound }));
+    expect(labelled(rows, 'Talent points')[0]?.value).toContain('press Z');
   });
 
   it('says “1 point”, not “1 points”', () => {
@@ -525,10 +537,15 @@ describe('charSheetHitAt', () => {
     expect(charSheetHitAt(rect, rect.x + 4, rect.y + 4)).toBeNull();
   });
 
-  it('offers the [G] control immediately left of the close, and never over it', () => {
+  it('offers the talent control immediately left of the close, and never over it', () => {
     // ToME's own discoverable route to its levelup screen is a button on the
     // character sheet (CharacterSheet.lua:99's "[L]evelup"). A SCAN across the
     // header describes what was found rather than asserting where it starts.
+    //
+    // THE CONTROL IS NO LONGER "[G]" — the letter is read off the live keymap
+    // now (see the painting test below), so this test names the HIT rather than
+    // the label. Its box is a little wider than it was to leave room for a
+    // four-character answer like `[--]`.
     const y = rect.y + Math.floor(HEADER_H / 2);
     const close: number[] = [];
     const talents: number[] = [];
@@ -602,6 +619,49 @@ describe('drawing', () => {
     expect(calls.filter((c) => c.startsWith('save(')).length).toBe(
       calls.filter((c) => c.startsWith('restore(')).length,
     );
+  });
+
+  it('paints the talent control with the LIVE key, not with a hard-coded [G]', () => {
+    // ═══ THE MNEMONIC IS A DEFAULT, NOT A FACT ═══
+    // `show_talents` is rebindable, so a label written into the source as '[G]'
+    // becomes a lie the first time somebody uses the Keys screen — and a
+    // mnemonic that names the wrong key is worse than none, because the player
+    // believes it and presses it. `measureText` answers six pixels a character
+    // here, matching the 10px monospace, so `fitText` does not ellipsise the
+    // three characters under test.
+    function paint(keymap: Parameters<typeof charSheetRows>[0]['keymap']): string[] {
+      const texts: string[] = [];
+      const stub = new Proxy(
+        {},
+        {
+          get: (_target, prop: string) => {
+            if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+            if (prop === 'fillText')
+              return (text: string) => {
+                texts.push(text);
+              };
+            if (prop === 'canvas') return undefined;
+            return () => {};
+          },
+          set: () => true,
+        },
+      ) as unknown as CanvasRenderingContext2D;
+
+      const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
+      if (rect === null) throw new Error('unreachable');
+      drawCharSheet({
+        ctx: stub,
+        sprites: { sprite: () => undefined },
+        rect,
+        rows: charSheetRows(sheet({ keymap })),
+        hoveredClose: false,
+        keymap,
+      });
+      return texts;
+    }
+
+    expect(paint(DEFAULT_KEYMAP)).toContain(`[${labelFor('show_talents', DEFAULT_KEYMAP)}]`);
+    expect(paint(compileKeymap(ACTIONS, { show_talents: ['key:z'] }))).toContain('[Z]');
   });
 
   it('still paints, and still clips, in a panel too small for everything', () => {

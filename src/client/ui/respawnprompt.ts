@@ -33,12 +33,37 @@
  */
 
 import { PALETTE } from '../render/canvas.ts';
+import { gameKeymap } from '../input/keys.ts';
+import { labelFor } from '../input/keymap.ts';
 import { drawPanel, fitText, PanelSkin } from './panel.ts';
+import type { Keymap } from '../input/keymap.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 
 /** The heading. Short, so it survives any width. */
 const HEADLINE = 'YOU ARE ERASED';
+
+/**
+ * THE KEY THAT REFILES YOU, AS THIS PLAYER'S KEYBOARD SPELLS IT TODAY.
+ *
+ * ═══ THIS USED TO BE THE LETTER F, WRITTEN INTO TWO STRINGS ═══
+ * `respawn` is rebindable, so the letter is a DEFAULT and not a fact. A stale
+ * mnemonic is worse here than anywhere else in the client: the person reading
+ * this is stuck, cannot act, and is already unsure whether the game has frozen —
+ * the keymap's own `respawn` row chose F for exactly that audience, "the only
+ * key in the game a player will look for while reading a prompt rather than from
+ * memory". Naming a key they have rebound would tell them to press something
+ * that does nothing, at the moment they have least patience for it.
+ *
+ * `labelFor` gives every binding, joined; the first is the one to print, and it
+ * is already '--' when there is genuinely none (KeyBind.lua:158-160's rule,
+ * ported in keymap.ts). CLICKING THE PLATE STILL WORKS EITHER WAY, which is why
+ * the sentence names both routes.
+ */
+function respawnKey(keymap: Keymap): string {
+  return labelFor('respawn', keymap).split(' / ')[0] ?? '--';
+}
+
 /**
  * The instruction, and it names BOTH ways through.
  *
@@ -48,7 +73,9 @@ const HEADLINE = 'YOU ARE ERASED';
  * *Unfiled* — and the plain-English half follows it in the same sentence so
  * nobody has to have read the fiction to understand the instruction.
  */
-const INSTRUCTION = 'press F — or click here — to refile yourself';
+function instruction(keymap: Keymap): string {
+  return `press ${respawnKey(keymap)} — or click here — to refile yourself`;
+}
 
 const PROMPT_W = 304;
 const PROMPT_H = 48;
@@ -57,8 +84,29 @@ const BORDER = 2;
 const FONT_HEAD = 'bold 12px ui-monospace, Consolas, monospace';
 const FONT_BODY = '10px ui-monospace, Consolas, monospace';
 
-/** The text the status line and the aria-live region say. One copy, two surfaces. */
-export const RESPAWN_PROMPT_SPEECH = 'ERASED — press F to refile yourself and get back up';
+/**
+ * The text the status line and the aria-live region say. One copy, two surfaces.
+ *
+ * ═══ THIS IS THE SENTENCE A SCREEN READER SPEAKS, SO IT IS THE ONE THAT MOST
+ *     HAS TO BE TRUE ═══
+ * A sighted player can at least see the plate; somebody hearing this has nothing
+ * else, so a key that has been rebound out from under it leaves them pressing a
+ * letter that does nothing with no way to discover as much.
+ */
+export function respawnPromptSpeech(keymap: Keymap = gameKeymap.current): string {
+  return `ERASED — press ${respawnKey(keymap)} to refile yourself and get back up`;
+}
+
+/**
+ * The same sentence with the SHIPPED default in it, evaluated once at module
+ * load.
+ *
+ * IT EXISTS ONLY SO main.ts'S CURRENT CALL SITE STILL COMPILES, and it is the
+ * stale one by construction: a string cannot follow a rebind. The live answer is
+ * `respawnPromptSpeech()` above, and the aria-live region must move onto it —
+ * main.ts:2440 is the single reader.
+ */
+export const RESPAWN_PROMPT_SPEECH = respawnPromptSpeech();
 
 /**
  * WHERE THE PLATE GOES, or null when the band it would sit in is too small.
@@ -113,8 +161,16 @@ export function drawRespawnPrompt(options: {
   readonly rect: PanelRect;
   /** Highlighted while the pointer is over it, so it reads as pressable. */
   readonly hovered: boolean;
+  /**
+   * The player's compiled keymap, so the instruction names the LIVE key.
+   * Optional and defaulted to `gameKeymap.current`, the box `bindGameKeys`
+   * already dereferences on every press — so main.ts's call site needed no
+   * change and the prompt cannot disagree with the dispatcher.
+   */
+  readonly keymap?: Keymap;
 }): void {
   const { ctx, sprites, rect, hovered } = options;
+  const keymap = options.keymap ?? gameKeymap.current;
   if (rect.w <= 0 || rect.h <= 0) return;
 
   ctx.save();
@@ -146,7 +202,7 @@ export function drawRespawnPrompt(options: {
 
   ctx.font = FONT_BODY;
   ctx.fillStyle = PALETTE.GOLD;
-  ctx.fillText(fitText(ctx, INSTRUCTION, inner.w - 8), midX, rect.y + 33);
+  ctx.fillText(fitText(ctx, instruction(keymap), inner.w - 8), midX, rect.y + 33);
 
   ctx.restore();
 }

@@ -51,6 +51,20 @@
       so the input and the zod schema in src/shared/protocol.ts cannot drift.
       Two numbers means the day they differ a player types a sentence, watches
       the field accept it, and gets `bad_message` back.
+
+      v11: `placeholder` IS SET FROM main.ts FOR THE SAME REASON, ONE STEP
+      FURTHER. The text below names a KEY, and keys are rebindable now
+      (src/client/input/keymap.ts's `say` row) — so a player who moved talking
+      off `t` was left reading an instruction that did not work, in the one row
+      that exists to teach them the feature. main.ts overwrites it on boot and
+      again on every `keybinds` frame, through `labelFor`.
+
+      THE MARKUP TEXT IS THE FALLBACK AND IT IS THE SHIPPED DEFAULT BY
+      CONSTRUCTION. A build whose script never runs still says something true for
+      a player who has never rebound anything, which is every player until they
+      open the Keys screen. Enter and Escape are NOT read off the keymap: the
+      command line handles those two itself, on the DOM event, outside the keymap
+      entirely — so they are frozen in fact and not merely by convention.
     -->
     <div id="cmdrow">
       <label id="cmdlabel" for="cmd">say</label>
