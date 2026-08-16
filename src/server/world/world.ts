@@ -44,7 +44,7 @@
 
 import { bresenham, step } from '../../shared/coords.ts';
 import { createTurnClock } from '../../shared/energy.ts';
-import { TEST_LEVEL_SPAWNS, canWalk, makeTestLevel } from '../../shared/level.ts';
+import { TEST_LEVEL_SPAWNS, blocksSightAt, canWalk, makeTestLevel } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
 import { ITEM_CATALOGUE } from '../content/items.ts';
@@ -177,17 +177,23 @@ const SPAWN_SEARCH_RADIUS = 8;
  * opened) must not blind you, and the target's own tile is what you are looking
  * at.
  *
- * FOV SEAM (M3): opacity and passability are the same thing today because every
- * blocker on the M2 map is a wall. When glass, chasms and open doors arrive this
- * needs its own `isOpaque` predicate rather than `canWalk`, and this is the one
- * function that changes.
+ * FOV SEAM — CLOSED. This function used to trace with `canWalk`, and the note
+ * here said opacity and passability were the same thing "because every blocker
+ * on the M2 map is a wall", to be split "when glass, chasms and open doors
+ * arrive". Alderbrook's canal is that case: solid to a body, transparent to an
+ * eye. So the trace now asks `blocksSightAt`, which is the predicate protocol.ts
+ * keeps beside `isWalkable` precisely so the two cannot drift.
+ *
+ * NOTHING ON THE M1 MAP CHANGES. Its only blocker is WALL, which is opaque and
+ * solid in both predicates, so every existing FOV test still describes the same
+ * game — the split is observable only where WATER or BRIDGE exists.
  */
 export function hasLineOfSight(level: LevelView, from: TileXY, to: TileXY): boolean {
   const line = bresenham(from, to);
   for (let i = 1; i < line.length - 1; i += 1) {
     const tile = line[i];
     if (tile === undefined) continue;
-    if (!canWalk(level, tile.x, tile.y)) return false;
+    if (blocksSightAt(level, tile.x, tile.y)) return false;
   }
   return true;
 }

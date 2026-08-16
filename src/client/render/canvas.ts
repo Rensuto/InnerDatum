@@ -537,14 +537,75 @@ function require2dContext(target: HTMLCanvasElement): CanvasRenderingContext2D {
  *
  * An exhaustive switch with no `default` on purpose — when DOOR or WATER is
  * added to `TileCode`, this stops compiling and names itself, instead of
- * quietly painting the new terrain as floor.
+ * quietly painting the new terrain as floor. THAT IS EXACTLY WHAT HAPPENED when
+ * Alderbrook's thirteen overworld codes landed, which is the whole reason the
+ * `default` is still absent after this file doubled in length.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OVERWORLD COLOURS OBEY ONE RULE: WALKABLE IS LIGHTER THAN BLOCKING
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A player answers "can I walk there?" hundreds of times an evening, at a
+ * glance, while talking to friends. That answer has to come from VALUE, not
+ * from hue and not from recognising a building — the same rule the tileset
+ * brief puts on the real art (ART-OVERWORLD.md § 4.2), stated here so the
+ * stand-in and the finished set read the same way and swapping one for the
+ * other is not a re-learning exercise.
+ *
+ * These are stand-ins and they are meant to be replaced by `tile_ow_*` sprites.
+ * They are NOT placeholders in the violet-box sense: a city drawn in these is
+ * legible and playable, which is what lets the overworld ship before the art
+ * does.
+ *
+ * CRIMSON is absent, as everywhere else — it means "hostiles are engaged" and
+ * the overworld has none, so a crimson cell would be a lie a player acts on.
  */
 function tileFill(code: TileCode): string {
   switch (code) {
+    // ─── the inner-worlds ───
     case TileCode.FLOOR:
       return PALETTE.PANEL;
     case TileCode.WALL:
       return PALETTE.VOID;
+
+    // ─── Alderbrook: ground. Light. ───
+    case TileCode.COBBLE:
+      return '#4a4450';
+    case TileCode.PAVING:
+      return '#6b6478';
+    case TileCode.GREEN:
+      return '#3f5040';
+    case TileCode.MIRE:
+      return '#43483d';
+    case TileCode.SOOT:
+      return '#33303a';
+    case TileCode.RAIL:
+      return '#3c3842';
+    case TileCode.BRIDGE:
+      return '#5a4a3c';
+
+    // ─── Alderbrook: blocks. Dark. ───
+    case TileCode.TERRACE:
+      return '#241d2c';
+    case TileCode.CIVIC:
+      return '#2b2536';
+    case TileCode.WORKS:
+      return '#1e1a24';
+    case TileCode.TREES:
+      return '#1c2a1e';
+    /**
+     * The Index has eaten this cell. Nearly the darkest thing on screen and
+     * deliberately NOT black: black reads as a hole, and this is worse than a
+     * hole — it is a correction.
+     */
+    case TileCode.ERASED:
+      return '#14101c';
+    /**
+     * The canal. Dark because it is impassable, and the one tile whose colour
+     * has to lie slightly about its nature: you can see across it, but value is
+     * how a player reads "can I walk there", and they cannot.
+     */
+    case TileCode.WATER:
+      return '#181f2e';
   }
 }
 

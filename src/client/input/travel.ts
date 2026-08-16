@@ -94,17 +94,32 @@ import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorView, LevelView, TurnMsg } from '../../shared/protocol.ts';
 
 /**
- * Hard ceiling on A* expansions for one click.
+ * Hard ceiling on A* expansions for one click, DERIVED FROM THE LEVEL.
  *
- * It can never refuse a route that exists on a level this game ships: floors are
- * capped at 40x40 = 1600 tiles and `findPath` closes each tile at most once, so
- * the search terminates on its own well under this number in BOTH the reachable
- * and the sealed-room cases. The bound is here so that a click on the far side
- * of a wall costs a bounded fraction of a millisecond rather than whatever the
- * next map generator decides — findPath's own default (4096) explores a 40x40
- * level several times over before giving up.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS WAS THE CONSTANT 2048, AND THE REASON GIVEN FOR IT STOPPED BEING TRUE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The old note read: "It can never refuse a route that exists on a level this
+ * game ships: floors are capped at 40x40 = 1600 tiles." Alderbrook is 64x48 =
+ * 3,072 cells. The bound survived the change by luck and by 264 cells — only
+ * 1,784 of the city is walkable and `findPath` closes each tile at most once —
+ * but a constant that is correct by coincidence is one map edit from being a
+ * bug, and the bug is invisible in the worst way: a perfectly legal walk from
+ * the office to the Glass Archive returns null, which `begin()` reports as
+ * NoRoute and main.ts turns into the sentence "no route to that tile".
+ *
+ * The player is then told a lie about the map, and it gets WORSE the further
+ * they try to travel — which is exactly the one direction of divergence this
+ * file's own header calls the kind a player actually notices.
+ *
+ * So the ceiling is now `w * h`, which by the closed-set argument above can
+ * never refuse a route that exists on ANY map, however large, while still
+ * bounding a click on the far side of a wall to a fraction of a millisecond.
+ * `+ 1` because the check is `expanded > maxNodes` after the increment.
  */
-const TRAVEL_MAX_NODES = 2048;
+function travelMaxNodes(level: LevelView): number {
+  return level.w * level.h + 1;
+}
 
 /**
  * How close a hostile has to be for travel to stop — see `hostileAlert`.
@@ -383,7 +398,7 @@ export function createTravel(): Travel {
     // reach and disagrees with the server's own A* (ai/npc.ts uses terrain only
     // for exactly this reason).
     const route = findPath(from, to, (x, y) => canWalk(level, x, y), {
-      maxNodes: TRAVEL_MAX_NODES,
+      maxNodes: travelMaxNodes(level),
       allowBlockedTarget: stopShort,
     });
 

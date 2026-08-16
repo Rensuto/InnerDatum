@@ -242,25 +242,110 @@ import { PROTOCOL_VERSION } from './version.ts';
 /**
  * Tile codes as they travel on the wire and sit in a save file.
  *
- * ART SEAM: M1 has no tile atlas, so the client renders FLOOR and WALL as flat
- * palette colours. When real tiles land, the mapping code -> atlas cell goes in
- * the renderer and this union grows (DOOR, WATER, STAIRS_DOWN...). Never
- * repurpose 0 or 1 — an old save would silently become a different dungeon.
+ * ART SEAM: the client renders any code it has no sprite for as a flat palette
+ * colour, which is how FLOOR and WALL have always drawn. The mapping
+ * code -> sprite lives in the renderer; this union is the vocabulary.
+ *
+ * NEVER REPURPOSE A NUMBER. An old save would silently become a different
+ * dungeon. Codes are append-only; 0 and 1 are frozen from M1.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TWO INDEPENDENT FACTS PER TILE, AND THEY ARE NOT THE SAME FACT
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Until the overworld there were two codes and one predicate, so "solid" and
+ * "opaque" were the same bit and nothing noticed. A canal is what separates
+ * them: you cannot walk across it and you can see straight over it. ToME has
+ * carried `block_move` and `block_sight` as separate terrain fields since
+ * forever (`data/general/grids/*.lua`), and this is that split, arriving at the
+ * first moment the game has a tile that needs it.
+ *
+ * Both predicates are FAIL-CLOSED on an unknown code, and they fail closed in
+ * opposite directions on purpose — see each one.
  */
 export const TileCode = {
+  // ─── frozen from M1 ───
   FLOOR: 0,
   WALL: 1,
+  // ─── Alderbrook, the overworld (v11) ───
+  // Ground. Walkable, transparent.
+  COBBLE: 2,
+  PAVING: 3,
+  GREEN: 4,
+  MIRE: 5,
+  SOOT: 6,
+  RAIL: 7,
+  BRIDGE: 8,
+  // Blocks. Solid and opaque.
+  TERRACE: 9,
+  CIVIC: 10,
+  WORKS: 11,
+  TREES: 12,
+  /** The Index has eaten this cell. The map border, and the premise. */
+  ERASED: 13,
+  /**
+   * Canal water. THE REASON THIS ENUM HAS TWO PREDICATES: solid to a body,
+   * transparent to an eye.
+   */
+  WATER: 14,
 } as const;
 export type TileCode = (typeof TileCode)[keyof typeof TileCode];
 
 /**
+ * Every code that can be stepped on. A Set rather than a comparison chain so
+ * adding a code is one line in one place and cannot drift from `BLOCKS_SIGHT`.
+ */
+const WALKABLE: ReadonlySet<number> = new Set<number>([
+  TileCode.FLOOR,
+  TileCode.COBBLE,
+  TileCode.PAVING,
+  TileCode.GREEN,
+  TileCode.MIRE,
+  TileCode.SOOT,
+  TileCode.RAIL,
+  TileCode.BRIDGE,
+]);
+
+/**
+ * Every code an eye cannot see through. `WATER` is deliberately absent: it is
+ * the one tile that is in neither set's complement — solid, and transparent.
+ */
+const BLOCKS_SIGHT: ReadonlySet<number> = new Set<number>([
+  TileCode.WALL,
+  TileCode.TERRACE,
+  TileCode.CIVIC,
+  TileCode.WORKS,
+  TileCode.TREES,
+  TileCode.ERASED,
+]);
+
+/**
  * Takes a plain number because `LevelView.tiles` is `number[]` on the wire and
- * the alternative is a cast at every call site. Anything unrecognised is NOT
- * walkable: an unknown code means a client is older than the map it was sent,
- * and walking into unknown terrain is the worse failure.
+ * the alternative is a cast at every call site.
+ *
+ * FAIL-CLOSED: anything unrecognised is NOT walkable. An unknown code means a
+ * client is older than the map it was sent, and walking into unknown terrain is
+ * the worse failure — you would walk through a wall this build cannot draw.
  */
 export function isWalkable(code: number): boolean {
-  return code === TileCode.FLOOR;
+  return WALKABLE.has(code);
+}
+
+/**
+ * FAIL-CLOSED IN THE OTHER DIRECTION, and the asymmetry is the point.
+ *
+ * An unrecognised code blocks sight. Both defaults resolve the same way — the
+ * player is told LESS than the truth rather than more — because the failure
+ * that matters is a client seeing through terrain it does not understand, which
+ * is an information leak the server cannot take back. Refusing to walk is
+ * visible and harmless; seeing an ambush through an unknown wall is neither.
+ */
+export function blocksSight(code: number): boolean {
+  if (BLOCKS_SIGHT.has(code)) return true;
+  // Walkable ground and the canal are the two transparent families. Spelled out
+  // rather than derived so an added code that belongs in neither set lands on
+  // the closed default below instead of quietly becoming see-through.
+  if (WALKABLE.has(code) || code === TileCode.WATER) return false;
+  return true;
 }
 
 /**
