@@ -217,6 +217,17 @@ describe('the fillRect overlays stay art-free', () => {
     // resolve and it is WRONG — no `icon_weapon_*` id is in the manifest and no
     // such PNG is on disk — so a prefix for them would be the invented case above,
     // wearing a comment that says otherwise.
+    // `icon_active_` REPLACED `icon_ability_` HERE, AND THAT IS NOT THE THING
+    // THIS TEST GUARDS AGAINST. The list is the same LENGTH — no prefix was
+    // added, so no new art was smuggled in. `icon_ability_` matched zero assets
+    // in every manifest this project has ever produced; every talent in
+    // src/server/talents/ declares `iconId: 'icon_active_<name>'`. The dead
+    // spelling filtered all twelve hand-drawn talent icons out of the load,
+    // which is why the hotbar drew "AF AV B MW" for weeks after the art landed.
+    //
+    // Correcting a prefix that resolves to NOTHING, to one that resolves to
+    // twelve assets already listed in the manifest and already on disk, is the
+    // opposite of inventing a prefix for art that does not exist.
     expect(prefixes).toEqual([
       'chr_player_',
       'chr_npc_',
@@ -226,7 +237,7 @@ describe('the fillRect overlays stay art-free', () => {
       'ui_icon_turn_',
       'ui_hotbar_slot_',
       'ui_pip_',
-      'icon_ability_',
+      'icon_active_',
       'icon_status_',
       'icon_character_',
       'ui_panel_',

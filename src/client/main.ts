@@ -311,7 +311,18 @@ const NEEDED_ASSET_PREFIXES = [
   'ui_icon_turn_',
   'ui_hotbar_slot_',
   'ui_pip_',
-  'icon_ability_',
+  // THE TALENT ICONS. This read `icon_ability_` for the whole of M3-M6 and that
+  // prefix matches NOTHING: every talent in src/server/talents/ declares
+  // `iconId: 'icon_active_<name>'`, and there has never been an `icon_ability_*`
+  // asset in the manifest. The hotbar therefore filtered out all twelve icons
+  // before they could load and fell through to its initials path — which is why
+  // four hand-drawn icons showed as "AF AV B MW" long after the art landed.
+  //
+  // The failure was invisible from both ends. From here the prefix looks like
+  // every other line in this list; from ui/hotbar.ts the initials path is a
+  // documented, deliberate fallback for art that has not arrived. Neither side
+  // is wrong on its own, and nothing in between compared the two spellings.
+  'icon_active_',
   // M4. `chr_player_` above already covers the three `*_downed_s` bodies.
   'icon_status_',
   // M5. The turn cards' portraits (`icon_character_the_*`). Half the family is
