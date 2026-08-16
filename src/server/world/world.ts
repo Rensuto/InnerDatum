@@ -44,7 +44,7 @@
 
 import { bresenham, step } from '../../shared/coords.ts';
 import { createTurnClock } from '../../shared/energy.ts';
-import { TEST_LEVEL_SPAWNS, blocksSightAt, canWalk, makeTestLevel } from '../../shared/level.ts';
+import { blocksSightAt, canWalk, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
 import { ITEM_CATALOGUE } from '../content/items.ts';
@@ -53,6 +53,7 @@ import { createProjectile } from '../engine/projectile.ts';
 import { recomposeCombat } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { TurnClock } from '../../shared/energy.ts';
+import type { AuthoredMap } from '../../shared/level.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { EngineActor, MonsterInit, PlayerInit } from '../engine/actor.ts';
@@ -535,9 +536,39 @@ function spriteForJoinIndex(index: number): string {
 /**
  * Build the world. `seed` names this world's random stream — pass a stable
  * string (`env.WORLD_SEED`) so a restart reproduces the same placements.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `map` IS OPTIONAL, AND THE DEFAULT IS LOAD-BEARING RATHER THAN POLITE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Absent means the M1 test level, which is what this function built
+ * unconditionally for its whole life. Roughly forty call sites across the test
+ * suite pass a seed and nothing else, and every one of them still describes the
+ * same game it always did.
+ *
+ * ═══ TWO WORLDS FROM ONE SEED ARE IDENTICAL, NOT INDEPENDENT ═══
+ * The three fork labels below are hard-coded, so the SEED STRING is the only
+ * lever that can distinguish two worlds. `createWorld(SEED)` twice gives two
+ * worlds rolling the same to-hit sequence, the same crits, the same AI coin
+ * flips and the same drops, in lockstep, for as long as they take the same
+ * number of draws — mirrored streams, not shared ones, which is the more
+ * confusing of the two failures because each world looks correct alone.
+ *
+ * So a caller building more than one MUST qualify the seed —
+ * `createWorld(`${SEED}:${realmId}`)` — and realms.ts is the only such caller.
+ * Distinct strings decorrelate properly: `hashSeed` FNV-1a's to 64 bits and
+ * `seedStream` runs two SplitMix64 passes precisely so that low-entropy inputs
+ * do not start in correlated neighbourhoods (rng.ts:131-169).
+ *
+ * Sharing ONE stream between two worlds would be worse and the codebase already
+ * says why: adding or removing a draw shifts every subsequent draw on that
+ * stream forever (rng.ts:31-39), so an overworld player's AI roll would move an
+ * instance's damage roll, and replay-from-seed would depend on what strangers
+ * were doing somewhere else.
  */
-export function createWorld(seed: number | string): World {
-  const level = makeTestLevel();
+export function createWorld(seed: number | string, map?: AuthoredMap): World {
+  const authored = map ?? makeTestMap();
+  const level = authored.view;
+  const spawns = authored.spawns;
   const actors = new Map<string, Actor>();
   /**
    * ORBS IN FLIGHT. Deliberately not in `actors` — see the block comment on
@@ -645,10 +676,17 @@ export function createWorld(seed: number | string): World {
    * get themselves unstuck must never meet an exception.
    */
   const findSpawn = (): TileXY | undefined => {
-    const count = TEST_LEVEL_SPAWNS.length;
+    // THE LEVEL'S OWN SPAWNS, not a module constant. This read
+    // `TEST_LEVEL_SPAWNS` directly for as long as there was one map, which
+    // meant a world built around any other map would place every joining body
+    // at the 30x30 test level's cluster coordinates — possibly inside a wall,
+    // and always in the wrong city. `placeAtSpawn` is also the respawn and
+    // floor-reset path, so the same bug would relocate a dying body to another
+    // map's corner.
+    const count = spawns.length;
     for (let i = 0; i < count; i += 1) {
       const index = (spawnCursor + i) % count;
-      const tile = TEST_LEVEL_SPAWNS[index];
+      const tile = spawns[index];
       if (tile === undefined) continue;
       if (isFree(tile.x, tile.y)) {
         spawnCursor = (index + 1) % count;
