@@ -18,7 +18,51 @@
 
 set -e
 
-echo "pre-push: npm run check"
+# ---------------------------------------------------------------------------
+# THIS GATE IS ABOUT THE COMMIT, NOT THE DESK IT WAS WRITTEN ON
+# ---------------------------------------------------------------------------
+# `npm run check` reads the WORKING TREE. For most of this repo's life that was
+# the same thing as the commit being pushed, so the distinction never mattered.
+#
+# It matters here, because work happens in this repo while a push is happening:
+# a long-running build edits files for an hour, and pushing an ALREADY VERIFIED
+# commit in the middle of that fails on half-finished code that is not being
+# pushed and may never be committed. The observed case was a lint error in a
+# switch statement in a file the push did not touch — correct, load-bearing, and
+# completely irrelevant to what was going out.
+#
+# So: if the tree is dirty, say so plainly and check the tree anyway (it is a
+# superset — anything wrong with the commit is also wrong here), but on FAILURE
+# tell the truth about what was measured. A gate that blocks a good push and
+# will not say why is a gate people learn to bypass, and once bypassed it
+# protects nothing while everyone still believes it runs.
+DIRTY=""
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then DIRTY="yes"; fi
+
+if [ -n "$DIRTY" ]; then
+	echo "pre-push: npm run check  (working tree is DIRTY — see below if this fails)"
+else
+	echo "pre-push: npm run check"
+fi
+
+# Whatever happens, explain the dirty case rather than leaving a wall of lint
+# output to be interpreted. `trap` fires on the `set -e` exit too.
+on_fail() {
+	status=$?
+	if [ "$status" -ne 0 ] && [ -n "$DIRTY" ]; then
+		echo "" >&2
+		echo "pre-push: the check ran against your WORKING TREE, which has uncommitted" >&2
+		echo "          changes. The failure above may be in work you are NOT pushing." >&2
+		echo "" >&2
+		echo "          To see whether the commit itself is sound:" >&2
+		echo "            git stash --include-untracked && npm run check && git stash pop" >&2
+		echo "" >&2
+		echo "          If it is, push it:  git push --no-verify" >&2
+		echo "          CI runs this same command on the pushed commit regardless." >&2
+	fi
+	exit $status
+}
+trap on_fail EXIT
 
 # ---------------------------------------------------------------------------
 # WHY THIS IS NOT SIMPLY `npm run check`
