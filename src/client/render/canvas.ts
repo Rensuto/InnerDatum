@@ -206,6 +206,34 @@ export type Scene = {
    * exactly the tile a token is most likely to be standing on.
    */
   readonly cursor?: TileXY | null;
+  /**
+   * CLICK-TO-TRAVEL's ROUTE PREVIEW — the tiles still AHEAD of the walker, in
+   * walk order, never including the tile they are standing on.
+   *
+   * GROUND PAINT. It is painted immediately after `targeting` and BELOW the
+   * y-sorted token pass, for the reason `TargetCell`'s header gives at length:
+   * an overlay above the tokens hides the thing it is about, and here that thing
+   * is the monster whose appearance is supposed to STOP the walk. A route drawn
+   * over the tokens would cover the interruption it exists to respect.
+   *
+   * It is advisory in exactly the sense input/targeting.ts claims for itself —
+   * the server re-validates every step and a wrong path simply gets its move
+   * refused — so it is drawn small and faint rather than as an authoritative
+   * line. Absent means "not travelling"; an empty array means the same thing and
+   * costs nothing, because the machine that produces it empties on arrival.
+   */
+  readonly path?: readonly TileXY[];
+  /**
+   * Where the walk ENDS — the tile that will actually be stood on, already
+   * adjusted for the walk-up-to case, or null when nothing is being travelled to.
+   *
+   * The one part of the preview allowed ABOVE the y-sorted tokens, beside
+   * `cursor` and for the identical reason: it is drawn as corner ticks that
+   * FRAME the tile rather than fill it, so the destination stays findable when
+   * something is standing on it — which for a walk-up-to is the normal case,
+   * since it deliberately stops one tile short of a body.
+   */
+  readonly pathEnd?: TileXY | null;
   /** The sweep beat's markers. Emphasis, drawn on top of everything. */
   readonly overlays?: readonly TileOverlay[];
   /**
@@ -310,6 +338,23 @@ const LOS_SHADE_ALPHA = 0.55;
 /** Corner ticks on the cursor tile: arm length and thickness, in logical px. */
 const CURSOR_TICK_PX = 8;
 const CURSOR_TICK_THICK = 2;
+
+/**
+ * THE TRAVEL PREVIEW'S DOT: size, its centring inset, and how far it fades.
+ *
+ * Small and translucent on purpose, twice over. The route is drawn UNDER the
+ * tokens, so anything larger competes with the actors it is routing between;
+ * and `paintTiles` puts a one-pixel SLATE grid on every floor tile because
+ * counting tiles is how a player measures a move, so a dot that filled the cell
+ * would take away the measurement the preview is helping with.
+ *
+ * The inset is ROUNDED rather than left as a division: an odd dot size would
+ * otherwise land the fill on a half pixel, which is precisely the fractional
+ * sampling the backbuffer exists to prevent (see the header).
+ */
+const PATH_DOT_PX = 6;
+const PATH_DOT_INSET = Math.round((TILE_PX - PATH_DOT_PX) / 2);
+const PATH_DOT_ALPHA = 0.7;
 
 /**
  * STATUS PIPS OVER A TOKEN — the cap, the size and the spacing.
@@ -429,6 +474,34 @@ function ringIdFor(actor: ActorView, selfId: string | null): string {
 function cameraAxis(worldPx: number, viewPx: number, focusPx: number): number {
   if (worldPx <= viewPx) return -Math.floor((viewPx - worldPx) / 2);
   return clamp(Math.floor(focusPx - viewPx / 2), 0, worldPx - viewPx);
+}
+
+/**
+ * A TILE -> ITS TOP-LEFT CORNER IN BACKBUFFER PIXELS, for one already-computed
+ * camera. The whole of the camera arithmetic the travel preview needs.
+ *
+ * IT IS EXPORTED FOR TWO REASONS, AND NEITHER IS CONVENIENCE. The preview has
+ * two painters — the dots below the tokens and the destination ticks above them
+ * — and without this they would carry two copies of `tile * TILE_PX - cam`;
+ * `Renderer.tileAtClient`'s own comment is already emphatic that a second copy
+ * of the camera maths is how the pointer and the map start disagreeing at the
+ * edges. And it is the only part of that arithmetic a TEST can reach: `draw`
+ * writes `lastCamX`/`lastCamY` at the very end of a frame and `tileAtClient`
+ * alone reads them, so there is nothing to sample from outside.
+ *
+ * IT DELIBERATELY DOES NOT CLAMP AND DOES NOT CULL. Both operands are signed:
+ * a tile behind the camera yields a negative origin, and `cameraAxis` returns a
+ * NEGATIVE camera whenever the whole map is smaller than the viewport, which it
+ * does to centre a small map instead of pinning it to the corner. Anything that
+ * assumes either is non-negative is wrong only on small maps and only at the
+ * edges, which is the worst place for a bug to hide.
+ *
+ * This is NOT the tile->screen accessor a HUD painter might want, and it must
+ * not grow into one on the `Renderer` type: the hover tooltip is anchored to the
+ * POINTER precisely so that nothing outside this file ever needs the camera.
+ */
+export function pathCellOrigin(tile: TileXY, camX: number, camY: number): { x: number; y: number } {
+  return { x: tile.x * TILE_PX - camX, y: tile.y * TILE_PX - camY };
 }
 
 export function createRenderer(options: RendererOptions): Renderer {
@@ -630,6 +703,80 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
+   * THE TRAVEL PATH PREVIEW. NO ART, DELIBERATELY — `fillRect` and nothing else.
+   *
+   * THE OBVIOUS IMPLEMENTATION IS A TRAP AND MUST NOT BE WRITTEN. Adding a
+   * `MarkerKind.Path` member and blitting `ui_tile_marker_path` would follow the
+   * shape of every other overlay in this file, and it would fail loudly for
+   * everyone: that id exists in no manifest, the art is gitignored WHOLESALE so
+   * a bare clone has no manifest at all, and `blitSprite` above resolves a
+   * missing sprite to the intentionally shouty violet fallback box. The result
+   * is a violet ring on every tile of every travel path, for every player,
+   * including the author — a broken-manifest alarm fired by a feature that is
+   * working perfectly, which is the one thing that alarm must never do. So: no
+   * `blitSprite`, no new `MarkerKind` member, no new NEEDED_ASSET_PREFIXES
+   * entry, and this preview keeps working on a clone with zero PNGs in it.
+   *
+   * GOLD because it is this file's affirmative / cursor colour, and the route
+   * and the destination bracket should read as one thing. Never CRIMSON, which
+   * `PALETTE` reserves for the single fact "hostiles are engaged"; and never
+   * VIOLET_HI, which IS the missing-asset colour — a path painted in it is
+   * indistinguishable from the bug described above.
+   *
+   * `save`/`restore` around `globalAlpha` for exactly the reason
+   * `paintTargeting` wraps its wash: canvas state is not reset between painters
+   * within a frame, so a leaked 0.7 makes every later sprite in the frame
+   * translucent, which reads as a broken PNG rather than as a missing restore.
+   */
+  function paintPath(tiles: readonly TileXY[], camX: number, camY: number): void {
+    if (tiles.length === 0) return;
+
+    backCtx.save();
+    backCtx.globalAlpha = PATH_DOT_ALPHA;
+    backCtx.fillStyle = PALETTE.GOLD;
+    for (const tile of tiles) {
+      const origin = pathCellOrigin(tile, camX, camY);
+      // The SAME cull the actors use, rather than a viewport test written fresh
+      // for this one painter. It is deliberately generous —
+      // ACTOR_CULL_MARGIN_PX is three tiles of slack, so a tall sprite does not
+      // pop at the edge — and the generosity is harmless here: a route running
+      // off the screen paints a few dots past the border, into backbuffer
+      // coordinates the canvas itself clips away.
+      if (!visible(origin.x, origin.y)) continue;
+      backCtx.fillRect(
+        origin.x + PATH_DOT_INSET,
+        origin.y + PATH_DOT_INSET,
+        PATH_DOT_PX,
+        PATH_DOT_PX,
+      );
+    }
+    backCtx.restore();
+  }
+
+  /**
+   * The eight rects of a corner bracket, at the current `fillStyle`.
+   *
+   * Factored out of `paintCursor` when the travel destination needed the same
+   * geometry: two hand-copied sets of eight offsets drift, and the drift shows
+   * up as a bracket whose arms are a pixel different from the one beside it.
+   */
+  function cornerTicks(x: number, y: number): void {
+    const arm = CURSOR_TICK_PX;
+    const thick = CURSOR_TICK_THICK;
+    const far = TILE_PX - thick;
+    const near = TILE_PX - arm;
+
+    backCtx.fillRect(x, y, arm, thick);
+    backCtx.fillRect(x, y, thick, arm);
+    backCtx.fillRect(x + near, y, arm, thick);
+    backCtx.fillRect(x + far, y, thick, arm);
+    backCtx.fillRect(x, y + far, arm, thick);
+    backCtx.fillRect(x, y + near, thick, arm);
+    backCtx.fillRect(x + near, y + far, arm, thick);
+    backCtx.fillRect(x + far, y + near, thick, arm);
+  }
+
+  /**
    * Four corner ticks on the cursor tile, drawn ABOVE the actors.
    *
    * Ticks rather than a filled marker precisely so this may sit on top: it
@@ -642,20 +789,34 @@ export function createRenderer(options: RendererOptions): Renderer {
     const y = tile.y * TILE_PX - camY;
     if (!visible(x, y)) return;
 
-    const arm = CURSOR_TICK_PX;
-    const thick = CURSOR_TICK_THICK;
-    const far = TILE_PX - thick;
-    const near = TILE_PX - arm;
-
     backCtx.fillStyle = PALETTE.GOLD;
-    backCtx.fillRect(x, y, arm, thick);
-    backCtx.fillRect(x, y, thick, arm);
-    backCtx.fillRect(x + near, y, arm, thick);
-    backCtx.fillRect(x + far, y, thick, arm);
-    backCtx.fillRect(x, y + far, arm, thick);
-    backCtx.fillRect(x, y + near, thick, arm);
-    backCtx.fillRect(x + near, y + far, arm, thick);
-    backCtx.fillRect(x + far, y + near, thick, arm);
+    cornerTicks(x, y);
+  }
+
+  /**
+   * The travel DESTINATION, bracketed above the tokens. Still no art.
+   *
+   * Corner ticks rather than a filled marker for `paintCursor`'s own reason, and
+   * the case is even stronger here: the tile a walk ends on is the tile most
+   * likely to have something standing next to or on it, because "walk up to"
+   * stops one square short of a body on purpose. A fill would hide the body the
+   * player is walking towards.
+   *
+   * Held at the dots' alpha, inside its own save/restore, so that when a
+   * targeting ring happens to share the frame the FULL-opacity bracket is the
+   * cursor being steered right now and the faint one is the route set earlier.
+   * Without the wrapper the leak is the same one `paintTargeting` guards
+   * against, and it would land on the sweep markers and the pings that follow.
+   */
+  function paintPathEnd(tile: TileXY, camX: number, camY: number): void {
+    const origin = pathCellOrigin(tile, camX, camY);
+    if (!visible(origin.x, origin.y)) return;
+
+    backCtx.save();
+    backCtx.globalAlpha = PATH_DOT_ALPHA;
+    backCtx.fillStyle = PALETTE.GOLD;
+    cornerTicks(origin.x, origin.y);
+    backCtx.restore();
   }
 
   /**
@@ -756,6 +917,10 @@ export function createRenderer(options: RendererOptions): Renderer {
       // The targeting layer, between the terrain and the tokens. See `TargetCell`.
       if (scene.targeting !== undefined) paintTargeting(scene.targeting, camX, camY);
 
+      // The travel route, in the same band and for the same reason: ground
+      // paint, above the floor and below the token rings. See `Scene.path`.
+      if (scene.path !== undefined) paintPath(scene.path, camX, camY);
+
       // Y-SORT. Painter's algorithm down the screen, so an actor standing lower
       // (larger y, nearer the viewer) draws in front of one behind it — which
       // matters the moment a sprite is taller than its tile. Ties break on x
@@ -796,6 +961,12 @@ export function createRenderer(options: RendererOptions): Renderer {
           if (visible(cellX, cellY)) paintStatusPips(badges, cellX, cellY);
         }
       }
+
+      // The travel destination, in the one band above the y-sorted tokens that
+      // is not the sweep beat. BEFORE the cursor, so that in the rare frame
+      // holding both, the aim being steered now paints over the older route.
+      const pathEnd = scene.pathEnd;
+      if (pathEnd !== undefined && pathEnd !== null) paintPathEnd(pathEnd, camX, camY);
 
       // The cursor's brackets — the only part of the targeting layer above the
       // tokens, and ticks rather than a fill so it frames without hiding.

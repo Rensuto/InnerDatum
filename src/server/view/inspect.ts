@@ -39,6 +39,7 @@
 import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { ActorKind } from '../../shared/protocol.ts';
+import type { InspectRow, InspectView } from '../../shared/protocol.ts';
 import {
   combatArmor,
   combatAttack,
@@ -50,41 +51,11 @@ import type { Combatant } from '../engine/derived.ts';
 import type { Actor, World } from '../world/world.ts';
 import { hasLineOfSight } from '../world/world.ts';
 
-/**
- * One line of a tooltip. A label and a value rather than a formatted string, so
- * the client owns presentation and a narrow viewport can drop rows rather than
- * truncating sentences mid-word.
- */
-export type InspectRow = {
-  readonly label: string;
-  readonly value: string;
-  /**
-   * Draws the reader's eye. Reserved for the number that decides whether to
-   * commit — the hit chance, and a threat that can kill you this turn.
-   */
-  readonly emphasis?: boolean;
-};
-
-export type InspectView = {
-  readonly id: string;
-  readonly name: string;
-  readonly kind: string;
-  readonly hp: number;
-  readonly maxHp: number;
-  /** Effect ids the viewer can see on this actor, for the badge row. */
-  readonly effects: readonly string[];
-  readonly rows: readonly InspectRow[];
-  /**
-   * Why an attack would be refused right now, in the words the player should
-   * read — "too close: needs 3 tiles", not `too_close`.
-   *
-   * PRESENT MEANS REFUSED. The Inspector's dead zone is the case that matters:
-   * game-design.md calls min_range "the single most important number here", and
-   * a class that silently does nothing at range 2 reads as broken rather than
-   * as having a rule.
-   */
-  readonly blockedReason?: string;
-};
+// `InspectRow` and `InspectView` WERE DECLARED HERE and now live in
+// src/shared/protocol.ts: the tooltip painter has to name them and eslint's
+// NO_SERVER_PATTERNS bans client/** -> server/** outright, so the browser can
+// never reach a type declared under src/server/. Only the DECLARATIONS moved —
+// this file remains the one and only implementation of what they contain.
 
 function pct(n: number): string {
   return `${Math.round(n)}%`;

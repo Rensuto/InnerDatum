@@ -59,6 +59,7 @@ import websocket from '@fastify/websocket';
 import { DIR_ORDER, dirVector, inBounds } from '../../shared/coords.ts';
 import { ErasedReason, ErrorCode, LogLane, parseClientMsg } from '../../shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
+import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   projectActors,
   projectCooldowns,
@@ -78,6 +79,7 @@ import type { Dir, TileXY } from '../../shared/coords.ts';
 import type {
   BroadcastMsg,
   ClientHello,
+  ClientInspect,
   ClientMove,
   ClientParty,
   ClientPoint,
@@ -535,7 +537,39 @@ export type PumpResult = {
   readonly turn: TurnState;
   readonly playerEvents: readonly TurnEvent[];
   readonly sweep: readonly TurnEvent[];
+  /**
+   * INTENTS THE SCHEDULER TOOK BACK. Not events — the OWNER'S OWN BAD NEWS.
+   *
+   * A third list rather than a third kind of `TurnEvent`, because a refund has
+   * nothing to draw and nobody else's business: `toWireEvents` drops `refunded`
+   * on purpose (turn-engine.ts) and must go on doing so.
+   *
+   * ═══ WITHOUT THIS THE OWNER IS TOLD NOTHING AT ALL ═══
+   * A move accepted by `submitMove` and refused at RESOLUTION — the tile was
+   * clear when the packet left and somebody stepped onto it in flight — takes
+   * scheduler.ts's refund path: zero energy spent, `Park` returned,
+   * `pendingIntent` back to null. So no clock advances, the actor goes straight
+   * back into the blocking set it was already in, and EVERY term of `turnKey`
+   * (gameTurn, engagement, whoseTurn, committed, standingBy, bellArmed) is
+   * byte-identical — `broadcastTurnIfChanged` sends nothing, and there is no
+   * `moved` and no `error` either. The client learns of the refusal by absence,
+   * which is not a signal: "no frame yet" and "no frame ever" look identical.
+   *
+   * That is not a cosmetic gap. A travelling client (src/client/input/travel.ts)
+   * waits on a `moved` that will never come, and because the party is
+   * phase-locked the whole floor then waits on it until the Bell rings.
+   */
+  readonly refusals: readonly RefundedIntent[];
 };
+
+/**
+ * One refunded intent, addressed to the actor that owed it.
+ *
+ * `reason` is a `string` for the same reason `IntentResult.reason` is: the
+ * gateway only ever puts it in a message, and widening the engine's `Refusal`
+ * union into net/ would be a second place to keep it in step.
+ */
+export type RefundedIntent = { readonly id: string; readonly reason: string };
 
 /**
  * Everything the gateway needs from `src/server/engine/scheduler.ts`.
@@ -1716,6 +1750,31 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (msg !== null) broadcast(msg);
     }
 
+    // ═══ A REFUND IS UNICAST, BECAUSE NOTHING ELSE WILL EVER MENTION IT ═══
+    // See `PumpResult.refusals` for why the turn frame below cannot carry this:
+    // a refund spends no energy, so `turnKey` does not move and
+    // `broadcastTurnIfChanged` suppresses the frame as a duplicate. Absence is
+    // not a signal, and a client left inferring one waits forever.
+    //
+    // ONLY THE OWNER HEARS IT, with the same code `handleMove` already uses for
+    // a refusal caught at SUBMISSION — a wall nobody walked into is not an
+    // event, and telling the room would leak where people are trying to go. It
+    // rides here, in the player lane, because that is the lane the sender is
+    // waiting on.
+    //
+    // `illegal_move` FOR EVERY REFUSAL, and deliberately no `Refusal`->ErrorCode
+    // table: the engine's refusal vocabulary is about resolution bookkeeping and
+    // most of it (`no_actor`, `no_talent_effect`) has no player-facing meaning at
+    // all. The wording says "at resolution" rather than "move blocked" because a
+    // refunded talent takes this path too, and a log line that named the wrong
+    // verb would be the kind of small lie that costs an evening.
+    for (const refusal of result.refusals) {
+      const conn = connByActor.get(refusal.id);
+      const owner = conn === undefined ? undefined : sessions.get(conn);
+      if (owner === undefined || !owner.helloDone) continue;
+      sendError(owner.socket, ErrorCode.IllegalMove, `refused at resolution: ${refusal.reason}`);
+    }
+
     // ONE frame for the whole monster turn. Never one per monster.
     if (result.sweep.length > 0) {
       broadcast({
@@ -2596,6 +2655,84 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `inspect` — "WHAT IS THAT, AND CAN I HIT IT?", answered to ONE socket.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * src/server/view/inspect.ts does the knowing; this does the COMPOSING. That
+   * split is deliberate — the two questions ("what may this viewer know about
+   * that body" and "would an attack be refused") have different gates, and the
+   * order in which they are asked is a security property. All three notes below
+   * are about that order.
+   *
+   * ═══ 1. THE TWO NULLS ARE THE SAME NULL, DELIBERATELY ═══
+   * An id that names nobody and a body the viewer cannot see produce a
+   * BYTE-IDENTICAL frame: `{ t: 'inspected', targetId, view: null }`. Nothing
+   * distinguishes them — not an `ErrorCode`, not a `reason`, not a differently
+   * shaped answer, not the ORDER they arrive in.
+   *
+   * inspect.ts:32-36 makes this argument about the RECORD shape: a redacted
+   * card still confirms something is there. The id-not-found branch is not
+   * covered by that file, because it does not live there — it lives HERE, and
+   * so the same argument has to be re-made and honoured at this site. A client
+   * that could sort the two replies apart would not need to see anybody: it
+   * would walk the id space, keep every id that answered "cannot see it", and
+   * have enumerated the whole floor. Every one of the distinguishers listed
+   * above rebuilds that oracle, which is why they are listed.
+   *
+   * ═══ 2. `attackBlockedReason` IS ASKED ONLY AFTER `inspectActor` SAID YES ═══
+   * Never before it, and never on its own. It has NO VISIBILITY GATE — it is
+   * the resolution-time refusal list, not a knowledge check — and for a target
+   * behind a wall it returns the literal string 'no line of sight'
+   * (inspect.ts:179). That sentence confirms two things at once: the actor
+   * exists, and it is somewhere with a wall in between. Which is exactly the
+   * leak note 1 forbids, arriving through the other door. So it is composed
+   * strictly downstream of a non-null view, and its answer rides INSIDE that
+   * view rather than beside it.
+   *
+   * ═══ 3. NO `opts`, SO THE REACH IS THE VIEWER'S OWN ═══
+   * With nothing passed, `minRange` and `maxRange` come off the VIEWER's sheet
+   * (`viewer.combat?.minRange ?? 0`, `viewer.combat?.range ?? 1`) — which is
+   * bump-attack reach, and bump-attack is the only attack this protocol has:
+   * there is no `attack` frame, a `move` into an occupied tile IS the attack
+   * (scheduler.ts strikes the occupant before terrain is consulted). So
+   * `blockedReason` answers the question the tooltip is actually being asked —
+   * "if I walk into it right now, do I hit it?" — rather than some abstract
+   * reachability. An `opts` here would silently answer about a talent nobody
+   * selected.
+   */
+  const handleInspect = (session: Session, msg: ClientInspect): void => {
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before inspecting');
+      return;
+    }
+    const viewer = world.getActor(actorId);
+    if (viewer === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+
+    const target = world.getActor(msg.targetId);
+    const view = target === undefined ? null : inspectActor(world, viewer, target);
+    // `target === undefined` is re-tested rather than asserted away with `!`:
+    // it is what NARROWS `target` for the call, and `view !== null` already
+    // implies it. A non-null assertion would be telling the compiler to stop
+    // checking the one invariant note 2 exists to maintain.
+    const answer =
+      target === undefined || view === null
+        ? null
+        : { ...view, blockedReason: attackBlockedReason(world, viewer, target) };
+
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'inspected',
+      targetId: msg.targetId,
+      view: answer,
+    });
+  };
+
+  /**
    * `revive` — stand the ally in `dir` back up.
    *
    * The gateway decides NOTHING here, exactly as with `talent`: adjacency,
@@ -2849,6 +2986,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'point':
         handlePoint(session, msg);
+        return;
+      // ALSO NON-PUMPING, and for the reason the `ping` case gives below: an
+      // inspect changes nothing — no energy, no intent, no RNG draw — so a
+      // frame that costs the sender nothing must not be a way to make the
+      // server advance the world. It is answered to the ASKER alone
+      // (`send`, never `broadcast`): what `inspectActor` returns depends on the
+      // viewer's line of sight, so the same target inspected by two people is
+      // legitimately two different answers.
+      case 'inspect':
+        handleInspect(session, msg);
         return;
       case 'revive':
         handleRevive(session, msg);

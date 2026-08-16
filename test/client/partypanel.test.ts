@@ -17,6 +17,7 @@ import { respawnPromptHit, respawnPromptRect } from '../../src/client/ui/respawn
 import { ActorKind, ActorRank, DownedStatus, PartyAction } from '../../src/shared/protocol.ts';
 import { TurnActorState, VoiceState } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
+import type { MapVerb } from '../../src/client/ui/contextmenu.ts';
 import type {
   PartyPaneHit,
   PartyPaneLayout,
@@ -460,7 +461,9 @@ describe('the token menu', () => {
     ]);
     const rect = menu.rect();
     if (rect === null) throw new Error('unreachable');
-    let found: PartyAction | null = null;
+    // `MenuItem.action` widened to `PartyAction | MapVerb` when the token menu
+    // grew map verbs; the row under test is still a party one.
+    let found: PartyAction | MapVerb | null = null;
     for (let y = rect.y; y < rect.y + rect.h; y += 1) {
       const item = menu.itemAt(rect.x + 8, y);
       if (item !== null) found = item.action;

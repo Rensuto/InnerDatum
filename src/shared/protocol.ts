@@ -277,6 +277,54 @@ export type ActorView = {
   alive: boolean;
 };
 
+/**
+ * WHAT A TOOLTIP SAYS. Computed in src/server/view/inspect.ts — DECLARED HERE.
+ *
+ * The maths is server-side and stays there (the client is banned from importing
+ * shared/checkhit, shared/scale and shared/energy, so it could not compute a hit
+ * chance even if it wanted to). But the tooltip PAINTER has to name the type it
+ * is handed, and eslint's NO_SERVER_PATTERNS bans client/** -> server/**
+ * outright: a browser file can never `import type` from under src/server/. So
+ * the shape lives on the wire's own file, which is the one place both halves may
+ * read. inspect.ts imports these back and remains the ONLY implementation.
+ */
+
+/**
+ * One line of a tooltip. A label and a value rather than a formatted string, so
+ * the client owns presentation and a narrow viewport can drop rows rather than
+ * truncating sentences mid-word.
+ */
+export type InspectRow = {
+  readonly label: string;
+  readonly value: string;
+  /**
+   * Draws the reader's eye. Reserved for the number that decides whether to
+   * commit — the hit chance, and a threat that can kill you this turn.
+   */
+  readonly emphasis?: boolean;
+};
+
+export type InspectView = {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: string;
+  readonly hp: number;
+  readonly maxHp: number;
+  /** Effect ids the viewer can see on this actor, for the badge row. */
+  readonly effects: readonly string[];
+  readonly rows: readonly InspectRow[];
+  /**
+   * Why an attack would be refused right now, in the words the player should
+   * read — "too close: needs 3 tiles", not `too_close`.
+   *
+   * PRESENT MEANS REFUSED. The Inspector's dead zone is the case that matters:
+   * game-design.md calls min_range "the single most important number here", and
+   * a class that silently does nothing at range 2 reads as broken rather than
+   * as having a rule.
+   */
+  readonly blockedReason?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Talents — the shapes both halves of the wire need to name
 // ---------------------------------------------------------------------------
@@ -1238,6 +1286,52 @@ const PartySchema = z.strictObject({
 });
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `inspect` — "WHAT IS THAT, AND CAN I HIT IT?" The hover/right-click question.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A request/response pair rather than three more fields on `ActorView`, because
+ * `ActorView` streams to everybody on every pump and an inspect card is asked
+ * for perhaps twice a minute by one person. Fattening the frame everyone always
+ * gets, to carry a thing almost nobody is looking at, is the wrong trade in both
+ * directions — bandwidth and the FOV audit, since every field added to
+ * `ActorView` has to be re-argued against "would this leak?".
+ *
+ * ═══ `targetId` IS THE OBJECT OF THE VERB, NEVER ITS SUBJECT ═══
+ * The missing-field rule at the top of this file is about WHO IS ACTING, and
+ * this frame still never says: who is doing the looking is resolved server-side
+ * from the socket's session, exactly as with `move` and `party`. `targetId` says
+ * WHAT IS BEING LOOKED AT. The same three things make it safe as make `party`'s
+ * safe:
+ *
+ *   IT IS AN ACTOR ID, NEVER A DISCORD ID. Ids are minted from a hash of the
+ *   snowflake (`actorIdForUser`, net/gateway.ts) and no account id has ever
+ *   travelled on this wire in either direction.
+ *
+ *   IT NAMES SOMETHING THIS CLIENT WAS ALREADY SENT. Every id a player can
+ *   point at arrived in an `ActorView`, so asking about one discloses nothing
+ *   the sender did not already have — which is exactly what makes hovering a
+ *   token a legal way to ask.
+ *
+ *   IT CANNOT BE USED TO ACT AS ANYBODY. The verb changes nothing in the world,
+ *   consumes no RNG and costs no turn. The worst a forged id achieves is
+ *   `inspected` with `view: null`, which is also the answer for a body the
+ *   sender cannot see — see `InspectedMsg`.
+ *
+ * ═══ `v` IS NOT BOILERPLATE HERE, IT IS THE ONLY VERSION CHECK ═══
+ * `parseClientMsg`'s own check below is guarded by `'v' in candidate`, and the
+ * gateway's `wireVersion` returns undefined for a frame that has no `v` — so a
+ * frame that simply OMITS the field skips version enforcement entirely. The
+ * `z.literal` is what makes it mandatory. Every schema in this file carries it
+ * for that reason; none of them may be the one that forgets.
+ */
+const InspectSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('inspect'),
+  targetId: z.string().min(1).max(ACTOR_ID_MAX_CHARS),
+});
+
+/**
  * The complete set of things a client may say.
  *
  * A discriminated union on `t` rather than a plain union: zod can then dispatch
@@ -1255,6 +1349,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   ReviveSchema,
   RespawnSchema,
   PartySchema,
+  InspectSchema,
   PingSchema,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
@@ -1270,6 +1365,7 @@ export type ClientPoint = z.infer<typeof PointSchema>;
 export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
+export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
 
 // ---------------------------------------------------------------------------
@@ -2037,6 +2133,38 @@ export type ResourceMsg = {
   resource: ResourceView;
 };
 
+/**
+ * THE ANSWER TO ONE `inspect`. Per-recipient by construction.
+ *
+ * ═══ `view: null` IS THE SINGLE ANSWER TO TWO DIFFERENT QUESTIONS ═══
+ * "There is no actor with that id" and "there is, and you cannot see it" come
+ * back identically, and the sameness is the security property rather than
+ * laziness. inspect.ts's own rule (its FOG OF WAR APPLIES TO KNOWLEDGE header)
+ * is that a redacted record still confirms something is there; the branch that
+ * lives in the GATEWAY — id not found — leaks the same fact in the other
+ * direction. A distinguishable "no such actor" turns this frame into an ORACLE:
+ * a patched client walks the id space, sorts the two replies apart, and has
+ * enumerated everybody on the floor without ever seeing one of them. One answer,
+ * both branches, nothing to sort.
+ *
+ * That is also why there is no `not_visible` `ErrorCode`. A refusal code would
+ * be the same oracle wearing a different hat, and adding an `ErrorCode` member
+ * is one of the things src/shared/version.ts records as forcing a bump.
+ *
+ * ═══ IT CARRIES `targetId` BECAUSE THIS PROTOCOL HAS NO CORRELATION ID ═══
+ * Nothing on this wire, in either direction, has ever carried a request id. So
+ * the client cannot match an answer to its question by arrival order — a hover
+ * that moves on before the reply lands would paint the previous target's card
+ * over the current one. It matches BY TARGET: an `inspected` whose `targetId` is
+ * not the thing currently under the pointer is discarded.
+ */
+export type InspectedMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'inspected';
+  targetId: string;
+  view: InspectView | null;
+};
+
 export type PongMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'pong';
@@ -2083,6 +2211,7 @@ export type ServerMsg =
   | LoadoutMsg
   | CooldownsMsg
   | ResourceMsg
+  | InspectedMsg
   | PongMsg
   | ErrorMsg;
 
@@ -2117,8 +2246,19 @@ export type ServerMsg =
  * made, and broadcasting the list would put every player's pending choices on
  * every other player's screen. There is no shape of this frame that is correct
  * for two people, so `broadcast(partyStateMsg)` must not compile.
+ *
+ * `inspected` JOINED FOR THE STRONGEST VERSION OF THE FIRST REASON. It is an
+ * answer to a question ONE socket asked, and its content is FOV-gated on the
+ * asker: `inspectActor` returns null for a target the VIEWER cannot see, so the
+ * same target inspected by two people is legitimately two different frames — one
+ * a full card, the other `view: null`. There is no correct shared form of it, and
+ * handing the room a copy would post one player's card about a monster nobody
+ * else can see, which is the tile-grid leak the whole FOV seam exists to stop.
+ * So `broadcast(inspected)` must be a compile error, and membership here is what
+ * makes it one.
  */
-export type ViewerMsg = LoadoutMsg | CooldownsMsg | ResourceMsg | TurnMsg | PartyStateMsg;
+export type ViewerMsg =
+  LoadoutMsg | CooldownsMsg | ResourceMsg | TurnMsg | PartyStateMsg | InspectedMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

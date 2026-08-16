@@ -382,3 +382,170 @@ describe('the M4 frames at the trust boundary', () => {
     expect([log.t, effects.t, party.t, pinged.t]).toEqual(['log', 'effects', 'party', 'pinged']);
   });
 });
+
+/**
+ * THE INSPECT PAIR — the mouse layer's one protocol addition.
+ *
+ * `inspect` is the second inbound verb to name another actor (after `party`) and
+ * the first one a player fires by MOVING THE MOUSE, so it is the one most likely
+ * to be sent in bulk by a patched client. Everything below is about shape at the
+ * trust boundary; whether the target exists, and whether the sender may see it,
+ * is answered in the gateway and comes back as a normal `inspected` carrying
+ * `view: null` — never as an error code, because a distinguishable refusal is an
+ * id oracle.
+ */
+describe('the inspect pair at the trust boundary', () => {
+  /** The schema's own cap, deliberately restated rather than exported. */
+  const ACTOR_ID_MAX_CHARS = 64;
+
+  it('accepts a well-formed inspect frame and narrows it', () => {
+    const parsed = parseClientMsg({ v: V, t: 'inspect', targetId: 'actor_u_0123456789abcdef' });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.msg.t).toBe('inspect');
+    // The narrowing is the assertion: `targetId` is only reachable once `t` has
+    // discriminated the union, which is what makes the handler's signature safe.
+    if (parsed.msg.t !== 'inspect') return;
+    expect(parsed.msg.targetId).toBe('actor_u_0123456789abcdef');
+  });
+
+  it('REFUSES a frame with no `v` at all', () => {
+    // THE ONE THAT IS EASY TO GET WRONG. `parseClientMsg`'s version check is
+    // guarded by `'v' in candidate`, so a frame that simply omits the field
+    // slips past it entirely — the `z.literal` in the schema is the only thing
+    // that makes the envelope mandatory. Drop it from one schema and that verb
+    // silently accepts frames from every client version ever shipped.
+    expect(parseClientMsg({ t: 'inspect', targetId: 'actor_a' }).ok).toBe(false);
+  });
+
+  it('REFUSES a wrong `v`, and says so before complaining about the payload', () => {
+    const parsed = parseClientMsg({ v: V - 1, t: 'inspect', targetId: 'actor_a' });
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error).toContain('protocol version mismatch');
+    expect(parseClientMsg({ v: V + 1, t: 'inspect', targetId: 'actor_a' }).ok).toBe(false);
+    expect(parseClientMsg({ v: 'six', t: 'inspect', targetId: 'actor_a' }).ok).toBe(false);
+  });
+
+  it('REFUSES an extra unknown key — strictObject, not object', () => {
+    expect(parseClientMsg({ v: V, t: 'inspect', targetId: 'actor_a', x: 3, y: 2 }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'inspect', targetId: 'actor_a', pin: true }).ok).toBe(false);
+  });
+
+  it('REFUSES an empty or oversized targetId', () => {
+    expect(parseClientMsg({ v: V, t: 'inspect', targetId: '' }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'inspect' }).ok).toBe(false);
+    // 64 is the boundary and it is inclusive; 65 is a place to park a payload.
+    const atLimit = 'a'.repeat(ACTOR_ID_MAX_CHARS);
+    expect(parseClientMsg({ v: V, t: 'inspect', targetId: atLimit }).ok).toBe(true);
+    const overLimit = 'a'.repeat(ACTOR_ID_MAX_CHARS + 1);
+    expect(parseClientMsg({ v: V, t: 'inspect', targetId: overLimit }).ok).toBe(false);
+  });
+
+  it('still refuses an identity field naming the SUBJECT of the verb', () => {
+    // `targetId` is the OBJECT — what is being looked at. The subject, who is
+    // doing the looking, is the socket's session and there is no field for it.
+    for (const key of ['actorId', 'userId', 'playerId', 'charId', 'viewerId']) {
+      const parsed = parseClientMsg({
+        v: V,
+        t: 'inspect',
+        targetId: 'actor_a',
+        [key]: 'actor_someone_else',
+      });
+      expect(parsed.ok, `${key} must be rejected`).toBe(false);
+    }
+  });
+
+  it('lets NO inbound verb name the subject of its own verb', () => {
+    // THE WHOLE-PROTOCOL SWEEP, not just the new frame. Every legal frame in the
+    // union, re-sent with each banned key bolted on; `strictObject` must reject
+    // all of them. This is the assertion that catches the NEXT verb somebody
+    // adds with an `object` instead of a `strictObject`.
+    const legalFrames: readonly Record<string, unknown>[] = [
+      { t: 'hello' },
+      { t: 'move', dir: 'n' },
+      { t: 'talent', talentId: 'talent:x' },
+      { t: 'commit' },
+      { t: 'hold' },
+      { t: 'say', text: 'hi' },
+      { t: 'point', x: 3, y: 4 },
+      { t: 'revive', dir: 'n' },
+      { t: 'respawn' },
+      { t: 'party', action: 'invite', targetId: 'actor_b' },
+      { t: 'inspect', targetId: 'actor_b' },
+      { t: 'ping' },
+    ];
+
+    for (const frame of legalFrames) {
+      // Each one is legal as written, or the negative half below proves nothing.
+      expect(parseClientMsg({ v: V, ...frame }).ok, `${String(frame.t)} must parse`).toBe(true);
+
+      for (const key of ['actorId', 'userId', 'playerId', 'charId']) {
+        const forged = parseClientMsg({ v: V, ...frame, [key]: 'actor_someone_else' });
+        expect(forged.ok, `${String(frame.t)} + ${key} must be rejected`).toBe(false);
+      }
+    }
+  });
+
+  it('keeps `inspected` OUT of the broadcastable set', () => {
+    // Stated explicitly because the set below is HAND-MAINTAINED: it is a list a
+    // human types, so on its own it cannot catch a frame that became wrongly
+    // broadcastable — the type would widen and this literal would simply be one
+    // tag short. The real enforcement is `ViewerMsg` membership feeding
+    // `BroadcastMsg = Exclude<ServerMsg, ViewerMsg>`, and the assignment below is
+    // what stops compiling if `inspected` ever leaves `ViewerMsg`.
+    //
+    // It must never be broadcast because an inspect card is FOV-gated ON THE
+    // ASKER: `inspectActor` returns null for a target the viewer cannot see, so
+    // one shared copy would post one player's card about a monster the rest of
+    // the room is not allowed to know is there.
+    const inspected: ServerMsg = {
+      v: V,
+      t: 'inspected',
+      targetId: 'actor_b',
+      view: {
+        id: 'actor_b',
+        name: 'Husk',
+        kind: 'monster',
+        hp: 9,
+        maxHp: 14,
+        effects: [],
+        rows: [{ label: 'Chance to hit', value: '71%', emphasis: true }],
+        blockedReason: 'out of range: 4 tiles, reaches 1',
+      },
+    };
+
+    const broadcastTags = new Set<BroadcastMsg['t']>([
+      'welcome',
+      'state',
+      'moved',
+      'joined',
+      'left',
+      'sweep',
+      'attacked',
+      'damaged',
+      'died',
+      'used',
+      'log',
+      'effects',
+      'party',
+      'pinged',
+      'pong',
+      'error',
+    ]);
+    expect(broadcastTags.has(inspected.t as BroadcastMsg['t'])).toBe(false);
+  });
+
+  it('answers both "no such actor" and "you cannot see it" with the same null', () => {
+    // ONE ANSWER, TWO QUESTIONS, ON PURPOSE. A distinguishable absent-actor
+    // branch turns this frame into an oracle: a patched client walks the id
+    // space, sorts the two replies apart, and has enumerated every body on the
+    // floor without seeing one of them. `view: null` is also why there is no
+    // `not_visible` ErrorCode — and an ErrorCode addition would force a
+    // PROTOCOL_VERSION bump, which this feature deliberately does not take.
+    const noSuchActor: ServerMsg = { v: V, t: 'inspected', targetId: 'actor_ghost', view: null };
+    const cannotSee: ServerMsg = { v: V, t: 'inspected', targetId: 'actor_b', view: null };
+    expect(noSuchActor).toEqual({ ...cannotSee, targetId: 'actor_ghost' });
+    expect(Object.values(ErrorCode)).not.toContain('not_visible');
+  });
+});

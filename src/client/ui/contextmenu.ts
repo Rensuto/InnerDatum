@@ -36,9 +36,32 @@
 
 import { PALETTE } from '../render/canvas.ts';
 import { drawPanel, PanelSkin } from './panel.ts';
+import type { TileXY } from '../../shared/coords.ts';
 import type { PartyAction } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
+
+/**
+ * THE THINGS A RIGHT-CLICK CAN MEAN THAT ARE NOT ABOUT A PARTY.
+ *
+ * `PartyAction` is a WIRE verb — the client puts it in a frame and the server
+ * decides what it means. These four are the opposite: every one of them is
+ * resolved by the CLIENT and then expressed in verbs that already exist.
+ * `Travel` and `Attack` both come out the far end as `{t:'move',dir}` (there is
+ * no attack intent — walking into a hostile IS the attack), `Point` is the
+ * existing `{t:'point',x,y}`, and `Inspect` is the one that adds a frame.
+ *
+ * A const object plus a derived type rather than an `enum`: `erasableSyntaxOnly`
+ * is on, and an enum emits runtime code the type-stripping loader will not
+ * accept.
+ */
+export const MapVerb = {
+  Travel: 'travel',
+  Attack: 'attack',
+  Inspect: 'inspect',
+  Point: 'point',
+} as const;
+export type MapVerb = (typeof MapVerb)[keyof typeof MapVerb];
 
 export type MenuItem = {
   /**
@@ -46,8 +69,15 @@ export type MenuItem = {
    * translated. `PartyAction` is already the closed set of things a player may
    * do about a party (protocol.ts), so a row IS one of them and main.ts sends
    * it without a lookup table in between — one vocabulary, no drift.
+   *
+   * `MapVerb` sits BESIDE it rather than replacing it, and the union is the
+   * whole point: `PartyAction` stays verbatim — the party rows keep sending the
+   * value the schema already names — and `MapVerb` is the disjoint set of rows
+   * that resolve locally in the client instead of going out as themselves. Two
+   * origins, one row type, and a `switch` over `action` that the compiler can
+   * still check for exhaustiveness.
    */
-  readonly action: PartyAction;
+  readonly action: PartyAction | MapVerb;
   readonly label: string;
   /**
    * A disabled row is still DRAWN, greyed, rather than dropped.
@@ -84,14 +114,32 @@ export type ContextMenu = {
     readonly items: readonly MenuItem[];
     readonly viewportW: number;
     readonly viewportH: number;
-    /** The actor the menu is ABOUT, handed back with whatever is picked. */
-    readonly targetId: string;
+    /**
+     * The actor the menu is ABOUT, handed back with whatever is picked.
+     *
+     * OPTIONAL because a menu opened on BARE GROUND has no actor at all — the
+     * "Travel here"/"Point here" rows are about a tile and nothing else. The
+     * accessor's signature already permitted null; this makes the opener agree
+     * with it rather than forcing a caller to invent a sentinel id, which is
+     * exactly how an empty string ends up on the wire as a target.
+     */
+    readonly targetId?: string;
+    /** The tile the menu is ABOUT, for the ground rows. Set instead of `targetId`. */
+    readonly targetTile?: TileXY;
   }) => void;
   /** Returns true if it was open — so Escape can know whether it consumed the key. */
   readonly close: () => boolean;
   readonly visible: () => boolean;
   /** The actor the open menu is about, or null. */
   readonly targetId: () => string | null;
+  /**
+   * The tile the open menu is about, or null.
+   *
+   * Which of the two accessors answers is how the caller tells "walk up to that
+   * husk" from "travel to that patch of floor": both rows carry
+   * `MapVerb.Travel`, and only the target differs.
+   */
+  readonly targetTile: () => TileXY | null;
   readonly rect: () => PanelRect | null;
   /** Move the highlight. Returns true when it changed, so the caller can redraw. */
   readonly hoverAt: (px: number, py: number) => boolean;
@@ -127,7 +175,8 @@ type OpenMenu = {
   readonly rect: PanelRect;
   readonly title: string;
   readonly items: readonly MenuItem[];
-  readonly targetId: string;
+  readonly targetId: string | undefined;
+  readonly targetTile: TileXY | undefined;
   hovered: number;
 };
 
@@ -199,6 +248,7 @@ export function createContextMenu(options: ContextMenuOptions): ContextMenu {
         title,
         items: opts.items,
         targetId: opts.targetId,
+        targetTile: opts.targetTile,
         hovered: -1,
       };
       options.onChange();
@@ -213,6 +263,7 @@ export function createContextMenu(options: ContextMenuOptions): ContextMenu {
 
     visible: () => menu !== null,
     targetId: () => menu?.targetId ?? null,
+    targetTile: () => menu?.targetTile ?? null,
     rect: () => menu?.rect ?? null,
 
     hoverAt: (px, py) => {

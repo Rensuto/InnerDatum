@@ -46,7 +46,7 @@
  *   is an animation; the other three are not, which is the whole point.
  *
  *   M2 ADDS EXACTLY TWO BOUNDED TIMERS, M3 A THIRD, M4 A FOURTH, M5 A FIFTH AND
- *   v6 A SIXTH. No unbounded one:
+ *   v6 A SIXTH AND A SEVENTH. No unbounded one:
  *     - the SWEEP BEAT (render/sweep.ts): one setTimeout per monster sweep, two
  *       draws, then nothing;
  *     - the BELL TICKER (below): a 4 Hz interval that exists only while a
@@ -67,6 +67,11 @@
  *       pending. It exists because an invite lapses and, out of combat, the pump
  *       idles — there may be no frame for minutes, and an ACCEPT button that has
  *       quietly stopped working is worse than no button.
+ *     - the HOVER SETTLE (v6, the mouse layer): ONE setTimeout, armed only when
+ *       the pointer moves onto a DIFFERENT actor and replaced rather than
+ *       stacked, which is what makes a mouse swept across a room send zero
+ *       `inspect` frames — the pointer has to come to rest before one goes out.
+ *       It fires once and does not re-arm itself. See `noteHoveredActor`.
  *   All of them are bounded loops that stop when the thing they animate stops,
  *   which is the shape the M1 header promised and the only shape allowed here.
  *
@@ -79,6 +84,20 @@
  *   right-click menu on any detective's token (ui/contextmenu.ts), the same menu
  *   on a pane row for somebody off screen, and `/party invite <name>` typed into
  *   the command line, because this is a MUD and typing must work.
+ *
+ *   v6: THE MOUSE CAN PLAY THE GAME, AND IT DECIDES NOTHING. Left-click walks
+ *   there or hits that, hover says what a thing is, right-click lists the verbs.
+ *   Not one of those rules lives in this file: `input/mouseintent.ts` says what a
+ *   click means, `input/travel.ts` is the walk's whole state machine, `ui/verbs.ts`
+ *   is the menu's decision table, and every one of them is a pure function tested
+ *   with nothing drawn. What is left here is wiring — turn a pointer into a tile,
+ *   ask, and send. TRAVEL AUTO-COMMITS ONE STEP PER TURN and sends `move` and
+ *   NOTHING ELSE (see the tick in `onMessage`, which says at length why a
+ *   following `commit` would cost every traveller a second turn per tile), and it
+ *   is interrupted by eleven things, seven of which are call sites in this file
+ *   marked "TRAVEL INTERRUPT". The tooltip asks the server what a body is
+ *   (`inspect`/`inspected`) rather than fattening `ActorView`, because that frame
+ *   streams every turn and this answer is wanted a few times a session.
  *
  *   M3: A REFUSAL IS ALWAYS VISIBLE, NEVER A NO-OP. Pressing a hotbar key ALWAYS
  *   sends a frame, even when this client believes the slot is on cooldown, out
@@ -113,10 +132,18 @@
  *   starting cannot leave a panel overlapping the cards on one surface only.
  */
 
-import { DIR_ORDER, chebyshev, step } from '../shared/coords.ts';
+import { DIR_ORDER, chebyshev, sameTile, step } from '../shared/coords.ts';
 import { parseCommand } from './input/commands.ts';
 import { bindGameKeys, TurnCommand, UiCommand } from './input/keys.ts';
+import { MouseIntentKind, mouseIntentAt, travelTargetAllowed } from './input/mouseintent.ts';
 import { createTargeting } from './input/targeting.ts';
+import {
+  TravelObservation,
+  TravelStart,
+  createTravel,
+  isHostileBody,
+  liveActorAt,
+} from './input/travel.ts';
 import { establishDiscordSession } from './net/discord.ts';
 import { connectGameSocket, SocketStatus } from './net/socket.ts';
 import { loadAssetLibrary } from './render/assets.ts';
@@ -129,7 +156,7 @@ import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts
 // here would be the first step towards refusing to send, which is exactly the
 // silent no-op this file's header forbids.
 import { drawHotbar, HOTBAR_TOTAL_H, hotbarSlotAt } from './ui/hotbar.ts';
-import { createContextMenu } from './ui/contextmenu.ts';
+import { createContextMenu, MapVerb } from './ui/contextmenu.ts';
 import {
   drawPartyPane,
   partyPaneHitAt,
@@ -144,8 +171,10 @@ import {
   respawnPromptHit,
   respawnPromptRect,
 } from './ui/respawnprompt.ts';
+import { drawTooltip } from './ui/tooltip.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
+import { verbsFor } from './ui/verbs.ts';
 import {
   ActorKind,
   DownedStatus,
@@ -162,6 +191,7 @@ import type {
   ActorView,
   DownedView,
   EffectView,
+  InspectView,
   LevelView,
   LoadoutTalent,
   PartyInviteView,
@@ -174,6 +204,7 @@ import type {
 } from '../shared/protocol.ts';
 import type { CommandContext, RosterEntry } from './input/commands.ts';
 import type { Targeting, TargetingWorld } from './input/targeting.ts';
+import type { Travel, TravelWorld } from './input/travel.ts';
 import type { DiscordParticipant } from './net/discord.ts';
 import type { AssetEntry } from './render/assets.ts';
 import type { HudPainter, PingMarker, Scene } from './render/canvas.ts';
@@ -186,6 +217,7 @@ import type { HotbarSlot, HotbarView } from './ui/hotbar.ts';
 import type { PanelRect } from './ui/panel.ts';
 import type { PartyPaneLayout, PartyPaneView } from './ui/partypanel.ts';
 import type { TurnView } from './ui/turncards.ts';
+import type { VerbTarget } from './ui/verbs.ts';
 
 /**
  * Load the art this build can actually draw, not all 99 files in the manifest.
@@ -258,6 +290,47 @@ const FONT_HUD = 'bold 10px ui-monospace, Consolas, monospace';
  * `point` produces two frames rather than one.
  */
 const PING_MS = 6000;
+
+/**
+ * How long the pointer must REST on a token before this client asks the server
+ * what it is.
+ *
+ * ═══ THIS NUMBER IS A RATE LIMIT, NOT A FEEL SETTING ═══
+ * net/gateway.ts gives one token bucket per SOCKET — 20 frames a second, burst
+ * 20 — and it is shared with `move`, `commit` and `hold`. An unthrottled hover
+ * would spend the whole bucket sweeping across a room, and an exhausted bucket
+ * does not merely drop frames: it answers with an `error`, which this client
+ * turns into a refusal banner AND uses to cancel an open targeting ring. So the
+ * failure mode of getting this wrong is not a busy socket, it is a player being
+ * told "too many commands" and losing their aim because they moved the mouse.
+ *
+ * 120 ms is under the threshold at which a tooltip feels laggy and well over the
+ * time a pointer spends crossing a token on the way somewhere else, so a sweep
+ * sends NOTHING and a rest sends at most one frame per game turn (the cache
+ * absorbs the rest).
+ */
+const HOVER_SETTLE_MS = 120;
+
+/**
+ * THE FLOOR ON HOW OFTEN A WALK MAY PUT A `move` ON THE WIRE.
+ *
+ * ═══ THIS NUMBER IS A RATE LIMIT TOO, AND IT IS THE ONE THAT BITES ═══
+ * Travel is the only thing in this client that sends frames nobody pressed a key
+ * for, and its loop is otherwise paced by ROUND-TRIP TIME with no floor at all:
+ * send `move`, the server pumps, `moved` and `turn` come back, send the next
+ * `move`. On the documented deployment — self-hosted on a PC at home, everyone
+ * on the same LAN — that round trip is one or two milliseconds, so a click 30
+ * tiles away drains the socket's whole 20-frame bucket in well under a second.
+ * The bucket does not merely drop the 21st frame: `noteThrottled` answers
+ * `rate_limited`, `case 'error'` stops the walk, and the player is stranded two
+ * thirds of the way across the room having been told the ROUTE was refused.
+ *
+ * 150 ms leaves the walk at under seven frames a second against a budget of
+ * twenty, with room for the hover card's own one-per-turn `inspect` beside it.
+ * It is also a pace a human can watch and interrupt, which a 500-tiles-a-second
+ * teleport across the room is not.
+ */
+const TRAVEL_STEP_MS = 150;
 
 /**
  * THE TWO SIDES: the party pane on the LEFT, the Case Log on the RIGHT.
@@ -567,6 +640,80 @@ let combatBanner: CombatBanner | null = null;
  * so a frame that arrives during startup cannot open one.
  */
 let tokenMenu: ContextMenu | null = null;
+/**
+ * THE WALK. Created in boot() with every other widget, for the same reason: a
+ * `turn` frame arriving during startup must have something to observe or nothing
+ * at all, never half a machine.
+ *
+ * It is asked for a step in `onMessage` and observed from `applyServerMessage`;
+ * both are module scope, which is why this is not a `const` inside boot().
+ */
+let travel: Travel | null = null;
+
+// ---------------------------------------------------------------------------
+// THE HOVER CARD'S STATE
+//
+// Module scope because `applyServerMessage` (the `inspected` frame) and
+// `paintHud` (the painter) both live out here, while the pointer events that
+// drive it are inside boot(). See decision (d) for the four stacked guards these
+// four variables implement between them.
+// ---------------------------------------------------------------------------
+
+/**
+ * THE ACTOR UNDER THE POINTER, BY ID AND NEVER BY TILE.
+ *
+ * By id because the pointer crosses a dozen tiles of bare floor between two
+ * tokens, and a hover tracked by tile would re-ask the server on every one of
+ * them. Null means "nothing to describe", which is the normal state.
+ */
+let hoveredActorId: string | null = null;
+
+/**
+ * WHERE THE POINTER IS, in LOGICAL backbuffer pixels, or null.
+ *
+ * The card is anchored to the POINTER rather than to the actor's tile, and that
+ * is forced rather than chosen: `lastCamX`/`lastCamY` are written at the very end
+ * of `draw()` and render/canvas.ts exports no tile->screen transform, so a
+ * tile-anchored card would need the second copy of `cameraAxis` that file warns
+ * about repeatedly.
+ */
+let pointerPoint: TileXY | null = null;
+
+/**
+ * THE ANSWERS, KEYED BY ACTOR ID AND STAMPED WITH THE TURN THEY DESCRIBE.
+ *
+ * A hit for the CURRENT game turn draws immediately and sends nothing, so
+ * sweeping back and forth between two husks costs one frame each per turn rather
+ * than one per crossing. Invalidated wholesale on a turn edge and on the two
+ * frames that replace the board — a hit chance from three turns ago is a wrong
+ * number stated confidently, which is worse than an empty card.
+ *
+ * A `null` view is CACHED LIKE ANY OTHER ANSWER. It is the server's single reply
+ * to "no such actor", "you cannot see it" and "that monster is dead"; re-asking
+ * every 120 ms would be the one case that defeats the cache entirely.
+ */
+const inspectCache = new Map<
+  string,
+  { readonly view: InspectView | null; readonly gameTurn: number }
+>();
+
+/**
+ * THE ONE OUTSTANDING QUESTION, or null. There is never more than one: a new
+ * hover replaces it, and an answer that names anybody else is discarded on
+ * arrival — protocol.ts's `InspectedMsg` says why matching is by target and not
+ * by arrival order.
+ */
+let inspectInFlight: string | null = null;
+
+/**
+ * THE PINNED CARD — right-click, Inspect. Null unless a menu pinned one.
+ *
+ * A pin outranks the hover so the card survives the pointer leaving the token it
+ * describes, which is the entire difference between "Inspect" and hovering. It
+ * is dropped the moment the pointer finds a DIFFERENT actor, and on mouseleave.
+ */
+let pinnedInspectId: string | null = null;
+let pinnedInspectView: InspectView | null = null;
 
 /**
  * Show a refusal. Replaced in boot() with the real, self-clearing implementation.
@@ -602,6 +749,58 @@ let addPing: (actorId: string, x: number, y: number) => void = () => {
  */
 let noteInvites: (invites: readonly PartyInviteView[]) => void = () => {
   // No timer yet.
+};
+
+/**
+ * STOP THE WALK, and say why if the player deserves a sentence.
+ *
+ * The same shape as `onRefusal` above and for the same reason: seven of the
+ * eleven travel interrupts fire from `applyServerMessage`, which is module scope,
+ * while the machine, the notice and the redraw all live inside boot(). Replaced
+ * there; a no-op until then, so a frame arriving mid-startup is dropped rather
+ * than throwing.
+ *
+ * IDEMPOTENT AND SILENT WHEN NOTHING WAS TRAVELLING. That is what lets every one
+ * of those call sites be careless: `case 'error'` cancels a walk that is usually
+ * not happening, and it must not print "travel stopped" over the server's own
+ * refusal when it was not.
+ */
+let cancelTravel: (why?: string) => void = () => {
+  // No machine yet.
+};
+
+/**
+ * A `moved` frame named the viewer. Replaced in boot() with the real observation.
+ *
+ * ONE BINDING FOR BOTH LANES, and that is the whole point of it: a self move
+ * arrives either as an immediate `moved` frame or inside a batched `sweep`, and
+ * the walk's step-landed evidence must not depend on which. It is module scope
+ * because `applyServerMessage` is, while the machine lives inside boot().
+ */
+let onSelfMoved: (x: number, y: number) => void = () => {
+  // No machine yet.
+};
+
+/**
+ * RE-ASK ABOUT THE PINNED CARD'S SUBJECT. Replaced in boot(), which owns the
+ * socket; a no-op until then and a no-op when nothing is pinned.
+ *
+ * ═══ A PIN MUST NOT OUTLIVE THE TURN ITS NUMBERS DESCRIBE ═══
+ * `inspectCache` is invalidated wholesale on every game-turn edge because hit
+ * points, hit chances and blocked reasons are answers about ONE game turn. The
+ * pin is a separate variable and `tooltipView()` consults it FIRST, so it used
+ * to shadow that invalidation entirely: a card pinned on a husk went on stating
+ * `42/42` and `Chance to hit 65%` in bold for as long as the player left it
+ * there, through four bumps, a debuff and the husk's death. Worse than stale —
+ * `inspectActor` would refuse to disclose anything about a dead monster or one
+ * out of sight, so the card was showing what the server had stopped answering.
+ *
+ * Re-asking rather than clearing is what keeps the pin's one useful property,
+ * which is that it outlives the pointer. A `view: null` reply retires the pin,
+ * so the card correctly VANISHES when its subject dies or goes out of sight.
+ */
+let refreshPinnedInspect: () => void = () => {
+  // No socket yet.
 };
 
 function bellRemainingMs(): number | null {
@@ -829,6 +1028,31 @@ function hotbarView(): HotbarView {
   };
 }
 
+/**
+ * WHERE THE VIEWER IS STANDING, or null before `welcome` puts a body on the map.
+ *
+ * A COPY, not the ActorView: everything that asks this question — the click
+ * intent, the walk, the menu's adjacency — wants a tile and nothing else, and
+ * handing out the live actor invites somebody to read `hp` off it and call that
+ * a rule.
+ */
+function selfTile(): TileXY | null {
+  const me = selfId === null ? undefined : actors.get(selfId);
+  return me === undefined ? null : { x: me.x, y: me.y };
+}
+
+/**
+ * Everything the walk needs, rebuilt from the board on every call — the same
+ * shape and the same reasoning as `targetingWorld` below.
+ *
+ * Every field may legitimately be null or empty before the first `welcome`;
+ * input/travel.ts answers "no step this frame" for all of them rather than
+ * throwing, which is why nothing here guards.
+ */
+function travelWorld(): TravelWorld {
+  return { self: selfTile(), level, actors: [...actors.values()], turn };
+}
+
 /** Everything targeting needs, rebuilt from the board on every call. */
 function targetingWorld(): TargetingWorld {
   const me = selfId === null ? undefined : actors.get(selfId);
@@ -980,6 +1204,33 @@ const paintHud: HudPainter = (ctx, width, height) => {
     drawRespawnPrompt({ ctx, sprites, rect: layout.respawn, hovered: respawnHovered });
   }
 
+  // ═══ THE HOVER CARD, AND IT LOSES TO BOTH OF THE SURFACES BELOW ═══
+  //
+  // Drawn AFTER the erased plate and BEFORE the combat banner, which fixes its
+  // precedence exactly: the banner wins, the token menu wins, this loses to
+  // both. Of the three claims on that piece of screen the incidental one is the
+  // weakest — the banner is on for two and a half seconds and answers "the fight
+  // has started", the menu was opened deliberately and is about to be clicked,
+  // and this appeared because a pointer came to rest. A card that covered either
+  // of them would be the mouse interrupting the two surfaces most likely to be
+  // urgent, in exchange for a number the player can see again by hovering again.
+  //
+  // SUPPRESSED ENTIRELY WHILE THE MENU IS OPEN rather than merely drawn under
+  // it: the menu opens AT THE POINTER, so the two overlap by construction, and a
+  // card peeking out from behind the rows it is hiding reads as a rendering bug.
+  const tip = tooltipView();
+  if (tip !== null && pointerPoint !== null && tokenMenu?.visible() !== true) {
+    drawTooltip({
+      ctx,
+      sprites,
+      view: tip,
+      px: pointerPoint.x,
+      py: pointerPoint.y,
+      viewportW: width,
+      viewportH: height,
+    });
+  }
+
   // THE COMBAT BANNER IS DRAWN LAST, over the dock and everything else.
   //
   // For the two and a half seconds it is up it is the most important thing on
@@ -1000,6 +1251,39 @@ const paintHud: HudPainter = (ctx, width, height) => {
   tokenMenu?.draw({ ctx, sprites });
 };
 
+/**
+ * WHAT THE HOVER CARD SHOULD SAY RIGHT NOW, or null for "draw nothing".
+ *
+ * THE PIN OUTRANKS THE HOVER, which is the whole of the difference between the
+ * two gestures. Below it, a cached answer for the actor under the pointer — and
+ * `null` is a legitimate cached answer (no such actor / cannot see it / a dead
+ * monster), so a miss and a null both come out here as "draw nothing". Do NOT
+ * try to tell those three apart: the server went to some trouble to make them
+ * indistinguishable, and a client that sorted them would be the oracle
+ * `InspectedMsg` exists to close.
+ */
+/**
+ * Drop every inspect answer and any card on screen.
+ *
+ * Called from the two frames that replace the board wholesale. An actor id is
+ * only meaningful within one session's world, so a cache carried across a
+ * `welcome` could describe the wrong body — and a pinned card describing
+ * somebody who is not on this floor is worse than no card.
+ */
+function forgetInspections(): void {
+  inspectCache.clear();
+  inspectInFlight = null;
+  hoveredActorId = null;
+  pinnedInspectId = null;
+  pinnedInspectView = null;
+}
+
+function tooltipView(): InspectView | null {
+  if (pinnedInspectView !== null) return pinnedInspectView;
+  if (hoveredActorId === null) return null;
+  return inspectCache.get(hoveredActorId)?.view ?? null;
+}
+
 function scene(): Scene {
   return {
     level,
@@ -1007,6 +1291,13 @@ function scene(): Scene {
     selfId,
     targeting: targeting?.cells(),
     cursor: targeting?.cursor() ?? null,
+    // THE ROUTE PREVIEW, PASSED UNCONDITIONALLY AND WITHOUT A GUARD. Both
+    // accessors answer "nothing" while idle — `preview()` is empty and
+    // `destination()` is null — and render/canvas.ts treats an empty array and
+    // an absent one identically, so the preview clears itself on arrival with
+    // nothing to reset here.
+    path: travel?.preview(),
+    pathEnd: travel?.destination() ?? null,
     overlays: sweep?.overlays(),
     downed: downedMap(),
     effects,
@@ -1067,6 +1358,50 @@ function refusalText(code: ErrorCode, fallback: string): string {
       // Not a game rule — a protocol fault. Show the server's own words; there
       // is nothing useful this file can add and inventing prose would hide it.
       return fallback;
+  }
+}
+
+/**
+ * WHY THE WALK STOPPED, when an `error` frame is what stopped it.
+ *
+ * Separate from `refusalText` because the two answer different questions. That
+ * one explains the REFUSAL — it is shown for every error, walking or not, and it
+ * is where the number goes. This one explains what happened TO THE ROUTE, and it
+ * is shown only when a walk was actually running.
+ *
+ * ═══ IT EXISTS BECAUSE ONE SENTENCE FOR EVERY CODE WAS A LIE ═══
+ * "the way was refused" used to be printed for all of them, `rate_limited`
+ * included — so a walk killed by the socket's own 20-a-second bucket blamed the
+ * route, and the actual diagnosis (the client is sending too fast; see
+ * TRAVEL_STEP_MS) was thrown away at the one moment somebody was looking at it.
+ * A wrong cause is worse than no cause: it sends the next hour of debugging into
+ * the map generator.
+ */
+function travelStopText(code: ErrorCode): string {
+  switch (code) {
+    // The two the ROUTE can actually be wrong about. `illegal_move` is a wall or
+    // a body — including the refund the server unicasts when a move that was
+    // legal on arrival is refused at resolution — and `not_your_turn` is the
+    // barrier saying this step came at the wrong moment.
+    case ErrorCode.IllegalMove:
+    case ErrorCode.NotYourTurn:
+      return 'the way was refused — travel stopped';
+    case ErrorCode.RateLimited:
+      return 'the server is throttling this client — travel stopped';
+    // Everything else stopped the walk without being about the walk: a talent
+    // refusal that happened to land mid-stride, or a protocol fault. Say that
+    // the walk stopped and nothing more — `refusalText` has already shown the
+    // server's own words for what actually went wrong.
+    case ErrorCode.TooClose:
+    case ErrorCode.OutOfRange:
+    case ErrorCode.NoLos:
+    case ErrorCode.OnCooldown:
+    case ErrorCode.NoResource:
+    case ErrorCode.BadMessage:
+    case ErrorCode.VersionMismatch:
+    case ErrorCode.NotAuthenticated:
+    case ErrorCode.Internal:
+      return 'travel stopped';
   }
 }
 
@@ -1136,6 +1471,13 @@ function applyTurnEvent(event: TurnEvent): void {
       // Absolute destination. `fromX`/`fromY` are ignored: they exist for a
       // client that interpolates the step, and this one deliberately does not.
       actors.set(event.id, { ...actor, x: event.x, y: event.y });
+      // THE SWEEP LANE'S COPY OF "I MOVED". A player's own step normally comes
+      // back as a `moved` frame, but this lane carries the identical fact for a
+      // move resolved inside a batch — and the walk must not conclude it was
+      // refused (interrupt 10) merely because the confirmation took the other
+      // road. protocol.ts wraps the same payload in both lanes precisely so this
+      // function can be the only reader; that is exactly why the hook is here.
+      if (event.id === selfId) onSelfMoved(event.x, event.y);
       break;
     }
     case 'attack':
@@ -1149,6 +1491,12 @@ function applyTurnEvent(event: TurnEvent): void {
       // kills itself back into agreement on the next hit instead of drifting
       // forever. `amount` is for the floating number in M4, not for arithmetic.
       actors.set(event.id, { ...actor, hp: event.hp, maxHp: event.maxHp });
+      // TRAVEL INTERRUPT (5): SOMETHING HIT YOU. Walking on while your health
+      // bar drops is the single worst thing an auto-walk can do — it is how a
+      // player dies to a fight they never saw start — and it is worth stopping
+      // for even when the source is a trap or a friend's misfire, because in
+      // every one of those cases the plan the player agreed to is stale.
+      if (event.id === selfId) cancelTravel('you were hit — travel stopped');
       break;
     }
     case 'death': {
@@ -1203,6 +1551,12 @@ function applyTurnEvent(event: TurnEvent): void {
       const actor = actors.get(event.id);
       if (actor === undefined) break;
       actors.set(event.id, { ...actor, hp: 0 });
+      // TRAVEL INTERRUPT (6): YOU WENT DOWN. Every move you send from here is
+      // refused anyway, so a walk left running would spend the five-turn rescue
+      // window firing frames at a server that answers `not_your_turn` — and it
+      // would leave a route drawn across the map from a body that is not going
+      // anywhere.
+      if (event.id === selfId) cancelTravel('you went down — travel stopped');
       break;
     }
     case 'revived': {
@@ -1484,6 +1838,237 @@ async function boot(): Promise<void> {
     requestDraw();
   };
 
+  // --- the walk ------------------------------------------------------------
+  // Created here with every other widget, so no frame can arrive before it
+  // exists. The MACHINE holds no timer; the pacing timer below is this file's,
+  // and it is the only clock in the feature.
+  travel = createTravel();
+
+  // THE EIGHTH BOUNDED TIMER, and the last. One shot, never stacked (the handle
+  // is the guard), cleared on every cancel. See TRAVEL_STEP_MS for why a walk
+  // needs a floor on its own send rate at all.
+  let travelTimer = 0;
+  /** Earliest wall-clock time the next step may go out. See TRAVEL_STEP_MS. */
+  let nextStepAtMs = 0;
+
+  /**
+   * STOP THE WALK. The one place it is stopped, and it is deliberately dull.
+   *
+   * `wasWalking` is read BEFORE the cancel so that the sentence and the redraw
+   * happen only when something was actually interrupted. Seven call sites hand
+   * this a reason for a walk that is usually not running — `case 'error'` most
+   * of all — and a notice printed for every one of them would sit on top of the
+   * server's own typed refusal, which is the one sentence with the number in it.
+   */
+  cancelTravel = (why) => {
+    const wasWalking = travel !== null && travel.active();
+    travel?.cancel();
+    // Unconditionally, even when nothing was walking: a pending tick for a walk
+    // that has just been cancelled would wake up, find `active()` false and do
+    // nothing — but a handle left set is a tick that never gets scheduled again.
+    if (travelTimer !== 0) {
+      window.clearTimeout(travelTimer);
+      travelTimer = 0;
+    }
+    if (!wasWalking) return;
+    if (why !== undefined) showNotice(why);
+    requestDraw();
+  };
+
+  onSelfMoved = (x, y) => {
+    travel?.observeSelfMoved({ x, y });
+  };
+
+  /** For Escape's ordered chain: did this press actually back out of a walk? */
+  function cancelTravelIfActive(): boolean {
+    if (travel === null || !travel.active()) return false;
+    cancelTravel();
+    return true;
+  }
+
+  /**
+   * ASK FOR A STEP AND SEND IT. THE ONLY PLACE TRAVEL PUTS A FRAME ON THE WIRE.
+   *
+   * ═══ IT SENDS `move` AND NEVER, EVER A FOLLOWING `commit` ═══
+   * This is the single most consequential line in the mouse layer, and it is
+   * exactly the line a future reader will try to "fix" by adding the commit that
+   * the keyboard's Enter key sends. Why it must not:
+   *
+   *   barrier.ts:293-305 is COMMIT-ON-SUBMIT — "a submitted intent IS the
+   *   commitment, even before it resolves" — so the `move` below has already
+   *   committed this player's turn by the time the server has read it.
+   *   scheduler.ts:718 then resolves a player's intent inside the same pump,
+   *   spending the energy. A `commit` arriving after that lands at
+   *   turn-engine.ts:1008 with `pendingIntent === null`, which submits
+   *   HOLD_INTENT — and that hold sits queued and burns the NEXT turn.
+   *
+   * So travel-with-commit costs every traveller TWO turns per tile, in a game
+   * where the whole party is phase-locked behind one barrier. The keyboard
+   * already proves the correct shape: `onMove` sends `move` alone.
+   *
+   * Called from `onMessage` (the one place every applied frame passes through
+   * with the board settled), once at `begin`, because out of combat the pump
+   * idles and no frame would arrive to tick the first step, and from its own
+   * pacing timer.
+   *
+   * ═══ THE PACING TIMER IS NOT A FEEL SETTING ═══
+   * Without it the loop runs at one step per round trip with no floor, which on
+   * a LAN empties the gateway's 20-a-second bucket in half a room — see
+   * TRAVEL_STEP_MS. The timer is what lets a step be DEFERRED rather than
+   * dropped: out of combat the server pump idles, so a tick that simply returned
+   * would leave the walk waiting for a frame that is never coming.
+   */
+  function tickTravel(): void {
+    if (travel === null || !travel.active()) return;
+    // A tick is already booked. Two would double the rate the floor exists to
+    // hold, which is the one thing this must not do.
+    if (travelTimer !== 0) return;
+
+    const now = Date.now();
+    if (now < nextStepAtMs) {
+      travelTimer = window.setTimeout(() => {
+        travelTimer = 0;
+        tickTravel();
+        // The step may have moved the preview; nothing else in this path draws.
+        requestDraw();
+      }, nextStepAtMs - now);
+      return;
+    }
+
+    const walk = travel.nextStep(travelWorld());
+    if (walk === null) return;
+    nextStepAtMs = now + TRAVEL_STEP_MS;
+    // A SEND THAT DID NOT HAPPEN MUST NOT LOOK LIKE A STEP IN FLIGHT. `send`
+    // answers false whenever the socket is not OPEN — which during a reconnect
+    // backoff can be fifteen seconds — and the machine has already recorded the
+    // step as sent. Left unread, the route stays painted across the map, the
+    // token never moves, and nothing on screen says why.
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'move', dir: walk.dir })) {
+      cancelTravel('lost connection — travel stopped');
+    }
+  }
+
+  /**
+   * Start a walk to a tile, and say what happened — or deliberately say nothing.
+   *
+   * The three answers are path.ts's own three and they are never conflated:
+   * a route, "you are already there" (silence, because the player can see they
+   * are standing on it) and "no route" (a sentence, because an unreachable tile
+   * looks identical to a click that did not register).
+   */
+  function beginTravel(to: TileXY, stopShort: boolean): void {
+    const from = selfTile();
+    if (travel === null || from === null || level === null) {
+      showNotice('the floor has not arrived yet');
+      return;
+    }
+    switch (travel.begin({ from, to, level, stopShort })) {
+      case TravelStart.Started:
+        clearNotice();
+        // The first step goes out NOW rather than waiting for a frame that, out
+        // of combat, may never come — the pump idles when nobody is fighting.
+        tickTravel();
+        requestDraw();
+        return;
+      case TravelStart.NoRoute:
+        showNotice('no route to that tile');
+        return;
+      case TravelStart.AlreadyThere:
+        // path.ts:303-311: `[]` is "you are standing on it", which is not a
+        // refusal and gets no sentence.
+        return;
+    }
+  }
+
+  // --- the hover card ------------------------------------------------------
+  // THE SEVENTH AND LAST BOUNDED TIMER. One shot, replaced rather than stacked,
+  // and armed only when the pointer moves onto a DIFFERENT actor. See
+  // HOVER_SETTLE_MS for why the delay is a rate limit rather than a taste.
+  let hoverTimer = 0;
+
+  /**
+   * The pointer has come to rest on a token. Ask, unless we already know.
+   *
+   * THREE OF DECISION (d)'S FOUR GUARDS ARE HERE — the cache, the one-in-flight
+   * rule, and the fact that nothing is sent for a hover that has already moved
+   * on. The fourth (track by id, not by tile) is in `noteHoveredActor`.
+   */
+  function requestInspect(): void {
+    const id = hoveredActorId;
+    if (id === null) return;
+    const known = inspectCache.get(id);
+    // A HIT FOR THIS TURN DRAWS AND SENDS NOTHING. The stamp is the whole cache:
+    // hit points and hit chances are answers about one game turn, and a stale
+    // one is a wrong number stated confidently.
+    if (known !== undefined && known.gameTurn === (turn?.gameTurn ?? -1)) {
+      requestDraw();
+      return;
+    }
+    if (inspectInFlight === id) return;
+    inspectInFlight = id;
+    // `targetId` is REQUIRED by the schema — a bare `{t:'inspect'}` is refused
+    // as `bad_message`, so there is no "clear the tooltip" frame and none is
+    // wanted: forgetting is a local act.
+    socket.send({ v: PROTOCOL_VERSION, t: 'inspect', targetId: id });
+  }
+
+  // THE PIN'S OWN REFRESH, fired from the game-turn edge that clears the cache.
+  // Deliberately NOT routed through `requestInspect`: that one is about the
+  // pointer and would answer "the pointer is not on anything" for a pin that has
+  // outlived its hover, which is the pin's entire purpose. See the binding's
+  // header for what a pin that is never re-asked goes on displaying.
+  refreshPinnedInspect = () => {
+    const id = pinnedInspectId;
+    if (id === null) return;
+    socket.send({ v: PROTOCOL_VERSION, t: 'inspect', targetId: id });
+  };
+
+  /**
+   * The pointer is over `tile` (or over nothing at all).
+   *
+   * GUARD ONE OF DECISION (d): the comparison is BY ACTOR ID. A pointer walking
+   * from one side of a room to the other crosses a dozen tiles of bare floor, and
+   * a hover tracked by tile would re-arm the timer on every one of them. It also
+   * means the card does not flicker when the token under a resting pointer is
+   * redrawn by an unrelated frame.
+   *
+   * AND IT REDRAWS ONLY ON A GENUINE CHANGE. An unconditional `requestDraw` per
+   * mousemove would quietly convert this client's dirty-flag renderer into a
+   * 60 fps one, which the header at the top of this file forbids at length.
+   */
+  function noteHoveredActor(tile: TileXY | null): void {
+    const all = [...actors.values()];
+    // The LIVING body first, then anything at all: a corpse is still a thing
+    // worth naming, and `liveActorAt` mirrors the server's own "a dead body is
+    // scenery" rule rather than re-deciding it here.
+    const under =
+      tile === null
+        ? undefined
+        : (liveActorAt(all, tile) ?? all.find((actor) => actor.x === tile.x && actor.y === tile.y));
+    const id = under?.id ?? null;
+    if (id === hoveredActorId) return;
+
+    hoveredActorId = id;
+    // A PIN IS ABOUT ONE BODY. Finding a different one under the pointer ends it
+    // — otherwise the card would go on describing a husk while the player is
+    // clearly asking about the thing they have moved to.
+    pinnedInspectId = null;
+    pinnedInspectView = null;
+    inspectInFlight = null;
+
+    if (hoverTimer !== 0) {
+      window.clearTimeout(hoverTimer);
+      hoverTimer = 0;
+    }
+    if (id !== null) {
+      hoverTimer = window.setTimeout(() => {
+        hoverTimer = 0;
+        requestInspect();
+      }, HOVER_SETTLE_MS);
+    }
+    requestDraw();
+  }
+
   // --- the token menu ------------------------------------------------------
   // Right-click a detective, or a row in the party pane. Created here with every
   // other widget so no frame can arrive before it exists.
@@ -1565,6 +2150,15 @@ async function boot(): Promise<void> {
       // The cursor is kept: the player is aiming at a thing, and having their
       // aim moved because they got knocked back would be the UI taking the shot.
       if (targeting !== null && targeting.active()) targeting.refresh(targetingWorld());
+      // ═══ THE WALK TAKES ITS STEP HERE, AND NOWHERE ELSE ═══
+      //
+      // After `applyServerMessage`, so the board is settled and the machine is
+      // deciding from the world as of this frame rather than the last one; and
+      // BEFORE `syncBellTimer`, so a step that is going out this turn goes out
+      // before the countdown is re-armed around it. It is the one place every
+      // applied frame passes through, which is exactly what auto-commit needs:
+      // one step per turn, taken the instant the previous one is confirmed.
+      tickTravel();
       syncBellTimer();
       requestDraw();
       updateStatus();
@@ -1882,76 +2476,179 @@ async function boot(): Promise<void> {
   }
 
   /**
-   * The rows a right-click on `actorId` offers, or an empty list for "nothing to
-   * offer, leave the click alone".
+   * Open the menu for one classified target at a backbuffer point. False when
+   * there is nothing to offer, so the caller can fall back to right-click's older
+   * meaning.
    *
-   * ONE ITEM, ALWAYS, and which one is decided by two questions the frames
-   * already answer: are they in my party, and do I lead it. A disabled Kick is
-   * still shown to somebody who is not the leader — see `MenuItem.enabled`: a row
-   * that vanishes teaches nothing about why.
+   * ═══ ZERO ROWS IS A RESULT, AND RETURNING FALSE FOR IT IS LOAD-BEARING ═══
+   * It is what preserves right-click-to-cancel over a wall, and over yourself
+   * when you have no party to leave. ui/verbs.ts's header says the same thing
+   * from the other end.
+   *
+   * WHICH ACCESSOR THE MENU CARRIES IS THE DISAMBIGUATOR, and it is decided here
+   * rather than by the row: "Walk up to" (a husk) and "Travel here" (bare floor)
+   * are both `MapVerb.Travel`, and they differ only in whether the open menu
+   * answers `targetId()` or `targetTile()`.
    */
-  function menuItemsFor(actorId: string): MenuItem[] {
-    const ids = partyIds();
-    const isSelf = actorId === selfId;
-    const mine = ids.has(actorId);
+  function openVerbMenu(target: VerbTarget, px: number, py: number): boolean {
+    if (tokenMenu === null || selfId === null) return false;
 
-    if (isSelf) {
-      // Leaving is the only thing you can do to yourself, and only when there is
-      // somebody to leave. Alone, the menu has nothing to say and does not open.
-      return ids.size > 1
-        ? [{ action: PartyAction.Leave, label: 'Leave party', enabled: true }]
-        : [];
-    }
-    if (mine) {
-      return [
-        {
-          action: PartyAction.Kick,
-          label: 'Remove from party',
-          enabled: selfLeads(),
-        },
-      ];
-    }
-    return [{ action: PartyAction.Invite, label: 'Invite to party', enabled: true }];
-  }
+    const me = selfTile();
+    const at = target.kind === 'tile' ? target.tile : target.actor;
+    const menu = verbsFor({
+      target,
+      // From the local session's own id, never from a field on a frame.
+      selfId,
+      partyIds: partyIds(),
+      selfLeads: selfLeads(),
+      // Decides ONLY whether Attack is greyed. Chebyshev, because a diagonal
+      // step costs the same as an orthogonal one everywhere in this game.
+      adjacent: me !== null && chebyshev(me, at) === 1,
+    });
+    if (menu.items.length === 0) return false;
 
-  /**
-   * Open the token menu for one actor at a backbuffer point. False when there is
-   * nothing to offer, so the caller can fall back to right-click's older meaning.
-   */
-  function openTokenMenu(actorId: string, px: number, py: number): boolean {
-    if (tokenMenu === null) return false;
-    const items = menuItemsFor(actorId);
-    if (items.length === 0) return false;
-    const name =
-      actors.get(actorId)?.name ??
-      partyState?.members.find((member) => member.id === actorId)?.name ??
-      'detective';
     const { logicalW, logicalH } = renderer.metrics();
     tokenMenu.open({
       x: px,
       y: py,
-      title: name,
-      items,
+      title: menu.title,
+      items: menu.items,
       viewportW: logicalW,
       viewportH: logicalH,
-      targetId: actorId,
+      ...(target.kind === 'tile' ? { targetTile: target.tile } : { targetId: target.actor.id }),
     });
     return true;
   }
 
   /**
-   * The PLAYER standing on a tile, or null.
+   * The menu for a PARTY PANE ROW, which is always about a detective.
    *
-   * A DOWNED OR ERASED BODY STILL COUNTS. Inviting somebody who is on the floor
-   * is exactly when you most want to — they are about to need a party — and the
-   * body is what is under the cursor.
+   * It resolves the row's id to a body, and offers nothing when there is not one
+   * yet. That window is a race and a narrow one — `party_state` can land in the
+   * pump before the `joined` that describes the body — and the honest answer
+   * during it is silence rather than a menu about somebody the server has not
+   * described. Everything the rows depend on (their name, and whether they are
+   * you) comes off that body.
    */
-  function playerAt(tile: TileXY): ActorView | null {
-    for (const actor of actors.values()) {
-      if (actor.kind !== ActorKind.Player) continue;
-      if (actor.x === tile.x && actor.y === tile.y) return actor;
+  function openPartyRowMenu(actorId: string, px: number, py: number): boolean {
+    const actor = actors.get(actorId);
+    if (actor === undefined) return false;
+    return openVerbMenu({ kind: 'player', actor }, px, py);
+  }
+
+  /**
+   * WHAT IS ON THIS TILE, in the four kinds ui/verbs.ts asks about.
+   *
+   * THE CLASSIFICATION IS THE CALLER'S JOB and it is done ONCE, here. `hostile`
+   * is `isHostileBody` and the live body is `liveActorAt`, both from
+   * input/travel.ts, which mirror engine/actor.ts:724 and world.ts respectively —
+   * a second opinion about either question in this file would be the copy that
+   * drifts.
+   *
+   * A DOWNED OR ERASED DETECTIVE IS STILL A `player`, not a `body`, and that is
+   * deliberate: `alive` stays true while somebody is on the floor, and inviting
+   * the person bleeding out in front of you is exactly when you most want to —
+   * they are about to need a party. Only a genuine corpse (`alive` false) falls
+   * through to the look-at-it list.
+   */
+  function targetAt(tile: TileXY): VerbTarget {
+    const all = [...actors.values()];
+    const occupant =
+      liveActorAt(all, tile) ?? all.find((actor) => actor.x === tile.x && actor.y === tile.y);
+    if (occupant !== undefined) {
+      if (!occupant.alive) return { kind: 'body', actor: occupant };
+      return isHostileBody(occupant)
+        ? { kind: 'hostile', actor: occupant }
+        : { kind: 'player', actor: occupant };
     }
-    return null;
+    // `walkable` is exactly `travelTargetAllowed` and nothing else — the ONE
+    // named predicate the future "has this tile been seen" clause lands behind.
+    // Asking `canWalk` directly here would be the second site that still permits
+    // travel into unexplored dark on the day the first one stops.
+    return { kind: 'tile', tile, walkable: level !== null && travelTargetAllowed(level, tile) };
+  }
+
+  /**
+   * Do what a menu row says. The only place a picked row is turned into an act.
+   *
+   * A `switch` over the WIDENED union with no `default`, so the day a fifth
+   * `MapVerb` or a sixth `PartyAction` appears it breaks here at lint time rather
+   * than becoming a row that quietly does nothing. The two halves are disjoint by
+   * construction (contextmenu.ts says so), which is what makes the check possible.
+   */
+  function runMenuItem(item: MenuItem, targetId: string | null, targetTile: TileXY | null): void {
+    switch (item.action) {
+      case PartyAction.Leave:
+        // ═══ LEAVE KEEPS ITS null-targetId SPECIAL CASE ═══
+        // You leave a party, you do not leave a PERSON. A `leave` naming a
+        // target is refused as `bad_message`, and widening this union without
+        // carrying the exception across is exactly how that regression arrives.
+        sendParty(PartyAction.Leave, null);
+        return;
+      case PartyAction.Invite:
+      case PartyAction.Kick:
+      case PartyAction.Accept:
+      case PartyAction.Decline:
+        // THE GUARD BELONGS TO THE PARTY ARM ALONE. It used to wrap the whole
+        // dispatch, and left where it was it would silently swallow every ground
+        // row — a menu opened on bare floor has `targetId() === null` by
+        // construction, and Travel here / Point here would do nothing at all.
+        if (targetId === null) return;
+        sendParty(item.action, targetId);
+        return;
+
+      case MapVerb.Travel: {
+        // ONE ROW, TWO MEANINGS, TOLD APART BY WHICH TARGET IS SET. A tile is
+        // "travel here"; an actor is "walk up to", which stops one tile short and
+        // deliberately does NOT swing on arrival.
+        if (targetTile !== null) {
+          beginTravel(targetTile, false);
+          return;
+        }
+        const actor = targetId === null ? undefined : actors.get(targetId);
+        if (actor === undefined) return;
+        beginTravel({ x: actor.x, y: actor.y }, true);
+        return;
+      }
+      case MapVerb.Attack: {
+        // THERE IS NO ATTACK INTENT. Walking into an adjacent hostile IS the
+        // attack — the scheduler strikes the occupant before it consults terrain
+        // — so this is one `move` and nothing else.
+        const actor = targetId === null ? undefined : actors.get(targetId);
+        const me = selfTile();
+        if (actor === undefined || me === null) return;
+        // The sanctioned idiom: walk DIR_ORDER and compare `step()`, never a
+        // hand-rolled dx/dy table.
+        const dir = DIR_ORDER.find((candidate) => sameTile(step(me, candidate), actor));
+        if (dir === undefined) {
+          // They moved between the menu opening and the row being clicked. The
+          // row was enabled when it was drawn, so saying nothing here would be a
+          // click that visibly did nothing.
+          showNotice('too far to reach — step closer first');
+          return;
+        }
+        socket.send({ v: PROTOCOL_VERSION, t: 'move', dir });
+        return;
+      }
+      case MapVerb.Inspect: {
+        if (targetId === null) return;
+        // PINNED, so the card outlives the pointer leaving the token — that is
+        // the whole difference between this row and simply hovering. The answer
+        // lands in `case 'inspected'` and fills the pin in.
+        pinnedInspectId = targetId;
+        pinnedInspectView = inspectCache.get(targetId)?.view ?? null;
+        inspectInFlight = targetId;
+        socket.send({ v: PROTOCOL_VERSION, t: 'inspect', targetId });
+        requestDraw();
+        return;
+      }
+      case MapVerb.Point:
+        if (targetTile === null) return;
+        // The frame that has existed since M4 — shift+click's own verb, offered
+        // a second way for the player who does not know the modifier exists.
+        socket.send({ v: PROTOCOL_VERSION, t: 'point', x: targetTile.x, y: targetTile.y });
+        return;
+    }
   }
 
   // --- input ---------------------------------------------------------------
@@ -2008,13 +2705,21 @@ async function boot(): Promise<void> {
     onCancel: () => {
       sweep?.settle();
       // Escape backs out of ONE thing, in the order they were opened, so a
-      // single key never does two things at once: the token menu, then the
-      // targeting ring, then the armed revive, then a scrolled-back log, then
-      // the notice.
+      // single key never does two things at once: the token menu, then a walk in
+      // progress, then the targeting ring, then the armed revive, then a
+      // scrolled-back log, then the notice.
       //
       // THE MENU IS FIRST because it is the most recently opened and the most
       // modal-feeling: it sits over the map with the pointer already on it.
       if (tokenMenu?.close() === true) return;
+      // TRAVEL INTERRUPT (3), AND IT IS INSIDE THE CHAIN RATHER THAN BESIDE IT.
+      // Appending it after the chain would let one press stop a walk AND clear
+      // the notice, or worse, stop a walk that had already been stopped by the
+      // window-level listener below while leaving a targeting ring up. Above
+      // targeting because a walk is the more recent thing the player started —
+      // travel is begun with the mouse, and an aim that is open at the same time
+      // was opened before it.
+      if (cancelTravelIfActive()) return;
       if (targeting !== null && targeting.active()) {
         targeting.cancel();
         return;
@@ -2062,6 +2767,41 @@ async function boot(): Promise<void> {
       // deliberately knows nothing about panels.
       caseLog?.scroll(alternate ? LogLane.Margin : LogLane.Record, steps * SCROLL_STEP);
     },
+  });
+
+  // ═══ TRAVEL INTERRUPT (2): ANY KEY AT ALL STOPS THE WALK ═══
+  //
+  // AND IT IS NOT A `KeyHandlers` MEMBER, WHICH LOOKS LIKE AN OVERSIGHT AND IS
+  // NOT. `bindGameKeys` dispatches only keys it has a meaning for: keys.ts:348-351
+  // drops an unmapped key on the floor, and :297 drops EVERY key while a text
+  // entry has focus. So a rule phrased as "any keyboard input cancels travel" is
+  // literally unreachable through the keymap — q, w, e, Tab, F1 and every other
+  // unbound key would sail past while the player's token kept walking, which is
+  // the exact moment somebody reaches for a key they are not sure about.
+  //
+  // It carries the ONE exemption keys.ts makes, restated rather than imported
+  // because `isTextEntry` is module-private there: a key typed into the command
+  // line is speech, not input, and travelling while saying "on my way" must not
+  // stop the walk mid-sentence. The four lines are a copy, and a copy that drifts
+  // costs a cancelled walk rather than a wrong frame.
+  //
+  // REGISTERED AFTER `bindGameKeys`, AND THAT ORDER IS LOAD-BEARING. Listeners on
+  // one target fire in registration order, so Escape reaches the ordered cancel
+  // chain above with the walk STILL RUNNING and is consumed there by
+  // `cancelTravelIfActive`. Registered first, this would stop the walk and then
+  // let the same press also cancel an aim — one key doing two things, which is
+  // the one thing that chain exists to prevent.
+  window.addEventListener('keydown', (event: KeyboardEvent) => {
+    const focus = event.target;
+    if (focus instanceof HTMLElement) {
+      if (focus.isContentEditable) return;
+      const tag = focus.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    }
+    // NOTHING ELSE. Not `preventDefault`, not a sweep settle, not a notice: this
+    // listener runs beside `bindGameKeys` on the same event, and anything it did
+    // to the key would be a second opinion about a key the keymap owns.
+    cancelTravel();
   });
 
   // --- the mouse -----------------------------------------------------------
@@ -2118,6 +2858,10 @@ async function boot(): Promise<void> {
     // plate. Both are cosmetic, and both report whether anything changed so an
     // idle mouse crossing the canvas cannot queue a draw per pixel.
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
+    // THE CARD'S ANCHOR, kept up to date on every move even when nothing is
+    // hovered: it is where the card WOULD open, and a stale one would put the
+    // next card wherever the pointer was when it last crossed a token.
+    pointerPoint = point;
     if (point !== null) {
       tokenMenu?.hoverAt(point.x, point.y);
       const { logicalW, logicalH } = renderer.metrics();
@@ -2132,7 +2876,19 @@ async function boot(): Promise<void> {
     // PANEL, not a tile. Letting it drag the aim while it crosses one would move
     // the cursor to whatever happens to be under the HUD on the way there.
     if (slot === -1 && !overPanel(event.clientX, event.clientY)) {
-      targeting?.hover(renderer.tileAtClient(event.clientX, event.clientY));
+      const tile = renderer.tileAtClient(event.clientX, event.clientY);
+      targeting?.hover(tile);
+      // THE HOVER CARD, from the same tile and inside the same gate. It is
+      // deliberately NOT given `point`: `backbufferPoint` and `tileAtClient` both
+      // return `TileXY`, so passing pixels where tiles are expected typechecks
+      // cleanly and lands about 32x off. `point` is pixels, `tile` is tiles, and
+      // this file keeps those two names apart everywhere for that reason.
+      noteHoveredActor(tile);
+    } else {
+      // Onto a panel. Whatever the card was describing is no longer under the
+      // pointer, and a card left painted over the panel that swallowed the
+      // pointer is the stale-tooltip bug in its most visible form.
+      noteHoveredActor(null);
     }
   });
 
@@ -2156,12 +2912,32 @@ async function boot(): Promise<void> {
   );
 
   canvas.addEventListener('mouseleave', () => {
+    // ═══ THE CARD IS DROPPED FIRST, ABOVE THE HOTBAR GUARD ═══
+    //
+    // The early return below fires on exactly the path a tooltip is most likely
+    // to be up: the pointer was over the MAP (so `hoveredSlot` is already -1) and
+    // left the canvas. Clearing after that guard would leave the card painted
+    // forever, over a canvas the pointer is no longer on, until something else
+    // happened to change the hover.
+    //
+    // The pin goes with it. A pinned card that survived the pointer leaving the
+    // window would be the one surface here with no way to dismiss it.
+    pointerPoint = null;
+    noteHoveredActor(null);
+
     if (hoveredSlot === -1) return;
     hoveredSlot = -1;
     requestDraw();
   });
 
   canvas.addEventListener('mousedown', (event) => {
+    // ═══ TRAVEL INTERRUPT (1), AND IT IS THE VERY FIRST LINE ON PURPOSE ═══
+    // Before the sweep settle, before the menu branch, before every early return
+    // below it. A click that is later swallowed by a panel, by an open menu or by
+    // the erased plate STILL means "stop what you are doing" — the player reached
+    // for the mouse, and a walk that carried on because the click happened to
+    // land on the Case Log would be the most confusing possible outcome.
+    cancelTravel();
     sweep?.settle();
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
     const { logicalW, logicalH } = renderer.metrics();
@@ -2174,16 +2950,18 @@ async function boot(): Promise<void> {
     // so "Kick" as a non-leader cannot fall through and ping the tile behind it.
     if (tokenMenu !== null && tokenMenu.visible()) {
       event.preventDefault();
+      // BOTH ACCESSORS ARE READ BEFORE THE CLOSE, because closing forgets them,
+      // and which of the two is set is how `runMenuItem` tells "walk up to that
+      // husk" from "travel to that patch of floor" — the same row carries both.
       const targetId = tokenMenu.targetId();
+      const targetTile = tokenMenu.targetTile();
       const item = point === null ? null : tokenMenu.itemAt(point.x, point.y);
       tokenMenu.close();
-      if (item !== null && targetId !== null) {
-        sendParty(item.action, item.action === PartyAction.Leave ? null : targetId);
-      }
+      if (item !== null) runMenuItem(item, targetId, targetTile);
       return;
     }
 
-    // ═══ 2. RIGHT-CLICK ON A DETECTIVE IS THE PARTY GESTURE ═══
+    // ═══ 2. RIGHT-CLICK IS THE VERB MENU, ON WHATEVER IS UNDER IT ═══
     //
     // THE TILE COMES FROM `renderer.tileAtClient` AND NOWHERE ELSE. Undoing the
     // letterbox, the integer scale and the camera clamp is render/canvas.ts's
@@ -2197,6 +2975,23 @@ async function boot(): Promise<void> {
     // the `contextmenu` listener below.
     if (event.button !== 0) {
       event.preventDefault();
+
+      // ═══ AN OPEN AIM TAKES THE CLICK, AND OPENS NOTHING ═══
+      //
+      // FIRST, unconditionally, and this one rule is what keeps
+      // right-click-to-cancel alive now that the menu has something to offer on
+      // very nearly every tile. It used to be preserved by accident: the old
+      // menu found rows only on a detective, so a right-click anywhere else fell
+      // through to the cancel below. `verbsFor` answers with rows for a husk, a
+      // corpse and bare floor as well — so without this the ring could no longer
+      // be dismissed with the mouse at all, and the bug would present as "the
+      // targeting ring is stuck", miles from anything anyone would think to
+      // look at.
+      if (targeting !== null && targeting.active()) {
+        targeting.cancel();
+        return;
+      }
+
       if (point !== null) {
         // A row in the party pane offers the same menu as the token does. It is
         // the only way to reach somebody who is off screen — which is most of
@@ -2206,15 +3001,19 @@ async function boot(): Promise<void> {
             ? null
             : partyPaneHitAt(layout.party, layout.pane, point.x, point.y);
         if (paneHit !== null && paneHit.kind === 'member') {
-          if (openTokenMenu(paneHit.id, point.x, point.y)) return;
+          if (openPartyRowMenu(paneHit.id, point.x, point.y)) return;
         } else if (paneHit === null && !overPanel(event.clientX, event.clientY)) {
+          // THE TILE COMES FROM `tileAtClient` AND THE MENU'S POSITION FROM
+          // `point`. Two different quantities from two different functions that
+          // share a return type: one says which tile, the other says where on the
+          // backbuffer to draw the box.
           const tile = renderer.tileAtClient(event.clientX, event.clientY);
-          const target = tile === null ? null : playerAt(tile);
-          if (target !== null && openTokenMenu(target.id, point.x, point.y)) return;
+          if (tile !== null && openVerbMenu(targetAt(tile), point.x, point.y)) return;
         }
       }
-      if (targeting !== null && targeting.active()) targeting.cancel();
-      else clearNotice();
+      // Nothing to offer — a wall, the letterbox, or yourself with no party to
+      // leave. Right-click keeps its oldest meaning.
+      clearNotice();
       return;
     }
 
@@ -2251,7 +3050,7 @@ async function boot(): Promise<void> {
             sendParty(PartyAction.Decline, hit.fromId);
             return;
           case 'member':
-            openTokenMenu(hit.id, point.x, point.y);
+            openPartyRowMenu(hit.id, point.x, point.y);
             return;
         }
       }
@@ -2283,12 +3082,65 @@ async function boot(): Promise<void> {
       return;
     }
 
-    if (targeting === null || !targeting.active()) return;
+    // ═══ 5. AN OPEN AIM STILL TAKES THE PLAIN CLICK ═══
+    //
+    // Written as a positive block rather than the bare guard it used to be, so
+    // that the branch below can follow it: targeting keeps priority, and a player
+    // who is aiming a talent has said what this click is for.
+    if (targeting !== null && targeting.active()) {
+      event.preventDefault();
+      // Aim at what was clicked, then fire it — one gesture, so a click on a
+      // distant tile does not require a hover first.
+      targeting.hover(renderer.tileAtClient(event.clientX, event.clientY));
+      targeting.confirm();
+      return;
+    }
+
+    // ═══ 6. THE PLAIN LEFT-CLICK: HIT THAT, OR WALK THERE ═══
+    //
+    // The LAST branch in this handler, and it has to be: every branch above
+    // returns, and each one is a surface that overlays the map. Moved any higher
+    // it would eat shift+click's `point`, or let a click meant for the Case Log
+    // walk the whole party across a room.
+    //
+    // THE DECISION IS NOT MADE HERE. `mouseIntentAt` is a pure function over a
+    // snapshot, tested in test/client/mouseintent.test.ts, and every rule it
+    // knows — an adjacent hostile is a bump, an ally is not, a corpse does not
+    // block, a wall is a sentence rather than a walk — is one this file must not
+    // acquire a second opinion about.
     event.preventDefault();
-    // Aim at what was clicked, then fire it — one gesture, so a click on a
-    // distant tile does not require a hover first.
-    targeting.hover(renderer.tileAtClient(event.clientX, event.clientY));
-    targeting.confirm();
+    // `tileAtClient`, NEVER `backbufferPoint`: the two share a return type and
+    // differ by a factor of the tile size. And it is null-checked, because
+    // `overPanel` answers FALSE on the letterbox — "not over a panel" is not the
+    // same fact as "over a tile".
+    const tile = renderer.tileAtClient(event.clientX, event.clientY);
+    if (tile === null) return;
+
+    const me = selfTile();
+    // Decision (f): A CLICK ON YOUR OWN TOKEN DOES NOTHING AT ALL, not even a
+    // sentence. mouseintent.ts supplies one for callers that want it; this one
+    // does not, because the player is looking at the tile they are standing on
+    // and does not need to be told so.
+    if (me !== null && sameTile(me, tile)) return;
+
+    const intent = mouseIntentAt({ self: me, tile, actors: [...actors.values()], level });
+    switch (intent.kind) {
+      case MouseIntentKind.Bump:
+        // ONE `move`, and nothing else. Walking into an adjacent hostile IS the
+        // attack (there is no attack intent on the wire), and no `commit`
+        // follows it for the reason `tickTravel` sets out at length.
+        socket.send({ v: PROTOCOL_VERSION, t: 'move', dir: intent.dir });
+        return;
+      case MouseIntentKind.Travel:
+        beginTravel(intent.to, intent.stopShort);
+        return;
+      case MouseIntentKind.None:
+        // ALWAYS A SENTENCE. A click that silently does nothing is
+        // indistinguishable from one the game never received, which is the M3
+        // rule at the top of this file applied to the mouse.
+        showNotice(intent.reason);
+        return;
+    }
   });
 
   // THE BROWSER'S OWN MENU IS SUPPRESSED ON THE CANVAS AND NOWHERE ELSE. The
@@ -2358,6 +3210,16 @@ function applyServerMessage(msg: ServerMsg): void {
       // A menu is a question about somebody who may not be on this floor any
       // more. Closing it is cheaper than answering that.
       tokenMenu?.close();
+      // TRAVEL INTERRUPT (7): THE BOARD WAS REPLACED. A welcome is the reconnect
+      // path and the floor reset after a wipe, so the route is a plan across a
+      // map that no longer exists — and the tile it ends on may be a wall now.
+      // No sentence: the player did not do anything wrong and has a whole new
+      // floor to look at.
+      cancelTravel();
+      // ...and every hover card with it. The answers are stamped with a game
+      // turn from the old session, and the ids they are keyed by may belong to
+      // somebody else entirely on the new floor.
+      forgetInspections();
       pings = [];
       reviveArmed = false;
       caseLog?.clear();
@@ -2366,6 +3228,11 @@ function applyServerMessage(msg: ServerMsg): void {
     case 'state':
       // The dumb recovery path: a full list replaces everything known.
       replaceActors(msg.actors);
+      // TRAVEL INTERRUPT (7), the other half. A resync means this client and the
+      // server had drifted, so every tile of the route was computed from a board
+      // that was wrong. Silently, for the same reason as `welcome`.
+      cancelTravel();
+      forgetInspections();
       break;
     case 'moved': {
       const actor = actors.get(msg.id);
@@ -2376,6 +3243,11 @@ function applyServerMessage(msg: ServerMsg): void {
       }
       // Absolute position from the server, never a local delta.
       actors.set(msg.id, { ...actor, x: msg.x, y: msg.y });
+      // THE STEP LANDED — or somebody put us somewhere we did not ask to be.
+      // The machine tells those apart; all this has to do is be the FIRST of the
+      // two observations, which the wire guarantees by dispatching `moved`
+      // before `turn` in the same pump.
+      if (msg.id === selfId) onSelfMoved(msg.x, msg.y);
       break;
     }
     case 'joined':
@@ -2388,8 +3260,43 @@ function applyServerMessage(msg: ServerMsg): void {
       actors.delete(msg.id);
       break;
     case 'turn': {
+      // THE HOVER CARD'S CACHE IS A ONE-TURN CACHE, invalidated wholesale here
+      // rather than entry by entry. Hit points, hit chances and blocked reasons
+      // are all answers about one game turn; keeping them across an edge would
+      // let a card state, confidently and in bold, a number that stopped being
+      // true while the pointer sat still.
+      // A PINNED CARD IS INVALIDATED BY THE SAME EDGE, and it has to be done
+      // explicitly: `tooltipView()` consults the pin BEFORE the cache, so
+      // clearing the cache alone leaves the pin shadowing the whole rule. It is
+      // RE-ASKED rather than dropped so the pin keeps outliving the pointer —
+      // and a `view: null` reply retires it, which is what makes the card vanish
+      // when its subject dies or the viewer loses sight of it.
+      if (msg.gameTurn !== turn?.gameTurn) {
+        inspectCache.clear();
+        refreshPinnedInspect();
+      }
       turn = msg;
       bellEndsAt = msg.bellMs === null ? null : Date.now() + msg.bellMs;
+      // ═══ EVERY `turn` FRAME REFRESHES THE WALK'S HOSTILE SNAPSHOT ═══
+      //
+      // Fed on ALL of them, including the many that are somebody else's pump —
+      // a monster that walked into range during another player's turn is exactly
+      // as dangerous as one that walked in during ours, and there is nothing here
+      // that needs a game-turn edge. A REFUSED MOVE IS NOT DETECTED HERE and
+      // never was detectable here: the server unicasts the refund as an `error`
+      // (gateway.ts's `pumpAndBroadcast`), which `case 'error'` already acts on.
+      // The interrupt is the machine's own; it has cancelled itself by the time
+      // it answers, so all that is owed here is the sentence.
+      //
+      // `onRefusal` rather than `showNotice`: this function is module scope and
+      // the notice's timer lives inside boot().
+      switch (travel?.observeTurn(travelWorld()) ?? TravelObservation.Continue) {
+        case TravelObservation.Hostile:
+          onRefusal('something is moving nearby — travel stopped');
+          break;
+        case TravelObservation.Continue:
+          break;
+      }
       // THE COMBAT CROSSING, ONCE PER CROSSING. `sync` compares `inCombat`
       // against the last frame and answers null for every one of the many turn
       // frames that do not change it — a banner that re-fired on each frame
@@ -2505,6 +3412,32 @@ function applyServerMessage(msg: ServerMsg): void {
       addPing(msg.id, msg.x, msg.y);
       break;
 
+    case 'inspected':
+      // THE ANSWER TO ONE HOVER, MATCHED BY TARGET AND NEVER BY ARRIVAL ORDER.
+      // Nothing on this wire carries a correlation id, so `targetId` is echoed
+      // from the request — verbatim, even for an id that does not exist — and it
+      // is the only thing that can join an answer to its question. The painter
+      // reads `hoveredActorId` and the pin, so a reply about somebody the pointer
+      // has already left is simply never drawn.
+      //
+      // `view: null` IS A REAL ANSWER AND IT IS CACHED LIKE ANY OTHER. It means
+      // "no such actor" and "you cannot see it" and "that monster is dead", all
+      // three, and this client must not try to tell them apart — the sameness is
+      // the security property (protocol.ts's `InspectedMsg` calls the alternative
+      // an id oracle), so there is one behaviour for it: draw nothing.
+      if (inspectInFlight === msg.targetId) inspectInFlight = null;
+      inspectCache.set(msg.targetId, { view: msg.view, gameTurn: turn?.gameTurn ?? -1 });
+      if (pinnedInspectId === msg.targetId) {
+        pinnedInspectView = msg.view;
+        // A NULL ANSWER RETIRES THE PIN ENTIRELY, not just its view. The server
+        // has stopped disclosing anything about that body — it died, it went out
+        // of sight, or it is gone — and there is nothing to re-ask about, so
+        // going on asking once a turn forever would be a poll for an answer that
+        // cannot change back into anything this card may draw.
+        if (msg.view === null) pinnedInspectId = null;
+      }
+      break;
+
     case 'pong':
       // Liveness only; the socket's watchdog already noted the frame's arrival.
       break;
@@ -2522,6 +3455,19 @@ function applyServerMessage(msg: ServerMsg): void {
       // talent is one keypress, and leaving a ring up after a "too close" makes
       // it look as though the shot is still pending.
       targeting?.cancel();
+      // TRAVEL INTERRUPT (4): ANY REFUSAL AT ALL, AND INTERRUPT (10) BESIDES.
+      //
+      // The walk is the only thing in this client that sends frames the player
+      // did not personally press a key for, so a refusal arriving while a walk is
+      // running is almost certainly the walk's own move — including the one the
+      // server now unicasts when the scheduler REFUNDS a move at resolution
+      // (gateway.ts's `pumpAndBroadcast`), which is the only frame that will ever
+      // mention that refund. It says nothing at all when nothing was travelling.
+      //
+      // THE SENTENCE IS THE CODE'S, NOT THE WALK'S: see `travelStopText`. A rate
+      // limit or a protocol fault stopped the walk with nothing whatsoever wrong
+      // with the route, and "the way was refused" throws that diagnosis away.
+      cancelTravel(travelStopText(msg.code));
       console.warn('server rejected a message', msg);
       break;
   }

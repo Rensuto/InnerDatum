@@ -618,3 +618,71 @@ describe('submitRespawn', () => {
     expect(result?.ok === false ? result.reason : '').toContain('survival');
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE REFUND, AND THE ONE CHANNEL IT IS ALLOWED OUT OF THE ENGINE ON
+// ---------------------------------------------------------------------------
+
+/**
+ * A move that is legal when the packet lands and illegal when it resolves.
+ *
+ * This is the case the refund rule exists for, and until `PumpResult.refusals`
+ * it was invisible from outside: `toWireEvents` drops `refunded` (it has nothing
+ * to draw), the refund spends no energy so no clock advances, and every term of
+ * the gateway's `turnKey` is therefore byte-identical — `broadcastTurnIfChanged`
+ * suppresses the frame. The owner of the intent was told LITERALLY NOTHING, and
+ * a travelling client waiting for its `moved` wedged forever with the whole
+ * phase-locked party behind it.
+ */
+describe('pump reports the intents it refunded', () => {
+  function twoPlayers(seed: string): {
+    readonly world: World;
+    readonly engine: ReturnType<typeof createTurnEngine>;
+  } {
+    const world = createWorld(seed);
+    world.level.tiles.fill(TileCode.FLOOR);
+
+    const walker = world.addPlayer('actor_walker', 'Walker');
+    walker.x = 10;
+    walker.y = 10;
+    // AN ALLY, NOT A MONSTER. Stepping into a hostile is a bump-attack and
+    // resolves perfectly well; stepping onto a friend is `MoveBlock.Occupied`,
+    // which is exactly what a traveller hits when somebody lands on its next
+    // tile during the step's flight time.
+    const blocker = world.addPlayer('actor_blocker', 'Blocker');
+    blocker.x = 11;
+    blocker.y = 10;
+
+    const engine = createTurnEngine({ world });
+    engine.join('actor_walker');
+    engine.join('actor_blocker');
+    return { world, engine };
+  }
+
+  it('surfaces a move refused at RESOLUTION, which nothing else on the wire mentions', () => {
+    const { engine } = twoPlayers('refund-surfaced');
+
+    // ACCEPTED AT SUBMISSION: `submitMove` validates only that the actor is
+    // alive. Terrain and occupancy are decided later, in `resolveIntent`.
+    expect(engine.submitMove('actor_walker', 'e').ok).toBe(true);
+
+    const result = engine.pump();
+
+    expect(result.refusals).toEqual([{ id: 'actor_walker', reason: 'occupied' }]);
+    // ...and the drawable lane says nothing whatsoever, which is correct and is
+    // also the whole problem `refusals` solves.
+    expect(result.playerEvents).toEqual([]);
+  });
+
+  it('is empty on a pump where nothing was taken back', () => {
+    // A refusal channel that fired on quiet turns would be worse than none: the
+    // client cancels a walk on it.
+    const { engine } = twoPlayers('refund-quiet');
+
+    expect(engine.submitMove('actor_walker', 'w').ok).toBe(true);
+    const result = engine.pump();
+
+    expect(result.refusals).toEqual([]);
+    expect(result.playerEvents.some((ev) => ev.k === 'move')).toBe(true);
+  });
+});

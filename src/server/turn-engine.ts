@@ -1373,11 +1373,25 @@ export function createTurnEngine(opts: TurnEngineOptions): TurnEngine & { barrie
         else playerEvents.push(event);
       }
 
+      // ═══ THE ONE BOOKKEEPING EVENT THAT HAS TO ESCAPE THIS FILE ═══
+      // `toWireEvents` drops `refunded` and should keep dropping it: a refund
+      // has nothing to draw and it is nobody's business but the owner's. But it
+      // is also the ONLY record that a submitted intent did not happen, and the
+      // refund path spends no energy — so no clock moves, `turnKey` is unchanged
+      // and the gateway's turn frame is suppressed as a duplicate. Drop it here
+      // as well and the actor that owes the turn is told literally nothing.
+      // See `PumpResult.refusals`; the gateway unicasts these to their owners.
+      const refusals: { readonly id: string; readonly reason: string }[] = [];
+      for (const event of result.events) {
+        if (event.t === 'refunded') refusals.push({ id: event.id, reason: event.reason });
+      }
+
       return {
         status: result.status,
         turn: turnState(),
         playerEvents: toWireEvents(world, playerEvents, 'player'),
         sweep: toWireEvents(world, sweepEvents, 'sweep'),
+        refusals,
       };
     },
 
