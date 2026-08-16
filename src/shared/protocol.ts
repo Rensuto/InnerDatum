@@ -669,10 +669,18 @@ export type ResourceView = {
   /**
    * Draw PIPS, not a bar.
    *
-   * game-design.md § 2 is emphatic that Reagents are "a countable stock of 0-8
-   * that refills on kills and at stairs — not a regenerating bar. Every cast is
-   * a discrete decision." A bar makes 3-of-8 look like 37% of something
-   * continuous and quietly deletes the Alchemist's whole read.
+   * ═══ THE FLAG DID NOT CHANGE. ITS JUSTIFICATION DID. ═══
+   * This used to be argued from Reagents never refilling at all. They now do —
+   * one WHOLE vial on a slow timer, on top of kills and stairs (game-design.md
+   * § 2) — and the flag is unchanged, because it never meant "static". It means
+   * COUNTABLE: `current` is an integer for a discrete kind at every moment the
+   * wire can observe, guaranteed by where the server keeps the remainder rather
+   * than by the pool standing still.
+   *
+   * Countability is the whole read. A bar answers "how full am I?"; pips answer
+   * "how many casts do I have left?", and 3-of-8 drawn as a bar reads as 37% of
+   * something continuous that will top itself up on its own. A pool that refills
+   * one countable unit at a time is still eight discrete decisions.
    *
    * On the wire rather than derived from `kind` in the renderer, because
    * "which kinds are countable" is authored data, and a client-side copy of it

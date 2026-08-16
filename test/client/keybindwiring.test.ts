@@ -119,11 +119,48 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
     // the menu into a modal without touching a single line that says "modal",
     // and the failure would be five people waiting at a barrier on somebody who
     // opened a menu — a CRITICAL this codebase has shipped once already.
-    const menuLine = /menu: menuOpen \? escapeMenuRect\(\{([^}]*)\}\) : null/.exec(CODE);
-    expect(menuLine, 'hudLayout still derives `menu`').not.toBeNull();
-    const args = menuLine?.[1] ?? '';
-    expect(args).toContain('top: band.top');
-    expect(args).toContain('bottom: band.bottom');
+    //
+    // ═══════════════════════════════════════════════════════════════════════
+    // v12: THE SHAPE CHANGED AND THE ASSERTION WAS UPDATED DELIBERATELY.
+    // ═══════════════════════════════════════════════════════════════════════
+    // This used to match `menu: menuOpen ? escapeMenuRect({…}) : null` as one
+    // expression. Draggable panels put `movePanel` between the helper and the
+    // field — it adds the player's stored offset and re-clamps the result into
+    // the SAME band — so the ternary is now that call's second argument. The
+    // regex was widened rather than deleted, and it still asserts the whole of
+    // the original property: the rect comes from `escapeMenuRect`, and it is
+    // told `band.top` and `band.bottom` rather than the viewport.
+    //
+    // AND IT NOW ASSERTS THE BAND TWICE OVER, which is the stronger statement.
+    // `movePanel`'s own third argument is `band`, so a pass that clamped a
+    // dragged menu to the VIEWPORT instead — letting a player park it over the
+    // hotbar and hide the four talent keys, which is the panel-not-modal promise
+    // broken by a gesture rather than by a code change — fails here too.
+    // ═══════════════════════════════════════════════════════════════════════
+    // AND IT MOVED AGAIN, FOR A REASON, AND IS ASSERTED IN BOTH HALVES.
+    // ═══════════════════════════════════════════════════════════════════════
+    // The unmoved rect now comes from `unmovedPanelRect`, because a RELEASE has
+    // to settle the stored offset against exactly the rect the painter drew
+    // from, and two producers of that rect is how a settle banks a position that
+    // was never on screen. So the property is asserted where each half of it now
+    // lives: `hudLayout` still routes the field through `movePanel` with the
+    // band, and `unmovedPanelRect` still builds the menu's rect from
+    // `band.top`/`band.bottom` rather than from the viewport. A pass that
+    // "tidied" either half into `escapeMenuRect(width, height)` still fails.
+    const menuLine =
+      /menu: movePanel\(\s*DraggablePanel\.Menu,\s*unmovedPanelRect\(DraggablePanel\.Menu, width, height, band\),\s*band,\s*width,\s*\)/.exec(
+        CODE,
+      );
+    expect(menuLine, 'hudLayout still derives `menu` through movePanel').not.toBeNull();
+
+    const producer = /function unmovedPanelRect\([\s\S]*?\n}/.exec(CODE)?.[0] ?? '';
+    expect(producer, 'unmovedPanelRect exists').not.toBe('');
+    // The options object every case is handed, and it is the BAND.
+    const options = /const options = \{([^}]*)\}/.exec(producer)?.[1] ?? '';
+    expect(options).toContain('top: band.top');
+    expect(options).toContain('bottom: band.bottom');
+    // ...and the menu's case is still `escapeMenuRect` of exactly that.
+    expect(producer).toContain('return menuOpen ? escapeMenuRect(options) : null;');
 
     // ...and the picker, one line below it, still is not derived that way — so
     // this test fails if somebody makes the two the same in EITHER direction.

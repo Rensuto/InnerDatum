@@ -267,11 +267,22 @@ export const INSPECTOR: ClassDef = {
 /**
  * The squishiest body, the only AoE, and the only heal in the game.
  *
- * Reagents are a COUNTABLE STOCK of 0-8 that refills on kills and at stairs and
- * NEVER regenerates (`RESOURCE_RULES` in engine/talents.ts encodes that as
- * `regenPerTurn: 0`, in one place, so it cannot quietly become a bar). Starting
- * full is deliberate: you walked in carrying eight vials, and the first fight
- * should be about spending them rather than about waiting for them.
+ * Reagents are a COUNTABLE STOCK of 0-8. It refills one per kill, tops up at
+ * stairs, and trickles back one WHOLE vial every `REAGENT_REGEN_EVERY_TURNS`
+ * (engine/talents.ts). Starting full is deliberate: you walked in carrying eight
+ * vials, and the first fight should be about spending them rather than about
+ * waiting for them.
+ *
+ * ═══ WHAT KEEPS IT COUNTABLE IS THE COUNTER, NOT A ZERO ═══
+ * This paragraph used to argue from `regenPerTurn: 0` — "in one place, so it
+ * cannot quietly become a bar". That guarantee is gone and the replacement is
+ * stronger: the timed refill banks turns on `ResourcePool.regenCounter` and
+ * grants ONE WHOLE UNIT, so `pool.value` IS AN INTEGER AT EVERY OBSERVABLE
+ * MOMENT. A zero could be edited to 0.5 by anyone in one line; an integer
+ * counter cannot express a fraction at all. That is what actually keeps the pips
+ * honest, and it is why the trickle does not make her a mana class — one vial
+ * every twelve turns is still eight discrete decisions, just with a floor under
+ * them.
  *
  * `increase: { fire: 10 }` is the Ashwick specialisation — an ADDITIVE
  * percentage inside the projector (damage_types.lua:270), which is why it is
@@ -565,9 +576,18 @@ export function loadoutViewFor(definition: ClassDef): readonly LoadoutTalent[] {
  * `discrete` is on the wire rather than derived from `kind` in the renderer,
  * because "which kinds are countable" is authored data and a client-side copy
  * of it is exactly the table that will be missing the Enforcer's Shells at M5.
- * It is read from `RESOURCE_RULES` — the same table that pins Reagents at
- * `regenPerTurn: 0` — so a resource cannot be a bar in one place and pips in
- * another.
+ * It is read from `RESOURCE_RULES`, the one table that answers the question, so
+ * a resource cannot be a bar in one place and pips in another.
+ *
+ * ═══ `current` IS AN INTEGER FOR A DISCRETE KIND, BY CONSTRUCTION ═══
+ * That used to be guaranteed by Reagents carrying `regenPerTurn: 0`. It is now
+ * guaranteed by where the REMAINDER lives: a discrete kind refills through
+ * `regenEvery`, which banks whole turns on `ResourcePool.regenCounter` and hands
+ * the pool exactly 1, so nothing fractional ever reaches this line. That matters
+ * here specifically, because this is the seam: `pipCount` floors and the
+ * character sheet rounds, so a pool holding 3.6 would draw three pips beside the
+ * text "4/8" while a 4-cost talent answered `no_resource`. Two readers
+ * disagreeing about one number, invisible until somebody screenshots it.
  */
 export function toResourceView(sheet: TalentSheet): ResourceView {
   return {

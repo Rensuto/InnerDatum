@@ -3,7 +3,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import {
+  INVENTORY_DRAG_PANEL,
   INVENTORY_PANEL_CARRIED_MAX,
   INVENTORY_PANEL_COLS,
   INVENTORY_PANEL_MARGIN,
@@ -14,6 +16,7 @@ import {
   InventoryTab,
   drawInventoryPanel,
   focusForHit,
+  inventoryPanelDragAt,
   inventoryPanelGeometry,
   inventoryPanelHitAt,
   inventoryPanelRect,
@@ -21,6 +24,7 @@ import {
 } from '../../src/client/ui/inventory.ts';
 import { ItemTier, SLOT_ORDER } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
+import type { SpriteSource } from '../../src/client/render/assets.ts';
 import type {
   InventoryFocus,
   InventoryPanelView,
@@ -46,8 +50,17 @@ import type { CarriedItemView, InventoryMsg, ItemView, Slot } from '../../src/sh
  *                   and the bug only shows up on somebody else's window
  *                   (ui/partypanel.ts:93-99).
  *   THE GRID        four columns, decided by the art: `ui_item_frame_*` is 72x72
- *                   and 320 - 16 of inset holds exactly four of them. Seven worn
- *                   slots are two rows and twelve carried are three.
+ *                   and 320 - 16 of inset holds exactly four of them. Twelve
+ *                   carried are three flat rows; the seven worn slots are a DOLL,
+ *                   placed at their own (col, row) on a 4x3 grid around a
+ *                   portrait, and the arrangement is asserted position by
+ *                   position because it is the one thing about this screen that
+ *                   is a decision rather than arithmetic.
+ *   THE BUDGET      three doll rows plus a one-line strip fits the panel at the
+ *                   480-pixel logical height render/canvas.ts floors at, and a
+ *                   fourth row does not. If that ever stops being true the
+ *                   existing drop policy resolves it SILENTLY, by shedding the
+ *                   FEET slot off the bottom of the doll.
  *   THE STRIP       every number in it is a STRING the server formatted. The
  *                   client cannot compute one — eslint blocks the three shared/
  *                   modules that would let it — and a client that subtracted two
@@ -123,8 +136,23 @@ function view(over: Partial<InventoryPanelView> = {}): InventoryPanelView {
   return { inventory: frame(), tab: InventoryTab.Equipped, focus: null, ...over };
 }
 
+/**
+ * Every row that holds cells, in reading order — the BAG's flat rows and the
+ * DOLL's placed grid alike. Both carry `cells`; only the doll carries `places`.
+ */
 function cellRows(rows: readonly InventoryRow[]) {
-  return rows.flatMap((row) => (row.kind === InventoryRowKind.Cells ? [row] : []));
+  return rows.flatMap((row) =>
+    row.kind === InventoryRowKind.Cells || row.kind === InventoryRowKind.Doll ? [row] : [],
+  );
+}
+
+/** The doll row, or a throw. There is exactly one on the Equipped tab. */
+function dollOf(rows: readonly InventoryRow[]) {
+  const row = rows.find((entry) => entry.kind === InventoryRowKind.Doll);
+  if (row === undefined || row.kind !== InventoryRowKind.Doll) {
+    throw new Error('unreachable: the Equipped tab is a doll');
+  }
+  return row;
 }
 
 function detailOf(rows: readonly InventoryRow[]) {
@@ -133,6 +161,22 @@ function detailOf(rows: readonly InventoryRow[]) {
     throw new Error('unreachable: every panel carries a detail row');
   }
   return row;
+}
+
+type Box = { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
+
+/**
+ * Do two placed boxes share a pixel?
+ *
+ * THROWS on a missing box rather than answering false. A doll cell that was never
+ * placed would otherwise make every overlap assertion pass by vacuity, which is
+ * the failure mode a geometry test can least afford.
+ */
+function overlaps(a: Box | null | undefined, b: Box | null | undefined): boolean {
+  if (a === null || a === undefined || b === null || b === undefined) {
+    throw new Error('unreachable: both boxes must have been placed');
+  }
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
 /** A band that comfortably holds the whole panel, strip included. */
@@ -189,15 +233,65 @@ describe('inventoryPanelRows', () => {
     expect(first.icon).toBe('item_watchmans_coat');
   });
 
-  it('lays seven worn slots into two rows and twelve carried into three', () => {
+  it('places the seven slots as a DOLL, at the four-by-three positions it claims', () => {
+    // ═══ THE REPLACEMENT FOR "seven worn slots into two rows" ═══
+    // That assertion was true of a flat grid and is false by construction now: the
+    // doll is ONE row carrying its own (col, row) per cell, because a paper doll's
+    // whole job is to say WHERE on a body a thing goes. Upstream places every frame
+    // at an absolute x/y (EquipDoll.lua:171-212 over the table at load.lua:140-156)
+    // for the same reason.
+    //
+    // The positions are spelled out here rather than imported, deliberately: this
+    // is the ONE place the arrangement is stated as an intention rather than as
+    // code, so moving a slot on the doll has to be a decision somebody takes twice.
+    // Left column is held-and-worn tokens (load.lua:144-147, x=48); right column is
+    // the armour spine head-to-legs (load.lua:150-153, x=264); FEET closes the
+    // bottom row under the portrait (load.lua:147-149, y=408).
+    const doll = dollOf(inventoryPanelRows(view()));
+    expect(doll.cells.map((cell) => cell.slot)).toEqual([...SLOT_ORDER]);
+    expect(doll.places).toHaveLength(doll.cells.length);
+
+    const at = new Map(doll.cells.map((cell, i) => [cell.slot, doll.places[i]]));
+    expect(at.get('offhand')).toEqual({ col: 0, row: 0 });
+    expect(at.get('ring')).toEqual({ col: 0, row: 1 });
+    expect(at.get('trinket')).toEqual({ col: 0, row: 2 });
+    expect(at.get('feet')).toEqual({ col: 1, row: 2 });
+    // DEVIATION, AND THE TEST NAMES IT: upstream's HEAD is top-CENTRE over the
+    // figure (load.lua:155, `x=150, y=35`). Ours is the top of the armour column,
+    // because three rows have no spare top-centre row.
+    expect(at.get('head')).toEqual({ col: 3, row: 0 });
+    expect(at.get('body')).toEqual({ col: 3, row: 1 });
+    expect(at.get('legs')).toEqual({ col: 3, row: 2 });
+
+    // NO TWO CELLS SHARE A BOX, and the PORTRAIT overlaps none of them. A doll
+    // whose cells overlapped would hand two slots to one click; a portrait over a
+    // cell would put a picture where a place is.
+    const rect = roomyRect();
+    const placed = inventoryPanelGeometry(rect, inventoryPanelRows(view())).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Doll,
+    );
+    if (placed === undefined) throw new Error('unreachable');
+    const boxes = placed.cells;
+    expect(boxes).toHaveLength(SLOT_ORDER.length);
+    for (const box of boxes) expect(box.w).toBeGreaterThan(0);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        expect(overlaps(boxes[i], boxes[j]), `${String(i)} overlaps ${String(j)}`).toBe(false);
+      }
+    }
+    expect(placed.portrait).not.toBeNull();
+    for (const box of boxes) {
+      expect(overlaps(placed.portrait, box), 'portrait overlaps a cell').toBe(false);
+    }
+  });
+
+  it('still lays twelve carried into three flat rows of four', () => {
     // FOUR COLUMNS, EXACTLY: 320 - 2x8 of inset is 304, and four 72-pixel frames
     // with three 5-pixel gaps is 303. Nothing else fits and nothing narrower is
-    // offered, because a column is the size of a PNG.
+    // offered, because a column is the size of a PNG. The BAG is still a reading
+    // order — twelve is a cap rather than a shape, so there is nowhere for a bag
+    // item to belong the way a boot belongs on a foot.
     expect(INVENTORY_PANEL_COLS).toBe(4);
-
-    const doll = cellRows(inventoryPanelRows(view()));
-    expect(doll).toHaveLength(2);
-    expect(doll.map((row) => row.cells.length)).toEqual([4, 3]);
 
     const full = Array.from({ length: INVENTORY_PANEL_CARRIED_MAX }, (_v, i) =>
       bagged(`item_${String(i)}`, `Thing ${String(i)}`, ItemTier.Common, 'ring'),
@@ -262,11 +356,26 @@ describe('the tabs', () => {
     const equipped = inventoryPanelRows(view({ tab: InventoryTab.Equipped, focus }));
     const carried = inventoryPanelRows(view({ tab: InventoryTab.Carried, focus }));
 
-    const strip = (rows: readonly InventoryRow[]) =>
-      rows.filter(
-        (row) => row.kind !== InventoryRowKind.Cells && row.kind !== InventoryRowKind.Tabs,
-      );
-    expect(strip(carried)).toEqual(strip(equipped));
+    // ═══ THE CONTENT IS IDENTICAL; ONLY THE RESERVED HEIGHT IS NOT ═══
+    // `compact` is deliberately excluded from the comparison, and that exclusion
+    // is the point rather than a loophole: the Equipped tab reserves ONE LINE for
+    // the strip because `compare` exists only on `CarriedItemView`
+    // (protocol.ts:1390-1403) and a worn item is handed `rows: []`, so the other
+    // six lines would be reserved for content the doll tab cannot produce. What
+    // the strip SAYS still has to be one answer to one question on both tabs, or
+    // the two halves are two panels wearing one header.
+    const stripBody = (rows: readonly InventoryRow[]) =>
+      rows
+        .filter(
+          (row) =>
+            row.kind !== InventoryRowKind.Cells &&
+            row.kind !== InventoryRowKind.Doll &&
+            row.kind !== InventoryRowKind.Tabs,
+        )
+        .map((row) => (row.kind === InventoryRowKind.Detail ? { ...row, compact: null } : row));
+    expect(stripBody(carried)).toEqual(stripBody(equipped));
+    expect(detailOf(equipped).compact).toBe(true);
+    expect(detailOf(carried).compact).toBe(false);
 
     const tabs = (rows: readonly InventoryRow[]) =>
       rows.find((row) => row.kind === InventoryRowKind.Tabs);
@@ -421,11 +530,17 @@ describe('inventoryPanelHitAt', () => {
         const geometry = inventoryPanelGeometry(rect, rows);
 
         for (const placed of geometry.placed) {
-          if (placed.row.kind !== InventoryRowKind.Cells) continue;
+          const row = placed.row;
+          if (row.kind !== InventoryRowKind.Cells && row.kind !== InventoryRowKind.Doll) continue;
+          let walked = 0;
           for (let i = 0; i < placed.cells.length; i += 1) {
             const box = placed.cells[i];
-            const cell = placed.row.cells[i];
+            const cell = row.cells[i];
             if (box === undefined || cell === undefined) throw new Error('unreachable');
+            // A shed doll cell keeps its index and takes a zero-sized box. There
+            // is no centre to walk and nothing drawn to click.
+            if (box.w === 0) continue;
+            walked += 1;
             const hit = inventoryPanelHitAt(
               rect,
               rows,
@@ -443,6 +558,11 @@ describe('inventoryPanelHitAt', () => {
               });
             }
           }
+          // ═══ AND EVERY DOLL CELL IS REACHABLE AT EVERY ONE OF THESE SIZES ═══
+          // Without this, a doll that placed nothing would pass the loop above
+          // vacuously — which is precisely the shape of the bug being hunted, a
+          // painter and a hit test that agree about a cell neither of them drew.
+          if (row.kind === InventoryRowKind.Doll) expect(walked).toBe(SLOT_ORDER.length);
         }
       }
     }
@@ -456,11 +576,12 @@ describe('inventoryPanelHitAt', () => {
     const rows = inventoryPanelRows(view());
     const found = new Map<string, unknown>();
     for (const placed of inventoryPanelGeometry(rect, rows).placed) {
-      if (placed.row.kind !== InventoryRowKind.Cells) continue;
+      const row = placed.row;
+      if (row.kind !== InventoryRowKind.Cells && row.kind !== InventoryRowKind.Doll) continue;
       for (let i = 0; i < placed.cells.length; i += 1) {
         const box = placed.cells[i];
-        const cell = placed.row.cells[i];
-        if (box === undefined || cell === undefined) continue;
+        const cell = row.cells[i];
+        if (box === undefined || cell === undefined || box.w === 0) continue;
         const hit = inventoryPanelHitAt(rect, rows, box.x + 4, box.y + 4);
         found.set(cell.kind === 'item' ? cell.itemId : cell.slot, hit);
       }
@@ -557,10 +678,132 @@ describe('inventoryPanelHitAt', () => {
   it('answers null on the panel but off every control, which the caller swallows', () => {
     const rect = roomyRect();
     const rows = inventoryPanelRows(view());
-    // The header strip, left of the ×.
+    // The header strip, left of the ×. A CLICK there means nothing — it is the
+    // drag handle, and only the press reader has an answer for it.
     expect(inventoryPanelHitAt(rect, rows, rect.x + 2, rect.y + 6)).toBeNull();
+    // ON the panel, beside the tab strip but left of the first tab box — the tabs
+    // start one INSET in and the panel body starts at the rect's own edge.
+    expect(inventoryPanelHitAt(rect, rows, rect.x + 2, rect.y + 30)).toBeNull();
+    // The bottom-middle box of the doll: FOUR COLUMNS BY THREE ROWS holds twelve
+    // and seven slots plus a two-by-two portrait leave one over. It is not a slot
+    // and must not answer like one.
+    const doll = inventoryPanelGeometry(rect, rows).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Doll,
+    );
+    if (doll === undefined || doll.row.kind !== InventoryRowKind.Doll) {
+      throw new Error('unreachable');
+    }
+    const portrait = doll.portrait;
+    if (portrait === null) throw new Error('unreachable: the doll carries a portrait');
+    // DERIVED FROM THE PLACED BOXES, never re-typed: the spare sits in the FEET
+    // row and in the portrait's right-hand column, so its two coordinates come
+    // from two boxes that were actually placed. Spelling out `72 * 2 + 5 * 2`
+    // here would be a second copy of the grid, which is the bug this whole
+    // describe block exists to catch.
+    const feet = doll.cells[doll.row.cells.findIndex((cell) => cell.slot === 'feet')];
+    if (feet === undefined) throw new Error('unreachable: FEET is on the doll');
+    expect(inventoryPanelHitAt(rect, rows, portrait.x + portrait.w - 4, feet.y + 4)).toBeNull();
     // ...and off the panel entirely.
     expect(inventoryPanelHitAt(rect, rows, rect.x - 4, rect.y - 4)).toBeNull();
+  });
+
+  it('splits the title bar into a handle and a ×, with the × winning where they meet', () => {
+    // The header strip is the DRAG HANDLE (ui/panel.ts's `headerDragRect`) and the
+    // close control is carved out of its right end. Both facts have to hold at
+    // once: a title bar that were grabbable everywhere would start a drag when you
+    // pressed ×, and then close the panel on mouseup having moved it first.
+    //
+    // TWO READERS, ONE STRIP. The CLICK reader says Close-or-nothing; the PRESS
+    // reader says Header-or-nothing over the same pixels. That split is not
+    // cosmetic — `InventoryHit` is consumed by an exhaustive `switch` in main.ts,
+    // so a click outcome added here is a compile error in a file this panel does
+    // not own, for an outcome the click path has nothing to do with.
+    const rect = roomyRect();
+    const rows = inventoryPanelRows(view());
+
+    const runsOf = (read: (x: number) => string | null) => {
+      const runs: (string | null)[] = [];
+      for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+        const kind = read(x);
+        if (runs.length === 0 || runs[runs.length - 1] !== kind) runs.push(kind);
+      }
+      return runs;
+    };
+
+    // A scan rather than a coordinate, for the reason the file header gives: one
+    // contiguous run each, in this order, and nothing else along the strip.
+    expect(runsOf((x) => inventoryPanelDragAt(rect, rows, x, rect.y + 6)?.kind ?? null)).toEqual([
+      InventoryHitKind.Header,
+      null,
+    ]);
+    expect(runsOf((x) => inventoryPanelHitAt(rect, rows, x, rect.y + 6)?.kind ?? null)).toEqual([
+      null,
+      InventoryHitKind.Close,
+      null,
+    ]);
+  });
+
+  it('starts a drag from a filled cell and from the header, and from nothing else', () => {
+    // ═══ A CLICK AND A PRESS-THAT-TRAVELS ARE DIFFERENT ACTS ON ONE PIXEL ═══
+    // Clicking a bag cell equips what is in it; dragging it picks it up. Two
+    // readers over ONE geometry is how both answers stay true at once — a second
+    // copy of the arithmetic is the bug ui/partypanel.ts:93-99 records.
+    const rect = roomyRect();
+
+    const worn = inventoryPanelRows(view());
+    const dollPlaced = inventoryPanelGeometry(rect, worn).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Doll,
+    );
+    if (dollPlaced === undefined || dollPlaced.row.kind !== InventoryRowKind.Doll) {
+      throw new Error('unreachable');
+    }
+    const centreOf = (i: number) => {
+      const box = dollPlaced.cells[i];
+      if (box === undefined || box.w === 0) throw new Error('unreachable');
+      return { x: box.x + Math.floor(box.w / 2), y: box.y + Math.floor(box.h / 2) };
+    };
+
+    // A WORN item is named by its SLOT, because taking it off sends
+    // `unequip { slot }` (protocol.ts:1949 takes `z.enum(SLOT_ORDER)`).
+    const head = centreOf(dollPlaced.row.cells.findIndex((cell) => cell.slot === 'head'));
+    expect(inventoryPanelDragAt(rect, worn, head.x, head.y)).toEqual({
+      kind: InventoryHitKind.DragStart,
+      subject: { kind: DragKind.Worn, slot: 'head' },
+    });
+
+    // AN EMPTY SLOT IS NOT A DRAG SOURCE. There is nothing in it to pick up, and a
+    // gesture carrying nothing either does nothing on release or invents a subject.
+    const legs = centreOf(dollPlaced.row.cells.findIndex((cell) => cell.slot === 'legs'));
+    expect(inventoryPanelDragAt(rect, worn, legs.x, legs.y)).toBeNull();
+
+    // A CARRIED item is named by its `itemId`, because putting it on sends
+    // `equip { itemId }` (protocol.ts:1905-1909). The verb differs and the
+    // identifier differs, which is why they are two DragKinds and not one with a
+    // flag (ui/drag.ts's `DragSubject`).
+    const bag = inventoryPanelRows(view({ tab: InventoryTab.Carried }));
+    const bagPlaced = inventoryPanelGeometry(rect, bag).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Cells,
+    );
+    const first = bagPlaced?.cells[0];
+    if (first === undefined) throw new Error('unreachable');
+    expect(inventoryPanelDragAt(rect, bag, first.x + Math.floor(first.w / 2), first.y + 4)).toEqual(
+      {
+        kind: InventoryHitKind.DragStart,
+        subject: { kind: DragKind.Carried, itemId: 'item_watchmans_coat' },
+      },
+    );
+
+    // THE HANDLE, and the × explicitly refused: pressing × and twitching must
+    // close the panel, not move it.
+    expect(inventoryPanelDragAt(rect, worn, rect.x + 4, rect.y + 6)).toEqual({
+      kind: InventoryHitKind.Header,
+    });
+    const close = inventoryPanelHitAt(rect, worn, rect.x + rect.w - 8, rect.y + 6);
+    expect(close?.kind).toBe(InventoryHitKind.Close);
+    expect(inventoryPanelDragAt(rect, worn, rect.x + rect.w - 8, rect.y + 6)).toBeNull();
+
+    // The handle is the panel the offset store is keyed by, spelled once.
+    expect(INVENTORY_DRAG_PANEL).toBe(DraggablePanel.Inventory);
   });
 
   it('turns a hit into the focus the strip is about, in ONE place', () => {
@@ -596,9 +839,18 @@ describe('the drop policy', () => {
     const rect = { x: 0, y: 0, w: INVENTORY_PANEL_MIN_W, h: INVENTORY_PANEL_MIN_H + 20 };
     const rows = inventoryPanelRows(view());
     const placed = inventoryPanelGeometry(rect, rows).placed;
+    // A SHED DOLL CELL KEEPS ITS INDEX AND TAKES A ZERO-SIZED BOX, so what was
+    // shown is counted by the boxes that have a size rather than by the length of
+    // the array. The parallel between `placed.cells[i]` and `row.cells[i]` is what
+    // the hit test depends on, and splicing to make the count easier here would
+    // break it there.
     const shown = placed
-      .filter((entry) => entry.row.kind === InventoryRowKind.Cells)
-      .flatMap((entry) => entry.cells);
+      .filter(
+        (entry) =>
+          entry.row.kind === InventoryRowKind.Cells || entry.row.kind === InventoryRowKind.Doll,
+      )
+      .flatMap((entry) => entry.cells)
+      .filter((box) => box.w > 0);
     expect(shown.length).toBeLessThan(SLOT_ORDER.length);
 
     const note = placed.find(
@@ -615,8 +867,16 @@ describe('the drop policy', () => {
     // Tall enough for both sentences and still too short for the strip. On a band
     // shorter even than this the sentences go too, which is talents.ts's own last
     // resort: a note that would be drawn over the hotbar is worse than no note.
+    //
+    // RE-BASED ONTO THE CARRIED TAB, and the re-basing is itself the point: this
+    // panel is now too short for the BAG's seven-line strip and comfortably tall
+    // enough for the DOLL's one-line one. Asserting both here is what makes the
+    // per-tab reservation a tested property rather than a comment.
     const tight = { x: 0, y: 0, w: INVENTORY_PANEL_MIN_W, h: INVENTORY_PANEL_MIN_H + 45 };
-    const placed = inventoryPanelGeometry(tight, inventoryPanelRows(view())).placed;
+    const placed = inventoryPanelGeometry(
+      tight,
+      inventoryPanelRows(view({ tab: InventoryTab.Carried })),
+    ).placed;
     expect(placed.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(false);
     expect(
       placed.some(
@@ -625,10 +885,114 @@ describe('the drop policy', () => {
       ),
     ).toBe(true);
 
+    const sameRect = inventoryPanelGeometry(tight, inventoryPanelRows(view())).placed;
+    expect(sameRect.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(true);
+
     // ...and it IS drawn when the panel is tall enough, so the note is not a
     // permanent excuse for a feature that never appears.
-    const roomy = inventoryPanelGeometry(roomyRect(), inventoryPanelRows(view())).placed;
+    const roomy = inventoryPanelGeometry(
+      roomyRect(),
+      inventoryPanelRows(view({ tab: InventoryTab.Carried })),
+    ).placed;
     expect(roomy.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(true);
+  });
+
+  it('reserves one line on the doll and seven in the bag, on a rect that never moves', () => {
+    // ═══ THE PANEL RECT MUST NOT CHANGE WHEN THE TAB DOES ═══
+    // `inventoryPanelRect` never sees a tab, and that is deliberate: if the panel
+    // resized on a tab switch, the click that switched it would land on a panel
+    // that had already moved out from under the pointer — the same class of bug as
+    // reserving the strip from the focus, one control further out.
+    const rect = roomyRect();
+    const stripOf = (tab: InventoryTab) => {
+      const placed = inventoryPanelGeometry(rect, inventoryPanelRows(view({ tab }))).placed.find(
+        (entry) => entry.row.kind === InventoryRowKind.Detail,
+      );
+      if (placed === undefined) throw new Error('unreachable');
+      return placed.rect;
+    };
+
+    // ONE LINE against SEVEN. The numbers are the file's own ROW_H and
+    // ROW_H * (3 + DETAIL_ROWS_MAX); what is asserted is the RATIO and the fact
+    // that the doll's is the smaller, not either literal.
+    expect(stripOf(InventoryTab.Equipped).h * 7).toBe(stripOf(InventoryTab.Carried).h);
+
+    // Both strips end at the same pixel — the strip is anchored to the bottom of
+    // the panel so it holds still while the grid above it grows and shrinks.
+    const equippedStrip = stripOf(InventoryTab.Equipped);
+    const carriedStrip = stripOf(InventoryTab.Carried);
+    expect(equippedStrip.y + equippedStrip.h).toBe(carriedStrip.y + carriedStrip.h);
+    expect(equippedStrip.x).toBe(carriedStrip.x);
+    expect(equippedStrip.w).toBe(carriedStrip.w);
+  });
+
+  it('fits the whole doll AND its strip at the smallest viewport this client renders', () => {
+    // ═══ THE HEIGHT BUDGET, ASSERTED RATHER THAN ASSUMED ═══
+    // This is the test that stops a fourth doll row, and it is also the test that
+    // catches somebody making the strip taller. The doll is 3*72 + 2*5 = 226 and
+    // the Equipped strip is one 12-pixel line; if either grows past the band, the
+    // existing drop policy resolves it SILENTLY by shedding the tail row — the
+    // FEET slot simply would not be on the doll, with one line of grey text to say
+    // so, on the most common small window.
+    //
+    // The band arithmetic is transcribed from main.ts:534-541 with its citation rather
+    // than imported, for the reason test/client/drag.test.ts transcribes the four
+    // panels' reserved-right values: main.ts cannot be imported (it calls `boot()`
+    // at module load) and a second authority in ui/ would be worse than a
+    // transcription that fails loudly when the real one moves.
+    //
+    //   panelBand.bottom = height - HOTBAR_TOTAL_H - RESOURCE_H - LINE_H*2 - DOCK_MARGIN
+    //
+    // RESOURCE_H is 18 (ui/resource.ts:57, PIP_PX 12 + 6), LINE_H is 14
+    // (main.ts:440) and DOCK_MARGIN is 3 (main.ts:521). The logical height is
+    // pinned to 480 by `minTilesH` in render/canvas.ts:729-730, so 480 is the
+    // FLOOR rather than a chosen case.
+    const HEIGHT = 480;
+    const RESOURCE_H = 18;
+    const LINE_H = 14;
+    const DOCK_MARGIN = 3;
+
+    // BOTH HOTBAR HEIGHTS. 94 is today's; 88 is what W5's hotbar shrink leaves.
+    // Asserting both means that change cannot silently take the budget away, and
+    // that this one cannot silently depend on it having landed.
+    for (const hotbarTotalH of [94, 88]) {
+      const label = `HOTBAR_TOTAL_H=${String(hotbarTotalH)}`;
+      const bottom = HEIGHT - hotbarTotalH - RESOURCE_H - LINE_H * 2 - DOCK_MARGIN;
+      const rect = inventoryPanelRect({ width: 640, height: HEIGHT, top: 17, bottom });
+      if (rect === null) throw new Error(`unreachable: the panel must open at ${label}`);
+
+      const rows = inventoryPanelRows(view());
+      const placed = inventoryPanelGeometry(rect, rows).placed;
+
+      // ALL SEVEN SLOTS PLACED, with a real box each.
+      const doll = placed.find((entry) => entry.row.kind === InventoryRowKind.Doll);
+      if (doll === undefined) throw new Error(`unreachable: no doll at ${label}`);
+      expect(
+        doll.cells.filter((box) => box.w > 0),
+        label,
+      ).toHaveLength(SLOT_ORDER.length);
+
+      // THE STRIP TOO, and it is the last thing to fit — the drop policy takes it
+      // before it takes a grid row.
+      expect(
+        placed.some((entry) => entry.row.kind === InventoryRowKind.Detail),
+        label,
+      ).toBe(true);
+
+      // ...AND NOTHING WAS HELD BACK. A note here would mean the doll shed a row
+      // or the comparison vanished, either of which is the failure this test is
+      // for; the note itself is honest, but at the minimum viewport it must not
+      // have anything to say.
+      expect(
+        placed.some((entry) => entry.row.kind === InventoryRowKind.Note),
+        label,
+      ).toBe(false);
+
+      // And the whole doll, strip included, stays inside the panel.
+      for (const entry of placed) {
+        expect(entry.rect.y + entry.rect.h, label).toBeLessThanOrEqual(rect.y + rect.h);
+      }
+    }
   });
 
   it('never places a row below the panel’s own inner bottom', () => {
@@ -659,8 +1023,11 @@ describe('the drop policy', () => {
 
       const cells = (placed: typeof cold) =>
         placed
-          .filter((entry) => entry.row.kind === InventoryRowKind.Cells)
-          .map((entry) => entry.rect);
+          .filter(
+            (entry) =>
+              entry.row.kind === InventoryRowKind.Cells || entry.row.kind === InventoryRowKind.Doll,
+          )
+          .flatMap((entry) => [entry.rect, ...entry.cells]);
       expect(cells(warm), `h=${String(h)}`).toEqual(cells(cold));
     }
   });
@@ -815,6 +1182,35 @@ describe('the panel computes nothing', () => {
     for (const arg of args) {
       expect(arg, `assembles a sprite key: ${arg}`).not.toMatch(/[+`]/);
     }
+
+    // ═══ AND THE EXPECTED SET, EXACTLY — an equality, not a containment ═══
+    // Every asset-shaped literal in the file, listed. `ui_inventory_cell_hover` is
+    // the new one and this pass is its first reader anywhere in src/ or test/; the
+    // two `epic`/`legendary` frames on disk stay deliberately unspent, because
+    // there are three tiers on the wire and inventing a fourth to use them would
+    // be inventing content in a renderer.
+    const literals = new Set(
+      [...source.matchAll(/'((?:ui_|icon_|item_|chr_|enemy_)[a-z0-9_]*)'/g)].map((m) => m[1]),
+    );
+    expect([...literals].sort()).toEqual([
+      'ui_inventory_cell_empty',
+      'ui_inventory_cell_hover',
+      'ui_item_frame_common',
+      'ui_item_frame_rare',
+      'ui_item_frame_uncommon',
+    ]);
+  });
+
+  it('takes the class portrait off the wire and never builds one', () => {
+    // ═══ WHY THE PORTRAIT IS NOT IN THE LITERAL SET ABOVE ═══
+    // It CANNOT be. `icon_character_the_*` is picked per class by the SERVER
+    // (src/server/view/projector.ts:387-393) and falls back to a generic face for
+    // the three classes that do not exist yet, so any literal written here would
+    // be one of five answers and wrong four times out of five. The pin is
+    // therefore the opposite shape: the string must not appear in this file's code
+    // at all, which also forbids the obvious wrong fix of a `icon_character_the_`
+    // prefix plus a class name off the wire.
+    expect(source).not.toContain('icon_character');
   });
 });
 
@@ -1053,6 +1449,251 @@ describe('drawing', () => {
     const { clips, texts } = paint(view(), rect);
     expect(clips[0]).toEqual(rect);
     expect(texts.some((t) => t.includes('hidden'))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // ...AND THE SAME PANEL WITH THE ART PRESENT, which is the OTHER supported
+  // state and the one the art pipeline can break silently.
+  // -------------------------------------------------------------------------
+
+  /**
+   * A library at the manifest's own authored sizes: `ui_item_frame_*` 72x72,
+   * `item_*` and `icon_character_*` 64x64, `ui_inventory_cell_*` 40x40.
+   *
+   * THE SIZES ARE LOAD-BEARING, not decoration. `blitCentred` REFUSES a sprite
+   * bigger than its box (a cropped icon is a lie about what the item looks like
+   * and a scaled one is the only blurred thing on the screen), so a library that
+   * answered a flat size would silently fall through to the letter plate and this
+   * whole block would test the fallback twice.
+   */
+  function library(asked: string[]): SpriteSource {
+    const size = (id: string): { w: number; h: number } | undefined => {
+      if (id.startsWith('ui_item_frame_')) return { w: 72, h: 72 };
+      if (id.startsWith('ui_inventory_cell_')) return { w: 40, h: 40 };
+      if (id.startsWith('item_') || id.startsWith('icon_character_')) return { w: 64, h: 64 };
+      return undefined;
+    };
+    return {
+      sprite: (id: string) => {
+        asked.push(id);
+        const wh = size(id);
+        if (wh === undefined) return undefined;
+        return { id, image: {} as unknown as HTMLImageElement, w: wh.w, h: wh.h };
+      },
+    };
+  }
+
+  function paintWithArt(panelView: InventoryPanelView, rect = roomyRect()) {
+    const clips: { x: number; y: number; w: number; h: number }[] = [];
+    const calls: string[] = [];
+    const texts: string[] = [];
+    const asked: string[] = [];
+    drawInventoryPanel({
+      ctx: recorder(clips, calls, texts),
+      sprites: library(asked),
+      rect,
+      rows: inventoryPanelRows(panelView),
+      hoveredClose: false,
+      focus: panelView.focus,
+      hovered: null,
+      hoveredDrop: false,
+    });
+    return { asked, calls, texts };
+  }
+
+  it('actually blits the item_* icons, in the doll AND in the bag', () => {
+    // ═══ THE END-TO-END HALF OF THE ICON WIRING, ASKED OF THE PAINTER ═══
+    // The talent icons sat on disk for weeks behind a dead `icon_ability_` prefix,
+    // and every line of code that would have drawn them was correct the whole
+    // time. So this asserts the BLIT, not the resolution: the icon key off the
+    // wire is asked for, it comes back at 64x64, `blitCentred` accepts it, and the
+    // letter plate therefore never draws.
+    const doll = paintWithArt(view());
+    expect(doll.asked).toContain('item_watchmans_cap');
+    expect(doll.asked).toContain('item_leather_chest');
+    expect(doll.asked).toContain('item_inspectors_signet');
+    // The frame goes down under every cell either way — EquipDollFrame.lua:165-170
+    // paints `bg` before it asks anything about the object.
+    expect(doll.asked).toContain('ui_item_frame_uncommon');
+    expect(doll.asked).toContain('ui_item_frame_common');
+    expect(doll.calls.filter((c) => c.startsWith('drawImage(')).length).toBeGreaterThan(0);
+    // The letter plate is the NO-ART path and must not run when there is art.
+    for (const initial of ['W', 'L', 'I']) expect(doll.texts).not.toContain(initial);
+
+    const bag = paintWithArt(view({ tab: InventoryTab.Carried }));
+    for (const id of ['item_watchmans_coat', 'item_signet', 'item_locket', 'item_boots']) {
+      expect(bag.asked).toContain(id);
+    }
+    expect(bag.asked).toContain('ui_item_frame_rare');
+    for (const initial of ['W', 'S', 'L', 'B']) expect(bag.texts).not.toContain(initial);
+  });
+
+  it('names an empty slot in the cell EVEN WHEN the plate resolves', () => {
+    // ═══ THE FIX FOR "a gap, not a slot" ═══
+    // The caption used to be the `else` of the plate blit, so on a machine that
+    // HAD the art the player never saw the word `offhand` in the cell at all —
+    // seven boxes wearing seven copies of one generic 40x40 plate.
+    //
+    // DEVIATION, LABELLED: upstream never labels an empty slot
+    // (EquipDollFrame.lua:115 early-returns) because it ships fifteen authored
+    // per-slot silhouettes (load.lua:120-134). We have one plate and a new id is
+    // forbidden, so a word is the only way a slot can name itself.
+    const { asked, texts } = paintWithArt(view());
+    expect(asked).toContain('ui_inventory_cell_empty');
+    for (const slot of ['legs', 'feet', 'offhand', 'trinket']) {
+      expect(texts, `no caption for ${slot}`).toContain(slot);
+    }
+    // ...and the no-art path still names them too, so neither branch is the only
+    // one that does.
+    const bare = paint(view());
+    for (const slot of ['legs', 'feet', 'offhand', 'trinket']) {
+      expect(bare.texts, `no caption for ${slot} without art`).toContain(slot);
+    }
+  });
+
+  it('marks the one slot a live drag could land in, and only while one is live', () => {
+    // `ui_inventory_cell_hover` has been on disk since M6 and read by nothing.
+    // This is its first use, and it is the drop target's whole signal: the plate
+    // in the middle of the cell, where the thing being dragged is about to land,
+    // rather than an edge already shared with focus and pointer-hover.
+    const quiet = paintWithArt(view());
+    expect(quiet.asked).not.toContain('ui_inventory_cell_hover');
+
+    // `item_boots` is a `feet` item and `feet` is empty on the fixture doll.
+    const dragging = paintWithArt(view({ drag: { kind: DragKind.Carried, itemId: 'item_boots' } }));
+    expect(dragging.asked).toContain('ui_inventory_cell_hover');
+    // EXACTLY ONE. An item's destination is authored content, so there is one
+    // place it can go — a doll lit up in seven places would be a lie about six.
+    expect(dragging.asked.filter((id) => id === 'ui_inventory_cell_hover')).toHaveLength(1);
+
+    // A WORN item dragged OFF the doll lights nothing: its destination is the bag,
+    // the floor or a hotbar slot, none of which are drawn here, so highlighting the
+    // slot it came from would be a drop target that does nothing.
+    const off = paintWithArt(view({ drag: { kind: DragKind.Worn, slot: 'head' } }));
+    expect(off.asked).not.toContain('ui_inventory_cell_hover');
+  });
+
+  it('is reachable: the whole carried-onto-the-doll gesture, one step at a time', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE PLATE ABOVE IS PAINTED BY A STATE NOTHING COULD REACH. THIS IS WHY.
+    // ═══════════════════════════════════════════════════════════════════════
+    // The doll and the bag are on MUTUALLY EXCLUSIVE tabs, so `drag: Carried`
+    // with `tab: Equipped` — the state the test above sets by hand — could not
+    // occur in a session: a carried item can only be picked up on the Carried
+    // tab, where there is no doll to drop it on, and the release resolves before
+    // any click could reach the tab control. The plate, `dropSlotFor` and both
+    // inventory branches of main.ts's `resolveDrop` were all dead.
+    //
+    // The caller's answer is to SPRING the tab mid-gesture (main.ts's
+    // `springInventoryTab`). This walks the chain that makes it work, in the
+    // order the pointer does it, using only this module's own readers — because
+    // "the code that would make it work exists" is exactly what was true before.
+    const rect = roomyRect();
+
+    // 1. PICK UP a coat from the bag. The press reader names it by `itemId`.
+    const bag = inventoryPanelRows(view({ tab: InventoryTab.Carried }));
+    const bagCells = inventoryPanelGeometry(rect, bag).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Cells,
+    );
+    const first = bagCells?.cells[0];
+    if (first === undefined) throw new Error('unreachable: the fixture bag has an item');
+    const grabbed = inventoryPanelDragAt(rect, bag, first.x + Math.floor(first.w / 2), first.y + 4);
+    expect(grabbed?.kind).toBe(InventoryHitKind.DragStart);
+    if (grabbed === null || grabbed.kind !== InventoryHitKind.DragStart) throw new Error('x');
+    const subject = grabbed.subject;
+
+    // 2. CARRY IT OVER THE OTHER TAB. The ordinary click reader answers `Tab`
+    //    there — no release-only outcome was invented — and that is the whole
+    //    hook the spring hangs on.
+    const tabStrip = inventoryPanelGeometry(rect, bag).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Tabs,
+    );
+    const equippedTab = tabStrip?.tabs[0];
+    if (equippedTab === undefined) throw new Error('unreachable: two tab boxes');
+    const overTab = inventoryPanelHitAt(
+      rect,
+      bag,
+      equippedTab.x + Math.floor(equippedTab.w / 2),
+      equippedTab.y + Math.floor(equippedTab.h / 2),
+    );
+    expect(overTab).toEqual({ kind: InventoryHitKind.Tab, tab: InventoryTab.Equipped });
+
+    // 3. THE PANEL TURNS OVER, still holding the coat — the state the plate test
+    //    above sets by hand is now the state a real gesture is in.
+    const doll = inventoryPanelRows(view({ tab: InventoryTab.Equipped, drag: subject }));
+    const dollRow = doll.find((row) => row.kind === InventoryRowKind.Doll);
+    if (dollRow === undefined || dollRow.kind !== InventoryRowKind.Doll) throw new Error('x');
+    // The coat is a `body` item and `body` is worn on the fixture, so the target
+    // is a FILLED cell — the swap case, which takes the 2px edge rather than the
+    // plate. Either way it is a target, and it is the item's OWN slot off the wire.
+    expect(dollRow.dropSlot).toBe('body');
+
+    // 4. RELEASE ON THAT CELL. The caller reads it back through the ordinary hit
+    //    test and sends `equip {itemId}` — `hit.worn` is true here, which is the
+    //    branch that used to be unreachable.
+    const placedDoll = inventoryPanelGeometry(rect, doll).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Doll,
+    );
+    if (placedDoll === undefined || placedDoll.row.kind !== InventoryRowKind.Doll) {
+      throw new Error('x');
+    }
+    const bodyBox = placedDoll.cells[placedDoll.row.cells.findIndex((c) => c.slot === 'body')];
+    if (bodyBox === undefined) throw new Error('unreachable: BODY is on the doll');
+    const landed = inventoryPanelHitAt(
+      rect,
+      doll,
+      bodyBox.x + Math.floor(bodyBox.w / 2),
+      bodyBox.y + Math.floor(bodyBox.h / 2),
+    );
+    expect(landed?.kind).toBe(InventoryHitKind.Item);
+    if (landed === null || landed.kind !== InventoryHitKind.Item) throw new Error('x');
+    expect(landed.worn).toBe(true);
+    // ...and the identity the caller sends comes from the DRAG, not the target.
+    expect(subject).toEqual({ kind: DragKind.Carried, itemId: 'item_watchmans_coat' });
+  });
+
+  it('draws the class portrait in the middle of the doll, and a figure without it', () => {
+    // ToME blits the ACTOR into the hole in the middle of the frame table
+    // (EquipDoll.lua:238, load.lua:140's `doll_x=116, doll_y=232`). We have no
+    // posed actor sprite and may not cut one, so the class portrait already on the
+    // wire and already on disk goes there.
+    const withFace = paintWithArt(view({ portrait: 'icon_character_the_watchman' }));
+    expect(withFace.asked).toContain('icon_character_the_watchman');
+
+    // WITH NO ART AT ALL — every fresh clone, since client/public/assets/ is
+    // gitignored wholesale — the region draws a figure out of fillRects rather
+    // than an empty box, which would read as a broken cell in the middle of the
+    // doll and reopen the very question the captions answer.
+    const bare = paint(view({ portrait: 'icon_character_the_watchman' }));
+    expect(bare.calls.filter((c) => c.startsWith('fillRect(')).length).toBeGreaterThan(0);
+    expect(bare.calls.filter((c) => c.startsWith('drawImage('))).toHaveLength(0);
+  });
+
+  it('draws the doll strip as ONE line and the bag strip as seven', () => {
+    // The Equipped tab's strip cannot carry comparison rows — `compare` lives on
+    // `CarriedItemView` alone — so it carries the name and the meta on one line.
+    const doll = paint(view({ focus: { kind: 'item', itemId: 'item_watchmans_cap' } }));
+    expect(doll.texts).toContain("Watchman's Cap");
+    expect(doll.texts.some((t) => t.includes('worn'))).toBe(true);
+    // The catalogue sentence is a THIRD line and there is no third line here.
+    expect(doll.texts).not.toContain("Watchman's Cap, worn.");
+
+    const bag = paint(
+      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_boots' } }),
+    );
+    expect(bag.texts).toContain('Boots');
+    expect(bag.texts).toContain('Boots, in the bag.');
+  });
+
+  it('keeps DROP reachable on the doll tab, where the focus can still be a bag item', () => {
+    // The focus is STICKY and survives a tab switch by design (`InventoryFocus`:
+    // the pointer has to leave the cell to reach the control, so a focus that
+    // cleared on leave would make DROP unreachable by construction). Switching
+    // tabs with a bag item focused is therefore a reachable state, and the
+    // one-line strip has to keep the control rather than trade it for the meta.
+    const { texts } = paint(view({ focus: { kind: 'item', itemId: 'item_signet' } }));
+    expect(texts).toContain('Signet');
+    expect(texts).toContain('DROP');
   });
 });
 

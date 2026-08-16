@@ -11,14 +11,25 @@ import {
   createContentTalentEngine,
   loadoutViewFor,
   sheetForClass,
+  toResourceView,
 } from '../../src/server/content/classes.ts';
 import { downedSpriteFor } from '../../src/server/engine/downed.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
-import { FOCUS_ON_HELD_GROUND, RESOLVE_ON_STRUCK } from '../../src/server/engine/talents.ts';
+import {
+  FOCUS_ON_HELD_GROUND,
+  FOCUS_PER_TURN,
+  REAGENT_REGEN_EVERY_TURNS,
+  RESOLVE_ON_STRUCK,
+  RESOLVE_PER_TURN,
+} from '../../src/server/engine/talents.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { actorIdForUser, wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { projectClassOptions, projectTurn } from '../../src/server/view/projector.ts';
+import {
+  projectClassOptions,
+  projectResource,
+  projectTurn,
+} from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
@@ -697,16 +708,29 @@ describe('AP and MP are structurally incapable of being short', () => {
       return sheet.resource.value - before;
     };
 
+    // ONE BASE TURN PER `delta`, so each expectation carries exactly one flat
+    // `FOCUS_PER_TURN` on top of the clause it is actually about. That trickle
+    // is unconditional (`regenPerTurn` is added before the per-class switch in
+    // `regenResource`), so it appears in BOTH answers and neither figure is
+    // tuned to make the test green — the difference between them is still
+    // exactly `FOCUS_ON_HELD_GROUND`.
+    // `toBeCloseTo` AND NOT `toBe`, for a reason worth stating once: a
+    // CONTINUOUS pool now accumulates a fractional rate, and 0.4 is not
+    // representable in binary — a delta measured off a pool that has already
+    // taken a few adds is 12.400000000000002, not 12.4. That drift is confined
+    // to Resolve and Focus by design. It is exactly why Reagents keep their
+    // remainder on an integer counter instead: a DISCRETE pool that drifted by
+    // 2e-15 would eventually floor to the wrong pip.
     expect(
       delta(() => {
         expect(engine.hold('p1').ok).toBe(true);
       }),
-    ).toBe(FOCUS_ON_HELD_GROUND);
+    ).toBeCloseTo(FOCUS_ON_HELD_GROUND + FOCUS_PER_TURN, 6);
     expect(
       delta(() => {
         expect(engine.submitMove('p1', 'w').ok).toBe(true);
       }),
-    ).toBe(0);
+    ).toBeCloseTo(FOCUS_PER_TURN, 6);
   });
 });
 
@@ -776,14 +800,22 @@ describe('a class resource that can only be earned in play', () => {
     // THE ONE-WAY DOOR THIS CLOSES.
     // ═══════════════════════════════════════════════════════════════════════
     //
-    // `RESOURCE_RULES[Reagents].regenPerTurn` is 0 and `noteStairs` has no floor
-    // to fire on, so a kill is the Alchemist's ONLY income. `TalentEngine`'s
-    // `noteKill` was called from exactly two places, both inside talents.ts's own
-    // damage helpers — so a kill landed by the bump swing, which is where most
-    // of her kills come from, paid nothing. Eight actions in, the pool hits 0 and
-    // every one of her four talents answers `no_resource` for the rest of the
-    // process, with no mechanism left that can grant one. The only escape was to
-    // leave the world entirely.
+    // KILLS ARE THE ALCHEMIST'S ECONOMY. There is now also a slow floor under
+    // her — one whole vial every `REAGENT_REGEN_EVERY_TURNS` base turns — but it
+    // pays roughly half what bodies do and it is deliberately NOT what this test
+    // is about. (This comment used to say a kill was her ONLY income, which was
+    // true when it was written and is the exact sentence that would mislead the
+    // next reader into thinking a green here proves the whole economy.)
+    //
+    // `TalentEngine.noteKill` was called from exactly two places, both inside
+    // talents.ts's own damage helpers — so a kill landed by the bump swing,
+    // which is where most of her kills come from, paid nothing. Eight actions
+    // in, the pool hit 0 and every one of her four talents answered
+    // `no_resource` for the rest of the process, with no mechanism left that
+    // could grant one. `noteStairs` has never had a call site, so the only
+    // escape was to leave the world entirely. That is the failure this closes,
+    // and the timed floor does not close it: at twelve turns a vial it would
+    // have taken a minute and a half of walking to buy back one cast.
     const table = bench('reagent-basic-kill', ALCHEMIST);
     // Enough to kill in one swing, so the assertion is about the wiring.
     table.player.combat = { mods: { atk: 60, dam: 2000 } };
@@ -798,6 +830,13 @@ describe('a class resource that can only be earned in play', () => {
     // It really was the basic swing, and the body really did die.
     expect(result.reaped).toEqual(['m_husk']);
     expect(table.sheet.resource.value).toBe(3);
+    // ═══ THE TURN COUNT IS PINNED, NOT ASSUMED ═══
+    // The pool stayed below its cap for the whole pump, so `regenCounter` IS the
+    // number of base turns that elapsed — an exact, readable clock. Asserting it
+    // is what stops this test from silently becoming "a kill plus whatever the
+    // timer happened to hand out" if the pump ever carries more passes. Two, and
+    // twelve are needed for a vial, so the +1 above came from the corpse.
+    expect(table.sheet.resource.regenCounter).toBe(2);
   });
 
   it('pays it exactly ONCE, so a party racing the same body cannot double-dip', () => {
@@ -815,11 +854,69 @@ describe('a class resource that can only be earned in play', () => {
     expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
     table.engine.pump();
     expect(table.sheet.resource.value).toBe(1);
+    expect(table.sheet.resource.regenCounter).toBe(2);
 
     // ...and pumping again over the corpse adds nothing.
     expect(table.engine.hold('p1').ok).toBe(true);
     table.engine.pump();
     expect(table.sheet.resource.value).toBe(1);
+    // THE COUNT IS PINNED FOR THE SAME REASON as the test above: the pool never
+    // reached its cap, so `regenCounter` is exactly the base turns elapsed. Three
+    // is well inside `REAGENT_REGEN_EVERY_TURNS`, which is what makes "adds
+    // nothing" a claim about `noteKill` rather than about the clock — if a
+    // future pump carried twelve passes this would go red HERE, naming the real
+    // reason, instead of the reagent count going quietly wrong.
+    expect(table.sheet.resource.regenCounter).toBe(3);
+    expect(table.sheet.resource.regenCounter).toBeLessThan(REAGENT_REGEN_EVERY_TURNS);
+  });
+
+  it('puts the timed vial ON THE WIRE, through a real pump and the real projector', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // END TO END, BECAUSE "THE CODE THAT WOULD MAKE IT WORK EXISTS" IS NOT IT.
+    // ═══════════════════════════════════════════════════════════════════════
+    // The talent icons sat on disk for weeks behind a dead prefix while every
+    // unit test passed. So this drives a REAL `createTurnEngine` through more
+    // than `REAGENT_REGEN_EVERY_TURNS` base turns and reads the answer off
+    // `projectResource` — the same function the gateway sends — rather than off
+    // the sheet. Everything between `actBase` and the browser is in the path.
+    const table = bench('reagent-regen-wire', ALCHEMIST, { maxHp: 500 });
+    // She must survive the wait, and the husk must not die (a kill would pay her
+    // a reagent through `noteKill` and the assertion would be about the wrong
+    // mechanism entirely).
+    table.player.maxHp = 100_000;
+    table.player.hp = 100_000;
+
+    table.sheet.resource.value = 3;
+    table.sheet.resource.regenCounter = 0;
+
+    const wireValue = (): number => {
+      const frame = projectResource(table.player, toResourceView(table.sheet));
+      if (frame === null) throw new Error('the Alchemist has no resource frame');
+      // The property the pips depend on, asserted on the WIRE and not on the
+      // pool: a discrete resource is a whole number by the time it leaves.
+      expect(frame.resource.discrete).toBe(true);
+      expect(Number.isInteger(frame.resource.current)).toBe(true);
+      return frame.resource.current;
+    };
+
+    expect(wireValue()).toBe(3);
+
+    // `PUMPS` pumps carry `PUMPS + 1` base passes (the first carries two), so
+    // this crosses twelve and lands on it exactly once.
+    const PUMPS = REAGENT_REGEN_EVERY_TURNS - 1;
+    const trace: number[] = [];
+    for (let pump = 0; pump < PUMPS; pump += 1) {
+      expect(table.engine.hold('p1').ok).toBe(true);
+      table.engine.pump();
+      trace.push(wireValue());
+    }
+
+    // The vial arrived, exactly one of it, and every frame before it read 3 —
+    // no partial value was ever sent.
+    expect(table.sheet.resource.regenCounter).toBe(0);
+    expect(wireValue()).toBe(4);
+    expect(trace.filter((value) => value === 3)).toHaveLength(PUMPS - 1);
+    expect(trace[trace.length - 1]).toBe(4);
   });
 
   it('builds the Watchman’s Resolve when he is STRUCK, with no ally in reach', () => {
@@ -871,15 +968,42 @@ describe('a class resource that can only be earned in play', () => {
     table.player.hp = 100_000;
 
     const before = table.player.hp;
-    for (let turn = 0; turn < 8; turn += 1) {
+    // ═══ THE TURN COUNT IS PINNED, BECAUSE THE FLOOR IS TIME-BASED ═══
+    // Every base turn now pays an unconditional `RESOLVE_PER_TURN`, so the
+    // expected figure is a function of HOW MANY BASE TURNS RAN and cannot be
+    // left implicit. `TURNS` pumps carry `TURNS + 1` base passes: the first pump
+    // carries two, one of them before the actor has ever acted (the Focus test
+    // above burns that pass rather than measuring it; this one accounts for it
+    // instead, because the trickle is why it can no longer be ignored).
+    const TURNS = 8;
+    const blowLanded: boolean[] = [];
+    let previous = table.player.hp;
+    for (let turn = 0; turn < TURNS; turn += 1) {
       expect(table.engine.hold('p1').ok).toBe(true);
       table.engine.pump();
+      blowLanded.push(table.player.hp < previous);
+      previous = table.player.hp;
     }
 
-    // Whatever Resolve he has, it is exactly `RESOLVE_ON_STRUCK` per blow that
-    // actually removed hp — never one per swing.
+    // ═══ THE OLD IDENTITY IS DEAD AND THIS IS ITS REPLACEMENT ═══
+    // This used to assert `value % RESOLVE_ON_STRUCK === 0`, which is a true
+    // statement only while every income is a multiple of 6. A fractional
+    // trickle kills it outright — 5.4 % 6 is 5.4 — so the claim is re-expressed
+    // as the two BOUNDS it was really making: at least one `RESOLVE_ON_STRUCK`
+    // per blow that removed hp, and nothing at all for the swings that missed.
     const struck = before - table.player.hp;
-    if (struck === 0) expect(table.sheet.resource.value).toBe(0);
-    else expect(table.sheet.resource.value % RESOLVE_ON_STRUCK).toBe(0);
+    const blows = blowLanded.filter(Boolean).length;
+    const trickle = RESOLVE_PER_TURN * (TURNS + 1);
+    expect(table.sheet.resource.value).toBeGreaterThanOrEqual(RESOLVE_ON_STRUCK * blows);
+    if (struck === 0) {
+      expect(blows).toBe(0);
+      // Nothing landed, so the pool holds the floor and NOT ONE POINT MORE.
+      expect(table.sheet.resource.value).toBeCloseTo(trickle, 6);
+    }
+    // …and the ceiling that gives this teeth either way: an un-gated hook would
+    // pay 6 for every SWING, landed or not, which is `RESOLVE_ON_STRUCK * TURNS`
+    // above the floor. A heal reported as a blow with `damage: 0` would land in
+    // the same place.
+    expect(table.sheet.resource.value).toBeLessThan(RESOLVE_ON_STRUCK * TURNS + trickle);
   });
 });

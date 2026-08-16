@@ -137,7 +137,7 @@ export function mouseIntentAt(snapshot: MouseSnapshot): MouseIntent {
   // same as an orthogonal one everywhere in this game, and `step` reaches all
   // eight neighbours.
   if (chebyshev(self, tile) === 1 && occupant !== undefined && isHostileBody(occupant)) {
-    // The sanctioned idiom (main.ts:669-672), never a hand-rolled dx/dy table.
+    // The sanctioned idiom (main.ts:1758-1762), never a hand-rolled dx/dy table.
     const dir = DIR_ORDER.find((candidate) => sameTile(step(self, candidate), tile));
     if (dir !== undefined) return { kind: MouseIntentKind.Bump, dir };
   }

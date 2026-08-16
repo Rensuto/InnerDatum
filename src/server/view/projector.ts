@@ -847,9 +847,17 @@ function toClassOptionView(definition: ClassDef): ClassOptionView {
     // The first number anybody compares. NOT rounded: `ClassDef.maxHp` is an
     // authored integer, unlike a live actor's fractional `hp`.
     maxHp: definition.maxHp,
-    // A FRESH sheet, so the pool reads as it will on the first turn — Reagents
-    // 8/8 because you walked in carrying eight vials, Resolve and Focus at 0
-    // because nothing in this game gives you a resource for existing.
+    // A FRESH sheet, so the card shows the pool a new detective STARTS with —
+    // Reagents 8/8 because you walked in carrying eight vials, Resolve and Focus
+    // at 0 because a fresh sheet has earned nothing yet.
+    //
+    // IT IS A STARTING LINE AND NOT A CEILING, which the wording used to get
+    // wrong: it said Resolve and Focus were 0 "because nothing in this game gives
+    // you a resource for existing", and that rule has since been reversed. All
+    // three pools trickle now (engine/talents.ts's `RESOURCE_RULES` — Resolve
+    // 0.6/turn, Focus 0.4/turn, one whole Reagent every twelve turns), so the two
+    // empty pools begin filling on the first base turn. `rule.start` is still the
+    // right number for this card; only the reason is different.
     resource: toResourceView(sheetForClass(definition)),
     talents: loadoutViewFor(definition),
   };

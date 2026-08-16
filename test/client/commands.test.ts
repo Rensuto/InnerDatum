@@ -209,7 +209,7 @@ describe('/keys — the pointer-only escape hatch', () => {
    * frozen so that can never fail — but "frozen" is a promise about OUR table,
    * and a player whose keyboard has genuinely stopped answering has no key at
    * all. `#cmd` is "a permanently visible, permanently focusable <input>" whose
-   * row reads "T or / to talk" (main.ts:540-544), so the player CLICKS it and
+   * row reads "T or / to talk" (main.ts:736), so the player CLICKS it and
    * types, and RESET ALL is two clicks from there with no keypress involved.
    */
   it('opens the keys screen, and carries nothing', () => {

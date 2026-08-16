@@ -23,6 +23,7 @@ import {
   createCharacterFile,
 } from '../../src/server/persist/saves.ts';
 import { StandingOrder } from '../../src/server/engine/actor.ts';
+import { REAGENT_REGEN_EVERY_TURNS } from '../../src/server/engine/talents.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
@@ -676,6 +677,7 @@ describe('choose_class, refused', () => {
     if (sheet === undefined) throw new Error('test fixture: the accepted choice attached no sheet');
     const spent = sheet.resource.value - 1;
     sheet.resource.value = spent;
+    sheet.resource.regenCounter = 0;
     body.hp = 9;
     body.cooldowns.set('talent:mend_wounds', 4);
 
@@ -684,6 +686,15 @@ describe('choose_class, refused', () => {
 
     // The SAME sheet object, still spent; the same battered body.
     expect(server.talents.sheetOf(body.id)).toBe(sheet);
+    // ═══ THE TURN COUNT IS PINNED, BECAUSE REAGENTS NOW REFILL ON A TIMER ═══
+    // The pool is one below its cap, so `regenCounter` runs, and after
+    // `REAGENT_REGEN_EVERY_TURNS` base turns the stock would come back by one
+    // ALL ON ITS OWN — which would read here as "the second choice refilled
+    // her", the exact bug this test exists to catch, arriving from the wrong
+    // direction. The counter is zeroed above and asserted below, so this stays
+    // a statement about `handleChooseClass` rather than about how long a settle
+    // happens to take today.
+    expect(sheet.resource.regenCounter).toBeLessThan(REAGENT_REGEN_EVERY_TURNS);
     expect(sheet.resource.value).toBe(spent);
     expect(body.hp).toBe(9);
     expect(body.cooldowns.get('talent:mend_wounds')).toBe(4);

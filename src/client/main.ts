@@ -162,6 +162,21 @@ import { createSweepPlayback } from './render/sweep.ts';
 import { applyProjectilesFrame, clearProjectiles, orbsAimedAt } from './state/projectiles.ts';
 import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
 import { charSheetHitAt, charSheetRect, charSheetRows, drawCharSheet } from './ui/charsheet.ts';
+// v12 — THE DRAG PRIMITIVES. Pure arithmetic and a closed set of panel names.
+// The offsets themselves live in THIS file (see `panelOffsets`) because they are
+// session-local browser state; what lives there is the one clamp, the one
+// threshold and the one offset-composition rule, so no two readers of a moved
+// panel can disagree about where it is.
+import {
+  DragKind,
+  DraggablePanel,
+  NO_OFFSET,
+  createPanelOffsets,
+  moveIntoBand,
+  nextOffset,
+  passesThreshold,
+  settleOffset,
+} from './ui/drag.ts';
 import {
   ClassPickerHitKind,
   classPickerCards,
@@ -174,7 +189,28 @@ import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts
 // the hotbar's business; whether a press is legal is the server's. Reading it
 // here would be the first step towards refusing to send, which is exactly the
 // silent no-op this file's header forbids.
-import { drawHotbar, HOTBAR_TOTAL_H, hotbarSlotAt } from './ui/hotbar.ts';
+//
+// v12 — SEVEN MORE NAMES, AND EVERY ONE OF THEM IS THE ITEM HALF OF THE BAR.
+// `itemSlotAction` and `wornSlotOf` are the state machine: a binding stores an
+// `itemId` and nothing else, so what pressing it MEANS is recomputed from the
+// last `inventory` frame on every frame. `hotbarDropTargetAt` is the release,
+// `isItemSlotIndex` is the right-click's guard, and the three constants are what
+// keeps slot 4 the first item slot in this file as well as in that one.
+import {
+  drawHotbar,
+  HOTBAR_ITEM_SLOTS,
+  HOTBAR_SLOTS,
+  HOTBAR_TALENT_SLOTS,
+  HOTBAR_TOTAL_H,
+  HotbarDropKind,
+  HotbarSlotKind,
+  ItemSlotAction,
+  hotbarDropTargetAt,
+  hotbarSlotAt,
+  isItemSlotIndex,
+  itemSlotAction,
+  wornSlotOf,
+} from './ui/hotbar.ts';
 import { createContextMenu, MapVerb } from './ui/contextmenu.ts';
 // v11 — THE ESCAPE MENU. Every rule it has is in that module and is pure: the
 // rows, the capture state machine, the geometry and the hit test. What is here
@@ -190,12 +226,14 @@ import {
   MenuRowKind,
   MenuScreen,
   applyCapture,
+  escapeMenuDragAt,
 } from './ui/escapemenu.ts';
 import {
   drawInventoryPanel,
   focusForHit,
   InventoryHitKind,
   InventoryTab,
+  inventoryPanelDragAt,
   inventoryPanelHitAt,
   inventoryPanelRect,
   inventoryPanelRows,
@@ -212,10 +250,17 @@ import {
   TalentHitKind,
   drawTalentPanel,
   pressSpend,
+  talentPanelDragAt,
   talentPanelHitAt,
   talentPanelRect,
   talentPanelRows,
 } from './ui/talents.ts';
+// v12 — THE LEVEL BADGE AND THE XP TRACK. Its own file rather than a section of
+// ui/resource.ts on that file's own argument: resource.ts is a sustained case
+// that its strip is a row of COUNTABLE PIPS and not a bar, and a continuous
+// gauge authored inside it is a comment that will mislead somebody within a
+// month. They share one 18px strip and nothing else.
+import { drawXpBar } from './ui/xpbar.ts';
 import {
   drawRespawnPrompt,
   respawnPromptHit,
@@ -262,6 +307,7 @@ import type {
 } from '../shared/protocol.ts';
 import type { CommandContext, RosterEntry } from './input/commands.ts';
 import type { KeyRemap } from './input/keymap.ts';
+import type { DragSubject, PanelOffset } from './ui/drag.ts';
 import type {
   ArmedCapture,
   EscapeMenuView,
@@ -280,7 +326,7 @@ import type { CaseLog } from './ui/caselog.ts';
 import type { CombatBanner } from './ui/combatbanner.ts';
 import type { ContextMenu, MenuItem } from './ui/contextmenu.ts';
 import type { HotbarSlot, HotbarView } from './ui/hotbar.ts';
-import type { InventoryFocus, InventoryPanelView } from './ui/inventory.ts';
+import type { InventoryFocus, InventoryHit, InventoryPanelView } from './ui/inventory.ts';
 import type { PanelRect } from './ui/panel.ts';
 import type { PartyPaneLayout, PartyPaneView } from './ui/partypanel.ts';
 import type { TurnView } from './ui/turncards.ts';
@@ -355,8 +401,11 @@ const NEEDED_ASSET_PREFIXES = [
   //   `ui_item_frame_*`    — 5 ids under ui/chrome/ (common/uncommon/rare are
   //                          drawn; epic and legendary are art waiting for a
   //                          rarity that does not exist — ui/inventory.ts).
-  //   `ui_inventory_cell_` — 2 ids under ui/chrome/. Only `_empty` is drawn;
-  //                          hover is a drawn ring, not a swapped plate.
+  //   `ui_inventory_cell_` — 2 ids under ui/chrome/, and BOTH are drawn. `_empty`
+  //                          backs every unfilled doll cell; `_hover` replaces it
+  //                          on the one cell a live item drag could land in
+  //                          (ui/inventory.ts's `drawCell`). The pointer-hover
+  //                          ring is a different signal and is drawn, not blitted.
   // Without these three, `isNeeded` filters every one of those entries out,
   // `sprites.sprite()` answers undefined for all of them, and the panel silently
   // draws letter plates and traced boxes forever — a SUPPORTED state (a bare
@@ -577,14 +626,13 @@ const cmdRowEl = document.getElementById('cmdrow');
  * the canvas, `isTextEntry` in keys.ts then drops EVERY subsequent keypress,
  * and the arrows, the digits and Enter all stop reaching the one screen the
  * player cannot dismiss. But that gate only covered the KEY. `#cmd` is a
- * permanently visible, permanently focusable `<input>` — `#cmdrow` has no
- * `display:none` in styles/main.css and it is the only tabbable element on the
- * page — so a single Tab, or a click on the chat row (which is fully visible
- * and reads "T or / to talk"), walked straight around it. And `mousedown`
- * STEP 0 `preventDefault`s both buttons while the picker is up, which
- * suppresses the browser's own focus change, so clicking the canvas could not
- * take focus back either. The only way out was Escape — which the picker
- * documents as swallowed, so nothing on screen suggested it.
+ * permanently focusable `<input>` and it is the only tabbable element on the
+ * page, so a single Tab, or a click on the chat row (which reads "T or / to
+ * talk"), walked straight around it. And `mousedown` STEP 0 `preventDefault`s
+ * both buttons while the picker is up, which suppresses the browser's own focus
+ * change, so clicking the canvas could not take focus back either. The only way
+ * out was Escape — which the picker documents as swallowed, so nothing on screen
+ * suggested it.
  *
  * THREE THINGS, AND EACH COVERS A DIFFERENT ROUTE IN. `disabled` stops the
  * click and the caret, `tabIndex = -1` stops the Tab (a disabled input is
@@ -593,12 +641,36 @@ const cmdRowEl = document.getElementById('cmdrow');
  * frame arrived — a player who was mid-sentence when they were asked to pick
  * a class.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * v12: THE ROW IS HIDDEN WITH `visibility: hidden`, AND THE VALUE IS THE POINT.
+ * ═══════════════════════════════════════════════════════════════════════════
  * `hidden` RATHER THAN A CLASS, on the ROW, so a reviewer has no class name to
- * go looking for — but it is NOT self-sufficient: `[hidden]` is `display: none`
- * in the user-agent stylesheet and `#cmdrow`'s author `display: flex` beats it,
- * so styles/main.css carries an explicit `#cmdrow[hidden]` rule and says why.
- * Without it this line is a no-op that nobody would notice, because the three
- * lines above it would still have shut the trap.
+ * go looking for — but the attribute is NOT self-sufficient: `[hidden]` is
+ * `display: none` in the user-agent stylesheet and `#cmdrow`'s author
+ * `display: flex` beats it, so styles/main.css carries an explicit
+ * `#cmdrow[hidden]` rule. That rule is `visibility: hidden`, NOT `display:
+ * none`, and swapping it back is the edit that reintroduces a shipped bug.
+ *
+ * WHY. This row is ~29 CSS px of a flex COLUMN and `#game` is the
+ * `flex: 1 1 auto; min-height: 0` sibling that absorbs whatever the other rows
+ * do not take. `display: none` therefore handed those 29px to the canvas, the
+ * ResizeObserver fired, and render/canvas.ts's `resize` (:697-747) does not
+ * merely re-letterbox — it recomputes tilesW/tilesH from the new device box
+ * (:727-730) and rebuilds the backbuffer (:732-742). At 1280x720/dpr1 that is
+ * one whole extra tile row: `panelBand` moves 32px, the camera clamp shifts, and
+ * the map jumps under the player at the instant this row is hidden. Keeping the
+ * box in the column means the measured rect never changes and `resize` returns
+ * false at its early-out (:707).
+ *
+ * AND IT MAKES THE FOCUS GATE STRONGER, NOT WEAKER. Per spec a
+ * `visibility: hidden` subtree is not a focusable area: out of the sequential
+ * focus order, out of the accessibility tree, and taking no pointer events. So
+ * the CSS now duplicates part of what the three lines above do — which is
+ * exactly why none of them may be deleted as redundant. They are the functional
+ * copy, they run in a build whose stylesheet failed to load, and `blur()` in
+ * particular covers what no declaration can: the field that was ALREADY focused
+ * when the `class_options` frame arrived. test/client/shell-layout.test.ts fails
+ * if any of the four is dropped.
  *
  * IT IS RESTORED IN `case 'loadout'`, which is where the modal is torn down and
  * the only place that knows the choice actually landed.
@@ -822,6 +894,108 @@ let partyState: PartyStateMsg | null = null;
 /** Panel visibility. Both default on; `m` and `p` toggle them. */
 let logVisible = true;
 let partyVisible = true;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * v12 — WHERE THE PLAYER HAS DRAGGED EACH OF THE FOUR MOVABLE PANELS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A DELTA IN LOGICAL BACKBUFFER PIXELS, not a position, and ui/drag.ts's
+ * `PanelOffset` says why: a stored position would have to be re-derived every
+ * time the viewport changed, while a delta re-applied to a freshly computed rect
+ * keeps a centred panel centred-plus-40 when the window grows.
+ *
+ * CLAMPED ON READ, AND SETTLED ONCE ON RELEASE. `hudLayout` runs `moveIntoBand`
+ * on the way out (see the four `movePanel` calls there), so a shrunk viewport
+ * walks the panel back into view on the very next frame and restoring the larger
+ * window restores the position the player actually chose — nothing is written on
+ * a resize, so a resize can never overwrite their choice.
+ *
+ * WHAT IS WRITTEN, AND ONLY AT THE END OF A GESTURE, IS WHAT THE CLAMP HONOURED.
+ * `settlePanel` runs on release and replaces the raw pointer delta with the
+ * offset actually realised. Leaving the raw value here was a shipped bug: the
+ * next `beginDrag` re-based on it while the grab point came from the CLAMPED
+ * position on screen, so one sweep past the band edge banked hundreds of pixels
+ * of dead travel and the title bar stopped responding for four consecutive
+ * full-height drags. See `settlePanel` for the arithmetic and the numbers.
+ *
+ * ═══ SESSION-LOCAL, RESET ON RELOAD, EXACTLY LIKE THE TWO BOOLEANS ABOVE ═══
+ * That is a decision and not an omission (DECISIONS.md D14). Persisting it needs
+ * one of two mechanisms and both are worse than forgetting: a `set_panel_layout`
+ * intent would be a new client verb, a new unicast echo, a new optional
+ * `SavedCharacter` field and a new validator — a protocol-and-save-file change
+ * to remember where somebody put a window — and `localStorage` would be a SECOND
+ * persistence mechanism competing with the save file, in a client that has none
+ * at all (net/socket.ts:16 is a comment explaining the auth token is
+ * memory-only). The precedent sits two lines above this one.
+ */
+const panelOffsets: Record<DraggablePanel, PanelOffset> = createPanelOffsets();
+
+/**
+ * THE GESTURE IN PROGRESS, or null. There is never more than one — a pointer has
+ * one button down at a time and a second press cancels the first (see the guard
+ * at the head of `mousedown`).
+ *
+ * ═══ IT IS A *PENDING* PRESS UNTIL `moved` GOES TRUE ═══
+ * `passesThreshold` is 6 logical pixels, ported from Mouse.lua:177, and below it
+ * the press is still a plain CLICK. That is what `click` is for: a press on an
+ * inventory cell cannot equip on `mousedown`, because the same press might turn
+ * out to be the start of a drag onto the hotbar — so the act is DEFERRED and run
+ * by the release only if the pointer never travelled far enough. A press on a
+ * panel header carries `click: null`, because a header has never done anything.
+ *
+ * `grabX`/`grabY` and `at` are in LOGICAL BACKBUFFER pixels, the one coordinate
+ * space every rect and every hit test in this file already works in, so nothing
+ * downstream converts anything.
+ */
+type LiveDrag = {
+  readonly subject: DragSubject;
+  readonly grabX: number;
+  readonly grabY: number;
+  /** The subject panel's offset when it was grabbed. Unused for item drags. */
+  readonly offsetAtGrab: PanelOffset;
+  /** What a sub-threshold release means, or null when the press means nothing. */
+  readonly click: (() => void) | null;
+  /** Has the pointer travelled past `DRAG_THRESHOLD_PX`? */
+  moved: boolean;
+  /** Where the pointer is now, for the ghost. Null while it is off the backbuffer. */
+  at: TileXY | null;
+};
+let drag: LiveDrag | null = null;
+
+/**
+ * WHAT IS ON THE FOUR MOUSE-ONLY HOTBAR SLOTS (indices 4-7), or null for empty.
+ *
+ * INDEXED 0-3 AND OFFSET BY `HOTBAR_TALENT_SLOTS` AT EVERY READ, rather than an
+ * eight-long array with four permanent holes: slots 0-3 are the class loadout and
+ * are not bindable at all (`hotbarDropTargetAt` answers `Talent` for them and the
+ * caller must refuse IN WORDS), so an array with room for them would be an array
+ * with four cells that must never be written — which is an invariant somebody
+ * eventually breaks.
+ *
+ * ═══ THE NAME AND THE ICON ARE CACHED AT BIND TIME, AND THE ACTION IS NOT ═══
+ * `itemSlotAction` recomputes EQUIP / REMOVE / GONE from the last `inventory`
+ * frame on every frame, because whether an id is in the bag, on the body or gone
+ * is a property of the world and a slot that cached it would keep saying EQUIP
+ * after the item was already worn. The name and icon are the opposite: they are
+ * authored catalogue facts that never change, and GONE still has to PRINT a name
+ * for an item that is in neither collection to read one off.
+ *
+ * SESSION-LOCAL, like the offsets above and for the same reasons. Stated plainly
+ * because it is a real limitation rather than an oversight: a bar the player
+ * fills is EMPTY AGAIN AFTER A REFRESH. ToME persists per character
+ * (`self.actor.hotkey[i] = {drag.kind, drag.id}`, HotkeysIconsDisplay.lua:355);
+ * we do not, this pass (DECISIONS.md D16).
+ */
+type ItemBinding = {
+  readonly itemId: string;
+  readonly name: string;
+  readonly icon: string;
+};
+const hotbarBindings: (ItemBinding | null)[] = Array.from(
+  { length: HOTBAR_ITEM_SLOTS },
+  () => null,
+);
 
 /**
  * THE CHARACTER SHEET, AND IT DEFAULTS OFF — the other two do not.
@@ -1279,6 +1453,24 @@ let onRefusal: (text: string) => void = () => {
 };
 
 /**
+ * SAY SOMETHING THAT IS NOT A COMPLAINT. Replaced in boot() alongside
+ * `onRefusal`, and it is the SAME timer and the SAME line.
+ *
+ * ═══ A SECOND NAME FOR ONE MECHANISM, AND THE NAME IS THE POINT ═══
+ * Everything else that reaches the notice slot is a refusal: "too close", "not
+ * your turn yet", "not connected — that did not go out". Routing a LEVEL-UP
+ * through a hook spelled `onRefusal` put the best news in the game in the
+ * complaints channel — and left the next reader of `case 'progress'` looking at
+ * a line that reads as an error path. There is no behavioural difference and
+ * there deliberately is not one: a second colour or a second slot would be a
+ * second thing to keep from overlapping the first, for a sentence that appears a
+ * handful of times an evening.
+ */
+let onGoodNews: (text: string) => void = () => {
+  // No canvas and no timer yet.
+};
+
+/**
  * Put a `point` marker on the board. Replaced in boot() with the real,
  * self-expiring implementation, for the same reason `onRefusal` is: the marker's
  * timer belongs with the Bell and the sweep beat inside `boot()`, where every
@@ -1500,7 +1692,40 @@ function lootAt(tile: TileXY): TileLoot {
  * the same property `talentPanelView()` has and for the same reason.
  */
 function inventoryPanelView(): InventoryPanelView {
-  return { inventory, tab: invTab, focus: invFocus };
+  return {
+    inventory,
+    tab: invTab,
+    focus: invFocus,
+    // ═══ THE FACE IN THE MIDDLE OF THE DOLL, JOINED FROM THE `turn` FRAME ═══
+    // NOT BUILT HERE FROM THE CLASS NAME. src/server/view/projector.ts:387-393
+    // picks the `icon_character_the_*` key per class WITH a generic fallback for
+    // the three classes that have no art, so any literal assembled in the
+    // browser would be wrong four times in five and would resolve to the loud
+    // violet missing-asset box on a clone. `TurnActor.portrait` is that key,
+    // already chosen by the authority; `selfCard` is the same accessor the turn
+    // strip reads, so the doll and the card cannot show two different faces.
+    //
+    // Null before the first `turn` frame, which ui/inventory.ts draws as a
+    // primitives silhouette — the same thing a bare clone with no art sees.
+    portrait: selfCard(turn)?.portrait ?? null,
+    // WHAT THE POINTER IS CARRYING, for the drop-target ring on the doll. See
+    // `liveDragSubject`: a press that has not passed the 6px threshold is still
+    // a CLICK, so it must not light anything up.
+    drag: liveDragSubject(),
+  };
+}
+
+/**
+ * THE DRAG THE PAINTERS MAY SEE, or null.
+ *
+ * `drag.moved` IS THE WHOLE GATE. Between `mousedown` and the sixth pixel of
+ * travel the gesture is still a plain click (ui/drag.ts's `DRAG_THRESHOLD_PX`,
+ * ported from Mouse.lua:177), and a doll cell that rang the moment a button went
+ * down — or a hotbar slot that lit up on every press of the inventory panel —
+ * would be telling the player a drag had started when one had not.
+ */
+function liveDragSubject(): DragSubject | null {
+  return drag !== null && drag.moved ? drag.subject : null;
 }
 
 /**
@@ -1661,6 +1886,12 @@ function escapeMenuView(): EscapeMenuView {
     page: menuPage,
     armed: menuArmed,
     message: menuMessage,
+    // v12 — THE COUNT GOES ON THE CONTROL THAT ALREADY ROUTES TO THE PANEL.
+    // Root row 3 opens the talent screen and never said how many points were
+    // behind it, so it reads `TALENTS (2)` while any are waiting and the bare
+    // word at zero. `?? 0` because `progress` is null for a real window on
+    // connect and "(0)" would be a number stated confidently about nothing.
+    unspent: progress?.unspent ?? 0,
   };
 }
 
@@ -1770,6 +2001,79 @@ type HudLayout = {
   readonly picker: PanelRect | null;
 };
 
+/**
+ * APPLY A PANEL'S DRAG OFFSET. The ONLY place one is applied, for every panel.
+ *
+ * ═══ IT TAKES THE *UNMOVED* RECT AND THE NULL DECISION IS MADE BEFORE IT ═══
+ * `charSheetRect`, `talentPanelRect`, `inventoryPanelRect` and `escapeMenuRect`
+ * each answer null when the band cannot hold them, and that refusal is computed
+ * from where the panel WOULD have been — never from where it was dragged to. Two
+ * things depend on that. `openMenu` and `onViewportChange` both ask
+ * `hudLayout(...).menu === null` to decide whether an open menu is drawable, and
+ * a panel that became undrawable because somebody dragged it would be closed out
+ * from under them with a sentence about the window being too short. And the four
+ * panel modules keep their own unit tests untouched, because none of them learns
+ * about a drag at all.
+ *
+ * THE OFFSET IS APPLIED HERE RATHER THAN PUSHED DOWN INTO THE FOUR `*Rect`
+ * HELPERS, which is decision D14's shape: `hudLayout` is already the single
+ * producer of every rect on screen and is already rebuilt per call, so the clamp
+ * runs against the CURRENT band every frame with nothing to invalidate. A drag
+ * parameter threaded into four independently unit-tested surfaces would multiply
+ * four suites and re-open the null-refusal question in four places.
+ *
+ * `moveIntoBand` clamps into `panelBand`, NOT the viewport. That is the
+ * panel-not-modal promise made mechanical rather than an extra safeguard bolted
+ * on: a viewport clamp would let a player park the escape menu over the hotbar
+ * and make the four talent keys invisible while it was up — the promise broken by
+ * a gesture rather than by a code change, which no review would catch because no
+ * line of code would have changed to cause it.
+ */
+function movePanel(
+  panel: DraggablePanel,
+  rect: PanelRect | null,
+  band: { readonly top: number; readonly bottom: number },
+  width: number,
+): PanelRect | null {
+  return rect === null ? null : moveIntoBand(rect, panelOffsets[panel], band, width);
+}
+
+/**
+ * WHERE A MOVABLE PANEL WOULD BE IF NOBODY HAD EVER DRAGGED IT, or null.
+ *
+ * ═══ ONE PRODUCER, TWO READERS, AND THAT IS THE ENTIRE REASON IT EXISTS ═══
+ * `hudLayout` reads it to draw (through `movePanel`, which adds the offset and
+ * clamps), and `endDrag` reads it to SETTLE — to turn the raw pointer delta a
+ * gesture reached into the offset the clamp actually honoured. Those two have to
+ * agree to the pixel about the unmoved rect or the settle records a position the
+ * painter never drew, and the panel would jump a few pixels every time a player
+ * let go of it. Written out once here so they cannot disagree, which is the same
+ * rule `slotRect` established in ui/hotbar.ts and that `HudLayout` states above.
+ *
+ * THE VISIBILITY GATE IS PART OF THE ANSWER rather than the caller's business: a
+ * panel that is shut has no rect, and `switch` over `DraggablePanel` means a
+ * fifth movable panel is a compile error here rather than a panel whose offset
+ * silently never settles.
+ */
+function unmovedPanelRect(
+  panel: DraggablePanel,
+  width: number,
+  height: number,
+  band: { readonly top: number; readonly bottom: number },
+): PanelRect | null {
+  const options = { width, height, top: band.top, bottom: band.bottom };
+  switch (panel) {
+    case DraggablePanel.Sheet:
+      return sheetVisible ? charSheetRect(options) : null;
+    case DraggablePanel.Talents:
+      return talentsVisible ? talentPanelRect(options) : null;
+    case DraggablePanel.Inventory:
+      return invVisible ? inventoryPanelRect(options) : null;
+    case DraggablePanel.Menu:
+      return menuOpen ? escapeMenuRect(options) : null;
+  }
+}
+
 function hudLayout(width: number, height: number): HudLayout {
   const hudTop = turnHudHeight(turnView());
   const band = panelBand(height, hudTop);
@@ -1814,21 +2118,47 @@ function hudLayout(width: number, height: number): HudLayout {
       selfErased() && !menuOpen
         ? respawnPromptRect({ width, top: band.top, bottom: band.bottom })
         : null,
-    sheet: sheetVisible
-      ? charSheetRect({ width, height, top: band.top, bottom: band.bottom })
-      : null,
-    talents: talentsVisible
-      ? talentPanelRect({ width, height, top: band.top, bottom: band.bottom })
-      : null,
+    // ═══ THE FOUR MOVABLE PANELS, EACH THROUGH `movePanel` AND THE SAME BAND ═══
+    // The `*Rect` helper still decides the SHAPE and the null; `movePanel` only
+    // slides the result by however far the player has dragged it and clamps that
+    // back into the band. See `movePanel` for why the offset lands here and not
+    // inside the four helpers, and why the null is computed before it.
+    sheet: movePanel(
+      DraggablePanel.Sheet,
+      unmovedPanelRect(DraggablePanel.Sheet, width, height, band),
+      band,
+      width,
+    ),
+    talents: movePanel(
+      DraggablePanel.Talents,
+      unmovedPanelRect(DraggablePanel.Talents, width, height, band),
+      band,
+      width,
+    ),
     // FROM THE BAND, exactly like the two above it and NOT like `picker`. See the
     // field's own note: that is the panel-not-modal decision made mechanical.
-    inventory: invVisible
-      ? inventoryPanelRect({ width, height, top: band.top, bottom: band.bottom })
-      : null,
+    inventory: movePanel(
+      DraggablePanel.Inventory,
+      unmovedPanelRect(DraggablePanel.Inventory, width, height, band),
+      band,
+      width,
+    ),
     // FROM THE BAND, exactly like the three above it and NOT like `picker`. See
     // the field's own note: this is the panel-not-modal decision, and therefore
     // the barrier answer, made mechanical in one line.
-    menu: menuOpen ? escapeMenuRect({ width, height, top: band.top, bottom: band.bottom }) : null,
+    menu: movePanel(
+      DraggablePanel.Menu,
+      unmovedPanelRect(DraggablePanel.Menu, width, height, band),
+      band,
+      width,
+    ),
+    // NOT THROUGH `movePanel`, AND NEITHER ARE `pane`, `log` OR `respawn` ABOVE.
+    // Each refusal has its own reason and they are recorded in full at
+    // ui/drag.ts's `DraggablePanel`: the picker is a scrimmed full-viewport modal
+    // whose rect is not band-derived at all, the pane and the log are two halves
+    // of one `rightReserved` handshake that a free-floating panel would make
+    // meaningless, and the plate is a plate — one sentence, one key, and already
+    // suppressed under the menu.
     picker: classOptions === null ? null : classPickerRect(width, height),
   };
 }
@@ -1900,8 +2230,35 @@ function affordable(talent: LoadoutTalent): boolean {
   return resource.current >= talent.cost.resource;
 }
 
+/**
+ * THE BAR: FOUR CLASS TALENTS ON KEYS 1-4, THEN FOUR MOUSE-ONLY ITEM SLOTS.
+ *
+ * ═══ THE ARRAY IS POSITIONAL AND `isItemSlotIndex` DEPENDS ON IT ═══
+ * ui/hotbar.ts hard-codes that index 4 is the first item slot, so the item slots
+ * are appended ONLY when the loadout is exactly `HOTBAR_TALENT_SLOTS` long. A
+ * short loadout (which `_loadoutArityCheck` in src/server/content/classes.ts
+ * makes impossible today, and which would still be a real state on a build that
+ * broke it) draws the talents alone rather than sliding four item slots down into
+ * indices the drop test would call talents. An EMPTY loadout draws nothing at
+ * all, exactly as before the item slots existed: the bar has not arrived yet, and
+ * four drop targets floating over a bar with no buttons on it would advertise a
+ * feature before the frame that gives it meaning.
+ *
+ * ═══ AND EVERY ITEM SLOT'S CAPTION IS RECOMPUTED, NEVER REMEMBERED ═══
+ * A binding stores an `itemId`, a name and an icon and nothing else;
+ * `itemSlotAction` asks the last `inventory` frame whether that id is in the bag
+ * (EQUIP), on the body (REMOVE) or in neither (GONE). That is
+ * HotkeysIconsDisplay.lua:232-234's own rule — the bar asks the world, every
+ * draw — and it is what makes an item equipped from the PANEL flip the caption on
+ * the BAR one frame later with nothing wired between them.
+ */
 function hotbarView(): HotbarView {
-  const slots: HotbarSlot[] = loadout.map((talent) => ({
+  const talents: HotbarSlot[] = loadout.map((talent) => ({
+    // v12: SPELLED OUT AT THE CONSTRUCTION SITE. `HotbarTalentSlot.kind` was
+    // optional purely so this literal kept compiling while ui/hotbar.ts grew two
+    // more members; now that the discriminant is written here it can stop being
+    // a shim, and the `case undefined:` arms in that file are what will say so.
+    kind: HotbarSlotKind.Talent,
     talent,
     // Absent from `cooldowns` means READY — the server deletes the entry at
     // zero, mirroring ToME's `talents_cd[tid] = nil`.
@@ -1909,11 +2266,29 @@ function hotbarView(): HotbarView {
     affordable: affordable(talent),
   }));
 
+  const carried = inventory?.carried ?? [];
+  const equipped = inventory?.equipped ?? {};
+  const items: HotbarSlot[] = hotbarBindings.map((binding) =>
+    binding === null
+      ? { kind: HotbarSlotKind.Empty }
+      : {
+          kind: HotbarSlotKind.Item,
+          itemId: binding.itemId,
+          name: binding.name,
+          icon: binding.icon,
+          action: itemSlotAction(binding.itemId, carried, equipped),
+        },
+  );
+
   const armedId = targeting?.talent()?.id ?? null;
   return {
-    slots,
+    slots: talents.length === HOTBAR_TALENT_SLOTS ? [...talents, ...items] : talents,
     hovered: hoveredSlot,
     armed: armedId === null ? -1 : loadout.findIndex((talent) => talent.id === armedId),
+    // So an empty item slot takes the hover frame and reads BIND while something
+    // droppable is being carried over the bar. Cosmetic only —
+    // `hotbarDropTargetAt` decides what a release actually means.
+    drag: liveDragSubject(),
   };
 }
 
@@ -2026,6 +2401,120 @@ function drawLine(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DRAG GHOST — 72 logical pixels, the same pitch as a cell and a slot.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Not a smaller thumbnail: every `item_*` icon is authored at 64x64 and every
+ * frame at 72x72, and ui/inventory.ts's `blitCentred` REFUSES a sprite bigger
+ * than its box rather than scaling or cropping it (a sprite that does not fit
+ * the box it was cut for is a pipeline fault, and drawing a fraction of it would
+ * hide that fault behind something that looks almost right). A 24px ghost would
+ * therefore have silently drawn the letter fallback forever, on a machine that
+ * has the art.
+ */
+const GHOST_PX = 72;
+
+/**
+ * WHAT THE POINTER IS CARRYING, resolved against the last `inventory` frame.
+ *
+ * NOT READ OFF THE DRAG. `DragSubject` carries an `itemId` or a `Slot` and
+ * nothing else, on purpose (ui/drag.ts) — the verb and the identifier differ
+ * between the two item kinds. The name and the icon are catalogue facts and the
+ * frame is where they live, so a drag whose subject has left the bag mid-gesture
+ * (dropped by a teammate's `state` resync, say) stops having a ghost rather than
+ * drawing a remembered picture of something the player no longer owns.
+ */
+function draggedItem(): ItemBinding | null {
+  const live = drag;
+  if (live === null || !live.moved) return null;
+  const subject = live.subject;
+  switch (subject.kind) {
+    case DragKind.Panel:
+      // A panel drag needs no ghost: the PANEL is the ghost. `panelOffsets`
+      // moves it under the pointer directly, which is the whole gesture.
+      return null;
+    case DragKind.Carried:
+      return inventory?.carried.find((item) => item.itemId === subject.itemId) ?? null;
+    case DragKind.Worn:
+      return inventory?.equipped[subject.slot] ?? null;
+  }
+}
+
+/**
+ * Paint whatever is in the player's hand, centred on the pointer.
+ *
+ * THE COMMON FRAME FOR EVERY TIER, and that is deliberate rather than lazy. The
+ * ghost is a CURSOR, not a statement about rarity: the cell it came from and the
+ * cell it is heading for both draw the tier frame (ui/inventory.ts's exhaustive
+ * `frameIdFor`), and a third copy of that switch in this file would be a second
+ * authority on which frame a tier wears — the exact duplication `slotRect` and
+ * `hudLayout` exist to prevent.
+ *
+ * `save`/`restore` around everything, because it sets `font`, `textAlign`,
+ * `textBaseline` and `fillStyle` and the world painter re-sets none of them.
+ */
+function drawDragGhost(ctx: CanvasRenderingContext2D, spriteSource: SpriteSource): void {
+  const live = drag;
+  if (live === null || !live.moved || live.at === null) return;
+  const item = draggedItem();
+  if (item === null) return;
+
+  const x = live.at.x - Math.floor(GHOST_PX / 2);
+  const y = live.at.y - Math.floor(GHOST_PX / 2);
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const frame = spriteSource.sprite('ui_item_frame_common');
+  if (frame !== undefined && frame.w <= GHOST_PX && frame.h <= GHOST_PX) {
+    ctx.drawImage(
+      frame.image,
+      x + Math.floor((GHOST_PX - frame.w) / 2),
+      y + Math.floor((GHOST_PX - frame.h) / 2),
+      frame.w,
+      frame.h,
+    );
+  } else {
+    // A BARE CLONE HAS NO ART AT ALL and must still be able to play: the plate
+    // is drawn with primitives so the gesture is visible on a checkout with an
+    // empty client/public/assets/. Same rule the panels keep.
+    ctx.fillStyle = PALETTE.PANEL;
+    ctx.fillRect(x, y, GHOST_PX, GHOST_PX);
+    ctx.fillStyle = PALETTE.SLATE;
+    ctx.fillRect(x, y, GHOST_PX, 1);
+    ctx.fillRect(x, y + GHOST_PX - 1, GHOST_PX, 1);
+    ctx.fillRect(x, y, 1, GHOST_PX);
+    ctx.fillRect(x + GHOST_PX - 1, y, 1, GHOST_PX);
+  }
+
+  const icon = spriteSource.sprite(item.icon);
+  if (icon !== undefined && icon.w <= GHOST_PX && icon.h <= GHOST_PX) {
+    ctx.drawImage(
+      icon.image,
+      x + Math.floor((GHOST_PX - icon.w) / 2),
+      y + Math.floor((GHOST_PX - icon.h) / 2),
+      icon.w,
+      icon.h,
+    );
+  } else {
+    // THE INITIAL, exactly as the hotbar and the inventory panel fall back. An
+    // unpromoted icon is a SUPPORTED state, not an error, so it draws a letter
+    // rather than a missing-asset box.
+    ctx.font = FONT_HUD;
+    ctx.fillStyle = PALETTE.PARCHMENT;
+    ctx.fillText(
+      item.name.slice(0, 1).toUpperCase(),
+      x + Math.floor(GHOST_PX / 2),
+      y + Math.floor(GHOST_PX / 2),
+    );
+  }
+
+  ctx.restore();
+}
+
+/**
  * The HUD layer, handed to the renderer as a painter so that render/ never has
  * to import ui/ (see `HudPainter` in render/canvas.ts).
  *
@@ -2082,6 +2571,13 @@ const paintHud: HudPainter = (ctx, width, height) => {
       hoveredClose: sheetCloseHovered,
       hoveredTalents: sheetTalentsHovered,
       talentsOpen: talentsVisible,
+      // v12 — THE COUNT ON THE CONTROL THAT ROUTES TO THE SPEND SCREEN: `[G·2]`
+      // while points are waiting, plain `[G]` at zero. It is passed separately
+      // from `rows` on purpose (ui/charsheet.ts says so at the field): `rows` is
+      // the BODY and sheds whole sections on a short panel, and a header control
+      // that went quiet on exactly the window where the sheet is hardest to read
+      // would be the wrong half to drop.
+      unspent: progress?.unspent ?? 0,
     });
   }
 
@@ -2115,6 +2611,10 @@ const paintHud: HudPainter = (ctx, width, height) => {
       hoveredClose: talentsCloseHovered,
       hovered: talentsHoveredRow,
       armedId: talentsArmedId,
+      // v12 — THE SCREEN WHOSE ENTIRE SUBJECT IS LEVELLING NOW STATES THE LEVEL:
+      // `TALENTS · Lv 3`. Null before the first `progress` frame, which falls
+      // back to the bare word rather than printing a level nobody has said yet.
+      level: progress?.level ?? null,
     });
   }
 
@@ -2197,6 +2697,26 @@ const paintHud: HudPainter = (ctx, width, height) => {
 
   const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;
   drawResource({ ctx, sprites, resource, x: 4, y: resourceY + 3, width: width - 8 });
+  // ═══ v12 — `Lv 3` AND THE XP TRACK, SHARING THIS ONE 18-PIXEL STRIP ═══
+  //
+  // THE SAME x/y/width AS `drawResource` ABOVE, DELIBERATELY. The pips are
+  // left-aligned (ui/resource.ts:70-74) and this widget right-aligns itself
+  // inside the same box, so the two occupy the empty end of one strip rather
+  // than costing a second row of the viewport — and neither has to know the
+  // other's width.
+  //
+  // IT IS PERMANENT FURNITURE, WHICH IS THE WHOLE POINT. Level, xp and the
+  // points in hand were drawn ONLY inside two panels the player has to open by
+  // hand, so a banked point was invisible to anybody who did not already know to
+  // press `g` and the entire talent tree was dead content for a party that never
+  // did. This is the surface that is always on screen.
+  //
+  // IT DRAWS NOTHING WHILE `progress` IS NULL, and that is not an edge case: it
+  // is a real window on connect, and it is exactly when the player is staring at
+  // the screen. ui/xpbar.ts owns that refusal for ui/charsheet.ts:344-347's
+  // reason — "a row reading Level: 0 in that window would be a wrong number
+  // stated confidently".
+  drawXpBar({ ctx, progress, x: 4, y: resourceY + 3, width: width - 8 });
 
   const hint = targeting?.hint() ?? '';
   const hintY = resourceY - LINE_H;
@@ -2261,6 +2781,17 @@ const paintHud: HudPainter = (ctx, width, height) => {
     drawRespawnPrompt({ ctx, sprites, rect: layout.respawn, hovered: respawnHovered });
   }
 
+  // ═══ v12 — THE THING IN THE PLAYER'S HAND, UNDER THE POINTER ═══
+  //
+  // AFTER the hotbar and the strips, so it is visible OVER the row it is being
+  // dragged to. That is the opposite of every panel above and it is the point: a
+  // ghost drawn under the bar would vanish at the exact instant the player needs
+  // to see which slot it is about to land in.
+  //
+  // ONLY FOR AN ITEM DRAG. A panel drag has no ghost because the PANEL is the
+  // ghost — it follows the pointer directly through `panelOffsets`.
+  drawDragGhost(ctx, sprites);
+
   // ═══ THE HOVER CARD, AND IT LOSES TO BOTH OF THE SURFACES BELOW ═══
   //
   // Drawn AFTER the erased plate and BEFORE the combat banner, which fixes its
@@ -2275,8 +2806,15 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // SUPPRESSED ENTIRELY WHILE THE MENU IS OPEN rather than merely drawn under
   // it: the menu opens AT THE POINTER, so the two overlap by construction, and a
   // card peeking out from behind the rows it is hiding reads as a rendering bug.
+  // ═══ ...AND SUPPRESSED WHILE A GESTURE IS LIVE, FOR THE MENU'S OWN REASON ═══
+  // The canvas `mousemove` handler short-circuits on its first line while a drag
+  // is in flight, so `pointerPoint` and the hovered actor are FROZEN at whatever
+  // they were when the button went down. This is painted after `drawDragGhost`,
+  // so a card left over from before the press is drawn on top of the 72px item in
+  // the player's hand, pinned at a position the pointer left — the thing being
+  // carried vanishes under a description of a tile nobody is looking at.
   const tip = tooltipView();
-  if (tip !== null && pointerPoint !== null && tokenMenu?.visible() !== true) {
+  if (tip !== null && pointerPoint !== null && drag === null && tokenMenu?.visible() !== true) {
     drawTooltip({
       ctx,
       sprites,
@@ -2907,6 +3445,9 @@ async function boot(): Promise<void> {
     updateStatus();
   }
   onRefusal = showNotice;
+  // THE SAME FUNCTION UNDER A NAME THAT DOES NOT ACCUSE THE PLAYER. See
+  // `onGoodNews` — one mechanism, two call-site vocabularies.
+  onGoodNews = showNotice;
 
   // --- the Bell ------------------------------------------------------------
   // A bounded loop, armed only while a countdown is on screen and disarmed by
@@ -3468,6 +4009,26 @@ async function boot(): Promise<void> {
    * input on arithmetic that could be one frame out of date.
    */
   function activateSlot(index: number): void {
+    // ═══════════════════════════════════════════════════════════════════════
+    // v12 — SLOTS 4-7 ARE ITEMS, AND THE VERB IS EQUIP/UNEQUIP, NOT USE.
+    // ═══════════════════════════════════════════════════════════════════════
+    // A DEVIATION FROM PlayerHotkeys.lua:173-181, which routes an object hotkey
+    // to `playerUseItem`. There is no `use` intent on this wire and there must
+    // not be one yet: `Wielder` is `{ stats?, mods? }` only
+    // (src/server/content/items.ts:231-234), all 22 authored items are passive,
+    // and a verb shipped with nothing to invoke is the dead control this whole
+    // pass was told to avoid. Upstream agrees a wearable on a hotkey is not a
+    // use — Object.lua:169-173's `canUseObject` answers "This object has no
+    // usable power." Equip/remove is a real act with a visible effect on the
+    // paper doll and the character sheet.
+    //
+    // THE INDEX DECIDES, NOT THE CONTENTS. `isItemSlotIndex` is ui/hotbar.ts's
+    // own answer, so this file cannot drift about where the talents stop.
+    if (isItemSlotIndex(index)) {
+      pressItemSlot(index);
+      return;
+    }
+
     const talent = loadout[index];
     if (talent === undefined) {
       showNotice(
@@ -3494,6 +4055,111 @@ async function boot(): Promise<void> {
       // No level, or no body on it yet. Say so rather than eating the key.
       showNotice(`cannot aim ${talent.name} yet — waiting for the map`);
     }
+  }
+
+  // --- the four item slots on the bar ---------------------------------------
+
+  /**
+   * Press one of the four mouse-only slots. Three outcomes and none is silence.
+   *
+   * THE ACTION IS ASKED FOR AGAIN HERE rather than read off the drawn view,
+   * because between the paint and the click a frame can land — a teammate's
+   * `state` resync, this player's own `equip` from the panel — and pressing what
+   * the LAST frame said would send `equip` for something already worn. The server
+   * would refuse it correctly and the player would read a sentence about an item
+   * they can see on their own doll.
+   *
+   * GONE CLEARS THE BINDING AND SAYS SO, which is upstream's own dangling case:
+   * PlayerHotkeys.lua:176-177 prints "You do not have any <name>." rather than
+   * leaving a button that does nothing. It is why `ItemBinding` caches the NAME —
+   * an id in neither collection has no frame left to read one off.
+   */
+  function pressItemSlot(index: number): void {
+    const binding = hotbarBindings[index - HOTBAR_TALENT_SLOTS] ?? null;
+    if (binding === null) {
+      showNotice(`slot ${String(index + 1)} is empty — drag an item onto it`);
+      return;
+    }
+    clearNotice();
+    const carried = inventory?.carried ?? [];
+    const equipped = inventory?.equipped ?? {};
+    switch (itemSlotAction(binding.itemId, carried, equipped)) {
+      case ItemSlotAction.Equip:
+        sendEquip(binding.itemId);
+        return;
+      case ItemSlotAction.Unequip: {
+        // `unequip` NAMES A SLOT, NOT AN ITEM (protocol.ts:1938-1942), so the
+        // binding's id has to be resolved back to the doll cell wearing it.
+        // `wornSlotOf` is ui/hotbar.ts's own walk of `SLOT_ORDER`, shared with
+        // the caption, so the button and the frame cannot disagree.
+        const slot = wornSlotOf(binding.itemId, equipped);
+        if (slot === null) {
+          // Unreachable while the two collections are the ones `itemSlotAction`
+          // just read — and answered rather than thrown, because a desync here
+          // would otherwise be a dead button with no sentence.
+          showNotice(`${binding.name} is not on you any more`);
+          return;
+        }
+        sendUnequip(slot);
+        return;
+      }
+      case ItemSlotAction.Gone:
+        hotbarBindings[index - HOTBAR_TALENT_SLOTS] = null;
+        showNotice(`you no longer have ${binding.name}`);
+        requestDraw();
+        return;
+    }
+  }
+
+  /**
+   * Put something on an item slot. The ONE place a binding is written.
+   *
+   * IT TAKES A `DragSubject` AND RESOLVES IT AGAINST THE FRAME, because the two
+   * item drags name their subject differently on purpose (ui/drag.ts): a bag item
+   * by `itemId`, a worn item by the `Slot` it came off. Both end up as the same
+   * binding — what is bound is the ITEM, and whether it is currently on the body
+   * is recomputed every frame by `itemSlotAction`.
+   *
+   * A SUBJECT THAT NO LONGER RESOLVES IS REFUSED IN WORDS. The gesture takes a
+   * human moment and a `state` resync can land inside it.
+   */
+  function bindItemSlot(index: number, subject: DragSubject): void {
+    const item =
+      subject.kind === DragKind.Carried
+        ? (inventory?.carried.find((entry) => entry.itemId === subject.itemId) ?? null)
+        : subject.kind === DragKind.Worn
+          ? (inventory?.equipped[subject.slot] ?? null)
+          : null;
+    if (item === null) {
+      showNotice('that is not in your hands any more');
+      return;
+    }
+    hotbarBindings[index - HOTBAR_TALENT_SLOTS] = {
+      itemId: item.itemId,
+      name: item.name,
+      icon: item.icon,
+    };
+    // NOTHING IS SENT. A binding is a fact about this browser and this session —
+    // see `hotbarBindings`. The server has no field for it and is not being asked
+    // to grow one for a cosmetic shortcut.
+    showNotice(`slot ${String(index + 1)}: ${item.name}`);
+    requestDraw();
+  }
+
+  /**
+   * Take something off an item slot. Right-click, and nothing else does it.
+   *
+   * Silent when the slot was already empty: a right-click on a slot with nothing
+   * in it is not a mistake worth a sentence, and printing one would put a line in
+   * front of a player every time they missed the slot they meant.
+   */
+  function unbindItemSlot(index: number): void {
+    const at = index - HOTBAR_TALENT_SLOTS;
+    const binding = hotbarBindings[at] ?? null;
+    if (binding === null) return;
+    hotbarBindings[at] = null;
+    showNotice(`slot ${String(index + 1)} cleared`);
+    requestDraw();
   }
 
   // --- the talent panel ----------------------------------------------------
@@ -3627,6 +4293,77 @@ async function boot(): Promise<void> {
   function sendDrop(itemId: string): void {
     if (!socket.send({ v: PROTOCOL_VERSION, t: 'drop', itemId })) {
       showNotice('not connected — that did not go out');
+    }
+  }
+
+  /**
+   * DO WHAT A PRESS ON THE INVENTORY PANEL MEANS. Five outcomes and no sixth.
+   *
+   * ═══ WHY IT IS A FUNCTION AND NOT A SWITCH INSIDE `mousedown` — v12 ═══
+   * It has TWO callers now and they are the same act reached two ways: a plain
+   * click, and the DEFERRED click of a press that turned out not to be a drag
+   * (see `beginDrag`). A press on a filled cell can no longer act on `mousedown`
+   * — the same press might be the beginning of a drag onto the hotbar — so the
+   * act has to be a value that can be held for the length of the gesture. Two
+   * copies of this switch would be two answers to "what does pressing a cell do",
+   * and the one that drifted would be the one behind the drag.
+   *
+   * Exhaustive over `InventoryHitKind` with no `default`, under
+   * `switch-exhaustiveness-check`, so a sixth control breaks the build rather
+   * than becoming something that is drawn, hit-tested and then ignored.
+   *
+   * `null` IS A REAL ARGUMENT and means "on the panel, but not on anything" — the
+   * press is still swallowed, which is what the `overPanel` check at the foot of
+   * `mousedown` already does for the same case.
+   */
+  function runInventoryHit(hit: InventoryHit | null): void {
+    if (hit === null) return;
+    switch (hit.kind) {
+      case InventoryHitKind.Close:
+        toggleInventoryPanel(false);
+        return;
+      case InventoryHitKind.Tab:
+        // CLIENT-LOCAL AND NOTHING IS SENT. The frame already carries both
+        // halves — one `inventory` message is the doll AND the bag — so
+        // switching tabs is a question about which of two things already in
+        // hand is on screen.
+        if (invTab !== hit.tab) {
+          invTab = hit.tab;
+          requestDraw();
+        }
+        return;
+      case InventoryHitKind.Item:
+        // THE FOCUS IS SET FROM THE SAME FUNCTION THE HOVER USES, so a click
+        // that arrives without a preceding hover (a touch, a panel that moved
+        // under a still pointer) leaves the strip describing what was pressed.
+        invFocus = focusForHit(hit);
+        // `worn` DECIDES THE VERB AND NOTHING ELSE DOES. On the doll it is
+        // `unequip { slot }` — a slot rather than the item, because a client
+        // one frame behind would otherwise ask to remove something already
+        // gone, while emptying the slot the player is looking at is what they
+        // meant (protocol.ts's `UnequipSchema`). In the bag it is
+        // `equip { itemId }`, and the destination slot is authored content the
+        // server reads off the catalogue.
+        if (hit.worn) sendUnequip(hit.slot);
+        else sendEquip(hit.itemId);
+        requestDraw();
+        return;
+      case InventoryHitKind.EmptySlot:
+        // SWALLOWED, NEVER A FALL-THROUGH. There is nothing to send — you
+        // cannot put on a slot — but the focus makes the strip say which slot
+        // it is, which is the only place the seven slot names are ever
+        // written down for the player.
+        invFocus = focusForHit(hit);
+        requestDraw();
+        return;
+      case InventoryHitKind.Drop:
+        // ONE PRESS, NO CONFIRMATION, argued at the control itself
+        // (ui/inventory.ts): the item lands on the tile you are standing on
+        // and `pickup` takes it straight back for the price of a turn. The
+        // irreversible act near here is walking away from it, and no button
+        // can warn about that.
+        sendDrop(hit.itemId);
+        return;
     }
   }
 
@@ -4920,6 +5657,25 @@ async function boot(): Promise<void> {
       activateSlot(slot);
     },
     onCancel: () => {
+      // ═══════════════════════════════════════════════════════════════════════
+      // v12 — A LIVE DRAG IS THE FIRST LINK, ABOVE EVEN THE CHOOSER'S SWALLOW.
+      // ═══════════════════════════════════════════════════════════════════════
+      // Everything else in this handler is a SURFACE; this is the pointer itself.
+      // While a gesture is live the canvas `mousemove` handler short-circuits
+      // every hover in the client and `overPanel` answers true for the whole
+      // screen, so a drag that could not be abandoned would be a state in which
+      // the mouse has stopped working and nothing on screen says why. It ends on
+      // `window` mouseup and on `window` blur as well — three exits, because
+      // there must be no state in which the pointer is captured and input is
+      // stuck.
+      //
+      // ABOVE the picker swallow rather than below it. That swallow exists so a
+      // REQUIRED SCREEN cannot be dismissed, and cancelling a gesture dismisses
+      // nothing — it puts a panel back where it was. The state is not reachable
+      // today (mousedown step 0 consumes every press while the chooser is up, so
+      // no grab can be recorded), and ordering it first means it stays unreachable
+      // as a matter of this chain rather than of that one.
+      if (cancelDrag()) return;
       // ═══ THE CHOOSER SWALLOWS ESCAPE OUTRIGHT, ABOVE THE CHAIN ═══
       //
       // A REQUIRED SCREEN MUST NOT BE DISMISSIBLE. There is no second copy of the
@@ -5154,12 +5910,28 @@ async function boot(): Promise<void> {
   // the mouse to point at a tile across the room, which is what people in a
   // voice channel actually do.
 
-  /** Which hotbar slot a pointer event is over, or -1. */
+  /**
+   * Which hotbar slot a pointer event is over, or -1.
+   *
+   * ═══ THE COUNT IS `hotbarView().slots.length`, AND IT USED TO BE FOUR ═══
+   * `hotbarSlotAt` centres the row on the count it is GIVEN, exactly as
+   * `drawHotbar` centres it on the slots it is given. `loadout.length` was
+   * correct only while the view returned four slots; the moment it returned eight
+   * the painter centred a 604-pixel row and this centred a 300-pixel one, so
+   * every hover and every click landed on the wrong box or on nothing — at every
+   * viewport, with no line of ui/hotbar.ts having changed. Asking the VIEW is
+   * what makes that class of bug unreachable rather than merely fixed: there is
+   * one number and both readers take it from the same place.
+   *
+   * Rebuilding the view per pointer move is eight small objects and a `find`,
+   * which is nothing beside `inventoryPanelRows` — already rebuilt on the same
+   * events — and much less than a second copy of "how many slots are there".
+   */
   function slotUnder(event: MouseEvent): number {
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
     if (point === null) return -1;
     const { logicalW, logicalH } = renderer.metrics();
-    return hotbarSlotAt(point.x, point.y, loadout.length, logicalW, logicalH);
+    return hotbarSlotAt(point.x, point.y, hotbarView().slots.length, logicalW, logicalH);
   }
 
   /**
@@ -5179,6 +5951,17 @@ async function boot(): Promise<void> {
    * rather than pinging a tile behind the strip that nobody can see.
    */
   function overPanel(clientX: number, clientY: number): boolean {
+    // ═══ v12 — A LIVE DRAG ANSWERS TRUE FOR THE WHOLE SCREEN, LETTERBOX AND ALL ═══
+    // The same shape the class picker takes four lines below, for the same
+    // reason: while a gesture owns the pointer there is no tile underneath worth
+    // reaching. Without it a release over bare map falls through the swallow at
+    // the foot of `mousedown` into the travel branch, and the party walks across
+    // the room at the end of every drag — an interaction the player will read as
+    // "dragging a window makes everybody run".
+    //
+    // ABOVE the `point === null` guard, deliberately: "not on the backbuffer" is
+    // not a reason to let a gesture through while one is in flight.
+    if (drag !== null) return true;
     const { logicalW, logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
     // ═══ THE CHOOSER ANSWERS TRUE FOR THE WHOLE SCREEN, LETTERBOX INCLUDED ═══
@@ -5233,6 +6016,25 @@ async function boot(): Promise<void> {
   }
 
   canvas.addEventListener('mousemove', (event) => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // v12 — A LIVE DRAG SHORT-CIRCUITS THIS ENTIRE HANDLER, ON THE FIRST LINE.
+    // ═══════════════════════════════════════════════════════════════════════
+    // The offset (or the ghost's position) is updated by the WINDOW listener —
+    // see `onDragMove` and the note there about why move and release cannot live
+    // on the canvas — and everything below is suppressed while one is in flight.
+    //
+    // IT IS NOT A TIDY-UP. Every line under here does real work per pointer
+    // event: `slotUnder` rebuilds the hotbar view, `inventoryPanelRows` rebuilds
+    // the whole doll AND the bag, `escapeMenuRows` builds twenty-six rows with
+    // four formatted strings each, and `noteHoveredActor` drives a settle-gated
+    // `inspect` ON THE WIRE. A drag is the one gesture in this client that fires
+    // mousemove continuously for a second or more, so leaving it unsuppressed
+    // would spend the socket's 20-frame bucket on hovering — and `overPanel`'s
+    // own note says what an exhausted bucket costs: the server answers `error`,
+    // and this client turns that into a refusal AND cancels the player's aim.
+    // Somebody dragging the inventory panel would cancel a teammate's shot.
+    if (drag !== null) return;
+
     const slot = slotUnder(event);
     if (slot !== hoveredSlot) {
       hoveredSlot = slot;
@@ -5486,6 +6288,17 @@ async function boot(): Promise<void> {
   );
 
   canvas.addEventListener('mouseleave', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // v12 — THIS DELIBERATELY DOES *NOT* TOUCH `drag`, AND THAT IS LOAD-BEARING.
+    // ═══════════════════════════════════════════════════════════════════════
+    // The canvas is one row of a flex column: `#cmdrow` and `#log` sit directly
+    // under it, so a pointer dragged towards the bottom of the screen crosses off
+    // the canvas WITH THE BUTTON STILL DOWN and fires this. Clearing the gesture
+    // here would abandon a drag the player is still making, halfway through, and
+    // the panel would snap back for no stated reason. The drag ends on `window`
+    // mouseup, on `window` blur, and on Escape — three exits, none of them a
+    // pointer crossing an element boundary.
+    //
     // ═══ THE CARD IS DROPPED FIRST, ABOVE THE HOTBAR GUARD ═══
     //
     // The early return below fires on exactly the path a tooltip is most likely
@@ -5504,6 +6317,435 @@ async function boot(): Promise<void> {
     requestDraw();
   });
 
+  // -------------------------------------------------------------------------
+  // v12 — THE DRAG. Four functions, three `window` listeners, and no capture.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Start a gesture. Records the grab; starts nothing until the sixth pixel.
+   *
+   * `click` IS WHAT THE PRESS MEANT IF THE POINTER NEVER TRAVELS. A press on an
+   * inventory cell cannot equip on `mousedown`, because that same press may turn
+   * out to be the beginning of a drag onto the hotbar — so the act is deferred
+   * here and run by `endDrag` only when the threshold was not passed. A press on
+   * a panel HEADER passes null: a header has never done anything on click, so a
+   * sub-threshold release correctly does nothing at all.
+   */
+  function beginDrag(
+    subject: DragSubject,
+    grabX: number,
+    grabY: number,
+    click: (() => void) | null,
+  ): void {
+    drag = {
+      subject,
+      grabX,
+      grabY,
+      offsetAtGrab: subject.kind === DragKind.Panel ? panelOffsets[subject.panel] : NO_OFFSET,
+      click,
+      moved: false,
+      at: { x: grabX, y: grabY },
+    };
+  }
+
+  /**
+   * The pointer moved while a gesture is live. Called from the WINDOW listener.
+   *
+   * ═══ IT REDRAWS ON A *CHANGE* AND NOT PER EVENT ═══
+   * The comparison against `at` is the same rule every hover in the canvas
+   * `mousemove` handler keeps: an unconditional `requestDraw` per pointer event
+   * turns this client's dirty-flag renderer into a 60fps one, which the header at
+   * the top of this file forbids at length. A drag is the worst case for it,
+   * because it is the one gesture that fires continuously for a second or more.
+   *
+   * `backbufferPoint` ANSWERS NULL OFF THE BACKBUFFER — the letterbox, or the
+   * chat row below the canvas — and that clears the ghost rather than freezing it
+   * at the edge. The GESTURE survives: the player is still holding the button and
+   * is on their way somewhere, and a drag that gave up because the pointer
+   * clipped a letterbox would be a drag that fails on small windows only.
+   */
+  function onDragMove(clientX: number, clientY: number): void {
+    const live = drag;
+    if (live === null) return;
+    const point = renderer.backbufferPoint(clientX, clientY);
+    if (point === null) {
+      if (live.at === null) return;
+      live.at = null;
+      requestDraw();
+      return;
+    }
+    if (live.at !== null && live.at.x === point.x && live.at.y === point.y) return;
+    live.at = point;
+    if (!live.moved) {
+      // BELOW THE THRESHOLD THE PANEL DOES NOT MOVE AT ALL. `passesThreshold` is
+      // Mouse.lua:177 verbatim — Chebyshev, strictly greater than 6 — so a firm
+      // click on a header with an unsteady hand is still a click.
+      if (!passesThreshold(live.grabX, live.grabY, point.x, point.y)) return;
+      live.moved = true;
+    }
+    const subject = live.subject;
+    if (subject.kind === DragKind.Panel) {
+      panelOffsets[subject.panel] = nextOffset(
+        live.offsetAtGrab,
+        live.grabX,
+        live.grabY,
+        point.x,
+        point.y,
+      );
+    } else {
+      springInventoryTab(point);
+    }
+    requestDraw();
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOLDING AN ITEM OVER THE OTHER TAB TURNS THE PANEL OVER. Mid-gesture.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ WITHOUT THIS, THE PAPER DOLL IS A DROP TARGET NOBODY CAN REACH ═══
+   * The doll and the bag are on MUTUALLY EXCLUSIVE tabs (`inventoryPanelRows`
+   * pushes a `Doll` row on Equipped and `Cells` rows on Carried, never both), so
+   * a carried item picked up on the Carried tab is being dragged across a panel
+   * that is not showing a single doll cell, and a worn item picked up on the
+   * Equipped tab is being dragged across a panel showing no bag. Both drop
+   * branches in `resolveDrop` were therefore unreachable, and so was the
+   * `ui_inventory_cell_hover` plate the doll paints on a valid target: three
+   * pieces of working code with no route to them, which is trap 2 of the brief
+   * (a control that does nothing) hiding as trap 3 (an invisible prerequisite).
+   *
+   * SPRING-LOADED RATHER THAN A SECOND COPY OF THE BAG ON THE DOLL TAB, because
+   * the doll's height budget is spoken for to the pixel: ui/inventory.ts:273-298
+   * shows three rows of cells fitting into 250 logical pixels with twelve to
+   * spare on the smallest viewport this client renders at, so there is no room
+   * for a carried strip beside it and a fourth row is already refused. Hovering a
+   * folder to open it is the oldest gesture in this shape and it costs no pixels
+   * at all.
+   *
+   * IT ONLY EVER SWITCHES TO THE TAB THE DRAG IS *GOING* TO, and that falls out
+   * of the geometry rather than needing a rule: a carried item can only have been
+   * picked up on Carried, so the one tab it can spring to is Equipped, and a worn
+   * item's only spring is back to Carried. The `hit.tab === invTab` comparison is
+   * what makes it idempotent while the pointer sits on the tab.
+   *
+   * THE COST IS PAID ONLY OVER THE PANEL. `inventoryPanelRows` walks the whole
+   * doll and the whole bag, which is exactly the work the canvas `mousemove`
+   * short-circuit exists to keep out of a gesture, so the rect test comes first
+   * and a drag anywhere else on the screen does nothing here. Nothing is sent —
+   * a tab is client-local, as `runInventoryHit`'s Tab case says.
+   */
+  function springInventoryTab(point: TileXY): void {
+    const { logicalW, logicalH } = renderer.metrics();
+    const layout = hudLayout(logicalW, logicalH);
+    if (!inRect(layout.inventory, point.x, point.y) || layout.inventory === null) return;
+    const hit = inventoryPanelHitAt(
+      layout.inventory,
+      inventoryPanelRows(inventoryPanelView()),
+      point.x,
+      point.y,
+    );
+    if (hit === null || hit.kind !== InventoryHitKind.Tab || hit.tab === invTab) return;
+    invTab = hit.tab;
+  }
+
+  /**
+   * WHERE AN ITEM RELEASED HERE LANDS. Three targets, and a miss is a miss.
+   *
+   * THE HOTBAR IS ASKED FIRST because it is painted last and is the only surface
+   * a release can be aimed at from outside a panel. `hotbarDropTargetAt` answers
+   * `Talent` rather than `Miss` for slots 1-4 precisely so that this function has
+   * to REFUSE IN WORDS: a coat dragged onto slot 2 that silently snapped back
+   * would be the "control that does nothing" trap with the control being the
+   * whole left half of the bar.
+   *
+   * THEN THE INVENTORY PANEL, THROUGH ITS ORDINARY HIT TEST. There is no
+   * release-only outcome and deliberately none was added (ui/inventory.ts):
+   * `EmptySlot { slot }` and `Item { slot, worn }` are already everything a drop
+   * needs, and the item's identity comes from the DRAG rather than from the
+   * target. A second code path for "the pointer was down when it got here" would
+   * be a second copy of the panel's geometry.
+   *
+   * THE DESTINATION SLOT IS NOT CHECKED HERE, and that is the same rule the
+   * panel's own click keeps: `equip` names an ITEM and the server reads the
+   * destination off the authored catalogue (protocol.ts's `EquipSchema`). A
+   * browser deciding that a coat may not be dropped on the HEAD cell would be a
+   * second copy of the catalogue, and it would be the copy that went stale.
+   */
+  function resolveDrop(live: LiveDrag, point: TileXY | null): void {
+    const subject = live.subject;
+    // A PANEL DRAG HAS NOTHING TO RESOLVE. Its whole effect is the offset, which
+    // `onDragMove` has already applied, `hudLayout` has already clamped and
+    // `settlePanel` is about to bank.
+    if (subject.kind === DragKind.Panel || point === null) return;
+
+    const { logicalW, logicalH } = renderer.metrics();
+    const drop = hotbarDropTargetAt(
+      point.x,
+      point.y,
+      hotbarView().slots.length,
+      logicalW,
+      logicalH,
+    );
+    switch (drop.kind) {
+      case HotbarDropKind.Bind:
+        bindItemSlot(drop.index, subject);
+        return;
+      case HotbarDropKind.Talent:
+        showNotice(
+          `slot ${String(drop.index + 1)} is a class talent — items go on slots ${String(HOTBAR_TALENT_SLOTS + 1)}-${String(HOTBAR_SLOTS)}`,
+        );
+        return;
+      case HotbarDropKind.Miss:
+        break;
+    }
+
+    const layout = hudLayout(logicalW, logicalH);
+    if (layout.inventory === null) return;
+    const hit = inventoryPanelHitAt(
+      layout.inventory,
+      inventoryPanelRows(inventoryPanelView()),
+      point.x,
+      point.y,
+    );
+    if (hit === null) return;
+    // A BAG ITEM ONTO A DOLL CELL — filled or empty — IS `equip`. That is the
+    // gesture the paper doll exists to invite, and it is the same frame the
+    // panel's own click already sends.
+    if (
+      subject.kind === DragKind.Carried &&
+      (hit.kind === InventoryHitKind.EmptySlot || (hit.kind === InventoryHitKind.Item && hit.worn))
+    ) {
+      sendEquip(subject.itemId);
+      return;
+    }
+    // ...AND A WORN ITEM ONTO THE BAG IS `unequip`, THE SAME GESTURE BACKWARDS.
+    // `unequip` names a SLOT rather than an item (protocol.ts:1938-1942), and the
+    // drag has carried that slot since the grab.
+    if (subject.kind === DragKind.Worn && hit.kind === InventoryHitKind.Item && !hit.worn) {
+      sendUnequip(subject.slot);
+      return;
+    }
+    // ═══ RELEASED BACK ON THE CELL IT CAME FROM: THAT IS THE CLICK, NOT A DROP ═══
+    // The 6px threshold turns a shaky press into a gesture, and before this branch
+    // existed the shaky press was SWALLOWED — `beginDrag` deferred the equip, the
+    // release found no target, and the item did not move, the strip did not
+    // update and nothing was said. "Clicking the item sometimes doesn't work" is
+    // how that reads from the chair, and a seven-pixel tremor on a click is
+    // ordinary. A release over the SAME cell is unambiguous: the player pressed a
+    // thing and let go of it in the same place, which is a click in every
+    // interface anybody has used, so the deferred act runs.
+    //
+    // THE SAME CELL AND NOT MERELY THE SAME PANEL. Dragging a worn coat across
+    // the panel and letting go somewhere else still means "never mind" — running
+    // the click there would take the coat OFF as the price of an abandoned drag.
+    if (hit.kind === InventoryHitKind.Item && sameSubject(subject, hit)) {
+      live.click?.();
+      return;
+    }
+    // ANYTHING ELSE PUTS IT BACK, SILENTLY. A drag released over nothing in
+    // particular means "never mind" in every interface anybody has used, and a
+    // sentence for it would fire on the most common way a player abandons a
+    // gesture they started by accident.
+  }
+
+  /**
+   * Is this hit the very cell the drag was picked up from?
+   *
+   * ONE COMPARISON PER KIND, and each uses the identifier that kind is NAMED by —
+   * a carried item by its `itemId`, a worn item by its `Slot` — for the reason
+   * ui/drag.ts's `DragSubject` gives: those are the two identifiers the verbs
+   * take, and comparing a worn item by id would be comparing a field the unequip
+   * frame does not carry.
+   */
+  function sameSubject(
+    subject: DragSubject,
+    hit: { readonly itemId: string; readonly slot: Slot; readonly worn: boolean },
+  ): boolean {
+    if (subject.kind === DragKind.Carried) return !hit.worn && hit.itemId === subject.itemId;
+    if (subject.kind === DragKind.Worn) return hit.worn && hit.slot === subject.slot;
+    return false;
+  }
+
+  /**
+   * The button came up. THE ONLY PLACE A GESTURE TURNS INTO AN ACT.
+   *
+   * REGISTERED ON `window`, NOT ON THE CANVAS, and that is not a style choice: a
+   * mouseup released outside the canvas — over `#cmdrow`, over the status line,
+   * over the desktop — never arrives at a canvas listener at all, and the panel
+   * would stay stuck to the cursor with the button already up.
+   */
+  function endDrag(clientX: number, clientY: number): void {
+    const live = drag;
+    if (live === null) return;
+    drag = null;
+    if (!live.moved) {
+      // NEVER TRAVELLED: this was a CLICK. Run what the press meant.
+      //
+      // AND THE HOVER STATE IS *NOT* CLEARED HERE, deliberately. Nothing went
+      // stale: the pointer never passed the threshold, so what it was over when
+      // the button went down is what it is over now, and clearing would blank the
+      // ring under the cell the player just clicked until they jiggled the mouse.
+      live.click?.();
+      requestDraw();
+      return;
+    }
+    resolveDrop(live, renderer.backbufferPoint(clientX, clientY));
+    settlePanel(live.subject);
+    clearHoverState();
+    requestDraw();
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BANK THE POSITION THE PLAYER CAN SEE, NOT THE ONE THE POINTER REACHED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `onDragMove` stores a RAW offset — `offsetAtGrab` plus the total pointer
+   * travel — and `hudLayout` clamps it on the way out through `moveIntoBand`. For
+   * the duration of the gesture that is exactly right, and ui/drag.ts's
+   * `nextOffset` argues why. The moment the button comes up it stops being right,
+   * because the NEXT `beginDrag` re-bases on the stored offset while `grabX/grabY`
+   * come from the CLAMPED position under the pointer — so an overshoot is banked
+   * forever and has to be paid back pixel for pixel before the panel moves again.
+   *
+   * THAT IS NOT A ROUNDING NICETY, IT IS A DEAD HANDLE. The character sheet on a
+   * 1248x480 backbuffer rests at y=46 and clamps at y=75: 29 pixels of legal
+   * travel against a 480-pixel canvas. One sweep to the bottom of the window banks
+   * dy≈423, and the next FOUR full-height upward drags then move the panel zero
+   * pixels each — a title bar the player can see, grab and pull with no effect and
+   * no explanation. Sideways is worse (SHEET_W 328 against 1248 banks ~320 in one
+   * stroke) and the offsets are session state, so the panel stays welded to the
+   * edge until the page is reloaded.
+   *
+   * SETTLED ON RELEASE RATHER THAN CLAMPED ON WRITE, and the difference is only
+   * bookkeeping — the drawn result mid-gesture is identical either way, because
+   * every read already clamps. Doing it here keeps `moveIntoBand` the one clamp
+   * and keeps the raw value available for the whole gesture, which is what lets a
+   * pointer that has swept past the edge pick the panel back up the instant it
+   * comes back into range.
+   *
+   * ONLY A PANEL DRAG HAS AN OFFSET. An item drag's whole effect is `resolveDrop`.
+   */
+  function settlePanel(subject: DragSubject): void {
+    if (subject.kind !== DragKind.Panel) return;
+    const { logicalW, logicalH } = renderer.metrics();
+    const band = panelBand(logicalH, turnHudHeight(turnView()));
+    const unmoved = unmovedPanelRect(subject.panel, logicalW, logicalH, band);
+    // NULL MEANS THE PANEL IS NOT DRAWABLE — shut, or a band too short to hold it.
+    // There is no position to settle to, and the raw offset is left alone so that
+    // a window which grows back restores what the player chose.
+    if (unmoved === null) return;
+    panelOffsets[subject.panel] = settleOffset(
+      unmoved,
+      panelOffsets[subject.panel],
+      band,
+      logicalW,
+    );
+  }
+
+  /**
+   * FORGET WHAT THE POINTER WAS OVER BEFORE THE GESTURE. Run at every exit.
+   *
+   * The canvas `mousemove` handler short-circuits on its first line while a drag
+   * is live, deliberately (see the note there — it is the difference between a
+   * drag that costs nothing and one that spends the socket's token bucket on
+   * hovering). The cost is that every hover flag it maintains is FROZEN at the
+   * pre-press value for the whole gesture and stays stale afterwards until the
+   * pointer next moves — and the pointer has usually finished moving by then,
+   * because the player just released the button.
+   *
+   * Two visible bugs, both reported from play: a hover card left over from before
+   * the press stayed pinned at the old `pointerPoint` and was painted OVER the
+   * thing in the player's hand, and the inventory panel's × stayed lit after the
+   * panel was dragged out from under it. Clearing is the honest fix rather than
+   * re-running the hover resolution here: a release is not a move, the pointer may
+   * well be over something else entirely by the next frame, and the very next
+   * `mousemove` repopulates all of it.
+   */
+  function clearHoverState(): void {
+    pointerPoint = null;
+    hoveredSlot = -1;
+    invHovered = null;
+    invCloseHovered = false;
+    invDropHovered = false;
+    sheetCloseHovered = false;
+    sheetTalentsHovered = false;
+    talentsCloseHovered = false;
+    talentsHoveredRow = null;
+    menuCloseHovered = false;
+    // `menuHovered` IS DELIBERATELY LEFT ALONE. It is not a hover: it doubles as
+    // the escape menu's KEYBOARD CURSOR (`onUi`'s arrow handling reads it as the
+    // position to move from), so clearing it here would send a player who dragged
+    // the menu by its title bar back to the top of the list on their next
+    // arrow-down. The × beside it is a hover and is cleared.
+    respawnHovered = false;
+    noteHoveredActor(null);
+  }
+
+  /**
+   * ABANDON the gesture: Escape, and losing the window.
+   *
+   * A GENUINE CANCEL, so a panel goes back where it was. The offset is applied
+   * live as the pointer moves, so "ending" a panel drag without restoring
+   * `offsetAtGrab` would leave the panel wherever the pointer happened to be when
+   * the alt-tab landed — which is the one outcome a player pressing Escape is
+   * explicitly asking not to have.
+   *
+   * The deferred `click` is NOT run. Escape means "not that", and a cancel that
+   * equipped something on the way out would be the worst possible reading of it.
+   */
+  function cancelDrag(): boolean {
+    const live = drag;
+    if (live === null) return false;
+    drag = null;
+    if (live.moved) {
+      if (live.subject.kind === DragKind.Panel) {
+        // `offsetAtGrab` IS ALWAYS A SETTLED VALUE, which is what makes restoring
+        // it safe: every gesture that ends normally runs `settlePanel`, and a
+        // fresh store is `NO_OFFSET`. So a cancel can never reinstate an
+        // overshoot that `settlePanel` would have to undo later.
+        panelOffsets[live.subject.panel] = live.offsetAtGrab;
+      }
+      // Same rule as `endDrag`: only a gesture that actually TRAVELLED left the
+      // hover state frozen, because only then was the canvas `mousemove` handler
+      // short-circuiting anything that mattered.
+      clearHoverState();
+    }
+    requestDraw();
+    return true;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // THREE `window` LISTENERS, REGISTERED ONCE FOR THE LIFE OF THE PAGE.
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // ON `window` AND NEVER ON THE CANVAS, for two independent reasons and either
+  // one alone would be enough. The canvas `mouseleave` handler clears the pointer
+  // state, so a canvas-driven drag would freeze the instant the pointer crossed
+  // onto `#cmdrow` — which is directly under the canvas and is exactly where a
+  // pointer goes when somebody drags a panel towards the bottom of the screen.
+  // And a release outside the canvas never fires a canvas listener at all, so the
+  // panel would stay stuck to a cursor with no button held.
+  //
+  // NEVER DISPOSED, which is keys.ts's precedent restated: a listener that comes
+  // and goes is a listener whose ORDER comes and goes with it. All three are
+  // completely inert while `drag` is null — one comparison and a return.
+  //
+  // BLUR IS NOT OPTIONAL. Alt-tab, a Discord overlay taking focus, the activity
+  // iframe losing it: the browser stops delivering mouse events and the mouseup
+  // that would have ended the gesture is never seen. Without this the player
+  // comes back to a panel welded to the pointer and a `mousemove` handler that
+  // short-circuits every hover in the client.
+  window.addEventListener('mousemove', (event: MouseEvent) => {
+    onDragMove(event.clientX, event.clientY);
+  });
+  window.addEventListener('mouseup', (event: MouseEvent) => {
+    endDrag(event.clientX, event.clientY);
+  });
+  window.addEventListener('blur', () => {
+    cancelDrag();
+  });
+
   canvas.addEventListener('mousedown', (event) => {
     // ═══ TRAVEL INTERRUPT (1), AND IT IS THE VERY FIRST LINE ON PURPOSE ═══
     // Before the sweep settle, before the menu branch, before every early return
@@ -5513,6 +6755,17 @@ async function boot(): Promise<void> {
     // land on the Case Log would be the most confusing possible outcome.
     cancelTravel();
     sweep?.settle();
+    // ═══ v12 — A SECOND PRESS WHILE A GESTURE IS LIVE ABANDONS IT ═══
+    // Reachable with a right-click during a left drag, and with a mouse whose
+    // button state the browser has lost track of after an alt-tab. Abandoning is
+    // the honest answer: there is one `drag`, so the alternative is a press that
+    // silently replaces a gesture the player is still making, and the offset
+    // would jump by the distance between the two grab points. Below the two
+    // interrupts above it, which fire for every press whatever else happens.
+    if (cancelDrag()) {
+      event.preventDefault();
+      return;
+    }
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
     const { logicalW, logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
@@ -5593,6 +6846,25 @@ async function boot(): Promise<void> {
       // look at.
       if (targeting !== null && targeting.active()) {
         targeting.cancel();
+        return;
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // v12 — RIGHT-CLICK ON AN ITEM SLOT UNBINDS IT. THE ONLY WAY TO CLEAR ONE.
+      // ═══════════════════════════════════════════════════════════════════════
+      // BELOW the aim cancel above, not beside it. That cancel is documented as
+      // unconditional and load-bearing — without it the targeting ring could no
+      // longer be dismissed with the mouse at all, and the bug would present as
+      // "the ring is stuck", miles from anything anyone would look at. So while
+      // an aim is open the first right-click still closes it and the second
+      // unbinds, which costs one press in a state that lasts a moment.
+      //
+      // `isItemSlotIndex` GUARDS IT, so a right-click on a TALENT slot is
+      // untouched and falls through to `clearNotice()` exactly as it always has.
+      // The class loadout is not bindable and there is nothing there to clear.
+      const rightSlot = slotUnder(event);
+      if (isItemSlotIndex(rightSlot)) {
+        unbindItemSlot(rightSlot);
         return;
       }
 
@@ -5717,7 +6989,22 @@ async function boot(): Promise<void> {
     //
     // `escapeMenuRows` IS CALLED ONCE and handed to the hit test, which is the
     // same split the painter uses.
+    //
+    // ═══ ...AND THE HEADER STRIP IS THE HANDLE, ASKED BEFORE THE ROWS ═══
+    // `escapeMenuDragAt` takes NO rows and refuses the close control outright, so
+    // asking it first costs nothing (it is two rect tests against the panel rect
+    // alone) and cannot shadow the ×: pressing × and twitching two pixels must
+    // close the menu, not move it. On this panel in particular the × is the way
+    // out for a player who has just made a mess of their keyboard, so it is the
+    // last control that may be ambiguous. Below it, `escapeMenuHitAt` is reached
+    // only for a press that was NOT on the handle, which is what keeps
+    // twenty-six rows from being rebuilt every time somebody grabs the title bar.
     if (point !== null && layout.menu !== null) {
+      if (escapeMenuDragAt(layout.menu, point.x, point.y) !== null) {
+        event.preventDefault();
+        beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Menu }, point.x, point.y, null);
+        return;
+      }
       const hit = escapeMenuHitAt(layout.menu, menuRows(), point.x, point.y);
       if (hit !== null) {
         event.preventDefault();
@@ -5791,62 +7078,51 @@ async function boot(): Promise<void> {
     // menu is, and it is wider than this panel — so without this line a click on
     // BARE MENU would reach a cell, a tab or the DROP control underneath it, and
     // DROP puts a coat on the floor of a room the player is about to leave.
+    //
+    // ═══ ...AND v12 ADDS THE PRESS, WHICH IS NOT A CLICK WITH AN EXTRA CASE ═══
+    // `inventoryPanelDragAt` is a SECOND reader over the SAME
+    // `inventoryPanelGeometry` (ui/inventory.ts explains why it is not a sixth
+    // member of `InventoryHit`: this switch is under
+    // `switch-exhaustiveness-check`, and a Header variant would be a compile
+    // error here for an outcome the click path has nothing to do with). It
+    // answers the header handle, or the item under the pointer, and it refuses
+    // both the close control and an EMPTY doll cell — there is nothing in an
+    // empty cell to pick up, though it remains a perfectly good drop TARGET.
+    //
+    // A PRESS ON A FILLED CELL DOES NOT ACT YET, AND THAT IS THE WHOLE CHANGE.
+    // The same press may turn out to be the start of a drag onto the hotbar, so
+    // the equip/unequip is handed to `beginDrag` as the deferred `click` and run
+    // by the release only if the pointer never travelled six pixels. Acting on
+    // `mousedown` as this block used to would mean every drag off the doll also
+    // took the item off the body on its way out.
     if (point !== null && layout.inventory !== null && !inRect(layout.menu, point.x, point.y)) {
-      const hit = inventoryPanelHitAt(
-        layout.inventory,
-        inventoryPanelRows(inventoryPanelView()),
-        point.x,
-        point.y,
-      );
+      // ONE `inventoryPanelRows` FOR BOTH READERS. The rows walk the whole doll
+      // and the whole bag, and building them twice per press would do that work
+      // twice for one pointer event.
+      const rows = inventoryPanelRows(inventoryPanelView());
+      const grab = inventoryPanelDragAt(layout.inventory, rows, point.x, point.y);
+      if (grab !== null) {
+        event.preventDefault();
+        if (grab.kind === InventoryHitKind.Header) {
+          beginDrag(
+            { kind: DragKind.Panel, panel: DraggablePanel.Inventory },
+            point.x,
+            point.y,
+            null,
+          );
+          return;
+        }
+        const pressed = inventoryPanelHitAt(layout.inventory, rows, point.x, point.y);
+        beginDrag(grab.subject, point.x, point.y, () => {
+          runInventoryHit(pressed);
+        });
+        return;
+      }
+      const hit = inventoryPanelHitAt(layout.inventory, rows, point.x, point.y);
       if (hit !== null) {
         event.preventDefault();
-        switch (hit.kind) {
-          case InventoryHitKind.Close:
-            toggleInventoryPanel(false);
-            return;
-          case InventoryHitKind.Tab:
-            // CLIENT-LOCAL AND NOTHING IS SENT. The frame already carries both
-            // halves — one `inventory` message is the doll AND the bag — so
-            // switching tabs is a question about which of two things already in
-            // hand is on screen.
-            if (invTab !== hit.tab) {
-              invTab = hit.tab;
-              requestDraw();
-            }
-            return;
-          case InventoryHitKind.Item:
-            // THE FOCUS IS SET FROM THE SAME FUNCTION THE HOVER USES, so a click
-            // that arrives without a preceding hover (a touch, a panel that moved
-            // under a still pointer) leaves the strip describing what was pressed.
-            invFocus = focusForHit(hit);
-            // `worn` DECIDES THE VERB AND NOTHING ELSE DOES. On the doll it is
-            // `unequip { slot }` — a slot rather than the item, because a client
-            // one frame behind would otherwise ask to remove something already
-            // gone, while emptying the slot the player is looking at is what they
-            // meant (protocol.ts's `UnequipSchema`). In the bag it is
-            // `equip { itemId }`, and the destination slot is authored content the
-            // server reads off the catalogue.
-            if (hit.worn) sendUnequip(hit.slot);
-            else sendEquip(hit.itemId);
-            requestDraw();
-            return;
-          case InventoryHitKind.EmptySlot:
-            // SWALLOWED, NEVER A FALL-THROUGH. There is nothing to send — you
-            // cannot put on a slot — but the focus makes the strip say which slot
-            // it is, which is the only place the seven slot names are ever
-            // written down for the player.
-            invFocus = focusForHit(hit);
-            requestDraw();
-            return;
-          case InventoryHitKind.Drop:
-            // ONE PRESS, NO CONFIRMATION, argued at the control itself
-            // (ui/inventory.ts): the item lands on the tile you are standing on
-            // and `pickup` takes it straight back for the price of a turn. The
-            // irreversible act near here is walking away from it, and no button
-            // can warn about that.
-            sendDrop(hit.itemId);
-            return;
-        }
+        runInventoryHit(hit);
+        return;
       }
     }
 
@@ -5870,6 +7146,16 @@ async function boot(): Promise<void> {
       !inRect(layout.inventory, point.x, point.y) &&
       !inRect(layout.menu, point.x, point.y)
     ) {
+      // ═══ v12 — THE HEADER STRIP IS THE HANDLE, ASKED BEFORE THE ROWS ═══
+      // `talentPanelDragAt` takes NO rows — the handle and the × both depend on
+      // the panel rect alone — so a press on the title bar never rebuilds four
+      // talent rows. It refuses the close control outright, so pressing × and
+      // twitching two pixels still closes the panel rather than moving it.
+      if (talentPanelDragAt(layout.talents, point.x, point.y) !== null) {
+        event.preventDefault();
+        beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Talents }, point.x, point.y, null);
+        return;
+      }
       const hit = talentPanelHitAt(
         layout.talents,
         talentPanelRows(talentPanelView()),
@@ -5891,6 +7177,18 @@ async function boot(): Promise<void> {
     if (
       point !== null &&
       layout.sheet !== null &&
+      // ═══ THE TALENT PANEL IS THE THIRD TERM, AND IT WAS MISSING ═══
+      // Step 4a above is drawn OVER this one and returns for only two of its
+      // outcomes — Close and Spend — so a press on a talent ROW, on the badge or
+      // on bare talent panel fell straight through to here. That was harmless
+      // while `charSheetHitAt` answered only 'close' and 'talents'; with the drag
+      // handle it answers 'header' for the whole title strip, and on an ordinary
+      // 1248x480 backbuffer the sheet's header sits BEHIND the talent panel's
+      // first content row. So a press aimed at a talent row began dragging a
+      // character sheet the player could not see, and banked an offset into it.
+      // Same rule as the other three terms: a control the player cannot see must
+      // not be pressable.
+      !inRect(layout.talents, point.x, point.y) &&
       !inRect(layout.inventory, point.x, point.y) &&
       !inRect(layout.menu, point.x, point.y)
     ) {
@@ -5911,6 +7209,19 @@ async function boot(): Promise<void> {
       if (hit === 'talents') {
         event.preventDefault();
         toggleTalentPanel();
+        return;
+      }
+      // ═══ v12 — THE THIRD OUTCOME: THE HEADER STRIP IS THE HANDLE ═══
+      // One hit test answers all three, so the sheet needs no second reader the
+      // way the talent panel, the inventory panel and the escape menu do — this
+      // one returns a plain string union that main.ts compares with `===`, so
+      // widening it broke nothing (ui/charsheet.ts's own note). It is tested LAST
+      // of the three because the `[G]` control and the × both sit INSIDE the
+      // header strip, and `charSheetHitAt` already offers them first for exactly
+      // that reason.
+      if (hit === 'header') {
+        event.preventDefault();
+        beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Sheet }, point.x, point.y, null);
         return;
       }
     }
@@ -6390,10 +7701,31 @@ function applyServerMessage(msg: ServerMsg): void {
       //
       // A NOTICE RATHER THAN A SOUND OR A MODAL. A modal in a phase-locked game
       // is the class picker's problem all over again — the barrier has no notion
-      // of "is reading a menu" — and this client has no audio. `onRefusal` is
-      // the module-scope notice hook, self-clearing after NOTICE_MS, and the
-      // shared half of the news is already in the Case Log where the whole party
-      // can read it.
+      // of "is reading a menu" — and this client has no audio. The shared half of
+      // the news is already in the Case Log where the whole party can read it.
+      //
+      // ═══════════════════════════════════════════════════════════════════════
+      // v12: IT NO LONGER GOES THROUGH `onRefusal`, AND IT IS ONE SENTENCE.
+      // ═══════════════════════════════════════════════════════════════════════
+      // TWO THINGS WERE WRONG WITH THE OLD SHAPE. The hook is spelled `onRefusal`
+      // and everything else that reaches it is a REFUSAL — "too close", "not your
+      // turn", "not connected" — so the single best piece of news in the game
+      // arrived in the complaints channel, in the same orange, in the same slot,
+      // for the same four and a half seconds. `showNotice` is the same timer and
+      // the same line under a name that does not claim the player did something
+      // wrong; the binding is `onGoodNews`, and the split costs one variable.
+      //
+      // And it was an `else if`, which made CROSSING A LEVEL AND GAINING A POINT
+      // — the common case, and precisely the moment the tree wants opening —
+      // print only the level and never the count. `src/shared/progression.ts`
+      // grants a point on every level, so the two move together on nearly every
+      // frame this branch fires on. One merged sentence names both.
+      //
+      // The two facts are still checked SEPARATELY and the `>` on each is still
+      // deliberate: a REFUND (a talent id that vanished from the loadout — the
+      // load path hands its points back) raises `unspent` with the level standing
+      // still, and a SPEND lowers it and must say nothing, because the player
+      // just watched themselves do it.
       {
         const before = progress;
         progress = msg;
@@ -6403,11 +7735,14 @@ function applyServerMessage(msg: ServerMsg): void {
         // rebound away would make the whole tree dead content for exactly the
         // player who took the trouble to rebind.
         const talentKey = keyHint('show_talents');
-        if (before !== null && msg.level > before.level) {
-          onRefusal(`level ${msg.level} — press ${talentKey} to spend`);
-        } else if (before !== null && msg.unspent > before.unspent) {
-          onRefusal(
-            `${msg.unspent} talent ${msg.unspent === 1 ? 'point' : 'points'} in hand — press ${talentKey}`,
+        const levelled = before !== null && msg.level > before.level;
+        const gained = before !== null && msg.unspent > before.unspent;
+        if (levelled || gained) {
+          const points = `${String(msg.unspent)} talent ${msg.unspent === 1 ? 'point' : 'points'}`;
+          onGoodNews(
+            levelled
+              ? `level ${String(msg.level)} — ${points} in hand, press ${talentKey}`
+              : `${points} in hand — press ${talentKey}`,
           );
         }
       }

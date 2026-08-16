@@ -9,6 +9,7 @@ import {
   ESCAPE_MENU_MARGIN,
   ESCAPE_MENU_MIN_H,
   ESCAPE_MENU_MIN_W,
+  escapeMenuDragAt,
   escapeMenuHitAt,
   escapeMenuPaging,
   escapeMenuRect,
@@ -27,6 +28,7 @@ import {
   resetOne,
 } from '../../src/client/input/keymap.ts';
 import { UiCommand } from '../../src/client/input/keys.ts';
+import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { PartyAction } from '../../src/shared/protocol.ts';
 import type { EscapeMenuView, MenuHit, MenuRow } from '../../src/client/ui/escapemenu.ts';
 import type { KeyRemap } from '../../src/client/input/keymap.ts';
@@ -217,6 +219,39 @@ describe('the root screen', () => {
     expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
+  it('puts the unspent count on row 3 without adding or moving a row', () => {
+    // ═══ THE REGRESSION THAT MATTERS IS THE SHAPE, NOT THE STRING ═══
+    // `rootRows` is six rows, always six, in one order, and ui/contextmenu.ts
+    // :94-102 gives the reason: a menu whose shape changes with state moves the
+    // row the player was already reaching for. So the count goes INSIDE the
+    // label of the row that already opens the spend screen — never a seventh row
+    // and never a reorder — and this asserts the whole list on both sides of it.
+    const shape = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.index);
+    const labels = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.label);
+
+    const waiting = escapeMenuRows(view({ unspent: 2 }));
+    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(labels(waiting)).toEqual([
+      'RESUME',
+      'KEY BINDINGS',
+      'CHARACTER SHEET',
+      'TALENTS (2)',
+      'INVENTORY',
+      'LEAVE PARTY',
+    ]);
+    // The effect on row 3 is untouched — it is still the launcher, and a longer
+    // label must not turn it into a different act.
+    expect(entryRows(waiting)[3]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
+    expect(entryRows(waiting)[3]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
+
+    // WITHOUT POINTS THE LABEL IS UNCHANGED, at zero and with the field absent
+    // entirely — which is what main.ts's existing `escapeMenuView()` passes. A
+    // row reading "TALENTS (0)" on every open is furniture within one session.
+    expect(labels(escapeMenuRows(view({ unspent: 0 })))[3]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view()))[3]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view({ unspent: 1 })))[3]).toBe('TALENTS (1)');
+  });
+
   it('draws LEAVE PARTY greyed for a party of one rather than dropping it', () => {
     // ui/contextmenu.ts:94-102: a menu whose shape changes with state moves the
     // row you were reaching for, and a player who cannot see the row at all
@@ -303,10 +338,59 @@ describe('escapeMenuHitAt on the root screen', () => {
   it('answers null on the panel but off every control, which the caller swallows', () => {
     const rect = roomyRect();
     const rows = escapeMenuRows(view());
-    // The header strip, left of the ×.
+    // The header strip, left of the ×. Still null to a CLICK — `Header` is
+    // deliberately not a member of `MenuHit` (see `escapeMenuDragAt` below).
     expect(escapeMenuHitAt(rect, rows, rect.x + 2, rect.y + 6)).toBeNull();
     // ...and off the panel entirely.
     expect(escapeMenuHitAt(rect, rows, rect.x - 4, rect.y - 4)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE DRAG HANDLE — a second reader over the same geometry
+// ---------------------------------------------------------------------------
+
+describe('escapeMenuDragAt', () => {
+  it('answers Header across the strip, and NEVER where the × is', () => {
+    // A SCAN, not a coordinate. The last assertion is the one that matters:
+    // pressing × and twitching two pixels must CLOSE the menu rather than move
+    // it — and on this panel the × is the way out for somebody who has just made
+    // a mess of their keyboard, so it is the last control that may be ambiguous.
+    const rect = roomyRect();
+    const rows = escapeMenuRows(view());
+    const y = rect.y + Math.floor(HEADER_H / 2);
+
+    const handle: number[] = [];
+    const close: number[] = [];
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+      if (escapeMenuDragAt(rect, x, y)?.kind === MenuHitKind.Header) handle.push(x);
+      if (escapeMenuHitAt(rect, rows, x, y)?.kind === MenuHitKind.Close) close.push(x);
+    }
+    expect(handle.length).toBeGreaterThan(0);
+    expect(close.length).toBeGreaterThan(0);
+    expect(handle[0]).toBe(rect.x);
+    expect(handle[handle.length - 1] ?? 0).toBe((handle[0] ?? 0) + handle.length - 1);
+    expect(handle[handle.length - 1] ?? 0).toBeLessThan(close[0] ?? 0);
+    for (const x of close) expect(escapeMenuDragAt(rect, x, y)).toBeNull();
+  });
+
+  it('is exactly the header strip and not one pixel of the body', () => {
+    // A handle taller than the strip makes the first ENTRY draggable, so a click
+    // meant for RESUME would move the panel instead.
+    const rect = roomyRect();
+    expect(escapeMenuDragAt(rect, rect.x + 2, rect.y + HEADER_H - 1)?.kind).toBe(
+      MenuHitKind.Header,
+    );
+    expect(escapeMenuDragAt(rect, rect.x + 2, rect.y + HEADER_H)).toBeNull();
+    expect(escapeMenuDragAt(rect, rect.x - 1, rect.y + 2)).toBeNull();
+  });
+
+  it('answers on the Keys screen too, where the rows are twenty-six', () => {
+    // The handle depends on the panel RECT alone, which is what lets a caller
+    // ask this on `mousedown` without rebuilding twenty-six key rows per event.
+    const rect = roomyRect();
+    expect(escapeMenuDragAt(rect, rect.x + 2, rect.y + 6)?.kind).toBe(MenuHitKind.Header);
+    expect(escapeMenuHitAt(rect, keysRows(), rect.x + 2, rect.y + 6)).toBeNull();
   });
 });
 

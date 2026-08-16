@@ -2751,9 +2751,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         .sort(([a], [b]) => (a < b ? -1 : 1))
         .map(([id, turns]) => `${id}:${turns}`)
         .join(','),
+      // ═══ THE POOL IS QUANTISED TO WHAT A CLIENT CAN DRAW ═══
+      // `Math.floor`, not the raw float, and without it this whole memo is dead
+      // for two of the three classes. Resolve and Focus now trickle 0.6 and 0.4
+      // per BASE TURN (engine/talents.ts's `RESOURCE_RULES`), so a Watchman
+      // standing still in an empty corridor changes `current` on every single
+      // turn — the key never matched, and both frames went out every turn with a
+      // cooldown block that was byte-identical and a pool difference no surface
+      // can show. The key string carried the float in full, e.g.
+      // `resolve:24.599999999999998/100`.
+      //
+      // FLOORING IS SAFE FOR THE GATE AS WELL AS FOR THE DISPLAY. The pip strip
+      // floors, the character sheet floors, and every talent cost is an integer —
+      // so `floor(current) >= cost` and `current >= cost` answer the same thing,
+      // and a client is never left thinking it can pay for something the server
+      // will refuse. What it stops being told about is the fraction, which is
+      // exactly the part nothing can render.
       resource === null
         ? '-'
-        : `${resource.resource.kind}:${resource.resource.current}/${resource.resource.max}`,
+        : `${resource.resource.kind}:${Math.floor(resource.resource.current)}/${resource.resource.max}`,
     ].join('|');
     if (key === session.viewerKey) return;
     session.viewerKey = key;
@@ -2840,10 +2856,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * Every attended body's own viewer-private frames, one socket at a time.
    *
    * The hotbar and the party pane travel together because both are memoised
-   * per socket and both are cheap when nothing moved — and because the one
-   * thing that must never happen is a loop that walks the session list twice
+   * per socket and both are cheap when nothing VISIBLY moved — and because the
+   * one thing that must never happen is a loop that walks the session list twice
    * and gets a different answer the second time, which is what two separate
    * passes over a mutating actor table would eventually produce.
+   *
+   * "VISIBLY" IS DOING REAL WORK IN THAT SENTENCE NOW. Resolve and Focus trickle
+   * every base turn, so the underlying float moves constantly for two of the
+   * three classes; `sendHotbarIfChanged` quantises the pool into its memo key so
+   * the frame goes out when the DISPLAYED number changes rather than when the
+   * float does. Without that the suppression is dead and four attended sockets
+   * sitting still push eight frames a turn for ever.
    */
   const refreshViewers = (): void => {
     for (const session of sessions.values()) {

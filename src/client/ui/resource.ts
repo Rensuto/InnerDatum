@@ -2,18 +2,28 @@
  * The class resource, as DISCRETE PIPS. Never a bar.
  *
  * ===========================================================================
- * WHY A BAR WOULD BE A DESIGN BUG, NOT A STYLE CHOICE
+ * THE ARGUMENT IS COUNTABILITY, NOT STASIS
  * ===========================================================================
  * game-design.md § 2 on the Alchemist: "Reagents are a countable stock of 0-8
- * that refills on kills and at stairs — not a regenerating bar. Every cast is a
- * discrete decision."
+ * that refills on kills, at stairs, and one whole vial every twelve turns — not
+ * a regenerating bar. Every cast is a discrete decision."
  *
- * A bar answers "how full am I?". Pips answer "how many casts do I have left?",
- * and the second question is the only one the Alchemist's player is ever asking.
- * Three-of-eight drawn as a bar reads as 37% of something continuous that will
- * top itself up; drawn as three filled shapes beside five empty ones it reads as
- * three vials, which is exactly what it is. The mechanic is countability, and a
- * bar deletes it while looking perfectly reasonable in a screenshot.
+ * This header used to quote the older half of that sentence and lean on "not a
+ * regenerating bar" as though the mechanic were the pool standing still. It is
+ * not, and the distinction matters now that the pool trickles: THE MECHANIC IS
+ * THAT THE UNITS ARE COUNTABLE OBJECTS. A bar answers "how full am I?"; pips
+ * answer "how many casts do I have left?", and the second question is the only
+ * one the Alchemist's player is ever asking — a question that a pool refilling
+ * one WHOLE vial at a time still answers exactly. Three-of-eight drawn as a bar
+ * reads as 37% of something continuous; drawn as three filled shapes beside five
+ * empty ones it reads as three vials, which is what it is whether or not a
+ * fourth is coming.
+ *
+ * The server is what makes that safe rather than aspirational: a discrete pool's
+ * remainder lives on an integer turn counter beside the pool, so `current` is
+ * always a whole number by the time it reaches this file. Nothing here needs to
+ * defend against a fraction, and nothing here should start drawing a partial pip
+ * to "show progress" — that is the bar, reintroduced one sixteenth at a time.
  *
  * `ResourceView.discrete` carries the distinction on the wire rather than being
  * a table in this file, because which pools are countable is authored data — and

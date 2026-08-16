@@ -582,10 +582,13 @@ export const ACTIONS = [
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // HOTBAR — FOUR SLOTS, NONE OF THEM REBINDABLE, AND THE REASON IS PAINTED ON
-  // THE SCREEN. src/client/ui/hotbar.ts:391 draws `${i + 1}` as each slot's
-  // label, so a rebound digit makes four on-screen buttons lie, and there is no
-  // art budget to redraw them — the manifest has no keycap glyphs.
+  // HOTBAR — FOUR KEYED SLOTS OUT OF EIGHT, NONE OF THE FOUR REBINDABLE, AND THE
+  // REASON IS PAINTED ON THE SCREEN. src/client/ui/hotbar.ts:953-957 draws
+  // `${index + 1}` as the label of each slot below `HOTBAR_TALENT_SLOTS`, so a
+  // rebound digit makes four on-screen buttons lie, and there is no art budget to
+  // redraw them — the manifest has no keycap glyphs. The other four slots are the
+  // ITEM half of the bar (hotbar.ts:215): mouse-only, no key, no digit, and
+  // therefore nothing here at all.
   //
   // MATCHED ON `key` AND NOT `code`, so a French AZERTY player (where the number
   // row is shifted) still presses what is printed on the cap. The counterpart

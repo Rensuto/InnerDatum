@@ -139,6 +139,7 @@ import {
   drawHeader,
   drawPanel,
   fitText,
+  headerDragRect,
   HEADER_H,
   PANEL_PAD,
   PanelSkin,
@@ -234,11 +235,35 @@ const CLOSE_PX = 13;
  * keymap on every frame, and answers `--` when the player has genuinely left the
  * panel with no key, which is a truth they need rather than a blank.
  *
- * WIDE ENOUGH FOR FOUR CHARACTERS, since the label is no longer known at compile
- * time: `[G]` is three, `[--]` is four, and anything longer is trimmed by
- * `drawButton`'s own `fitText`.
+ * ═══ AND IT NOW CARRIES THE COUNT: `[G·2]` WHILE POINTS ARE WAITING ═══
+ * The control already routes to the screen where a point is spent; what it did
+ * not do is say how many are behind it. That is the levelup-clarity half of this
+ * pass, and it is the same act ToME performs at LevelupDialog.lua:757-784, where
+ * every point counter carries its number in the button's own text. The
+ * EMPHASIS is conditional — gold only while `unspent > 0`, upstream's
+ * `glow = 0.6` at :690-691 — and so is the suffix: at zero the label is the bare
+ * `[G]` it has always been, because a control reading `[G·0]` on every open is
+ * furniture within one session.
+ *
+ * ═══ THE WIDTH IS DERIVED AND IT IS NOT A FREE NUMBER ═══
+ * SEVEN CHARACTERS plus `drawButton`'s own 6 pixels of padding: 7 × CHAR_W + 6 =
+ * 48. Seven is the widest label this game can produce — `[--·11]`, the player
+ * who has left `show_talents` unbound AND banked every point, since
+ * `totalPointsAtLevel(MAX_CHARACTER_LEVEL)` is 11 (src/shared/progression.ts).
+ * It was 30 (four characters) when the label was at most `[--]`, and 30 would
+ * have ellipsised `[G·2]` to `[G·…` — a control that reports the wrong count is
+ * worse than one that reports none.
+ *
+ * WIDENING IT NARROWS THE BAND IN WHICH THE BUTTON APPEARS AT ALL, because
+ * `headerHasTalentsButton` gates BOTH the paint and the hit test on this width
+ * against the title. The arithmetic: the button needs
+ * `rect.w >= PANEL_PAD*2 + CLOSE_PX + HEADER_BTN_GAP + TALENTS_BTN_W + titleW`
+ * = 10 + 13 + 3 + 48 + 54 = 128, and `charSheetRect` never returns a panel
+ * narrower than `SHEET_MIN_W` (168). So the control is still offered at every
+ * size this panel can be drawn at, with 40 pixels to spare — which is what makes
+ * the widening safe rather than a trade.
  */
-const TALENTS_BTN_W = 30;
+const TALENTS_BTN_W = 48;
 /** Air between the two header controls, so neither swallows the other's click. */
 const HEADER_BTN_GAP = 3;
 
@@ -497,6 +522,19 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
       // ONLY WHILE THERE IS SOMETHING TO SPEND, mirroring ToME's own conditional
       // (uiset/Minimalist.lua:1512-1516 draws the levelup glow, :1587-1589 makes
       // its hotspot clickable, both only under `player.unused_talents > 0 or …`).
+      //
+      // ═══ AND THE TALENT PANEL DELIBERATELY DIFFERS. THAT IS NOT AN
+      //     INCONSISTENCY, IT IS THE SPLIT ═══
+      // ui/talents.ts's points row is UNCONDITIONAL now and states one of three
+      // things at every count. The defensible line between the two surfaces is
+      // what each one IS: this is a STAT PAGE, where a call to action appears
+      // when there is something to answer and goes away when there is not
+      // (Minimalist.lua's plate, cited above); that is the SPEND SCREEN, where
+      // upstream keeps its four counters on screen at zero and regenerates them
+      // after every spend (LevelupDialog.lua:757-784, :1001-1008). Flipping this
+      // one too would also move SHEET_MIN_H, which GATES whether the panel opens
+      // at all — a much bigger change than it looks, for the surface that needs
+      // it least.
       // An unspent point is a call to action rather than a number about the
       // character, so the value NAMES THE KEY that answers it: a player who has
       // never opened the talent panel learns it exists on the sheet they already
@@ -540,7 +578,24 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
     rows.push({
       kind: SheetRowKind.Field,
       label: resourceLabel(view.resource.kind),
-      value: `${Math.max(0, Math.round(view.resource.current))}/${view.resource.max}`,
+      // ═══ `floor`, AND THE DIRECTION IS THE WHOLE POINT ═══
+      // Unlike the Life row two blocks up — which rounds UP, with ui/tooltip.ts
+      // and ui/partypanel.ts, because a body on 0.4 hp is alive and must not read
+      // as dead — this is a SPEND GATE, and the only safe direction for one is
+      // down. Every other reader of the same number floors or compares raw:
+      // ui/resource.ts's pip strip prints `Math.floor(resource.current)`, the
+      // `no_resource` refusal in this file's caller prints `Math.floor`, and both
+      // `affordable` here and `hasResource` on the server compare the raw value.
+      //
+      // IT USED TO BE `Math.round`, AND IT WAS SAFE UNTIL THE POOLS STARTED
+      // TRICKLING. Resolve and Focus only ever moved in whole numbers, so round
+      // and floor could not disagree; `RESOLVE_PER_TURN` 0.6 and `FOCUS_PER_TURN`
+      // 0.4 make them fractional on almost every turn. At 24.6 this row said
+      // `Resolve 25/100` while the pip strip said 24 and a 25-cost talent was
+      // greyed out — two numbers for one pool, and the larger one promising a
+      // talent the server refuses. src/server/content/classes.ts and
+      // test/server/talents.test.ts both name this hazard by name.
+      value: `${Math.max(0, Math.floor(view.resource.current))}/${view.resource.max}`,
     });
   }
 
@@ -656,7 +711,45 @@ function talentsRect(rect: PanelRect): PanelRect {
 }
 
 /**
- * What a LOGICAL backbuffer point is over. Two controls, both in the header.
+ * THE HEADER STRIP AS A DRAG HANDLE — the strip minus BOTH controls carved out
+ * of its right end. ONE copy of the reservation arithmetic.
+ *
+ * `PANEL_PAD + CLOSE_PX + HEADER_BTN_GAP + TALENTS_BTN_W` is this panel's own
+ * pair of header controls, and it stays private here: ui/panel.ts's
+ * `headerDragRect` deliberately does not know any panel's `CLOSE_PX` (see its
+ * note), because a second authority on where a close control lives is the exact
+ * duplication it exists to prevent. This is the widest reservation of the four
+ * draggable panels, because this is the only one with two controls up there.
+ *
+ * IT RESERVES THE `[G]` BUTTON'S WIDTH EVEN WHEN `headerHasTalentsButton` IS
+ * FALSE, on purpose: reserving space for a control that is not drawn costs a
+ * handful of grabbable pixels, while NOT reserving it on a frame where the
+ * button IS drawn is a press on the button that moves the window instead. The
+ * cheap mistake is the one that is safe, and the two answers only differ on a
+ * panel narrower than 128 pixels, which `charSheetRect` never returns.
+ */
+function headerHandle(rect: PanelRect): PanelRect {
+  return headerDragRect(rect, PANEL_PAD + CLOSE_PX + HEADER_BTN_GAP + TALENTS_BTN_W);
+}
+
+/**
+ * What a LOGICAL backbuffer point is over. Two controls and a handle, all three
+ * in the header.
+ *
+ * PRECEDENCE IS UNCHANGED AND THE CONTROLS STILL WIN. `close` and `talents` are
+ * tested first and `header` is what is left of the strip, so no press that used
+ * to press a button now moves the window — which is the failure ui/panel.ts's
+ * `headerDragRect` note describes: "a header that looks grabbable and, on one
+ * panel, starts a drag when you press the close control — which then closes the
+ * panel on mouseup, having moved it first."
+ *
+ * `header` IS A THIRD STRING RATHER THAN A SECOND FUNCTION, unlike ui/talents.ts
+ * and ui/escapemenu.ts, and the difference is forced rather than chosen: this
+ * hit test answers a plain string union that main.ts compares with `===`, so
+ * widening it breaks nothing, while those two feed a `switch` under
+ * `switch-exhaustiveness-check` and a property access that a Header variant does
+ * not have. Same rule in all three files — the CLICK path keeps compiling
+ * untouched — reached by whichever route each file's caller allows.
  *
  * THE BODY OF THE SHEET STILL ANSWERS NULL EVERYWHERE, and that is unchanged and
  * load-bearing: main.ts eats those clicks with its `overPanel` swallow, and a
@@ -667,7 +760,7 @@ export function charSheetHitAt(
   rect: PanelRect,
   px: number,
   py: number,
-): 'close' | 'talents' | null {
+): 'close' | 'talents' | 'header' | null {
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
   if (inside(closeRect(rect))) return 'close';
@@ -677,6 +770,7 @@ export function charSheetHitAt(
   // button drawn on top of the word CHARACTER would be worse than no button, and
   // the painter tests the same expression.
   if (headerHasTalentsButton(rect) && inside(talentsRect(rect))) return 'talents';
+  if (inside(headerHandle(rect))) return 'header';
   return null;
 }
 
@@ -850,11 +944,20 @@ function sheetGeometry(rect: PanelRect, rows: readonly SheetRow[]): SheetGeometr
  * centre rather than the bottom, unlike ui/partypanel.ts's token: a body is
  * identified by its feet, a symbol by its middle.
  *
- * THE FALLBACK IS A LETTER, NOT THE MISSING-ASSET BOX. Today it is the ONLY
- * path: every talent icon is an `icon_active_*` key and that prefix is not in
- * main.ts's `NEEDED_ASSET_PREFIXES`, so nothing resolves — four identical violet
- * error squares would make the block unreadable while the art pipeline catches
- * up, for exactly the reason ui/hotbar.ts:193-201 gives for its own initials.
+ * THE FALLBACK IS A LETTER, NOT THE MISSING-ASSET BOX. This paragraph used to
+ * say the fallback was the ONLY path, "because every talent icon is an
+ * `icon_active_*` key and that prefix is not in main.ts's
+ * `NEEDED_ASSET_PREFIXES`". THAT IS NO LONGER TRUE: the prefix list held a dead
+ * `icon_ability_` spelling that matched nothing in the manifest, all twelve
+ * talents have always declared `iconId: 'icon_active_<name>'`
+ * (src/server/talents/*.ts), and the twelve 64x64 PNGs have always been on disk.
+ * The prefix is spelled correctly now and the icons blit.
+ *
+ * THE LETTER IS STILL LOAD-BEARING, for the case that will never go away:
+ * `client/public/assets/` is gitignored wholesale, so a fresh clone has NO art
+ * and must still be fully playable. Four identical violet error squares would
+ * make the block unreadable, for exactly the reason ui/hotbar.ts gives for its
+ * own initials.
  */
 function drawTalentIcon(
   ctx: CanvasRenderingContext2D,
@@ -992,6 +1095,20 @@ export type CharSheetDrawOptions = {
    * `CharSheetView.keymap` gives.
    */
   readonly keymap?: Keymap;
+  /**
+   * TALENT POINTS IN HAND, for the header control: `[G·2]` while any are
+   * waiting, plain `[G]` at zero. `ProgressMsg.unspent`.
+   *
+   * THE COUNT COMES IN SEPARATELY FROM `rows` ON PURPOSE. `rows` is the sheet's
+   * BODY and drops whole sections on a short panel (see `DROP_ORDER`); the
+   * header control is chrome and must say the same thing at every size. Reading
+   * the count back out of a row would make the button go quiet on exactly the
+   * window where the sheet is hardest to read.
+   *
+   * OPTIONAL, defaulting to 0, so the existing call site in main.ts compiles
+   * unchanged and degrades to the label this control has always had.
+   */
+  readonly unspent?: number;
 };
 
 /**
@@ -1044,10 +1161,21 @@ export function drawCharSheet(options: CharSheetDrawOptions): void {
   // (`c`) is shown the other one rather than being expected to find it. The key
   // is the fast path and this is the taught one. Drawn only when the header can
   // hold it without landing on the title — see `headerHasTalentsButton`.
+  //
+  // ═══ AND IT CARRIES THE COUNT WHILE POINTS ARE WAITING: `[G·2]` ═══
+  // Two working affordances used to route to the talent panel without saying
+  // how many points were behind them (this one and the escape menu's row 3).
+  // The suffix is the count and the GOLD is the emphasis — LevelupDialog.lua
+  // :757-784 puts the number in the button's own text, :690-691 lights it only
+  // above zero. Gold here also outranks `talentsOpen`/`hoveredTalents`, because
+  // "there is something to spend" is a louder fact than "the panel is open".
   if (headerHasTalentsButton(rect)) {
     const keymap = options.keymap ?? gameKeymap.current;
-    drawButton(ctx, talentsRect(rect), `[${keyMnemonic('show_talents', keymap)}]`, {
-      ink: talentsOpen || hoveredTalents ? PALETTE.GOLD : PALETTE.GREY_HI,
+    const unspent = Math.max(0, Math.floor(options.unspent ?? 0));
+    const mnemonic = keyMnemonic('show_talents', keymap);
+    const label = unspent > 0 ? `[${mnemonic}·${String(unspent)}]` : `[${mnemonic}]`;
+    drawButton(ctx, talentsRect(rect), label, {
+      ink: unspent > 0 || talentsOpen || hoveredTalents ? PALETTE.GOLD : PALETTE.GREY_HI,
     });
   }
 

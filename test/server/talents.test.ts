@@ -20,8 +20,12 @@ import {
 } from '../../src/server/engine/actor.ts';
 import {
   Affinity,
+  FOCUS_PER_TURN,
+  REAGENT_REGEN_EVERY_TURNS,
+  RESOLVE_PER_TURN,
   RESOURCE_RULES,
   ResourceKind,
+  TOME_ACTIONS_PER_TURN,
   TalentEffect,
   TalentRefusal,
   TargetShape,
@@ -31,6 +35,7 @@ import {
   markMultiplier,
   resolveGuardCounter,
   secondsToTurns,
+  spendResource,
   talentId,
   tomeCooldownToTurns,
   useTalent,
@@ -72,8 +77,10 @@ import type { Rng } from '../../src/shared/rng.ts';
  *     only way out of one.
  *  4. COOLDOWNS TICK ON THE BASE CLOCK — `actBase`, once per game turn, at any
  *     speed. The #1 port mistake.
- *  5. REAGENTS ARE A STOCK, NOT A BAR: no per-turn regen, +1 on a kill, full at
- *     the stairs.
+ *  5. REAGENTS ARE A COUNTED STOCK: +1 on a kill, full at the stairs, and ONE
+ *     WHOLE VIAL every `REAGENT_REGEN_EVERY_TURNS` — pinned from both sides, at
+ *     zero rng draws, never fractional on the wire, nothing while at the cap,
+ *     and nothing at all for a body that is down.
  *  6. THE CAP: 3 classes x 4 talents = 12, all ids distinct and namespaced.
  */
 
@@ -909,8 +916,20 @@ describe('cooldowns tick on the BASE clock — the #1 port mistake', () => {
   });
 });
 
-describe('REAGENTS ARE A STOCK, NOT A BAR — game-design.md § 2', () => {
-  it('starts full at 8 and never regenerates on a turn tick', () => {
+describe('REAGENTS ARE A COUNTED STOCK THAT REFILLS IN WHOLE UNITS — game-design.md § 2', () => {
+  it('starts full at 8, and one whole vial lands on turn 12 — not on 11', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // BOTH SIDES OF THE CADENCE, BECAUSE ONE SIDE IS AN ACCIDENTAL GREEN.
+    // ═══════════════════════════════════════════════════════════════════════
+    // This test used to read "never regenerates on a turn tick" and loop
+    // exactly TEN base turns. At `REAGENT_REGEN_EVERY_TURNS` = 12 that loop
+    // still passes — it would have gone green against the very behaviour it
+    // claimed to forbid, which is worse than a red, because nobody re-reads a
+    // passing test. So the count is pinned from BELOW (eleven turns change
+    // nothing) and from ABOVE (the twelfth pays exactly one).
+    //
+    // `regenAmmo`, Actor.lua:2074-2084: the counter increments once per base
+    // turn and the grant is `shots_left + 1`, never a fraction.
     const f = fixture(PLENTY);
     const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
     const sheet = f.engine.sheetOf('rey');
@@ -922,10 +941,24 @@ describe('REAGENTS ARE A STOCK, NOT A BAR — game-design.md § 2', () => {
     expect(sheet.resource.max).toBe(8);
 
     sheet.resource.value = 3;
-    for (let turn = 0; turn < 10; turn += 1) f.engine.actBase(alchemist.id, f.world);
-    // Ten turns of standing still. A regenerating pool would be back at 8; a
-    // countable stock is still 3, and every cast is still a decision.
+    for (let turn = 0; turn < REAGENT_REGEN_EVERY_TURNS - 1; turn += 1) {
+      f.engine.actBase(alchemist.id, f.world);
+    }
+    // Eleven turns of standing still. Nothing partial has reached the pool —
+    // the remainder is on `regenCounter`, which is exactly what keeps the pips
+    // honest.
     expect(sheet.resource.value).toBe(3);
+    expect(sheet.resource.regenCounter).toBe(REAGENT_REGEN_EVERY_TURNS - 1);
+
+    f.engine.actBase(alchemist.id, f.world);
+    expect(sheet.resource.value).toBe(4);
+    // …and the counter starts over rather than carrying, so the next vial is a
+    // full twelve turns away and not one.
+    expect(sheet.resource.regenCounter).toBe(0);
+    for (let turn = 0; turn < REAGENT_REGEN_EVERY_TURNS - 1; turn += 1) {
+      f.engine.actBase(alchemist.id, f.world);
+    }
+    expect(sheet.resource.value).toBe(4);
   });
 
   it('refills one per kill and completely at the stairs', () => {
@@ -947,19 +980,177 @@ describe('REAGENTS ARE A STOCK, NOT A BAR — game-design.md § 2', () => {
     expect(sheet.resource.value).toBe(8);
   });
 
-  it('is the only resource the wire draws as pips', () => {
+  it('is the only resource the wire draws as pips, and the only one on a counter', () => {
     expect(toResourceView(sheetForClass(ALCHEMIST)).discrete).toBe(true);
     expect(toResourceView(sheetForClass(WATCHMAN)).discrete).toBe(false);
     expect(toResourceView(sheetForClass(INSPECTOR)).discrete).toBe(false);
-    // Nothing in this game gives a resource for merely existing.
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE ACTUAL RATES, WITH THE DERIVATION BESIDE EACH.
+    // ═══════════════════════════════════════════════════════════════════════
+    // This used to be `for (kind of ResourceKind) regenPerTurn === 0`, with the
+    // comment "nothing in this game gives a resource for merely existing". That
+    // decision is reversed. The rates are ToME's own defaults (Actor.lua:227-241)
+    // scaled by our turn density, so they are asserted as the DERIVATION rather
+    // than as copied decimals — a test that hard-codes 0.6 cannot tell a tuning
+    // change from a typo.
+    const TOME_STAMINA_REGEN = 0.3; // Actor.lua:230
+    const TOME_PSI_REGEN = 0.2; // Actor.lua:239
+    expect(RESOURCE_RULES[ResourceKind.Resolve].regenPerTurn).toBe(
+      TOME_STAMINA_REGEN * TOME_ACTIONS_PER_TURN,
+    );
+    expect(RESOURCE_RULES[ResourceKind.Focus].regenPerTurn).toBe(
+      TOME_PSI_REGEN * TOME_ACTIONS_PER_TURN,
+    );
+
+    // A CONTINUOUS KIND USES `regenPerTurn` AND A DISCRETE KIND USES
+    // `regenEvery`, never both: two clocks on one pool and the fractional one
+    // defeats the integer one, which is the whole mechanism.
+    expect(RESOURCE_RULES[ResourceKind.Reagents].regenPerTurn).toBe(0);
+    expect(RESOURCE_RULES[ResourceKind.Reagents].regenEvery).toBe(REAGENT_REGEN_EVERY_TURNS);
     for (const kind of Object.values(ResourceKind)) {
-      expect(RESOURCE_RULES[kind].regenPerTurn).toBe(0);
+      const rules = RESOURCE_RULES[kind];
+      if (rules.discrete) expect(rules.regenPerTurn).toBe(0);
+      else expect(rules.regenEvery).toBeUndefined();
     }
+  });
+
+  it('takes ZERO rng draws across a long stretch of base turns', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // A DRAW HERE WOULD MOVE THE STREAM, AND NOTHING WOULD FAIL FOR WEEKS.
+    // ═══════════════════════════════════════════════════════════════════════
+    // docs/engineering-standards.md:101 pins save → load → continue ≡
+    // never-saved. Regeneration runs once per base turn for every actor with a
+    // sheet, so a single draw inside it shifts every subsequent roll in the
+    // process — which surfaces, much later, as "the level regenerated
+    // differently". The counter port is integer arithmetic precisely so this
+    // number stays at zero.
+    const f = fixture(PLENTY);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    const watchman = f.add(WATCHMAN, 'dalt', 9, 9);
+    const inspector = f.add(INSPECTOR, 'sam', 9, 10);
+    const before = drawCount(f.rng);
+
+    const TURNS = 40;
+    for (let turn = 0; turn < TURNS; turn += 1) {
+      f.engine.actBase(alchemist.id, f.world);
+      f.engine.actBase(watchman.id, f.world);
+      f.engine.actBase(inspector.id, f.world);
+    }
+
+    // All three kinds, including the one that actually granted something.
+    expect(f.engine.sheetOf('rey')?.resource.value).toBeGreaterThan(0);
+    expect(f.engine.sheetOf('dalt')?.resource.value).toBeGreaterThan(0);
+    expect(drawCount(f.rng)).toBe(before);
+  });
+
+  it('hands `toResourceView` a whole number at every single step, spends included', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE SEAM WHERE A FRACTION WOULD MAKE TWO READERS DISAGREE.
+    // ═══════════════════════════════════════════════════════════════════════
+    // `pipCount` floors the filled count and the character sheet rounds it, so a
+    // pool holding 3.6 would draw THREE pips beside the text "4/8" while a
+    // 4-cost talent answered `no_resource`. Nothing would throw. This asserts
+    // the property the whole `regenCounter` design exists to provide, at every
+    // observable moment rather than at the end.
+    const f = fixture(PLENTY);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    const sheet = f.engine.sheetOf('rey');
+    expect(sheet).toBeDefined();
+    if (sheet === undefined) return;
+
+    const TURNS = 40;
+    for (let turn = 0; turn < TURNS; turn += 1) {
+      f.engine.actBase(alchemist.id, f.world);
+      // Spend on an irregular beat, so a refill lands mid-count as often as it
+      // lands on an empty counter.
+      if (turn % 5 === 0) spendResource(sheet.resource, 1);
+      if (turn % 7 === 0) spendResource(sheet.resource, 2);
+      const view = toResourceView(sheet);
+      expect(view.discrete).toBe(true);
+      expect(Number.isInteger(view.current)).toBe(true);
+      expect(Number.isInteger(sheet.resource.regenCounter)).toBe(true);
+    }
+  });
+
+  it('banks nothing while full: forty turns at the cap, then a spend, then a wait', () => {
+    // Actor.lua:2078 — `if shots_left >= capacity then ... return end`, BEFORE
+    // the counter increments. Without it the counter runs while the pool is
+    // full and the first vial an Alchemist spends comes straight back; kills and
+    // stairs both push her to the cap, so that is the common case rather than
+    // an edge one.
+    const f = fixture(PLENTY);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    const sheet = f.engine.sheetOf('rey');
+    expect(sheet).toBeDefined();
+    if (sheet === undefined) return;
+
+    expect(sheet.resource.value).toBe(sheet.resource.max);
+    const IDLE_TURNS = 40;
+    for (let turn = 0; turn < IDLE_TURNS; turn += 1) f.engine.actBase(alchemist.id, f.world);
+    expect(sheet.resource.value).toBe(sheet.resource.max);
+    expect(sheet.resource.regenCounter).toBe(0);
+
+    expect(spendResource(sheet.resource, 1)).toBe(true);
+    expect(sheet.resource.value).toBe(sheet.resource.max - 1);
+
+    // Eleven turns after the spend she is still one short — the forty banked
+    // nothing at all.
+    for (let turn = 0; turn < REAGENT_REGEN_EVERY_TURNS - 1; turn += 1) {
+      f.engine.actBase(alchemist.id, f.world);
+    }
+    expect(sheet.resource.value).toBe(sheet.resource.max - 1);
+    f.engine.actBase(alchemist.id, f.world);
+    expect(sheet.resource.value).toBe(sheet.resource.max);
+  });
+
+  it('pays a DOWNED body nothing, for any kind, across twenty base turns', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // A CORPSE THAT REFILLS IS A CORPSE-CAMP INCENTIVE.
+    // ═══════════════════════════════════════════════════════════════════════
+    // Two guards agree on this and neither is new: `actBase` in engine/actor.ts
+    // returns at `if (!actor.alive) return`, and `TalentEngine.actBase` returns
+    // at the same test before it reaches `regenResource`. downed.ts spells out
+    // the intent — "returns early ⇒ no regeneration, no status ticks and NO
+    // COOLDOWN TICKS while down … being on the floor costs you progress".
+    // Per-turn regen is the first thing in years to make that guard load-bearing
+    // for a RESOURCE, so it is pinned here rather than assumed.
+    const f = fixture(PLENTY);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    const watchman = f.add(WATCHMAN, 'dalt', 6, 5);
+    const inspector = f.add(INSPECTOR, 'sam', 5, 6);
+    const alchemistSheet = f.engine.sheetOf('rey');
+    const watchmanSheet = f.engine.sheetOf('dalt');
+    const inspectorSheet = f.engine.sheetOf('sam');
+    if (
+      alchemistSheet === undefined ||
+      watchmanSheet === undefined ||
+      inspectorSheet === undefined
+    ) {
+      throw new Error('fixture: a sheet is missing');
+    }
+
+    alchemistSheet.resource.value = 2;
+    alchemist.alive = false;
+    watchman.alive = false;
+    inspector.alive = false;
+
+    const DOWN_TURNS = 20;
+    for (let turn = 0; turn < DOWN_TURNS; turn += 1) {
+      f.engine.actBase(alchemist.id, f.world);
+      f.engine.actBase(watchman.id, f.world);
+      f.engine.actBase(inspector.id, f.world);
+    }
+
+    expect(alchemistSheet.resource.value).toBe(2);
+    expect(alchemistSheet.resource.regenCounter).toBe(0);
+    expect(watchmanSheet.resource.value).toBe(0);
+    expect(inspectorSheet.resource.value).toBe(0);
   });
 });
 
-describe('Resolve and Focus are earned by STANDING SOMEWHERE', () => {
-  it('Resolve accrues per adjacent ally, per game turn', () => {
+describe('Resolve and Focus are earned by STANDING SOMEWHERE, on a thin trickle', () => {
+  it('Resolve accrues per adjacent ally, per game turn, above the flat rate', () => {
     const f = fixture(PLENTY);
     const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
     const sheet = f.engine.sheetOf('dalt');
@@ -967,15 +1158,21 @@ describe('Resolve and Focus are earned by STANDING SOMEWHERE', () => {
     if (sheet === undefined) return;
 
     f.engine.actBase(watchman.id, f.world);
-    expect(sheet.resource.value).toBe(0); // alone: nothing
+    // Alone: the unconditional trickle and NOTHING ELSE. It is deliberately a
+    // tenth of what one blow taken pays (`RESOLVE_ON_STRUCK` = 6) — a floor, so
+    // a solo Watchman is never permanently locked out of Iron Curtain, not a
+    // second income he can stand still and farm.
+    expect(sheet.resource.value).toBe(RESOLVE_PER_TURN);
 
     f.add(INSPECTOR, 'sam', 6, 5);
     f.add(ALCHEMIST, 'rey', 4, 5);
     f.engine.actBase(watchman.id, f.world);
-    expect(sheet.resource.value).toBe(6); // two allies x 3
+    // Two allies x 3, plus a second turn of trickle. The adjacency clause is
+    // still ten times the size of the trickle beside it.
+    expect(sheet.resource.value).toBe(RESOLVE_PER_TURN * 2 + 6);
   });
 
-  it('Focus accrues for holding ground, and Fog Step forfeits it', () => {
+  it('Focus accrues for holding ground, and Fog Step forfeits everything but the trickle', () => {
     const f = fixture(PLENTY);
     const inspector = f.add(INSPECTOR, 'sam', 5, 5);
     const sheet = f.engine.sheetOf('sam');
@@ -983,12 +1180,16 @@ describe('Resolve and Focus are earned by STANDING SOMEWHERE', () => {
     if (sheet === undefined) return;
 
     f.engine.actBase(inspector.id, f.world);
-    expect(sheet.resource.value).toBe(12);
+    expect(sheet.resource.value).toBe(12 + FOCUS_PER_TURN);
 
     useTalent(f.engine, inspector, talentId('fog_step'), { x: 5, y: 7 }, f.ctx);
     expect(sheet.movedThisTurn).toBe(true);
     f.engine.actBase(inspector.id, f.world);
-    expect(sheet.resource.value).toBe(12); // no gain on a turn you moved
+    // The 12 for holding ground is forfeit; the flat rate is not, because it is
+    // unconditional by construction (`regenPerTurn` is added before the switch).
+    // Thirty turns of trickle to buy what one still turn buys — which is the
+    // point: moving still costs you the shot.
+    expect(sheet.resource.value).toBe(12 + FOCUS_PER_TURN * 2);
   });
 });
 

@@ -191,6 +191,46 @@ export function drawHeader(
 }
 
 /**
+ * THE HEADER STRIP AS A DRAG HANDLE — the strip minus the controls carved out of
+ * its right end.
+ *
+ * ONE COPY, HERE, for the reason every other geometry helper in this client is
+ * one copy: the painter that highlights the handle, the `mousedown` that starts
+ * the gesture and the tests all have to agree to the pixel, and four panel
+ * modules each deriving "the header, but not the buttons" is four chances for
+ * one of them to be three pixels out. The bug that produces is a header that
+ * looks grabbable and, on one panel, starts a drag when you press the close
+ * control — which then closes the panel on mouseup, having moved it first.
+ *
+ * `reservedRight` is how many pixels at the right end belong to that panel's own
+ * header controls, measured from the panel's right edge inward. Each caller
+ * derives it from ITS OWN close/`[G]` arithmetic, which stays private to that
+ * module: three of the four panels reserve `PANEL_PAD + CLOSE_PX`, and the
+ * character sheet reserves that plus the gap and the `[G]` button beside it
+ * (ui/charsheet.ts's `talentsRect`). This function deliberately does NOT know
+ * those numbers — a second authority on where the close control is would be the
+ * exact duplication it exists to prevent.
+ *
+ * `HEADER_H` EXACTLY, never a pixel more: the strip is the only part of a panel
+ * that reads as a different KIND of thing from the body (see `drawHeader`), and
+ * a handle that extended into the body would make the rows draggable, which
+ * means a click meant for a talent row would sometimes move the panel instead.
+ *
+ * Width floors at 0 rather than going negative — a panel narrower than its own
+ * controls has no handle, which is the honest answer, and a negative-width rect
+ * would pass a naive `px >= x && px < x + w` hit test for nothing at all but
+ * would still be handed to `fillRect`.
+ */
+export function headerDragRect(rect: PanelRect, reservedRight: number): PanelRect {
+  return {
+    x: rect.x,
+    y: rect.y,
+    w: Math.max(0, rect.w - Math.max(0, reservedRight)),
+    h: HEADER_H,
+  };
+}
+
+/**
  * Trim to fit, with an ellipsis.
  *
  * A fourth copy of this existed in turnbar.ts and hotbar.ts before this file

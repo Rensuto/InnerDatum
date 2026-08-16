@@ -13,6 +13,8 @@ import { MELEE_REACH } from '../../src/server/engine/combat.ts';
 import { Refusal, submitIntent } from '../../src/server/engine/scheduler.ts';
 import {
   FOCUS_ON_HELD_GROUND,
+  FOCUS_PER_TURN,
+  RESOLVE_PER_TURN,
   TalentEffect,
   TalentRefusal,
   markMultiplier,
@@ -305,9 +307,31 @@ describe('with the runtime wired in, a talent resolves', () => {
     table.cast(IRON_CURTAIN);
     table.engine.pump();
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE SPEND, PLUS THE ONE BASE TURN THE PUMP RAN AFTER IT. BOTH PINNED.
+    // ═══════════════════════════════════════════════════════════════════════
     // Iron Curtain: 5 AP, 25 Resolve, and ToME's ten-action cooldown converted
     // to game turns (talents.ts `tomeCooldownToTurns`).
-    expect(table.sheet.resource.value).toBe(75);
+    //
+    // This used to read `.toBe(75)` and was silent about how many base turns the
+    // pump carried, which was harmless while `regenPerTurn` was 0 and is not
+    // any more. The count is written out rather than folded into the expected
+    // figure: ONE base pass runs after the actor acts, on the pump's way to the
+    // next park. Base passes BEFORE the cast add nothing, because the pool starts
+    // at its cap of 100 and `gainResource` clamps — so this figure would not move
+    // even if the pump grew a leading pass.
+    //
+    // Written as an expression so that a future rate change fails at the RATE,
+    // naming it, instead of at a copied decimal that somebody then "fixes".
+    const IRON_CURTAIN_RESOLVE = 25;
+    const BASE_PASSES_AFTER_THE_ACT = 1;
+    expect(table.sheet.resource.value).toBeCloseTo(
+      100 - IRON_CURTAIN_RESOLVE + RESOLVE_PER_TURN * BASE_PASSES_AFTER_THE_ACT,
+      6,
+    );
+    // …and no blow landed on him this pump, which is the other thing that could
+    // have moved this number (`RESOLVE_ON_STRUCK` is ten times the trickle).
+    expect(table.sheet.resource.value).toBeLessThan(100 - IRON_CURTAIN_RESOLVE + 1);
     expect(table.world.getActor('p1')?.cooldowns.get(IRON_CURTAIN)).toBeGreaterThan(0);
   });
 
@@ -657,22 +681,31 @@ describe('the base-clock pass', () => {
     // what is pinned.
     const table = inspectorScene('seam-moved');
 
+    // ═══ EVERY DELTA IS ONE BASE TURN, SO EVERY DELTA CARRIES ONE TRICKLE ═══
+    // `regenPerTurn` is added before the per-class switch in `regenResource`, so
+    // `FOCUS_PER_TURN` is in BOTH answers and the DIFFERENCE between them is
+    // still exactly `FOCUS_ON_HELD_GROUND` — which is the claim this test is
+    // making. `toBeCloseTo` because 0.4 is not representable in binary and these
+    // deltas are measured off a pool that has already taken adds.
     const holding = table.focusDelta(() => {
       expect(table.engine.hold('p1').ok).toBe(true);
     });
-    expect(holding).toBe(FOCUS_ON_HELD_GROUND);
+    expect(holding).toBeCloseTo(FOCUS_ON_HELD_GROUND + FOCUS_PER_TURN, 6);
 
     const walking = table.focusDelta(() => {
       expect(table.engine.submitMove('p1', 'w').ok).toBe(true);
     });
-    expect(walking).toBe(0);
+    expect(walking).toBeCloseTo(FOCUS_PER_TURN, 6);
+    // The suppression is worth ten times the floor, which is the whole reason
+    // the floor is safe to add: moving still costs you the shot.
+    expect(holding - walking).toBeCloseTo(FOCUS_ON_HELD_GROUND, 6);
 
     // ...and standing still again earns it back, so the suppression is a fact
     // about the turn rather than a latch that stays down.
     const settled = table.focusDelta(() => {
       expect(table.engine.hold('p1').ok).toBe(true);
     });
-    expect(settled).toBe(FOCUS_ON_HELD_GROUND);
+    expect(settled).toBeCloseTo(FOCUS_ON_HELD_GROUND + FOCUS_PER_TURN, 6);
   });
 
   it('leaves the talent budget alone when the sheet belongs to nobody in the world', () => {

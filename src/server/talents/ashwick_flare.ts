@@ -24,8 +24,13 @@
  * different from the Inspector's three.
  *
  * The trade is the resource. The Inspector's shots are gated by a die; the
- * Alchemist's are gated by a countable stock of eight objects that only refills
- * on a kill or at the stairs. Reliable damage, finite ammunition.
+ * Alchemist's are gated by a countable stock of eight objects, paid for mostly
+ * by killing things — with a top-up at the stairs and a slow trickle of one
+ * whole vial every twelve turns underneath it (`REAGENT_REGEN_EVERY_TURNS`,
+ * engine/talents.ts). Reliable damage, finite ammunition: the trickle is a floor
+ * so a spent Alchemist is never stranded, and at roughly half what bodies pay it
+ * does not turn the stock into a bar. Every cast is still a decision about a
+ * countable object you are holding.
  *
  * ═══ ONE DAMAGE CURVE IN THE GAME ═══
  * The base is `combatDamage` — the same weapon-damage function the Watchman's

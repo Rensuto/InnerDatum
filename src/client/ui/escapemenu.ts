@@ -115,7 +115,7 @@
  * second column would cost the reader the one thing the row is FOR. So: ONE
  * column, and PAGES.
  *
- * `place` below is nonetheless ui/charsheet.ts:706-751's function, ported with
+ * `place` below is nonetheless ui/charsheet.ts:842-886's function, ported with
  * its orphan rule intact — A HEADING NEVER SITS ALONE AT THE FOOT OF A PAGE,
  * because the reader takes the rows UNDER a heading as belonging to it and an
  * orphan says the next block is unlabelled. The only change is that it breaks to
@@ -163,6 +163,7 @@ import {
   drawHeader,
   drawPanel,
   fitText,
+  headerDragRect,
   HEADER_H,
   PANEL_PAD,
   PanelSkin,
@@ -458,6 +459,21 @@ export type EscapeMenuView = {
   readonly armed: ArmedCapture | null;
   /** The last thing `applyCapture` said, or null. Shown on the status line. */
   readonly message: string | null;
+  /**
+   * TALENT POINTS IN HAND, for row 3's label: `TALENTS (2)`. `ProgressMsg.unspent`.
+   *
+   * ═══ A LONGER LABEL ON THE SAME ROW, NEVER A SEVENTH ROW ═══
+   * `rootRows` is six rows, always six, in one order, and that constraint is
+   * stated in full there. The count goes INSIDE the label of the row that
+   * already opens the talent panel, so nothing moves and nothing is added: this
+   * is one of the two working affordances (the other is ui/charsheet.ts's `[G]`
+   * control) that routed to the spend screen without ever saying how many points
+   * were behind them.
+   *
+   * OPTIONAL, defaulting to 0, so main.ts's existing `escapeMenuView()` compiles
+   * unchanged and degrades to the label this row has always had.
+   */
+  readonly unspent?: number;
 };
 
 /**
@@ -470,9 +486,11 @@ export type EscapeMenuView = {
  * keymap.ts is read by the dispatcher, which has no screen.
  */
 function lockReason(action: ActionDef): string {
-  // ui/hotbar.ts:391 paints `${i + 1}` as each slot's label, so a rebound digit
-  // makes four on-screen buttons lie — and the manifest has no keycap glyphs to
-  // redraw them with.
+  // ui/hotbar.ts:953-957 paints `${index + 1}` as the label of each of the FOUR
+  // KEYED slots (the bar is eight wide now; the four item slots carry no digit
+  // precisely because no key sends them), so a rebound digit makes four
+  // on-screen buttons lie — and the manifest has no keycap glyphs to redraw
+  // them with.
   if (action.group === 'Hotbar') return 'the digit is painted on the slot';
   // keys.ts calls Escape "the one key in the game that means put that back"; it
   // is also this menu's opener, so freezing it is what makes RESET ALL reachable
@@ -500,6 +518,15 @@ function entryRow(
  */
 function rootRows(view: EscapeMenuView): readonly MenuRow[] {
   const keymap = view.keymap;
+  // THE COUNT, ON THE LABEL, ONLY WHILE THERE IS ONE. A row reading
+  // "TALENTS (0)" on every open is furniture within one session, which is the
+  // same conditional ToME applies to its levelup EMPHASIS
+  // (uiset/Minimalist.lua:1512-1516, LevelupDialog.lua:690-691). What is NOT
+  // conditional is the spend screen's own count — see ui/talents.ts's
+  // `pointsText`, which states one of three things at every level. This is a
+  // launcher, not the screen.
+  const unspent = Math.max(0, Math.floor(view.unspent ?? 0));
+  const talentsLabel = unspent > 0 ? `TALENTS (${String(unspent)})` : 'TALENTS';
   return [
     // 'Esc', read off the keymap like every other row here — even though the key
     // is frozen, because the row must not become the one place a hard-coded
@@ -517,7 +544,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
     entryRow(
       3,
       { kind: 'ui', command: UiCommand.ShowTalents },
-      'TALENTS',
+      talentsLabel,
       labelFor('show_talents', keymap),
       true,
       null,
@@ -1033,7 +1060,7 @@ type EscapeMenuGeometry = {
 /**
  * FIT ROWS FROM `offset` INTO ONE PAGE, and say where the next page starts.
  *
- * ═══ ui/charsheet.ts:706-751, PORTED, WITH ITS ORPHAN RULE INTACT ═══
+ * ═══ ui/charsheet.ts:842-886, PORTED, WITH ITS ORPHAN RULE INTACT ═══
  * "TALENTS" at the foot of a column with all four talents at the top of the next
  * one is not a small ugliness: the heading labels the wrong thing, because the
  * reader's eye takes the rows UNDER a heading as belonging to it. The sheet
@@ -1283,6 +1310,12 @@ export const MenuHitKind = {
   Back: 'back',
   /** PREV / NEXT. `delta` is -1 or +1. */
   Page: 'page',
+  /**
+   * The header strip, minus the × carved out of its right end: the DRAG HANDLE.
+   *
+   * IT IS NOT A MEMBER OF `MenuHit`, DELIBERATELY — see `MenuDrag` below.
+   */
+  Header: 'header',
 } as const;
 export type MenuHitKind = (typeof MenuHitKind)[keyof typeof MenuHitKind];
 
@@ -1303,6 +1336,61 @@ export type MenuHit =
   | { readonly kind: typeof MenuHitKind.ResetAll }
   | { readonly kind: typeof MenuHitKind.Back }
   | { readonly kind: typeof MenuHitKind.Page; readonly delta: number };
+
+/**
+ * WHAT A PRESS ON THE HEADER MEANS — a second reader over the SAME geometry,
+ * not a ninth branch of `MenuHit`.
+ *
+ * ═══ THE SPLIT IS FORCED BY THE GATE, AND ui/inventory.ts:1270-1300 HIT IT
+ *     FIRST ═══
+ * main.ts's `runMenuHit` is a `switch (hit.kind)` with no `default`, under
+ * `@typescript-eslint/switch-exhaustiveness-check` configured with
+ * `allowDefaultCaseForExhaustiveSwitch: false` and
+ * `considerDefaultExhaustiveForUnions: false` (eslint.config.js). Adding a ninth
+ * member to `MenuHit` is therefore a LINT FAILURE in a file this menu does not
+ * own, for an outcome the click path has nothing to do with — and `npm run
+ * check` runs lint. So `MenuHit` keeps its eight click outcomes and stays total,
+ * and the press gets its own reader. ui/talents.ts does the same thing for the
+ * same reason one rule over; ui/charsheet.ts does not need to, because its hit
+ * test answers a plain string union nobody switches on.
+ *
+ * BOTH READ THE SAME `closeRect`. There is still exactly one copy of where the
+ * × is, which is the property ui/partypanel.ts:93-99 records the cost of losing.
+ */
+export type MenuDrag = { readonly kind: typeof MenuHitKind.Header };
+
+/**
+ * The header strip's grabbable part. ONE copy of the reservation arithmetic.
+ *
+ * `PANEL_PAD + CLOSE_PX` is this panel's own close control, and it stays private
+ * here: ui/panel.ts's `headerDragRect` deliberately does not know any panel's
+ * `CLOSE_PX` (see its note), because a second authority on where a close control
+ * lives is the exact duplication it exists to prevent.
+ */
+function headerHandle(rect: PanelRect): PanelRect {
+  return headerDragRect(rect, PANEL_PAD + CLOSE_PX);
+}
+
+/**
+ * WHAT A PRESS AT THIS POINT WOULD GRAB — the header, or nothing.
+ *
+ * THE CLOSE CONTROL IS REFUSED EXPLICITLY rather than left to `headerDragRect`'s
+ * reservation, exactly as ui/inventory.ts's `inventoryPanelDragAt` refuses it:
+ * pressing × and twitching two pixels must CLOSE the menu, not move it — and on
+ * this panel in particular, the × is the way out for a player who has just made
+ * a mess of their keyboard, so it is the last control that may be ambiguous.
+ *
+ * It takes no rows: the handle and the × both depend on the panel rect alone.
+ * That is what lets a caller ask this question on `mousedown` without rebuilding
+ * twenty-six key rows and four formatted strings each, per event.
+ */
+export function escapeMenuDragAt(rect: PanelRect, px: number, py: number): MenuDrag | null {
+  const inside = (r: PanelRect): boolean =>
+    px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
+  if (inside(closeRect(rect))) return null;
+  if (inside(headerHandle(rect))) return { kind: MenuHitKind.Header };
+  return null;
+}
 
 /**
  * What a LOGICAL backbuffer point is over, or null.
@@ -1460,7 +1548,7 @@ function drawRow(
       ctx.fillStyle = PALETTE.GOLD;
       ctx.fillText(fitText(ctx, row.label, rect.w), rect.x, rect.y + SECTION_H - 6);
       // A rule under the heading, so the groups read as blocks in a column that
-      // has no other structure. ui/charsheet.ts:865-868 draws the same one.
+      // has no other structure. ui/charsheet.ts:1012-1013 draws the same one.
       ctx.fillStyle = PALETTE.SLATE;
       ctx.fillRect(rect.x, rect.y + SECTION_H - 1, rect.w, 1);
       return;

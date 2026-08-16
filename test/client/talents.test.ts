@@ -10,11 +10,13 @@ import {
   TalentRowKind,
   drawTalentPanel,
   pressSpend,
+  talentPanelDragAt,
   talentPanelGeometry,
   talentPanelHitAt,
   talentPanelRect,
   talentPanelRows,
 } from '../../src/client/ui/talents.ts';
+import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { TalentShape } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
@@ -147,15 +149,56 @@ describe('talentPanelRows', () => {
     expect(talentRows(talentPanelRows(view()))[0]?.icon).toBe('icon_active_ward_rush');
   });
 
-  it('shows the points badge only while there is something to spend', () => {
-    // ToME's own conditional: uiset/Minimalist.lua:1587-1589 makes its levelup
-    // hotspot clickable only under `player.unused_talents > 0 or ...`.
+  /** The points row, or undefined. */
+  function pointsRow(rows: readonly TalentRow[]) {
+    return rows.flatMap((row) => (row.kind === TalentRowKind.Points ? [row] : []))[0];
+  }
+
+  it('states the points at EVERY count, in three distinct sentences', () => {
+    // ═══ THE FIX FOR A SPEND SCREEN THAT SAID NOTHING AT ZERO POINTS ═══
+    // This row used to be present only above zero, citing ToME's conditional
+    // levelup HOTSPOT (uiset/Minimalist.lua:1512-1516, :1587-1589). Those
+    // citations are about the HUD's call-to-action plate, which is still
+    // conditional here (the gold plate below, and the character sheet's own
+    // points row). Upstream's SPEND SCREEN does the opposite: its four point
+    // counters at LevelupDialog.lua:757-784 are always present, including at
+    // zero, and are regenerated after every spend (:1001-1008). At zero this
+    // panel showed four rows each promising "→ something better" with no count,
+    // no button and no sentence about where the next point comes from.
     const withPoints = talentPanelRows(view());
-    expect(withPoints[0]).toEqual({ kind: TalentRowKind.Points, unspent: 2 });
+    expect(withPoints[0]).toEqual({
+      kind: TalentRowKind.Points,
+      unspent: 2,
+      text: '2 points to spend',
+    });
+    expect(
+      pointsRow(talentPanelRows(view({ progress: progressFrame({ unspent: 1 }) })))?.text,
+    ).toBe('1 point to spend');
 
-    const without = talentPanelRows(view({ progress: progressFrame({ unspent: 0 }) }));
-    expect(without.some((row) => row.kind === TalentRowKind.Points)).toBe(false);
+    // ZERO, BELOW THE CAP: it names where the next one comes from, which is the
+    // prose LevelupDialog.lua:623-624 attaches to its own class-point counter
+    // ("Each level you gain 1 new class point to use.").
+    const none = pointsRow(talentPanelRows(view({ progress: progressFrame({ unspent: 0 }) })));
+    expect(none?.unspent).toBe(0);
+    expect(none?.text).toBe('no points — next at level 7');
 
+    // ZERO, AT THE CAP: `xpToNext === 0` is the sentinel and there is no level 11
+    // to promise. No new wire field was added to detect this.
+    const capped = pointsRow(
+      talentPanelRows(view({ progress: progressFrame({ unspent: 0, level: 10, xpToNext: 0 }) })),
+    );
+    expect(capped?.text).toBe('top level — no more points');
+
+    // All three are different sentences, which is the whole point of having
+    // three: a row that read the same at zero and at the cap would be furniture.
+    expect(new Set([pointsRow(withPoints), none, capped].map((row) => row?.text)).size).toBe(3);
+  });
+
+  it('draws no points row at all before the first progress frame', () => {
+    // Two of the three states name a LEVEL and the third is read off `xpToNext`.
+    // With no frame there is nothing to read, and "next at level 1" would be a
+    // wrong number stated confidently — ui/charsheet.ts:344-347's rule about the
+    // same frame in the same one-frame window on connect.
     const nothingYet = talentPanelRows(view({ progress: null }));
     expect(nothingYet.some((row) => row.kind === TalentRowKind.Points)).toBe(false);
   });
@@ -425,6 +468,60 @@ describe('talentPanelHitAt', () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE DRAG HANDLE — a second reader over the same geometry
+// ---------------------------------------------------------------------------
+
+describe('talentPanelDragAt', () => {
+  it('answers Header across the strip, and NEVER where the × is', () => {
+    // A SCAN, not a coordinate. The one assertion that matters is the LAST one:
+    // pressing × and twitching two pixels must close the panel rather than move
+    // it, which is why the drag reader refuses the close control explicitly
+    // instead of trusting `headerDragRect`'s reservation (ui/panel.ts:193-223
+    // describes exactly this bug: "a header that looks grabbable and, on one
+    // panel, starts a drag when you press the close control — which then closes
+    // the panel on mouseup, having moved it first").
+    const rect = roomyRect();
+    const rows = talentPanelRows(view());
+    const y = rect.y + Math.floor(HEADER_H / 2);
+
+    const handle: number[] = [];
+    const close: number[] = [];
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+      if (talentPanelDragAt(rect, x, y)?.kind === TalentHitKind.Header) handle.push(x);
+      if (talentPanelHitAt(rect, rows, x, y)?.kind === TalentHitKind.Close) close.push(x);
+    }
+    expect(handle.length).toBeGreaterThan(0);
+    expect(close.length).toBeGreaterThan(0);
+    // Contiguous, starting at the panel's own left edge...
+    expect(handle[0]).toBe(rect.x);
+    expect(handle[handle.length - 1] ?? 0).toBe((handle[0] ?? 0) + handle.length - 1);
+    // ...and stopping strictly before the ×, with no pixel answering both.
+    expect(handle[handle.length - 1] ?? 0).toBeLessThan(close[0] ?? 0);
+    for (const x of close) expect(talentPanelDragAt(rect, x, y)).toBeNull();
+  });
+
+  it('is exactly the header strip and not one pixel of the body', () => {
+    // A handle taller than the strip makes the first talent row draggable, so a
+    // click meant for a row moves the panel instead.
+    const rect = roomyRect();
+    expect(talentPanelDragAt(rect, rect.x + 2, rect.y + HEADER_H - 1)?.kind).toBe(
+      TalentHitKind.Header,
+    );
+    expect(talentPanelDragAt(rect, rect.x + 2, rect.y + HEADER_H)).toBeNull();
+    expect(talentPanelDragAt(rect, rect.x - 1, rect.y + 2)).toBeNull();
+  });
+
+  it('leaves the click path alone: the strip still answers null to a CLICK', () => {
+    // `Header` is deliberately not a member of `TalentHit` — main.ts's hover
+    // block reads `talentHit.index` for every non-Close outcome, and a Header
+    // variant carries none. The press is a second reader over one geometry, in
+    // ui/inventory.ts's shape.
+    const rect = roomyRect();
+    expect(talentPanelHitAt(rect, talentPanelRows(view()), rect.x + 2, rect.y + 6)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // THE DROP POLICY — no scrolling, and it says so in words
 // ---------------------------------------------------------------------------
 
@@ -487,6 +584,7 @@ describe('drawing', () => {
     clips: { x: number; y: number; w: number; h: number }[],
     calls: string[],
     texts: string[],
+    fills: { x: number; y: number; w: number; h: number }[],
   ) {
     return new Proxy(
       {},
@@ -496,6 +594,17 @@ describe('drawing', () => {
           if (prop === 'rect')
             return (x: number, y: number, w: number, h: number) => {
               clips.push({ x, y, w, h });
+            };
+          // ═══ `fillRect`'s COORDINATES, not just its arity ═══
+          // The points row's PLATE is one `fillRect` the exact size of the row,
+          // and it is the only signal that separates "the count is drawn" from
+          // "the count is EMPHASISED". Counting calls cannot do it: at zero
+          // points there is also no `+` on any row, so four buttons' worth of
+          // rects disappear at the same time and the difference is swamped.
+          if (prop === 'fillRect')
+            return (x: number, y: number, w: number, h: number) => {
+              fills.push({ x, y, w, h });
+              calls.push('fillRect(4)');
             };
           if (prop === 'fillText')
             return (text: string, ...rest: unknown[]) => {
@@ -512,16 +621,21 @@ describe('drawing', () => {
     ) as unknown as CanvasRenderingContext2D;
   }
 
-  function paint(panelView: TalentPanelView, armedId: string | null = null) {
+  function paint(panelView: TalentPanelView, armedId: string | null = null, level?: number | null) {
     const clips: { x: number; y: number; w: number; h: number }[] = [];
     const calls: string[] = [];
     const texts: string[] = [];
+    const fills: { x: number; y: number; w: number; h: number }[] = [];
     const rect = roomyRect();
     drawTalentPanel({
-      ctx: recorder(clips, calls, texts),
-      // NO ART AT ALL, which is the honest state of the ability icons today:
-      // `icon_active_*` is under no prefix in main.ts's NEEDED_ASSET_PREFIXES,
-      // so the letter-plate fallback is the ONLY path and it runs here.
+      ctx: recorder(clips, calls, texts, fills),
+      level,
+      // NO ART AT ALL — which is a FRESH CLONE, not a broken pipeline. It used
+      // to be the only state there was: main.ts's prefix list held a dead
+      // `icon_ability_` spelling and every talent icon fell through to the
+      // letter plate. The prefix is `icon_active_` now and the twelve icons
+      // blit; `client/public/assets/` stays gitignored, so this path is what a
+      // checkout with no art gets and it has to stay legible.
       sprites: { sprite: () => undefined },
       rect,
       rows: talentPanelRows(panelView),
@@ -529,7 +643,7 @@ describe('drawing', () => {
       hovered: null,
       armedId,
     });
-    return { clips, calls, texts, rect };
+    return { clips, calls, texts, fills, rect };
   }
 
   it('clips to its own rect and pairs every save with a restore', () => {
@@ -600,13 +714,56 @@ describe('drawing', () => {
     expect(quiet.texts).toContain('+');
   });
 
-  it('paints the badge only when there is a point in hand, and counts it', () => {
-    expect(paint(view()).texts.some((t) => t.includes('2 points to spend'))).toBe(true);
+  it('paints the count at every level, and the PLATE only above zero', () => {
+    // ═══ THE COUNT IS THE COUNTER, THE PLATE IS THE GLOW ═══
+    // LevelupDialog.lua:757-784 keeps its counters on screen at zero;
+    // :690-691 sets `glow = 0.6` only above it. The plate is one `fillRect` the
+    // width of the row, so counting `fillRect(4)` calls separates the two: what
+    // is asserted is that the SENTENCE survives at zero and the EMPHASIS does
+    // not.
+    const withPoints = paint(view());
+    expect(withPoints.texts).toContain('2 points to spend');
     expect(paint(view({ progress: progressFrame({ unspent: 1 }) })).texts).toContain(
       '1 point to spend',
     );
+
     const none = paint(view({ progress: progressFrame({ unspent: 0 }) }));
+    expect(none.texts).toContain('no points — next at level 7');
     expect(none.texts.some((t) => t.includes('to spend'))).toBe(false);
+
+    // THE PLATE IS A FILL THE EXACT SIZE OF THE POINTS ROW, so it can be found
+    // by asking the geometry where that row landed rather than by counting
+    // rects — see the recorder's note for why counting cannot work here.
+    const plateAt = (panelView: TalentPanelView, painted: ReturnType<typeof paint>) => {
+      const rows = talentPanelRows(panelView);
+      const placed = talentPanelGeometry(painted.rect, rows).placed.find(
+        (entry) => entry.row.kind === TalentRowKind.Points,
+      );
+      if (placed === undefined) throw new Error('unreachable: the points row is unconditional');
+      return painted.fills.some(
+        (fill) =>
+          fill.x === placed.rect.x &&
+          fill.y === placed.rect.y &&
+          fill.w === placed.rect.w &&
+          fill.h === placed.rect.h,
+      );
+    };
+    expect(plateAt(view(), withPoints)).toBe(true);
+    expect(plateAt(view({ progress: progressFrame({ unspent: 0 }) }), none)).toBe(false);
+  });
+
+  it('puts the LEVEL on the header, and falls back to the bare word without it', () => {
+    // LevelupDialog.lua:88 titles the dialog with the actor it is about
+    // (`"Levelup: "..actor.name`). Ours has one actor and needs no name; what it
+    // was missing is the number every row on it is about.
+    const { texts } = paint(view(), null, 6);
+    expect(texts).toContain('TALENTS · Lv 6');
+
+    // No level passed — main.ts's existing call site, and the window before the
+    // first `progress` frame. Never `Lv 0`, never `Lv ?`.
+    expect(paint(view()).texts).toContain('TALENTS');
+    expect(paint(view(), null, null).texts).toContain('TALENTS');
+    expect(paint(view(), null, null).texts.some((t) => t.includes('Lv'))).toBe(false);
   });
 
   it('still paints, and still clips, in a panel too small for four rows', () => {
@@ -615,7 +772,7 @@ describe('drawing', () => {
     const texts: string[] = [];
     const rect = { x: 4, y: 4, w: 190, h: 96 };
     drawTalentPanel({
-      ctx: recorder(clips, calls, texts),
+      ctx: recorder(clips, calls, texts, []),
       sprites: { sprite: () => undefined },
       rect,
       rows: talentPanelRows(view()),

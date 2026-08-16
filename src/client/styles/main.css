@@ -66,15 +66,50 @@ body {
   image-rendering: pixelated;
 }
 
+/*
+ * THE STATUS LINE IS EXACTLY ONE LINE TALL, AND THAT IS A RENDERER RULE, NOT A
+ * TYPOGRAPHIC ONE.
+ *
+ * It used to be `min-height` + `white-space: pre-wrap`, which meant the box GREW
+ * the moment the string was too long for the viewport. `updateStatus` in main.ts
+ * (~:2769-2879) joins connection, phase, contact state, actor count, name and
+ * position, scale, the revive or respawn prompt, banked talent points, a party
+ * invite, the participant count and a `notice` — routinely 150-250 characters,
+ * and the `notice` APPEARS AND EXPIRES ON A TIMER. So the row wrapped to two
+ * lines, body (a flex column) took ~29px away from `#game`, the ResizeObserver
+ * fired, and canvas.ts's `resize` (:697-747) did not merely re-letterbox: it
+ * recomputes tilesW/tilesH from the new device box (:727-730) and reassigns the
+ * backbuffer (:732-742). The map jumped under the player TWICE per refusal —
+ * once when the notice appeared and once when it expired — with nobody touching
+ * anything.
+ *
+ * SO THE BOX IS FIXED AND THE TEXT IS CLIPPED, exactly the way `#margin` already
+ * does it below (:159-170 there: nowrap + overflow hidden + ellipsis). The
+ * height is spelled as a `calc` rather than a round `1.75rem` because
+ * `box-sizing: border-box` is on: 1.5rem IS the line box (line-height 1.5 at the
+ * 12px root font set on html), and the +11px is this rule's own 5px+5px padding
+ * and 1px border. That is precisely the height the row already renders at with
+ * one line in it, so this declaration changes nothing that is on screen today —
+ * it only removes the second line. A bare `1.75rem` (21px) would have been eight
+ * pixels SHORT of the line box and clipped the glyphs in half.
+ *
+ * NO SCREEN-READER INFORMATION IS LOST. `#log` is `role="status"
+ * aria-live="polite"` and `setStatusText` (main.ts:741-744) writes the WHOLE
+ * string into textContent; the ellipsis is a paint, not a truncation, so the
+ * announcement is the full sentence whatever the viewport is doing. `nowrap`
+ * does collapse the double spaces in the `  ·  ` separator to single ones —
+ * cosmetic, and the same trade `#margin` already makes.
+ */
 #log {
   flex: 0 0 auto;
-  min-height: 1.75rem;
+  height: calc(1.5rem + 11px);
   padding: 5px 10px;
   border-top: 1px solid #36303e; /* SLATE */
   background: #312938; /* PANEL */
   color: #ede6c2; /* PARCHMENT */
-  white-space: pre-wrap;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /*
@@ -104,17 +139,45 @@ body {
 }
 
 /*
- * THE `hidden` ATTRIBUTE NEEDS THIS RULE, AND THAT IS NOT OBVIOUS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `visibility`, NOT `display`. THE ROW GOES AWAY; ITS BOX MUST NOT.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * `[hidden]` is `display: none` in the USER-AGENT stylesheet, and the author
- * `display: flex` directly above beats it — so toggling the attribute alone
- * would leave the row on screen and this whole line would silently do nothing.
- * The functional half of the gate (`disabled` + `tabIndex = -1` + `blur`) would
- * still hold, which is exactly why the omission would never be noticed: the trap
- * would be shut and the row would sit there inviting a click that did nothing.
+ * THE RULE IS STILL REQUIRED, AND THAT IS STILL NOT OBVIOUS. `[hidden]` is
+ * `display: none` in the USER-AGENT stylesheet, and the author `display: flex`
+ * directly above BEATS it — so without an explicit `#cmdrow[hidden]` rule the
+ * attribute toggle in `setCommandLineReachable` is a silent no-op and the row
+ * sits there in front of a modal inviting a click. Keep both halves: delete the
+ * `display: flex` above and this rule is doing work the UA would have done
+ * anyway; delete this rule and the attribute stops meaning anything. The
+ * functional half of the gate (`disabled` + `tabIndex = -1` + `blur()`) would
+ * still hold either way, which is exactly why the omission would never be
+ * noticed.
+ *
+ * WHY IT IS NOT `display: none`. This row is ~29px of a flex COLUMN, and `#game`
+ * is the `flex: 1 1 auto; min-height: 0` sibling that absorbs whatever the other
+ * rows do not take. Taking the row out of layout therefore handed those 29px to
+ * the canvas, the ResizeObserver fired, and canvas.ts's `resize` (:697-747) does
+ * not merely re-letterbox — it recomputes tilesW/tilesH from the new device box
+ * (:727-730), reassigns logicalW/logicalH and rebuilds the backbuffer
+ * (:732-742). At 1280x720/dpr1 that is one whole extra tile row, the panel band
+ * moves, the camera clamp shifts, and the map jumps under the player at the
+ * instant the Escape menu (or the class picker) opens — and jumps back when it
+ * closes. `visibility: hidden` leaves the box in the column, so the measured
+ * rect never changes and `resize` returns false at its early-out (:707).
+ *
+ * AND IT STRENGTHENS THE FOCUS GATE RATHER THAN WEAKENING IT. Per spec a
+ * `visibility: hidden` element (and its subtree) is not a focusable area: it is
+ * out of the sequential focus order and out of the accessibility tree, and it
+ * takes no pointer events. So `#cmd` — the only tabbable element on the page,
+ * and the reason this gate exists at all — is unreachable by Tab, by click and
+ * by screen-reader cursor while the attribute is set, on top of the three
+ * functional guards main.ts sets. `opacity: 0` would NOT do this and must never
+ * be substituted here: it leaves the field focusable and clickable, which is the
+ * shipped bug the block above `#cmdrow` describes.
  */
 #cmdrow[hidden] {
-  display: none;
+  visibility: hidden;
 }
 
 #cmdlabel {

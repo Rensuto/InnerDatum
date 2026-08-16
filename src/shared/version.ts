@@ -183,7 +183,7 @@
  *   UI", but a client that keeps running while quietly committing the player to
  *   something they were never asked about.
  *
- *   THE GATE IS WHAT TURNS IT INTO AN HONEST REFUSAL. `net/gateway.ts:3436-3445`
+ *   THE GATE IS WHAT TURNS IT INTO AN HONEST REFUSAL. `net/gateway.ts:6357-6366`
  *   answers `version_mismatch` and closes the socket before any frame is
  *   dispatched, so a stale bundle gets "update and reconnect" instead of a class
  *   written to disk behind the player's back. A refused connection beats a

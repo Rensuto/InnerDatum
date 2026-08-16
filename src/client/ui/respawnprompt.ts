@@ -104,7 +104,7 @@ export function respawnPromptSpeech(keymap: Keymap = gameKeymap.current): string
  * IT EXISTS ONLY SO main.ts'S CURRENT CALL SITE STILL COMPILES, and it is the
  * stale one by construction: a string cannot follow a rebind. The live answer is
  * `respawnPromptSpeech()` above, and the aria-live region must move onto it —
- * main.ts:2440 is the single reader.
+ * main.ts:2781 is the single reader.
  */
 export const RESPAWN_PROMPT_SPEECH = respawnPromptSpeech();
 

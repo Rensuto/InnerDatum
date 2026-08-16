@@ -149,22 +149,53 @@ export const ClassId = {
 export type ClassId = (typeof ClassId)[keyof typeof ClassId];
 
 /**
- * The three class resources, and the one that is not a bar.
+ * The three class resources, and the one that is COUNTED rather than measured.
  *
- * REAGENTS ARE A COUNTABLE STOCK OF 0-8 THAT REFILLS ON KILLS AND AT STAIRS —
- * not a regenerating pool (game-design.md § 2). That distinction is the whole
- * Alchemist: every cast is a discrete decision about a finite object you are
- * holding, and the UI renders it as pips rather than a bar
- * (docs/assets-needed.md, `ui_pip_reagent_{full,empty}`). `RESOURCE_RULES`
- * below encodes it as `regenPerTurn: 0`, so nothing can quietly turn it into a
- * bar by adding a regen number in one place.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ALL THREE TRICKLE. REAGENTS TRICKLE IN WHOLE VIALS, AND THAT IS THE WHOLE
+ * DISTINCTION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This block used to say "not a regenerating pool … nothing can quietly turn it
+ * into a bar", and `RESOURCE_RULES` used to encode that as three zeroes. The
+ * designer has now played the shipped build and reversed it: a resource you can
+ * only earn by killing is a resource that leaves you standing in a corridor with
+ * every button greyed out, which is not a decision, it is a dead class. W7's
+ * DECISIONS.md entry records the reversal.
+ *
+ * What the reversal is careful NOT to do is make Reagents continuous:
+ *
+ *   RESOLVE, FOCUS — continuous, 0-100, `regenPerTurn` FRACTIONAL. Ported from
+ *     ToME's `stamina_regen`/`psi_regen` defaults (Actor.lua:227-241), applied
+ *     once per BASE turn by `regenResources` (ActorResource.lua:201-211) from
+ *     `actBase` (Actor.lua:558). Standing next to people and holding still are
+ *     still where the real income is; the trickle is the floor under them.
+ *
+ *   REAGENTS — COUNTABLE, 0-8. Refilled one per kill, topped up at stairs, and
+ *     ONE WHOLE VIAL every `regenEvery` game turns via an integer counter that
+ *     lives beside the pool rather than inside it (`ResourcePool.regenCounter`,
+ *     a verbatim port of `regenAmmo`, Actor.lua:2074-2084). `pool.value` is
+ *     therefore an INTEGER at every observable moment — a stronger guarantee
+ *     than the zero it replaced, because a zero can be edited to 0.5 by anyone
+ *     while an integer counter cannot express a fraction at all.
+ *
+ * Upstream already ships exactly this shape and it is why the reconciliation is
+ * a port rather than a capitulation: Souls is an explicit min-0/max-10 countable
+ * stock (resources.lua:266) earned one per kill, and two shipped NPCs set
+ * `soul_regen = 1` (dreadfell/npcs.lua:71). "Nothing regenerates by default"
+ * (data/birth/descriptors.lua:71 sets base `mana_regen = 0`) and "this class's
+ * stock trickles" are both true statements about ToME.
+ *
+ * The UI does not change: pips, never a bar (docs/assets-needed.md,
+ * `ui_pip_reagent_{full,empty}`). A slow refill expressed in whole pips still
+ * answers "how many casts do I have left?", which is the only question the
+ * Alchemist's player is ever asking.
  */
 export const ResourceKind = {
-  /** Watchman. Builds when struck and when standing next to an ally. */
+  /** Watchman. Builds when struck, next to an ally, and slowly on its own. */
   Resolve: 'resolve',
-  /** Inspector. Builds by holding still and by watching a marked target. */
+  /** Inspector. Builds by holding still, by watching a mark, and slowly on its own. */
   Focus: 'focus',
-  /** Alchemist. COUNTABLE. Refills on kills and at stairs. Never regenerates. */
+  /** Alchemist. COUNTABLE. Refills on kills, at stairs, and one whole vial per `regenEvery`. */
   Reagents: 'reagents',
 } as const;
 export type ResourceKind = (typeof ResourceKind)[keyof typeof ResourceKind];
@@ -381,6 +412,41 @@ export function combatTalentSpellDamage(
 // Resources
 // ---------------------------------------------------------------------------
 
+/**
+ * ToME's `stamina_regen` 0.3 (Actor.lua:230) x `TOME_ACTIONS_PER_TURN`.
+ *
+ * Named rather than inlined so a balance pass has one symbol to grep and the
+ * tests can assert the DERIVATION rather than a copied decimal.
+ */
+export const RESOLVE_PER_TURN = 0.3 * TOME_ACTIONS_PER_TURN;
+
+/** ToME's `psi_regen` 0.2 (Actor.lua:239) x `TOME_ACTIONS_PER_TURN`. */
+export const FOCUS_PER_TURN = 0.2 * TOME_ACTIONS_PER_TURN;
+
+/**
+ * GAME TURNS PER ONE WHOLE REAGENT. The Alchemist's floor, and only her floor.
+ *
+ * ═══ WHERE 12 COMES FROM, AND WHY IT IS NOT 6 ═══
+ * Upstream's mana regen is 0.5/turn (Actor.lua:229) and the cheapest attack
+ * spell in the game costs `mana = 12` (data/talents/spells/fire.lua:26), so a
+ * ToME caster buys one cast every 24 ToME turns. Divide by
+ * `TOME_ACTIONS_PER_TURN` for our turn density and one 1-Reagent cast is 12 of
+ * our turns.
+ *
+ * REJECTED: the 6 in `ammo_every = 6 - e.combat.ammo_regen`
+ * (data/general/objects/egos/ammo.lua:227) — upstream's own cadence for exactly
+ * this counter, and therefore the tempting number. At 6 a ~100-turn floor pays
+ * ~16 vials against ~15 from kills, which makes the trickle EQUAL to the kill
+ * economy and turns the Alchemist into a mana class after all. At 12 it pays
+ * ~8, so bodies stay the income and this is the safety net that the dead
+ * `noteStairs` was supposed to be.
+ *
+ * The ammo figure was NOT additionally halved: `ammo_every` is a reload cadence
+ * rather than an action budget, and applying the density factor twice is how a
+ * citation stops meaning anything.
+ */
+export const REAGENT_REGEN_EVERY_TURNS = 12;
+
 /** Per-kind limits and regeneration. One table, so no pool can drift. */
 export const RESOURCE_RULES: Readonly<
   Record<
@@ -392,31 +458,79 @@ export const RESOURCE_RULES: Readonly<
        * UNCONDITIONAL gain per GAME TURN, on the base clock, before the
        * per-class clauses in `regenResource`.
        *
-       * All three are 0 today and that is the point: nothing in this game gives
-       * you a resource for existing. Resolve is earned by standing next to
-       * people, Focus by holding still, Reagents by killing something.
+       * ═══ PORTED, WITH THE TURN-DENSITY FACTOR APPLIED EXACTLY ONCE ═══
+       * ToME's per-turn defaults are authored at Actor.lua:227-241 —
+       * `mana_regen = 0.5`, `stamina_regen = 0.3` ("Stamina regens slower than
+       * mana"), `psi_regen = 0.2` ("Energy regens slowly") — and added by
+       * `regenResources` (ActorResource.lua:201-211), which is ONE bounded add
+       * and contains no rng anywhere in the file. Its clock is `actBase`
+       * (Actor.lua:558), driven by `energyBase`, which GameEnergyBased.lua:114-121
+       * grants FLAT while :125 multiplies the ACT clock by `global_speed`. A
+       * hasted actor therefore gets more actions and exactly the same
+       * regeneration — which is our energy.ts:621-629 invariant, and why
+       * `regenResource` is reachable only from `TalentEngine.actBase`.
+       *
+       * A ToME turn holds ONE action; ours holds `TOME_ACTIONS_PER_TURN`. So a
+       * per-turn ACCRUAL is MULTIPLIED by that factor to hold upstream's
+       * actions-per-refill — the exact inverse of what `tomeCooldownToTurns`
+       * does to a cooldown, and the reason both live next to the same constant.
+       *
+       *   RESOLVE 0.6 = stamina 0.3 x 2. Stamina is the physical-fatigue
+       *     resource of a melee body; Resolve is the nearest thing we have.
+       *   FOCUS 0.4 = psi 0.2 x 2. Psi is the mental one
+       *     (data/birth/classes/psionic.lua:40 is the class-level value).
+       *
+       * BOTH ARE DELIBERATELY TINY NEXT TO THE EARNED CLAUSES: one blow taken
+       * pays `RESOLVE_ON_STRUCK` (6), ten turns of trickle. Holding ground pays
+       * `FOCUS_ON_HELD_GROUND` (12), thirty turns of trickle. That is ToME
+       * parity and it is meant to be a floor, not a second income — if you can
+       * WATCH it tick up, the rate is wrong.
+       *
+       * REAGENTS STAY 0 HERE and use `regenEvery` instead, because a fractional
+       * add is precisely what would turn a counted stock into a bar.
        */
       readonly regenPerTurn: number;
       /**
+       * WHOLE GAME TURNS PER ONE WHOLE UNIT. Omitted means "no timed refill".
+       *
+       * ONLY MEANINGFUL FOR A DISCRETE KIND. It is the mechanism that lets a
+       * counted stock regenerate without the pool ever holding a fraction:
+       * `regenResource` banks turns on `ResourcePool.regenCounter` and grants
+       * exactly 1 when the counter reaches this number, which is `regenAmmo`'s
+       * `ammo_every` / `reload_counter` pair verbatim (Actor.lua:2074-2084).
+       *
+       * A continuous kind must leave this undefined and use `regenPerTurn`.
+       * Setting both would be two clocks feeding one pool, and the fractional
+       * one would defeat the whole reason the integer one exists.
+       */
+      readonly regenEvery?: number;
+      /**
        * Draw PIPS, not a bar — `ResourceView.discrete` on the wire.
        *
-       * game-design.md § 2 is emphatic: Reagents are "a countable stock of 0-8
-       * ... not a regenerating bar. Every cast is a discrete decision." A bar
-       * makes 3-of-8 look like 37% of something continuous and quietly deletes
-       * the Alchemist's whole read. Authored HERE rather than derived from the
-       * kind in the renderer, because a client-side copy of "which kinds are
-       * countable" is exactly the table that will be missing the Enforcer's
-       * Shells at M5.
+       * A bar makes 3-of-8 look like 37% of something continuous and quietly
+       * deletes the Alchemist's whole read. Authored HERE rather than derived
+       * from the kind in the renderer, because a client-side copy of "which
+       * kinds are countable" is exactly the table that will be missing the
+       * Enforcer's Shells at M5.
+       *
+       * This flag is NOT a statement that the pool never refills — it says the
+       * pool is COUNTABLE, and `regenEvery` refills it in countable units.
        */
       readonly discrete: boolean;
     }
   >
 > = {
-  [ResourceKind.Resolve]: { max: 100, start: 0, regenPerTurn: 0, discrete: false },
-  [ResourceKind.Focus]: { max: 100, start: 0, regenPerTurn: 0, discrete: false },
+  [ResourceKind.Resolve]: { max: 100, start: 0, regenPerTurn: RESOLVE_PER_TURN, discrete: false },
+  [ResourceKind.Focus]: { max: 100, start: 0, regenPerTurn: FOCUS_PER_TURN, discrete: false },
   // 0-8, COUNTABLE. Starts full: you walked in carrying eight vials, and the
   // first fight should be about spending them rather than about waiting.
-  [ResourceKind.Reagents]: { max: 8, start: 8, regenPerTurn: 0, discrete: true },
+  [ResourceKind.Reagents]: {
+    max: 8,
+    start: 8,
+    regenPerTurn: 0,
+    regenEvery: REAGENT_REGEN_EVERY_TURNS,
+    discrete: true,
+  },
 };
 
 /**
@@ -450,11 +564,33 @@ export type ResourcePool = {
   readonly kind: ResourceKind;
   value: number;
   readonly max: number;
+  /**
+   * GAME TURNS banked toward the next whole unit of a `regenEvery` refill.
+   * `reload_counter` in `regenAmmo` (Actor.lua:2074-2084). Always 0 for a kind
+   * with no `regenEvery`.
+   *
+   * ═══ ENGINE-ONLY, NOT ON THE WIRE, AND DELIBERATELY NOT SAVED ═══
+   * `ResourceView` carries `current`/`max`/`discrete` and nothing else, and this
+   * is NOT in `SavedResources` (persist/saves.ts:330-342). A reconnect therefore
+   * loses at most `regenEvery - 1` turns of accumulation.
+   *
+   * That is the same invisible class of loss as `TalentSheet.movedThisTurn`,
+   * which is also rebuilt from nothing on load: nobody can observe it, nothing
+   * derived from it is wrong afterwards, and the worst case costs eleven turns
+   * of walking. Which is exactly why NO `SCHEMA_VERSION` BUMP IS NEEDED — the
+   * saved shape is byte-identical to what it was before regen existed.
+   *
+   * THE OMISSION IS A DECISION, NOT AN OVERSIGHT. Persisting it would put a
+   * sub-unit counter into a save file whose entire promise is that a Reagent is
+   * a countable object, and would buy back eleven turns nobody was counting.
+   * Anyone tempted to "fix" it should read this paragraph first.
+   */
+  regenCounter: number;
 };
 
 export function createResourcePool(kind: ResourceKind): ResourcePool {
   const rules = RESOURCE_RULES[kind];
-  return { kind, value: rules.start, max: rules.max };
+  return { kind, value: rules.start, max: rules.max, regenCounter: 0 };
 }
 
 export function hasResource(pool: ResourcePool, amount: number): boolean {
@@ -1200,6 +1336,20 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       }
     },
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // STILL DEAD CODE. NOTHING IN src/ CALLS THIS. READ THIS BEFORE ASSUMING.
+    // ═══════════════════════════════════════════════════════════════════════
+    // `grep -rn noteStairs src/` finds this definition, the `TalentEngine` member
+    // above, and TWO COMMENTS IN THE SCHEDULER (scheduler.ts:622, :2521) that
+    // both describe it as unreachable "in a floor that has no stairs". There is
+    // no call site, because there are no stairs yet.
+    //
+    // The per-turn regen added to `regenResource` is the FLOOR, NOT A
+    // REPLACEMENT FOR THIS. It exists so an Alchemist is never permanently
+    // stranded at zero; it does not top anyone up between floors, and it pays
+    // about half what bodies do. When stairs land, wire this — the symptom that
+    // made its absence obvious (a hotbar answering `no_resource` forever) is now
+    // gone, so nothing will remind you.
     noteStairs: (): void => {
       for (const sheet of sheets.values()) {
         if (sheet.resource.kind === ResourceKind.Reagents) {
@@ -1260,12 +1410,59 @@ function regenResource(
       }
       return;
     }
-    case ResourceKind.Reagents:
-      // COUNTABLE STOCK. Refills on kills (`noteKill`) and at stairs
-      // (`noteStairs`) and at NO other time. If a regen line ever appears here,
-      // the Alchemist has quietly become a mana class and every cast has
-      // stopped being a decision.
+    case ResourceKind.Reagents: {
+      // ═══════════════════════════════════════════════════════════════════════
+      // A COUNTED STOCK THAT REFILLS IN WHOLE UNITS — `regenAmmo`, ported.
+      // ═══════════════════════════════════════════════════════════════════════
+      // Actor.lua:2074-2084, verbatim:
+      //
+      //     if ammo.combat.shots_left >= ammo.combat.capacity then
+      //       ammo.combat.shots_left = ammo.combat.capacity return end
+      //     ammo.combat.reload_counter = (ammo.combat.reload_counter or 0) + 1
+      //     if ammo.combat.reload_counter == r then
+      //       ammo.combat.reload_counter = 0
+      //       ammo.combat.shots_left = util.bound(shots_left + 1, 0, capacity)
+      //     end
+      //
+      // THIS BLOCK USED TO FORBID EXACTLY THIS CHANGE ("if a regen line ever
+      // appears here, the Alchemist has quietly become a mana class"). The
+      // designer has since played the shipped build. Sitting at 0 Reagents with
+      // four greyed-out buttons and no route back — `noteStairs` has never had a
+      // caller, see below — is not "every cast is a discrete decision", it is a
+      // class that has stopped existing. W7's DECISIONS.md entry records the
+      // reversal and its reasoning.
+      //
+      // WHAT SURVIVES THE REVERSAL, mechanically rather than by promise: the
+      // grant is ONE WHOLE UNIT and the REMAINDER LIVES ON THE COUNTER, NEVER
+      // ON THE POOL. `pool.value` is an integer at every observable moment, so
+      // the pips and the "N/8" on the character sheet can never disagree — a
+      // stronger guarantee than the `regenPerTurn: 0` it replaces, which any
+      // edit could have turned into 0.5.
+      //
+      // This is also still the FLOOR and not the economy: `REAGENT_REGEN_EVERY_TURNS`
+      // pays roughly 8 vials over a 100-turn floor against roughly 15 from
+      // bodies. Kills remain how an Alchemist is paid.
+      //
+      // INTEGER ARITHMETIC ONLY AND NO RNG. This runs inside the seeded turn,
+      // and one draw here would shift every subsequent roll — the failure that
+      // surfaces weeks later as "the level regenerated differently".
+      const every = RESOURCE_RULES[pool.kind].regenEvery;
+      if (every === undefined) return;
+      // Actor.lua:2078. WITHOUT THE AT-CAP EARLY RETURN the counter banks while
+      // the pool is full and the first vial she spends comes back for free —
+      // and both kills and stairs push her to the cap, so that is the common
+      // case, not an edge one. Upstream does NOT clear the counter here and
+      // neither do we: a partial count that was genuinely earned before a
+      // top-up survives it, which is bounded by `every - 1` turns and can never
+      // exceed the cap because `gainResource` clamps.
+      if (pool.value >= pool.max) return;
+      pool.regenCounter += 1;
+      if (pool.regenCounter >= every) {
+        pool.regenCounter = 0;
+        gainResource(pool, 1);
+      }
       return;
+    }
   }
 }
 

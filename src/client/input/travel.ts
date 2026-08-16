@@ -457,7 +457,7 @@ export function createTravel(): Travel {
       return null;
     }
 
-    // THE SANCTIONED IDIOM (main.ts:669-672): walk DIR_ORDER and compare
+    // THE SANCTIONED IDIOM (main.ts:1758-1762): walk DIR_ORDER and compare
     // `step()`, never a hand-rolled dx/dy table. There is exactly one direction
     // vocabulary in this codebase and it is `DIR_ORDER`; a second one would be a
     // sprite-row order and a wire enum waiting to drift.

@@ -95,17 +95,26 @@
  * ZERO NEW SPRITE IDS, AND THE FRAME HAS TO CARRY THE MEANING WITHOUT ART
  * ===========================================================================
  * `LoadoutTalent.icon` is an asset KEY off the wire and it is passed through
- * verbatim, exactly as ui/charsheet.ts:657 and ui/classpicker.ts:338 do. Nothing
+ * verbatim, exactly as ui/charsheet.ts and ui/classpicker.ts:338 do. Nothing
  * here writes an `icon_active_*` literal and nothing assembles a key from a name.
- * TODAY THAT KEY NEVER RESOLVES: `icon_active_*` is under no prefix in main.ts's
- * `NEEDED_ASSET_PREFIXES`, so every talent icon on the hotbar, the sheet, the
- * picker and this panel is the letter-plate fallback. So the frame, the `n/max`
- * label, the `+`/`MAX` glyph and the selection ring are all drawn with
- * `fillRect`/`fillText` — the same way ui/classpicker.ts:403-411 draws its
- * selection ring and ui/charsheet.ts:675-686 draws its letter plate — and the
- * panel is fully legible with no art at all. ToME's `ui/plus.png` and
- * `ui/minus.png` (TalentTrees.lua's `self.plus`/`self.minus`) are deliberately
- * NOT ported as ids.
+ *
+ * ═══ THE ICONS RESOLVE NOW, AND THIS PARAGRAPH USED TO SAY THEY NEVER DID ═══
+ * It read: "TODAY THAT KEY NEVER RESOLVES: `icon_active_*` is under no prefix in
+ * main.ts's `NEEDED_ASSET_PREFIXES`, so every talent icon on the hotbar, the
+ * sheet, the picker and this panel is the letter-plate fallback." That was true
+ * for the whole of M3-M6 and it is FALSE NOW: the loader filtered on a dead
+ * `icon_ability_` spelling that matched nothing, while all twelve talents
+ * declare `iconId: 'icon_active_<name>'` (src/server/talents/*.ts) and all twelve
+ * 64x64 PNGs were on disk. `icon_active_` is in the prefix list and the icons
+ * blit — centre-cropped 1:1 into the 24-pixel box below, never scaled.
+ *
+ * WHAT DOES NOT CHANGE IS THE FALLBACK, and it is not dead code: the manifest is
+ * gitignored wholesale (CLAUDE.md), so a fresh clone with no art must still be
+ * fully playable. The frame, the `n/max` label, the `+`/`MAX` glyph and the
+ * selection ring stay `fillRect`/`fillText` — the same way ui/classpicker.ts
+ * :403-411 draws its selection ring — so the panel is legible with the art and
+ * without it. ToME's `ui/plus.png` and `ui/minus.png` (TalentTrees.lua's
+ * `self.plus`/`self.minus`) are still deliberately NOT ported as ids.
  *
  * ===========================================================================
  * NEVER COLOUR ALONE
@@ -132,6 +141,7 @@ import {
   drawHeader,
   drawPanel,
   fitText,
+  headerDragRect,
   HEADER_H,
   PANEL_PAD,
   PanelSkin,
@@ -205,8 +215,33 @@ const FONT_META = 'bold 10px ui-monospace, Consolas, monospace';
 /** The first-letter fallback inside an icon box. Non-violet, by rule. */
 const FONT_ICON_FALLBACK = 'bold 12px ui-monospace, Consolas, monospace';
 
-/** The title on the header strip. */
+/**
+ * The title on the header strip, and the LEVEL that goes on it.
+ *
+ * ═══ THE SCREEN WHOSE WHOLE SUBJECT IS LEVELLING USED TO NEVER STATE THE LEVEL ═══
+ * ToME titles this exact dialog with the actor it is about —
+ * `Dialog.init(self, "Levelup: "..actor.name, ...)` at LevelupDialog.lua:88 —
+ * because a spend screen that does not say WHOSE points these are is a screen
+ * you can be looking at without knowing what it is. Ours has one actor and
+ * needs no name; what it was missing is the number every one of its rows is
+ * about. `TALENTS · Lv 3`.
+ *
+ * THE LEVEL COMES IN ON THE DRAW OPTIONS, NOT AS A STRING. Handing this file a
+ * finished title would put the formatting in main.ts, and then the day somebody
+ * wants "Lv" spelled differently there would be two files to find. The caller
+ * passes the number; this file owns every glyph on its own header.
+ *
+ * NULL FALLS BACK TO THE BARE WORD rather than to `Lv 0` or `Lv ?`. `progress`
+ * is unicast in the `hello` block, so a null is a one-frame window on connect
+ * and never a level-zero character — the same rule ui/charsheet.ts:344-347
+ * states about the same frame.
+ */
 const PANEL_TITLE = 'TALENTS';
+
+function panelTitle(level: number | null | undefined): string {
+  if (level === null || level === undefined || !Number.isFinite(level)) return PANEL_TITLE;
+  return `${PANEL_TITLE} · Lv ${String(Math.max(0, Math.floor(level)))}`;
+}
 
 /**
  * THE ARROW THAT MAKES THE DIFF A DIFF.
@@ -236,7 +271,11 @@ const PLUS_ARMED_LABEL = '+?';
  * is on and an enum emits runtime code the type-stripping loader refuses.
  */
 export const TalentRowKind = {
-  /** "3 points to spend". Present ONLY while there is something to spend. */
+  /**
+   * "3 points to spend", "no points — next at level 7", "top level — no more
+   * points". Present whenever the `progress` frame is, at any count. See
+   * `pointsText` for why the COUNT is unconditional and the PLATE is not.
+   */
   Points: 'points',
   /** Icon, name, `n/max`, the current->next diff, and the `+`. The workhorse. */
   Talent: 'talent',
@@ -246,7 +285,13 @@ export const TalentRowKind = {
 export type TalentRowKind = (typeof TalentRowKind)[keyof typeof TalentRowKind];
 
 export type TalentRow =
-  | { readonly kind: typeof TalentRowKind.Points; readonly unspent: number }
+  | {
+      readonly kind: typeof TalentRowKind.Points;
+      /** Points in hand. ZERO IS A VALID VALUE and draws the second or third state. */
+      readonly unspent: number;
+      /** The whole sentence, composed by `pointsText`. One copy, read by the painter. */
+      readonly text: string;
+    }
   | {
       readonly kind: typeof TalentRowKind.Talent;
       /** The NAMESPACED talent id, which is what `spend_point` names. */
@@ -285,6 +330,59 @@ export type TalentPanelView = {
 };
 
 /**
+ * THE POINTS LINE, IN THREE STATES, AND THE COUNT IS UNCONDITIONAL.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS REVERSES WHAT THIS FILE USED TO SAY, AND THE OLD CITATION WAS READ FROM
+ * THE WRONG HALF OF ITS OWN PRECEDENT
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The paragraph that stood here read: "THE POINTS BADGE IS CONDITIONAL,
+ * mirroring ToME's own conditional hotspot: uiset/Minimalist.lua:1587-1589 only
+ * makes the levelup plate clickable `and (player.unused_stats > 0 or
+ * player.unused_talents > 0 or ...)`, and :1512-1516 only draws its glow under
+ * the same test. A badge reading '0 points' on every open would be furniture
+ * within one session."
+ *
+ * Both citations are real and both are about the HUD's levelup PLATE — a
+ * call-to-action out on the frame, which is correctly conditional and still is
+ * (see the gold plate below, and ui/charsheet.ts's own points row, which stays
+ * conditional for exactly this reason). What they are NOT about is the spend
+ * SCREEN. Upstream's own levelup dialog carries four point counters —
+ * `text="Stats: "..self.actor.unused_stats`, `"Class points: "`,
+ * `"Generic points: "`, `"Category points: "` at LevelupDialog.lua:757-784 —
+ * and every one of them is ALWAYS PRESENT, including at zero, and is
+ * regenerated after every single spend (:1001-1008 rewrites all four `.text`
+ * fields and calls `:generate()` on each). What is conditional there is the
+ * EMPHASIS: `glow = 0.6` at :690-691, set only when the matching counter is
+ * above zero. Each counter also carries prose about where the next point comes
+ * from — "Each level you gain 1 new class point to use. Each five levels you
+ * gain one more." (:623-624).
+ *
+ * So the correct port is: THE COUNT IS ALWAYS THERE, THE EMPHASIS IS NOT. What
+ * the old reading produced was a spend screen that, at zero points, showed four
+ * rows each advertising "→ (something better)" with no count, no button and no
+ * sentence anywhere saying where the next point comes from — a screen that says
+ * nothing about the only question it exists to answer.
+ *
+ * THE THIRD STATE IS THE CAP, and it is detected from the `xpToNext === 0`
+ * SENTINEL rather than from a new wire field or a client-side copy of
+ * `MAX_CHARACTER_LEVEL` (shared/protocol.ts:3301-3305 argues against the
+ * second; the first is a protocol change for a sentence). "next at level 11"
+ * for a level-10 character would be a promise the game cannot keep.
+ */
+function pointsText(progress: ProgressMsg): string {
+  if (progress.unspent > 0) {
+    return progress.unspent === 1 ? '1 point to spend' : `${progress.unspent} points to spend`;
+  }
+  // The cap. `xpToNext` is 0 there and is never a denominator — ui/charsheet.ts
+  // :428-441 and ui/xpbar.ts handle the same sentinel the same way.
+  if (!Number.isFinite(progress.xpToNext) || progress.xpToNext <= 0) {
+    return 'top level — no more points';
+  }
+  return `no points — next at level ${String(Math.floor(progress.level) + 1)}`;
+}
+
+/**
  * THE PANEL, AS AN ORDERED LIST OF LINES. Pure, and the whole port lives here.
  *
  * THE ORDER IS THE LOADOUT'S ORDER AND IS NEVER SORTED. `LoadoutMsg` promises
@@ -293,16 +391,20 @@ export type TalentPanelView = {
  * the one under the player's fingers on the hotbar — and this is the screen
  * where somebody decides which of those four keys to make better.
  *
- * THE POINTS BADGE IS CONDITIONAL, mirroring ToME's own conditional hotspot:
- * uiset/Minimalist.lua:1587-1589 only makes the levelup plate clickable
- * `and (player.unused_stats > 0 or player.unused_talents > 0 or ...)`, and
- * :1512-1516 only draws its glow under the same test. A badge reading "0 points"
- * on every open would be furniture within one session.
+ * THE POINTS ROW IS UNCONDITIONAL ON THE COUNT AND CONDITIONAL ON THE FRAME.
+ * See `pointsText` for the port and for what it reverses. It still needs the
+ * `progress` frame to exist, because two of its three states name a LEVEL and
+ * the third is read off `xpToNext` — with nothing to read, "next at level 1" is
+ * a wrong number stated confidently, which ui/charsheet.ts:344-347 refuses for
+ * the same frame in the same one-frame window on connect.
  */
 export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
   const rows: TalentRow[] = [];
-  const unspent = view.progress?.unspent ?? 0;
-  if (unspent > 0) rows.push({ kind: TalentRowKind.Points, unspent });
+  const progress = view.progress;
+  const unspent = progress?.unspent ?? 0;
+  if (progress !== null) {
+    rows.push({ kind: TalentRowKind.Points, unspent, text: pointsText(progress) });
+  }
 
   if (view.loadout.length === 0) {
     // NEVER A BLANK BOX. `loadout` is unicast in the `hello` block, so this is a
@@ -528,6 +630,13 @@ export const TalentHitKind = {
   Spend: 'spend',
   /** Somewhere on a talent row, but not on its `+`. Cosmetic — it hovers. */
   Row: 'row',
+  /**
+   * The header strip, minus the × carved out of its right end: the DRAG HANDLE.
+   *
+   * IT IS NOT A MEMBER OF `TalentHit`, DELIBERATELY, AND THE SPLIT WAS FORCED BY
+   * THE GATE — see `TalentPanelDrag` below for the whole reason.
+   */
+  Header: 'header',
 } as const;
 export type TalentHitKind = (typeof TalentHitKind)[keyof typeof TalentHitKind];
 
@@ -539,6 +648,61 @@ export type TalentHit =
       readonly talentId: string;
     }
   | { readonly kind: typeof TalentHitKind.Row; readonly index: number };
+
+/**
+ * WHAT A PRESS ON THE HEADER MEANS — a second reader over the SAME geometry,
+ * not a fourth branch of `TalentHit`.
+ *
+ * ═══ THE SPLIT IS FORCED, AND ui/inventory.ts:1270-1300 HIT IT FIRST ═══
+ * A press is not a click, and this codebase has two independent proofs of it.
+ * `Header` cannot join `TalentHit` because main.ts's hover block reads
+ * `talentHit.kind !== TalentHitKind.Close ? talentHit.index : null` — a Header
+ * variant carries no `index` and that line stops compiling, in a file this panel
+ * does not own, for an outcome the hover has nothing to do with. The escape menu
+ * hits the same wall one rule over: `runMenuHit`'s switch is under
+ * `@typescript-eslint/switch-exhaustiveness-check` with
+ * `considerDefaultExhaustiveForUnions: false`, so a sixth member is a lint error
+ * there. Both files answer it the same way, which is ui/inventory.ts's answer:
+ * the CLICK union keeps exactly the outcomes a click can have and stays total,
+ * and the PRESS gets its own reader.
+ *
+ * BOTH READ THE SAME `closeRect`. There is still exactly one copy of where the
+ * × is, which is the property ui/partypanel.ts:93-99 records the cost of losing.
+ */
+export type TalentPanelDrag = { readonly kind: typeof TalentHitKind.Header };
+
+/**
+ * The header strip's grabbable part. ONE copy of the reservation arithmetic.
+ *
+ * `PANEL_PAD + CLOSE_PX` is this panel's own close control, and it stays private
+ * here: ui/panel.ts's `headerDragRect` deliberately does not know any panel's
+ * `CLOSE_PX` (see its note), because a second authority on where a close control
+ * lives is the exact duplication it exists to prevent.
+ */
+function headerHandle(rect: PanelRect): PanelRect {
+  return headerDragRect(rect, PANEL_PAD + CLOSE_PX);
+}
+
+/**
+ * WHAT A PRESS AT THIS POINT WOULD GRAB — the header, or nothing.
+ *
+ * THE CLOSE CONTROL IS REFUSED EXPLICITLY rather than left to `headerDragRect`'s
+ * reservation, exactly as ui/inventory.ts's `inventoryPanelDragAt` refuses it:
+ * pressing × and twitching two pixels must CLOSE the panel, not move it. A panel
+ * narrower than its own controls gets a zero-width handle, and without this line
+ * that case becomes "the close button drags the window".
+ *
+ * It takes no rows, because nothing above the body can move: the handle and the
+ * × both depend on the panel rect alone. That is what lets a caller ask this
+ * question on `mousedown` without rebuilding four talent rows per event.
+ */
+export function talentPanelDragAt(rect: PanelRect, px: number, py: number): TalentPanelDrag | null {
+  const inside = (r: PanelRect): boolean =>
+    px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
+  if (inside(closeRect(rect))) return null;
+  if (inside(headerHandle(rect))) return { kind: TalentHitKind.Header };
+  return null;
+}
 
 /**
  * What a LOGICAL backbuffer point is over, or null.
@@ -584,10 +748,12 @@ export function talentPanelHitAt(
  * exactly the resampling render/canvas.ts's backbuffer exists to prevent, and a
  * smoothed one would be the only blurred thing on the screen.
  *
- * THE FALLBACK IS A LETTER, NOT THE MISSING-ASSET BOX, and today it is the ONLY
- * path — see the header. Four identical violet error squares would make the
- * panel unreadable, for exactly the reason ui/hotbar.ts:193-201 gives for its own
- * initials.
+ * THE FALLBACK IS A LETTER, NOT THE MISSING-ASSET BOX. It USED to be the only
+ * path — the loader filtered talent icons out behind a dead `icon_ability_`
+ * prefix — and it is now the CLONE path: `client/public/assets/` is gitignored
+ * wholesale, so a checkout with no art has to stay playable. Four identical
+ * violet error squares would make the panel unreadable, for exactly the reason
+ * ui/hotbar.ts gives for its own initials.
  *
  * THE FRAME IS DRAWN EITHER WAY. TalentTrees.lua:424 draws `self.talent_frame`
  * around every node regardless of the icon, and it is what makes a row read as a
@@ -665,15 +831,23 @@ function drawRow(
 
   switch (row.kind) {
     case TalentRowKind.Points: {
-      // THE BADGE. A count and a verb, on a plate dark enough to read against
-      // whatever the panel skin is, because this is the one line that says the
-      // screen has something for you right now.
+      // ═══ THE COUNT IS ALWAYS DRAWN. THE PLATE IS THE EMPHASIS AND IS NOT ═══
+      // LevelupDialog.lua:757-784 keeps its four counters on screen at zero;
+      // :690-691 lights `glow = 0.6` only above zero. This is that split, in two
+      // lines: the gold plate is upstream's glow, and the sentence underneath it
+      // is upstream's counter. See `pointsText` for the full argument and for
+      // what it reverses.
+      const armedToSpend = row.unspent > 0;
       ctx.font = FONT_META;
-      ctx.fillStyle = PALETTE.INK;
-      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      ctx.fillStyle = PALETTE.GOLD;
-      const word = row.unspent === 1 ? '1 point to spend' : `${row.unspent} points to spend`;
-      ctx.fillText(fitText(ctx, word, rect.w - 2), rect.x + 2, rect.y + rect.h / 2);
+      if (armedToSpend) {
+        // A plate dark enough to read against whatever the panel skin is,
+        // because this is the one line that says the screen has something for
+        // you RIGHT NOW.
+        ctx.fillStyle = PALETTE.INK;
+        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      }
+      ctx.fillStyle = armedToSpend ? PALETTE.GOLD : PALETTE.GREY_HI;
+      ctx.fillText(fitText(ctx, row.text, rect.w - 2), rect.x + 2, rect.y + rect.h / 2);
       return;
     }
 
@@ -772,6 +946,15 @@ export type TalentPanelDrawOptions = {
   readonly hovered: number | null;
   /** The talent id one press from being bought, or null. See `pressSpend`. */
   readonly armedId: string | null;
+  /**
+   * The character level, for the header — `TALENTS · Lv 3`. See `panelTitle`.
+   *
+   * `ProgressMsg.level`, and NULL/absent before the first frame arrives, which
+   * falls back to the bare word. OPTIONAL so the existing call site in main.ts
+   * compiles unchanged; a caller that omits it gets the title this panel had
+   * before, which is a degradation nobody can misread.
+   */
+  readonly level?: number | null;
 };
 
 /**
@@ -801,7 +984,7 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
   ctx.clip();
 
-  drawHeader(ctx, sprites, PANEL_TITLE, rect, FONT_META);
+  drawHeader(ctx, sprites, panelTitle(options.level), rect, FONT_META);
 
   const geometry = talentPanelGeometry(rect, rows);
   for (const placed of geometry.placed) drawRow(ctx, sprites, placed, armedId, hovered);

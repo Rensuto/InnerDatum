@@ -773,9 +773,11 @@ describe('projectClassOptions', () => {
       expect(option.resource.kind).toBe(definition.resource);
       expect(option.resource.discrete).toBe(rule.discrete);
       expect(option.resource.max).toBe(rule.max);
-      // The pool as it will read on the first turn — Reagents full because you
-      // walked in carrying eight vials, Resolve and Focus empty because nothing
-      // in this game gives you a resource for existing.
+      // The pool a new detective STARTS with — Reagents full because you walked
+      // in carrying eight vials, Resolve and Focus empty because a fresh sheet
+      // has earned nothing yet. It is a starting line, not a ceiling: all three
+      // pools trickle from the first base turn, which is why this asserts
+      // `rule.start` rather than anything about the rates.
       expect(option.resource.current).toBe(rule.start);
     }
   });

@@ -274,6 +274,42 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
     );
     expect(rows).toContainEqual({ kind: SheetRowKind.Field, label: 'Reagents', value: '3/8' });
   });
+
+  it('FLOORS a fractional pool, so this row and the pip strip cannot disagree', () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE ROUNDING HAZARD THE CODEBASE NAMED, ON THE POOLS IT WAS LEFT OPEN FOR.
+    // ═══════════════════════════════════════════════════════════════════════
+    // Resolve and Focus only ever moved in whole numbers until the pools started
+    // trickling; `RESOLVE_PER_TURN` 0.6 and `FOCUS_PER_TURN` 0.4 make them
+    // fractional on almost every turn. This row used `Math.round` while
+    // ui/resource.ts's pip strip prints `Math.floor`, the `no_resource` refusal
+    // prints `Math.floor`, and both the client's `affordable` and the server's
+    // `hasResource` compare the RAW value.
+    //
+    // 24.6 is four blows taken (4 x 6) plus one turn of trickle. Rounded it read
+    // `25/100` — one more than the strip beside it, and a promise that Iron
+    // Curtain (25) was payable when the server would refuse it.
+    const rows = charSheetRows(sheet({ resource: pool({ current: 24.6, max: 100 }) }));
+    expect(rows).toContainEqual({
+      kind: SheetRowKind.Field,
+      label: 'Resolve',
+      value: '24/100',
+    });
+    expect(Math.floor(24.6)).toBe(24);
+    // Just under a whole pip floors down too, rather than presenting a pool the
+    // player does not have.
+    expect(charSheetRows(sheet({ resource: pool({ current: 0.9 }) }))).toContainEqual({
+      kind: SheetRowKind.Field,
+      label: 'Resolve',
+      value: '0/100',
+    });
+    // ...and it never goes negative, which is the `Math.max(0, …)` beside it.
+    expect(charSheetRows(sheet({ resource: pool({ current: -3.2 }) }))).toContainEqual({
+      kind: SheetRowKind.Field,
+      label: 'Resolve',
+      value: '0/100',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -327,6 +363,17 @@ describe('the progression rows', () => {
     // glow and :1587-1589 makes its hotspot clickable only under
     // `player.unused_talents > 0 or ...`. A row reading "0 points" on every open
     // is furniture within one session.
+    //
+    // ═══ THE TALENT PANEL DELIBERATELY DIFFERS, AND THAT IS RECORDED HERE SO
+    //     NOBODY "FIXES" THE INCONSISTENCY ═══
+    // ui/talents.ts's points row is UNCONDITIONAL and states one of three things
+    // at every count (test/client/talents.test.ts pins all three). The line
+    // between the two surfaces is what each one IS: this is a STAT PAGE, where a
+    // call to action appears when there is something to answer — Minimalist's
+    // plate, cited above — while that is the SPEND SCREEN, where upstream keeps
+    // its four counters visible at zero and regenerates them after every spend
+    // (LevelupDialog.lua:757-784, :1001-1008). Flipping this one too would also
+    // move SHEET_MIN_H, which gates whether this panel opens at all.
     expect(fieldLabels(charSheetRows(sheet()))).not.toContain('Talent points');
 
     const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 3 }) }));
@@ -353,6 +400,17 @@ describe('the progression rows', () => {
   it('says “1 point”, not “1 points”', () => {
     const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 1 }) }));
     expect(labelled(rows, 'Talent points')[0]?.value).toContain('1 point —');
+  });
+
+  it('keeps the points row conditional even though the talent panel’s is not', () => {
+    // The assertion above is about ONE fixture. This is the rule, asked directly
+    // and left as the record of a decision: the sheet is a stat page and the
+    // panel is the spend screen, so the sheet's call to action goes away and the
+    // panel's count does not.
+    for (const unspent of [0, 1, 5]) {
+      const labels = fieldLabels(charSheetRows(sheet({ progress: progressFrame({ unspent }) })));
+      expect(labels.includes('Talent points'), `unspent=${unspent}`).toBe(unspent > 0);
+    }
   });
 
   it('puts the points row under Experience and still above Life', () => {
@@ -504,6 +562,17 @@ describe('charSheetRect', () => {
     if (rect === null) throw new Error('unreachable');
     expect(rect.h).toBeGreaterThanOrEqual(SHEET_MIN_H);
 
+    // ═══ AND THE CONSTANT ITSELF IS PINNED, BECAUSE THE LEVELUP WORK CAME
+    //     CLOSE TO MOVING IT ═══
+    // HEADER_H 24 + INSET 8 twice + SECTION_H 18 + ROW_H 12 × five identity
+    // rows. The talent-points row is deliberately NOT one of the five: it is
+    // conditional on this surface (see the two tests below), and sizing the
+    // minimum for a row that is usually absent would refuse to draw a perfectly
+    // good sheet on a short viewport. Making that row unconditional — which the
+    // TALENT PANEL now does — would move this number, and this number gates
+    // whether the panel opens at all.
+    expect(SHEET_MIN_H).toBe(HEADER_H + 8 * 2 + 18 + 12 * 5);
+
     // One pixel shorter and it must refuse, so the constant is a real edge
     // rather than a number nothing reads.
     expect(charSheetRect({ width: 640, height: 400, top: 0, bottom: SHEET_MIN_H + 11 })).toBeNull();
@@ -534,7 +603,48 @@ describe('charSheetHitAt', () => {
     for (let y = rect.y + HEADER_H; y < rect.y + rect.h; y += 1) {
       expect(charSheetHitAt(rect, column, y)).toBeNull();
     }
-    expect(charSheetHitAt(rect, rect.x + 4, rect.y + 4)).toBeNull();
+    // ...and the BODY's top-left, which is one pixel below the header strip. It
+    // used to be enough to test `rect.y + 4` here; that point is now the DRAG
+    // HANDLE (see below), so the assertion moves down to the first row of the
+    // body — which is what the sentence above was always about.
+    expect(charSheetHitAt(rect, rect.x + 4, rect.y + HEADER_H)).toBeNull();
+  });
+
+  it('offers the header strip as a drag handle, and the controls still win', () => {
+    // ═══ PRECEDENCE, NOT GEOMETRY ═══
+    // A SCAN across the header. What is asserted is that the two CONTROLS keep
+    // every pixel they had — one press that used to press a button and now moves
+    // the window is the failure ui/panel.ts:193-223 describes in full — and that
+    // what is left of the strip answers `header`.
+    const y = rect.y + Math.floor(HEADER_H / 2);
+    const kinds: (string | null)[] = [];
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) kinds.push(charSheetHitAt(rect, x, y));
+
+    expect(kinds.filter((hit) => hit === 'header').length).toBeGreaterThan(0);
+    expect(kinds.filter((hit) => hit === 'close').length).toBeGreaterThan(0);
+    expect(kinds.filter((hit) => hit === 'talents').length).toBeGreaterThan(0);
+    // The handle is the LEFT part, contiguous, starting at the panel's own edge,
+    // and everything left of the first control is grabbable — no dead strip.
+    const lastHandle = kinds.lastIndexOf('header');
+    expect(kinds.indexOf('header')).toBe(0);
+    expect(kinds.slice(0, lastHandle + 1).every((hit) => hit === 'header')).toBe(true);
+    // And it stops before the leftmost control — the `[G]` button, not the ×.
+    const firstControl = kinds.indexOf('talents');
+    expect(lastHandle).toBe(firstControl - 1);
+    // THE ONLY UNCLAIMED PIXELS ARE THE DELIBERATE ONES, and they are all to the
+    // RIGHT of the first control: `HEADER_BTN_GAP`'s three pixels between the two
+    // buttons, so neither swallows the other's click, and `PANEL_PAD`'s five at
+    // the very edge. A null to the LEFT of the controls would be a dead patch of
+    // handle, which is a header that only sometimes picks the window up.
+    expect(kinds.slice(0, firstControl).some((hit) => hit === null)).toBe(false);
+    expect(kinds.filter((hit) => hit === null)).toHaveLength(3 + 5);
+  });
+
+  it('does not make the body draggable — the handle is the strip and no more', () => {
+    // A handle one pixel taller makes the first row of the sheet draggable, so a
+    // click meant for a stat row would move the panel instead.
+    expect(charSheetHitAt(rect, rect.x + 4, rect.y + HEADER_H - 1)).toBe('header');
+    expect(charSheetHitAt(rect, rect.x + 4, rect.y + HEADER_H)).toBeNull();
   });
 
   it('offers the talent control immediately left of the close, and never over it', () => {
@@ -544,8 +654,21 @@ describe('charSheetHitAt', () => {
     //
     // THE CONTROL IS NO LONGER "[G]" — the letter is read off the live keymap
     // now (see the painting test below), so this test names the HIT rather than
-    // the label. Its box is a little wider than it was to leave room for a
-    // four-character answer like `[--]`.
+    // the label.
+    //
+    // ═══ RE-BASED FOR THE WIDER LABEL ═══
+    // The box was sized for four characters (`[--]`) and is now sized for SEVEN,
+    // because the control carries the unspent count: `[G·2]`, and at worst
+    // `[--·11]` for a player who has unbound `show_talents` and banked every
+    // point `totalPointsAtLevel(MAX_CHARACTER_LEVEL)` can grant. The width is
+    // TRANSCRIBED here rather than imported, the same way test/client/drag.ts's
+    // RESERVED table transcribes each panel's close arithmetic: seven glyphs at
+    // the 10px monospace's six-pixel advance, plus `drawButton`'s own 6 pixels
+    // of padding. If the button is narrowed back to four characters the label
+    // silently ellipsises to `[G·…` — a control reporting the wrong count — and
+    // this is where that surfaces.
+    const WIDEST_LABEL = '[--·11]';
+    const TALENTS_BTN_W = WIDEST_LABEL.length * 6 + 6;
     const y = rect.y + Math.floor(HEADER_H / 2);
     const close: number[] = [];
     const talents: number[] = [];
@@ -561,6 +684,8 @@ describe('charSheetHitAt', () => {
     // panel, which on this header is the two most similar-looking gestures.
     expect(talents[talents.length - 1] ?? 0).toBe((talents[0] ?? 0) + talents.length - 1);
     expect(talents[talents.length - 1] ?? 0).toBeLessThan(close[0] ?? 0);
+    // ...and wide enough for the widest label it can be asked to draw.
+    expect(talents).toHaveLength(TALENTS_BTN_W);
   });
 
   it('does not answer for a point outside the panel', () => {
@@ -629,7 +754,10 @@ describe('drawing', () => {
     // believes it and presses it. `measureText` answers six pixels a character
     // here, matching the 10px monospace, so `fitText` does not ellipsise the
     // three characters under test.
-    function paint(keymap: Parameters<typeof charSheetRows>[0]['keymap']): string[] {
+    function paint(
+      keymap: Parameters<typeof charSheetRows>[0]['keymap'],
+      unspent?: number,
+    ): string[] {
       const texts: string[] = [];
       const stub = new Proxy(
         {},
@@ -656,12 +784,28 @@ describe('drawing', () => {
         rows: charSheetRows(sheet({ keymap })),
         hoveredClose: false,
         keymap,
+        unspent,
       });
       return texts;
     }
 
     expect(paint(DEFAULT_KEYMAP)).toContain(`[${labelFor('show_talents', DEFAULT_KEYMAP)}]`);
     expect(paint(compileKeymap(ACTIONS, { show_talents: ['key:z'] }))).toContain('[Z]');
+
+    // ═══ AND IT CARRIES THE COUNT WHILE POINTS ARE WAITING ═══
+    // Two working affordances routed to the spend screen without ever saying how
+    // many points were behind them; this is one of them (the escape menu's row 3
+    // is the other). LevelupDialog.lua:757-784 puts the number in the button's
+    // own text. NOT ELLIPSISED: `measureText` answers six pixels a character
+    // here, matching the 10px monospace, so a label that came back as `[G·…`
+    // would mean the button had been narrowed below what its widest label needs.
+    const key = labelFor('show_talents', DEFAULT_KEYMAP);
+    expect(paint(DEFAULT_KEYMAP, 2)).toContain(`[${key}·2]`);
+    expect(paint(DEFAULT_KEYMAP, 11)).toContain(`[${key}·11]`);
+    // At zero it is the bare control it has always been — a `[G·0]` on every
+    // open is furniture, which is the same conditional the sheet's points ROW
+    // keeps (Minimalist.lua:1512-1516).
+    expect(paint(DEFAULT_KEYMAP, 0)).toContain(`[${key}]`);
   });
 
   it('still paints, and still clips, in a panel too small for everything', () => {
