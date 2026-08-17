@@ -47,20 +47,21 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * NOTHING IN THE GAME BUILDS ONE OF THESE IDS YET
  * ═══════════════════════════════════════════════════════════════════════════
- * There are no egos. `EGO_CODES` is empty, so every id with a `~` in it is an
- * id this build does not know, and `resolveItem` says so by returning
- * `undefined` — which is the answer every caller already handles, because a
- * build that drops an item another build authored is a case the save loader,
- * the projector and the pickup path were all written for.
+ * `resolveItem('item_watchmans_coat~rf2')` returns a real Reinforced Watchman's
+ * Coat with real numbers on it — but no drop, no shop and no spawn constructs
+ * such an id, so no player has seen one. The roll lands separately.
  *
- * That is deliberate. The grammar ships first and unused: nothing a player can
- * see changes, and every step after this one is a content edit rather than a
- * refactor of twelve call sites under a deadline.
+ * That order is deliberate and it is the reason this file is testable at all:
+ * the entire ego system can be exercised with a string literal and no world, no
+ * seed and no monster. When the roll does arrive, the only question left open
+ * is which id it builds.
  */
 
 import { ITEM_ID_MAX_CHARS } from '../../shared/protocol.ts';
+import { EGO_TAG_ORDER, EgoSlotTag, egoByCode, egoWielder, tierWeight } from './egos.ts';
 import { ITEMS, itemById } from './items.ts';
-import type { Item } from './items.ts';
+import type { Ego } from './egos.ts';
+import type { Item, ItemTier } from './items.ts';
 
 /** Base from egos. */
 export const EGO_SEPARATOR = '~';
@@ -172,14 +173,13 @@ export function formatItemId(base: string, egos: readonly ItemEgoRef[]): string 
 }
 
 /**
- * Every ego code that exists. EMPTY, ON PURPOSE — see the file header.
- *
- * A real lookup against real content, which happens to have nothing in it yet.
- * `resolveItem` takes the same path it will take when the roster is authored,
- * so the "unknown ego" branch is exercised by every test in this build rather
- * than being a branch nobody runs until the day it matters.
+ * How much brighter an ego'd item's tier reads. `Object.lua:517-527` colours an
+ * object by how many egos it carries; we say the same thing in the field that
+ * already exists, so `ItemView.tier` and `GroundItemView.tier` need no new key
+ * and protocol.ts:1580-1581's rule — "the client must not infer it" — holds,
+ * because the server still computes it.
  */
-const EGO_CODES: ReadonlySet<string> = new Set<string>();
+const TIER_BY_WEIGHT: readonly ItemTier[] = Object.freeze(['common', 'uncommon', 'rare']);
 
 /**
  * An id to the item it names, or `undefined` if this build does not know it.
@@ -190,6 +190,13 @@ const EGO_CODES: ReadonlySet<string> = new Set<string>();
  *
  * A plain id returns the catalogue's own object BY IDENTITY, so nothing that
  * held an `Item` before this file existed sees a different object now.
+ *
+ * ═══ WHAT AN EGO CHANGES, AND WHAT IT DELIBERATELY DOES NOT ═══
+ * `name` is rebuilt by concatenation, `wielder` is the additive merge, and
+ * `tier` climbs one step per ego. `icon` and `desc` are the BASE'S, untouched:
+ * there is no ego art, and items.ts:697-703 throws at import on an unknown icon
+ * precisely so a violet fallback box cannot ship. An ego'd coat looks like a
+ * coat, which is also true in ToME.
  */
 export function resolveItem(id: string): Item | undefined {
   const parsed = parseItemId(id);
@@ -199,18 +206,73 @@ export function resolveItem(id: string): Item | undefined {
   if (base === undefined) return undefined;
   if (parsed.egos.length === 0) return base;
 
-  // Unknown egos make the whole item unknown, rather than resolving to a bare
-  // base wearing the wrong name. An item that silently lost its egos would read
-  // to the player as a bug in the loot, and to the save file as a downgrade
-  // nobody asked for.
-  for (const ego of parsed.egos) {
-    if (!EGO_CODES.has(ego.code)) return undefined;
+  // ─── LOOK EVERY EGO UP FIRST ───
+  // An unknown code makes the whole item unknown rather than resolving to a bare
+  // base wearing a shortened name. Silently losing an ego would read to a player
+  // as a bug in the loot and to the save file as a downgrade nobody asked for,
+  // and "this build does not know that item" is a case every caller handles.
+  const egos: Ego[] = [];
+  for (const ref of parsed.egos) {
+    const ego = egoByCode(ref.code);
+    if (ego === undefined) return undefined;
+    egos.push(ego);
   }
 
-  // Unreachable while `EGO_CODES` is empty. The fold lands here in the step that
-  // authors the roster; until then an ego'd id is an id this build does not know
-  // and every caller already handles that.
-  return undefined;
+  // ─── ONE SLOT, ONCE, IN ORDER ───
+  // Zone.lua:650-668 fills each declared slot at most once, so `~rf2.ol1` (two
+  // prefixes) and `~lg1.rf2` (a suffix before a prefix) are not items — they are
+  // a second spelling of something, and two spellings of one item is exactly
+  // what breaks the bag's "an item is its id" de-duplication.
+  let seenTag = -1;
+  for (const ego of egos) {
+    const rank = EGO_TAG_ORDER.indexOf(ego.tag);
+    if (rank <= seenTag) return undefined;
+    seenTag = rank;
+  }
+
+  // ─── SLOT LEGALITY ───
+  // An ego that only goes on an offhand cannot be on a ring, however the id got
+  // written. The roll already respects this; a hand-edited save does not.
+  for (const ego of egos) {
+    if (ego.slots !== undefined && !ego.slots.includes(base.slot)) return undefined;
+  }
+
+  // ─── THE MERGE. NUMBERS ADD, AND THAT IS THE WHOLE RULE ───
+  const stats: Record<string, number> = { ...base.wielder.stats };
+  const mods: Record<string, number> = { ...base.wielder.mods };
+  for (const [index, ego] of egos.entries()) {
+    const ref = parsed.egos[index];
+    if (ref === undefined) continue;
+    const wielder = egoWielder(ego, ref.power, base.tier);
+    for (const [key, value] of Object.entries(wielder.stats ?? {})) {
+      stats[key] = (stats[key] ?? 0) + value;
+    }
+    for (const [key, value] of Object.entries(wielder.mods ?? {})) {
+      mods[key] = (mods[key] ?? 0) + value;
+    }
+  }
+
+  const merged: { stats?: typeof stats; mods?: typeof mods } = {};
+  if (Object.keys(stats).length > 0) merged.stats = stats;
+  if (Object.keys(mods).length > 0) merged.mods = mods;
+
+  // Prefixes carry their own trailing space and suffixes their own leading one
+  // (`validateEgos` proves it), so this is concatenation with no separator
+  // logic — Zone.lua:527-531 exactly.
+  let name = base.name;
+  for (const ego of egos) {
+    name = ego.tag === EgoSlotTag.Prefix ? `${ego.name}${name}` : `${name}${ego.name}`;
+  }
+
+  const weight = Math.min(TIER_BY_WEIGHT.length, tierWeight(base.tier) + egos.length);
+
+  return Object.freeze({
+    ...base,
+    id,
+    name,
+    tier: TIER_BY_WEIGHT[weight - 1] ?? base.tier,
+    wielder: merged,
+  });
 }
 
 // ---------------------------------------------------------------------------

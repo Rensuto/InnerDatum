@@ -122,20 +122,12 @@ describe('resolveItem', () => {
     expect(resolveItem('item_cut_before_ship~ba2')).toBeUndefined();
   });
 
-  /**
-   * THE STEP-1 BEHAVIOUR, PINNED DELIBERATELY.
-   *
-   * No egos are authored, so every ego'd id names an item this build cannot
-   * produce, and `undefined` is the honest answer — the same answer every caller
-   * already handles for an item deleted from content.
-   *
-   * This test is expected to CHANGE when the roster lands, and that is the
-   * point: it is the line that makes "the grammar ships unused" a fact rather
-   * than a claim in a commit message.
-   */
-  it('does not resolve an ego id, because this build has no egos', () => {
-    expect(resolveItem(`${PLAIN}~ba2`)).toBeUndefined();
-    expect(resolveItem(`${PLAIN}~ba2${EGO_DELIMITER}wd1`)).toBeUndefined();
+  it('does not know an ego code this build has never authored', () => {
+    // `zz` is not a code. The whole item is unknown rather than resolving to a
+    // bare coat with a shortened name — a silent downgrade is the one outcome
+    // worse than a dropped item, because nothing records it.
+    expect(resolveItem(`${PLAIN}~zz2`)).toBeUndefined();
+    expect(resolveItem(`${PLAIN}~rf2${EGO_DELIMITER}zz1`)).toBeUndefined();
   });
 
   it('is pure — the same id resolves the same way however many times it is asked', () => {
@@ -144,6 +136,137 @@ describe('resolveItem', () => {
     // rendering an inventory mutates the world.
     const first = resolveItem(PLAIN);
     for (let i = 0; i < 50; i += 1) expect(resolveItem(PLAIN)).toBe(first);
+
+    // And an ego'd id is stable in VALUE across calls even though it allocates.
+    const a = resolveItem(`${PLAIN}~rf2`);
+    const b = resolveItem(`${PLAIN}~rf2`);
+    expect(a).toEqual(b);
+    expect(a).not.toBeUndefined();
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *                            THE FOLD
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Two bases, chosen for their tiers, and every expected number written out as a
+ * LITERAL. A test that recomputes `floor + step × power × tierWeight` proves
+ * only that the formula equals itself; these are the numbers a player's
+ * character sheet will show.
+ *
+ *   `item_watchmans_coat`   body, RARE     (tierWeight 3)  armour 4, hardiness 10
+ *   `item_leather_chest`    body, COMMON   (tierWeight 1)  armour 3, def 1
+ *
+ *   `rf` Reinforced   armour {floor 1, step 1}   hardiness {floor 2, step 1}
+ *   `lg` of the Ledger   cun {floor 3, step 1}
+ */
+describe('resolveItem folds egos onto a base', () => {
+  const COAT = itemById(PLAIN);
+
+  it('starts from the numbers the bases actually ship with', () => {
+    // If this fails, every literal below is measuring the wrong thing — so it
+    // fails FIRST and says so, rather than six assertions failing mysteriously.
+    expect(COAT?.tier).toBe('rare');
+    expect(COAT?.wielder.mods?.armour).toBe(4);
+    expect(COAT?.wielder.mods?.armourHardiness).toBe(10);
+    expect(itemById('item_leather_chest')?.tier).toBe('common');
+    expect(itemById('item_leather_chest')?.wielder.mods?.armour).toBe(3);
+  });
+
+  it('adds the ego to what the base already granted', () => {
+    // armour     4 + (1 + 1×2×3) = 11
+    // hardiness 10 + (2 + 1×2×3) = 18
+    const ego = resolveItem(`${PLAIN}~rf2`);
+    expect(ego?.wielder.mods?.armour).toBe(11);
+    expect(ego?.wielder.mods?.armourHardiness).toBe(18);
+  });
+
+  it('gives a power-0 ego its floor and nothing more, which is still not nothing', () => {
+    // The reason `floor` exists: an ego that rolled badly is weaker, never inert.
+    const ego = resolveItem(`${PLAIN}~rf0`);
+    expect(ego?.wielder.mods?.armour).toBe(5);
+    expect(ego?.wielder.mods?.armourHardiness).toBe(12);
+  });
+
+  it('scales with the BASE ITEM TIER, not with anything else', () => {
+    // The same ego at the same power on a common base and on a rare one. This is
+    // `material_level` doing all the work of a tier system without a tier system
+    // existing (resolvers.lua:594-596), expressed in the field that already
+    // means it.
+    //
+    //   common (weight 1):  3 + (1 + 1×3×1) = 7    — a gain of 4
+    //   rare   (weight 3):  4 + (1 + 1×3×3) = 14   — a gain of 10
+    expect(resolveItem('item_leather_chest~rf3')?.wielder.mods?.armour).toBe(7);
+    expect(resolveItem(`${PLAIN}~rf3`)?.wielder.mods?.armour).toBe(14);
+  });
+
+  it('builds the name by concatenation, with the whitespace living in the ego', () => {
+    expect(resolveItem(`${PLAIN}~rf1`)?.name).toBe("Reinforced Watchman's Coat");
+    expect(resolveItem(`${PLAIN}~lg1`)?.name).toBe("Watchman's Coat of the Ledger");
+    expect(resolveItem(`${PLAIN}~rf1${EGO_DELIMITER}lg1`)?.name).toBe(
+      "Reinforced Watchman's Coat of the Ledger",
+    );
+  });
+
+  it('keeps the base icon and description — there is no ego art', () => {
+    const ego = resolveItem(`${PLAIN}~rf2${EGO_DELIMITER}lg2`);
+    if (ego === undefined || COAT === undefined) throw new Error('unreachable');
+    expect(ego.icon).toBe(COAT.icon);
+    expect(ego.desc).toBe(COAT.desc);
+    expect(ego.slot).toBe(COAT.slot);
+    // And the id it reports is the INSTANCE id, not the base's — otherwise an
+    // equip intent built from a view would name the wrong item.
+    expect(ego.id).toBe(`${PLAIN}~rf2${EGO_DELIMITER}lg2`);
+  });
+
+  it('climbs one tier per ego and stops at rare', () => {
+    // Object.lua:517-527 colours by ego count; we say it in the field that
+    // already exists, so the floor marker gets brighter for a better drop.
+    expect(resolveItem('item_leather_chest~rf1')?.tier).toBe('uncommon');
+    expect(resolveItem(`item_leather_chest~rf1${EGO_DELIMITER}lg1`)?.tier).toBe('rare');
+    // Already rare plus two egos would be five; there is no fifth tier, and a
+    // clamp is better than a new one nothing else in the game understands.
+    expect(resolveItem(`${PLAIN}~rf1${EGO_DELIMITER}lg1`)?.tier).toBe('rare');
+  });
+
+  it('carries both egos, and every resolved number is an integer', () => {
+    // Two egos onto one base — the property engine/equipment.ts rests on, one
+    // layer earlier. Integers make the downstream fold EXACTLY commutative;
+    // one fractional magnitude would quietly turn that proof into a proof about
+    // a single ordering.
+    //
+    //   armour  4 + (1 + 1×3×3) = 14      cun  0 + (3 + 1×3×3) = 12
+    const a = resolveItem(`${PLAIN}~rf3${EGO_DELIMITER}lg3`);
+    expect(a?.wielder.mods?.armour).toBe(14);
+    expect(a?.wielder.stats?.cun).toBe(12);
+    for (const value of [
+      ...Object.values(a?.wielder.stats ?? {}),
+      ...Object.values(a?.wielder.mods ?? {}),
+    ]) {
+      expect(Number.isInteger(value)).toBe(true);
+    }
+  });
+
+  /**
+   * ONE SLOT, ONCE, IN ORDER — the ids that are not items.
+   *
+   * Each of these parses cleanly. They are refused at resolve time because they
+   * would be a SECOND SPELLING of an item that already has one, and two
+   * spellings of one item is exactly what breaks the bag's de-duplication.
+   */
+  it('refuses two prefixes, two suffixes, or a suffix before a prefix', () => {
+    expect(resolveItem(`${PLAIN}~rf1${EGO_DELIMITER}ol1`)).toBeUndefined();
+    expect(resolveItem(`${PLAIN}~lg1${EGO_DELIMITER}lw1`)).toBeUndefined();
+    expect(resolveItem(`${PLAIN}~lg1${EGO_DELIMITER}rf1`)).toBeUndefined();
+    // ...and the canonical spelling of that last one is fine.
+    expect(resolveItem(`${PLAIN}~rf1${EGO_DELIMITER}lg1`)).not.toBeUndefined();
+  });
+
+  it('refuses an ego on a slot it is not allowed on', () => {
+    // `wt` (Weighted) is offhand/trinket only. A hand-edited save is the way one
+    // of these arrives; the roll already respects the restriction.
+    expect(resolveItem(`${PLAIN}~wt2`)).toBeUndefined();
+    expect(resolveItem('item_watchmans_buckler~wt2')).not.toBeUndefined();
   });
 });
 
