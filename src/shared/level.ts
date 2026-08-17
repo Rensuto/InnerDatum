@@ -254,103 +254,119 @@ export function canWalk(level: LevelView, x: number, y: number): boolean {
 // ===========================================================================
 
 /**
- * The country around Alderbrook, 96x64, hand-authored and machine-verified.
+ * The country around Alderbrook, 96x64, MODELLED rather than drawn.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * THIS WAS THE CITY. IT IS NOW THE REGION, AND THE CITY IS A PLACE ON IT.
+ * THE FIRST TWO ATTEMPTS WERE A DIAGRAM. THIS ONE IS A REGION.
  * ═══════════════════════════════════════════════════════════════════════════
- * The first overworld was Alderbrook itself — cobbles, terraces, canals — and
- * that made the whole game one town. The overworld is now what an overworld is
- * in Final Fantasy VII and in ToME: country you TRAVEL ACROSS, between
- * settlements you walk into. Alderbrook is the largest of those settlements and
- * is entered like any other.
+ * Attempt one was the city itself, which made the whole game one town. Attempt
+ * two stamped ellipses of terrain and cut L-shaped roads between them —
+ * everything reachable, nothing that read as a place: hard blob edges, a
+ * staircase coastline, roads that ignored the ground they crossed.
+ *
+ * This is generated in the order the real thing happens, and every feature on
+ * it is a CONSEQUENCE rather than a decision:
+ *
+ *   ELEVATION    a mountain spine plus four octaves of value noise, pulled down
+ *                toward the south and east so the land ends in a sea
+ *   RIVERS       start at the highest ground and walk DOWNHILL to the coast,
+ *                carving as they go — so every river runs the way water runs
+ *   MOISTURE     breadth-first distance from fresh water
+ *   BIOMES       from (elevation, moisture), never hand-placed. Forest grows
+ *                along the rivers, marsh sits in the wet hollows, heath is
+ *                where nothing reaches, plains are the rest
+ *   SETTLEMENTS  SCORED, not sited: flat, low, near water, far from each other
+ *   ROADS        A* over a real cost field, so a road hugs a valley and takes a
+ *                pass rather than a cliff — and a little positional jitter, or
+ *                the cheapest line on flat ground is a dead straight one and
+ *                the map grows forty-cell pipelines
+ *
+ * THRESHOLDS ARE PERCENTILES, NOT HEIGHTS. Fixed cut-offs produced a region
+ * that was 70% highland with nine cells of sea: after a ridge is added and the
+ * field renormalised, the distribution of elevation is not something you can
+ * predict. "The top 5% is bare rock" is true whatever the noise did.
  *
  * ═══ THE WALKABLE GROUND IS THE MAP, AND THE REST IS WALLS ═══
- * Forest, mountain, crag and water BLOCK MOVEMENT. That is ToME's own rule
- * rather than an invention — `data/zones/wilderness/grids.lua` in the reference
- * clone gives FOREST `does_block_move = true` and `can_pass = {pass_tree=1}` —
- * and it is what makes geography mean anything: the light ground threading
- * between dark masses IS the route, and a mountain you could walk over would
- * delete every decision the map makes for you.
+ * Forest, mountain, crag and water BLOCK MOVEMENT — ToME's own rule, verified
+ * in the reference clone (`data/zones/wilderness/grids.lua` gives FOREST
+ * `does_block_move = true`). The light ground threading between dark masses IS
+ * the route, and a mountain you could walk over would delete every decision the
+ * geography makes for you.
  *
- * ═══ 96x64, AND WHY IT GREW ═══
- * The camera shows at most 48x32 cells, so this is two screens each way: far
- * enough that crossing it is a journey rather than a stroll. The old 64x48 was
- * sized so six friends kept running into each other on the streets, which was
- * right when the overworld WAS the town. It is wrong now — the meeting places
- * are the settlements, which are shared realms, and the country between them is
- * meant to feel empty.
+ * ═══ IT IS AUTHORED DATA, NOT A GENERATOR THE GAME RUNS ═══
+ * The generator ran once, offline, and its output is frozen below. The city is
+ * something players learn, and a world that reshuffled on restart is a world
+ * nobody can know. Procedural INNER-worlds are still the plan; this is not one.
  *
- * ═══ HOW IT WAS VERIFIED ═══
- * 6,144 cells is far past what anyone can read for the mistake that matters — a
- * settlement nobody can walk to. Built from regions and roads, then flood-filled
- * from Alderbrook with corner-cutting enabled (world.ts:852-856): all 9 sites
- * reachable, 0 of 3,288 walkable cells marooned. Re-run on every commit by
- * test/shared/overworld.test.ts rather than trusted from this comment.
+ * ═══ VERIFIED ═══
+ * 6,144 cells, far past what anyone can read for the mistake that matters — a
+ * settlement nobody can reach. Flood-filled from Alderbrook with corner-cutting
+ * enabled (world.ts:852-856): 9 sites reachable, 0 of 2,862 walkable cells
+ * marooned. test/shared/overworld.test.ts re-runs it on every commit.
  */
 const ALDERBROOK_ROWS: readonly string[] = [
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-  'XXXXXcccccccccccpppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppXXX',
-  'XXXXcccccccccccccccpppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppeppppppppppppXXX',
-  'XXXXccccccMccMccccccccpppppppppppppppppppppppppppppppppppppppppppppppppppppeeeeeeeeeeepppppppXXX',
-  'XXXcccccMMMMMMMMMccccccccpppppppppppppppeppppppppppppppppppppppppppppppppeeeeeeeeeeeeeeepppppXXX',
-  'XXXccccMMMMMMMMMMMMMccccccccpppppppeeeeeeeeeeepppppppppppppppppppppppppeeeeeeeeeeeeeeeeeeepppXXX',
-  'XXXpccMMMMMMMMMMMMMMMMMccccccccppeeeeeeeeeeeeeeeppppppppppppppppppppppeeeeeeeeeeeeeeeeeeeeeppXXX',
-  'XXXpcccMMMMMMMMMMMMMMMMMMMcccccceeeeeeeeeeeeeeeeepppppppppppppTppppppeeeeeeeeeeeeeeeeeeeeeeepXXX',
-  'XXXppcccMMMMMMMMMMMMMMMMMMMMMcAeeeeeeeeeeeeeeeeeeepppppppTTTTTTTTTTTpeeeeeeeeeeeeeeeeeeeeeeepXXX',
-  'XXXpppccccMccMMMMMMMMMMMMMMMMM.eeeeeeeeeeeeeeeeeeepppppTTTTTTTTTTTTTTeeeeeeeeeeeeeeeeeeeeeeepXXX',
-  'XXXppppppcppccccMMMMMMMMMMMMMM...............eeeeeeppTTTTTTTTTTTTTTTeeeeeeeeeeeeeeeeeeeeeeeeeXXX',
-  'XXXppppppppppppccccMMMMMMMMMMMMeeeeeeeeeeeee.eeeeepppTTTTTTTTTTTTTTTTeeeeeeeeeeeeeeeeeeeeeeepXXX',
-  'XXXpppppppppppppppccccMMMMMMMMMeeeeeeeeeeeee.eeeeeccTTTTTTTTTTTTTTTTTeeeeeeeeeeeeeeeeeeeeeeepXXX',
-  'XXXppppppppppppppppppccccMMMMMMMeeeeeeeeeeee.eeeecccTTTTTTTTTTTTTTTTTeeeeeeeeeeeeeeeeeeeeeeepXXX',
-  'XXXpppppppppppppppppppppccccMMMMMeeeeeeeeeee.eeeMMcTTTTTTTTTTTTTTTTTTTeeeeeeeeeeeeeeeeeeeeeppXXX',
-  'XXXppppppppppppppppppppppppccccMMMMeeeeeeeee.eMMMMMMTTTTTTTTTTTTTTTTTTTeeeeeeeeeeeeeeeeeeepppXXX',
-  'XXXpppppppppppppppppppppppppppccccMMMMMMeMMM.MMMMMMMTTTTTTTTTTTTTTTTTTTTTeeeeeeeeeeeeeeepppppXXX',
-  'XXXppppppppppppppppppppppppppppppccccMMMMMMM.MMMMMMMMTTTTTTTTTTTTTTTTTTTTTTeeeeeeeeeeepppppppXXX',
-  'XXXpppppppppppppppppppppppppppppppppccccMccM.MMMMMMMMTTTTTPTTTTTTTTTTTTTTTTTTpppeppppppppppppXXX',
-  'XXXppppppppppppppppppppppppppppppppppppcp,,,.,,,MMMMMMMTTT.TTTTTTTTTTTTTTTTTTppppppppppppppppXXX',
-  'XXXppppppppppppppppppppppppppppppppppppp,CCC.CCC,MMMMMMMMT.TTTTTTTTTTTTTTTTTTTpppppppppppppppXXX',
-  'XXXppppppppppppppppppppppppp,ppppppppppp,CCC.CCC,cccMMMMMM.MMMTMTTTTTTTTTTTTTcpppppppppppppppXXX',
-  'XXXpppppppppppppppppppppp,,,,,,,ppppppp,,CCC.CCC,,pccccMMM.MMMMMTTTTTTTTTTTTTcpppppppppppppppXXX',
-  'XXXppppppppppppppppppppp,###,###,ppppppp,,,,.,,,,pppppcccc.MMMMMMTTTTTTTTTTTcccppppppppppppppXXX',
-  'XXXppppppppppppppppppppp,###.......................................TTTTTTTTcccpppppppppppppppXXX',
-  'XXXppppppppppppppppp.........###,,ppppppp,,,,,,,pppp.ppppp.pccc,,,.,,,TcccccccpppppppppppppppXXX',
-  'XXXppppppppppppppppp.ppp,,,,,,,,,ppppppppp""O""""""p.ppppp.ppp,###.###,ccccccppppppppppppppppXXX',
-  'XXXppppppppppppppppp.ppp,,,,H,,,,ppppppp"""""""""""".ppppp.ppp,###.###,cccccpppppppppppppppppXXX',
-  'XXXppppppppppppppppp.pppp,,,,,,,wwppppp"""""""""""""."pppp.............................ppppppXXX',
-  'XXXpppppppppppppppTp.ppppppp,pwwwwwwwwp"""""""""""""."pppppppp,,,,,,,,,ppp.ppppppppppp.ppppppXXX',
-  'XXXppppppppppTTTTTTT.TTTppppppwwwwwwwwwww""""""""""".""ppppppp,,,,R,,,,ppp.ppppppppppp.ppppppXXX',
-  'XXXpppppppTTTTTTTTTT.TTTTTTpppppppwwwwwwwwwww"""""""."ppppppppp,,,,,,,pppp.ppppppppppp.ppppppXXX',
-  'XXXppppppTTTTTTTTTTT.TTTTTTTppppppppppwwwwwwwwww""""."pppppppppppp,ppppppp.ppppppppppp.ppppppXXX',
-  'XXXpppppTTTTTTTTTTTT.TTTTTTTTppppppppppp"wwwwwwwwwww.pppppppppppppppp~~~~~.~~~~~pppppp.ppppppXXX',
-  'XXXppppTTTTTTTTTTTTT.TTTTTTTTTpppppppppppp"""wwwwwww=wwpppppppppppp~~~~~~~.~~~~~~~ppppUppppppXXX',
-  'XXXpppTTTTTTTTTTTTTT.TTTTTTTTTTppppppppppppppp"pwwww=wwwwwwppppppp~~~~KKKK.~KKKK~~~ppppppppppXXX',
-  'XXXpppTTTTTTTTTTTTTT.TTTTTTTTTTppppppppppppppppppppp=wwwwwwwwwwpp~~~~~KKKK.~KKKK~~~~pppppppppXXX',
-  'XXXpppTTTTTTTTTTTTTT.TTTTTTTTTTppppppppppppppppppppp.ppwwwwwwwwww~~~~~KKKK.~KKKK~~~~pppppppppXXX',
-  'XXXppTTTTTTTTTTTTTTT.TTTTTTTTTTTpppppppppppppppppppp.ppppppwwwww~~~~~~~~~~.~~~~~~~~~~ppppppppXXX',
-  'XXXpppTTTTTTTTTTTTTT.TTTTTTTTTTppppppppppppppp++++++.+++++++++++++++++++++.++++++++++WWWWWWWWXXX',
-  'XXXpppTTTTTTTTTTTTTT.TTTTTTTTTTppppppppppppppppppppp.pWWWWWWWWWWW~~~~~KKKK.~~~~~~~~~WWWWWWWWWXXX',
-  'XXXpppTTTTTTTTTTTTTT.TTTTTTTTTTTpppppppppppppppppppp.pWWWWWWWWWWWW~~~~K,,,.,,,~~~~~WWWWWWWWWWXXX',
-  'XXXppppTTTTTTTTTTTTT.TTTTTTTTTTTTppppppppppppppppppp.pWWWWWWWWWWWWW~~~,###.###,~~~wwWWWWWWWWWXXX',
-  'XXXpppppTTTTTTTTTTTT.TTTTTTTTTTTTppppppppppppppppppp.pWWWWWWWWWWWWWWW~,###.###,~wwwwwwwwWWWWWXXX',
-  'XXXppppppTTTTTTTTTTT.TTTTTTTTTTTTTpppppppppppp;ppppp.pWWWWWWWWWWWWWWW,,###.###,,wwwwwwwwwwwWWXXX',
-  'XXXpppppppTTTTTTTTTT.TTTTTTTTTTTTppppppp;;;;;;;;;;;;.pWWWWWWWWWWWWWWWW,,,,,,,,,WWWWWwwwwwwwwWXXX',
-  'XXXppppppppppTTTTTTT.TTTTTTTTTTTTppppp;;;;;;;;;;;;;;.;;WWWWWWWWWWWWWWW,,,,F,,,,WWWWWWWWWwwwwWXXX',
-  'XXXppppppppp;pppp,,,.,,,TTTTTTTTppppp;;;;;;;;;;;;;;;.;;;WWWWWWWWWWWWWWW,,,,,,,WWWWWWWWWWWWWwWXXX',
-  'XXXppppp;;;;;;;;,###.###,TTTTTTppppp;;;;;;;;;;;;;;;;.;;;;WWWWWWWWWWWWWWWWW,WWWWWWWWWWWWWWWWWWXXX',
-  'XXXppp;;;;;;;;;;,###.###,TTTTppppppp;;;;;;;;;;;;;;;;.;;;;WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXpp;;;;;;;;;;,,###.###,,ppppppppp;;;;;;;;;;;;;;;;;.;;;;;WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXp;;;;;;;;;;;;,,,,,,,,,ppppppppppp;;;;;;;;;;;;;;;;.;;;;WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXp;;;;;;;;;;;;,,,,B,,,,ppppppppppp;;;;;;;;;;;;;,,,.,,,;WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXX;;;;;;;;;;;;;;,,,,,,,ppppppppppppp;;;;;;;;;;;,CCC.CCC,WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXp;;;;;;;;;;;;;;;;,ppppppppppppppppp;;;;;;;;;;,CCC.CCC,WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXp;;;;;;;;;;;;;;;;;ppppppppppppppppppp;;;;;;;,,CCC.CCC,,WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXpp;;;;;;;;;;;;;;;pppppppppppppppppppppppppp;p,,,,,,,,,WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXppp;;;;;;;;;;;;;ppppppppppppppppppppppppppppp,,,,G,,,,WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXppppp;;;;;;;;;pppppppppppppppppppppppppppppppp,,,,,,,WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXXX',
-  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  'XXXXXXXXXXXTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWXX',
+  'XXXTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwwwwwwwWXX',
+  'XXXTTTTTTTTTTTTTTTTccccccccccccccccccccccccccccccwcchhhhhhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTTT;;;wWXX',
+  'XXXTTTTTTTTTTcccccccccccccccccccccccccccccccccccwcccchhhhhhhhhhwTTTTTTTTTTTTTTTTTTTTTTTTTTT;wWXX',
+  'XXXTTTTTTTccccccccccccccccccccccccccccMMMMMMMMMwcccccchhhhhh##w,w##TTTTTTTTTTTTTTTTTTTTTTTT;wWXX',
+  'XXTTTTTTTcccccccccccccccccccccccccccMMMMMMMMMMwMMMcccccchhhh##,,,##TwwwwwwwwTTTTTTTTTTTTTTT;wWXX',
+  'XXTTTTTcccccccccccccccccccccccccccMMMMMMMMMMMwMMMMcccccccchhw,,F,,wwTTTTTTTTwwwTTTTTTTTTTTT;wWXX',
+  'XXTTTccccccccccccccMMMMMMMMcMMMMMMMMMMMMMMMMwMMMMMMMcccccccw,,,,,,,TTTTTTTTTTTTwwwwTTTTTTTT;wWXX',
+  'XXTTccccccccccccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccccwc,,,,,,,TTTTTTTTTTTTTTTTwwwTTTTT;wWXX',
+  'XXTTcccccccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMcwccchh...TTTTTTTTTTTTTTTTTTTTw;TTT;wWXX',
+  'XXTTcccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwcccchhhh.TTTTTTTTTTTTTTTTTTTTTw;TT;wWXX',
+  'XXTTccMMMMMMMMMMMMMcccccMMMMMMMMMMMMMMMMMcccccMMMMMMMMMwMMcccchhh......pppppTTTTTTTTTTT;w;T;wWXX',
+  'XXTTccMMMMMMMMMMccccccccccccccMMMMccccccccccccccMMMMMMwMMMcccchhhhhhhh.ppppppppTTTTTTTTT;w;swWXX',
+  'XXTTccMMMMMMMccccccccccccccccccccccccccccccccccccMMMMMMMMMccccchhhhhhh.hppppppppppp##,,,##wwwWXX',
+  'XXTTccMMMMMcccccccchhhhhcccccccccccccccccccccccccccMMMMMMMccccchhhhhhh.hhpppppppppp##,,,##;swWXX',
+  'XXTTcccMcccccccchhhhhhhhhhhhhhAhhcccccccccccccccccccMMMMMcccccchhhhhhh.hhhppppppppp,,,P,,,TswWXX',
+  'XXTTccccccccccchhhhhhhhhhhhhhh.hhhhhhhhhhhhhhccccccccMMMcccccccchhhhhh.hhhhpppppppp,,,,,,,TswWXX',
+  'XXTTcccccccccchhhhhhheeeehhhhh.hhhhhhhhhhhhhhhhccccccccccccccccchhhhhh.hhhhhppppppp,,,,,,,TswWXX',
+  'XXTTcccccccchhhhhhheeeeeeeeeee.ehhhhhhhhhhhhhhhhhccccccccccccccchhhhhh.hhhhhhppppppppp.TTTTswWXX',
+  'XXTTcccccchhhhhhhheeeeeeeeeeee.eehhhhhhhhhhhhhhhhhccccccccccccchhhhhhh.hhhhhhhpppppppp.TTTTswWXX',
+  'XXTTcccchhhhhhhheeeeeeeeeeeeee.eeehhhhhhhhhhhhhhhhhcccccccccccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
+  'XXTThchhhhhhhhheeeeeeeeeeeeeee.eeeeeehhhhhhhhhhhhhhhccccccccccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
+  'XXTThhhhhhhhhpppeeeeeeeeeeeeee.eeeeeeehhhhhhhhhhhhhhhccccccwccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
+  'XXTThhhhhhhhppppeeeeeeeeeeeeee....eeeehhhhhhhhhhhhhhhhhhccwcccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
+  'XXTThhhhhhhhppppeeeeeeeeeeeeeeeee.eeehheehhhhhhhhhhhhhhhhwcccccchhh...U..........ppppp.TTTTswWXX',
+  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeee.eehheeeehhhhhhhhhhhhhhwccccccchh..hhhhhhhhhhpp..pppp.TTTsswWXX',
+  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeee.........hhhhhhhhhhhhhwhhhccccc...hhhhhhhhhheppp..ppp.TTTsswWXX',
+  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeeeep..hh##,,,##hhwhhhhhhhhh.hhhhhhhhhhheepppp.ppp.TTTsswWXX',
+  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeeeppp..h##,,,##hwh..........hhhhhhhhhhheepppp.ppp.TTTsswWXX',
+  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeeppppp..,,,B,,,=...hhhhhhhhhhhhhhhhhhhheepppp..pp.TTTsswWXX',
+  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeppppppph,,,,,,whhhhhhhhhhhhhhhhhhhhhhhheeppppp##,,,##sswWXX',
+  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeppppppppp,,,,,w,hhhhhhhhhhhhhhhhhhhhhhhheeppppp##,,,##sswWXX',
+  'XXTThhhhhhppppppeeeeeeeeeeeeeeeeeeeeepppppppp...hhhwhhhhhhhhhhhhhhhhhhhhhhhheeppppp,,,H,,,sswWXX',
+  'XXTTThhhhpppppppeeeeeeeeeeeeeeeeeeeeepppppppp.hhhhhwhhhhhhhhhhhhhhhhhhhhhhheeeppppp,,,,,,,sswWXX',
+  'XXwTTThhpppppppppeeeeeeeeeeeeeeeeeeeepppppppp.ThhhTwThhhhhhhhhhhhhhhhhhhhheeeeppppp,,,,,,,sswWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeepppppppp.TTTTTwTThhhhhhhhhhhhhhhhhhhheeeepppppppppTTssswWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeepppppppp.TTTTTwTTTTThhhhhhhhhhhhhhheeeeepppppppppTTsssswWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeppppppp.pTTTTTwTTTTThhhhhhhhpeeeeeeeeepppppppppTTssssswWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeppppppp.pTTTTTwTTTTTphhhhppppeeeeeeeepppppppppTTTssswwwWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeepppppp.ppTTTTTwTTTTTpppppppppeeeeeepppppppppTTTsswwwwwWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeepppppp.ppTTTTTwTTTTTpppppppppeeeeeepppppppppTTTsswwwwwWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeepppppp.ppTTTTTwTTTTTpppppppppeeeeepppppppppTTTsswwwwwwWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeeeppppp.pppTTTTTwTTTTTpppppppppeeepppppppppTTTssswwwwwwWXX',
+  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeeeppppp.pppTTTTTwTTTTTpppppppppeepppppppppTTTsswwwwwwwwWXX',
+  'XXwTTTTTppppppppppppppppppppppppppppppppppppp.pppTTTTTwTTTTTpppppppppppppppppppTTTsswwwwwwwwwWXX',
+  'XXwTTTTTppppppppppppppppppppppppppppppppppppp.pppTTTT;w;TTTTppppppppppppppppppTTTsswwwwwwwwwwWXX',
+  'XXwTTTTTCC,,,CCpppppppppppppppppppppppppp.....pppTTTT;w;TTTTpppppppppppppppppTTTsswwwwwwwwwwWWXX',
+  'XXwTTTTTCC,,,CCppppppppppppppppppppppppp..pppppppTTTT;w;TTTTppppppppppppppppTTTTswwwwwwwwwwwWWXX',
+  'XXwwTTTT,,,G,,,.........pppppppppppppppp.pppppppTTTT;w;TTTTpppppppppppppppppTTTsswwwwwwwwwwwWWXX',
+  'XXwwTTTT,,,,,,,pppppppp.pppppppppppppCC,,,CCpppTTTT;w;TTT##,,,##ppppppppppppTTTsswwwwwwwwwwwWWXX',
+  'XXwwTTTT,,,,,,,pppppppp....ppppppppppCC,,,CCpTTTTsswsTTTT##,,,##pppppppppppTTTTswwwwwwwwwwwwWWXX',
+  'XXwwTTTTTppppppppppppppppp...........,,,O,,,.......=.....,,,R,,,pppppppppppTTTsswwwwwwwwwwwwWWXX',
+  'XXwwTTTTTpppppppppppppppppppppppppppp,,,,,,,Tsssssswsssss,,,,,,,TTTpppppppTTTsswwwwwwwwwwwwwWWXX',
+  'XXwwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT,,,,,,,Tssssswwwwsss,,,,,,,TTTTTTTTTTTTTswwwwwwwwwwwwwwWWXX',
+  'XXWwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTsssswwwwwwwwwwsssssTTTTTTTTTTTTTTsswwwwwwwwwwwwwwWWXX',
+  'XXWwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTssswwwwwwwwwwwwwwssssTTTTTTTTTTTTsswwwwwwwwwwwwwwwWWXX',
+  'XXWwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTssswwwwwwwwwwwwwwwwsssssssssTTTTTTswwwwwwwwwwwwwwWWWWXX',
+  'XXWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwTTTT;;;;sswwwwwwwwwwwwwwwwwwwwwwwwwsss;;;;sswwwwwwwwwwwwwWWWWWXX',
+  'XXWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
 ];
@@ -358,10 +374,9 @@ const ALDERBROOK_ROWS: readonly string[] = [
 /**
  * The legend. Every character is a real TileCode; nothing defaults.
  *
- * SITE GLYPHS CARRY THE GROUND THEY SIT ON — a settlement gate is still the
- * swept approach underfoot — so a site never punches a hole in the terrain
- * layer, and a build with no `tile_ow_site_*` art draws ordinary ground rather
- * than a violet box.
+ * SITE GLYPHS CARRY THE GROUND THEY SIT ON, so a site never punches a hole in
+ * the terrain layer and a build with no `tile_ow_site_*` art draws ordinary
+ * ground rather than a violet box.
  */
 const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
   '.': { tile: TileCode.COBBLE },
@@ -369,10 +384,8 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
   p: { tile: TileCode.PLAINS },
   h: { tile: TileCode.HILLS },
   e: { tile: TileCode.HEATH },
-  '"': { tile: TileCode.GREEN },
+  s: { tile: TileCode.SHORE },
   ';': { tile: TileCode.MIRE },
-  '~': { tile: TileCode.SOOT },
-  '+': { tile: TileCode.RAIL },
   '=': { tile: TileCode.BRIDGE },
   w: { tile: TileCode.WATER },
   W: { tile: TileCode.DEEPWATER },
@@ -381,31 +394,23 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
   c: { tile: TileCode.CRAG },
   '#': { tile: TileCode.TERRACE },
   C: { tile: TileCode.CIVIC },
-  K: { tile: TileCode.WORKS },
   X: { tile: TileCode.ERASED },
   /**
-   * Alderbrook, the city. The hub, the only spawn on the map, and the one fixed
-   * point the Index cannot overwrite (docs/game-design.md s1). Every player
-   * starts at its gate, so the first thing you see on connecting is another
-   * player rather than empty country.
+   * Alderbrook. The hub, the only spawn, and "the one fixed point the Index
+   * cannot overwrite" (docs/game-design.md s1). Every player starts at its gate,
+   * so the first thing you see on connecting is another player rather than
+   * empty country. The generator SCORED this spot rather than being told it:
+   * flat, low, beside the river, far from the other settlements.
    */
   O: { tile: TileCode.PAVING, spawn: true, site: 'site:alderbrook' },
   R: { tile: TileCode.PAVING, site: 'site:threadneedle_row' },
   H: { tile: TileCode.PAVING, site: 'site:ashwick_row' },
+  P: { tile: TileCode.PAVING, site: 'site:wayfarers_camp' },
   B: { tile: TileCode.PAVING, site: 'site:blackwood_outskirts' },
   F: { tile: TileCode.PAVING, site: 'site:gearford_ward' },
-  U: { tile: TileCode.SOOT, site: 'site:underworks' },
   G: { tile: TileCode.PAVING, site: 'site:glass_archive' },
-  /**
-   * HILLS, not CRAG. The altar stands high in the range and the first draft
-   * gave it the crag it is surrounded by -- which is a BLOCKING tile, so the
-   * site sat on solid rock and could never be entered. Caught by the test that
-   * checks walkability before reachability, which is why those are two
-   * assertions and not one: a site on a wall and a site behind a wall fail the
-   * flood fill identically and want completely different fixes.
-   */
+  U: { tile: TileCode.HILLS, site: 'site:underworks' },
   A: { tile: TileCode.HILLS, site: 'site:watchers_altar' },
-  P: { tile: TileCode.PLAINS, site: 'site:wayfarers_camp' },
 };
 
 const ALDERBROOK = parseMap(ALDERBROOK_ROWS, ALDERBROOK_LEGEND);

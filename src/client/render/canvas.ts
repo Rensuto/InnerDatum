@@ -612,6 +612,7 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.PLAINS]: ['tile_ow_plains', 'tile_ow_plains_b'],
   [TileCode.HILLS]: ['tile_ow_hills'],
   [TileCode.HEATH]: ['tile_ow_heath'],
+  [TileCode.SHORE]: ['tile_ow_shore'],
   [TileCode.MOUNTAIN]: ['tile_ow_mountain'],
   [TileCode.CRAG]: ['tile_ow_crag'],
   [TileCode.DEEPWATER]: ['tile_ow_deepwater'],
@@ -672,6 +673,8 @@ function tileFill(code: TileCode): string {
       return '#5a6142';
     case TileCode.HEATH:
       return '#565442';
+    case TileCode.SHORE:
+      return '#6b6350';
 
     // ─── the wilderness. Blocking: dark. ───
     case TileCode.MOUNTAIN:

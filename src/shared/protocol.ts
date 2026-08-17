@@ -307,6 +307,11 @@ export const TileCode = {
   CRAG: 19,
   /** Open sea. Darker than WATER, which is what makes a shoreline legible. */
   DEEPWATER: 20,
+  /**
+   * The beach. Walkable, and the transition that makes a coast read as a coast
+   * rather than as land abutting a blue shape.
+   */
+  SHORE: 21,
 } as const;
 export type TileCode = (typeof TileCode)[keyof typeof TileCode];
 
@@ -326,6 +331,7 @@ const WALKABLE: ReadonlySet<number> = new Set<number>([
   TileCode.PLAINS,
   TileCode.HILLS,
   TileCode.HEATH,
+  TileCode.SHORE,
 ]);
 
 /**
