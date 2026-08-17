@@ -559,6 +559,40 @@ function require2dContext(target: HTMLCanvasElement): CanvasRenderingContext2D {
  * CRIMSON is absent, as everywhere else — it means "hostiles are engaged" and
  * the overworld has none, so a crimson cell would be a lie a player acts on.
  */
+/**
+ * TileCode -> the sprite id(s) that may draw it. The ART SEAM, finally open.
+ *
+ * A code with no entry here has no art and never will have (FLOOR and WALL are
+ * interiors, drawn as palette cells by design); a code WITH an entry draws from
+ * the tileset when the file is on disk and falls back to `tileFill` when it is
+ * not. Both states are correct and shippable, which is what lets the overworld
+ * exist before the art does — see `paintTerrain`.
+ *
+ * MORE THAN ONE ID MEANS INTERCHANGEABLE VARIANTS, picked per cell by position.
+ * Only cobble has them, and only because it is the most repeated sprite in the
+ * game by a wide margin. They must be indistinguishable in VALUE — a lighter
+ * second cobble would read as a different kind of ground, not as texture.
+ *
+ * Ids are exactly what ART-OVERWORLD.md asks Sol for. A file named anything
+ * else will not draw, and will not error either: it will simply keep showing
+ * the flat colour, which is the one failure mode worth knowing about here.
+ */
+const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
+  [TileCode.COBBLE]: ['tile_ow_cobble', 'tile_ow_cobble_b'],
+  [TileCode.PAVING]: ['tile_ow_paving'],
+  [TileCode.GREEN]: ['tile_ow_green'],
+  [TileCode.MIRE]: ['tile_ow_mire'],
+  [TileCode.SOOT]: ['tile_ow_soot'],
+  [TileCode.RAIL]: ['tile_ow_rail'],
+  [TileCode.BRIDGE]: ['tile_ow_bridge'],
+  [TileCode.TERRACE]: ['tile_ow_terrace'],
+  [TileCode.CIVIC]: ['tile_ow_civic'],
+  [TileCode.WORKS]: ['tile_ow_works'],
+  [TileCode.TREES]: ['tile_ow_trees'],
+  [TileCode.ERASED]: ['tile_ow_erased'],
+  [TileCode.WATER]: ['tile_ow_water'],
+};
+
 function tileFill(code: TileCode): string {
   switch (code) {
     // ─── the inner-worlds ───
@@ -807,6 +841,51 @@ export function createRenderer(options: RendererOptions): Renderer {
     return true;
   }
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * PAINT ONE TERRAIN CELL FROM THE TILESET. Returns false if there is no art
+   * for it, which is the caller's cue to fall back to the flat palette colour.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * DELIBERATELY NOT `blitSprite`, and the difference is the whole point.
+   * `blitSprite` paints a loud violet box on a miss, which is exactly right for
+   * a token — an invisible player reads as a netcode bug and costs an evening.
+   * It is exactly WRONG here: a bare clone with no manifest, or a tileset
+   * half-delivered, would fill the entire screen with violet boxes and take the
+   * game with it. Terrain has a good answer to a missing sprite that a creature
+   * does not — the flat colour the renderer has always used — so it fails to
+   * THAT, silently, and the city stays legible and playable with no art at all.
+   *
+   * NO BOTTOM-CENTRE ANCHOR EITHER. A terrain tile is exactly TILE_PX square
+   * and is drawn at the cell origin. `blitSprite`'s anchor exists so a 48x64
+   * ogre overflows upward rather than downward; a ground tile that overflowed
+   * anywhere would tear the grid.
+   *
+   * VARIANTS ARE PICKED BY POSITION, NOT BY A DRAW. Cobble ships two
+   * interchangeable tiles, because the single most repeated sprite in the game
+   * looks mechanical however well it is drawn. The choice is a pure function of
+   * (x, y): the same cell is the same stone on every client and on every frame,
+   * which a random pick would not be — it would shimmer as the camera moved.
+   */
+  function paintTerrain(code: TileCode, tx: number, ty: number, sx: number, sy: number): boolean {
+    const ids = TILE_SPRITES[code];
+    if (ids === undefined) return false;
+
+    // A cheap positional hash. Two odd multipliers so a diagonal run does not
+    // land on one variant, xor-folded so neither axis dominates.
+    const id = ids.length === 1 ? ids[0] : ids[((tx * 73) ^ (ty * 151)) % ids.length];
+    if (id === undefined) return false;
+
+    const sprite: Sprite | undefined = sprites.sprite(id);
+    if (sprite === undefined) return false;
+
+    // Scaled to TILE_PX rather than drawn at the sprite's own size: a tile that
+    // is not 32x32 is an authoring mistake (the brief is explicit), and letting
+    // it tear the grid would be a worse way to report that than a stretched cell.
+    backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
+    return true;
+  }
+
   function blitSprite(id: string, cellX: number, cellY: number): void {
     const sprite: Sprite | undefined = sprites.sprite(id);
     if (sprite === undefined) {
@@ -846,20 +925,24 @@ export function createRenderer(options: RendererOptions): Renderer {
         const sx = tx * TILE_PX - camX;
         const sy = ty * TILE_PX - camY;
 
-        backCtx.fillStyle = tileFill(code);
-        backCtx.fillRect(sx, sy, TILE_PX, TILE_PX);
+        // A REAL TERRAIN SPRITE WINS, and when one is present it is the WHOLE
+        // cell — no flat fill under it, no grid line over it. See `paintTerrain`.
+        if (!paintTerrain(code, tx, ty, sx, sy)) {
+          backCtx.fillStyle = tileFill(code);
+          backCtx.fillRect(sx, sy, TILE_PX, TILE_PX);
 
-        if (code === TileCode.WALL) {
-          // A lit top edge. Without it a flat wall colour reads as a hole in
-          // the floor rather than as something solid you cannot walk through.
-          backCtx.fillStyle = PALETTE.GREY;
-          backCtx.fillRect(sx, sy, TILE_PX, WALL_EDGE_PX);
-        } else {
-          // A one-pixel grid on floor tiles. Counting tiles is how a player
-          // measures a move, and it costs a barely-visible shade of SLATE.
-          backCtx.fillStyle = PALETTE.SLATE;
-          backCtx.fillRect(sx, sy + TILE_PX - 1, TILE_PX, 1);
-          backCtx.fillRect(sx + TILE_PX - 1, sy, 1, TILE_PX);
+          if (code === TileCode.WALL) {
+            // A lit top edge. Without it a flat wall colour reads as a hole in
+            // the floor rather than as something solid you cannot walk through.
+            backCtx.fillStyle = PALETTE.GREY;
+            backCtx.fillRect(sx, sy, TILE_PX, WALL_EDGE_PX);
+          } else {
+            // A one-pixel grid on floor tiles. Counting tiles is how a player
+            // measures a move, and it costs a barely-visible shade of SLATE.
+            backCtx.fillStyle = PALETTE.SLATE;
+            backCtx.fillRect(sx, sy + TILE_PX - 1, TILE_PX, 1);
+            backCtx.fillRect(sx + TILE_PX - 1, sy, 1, TILE_PX);
+          }
         }
       }
     }

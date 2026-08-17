@@ -41,6 +41,8 @@ PROVENANCE = [
     ("characters/chr_player_watchman_downed_s.png", "stand-in", "rotated token + contact outline"),
     ("characters/chr_player_inspector_downed_s.png","stand-in", "rotated token + contact outline"),
     ("characters/chr_player_alchemist_downed_s.png","stand-in", "rotated token + contact outline"),
+    # The overworld tileset is hand-drawn to ART-OVERWORLD.md, like the icons.
+    ("tiles/",                                      "derived",  "hand-drawn overworld tileset"),
     ("branding/",                                   "stand-in", "procedural emblem"),
     ("items/",                                      "stand-in", "procedural slot silhouette"),
     ("props/",                                      "stand-in", "procedural"),
@@ -67,6 +69,7 @@ MILESTONE = [
     ("items/",               "M6"),
     ("ui/chrome/ui_item_frame", "M6"),
     ("ui/chrome/ui_inventory",  "M6"),
+    ("tiles/",               "M7"),   # the overworld
 ]
 
 

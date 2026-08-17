@@ -352,6 +352,18 @@ const NEEDED_ASSET_PREFIXES = [
   // unpromoted husk is a visible placeholder rather than a client that will not
   // boot.
   'enemy_',
+  // THE OVERWORLD TILESET (ART-OVERWORLD.md). Nothing matches this yet, and
+  // that is the expected state while the art is being drawn: `paintTerrain`
+  // falls back to a flat palette colour per code, so Alderbrook is legible and
+  // playable with zero tiles on disk and improves one file at a time as they
+  // land. No code change accompanies the art.
+  //
+  // The prefix is `tile_ow_` and it must stay in step with `TILE_SPRITES` in
+  // render/canvas.ts — that pair is exactly the trap `icon_ability_` was below:
+  // a prefix matching nothing filters the whole family out before it can load,
+  // and the fallback then looks like a deliberate art choice rather than a bug.
+  // test/client/assets.test.ts greps this list for that reason.
+  'tile_ow_',
   'ui_token_ring_',
   'ui_tile_marker_',
   'ui_icon_turn_',

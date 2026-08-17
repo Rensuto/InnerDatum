@@ -228,10 +228,35 @@ describe('the fillRect overlays stay art-free', () => {
     // Correcting a prefix that resolves to NOTHING, to one that resolves to
     // twelve assets already listed in the manifest and already on disk, is the
     // opposite of inventing a prefix for art that does not exist.
+    // `tile_ow_` IS THE ONE ENTRY HERE THAT MATCHES NOTHING ON DISK TODAY, and
+    // it is added with that stated rather than hidden, because it is the exact
+    // shape this test exists to catch. Three things make it the legitimate case
+    // and not the invented one:
+    //
+    //   1. THE IDS ARE SPECIFIED, not hoped for. All twenty are named in
+    //      ART-OVERWORLD.md and enumerated in `TILE_SPRITES` in
+    //      render/canvas.ts. This is a contract with art in production, not a
+    //      prefix cast into the dark.
+    //   2. THE FALLBACK IS GOOD, which no other family here can say. A missing
+    //      token draws `blitSprite`'s loud violet box, because an invisible
+    //      player must be loud. A missing TERRAIN tile draws the flat palette
+    //      colour the renderer has always used — so zero tiles on disk is a
+    //      legible, playable city, and each delivered file improves it with no
+    //      code change. `paintTerrain` returns false rather than calling
+    //      `blitSprite` precisely so 3,000 cells cannot become 3,000 violet
+    //      boxes.
+    //   3. IT COSTS NOTHING WHILE EMPTY. `loadSprites` only fetches manifest
+    //      entries, and the manifest has no `tile_ow_*` rows yet, so this
+    //      prefix currently admits zero requests.
+    //
+    // Contrast the deliberately-absent `icon_weapon_*` above: those ids are
+    // claimed to resolve by a file that is wrong, resolve to nothing, and have
+    // no fallback but the violet box.
     expect(prefixes).toEqual([
       'chr_player_',
       'chr_npc_',
       'enemy_',
+      'tile_ow_',
       'ui_token_ring_',
       'ui_tile_marker_',
       'ui_icon_turn_',
