@@ -128,11 +128,22 @@ fi
 # .gitignore. `catchup` is idempotent against a per-sha ledger in .git/, so
 # running it on every push cannot double-post.
 #
+# `--limit 500` RATHER THAN THE DEFAULT 50. The walk truncates silently, and
+# anything past the cut is buried for good: never scanned, so never recorded as
+# failed, and covered by the ancestor rule the moment one more commit is
+# announced. A weekend of commits made with the hook missing is more than fifty.
+#
 # IT CANNOT BLOCK A PUSH. `--soft` keeps the relay at exit 0 on any failure, and
 # the `|| true` covers a crash in the relay itself. A hotfix during a live
 # session must never wait on Discord being up.
-RELAY="c:/Users/dalto/Desktop/Files/VSCode Projects/_shared/discord-relay/relay.mjs"
-if [ -n "$NODE_BIN" ] && [ -f "$RELAY" ]; then
+# THE PATH IS NOT IN THIS FILE. It is machine-specific, this hook is TRACKED,
+# and this repository is public — a hard-coded path publishes the author's home
+# directory. .gitignore:238-241 exists for exactly this and says so: "Getting
+# this wrong publishes a home address, and it only has to happen once." It was
+# got wrong here, in this file, and the fix is the same mechanism post-merge and
+# post-rewrite already use.
+RELAY="$(git config discord-relay.path 2>/dev/null)"
+if [ -n "$NODE_BIN" ] && [ -n "$RELAY" ] && [ -f "$RELAY" ]; then
 	echo "pre-push: draining the #updates backlog"
-	"$NODE_BIN" "$RELAY" catchup --repo "$(git rev-parse --show-toplevel)" --soft || true
+	"$NODE_BIN" "$RELAY" catchup --repo "$(git rev-parse --show-toplevel)" --limit 500 --soft || true
 fi

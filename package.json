@@ -28,7 +28,7 @@
     "assets:all": "npm run assets:derive && npm run assets",
     "check:assets": "node tools/check-assets.mjs",
     "updates": "node tools/updates.mjs",
-    "updates:catchup": "node \"c:/Users/dalto/Desktop/Files/VSCode Projects/_shared/discord-relay/relay.mjs\" catchup --repo ."
+    "updates:catchup": "node tools/updates.mjs --catchup"
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "2.5.0",

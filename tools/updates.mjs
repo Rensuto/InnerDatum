@@ -34,7 +34,40 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 
-const RELAY = 'c:/Users/dalto/Desktop/Files/VSCode Projects/_shared/discord-relay/relay.mjs';
+/**
+ * WHERE THE RELAY LIVES — READ FROM CONFIG, NEVER WRITTEN DOWN HERE.
+ *
+ * This file is tracked and this repository is public, so an absolute path in it
+ * publishes the author's home directory. `.gitignore:238-241` guards the two
+ * files that legitimately need one, and states the stake plainly: "Getting this
+ * wrong publishes a home address, and it only has to happen once."
+ *
+ * It was got wrong. This constant, `package.json` and `.githooks/pre-push` all
+ * carried the literal path, and one of them reached the public repo. The path
+ * now comes from `git config discord-relay.path` — per-clone local state that
+ * never leaves the machine.
+ */
+function relayPath() {
+  try {
+    return execFileSync('git', ['config', 'discord-relay.path'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+const RELAY = relayPath();
+
+if (RELAY === '') {
+  console.error('updates: git config discord-relay.path is unset, so nothing can be checked.');
+  console.error('  Set it to your local _shared/discord-relay/relay.mjs, then re-run.');
+  process.exit(1);
+}
+
+/** `--catchup` drains the backlog; the default only reports on it. */
+const MODE = process.argv.includes('--catchup') ? 'catchup' : 'status';
 
 function git(args) {
   try {
@@ -57,7 +90,7 @@ function git(args) {
 // `spawnSync` is used instead of `execFileSync` for exactly that reason: it
 // hands back BOTH streams, so the count is read from the text that actually
 // contains it. A fittingly ironic bug for a tool whose job is noticing silence.
-const run = spawnSync(process.execPath, [RELAY, 'status', '--repo', '.'], {
+const run = spawnSync(process.execPath, [RELAY, MODE, '--repo', '.', '--limit', '500'], {
   encoding: 'utf8',
 });
 
