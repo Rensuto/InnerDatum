@@ -425,45 +425,48 @@ describe('what happens to an instance when everyone leaves', () => {
   });
 });
 
-describe('the threshold is six tiles wide, which is why the exit must arm', () => {
-  it('gives the test map a spawn CLUSTER, not a single doorstep', () => {
-    // THE FACT THAT CAUSED THE BUG, pinned so it cannot be forgotten again.
-    // `leaveRealm` treats spawn tiles as the door, on the argument that arrival
-    // is not a move so it cannot eject you. That is true and insufficient: the
-    // M1 map spawns on a 3x2 block of SIX ADJACENT tiles, so the first step
-    // after arriving lands on another one.
+describe('the threshold, and why the exit still has to arm', () => {
+  it('is a single tile now that floors are generated', () => {
+    // THE ORIGINAL BUG IS GONE, AND THE GUARD IS NOT. `leaveRealm` treats a
+    // site's spawn tiles as its door, and the M1 map spawned on a 3x2 block of
+    // SIX ADJACENT tiles — so the first step after arriving landed on another
+    // one and ejected you instantly. Reported from play as "encounters start
+    // but there are no enemies" and "I can click out and carry on walking".
     //
-    // Live effect: an ambush fired, moved the body in, and threw it straight
-    // back out on the next step — reported from play as "encounters start but
-    // there are no enemies" and "I can click out of the encounter and carry on
-    // walking". One bug, both symptoms: nobody was ever inside long enough to
-    // see a monster, and the breach sealed and closed behind them.
-    //
-    // The gateway's fix is `Session.exitArmed`. This pins the map fact the fix
-    // exists for, because a future map with ONE spawn tile would make the bug
-    // untestable-by-accident rather than fixed.
+    // Generated floors have one threshold, so that particular collision cannot
+    // happen any more. `Session.exitArmed` stays because the REQUIREMENT it
+    // encodes never depended on the cluster: arriving on the door must not be
+    // the same act as leaving through it, whatever the door's shape. Deleting
+    // it would work today and break the first time a floor is authored with a
+    // wider entrance.
     const realms = makeRealms();
     const delve = realms.open(site('site:underworks'), 'party_1');
-    expect(delve.spawns.length).toBeGreaterThan(1);
-
-    // ...and they are adjacent, which is the half that actually bites.
-    const [first] = delve.spawns;
-    expect(first).toBeDefined();
-    const touching = delve.spawns.filter(
-      (t) =>
-        t !== first && Math.abs(t.x - (first?.x ?? 0)) <= 1 && Math.abs(t.y - (first?.y ?? 0)) <= 1,
-    );
-    expect(touching.length).toBeGreaterThan(0);
+    expect(delve.spawns).toHaveLength(1);
   });
 
-  it('puts an arriving body onto one of those threshold tiles', () => {
-    // The other half of the setup: if arrival did NOT land on a spawn tile the
-    // bug could not happen, so this is what makes the arming necessary rather
-    // than defensive.
+  it('puts an arriving body onto that threshold', () => {
+    // The half that makes the arming necessary rather than defensive: if
+    // arrival did NOT land on the door, nothing would need to distinguish the
+    // two acts.
     const realms = makeRealms();
     const delve = realms.open(site('site:underworks'), 'party_1');
     const body = delve.world.addPlayer('p1', 'Arrived');
     expect(delve.spawns.some((t) => t.x === body.x && t.y === body.y)).toBe(true);
+  });
+
+  it('always leaves the threshold walkable, whatever the generator did', () => {
+    // A door stamped into a wall is a floor nobody can leave. Every shape
+    // carves its spawn last for this reason (shared/sitemap.ts).
+    const realms = makeRealms();
+    for (const s of SITES.values()) {
+      const realm = realms.open(s, `party_${s.id}`);
+      const door = realm.spawns[0];
+      expect(door, `${s.id} has no threshold`).toBeDefined();
+      expect(
+        realm.world.getActor('probe') ?? realm.world.addPlayer('probe', 'Probe'),
+      ).toBeDefined();
+      realm.world.removePlayer('probe');
+    }
   });
 });
 
@@ -546,5 +549,55 @@ describe('an ambush puts the fight where you are standing', () => {
       .filter((a) => a.kind === ActorKind.Monster)
       .map((a) => `${a.x},${a.y}`);
     expect(new Set(cells).size).toBe(cells.length);
+  });
+});
+
+describe('a town is a place you learn; a delve is not', () => {
+  const layout = (r: { world: { level: { tiles: readonly number[] } } }): string =>
+    r.world.level.tiles.join(',');
+
+  it('gives a town the same streets on every server start', () => {
+    // STATIC BY SEED. A Common realm's map is built from an id derived from the
+    // SITE, so Threadneedle Row is the same Threadneedle Row tonight as it was
+    // last night — which is the whole difference between a place and a floor.
+    expect(layout(makeRealms('seed-a').open(site('site:threadneedle_row'), 'p1'))).toBe(
+      layout(makeRealms('seed-b').open(site('site:threadneedle_row'), 'p1')),
+    );
+  });
+
+  it('gives two unrelated parties the SAME town', () => {
+    const realms = makeRealms();
+    expect(layout(realms.open(site('site:ashwick_row'), 'p1'))).toBe(
+      layout(realms.open(site('site:ashwick_row'), 'p2')),
+    );
+  });
+
+  it('gives two parties DIFFERENT ground in the same delve', () => {
+    // Stated as the requirement was: solo players entering the same area each
+    // get their own randomised instance of it.
+    const realms = makeRealms();
+    const mine = realms.open(site('site:underworks'), 'party_1');
+    const theirs = realms.open(site('site:underworks'), 'party_2');
+    expect(mine.id).not.toBe(theirs.id);
+    expect(layout(mine)).not.toBe(layout(theirs));
+  });
+
+  it('re-randomises a delve once the linger has reaped it', () => {
+    // THE FIVE-MINUTE RULE'S OTHER HALF. While the instance lives, coming back
+    // finds the floor you left — that is what the linger is for. Once it is
+    // reaped, the next party through the door gets somewhere new, because the
+    // realm id carries a monotonic instance number and the map is seeded from
+    // it.
+    const realms = makeRealms();
+    const first = realms.open(site('site:hollow_mine'), 'party_1');
+    const before = layout(first);
+
+    // Still open: the same floor comes back.
+    expect(layout(realms.open(site('site:hollow_mine'), 'party_1'))).toBe(before);
+
+    expect(realms.close(first.id)).toBe(true);
+    const second = realms.open(site('site:hollow_mine'), 'party_1');
+    expect(second.id).not.toBe(first.id);
+    expect(layout(second)).not.toBe(before);
   });
 });

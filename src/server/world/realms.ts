@@ -54,7 +54,8 @@
  */
 
 import { makeArena } from '../../shared/arena.ts';
-import { makeOverworld, makeTestMap } from '../../shared/level.ts';
+import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
+import { makeOverworld } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
@@ -625,29 +626,43 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
       // the SETTLEMENTS, and with the overworld now being open country they are
       // where the game is social — the road between them is meant to feel empty.
       //
-      ['site:alderbrook', 'Alderbrook', RealmKind.Common, 'city'],
-      ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common, 'town'],
-      ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common, 'town'],
-      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common, 'village'],
-      ['site:saints_rest', "Saint's Rest", RealmKind.Common, 'town'],
+      ['site:alderbrook', 'Alderbrook', RealmKind.Common, 'city', SiteShape.Town],
+      ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common, 'town', SiteShape.Town],
+      ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common, 'town', SiteShape.Town],
+      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common, 'village', SiteShape.Ruin],
+      ['site:saints_rest', "Saint's Rest", RealmKind.Common, 'town', SiteShape.Town],
       // ─── one party at a time: combat, so a shared barrier would be wrong ───
-      ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner, 'gate'],
-      ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner, 'gate'],
-      ['site:underworks', 'The Underworks', RealmKind.Inner, 'mine'],
-      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner, 'city'],
-      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner, 'ruin'],
-      ['site:hollow_mine', 'The Hollow Mine', RealmKind.Inner, 'mine'],
-      ['site:drowned_chapel', 'The Drowned Chapel', RealmKind.Inner, 'ruin'],
-      ['site:outer_index', 'The Outer Index', RealmKind.Inner, 'city'],
+      ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner, 'gate', SiteShape.Cave],
+      ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner, 'gate', SiteShape.Works],
+      ['site:underworks', 'The Underworks', RealmKind.Inner, 'mine', SiteShape.Cave],
+      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner, 'city', SiteShape.Works],
+      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner, 'ruin', SiteShape.Ruin],
+      ['site:hollow_mine', 'The Hollow Mine', RealmKind.Inner, 'mine', SiteShape.Cave],
+      ['site:drowned_chapel', 'The Drowned Chapel', RealmKind.Inner, 'ruin', SiteShape.Ruin],
+      ['site:outer_index', 'The Outer Index', RealmKind.Inner, 'city', SiteShape.Works],
     ] as const
-  ).map(([id, name, kind, marker]): [string, SiteDef] => [
+  ).map(([id, name, kind, marker, shape]): [string, SiteDef] => [
     id,
     {
       id,
       name,
       kind,
       marker,
-      map: () => makeTestMap(),
+      /**
+       * THE SHAPE IS THE IDENTITY at this scale. Every site used to open onto
+       * the same authored 30x30 room, which made thirteen destinations one
+       * destination with thirteen doors. A mine of winding galleries and a
+       * market that is an open plaza read as different PLACES before a single
+       * sprite is drawn. See shared/sitemap.ts.
+       *
+       * STATIC FOR A TOWN, FRESH FOR A DELVE, and the seed is what decides
+       * which: a Common realm is built once with an id derived from the SITE,
+       * so its streets are the same every time and a player can learn them. An
+       * Inner realm's id carries a monotonic instance number, so every opening
+       * is a different floor — and after the five-minute linger reaps it, the
+       * next party through the door gets somewhere new.
+       */
+      map: (seed) => makeSiteMap(seed, shape),
       // A delve is a place you can go back to. A town never empties in the sense
       // that matters — `close` refuses a shared realm outright — so the number
       // is inert there and stated once rather than branched on.
