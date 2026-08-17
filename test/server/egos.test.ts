@@ -4,6 +4,7 @@ import {
   CHECKED_EGOS,
   EGOS,
   EGO_CATALOGUE,
+  EGO_FORBIDDEN_MOD_KEYS,
   EgoSlotTag,
   MIN_STAT_FLOOR,
   egoByCode,
@@ -168,6 +169,29 @@ describe('validateEgos', () => {
     expect(() =>
       validateEgos([{ ...SOUND, grants: { mods: { armour: { floor: 0.5, step: 1 } } } }]),
     ).toThrow(/INTEGER/);
+  });
+
+  it('refuses a floor of zero — a guarantee of nothing is not a guarantee', () => {
+    // `resolveItem` writes every key the ego names, so a floor of 0 puts
+    // `armour: 0` on the item at power 0: a line on the character sheet, a term
+    // in the fold, and no change to any number a player can see. Found by
+    // printing sample loot rather than by reading the table.
+    expect(() =>
+      validateEgos([{ ...SOUND, grants: { mods: { armour: { floor: 0, step: 1 } } } }]),
+    ).toThrow(/must be at least 1/);
+  });
+
+  it('refuses `damRange`, whose natural unit is a tenth', () => {
+    // ALIVE, LEGAL ON AN ITEM, AND STILL WRONG ON AN EGO. It is ADDED to a
+    // weapon range that defaults to 1.1 (derived.ts:442-445), so the smallest
+    // integer grant this file can express turns a 1.1x damage spread into 2.1x
+    // and a power-3 roll into 4.1x. A unit mismatch, not a strong ego — and the
+    // fix is not a fractional step, because §1.4 refuses those for the
+    // commutativity proof.
+    expect(() =>
+      validateEgos([{ ...SOUND, grants: { mods: { damRange: { floor: 1, step: 1 } } } }]),
+    ).toThrow(/unit mismatch/);
+    expect(EGO_FORBIDDEN_MOD_KEYS).toContain('damRange');
   });
 
   it('refuses a negative or non-finite magnitude', () => {

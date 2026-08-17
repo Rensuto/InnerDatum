@@ -189,7 +189,9 @@ const PREFIXES: readonly Ego[] = [
     tag: EgoSlotTag.Prefix,
     rarity: 4,
     levelRange: [1, 50],
-    grants: { mods: { def: { floor: 2, step: 1 }, damRange: { floor: 0, step: 1 } } },
+    // Supple rather than thick: harder to land a clean hit on, and quicker to
+    // find an opening with. NOT `damRange` — see `EGO_FORBIDDEN_MOD_KEYS`.
+    grants: { mods: { def: { floor: 2, step: 1 }, genericCrit: { floor: 1, step: 1 } } },
     cost: 15,
   },
   {
@@ -375,6 +377,12 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
             `see the note on DEAD_MOD_KEYS in content/items.ts`,
         );
       }
+      if (EGO_FORBIDDEN_MOD_KEYS.includes(key)) {
+        throw new Error(
+          `egos: ${ego.code} grants '${key}', whose natural unit is a fraction — an integer ` +
+            `magnitude there is a unit mismatch, not a strong ego (see EGO_FORBIDDEN_MOD_KEYS)`,
+        );
+      }
       if (grant === undefined) continue;
       assertGrant(ego.code, key, grant);
     }
@@ -396,6 +404,29 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
 /** The three dead `CombatMods` fields, by name. Mirrors items.ts's own list. */
 const DEAD_GRANT_KEYS: readonly string[] = Object.freeze(['physSpeed', 'spellPower', 'mindPower']);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ALIVE, LEGAL ON AN ITEM, AND STILL WRONG ON AN EGO. CURRENTLY ONE FIELD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `mods.damRange` is ADDED to a weapon range that defaults to 1.1
+ * (derived.ts:442-445, Combat.lua:1432) — its natural unit is a TENTH. Every
+ * ego magnitude here is an integer by construction, so the smallest grant this
+ * file can express is `+1`, which turns a 1.1× damage spread into 2.1× and a
+ * power-3 roll into 4.1×. One prefix would roughly quadruple a weapon's top
+ * end.
+ *
+ * That is not a balance opinion, it is a UNIT MISMATCH, and it was caught by
+ * printing sample loot rather than by reading the table — which is the reason
+ * it gets a named list and a throw instead of a note. The alternative
+ * (fractional steps) is the thing §1.4 refuses for the commutativity proof, so
+ * the field is simply not available to an ego.
+ *
+ * A class sheet may still set it: classes.ts authors 1.1 / 1.2 / 1.15 directly,
+ * in the units the formula wants. No authored ITEM grants it either.
+ */
+export const EGO_FORBIDDEN_MOD_KEYS: readonly string[] = Object.freeze(['damRange']);
+
 /** Every tier, for the corner check below. */
 const ALL_TIERS: readonly ItemTier[] = Object.freeze(['common', 'uncommon', 'rare']);
 
@@ -416,6 +447,19 @@ function assertGrant(code: string, key: string, grant: EgoGrant): void {
           `egos: ${code} grants ${key} = ${String(value)} at power ${String(power)} on a ` +
             `${tier} item; every resolved value must be a finite non-negative INTEGER or the ` +
             `fold in engine/equipment.ts stops being exactly order-independent`,
+        );
+      }
+      // A ZERO IS WORSE THAN AN ABSENT KEY. `resolveItem` writes every key the
+      // ego names, so a floor of 0 puts `damRange: 0` (or `armour: 0`) on the
+      // item at power 0 — a line on the character sheet, a term in the fold, and
+      // no change to any number. `floor` is the GUARANTEED part; a guarantee of
+      // nothing is the one thing it must not be. Caught by printing sample loot,
+      // which is why it is a throw and not a review comment.
+      if (value <= 0) {
+        throw new Error(
+          `egos: ${code} grants ${key} = 0 at power ${String(power)} on a ${tier} item — ` +
+            `floor is the GUARANTEED term and must be at least 1, or the ego writes a key ` +
+            `that changes nothing`,
         );
       }
     }

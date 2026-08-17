@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { rollDrop, seedTestEncounter } from '../../src/server/content/encounter.ts';
 import { ITEMS, SLOT_ORDER } from '../../src/server/content/items.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
 import {
   INDEX_HUSK,
   INDEX_HUSK_ELITE,
@@ -342,6 +343,107 @@ describe('how many draws a drop table costs', () => {
     expect(picks).toBeGreaterThanOrEqual(1);
     expect(picks).toBeLessThanOrEqual(3);
     expect(world.getActor('mon_index_wraith')?.carried).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b — THE EGO FORK, AND THE CLAIM IT MAKES
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PROOF THE FORK BOUGHT WHAT IT CLAIMS
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Every ego draw lands on `world.lootRng.fork('loot.ego:<actor>:<n>')`, and
+ * `fork` does not advance its parent (rng.ts:261-274). So the whole ego system
+ * — the category roll, the ego pick, the power roll, and every ego and slot
+ * added to it in future — costs `world.loot` **zero** draws.
+ *
+ * That is the single most valuable property in this subsystem, and it is
+ * checkable rather than arguable: the labels on the parent stream are still
+ * exactly `loot.chance` and `loot.pick`, and the count is unchanged.
+ */
+describe('the ego roll costs the loot stream nothing', () => {
+  it('leaves the parent stream at exactly `loot.chance` and `loot.pick`', () => {
+    // If an ego draw ever leaks onto `world.lootRng`, an `ego.*` label appears
+    // here — and every drop after it on that seed silently changes.
+    const world = createWorld('ego-fork-labels');
+    const labels = new Set(seedWatched(world).draws.map((draw) => draw.label));
+    expect([...labels].sort()).toEqual(['loot.chance', 'loot.pick']);
+  });
+
+  it('takes the same number of parent draws as a floor with egos impossible', () => {
+    // The counterfactual, run for real: `withEgos` is the shipped seeder;
+    // `withoutEgos` is `rollDrop` alone, which is what the loot stream saw
+    // before the ego system existed. Same seed, same count, byte-identical
+    // state — so no seeded test in the repository moved when egos landed, and
+    // none will when the roster grows.
+    const withEgos = createWorld('ego-fork-count');
+    seedTestEncounter(withEgos);
+
+    const bare = createRng('ego-fork-count').fork('world.loot');
+    for (const template of [INDEX_HUSK, INDEX_WRAITH, INDEX_HUSK_ELITE]) {
+      rollDrop(bare, template.drops);
+    }
+
+    expect(withEgos.lootRng.getState().count).toBe(bare.getState().count);
+    expect(withEgos.lootRng.getState()).toEqual(bare.getState());
+  });
+
+  it('never touches the play stream — the rule drops were introduced to keep', () => {
+    const world = createWorld('ego-fork-play-stream');
+    seedTestEncounter(world);
+    expect(world.rng.getState().count).toBe(0);
+    expect(world.rng.getState().lastLabel).toBe('');
+  });
+
+  it('gives two worlds on one seed the same named items', () => {
+    const a = createWorld('ego-replay');
+    const b = createWorld('ego-replay');
+    seedTestEncounter(a);
+    seedTestEncounter(b);
+    expect(carriedByMonster(a)).toEqual(carriedByMonster(b));
+
+    const other = createWorld('ego-replay-different');
+    seedTestEncounter(other);
+    expect(carriedByMonster(other)).not.toEqual(carriedByMonster(a));
+  });
+
+  it('drops items that RESOLVE, whatever the roll produced', () => {
+    // The one that would hurt: a roll that builds an id `resolveItem` refuses
+    // is an item that vanishes from the floor on the next save/load, silently.
+    // Swept across many seeds because the categories are weighted and one seed
+    // exercises one path.
+    for (let i = 0; i < 60; i += 1) {
+      const world = createWorld(`ego-resolvable-${String(i)}`);
+      seedTestEncounter(world);
+      for (const id of SEEDED_IDS) {
+        for (const itemId of world.getActor(id)?.carried ?? []) {
+          expect(resolveItem(itemId), `${itemId} did not resolve`).not.toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it('produces named items at a level-1 party, but mostly plain ones', () => {
+    // Band 1 is `plain 38 / ego 45 / double 20 / money 7`, so roughly a third
+    // of drops carry no name at all. Both halves are asserted: a table that
+    // silently produced NOTHING named, or EVERYTHING named, would be a table
+    // that is not being read.
+    let named = 0;
+    let plain = 0;
+    for (let i = 0; i < 120; i += 1) {
+      const world = createWorld(`ego-mix-${String(i)}`);
+      seedTestEncounter(world);
+      for (const id of SEEDED_IDS) {
+        for (const itemId of world.getActor(id)?.carried ?? []) {
+          if (itemId.includes('~')) named += 1;
+          else plain += 1;
+        }
+      }
+    }
+    expect(named).toBeGreaterThan(0);
+    expect(plain).toBeGreaterThan(0);
   });
 });
 

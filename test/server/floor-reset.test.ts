@@ -546,10 +546,21 @@ describe('a floor reset clears the floor of items too', () => {
     const stuck = scene('reset-rerolls-drops');
     seedTestEncounter(stuck.world);
 
+    const rareIds = ITEMS.filter((item) => item.tier === 'rare').map((item) => item.id);
+    /**
+     * THE BASE, out of an id that may carry egos.
+     *
+     * The drop table names a base and the ego roll decorates it, so what this
+     * test is actually asserting — "the wraith drew from the rare table" — is a
+     * claim about the part before the `~`. Asserting on the whole id would make
+     * this test fail every time an ego lands, which is not the wraith's table
+     * changing.
+     */
+    const baseOf = (id: string | undefined): string | undefined => id?.split('~')[0];
+
     const before = stuck.world.getActor('mon_index_wraith');
     expect(before?.carried).toHaveLength(1);
-    const rareIds = ITEMS.filter((item) => item.tier === 'rare').map((item) => item.id);
-    expect(rareIds).toContain(before?.carried?.[0]);
+    expect(rareIds).toContain(baseOf(before?.carried?.[0]));
 
     stuck.knockDown('p1');
     stuck.engine.pump();
@@ -560,7 +571,7 @@ describe('a floor reset clears the floor of items too', () => {
     // ...but a DIFFERENT BODY, which is exactly why the drop is a new roll.
     expect(after).not.toBe(before);
     expect(after?.carried).toHaveLength(1);
-    expect(rareIds).toContain(after?.carried?.[0]);
+    expect(rareIds).toContain(baseOf(after?.carried?.[0]));
   });
 
   it('re-rolls reproducibly — two identical sessions reset to the identical floor', () => {

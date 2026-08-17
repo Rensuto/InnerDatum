@@ -33,7 +33,9 @@
  */
 
 import type { TileXY } from '../../shared/coords.ts';
+import { ActorKind } from '../../shared/protocol.ts';
 import { canWalk } from '../../shared/level.ts';
+import { partyMaxLevel, rollEgos } from './loot.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { World } from '../world/world.ts';
 import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
@@ -158,6 +160,41 @@ export function rollDrop(rng: Rng, drops: MonsterTemplate['drops']): string | un
 }
 
 /**
+ * Turn the base id `rollDrop` picked into the id of the thing that actually
+ * dropped — which may have a name on it.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT TAKES ITS DRAWS ON A FORK, AND `rollDrop` ABOVE IS UNTOUCHED
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `world.lootRng` still sits at exactly `loot.chance` then `loot.pick`, in that
+ * order, per monster. Every draw the ego system takes is on a child stream
+ * derived from (the parent's current state, its inc, this label), and `fork`
+ * does not advance its parent (rng.ts:261-274).
+ *
+ * So the ego system's draw count is NOT LOAD-BEARING. That is worth stating
+ * plainly because it is the property that pays for the whole design: the next
+ * person to add an ego, change the quality table or add a third ego slot moves
+ * no seeded test in this repository, and `test/server/loot.test.ts` pins
+ * `world.lootRng`'s count across this change to prove the claim rather than
+ * assert it.
+ *
+ * THE LABEL CARRIES THE ACTOR AND THE DROP INDEX. rng.ts:266-272: forking one
+ * label in a loop hands every monster the same sequence, which here would mean
+ * every husk in an ambush carrying the identically-named coat. The parent's
+ * state has also moved between monsters, so this is belt and braces — but the
+ * belt is the one that keeps working when somebody reorders the loop.
+ *
+ * LEVEL IS PARTY MAX. There is no zone level here; see `partyMaxLevel`.
+ */
+function embellish(world: World, actorId: string, baseId: string | undefined): string | undefined {
+  if (baseId === undefined) return undefined;
+  const level = partyMaxLevel(
+    world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])),
+  );
+  return rollEgos(world.lootRng.fork(`loot.ego:${actorId}:0`), baseId, level);
+}
+
+/**
  * Place the test encounter. Idempotent on id, like `addMonster` itself, so a
  * reconnect or a re-seed cannot double the population.
  *
@@ -248,7 +285,7 @@ export function seedTestEncounter(world: World): SeededMonster[] {
      * is explicit: `[]` means "carries nothing", `undefined` means "this producer
      * cannot say"), and a monster is a producer that genuinely said nothing.
      */
-    const carrying = rollDrop(world.lootRng, template.drops);
+    const carrying = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
     if (carrying !== undefined) actor.carried = [carrying];
 
     placed.push({
@@ -346,7 +383,7 @@ export function seedAmbush(world: World, near: TileXY): SeededMonster[] {
     if (template === undefined || at === undefined) continue;
     const id = `mon_${template.id}`;
     const actor = world.addMonster(id, monsterInit(template, at));
-    const carrying = rollDrop(world.lootRng, template.drops);
+    const carrying = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
     if (carrying !== undefined) actor.carried = [carrying];
     placed.push({
       id: actor.id,
