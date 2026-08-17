@@ -1060,6 +1060,68 @@ function claim<T>(
  * `event.key.toLowerCase()` first, so a stored 'H' that was not lowered would
  * simply never match — the rebind would appear to take and then do nothing.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A STORED KEYMAP CAN HOLD A KEY THE DEFAULTS HAVE SINCE GIVEN AWAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Keybinds persist server-side, deliberately: nobody should reconfigure them
+ * twice. That means a save written before the world map existed still says
+ * `toggle_log: ['key:m']` — and `m` is now the world map's default. Both land
+ * in `uiByKey`, the later action wins, and the returning player presses M and
+ * gets the Case Log with no explanation. Reported from play as a map that
+ * "won't open properly".
+ *
+ * The rule this applies is narrow on purpose: a stored binding is only dropped
+ * when it holds a key that action NO LONGER DEFAULTS TO and another action now
+ * does. That is exactly the upgrade case and nothing else — a player who
+ * deliberately bound the log to `m` after this shipped is expressing a
+ * preference and keeps it, because their remap will also have moved the world
+ * map off `m` and the conflict will not exist.
+ *
+ * IT DROPS RATHER THAN REWRITES. Moving the stored binding to the new default
+ * would be inventing a preference nobody expressed; dropping it falls back to
+ * the action's own default, which is the value the player would get on a fresh
+ * clone and the one the Keys screen shows.
+ */
+export function migrateStoredKeymap(actions: readonly ActionDef[], remap: KeyRemap): KeyRemap {
+  const defaultOwner = new Map<string, string>();
+  for (const action of actions) {
+    for (const b of action.defaults) {
+      if (b.kind === 'key') defaultOwner.set(b.value.toLowerCase(), action.id);
+    }
+  }
+
+  const out: Record<string, readonly string[]> = {};
+  let dropped = 0;
+  for (const [actionId, slots] of Object.entries(remap)) {
+    const kept = slots.map((slot) => {
+      if (typeof slot !== 'string' || !slot.startsWith('key:')) return slot;
+      const key = slot.slice(4).toLowerCase();
+      const owner = defaultOwner.get(key);
+      // Held by somebody else's default now, and not by this action's own.
+      if (owner !== undefined && owner !== actionId) {
+        const mine = actions.find((a) => a.id === actionId);
+        const stillMine = mine?.defaults.some(
+          (b) => b.kind === 'key' && b.value.toLowerCase() === key,
+        );
+        if (stillMine !== true) {
+          dropped += 1;
+          return SLOT_NONE;
+        }
+      }
+      return slot;
+    });
+    out[actionId] = kept;
+  }
+  if (dropped > 0) {
+    console.warn(
+      `keymap: dropped ${dropped} stored binding(s) that a newer default now owns; ` +
+        'those actions fall back to their defaults. Rebind them on the Keys screen if you want them back.',
+    );
+  }
+  return out;
+}
+
 export function compileKeymap(actions: readonly ActionDef[], remap: KeyRemap): Keymap {
   const dirByCode = new Map<string, Dir>();
   const dirByKey = new Map<string, Dir>();

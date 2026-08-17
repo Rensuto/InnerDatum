@@ -139,7 +139,15 @@ import { bindGameKeys, gameKeymap, setKeymap, TurnCommand, UiCommand } from './i
 // is a hard-coded letter any more: a printed "press g" is a lie the moment
 // somebody rebinds, and the three of them here had already been written twice.
 // The three mutators are the menu's buttons and nothing else reaches them.
-import { clearBinding, labelFor, resetAll, resetOne, SLOTS_PER_ACTION } from './input/keymap.ts';
+import {
+  ACTIONS,
+  clearBinding,
+  labelFor,
+  migrateStoredKeymap,
+  resetAll,
+  resetOne,
+  SLOTS_PER_ACTION,
+} from './input/keymap.ts';
 import { MouseIntentKind, mouseIntentAt, travelTargetAllowed } from './input/mouseintent.ts';
 import { createTargeting } from './input/targeting.ts';
 import {
@@ -269,7 +277,13 @@ import {
 } from './ui/respawnprompt.ts';
 import { drawTooltip } from './ui/tooltip.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
-import { minimapRect, paintMap } from './ui/mapview.ts';
+import {
+  MINIMAP_MARGIN,
+  MINIMAP_MAX_H,
+  MINIMAP_RADIUS,
+  minimapRect,
+  paintMap,
+} from './ui/mapview.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
 import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
@@ -563,6 +577,13 @@ function panelBand(height: number, hudTop: number): { top: number; bottom: numbe
  * click lands on a tile that is underneath a panel, and the bug only shows up on
  * somebody else's window size.
  */
+/**
+ * Vertical space the log gives up to the minimap: its box, both margins, and a
+ * little air so the two do not touch. Derived from the minimap's own constants
+ * rather than guessed, so moving one moves the other.
+ */
+const MINIMAP_RESERVE_H = MINIMAP_MAX_H + MINIMAP_MARGIN * 2 + 4;
+
 function logPanelRect(
   width: number,
   height: number,
@@ -571,9 +592,29 @@ function logPanelRect(
 ): PanelRect | null {
   if (!showLog || width < DOCK_MIN_VIEWPORT_W) return null;
   const band = panelBand(height, hudTop);
-  const h = band.bottom - band.top;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LOG STARTS BELOW THE MINIMAP, BECAUSE THEY SHARE A CORNER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Both are top-right: the log because that is where this game's dock has
+   * always been, the minimap because that is where every game puts one. The
+   * minimap is drawn LATER, so it won — the top of the transcript disappeared
+   * under it, which is exactly where the newest lines are on the Margin lane.
+   *
+   * Yielding the space is the right way round rather than moving the minimap:
+   * the log can lose a line and still be a log, and a minimap pushed anywhere
+   * else stops being where a player's eye goes for it.
+   *
+   * The reserve is unconditional, even when the world map has replaced the
+   * minimap for a moment. A dock whose height depended on whether an overlay
+   * happened to be open would re-lay the transcript every time somebody pressed
+   * M, and a log that reflows on a keypress is worse than one that is a few
+   * pixels short.
+   */
+  const top = band.top + MINIMAP_RESERVE_H;
+  const h = band.bottom - top;
   if (h < DOCK_MIN_H) return null;
-  return { x: width - DOCK_W - DOCK_MARGIN, y: band.top, w: DOCK_W, h };
+  return { x: width - DOCK_W - DOCK_MARGIN, y: top, w: DOCK_W, h };
 }
 
 /** True when a LOGICAL backbuffer point is over either dock panel. */
@@ -823,8 +864,66 @@ let currentRealmId: string | null = null;
  */
 let overworldLevel: LevelView | null = null;
 let overworldSites: readonly SiteView[] = [];
-/** Is the full-screen world map open? Toggled by `M`. */
+/**
+ * The overworld's realm id, learned rather than hard-coded. The client has no
+ * business knowing the server's naming; it knows which frame said `overworld`.
+ */
+let overworldRealmId: string | null = null;
+/** Is the full-screen world map open? Toggled by `M`, closed by Escape. */
 let worldMapOpen = false;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FOG — WHAT THIS CLIENT HAS ACTUALLY SEEN, PER REALM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A 170x100 region handed over whole on the first frame gives away every
+ * settlement, every road and every place worth going before the player has
+ * walked anywhere. The map should be something you EARN.
+ *
+ * Keyed by realm, because the overworld's exploration is not an arena's and a
+ * fresh instance must not arrive pre-explored.
+ *
+ * ═══ CLIENT-SIDE AND SESSION-LOCAL, WHICH IS A REAL LIMIT ═══
+ * It is not persisted, so a reload forgets the map. Persisting it means a new
+ * field on the character file and therefore a SCHEMA_VERSION bump, and it
+ * belongs in the same pass as deciding whether exploration is per-character or
+ * per-player. Stated here rather than discovered later: today, fog is a
+ * per-session veil, not a permanent record.
+ *
+ * It is also NOT a visibility rule — the playfield still draws everything in
+ * range, because the server decides what a client may know and this is a
+ * drawing convenience on top of what it already sent. Anyone using it to hide
+ * information from a hostile client is reading it wrong.
+ */
+const explored = new Map<string, Set<string>>();
+
+/** How far a body reveals. Generous: this is a map, not a torch. */
+const REVEAL_RADIUS = 12;
+
+/** Mark everything within reach of the viewer as seen, and answer the set. */
+function revealAround(
+  realmId: string,
+  level: LevelView,
+  at: { x: number; y: number },
+): Set<string> {
+  let seen = explored.get(realmId);
+  if (seen === undefined) {
+    seen = new Set<string>();
+    explored.set(realmId, seen);
+  }
+  for (let dy = -REVEAL_RADIUS; dy <= REVEAL_RADIUS; dy += 1) {
+    for (let dx = -REVEAL_RADIUS; dx <= REVEAL_RADIUS; dx += 1) {
+      // A circle rather than the square the loop walks, so the edge of what you
+      // have explored looks like a place someone stood rather than a stamp.
+      if (dx * dx + dy * dy > REVEAL_RADIUS * REVEAL_RADIUS) continue;
+      const x = at.x + dx;
+      const y = at.y + dy;
+      if (x < 0 || y < 0 || x >= level.w || y >= level.h) continue;
+      seen.add(`${x},${y}`);
+    }
+  }
+  return seen;
+}
 let connection = 'connecting';
 let lastError: string | null = null;
 
@@ -2924,6 +3023,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
       sites: overworldSites,
       self: me === undefined ? undefined : { x: me.x, y: me.y },
       framed: false,
+      // The overworld's own fog, whichever realm you are standing in — the map
+      // shows what you have walked, not what you can currently reach.
+      seen: explored.get(overworldRealmId ?? '') ?? new Set<string>(),
     });
     ctx.fillStyle = PALETTE.SILVER;
     ctx.font = '11px ui-monospace, monospace';
@@ -2937,16 +3039,24 @@ const paintHud: HudPainter = (ctx, width, height) => {
       height - 6,
     );
     ctx.textAlign = 'left';
-  } else if (level !== null) {
-    const rect = minimapRect(level, width);
+  } else if (level !== null && currentRealmId !== null) {
     const me = selfId === null ? undefined : actors.get(selfId);
+    // REVEAL FIRST, THEN PAINT. The cell you are standing on has to be part of
+    // what you have seen by the time the same frame draws it, or the player is
+    // permanently at the edge of their own fog.
+    const seen =
+      me === undefined
+        ? new Set<string>()
+        : revealAround(currentRealmId, level, { x: me.x, y: me.y });
     paintMap({
       ctx,
       level,
-      rect,
+      rect: minimapRect(width),
       sites,
       self: me === undefined ? undefined : { x: me.x, y: me.y },
       framed: true,
+      seen,
+      windowRadius: MINIMAP_RADIUS,
     });
   }
 
@@ -5841,6 +5951,26 @@ async function boot(): Promise<void> {
       // later press reached the swallow, which is a Escape that sometimes appears
       // to do something on a screen where it must always do nothing.
       if (classOptions !== null) return;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE WORLD MAP CLOSES ON ESCAPE, AND IT IS HIGH IN THE CHAIN BECAUSE IT
+       * COVERS THE WHOLE SCREEN.
+       * ═══════════════════════════════════════════════════════════════════════
+       * It was reachable only by its own key, which is one exit — and a
+       * full-screen overlay with one exit is a trap the moment that key is
+       * rebound, conflicts, or is simply forgotten. Reported from play as a map
+       * that "won't close".
+       *
+       * ABOVE the escape menu's links and the token menu, mirroring paint
+       * order: this is drawn over all of them, so a press that closed something
+       * underneath while a full-screen sheet stayed up would be an Escape that
+       * appears to do nothing.
+       */
+      if (worldMapOpen) {
+        worldMapOpen = false;
+        requestDraw();
+        return;
+      }
       sweep?.settle();
       // ═══════════════════════════════════════════════════════════════════════
       // THE ESCAPE MENU'S THREE HEAD LINKS, INNERMOST FIRST — v11.
@@ -7723,6 +7853,7 @@ function applyServerMessage(msg: ServerMsg): void {
       if (msg.kind === 'overworld') {
         overworldLevel = msg.level;
         overworldSites = msg.sites;
+        overworldRealmId = msg.realmId;
       }
       lastError = null;
 
@@ -8338,7 +8469,15 @@ function applyServerMessage(msg: ServerMsg): void {
       // verbatim so a renamed-then-restored action comes back, and this is
       // exactly what `createTalentSheet` does with a talent id the class no
       // longer has.
-      setKeymap(msg.binds);
+      /**
+       * MIGRATED FIRST. A save written before the world map existed still says
+       * `toggle_log: ['key:m']`, and `m` is now the world map's default — both
+       * would land in the same table and the later action would win, so the
+       * returning player presses M and gets the Case Log. See
+       * `migrateStoredKeymap`, which drops only a stored key that some OTHER
+       * action now defaults to.
+       */
+      setKeymap(migrateStoredKeymap(ACTIONS, msg.binds));
       keybindsPersisted = msg.persisted;
       // ...AND THE CHAT ROW'S PLACEHOLDER, because `say` is rebindable and that
       // string names its key. See `syncCommandLinePlaceholder`.

@@ -699,7 +699,12 @@ describe('the keybinds frame', () => {
     // after the travel-cancel listener and invert the Escape precedence.
     const start = at("case 'keybinds':");
     const body = CODE.slice(start, CODE.indexOf("case 'pong':", start));
-    expect(body).toContain('setKeymap(msg.binds);');
+    expect(body).toContain('setKeymap(migrateStoredKeymap(ACTIONS, msg.binds));');
+    // MIGRATED ON THE WAY IN, not stored migrated. Keybinds persist
+    // server-side, so a save written before an action existed can still hold a
+    // key that a newer default now owns — `toggle_log` kept `m` after the world
+    // map took it, and the returning player pressed M and got the Case Log.
+    // The drop happens here, at the one door those bindings come through.
     expect(body).toContain('keybindsPersisted = msg.persisted;');
     expect(body).not.toContain('bindGameKeys');
   });
