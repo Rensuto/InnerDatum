@@ -3752,9 +3752,39 @@ export type RealmMsg = {
   selfId: string;
 };
 
+/**
+ * THE MARKERS ON THIS MAP, WITHOUT THE MAP.
+ *
+ * `realm` carries the level, the roster and the markers together, which is
+ * right when you have just arrived and wrong every time afterwards. Roamers
+ * wander, so their positions change every few turns while the level under them
+ * never does — and re-sending `realm` to say so ships 17,000 tiles to describe
+ * a marker moving one cell.
+ *
+ * That was affordable at 96x64 and stopped being so the moment the region grew
+ * to ToME's 170x100. The comment that accepted the cost said the fix would be a
+ * `sites` frame rather than a second marker system, and this is that frame.
+ *
+ * ABSOLUTE, NOT A PATCH, exactly like `ground` and `projectiles`: the client
+ * REPLACES its whole marker table with this. A patch protocol would need a
+ * delete verb, an ordering guarantee and a resync path, to save a few hundred
+ * bytes on a message that is already the cheapest thing on the wire.
+ *
+ * Viewer-scoped for the same reason `realm` is — these are the markers on the
+ * map THIS player is standing on.
+ */
+export type SitesMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'sites';
+  /** Which realm they belong to, so a frame in flight across a crossing is dropped. */
+  realmId: string;
+  sites: SiteView[];
+};
+
 export type ServerMsg =
   | WelcomeMsg
   | RealmMsg
+  | SitesMsg
   | StateMsg
   | MovedMsg
   | JoinedMsg
@@ -3906,7 +3936,8 @@ export type ViewerMsg =
   // A realm change is true for exactly one person — the map in it is the map
   // THEY are now standing on. Membership here makes `broadcast(realmMsg)` a
   // compile error rather than a rule to remember. See `RealmMsg`.
-  | RealmMsg;
+  | RealmMsg
+  | SitesMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

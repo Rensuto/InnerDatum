@@ -254,130 +254,160 @@ export function canWalk(level: LevelView, x: number, y: number): boolean {
 // ===========================================================================
 
 /**
- * The country around Alderbrook, 96x64, MODELLED rather than drawn.
+ * The country around Alderbrook, 170x100, MODELLED rather than drawn.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * THE FIRST TWO ATTEMPTS WERE A DIAGRAM. THIS ONE IS A REGION.
+ * THE SIZE IS ToME'S, DELIBERATELY
  * ═══════════════════════════════════════════════════════════════════════════
- * Attempt one was the city itself, which made the whole game one town. Attempt
- * two stamped ellipses of terrain and cut L-shaped roads between them —
- * everything reachable, nothing that read as a place: hard blob edges, a
- * staircase coastline, roads that ignored the ground they crossed.
+ * `data/zones/wilderness/zone.lua` in the reference clone reads
+ * `width = 170, height = 100`, and this is that. 17,000 cells against the
+ * camera's 48x32, so the region is roughly four screens across and three down:
+ * crossing it is a journey with decisions in it rather than a walk.
  *
- * This is generated in the order the real thing happens, and every feature on
- * it is a CONSEQUENCE rather than a decision:
+ * It grew from 96x64 for one reason — that map was a diagram of a region and
+ * this is a region. The generator is unchanged; only its inputs are.
  *
- *   ELEVATION    a mountain spine plus four octaves of value noise, pulled down
- *                toward the south and east so the land ends in a sea
- *   RIVERS       start at the highest ground and walk DOWNHILL to the coast,
- *                carving as they go — so every river runs the way water runs
- *   MOISTURE     breadth-first distance from fresh water
- *   BIOMES       from (elevation, moisture), never hand-placed. Forest grows
- *                along the rivers, marsh sits in the wet hollows, heath is
- *                where nothing reaches, plains are the rest
- *   SETTLEMENTS  SCORED, not sited: flat, low, near water, far from each other
- *   ROADS        A* over a real cost field, so a road hugs a valley and takes a
- *                pass rather than a cliff — and a little positional jitter, or
- *                the cheapest line on flat ground is a dead straight one and
- *                the map grows forty-cell pipelines
+ * ═══════════════════════════════════════════════════════════════════════════
+ * GENERATED IN THE ORDER THE REAL THING HAPPENS
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Elevation from a mountain spine plus four octaves of value noise, pulled down
+ * toward the south and east so the land ends in a sea. Rivers that begin on the
+ * highest ground and walk DOWNHILL to the coast, carving as they go. Moisture
+ * as breadth-first distance from fresh water. Then biomes from (elevation,
+ * moisture) and nothing hand-placed: forest along the rivers, marsh in the wet
+ * hollows, heath where no water reaches, plains the rest. Settlements SCORED
+ * rather than sited — flat, low, near water, far apart. Roads by A* over a real
+ * cost field, so one hugs a valley and takes a pass rather than a cliff.
  *
- * THRESHOLDS ARE PERCENTILES, NOT HEIGHTS. Fixed cut-offs produced a region
- * that was 70% highland with nine cells of sea: after a ridge is added and the
- * field renormalised, the distribution of elevation is not something you can
- * predict. "The top 5% is bare rock" is true whatever the noise did.
+ * ═══ TWO THINGS THAT DO NOT SURVIVE A CHANGE OF SCALE, AND BOTH BIT ═══
+ * ELEVATION THRESHOLDS ARE PERCENTILES. Absolute cut-offs produced a region
+ * 70% highland with nine cells of sea, because after a ridge is added and the
+ * field renormalised the distribution is not something you can predict.
+ * MOISTURE BANDS ARE FRACTIONS OF THE MAP. They are DISTANCES, so the values
+ * tuned at 96x64 put almost every cell in the driest bucket here and heath went
+ * from a tenth of the land to two fifths. Both are now expressed against the
+ * map's own size, which is what makes 170x100 the same world as 96x64 rather
+ * than a differently-broken one.
  *
  * ═══ THE WALKABLE GROUND IS THE MAP, AND THE REST IS WALLS ═══
- * Forest, mountain, crag and water BLOCK MOVEMENT — ToME's own rule, verified
- * in the reference clone (`data/zones/wilderness/grids.lua` gives FOREST
- * `does_block_move = true`). The light ground threading between dark masses IS
- * the route, and a mountain you could walk over would delete every decision the
- * geography makes for you.
+ * Forest, mountain, crag and water BLOCK MOVEMENT — ToME's own rule
+ * (`grids.lua` gives FOREST `does_block_move = true`). The light ground
+ * threading between dark masses IS the route.
  *
- * ═══ IT IS AUTHORED DATA, NOT A GENERATOR THE GAME RUNS ═══
- * The generator ran once, offline, and its output is frozen below. The city is
- * something players learn, and a world that reshuffled on restart is a world
- * nobody can know. Procedural INNER-worlds are still the plan; this is not one.
+ * ═══ AUTHORED DATA, NOT A GENERATOR THE GAME RUNS ═══
+ * The generator ran once, offline (tools/worldgen.py), and its output is frozen
+ * below. A world that reshuffled on restart is a world nobody can learn, and
+ * knowing the map is most of what an overworld is for.
  *
  * ═══ VERIFIED ═══
- * 6,144 cells, far past what anyone can read for the mistake that matters — a
- * settlement nobody can reach. Flood-filled from Alderbrook with corner-cutting
- * enabled (world.ts:852-856): 9 sites reachable, 0 of 2,862 walkable cells
- * marooned. test/shared/overworld.test.ts re-runs it on every commit.
+ * 17,000 cells. Flood-filled from Alderbrook with corner-cutting enabled
+ * (world.ts:852-856): 13 sites reachable, 0 of 9,114 walkable cells marooned.
+ * test/shared/overworld.test.ts re-runs it on every commit.
  */
 const ALDERBROOK_ROWS: readonly string[] = [
-  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-  'XXXXXXXXXXXTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWXX',
-  'XXXTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwwwwwwwWXX',
-  'XXXTTTTTTTTTTTTTTTTccccccccccccccccccccccccccccccwcchhhhhhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTTT;;;wWXX',
-  'XXXTTTTTTTTTTcccccccccccccccccccccccccccccccccccwcccchhhhhhhhhhwTTTTTTTTTTTTTTTTTTTTTTTTTTT;wWXX',
-  'XXXTTTTTTTccccccccccccccccccccccccccccMMMMMMMMMwcccccchhhhhh##w,w##TTTTTTTTTTTTTTTTTTTTTTTT;wWXX',
-  'XXTTTTTTTcccccccccccccccccccccccccccMMMMMMMMMMwMMMcccccchhhh##,,,##TwwwwwwwwTTTTTTTTTTTTTTT;wWXX',
-  'XXTTTTTcccccccccccccccccccccccccccMMMMMMMMMMMwMMMMcccccccchhw,,F,,wwTTTTTTTTwwwTTTTTTTTTTTT;wWXX',
-  'XXTTTccccccccccccccMMMMMMMMcMMMMMMMMMMMMMMMMwMMMMMMMcccccccw,,,,,,,TTTTTTTTTTTTwwwwTTTTTTTT;wWXX',
-  'XXTTccccccccccccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccccwc,,,,,,,TTTTTTTTTTTTTTTTwwwTTTTT;wWXX',
-  'XXTTcccccccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMcwccchh...TTTTTTTTTTTTTTTTTTTTw;TTT;wWXX',
-  'XXTTcccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwcccchhhh.TTTTTTTTTTTTTTTTTTTTTw;TT;wWXX',
-  'XXTTccMMMMMMMMMMMMMcccccMMMMMMMMMMMMMMMMMcccccMMMMMMMMMwMMcccchhh......pppppTTTTTTTTTTT;w;T;wWXX',
-  'XXTTccMMMMMMMMMMccccccccccccccMMMMccccccccccccccMMMMMMwMMMcccchhhhhhhh.ppppppppTTTTTTTTT;w;swWXX',
-  'XXTTccMMMMMMMccccccccccccccccccccccccccccccccccccMMMMMMMMMccccchhhhhhh.hppppppppppp##,,,##wwwWXX',
-  'XXTTccMMMMMcccccccchhhhhcccccccccccccccccccccccccccMMMMMMMccccchhhhhhh.hhpppppppppp##,,,##;swWXX',
-  'XXTTcccMcccccccchhhhhhhhhhhhhhAhhcccccccccccccccccccMMMMMcccccchhhhhhh.hhhppppppppp,,,P,,,TswWXX',
-  'XXTTccccccccccchhhhhhhhhhhhhhh.hhhhhhhhhhhhhhccccccccMMMcccccccchhhhhh.hhhhpppppppp,,,,,,,TswWXX',
-  'XXTTcccccccccchhhhhhheeeehhhhh.hhhhhhhhhhhhhhhhccccccccccccccccchhhhhh.hhhhhppppppp,,,,,,,TswWXX',
-  'XXTTcccccccchhhhhhheeeeeeeeeee.ehhhhhhhhhhhhhhhhhccccccccccccccchhhhhh.hhhhhhppppppppp.TTTTswWXX',
-  'XXTTcccccchhhhhhhheeeeeeeeeeee.eehhhhhhhhhhhhhhhhhccccccccccccchhhhhhh.hhhhhhhpppppppp.TTTTswWXX',
-  'XXTTcccchhhhhhhheeeeeeeeeeeeee.eeehhhhhhhhhhhhhhhhhcccccccccccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
-  'XXTThchhhhhhhhheeeeeeeeeeeeeee.eeeeeehhhhhhhhhhhhhhhccccccccccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
-  'XXTThhhhhhhhhpppeeeeeeeeeeeeee.eeeeeeehhhhhhhhhhhhhhhccccccwccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
-  'XXTThhhhhhhhppppeeeeeeeeeeeeee....eeeehhhhhhhhhhhhhhhhhhccwcccchhhhhhh.hhhhhhhhppppppp.TTTTswWXX',
-  'XXTThhhhhhhhppppeeeeeeeeeeeeeeeee.eeehheehhhhhhhhhhhhhhhhwcccccchhh...U..........ppppp.TTTTswWXX',
-  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeee.eehheeeehhhhhhhhhhhhhhwccccccchh..hhhhhhhhhhpp..pppp.TTTsswWXX',
-  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeee.........hhhhhhhhhhhhhwhhhccccc...hhhhhhhhhheppp..ppp.TTTsswWXX',
-  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeeeep..hh##,,,##hhwhhhhhhhhh.hhhhhhhhhhheepppp.ppp.TTTsswWXX',
-  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeeeppp..h##,,,##hwh..........hhhhhhhhhhheepppp.ppp.TTTsswWXX',
-  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeeppppp..,,,B,,,=...hhhhhhhhhhhhhhhhhhhheepppp..pp.TTTsswWXX',
-  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeeppppppph,,,,,,whhhhhhhhhhhhhhhhhhhhhhhheeppppp##,,,##sswWXX',
-  'XXTThhhhhhhpppppeeeeeeeeeeeeeeeeeeeeppppppppp,,,,,w,hhhhhhhhhhhhhhhhhhhhhhhheeppppp##,,,##sswWXX',
-  'XXTThhhhhhppppppeeeeeeeeeeeeeeeeeeeeepppppppp...hhhwhhhhhhhhhhhhhhhhhhhhhhhheeppppp,,,H,,,sswWXX',
-  'XXTTThhhhpppppppeeeeeeeeeeeeeeeeeeeeepppppppp.hhhhhwhhhhhhhhhhhhhhhhhhhhhhheeeppppp,,,,,,,sswWXX',
-  'XXwTTThhpppppppppeeeeeeeeeeeeeeeeeeeepppppppp.ThhhTwThhhhhhhhhhhhhhhhhhhhheeeeppppp,,,,,,,sswWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeepppppppp.TTTTTwTThhhhhhhhhhhhhhhhhhhheeeepppppppppTTssswWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeepppppppp.TTTTTwTTTTThhhhhhhhhhhhhhheeeeepppppppppTTsssswWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeppppppp.pTTTTTwTTTTThhhhhhhhpeeeeeeeeepppppppppTTssssswWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeppppppp.pTTTTTwTTTTTphhhhppppeeeeeeeepppppppppTTTssswwwWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeepppppp.ppTTTTTwTTTTTpppppppppeeeeeepppppppppTTTsswwwwwWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeepppppp.ppTTTTTwTTTTTpppppppppeeeeeepppppppppTTTsswwwwwWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeepppppp.ppTTTTTwTTTTTpppppppppeeeeepppppppppTTTsswwwwwwWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeeeppppp.pppTTTTTwTTTTTpppppppppeeepppppppppTTTssswwwwwwWXX',
-  'XXwTTTTTpppppppppeeeeeeeeeeeeeeeeeeeeeeeppppp.pppTTTTTwTTTTTpppppppppeepppppppppTTTsswwwwwwwwWXX',
-  'XXwTTTTTppppppppppppppppppppppppppppppppppppp.pppTTTTTwTTTTTpppppppppppppppppppTTTsswwwwwwwwwWXX',
-  'XXwTTTTTppppppppppppppppppppppppppppppppppppp.pppTTTT;w;TTTTppppppppppppppppppTTTsswwwwwwwwwwWXX',
-  'XXwTTTTTCC,,,CCpppppppppppppppppppppppppp.....pppTTTT;w;TTTTpppppppppppppppppTTTsswwwwwwwwwwWWXX',
-  'XXwTTTTTCC,,,CCppppppppppppppppppppppppp..pppppppTTTT;w;TTTTppppppppppppppppTTTTswwwwwwwwwwwWWXX',
-  'XXwwTTTT,,,G,,,.........pppppppppppppppp.pppppppTTTT;w;TTTTpppppppppppppppppTTTsswwwwwwwwwwwWWXX',
-  'XXwwTTTT,,,,,,,pppppppp.pppppppppppppCC,,,CCpppTTTT;w;TTT##,,,##ppppppppppppTTTsswwwwwwwwwwwWWXX',
-  'XXwwTTTT,,,,,,,pppppppp....ppppppppppCC,,,CCpTTTTsswsTTTT##,,,##pppppppppppTTTTswwwwwwwwwwwwWWXX',
-  'XXwwTTTTTppppppppppppppppp...........,,,O,,,.......=.....,,,R,,,pppppppppppTTTsswwwwwwwwwwwwWWXX',
-  'XXwwTTTTTpppppppppppppppppppppppppppp,,,,,,,Tsssssswsssss,,,,,,,TTTpppppppTTTsswwwwwwwwwwwwwWWXX',
-  'XXwwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT,,,,,,,Tssssswwwwsss,,,,,,,TTTTTTTTTTTTTswwwwwwwwwwwwwwWWXX',
-  'XXWwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTsssswwwwwwwwwwsssssTTTTTTTTTTTTTTsswwwwwwwwwwwwwwWWXX',
-  'XXWwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTssswwwwwwwwwwwwwwssssTTTTTTTTTTTTsswwwwwwwwwwwwwwwWWXX',
-  'XXWwTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTssswwwwwwwwwwwwwwwwsssssssssTTTTTTswwwwwwwwwwwwwwWWWWXX',
-  'XXWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwTTTT;;;;sswwwwwwwwwwwwwwwwwwwwwwwwwsss;;;;sswwwwwwwwwwwwwWWWWWXX',
-  'XXWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWXX',
-  'XXWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
-  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  'XXwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwwwwwss;;;;;;;;...............;;w;;TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwws.........................wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWXX',
+  'XXwwTTTTTw##,,,##TT.TTTTTTTTTTTT##,,,##TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTCC,,,CCTTTTTTTTTTTTTTTTTTTT.TTTT##,,,##TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwwwwwwwwwwwwwwwwwWWXX',
+  'XXwwThhhhh##,,,##...cccccccccccc##,,,##hcccccccccccccccccccccccccccccccccchhhhCC,,,CChhhhcccchhhhhhhhhhhh.hhhh##,,,##TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;;;;;;sssswwwWWXX',
+  'XXwwThhhhh,w,B,,,.hccccccccccccc,,,F,,whccccccccccccccccccccccccccccccccccchhh,w,G,,,ccccccccchhhhhhhhhhh.....,,,S,,,TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;;;;ssswwwWWXX',
+  'XXwTThhhhhw,,,,,,hcccccccccccccc,,,,,w,ccccccccccccccMMMMMMMcccccccccccccccchhw,,,,,,cccccccccccccchhhhhhh.hhh,,,,,,,TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTssswwWWXX',
+  'XXwTThhhhhw,,,,,,ccccccccccccccc,,,,w,,ccccccccccccMMMMMMMMMcccccccccccccccccw,,,,,,,ccccccccccccccccchhhh.hhh,,,,,,,TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;swwwWWXX',
+  'XXwTTccchwhhhhhcccccccccccccccccccc.wcccccccccccccMMMMMMMMMMMccccccccccccccccwccccccccccccccccccccccccchhh.hhhhhT.TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;swwwWWXX',
+  'XXTTTccccwccccccccccccccccccccccccc.wccccccccccMMMMMMMMMMMMMMMMccccccccccccccwcccccccccccccccccccccccccchh.hhhhhT.TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTsswwWWXX',
+  'XXTTTcccccwcccccccccccccccccccccccc.wcccccccccMMMMMMMMMMMMMMMMMMccccccccccccwcccccccccccccccccccccccccccch.hhhhhT.TTpppTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTsswwWWXX',
+  'XXTTTcccccwcccccccccccccccccccccccc.wcccccccMMMMMMMMMMMMMMMMMMMMMcccccccccccwcccccMMMMMMMcccccMMMMccccccch.hhhhhp.pppppppppppppppppppppppppppppppppppTTTTTTTTTTTTTsswwWWXX',
+  'XXTTcccccccwccccccccccccccccccccccc.wccccccMMMMMMMMMMMMMMMMMMMMMMMMcccMMMcccwccccMMMMMMMMMMMMMMMMMMccccccc.hhhhhp..pppppppppppppppppppppppppppppppppppppppppTTTTTT;swwWWXX',
+  'XXTTccccccccwccccccccMMMMMMMMMMcccc=cccccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccwccMMMMMMMMMMMMMMMMMMMMccccccc.hhhhhpp.pppppppppppppppppppppppppppppppppppppppppTTTTTT;swwWWXX',
+  'XXTTccccccccwcccccccMMMMMMMMMMMMMMc.wMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccwcMMMMMMMMMMMMMMMMMMMMMccccccc.hhhhhpp.pppppppppppppppppppppppppppppppppppppppppTTTTTT;swwWWXX',
+  'XXTTcMMMMMccwccccccMMMMMMMMMMMMMMMM.MwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMcwMMMMMMMMMMMMMMMMMMMMMMccccccc.hhhhhpp.ppppppppppppppppppppppppppppppppppppppppppTTTTTTsswWWXX',
+  'XXTTcMMMMMMMwccMMMMMMMMMMMMMMMMMMMM.MMwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMMMMMMMMMMMMMcccccccc.hhhhhpp.ppppppppppppppppppppppppppppppppppppppppppTTTTTTsswWWXX',
+  'XXTTcMMMMMMwMMMMMMMMMMMMMMMMMMMMMMM.MMMwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMMMMMMMMcccccccccccc.hhhhppp.pppppppppppppppppppppppppppppppppppppp##,,,##TTTsswWWXX',
+  'XXTTcMMMMMwMMMMMMMMMMMMMMMMMMMMMMMM.MMMMwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMMMMMcccccccccccccc.hhhhppp.pppppppppppppppppppppppppppppppppppppp##,,,##TTssswWWXX',
+  'XXTTcMMMMwMMMMMMMMMMMMMccccccMMMMMM.MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccMMMMMMMMMMMMMMMMMMMMMMcccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppppp,,,R,,,TTssswWWXX',
+  'XXTTcMMMwMMMMMMMMMMMccccccccccccccc.cMMMMMMMMMMMMMMMMMMMMMMMMMMMMccccccccccMMMMMMMMMMMMMMMccccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppppp,,,,,,,sssswwWWXX',
+  'XXTTcMMMMMMMMMMMMcccccccccccccccccc.ccMMMMMMMMMcccccccccccMMMMMMcccccccccccccMMMMMMMMMMMMcccccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppppp,,,,,,,sssswwWWXX',
+  'XXTTcMMMMMMMMMMcccccccccccccccccccc.cccccccccccccccccccccccMMMMccccccccccccccccMMMMMMMMcccccccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppppp.TTTTTTsswwwwWWXX',
+  'XXTTcMMMMMMMMcccccccccccccccccccccc.ccccccccccccccccccccccccMMcccccccccccccccccccMMMcccccccccccccccccccchh.hhhpppp.pppppppppppppppppppppppppppppppppppppp.TTTTTTsswwwwWWXX',
+  'XXTTcMMMMMMMccccccccccccccccccccccc.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccchhh.hhhpppp.pppppppppppppppppppppppppppppppppppppp.TTTTTTsswwwwWWXX',
+  'XXTTcMMMMMMcccccccccccccccccccccccc.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccchhhhh.hhhpppp..ppppppppppppppppppppppppppppppppppppp.pTTTTTssswwwWWXX',
+  'XXTTcMMMMccccccccccccccchhcchhhhccc.ccccccccccccccccccccccccccccccccccchcccccccccccccccccccccccccccchhhhhh.hhpppppp.eeepppppppppppppppppppppppppppppppppp.ppTTTTTsssswWWXX',
+  'XXTTcMccccccccccccccccchhhhhhhhhhhh.cccccccccccccccccccccccccccccchhhhhhhhcccccccccccccccccchhccchhhhhhhhh.hheeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTssswWWXX',
+  'XXTTccccccccccccchhhhhhhhhhhhhhhhhh.hccccccccccccccccccccccccccchhhhhhhhhhccccccccccccccchhhhhhhhhhhhhhhhh.hheeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTTsswWWXX',
+  'XXTTccccccccccchhhhhhhhhhhhhhhhh..N.hhccccccccccccccccccccccccchhhhhhhhhhhhccccccccccccchhhhhhhhhhhhhhhhhh.hheeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTTsswWWXX',
+  'XXTTcccccccccchhhhhhhhhhhhhhhhhh.hh.hhhcccccccccch.A.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh.heeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;swWWXX',
+  'XXTTccccccccchhhhhhhhhhhhhhhhhhh.hh.hhhhhccccch....h.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh..eeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;swWWXX',
+  'XXTTcccccchhhhhhhhhhhhhhhhhhhhhh.hh.............hhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh..eeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wWWXX',
+  'XXTTccccchhhhhhhhhhhhhhhhhhhhhh..hhhhhhhhhhhhhhhhhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhee.eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wWWXX',
+  'XXTTcccchhhhhhhhhh..............hhhhhhhhhhhhhhhhhhhh...eeeeehhhhhhhhhhhhhhhhhhhhhpppppppeehhhhhhhhhhheee.eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTss;wWWXX',
+  'XXTTccchhhhhhhhhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhee.eeeeeeehhhhhhhhhhhhhhhhpppppppppeeeehhhhhhhhhheee.eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTs;;wWWXX',
+  'XXwTTchhhhhhhphhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheee.eeeeeeeehhhhhhhheehhhhpppppppppeeeeeeehhhhhhheee..eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wWWXX',
+  'XXwTThhhhhhp.......hhhhhhhhhhhhhhhhhhhhhhhhhhpehhheeee.......eeehhhhhhheeephpppppppppeeeeeeeeehhhhheeee.eeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wwWXX',
+  'XXwTThhhhhh..ppphhhhhhhhhhhhhhhhhhhhhhhhhhhppeeeeeeeeeeeeeee....hhhhhheeeeepppppppppeeeeeeeeeeehhhe.....eeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppp...pppTTTTTT;;wwWXX',
+  'XXwTThhhhh..pppphhhhhhhhhhhhhhhhhhhhhhhhhpppeeeeeeeeeeeeeeeeeee.....................................eeeeeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppp.pppppTTTTTT;;wwWXX',
+  'XXwTThhhhh.hppphhhhhhhhhhhhhhhhhhhheeepppppeeeeeeeeeeeeeeeeeeeeeehhhhheeeeeeepppppeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppp...pppppTTTTTT;;wwWXX',
+  'XXwTThhhhh.hhhhhhhhhhhhhhhhhhhhhhhheeeepppeeeeeeeeeeeeeeeeeeeeeeeehhhheeeeeeeepppeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehU......eeeeeeeeeeeeeeeeeeepppppppp.pppppppTTTTTTT;wwWXX',
+  'XXwTThhhhh.hhhhhhhhhhhhhhhhhhhhhhhheeeeepeeeeeeeeeeeeeeeeeeeeeeeehhhheeeeeeeeeepeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhheeee..eeeeeeeeeeeeeeeeeepppppppp.pppppppTTTTTTTTwwWXX',
+  'XXwTThhhh..hhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhheehhe..eeeeeeeeeeeeeeeeepppppppp.pppppppTTTTTTTTwwWXX',
+  'XXwTTh....hhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhehhhhe.......eeeeeeeeeeeppppp....pppppppTTTTTTTTwwWXX',
+  'XXwTTh.hhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhheeeeee.eeeeeeeeeeepppp..ppppppppppTTTTTTTTwwWXX',
+  'XXwTTh.hhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhheeeeheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhhheeeee.eeeeeeeeeeeepp..ppppppppppppTTTTTTTwwWXX',
+  'XXwTTh.hhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhheeehheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhhheeeee.eeeeeeeeeeeepp.pppppppppppppTTTTTTTwwWXX',
+  'XXwTTh.hhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhheeeheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhhheeeee.eeeeeeeeeeeep..pppppppppppppTTTTTTTwwWXX',
+  'XXw##,,,##hhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeehheeeeeehhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhheeeeeee.eeeeeeeeee....ppppppppppppppTTTTTTTwwWXX',
+  'XXw##,,,##hhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeehheeeeeehhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhheeeeeeeee..eeeee.....eppppppppppppppppTTTTTTTwwWXX',
+  'XXw,,,P,,,.hhhhhhhhhhhhhhhhhhhhhhhhheeheeeeeeeeeeeeeeeeeeeeehheeeeeehhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhheeeeeeeeeeee.eee...eeeeeppppppppppppppppTTTTTTTwwWXX',
+  'XXw,,,,,,,.hhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeehhhhheeeehhhhhhhhheeeehheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee...e.eeeeeeeppppppppppppppppTTTTTTTwwWXX',
+  'XXww,,,,,,...hhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeehhhhhhheehhhhhhhhhhhehhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeppeeee.e.eeeeeeeppppppppppppppppTTTTTTTwwWXX',
+  'XXwwTTTTThhh.hhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeehhheeeeeeeeeeeeeeeeeeeeeeeppppe..D..eeeeeeeppppppppppppppppTTTTTTTwwWXX',
+  'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeehhhhheeeeeeeeeeeeeeeeeeeeeppppp..eeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
+  'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeepppppp.peeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
+  'XXwwTTTTThhh.hhhhpppphhhhhhhheeehhhhhhheeeeeeeeeeeeeehhhhhheehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeepppppp..pppeeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
+  'XXwwTTTTTThh.hhhppppphhhhhhheeeeehhhhhheeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeppppppp.pppppeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
+  'XXWwTTTTTTTT.hhhpppppphhhhhpeeeeehhhhheeeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeepppppppp.ppppppeeeeeeppppppppppppppppTTTTTT;;wwWXX',
+  'XXWwTTTTTTTT..ppppppppppppppeeeeeehhhhppeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeppppppppp.pppppppeeeeeppppppppppppppppTTTTTT;;wwWXX',
+  'XXWwTTTTTTTTp.ppppppppppppppeeeeepphhhppppeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeepppppppppp.ppppppppeeeeppppppppppppppppTTTTTT;;wwWXX',
+  'XXWwTTTTTTTTp..pppppppppppppeeppppphhhppppppeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhepppeeepeeeeeeppppppppppp.pppppppppeeeppppppppppppppppTTTTTT;;wwWXX',
+  'XXWwTTTTTTTTpp.pppppppppppppeppppppphpppppppppeeephhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhphhhhhhhhhhhhhhhhhhpppppppppeeeepppppppppppp.ppppppppppeeppppppppppppppppTTTTTT;;wWWXX',
+  'XXWwTTTTTTTTpp..pppppppppppppppppppppppppppppppppphhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhppphhhhhhhhhhhhhhhhhppppppppppeeppppppppppppp.pppppppppppeppppppppppppppppTTTTTT;;wWWXX',
+  'XXWwTTTTTTTTppp...pppppppppppppppppppppppppppppppphhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhppphhhhhhhhhhhhhhhhhhpppppppppppppppppppppppp.ppppppppppppppppppppppppppppTTTTTT;;wWWXX',
+  'XXWwTTTTTTTTppppp.pppppppppppppppppppppppppppppppphhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhppppphhhhhhhhhhhhhhhhhppppppppppppppppppppppp..pppppppppppppppppppppppppppTTTTTT;;swWWXX',
+  'XXWwTTTTTTTTppppp.....ppppppppppppppppppppppppppppphhhhhhhhhhhhhhhphhhhhhhhhhhhhhppppppphhhhhhhhhhhhhhhppppppppppppppppppppp....pppppppppppppppppppppppppppTTTTTTsswwwWWXX',
+  'XXWwTTTTTTTTppppppppp..pppppppppppppppppppppppppppppphhhhhhhhhhhhpppphhhhhpphhhhppppppppppphhhhhhhhhhhhppppppppppppppppppppp.........pppppppppppppppppppppTTTTTT;swwwwWWXX',
+  'XXWwTTTTTTTTpppppppppp........pppppppppppppppppppppppphhhhhhhhhhhpppppphhpppphhppppppppppppppphhhhhhhhpppppppppppppppppppp....TTpppp..........pppppppppppTTTTTT;swwwwwWWXX',
+  'XXWwTTTTTTTTppppppppppppppppp.pppppppppppppppppppppppphhhhhhhhhppppppppppppppppppppppppppppppphhhhhhhhpppppppppppppppppCC,,,CCTTTpppppppppppp.ppppppppppTTTTTT;swwwwwwWWXX',
+  'XXWwTTTTTTTTppppppppppppppppp.CC,,,CCppppppppppppppppphhhhhhhhhpppppppppppppppppppppppppppppppphhhhhhppppppppppppppppppCC,,,CCTTTTppppppppppp.pppppppppTTTTTT;swwwwwwwWWXX',
+  'XXWwTTTTTTTTppppppppppppppppppCC,,,CCpppppppppppppppppppppphhhpppppppppppppppppppppppppppppppppphhppppppppppppppppppppp,,,O,,,TTTTTpppppppppp.......pppTTTTTT;swwwwwwwWWXX',
+  'XXWwTTTTTTTTpppppppppppppppppp,,,I,,,ppppppppppppppppppppppphpppppppppppppppppppppppppppppppppppppppppppppppppppppppppp,,,,,,,TTTTTTTpppppppppppppp.pppTTTTTTsswwwwwwwWWXX',
+  'XXWwTTTTTTTTpppppppppppppppppp,,,,,,,pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp,,,,,,,TTTTTTTTppppppppppppp.pppTTTTTTsswwwwwwwWWXX',
+  'XXWwTTTTTTTTpppppppppppppppppp,,,,,,,pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppTssssT;sTTTTTTTppppppppppp##,,,##TTTssswwwwwwwWWXX',
+  'XXWwTTTTTTTTpppppppppppppppppppppppTTTTTpppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppsssssssssssTTTTTTpppppppppp##,,,##TTTsswwwwwwwwWWXX',
+  'XXWwwTTTTTTTTppppppppppppppppppppTTTTTTTTTppppppppppppTTTTTpppppppppppppppppppppppTTTTTpppppppppppppppppppppppppppppppsssssssswwssTTTTTTTppppppppp,,,H,,,TTTsswwwwwwwwWWXX',
+  'XXWwwTTTTTTTTpppppppppppppppppTTTTTTTTTTTTTTpppppppppTTTTTTTTTTTpppppppppppppppppTTTTTTTTTppppppppppppppTTTpppTpppppppTssssssswwsssTTTTTTTpppppppp,,,,,,,TssswwwwwwwwwWWXX',
+  'XXWwwTTTTTTTTppppppppppppppppTTTTTTTTTTTTTTTTTpppTTTTTTTTTTTTTTTTTTTTTTTTTTpppTTTTTTTTTTTTTTppTTTTTTTTTTTTTTTTTTppppppTTsssssswwsssssTTTTTTppppppp,,,,,,,ssswwwwwwwwwWWWXX',
+  'XXWWwTTTTTTTTpppppppppppppppTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppTTTTTTsswwssssssTTTTTTpppppppTTTTTssswwwwwwwwwwWWWXX',
+  'XXWWw;TTTTTTTTpppppppppppppTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTppppTTTTTTsssssswwssTTTTTTpppppTTTTTTsswwwwwwwwwwwWWWXX',
+  'XXWWw;;TTTTTTTTTpTTTTTTTTTTTTTTTTTT;;ss;TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTppTTTTTTTssswwwwssTTTTTTppppTTTTTTT;swwwwwwwwwwwWWWXX',
+  'XXWWw;;TTTTTTTTTTTTTTTTTTTTTTTTTT;sssssss;TTTTTTTTTTTT;;ss;TTTTTTTTTTTTTTTTTTTTTTT;;;;;sTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;swwwwwwssTTTTTTpTTTTTTTTT;swwwwwwwwwwwWWWXX',
+  'XXWWw;;TTTTTTTTTTTTTTTTTTTTTTT;sssswwwwwss;;TTTTTTTTT;sssssssss;TTTTTTTTTTTTTTTTT;sssssss;TTTTTTTTTTTTTT;;;TTT;TTTTTTTTTTTTTTssswwwwwwssssTTTTTTTTTTT;;ssswwwwwwwwwwwWWWXX',
+  'XXWWw;;TTTTTTTTTTTTTTTTsssTTTsssswwwwwwwwwss;;TTT;;;sswwwwwsssssss;;;;;;;;;TTT;ssswwwwwsssssTT;sssssss;sssssssssTTTTTTTTTTTTTsswwwwwwwwsssTTTTTTTTTT;ssswwwwwwwwwwwwwWWWXX',
+  'XXWWw;;TTTTTsTTTTTTTTTsssssssswwwwwwwwwwwwwwss;;ssssswwwwwwwwwwwssssssssss;;;sssswwwwwwwwwsssssssssssssswwwssswssTTTTTTTTTTTsswwwwwwwwwssssTTTTTTTTsswwwwwwwwwwwwwwwwWWWXX',
+  'XXWWw;;TTTTsssTTTTTsssssssssswwwwwwwwwwwwwwwwwssswwwwwwwwwwwwwwwwwwwwwwwwwwssswwwwwwwwwwwwwwsswwwwwwwwwwwwwwwwwwss;TTTTTsssssswwwwwwwwwssssTTTTTTT;swwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWws;TTssssssssssssssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwssssssssssssswwwwwwwwwsssssTTTTTTsswwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWws;;ssswwwsssssssssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwsssssssssssswwwwwwwwsssssssT;;;sswwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWwsssswwwwwwwswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwsswwwwwwwwwwwwwwwwwsssssssssswwwwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwsssswwwwwwwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWwwwwwwwwWwwwwwwwwwwwWWWWWWWWWwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWwwwwwWWWWWWwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
 ];
 
-/**
- * The legend. Every character is a real TileCode; nothing defaults.
- *
- * SITE GLYPHS CARRY THE GROUND THEY SIT ON, so a site never punches a hole in
- * the terrain layer and a build with no `tile_ow_site_*` art draws ordinary
- * ground rather than a violet box.
- */
+/** The legend. Every character is a real TileCode; nothing defaults. */
 const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
   '.': { tile: TileCode.COBBLE },
   ',': { tile: TileCode.PAVING },
@@ -399,18 +429,21 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
    * Alderbrook. The hub, the only spawn, and "the one fixed point the Index
    * cannot overwrite" (docs/game-design.md s1). Every player starts at its gate,
    * so the first thing you see on connecting is another player rather than
-   * empty country. The generator SCORED this spot rather than being told it:
-   * flat, low, beside the river, far from the other settlements.
+   * empty country. The generator SCORED this spot rather than being told it.
    */
   O: { tile: TileCode.PAVING, spawn: true, site: 'site:alderbrook' },
   R: { tile: TileCode.PAVING, site: 'site:threadneedle_row' },
   H: { tile: TileCode.PAVING, site: 'site:ashwick_row' },
   P: { tile: TileCode.PAVING, site: 'site:wayfarers_camp' },
+  S: { tile: TileCode.PAVING, site: 'site:saints_rest' },
   B: { tile: TileCode.PAVING, site: 'site:blackwood_outskirts' },
   F: { tile: TileCode.PAVING, site: 'site:gearford_ward' },
   G: { tile: TileCode.PAVING, site: 'site:glass_archive' },
   U: { tile: TileCode.HILLS, site: 'site:underworks' },
   A: { tile: TileCode.HILLS, site: 'site:watchers_altar' },
+  N: { tile: TileCode.HILLS, site: 'site:hollow_mine' },
+  D: { tile: TileCode.HILLS, site: 'site:drowned_chapel' },
+  I: { tile: TileCode.PAVING, site: 'site:outer_index' },
 };
 
 const ALDERBROOK = parseMap(ALDERBROOK_ROWS, ALDERBROOK_LEGEND);

@@ -24,7 +24,7 @@ import type { LevelView } from '../../src/shared/protocol.ts';
 const OVERWORLD = makeOverworld();
 
 /** Alderbrook's gate. Every player starts here, so it anchors every claim. */
-const ALDERBROOK = { x: 40, y: 53 };
+const ALDERBROOK = { x: 122, y: 73 };
 
 /**
  * Flood fill from a tile, EIGHT-WAY WITH CORNER CUTTING.
@@ -63,10 +63,13 @@ function reachableFrom(level: LevelView, from: { x: number; y: number }): Set<st
 }
 
 describe('the region — shape', () => {
-  it('is 96x64 with a tile for every cell', () => {
-    expect(OVERWORLD.view.w).toBe(96);
-    expect(OVERWORLD.view.h).toBe(64);
-    expect(OVERWORLD.view.tiles).toHaveLength(96 * 64);
+  it("is 170x100 — ToME's own wilderness size — with a tile for every cell", () => {
+    // `data/zones/wilderness/zone.lua` in the reference clone reads
+    // `width = 170, height = 100`. Roughly four camera screens across and three
+    // down, so crossing the region is a journey rather than a walk.
+    expect(OVERWORLD.view.w).toBe(170);
+    expect(OVERWORLD.view.h).toBe(100);
+    expect(OVERWORLD.view.tiles).toHaveLength(170 * 100);
   });
 
   it('spawns every player at Alderbrook and nowhere else', () => {
@@ -168,20 +171,24 @@ describe('it is wilderness, not a town', () => {
     // what makes the north-west a barrier instead of scenery. Counted rather
     // than eyeballed so thinning it out is a test failure.
     const peaks = OVERWORLD.view.tiles.filter((t) => t === TileCode.MOUNTAIN).length;
-    expect(peaks).toBeGreaterThan(250);
+    expect(peaks).toBeGreaterThan(700);
   });
 });
 
 describe('every settlement can be reached on foot', () => {
   const reach = reachableFrom(OVERWORLD.view, ALDERBROOK);
 
-  it('places all nine sites', () => {
+  it('places all thirteen sites', () => {
     expect([...OVERWORLD.sites.values()].sort()).toEqual([
       'site:alderbrook',
       'site:ashwick_row',
       'site:blackwood_outskirts',
+      'site:drowned_chapel',
       'site:gearford_ward',
       'site:glass_archive',
+      'site:hollow_mine',
+      'site:outer_index',
+      'site:saints_rest',
       'site:threadneedle_row',
       'site:underworks',
       'site:watchers_altar',
@@ -221,28 +228,27 @@ describe('every settlement can be reached on foot', () => {
     // are bounded by the reachable cell count, so this is the number that
     // decides whether "walk to the Glass Archive" answers 'no route to that
     // tile' — a lie about the map, and the one divergence a player notices.
-    expect(reach.size).toBe(2862);
+    expect(reach.size).toBe(9114);
     expect(reach.size).toBeLessThan(OVERWORLD.view.w * OVERWORLD.view.h + 1);
   });
 
   it('routes clear across the region under the travel budget', () => {
-    // THE REGRESSION THIS FILE EXISTS FOR: a long legal journey — the Watcher's
-    // Altar high in the northern range to the Glass Archive on the south-west
-    // coast — must return a route rather than null.
+    // THE REGRESSION THIS FILE EXISTS FOR: a long legal journey across the whole
+    // region must return a route rather than null. At 170x100 this is also the
+    // test that the pathfinder's `w * h` ceiling is still enough.
     const route = findPath(
-      { x: 30, y: 17 },
-      { x: 11, y: 50 },
+      { x: 51, y: 31 },
+      { x: 149, y: 78 },
       (x, y) => canWalk(OVERWORLD.view, x, y),
       { maxNodes: OVERWORLD.view.w * OVERWORLD.view.h + 1 },
     );
     // `[]` and null are different answers (path.ts:303-311): [] means "you are
     // already there", null means "no route". Neither is acceptable here.
     expect(route).not.toBeNull();
-    // Chebyshev is 33 and the answer is 33: the two are on opposite sides of
-    // the map but the walkable ground between them happens to admit a clean
-    // diagonal, which is a fact about this world and not a weaker assertion —
-    // anything SHORTER would mean the pathfinder cheated through a mountain.
-    expect(route?.length ?? 0).toBeGreaterThanOrEqual(33);
+    // The Watcher's Altar in the northern range to Ashwick on the far south
+    // coast — Chebyshev 98, and anything SHORTER would mean the pathfinder
+    // cheated through a mountain.
+    expect(route?.length ?? 0).toBeGreaterThanOrEqual(98);
   });
 });
 

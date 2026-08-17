@@ -82,8 +82,8 @@ describe('the overworld', () => {
 
   it('holds the region, not the test level', () => {
     const realms = makeRealms();
-    expect(realms.overworld.world.level.w).toBe(96);
-    expect(realms.overworld.world.level.h).toBe(64);
+    expect(realms.overworld.world.level.w).toBe(170);
+    expect(realms.overworld.world.level.h).toBe(100);
   });
 
   it('has no hostiles, and that is load-bearing rather than flavour', () => {

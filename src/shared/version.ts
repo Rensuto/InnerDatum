@@ -430,6 +430,24 @@
  * third must not undo it out of tidiness.
  *
  * ═══════════════════════════════════════════════════════════════════════════
+
+ * 12 -> 13 (MARKERS WITHOUT THE MAP). `ServerMsg` gains `SitesMsg`.
+ *
+ * An ADDITION an old client ignores, which by the rule this file has applied
+ * since v5 would not force a bump on its own -- and it does here, because of
+ * what the addition is FOR. The roamers wander every few turns; a v12 client
+ * cannot name `sites`, so it drops every one and keeps drawing the markers it
+ * received in its last `realm` frame. The overworld would then show visible
+ * danger standing still on tiles it has already left, and a player would route
+ * around a threat that is not there and walk into one that is. A frame that is
+ * merely missing is survivable; one whose absence FREEZES a moving thing on
+ * screen is the permanently-wrong shape that forced 6 -> 7 and 9 -> 10.
+ *
+ * The region also grew to ToME'''s 170x100, which needs no bump of its own --
+ * `LevelView` carries its own dimensions and always has.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing persisted changed shape.
+ *
  * 11 -> 12 (THE WILDERNESS). Six terrain codes: PLAINS, HILLS, HEATH,
  * MOUNTAIN, CRAG, DEEPWATER.
  *
@@ -466,7 +484,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

@@ -800,6 +800,13 @@ let realmName: string | null = null;
  * does not know where anything is and must not draw guesses.
  */
 let sites: readonly SiteView[] = [];
+/**
+ * Which realm the markers above belong to, so a `sites` frame that crossed a
+ * realm change in flight is dropped rather than painting another map's towns
+ * onto this one. The server stamps every such frame with its realm for exactly
+ * this; without the check the failure is silent and looks like a rendering bug.
+ */
+let currentRealmId: string | null = null;
 let connection = 'connecting';
 let lastError: string | null = null;
 
@@ -7574,6 +7581,7 @@ function applyServerMessage(msg: ServerMsg): void {
       realmKind = msg.kind;
       realmName = msg.name;
       sites = msg.sites;
+      currentRealmId = msg.realmId;
       lastError = null;
 
       // Mid-flight and about to be about the wrong world — the same four
@@ -7601,6 +7609,17 @@ function applyServerMessage(msg: ServerMsg): void {
       // NOT cleared, and each one is load-bearing: caseLog, party, partyState,
       // inviteDeadlines, inventory, progress. See the block above.
       setMarginText(undefined, `You are in ${msg.name}.`);
+      break;
+    /**
+     * THE MARKERS MOVED, AND NOTHING ELSE DID. See `SitesMsg`: the roamers
+     * wander every few turns while the level under them never changes, and
+     * re-sending `realm` to say so would ship 17,000 tiles to describe one
+     * marker stepping a cell.
+     *
+     * Absolute, like `ground` and `projectiles`: the table is REPLACED.
+     */
+    case 'sites':
+      if (msg.realmId === currentRealmId) sites = msg.sites;
       break;
     case 'state':
       // The dumb recovery path: a full list replaces everything known.

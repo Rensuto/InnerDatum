@@ -229,6 +229,7 @@ import type {
   PartyAction,
   ResourceView,
   ServerMsg,
+  SiteView,
   TurnEvent,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
@@ -3426,7 +3427,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       roamerSeq += 1;
       if (tickRoamers(full, roamerSeq)) {
         for (const session of sessions.values()) {
-          if (session.helloDone && session.realmId === full.id) sendRealm(session);
+          if (session.helloDone && session.realmId === full.id) sendSites(session);
         }
       }
     }
@@ -4447,6 +4448,59 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * SILENT WITH NO REGISTRY, which is the fallback rule this whole change rests
    * on: one world has no name to send and no id to send it under.
    */
+  /**
+   * Every marker on the realm this session is in: authored sites, the way out,
+   * and whatever is currently wandering.
+   *
+   * ONE BUILDER FOR TWO FRAMES. `realm` carries this list on arrival and
+   * `sites` carries it whenever the roamers move, and the two must never
+   * disagree about what a marker is — a settlement that changed shape depending
+   * on which frame last described it would be indistinguishable from a bug.
+   */
+  const markersFor = (realm: Realm): SiteView[] => {
+    const authored = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
+      const def = SITES.get(siteId);
+      if (def === undefined) return [];
+      const parts = cell.split(',');
+      return [{ x: Number(parts[0]), y: Number(parts[1]), marker: def.marker, name: def.name }];
+    });
+
+    // THE WAY OUT, inside a site only. The overworld's edge is the edge of the
+    // world and is already drawn as erased ground.
+    const exits =
+      realm.kind === RealmKind.Overworld
+        ? []
+        : realm.spawns.map((t) => ({ x: t.x, y: t.y, marker: 'gate', name: 'The way out' }));
+
+    const wandering = [...realm.roamers.values()].map((r) => ({
+      x: r.x,
+      y: r.y,
+      marker: 'breach',
+      name: r.name,
+    }));
+
+    return [...authored, ...exits, ...wandering];
+  };
+
+  /**
+   * The markers, without the map.
+   *
+   * Sent when the roamers move. `realm` would say the same thing and carry
+   * 17,000 tiles to do it — affordable at 96x64, and not at ToME's 170x100.
+   */
+  const sendSites = (session: Session): void => {
+    const realms = opts.realms;
+    if (realms === undefined || session.realmId === null) return;
+    const realm = realms.get(session.realmId);
+    if (realm === undefined) return;
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'sites',
+      realmId: realm.id,
+      sites: markersFor(realm),
+    });
+  };
+
   const sendRealm = (session: Session): void => {
     const realms = opts.realms;
     const actorId = session.actorId;
@@ -4464,55 +4518,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * missing is skipped rather than sent with a guessed marker — an
      * unexplained icon on a world map is worse than an absent one.
      */
-    const sites = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
-      const def = SITES.get(siteId);
-      if (def === undefined) return [];
-      const parts = cell.split(',');
-      return [
-        {
-          x: Number(parts[0]),
-          y: Number(parts[1]),
-          marker: def.marker,
-          name: def.name,
-        },
-      ];
-    });
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * THE WAY OUT IS DRAWN. AN INVISIBLE DOOR IS A TRAP IN BOTH DIRECTIONS.
-     * ═══════════════════════════════════════════════════════════════════════
-     * A site's threshold is its spawn tiles, and nothing on screen said so. The
-     * consequences were both reported from play: people left encounters by
-     * accident while walking (the threshold is in the corner they arrive in),
-     * and had no idea how to leave on purpose.
-     *
-     * Marked as a `gate`, which is the family the art already has, and named in
-     * plain words. Only inside a site — the overworld's "exit" is the edge of
-     * the world, and it is already drawn as erased ground.
-     */
-    const exits =
-      realm.kind === RealmKind.Overworld
-        ? []
-        : realm.spawns.map((t) => ({
-            x: t.x,
-            y: t.y,
-            marker: 'gate',
-            name: 'The way out',
-          }));
-
-    /**
-     * THE ROAMERS, drawn with the breach marker. Sent as sites because that is
-     * exactly what they are to a client — a thing on a cell you can walk into —
-     * and reusing the path means no new frame, no new renderer and no second
-     * way for a marker to be wrong.
-     */
-    const wandering = [...realm.roamers.values()].map((r) => ({
-      x: r.x,
-      y: r.y,
-      marker: 'breach',
-      name: r.name,
-    }));
-
+    // ONE BUILDER, shared with the `sites` frame — see `markersFor`.
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'realm',
@@ -4521,7 +4527,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       name: realm.name,
       level: view.level,
       actors: view.actors,
-      sites: [...sites, ...exits, ...wandering],
+      sites: markersFor(realm),
       selfId: actorId,
     });
   };

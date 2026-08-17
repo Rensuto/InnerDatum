@@ -43,9 +43,15 @@ import type { Realm, Roamer } from './realms.ts';
  *
  * Enough that you meet one on a long crossing and have to decide something;
  * few enough that the map is not a minefield and a careful player can still
- * cross it untouched. A first number, expected to move after a playtest.
+ * cross it untouched.
+ *
+ * SCALED WITH THE REGION. Seven was tuned against 6,144 cells; the map is now
+ * 17,000, so seven would have been a rumour rather than a hazard. Eighteen
+ * keeps roughly the same density -- about one per five hundred cells -- which
+ * is the number that was actually playtested, expressed against the map that
+ * exists.
  */
-export const MAX_ROAMERS = 7;
+export const MAX_ROAMERS = 18;
 
 /** One step every this many game turns, so they drift rather than chase. */
 const MOVE_EVERY_TURNS = 3;

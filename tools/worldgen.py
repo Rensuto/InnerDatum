@@ -26,7 +26,7 @@ never runs this.
 
 import math
 
-W, H = 96, 64
+W, H = 170, 100   # ToME's wilderness is 170x100 (data/zones/wilderness/zone.lua)
 SEED = 20260817
 
 
@@ -80,7 +80,14 @@ for y in range(H):
 # THE SPINE. A ridge from the north-west to the centre-north, raised by distance
 # to a poly-line. This is what gives the region one dominant range instead of
 # noise-blobs of high ground scattered everywhere.
-SPINE = [(8, 14), (20, 11), (32, 12), (44, 9), (54, 14)]
+SPINE = [
+    (int(W * 0.05), int(H * 0.22)),
+    (int(W * 0.14), int(H * 0.17)),
+    (int(W * 0.23), int(H * 0.19)),
+    (int(W * 0.34), int(H * 0.14)),
+    (int(W * 0.45), int(H * 0.20)),
+    (int(W * 0.56), int(H * 0.15)),
+]
 
 
 def dist_to_spine(x, y):
@@ -96,7 +103,7 @@ def dist_to_spine(x, y):
 
 for y in range(H):
     for x in range(W):
-        ridge = max(0.0, 1.0 - dist_to_spine(x, y) / 13.0)
+        ridge = max(0.0, 1.0 - dist_to_spine(x, y) / (W * 0.135))
         elev[y][x] += ridge ** 1.6 * 0.85
 
 # THE COAST. Pull elevation down toward the south and east edges so the land
@@ -104,14 +111,14 @@ for y in range(H):
 # one open coast reads as somewhere, a symmetric island reads as a logo.
 for y in range(H):
     for x in range(W):
-        ex = max(0.0, (x - 58) / 38.0)
-        ey = max(0.0, (y - 34) / 30.0)
+        ex = max(0.0, (x - W * 0.60) / (W * 0.40))
+        ey = max(0.0, (y - H * 0.53) / (H * 0.47))
         falloff = (ex ** 1.5) * 0.55 + (ey ** 1.5) * 0.75
         # Keep the outer two cells firmly under water so the erased frame never
         # borders dry land.
         edge = min(x, y, W - 1 - x, H - 1 - y)
-        if edge < 4:
-            falloff += (4 - edge) * 0.30
+        if edge < 5:
+            falloff += (5 - edge) * 0.30
         elev[y][x] -= falloff
 
 lo = min(min(r) for r in elev)
@@ -170,7 +177,7 @@ def carve_river(sx, sy):
         x, y = bx, by
     else:
         return False
-    if len(path) < 12:
+    if len(path) < 18:
         return False
     for (px, py) in path:
         river[py][px] = True
@@ -184,7 +191,7 @@ sources = sorted(
 )
 made = 0
 for _, sx, sy in sources:
-    if made >= 4:
+    if made >= 8:
         break
     if any(river[sy + dy][sx + dx] for dy in range(-4, 5) for dx in range(-4, 5)
            if 0 <= sy + dy < H and 0 <= sx + dx < W):
@@ -215,6 +222,11 @@ while head < len(wet):
 # ---------------------------------------------------------------------------
 # 5. BIOMES from (elevation, moisture). Nothing is hand-placed.
 # ---------------------------------------------------------------------------
+SCALE = (W + H) / 160.0        # 1.0 at the original 96x64
+WET = max(1, round(1 * SCALE))
+DAMP = max(3, round(5 * SCALE))
+DRY = max(8, round(14 * SCALE))
+
 g = [['p'] * W for _ in range(H)]
 for y in range(H):
     for x in range(W):
@@ -235,11 +247,17 @@ for y in range(H):
         # the wet hollows, forest along the rivers, plains beyond, heath where
         # nothing reaches. This is the half that makes the map look grown rather
         # than drawn.
-        elif m <= 1 and e < q(0.32):
+        # MOISTURE BANDS SCALE WITH THE MAP, because they are DISTANCES.
+        # Fixed values (1/5/14) were tuned at 96x64; at 170x100 every cell is
+        # further from water in absolute terms, so the whole land fell into the
+        # driest bucket and heath went from 10% to 41% of the region. The bands
+        # are now a fraction of the map's linear size, which is what keeps the
+        # mix stable at any scale.
+        elif m <= WET and e < q(0.32):
             g[y][x] = ';'
-        elif m <= 5:
+        elif m <= DAMP:
             g[y][x] = 'T'
-        elif m <= 14:
+        elif m <= DRY:
             g[y][x] = 'p'
         else:
             g[y][x] = 'e'
@@ -276,8 +294,10 @@ cand.sort(reverse=True)
 
 SITES_WANTED = [
     ('O', 'alderbrook'), ('R', 'threadneedle_row'), ('H', 'ashwick_row'),
-    ('P', 'wayfarers_camp'), ('B', 'blackwood_outskirts'), ('F', 'gearford_ward'),
-    ('G', 'glass_archive'), ('U', 'underworks'), ('A', 'watchers_altar'),
+    ('P', 'wayfarers_camp'), ('S', 'saints_rest'),
+    ('B', 'blackwood_outskirts'), ('F', 'gearford_ward'), ('G', 'glass_archive'),
+    ('U', 'underworks'), ('A', 'watchers_altar'),
+    ('N', 'hollow_mine'), ('D', 'drowned_chapel'), ('I', 'outer_index'),
 ]
 placed = []
 for score, x, y in cand:
@@ -303,8 +323,9 @@ def relocate(ch, want, near):
                 placed[i] = (ch, best[1], best[2])
 
 
-relocate('A', 'h', (30, 12))
-relocate('U', 'h', (70, 26))
+relocate('A', 'h', (int(W * 0.30), int(H * 0.18)))
+relocate('U', 'h', (int(W * 0.70), int(H * 0.40)))
+relocate('N', 'h', (int(W * 0.20), int(H * 0.30)))
 
 # ---------------------------------------------------------------------------
 # 7. ROADS -- A* on a cost field, so a road follows the land.
@@ -380,9 +401,9 @@ for i, j in edges:
 # ---------------------------------------------------------------------------
 # 8. SETTLEMENT FOOTPRINTS, then the site cells, then the frame.
 # ---------------------------------------------------------------------------
-BIG = {'O', 'G'}
+BIG = {'O', 'G', 'I'}
 for ch, x, y in placed:
-    if ch in ('A', 'U'):
+    if ch in ('A', 'U', 'N', 'D'):
         continue                      # a shrine and a stair have no town around them
     for dy in range(-2, 3):
         for dx in range(-3, 4):
