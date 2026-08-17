@@ -262,3 +262,99 @@ export function seedTestEncounter(world: World): SeededMonster[] {
 
   return placed;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN AMBUSH PUTS THE FIGHT WHERE YOU ARE STANDING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `seedTestEncounter` above places three monsters at authored coordinates
+ * chosen for a hand-explored floor: far from the spawn, "so nothing is hunting
+ * you the instant you connect — exploration should come first."
+ *
+ * That is exactly right for a floor you walk into and exactly wrong for an
+ * AMBUSH, and reusing it produced a bug that read as broken rather than as
+ * mistuned. A player pulled off the overworld arrives in the map's spawn corner
+ * at (3,2) while the nearest monster is at (22,6) — nineteen tiles away, and
+ * the viewport inside a Discord iframe is roughly twenty tiles wide. So the
+ * ambush fired, the map changed, and the screen showed an empty room. Reported
+ * from play, twice, as "encounters start but there are no enemies".
+ *
+ * ToME does not have this problem because its ambush GENERATES a 20x20 zone
+ * around the player rather than dropping them into a corner of a larger one
+ * (`GameState.lua`'s ambush zone: `width = enc.width or 20`).
+ *
+ * ═══ THE RING, AND WHY IT IS A RING ═══
+ * Monsters are placed at a fixed distance from the arrival tile: far enough
+ * that nothing is adjacent on the first turn — being hit before the map has
+ * even drawn is not tension, it is a bug report — and close enough to be on
+ * screen at the smallest viewport this game ships. Angles are spread evenly so
+ * a party is surrounded rather than facing a queue.
+ *
+ * NO DRAWS. Positions are a pure function of the arrival tile, so an ambush is
+ * reproducible from the seed that caused it, and `world.addMonster` settles to
+ * the nearest free tile if geometry lands one in a wall.
+ */
+/** Closest and furthest an ambusher may stand from the arrival tile. */
+const AMBUSH_MIN = 4;
+const AMBUSH_MAX = 7;
+
+export function seedAmbush(world: World, near: TileXY): SeededMonster[] {
+  const roster = [INDEX_HUSK, INDEX_WRAITH, INDEX_HUSK_ELITE];
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE ANNULUS IS SEARCHED, NOT COMPUTED. A RING OF ANGLES DOES NOT SURVIVE A
+   * CORNER.
+   * ═════════════════════════════════════════════════════════════════════════
+   * The first version placed each monster at a fixed radius and even angle and
+   * let `addMonster` settle a bad tile to the nearest free one. On this map the
+   * arrival tile is (3,2) — a CORNER — so most of that ring is wall or off-grid,
+   * every settle pulled inward, and the elite ended up ADJACENT on arrival.
+   * Being hit before the map has finished drawing is not tension, it is a bug
+   * report, and it is the one thing the radius existed to prevent.
+   *
+   * So the candidates are the tiles that actually exist: walkable, in the
+   * distance band, in row-major order. Chebyshev, because that is the metric
+   * movement uses — a diagonal step costs the same as an orthogonal one, so a
+   * monster "five tiles away" diagonally is five turns away, not seven.
+   *
+   * STILL NO DRAWS. Row-major order plus an even stride is a pure function of
+   * the arrival tile, so an ambush is reproducible from the seed that caused it.
+   */
+  const candidates: TileXY[] = [];
+  for (let y = near.y - AMBUSH_MAX; y <= near.y + AMBUSH_MAX; y += 1) {
+    for (let x = near.x - AMBUSH_MAX; x <= near.x + AMBUSH_MAX; x += 1) {
+      const d = Math.max(Math.abs(x - near.x), Math.abs(y - near.y));
+      if (d < AMBUSH_MIN || d > AMBUSH_MAX) continue;
+      if (!canWalk(world.level, x, y)) continue;
+      if (world.actorAt(x, y) !== undefined) continue;
+      candidates.push({ x, y });
+    }
+  }
+
+  const placed: SeededMonster[] = [];
+  if (candidates.length === 0) return placed;
+
+  // Spread across whatever the room actually offers, rather than clustering at
+  // the start of the list — three monsters in a queue is not an ambush.
+  const stride = Math.max(1, Math.floor(candidates.length / roster.length));
+
+  for (let i = 0; i < roster.length; i += 1) {
+    const template = roster[i];
+    const at = candidates[(i * stride) % candidates.length];
+    if (template === undefined || at === undefined) continue;
+    const id = `mon_${template.id}`;
+    const actor = world.addMonster(id, monsterInit(template, at));
+    const carrying = rollDrop(world.lootRng, template.drops);
+    if (carrying !== undefined) actor.carried = [carrying];
+    placed.push({
+      id: actor.id,
+      name: template.displayName,
+      at: { x: actor.x, y: actor.y },
+      intent: 'ambush',
+      carrying,
+    });
+  }
+  return placed;
+}

@@ -4447,6 +4447,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         },
       ];
     });
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE WAY OUT IS DRAWN. AN INVISIBLE DOOR IS A TRAP IN BOTH DIRECTIONS.
+     * ═══════════════════════════════════════════════════════════════════════
+     * A site's threshold is its spawn tiles, and nothing on screen said so. The
+     * consequences were both reported from play: people left encounters by
+     * accident while walking (the threshold is in the corner they arrive in),
+     * and had no idea how to leave on purpose.
+     *
+     * Marked as a `gate`, which is the family the art already has, and named in
+     * plain words. Only inside a site — the overworld's "exit" is the edge of
+     * the world, and it is already drawn as erased ground.
+     */
+    const exits =
+      realm.kind === RealmKind.Overworld
+        ? []
+        : realm.spawns.map((t) => ({
+            x: t.x,
+            y: t.y,
+            marker: 'gate',
+            name: 'The way out',
+          }));
+
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'realm',
@@ -4455,7 +4478,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       name: realm.name,
       level: view.level,
       actors: view.actors,
-      sites,
+      sites: [...sites, ...exits],
       selfId: actorId,
     });
   };

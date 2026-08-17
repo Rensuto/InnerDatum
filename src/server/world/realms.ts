@@ -55,7 +55,7 @@
 
 import { makeOverworld, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
-import { seedTestEncounter } from '../content/encounter.ts';
+import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
@@ -229,7 +229,7 @@ export type SiteDef = {
    * arms engagement for every unrelated person standing in it, and they all
    * start waiting on each other's turns with no way to discover why.
    */
-  readonly populate?: (world: World) => void;
+  readonly populate?: (world: World, map: AuthoredMap) => void;
 };
 
 export type Realms = {
@@ -475,12 +475,13 @@ export function createRealms(opts: RealmsOptions): Realms {
 
     instanceSeq += 1;
     const id = `realm:${site.id}:${String(instanceSeq)}`;
-    const realm = build(id, RealmKind.Inner, site.name, site.map(), {
+    const builtMap = site.map();
+    const realm = build(id, RealmKind.Inner, site.name, builtMap, {
       partyId,
       siteId: site.id,
       lingerMs: site.lingerMs,
     });
-    site.populate?.(realm.world);
+    site.populate?.(realm.world, builtMap);
     return realm;
   };
 
@@ -610,7 +611,16 @@ export const ENCOUNTER_SITE: SiteDef = {
   // ZERO, AND THIS IS THE FIELD THAT MAKES FLEEING MEAN SOMETHING. See
   // `SiteDef.lingerMs`: a breach you ran out of must not still be there.
   lingerMs: 0,
-  populate: (world) => {
-    seedTestEncounter(world);
+  populate: (world, map) => {
+    // AROUND THE ARRIVAL TILE, not at the authored coordinates. seedAmbush
+    // explains why: the authored encounter is placed for a floor you EXPLORE,
+    // and reusing it for an ambush drops the player in a corner with the
+    // nearest monster nineteen tiles away -- off screen at this game's
+    // viewport, which read in play as "the encounter has no enemies".
+    const arrival = map.spawns[0] ?? {
+      x: Math.floor(map.view.w / 2),
+      y: Math.floor(map.view.h / 2),
+    };
+    seedAmbush(world, arrival);
   },
 };

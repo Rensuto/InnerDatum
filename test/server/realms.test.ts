@@ -489,3 +489,46 @@ describe('every site can be drawn on the overworld', () => {
     }
   });
 });
+
+describe('an ambush puts the fight where you are standing', () => {
+  it('places every ambusher on screen and none of them adjacent', () => {
+    // THE BUG THIS PREVENTS, reported from play twice as "encounters start but
+    // there are no enemies". `seedTestEncounter` places monsters at authored
+    // coordinates chosen for a floor you EXPLORE — far from the spawn, so
+    // nothing hunts you the instant you arrive. Reused for an AMBUSH it drops
+    // the player in the map's corner at (3,2) with the nearest monster at
+    // (22,6): nineteen tiles, and the viewport in a Discord iframe is about
+    // twenty tiles wide. The map changed and the screen showed an empty room.
+    //
+    // The first fix was a ring of fixed radius and even angles, which does not
+    // survive a corner: most of the ring was wall, every placement settled to
+    // the nearest free tile, and the elite arrived ADJACENT. So both bounds are
+    // asserted, because fixing one broke the other.
+    const realms = makeRealms();
+    const breach = realms.open(ENCOUNTER_SITE, 'party_1');
+    const arrival = breach.spawns[0];
+    expect(arrival).toBeDefined();
+
+    const monsters = breach.world.allActors().filter((a) => a.kind === ActorKind.Monster);
+    expect(monsters.length).toBeGreaterThan(0);
+
+    for (const m of monsters) {
+      const d = Math.max(Math.abs(m.x - (arrival?.x ?? 0)), Math.abs(m.y - (arrival?.y ?? 0)));
+      // Not adjacent: being hit before the map has finished drawing is not
+      // tension. Chebyshev, because that is the metric movement uses.
+      expect(d, `${m.id} is ${d} tiles away — too close`).toBeGreaterThanOrEqual(4);
+      // And on screen at the smallest viewport this game ships.
+      expect(d, `${m.id} is ${d} tiles away — off screen`).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it('does not stack two ambushers on one tile', () => {
+    const realms = makeRealms();
+    const breach = realms.open(ENCOUNTER_SITE, 'party_2');
+    const cells = breach.world
+      .allActors()
+      .filter((a) => a.kind === ActorKind.Monster)
+      .map((a) => `${a.x},${a.y}`);
+    expect(new Set(cells).size).toBe(cells.length);
+  });
+});
