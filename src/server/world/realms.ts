@@ -53,6 +53,7 @@
  * arbitrates turns must not learn what an invite is.
  */
 
+import { makeArena } from '../../shared/arena.ts';
 import { makeOverworld, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { seedAmbush } from '../content/encounter.ts';
@@ -219,8 +220,16 @@ export type SiteDef = {
    * wants to come back".
    */
   readonly lingerMs: number;
-  /** Builds a fresh map. */
-  readonly map: () => AuthoredMap;
+  /**
+   * Builds a fresh map.
+   *
+   * TAKES THE REALM'S SEED so a site may GENERATE rather than merely copy. An
+   * authored site ignores it and hands back the same floor every time; the
+   * ambush arena uses it, which is what makes two parties ambushed at the same
+   * moment get two different rooms, and the same party re-entering its own
+   * realm get the same room back.
+   */
+  readonly map: (seed: string) => AuthoredMap;
   /**
    * Seeds the population. Called once, after the world exists.
    *
@@ -424,9 +433,15 @@ export function createRealms(opts: RealmsOptions): Realms {
   for (const site of sites.values()) {
     if (site.kind !== RealmKind.Common) continue;
     assertNoCombatInSharedSpace(site);
-    const realm = build(`realm:${site.id}`, RealmKind.Common, site.name, site.map(), {
-      siteId: site.id,
-    });
+    const realm = build(
+      `realm:${site.id}`,
+      RealmKind.Common,
+      site.name,
+      site.map(`realm:${site.id}`),
+      {
+        siteId: site.id,
+      },
+    );
     commonBySite.set(site.id, realm);
   }
 
@@ -451,9 +466,15 @@ export function createRealms(opts: RealmsOptions): Realms {
       // A common site that was not built at boot means the SITES table and this
       // registry disagree, which is a wiring bug rather than a runtime state.
       assertNoCombatInSharedSpace(site);
-      const built = build(`realm:${site.id}`, RealmKind.Common, site.name, site.map(), {
-        siteId: site.id,
-      });
+      const built = build(
+        `realm:${site.id}`,
+        RealmKind.Common,
+        site.name,
+        site.map(`realm:${site.id}`),
+        {
+          siteId: site.id,
+        },
+      );
       commonBySite.set(site.id, built);
       return built;
     }
@@ -475,7 +496,7 @@ export function createRealms(opts: RealmsOptions): Realms {
 
     instanceSeq += 1;
     const id = `realm:${site.id}:${String(instanceSeq)}`;
-    const builtMap = site.map();
+    const builtMap = site.map(seedFor(opts.seed, id));
     const realm = build(id, RealmKind.Inner, site.name, builtMap, {
       partyId,
       siteId: site.id,
@@ -569,7 +590,7 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
       name,
       kind,
       marker,
-      map: makeTestMap,
+      map: () => makeTestMap(),
       // A delve is a place you can go back to. A town never empties in the sense
       // that matters — `close` refuses a shared realm outright — so the number
       // is inert there and stated once rather than branched on.
@@ -607,7 +628,13 @@ export const ENCOUNTER_SITE: SiteDef = {
   name: 'An Index Breach',
   kind: RealmKind.Inner,
   marker: 'breach',
-  map: makeTestMap,
+  /**
+   * GENERATED PER AMBUSH, not one shared floor. See shared/arena.ts: an ambush
+   * is somewhere you have never been and will never return to, so the same room
+   * every time — entered at the same corner, with the exit two steps behind you
+   * — was the wrong shape for it in every way.
+   */
+  map: (seed) => makeArena(seed),
   // ZERO, AND THIS IS THE FIELD THAT MAKES FLEEING MEAN SOMETHING. See
   // `SiteDef.lingerMs`: a breach you ran out of must not still be there.
   lingerMs: 0,
