@@ -111,3 +111,28 @@ else
 	echo "          already run 'npm run check' yourself." >&2
 	exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# DRAIN THE ANNOUNCEMENT BACKLOG — the safety net under the post-commit hook
+# ---------------------------------------------------------------------------
+# Every commit in this project is announced to #updates. The post-commit hook
+# does that at commit time, and it CANNOT be relied on alone: it is deliberately
+# fail-soft (losing an announcement is a nuisance, losing a commit is a
+# disaster), so a commit made offline, on a laptop with no token, or while
+# Discord is down posts nothing and says so and then life moves on. Left there,
+# the channel quietly develops a hole — and a silent week is indistinguishable
+# from a dead relay, which is the failure this project has already had once.
+#
+# So the backlog is drained HERE, at the last moment before the work becomes
+# public, for the same reason check-assets runs in the gate rather than only in
+# .gitignore. `catchup` is idempotent against a per-sha ledger in .git/, so
+# running it on every push cannot double-post.
+#
+# IT CANNOT BLOCK A PUSH. `--soft` keeps the relay at exit 0 on any failure, and
+# the `|| true` covers a crash in the relay itself. A hotfix during a live
+# session must never wait on Discord being up.
+RELAY="c:/Users/dalto/Desktop/Files/VSCode Projects/_shared/discord-relay/relay.mjs"
+if [ -n "$NODE_BIN" ] && [ -f "$RELAY" ]; then
+	echo "pre-push: draining the #updates backlog"
+	"$NODE_BIN" "$RELAY" catchup --repo "$(git rev-parse --show-toplevel)" --soft || true
+fi
