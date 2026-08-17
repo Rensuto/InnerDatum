@@ -11,6 +11,8 @@
  * taking away: something to SEE and decide about.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { createDownedState } from '../../src/server/engine/downed.ts';
@@ -119,5 +121,42 @@ describe('walking into one is how you start the fight', () => {
     expect(r).toBeDefined();
     expect(roamerAt(realms.overworld, r?.x ?? -1, r?.y ?? -1)?.id).toBe(r?.id);
     expect(roamerAt(realms.overworld, -5, -5)).toBeUndefined();
+  });
+});
+
+describe('nothing starts a fight that the player cannot see', () => {
+  it('leaves no per-step encounter roll anywhere in the gateway', () => {
+    // THE BUG THIS PINS, reported from play three separate times as "the fight
+    // just starts randomly".
+    //
+    // The overworld used to have an invisible d100 per step, keyed on terrain.
+    // When the visible roamers were added they were added ALONGSIDE it rather
+    // than INSTEAD of it, so both were live: you could see danger and choose to
+    // take it on, AND still be yanked into a fight for standing on grass. Every
+    // report after that was about the roll, and every fix went somewhere else.
+    //
+    // Asserted by grep because the absence of a code path cannot be tested by
+    // calling it. If a roll comes back, it comes back here first.
+    const gateway = readFileSync(
+      new URL('../../src/server/net/gateway.ts', import.meta.url),
+      'utf8',
+    );
+    expect(gateway).not.toContain('rollForEncounter');
+    expect(gateway).not.toContain('ENCOUNTER_CHANCE[');
+    expect(gateway).not.toContain("'overworld.encounter'");
+  });
+
+  it('reaches the ambush only through a roamer the player walked onto', () => {
+    // The one remaining entry point. `crossIntoSite` checks `roamerAt` on the
+    // tile the body resolved onto, and nothing else opens ENCOUNTER_SITE.
+    const gateway = readFileSync(
+      new URL('../../src/server/net/gateway.ts', import.meta.url),
+      'utf8',
+    );
+    // The import is an occurrence too, so count the ENTRY POINTS: how many
+    // places actually cross a body into the ambush.
+    const opens = [...gateway.matchAll(/crossInto\([^)]*ENCOUNTER_SITE/g)].length;
+    expect(opens, 'there should be exactly one way into an ambush').toBe(1);
+    expect(gateway).toContain('roamerAt(from, body.x, body.y)');
   });
 });

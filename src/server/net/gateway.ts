@@ -57,13 +57,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import websocket from '@fastify/websocket';
 
 import { DIR_ORDER, dirVector, inBounds } from '../../shared/coords.ts';
-import { tileAt } from '../../shared/level.ts';
 import {
   ActorKind,
   ErasedReason,
   ErrorCode,
   LogLane,
-  TileCode,
   parseClientMsg,
 } from '../../shared/protocol.ts';
 /**
@@ -1923,45 +1921,19 @@ type PumpTarget = {
 };
 
 /**
- * PER-STEP AMBUSH CHANCE, AS A PERCENTAGE, BY THE GROUND UNDER YOUR FEET.
+ * WHERE THE "WHICH GROUND IS DANGEROUS" TABLE WENT.
  *
- * Absent means zero, which is why only the dangerous half is listed: civic
- * paving, bridges and anything you cannot stand on are all silently safe.
+ * There was an `ENCOUNTER_CHANCE` map here, a percentage per terrain, read by a
+ * per-step d100. Both are gone: danger on the overworld is a thing you can see
+ * and walk into, not a roll you cannot.
  *
- * THE SHAPE IS THE POINT, NOT THE NUMBERS. Safety falls away as the city does —
- * swept civic stone, then ordinary streets, then the ground the Index has got
- * into. A player learns which districts are dangerous by walking them, which is
- * the only way that knowledge is worth having, and it is what makes Blackwood
- * and Gearford feel unlike Saint Orwin's Square rather than merely look unlike
- * it.
- *
- * A BRIDGE IS AS SAFE AS PAVING, DELIBERATELY. Being pulled off a four-tile span
- * with water on both sides reads as a bug however correct the roll was.
- *
- * Tuned for a city that takes roughly forty steps to cross: on cobble that is
- * about one encounter every three crossings, and Blackwood is about one every
- * crossing. These are first numbers and expected to move after a playtest;
- * nothing else depends on them.
+ * The knowledge itself survives and is now in exactly one place — `HAUNTS` in
+ * world/roamers.ts, which decides where a roamer may stand and wander. It keeps
+ * the same rule for the same reason: never the road, a settlement approach or a
+ * bridge, because "the road is safe" is a promise a player learns to rely on.
+ * A visible marker parked on the road would break that promise far more
+ * plainly than an invisible roll ever did.
  */
-const ENCOUNTER_CHANCE: Readonly<Partial<Record<TileCode, number>>> = {
-  // ─── kept ground. The road is the safe network between settlements, and a
-  // settlement's own approach is safer still. Both absent-by-omission would
-  // have worked; stated at 0 because "the road is safe" is a design promise the
-  // player learns to rely on, not an accident of a lookup table.
-  [TileCode.COBBLE]: 0,
-  [TileCode.PAVING]: 0,
-  [TileCode.BRIDGE]: 0,
-  // ─── open country. The ordinary risk of travelling.
-  [TileCode.GREEN]: 1,
-  [TileCode.HILLS]: 2,
-  [TileCode.PLAINS]: 3,
-  [TileCode.HEATH]: 4,
-  // ─── ground the Index has got into.
-  [TileCode.RAIL]: 3,
-  [TileCode.SOOT]: 5,
-  [TileCode.MIRE]: 6,
-};
-
 export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts) => {
   const { world, engine } = opts;
   const disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULT_DISCONNECT_GRACE_MS;
@@ -5144,59 +5116,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `moved` frame has to reach the client first, or the map it is about is
     // already gone.
     if (leaveRealm(session)) return;
+    /**
+     * WHAT IS NOT HERE ANY MORE: a per-step encounter roll.
+     *
+     * There was one, and when the roamers arrived they were added ALONGSIDE it
+     * rather than INSTEAD of it. So the overworld had visible danger you could
+     * choose to take on AND an invisible d100 that pulled you into a fight for
+     * standing on grass. Reported from play as "the fight just starts
+     * randomly" — which is precisely what it did, three times, while I kept
+     * fixing everything except the thing doing it.
+     *
+     * Every fight on the overworld now starts by walking onto something you can
+     * see; `crossIntoSite` checks the roamers first. That is the whole point of
+     * making danger visible — a hazard you cannot see is not a decision, it is
+     * weather.
+     */
     crossIntoSite(session);
-    rollForEncounter(session);
-  };
-
-  /**
-   * ═════════════════════════════════════════════════════════════════════════
-   * DANGER IN THE CITY, WHICH IS NEVER *IN* THE CITY. ToME's wilderness rule.
-   * ═════════════════════════════════════════════════════════════════════════
-   *
-   * A step on the overworld can pull you into an encounter. Nothing hostile
-   * ever stands on Alderbrook itself, and that is not squeamishness — one
-   * monster on the shared map lifts `engagement` above zero, and `isBlocking`
-   * then returns true for every player in the city, related or not
-   * (barrier.ts:293-306). Six friends walking to three different districts
-   * would begin waiting on one another with a Bell running. Encounters are
-   * what let the overworld be dangerous AND shared at the same time.
-   *
-   * ═══ THE CHANCE COMES FROM THE GROUND YOU ARE STANDING ON ═══
-   * Not a flat per-step number. Civic paving is safe outright, cobbled streets
-   * are nearly safe, and it climbs as the city gives out — mire and soot are
-   * where the Index has got in. This is the districts earning their terrain:
-   * Saint Orwin's Square feels different from Blackwood because it IS
-   * different, and a player learns that by walking rather than by being told.
-   *
-   * A bridge is deliberately as safe as paving. Being pulled off a four-tile
-   * span with water on both sides reads as a bug however correct the roll was.
-   *
-   * ═══ THE DRAW IS ON THE OVERWORLD'S OWN `rng`, AND THAT IS FREE ═══
-   * `world.rng` is the stream every to-hit, crit, damage and AI roll consumes,
-   * and adding a draw to it shifts every subsequent draw forever
-   * (shared/rng.ts:31-39). On the OVERWORLD that stream has no other consumer
-   * at all — there is no combat there and no AI, by the invariant above — so
-   * this is the one place in the process where a new per-step draw costs
-   * nothing downstream. An instance's `world.rng` is untouched.
-   */
-  const rollForEncounter = (session: Session): void => {
-    const realms = opts.realms;
-    const actorId = session.actorId;
-    if (realms === undefined || actorId === null || session.realmId === null) return;
-
-    const from = realms.get(session.realmId);
-    // Overworld only. A town has no encounters by the same no-hostiles rule,
-    // and an instance already IS one.
-    if (from === undefined || from.kind !== RealmKind.Overworld) return;
-
-    const body = from.world.getActor(actorId);
-    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return;
-
-    const chance = ENCOUNTER_CHANCE[tileAt(from.world.level, body.x, body.y)] ?? 0;
-    if (chance <= 0) return;
-    if (from.world.rng.int('overworld.encounter', 1, 100) > chance) return;
-
-    crossInto(session, ENCOUNTER_SITE, 'ambushed');
   };
 
   /**
