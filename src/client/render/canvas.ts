@@ -80,7 +80,7 @@
 
 import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
-import { ActorRank, TileCode } from '../../shared/protocol.ts';
+import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
 import { TILE_PX } from '../../shared/version.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type {
@@ -846,6 +846,12 @@ export function createRenderer(options: RendererOptions): Renderer {
   const minLogicalW = minTilesW * TILE_PX;
   const minLogicalH = minTilesH * TILE_PX;
   /** Guardrail: past this the tiles are too small to read on a laptop. */
+  /**
+   * How thick the barrier contour is. Two pixels at 32 reads at every integer
+   * scale this game uses; one disappears at 1x on a laptop screen.
+   */
+  const BARRIER_EDGE_PX = 2;
+
   const MAX_TILES_W = 48;
   const MAX_TILES_H = 32;
   let logicalW = minLogicalW;
@@ -1006,6 +1012,61 @@ export function createRenderer(options: RendererOptions): Renderer {
     }
   }
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * OUTLINE EVERY MASS YOU CANNOT WALK INTO. THE ART ALONE DOES NOT SAY SO.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Reported from play: "the walls and borders around the map are not very
+   * clear that it's a barrier until you try to click past it."
+   *
+   * TWO CAUSES, AND THE SECOND WAS INTRODUCED BY THE ART LANDING.
+   *
+   *   The lit top edge only ever applied to `TileCode.WALL`. Mountain, crag,
+   *   forest, water, deep water and erased ground — every barrier the overworld
+   *   is actually made of — got nothing, because they did not exist when that
+   *   branch was written.
+   *
+   *   And the whole edge/grid block sits inside `if (!paintTerrain(...))`, i.e.
+   *   in the NO-ART fallback. The moment real tiles were installed the renderer
+   *   stopped drawing cues altogether, so the region got *less* legible as it
+   *   got prettier. That is the worst shape a regression can have: it arrives
+   *   with something that is otherwise an improvement.
+   *
+   * So this runs unconditionally and OUTSIDE that branch. A dark rim is drawn on
+   * the blocking tile along every side that faces ground you can walk on, which
+   * outlines each range, wood and coast as one continuous mass — the contour a
+   * world map wants — and costs nothing on an interior floor, where FLOOR and
+   * WALL already read.
+   *
+   * DRAWN ON THE BLOCKING SIDE, never on the walkable one: the rim must not eat
+   * a pixel of the tile a player is judging a move onto, and terrain art is
+   * seamless by contract so a rim inside it cannot break a tiling edge.
+   *
+   * Value, not hue. `INK` is the darkest thing in the palette and the barrier
+   * band is already the dark half of the set, so this reads at a glance and in
+   * peripheral vision, which is the whole argument of ART-OVERWORLD.md § 4.2.
+   */
+  function paintBarrierEdge(
+    level: LevelView,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    sx: number,
+    sy: number,
+  ): void {
+    if (isWalkable(code)) return;
+
+    backCtx.fillStyle = PALETTE.INK;
+    const W = BARRIER_EDGE_PX;
+    // North, south, west, east. `tileAt` fails closed to WALL off-grid, so the
+    // map border never draws a rim against nothing.
+    if (isWalkable(tileAt(level, tx, ty - 1))) backCtx.fillRect(sx, sy, TILE_PX, W);
+    if (isWalkable(tileAt(level, tx, ty + 1))) backCtx.fillRect(sx, sy + TILE_PX - W, TILE_PX, W);
+    if (isWalkable(tileAt(level, tx - 1, ty))) backCtx.fillRect(sx, sy, W, TILE_PX);
+    if (isWalkable(tileAt(level, tx + 1, ty))) backCtx.fillRect(sx + TILE_PX - W, sy, W, TILE_PX);
+  }
+
   function blitSprite(id: string, cellX: number, cellY: number): void {
     const sprite: Sprite | undefined = sprites.sprite(id);
     if (sprite === undefined) {
@@ -1051,9 +1112,9 @@ export function createRenderer(options: RendererOptions): Renderer {
           backCtx.fillStyle = tileFill(code);
           backCtx.fillRect(sx, sy, TILE_PX, TILE_PX);
 
-          if (code === TileCode.WALL) {
-            // A lit top edge. Without it a flat wall colour reads as a hole in
-            // the floor rather than as something solid you cannot walk through.
+          if (!isWalkable(code)) {
+            // A lit top edge. Without it a flat blocking colour reads as a hole
+            // in the floor rather than as something solid.
             backCtx.fillStyle = PALETTE.GREY;
             backCtx.fillRect(sx, sy, TILE_PX, WALL_EDGE_PX);
           } else {
@@ -1064,6 +1125,9 @@ export function createRenderer(options: RendererOptions): Renderer {
             backCtx.fillRect(sx + TILE_PX - 1, sy, 1, TILE_PX);
           }
         }
+
+        // ALWAYS, ART OR NO ART. See `paintBarrierEdge`.
+        paintBarrierEdge(level, code, tx, ty, sx, sy);
       }
     }
   }

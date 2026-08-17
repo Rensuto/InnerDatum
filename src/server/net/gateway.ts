@@ -203,6 +203,7 @@ import {
  * one world, and `crossIntoSite` returns on its first line.
  */
 import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
+import { roamerAt, tickRoamers } from '../world/roamers.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
@@ -3398,8 +3399,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * inside this function rather than around the loop for that reason: an
    * invariant failing in one party's instance must not stop the city.
    */
+  /**
+   * How many times the overworld has pumped. Drives the roamers' cadence and
+   * their ids, so a wanderer's identity does not depend on wall-clock time.
+   */
+  let roamerSeq = 0;
+
   const pumpRealm = (realm: PumpTarget): void => {
     const { world, engine } = realm;
+
+    /**
+     * THE ROAMERS WANDER HERE, before anything is broadcast, so a frame sent
+     * below already describes where they are.
+     *
+     * Only the overworld has any (see world/roamers.ts), so this is a Map size
+     * check on every other realm. When the picture changes, the people standing
+     * in that realm get a fresh `realm` frame — which is heavier than a
+     * dedicated frame would be, and is the right trade at this size: markers
+     * already ride on `realm`, so this costs no new message type, no new
+     * renderer path, and no second way for a marker to be wrong. If the level
+     * payload ever hurts, the fix is a `sites` frame, not a second marker
+     * system.
+     */
+    const full = opts.realms?.get(realm.id);
+    if (full !== undefined && full.kind === RealmKind.Overworld) {
+      roamerSeq += 1;
+      if (tickRoamers(full, roamerSeq)) {
+        for (const session of sessions.values()) {
+          if (session.helloDone && session.realmId === full.id) sendRealm(session);
+        }
+      }
+    }
     /**
      * TO THE PEOPLE STANDING HERE, and to nobody else.
      *
@@ -4470,6 +4500,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             name: 'The way out',
           }));
 
+    /**
+     * THE ROAMERS, drawn with the breach marker. Sent as sites because that is
+     * exactly what they are to a client — a thing on a cell you can walk into —
+     * and reusing the path means no new frame, no new renderer and no second
+     * way for a marker to be wrong.
+     */
+    const wandering = [...realm.roamers.values()].map((r) => ({
+      x: r.x,
+      y: r.y,
+      marker: 'breach',
+      name: r.name,
+    }));
+
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'realm',
@@ -4478,7 +4521,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       name: realm.name,
       level: view.level,
       actors: view.actors,
-      sites: [...sites, ...exits],
+      sites: [...sites, ...exits, ...wandering],
       selfId: actorId,
     });
   };
@@ -5423,6 +5466,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (from === undefined) return;
     const body = from.world.getActor(actorId);
     if (body === undefined || body.kind !== 'player' || !body.alive) return;
+
+    /**
+     * A ROAMER FIRST. It is standing on the tile, so it is the more specific
+     * answer, and it is CONSUMED — walking into the thing you could see is the
+     * decision the overworld exists to offer, and it must not still be there
+     * when you come back out.
+     */
+    const roamer = roamerAt(from, body.x, body.y);
+    if (roamer !== undefined) {
+      from.roamers.delete(roamer.id);
+      crossInto(session, ENCOUNTER_SITE, `walked into ${roamer.name}`);
+      return;
+    }
 
     const siteId = from.sites.get(`${body.x},${body.y}`);
     if (siteId === undefined) return;

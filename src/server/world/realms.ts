@@ -108,6 +108,18 @@ export function isShared(kind: RealmKind): boolean {
 /** The one realm id that is a constant, because there is only ever one. */
 export const OVERWORLD_ID = 'realm:overworld';
 
+/**
+ * One roaming danger on the overworld. Deliberately tiny: a position, a name to
+ * show, and nothing that could make it a combatant.
+ */
+export type Roamer = {
+  readonly id: string;
+  x: number;
+  y: number;
+  /** What a player is told they walked into. */
+  readonly name: string;
+};
+
 export type Realm = {
   readonly id: string;
   readonly kind: RealmKind;
@@ -122,6 +134,32 @@ export type Realm = {
    * it by accident is how a party ends up unable to get home.
    */
   readonly sites: ReadonlyMap<string, string>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ROAMERS — VISIBLE DANGER ON THE OVERWORLD, WITHOUT PUTTING A HOSTILE ON IT
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Reported from play, repeatedly: "we still do not see enemies in the
+   * overworld". The honest answer was that ToME does not have any either — and
+   * the honest answer was not the useful one. Danger you cannot see is danger
+   * you cannot make a decision about, so the overworld had no gameplay in it:
+   * you walked, and sometimes a fight happened at you.
+   *
+   * A ROAMER IS NOT AN ACTOR, and that is the whole trick. It has no hp, no
+   * turn, no AI and no place in `world.actors`, so `engagement` on the shared
+   * overworld stays exactly zero and the barrier stays disarmed — which is the
+   * invariant every other decision in this file was arranged around
+   * (`assertNoCombatInSharedSpace`, `RealmKind`). It is a MARKER that moves.
+   *
+   * Walk onto one and it pulls you into an ambush arena and is consumed. So the
+   * player gets what a visible enemy is FOR: see it, judge it, go around it or
+   * go at it. The fight still happens somewhere private, which is what keeps six
+   * unrelated people able to share a map.
+   *
+   * Keyed by id rather than by cell because it moves and because two must never
+   * silently merge. Mutable, and only ever on the overworld.
+   */
+  readonly roamers: Map<string, Roamer>;
   /**
    * Where a body is placed on arrival — AND, inside a site, the way out.
    *
@@ -403,6 +441,7 @@ export function createRealms(opts: RealmsOptions): Realms {
       engine,
       sites: map.sites,
       spawns: map.spawns,
+      roamers: new Map<string, Roamer>(),
       // A shared space is never reaped, so its linger is meaningless; 0 is the
       // honest value rather than a large number pretending to be a policy.
       lingerMs: extra.lingerMs ?? 0,
