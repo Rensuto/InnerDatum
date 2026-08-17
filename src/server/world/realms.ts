@@ -611,20 +611,20 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
       // the SETTLEMENTS, and with the overworld now being open country they are
       // where the game is social — the road between them is meant to feel empty.
       //
-      ['site:alderbrook', 'Alderbrook', RealmKind.Common, 'town'],
+      ['site:alderbrook', 'Alderbrook', RealmKind.Common, 'city'],
       ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common, 'town'],
       ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common, 'town'],
-      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common, 'gate'],
+      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common, 'village'],
       ['site:saints_rest', "Saint's Rest", RealmKind.Common, 'town'],
       // ─── one party at a time: combat, so a shared barrier would be wrong ───
       ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner, 'gate'],
       ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner, 'gate'],
-      ['site:underworks', 'The Underworks', RealmKind.Inner, 'stair'],
-      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner, 'archive'],
-      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner, 'altar'],
-      ['site:hollow_mine', 'The Hollow Mine', RealmKind.Inner, 'stair'],
-      ['site:drowned_chapel', 'The Drowned Chapel', RealmKind.Inner, 'altar'],
-      ['site:outer_index', 'The Outer Index', RealmKind.Inner, 'archive'],
+      ['site:underworks', 'The Underworks', RealmKind.Inner, 'mine'],
+      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner, 'city'],
+      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner, 'ruin'],
+      ['site:hollow_mine', 'The Hollow Mine', RealmKind.Inner, 'mine'],
+      ['site:drowned_chapel', 'The Drowned Chapel', RealmKind.Inner, 'ruin'],
+      ['site:outer_index', 'The Outer Index', RealmKind.Inner, 'city'],
     ] as const
   ).map(([id, name, kind, marker]): [string, SiteDef] => [
     id,

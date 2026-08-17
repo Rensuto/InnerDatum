@@ -333,7 +333,8 @@ relocate('N', 'h', (int(W * 0.20), int(H * 0.30)))
 import heapq
 
 COST = {'p': 1.0, 'e': 1.2, 'h': 2.6, 's': 1.4, ';': 3.2, 'T': 4.0,
-        'c': 9.0, 'M': 40.0, 'w': 7.0, 'W': 400.0}
+        'c': 9.0, 'M': 40.0, 'w': 7.0, 'W': 400.0,
+        'y': 0.8, 'j': 1.1, 'L': 30.0}
 
 
 # A LITTLE JITTER, so a road is surveyed rather than ruled.
@@ -401,21 +402,57 @@ for i, j in edges:
 # ---------------------------------------------------------------------------
 # 8. SETTLEMENT FOOTPRINTS, then the site cells, then the frame.
 # ---------------------------------------------------------------------------
-BIG = {'O', 'G', 'I'}
+# ---------------------------------------------------------------------------
+# SETTLEMENT FOOTPRINTS, IN THREE SIZE TIERS.
+# ---------------------------------------------------------------------------
+# A settlement is a CLUSTER, not a cell, and the art is drawn for that: three
+# roof densities, a yard to walk on between them, and fields around the edge
+# that say "people live here" from a screen away.
+#
+# The tier is a fact about the PLACE, so it lives here rather than in the
+# renderer: Alderbrook and the two Archives are cities, the ordinary
+# settlements are towns, and the camp is a village.
+CITY = {'O', 'G', 'I'}
+VILLAGE = {'P'}
 for ch, x, y in placed:
     if ch in ('A', 'U', 'N', 'D'):
         continue                      # a shrine and a stair have no town around them
-    for dy in range(-2, 3):
-        for dx in range(-3, 4):
+
+    if ch in CITY:
+        roof, r, fields = 'k', 4, 2
+    elif ch in VILLAGE:
+        roof, r, fields = 'v', 2, 1
+    else:
+        roof, r, fields = 't', 3, 2
+
+    # FIELDS FIRST, as the outer ring, so everything below overwrites them.
+    for dy in range(-r - fields, r + fields + 1):
+        for dx in range(-r - fields - 1, r + fields + 2):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < W and 0 <= ny < H and g[ny][nx] in 'pheT;':
+                g[ny][nx] = 'j'
+
+    # The yard: walkable ground the settlement stands on.
+    for dy in range(-r, r + 1):
+        for dx in range(-r - 1, r + 2):
             nx, ny = x + dx, y + dy
             if 0 <= nx < W and 0 <= ny < H and g[ny][nx] not in 'wW=':
-                g[ny][nx] = ','
-    roof = 'C' if ch in BIG else '#'
-    for dy in (-2, -1):
-        for dx in (-3, -2):
+                g[ny][nx] = 'y'
+
+    # Roofs in two blocks either side of the centre, leaving a way through.
+    for dy in range(-r + 1, 0):
+        for dx in range(-r - 1, -1):
             g[y+dy][x+dx] = roof
-        for dx in (2, 3):
+        for dx in range(2, r + 2):
             g[y+dy][x+dx] = roof
+
+    # A wall along the front of a city, which is what makes one read as one.
+    if ch in CITY:
+        for dx in range(-r - 1, r + 2):
+            nx, ny = x + dx, y + r
+            if 0 <= nx < W and 0 <= ny < H and g[ny][nx] == 'y':
+                g[ny][nx] = 'L'
+        g[y + r][x] = 'y'   # the gate
 
 for ch, x, y in placed:
     g[y][x] = ch
@@ -433,6 +470,8 @@ LEGEND = {
     '=': (True, 'bridge'), 'w': (False, 'river'), 'W': (False, 'sea'),
     'T': (False, 'forest'), 'M': (False, 'mountain'), 'c': (False, 'crag'),
     '#': (False, 'roofs'), 'C': (False, 'great roofs'), 'K': (False, 'works'),
+    'v': (False, 'village roofs'), 't': (False, 'town roofs'), 'k': (False, 'city roofs'),
+    'L': (False, 'town wall'), 'y': (True, 'yard'), 'j': (True, 'field'),
     'X': (False, 'erased'),
 }
 for ch, _ in SITES_WANTED:

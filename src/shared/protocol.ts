@@ -312,6 +312,22 @@ export const TileCode = {
    * rather than as land abutting a blue shape.
    */
   SHORE: 21,
+  // ─── settlements at world-map scale, v14 ───
+  // TERRACE and CIVIC stay exactly what they were: a street seen from inside a
+  // town. These are the same buildings seen from four screens away, and the
+  // difference between the two is the whole reason they are separate codes.
+  /** A hamlet's roofs — a few small ones with gaps between. */
+  VILLAGE_ROOF: 22,
+  /** A working town's roofs — packed, chimneys. */
+  TOWN_ROOF: 23,
+  /** Civic stone, lead roofs, a cupola. Somewhere important. */
+  CITY_ROOF: 24,
+  /** A town wall or palisade. Ties a cluster into one silhouette. */
+  TOWN_WALL: 25,
+  /** Trodden ground between the roofs. Walkable. */
+  YARD: 26,
+  /** Ploughed strips around a settlement. Walkable. ToME's CULTIVATION. */
+  FIELD: 27,
 } as const;
 export type TileCode = (typeof TileCode)[keyof typeof TileCode];
 
@@ -332,6 +348,8 @@ const WALKABLE: ReadonlySet<number> = new Set<number>([
   TileCode.HILLS,
   TileCode.HEATH,
   TileCode.SHORE,
+  TileCode.YARD,
+  TileCode.FIELD,
 ]);
 
 /**
@@ -347,6 +365,10 @@ const BLOCKS_SIGHT: ReadonlySet<number> = new Set<number>([
   TileCode.ERASED,
   TileCode.MOUNTAIN,
   TileCode.CRAG,
+  TileCode.VILLAGE_ROOF,
+  TileCode.TOWN_ROOF,
+  TileCode.CITY_ROOF,
+  TileCode.TOWN_WALL,
 ]);
 
 /**

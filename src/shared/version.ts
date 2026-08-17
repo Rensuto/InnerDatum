@@ -431,6 +431,21 @@
  *
  * ═══════════════════════════════════════════════════════════════════════════
 
+
+ * 13 -> 14 (SETTLEMENTS). Six terrain codes: VILLAGE_ROOF, TOWN_ROOF,
+ * CITY_ROOF, TOWN_WALL, YARD, FIELD.
+ *
+ * The same shape as 11 -> 12 and the same reason: a v13 client meets codes
+ * 22-27, `tileAt` fails them closed to WALL, and every settlement on the map
+ * becomes a solid block with its yard, its gate and its fields all impassable.
+ * Fail-closed is right and it still renders thirteen towns as rubble.
+ *
+ * TERRACE and CIVIC are untouched and still mean what they meant -- a street
+ * seen from inside a town. These are the same buildings seen from four screens
+ * away, which is a different picture and therefore a different code.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing persisted changed shape.
+ *
  * 12 -> 13 (MARKERS WITHOUT THE MAP). `ServerMsg` gains `SitesMsg`.
  *
  * An ADDITION an old client ignores, which by the rule this file has applied
@@ -484,7 +499,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

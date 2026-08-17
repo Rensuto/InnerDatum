@@ -627,7 +627,15 @@ function require2dContext(target: HTMLCanvasElement): CanvasRenderingContext2D {
  * placeholder, it is a deliberate reuse, and swapping it is one line here.
  */
 const SITE_MARKERS: ReadonlyMap<string, string> = new Map([
-  ['town', 'tile_ow_site_office'],
+  // Three SIZE TIERS, and they are told apart by silhouette rather than detail
+  // — they are read in peripheral vision at whatever zoom the player is at.
+  // Measured on delivery: 294px / 430px / 571px of ink, strictly increasing.
+  ['village', 'tile_ow_site_village'],
+  ['town', 'tile_ow_site_town'],
+  ['city', 'tile_ow_site_city'],
+  ['mine', 'tile_ow_site_mine'],
+  ['ruin', 'tile_ow_site_ruin'],
+  ['office', 'tile_ow_site_office'],
   ['gate', 'tile_ow_site_gate'],
   ['stair', 'tile_ow_site_stair'],
   ['altar', 'tile_ow_site_altar'],
@@ -653,6 +661,12 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.HILLS]: ['tile_ow_hills'],
   [TileCode.HEATH]: ['tile_ow_heath'],
   [TileCode.SHORE]: ['tile_ow_shore'],
+  [TileCode.YARD]: ['tile_ow_yard'],
+  [TileCode.FIELD]: ['tile_ow_field'],
+  [TileCode.VILLAGE_ROOF]: ['tile_ow_village_roof'],
+  [TileCode.TOWN_ROOF]: ['tile_ow_town_roof'],
+  [TileCode.CITY_ROOF]: ['tile_ow_city_roof'],
+  [TileCode.TOWN_WALL]: ['tile_ow_wall'],
   [TileCode.MOUNTAIN]: ['tile_ow_mountain'],
   [TileCode.CRAG]: ['tile_ow_crag'],
   [TileCode.DEEPWATER]: ['tile_ow_deepwater'],
@@ -715,6 +729,18 @@ function tileFill(code: TileCode): string {
       return '#565442';
     case TileCode.SHORE:
       return '#6b6350';
+    case TileCode.YARD:
+      return '#6a604e';
+    case TileCode.FIELD:
+      return '#5f6042';
+    case TileCode.VILLAGE_ROOF:
+      return '#2e2530';
+    case TileCode.TOWN_ROOF:
+      return '#2a2230';
+    case TileCode.CITY_ROOF:
+      return '#332b3c';
+    case TileCode.TOWN_WALL:
+      return '#2c2a30';
 
     // ─── the wilderness. Blocking: dark. ───
     case TileCode.MOUNTAIN:

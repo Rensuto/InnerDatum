@@ -228,7 +228,7 @@ describe('every settlement can be reached on foot', () => {
     // are bounded by the reachable cell count, so this is the number that
     // decides whether "walk to the Glass Archive" answers 'no route to that
     // tile' — a lie about the map, and the one divergence a player notices.
-    expect(reach.size).toBe(9114);
+    expect(reach.size).toBe(9327);
     expect(reach.size).toBeLessThan(OVERWORLD.view.w * OVERWORLD.view.h + 1);
   });
 

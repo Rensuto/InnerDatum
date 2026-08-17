@@ -472,20 +472,36 @@ describe('every site can be drawn on the overworld', () => {
     // Sites are drawn from `SiteView.marker`, and the renderer falls back to
     // `gate` for anything it does not recognise. That fallback is a safety net
     // for a newer server, not a licence for this table to invent families.
-    const known = new Set(['town', 'gate', 'stair', 'altar', 'archive', 'breach']);
+    const known = new Set([
+      'village',
+      'town',
+      'city',
+      'mine',
+      'ruin',
+      'gate',
+      'stair',
+      'altar',
+      'archive',
+      'breach',
+      'office',
+    ]);
     for (const s of SITES.values()) {
       expect(known.has(s.marker), `${s.id} has marker '${s.marker}'`).toBe(true);
     }
     expect(known.has(ENCOUNTER_SITE.marker)).toBe(true);
   });
 
-  it('marks the settlements as towns and the delves as something else', () => {
-    // The map has to say which places are safe before you walk into them —
-    // that is most of what a world map is for.
+  it('sizes the settlements, because that is what the tiers are for', () => {
+    // The map has to say which places are safe AND how big they are before you
+    // walk into them — that is most of what a world map is for. The three
+    // markers were measured on delivery at 294 / 430 / 571 px of ink, so the
+    // tier is legible by silhouette alone; this pins that the DATA uses it.
+    const size = new Map([...SITES.values()].map((s) => [s.id, s.marker]));
+    expect(size.get('site:alderbrook')).toBe('city');
+    expect(size.get('site:wayfarers_camp')).toBe('village');
     for (const s of SITES.values()) {
-      if (s.kind === RealmKind.Common && s.id !== 'site:wayfarers_camp') {
-        expect(s.marker, `${s.id}`).toBe('town');
-      }
+      if (s.kind !== RealmKind.Common) continue;
+      expect(['village', 'town', 'city'], `${s.id} is not a size tier`).toContain(s.marker);
     }
   });
 });
