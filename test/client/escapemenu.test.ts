@@ -918,7 +918,7 @@ describe('drawing', () => {
     expect(texts).toContain('RESET ALL');
     expect(texts).toContain('BACK');
     // WORDS AND A COUNT, never a bar (ui/caselog.ts:464-478).
-    expect(texts.some((t) => /\d+–\d+ of 26/.test(t))).toBe(true);
+    expect(texts.some((t) => /\d+–\d+ of 29/.test(t))).toBe(true);
     // The permanent floor is on the row, so a rebind cannot look like a break.
     expect(texts.some((t) => t.includes('Up / Num8'))).toBe(true);
   });

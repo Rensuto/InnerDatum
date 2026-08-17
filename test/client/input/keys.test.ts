@@ -323,8 +323,17 @@ describe('v8 puts the character sheet on C and the Case Log on M', () => {
     });
   });
 
-  it('m toggles the Case Log — conventional, NOT ported (see keys.ts)', () => {
-    expect(press({ key: 'm' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ToggleLog }]);
+  it('the Case Log moved off m, which the world map now has', () => {
+    // M is the conventional roguelike MESSAGE key and also the conventional MAP
+    // key, and only one of them can have it. The map won: it is what a player
+    // reaches for constantly on a 170x100 region, while the Case Log is already
+    // visible in the dock without being toggled at all.
+    //
+    // THE MEMBER DID NOT CHANGE, which is the whole point of naming actions
+    // rather than keys — this row moved off `c` at v8 and off `m` here, and
+    // nothing downstream noticed either time.
+    expect(press({ key: 'm' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ShowWorldMap }]);
+    expect(press({ key: 'v' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ToggleLog }]);
   });
 });
 
@@ -361,7 +370,7 @@ describe('v9 puts the talent panel on G, and takes nothing away', () => {
 
   it('g takes nothing from the sheet or the Case Log', () => {
     expect(press({ key: 'c' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ShowSheet }]);
-    expect(press({ key: 'm' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ToggleLog }]);
+    expect(press({ key: 'v' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ToggleLog }]);
   });
 });
 
@@ -446,7 +455,10 @@ describe('every row that already worked still works', () => {
     ['/', UiCommand.Say],
     ['c', UiCommand.ShowSheet],
     ['g', UiCommand.ShowTalents],
-    ['m', UiCommand.ToggleLog],
+    ['v', UiCommand.ToggleLog],
+    ['m', UiCommand.ShowWorldMap],
+    ['-', UiCommand.ZoomOut],
+    ['=', UiCommand.ZoomIn],
     ['p', UiCommand.ToggleParty],
     // v10. THE INVENTORY, ON ToME'S OWN LETTER — a dialog-local mnemonic
     // ("Manage [I]nventory", dialogs/CharacterSheet.lua:95-98, and the `c == 'i'`
@@ -482,7 +494,7 @@ describe('every row that already worked still works', () => {
     expect(press({ key: 'Escape' }).calls).toEqual([{ kind: 'cancel' }]);
   });
 
-  it('binds a key for every UiCommand member, so an eighth verb is considered here', () => {
+  it('binds a key for every UiCommand member, so a new verb is considered here', () => {
     expect(new Set(UI_ROWS.map(([, command]) => command))).toEqual(
       new Set(Object.values(UiCommand)),
     );
@@ -494,13 +506,14 @@ describe('every row that already worked still works', () => {
 // ---------------------------------------------------------------------------
 
 describe('what the keymap deliberately does NOT do', () => {
-  it('names exactly eight UI verbs', () => {
+  it('names exactly eleven UI verbs', () => {
     // A ninth member has to be added here on purpose, which is the point: the
     // exhaustive switch in main.ts breaks at lint time, and this breaks at test
     // time with the list of what the game claims to have. v9 added
-    // `show_talents`; v10 added `show_inventory` and that is the whole of the
-    // change to this list — `pickup` is deliberately NOT here, because it spends a
-    // turn and therefore lives on `TurnCommand` beside commit and hold.
+    // `show_talents`; v10 added `show_inventory`; the overworld added
+    // `show_world_map` and the two zoom steps — `pickup` is deliberately NOT
+    // here, because it spends a turn and therefore lives on `TurnCommand`
+    // beside commit and hold.
     expect(Object.values(UiCommand).slice().sort()).toEqual([
       'respawn',
       'revive',
@@ -508,8 +521,11 @@ describe('what the keymap deliberately does NOT do', () => {
       'show_inventory',
       'show_sheet',
       'show_talents',
+      'show_world_map',
       'toggle_log',
       'toggle_party',
+      'zoom_in',
+      'zoom_out',
     ]);
   });
 
@@ -556,12 +572,12 @@ describe('a rebind reaches an already-registered listener', () => {
     const live = createLiveKeymap();
     const run = session(live);
 
-    run.send({ key: 'v', code: 'KeyV' });
+    run.send({ key: 'z', code: 'KeyZ' });
     expect(run.calls).toEqual([]);
 
-    setKeymap({ show_inventory: ['key:v'] }, live);
+    setKeymap({ show_inventory: ['key:z'] }, live);
 
-    run.send({ key: 'v', code: 'KeyV' });
+    run.send({ key: 'z', code: 'KeyZ' });
     expect(run.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowInventory }]);
     run.dispose();
   });
@@ -569,31 +585,31 @@ describe('a rebind reaches an already-registered listener', () => {
   it('the old key stops answering, so a rebind is a MOVE and not a second key', () => {
     const live = createLiveKeymap();
     const run = session(live);
-    setKeymap({ show_inventory: ['key:v'] }, live);
+    setKeymap({ show_inventory: ['key:z'] }, live);
     run.send({ key: 'i' });
     expect(run.calls).toEqual([]);
     run.dispose();
   });
 
   it('an empty remap is RESET ALL, and it is a real value rather than a no-op', () => {
-    const live = createLiveKeymap({ show_inventory: ['key:v'] });
+    const live = createLiveKeymap({ show_inventory: ['key:z'] });
     const run = session(live);
     setKeymap({}, live);
     run.send({ key: 'i' });
-    run.send({ key: 'v', code: 'KeyV' });
+    run.send({ key: 'z', code: 'KeyZ' });
     expect(run.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowInventory }]);
     run.dispose();
   });
 
   it('a capital captured key still matches, because the compile lowercases', () => {
     // A capture field reads `event.key` raw, so a player with capslock on binds
-    // 'V'. Every key-side lookup in this file lowercases first, so a stored
+    // 'Z'. Every key-side lookup in this file lowercases first, so a stored
     // capital that was not lowered at compile time would be a key no press could
     // ever match — the rebind takes, the row draws, and nothing happens.
-    const live = createLiveKeymap({ show_inventory: ['key:V'] });
+    const live = createLiveKeymap({ show_inventory: ['key:Z'] });
     const run = session(live);
-    run.send({ key: 'v', code: 'KeyV' });
-    run.send({ key: 'V', shiftKey: true, code: 'KeyV' });
+    run.send({ key: 'z', code: 'KeyZ' });
+    run.send({ key: 'Z', shiftKey: true, code: 'KeyZ' });
     expect(run.calls).toEqual([
       { kind: 'ui', command: UiCommand.ShowInventory },
       { kind: 'ui', command: UiCommand.ShowInventory },

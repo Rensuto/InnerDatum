@@ -571,10 +571,48 @@ export const ACTIONS = [
     rebindable: true,
   },
   {
+    id: 'show_world_map',
+    name: 'World map',
+    group: 'Screens',
+    order: 19,
+    effect: { kind: 'ui', command: 'show_world_map' },
+    /**
+     * `M`, which is what every map in the genre is bound to, and ToME is no
+     * exception — `SHOW_MAP` sits on it in `engine/KeyBind.lua`'s defaults.
+     * There is nothing to port here beyond the letter; upstream's map is a
+     * different thing.
+     */
+    defaults: [{ kind: 'key', value: 'm' }],
+    fixed: [],
+    rebindable: true,
+  },
+  {
+    id: 'zoom_out',
+    name: 'Zoom out',
+    group: 'Screens',
+    order: 20,
+    effect: { kind: 'ui', command: 'zoom_out' },
+    defaults: [{ kind: 'key', value: '-' }],
+    fixed: [],
+    rebindable: true,
+  },
+  {
+    id: 'zoom_in',
+    name: 'Zoom in',
+    group: 'Screens',
+    order: 21,
+    effect: { kind: 'ui', command: 'zoom_in' },
+    // `=` rather than `+`: it is the unshifted key, so it works without a
+    // modifier on every layout this game has been played on.
+    defaults: [{ kind: 'key', value: '=' }],
+    fixed: [],
+    rebindable: true,
+  },
+  {
     id: 'toggle_party',
     name: 'Party panel',
     group: 'Screens',
-    order: 19,
+    order: 22,
     effect: { kind: 'ui', command: 'toggle_party' },
     defaults: [{ kind: 'key', value: 'p' }],
     fixed: [],
@@ -601,7 +639,7 @@ export const ACTIONS = [
     id: 'hotbar_1',
     name: 'Talent slot 1',
     group: 'Hotbar',
-    order: 20,
+    order: 23,
     effect: { kind: 'slot', slot: 0 },
     defaults: [],
     fixed: [{ kind: 'key', value: '1' }],
@@ -611,7 +649,7 @@ export const ACTIONS = [
     id: 'hotbar_2',
     name: 'Talent slot 2',
     group: 'Hotbar',
-    order: 21,
+    order: 24,
     effect: { kind: 'slot', slot: 1 },
     defaults: [],
     fixed: [{ kind: 'key', value: '2' }],
@@ -621,7 +659,7 @@ export const ACTIONS = [
     id: 'hotbar_3',
     name: 'Talent slot 3',
     group: 'Hotbar',
-    order: 22,
+    order: 25,
     effect: { kind: 'slot', slot: 2 },
     defaults: [],
     fixed: [{ kind: 'key', value: '3' }],
@@ -631,7 +669,7 @@ export const ACTIONS = [
     id: 'hotbar_4',
     name: 'Talent slot 4',
     group: 'Hotbar',
-    order: 23,
+    order: 26,
     effect: { kind: 'slot', slot: 3 },
     defaults: [],
     fixed: [{ kind: 'key', value: '4' }],
@@ -645,16 +683,27 @@ export const ACTIONS = [
     id: 'toggle_log',
     name: 'Case Log',
     group: 'Log',
-    order: 24,
+    order: 27,
     effect: { kind: 'ui', command: 'toggle_log' },
     // THE KEY IS CHOSEN, NOT PORTED, AND THIS SAYS SO RATHER THAN DRESSING A
     // GUESS AS A CITATION. ToME has a SHOW_MESSAGE_LOG action and its Classic HUD
     // triggers it (uiset/Classic.lua:238, with the tooltip branch at :281 that
     // would print whatever key it finds) — but there is no default to read in
-    // this clone. M is the conventional roguelike message key, chosen on that
-    // basis. The MEMBER never changed when v8 moved this row off `c`, which is
-    // the whole point of naming actions rather than keys.
-    defaults: [{ kind: 'key', value: 'm' }],
+    // this clone.
+    //
+    // ═══ IT WAS `m`, AND `m` WENT TO THE WORLD MAP ═══
+    // M is the conventional roguelike MESSAGE key and also the conventional MAP
+    // key, and only one of them can have it. The map won: it is the thing a
+    // player reaches for constantly on a 170x100 region, and the Case Log is
+    // already visible in the dock without being toggled at all.
+    //
+    // `v` FOR "VIEW" IS ARBITRARY AND SAYS SO. The vi-keys take h/j/k/l/y/u/b/n
+    // for movement and the screens take c/g/i/p/t, so the honest options were
+    // few and none of them are mnemonic. THE MEMBER DID NOT CHANGE, which is the
+    // entire point of naming actions rather than keys — this row moved off `c`
+    // at v8 and off `m` now, and nothing downstream noticed either time. It is
+    // rebindable, so anyone who disagrees has one screen to visit.
+    defaults: [{ kind: 'key', value: 'v' }],
     fixed: [],
     rebindable: true,
   },
@@ -662,7 +711,7 @@ export const ACTIONS = [
     id: 'scroll_back',
     name: 'Scroll the log back',
     group: 'Log',
-    order: 25,
+    order: 28,
     // +1 is BACK IN TIME, matching what Page Up does in every document ever
     // written. Shift picks the other lane, and that is a fact about a panel
     // rather than about a key, so it is not an action here.
@@ -675,7 +724,7 @@ export const ACTIONS = [
     id: 'scroll_forward',
     name: 'Scroll the log forward',
     group: 'Log',
-    order: 26,
+    order: 29,
     effect: { kind: 'scroll', steps: -1 },
     defaults: [{ kind: 'key', value: 'pagedown' }],
     fixed: [],

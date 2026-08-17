@@ -137,7 +137,7 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
     );
   });
 
-  it('KEY_TO_UI — all nine rows for all eight verbs, `/` beside `t`', () => {
+  it('KEY_TO_UI — every row for every verb, `/` beside `t`', () => {
     expect(entries(DEFAULT_KEYMAP.uiByKey)).toEqual(
       sorted([
         ['r', UiCommand.Revive],
@@ -145,7 +145,10 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
         ['t', UiCommand.Say],
         ['/', UiCommand.Say],
         ['c', UiCommand.ShowSheet],
-        ['m', UiCommand.ToggleLog],
+        ['v', UiCommand.ToggleLog],
+        ['m', UiCommand.ShowWorldMap],
+        ['-', UiCommand.ZoomOut],
+        ['=', UiCommand.ZoomIn],
         ['p', UiCommand.ToggleParty],
         ['g', UiCommand.ShowTalents],
         ['i', UiCommand.ShowInventory],
@@ -188,11 +191,11 @@ describe('the action registry', () => {
     expect(ACTIONS.map((action) => action.order)).toEqual(ACTIONS.map((_, index) => index + 1));
   });
 
-  it('names 26 actions, which is the count KEYBIND_MAX_ACTIONS was sized from', () => {
+  it('names 29 actions, which is the count KEYBIND_MAX_ACTIONS was sized from', () => {
     // src/shared/protocol.ts:2138-2142 justifies the wire cap with this exact
     // enumeration. If the table outgrows the cap, a complete keymap starts
     // getting refused as `bad_message` and nobody would guess why.
-    expect(ACTIONS).toHaveLength(26);
+    expect(ACTIONS).toHaveLength(29);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 
@@ -454,13 +457,13 @@ describe('a locked action refuses every write', () => {
     // comments and a test call load-bearing. So the refusal happens here, where
     // the capture field can say why, rather than as a bind that silently does
     // nothing.
-    expect(canDeliver(def('toggle_log'), code('KeyM'))).toBe(false);
+    expect(canDeliver(def('toggle_log'), code('KeyV'))).toBe(false);
     expect(canDeliver(def('move_north'), code('Numpad8'))).toBe(true);
     expect(canDeliver(def('commit'), code('NumpadEnter'))).toBe(true);
-    expect(setBinding({}, 'toggle_log', 0, code('KeyM'))).toEqual({});
+    expect(setBinding({}, 'toggle_log', 0, code('KeyV'))).toEqual({});
     // And if one reaches the compiler through a hand-edited save it is dropped
     // rather than installed somewhere it can never be read.
-    expect(compileKeymap(ACTIONS, { toggle_log: ['code:KeyM'] }).uiByKey.get('m')).toBe(
+    expect(compileKeymap(ACTIONS, { toggle_log: ['code:KeyV'] }).uiByKey.get('v')).toBe(
       UiCommand.ToggleLog,
     );
   });
@@ -483,9 +486,9 @@ describe('conflicts are resolved by dispatch and not by string equality', () => 
   });
 
   it('reports a plain key-vs-key collision, with the holder named', () => {
-    const found = conflictsFor({ action: 'show_inventory', binding: key('m') }, DEFAULT_KEYMAP);
+    const found = conflictsFor({ action: 'show_inventory', binding: key('v') }, DEFAULT_KEYMAP);
     expect(found).toEqual([
-      { holder: 'toggle_log', holderName: 'Case Log', press: { key: 'm', code: '' } },
+      { holder: 'toggle_log', holderName: 'Case Log', press: { key: 'v', code: '' } },
     ]);
   });
 
@@ -515,7 +518,7 @@ describe('conflicts are resolved by dispatch and not by string equality', () => 
   });
 
   it('an action does not conflict with itself', () => {
-    expect(conflictsFor({ action: 'toggle_log', binding: key('m') }, DEFAULT_KEYMAP)).toEqual([]);
+    expect(conflictsFor({ action: 'toggle_log', binding: key('v') }, DEFAULT_KEYMAP)).toEqual([]);
   });
 
   it('a free key conflicts with nothing', () => {
@@ -524,7 +527,7 @@ describe('conflicts are resolved by dispatch and not by string equality', () => 
 
   it('is asked about the CURRENT keymap, so a freed key stops conflicting', () => {
     const after = compileKeymap(ACTIONS, { toggle_log: ['key:z'] });
-    expect(conflictsFor({ action: 'show_inventory', binding: key('m') }, after)).toEqual([]);
+    expect(conflictsFor({ action: 'show_inventory', binding: key('v') }, after)).toEqual([]);
     expect(
       conflictsFor({ action: 'show_inventory', binding: key('z') }, after).map((c) => c.holder),
     ).toEqual(['toggle_log']);
@@ -591,6 +594,6 @@ describe('labelFor never shows the stored form', () => {
   it("a cleared action reads '--' rather than blank", () => {
     const keymap = compileKeymap(ACTIONS, { toggle_log: [SLOT_NONE, SLOT_NONE] });
     expect(labelFor('toggle_log', keymap)).toBe('--');
-    expect(keymap.uiByKey.get('m')).toBeUndefined();
+    expect(keymap.uiByKey.get('v')).toBeUndefined();
   });
 });

@@ -252,6 +252,11 @@ export const UiCommand = {
    * A second member for equipment would be a deviation wearing a port's clothes.
    */
   ShowInventory: 'show_inventory',
+  /** The full-screen region map. Shows the OVERWORLD and only the overworld. */
+  ShowWorldMap: 'show_world_map',
+  /** One whole step of scale, out and in. See the renderer's `setZoom`. */
+  ZoomOut: 'zoom_out',
+  ZoomIn: 'zoom_in',
   ToggleLog: 'toggle_log',
   ToggleParty: 'toggle_party',
 } as const;

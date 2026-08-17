@@ -376,6 +376,14 @@ export type RendererMetrics = {
 export type Renderer = {
   /** Re-measure the CSS box and dpr. Returns true if anything changed. */
   readonly resize: () => boolean;
+  /**
+   * Move the zoom to a whole step and re-lay the board. Returns the step
+   * actually taken after clamping, so a caller can tell "already at the limit"
+   * from "moved" without keeping its own copy of the bounds.
+   */
+  readonly setZoom: (next: number) => number;
+  /** The current zoom step. -1 out, 0 default, +1 in. */
+  readonly zoom: () => number;
   readonly draw: (scene: Scene) => void;
   readonly metrics: () => RendererMetrics;
   /**
@@ -878,6 +886,10 @@ export function createRenderer(options: RendererOptions): Renderer {
    */
   const BARRIER_EDGE_PX = 2;
 
+  /** One step out and one step in. "Slightly", as asked for. */
+  const ZOOM_MIN = -1;
+  const ZOOM_MAX = 1;
+
   const MAX_TILES_W = 48;
   const MAX_TILES_H = 32;
   let logicalW = minLogicalW;
@@ -898,6 +910,27 @@ export function createRenderer(options: RendererOptions): Renderer {
   let deviceH = 0;
   let dpr = 1;
   let scale = 1;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * ZOOM, AS A BIAS ON THE INTEGER SCALE RATHER THAN A MULTIPLIER ON IT
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `scale` is deliberately a whole number: it is what keeps every pixel of
+   * hand-drawn art landing on a whole screen pixel, and the header above spends
+   * a paragraph on why. A zoom that multiplied it by 1.25 would throw that away
+   * for every player who used it, which is the one thing this renderer will not
+   * do.
+   *
+   * So zoom moves the scale by whole STEPS. Out is a smaller scale — more
+   * tiles, each smaller; in is a larger one. Clamped so it can never reach 0,
+   * and clamped again by `MAX_TILES_*` on the way out, so zooming out on a big
+   * window stops at a readable size rather than at unreadable specks.
+   *
+   * "Slightly" is the requirement and one step each way is what that means: at
+   * the size this runs in a Discord iframe the natural scale is 2, so the range
+   * is 1x to 3x and no setting is useless.
+   */
+  let zoomStep = 0;
   let offsetX = 0;
   let offsetY = 0;
 
@@ -907,6 +940,28 @@ export function createRenderer(options: RendererOptions): Renderer {
   let lastCamX = 0;
   let lastCamY = 0;
   let lastLevel: LevelView | null = null;
+
+  /**
+   * Change the zoom by one step and re-lay the board.
+   *
+   * Returns the step actually taken, which may be the current one — the clamp
+   * is authoritative and the caller must be able to say "already as far out as
+   * it goes" rather than silently doing nothing.
+   */
+  function setZoom(next: number): number {
+    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.trunc(next)));
+    if (clamped === zoomStep) return zoomStep;
+    zoomStep = clamped;
+    // The device box has not changed, so `resize`'s early-out would skip the
+    // whole recompute. Forcing it is the point of this line.
+    deviceW = 0;
+    resize();
+    return zoomStep;
+  }
+
+  function zoom(): number {
+    return zoomStep;
+  }
 
   function resize(): boolean {
     const rect = canvas.getBoundingClientRect();
@@ -933,7 +988,8 @@ export function createRenderer(options: RendererOptions): Renderer {
 
     // Scale first, from the MINIMUM viewport — this is what keeps the factor a
     // whole number and the pixels sharp.
-    scale = Math.max(1, Math.floor(Math.min(deviceW / minLogicalW, deviceH / minLogicalH)));
+    const fitScale = Math.floor(Math.min(deviceW / minLogicalW, deviceH / minLogicalH));
+    scale = Math.max(1, fitScale + zoomStep);
 
     // Then fill the box with whole tiles at that scale. Clamped below by the
     // requested minimum (never show LESS than was asked for) and above by
@@ -1722,5 +1778,5 @@ export function createRenderer(options: RendererOptions): Renderer {
     return { x: tx, y: ty };
   }
 
-  return { resize, draw, metrics, backbufferPoint, tileAtClient };
+  return { resize, draw, metrics, backbufferPoint, tileAtClient, setZoom, zoom };
 }

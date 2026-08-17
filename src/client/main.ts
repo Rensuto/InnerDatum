@@ -269,6 +269,7 @@ import {
 } from './ui/respawnprompt.ts';
 import { drawTooltip } from './ui/tooltip.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
+import { minimapRect, paintMap } from './ui/mapview.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
 import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
@@ -807,6 +808,23 @@ let sites: readonly SiteView[] = [];
  * this; without the check the failure is silent and looks like a rendering bug.
  */
 let currentRealmId: string | null = null;
+/**
+ * THE OVERWORLD, REMEMBERED, so the world map works from inside a delve.
+ *
+ * The client only ever holds the level it is standing on, and the world map is
+ * specified to show the OVERWORLD and only the overworld — so from inside an
+ * arena there would be nothing to draw. Cached on the way past instead: the
+ * region is authored and never changes, so a copy taken on arrival is still
+ * true an hour later.
+ *
+ * Sites are cached WITH it. They move — the roamers wander — so what this shows
+ * from underground is the world as it was when you went down, which is the
+ * honest thing for a map to be. It is not a live feed and must not pretend.
+ */
+let overworldLevel: LevelView | null = null;
+let overworldSites: readonly SiteView[] = [];
+/** Is the full-screen world map open? Toggled by `M`. */
+let worldMapOpen = false;
 let connection = 'connecting';
 let lastError: string | null = null;
 
@@ -2879,6 +2897,59 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // `hudTop`, not `TURN_BAR_H`: it opens at the top of the MAP, below the card
   // strip that has just appeared with it. Covering the cards with the banner
   // announcing them would hide the answer at the moment it was being given.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MAP, at whichever of its two sizes is called for.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Drawn HERE, above the dock surfaces and below the token menu, for the same
+   * reason the combat banner is: it is an overlay a player reads, not a thing
+   * they click through. The minimap sits top-right and is always on; the world
+   * map is a deliberate act and takes the screen.
+   *
+   * The world map shows the OVERWORLD and only the overworld — from inside a
+   * delve it draws the cached copy, with no "you are here" marker, because you
+   * are not there. A marker showing your arena position on a region map would
+   * be a confident lie.
+   */
+  if (worldMapOpen && overworldLevel !== null) {
+    ctx.fillStyle = 'rgba(10, 8, 19, 0.92)';
+    ctx.fillRect(0, 0, width, height);
+    const inset = 24;
+    const onIt = realmKind === 'overworld' && selfId !== null;
+    const me = onIt ? actors.get(selfId ?? '') : undefined;
+    paintMap({
+      ctx,
+      level: overworldLevel,
+      rect: { x: inset, y: inset, w: width - inset * 2, h: height - inset * 2 - 18 },
+      sites: overworldSites,
+      self: me === undefined ? undefined : { x: me.x, y: me.y },
+      framed: false,
+    });
+    ctx.fillStyle = PALETTE.SILVER;
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(
+      onIt
+        ? 'THE ALDERBROOK REGION — M to close'
+        : 'THE ALDERBROOK REGION — as you left it — M to close',
+      Math.floor(width / 2),
+      height - 6,
+    );
+    ctx.textAlign = 'left';
+  } else if (level !== null) {
+    const rect = minimapRect(level, width);
+    const me = selfId === null ? undefined : actors.get(selfId);
+    paintMap({
+      ctx,
+      level,
+      rect,
+      sites,
+      self: me === undefined ? undefined : { x: me.x, y: me.y },
+      framed: true,
+    });
+  }
+
   combatBanner?.draw({ ctx, width, top: hudTop });
 
   // ...EXCEPT THE TOKEN MENU, which is drawn after even the banner. It is the
@@ -5037,6 +5108,31 @@ async function boot(): Promise<void> {
         // instant it appears.
         toggleTalentPanel();
         return;
+      case UiCommand.ShowWorldMap:
+        // Nothing to fetch: the overworld was cached the last time this client
+        // stood on it. Refusing in words when it has not is better than opening
+        // an empty black screen and letting the player wonder what broke.
+        if (overworldLevel === null) {
+          showNotice('the region map is not known yet');
+          return;
+        }
+        worldMapOpen = !worldMapOpen;
+        requestDraw();
+        return;
+      case UiCommand.ZoomOut:
+      case UiCommand.ZoomIn: {
+        const want = renderer.zoom() + (command === UiCommand.ZoomIn ? 1 : -1);
+        // `setZoom` clamps and returns what it settled on, so "already as far
+        // as it goes" is a fact this can state rather than a silent no-op —
+        // a key that appears to do nothing is indistinguishable from one that
+        // is not bound.
+        const got = renderer.setZoom(want);
+        if (got !== want) {
+          showNotice(command === UiCommand.ZoomIn ? 'already closest' : 'already widest');
+        }
+        requestDraw();
+        return;
+      }
       case UiCommand.ShowInventory:
         // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING — the talent panel's
         // shape exactly, and for its reason: the one frame this panel is built
@@ -7582,6 +7678,10 @@ function applyServerMessage(msg: ServerMsg): void {
       realmName = msg.name;
       sites = msg.sites;
       currentRealmId = msg.realmId;
+      if (msg.kind === 'overworld') {
+        overworldLevel = msg.level;
+        overworldSites = msg.sites;
+      }
       lastError = null;
 
       // Mid-flight and about to be about the wrong world — the same four
@@ -7619,7 +7719,10 @@ function applyServerMessage(msg: ServerMsg): void {
      * Absolute, like `ground` and `projectiles`: the table is REPLACED.
      */
     case 'sites':
-      if (msg.realmId === currentRealmId) sites = msg.sites;
+      if (msg.realmId === currentRealmId) {
+        sites = msg.sites;
+        if (realmKind === 'overworld') overworldSites = msg.sites;
+      }
       break;
     case 'state':
       // The dumb recovery path: a full list replaces everything known.

@@ -103,7 +103,8 @@
  * ===========================================================================
  * The map is the game, so this states its cost rather than discovering it:
  *
- *   TURN_CARDS_H = 78 = 3 pad + 4 caret + 68 card + 3 pad
+ *   TURN_CARDS_H = 46 = 3 pad + 4 caret + 36 card + 3 pad  (was 78 at a
+ *   64px portrait; see PORTRAIT_PX for why it is half)
  *
  * That is 16% of the 480px MINIMUM logical viewport and about 9% of the ~832px
  * one a real Discord Activity iframe actually gets (render/canvas.ts grows the
@@ -150,8 +151,27 @@ import type { PanelRect } from './panel.ts';
 // Geometry. See the height budget in the header before changing any of it.
 // ---------------------------------------------------------------------------
 
-/** Authored size of every `icon_character_the_*`. Blitted 1:1, never scaled. */
-const PORTRAIT_PX = 64;
+/**
+ * How big a portrait is DRAWN. The art is authored at 64.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HALVED, BECAUSE THE STRIP WAS EATING THE FIGHT
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This used to be 64 and blitted 1:1, which made the band 78px — a sizable
+ * bite out of a viewport that is at most 32 tiles tall, taken at exactly the
+ * moment the player most needs to see the room. Reported from play as taking
+ * up too much of the screen during a fight, which it did.
+ *
+ * 32 IS AN EXACT HALF AND THAT IS THE WHOLE REASON FOR THE NUMBER. The HUD
+ * context runs with `imageSmoothingEnabled = false`, so a downscale is
+ * nearest-neighbour: at 1/2 it drops every other pixel evenly and the face
+ * stays clean, while 40 or 48 would drop them unevenly and make a hand-drawn
+ * portrait look damaged. The band goes 78 -> 46, a third of the screen bite
+ * given back, and the card still answers the only question it is for — who
+ * acts next — because that is carried by the silhouette and the frame rather
+ * than by the detail.
+ */
+const PORTRAIT_PX = 32;
 /** Authored size of every `ui_icon_turn_*`. */
 const CHIP_PX = 24;
 const CARD_BORDER = 2;
