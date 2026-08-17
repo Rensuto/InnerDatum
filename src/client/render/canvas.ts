@@ -562,11 +562,29 @@ function require2dContext(target: HTMLCanvasElement): CanvasRenderingContext2D {
 /**
  * TileCode -> the sprite id(s) that may draw it. The ART SEAM, finally open.
  *
- * A code with no entry here has no art and never will have (FLOOR and WALL are
- * interiors, drawn as palette cells by design); a code WITH an entry draws from
- * the tileset when the file is on disk and falls back to `tileFill` when it is
- * not. Both states are correct and shippable, which is what lets the overworld
- * exist before the art does — see `paintTerrain`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * INTERIORS STAY FLAT. FLOOR AND WALL ARE ABSENT HERE ON PURPOSE, FOREVER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The overworld is a fixed, hand-authored city, so it can afford — and wants —
+ * real terrain art. An inner-world is the opposite: instanced, disposable, and
+ * headed for a generator. Flat palette cells are the right look for that and
+ * not a placeholder for a better one:
+ *
+ *   A GENERATOR NEEDS NO ART BUDGET. Every new room shape, corridor width and
+ *   floor plan works on the day it is written, because FLOOR and WALL are the
+ *   whole vocabulary. Tiling art would make each generator change an art
+ *   commission, which is how procedural content quietly stops being made.
+ *   NO SEAM PROBLEM, NO VARIANT PROBLEM, NO EDGE CASES. A generated floor is
+ *   full of one-tile nooks and ragged edges — precisely where a seamless
+ *   tileset looks worst and needs the most per-case work.
+ *   AND THE TWO PLACES READ AS DIFFERENT PLACES. Stepping from a drawn city
+ *   into flat violet geometry says "you are inside the Index's copy of this"
+ *   more plainly than any amount of matching art would.
+ *
+ * So: a code with no entry here has no art and never will have; a code WITH an
+ * entry draws from the tileset when the file is on disk and falls back to
+ * `tileFill` when it is not. Both states are correct and shippable, which is
+ * what lets the overworld exist before its art does — see `paintTerrain`.
  *
  * MORE THAN ONE ID MEANS INTERCHANGEABLE VARIANTS, picked per cell by position.
  * Only cobble has them, and only because it is the most repeated sprite in the

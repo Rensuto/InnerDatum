@@ -509,3 +509,56 @@ describe('the fillRect overlays stay art-free', () => {
     }
   });
 });
+
+describe('interiors stay flat, and the overworld does not', () => {
+  // THE RULE, PINNED RATHER THAN LEFT AS AN ACCIDENT OF A TABLE. The city is
+  // hand-authored and gets real terrain art; an inner-world is instanced,
+  // disposable and headed for a generator, and flat palette cells are the right
+  // look for that rather than a placeholder for a better one — a generator that
+  // needed a matching tile for every new room shape would be a generator whose
+  // every change is an art commission.
+  //
+  // Read from disk for the same reason the prefix pin above is: `TILE_SPRITES`
+  // is module-private, and exporting it purely to be asserted on would widen the
+  // renderer's surface to satisfy a test.
+  // Same URL-relative read the overlay pins above use — this file has no
+  // node:path import, and adding one for a single join would be the wrong kind
+  // of tidy.
+  const source = readFileSync(
+    new URL('../../src/client/render/canvas.ts', import.meta.url),
+    'utf8',
+  );
+  const table = source.split('const TILE_SPRITES')[1]?.split('};')[0] ?? '';
+
+  it('gives FLOOR and WALL no sprite, so an inner-world needs no art at all', () => {
+    expect(table).not.toBe('');
+    expect(table).not.toContain('TileCode.FLOOR');
+    expect(table).not.toContain('TileCode.WALL');
+  });
+
+  it('gives every overworld code one, so Alderbrook is drawn', () => {
+    for (const code of [
+      'COBBLE',
+      'PAVING',
+      'GREEN',
+      'MIRE',
+      'SOOT',
+      'RAIL',
+      'BRIDGE',
+      'TERRACE',
+      'CIVIC',
+      'WORKS',
+      'TREES',
+      'ERASED',
+      'WATER',
+    ]) {
+      expect(table, `${code} has no tile sprite`).toContain(`TileCode.${code}`);
+    }
+  });
+
+  it('names only tile_ow_ sprites, so no interior art can creep in', () => {
+    const ids = [...table.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(id).toMatch(/^tile_ow_/);
+  });
+});
