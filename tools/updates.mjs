@@ -92,6 +92,19 @@ if (process.exitCode !== 1) {
   if (pending > 0) {
     console.log(`  ${pending} commit(s) made but NOT announced.`);
     console.log('  Fix:  npm run updates:catchup');
+    /**
+     * NON-ZERO, so this is checkable by a machine and not only by a reader.
+     *
+     * A verification command that exits 0 while reporting a backlog can be
+     * "run" without being READ, which is precisely the failure this whole
+     * pipeline keeps having: everything works, nobody notices, the channel is
+     * silent. An unannounced commit is a defect, so it exits like one.
+     *
+     * THE DIRTY-TREE BRANCH BELOW DELIBERATELY DOES NOT. That is the normal
+     * state of someone mid-task, and failing on it would make this unrunnable
+     * during the exact work it exists to keep honest.
+     */
+    process.exitCode = 1;
   }
 
   if (dirty.length > 0) {

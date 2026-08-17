@@ -1,0 +1,32 @@
+#!/bin/sh
+# Inner Datum — announce commits that arrived without a post-commit.
+#
+# WHY THIS EXISTS. `post-commit` fires for `git commit` and for nothing else.
+# git does NOT run it for a merge, a rebase, a cherry-pick, a pull that
+# fast-forwards, or a squash — so every commit arriving by those routes is
+# announced by nothing, and the ledger then reports `pending 0` truthfully about
+# a channel that is missing them. One merge commit was already lost this way
+# before this hook existed.
+#
+# `catchup` is idempotent against the per-sha ledger, so running it here can
+# never double-post; the worst case is that it finds nothing to do.
+#
+# THE RELAY PATH IS NOT IN THIS FILE. It is machine-specific, and this repository
+# is public — a hard-coded path would publish the author's home directory. It
+# comes from `git config discord-relay.path`, which tools/install-hooks.mjs sets.
+#
+# THIS CAN NEVER FAIL A MERGE: every path ends in exit 0.
+set +e
+__dr_node="${DISCORD_RELAY_NODE:-node}"
+__dr_relay=$(git config discord-relay.path 2>/dev/null)
+if [ -n "$__dr_relay" ] && [ -f "$__dr_relay" ] && command -v "$__dr_node" >/dev/null 2>&1; then
+	__dr_top=$(git rev-parse --show-toplevel 2>/dev/null)
+	__dr_out=$("$__dr_node" "$__dr_relay" catchup --repo "$__dr_top" --soft 2>/dev/null)
+	if [ -n "$__dr_out" ]; then printf '%s\n' "$__dr_out"; fi
+elif [ -z "$__dr_relay" ]; then
+	# SAY SO. A relay that is not configured is indistinguishable from a relay
+	# that is working, which is the failure this whole pipeline keeps having.
+	echo "discord-relay: not configured (git config discord-relay.path). Commits from this merge are unannounced."
+fi
+unset __dr_node __dr_relay __dr_top __dr_out 2>/dev/null
+exit 0

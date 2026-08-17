@@ -40,3 +40,52 @@ try {
   // that the hook would have run.
   console.warn('note: could not set core.hooksPath — pre-push hook not installed');
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS ANYTHING ACTUALLY GOING TO ANNOUNCE COMMITS? SAY SO IF NOT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `.githooks/post-commit` is gitignored, and correctly so: it carries an
+ * absolute path to a relay outside this repository, and this repository is
+ * public — a tracked copy would publish the author's home directory.
+ *
+ * The consequence is that A FRESH CLONE HAS NO ANNOUNCER AT ALL. `pre-push` is
+ * tracked and arrives; `post-commit` does not. So every commit made on that
+ * clone is announced by nothing, the ledger reports `pending 0` truthfully
+ * about a channel that never received them, and there is no symptom whatsoever.
+ * `git clean -xfd` does the same thing to an existing clone.
+ *
+ * This cannot install the hook — it does not know where the relay lives — but
+ * it can refuse to let the absence be silent, which is the whole difference
+ * between a missing feature and an invisible one.
+ */
+{
+  const hook = `${repo}/.githooks/post-commit`;
+  /**
+   * `git config <key>` EXITS NON-ZERO WHEN THE KEY IS UNSET, so reading it
+   * inside the outer try swallowed the very case this check exists for: an
+   * unconfigured relay threw, the catch ate it, and the warning never printed.
+   * Exactly the shape of bug being hunted, in the code hunting it.
+   */
+  let configured;
+  try {
+    configured = execFileSync('git', ['config', 'discord-relay.path'], {
+      cwd: repo,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    configured = '';
+  }
+
+  if (!existsSync(hook) || configured === '') {
+    console.warn('');
+    console.warn('  ⚠  NOTHING ON THIS CLONE WILL ANNOUNCE COMMITS TO #updates.');
+    if (!existsSync(hook))
+      console.warn('     .githooks/post-commit is absent (it is gitignored by design).');
+    if (configured === '') console.warn('     git config discord-relay.path is unset.');
+    console.warn('     Install it from _shared/discord-relay/install-hook.mjs, then');
+    console.warn('     check with:  npm run updates');
+    console.warn('');
+  }
+}
