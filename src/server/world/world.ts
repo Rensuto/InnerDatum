@@ -425,6 +425,8 @@ export type World = {
    * tile at all. It NEVER throws: the caller is a player pressing a key to get
    * out of a stranded state, and an exception there is the bug all over again.
    */
+  /** Put a body on a named tile. False if it is solid or taken. See the impl. */
+  placeAt(id: string, tile: TileXY): boolean;
   placeAtSpawn(id: string): TileXY | undefined;
   /**
    * Remove a player outright.
@@ -856,6 +858,31 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
    * caller stands it up immediately afterwards, on a tile that has just been
    * proven empty of the living.
    */
+  /**
+   * Put a body on a NAMED tile. The realm-crossing path, and nothing else.
+   *
+   * WHY THIS IS ALLOWED TO WRITE x/y DIRECTLY, when `tryMove` is the whole point
+   * of this file: it is placement, not movement, and it is the same exception
+   * `placeAtSpawn` directly below already takes. A crossing is not a step — no
+   * energy, no bump, no corner rule — and routing it through `tryMove` would
+   * mean pathing a body across a map it is not on yet.
+   *
+   * REFUSES rather than shoving: an occupied or solid tile answers false and
+   * leaves the body where it was. The caller (a return from a delve, aiming for
+   * the doorstep somebody walked in from) has already been placed somewhere
+   * legal, so a refusal costs a step of accuracy and never a stuck body.
+   */
+  const placeAt = (id: string, tile: TileXY): boolean => {
+    const actor = actors.get(id);
+    if (actor === undefined) return false;
+    if (!canWalk(level, tile.x, tile.y)) return false;
+    const sitting = actorAt(tile.x, tile.y);
+    if (sitting !== undefined && sitting.id !== id) return false;
+    actor.x = tile.x;
+    actor.y = tile.y;
+    return true;
+  };
+
   const placeAtSpawn = (id: string): TileXY | undefined => {
     const actor = actors.get(id);
     if (actor === undefined) return undefined;
@@ -948,6 +975,7 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
     addPlayer,
     reclothePlayer,
     addMonster,
+    placeAt,
     placeAtSpawn,
     removePlayer: removeActor,
     removeActor,

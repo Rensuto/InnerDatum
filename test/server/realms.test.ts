@@ -22,6 +22,7 @@ import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import {
   ENCOUNTER_SITE,
+  INSTANCE_LINGER_MS,
   OVERWORLD_ID,
   RealmKind,
   SITES,
@@ -151,6 +152,7 @@ describe('a town is open to everybody', () => {
               name: 'A town with monsters in it',
               kind: RealmKind.Common,
               map: makeTestMap,
+              lingerMs: 0,
               populate: () => undefined,
             },
           ],
@@ -373,5 +375,51 @@ describe('the roaming encounter', () => {
     // it to that table would put a permanent ambush tile in Alderbrook.
     expect(SITES.has(ENCOUNTER_SITE.id)).toBe(false);
     expect([...OVERWORLD_SITE_IDS]).not.toContain(ENCOUNTER_SITE.id);
+  });
+});
+
+describe('what happens to an instance when everyone leaves', () => {
+  it('gives a delve a linger and an ambush none', () => {
+    // The distinction in one assertion: a delve is a place you can go back to,
+    // an ambush is an event you can flee. The gateway owns the wall clock; this
+    // is the policy it reads.
+    expect(ENCOUNTER_SITE.lingerMs).toBe(0);
+    for (const s of SITES.values()) expect(s.lingerMs).toBe(INSTANCE_LINGER_MS);
+  });
+
+  it('will not hand a fled breach back to the party that ran', () => {
+    // FLEEING HAS TO COST SOMETHING. A breach left open would let a party step
+    // out, heal, and step back into a fight frozen exactly as they left it —
+    // making "run away" and "pause the fight" the same verb. Sealing is what
+    // makes the second ambush a NEW fight.
+    const realms = makeRealms();
+    const first = realms.open(ENCOUNTER_SITE, 'party_1');
+    first.sealed = true;
+    const second = realms.open(ENCOUNTER_SITE, 'party_1');
+    expect(second.id).not.toBe(first.id);
+    expect(second.sealed).toBe(false);
+  });
+
+  it('still hands a delve back to the party that left it', () => {
+    // The mirror of the test above, and the reason sealing is per-realm rather
+    // than a rule about Inner realms in general.
+    const realms = makeRealms();
+    const first = realms.open(site('site:underworks'), 'party_1');
+    expect(realms.open(site('site:underworks'), 'party_1').id).toBe(first.id);
+  });
+
+  it('reports an emptied instance as reapable, and a town never', () => {
+    const realms = makeRealms();
+    const delve = realms.open(site('site:underworks'), 'party_1');
+    const town = realms.open(site('site:office'), 'party_1');
+    delve.world.addPlayer('p1', 'Someone');
+    town.world.addPlayer('p2', 'Someone else');
+    expect(realms.empty()).toEqual([]);
+
+    delve.world.removePlayer('p1');
+    town.world.removePlayer('p2');
+    // The town is deserted and still not a candidate: it is a place, not a
+    // session, and somebody walking back for a dropped coat must find it.
+    expect(realms.empty().map((r) => r.id)).toEqual([delve.id]);
   });
 });

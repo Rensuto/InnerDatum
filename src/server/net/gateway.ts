@@ -202,7 +202,7 @@ import {
  * injected as `opts.realms`, so a build with no registry is still a build with
  * one world, and `crossIntoSite` returns on its first line.
  */
-import { ENCOUNTER_SITE, RealmKind, SITES } from '../world/realms.ts';
+import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
@@ -235,7 +235,7 @@ import type { Slot } from '../content/items.ts';
 import type { PlayerActor } from '../engine/actor.ts';
 import type { PartyState } from '../engine/party.ts';
 import type { PartyOffer, TurnState } from '../view/projector.ts';
-import type { Realms, SiteDef } from '../world/realms.ts';
+import type { Realm, Realms, SiteDef } from '../world/realms.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
 /**
@@ -401,6 +401,19 @@ type Session = {
    * non-negotiable 5's reason.
    */
   realmId: string | null;
+  /**
+   * The overworld cell this body stepped off when it crossed into a site, and
+   * where `leaveRealm` puts it back.
+   *
+   * On the SESSION rather than on the actor, because it is a fact about a
+   * journey and not about a body: it means nothing to anyone else, it must not
+   * reach a client, and it must not be persisted — a save that remembered a
+   * doorstep from three weeks ago would put a returning player somewhere they
+   * have no memory of standing.
+   *
+   * Null on the overworld, and null again the moment it is spent.
+   */
+  enteredFrom: TileXY | null;
   helloDone: boolean;
   /**
    * `hello` is in flight. It is the one handler that awaits (it reads a
@@ -5000,6 +5013,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // would open an instance for somebody who never took the step. And the
     // `moved` frame has to reach the client first, or the map it is about is
     // already gone.
+    if (leaveRealm(session)) return;
     crossIntoSite(session);
     rollForEncounter(session);
   };
@@ -5144,6 +5158,169 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * NEW body in Alderbrook, and a body left in an instance is reaped by the
    * ten-minute grace.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHEN THE LAST BODY LEAVES. Two policies, and the difference is the point.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A DELVE LINGERS (`INSTANCE_LINGER_MS`). The ordinary reason a floor empties
+   * is that somebody stepped out for a moment; coming back to a re-rolled floor
+   * with the loot swept off it would make leaving something you never dare do.
+   * The countdown is CANCELLED on re-entry rather than paused, so returning and
+   * leaving again buys another full five minutes.
+   *
+   * AN AMBUSH DOES NOT (`lingerMs === 0`). It is closed on the spot, and
+   * `leaveRealm` has already sealed it besides. Fleeing has to mean something.
+   *
+   * A SHARED SPACE IS NEVER REAPED at all — `Realms.close` refuses one outright,
+   * so a town keeps the coat you dropped in it.
+   *
+   * THE TIMER IS `unref`'d: an abandoned instance must never be the reason a
+   * process refuses to exit, and a shutdown that reaps nothing has lost nothing
+   * — the whole registry goes with the process.
+   */
+  /**
+   * Drop a reaped realm's rows from every per-realm side table.
+   *
+   * Not tidiness. The memo maps and the Bell map are keyed by realm id, and ids
+   * are never recycled (world/realms.ts) — so a stale row can never be READ by a
+   * later realm. What it would do is grow: one row per instance per evening, for
+   * the life of the process, in six maps. Small, unbounded, and exactly the kind
+   * of leak nobody finds because nothing ever breaks.
+   */
+  const forgetRealmMemos = (realmId: string): void => {
+    clearBell(realmId);
+    lastTurnKeys.delete(realmId);
+    lastPartyKeys.delete(realmId);
+    lastEffectsKeys.delete(realmId);
+    lastProjectilesKeys.delete(realmId);
+    lastGroundKeys.delete(realmId);
+  };
+
+  const reaps = new Map<string, NodeJS.Timeout>();
+
+  const cancelReap = (realmId: string): void => {
+    const t = reaps.get(realmId);
+    if (t === undefined) return;
+    clearTimeout(t);
+    reaps.delete(realmId);
+  };
+
+  const reapIfEmpty = (realm: Realm): void => {
+    const realms = opts.realms;
+    if (realms === undefined || isShared(realm.kind)) return;
+    if (realm.world.allActors().some((a: Actor) => a.kind === ActorKind.Player)) return;
+
+    if (realm.lingerMs <= 0) {
+      cancelReap(realm.id);
+      if (realms.close(realm.id)) {
+        forgetRealmMemos(realm.id);
+        app.log.info({ realmId: realm.id }, 'instance closed on the last body out');
+      }
+      return;
+    }
+
+    cancelReap(realm.id);
+    const timer = setTimeout(() => {
+      reaps.delete(realm.id);
+      const still = realms.get(realm.id);
+      // Re-checked at FIRE TIME, not trusted from arm time. `cancelReap` covers
+      // the ordinary return, but a body can also arrive by a path that never
+      // touches it (a reconnect resolving into this realm), and reaping a floor
+      // out from under somebody would leave their socket rendering a map the
+      // server no longer holds.
+      if (still === undefined) return;
+      if (still.world.allActors().some((a: Actor) => a.kind === ActorKind.Player)) return;
+      if (realms.close(realm.id)) {
+        forgetRealmMemos(realm.id);
+        app.log.info({ realmId: realm.id }, 'instance reaped after its linger');
+      }
+    }, realm.lingerMs);
+    timer.unref?.();
+    reaps.set(realm.id, timer);
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE WAY OUT. The tile you came in on is the door you leave by.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * No new art, no new glyph, no second authored map: a site's spawn tiles are
+   * its threshold. This works only because ARRIVAL IS NOT A MOVE — `crossIntoSite`
+   * and this run from `handleMove` alone, so being placed on the threshold cannot
+   * eject you on the instant you arrive, and stepping back onto it later can.
+   *
+   * ═══ WHERE YOU COME BACK OUT ═══
+   * The overworld cell you were standing on when you crossed in, remembered on
+   * the session. Returning to the city's single spawn instead would teleport a
+   * party from Gearford to the office doorstep, which is a fast-travel system
+   * nobody asked for and a long walk silently deleted.
+   *
+   * ═══ AN ENCOUNTER IS SEALED ON THE WAY OUT ═══
+   * Fleeing has to cost something. A breach left standing would let a party step
+   * out, heal, and step back into a fight frozen exactly as they left it —
+   * making "run away" and "pause the fight" the same verb. See `Realm.sealed`.
+   */
+  const leaveRealm = (session: Session): boolean => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
+    if (realms === undefined || actorId === null || session.realmId === null) return false;
+
+    const from = realms.get(session.realmId);
+    if (from === undefined || from.kind === RealmKind.Overworld) return false;
+
+    const body = from.world.getActor(actorId);
+    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return false;
+    if (!from.spawns.some((t) => t.x === body.x && t.y === body.y)) return false;
+
+    const to = realms.overworld;
+    // ONE-WAY, AND ONLY FOR AN AMBUSH. A delve stays open behind you.
+    if (from.lingerMs === 0) from.sealed = true;
+
+    from.world.removePlayer(actorId);
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'left', id: actorId },
+      session.connId,
+      audienceFor(from.id),
+    );
+
+    const definition = body.classId === undefined ? undefined : classById(body.classId);
+    const placed = to.world.addPlayer(
+      actorId,
+      body.name,
+      definition === undefined ? undefined : overlayFor(definition),
+    );
+    carryAcross(body, placed);
+    // BACK WHERE THEY WENT IN, when the tile is still free. `placeAtSpawn` has
+    // already put a body somewhere legal, so a taken doorstep costs a step of
+    // accuracy rather than an error.
+    const back = session.enteredFrom;
+    if (back !== null && to.world.actorAt(back.x, back.y) === undefined) {
+      const moved = to.world.placeAt(actorId, back);
+      if (!moved) app.log.warn({ actorId, back }, 'could not restore the entry tile');
+    }
+    session.enteredFrom = null;
+
+    to.engine.join(actorId);
+    to.engine.setConnected(actorId, true);
+    session.realmId = to.id;
+    sendRealm(session);
+    broadcast(
+      {
+        v: PROTOCOL_VERSION,
+        t: 'joined',
+        actor: toActorView(to.world.getActor(actorId) ?? placed),
+      },
+      session.connId,
+      audienceFor(to.id),
+    );
+
+    app.log.info({ actorId, from: from.id, sealed: from.sealed, to: to.id }, 'a body left a realm');
+    reapIfEmpty(from);
+    pumpAndBroadcast();
+    return true;
+  };
+
   const crossIntoSite = (session: Session): void => {
     const realms = opts.realms;
     const actorId = session.actorId;
@@ -5203,6 +5380,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // the same tile would produce if one were ever possible.
     if (to.id === from.id) return;
 
+    // WHERE TO PUT THEM BACK. Recorded only when leaving the overworld, so a
+    // delve reached from a town would return to the town's doorstep rather than
+    // to a city cell nobody was standing on.
+    if (from.kind === RealmKind.Overworld) session.enteredFrom = { x: body.x, y: body.y };
+
     // ═══ REMOVE, THEN PLACE, AND THE ORDER MATTERS FOR THE OLD FLOOR ═══
     // `left` is what takes the token off everybody else's screen in the realm
     // being left; without it a body would stand in the doorway on four other
@@ -5231,6 +5413,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE NEW FLOOR'S SCHEDULER LEARNS ABOUT THEM. `join` clears any stale
     // Standing By in that realm's barrier and `setConnected` puts them in its
     // quorum — both idempotent, and both are what `hello` does for a fresh body.
+    // SOMEBODY CAME BACK. The countdown is cancelled outright rather than
+    // paused, so the five minutes restart from zero when they leave again —
+    // which is what "the timer does not start until the player leaves again"
+    // means, and it is why a party that keeps returning keeps its floor.
+    cancelReap(to.id);
+
     to.engine.join(actorId);
     to.engine.setConnected(actorId, true);
 
@@ -7505,6 +7693,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // and `realmFor`. A socket with no body cannot be anywhere, and a build
       // with no `opts.realms` never leaves this value.
       realmId: null,
+      enteredFrom: null,
       helloDone: false,
       // Set true for the whole of `hello`, attempted or completed, and never
       // cleared: one hello per connection. A socket whose hello failed hard

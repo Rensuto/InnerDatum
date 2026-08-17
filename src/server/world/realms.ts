@@ -57,6 +57,7 @@ import { makeOverworld, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { seedTestEncounter } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
+import type { TileXY } from '../../shared/coords.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { ReapingTurnEngine } from '../turn-engine.ts';
 import type { World } from './world.ts';
@@ -121,6 +122,15 @@ export type Realm = {
    */
   readonly sites: ReadonlyMap<string, string>;
   /**
+   * Where a body is placed on arrival — AND, inside a site, the way out.
+   *
+   * The tile you came in on is the door you leave by, which needs no new art,
+   * no new glyph and no second authored map. It works because arrival is not a
+   * MOVE: `crossIntoSite` runs from `handleMove` only, so being placed here
+   * cannot immediately eject you, and stepping back on later can.
+   */
+  readonly spawns: readonly TileXY[];
+  /**
    * The party this instance belongs to, for `Inner` realms. Undefined on the
    * overworld, which belongs to everybody.
    *
@@ -130,7 +140,35 @@ export type Realm = {
   readonly partyId?: string;
   /** Which site opened this realm. Undefined on the overworld. */
   readonly siteId?: string;
+  /** Copied from the site. See `SiteDef.lingerMs`. */
+  readonly lingerMs: number;
+  /**
+   * ONE-WAY. Set when a body leaves a realm that must not be re-entered, which
+   * today means exactly the roaming encounter.
+   *
+   * `open` skips a sealed realm, so a party that flees a breach and is ambushed
+   * again gets a NEW breach rather than walking back into the one they ran from
+   * — with its hp, its cooldowns and its half-killed monsters exactly as they
+   * left them. Without this, "run away" and "pause the fight" would be the same
+   * verb.
+   *
+   * Mutable, deliberately: it is the one fact about a realm that changes after
+   * construction, and hiding that behind a rebuild would mean re-keying every
+   * side table that points at the realm's id.
+   */
+  sealed: boolean;
 };
+
+/**
+ * How long a delve's instance outlives its last occupant.
+ *
+ * Five minutes is long enough to cover the reason people actually leave — a
+ * quick trip back to town, somebody answering their door — and short enough
+ * that a server left running overnight is not holding a dozen abandoned floors.
+ * It is a wall-clock number and therefore lives with the gateway's other one
+ * (the Bell); this constant only says what the policy is.
+ */
+export const INSTANCE_LINGER_MS = 5 * 60_000;
 
 /**
  * A site: somewhere on the overworld you can walk into.
@@ -150,6 +188,30 @@ export type SiteDef = {
    * `Common` requires that nothing ever spawns here.
    */
   readonly kind: typeof RealmKind.Common | typeof RealmKind.Inner;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW LONG AN EMPTIED INSTANCE WAITS BEFORE IT IS REAPED. 0 = immediately.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The distinction this field exists to draw: an ENCOUNTER is an event you can
+   * flee, and a DELVE is a place you can go back to.
+   *
+   * A delve lingers, because the ordinary reason a floor empties is that
+   * somebody stepped out for a moment — to sell, to regroup, to answer the door
+   * — and coming back to a re-rolled floor with your loot swept off it would
+   * make leaving something you never dare do. `INSTANCE_LINGER_MS`.
+   *
+   * An ambush does not, because fleeing has to MEAN something. If the breach
+   * you ran out of were still there thirty seconds later, running would be a
+   * way to save-scum a fight rather than a decision with a cost. 0.
+   *
+   * THE TIMER RESTARTS FROM ZERO ON RE-ENTRY, never from when it was armed:
+   * walking back in cancels the reap outright, and the countdown only begins
+   * again when the last body leaves again. So a party that keeps returning keeps
+   * its floor indefinitely, which is the correct reading of "in case someone
+   * wants to come back".
+   */
+  readonly lingerMs: number;
   /** Builds a fresh map. */
   readonly map: () => AuthoredMap;
   /**
@@ -313,7 +375,7 @@ export function createRealms(opts: RealmsOptions): Realms {
     kind: RealmKind,
     name: string,
     map: AuthoredMap,
-    extra: { readonly partyId?: string; readonly siteId?: string },
+    extra: { readonly partyId?: string; readonly siteId?: string; readonly lingerMs?: number },
   ): Realm => {
     const world = createWorld(seedFor(opts.seed, id), map);
     const engine = opts.engineFor(world);
@@ -324,6 +386,11 @@ export function createRealms(opts: RealmsOptions): Realms {
       world,
       engine,
       sites: map.sites,
+      spawns: map.spawns,
+      // A shared space is never reaped, so its linger is meaningless; 0 is the
+      // honest value rather than a large number pretending to be a policy.
+      lingerMs: extra.lingerMs ?? 0,
+      sealed: false,
       ...extra,
     };
     realms.set(id, realm);
@@ -391,6 +458,11 @@ export function createRealms(opts: RealmsOptions): Realms {
     // onto the site yourself later joins your friends rather than opening a
     // private second copy of the floor beside them.
     for (const realm of realms.values()) {
+      // A SEALED REALM IS NOT A CANDIDATE. Without this, a party that fled a
+      // breach and was ambushed again would be handed the breach they ran from,
+      // monsters and all, which makes running away and pausing the fight the
+      // same verb. See `Realm.sealed`.
+      if (realm.sealed) continue;
       if (realm.partyId === partyId && realm.siteId === site.id) return realm;
     }
 
@@ -399,6 +471,7 @@ export function createRealms(opts: RealmsOptions): Realms {
     const realm = build(id, RealmKind.Inner, site.name, site.map(), {
       partyId,
       siteId: site.id,
+      lingerMs: site.lingerMs,
     });
     site.populate?.(realm.world);
     return realm;
@@ -477,7 +550,19 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
       ['site:glass_archive', 'The Glass Archive', RealmKind.Inner],
       ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner],
     ] as const
-  ).map(([id, name, kind]) => [id, { id, name, kind, map: makeTestMap }]),
+  ).map(([id, name, kind]): [string, SiteDef] => [
+    id,
+    {
+      id,
+      name,
+      kind,
+      map: makeTestMap,
+      // A delve is a place you can go back to. A town never empties in the sense
+      // that matters — `close` refuses a shared realm outright — so the number
+      // is inert there and stated once rather than branched on.
+      lingerMs: INSTANCE_LINGER_MS,
+    },
+  ]),
 );
 
 /**
@@ -509,6 +594,9 @@ export const ENCOUNTER_SITE: SiteDef = {
   name: 'An Index Breach',
   kind: RealmKind.Inner,
   map: makeTestMap,
+  // ZERO, AND THIS IS THE FIELD THAT MAKES FLEEING MEAN SOMETHING. See
+  // `SiteDef.lingerMs`: a breach you ran out of must not still be there.
+  lingerMs: 0,
   populate: (world) => {
     seedTestEncounter(world);
   },
