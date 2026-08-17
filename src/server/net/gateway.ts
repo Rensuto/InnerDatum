@@ -4444,11 +4444,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ? []
         : realm.spawns.map((t) => ({ x: t.x, y: t.y, marker: 'gate', name: 'The way out' }));
 
+    // A ROAMER IS DRAWN AS A CREATURE, not as a place. `marker` stays only as
+    // the fallback for a client with no creature art; `sprite` is what it
+    // actually wears. See `SiteView.sprite`.
     const wandering = [...realm.roamers.values()].map((r) => ({
       x: r.x,
       y: r.y,
       marker: 'breach',
       name: r.name,
+      sprite: r.sprite,
     }));
 
     return [...authored, ...exits, ...wandering];

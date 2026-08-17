@@ -3752,9 +3752,22 @@ export type ErrorMsg = {
 export type SiteView = {
   readonly x: number;
   readonly y: number;
-  /** `town` | `gate` | `stair` | `altar` | `archive` | `breach`. */
+  /** `village` | `town` | `city` | `mine` | `ruin` | `gate` | `stair` | ... */
   readonly marker: string;
   readonly name: string;
+  /**
+   * A CREATURE SPRITE, when this marker is something alive.
+   *
+   * Present on a roamer, absent on a place. A settlement is drawn as a marker
+   * lying on the map; a wandering danger is drawn as a TOKEN — bottom-anchored,
+   * with a hostile ring under it — because it is the same kind of thing as the
+   * creature it becomes and has to read that way at a glance.
+   *
+   * The first version had no such field, so roamers borrowed the breach marker
+   * and looked like doors. Reported from play as "the enemies do not seem to
+   * have enemy assets", which was exactly right: they had a door's.
+   */
+  readonly sprite?: string;
 };
 
 export type RealmMsg = {

@@ -160,3 +160,35 @@ describe('nothing starts a fight that the player cannot see', () => {
     expect(gateway).toContain('roamerAt(from, body.x, body.y)');
   });
 });
+
+describe('a roamer looks like a creature, not like a place', () => {
+  it('wears a real enemy sprite', () => {
+    // Reported from play as "the enemies do not seem to have enemy assets, it
+    // seems to be a door or something odd" — which was exactly right. Roamers
+    // ride on the same list as the settlements, so they borrowed the breach
+    // MARKER: `tile_ow_site_breach`, drawn as "a tear in the air", which reads
+    // as a door because that is what it was drawn to be.
+    //
+    // A thing you are meant to recognise as dangerous and decide about has to
+    // look like what it becomes.
+    const realms = makeRealms();
+    settle(realms);
+    expect(realms.overworld.roamers.size).toBeGreaterThan(0);
+    for (const r of realms.overworld.roamers.values()) {
+      expect(r.sprite, `${r.id} wears '${r.sprite}'`).toMatch(/^enemy_/);
+      expect(r.name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('draws anything carrying a sprite as a token rather than a marker', () => {
+    // The renderer branch that makes the difference. A settlement is a marker
+    // lying on the ground; a roamer gets the hostile ring and the bottom-centre
+    // anchor every other body on the board gets.
+    const canvas = readFileSync(
+      new URL('../../src/client/render/canvas.ts', import.meta.url),
+      'utf8',
+    );
+    expect(canvas).toContain("sprites.sprite('ui_token_ring_hostile')");
+    expect(canvas).toContain('if (site.sprite !== undefined)');
+  });
+});

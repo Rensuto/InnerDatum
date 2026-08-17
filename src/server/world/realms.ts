@@ -118,6 +118,20 @@ export type Roamer = {
   y: number;
   /** What a player is told they walked into. */
   readonly name: string;
+  /**
+   * WHAT IT LOOKS LIKE, and it is a CREATURE, not a marker.
+   *
+   * The first version drew roamers with `tile_ow_site_breach` — a site marker,
+   * "a tear in the air" — because they ride on the same list as the towns. It
+   * reads as a door, which is what it was drawn to be, and reported from play
+   * as "the enemies do not seem to have enemy assets".
+   *
+   * A thing you are meant to recognise as dangerous and decide about should
+   * look like the thing it will turn into. So a roamer wears one of the ambush
+   * roster's own sprites and is drawn as a token with a hostile ring, exactly
+   * as the creature itself will be one screen later.
+   */
+  readonly sprite: string;
 };
 
 export type Realm = {

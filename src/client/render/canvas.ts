@@ -1024,6 +1024,22 @@ export function createRenderer(options: RendererOptions): Renderer {
       const sy = site.y * TILE_PX - camY;
       if (sx < -TILE_PX || sy < -TILE_PX || sx > logicalW || sy > logicalH) continue;
 
+      /**
+       * SOMETHING ALIVE IS DRAWN AS A TOKEN, not as a marker on the ground.
+       *
+       * A roamer carries a creature sprite and gets the hostile ring and the
+       * bottom-centre anchor every other body on the board gets — because it IS
+       * the same kind of thing as the creature it becomes, and it has to read
+       * that way instantly. Drawing it with the breach marker instead made it
+       * look like a door, which is exactly what that art was drawn to be.
+       */
+      if (site.sprite !== undefined) {
+        const ring = sprites.sprite('ui_token_ring_hostile');
+        if (ring !== undefined) backCtx.drawImage(ring.image, sx, sy, TILE_PX, TILE_PX);
+        blitSprite(site.sprite, sx, sy);
+        continue;
+      }
+
       const id = SITE_MARKERS.get(site.marker) ?? SITE_MARKERS.get('gate');
       const sprite = id === undefined ? undefined : sprites.sprite(id);
       if (sprite !== undefined) {

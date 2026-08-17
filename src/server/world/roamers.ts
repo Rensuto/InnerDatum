@@ -74,7 +74,19 @@ const HAUNTS: ReadonlySet<number> = new Set<number>([
   TileCode.RAIL,
 ]);
 
-const NAMES: readonly string[] = ['An Index Breach', 'Something Redacted', 'A Wrong Shadow'];
+/**
+ * What wanders, paired with what it looks like.
+ *
+ * The sprites are the AMBUSH ROSTER's own (content/monsters.ts), so the thing
+ * you decided to walk into is the thing you meet — a roamer that looked like a
+ * husk and produced a wraith would make the decision it exists to offer a lie.
+ */
+const KINDS: readonly { readonly name: string; readonly sprite: string }[] = [
+  { name: 'An Index Husk', sprite: 'enemy_index_husk_s' },
+  { name: 'An Index Wraith', sprite: 'enemy_index_wraith_s' },
+  { name: 'Something Redacted', sprite: 'enemy_index_glut_s' },
+  { name: 'A Wrong Shadow', sprite: 'enemy_index_cairn_s' },
+];
 
 /** The eight steps. Fixed order — the index is a draw, so order is seed contract. */
 const STEPS: readonly (readonly [number, number])[] = [
@@ -117,8 +129,14 @@ export function tickRoamers(realm: Realm, seq: number): boolean {
       if (realm.world.actorAt(x, y) !== undefined) continue;
       if ([...realm.roamers.values()].some((r) => r.x === x && r.y === y)) continue;
       const id = `roam_${String(seq)}_${String(realm.roamers.size)}`;
-      const name = NAMES[realm.world.rng.int('roamer.name', 0, NAMES.length - 1)] ?? NAMES[0];
-      realm.roamers.set(id, { id, x, y, name: name ?? 'An Index Breach' });
+      const kind = KINDS[realm.world.rng.int('roamer.kind', 0, KINDS.length - 1)] ?? KINDS[0];
+      realm.roamers.set(id, {
+        id,
+        x,
+        y,
+        name: kind?.name ?? 'An Index Husk',
+        sprite: kind?.sprite ?? 'enemy_index_husk_s',
+      });
       changed = true;
       break;
     }
