@@ -430,6 +430,20 @@
  * third must not undo it out of tidiness.
  *
  * ═══════════════════════════════════════════════════════════════════════════
+ * 11 -> 12 (THE WILDERNESS). Six terrain codes: PLAINS, HILLS, HEATH,
+ * MOUNTAIN, CRAG, DEEPWATER.
+ *
+ * The overworld stopped being Alderbrook-the-city and became the country around
+ * it, so the ground the client is asked to draw is new. An old client would
+ * meet codes 15-20 and `tileAt` fails them closed to WALL (shared/level.ts) --
+ * so the region would render as solid rock, entirely unwalkable, with the
+ * player's own token apparently embedded in it. Fail-closed is the RIGHT
+ * behaviour and it is still catastrophic to look at, which is exactly the case
+ * the version gate converts into an honest "your client is out of date".
+ *
+ * `SCHEMA_VERSION` STAYS 1. No persisted field changed shape; a body's realm
+ * and position are still decided by the join path rather than read from disk.
+ *
  * 10 -> 11 (THE OVERWORLD). A SECOND MAP CAN ARRIVE MID-SESSION: `realm`
  * ═══════════════════════════════════════════════════════════════════════════
  * `ServerMsg` gains `RealmMsg`, and it is the first frame other than `welcome`
@@ -452,7 +466,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

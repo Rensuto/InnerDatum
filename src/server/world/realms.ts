@@ -512,10 +512,10 @@ export function createRealms(opts: RealmsOptions): Realms {
 }
 
 /**
- * The sites Alderbrook opens onto, and whether each is a place or a delve.
+ * The sites the region opens onto, and whether each is a place or a delve.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * THREE OPEN, FIVE CLOSED, AND THE SPLIT IS THE CIVILISED / UNCIVILISED LINE
+ * FOUR OPEN, FIVE CLOSED, AND THE SPLIT IS THE CIVILISED / UNCIVILISED LINE
  * ═══════════════════════════════════════════════════════════════════════════
  * The rule from `RealmKind` decides every row mechanically — is there combat
  * here — and the fiction happens to agree with it exactly, which is a good sign
@@ -539,10 +539,14 @@ export function createRealms(opts: RealmsOptions): Realms {
 export const SITES: ReadonlyMap<string, SiteDef> = new Map(
   (
     [
-      // ─── open to everybody: no combat, so nothing to coordinate ───
-      ['site:office', "The Detective's Office", RealmKind.Common],
+      // ─── open to everybody: no combat, so nothing to coordinate. These are
+      // the SETTLEMENTS, and with the overworld now being open country they are
+      // where the game is social — the road between them is meant to feel empty.
+      //
+      ['site:alderbrook', 'Alderbrook', RealmKind.Common],
       ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common],
       ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common],
+      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common],
       // ─── one party at a time: combat, so a shared barrier would be wrong ───
       ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner],
       ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner],

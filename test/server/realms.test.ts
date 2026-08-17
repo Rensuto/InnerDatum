@@ -80,10 +80,10 @@ describe('the overworld', () => {
     expect(realms.all().filter((r) => r.kind === RealmKind.Inner)).toEqual([]);
   });
 
-  it('holds the city, not the test level', () => {
+  it('holds the region, not the test level', () => {
     const realms = makeRealms();
-    expect(realms.overworld.world.level.w).toBe(64);
-    expect(realms.overworld.world.level.h).toBe(48);
+    expect(realms.overworld.world.level.w).toBe(96);
+    expect(realms.overworld.world.level.h).toBe(64);
   });
 
   it('has no hostiles, and that is load-bearing rather than flavour', () => {
@@ -113,13 +113,13 @@ describe('the overworld', () => {
 });
 
 describe('a town is open to everybody', () => {
-  it('gives two unrelated parties the SAME office', () => {
+  it('gives two unrelated parties the SAME city', () => {
     // The rule: a common space has no combat, so there is nothing to
     // coordinate, so there is no reason to keep anyone out. This is the half
     // that makes the world feel populated rather than a set of private rooms.
     const realms = makeRealms();
-    const mine = realms.open(site('site:office'), 'party_1');
-    const theirs = realms.open(site('site:office'), 'party_2');
+    const mine = realms.open(site('site:alderbrook'), 'party_1');
+    const theirs = realms.open(site('site:alderbrook'), 'party_2');
     expect(theirs.id).toBe(mine.id);
     expect(mine.kind).toBe(RealmKind.Common);
     expect(mine.partyId).toBeUndefined();
@@ -165,10 +165,10 @@ describe('a town is open to everybody', () => {
     // A town is a place, not a session. Somebody walking back for the coat they
     // dropped there must find it.
     const realms = makeRealms();
-    const office = realms.open(site('site:office'), 'party_1');
+    const town = realms.open(site('site:alderbrook'), 'party_1');
     expect(realms.empty()).toEqual([]);
-    expect(realms.close(office.id)).toBe(false);
-    expect(realms.get(office.id)).toBeDefined();
+    expect(realms.close(town.id)).toBe(false);
+    expect(realms.get(town.id)).toBeDefined();
   });
 });
 
@@ -411,7 +411,7 @@ describe('what happens to an instance when everyone leaves', () => {
   it('reports an emptied instance as reapable, and a town never', () => {
     const realms = makeRealms();
     const delve = realms.open(site('site:underworks'), 'party_1');
-    const town = realms.open(site('site:office'), 'party_1');
+    const town = realms.open(site('site:alderbrook'), 'party_1');
     delve.world.addPlayer('p1', 'Someone');
     town.world.addPlayer('p2', 'Someone else');
     expect(realms.empty()).toEqual([]);

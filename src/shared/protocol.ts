@@ -287,6 +287,26 @@ export const TileCode = {
    * transparent to an eye.
    */
   WATER: 14,
+  // ─── the wilderness, v12. The overworld is the REGION around Alderbrook now,
+  // and the city is a settlement on it. See shared/level.ts's ALDERBROOK_ROWS.
+  /** Open grassland. The default ground of the whole region. */
+  PLAINS: 15,
+  /** Low rolling hills. Walkable, and higher than the plains. */
+  HILLS: 16,
+  /** Scrub and poor soil, between cultivated land and true wilderness. */
+  HEATH: 17,
+  /**
+   * Bare rock. THE CLASSIC OVERWORLD BARRIER, and blocking is the whole point:
+   * ToME's world map does the same (`grids.lua`, FOREST/mountain
+   * `does_block_move = true`), and so does FF7's. The light ground threading
+   * between dark masses IS the map — a mountain you could walk over would
+   * delete every route decision the geography makes.
+   */
+  MOUNTAIN: 18,
+  /** Broken rock and scree. Lets a range have an edge that is not a hard line. */
+  CRAG: 19,
+  /** Open sea. Darker than WATER, which is what makes a shoreline legible. */
+  DEEPWATER: 20,
 } as const;
 export type TileCode = (typeof TileCode)[keyof typeof TileCode];
 
@@ -303,6 +323,9 @@ const WALKABLE: ReadonlySet<number> = new Set<number>([
   TileCode.SOOT,
   TileCode.RAIL,
   TileCode.BRIDGE,
+  TileCode.PLAINS,
+  TileCode.HILLS,
+  TileCode.HEATH,
 ]);
 
 /**
@@ -316,6 +339,8 @@ const BLOCKS_SIGHT: ReadonlySet<number> = new Set<number>([
   TileCode.WORKS,
   TileCode.TREES,
   TileCode.ERASED,
+  TileCode.MOUNTAIN,
+  TileCode.CRAG,
 ]);
 
 /**
@@ -344,7 +369,7 @@ export function blocksSight(code: number): boolean {
   // Walkable ground and the canal are the two transparent families. Spelled out
   // rather than derived so an added code that belongs in neither set lands on
   // the closed default below instead of quietly becoming see-through.
-  if (WALKABLE.has(code) || code === TileCode.WATER) return false;
+  if (WALKABLE.has(code) || code === TileCode.WATER || code === TileCode.DEEPWATER) return false;
   return true;
 }
 

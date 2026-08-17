@@ -1916,11 +1916,22 @@ type PumpTarget = {
  * nothing else depends on them.
  */
 const ENCOUNTER_CHANCE: Readonly<Partial<Record<TileCode, number>>> = {
-  [TileCode.COBBLE]: 1,
-  [TileCode.GREEN]: 2,
+  // ─── kept ground. The road is the safe network between settlements, and a
+  // settlement's own approach is safer still. Both absent-by-omission would
+  // have worked; stated at 0 because "the road is safe" is a design promise the
+  // player learns to rely on, not an accident of a lookup table.
+  [TileCode.COBBLE]: 0,
+  [TileCode.PAVING]: 0,
+  [TileCode.BRIDGE]: 0,
+  // ─── open country. The ordinary risk of travelling.
+  [TileCode.GREEN]: 1,
+  [TileCode.HILLS]: 2,
+  [TileCode.PLAINS]: 3,
+  [TileCode.HEATH]: 4,
+  // ─── ground the Index has got into.
   [TileCode.RAIL]: 3,
-  [TileCode.SOOT]: 4,
-  [TileCode.MIRE]: 5,
+  [TileCode.SOOT]: 5,
+  [TileCode.MIRE]: 6,
 };
 
 export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts) => {

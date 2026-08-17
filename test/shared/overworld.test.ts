@@ -1,18 +1,17 @@
 /**
- * Alderbrook — the overworld map, proven rather than eyeballed.
+ * The Alderbrook region — the overworld map, proven rather than eyeballed.
  *
- * WHY THIS FILE EXISTS. `ALDERBROOK_ROWS` is 3,072 authored cells. Nobody can
- * read that for the one mistake that actually matters — a district that cannot
- * be walked to — and the failure is silent: the map loads, the city draws, and
- * a player walks to the Glass Archive for ten minutes and finds no way in.
+ * WHY THIS FILE EXISTS. `ALDERBROOK_ROWS` is 6,144 authored cells. Nobody can
+ * read that for the one mistake that actually matters — a settlement that
+ * cannot be walked to — and the failure is silent: the map loads, the country
+ * draws, and a party walks toward the Glass Archive for ten minutes and finds
+ * no way in.
  *
- * The layout was generated from districts and streets and verified once before
+ * The layout was generated from regions and roads and verified once before
  * being frozen into the source. This re-runs that verification on every commit,
- * because the map is now ordinary text that an ordinary edit can break: widen
- * one terrace by a cell and you can seal a district without touching anything
+ * because the map is now ordinary text an ordinary edit can break: widen one
+ * mountain range by a cell and you can seal a road without touching anything
  * that looks load-bearing.
- *
- * These tests are about the MAP, not the renderer and not the realm plumbing.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -24,16 +23,16 @@ import type { LevelView } from '../../src/shared/protocol.ts';
 
 const OVERWORLD = makeOverworld();
 
-/** The office. Every player starts here, so it anchors every reachability claim. */
-const OFFICE = { x: 32, y: 15 };
+/** Alderbrook's gate. Every player starts here, so it anchors every claim. */
+const ALDERBROOK = { x: 44, y: 28 };
 
 /**
  * Flood fill from a tile, EIGHT-WAY WITH CORNER CUTTING.
  *
  * The corner-cutting part is not incidental — it must match the movement rule
- * the server actually enforces, which allows a diagonal step between two
- * orthogonally adjacent walls (world.ts:852-856, ported from ToME). A stricter
- * flood here would report false failures; a laxer one would prove nothing.
+ * the server enforces, which allows a diagonal step between two orthogonally
+ * adjacent walls (world.ts:852-856, ported from ToME). A stricter flood here
+ * would report false failures; a laxer one would prove nothing.
  */
 function reachableFrom(level: LevelView, from: { x: number; y: number }): Set<string> {
   const seen = new Set<string>([`${from.x},${from.y}`]);
@@ -63,22 +62,22 @@ function reachableFrom(level: LevelView, from: { x: number; y: number }): Set<st
   return seen;
 }
 
-describe('Alderbrook — shape', () => {
-  it('is 64x48 with a tile for every cell', () => {
-    expect(OVERWORLD.view.w).toBe(64);
-    expect(OVERWORLD.view.h).toBe(48);
-    expect(OVERWORLD.view.tiles).toHaveLength(64 * 48);
+describe('the region — shape', () => {
+  it('is 96x64 with a tile for every cell', () => {
+    expect(OVERWORLD.view.w).toBe(96);
+    expect(OVERWORLD.view.h).toBe(64);
+    expect(OVERWORLD.view.tiles).toHaveLength(96 * 64);
   });
 
-  it('spawns every player on the office and nowhere else', () => {
+  it('spawns every player at Alderbrook and nowhere else', () => {
     // ONE spawn is deliberate: the first thing you see on connecting should be
-    // another player, not an empty street. See ALDERBROOK_LEGEND's `O` entry.
-    expect(OVERWORLD.spawns).toEqual([OFFICE]);
+    // another player, not empty country.
+    expect(OVERWORLD.spawns).toEqual([ALDERBROOK]);
   });
 
   it('is sealed by erased ground on all four edges', () => {
     // The border is fiction, not a wall: the Index has eaten everything beyond
-    // Alderbrook. It still has to actually seal, or a player walks off the map.
+    // the region. It still has to actually seal, or a player walks off the map.
     for (let x = 0; x < OVERWORLD.view.w; x += 1) {
       expect(tileAt(OVERWORLD.view, x, 0)).toBe(TileCode.ERASED);
       expect(tileAt(OVERWORLD.view, x, OVERWORLD.view.h - 1)).toBe(TileCode.ERASED);
@@ -90,19 +89,62 @@ describe('Alderbrook — shape', () => {
   });
 });
 
-describe('Alderbrook — every site can be reached on foot', () => {
-  const reach = reachableFrom(OVERWORLD.view, OFFICE);
+describe('it is wilderness, not a town', () => {
+  it('is mostly open country rather than paving', () => {
+    // THE CHANGE THIS FILE RECORDS. The overworld used to BE Alderbrook, and
+    // its commonest tile was a cobbled street. It is now the country around
+    // Alderbrook, and the commonest tile must be open ground — otherwise the
+    // city has quietly eaten the map again.
+    const tiles = OVERWORLD.view.tiles;
+    const countOf = (want: readonly number[]): number =>
+      tiles.filter((t) => want.includes(t)).length;
+    const open = countOf([TileCode.PLAINS, TileCode.HILLS, TileCode.HEATH, TileCode.GREEN]);
+    const built = countOf([TileCode.COBBLE, TileCode.PAVING]);
+    expect(open).toBeGreaterThan(built * 5);
+  });
 
-  it('places all eight sites', () => {
+  it('makes forest, mountain and water the walls of the map', () => {
+    // ToME's own rule, verified in the reference clone rather than remembered:
+    // data/zones/wilderness/grids.lua gives FOREST `does_block_move = true`.
+    // The light ground threading between dark masses IS the route, and a
+    // mountain you could walk over would delete every decision the map makes.
+    for (const blocking of [
+      TileCode.TREES,
+      TileCode.MOUNTAIN,
+      TileCode.CRAG,
+      TileCode.WATER,
+      TileCode.DEEPWATER,
+    ]) {
+      expect(isWalkable(blocking), `${blocking} should block movement`).toBe(false);
+    }
+    for (const open of [TileCode.PLAINS, TileCode.HILLS, TileCode.HEATH]) {
+      expect(isWalkable(open), `${open} should be walkable`).toBe(true);
+    }
+  });
+
+  it('has a real mountain range rather than scattered rocks', () => {
+    // A range is the longest continuous run of one tile in the game, and it is
+    // what makes the north-west a barrier instead of scenery. Counted rather
+    // than eyeballed so thinning it out is a test failure.
+    const peaks = OVERWORLD.view.tiles.filter((t) => t === TileCode.MOUNTAIN).length;
+    expect(peaks).toBeGreaterThan(200);
+  });
+});
+
+describe('every settlement can be reached on foot', () => {
+  const reach = reachableFrom(OVERWORLD.view, ALDERBROOK);
+
+  it('places all nine sites', () => {
     expect([...OVERWORLD.sites.values()].sort()).toEqual([
+      'site:alderbrook',
       'site:ashwick_row',
       'site:blackwood_outskirts',
       'site:gearford_ward',
       'site:glass_archive',
-      'site:office',
       'site:threadneedle_row',
       'site:underworks',
       'site:watchers_altar',
+      'site:wayfarers_camp',
     ]);
   });
 
@@ -110,18 +152,18 @@ describe('Alderbrook — every site can be reached on foot', () => {
     const parts = key.split(',');
     const x = Number(parts[0]);
     const y = Number(parts[1]);
-    // Walkable first: a site stamped onto a terrace block is unreachable for a
-    // reason the flood fill would report identically to a sealed district, and
-    // the two want different fixes.
+    // Walkable first: a site stamped onto a mountain is unreachable for a reason
+    // the flood fill would report identically to a sealed road, and the two want
+    // different fixes.
     expect(canWalk(OVERWORLD.view, x, y), `${siteId} sits on solid terrain`).toBe(true);
-    expect(reach.has(key), `${siteId} is sealed off from the office`).toBe(true);
+    expect(reach.has(key), `${siteId} is sealed off from Alderbrook`).toBe(true);
   });
 
-  it('maroons no walkable cell anywhere on the map', () => {
+  it('maroons no walkable cell anywhere in the region', () => {
     // The strongest statement available: not merely "the sites are reachable"
     // but "there is exactly one connected walkable region". A pocket is not
-    // something a player sees, but it IS a lie in the data — the pathfinder
-    // will happily route toward a cell no route reaches.
+    // something a player sees, but it IS a lie in the data — the pathfinder will
+    // happily route toward a cell no route reaches.
     const marooned: string[] = [];
     for (let y = 0; y < OVERWORLD.view.h; y += 1) {
       for (let x = 0; x < OVERWORLD.view.w; x += 1) {
@@ -137,80 +179,54 @@ describe('Alderbrook — every site can be reached on foot', () => {
     // travel.ts caps A* at `w * h + 1` expansions. With a closed set, expansions
     // are bounded by the reachable cell count, so this is the number that
     // decides whether "walk to the Glass Archive" answers 'no route to that
-    // tile' — a lie about the map, and the one divergence a player actually
-    // notices. Pinned so growing the city cannot silently break travel.
-    expect(reach.size).toBe(1784);
+    // tile' — a lie about the map, and the one divergence a player notices.
+    expect(reach.size).toBe(3288);
     expect(reach.size).toBeLessThan(OVERWORLD.view.w * OVERWORLD.view.h + 1);
   });
 
-  it('routes clear across the city under the travel budget', () => {
-    // THE REGRESSION THIS FILE EXISTS FOR, stated as the player would hit it:
-    // the longest legal walk on the map — the Watcher's Altar in the far
-    // north-east to the Glass Archive in the far south-west, opposite corners
-    // across the canal — must return a route rather than null. Under the old
-    // fixed 2048-node ceiling this survived by 264 cells; under `w * h` it
-    // cannot fail on any map, and this proves the wiring rather than the maths.
-    const altar = { x: 57, y: 5 };
-    const archive = { x: 15, y: 40 };
-    const route = findPath(altar, archive, (x, y) => canWalk(OVERWORLD.view, x, y), {
-      maxNodes: OVERWORLD.view.w * OVERWORLD.view.h + 1,
-    });
+  it('routes clear across the region under the travel budget', () => {
+    // THE REGRESSION THIS FILE EXISTS FOR: the longest legal journey — the
+    // Watcher's Altar high in the north-west mountains to the Glass Archive on
+    // the southern coast — must return a route rather than null.
+    const route = findPath(
+      { x: 30, y: 10 },
+      { x: 52, y: 59 },
+      (x, y) => canWalk(OVERWORLD.view, x, y),
+      { maxNodes: OVERWORLD.view.w * OVERWORLD.view.h + 1 },
+    );
     // `[]` and null are different answers (path.ts:303-311): [] means "you are
     // already there", null means "no route". Neither is acceptable here.
     expect(route).not.toBeNull();
-    // 50 steps for a Chebyshev distance of 42 — the eight extra are the detour
-    // to a bridge, which is the geography doing its job. Pinned exactly because
-    // the map is frozen authored data: if this number moves, either the city or
-    // the pathfinder changed, and both are worth a second look.
-    expect(route?.length).toBe(50);
+    // Chebyshev is 49, so anything near it proves a real cross-map path that had
+    // to go around the range rather than through it.
+    expect(route?.length ?? 0).toBeGreaterThan(49);
   });
 });
 
-describe('Alderbrook — the canal is the reason tiles have two predicates', () => {
+describe('water is the reason tiles have two predicates', () => {
   it('is solid to a body and transparent to an eye', () => {
-    expect(isWalkable(TileCode.WATER)).toBe(false);
-    expect(blocksSight(TileCode.WATER)).toBe(false);
-  });
-
-  it('has water on the map, and bridges across it', () => {
-    const codes = new Set(OVERWORLD.view.tiles);
-    expect(codes.has(TileCode.WATER)).toBe(true);
-    expect(codes.has(TileCode.BRIDGE)).toBe(true);
-  });
-
-  it('crosses the canal only on a bridge', () => {
-    // Walk the canal band and assert every crossing column is a bridge. If a
-    // stray walkable tile ever appears mid-canal the city gets a secret ford,
-    // which breaks the district geography without breaking any other test.
-    for (let y = 26; y <= 29; y += 1) {
-      for (let x = 0; x < OVERWORLD.view.w; x += 1) {
-        const t = tileAt(OVERWORLD.view, x, y);
-        if (isWalkable(t)) expect(t).toBe(TileCode.BRIDGE);
-      }
+    for (const wet of [TileCode.WATER, TileCode.DEEPWATER]) {
+      expect(isWalkable(wet)).toBe(false);
+      expect(blocksSight(wet)).toBe(false);
     }
   });
-});
 
-describe("the Watcher's Altar is gated on purpose", () => {
-  it('is walled off by erased ground with a single approach', () => {
-    // The altar is the boss site and it should be hard to reach. This pins the
-    // geography that makes it so: erased ground on both sides of one corridor.
-    const reach = reachableFrom(OVERWORLD.view, OFFICE);
-    expect(reach.has('57,5')).toBe(true);
-    expect(tileAt(OVERWORLD.view, 56, 8)).toBe(TileCode.ERASED);
-    expect(tileAt(OVERWORLD.view, 58, 8)).toBe(TileCode.ERASED);
-    expect(canWalk(OVERWORLD.view, 57, 8)).toBe(true);
+  it('has a river, a sea and bridges across the water', () => {
+    const codes = new Set(OVERWORLD.view.tiles);
+    expect(codes.has(TileCode.WATER)).toBe(true);
+    expect(codes.has(TileCode.DEEPWATER)).toBe(true);
+    expect(codes.has(TileCode.BRIDGE)).toBe(true);
   });
 });
 
 describe('the two maps are independent objects', () => {
   it('hands out a fresh tile array per call', () => {
     // Same argument makeTestLevel makes: one realm changing its map must never
-    // appear in another's. With realms this stops being hypothetical.
+    // appear in another's. With realms this stopped being hypothetical.
     const a = makeOverworld();
     const b = makeOverworld();
     expect(a.view.tiles).not.toBe(b.view.tiles);
-    a.view.tiles[0] = TileCode.COBBLE;
+    a.view.tiles[0] = TileCode.PLAINS;
     expect(b.view.tiles[0]).toBe(TileCode.ERASED);
   });
 });

@@ -609,6 +609,12 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.TREES]: ['tile_ow_trees'],
   [TileCode.ERASED]: ['tile_ow_erased'],
   [TileCode.WATER]: ['tile_ow_water'],
+  [TileCode.PLAINS]: ['tile_ow_plains', 'tile_ow_plains_b'],
+  [TileCode.HILLS]: ['tile_ow_hills'],
+  [TileCode.HEATH]: ['tile_ow_heath'],
+  [TileCode.MOUNTAIN]: ['tile_ow_mountain'],
+  [TileCode.CRAG]: ['tile_ow_crag'],
+  [TileCode.DEEPWATER]: ['tile_ow_deepwater'],
 };
 
 function tileFill(code: TileCode): string {
@@ -658,6 +664,26 @@ function tileFill(code: TileCode): string {
      */
     case TileCode.WATER:
       return '#181f2e';
+
+    // ─── the wilderness. Walkable: light. ───
+    case TileCode.PLAINS:
+      return '#4e5a3c';
+    case TileCode.HILLS:
+      return '#5a6142';
+    case TileCode.HEATH:
+      return '#565442';
+
+    // ─── the wilderness. Blocking: dark. ───
+    case TileCode.MOUNTAIN:
+      return '#2b2a30';
+    case TileCode.CRAG:
+      return '#302e34';
+    /**
+     * Open sea, darker than the river. Two values of water is what makes a
+     * shoreline legible; one value makes a coast a flat shape.
+     */
+    case TileCode.DEEPWATER:
+      return '#10151f';
   }
 }
 
