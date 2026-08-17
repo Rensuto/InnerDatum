@@ -537,6 +537,29 @@ export type CharacterFile = {
    * evening. Written down here rather than re-litigated a fourth time.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS CHARACTER HAS EXPLORED OF THE OVERWORLD — base64 of a bitset.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * One bit per cell, so the whole 170x100 region is 2,125 bytes and about
+   * 2,836 characters on disk. As a set of `"x,y"` strings the same fact would
+   * be roughly 130 KB per character, which is the sort of number that makes a
+   * feature quietly not worth having.
+   *
+   * ONLY THE OVERWORLD IS KEPT. Instanced realms have ids minted per opening
+   * (`realm:site:underworks:3`), so persisting their fog would grow a file
+   * forever with keys that can never match again — and an ambush arena is
+   * twenty-four cells square and disposable, which is not a thing anybody
+   * explores. Towns are stable ids and could be added later; they are small
+   * enough that walking in reveals most of one.
+   *
+   * NO SCHEMA BUMP, on exactly the ground `keybinds` sets out above:
+   * docs/data-schemas.md:48-49, an OPTIONAL field needs none. `migrateDoc`
+   * compares nothing but the integer, so a v1 file without this loads
+   * untouched, and a rollback costs a player some re-walked country rather than
+   * quarantining their character.
+   */
+  readonly explored?: string;
 
   readonly resources: SavedResources;
   /** Talent id → GAME TURNS remaining. Soft references, like `classId`. */
@@ -681,6 +704,8 @@ export type CharacterInit = {
    * save written by a fixture-shaped producer.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /** base64 bitset of the overworld this character has explored. See CharacterFile. */
+  readonly explored?: string;
   readonly resources: SavedResources;
   readonly talentCooldowns?: Readonly<Record<string, number>>;
   readonly effects?: readonly SavedEffect[];
@@ -731,6 +756,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     carried: init.carried,
     equipped: init.equipped,
     keybinds: init.keybinds,
+    explored: init.explored,
     resources: init.resources,
     talentCooldowns: init.talentCooldowns ?? {},
     effects: init.effects ?? [],
@@ -1381,6 +1407,10 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       carried,
       equipped,
       keybinds: parseKeybinds(doc.keybinds, problems),
+      // REPAIR, NEVER REJECT, like every other field here: anything that is not
+      // a string is dropped and the character loads with no fog rather than
+      // failing to load at all. `fogFromBase64` is itself lenient about length.
+      explored: typeof doc.explored === 'string' ? doc.explored : undefined,
       resources,
       talentCooldowns: parseCooldowns(doc.talentCooldowns, problems),
       effects: parseEffects(doc.effects, problems),
@@ -2158,6 +2188,8 @@ export type SavedLoadout = {
  */
 export type SavedPrefs = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /** base64 bitset of the overworld this character has explored. See CharacterFile. */
+  readonly explored?: string;
 };
 
 /** A snapshot from a producer that may or may not know about items or keys. */
@@ -2230,6 +2262,8 @@ type Binding = {
    * the key stays off the disk.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /** base64 bitset of the overworld this character has explored. See CharacterFile. */
+  readonly explored?: string;
 };
 
 export type CharacterBridgeOptions = {
@@ -2321,6 +2355,12 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // found it. A producer that CAN say and says `{}` writes `{}`, and that is
       // a real statement — the player pressed RESET ALL.
       keybinds: snapshot.keybinds ?? binding.keybinds,
+      // THE SAME CARRY-FORWARD RULE, and for the same reason: a producer that
+      // cannot say what has been explored leaves the disk exactly as it found
+      // it. Losing a map to a build that had not been taught to fill this in
+      // would be the keybinds failure again with a bigger blast radius -- a
+      // whole region re-walked rather than a few keys re-bound.
+      explored: snapshot.explored ?? binding.explored,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
       // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
       // are intra-turn budgets refilled from the class every turn, so a stored
@@ -2472,6 +2512,13 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // shape and the size have already been checked on the way in, and the
       // MEMBERSHIP question is one only the client can answer.
       keybinds: file.keybinds,
+      // AND THE MAP THEY WALKED, on the same argument the line above makes:
+      // nobody should have to re-explore a region because they closed a tab.
+      // Named in this literal DELIBERATELY -- saves.ts:1366-1369 warns that a
+      // field absent from either rebuilt literal is silently dropped, and
+      // dropped here would mean the fog loaded, was never returned, and was
+      // overwritten as empty on the next autosave.
+      explored: file.explored,
     };
   };
 

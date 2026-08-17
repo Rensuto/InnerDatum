@@ -432,6 +432,29 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 14 -> 15 (THE MAP YOU EARNED). `RealmMsg` gains an optional `explored`.
+ *
+ * AN ADDITION AN OLD CLIENT IGNORES, AND HERE THAT IS GENUINELY HARMLESS --
+ * unlike `sites` at 12 -> 13, whose absence FROZE a moving thing on screen. A
+ * v14 client drops this and starts each session with an empty map, revealing as
+ * it walks exactly as it did before. It loses persistence, not correctness, and
+ * nothing it draws is a lie.
+ *
+ * So this bump is for the SERVER's benefit rather than the client's: the field
+ * is on the wire and in the save file from here, and a build that sent it to a
+ * client which silently discarded it would be indistinguishable from one where
+ * persistence was broken. A version that tells those apart is worth more than
+ * the compatibility it costs on a project whose players all update together.
+ *
+ * `SCHEMA_VERSION` STAYS 1, and this is the fourth pass to take that decision.
+ * `CharacterFile` gains `explored` as an OPTIONAL field, and
+ * docs/data-schemas.md:48-49 is verbatim: "Adding an *optional* field needs no
+ * bump; the bump is for renames, semantic changes, and new required fields."
+ * The rollback trade is the one `keybinds` already argued: not bumping costs a
+ * player some re-walked country if a build is rolled back, while bumping
+ * QUARANTINES the character file in every older build and costs them the
+ * evening.
+ *
  * 13 -> 14 (SETTLEMENTS). Six terrain codes: VILLAGE_ROOF, TOWN_ROOF,
  * CITY_ROOF, TOWN_WALL, YARD, FIELD.
  *
@@ -499,7 +522,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

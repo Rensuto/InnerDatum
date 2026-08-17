@@ -285,6 +285,7 @@ import {
   paintMap,
 } from './ui/mapview.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
+import { REVEAL_RADIUS as SHARED_REVEAL_RADIUS } from '../shared/fog.ts';
 import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
   ActorKind,
@@ -897,8 +898,36 @@ let worldMapOpen = false;
  */
 const explored = new Map<string, Set<string>>();
 
-/** How far a body reveals. Generous: this is a map, not a torch. */
-const REVEAL_RADIUS = 12;
+/**
+ * How far a body reveals. Shared with the server, which is not a nicety: the
+ * server's copy is what persists and the client's is what draws, and two radii
+ * would make a map that changed shape when you reloaded.
+ */
+const REVEAL_RADIUS = SHARED_REVEAL_RADIUS;
+
+/**
+ * Read one bit out of the base64 the server sent.
+ *
+ * Decoded lazily, a bit at a time, rather than materialised into a byte array:
+ * this runs once per cell of a 17,000-cell region on arrival and never again,
+ * and the alternative is a second copy of the whole bitset for one pass.
+ */
+function fogBitSet(b64: string, bit: number): boolean {
+  const byteIndex = bit >> 3;
+  const charIndex = Math.floor(byteIndex / 3) * 4;
+  const chunk = b64.slice(charIndex, charIndex + 4);
+  if (chunk.length < 4) return false;
+  const n =
+    (B64_ALPHABET.indexOf(chunk[0] ?? 'A') << 18) |
+    (B64_ALPHABET.indexOf(chunk[1] ?? 'A') << 12) |
+    (B64_ALPHABET.indexOf(chunk[2] ?? 'A') << 6) |
+    B64_ALPHABET.indexOf(chunk[3] ?? 'A');
+  const within = byteIndex % 3;
+  const byte = within === 0 ? (n >> 16) & 255 : within === 1 ? (n >> 8) & 255 : n & 255;
+  return (byte & (1 << (bit & 7))) !== 0;
+}
+
+const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 /** Mark everything within reach of the viewer as seen, and answer the set. */
 function revealAround(
@@ -7854,6 +7883,25 @@ function applyServerMessage(msg: ServerMsg): void {
         overworldLevel = msg.level;
         overworldSites = msg.sites;
         overworldRealmId = msg.realmId;
+      }
+      /**
+       * SEEDED FROM THE SERVER'S COPY, which is the one that persists.
+       *
+       * The client keeps revealing locally at the same radius so neither side
+       * sends anything per step — but the authority is the save, and this is
+       * where the two meet. Merged into whatever this session had rather than
+       * replacing it: a frame that arrived after some walking must not un-see
+       * ground the player just crossed.
+       */
+      if (msg.explored !== undefined) {
+        const seen = explored.get(msg.realmId) ?? new Set<string>();
+        for (let y = 0; y < msg.level.h; y += 1) {
+          for (let x = 0; x < msg.level.w; x += 1) {
+            const bit = y * msg.level.w + x;
+            if (fogBitSet(msg.explored, bit)) seen.add(`${x},${y}`);
+          }
+        }
+        explored.set(msg.realmId, seen);
       }
       lastError = null;
 

@@ -3783,6 +3783,18 @@ export type RealmMsg = {
   actors: ActorView[];
   /** Everywhere on THIS map you can walk into. Drawn as markers. */
   sites: SiteView[];
+  /**
+   * WHAT THIS CHARACTER HAS EXPLORED, base64 of one bit per cell.
+   *
+   * Sent once, with the map it describes, and only for a realm whose fog is
+   * kept — the overworld. About 2,836 characters for a 170x100 region, against
+   * roughly 130 KB for the same fact as a list of cells.
+   *
+   * After this the CLIENT keeps revealing locally at the same radius, so
+   * neither side sends anything per step. The server's copy is the one that
+   * persists; this is the seed.
+   */
+  explored?: string;
   /** Which actor in `actors` is the recipient — the client re-centres on it. */
   selfId: string;
 };

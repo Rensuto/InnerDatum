@@ -202,6 +202,7 @@ import {
  */
 import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
+import { createFog, fogFromBase64, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
@@ -1324,6 +1325,8 @@ export type CharacterSnapshot = {
    * See `snapshotPlayers`. A keymap is not a claim about a class.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /** base64 bitset of the overworld this character had explored. */
+  readonly explored?: string;
 };
 
 /**
@@ -1462,6 +1465,13 @@ export type CharacterRestore = {
    * `CharacterSnapshot.keybinds` for why that is a compile-time guarantee.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * base64 bitset of the overworld this character had explored, straight off
+   * the disk. Decoded against the CURRENT region's size, so a save written
+   * before the map grew loads the country it knew and treats the rest as
+   * unexplored — see `applyRestore`.
+   */
+  readonly explored?: string;
 };
 
 /**
@@ -2664,8 +2674,56 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * PLAYER chose. Folding them together would mean a future producer that fills
    * "the loadout" reasonably believing it had said something about the keymap.
    */
-  const prefsFields = (actor: Actor): { keybinds?: Readonly<Record<string, readonly string[]>> } =>
-    actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) };
+  const prefsFields = (
+    actor: Actor,
+  ): { keybinds?: Readonly<Record<string, readonly string[]>>; explored?: string } => ({
+    ...(actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) }),
+    // WHAT THEY HAVE WALKED. Absent when this process has never revealed
+    // anything for them, which `saveCharacter` reads as "cannot say" and leaves
+    // the disk alone — the same carry-forward rule the keymap gets, and the
+    // same reason: a producer that does not know must not erase.
+    ...(fog.has(actor.id) ? { explored: fogToBase64(fogFor(actor.id)) } : {}),
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT EACH CHARACTER HAS EXPLORED OF THE OVERWORLD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PER CHARACTER, NOT PER PROCESS, which is the whole request: six people can
+   * walk the same region and each has their own map of it, because exploring is
+   * a thing you did rather than a fact about the world.
+   *
+   * Kept beside the sessions rather than on the actor, because a body is
+   * rebuilt every time it crosses a realm (`crossInto` makes a new one) and the
+   * map must not be rebuilt with it. Keyed by actor id, which is what survives.
+   *
+   * ONLY THE OVERWORLD. Instanced realms mint an id per opening, so their fog
+   * could never be matched again, and a 24x24 arena is not somewhere anybody
+   * explores. See `CharacterFile.explored`.
+   */
+  const fog = new Map<string, Uint8Array>();
+
+  const fogFor = (actorId: string): Uint8Array => {
+    const existing = fog.get(actorId);
+    if (existing !== undefined) return existing;
+    const level = opts.realms?.overworld.world.level;
+    const made = createFog(level?.w ?? 1, level?.h ?? 1);
+    fog.set(actorId, made);
+    return made;
+  };
+
+  /**
+   * Reveal around a body, and answer whether anything was newly seen.
+   *
+   * The caller uses that to decide whether to mark the save dirty: a party
+   * standing still in a town must not write a file on every pump, and standing
+   * still is what a party does most.
+   */
+  const revealFor = (realm: Realm, actorId: string, x: number, y: number): boolean => {
+    if (realm.kind !== RealmKind.Overworld) return false;
+    const level = realm.world.level;
+    return revealDisc(fogFor(actorId), level.w, level.h, x, y);
+  };
 
   /**
    * EVERY PLAYER IN THE PROCESS, NOT EVERY PLAYER ON ONE FLOOR.
@@ -4093,6 +4151,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * in. One info line with a number is what a human actually wants at 1 a.m.
    */
   const restoreKeybinds = (actor: Actor, restore: CharacterRestore): void => {
+    /**
+     * THE MAP THEY HAD WALKED, BACK INTO THE PROCESS.
+     *
+     * Sized against the CURRENT overworld rather than against whatever the file
+     * was written from: `fogFromBase64` fills what it can and zeroes the rest,
+     * so a save made before the region grew loads the country it knew and
+     * treats the new ground as unexplored. That is the right answer and it is
+     * why this decodes with an explicit length instead of trusting the string.
+     */
+    if (restore.explored !== undefined && opts.realms !== undefined) {
+      const level = opts.realms.overworld.world.level;
+      fog.set(actor.id, fogFromBase64(restore.explored, Math.ceil((level.w * level.h) / 8)));
+    }
     if (restore.keybinds === undefined) return;
     actor.keybinds = keybindsRecord(restore.keybinds);
     app.log.info(
@@ -4495,6 +4566,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * unexplained icon on a world map is worse than an absent one.
      */
     // ONE BUILDER, shared with the `sites` frame — see `markersFor`.
+    /**
+     * THE FOG, ONLY WITH THE MAP IT BELONGS TO. 2,836 characters for the whole
+     * region, sent once on arrival — after which the client keeps revealing
+     * locally at the same radius, so neither has to send anything per step.
+     * The server's copy is the one that persists.
+     */
+    const explored =
+      realm.kind === RealmKind.Overworld && fog.has(actorId)
+        ? fogToBase64(fogFor(actorId))
+        : undefined;
+
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'realm',
@@ -4504,6 +4586,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       level: view.level,
       actors: view.actors,
       sites: markersFor(realm),
+      explored,
       selfId: actorId,
     });
   };
@@ -5119,6 +5202,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // would open an instance for somebody who never took the step. And the
     // `moved` frame has to reach the client first, or the map it is about is
     // already gone.
+    /**
+     * REVEAL FIRST, and after the pump rather than before it — the tile a body
+     * is standing on is only decided when the intent RESOLVES, and revealing
+     * around a move that was refunded would give away country nobody walked.
+     */
+    const walker = session.actorId;
+    if (walker !== null && session.realmId !== null) {
+      const here = opts.realms?.get(session.realmId);
+      const body = here?.world.getActor(walker);
+      if (here !== undefined && body !== undefined) {
+        // Only queue a save when something was NEWLY seen. A party pacing the
+        // same street would otherwise ask for a write on every step, and the
+        // debounce would coalesce them into a file that says nothing new.
+        if (revealFor(here, walker, body.x, body.y)) queueSave('explored');
+      }
+    }
+
     if (leaveRealm(session)) return;
     /**
      * WHAT IS NOT HERE ANY MORE: a per-step encounter roll.
