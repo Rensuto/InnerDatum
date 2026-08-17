@@ -244,3 +244,8 @@ tools/discord/
 # The real Caddyfile names the live host. deploy/Caddyfile.example is the
 # published, generic one.
 deploy/Caddyfile
+
+# Python bytecode from the offline tools (worldgen, the asset pipeline).
+# Committed once by accident when worldgen.py was imported rather than run.
+__pycache__/
+*.pyc
