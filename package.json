@@ -27,7 +27,7 @@
     "assets:derive": "python tools/derive_assets.py",
     "assets:all": "npm run assets:derive && npm run assets",
     "check:assets": "node tools/check-assets.mjs",
-    "updates": "node \"c:/Users/dalto/Desktop/Files/VSCode Projects/_shared/discord-relay/relay.mjs\" status --repo .",
+    "updates": "node tools/updates.mjs",
     "updates:catchup": "node \"c:/Users/dalto/Desktop/Files/VSCode Projects/_shared/discord-relay/relay.mjs\" catchup --repo ."
   },
   "dependencies": {
