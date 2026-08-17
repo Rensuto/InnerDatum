@@ -47,7 +47,6 @@ import { createWorld } from './world/world.ts';
 import type { EngineActor } from './engine/actor.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
 import type { GuardCounter, TalentEngine } from './engine/talents.ts';
-import type { TurnEngine } from './net/gateway.ts';
 import type { ReapingTurnEngine, TalentRuntime } from './turn-engine.ts';
 import type { World } from './world/world.ts';
 import type { TileXY } from '../shared/coords.ts';
