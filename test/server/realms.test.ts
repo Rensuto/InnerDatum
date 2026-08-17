@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { OVERWORLD_ID, RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { makeTestMap } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
@@ -29,10 +30,19 @@ const COMMON_SITES = [...SITES.values()]
   .filter((s) => s.kind === RealmKind.Common)
   .map((s) => s.id);
 
+/**
+ * The engine factory a test needs: one per world, with the process-wide tables
+ * shared across realms exactly as main.ts shares them. `downed` and `parties`
+ * are deliberately built ONCE and closed over — a five-turn Downed countdown
+ * must follow a body through a door, and a party is a social fact that outlives
+ * every map.
+ */
 function makeRealms(seed = 'test-seed'): Realms {
+  const downed = createDownedState();
+  const parties = createPartyState();
   return createRealms({
     seed,
-    deps: { downed: createDownedState(), parties: createPartyState() },
+    engineFor: (world) => createTurnEngine({ world, downed, parties }),
   });
 }
 
@@ -122,7 +132,8 @@ describe('a town is open to everybody', () => {
     expect(() =>
       createRealms({
         seed: 'x',
-        deps: { downed: createDownedState(), parties: createPartyState() },
+        engineFor: (world) =>
+          createTurnEngine({ world, downed: createDownedState(), parties: createPartyState() }),
         sites: new Map([
           [
             'site:bad',

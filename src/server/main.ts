@@ -42,12 +42,13 @@ import { createSessionStore } from './http/session.ts';
 import { wsGateway } from './net/gateway.ts';
 import { createCharacterBridge, createSaveStore } from './persist/saves.ts';
 import { createTurnEngine } from './turn-engine.ts';
+import { createRealms } from './world/realms.ts';
 import { createWorld } from './world/world.ts';
 import type { EngineActor } from './engine/actor.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
 import type { GuardCounter, TalentEngine } from './engine/talents.ts';
 import type { TurnEngine } from './net/gateway.ts';
-import type { TalentRuntime } from './turn-engine.ts';
+import type { ReapingTurnEngine, TalentRuntime } from './turn-engine.ts';
 import type { World } from './world/world.ts';
 import type { TileXY } from '../shared/coords.ts';
 
@@ -448,14 +449,41 @@ export function buildServer() {
    * two ways that can go wrong (no free tile at all; the same party wiping again
    * two turns later) are both invisible from inside the game. See `resetFloor`.
    */
-  const engine = createTurnEngine({
-    world,
-    downed,
-    parties,
-    talents: createTalentBook(talentEngine, world),
-    talentRuntime: talentRuntimeFor(talentEngine, world),
-    log: app.log,
-  });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE ENGINE PER REALM, BUILT BY THIS FACTORY AND NOWHERE ELSE
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `createTalentBook` and `talentRuntimeFor` both CLOSE OVER A WORLD, so they
+   * cannot be built once and shared: a talent resolving line-of-sight, targets
+   * and adjacency would answer about Alderbrook while its caster stood in an
+   * instance. Every call succeeds, every answer is about the wrong map, and
+   * nothing anywhere fails — which is why realms.ts takes a factory rather than
+   * a bag of dependencies.
+   *
+   * WHAT IS SHARED AND WHAT IS NOT, deliberately:
+   *
+   *   `downed`  SHARED. A five-turn countdown has to follow a body through a
+   *             door; two tables would be two answers to "how long has Sam got".
+   *   `parties` SHARED. A party is a social fact, not a map fact — and it is the
+   *             very thing that decides which instance you may stand in.
+   *   `talentEngine` SHARED. It holds per-ACTOR sheets, and a character keeps
+   *             its talents when it walks somewhere.
+   *   the BOOK and the RUNTIME are PER WORLD, for the reason above.
+   *   the BARRIER is per realm, built inside `createTurnEngine` — two realms
+   *             sharing one would collide on its level-wide countdown key.
+   */
+  const engineFor = (forWorld: World): ReapingTurnEngine =>
+    createTurnEngine({
+      world: forWorld,
+      downed,
+      parties,
+      talents: createTalentBook(talentEngine, forWorld),
+      talentRuntime: talentRuntimeFor(talentEngine, forWorld),
+      log: app.log,
+    });
+
+  const engine = engineFor(world);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -512,8 +540,26 @@ export function buildServer() {
    * actually closes is the one that exists: an Alchemist who has spent vials and
    * re-clothes, who would otherwise walk away with a full stock of eight.
    */
-  const gatewayEngine: TurnEngine = {
-    ...engine,
+  /**
+   * THE GATEWAY'S EXTRA SEAMS, APPLIED TO EVERY REALM'S ENGINE RATHER THAN ONE.
+   *
+   * This was a single `gatewayEngine` object wrapping the single engine. With
+   * realms it has to be a function, because a body that walks into an instance
+   * is served by THAT realm's engine — and an unwrapped one has no
+   * `attachClass` and none of the three talent-point seams. The failure would
+   * be silent and specific: choosing a class, or spending a point, while
+   * standing anywhere but the overworld would succeed on the wire, refuse
+   * nothing, and simply never attach a sheet.
+   *
+   * `net/**` may not import `engine/talents.ts` — it states its whole engine
+   * contract structurally so the dependency arrow cannot point the wrong way —
+   * and this file is the only one that can see the talent registry, the world
+   * and the gateway at once. So the capabilities are declared as optional
+   * methods on the gateway's `TurnEngine` port and implemented here, which is
+   * unchanged; only the arity moved.
+   */
+  const wrapForGateway = (base: ReapingTurnEngine): ReapingTurnEngine => ({
+    ...base,
     attachClass: (actorId: string, classId: string): void => {
       const definition = classById(classId);
       if (definition === undefined) {
@@ -617,9 +663,40 @@ export function buildServer() {
       }
       return dropped;
     },
-  };
+  });
 
-  app.register(wsGateway, { world, engine: gatewayEngine, downed, sessions, persist });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE REALMS. Alderbrook, the towns, and whatever instances get opened.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Built HERE, beside the world it will come to replace, for the same reason
+   * the world and the survival table are: it is a lifetime the entry point
+   * owns.
+   *
+   * `world` AND `engine` ARE STILL PASSED, and that is not vestigial. They are
+   * the gateway's fallback for a session that has not been placed in a named
+   * realm — `realmFor` resolves a null `Session.realmId` to exactly this pair —
+   * which is what keeps every existing test, and tools/e2e-m1.mjs, describing
+   * the game they always did.
+   */
+  const realms = createRealms({
+    seed: WORLD_SEED,
+    engineFor: (forWorld) => wrapForGateway(engineFor(forWorld)),
+  });
+
+  app.log.info(
+    {
+      realms: realms.all().map((r) => `${r.name} [${r.kind}]`),
+      overworld: `${realms.overworld.world.level.w}x${realms.overworld.world.level.h}`,
+      sites: realms.overworld.sites.size,
+    },
+    `built ${realms.all().length} realm(s)`,
+  );
+
+  const gatewayEngine = wrapForGateway(engine);
+
+  app.register(wsGateway, { world, engine: gatewayEngine, realms, downed, sessions, persist });
 
   return app;
 }

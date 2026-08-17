@@ -55,10 +55,9 @@
 
 import { makeOverworld, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
-import { createTurnEngine } from '../turn-engine.ts';
 import { createWorld } from './world.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
-import type { ReapingTurnEngine, TurnEngineOptions } from '../turn-engine.ts';
+import type { ReapingTurnEngine } from '../turn-engine.ts';
 import type { World } from './world.ts';
 
 /**
@@ -199,12 +198,35 @@ export type Realms = {
  *   `talents`  — the authored book. Immutable content.
  *   `barrier`  — DELIBERATELY NOT HERE. See below.
  */
-export type RealmDeps = Omit<TurnEngineOptions, 'world' | 'barrier'>;
+/**
+ * Builds the turn engine for ONE realm's world.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A FACTORY RATHER THAN A BAG OF SHARED DEPENDENCIES, AND THE REASON IS REAL
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This was `deps: Omit<TurnEngineOptions, 'world' | 'barrier'>` — one object,
+ * spread into every realm's engine. That cannot work, because two of the
+ * dependencies are not shareable: `createTalentBook(talentEngine, world)` and
+ * `talentRuntimeFor(talentEngine, world)` are both CLOSED OVER A WORLD. Handing
+ * every realm the overworld's talent book would have every talent in every
+ * instance resolve line-of-sight, targets and adjacency against Alderbrook —
+ * silently, since the calls all succeed and simply answer about the wrong map.
+ *
+ * main.ts also wraps the engine (`gatewayEngine`) to add `attachClass` and the
+ * three talent-point seams, because it is the one file that can see the talent
+ * registry, the world and the gateway at once. A factory lets that wrapping
+ * happen per realm without this file learning what a talent is.
+ *
+ * So realms.ts no longer constructs engines at all, and no longer imports
+ * `createTurnEngine`. It is a registry; composing an engine is the entry
+ * point's job, exactly as composing the gateway's is.
+ */
+export type EngineFor = (world: World) => ReapingTurnEngine;
 
 export type RealmsOptions = {
   /** Qualified per realm. See `seedFor`. */
   readonly seed: string;
-  readonly deps: RealmDeps;
+  readonly engineFor: EngineFor;
   /**
    * Everywhere the overworld can lead. Defaults to the authored `SITES`.
    *
@@ -293,7 +315,7 @@ export function createRealms(opts: RealmsOptions): Realms {
     extra: { readonly partyId?: string; readonly siteId?: string },
   ): Realm => {
     const world = createWorld(seedFor(opts.seed, id), map);
-    const engine = createTurnEngine({ ...opts.deps, world });
+    const engine = opts.engineFor(world);
     const realm: Realm = {
       id,
       kind,
