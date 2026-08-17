@@ -55,6 +55,7 @@
 
 import { makeOverworld, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
+import { seedTestEncounter } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { ReapingTurnEngine } from '../turn-engine.ts';
@@ -478,3 +479,37 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
     ] as const
   ).map(([id, name, kind]) => [id, { id, name, kind, map: makeTestMap }]),
 );
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ROAMING ENCOUNTER — Alderbrook's danger, which is never ON Alderbrook
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's world map has no monsters standing on it. Crossing the wilderness is
+ * dangerous because a step can PULL YOU INTO a zone, not because something is
+ * walking toward your token. This is that, and copying it is not deference —
+ * it is the only shape that fits the rest of this design.
+ *
+ * A hostile standing on the overworld would lift `engagement` above zero, and
+ * `isBlocking` would then return true for every player in the city, related or
+ * not (barrier.ts:293-306; engagement is a fact about the WORLD, not a party).
+ * Six friends walking to three different districts would start waiting on each
+ * other, with a Bell running and nothing on screen explaining why. So the
+ * overworld's no-hostiles rule is not a simplification that encounters have to
+ * work around — encounters are what let the rule survive contact with danger.
+ *
+ * It is a `SiteDef` like any other and it is deliberately NOT in `SITES`: every
+ * entry there is a cell somebody authored on the map, and this one is a roll.
+ * Sharing the type means it crosses through exactly the same code path as a
+ * doorway — same instancing, same party keying, same idempotence — so an
+ * encounter cannot drift from a delve in how it behaves.
+ */
+export const ENCOUNTER_SITE: SiteDef = {
+  id: 'site:encounter',
+  name: 'An Index Breach',
+  kind: RealmKind.Inner,
+  map: makeTestMap,
+  populate: (world) => {
+    seedTestEncounter(world);
+  },
+};

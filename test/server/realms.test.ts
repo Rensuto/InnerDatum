@@ -20,12 +20,21 @@ import { describe, expect, it } from 'vitest';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { OVERWORLD_ID, RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
-import { makeTestMap } from '../../src/shared/level.ts';
+import {
+  ENCOUNTER_SITE,
+  OVERWORLD_ID,
+  RealmKind,
+  SITES,
+  createRealms,
+} from '../../src/server/world/realms.ts';
+import { makeOverworld, makeTestMap } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import type { Realms, SiteDef } from '../../src/server/world/realms.ts';
 
 /** The towns, derived rather than restated so the table stays the one source. */
+/** Every site id the city actually has a cell for. */
+const OVERWORLD_SITE_IDS = [...makeOverworld().sites.values()];
+
 const COMMON_SITES = [...SITES.values()]
   .filter((s) => s.kind === RealmKind.Common)
   .map((s) => s.id);
@@ -314,5 +323,55 @@ describe('closing an instance', () => {
 
   it('answers false for a realm that never existed', () => {
     expect(makeRealms().close('realm:nonsense')).toBe(false);
+  });
+});
+
+describe('the roaming encounter', () => {
+  it('is instanced and populated, unlike anywhere shared', () => {
+    // ToME's wilderness rule: the world map has no monsters on it, and crossing
+    // it is dangerous because a step PULLS YOU INTO a zone. The encounter is
+    // therefore an ordinary Inner site that happens to be opened by a roll
+    // rather than by a doorway.
+    const realms = makeRealms();
+    expect(ENCOUNTER_SITE.kind).toBe(RealmKind.Inner);
+    const breach = realms.open(ENCOUNTER_SITE, 'party_1');
+    const monsters = breach.world.allActors().filter((a) => a.kind === ActorKind.Monster);
+    expect(monsters.length).toBeGreaterThan(0);
+  });
+
+  it('gives two unrelated parties two separate ambushes', () => {
+    // Two people ambushed on opposite sides of the city are in two different
+    // fights, which is the same rule every delve obeys — and the reason the
+    // encounter reuses `SiteDef` rather than inventing a second crossing path.
+    const realms = makeRealms();
+    const mine = realms.open(ENCOUNTER_SITE, 'party_1');
+    const theirs = realms.open(ENCOUNTER_SITE, 'party_2');
+    expect(mine.id).not.toBe(theirs.id);
+    expect(mine.world).not.toBe(theirs.world);
+  });
+
+  it('leaves the overworld with no hostiles and no engagement', () => {
+    // THE INVARIANT THE WHOLE DESIGN RESTS ON, restated after an ambush exists.
+    // A hostile standing on Alderbrook would lift engagement above zero, and
+    // `isBlocking` would then return true for every player in the city, related
+    // or not — six friends walking to three districts would start waiting on
+    // each other with a Bell running. Encounters are what let the overworld be
+    // dangerous AND shared; they must never put anything ON it.
+    const realms = makeRealms();
+    realms.open(ENCOUNTER_SITE, 'party_1');
+    realms.open(ENCOUNTER_SITE, 'party_2');
+    const onTheStreet = realms.overworld.world
+      .allActors()
+      .filter((a) => a.kind === ActorKind.Monster);
+    expect(onTheStreet).toEqual([]);
+    expect(realms.overworld.world.turn.engagement).toBe(0);
+  });
+
+  it('is not an authored map cell', () => {
+    // Every entry in SITES is a door somebody drew on the city. The encounter is
+    // a roll, so it is deliberately absent — and a test says so, because adding
+    // it to that table would put a permanent ambush tile in Alderbrook.
+    expect(SITES.has(ENCOUNTER_SITE.id)).toBe(false);
+    expect([...OVERWORLD_SITE_IDS]).not.toContain(ENCOUNTER_SITE.id);
   });
 });

@@ -57,7 +57,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import websocket from '@fastify/websocket';
 
 import { DIR_ORDER, dirVector, inBounds } from '../../shared/coords.ts';
-import { ErasedReason, ErrorCode, LogLane, parseClientMsg } from '../../shared/protocol.ts';
+import { tileAt } from '../../shared/level.ts';
+import {
+  ActorKind,
+  ErasedReason,
+  ErrorCode,
+  LogLane,
+  TileCode,
+  parseClientMsg,
+} from '../../shared/protocol.ts';
 /**
  * THE PROGRESSION LEDGER, AND IT IS ARITHMETIC ONLY.
  *
@@ -194,7 +202,7 @@ import {
  * injected as `opts.realms`, so a build with no registry is still a build with
  * one world, and `crossIntoSite` returns on its first line.
  */
-import { SITES } from '../world/realms.ts';
+import { ENCOUNTER_SITE, RealmKind, SITES } from '../world/realms.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
@@ -227,7 +235,7 @@ import type { Slot } from '../content/items.ts';
 import type { PlayerActor } from '../engine/actor.ts';
 import type { PartyState } from '../engine/party.ts';
 import type { PartyOffer, TurnState } from '../view/projector.ts';
-import type { Realms } from '../world/realms.ts';
+import type { Realms, SiteDef } from '../world/realms.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
 /**
@@ -1871,6 +1879,35 @@ type PumpTarget = {
   readonly id: string;
   readonly world: World;
   readonly engine: TurnEngine;
+};
+
+/**
+ * PER-STEP AMBUSH CHANCE, AS A PERCENTAGE, BY THE GROUND UNDER YOUR FEET.
+ *
+ * Absent means zero, which is why only the dangerous half is listed: civic
+ * paving, bridges and anything you cannot stand on are all silently safe.
+ *
+ * THE SHAPE IS THE POINT, NOT THE NUMBERS. Safety falls away as the city does —
+ * swept civic stone, then ordinary streets, then the ground the Index has got
+ * into. A player learns which districts are dangerous by walking them, which is
+ * the only way that knowledge is worth having, and it is what makes Blackwood
+ * and Gearford feel unlike Saint Orwin's Square rather than merely look unlike
+ * it.
+ *
+ * A BRIDGE IS AS SAFE AS PAVING, DELIBERATELY. Being pulled off a four-tile span
+ * with water on both sides reads as a bug however correct the roll was.
+ *
+ * Tuned for a city that takes roughly forty steps to cross: on cobble that is
+ * about one encounter every three crossings, and Blackwood is about one every
+ * crossing. These are first numbers and expected to move after a playtest;
+ * nothing else depends on them.
+ */
+const ENCOUNTER_CHANCE: Readonly<Partial<Record<TileCode, number>>> = {
+  [TileCode.COBBLE]: 1,
+  [TileCode.GREEN]: 2,
+  [TileCode.RAIL]: 3,
+  [TileCode.SOOT]: 4,
+  [TileCode.MIRE]: 5,
 };
 
 export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts) => {
@@ -4964,6 +5001,58 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `moved` frame has to reach the client first, or the map it is about is
     // already gone.
     crossIntoSite(session);
+    rollForEncounter(session);
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * DANGER IN THE CITY, WHICH IS NEVER *IN* THE CITY. ToME's wilderness rule.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A step on the overworld can pull you into an encounter. Nothing hostile
+   * ever stands on Alderbrook itself, and that is not squeamishness — one
+   * monster on the shared map lifts `engagement` above zero, and `isBlocking`
+   * then returns true for every player in the city, related or not
+   * (barrier.ts:293-306). Six friends walking to three different districts
+   * would begin waiting on one another with a Bell running. Encounters are
+   * what let the overworld be dangerous AND shared at the same time.
+   *
+   * ═══ THE CHANCE COMES FROM THE GROUND YOU ARE STANDING ON ═══
+   * Not a flat per-step number. Civic paving is safe outright, cobbled streets
+   * are nearly safe, and it climbs as the city gives out — mire and soot are
+   * where the Index has got in. This is the districts earning their terrain:
+   * Saint Orwin's Square feels different from Blackwood because it IS
+   * different, and a player learns that by walking rather than by being told.
+   *
+   * A bridge is deliberately as safe as paving. Being pulled off a four-tile
+   * span with water on both sides reads as a bug however correct the roll was.
+   *
+   * ═══ THE DRAW IS ON THE OVERWORLD'S OWN `rng`, AND THAT IS FREE ═══
+   * `world.rng` is the stream every to-hit, crit, damage and AI roll consumes,
+   * and adding a draw to it shifts every subsequent draw forever
+   * (shared/rng.ts:31-39). On the OVERWORLD that stream has no other consumer
+   * at all — there is no combat there and no AI, by the invariant above — so
+   * this is the one place in the process where a new per-step draw costs
+   * nothing downstream. An instance's `world.rng` is untouched.
+   */
+  const rollForEncounter = (session: Session): void => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
+    if (realms === undefined || actorId === null || session.realmId === null) return;
+
+    const from = realms.get(session.realmId);
+    // Overworld only. A town has no encounters by the same no-hostiles rule,
+    // and an instance already IS one.
+    if (from === undefined || from.kind !== RealmKind.Overworld) return;
+
+    const body = from.world.getActor(actorId);
+    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return;
+
+    const chance = ENCOUNTER_CHANCE[tileAt(from.world.level, body.x, body.y)] ?? 0;
+    if (chance <= 0) return;
+    if (from.world.rng.int('overworld.encounter', 1, 100) > chance) return;
+
+    crossInto(session, ENCOUNTER_SITE, 'ambushed');
   };
 
   /**
@@ -5079,6 +5168,31 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
+    crossInto(session, site, 'walked in');
+  };
+
+  /**
+   * Move a body into a site's realm, whatever decided it should go.
+   *
+   * SPLIT FROM `crossIntoSite` SO AN AMBUSH AND A DOORWAY CROSS IDENTICALLY.
+   * They differ only in what asked — a Map lookup on the tile, or a d100 on the
+   * ground you are standing on — and everything after that must not differ at
+   * all: the same party keying, the same idempotent `open`, the same carry-across
+   * of hp and bag and doll, the same frame order. Two crossing paths would be two
+   * places for a body to arrive without its coat.
+   *
+   * `why` reaches only the log. It is what makes "I was suddenly somewhere else"
+   * answerable after the fact.
+   */
+  const crossInto = (session: Session, site: SiteDef, why: string): void => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
+    if (realms === undefined || actorId === null || session.realmId === null) return;
+    const from = realms.get(session.realmId);
+    if (from === undefined) return;
+    const body = from.world.getActor(actorId);
+    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return;
+
     // A SOLO PLAYER IS A PARTY OF ONE, which is what `partyOf` mints on demand
     // rather than something invented here (engine/party.ts:276-290). With no
     // party table the actor's own id is the same statement.
@@ -5141,7 +5255,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     );
 
     app.log.info(
-      { actorId, siteId, from: from.id, to: to.id, kind: to.kind },
+      { actorId, site: site.id, why, from: from.id, to: to.id, kind: to.kind },
       'a body crossed into a site',
     );
 
