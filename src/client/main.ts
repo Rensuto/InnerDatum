@@ -301,6 +301,7 @@ import type {
   ProjectileView,
   ResourceView,
   ServerMsg,
+  SiteView,
   Slot,
   TurnEvent,
   TurnMsg,
@@ -793,6 +794,12 @@ let selfId: string | null = null;
  */
 let realmKind: string | null = null;
 let realmName: string | null = null;
+/**
+ * The places on this map you can walk into. Empty until a `realm` frame says
+ * otherwise — `welcome` carries none, so a freshly connected client genuinely
+ * does not know where anything is and must not draw guesses.
+ */
+let sites: readonly SiteView[] = [];
 let connection = 'connecting';
 let lastError: string | null = null;
 
@@ -2936,6 +2943,7 @@ function scene(): Scene {
     level,
     actors: [...actors.values()],
     selfId,
+    sites,
     targeting: targeting?.cells(),
     cursor: targeting?.cursor() ?? null,
     // THE ROUTE PREVIEW, PASSED UNCONDITIONALLY AND WITHOUT A GUARD. Both
@@ -7565,6 +7573,7 @@ function applyServerMessage(msg: ServerMsg): void {
       replaceActors(msg.actors);
       realmKind = msg.kind;
       realmName = msg.name;
+      sites = msg.sites;
       lastError = null;
 
       // Mid-flight and about to be about the wrong world — the same four
@@ -7586,6 +7595,8 @@ function applyServerMessage(msg: ServerMsg): void {
       ground = [];
       effects = new Map();
       reviveArmed = false;
+      // The landmarks came WITH the frame, so they are replaced rather than
+      // cleared -- an inner-world has none and says so with an empty list.
 
       // NOT cleared, and each one is load-bearing: caseLog, party, partyState,
       // inviteDeadlines, inventory, progress. See the block above.

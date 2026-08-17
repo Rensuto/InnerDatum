@@ -414,6 +414,32 @@ type Session = {
    * Null on the overworld, and null again the moment it is spent.
    */
   enteredFrom: TileXY | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HAS THIS BODY STEPPED OFF THE THRESHOLD YET? THE EXIT IS NOT LIVE UNTIL IT
+   * HAS, AND SHIPPING WITHOUT THIS COST AN ENTIRE PLAYTEST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `leaveRealm` treats a site's spawn tiles as its door, and the argument for
+   * why that is safe was: "arrival is not a MOVE, so being placed on the
+   * threshold cannot eject you." True, and not enough — the M1 map's spawn is a
+   * 3x2 CLUSTER OF SIX ADJACENT TILES, so the first step after arriving lands on
+   * ANOTHER spawn tile and leaves immediately.
+   *
+   * The observed effect was an ambush that fired, moved the body into the
+   * encounter, and threw it back to the overworld on the very next step —
+   * reported as "encounters start but there are no enemies" and "I can click out
+   * of the encounter and carry on walking". Both are this one bug: nobody was
+   * ever in there long enough to see a monster, and the breach was sealed and
+   * closed behind them on the way out.
+   *
+   * So the door ARMS. False on arrival, set true the moment the body stands on
+   * a non-threshold tile, and only then can stepping back on leave. Leaving
+   * deliberately therefore costs two steps — off the doorstep and back onto it —
+   * which is exactly what a door should cost and what a stray keystroke should
+   * not.
+   */
+  exitArmed: boolean;
   helloDone: boolean;
   /**
    * `hello` is in flight. It is the one handler that awaits (it reads a
@@ -4401,6 +4427,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // every player their session and a missing HUD label costs one their label.
     if (realm === undefined) return;
     const view = projectWorld(realm.world);
+    /**
+     * THE LANDMARKS, and they are the reason the first overworld had none.
+     * `Realm.sites` is `"x,y" -> site id`; the client needs a POSITION, an art
+     * family and a name, and must never see an id. A site whose def has gone
+     * missing is skipped rather than sent with a guessed marker — an
+     * unexplained icon on a world map is worse than an absent one.
+     */
+    const sites = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
+      const def = SITES.get(siteId);
+      if (def === undefined) return [];
+      const parts = cell.split(',');
+      return [
+        {
+          x: Number(parts[0]),
+          y: Number(parts[1]),
+          marker: def.marker,
+          name: def.name,
+        },
+      ];
+    });
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'realm',
@@ -4409,6 +4455,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       name: realm.name,
       level: view.level,
       actors: view.actors,
+      sites,
       selfId: actorId,
     });
   };
@@ -5282,7 +5329,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const body = from.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return false;
-    if (!from.spawns.some((t) => t.x === body.x && t.y === body.y)) return false;
+
+    const onThreshold = from.spawns.some((t) => t.x === body.x && t.y === body.y);
+    if (!onThreshold) {
+      // Stepped off the doorstep. From here, standing on it again means leaving.
+      session.exitArmed = true;
+      return false;
+    }
+    // On the threshold, but they have not left it since arriving — this is the
+    // shuffle across a six-tile spawn cluster, not a decision to go. See
+    // `Session.exitArmed`.
+    if (!session.exitArmed) return false;
 
     const to = realms.overworld;
     // ONE-WAY, AND ONLY FOR AN AMBUSH. A delve stays open behind you.
@@ -5311,6 +5368,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (!moved) app.log.warn({ actorId, back }, 'could not restore the entry tile');
     }
     session.enteredFrom = null;
+    // Back in the open. The next door they walk into arms from scratch.
+    session.exitArmed = false;
 
     to.engine.join(actorId);
     to.engine.setConnected(actorId, true);
@@ -5424,6 +5483,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE NEW FLOOR'S SCHEDULER LEARNS ABOUT THEM. `join` clears any stale
     // Standing By in that realm's barrier and `setConnected` puts them in its
     // quorum — both idempotent, and both are what `hello` does for a fresh body.
+    // ARRIVING DISARMS THE DOOR. Whatever this body did on the last floor, it
+    // has not yet stepped off THIS threshold, so the tile it is about to be
+    // placed on must not also be the tile that ejects it.
+    session.exitArmed = false;
+
     // SOMEBODY CAME BACK. The countdown is cancelled outright rather than
     // paused, so the five minutes restart from zero when they leave again —
     // which is what "the timer does not start until the player leaves again"
@@ -7705,6 +7769,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // with no `opts.realms` never leaves this value.
       realmId: null,
       enteredFrom: null,
+      exitArmed: false,
       helloDone: false,
       // Set true for the whole of `hello`, attempted or completed, and never
       // cleared: one hello per connection. A socket whose hello failed hard

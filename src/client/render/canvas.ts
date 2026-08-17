@@ -90,6 +90,7 @@ import type {
   ItemTier,
   LevelView,
   ProjectileView,
+  SiteView,
 } from '../../shared/protocol.ts';
 import type { Sprite, SpriteSource } from './assets.ts';
 
@@ -224,6 +225,17 @@ export type LootMarker = {
 /** Everything one frame needs. The renderer holds no game state of its own. */
 export type Scene = {
   readonly level: LevelView | null;
+  /**
+   * Places on THIS map you can walk into, drawn as markers over the terrain.
+   *
+   * THE OVERWORLD'S WHOLE JOB IS TELLING YOU WHERE THINGS ARE. The first
+   * version kept sites server-side on the reasoning that a destination is
+   * something a player earns by treading on it — a good rule for a dungeon and
+   * a terrible one for a world map, which left the region with no towns and no
+   * dungeon mouths on it at all. FF7 and ToME both draw their settlements; the
+   * discovery is in the journey, not in the existence of the place.
+   */
+  readonly sites?: readonly SiteView[];
   readonly actors: readonly ActorView[];
   /** Which actor the camera follows. Null before `welcome` arrives. */
   readonly selfId: string | null;
@@ -595,6 +607,20 @@ function require2dContext(target: HTMLCanvasElement): CanvasRenderingContext2D {
  * else will not draw, and will not error either: it will simply keep showing
  * the flat colour, which is the one failure mode worth knowing about here.
  */
+/**
+ * The marker families the client can draw. Matched against `SiteView.marker`,
+ * with anything unrecognised falling back to `gate` — a door is the right guess
+ * for an unknown kind of place, and drawing nothing is not.
+ */
+const SITE_MARKERS: ReadonlySet<string> = new Set([
+  'town',
+  'gate',
+  'stair',
+  'altar',
+  'archive',
+  'breach',
+]);
+
 const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.COBBLE]: ['tile_ow_cobble', 'tile_ow_cobble_b'],
   [TileCode.PAVING]: ['tile_ow_paving'],
@@ -931,6 +957,39 @@ export function createRenderer(options: RendererOptions): Renderer {
     // it tear the grid would be a worse way to report that than a stretched cell.
     backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
     return true;
+  }
+
+  /**
+   * Draw the places you can walk into.
+   *
+   * FALLS BACK TO A DRAWN MARK, NOT TO A VIOLET BOX. `tile_ow_site_*` may not be
+   * on disk — the art tree is gitignored, so a bare clone has none of it — and a
+   * world map speckled with violet error boxes where its towns should be is
+   * worse than useless. So a missing marker paints a small gold ring instead:
+   * legible, obviously deliberate, and enough to navigate by. Same argument
+   * `paintTerrain` makes, and the opposite of `blitSprite`'s.
+   *
+   * AN UNKNOWN MARKER FAMILY FALLS BACK TO `gate`. A client meeting a marker a
+   * newer server invented should draw *a door* rather than nothing at all.
+   */
+  function paintSites(sites: readonly SiteView[], camX: number, camY: number): void {
+    for (const site of sites) {
+      const sx = site.x * TILE_PX - camX;
+      const sy = site.y * TILE_PX - camY;
+      if (sx < -TILE_PX || sy < -TILE_PX || sx > logicalW || sy > logicalH) continue;
+
+      const known = SITE_MARKERS.has(site.marker) ? site.marker : 'gate';
+      const sprite = sprites.sprite(`tile_ow_site_${known}`);
+      if (sprite !== undefined) {
+        backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
+        continue;
+      }
+
+      // The no-art path. A ring on the cell, inset so the ground still reads.
+      backCtx.strokeStyle = PALETTE.GOLD;
+      backCtx.lineWidth = 2;
+      backCtx.strokeRect(sx + 5, sy + 5, TILE_PX - 10, TILE_PX - 10);
+    }
   }
 
   function blitSprite(id: string, cellX: number, cellY: number): void {
@@ -1372,6 +1431,12 @@ export function createRenderer(options: RendererOptions): Renderer {
       const camY = cameraAxis(level.h * TILE_PX, logicalH, focusY);
 
       paintTiles(level, camX, camY);
+
+      // THE LANDMARKS, directly on the terrain and under everything else. A
+      // marker is part of the map rather than a thing standing on it, so a
+      // token, a route or a targeting ring all draw over it — you must never
+      // lose a friend behind a town.
+      if (scene.sites !== undefined) paintSites(scene.sites, camX, camY);
 
       // The targeting layer, between the terrain and the tokens. See `TargetCell`.
       if (scene.targeting !== undefined) paintTargeting(scene.targeting, camX, camY);

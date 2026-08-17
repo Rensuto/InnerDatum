@@ -3707,6 +3707,34 @@ export type ErrorMsg = {
  * `ViewerMsg` membership makes `broadcast(realmChangeMsg)` a compile error
  * rather than a rule somebody has to remember at one in the morning.
  */
+/**
+ * A place you can walk into, as the client needs to DRAW it.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SITES USED TO BE SERVER-ONLY, AND THAT WAS WRONG.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `AuthoredMap.sites` was deliberately kept off the wire, on the reasoning that
+ * "a site's destination is a fact a player earns by walking onto it". That is a
+ * good rule for a DUNGEON and a terrible one for an overworld: it left the map
+ * with no towns, no dungeon mouths and no landmarks on it at all, so the only
+ * way to find anywhere was to walk the whole region hoping to tread on it.
+ *
+ * An overworld's entire job is telling you where things are. FF7 and ToME both
+ * draw their settlements on the world map; the discovery is in the JOURNEY, not
+ * in the existence of the destination.
+ *
+ * `marker` is the ART FAMILY, not the site id: several sites share a marker and
+ * a client that meets an unknown one falls back to the generic gate rather than
+ * failing. `name` is prose and is shown — the id never reaches a player.
+ */
+export type SiteView = {
+  readonly x: number;
+  readonly y: number;
+  /** `town` | `gate` | `stair` | `altar` | `archive` | `breach`. */
+  readonly marker: string;
+  readonly name: string;
+};
+
 export type RealmMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'realm';
@@ -3718,6 +3746,8 @@ export type RealmMsg = {
   name: string;
   level: LevelView;
   actors: ActorView[];
+  /** Everywhere on THIS map you can walk into. Drawn as markers. */
+  sites: SiteView[];
   /** Which actor in `actors` is the recipient — the client re-centres on it. */
   selfId: string;
 };

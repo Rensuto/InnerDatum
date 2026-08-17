@@ -183,6 +183,13 @@ export type SiteDef = {
   readonly id: string;
   readonly name: string;
   /**
+   * Which marker art draws this place on the overworld — `town`, `gate`,
+   * `stair`, `altar`, `archive`. An ART FAMILY rather than a per-site sprite:
+   * five settlements sharing one town marker is correct, and a new site needs
+   * no new asset.
+   */
+  readonly marker: string;
+  /**
    * SHARED, or PRIVATE TO A PARTY. The single most consequential field on a
    * site, and it is not a matter of taste — see the essay on `RealmKind`.
    * `Common` requires that nothing ever spawns here.
@@ -543,23 +550,24 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
       // the SETTLEMENTS, and with the overworld now being open country they are
       // where the game is social — the road between them is meant to feel empty.
       //
-      ['site:alderbrook', 'Alderbrook', RealmKind.Common],
-      ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common],
-      ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common],
-      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common],
+      ['site:alderbrook', 'Alderbrook', RealmKind.Common, 'town'],
+      ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common, 'town'],
+      ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common, 'town'],
+      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common, 'gate'],
       // ─── one party at a time: combat, so a shared barrier would be wrong ───
-      ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner],
-      ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner],
-      ['site:underworks', 'The Underworks', RealmKind.Inner],
-      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner],
-      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner],
+      ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner, 'gate'],
+      ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner, 'gate'],
+      ['site:underworks', 'The Underworks', RealmKind.Inner, 'stair'],
+      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner, 'archive'],
+      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner, 'altar'],
     ] as const
-  ).map(([id, name, kind]): [string, SiteDef] => [
+  ).map(([id, name, kind, marker]): [string, SiteDef] => [
     id,
     {
       id,
       name,
       kind,
+      marker,
       map: makeTestMap,
       // A delve is a place you can go back to. A town never empties in the sense
       // that matters — `close` refuses a shared realm outright — so the number
@@ -597,6 +605,7 @@ export const ENCOUNTER_SITE: SiteDef = {
   id: 'site:encounter',
   name: 'An Index Breach',
   kind: RealmKind.Inner,
+  marker: 'breach',
   map: makeTestMap,
   // ZERO, AND THIS IS THE FIELD THAT MAKES FLEEING MEAN SOMETHING. See
   // `SiteDef.lingerMs`: a breach you ran out of must not still be there.
