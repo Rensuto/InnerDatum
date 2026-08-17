@@ -6398,7 +6398,10 @@ async function boot(): Promise<void> {
       // docks own the sides, and neither consults the log's rect.
       if (classOptions !== null) return;
       const point = renderer.backbufferPoint(event.clientX, event.clientY);
-      if (point === null || caseLog === null) return;
+      // On the letterbox bars there is no world under the pointer and no panel
+      // either, so there is nothing to zoom TOWARD. Leave it alone.
+      if (point === null) return;
+
       const { logicalW, logicalH } = renderer.metrics();
       const wheelLayout = hudLayout(logicalW, logicalH);
       // ═══ THE ESCAPE MENU FIRST, MIRRORING THE PAINT ORDER, AND IT IS AN
@@ -6430,12 +6433,51 @@ async function boot(): Promise<void> {
       // horizontally like the other two, on the same assumption that the docks own
       // the sides.
       if (inRect(wheelLayout.inventory, point.x, point.y)) return;
-      const lane = caseLog.laneAt(point.x, point.y);
-      if (lane === null) return;
+      /**
+       * `?.` RATHER THAN AN EARLY BAIL ON A MISSING LOG, and the difference is
+       * an ordering bug a test caught before this shipped.
+       *
+       * The first version returned early when `caseLog` was null — ABOVE the
+       * panel guards — so before the log existed a wheel rolled over the escape
+       * menu would have zoomed the map underneath it. No log simply means no
+       * lane can claim the wheel, which is what the fall-through below already
+       * handles; it is not a reason to skip the occlusion guards.
+       */
+      const lane = caseLog?.laneAt(point.x, point.y) ?? null;
+      if (lane === null) {
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * NOTHING CLAIMED THE WHEEL, SO IT ZOOMS. THE POSITION OF THIS LINE IS
+         * THE WHOLE FEATURE.
+         * ═══════════════════════════════════════════════════════════════════
+         * Every `return` above is a surface saying "this wheel is mine, or I am
+         * drawn over something whose it would be" — the chooser, the escape
+         * menu, the sheet, the talent panel, the inventory, and a Case Log lane
+         * just above. Reaching here means the pointer is over the WORLD, and
+         * over the world a wheel means zoom.
+         *
+         * Written as a fall-through rather than as its own hit test on purpose.
+         * A test of the form "is the pointer NOT over any panel" would be a
+         * second copy of that list, and the copy would be the one that went
+         * stale the next time a panel was added — silently, because the symptom
+         * is a wheel that zooms the map while it looks like it is scrolling a
+         * transcript. Here a new panel gets its guard in one place and this
+         * inherits it.
+         *
+         * UP IS IN, which is what every map in every application does. The
+         * `-`/`=` keys and this share `setZoom`, so the clamp is stated once.
+         */
+        event.preventDefault();
+        renderer.setZoom(renderer.zoom() + (event.deltaY < 0 ? 1 : -1));
+        requestDraw();
+        return;
+      }
       event.preventDefault();
       // Wheel up (negative deltaY) goes BACK in time, which is what every
       // document and every chat client does.
-      caseLog.scroll(lane, event.deltaY < 0 ? SCROLL_STEP : -SCROLL_STEP);
+      // A lane can only be non-null if the log exists, but the compiler cannot
+      // see that across the branch above.
+      caseLog?.scroll(lane, event.deltaY < 0 ? SCROLL_STEP : -SCROLL_STEP);
     },
     { passive: false },
   );

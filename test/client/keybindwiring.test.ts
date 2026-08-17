@@ -503,6 +503,37 @@ describe('the mouse layer', () => {
     expect(at('wheelLayout.menu', body)).toBeLessThan(at('wheelLayout.sheet', body));
   });
 
+  it('zooms only after every surface has declined the wheel', () => {
+    // THE POSITION OF THE ZOOM IS THE FEATURE. Every `return` above it is a
+    // surface saying "this wheel is mine, or I am drawn over something whose it
+    // would be" — the chooser, the escape menu, the sheet, the talent panel,
+    // the inventory, and a Case Log lane. Reaching the end means the pointer is
+    // over the WORLD, and over the world a wheel zooms.
+    //
+    // A hit test of the form "is the pointer NOT over any panel" would be a
+    // second copy of that list, and the copy is what goes stale the next time a
+    // panel is added — silently, because the symptom is a wheel that zooms the
+    // map while it looks like it is scrolling a transcript. This pins the
+    // ORDER, which is the thing that keeps the fall-through honest.
+    const start = at("'wheel',");
+    const body = CODE.slice(start, CODE.indexOf('{ passive: false }', start));
+    const zoom = body.indexOf('renderer.setZoom(renderer.zoom() +');
+    expect(zoom).toBeGreaterThan(-1);
+    for (const guard of [
+      'wheelLayout.menu',
+      'wheelLayout.sheet',
+      'wheelLayout.talents',
+      'wheelLayout.inventory',
+    ]) {
+      expect(body.indexOf(guard), `${guard} must be tested before the zoom`).toBeLessThan(zoom);
+    }
+    // And the log's lanes claim it before the world does.
+    expect(body.indexOf('caseLog.laneAt(')).toBeLessThan(zoom);
+    // It suppresses the page scroll, or the activity iframe drags the canvas
+    // out of view — the same reason the log branch does.
+    expect(body.slice(0, zoom)).toContain('event.preventDefault();');
+  });
+
   it('hit-tests the menu before the three panels it is painted over', () => {
     // HIT-TEST ORDER MIRRORS PAINT ORDER — the rule main.ts states four times.
     const mousedown = CODE.slice(at("canvas.addEventListener('mousedown'"));
