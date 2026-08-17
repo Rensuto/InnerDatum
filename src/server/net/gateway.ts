@@ -133,6 +133,25 @@ import { StandingOrder } from '../engine/actor.ts';
  * one door the type system cannot close.
  */
 import { recomposeCombat } from '../engine/effects.ts';
+/**
+ * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
+ * moment: the step that walks onto a site cell.
+ *
+ * `Realms.open` is idempotent on (partyId, siteId) (world/realms.ts:386-394),
+ * and that is the whole reason a party id has to be reachable from here: it is
+ * what makes the second person through the door join the first rather than open
+ * a private second copy of the floor beside them. Nothing else in this file
+ * reads the party table — membership, invites and the barrier's scope are all
+ * `engine/party.ts`'s, reached through `TurnEngine.submitParty` exactly as
+ * before.
+ *
+ * A VALUE IMPORT INTO net/, AND IT IS ONE-WAY. eslint bans `engine/** ->
+ * net/**` (the `NO_IO_LAYER_PATTERNS` group in eslint.config.js) and this arrow
+ * points the other way, like `recomposeCombat` directly above and for the same
+ * stated reason: `partyIdOf` is a two-line lookup over a table this process
+ * already owns, it returns a string, it draws no RNG and it queues nothing.
+ */
+import { partyIdOf } from '../engine/party.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
 // difference between "this file predates classes" and "this file names a class
@@ -157,6 +176,25 @@ import {
   projectWorld,
   toActorView,
 } from '../view/projector.ts';
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE AUTHORED SITE TABLE, AND THE CYCLE THIS USED TO FEAR IS GONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The `import type { Realms }` below carried a note saying a value import here
+ * "would close the loop", because realms.ts imported `createTurnEngine` and
+ * turn-engine.ts imports `TurnEngine` back out of THIS file. That is no longer
+ * true of realms.ts: it takes an `EngineFor` factory instead of building engines
+ * (world/realms.ts:224 and the essay above it), and its only runtime imports are
+ * `shared/level.ts`, `shared/protocol.ts` and `world/world.ts`. So the arrow
+ * gateway -> realms is a leaf edge with nothing pointing back.
+ *
+ * `SITES` is DATA — the map from a site cell's id to the place behind it, on the
+ * same terms as the two content imports above. The registry's BEHAVIOUR is still
+ * injected as `opts.realms`, so a build with no registry is still a build with
+ * one world, and `crossIntoSite` returns on its first line.
+ */
+import { SITES } from '../world/realms.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
@@ -187,16 +225,8 @@ import type {
 import type { ClassDef } from '../content/classes.ts';
 import type { Slot } from '../content/items.ts';
 import type { PlayerActor } from '../engine/actor.ts';
+import type { PartyState } from '../engine/party.ts';
 import type { PartyOffer, TurnState } from '../view/projector.ts';
-/**
- * THE REGISTRY OF PLACES, AND IT IS A TYPE-ONLY EDGE.
- *
- * `import type` erases completely, so net/ gains no runtime dependency on
- * world/realms.ts — which matters here more than usual, because realms.ts
- * imports `createTurnEngine` and turn-engine.ts imports `TurnEngine` back out of
- * THIS file. That triangle only stays acyclic at runtime because both of those
- * arrows are type-only; a value import here would close the loop.
- */
 import type { Realms } from '../world/realms.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
@@ -347,8 +377,13 @@ type Session = {
    * `opts.engine` — the single world this gateway was built around — and it is
    * what a socket carries from the moment it opens until something places its
    * body in a named realm. A build with no `opts.realms` never leaves that
-   * state, which is precisely why adding this field changes nothing: see
-   * `realmFor`.
+   * state, which is why every pre-realms construction still describes the game it
+   * always did: see `realmFor` and `fallbackRealm`.
+   *
+   * IT IS WRITTEN IN EXACTLY TWO PLACES and both are the server deciding where a
+   * body IS, never a client saying where it wants to be: `handleHello` reads it
+   * back off the registry after the body is placed, and `crossIntoSite` moves it
+   * after the body has actually been moved. Nothing else may assign it.
    *
    * PER CONNECTION RATHER THAN PER ACTOR, like `viewerKey` and the three memo
    * keys beside it, and for a different reason: a resumed socket has to be told
@@ -1484,17 +1519,34 @@ export type WsGatewayOptions = {
    * pair above, which is the M1-M10 shape of this server and still the right
    * shape for a test that boots a floor in memory.
    *
-   * OPTIONAL FOR THAT REASON AND NOT MERELY FOR CONVENIENCE. `realmFor` falls
-   * back to `{ world, engine }` when this is undefined, so wiring the registry
-   * in (src/server/main.ts, a later commit) is the ONLY thing that can change
-   * where a frame lands. Until then this file is realm-aware and single-world at
-   * the same time, which is what makes the change reviewable in two pieces
-   * rather than one.
+   * OPTIONAL FOR THAT REASON AND NOT MERELY FOR CONVENIENCE. Supplying it is the
+   * ONE thing that changes where a frame lands: with it, `hello` places a body in
+   * Alderbrook, a step onto a site cell crosses into that site, the pump ticks
+   * every realm, and every broadcast is narrowed to the floor it is about.
+   * Without it, `realmFor` and `homeOf` both answer `fallbackRealm`, whose id is
+   * `''`, and every one of those paths collapses back into the single-world game
+   * — which is what test/server/**, tools/e2e-m1.mjs and any fixture that builds
+   * `{ world, engine }` are still describing, unchanged.
    *
-   * The SAME instance src/server/main.ts pumps. Two would be two answers to
+   * The SAME instance src/server/main.ts builds. Two would be two answers to
    * "which floor is Sam standing on".
    */
   readonly realms?: Realms;
+  /**
+   * WHO IS PLAYING WITH WHOM (engine/party.ts), READ FOR ONE QUESTION ONLY:
+   * whose instance is this, when somebody steps onto a site cell.
+   *
+   * The SAME instance src/server/main.ts hands to every realm's engine. Two
+   * would be two answers to "is Ren in my party", and the second one would open
+   * a private copy of the floor beside her.
+   *
+   * OPTIONAL, AND ABSENT MEANS EVERY PLAYER IS A PARTY OF ONE for the purpose of
+   * opening an instance — the id falls back to the actor's own, which is exactly
+   * what `partyOf` would have minted for a player nobody has invited
+   * (engine/party.ts:276-290). A gateway built without a party table is the
+   * pre-party game and must go on describing it.
+   */
+  readonly parties?: PartyState;
   /** Defaults to ten minutes. Shorten it in tests, never in production. */
   readonly disconnectGraceMs?: number;
   /**
@@ -1790,9 +1842,75 @@ const EMPTY_INVENTORY_KEY = '[[],{}]';
  */
 const INVENTORY_CAP = 12;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE PLACE TO PUMP AND BROADCAST ABOUT. STRUCTURAL, NOT `Realm`, ON PURPOSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A `Realm` (world/realms.ts:108) satisfies this by identity — id, world,
+ * engine — so `Realms.all()` is a list of these with no conversion anywhere.
+ * What this type buys is the OTHER member of the list: the synthetic fallback
+ * that wraps `opts.world`/`opts.engine` for a gateway built with no registry.
+ *
+ * That one cannot be a `Realm`, and not for a stylistic reason. `Realm.engine`
+ * is a `ReapingTurnEngine` — the ADAPTER's type, from turn-engine.ts — while
+ * this file's whole contract with the scheduler is the structural `TurnEngine`
+ * it declares itself, precisely so net/ never imports the engine. Every test in
+ * test/server/ registers this plugin against a hand-written object that is a
+ * `TurnEngine` and is emphatically not a `ReapingTurnEngine`. Widening the pump
+ * loop's element type is what lets those two live in one array without a cast
+ * — and a cast here would be a lie the compiler had agreed to.
+ *
+ * THE ID IS `''` FOR THE FALLBACK, and that empty string is load-bearing rather
+ * than decorative: `broadcast`'s third argument means "only this realm", and
+ * `''` is never a realm id, so the pump maps it back to `undefined` — "tell
+ * everybody", which is what every frame in this file did before realms existed.
+ * See `audienceFor`.
+ */
+type PumpTarget = {
+  readonly id: string;
+  readonly world: World;
+  readonly engine: TurnEngine;
+};
+
 export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts) => {
   const { world, engine } = opts;
   const disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULT_DISCONNECT_GRACE_MS;
+
+  /**
+   * THE ONE WORLD, WEARING A REALM'S SHAPE. See `PumpTarget`.
+   *
+   * It is what `realmFor` answers for a socket that has not been placed, what
+   * `homeOf` answers for a body the registry does not hold, and — when there is
+   * no registry at all — the entire contents of `pumpTargets()`. Its `id` is
+   * `''`, so every frame sent on its behalf goes to the whole room exactly as it
+   * always did.
+   */
+  const fallbackRealm: PumpTarget = { id: '', world, engine };
+
+  /**
+   * EVERYWHERE THE WORLD HAS TO BE ADVANCED THIS TICK.
+   *
+   * A live read rather than a cached array, because the set GROWS: `Realms.open`
+   * mints an instance the moment a party walks into a site, and a pump that was
+   * iterating a snapshot taken at boot would never tick the floor those players
+   * are standing on. Common realms are built eagerly at boot for the related
+   * reason realms.ts states — `all()` must not change shape underneath a single
+   * iteration — and this function is called once per pump, before the loop.
+   */
+  const pumpTargets = (): readonly PumpTarget[] => opts.realms?.all() ?? [fallbackRealm];
+
+  /**
+   * WHO A FRAME ABOUT THIS REALM IS FOR, in `broadcast`'s third-argument terms.
+   *
+   * A named realm narrows the audience to the sockets standing in it. The
+   * fallback realm's `''` widens back to `undefined`, which `broadcast`
+   * documents as "every session that has completed hello" — the pre-realms
+   * behaviour, and the reason a gateway with no registry sends byte-for-byte
+   * what it always sent.
+   */
+  const audienceFor = (realmId: string): string | undefined =>
+    realmId === '' ? undefined : realmId;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1830,11 +1948,35 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * rendering a place it is not in — visibly wrong, recoverable by reconnecting,
    * and logged by whatever closed the realm. Wrong beats gone.
    */
-  const realmFor = (session: Session): { world: World; engine: TurnEngine } => {
-    if (opts.realms === undefined || session.realmId === null) return { world, engine };
-    const realm = opts.realms.get(session.realmId);
-    return realm === undefined ? { world, engine } : { world: realm.world, engine: realm.engine };
+  const realmFor = (session: Session): PumpTarget => {
+    if (opts.realms === undefined || session.realmId === null) return fallbackRealm;
+    return opts.realms.get(session.realmId) ?? fallbackRealm;
   };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH WORLD IS THIS *BODY* IN? — the same question asked without a socket.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `realmFor` answers for a CONNECTION and is what every handler starts with.
+   * A dozen things in this file are about an ACTOR ID with no session in hand:
+   * the Case Log naming a monster somebody's orb just hit, the reconnect grace
+   * expiring on a body whose socket closed ten minutes ago, a loot verb charging
+   * a turn. Those cannot ask a socket, so they ask the registry.
+   *
+   * A LINEAR SCAN, AND IT IS THE RIGHT SHAPE HERE. `Realms.realmOf` walks the
+   * realms and asks each world for the id (world/realms.ts:358-363) — a handful
+   * of Map lookups against a registry that holds the overworld, three towns and
+   * whatever instances are open. The alternative is an actor -> realm index in
+   * this file, which is a SECOND answer to "where is Sam" beside the one the
+   * worlds already hold, and the two would drift the first time a body moved by
+   * a path that forgot to update it. See the realms.ts header: the whole design
+   * is "correct by construction rather than by vigilance".
+   *
+   * WITH NO REGISTRY IT IS NOT RUN AT ALL and the answer is the default pair,
+   * which is what keeps every pre-realms construction byte-identical.
+   */
+  const homeOf = (actorId: string): PumpTarget => opts.realms?.realmOf(actorId) ?? fallbackRealm;
 
   /** Every live connection, keyed by connection id. The broadcast list. */
   const sessions = new Map<string, Session>();
@@ -1859,23 +2001,52 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /**
-   * The Bell, or null when none is running.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BELL — ONE PER REALM, AND THE TIMERS MUST NOT SHARE A VARIABLE.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
    * `gameTurn` identifies WHICH park this Bell belongs to. Players are
    * phase-locked (DECISIONS.md § D1) so the barrier parks exactly once per game
    * turn, which makes the turn number a sufficient identity and stops a second
    * commit arriving mid-countdown from restarting the clock — a Bell that
    * restarts every time someone else commits never rings.
+   *
+   * ═══ WHY A MAP, AND WHAT THE SINGLE VARIABLE ACTUALLY BROKE ═══
+   * This was one `bell | null`, which is correct for one floor and silently
+   * wrong for N. Each realm has its OWN barrier (world/realms.ts:266-289 — two
+   * realms sharing one would collide on the level-wide countdown key), so each
+   * realm parks on its own schedule and asks for its own countdown. With one
+   * variable, the second realm to arm in a tick called `clearBell` on the first
+   * realm's `setTimeout` and overwrote it: the party in the Underworks would
+   * have their 20 seconds cancelled by three people in the office standing still
+   * — no ring, no straggler hold, and the floor waits forever on somebody who
+   * has gone to make tea. Keyed by realm id, `clearBell(a)` cannot reach b's
+   * timer, because it does not have it.
+   *
+   * `gameTurn` STAYS THE PARK IDENTITY WITHIN a realm. Two realms genuinely can
+   * be on the same game turn; they are simply different rows.
    */
-  let bell: {
+  type Bell = {
     readonly gameTurn: number;
     readonly durationMs: number;
     readonly deadline: number;
     readonly timer: ReturnType<typeof setTimeout>;
-  } | null = null;
+  };
+  const bells = new Map<string, Bell>();
 
-  /** The last barrier state broadcast, as a key. See `turnKey`. */
-  let lastTurnKey: string | null = null;
+  /**
+   * The last barrier state broadcast PER REALM, as a key. See `turnKey`.
+   *
+   * ═══ WHY EVERY MEMO IN THIS FILE HAD TO BECOME A MAP ═══
+   * A change-detector answers "did this frame's content move since I last sent
+   * it". With one variable and N realms it answers a different question — "did
+   * it move since the last realm I looked at" — and the failure is SUPPRESSION,
+   * which is invisible: realm A's key overwrites realm B's, B's genuinely
+   * changed frame compares equal to A's, and B is never told. On the turn frame
+   * that means a party is not shown that the barrier is now waiting on them,
+   * which game-design.md § 4 names as the way this genre dies.
+   */
+  const lastTurnKeys = new Map<string, string>();
 
   /**
    * Names ANONYMOUS players — the ones with no verified Discord identity behind
@@ -1892,11 +2063,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   let logSeq = 0;
 
-  /** The last `party` frame broadcast, as a key. Same trick as `turnKey`. */
-  let lastPartyKey: string | null = null;
+  /** The last `party` frame broadcast per realm, as a key. Same trick as `turnKey`. */
+  const lastPartyKeys = new Map<string, string>();
 
-  /** The last `effects` frame broadcast, as a key. */
-  let lastEffectsKey: string | null = null;
+  /** The last `effects` frame broadcast per realm, as a key. */
+  const lastEffectsKeys = new Map<string, string>();
 
   /**
    * The last `projectiles` frame broadcast, as a key — and SEEDED WITH THE
@@ -1909,15 +2080,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * all. An empty sky is not news: it is what a client already believes before
    * it is told anything, and `welcome` carries no orb list precisely because
    * absence is the default rather than a fact that has to be transmitted.
+   *
+   * ═══ A MISSING ROW IS THE SEED, WHICH IS WHY THE READS SAY `?? …` ═══
+   * Per realm the seeding argument gets STRONGER, not weaker: a realm that was
+   * created four seconds ago has never broadcast anything, and its first pump
+   * must not open with an empty `projectiles` frame telling a client something
+   * it already believes. Absent and `'[]'` therefore mean the same thing, and
+   * every read spells that out rather than defaulting the Map.
    */
-  let lastProjectilesKey = NO_PROJECTILES_KEY;
+  const lastProjectilesKeys = new Map<string, string>();
 
   /**
-   * The last `ground` frame broadcast, as a key — SEEDED WITH THE EMPTY FLOOR
-   * for exactly the reason `lastProjectilesKey` is seeded with the empty sky.
-   * See `NO_GROUND_KEY`.
+   * The last `ground` frame broadcast per realm, as a key — SEEDED WITH THE
+   * EMPTY FLOOR for exactly the reason `lastProjectilesKeys` is seeded with the
+   * empty sky, missing row and all. See `NO_GROUND_KEY`.
    */
-  let lastGroundKey = NO_GROUND_KEY;
+  const lastGroundKeys = new Map<string, string>();
 
   /**
    * Actor id -> when that player last put a line in the Margin.
@@ -2022,13 +2200,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * low-frequency BY DESIGN (protocol.ts — it changes when somebody goes down,
    * gets up, drops or speaks, not when they take a hit), and a frame every pump
    * would quietly turn it into a second hp stream.
+   *
+   * THE PANEL IS THE PEOPLE ON THIS FLOOR. `projectParty` walks one world, so a
+   * realm's panel lists that realm's bodies and the frame goes to that realm's
+   * sockets — which is the only reading that is not a lie in both directions: a
+   * player who walked into an instance is not standing next to you any more, and
+   * their hp bar on your screen would be a bar you cannot do anything about.
    */
-  const broadcastPartyIfChanged = (nowMs: number): void => {
-    const msg = projectParty(world, opts.downed, speakingNow(nowMs));
+  const broadcastPartyIfChanged = (realm: PumpTarget, nowMs: number): void => {
+    const msg = projectParty(realm.world, opts.downed, speakingNow(nowMs));
     const key = JSON.stringify(msg.members);
-    if (key === lastPartyKey) return;
-    lastPartyKey = key;
-    broadcast(msg);
+    if (key === lastPartyKeys.get(realm.id)) return;
+    lastPartyKeys.set(realm.id, key);
+    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -2038,14 +2222,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `effects` frames at all rather than an empty one every pump, which keeps the
    * M3 frame set byte-for-byte unchanged on that path.
    */
-  const broadcastEffectsIfChanged = (): void => {
+  const broadcastEffectsIfChanged = (realm: PumpTarget): void => {
     const effects = opts.effects;
     if (effects === undefined) return;
-    const msg = projectEffects(world, effects);
+    // ONE SHARED `EffectState`, PROJECTED PER WORLD. The table is keyed by actor
+    // id and is deliberately process-wide (a stun follows a body through a door,
+    // exactly as the Downed countdown does — world/realms.ts:188-199), and
+    // `projectEffects` filters it against the actors it can see. So each realm's
+    // frame lists that realm's badges and nobody else's.
+    const msg = projectEffects(realm.world, effects);
     const key = JSON.stringify(msg.actors);
-    if (key === lastEffectsKey) return;
-    lastEffectsKey = key;
-    broadcast(msg);
+    if (key === lastEffectsKeys.get(realm.id)) return;
+    lastEffectsKeys.set(realm.id, key);
+    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -2073,12 +2262,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * line of it here would be a second scheduler in the file that owns the only
    * `setTimeout` in the turn path.
    */
-  const broadcastProjectilesIfChanged = (): void => {
-    const msg = projectProjectiles(world);
+  const broadcastProjectilesIfChanged = (realm: PumpTarget): void => {
+    const msg = projectProjectiles(realm.world);
     const key = JSON.stringify(msg.projectiles);
-    if (key === lastProjectilesKey) return;
-    lastProjectilesKey = key;
-    broadcast(msg);
+    if (key === (lastProjectilesKeys.get(realm.id) ?? NO_PROJECTILES_KEY)) return;
+    lastProjectilesKeys.set(realm.id, key);
+    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -2105,15 +2294,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *   form also updates the memo, so the `broadcastProjectilesIfChanged` a few
    *   lines later in the same pump correctly sends nothing.
    */
-  const sendProjectilesIfAny = (socket?: GatewaySocket): void => {
-    const msg = projectProjectiles(world);
+  const sendProjectilesIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
+    const msg = projectProjectiles(realm.world);
     if (msg.projectiles.length === 0) return;
     if (socket !== undefined) {
       send(socket, msg);
       return;
     }
-    lastProjectilesKey = JSON.stringify(msg.projectiles);
-    broadcast(msg);
+    lastProjectilesKeys.set(realm.id, JSON.stringify(msg.projectiles));
+    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -2139,12 +2328,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * change like any other, so the pile shrinking broadcasts an absence rather
    * than a "removed" patch.
    */
-  const broadcastGroundIfChanged = (): void => {
-    const msg = projectGroundItems(world);
+  const broadcastGroundIfChanged = (realm: PumpTarget): void => {
+    const msg = projectGroundItems(realm.world);
     const key = JSON.stringify(msg.items);
-    if (key === lastGroundKey) return;
-    lastGroundKey = key;
-    broadcast(msg);
+    if (key === (lastGroundKeys.get(realm.id) ?? NO_GROUND_KEY)) return;
+    lastGroundKeys.set(realm.id, key);
+    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -2165,15 +2354,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *   form updates the memo, so a `broadcastGroundIfChanged` later in the same
    *   pump correctly sends nothing.
    */
-  const sendGroundIfAny = (socket?: GatewaySocket): void => {
-    const msg = projectGroundItems(world);
+  const sendGroundIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
+    const msg = projectGroundItems(realm.world);
     if (msg.items.length === 0) return;
     if (socket !== undefined) {
       send(socket, msg);
       return;
     }
-    lastGroundKey = JSON.stringify(msg.items);
-    broadcast(msg);
+    lastGroundKeys.set(realm.id, JSON.stringify(msg.items));
+    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -2201,6 +2390,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * moving — see `handleChooseClass`.
    */
   const sendInventory = (session: Session): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -2224,6 +2414,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * monster that steals.
    */
   const sendInventoryIfChanged = (session: Session): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -2242,16 +2433,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * minutes. ONE pending timer, replaced rather than stacked, so a player typing
    * ten lines arms one refresh and not ten.
    */
-  const noteSpoke = (actorId: string): void => {
+  const noteSpoke = (realm: PumpTarget, actorId: string): void => {
     const nowMs = Date.now();
     spokeAtMs.set(actorId, nowMs);
-    broadcastPartyIfChanged(nowMs);
+    broadcastPartyIfChanged(realm, nowMs);
 
     if (speakingTimer !== null) clearTimeout(speakingTimer);
     speakingTimer = setTimeout(() => {
       speakingTimer = null;
       guard('speaking sweep threw', () => {
-        broadcastPartyIfChanged(Date.now());
+        // EVERY REALM, not the one the speaker was in. The dot goes out on a wall
+        // clock, so this is the only thing that ever recomputes it — and the
+        // panel it lights is per realm. Sweeping just the speaker's realm would
+        // leave a dot burning on any other floor whose last talker fell silent
+        // without a pump to notice. It is one memo compare per realm.
+        for (const target of pumpTargets()) broadcastPartyIfChanged(target, Date.now());
       });
     }, SPEAKING_WINDOW_MS);
     speakingTimer.unref();
@@ -2410,7 +2606,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const prefsFields = (actor: Actor): { keybinds?: Readonly<Record<string, readonly string[]>> } =>
     actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) };
 
+  /**
+   * EVERY PLAYER IN THE PROCESS, NOT EVERY PLAYER ON ONE FLOOR.
+   *
+   * The loop over realms is not tidiness. `saveNow`/`queueSave` are called from
+   * one pump, from a socket closing and from a body being recalled, and each of
+   * those hands the persist layer THE list of characters — the port then decides
+   * what is dirty. Snapshot one world and the four people who walked into the
+   * Underworks stop being written the moment they step through the door, with
+   * nothing failing anywhere: their evening reaches disk exactly as far as the
+   * last save taken while they were still in Alderbrook.
+   *
+   * With no registry `pumpTargets()` is the single fallback realm, so this is
+   * the same one pass over the same one world it always was.
+   */
   const snapshotPlayers = (): CharacterSnapshot[] => {
+    const snapshots: CharacterSnapshot[] = [];
+    for (const realm of pumpTargets()) {
+      snapshots.push(...snapshotRealm(realm));
+    }
+    return snapshots;
+  };
+
+  const snapshotRealm = (realm: PumpTarget): CharacterSnapshot[] => {
+    const { world, engine } = realm;
     const snapshots: CharacterSnapshot[] = [];
     for (const actor of world.allActors()) {
       if (actor.kind !== 'player') continue;
@@ -2604,18 +2823,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═══════════════════════════════════════════════════════════════════════════
    * `realmId` IS LAST AND OPTIONAL, AND OMITTING IT IS THE PRE-REALM BEHAVIOUR
    * ═══════════════════════════════════════════════════════════════════════════
-   * Omitted, this goes to EVERY session that has completed `hello`, which is
-   * exactly what it did before realms existed and what all nineteen call sites
-   * in this file still ask for. That is deliberate for this commit: the audience
-   * of a `moved` or a `sweep` is a question about where the two bodies are, and
-   * answering it site by site is a behaviour change that belongs in the commit
-   * that actually moves players — not in the one that adds the parameter.
+   * Omitted, this goes to EVERY session that has completed `hello` — exactly what
+   * it did before realms existed.
    *
    * Passed, it skips every session whose `realmId` differs, INCLUDING the
    * null-vs-named case: a socket still on the default world is not in
    * `realm:underworks:3`, and a frame about a floor you are not standing on is
-   * either noise or a leak. That is the narrowing the follow-up commit turns on,
-   * one call site at a time, with the argument for each written where it goes.
+   * either noise or a leak.
+   *
+   * ═══ AND NOW EVERY CALL SITE PASSES ONE, THROUGH `audienceFor` ═══
+   * That is the narrowing this parameter was added for, and it is on. Nothing
+   * calls `broadcast` with a bare `undefined` third argument by accident any
+   * more: the pump uses its local `say`, the out-of-pump sites pass
+   * `audienceFor(realm.id)`, and `audienceFor` is the ONE place that maps the
+   * fallback realm's `''` back to "everybody". So a gateway built with no
+   * registry — every test under test/server/ and tools/e2e-m1.mjs — sends
+   * byte-for-byte the frames it always sent, through one function rather than
+   * through nineteen omitted arguments.
    */
   const broadcast = (msg: BroadcastMsg, exceptConnId?: string, realmId?: string): void => {
     for (const session of sessions.values()) {
@@ -2630,13 +2854,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   // The Bell — the one piece of wall clock in the turn pipeline
   // -------------------------------------------------------------------------
 
-  const bellRemainingMs = (): number | null =>
-    bell === null ? null : Math.max(0, bell.deadline - Date.now());
+  /**
+   * How long THIS realm's stragglers have left, or null if nothing is counting.
+   *
+   * Every caller names the realm it is asking about, and there is no argument-
+   * less form on purpose: "how long has the Bell got" has no answer once there
+   * is more than one floor, and a default would silently pick the wrong one.
+   */
+  const bellRemainingMs = (realmId: string): number | null => {
+    const bell = bells.get(realmId);
+    return bell === undefined ? null : Math.max(0, bell.deadline - Date.now());
+  };
 
-  const clearBell = (): void => {
-    if (bell === null) return;
+  /**
+   * Disarm one realm's Bell. IT CANNOT REACH ANOTHER'S, which is the entire
+   * point of the Map — see the block on `bells`.
+   */
+  const clearBell = (realmId: string): void => {
+    const bell = bells.get(realmId);
+    if (bell === undefined) return;
     clearTimeout(bell.timer);
-    bell = null;
+    bells.delete(realmId);
   };
 
   /**
@@ -2657,30 +2895,46 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * shortening a visible countdown out from under someone is indistinguishable
    * from the server cheating.
    */
-  const syncBell = (state: TurnState): void => {
+  const syncBell = (realm: PumpTarget, state: TurnState): void => {
     const wanted = state.bellDurationMs;
     if (wanted === null) {
-      clearBell();
+      clearBell(realm.id);
       return;
     }
-    if (bell !== null && bell.gameTurn === state.gameTurn && wanted <= bell.durationMs) return;
+    const bell = bells.get(realm.id);
+    if (bell !== undefined && bell.gameTurn === state.gameTurn && wanted <= bell.durationMs) return;
 
-    clearBell();
+    clearBell(realm.id);
     const timer = setTimeout(() => {
-      guard('bell timer threw', onBellExpired);
+      guard('bell timer threw', () => {
+        onBellExpired(realm);
+      });
     }, wanted);
     // Never let a pending Bell hold the process open at shutdown.
     timer.unref();
-    bell = { gameTurn: state.gameTurn, durationMs: wanted, deadline: Date.now() + wanted, timer };
-    app.log.info({ gameTurn: state.gameTurn, ms: wanted }, 'bell armed');
+    bells.set(realm.id, {
+      gameTurn: state.gameTurn,
+      durationMs: wanted,
+      deadline: Date.now() + wanted,
+      timer,
+    });
+    app.log.info({ realmId: realm.id, gameTurn: state.gameTurn, ms: wanted }, 'bell armed');
   };
 
-  const onBellExpired = (): void => {
-    const rang = bell;
-    bell = null;
-    app.log.info({ gameTurn: rang?.gameTurn }, 'bell rang — stragglers hold');
+  /**
+   * ONE REALM'S BELL RANG. Only that realm's stragglers hold.
+   *
+   * The timer closes over the realm it was armed for, so this can never ring the
+   * wrong floor's barrier — which matters because `bellExpired` is the one call
+   * that FORCES a decision on somebody who has not made one, and forcing it on a
+   * party three rooms away would be the server playing for them.
+   */
+  const onBellExpired = (realm: PumpTarget): void => {
+    const rang = bells.get(realm.id);
+    bells.delete(realm.id);
+    app.log.info({ realmId: realm.id, gameTurn: rang?.gameTurn }, 'bell rang — stragglers hold');
     try {
-      engine.bellExpired();
+      realm.engine.bellExpired();
     } catch (err) {
       app.log.error({ err }, 'engine.bellExpired threw');
       return;
@@ -2703,6 +2957,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * is answering "is the game waiting on ME?".
    */
   const sendTurn = (session: Session, state: TurnState, bellMs: number | null): void => {
+    const { world, engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -2744,6 +2999,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * answer, and better than one describing an invented party of one.
    */
   const sendPartyStateIfChanged = (session: Session): void => {
+    const realm = realmFor(session);
+    const { world, engine } = realm;
     const actorId = session.actorId;
     if (actorId === null) return;
     if (engine.partySnapshot === undefined) return;
@@ -2757,7 +3014,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       world,
       snapshot,
       engine.turnState(actorId),
-      bellRemainingMs(),
+      // THIS SOCKET'S OWN FLOOR. The pane draws the countdown the recipient is
+      // standing under, and a member who has walked into an instance is counting
+      // down under a different Bell entirely.
+      bellRemainingMs(realm.id),
       snapshot.invites,
     );
 
@@ -2784,14 +3044,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * disconnect and every Bell arming is visible to the whole party, not only to
    * the person it happened to.
    */
-  const broadcastTurnIfChanged = (state: TurnState): void => {
-    const key = turnKey(state, bell !== null);
-    if (key === lastTurnKey) return;
-    lastTurnKey = key;
+  const broadcastTurnIfChanged = (realm: PumpTarget, state: TurnState): void => {
+    const key = turnKey(state, bells.has(realm.id));
+    if (key === lastTurnKeys.get(realm.id)) return;
+    lastTurnKeys.set(realm.id, key);
 
-    const bellMs = bellRemainingMs();
+    const bellMs = bellRemainingMs(realm.id);
     for (const session of sessions.values()) {
       if (!session.helloDone) continue;
+      // THE PEOPLE ON THIS FLOOR. `sendTurn` rebuilds the frame against the
+      // recipient's own body and party, and a socket standing somewhere else has
+      // neither in this world — it would be sent nothing, silently, on every
+      // pump. Skipping explicitly says so, and costs one comparison.
+      if (realmFor(session).id !== realm.id) continue;
       sendTurn(session, state, bellMs);
     }
   };
@@ -2821,6 +3086,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * clicking a tile the server would have accepted.
    */
   const sendLoadout = (session: Session): void => {
+    const { world, engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -2844,6 +3110,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * the memo bookkeeping to save one small frame per turn.
    */
   const sendHotbarIfChanged = (session: Session): void => {
+    const { world, engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -2921,6 +3188,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *   body and for a monster, which cannot be a viewer anyway.
    */
   const sendProgress = (session: Session): boolean => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) return false;
     const viewer = world.getActor(actorId);
@@ -2957,6 +3225,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * saying what the client already believes.
    */
   const sendProgressIfChanged = (session: Session): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -2982,9 +3251,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * float does. Without that the suppression is dead and four attended sockets
    * sitting still push eight frames a turn for ever.
    */
-  const refreshViewers = (): void => {
+  const refreshViewers = (realm: PumpTarget): void => {
     for (const session of sessions.values()) {
       if (!session.helloDone) continue;
+      // ONLY THE SOCKETS THIS PUMP WAS ABOUT. Every one of the four frames below
+      // is memoised per socket and would send nothing for a viewer whose realm
+      // did not move — so this is a cost saving rather than a correctness one,
+      // and it is still worth stating: with N realms the unfiltered loop is N
+      // passes over every socket in the process on every pump.
+      if (realmFor(session).id !== realm.id) continue;
       sendHotbarIfChanged(session);
       sendPartyStateIfChanged(session);
       // THE THIRD MEMOISED VIEWER FRAME, and it rides this loop for the same
@@ -3022,13 +3297,39 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * would otherwise unwind through a `ws` event handler and kill the process,
    * taking the other three players' session with it — and an engine invariant
    * failing is precisely the moment everyone most wants the server to stay up.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE REALM'S WORTH OF THAT. `pumpAndBroadcast` DOES ALL OF THEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The body below is the function this used to be, with two substitutions:
+   * `world`/`engine` are the REALM'S (shadowing the plugin-wide pair for the
+   * length of this function, exactly as every handler already shadows them via
+   * `realmFor`), and every broadcast goes through `say`, which narrows the
+   * audience to the sockets standing here.
+   *
+   * A THROW STILL COSTS ONE REALM ITS TICK AND NOT THE PROCESS. The catch is
+   * inside this function rather than around the loop for that reason: an
+   * invariant failing in one party's instance must not stop the city.
    */
-  const pumpAndBroadcast = (): void => {
+  const pumpRealm = (realm: PumpTarget): void => {
+    const { world, engine } = realm;
+    /**
+     * TO THE PEOPLE STANDING HERE, and to nobody else.
+     *
+     * `broadcast`'s realm argument is a filter over sessions; `audienceFor` maps
+     * the fallback realm's `''` back to `undefined`, which is "everybody". So a
+     * gateway with no registry emits byte-for-byte the frames it always did,
+     * and this one line is the whole of the difference between the two.
+     */
+    const say = (msg: BroadcastMsg, exceptConnId?: string): void => {
+      broadcast(msg, exceptConnId, audienceFor(realm.id));
+    };
+
     let result: PumpResult;
     try {
       result = engine.pump();
     } catch (err) {
-      app.log.error({ err }, 'turn pump threw — the world did not advance');
+      app.log.error({ err, realmId: realm.id }, 'turn pump threw — the world did not advance');
       return;
     }
 
@@ -3041,7 +3342,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // `messageForEvent`. It is delivered by the `effects`/`party` snapshots
       // below, in this same pump.
       const msg = messageForEvent(event);
-      if (msg !== null) broadcast(msg);
+      if (msg !== null) say(msg);
     }
 
     // ═══ A REFUND IS UNICAST, BECAUSE NOTHING ELSE WILL EVER MENTION IT ═══
@@ -3071,7 +3372,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // ONE frame for the whole monster turn. Never one per monster.
     if (result.sweep.length > 0) {
-      broadcast({
+      say({
         v: PROTOCOL_VERSION,
         t: 'sweep',
         gameTurn: result.turn.gameTurn,
@@ -3082,7 +3383,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE RECORD LANE, after the events it narrates and before the snapshots.
     // One batch for the whole pump — see `broadcastRecord`. It is silent on an
     // idle pump, so a client spamming frames cannot farm log traffic either.
-    broadcastRecord(result);
+    broadcastRecord(realm, result);
 
     // ═════════════════════════════════════════════════════════════════════
     // THE REAP WINDOW. DEAD MONSTERS LEAVE THE MAP, AND THIS IS THE ONE
@@ -3145,7 +3446,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (name !== undefined) reapedNames.set(id, name);
 
       engine.reap?.(id);
-      broadcast({ v: PROTOCOL_VERSION, t: 'left', id });
+      say({ v: PROTOCOL_VERSION, t: 'left', id });
     }
 
     // ...and the memo lives exactly as long as the sky does. Its only reader is
@@ -3162,7 +3463,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (isPartyWipe(result)) {
         app.log.warn({ gameTurn: result.turn.gameTurn }, 'party wipe — the floor resets');
       }
-      broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
+      say({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
       // ═══ AND THE SKY WITH IT — `state` CARRIES NO ORB ═══
       // The resync above is the "the client's board may be out of step" hammer,
       // and it swings over `ActorView` alone. An orb is not an actor, so a
@@ -3171,11 +3472,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // the same event for the same few-KB-once reason, it is silent when
       // nothing is flying, and it updates the memo so the snapshot band below
       // does not say the same thing twice in one pump.
-      sendProjectilesIfAny();
+      sendProjectilesIfAny(realm);
     }
 
-    syncBell(result.turn);
-    broadcastTurnIfChanged(result.turn);
+    syncBell(realm, result.turn);
+    broadcastTurnIfChanged(realm, result.turn);
 
     // THE TWO SNAPSHOTS, AFTER the events that caused them and BEFORE the
     // hotbars. Order is not cosmetic: a client that saw `downed` in a sweep and
@@ -3186,14 +3487,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // Both are complete and both are memoised, so the common turn — somebody
     // walked, nothing landed on anybody — costs two `JSON.stringify` calls over
     // a handful of small objects and sends nothing.
-    broadcastEffectsIfChanged();
-    broadcastPartyIfChanged(Date.now());
+    broadcastEffectsIfChanged(realm);
+    broadcastPartyIfChanged(realm, Date.now());
     // THE THIRD SNAPSHOT, and the only one whose subject moved during the pump
     // rather than because of it. It goes out AFTER the `sweep` above for the
     // same reason the other two do: the frame that says an orb is gone must
     // follow the `attack` step that says what it hit, or a client draws the
     // impact against a sky that has already been cleared.
-    broadcastProjectilesIfChanged();
+    broadcastProjectilesIfChanged(realm);
     // THE FOURTH SNAPSHOT, and it moves for reasons that are not all verbs. A
     // pickup and a drop change it directly, a monster dying SPILLS onto it
     // inside this pump, and a party wipe clears the whole table
@@ -3201,7 +3502,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // into the two loot verbs would be silently blind to the other two, and the
     // symptom would be a corpse's drop nobody can see. See
     // `broadcastGroundIfChanged`.
-    broadcastGroundIfChanged();
+    broadcastGroundIfChanged(realm);
 
     // Unicast, and each socket learns only about its own. This is deliberately
     // unconditional rather than gated on "did a talent happen": `actBase` ticks
@@ -3212,7 +3513,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE PARTY PANE RIDES THE SAME LOOP, for a different reason: a member's hp
     // and their presence change under a pump that had nothing to do with the
     // party at all, and `handleParty`'s targeted push cannot see those.
-    refreshViewers();
+    refreshViewers(realm);
 
     // ═══ LAST, AND THE ONLY LINE IN THIS FILE THAT TOUCHES A DISK ═══
     // AFTER the pump has returned and after every frame is out. Never inside the
@@ -3233,6 +3534,34 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     } else if (result.playerEvents.length > 0 || result.sweep.length > 0) {
       queueSave('pump');
     }
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ADVANCE EVERY PLACE THERE IS. THE ONLY WAY THE WORLD MOVES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ZERO ARGUMENTS, AND DELIBERATELY SO. Roughly ten call sites reach this — a
+   * move, a talent, a commit, a hold, a party command, a respawn, four loot
+   * verbs, a Bell, a recall, a socket closing — and not one of them knows or
+   * should know how many floors exist. "The frame I just accepted may have
+   * unblocked somebody" is a statement about the process, not about a map.
+   *
+   * ═══ WHY EVERY REALM AND NOT JUST THE SENDER'S ═══
+   * Pumping only the realm the frame arrived on would freeze every other floor
+   * between two of its own players' keystrokes, and the barrier is the thing
+   * that makes that visible: a party in an instance parked on a Bell needs a
+   * pump to notice the Bell rang, and their own timer already provides one — but
+   * a monster's turn on a floor whose players are all Standing By would never
+   * resolve. An idle pump is a documented fixed point (`PumpResult.status ===
+   * 'idle'` — nothing gained energy, nothing spent any, no clock advanced), so
+   * the cost of the realms nobody is in is a function call and a comparison.
+   *
+   * The overwhelmingly common shape today is ONE realm — the fallback — which is
+   * exactly the loop this function used to be without one.
+   */
+  const pumpAndBroadcast = (): void => {
+    for (const realm of pumpTargets()) pumpRealm(realm);
   };
 
   // -------------------------------------------------------------------------
@@ -3277,6 +3606,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * chewing on an unattended body is a self-correcting problem in the meantime.
    */
   const recallBody = (actorId: string): void => {
+    // WHEREVER THE BODY ACTUALLY IS. The socket that owned it closed ten minutes
+    // ago, so there is nothing to ask but the registry — and a player who
+    // dropped inside an instance must be removed from THAT world, not from the
+    // one their session happened to start in. See `homeOf`.
+    const home = homeOf(actorId);
     graceTimers.delete(actorId);
     dropResumeToken(actorId);
     connByActor.delete(actorId);
@@ -3318,13 +3652,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     classChoiceOwed.delete(actorId);
     opts.persist?.closeCharacter?.(actorId);
     try {
-      engine.leave(actorId);
+      home.engine.leave(actorId);
     } catch (err) {
       app.log.error({ err, actorId }, 'engine.leave threw during recall');
     }
-    world.removePlayer(actorId);
-    broadcast({ v: PROTOCOL_VERSION, t: 'left', id: actorId });
-    app.log.info({ actorId }, 'reconnect grace expired — body recalled');
+    home.world.removePlayer(actorId);
+    broadcast({ v: PROTOCOL_VERSION, t: 'left', id: actorId }, undefined, audienceFor(home.id));
+    app.log.info({ actorId, realmId: home.id }, 'reconnect grace expired — body recalled');
     pumpAndBroadcast();
   };
 
@@ -3677,7 +4011,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     );
   };
 
-  const restoreProgression = (actor: Actor, restore: CharacterRestore): void => {
+  /**
+   * @param engine the engine of the realm this body was placed in. Passed rather
+   *   than closed over because the talent seams below are the WRAPPED engine's,
+   *   and `handleHello` has already resolved which realm that is — one answer,
+   *   threaded, instead of two lookups that could disagree.
+   */
+  const restoreProgression = (
+    actor: Actor,
+    restore: CharacterRestore,
+    engine: TurnEngine,
+  ): void => {
     // A monster has no progression. Narrowed rather than asserted: `level`,
     // `xp` and `unspentPoints` live on `PlayerActor` alone.
     if (actor.kind !== 'player') return;
@@ -3930,6 +4274,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * else, which is the correct answer for somebody who is demonstrably there.
    */
   const unparkOnCommand = (session: Session): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null || !classChoiceOwed.has(actorId)) return;
     const body = world.getActor(actorId);
@@ -3965,6 +4310,46 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // somebody whose choice would then be refused.
     if (!classChoiceOwed.has(actorId)) return;
     send(session.socket, projectClassOptions());
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * "YOU ARE HERE." The map, who is on it, and which one of them is you.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * TWO CALLERS AND THEY ARE THE ONLY TWO MOMENTS A PLAYER'S MAP CHANGES: the
+   * `hello` block (you have arrived) and a site crossing (you have walked
+   * through a door). There is no on-change memo because there is no stream to
+   * memoise — a realm change is an EVENT, not a state that drifts.
+   *
+   * UNICAST AND STRUCTURALLY SO. `RealmMsg` is a `ViewerMsg`, so
+   * `broadcast(realmMsg)` does not compile: the map in it is the map THIS person
+   * is now looking at, and handed to the room it would redraw everybody else's
+   * floor as somewhere they are not. protocol.ts argues it at the type.
+   *
+   * SILENT WITH NO REGISTRY, which is the fallback rule this whole change rests
+   * on: one world has no name to send and no id to send it under.
+   */
+  const sendRealm = (session: Session): void => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
+    if (realms === undefined || actorId === null || session.realmId === null) return;
+    const realm = realms.get(session.realmId);
+    // A realm that went away underneath somebody. `realmFor` argues the same
+    // case at length: answer rather than throw, because an exception here costs
+    // every player their session and a missing HUD label costs one their label.
+    if (realm === undefined) return;
+    const view = projectWorld(realm.world);
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'realm',
+      realmId: realm.id,
+      kind: realm.kind,
+      name: realm.name,
+      level: view.level,
+      actors: view.actors,
+      selfId: actorId,
+    });
   };
 
   /**
@@ -4010,6 +4395,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * notion of ownership and the wider answer is right for it.
    */
   const sendKeybinds = (session: Session): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     const body = actorId === null ? undefined : world.getActor(actorId);
     send(session.socket, {
@@ -4087,14 +4473,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `restore` is whatever the character file said, already read — see
    * `handleHello`, which is where the one await lives.
    */
+  /**
+   * @param place where a NEW body goes: Alderbrook when there is a registry, the
+   *   one world when there is not. See `handleHello`.
+   *
+   * ═══ FINDING A BODY AND PLACING ONE ARE NOW DIFFERENT QUESTIONS ═══
+   * A returning player's body may be standing anywhere — they closed the tab
+   * inside an instance and the grace has not expired — and looking for it only
+   * in `place` would find nothing and build a SECOND body for the same id, in
+   * the city, while the first one stands in the Underworks with their kit on it.
+   * So the lookups go through `homeOf`, which asks the registry where that id
+   * actually is, and only the `addPlayer` calls use `place`.
+   *
+   * With no registry `homeOf` answers the fallback realm, whose world IS
+   * `place`, and the two questions collapse back into the one this used to ask.
+   */
   const resolveActor = (
     session: Session,
     token: string | undefined,
     verified: VerifiedPlayer | null,
     restore: CharacterRestore | null,
+    place: World,
   ): ResolvedActor => {
+    const findBody = (id: string): Actor | undefined => homeOf(id).world.getActor(id);
+
     if (verified !== null) {
-      const existing = world.getActor(verified.actorId);
+      const existing = findBody(verified.actorId);
       if (existing !== undefined) {
         claimActor(session, existing.id, 'identity');
         // Their Discord global name is authoritative every time they connect —
@@ -4112,7 +4516,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return { actor: existing, resumed: true, renamed };
       }
       const definition = classFor(restore, verified.actorId);
-      const actor = world.addPlayer(verified.actorId, verified.displayName, overlayFor(definition));
+      const actor = place.addPlayer(verified.actorId, verified.displayName, overlayFor(definition));
       connByActor.set(actor.id, session.connId);
       // AFTER the class, never before: `applyRestore` clamps the saved hp to
       // `actor.maxHp`, so a Watchman restored at 70 would be filed down to 60
@@ -4123,7 +4527,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     if (token !== undefined) {
       const actorId = actorByToken.get(token);
-      const existing = actorId === undefined ? undefined : world.getActor(actorId);
+      const existing = actorId === undefined ? undefined : findBody(actorId);
       if (existing !== undefined) {
         claimActor(session, existing.id, 'resume');
         // Same as the identity re-attach above: the body kept its class.
@@ -4137,7 +4541,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // rotation — plain-browser development and tools/e2e-m1.mjs get a real
     // hotbar rather than the four blank buttons a classless body would produce.
     const definition = classFor(null, `actor_${String(joinCount)}`);
-    const actor = world.addPlayer(
+    const actor = place.addPlayer(
       `actor_${randomUUID()}`,
       `Player ${joinCount}`,
       overlayFor(definition),
@@ -4196,7 +4600,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * rejection and therefore a dead process, so the whole body is wrapped.
    */
   const handleHello = async (session: Session, msg: ClientHello): Promise<void> => {
-    const { world, engine } = realmFor(session);
     if (session.helloDone || session.helloPending) {
       sendError(session.socket, ErrorCode.BadMessage, 'hello has already been completed');
       return;
@@ -4220,9 +4623,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * EVERYBODY ARRIVES IN ALDERBROOK. THE CITY IS THE FRONT DOOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `Realms.overworld` is the one realm that is created at boot and never
+     * closed (world/realms.ts:332-333), it has no hostiles by construction, and
+     * it is the only place with site cells on it — so it is the only realm a
+     * player can arrive in and still be able to get anywhere. Dropping somebody
+     * into an instance on connect would also require answering "whose?", which
+     * is a question a socket that has not said hello yet cannot be asked.
+     *
+     * ONLY A NEW BODY IS PLACED. `resolveActor` finds an existing one wherever
+     * it is standing and reattaches to it — a reconnect inside an instance is
+     * exactly the case the ten-minute grace exists for, and teleporting that
+     * body to the city on reconnect would be the server undoing the walk.
+     *
+     * `opts.world` RATHER THAN THE `world` BINDING because there is no `world`
+     * in scope here yet: the realm-scoped pair is destructured a few lines
+     * below, once `session.realmId` says which realm to destructure.
+     */
+    const entryWorld = opts.realms?.overworld.world ?? opts.world;
+
     let resolved: ResolvedActor;
     try {
-      resolved = resolveActor(session, msg.resumeToken, verified, restore);
+      resolved = resolveActor(session, msg.resumeToken, verified, restore, entryWorld);
     } catch (err) {
       // The only way out of addPlayer is "no free tile", which would take more
       // than 761 players. Answer honestly and close rather than leaving a socket
@@ -4236,15 +4662,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const actor = resolved.actor;
     session.actorId = actor.id;
     // ═══ AND WHERE THAT BODY IS, READ BACK OFF THE REGISTRY ═══
-    // `resolveActor` placed it (or found it already placed) in the world
-    // `realmFor` handed this function, so this is a read of the fact rather than
-    // a second decision about it — which is what keeps the routing and the
-    // placement from ever being two different answers. `realmOf` is a scan over
-    // realms, run once per `hello`; with no registry it is not run at all and the
-    // field stays null, which is the pre-realm state and the reason this line is
-    // behaviour-neutral today.
+    // `resolveActor` placed it in `entryWorld`, or found it already placed
+    // somewhere else entirely, so this is a READ of the fact rather than a second
+    // decision about it — which is what keeps the routing and the placement from
+    // ever being two different answers, and is why a reconnect into an instance
+    // routes to that instance without this function knowing instances exist.
+    // `realmOf` is a scan over realms, run once per `hello`; with no registry it
+    // is not run at all and the field stays null, which is the pre-realm state.
     session.realmId = opts.realms?.realmOf(actor.id)?.id ?? null;
     session.helloDone = true;
+
+    // AND ONLY NOW THE PAIR EVERYTHING BELOW READS. It has to be after the line
+    // above: `realmFor` resolves `session.realmId`, so destructuring any earlier
+    // would hand the whole hello block the fallback world and every frame in it
+    // would describe a map this player is not standing on.
+    const { world, engine } = realmFor(session);
 
     // The body is attended again: cancel the recall and clear Standing By. Order
     // matters — an actor that is back in the quorum must not still have a timer
@@ -4281,7 +4713,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // recomputed from that spread, so restoring the level without it would
       // hand the player back every point they had already spent. The two halves
       // are done together, here, after the sheet exists.
-      if (restore !== null) restoreProgression(actor, restore);
+      if (restore !== null) restoreProgression(actor, restore, engine);
 
       // ═══ AND DOES THIS BODY OWE US A CHOICE? A THREE-VALUED READ ═══
       // Three states of the character file mean "nobody has ever picked": there
@@ -4332,12 +4764,34 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       actors: view.actors,
     });
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // AND WHICH PLACE THAT WAS. `welcome` CARRIES A MAP BUT NOT ITS NAME.
+    // ═════════════════════════════════════════════════════════════════════════
+    //
+    // `WelcomeMsg` has a `level` and an actor list and nothing that says WHERE —
+    // no realm id, no kind, no prose name — because until there was more than
+    // one place, there was nothing to say. The client's HUD reads all three off
+    // `realm` (protocol.ts's `RealmMsg`), so without this frame a player who
+    // connects is standing in Alderbrook on a screen that will not name it, and
+    // the first `realm` frame they ever see is the one that arrives when they
+    // walk through a door — at which point the label CHANGES from nothing to
+    // something and reads as a bug.
+    //
+    // SENT ONLY WHEN THERE IS A REGISTRY, which is the whole fallback rule of
+    // this commit: a gateway built with `{world, engine}` alone has exactly one
+    // unnamed place, sends no `realm` frame, and is byte-for-byte the game it
+    // was — including every test under test/server/ and tools/e2e-m1.mjs.
+    //
+    // AFTER `welcome`, because the client's `case 'welcome'` clears the board it
+    // is about to be handed and `case 'realm'` does not.
+    sendRealm(session);
+
     // Unicast, unconditionally, before anything else can change: a client that
     // has just connected must not have to wait for someone else to commit
     // before it learns whether the party is parked on it. `broadcastTurnIfChanged`
     // deliberately will not do this — the state has not changed, only the
     // audience has.
-    sendTurn(session, engine.turnState(), bellRemainingMs());
+    sendTurn(session, engine.turnState(), bellRemainingMs(realmFor(session).id));
 
     // The hotbar, for the same reason and with the same exception to the
     // on-change rule: this socket has seen nothing yet. A RESUMED session gets
@@ -4395,7 +4849,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // a clear sky with a shot still coming at them. `welcome` cannot carry it
     // either: that frame is the level and the actors, and an orb is neither.
     // Silent when nothing is in the air — see `sendProjectilesIfAny`.
-    sendProjectilesIfAny(session.socket);
+    sendProjectilesIfAny(realmFor(session), session.socket);
 
     // THE FLOOR, unicast, and for a longer-lived version of the reason directly
     // above: an orb is a three-turn object and a coat on the floor lasts the
@@ -4404,7 +4858,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // which out of combat can be the whole evening. `welcome` cannot carry it —
     // that frame is the level and the actors, and a ground item is neither.
     // Silent on an empty floor; see `sendGroundIfAny`.
-    sendGroundIfAny(session.socket);
+    sendGroundIfAny(realmFor(session), session.socket);
 
     // THEIR OWN BAG AND DOLL, on the memo, which is seeded EMPTY. So a
     // brand-new character gets nothing (they own nothing, and the client already
@@ -4425,7 +4879,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A resume reattaches to an actor everyone can already see, so it announces
     // nothing; only a genuinely new player is a `joined`.
     if (!resolved.resumed) {
-      broadcast({ v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(actor) }, session.connId);
+      broadcast(
+        { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(actor) },
+        session.connId,
+        audienceFor(realmFor(session).id),
+      );
       // A NEW CHARACTER EXISTS. Nothing has happened to it yet, so the pump
       // below may produce no events at all and never reach `queueSave` — but the
       // file has to exist before the first thing that changes it does. Immediate
@@ -4437,7 +4895,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // `name` travels only on `ActorView`. No delta can express it, so the board
       // is resent — the same deliberately dumb answer `needsFullResync` gives,
       // for the same reason, and at the same cost of a few KB once.
-      broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) }, session.connId);
+      broadcast(
+        { v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) },
+        session.connId,
+        audienceFor(realmFor(session).id),
+      );
       // ═══ AND THE SKY WITH IT — THE CLIENT CLEARS ITS ORBS ON `state` ═══
       // src/client/main.ts's `case 'state'` runs `clearProjectiles()`, so this
       // broadcast wipes every orb from every OTHER player's screen. The memo
@@ -4450,7 +4912,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // The `state` above excludes `session.connId` while this does not, and
       // that is harmless: the frame is ABSOLUTE, and the rejoining socket
       // already got its own unicast copy a few lines up.
-      sendProjectilesIfAny();
+      sendProjectilesIfAny(realmFor(session));
     }
 
     app.log.info(
@@ -4492,6 +4954,199 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // The step itself comes back out of the pump as a `moved` to EVERYONE, the
     // mover included. See the header note: there is no optimistic path.
+    pumpAndBroadcast();
+
+    // ═══ AND WAS THAT STEP ONTO A DOOR? ═══
+    // AFTER the pump, never before it: the tile the body is standing on is only
+    // decided when the intent RESOLVES (a move accepted by `submitMove` can
+    // still be refunded — see `PumpResult.refusals`), so asking any earlier
+    // would open an instance for somebody who never took the step. And the
+    // `moved` frame has to reach the client first, or the map it is about is
+    // already gone.
+    crossIntoSite(session);
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A BODY, CARRIED FROM ONE WORLD TO ANOTHER. Everything that IS the character
+   * and nothing that is about a floor.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Two `World`s are two closures over two actor tables (world/realms.ts's
+   * header: that separation is the whole design), so there is no way to hand one
+   * the other's object — the body is REBUILT by `addPlayer` through the ordinary
+   * `PlayerOverlay` path, exactly as `hello` builds one, and then everything the
+   * overlay cannot say is copied onto it here.
+   *
+   * ═══ WHAT IS CARRIED IS PRECISELY WHAT `snapshotPlayers` WRITES DOWN ═══
+   * That list is already this file's answer to "what makes this character this
+   * character" — it is what survives a server restart — so reusing it means the
+   * crossing cannot lose something a save would have kept. Read `snapshotRealm`
+   * beside this: hp, cooldowns, class, level/xp/points, bag, doll, keys.
+   *
+   * The TALENT SHEET is not in that list and does not need to be: it is held by
+   * `engine/talents.ts` keyed by ACTOR ID, and main.ts shares one talent engine
+   * across every realm (`talentEngine` — "it holds per-ACTOR sheets, and a
+   * character keeps its talents when it walks somewhere"). Calling `attachClass`
+   * here would be the bug rather than the fix — it ends in an unconditional
+   * `sheets.set` and would hand the crosser a full resource pool for free.
+   *
+   * ═══ WHAT IS DELIBERATELY NOT CARRIED, AND IT IS THE SAME LIST TWICE ═══
+   * `pendingIntent`, `standingOrder`, `standingBy`, energy: every one of them is
+   * a fact about a BARRIER, and world/realms.ts:266-289 already ruled on this in
+   * writing — per-actor barrier bookkeeping does not follow a body across a
+   * boundary, because "Standing By means this person has stopped answering on
+   * this floor, and walking through a door is the loudest possible evidence that
+   * they have started again". The old realm's barrier keeps a row for an id that
+   * is no longer in its world; the quorum is surveyed from the actor table, so
+   * that row can never block anybody again.
+   */
+  const carryAcross = (from: PlayerActor, to: Actor): void => {
+    if (to.kind !== 'player') return;
+    // CLAMPED, not copied raw, on `applyRestore`'s terms: the two bodies are the
+    // same class so the ceiling is the same number, and the clamp costs nothing
+    // and cannot be wrong.
+    to.hp = Math.max(1, Math.min(to.maxHp, from.hp));
+    to.cooldowns.clear();
+    for (const [talentId, turns] of from.cooldowns) {
+      if (turns > 0) to.cooldowns.set(talentId, turns);
+    }
+    to.level = from.level;
+    to.xp = from.xp;
+    to.unspentPoints = from.unspentPoints;
+    if (from.keybinds !== undefined) to.keybinds = from.keybinds;
+    // THE BAG AND THE DOLL, THEN THE SHEET. `equipped` is owned by the equipment
+    // verbs and `combat` by `recomposeCombat` and nothing else — a write to the
+    // first without the second leaves a detective wearing a coat that changes no
+    // number, which is Trap 1 arriving through a door. See `restoreLoadout`,
+    // which states the same contract for the load path.
+    if (from.carried !== undefined) to.carried = [...from.carried];
+    if (from.equipped !== undefined) to.equipped = { ...from.equipped };
+    recomposeCombat(to, opts.effects ?? null, ITEM_CATALOGUE);
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE CROSSING. A STEP ONTO A SITE CELL IS A STEP THROUGH A DOOR.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `Realm.sites` is the authored `"x,y" -> site id` table the map was parsed
+   * with (shared/level.ts:44-49), so "is this a door" is a Map lookup on the
+   * tile the body is ALREADY standing on. No range check, no adjacency rule, and
+   * nothing off the wire: `handleMove` carries a direction and the server decided
+   * where that put them.
+   *
+   * ═══ THE PARTY IS THE KEY, AND `open` IS IDEMPOTENT ON IT ═══
+   * `Realms.open(site, partyId)` returns the instance that party already has at
+   * that site, or mints one (world/realms.ts:386-394). So the second person
+   * through the door joins the first; a stranger walking onto the same tile gets
+   * their own floor; and a COMMON site ignores the party entirely, because there
+   * is one office and everybody who walks in is in it.
+   *
+   * ═══ THIS IS ENTRY ONLY. THERE IS NO WAY BACK YET, AND THAT IS DELIBERATE ═══
+   * A player who crosses into a site stays there for the rest of the session.
+   * The exit is a separate decision with real design in it — whether the party's
+   * instance stays open behind them, what happens to the last body out, whether
+   * a Common realm and an Inner one leave the same way — and inventing an answer
+   * here by accident is exactly how a party ends up unable to get home
+   * (world/realms.ts:114-120 raises the nesting half of the same question).
+   * `Realms.close` and `Realms.empty` already exist for the reaper that will do
+   * it. Until that commit lands, the way out is to reconnect: `hello` places a
+   * NEW body in Alderbrook, and a body left in an instance is reaped by the
+   * ten-minute grace.
+   */
+  const crossIntoSite = (session: Session): void => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
+    if (realms === undefined || actorId === null || session.realmId === null) return;
+
+    const from = realms.get(session.realmId);
+    if (from === undefined) return;
+    const body = from.world.getActor(actorId);
+    if (body === undefined || body.kind !== 'player' || !body.alive) return;
+
+    const siteId = from.sites.get(`${body.x},${body.y}`);
+    if (siteId === undefined) return;
+
+    const site = SITES.get(siteId);
+    if (site === undefined) {
+      // The map names a door this build has no room behind. A content bug, not a
+      // player one: logged, and the step is an ordinary step.
+      app.log.warn(
+        { siteId, realmId: from.id },
+        'a site cell names a site this build does not have',
+      );
+      return;
+    }
+
+    // A SOLO PLAYER IS A PARTY OF ONE, which is what `partyOf` mints on demand
+    // rather than something invented here (engine/party.ts:276-290). With no
+    // party table the actor's own id is the same statement.
+    const partyId = opts.parties === undefined ? actorId : partyIdOf(opts.parties, actorId);
+    const to = realms.open(site, partyId);
+    // Already there. Unreachable while sites live only on the overworld, and
+    // free to answer: `open` is idempotent, so this is what a second step onto
+    // the same tile would produce if one were ever possible.
+    if (to.id === from.id) return;
+
+    // ═══ REMOVE, THEN PLACE, AND THE ORDER MATTERS FOR THE OLD FLOOR ═══
+    // `left` is what takes the token off everybody else's screen in the realm
+    // being left; without it a body would stand in the doorway on four other
+    // maps forever, because client/main.ts forbids inferring removal from
+    // absence. The old world drops the body first so nothing can act on it
+    // between the two worlds.
+    from.world.removePlayer(actorId);
+    // EXCEPT THE PERSON LEAVING. Their own client is about to be handed a whole
+    // new board by the `realm` frame below, and `case 'left'` deletes an actor
+    // from the map it is currently drawing — harmless in that order, and one
+    // fewer frame whose correctness depends on an ordering.
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'left', id: actorId },
+      session.connId,
+      audienceFor(from.id),
+    );
+
+    const definition = body.classId === undefined ? undefined : classById(body.classId);
+    const placed = to.world.addPlayer(
+      actorId,
+      body.name,
+      definition === undefined ? undefined : overlayFor(definition),
+    );
+    carryAcross(body, placed);
+
+    // THE NEW FLOOR'S SCHEDULER LEARNS ABOUT THEM. `join` clears any stale
+    // Standing By in that realm's barrier and `setConnected` puts them in its
+    // quorum — both idempotent, and both are what `hello` does for a fresh body.
+    to.engine.join(actorId);
+    to.engine.setConnected(actorId, true);
+
+    // AND THE ROUTING MOVES, BEFORE ANY FRAME GOES OUT. Every helper below
+    // resolves through `realmFor`, so a frame sent while this still said the old
+    // realm would be addressed to the room they just left.
+    session.realmId = to.id;
+
+    // THE MAP, TO THEM. Unicast, and the one frame in the protocol that carries
+    // a new level mid-session — `welcome` cannot, because the client's handler
+    // for it clears the case log, the bag and the party panel, and walking
+    // through a door is not a new session. See `RealmMsg`.
+    sendRealm(session);
+
+    // AND THE TOKEN, TO EVERYONE ALREADY IN THERE. `joined` is how a body
+    // appears on a client that has a board already; the crosser's own copy came
+    // in the `realm` frame's actor list a line ago, so they are excluded.
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(placed) },
+      session.connId,
+      audienceFor(to.id),
+    );
+
+    app.log.info(
+      { actorId, siteId, from: from.id, to: to.id, kind: to.kind },
+      'a body crossed into a site',
+    );
+
+    // BOTH BARRIERS JUST CHANGED SHAPE — one lost a member, one gained one — and
+    // `pumpAndBroadcast` ticks every realm, so both are settled by one call.
     pumpAndBroadcast();
   };
 
@@ -4634,7 +5289,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * wraith's orb narrates as.
    */
   const nameOf = (id: string): string =>
-    world.getActor(id)?.name ?? reapedNames.get(id) ?? 'someone';
+    // WHEREVER THAT BODY IS. The Case Log narrates one realm at a time, but a
+    // name is a fact about an actor and not about a floor, and threading a world
+    // through `recordFor`'s twelve call sites would put a parameter on every
+    // sentence in the game to answer a question `homeOf` answers in one lookup.
+    homeOf(id).world.getActor(id)?.name ?? reapedNames.get(id) ?? 'someone';
 
   /**
    * A talent's display name, from the CASTER'S OWN BOOK where there is one.
@@ -4646,7 +5305,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * at somebody.
    */
   const talentName = (casterId: string, talentId: string): string =>
-    engine.loadoutOf(casterId).find((talent) => talent.id === talentId)?.name ?? prettyId(talentId);
+    // THE CASTER'S OWN REALM'S ENGINE, for `nameOf`'s reason. Every realm's
+    // engine is built over the same shared talent registry (main.ts's
+    // `engineFor`), so this is the same answer wherever it is asked — asking the
+    // right one costs nothing and cannot go stale the day that stops being true.
+    homeOf(casterId)
+      .engine.loadoutOf(casterId)
+      .find((talent) => talent.id === talentId)?.name ?? prettyId(talentId);
 
   /** Which compass word a step took, or '' when the two tiles are not adjacent. */
   const stepWord = (fromX: number, fromY: number, x: number, y: number): string => {
@@ -4803,7 +5468,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * client appends them in order. Silence when nothing happened — an idle pump
    * must not cost a frame.
    */
-  const broadcastRecord = (result: PumpResult): void => {
+  const broadcastRecord = (realm: PumpTarget, result: PumpResult): void => {
     const lines: LogLine[] = [];
     const gameTurn = result.turn.gameTurn;
 
@@ -4859,7 +5524,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     if (lines.length === 0) return;
-    broadcast({ v: PROTOCOL_VERSION, t: 'log', lines });
+    // TO THIS FLOOR. The Case Log is a transcript of what happened where you are
+    // standing; a party in an instance reading somebody else's fight in the city
+    // would be reading about people they cannot see, in a log whose whole value
+    // is that every line is about the room.
+    broadcast({ v: PROTOCOL_VERSION, t: 'log', lines }, undefined, audienceFor(realm.id));
   };
 
   // -------------------------------------------------------------------------
@@ -4879,15 +5548,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * Two counters, or two increments, and a client's de-duplication quietly stops
    * working the day the second one is added.
    */
-  const broadcastMargin = (line: Omit<LogLine, 'seq' | 'lane' | 'gameTurn'>): void => {
+  const broadcastMargin = (
+    realm: PumpTarget,
+    line: Omit<LogLine, 'seq' | 'lane' | 'gameTurn'>,
+  ): void => {
     logSeq += 1;
     const full: LogLine = {
       seq: logSeq,
       lane: LogLane.Margin,
-      gameTurn: world.turn.clock.gameTurn,
+      gameTurn: realm.world.turn.clock.gameTurn,
       ...line,
     };
-    broadcast({ v: PROTOCOL_VERSION, t: 'log', lines: [full] });
+    // TO THE ROOM THE SPEAKER IS IN. Talking across a realm boundary would be a
+    // voice from nowhere — the Margin's `speaker` names somebody the recipient
+    // has no token for, and `point` puts its marker on a tile of a map they are
+    // not looking at. The voice channel is where the party talks across floors.
+    broadcast({ v: PROTOCOL_VERSION, t: 'log', lines: [full] }, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -4902,21 +5578,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * It shares `logSeq` with the Margin and the Record batch, and it must: two
    * counters is how a client's de-duplication quietly stops working.
    */
-  const broadcastRecordLine = (text: string): void => {
+  const broadcastRecordLine = (realm: PumpTarget, text: string): void => {
     logSeq += 1;
-    broadcast({
-      v: PROTOCOL_VERSION,
-      t: 'log',
-      lines: [
-        {
-          seq: logSeq,
-          lane: LogLane.Record,
-          gameTurn: world.turn.clock.gameTurn,
-          text,
-          depth: 0,
-        },
-      ],
-    });
+    broadcast(
+      {
+        v: PROTOCOL_VERSION,
+        t: 'log',
+        lines: [
+          {
+            seq: logSeq,
+            lane: LogLane.Record,
+            gameTurn: realm.world.turn.clock.gameTurn,
+            text,
+            depth: 0,
+          },
+        ],
+      },
+      undefined,
+      audienceFor(realm.id),
+    );
   };
 
   /**
@@ -4934,7 +5614,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * escape into. eslint.config.js § group 6 is the other half of that guarantee.
    */
   const handleSay = (session: Session, msg: ClientSay): void => {
-    const { world } = realmFor(session);
+    const realm = realmFor(session);
+    const { world } = realm;
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before speaking');
@@ -4945,11 +5626,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
       return;
     }
-    broadcastMargin({ text: msg.text, speaker: speaker.name });
+    broadcastMargin(realm, { text: msg.text, speaker: speaker.name });
     // THE SPEAKING DOT, server-side half. A line in the Margin is the one piece
     // of "this person is here" the server can know on its own — Discord's voice
     // events never reach it. See `noteSpoke` and `PartyMember.voice`.
-    noteSpoke(actorId);
+    noteSpoke(realm, actorId);
   };
 
   /**
@@ -4966,7 +5647,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * 4000) is a marker nobody can see attached to a log line that lies.
    */
   const handlePoint = (session: Session, msg: ClientPoint): void => {
-    const { world } = realmFor(session);
+    const realm = realmFor(session);
+    const { world } = realm;
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before pointing');
@@ -4982,8 +5664,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    broadcast({ v: PROTOCOL_VERSION, t: 'pinged', id: actorId, x: msg.x, y: msg.y });
-    broadcastMargin({ text: `points at ${msg.x},${msg.y}`, speaker: pointer.name });
+    // A MARKER IS A TILE ON *THIS* MAP. Sent to the room at large it would land
+    // on the same coordinate of somebody else's floor, which is a pointer at a
+    // wall in a building they are not in.
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'pinged', id: actorId, x: msg.x, y: msg.y },
+      undefined,
+      audienceFor(realm.id),
+    );
+    broadcastMargin(realm, { text: `points at ${msg.x},${msg.y}`, speaker: pointer.name });
   };
 
   /**
@@ -5137,7 +5826,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * sender nothing must not be a way to make the server advance the world.
    */
   const handleChooseClass = (session: Session, msg: ClientChooseClass): void => {
-    const { world, engine } = realmFor(session);
+    const realm = realmFor(session);
+    const { world, engine } = realm;
     // A NARROWING, NOT A GATE. The dispatch switch sits below the `helloDone`
     // check, so this branch is unreachable without an actor; the compiler still
     // needs the null gone, and answering honestly beats a non-null assertion.
@@ -5244,7 +5934,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // No delta carries either one. This is the same deliberately dumb answer
     // `needsFullResync` gives and the same one the rename path in `hello` gives
     // at :2669-2677 — resend the actor list and let it cost a few KB once.
-    broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) },
+      undefined,
+      audienceFor(realm.id),
+    );
     // ═══ AND THE SKY WITH IT — THE CLIENT CLEARS ITS ORBS ON `state` ═══
     // src/client/main.ts's `case 'state'` runs `clearProjectiles()`, so the
     // broadcast above wipes every orb from every screen that receives it, and
@@ -5254,7 +5948,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // can no longer see because somebody in the next room finished character
     // creation. This is not rediscovered reasoning — it is copied from the
     // rename path, and every `state` broadcast in this file carries the sky.
-    sendProjectilesIfAny();
+    sendProjectilesIfAny(realm);
 
     // ═══ AND THE TURN STRIP, FOR THE SAME REASON THE BOARD WENT ═══
     // `TurnActor` carries its OWN hp, maxHp and portrait — protocol.ts justifies
@@ -5274,8 +5968,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE MEMO IS CLEARED RATHER THAN BYPASSED, so the frame goes to EVERYBODY.
     // Every other player's strip carries this card too, and a unicast would fix
     // it for the one person who cannot see their own portrait anyway.
-    lastTurnKey = null;
-    broadcastTurnIfChanged(engine.turnState());
+    lastTurnKeys.delete(realm.id);
+    broadcastTurnIfChanged(realm, engine.turnState());
 
     // ═══ IMMEDIATE, NOT THE 5s DEBOUNCE, AND THE LABEL IS `join` ═══
     // For the reason `hello` flushes at :2656-2662: the file has to exist before
@@ -5628,6 +6322,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * @returns the body, or undefined when an error has ALREADY been sent.
    */
   const lootActor = (session: Session, verb: string): PlayerActor | undefined => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, `send hello before ${verb}`);
@@ -5815,7 +6510,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * to close, and the one that got shipped once already by being invisible.
    */
   const spendLootTurn = (body: PlayerActor, verb: string): void => {
-    const charged = engine.hold(body.id);
+    // THE SCHEDULER OF THE FLOOR THE BODY IS ON. A turn is charged against one
+    // barrier, and charging the wrong one would spend a turn nobody was waiting
+    // for while the one they ARE waiting for goes on waiting. See `homeOf`.
+    const charged = homeOf(body.id).engine.hold(body.id);
     if (!charged.ok) {
       app.log.warn({ actorId: body.id, verb, reason: charged.reason }, 'loot: turn not charged');
     }
@@ -5823,10 +6521,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
   /** Say it once a turn, to the room. See `bagFullNoticeTurn`. */
   const noteBagFull = (body: PlayerActor): void => {
-    const turn = world.turn.clock.gameTurn;
+    const home = homeOf(body.id);
+    const turn = home.world.turn.clock.gameTurn;
     if (bagFullNoticeTurn.get(body.id) === turn) return;
     bagFullNoticeTurn.set(body.id, turn);
-    broadcastRecordLine(`${nameOf(body.id)}'s evidence bag is full — nothing more will fit.`);
+    broadcastRecordLine(home, `${nameOf(body.id)}'s evidence bag is full — nothing more will fit.`);
   };
 
   /**
@@ -5927,7 +6626,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // answer is social rather than mechanical: a line naming who took what, so
     // the transcript settles the argument afterwards. Without this line the rule
     // is just a race nobody can audit.
-    broadcastRecordLine(`${nameOf(body.id)} picks up the ${item.name}.`);
+    broadcastRecordLine(homeOf(body.id), `${nameOf(body.id)} picks up the ${item.name}.`);
 
     // AND IT COSTS THE TURN — Player.lua:1313-1315 charges for exactly this, on
     // exactly this path. See `spendLootTurn`.
@@ -6132,7 +6831,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // standing on, which is somewhere somebody was legally standing.
     world.addGroundItem({ x: body.x, y: body.y }, msg.itemId);
 
-    broadcastRecordLine(`${nameOf(body.id)} puts down the ${item.name}.`);
+    broadcastRecordLine(homeOf(body.id), `${nameOf(body.id)} puts down the ${item.name}.`);
     // AND IT COSTS THE TURN — Actor.lua:7323. Upstream charges for putting
     // something down and does NOT exempt it under `quick_wear_takeoff`, which is
     // the right call for us too: a free drop is a free handover, and handing a
@@ -6209,7 +6908,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * done here, in the order the pump would have done them.
    */
   const handleRespawn = (session: Session): void => {
-    const { world, engine } = realmFor(session);
+    const realm = realmFor(session);
+    const { world, engine } = realm;
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before respawning');
@@ -6235,13 +6935,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // The line first, then the board — the same order `pumpAndBroadcast` uses,
     // so a client reads what happened before it is shown the result of it.
-    broadcastRecordLine(`${nameOf(actorId)} is refiled — back on their feet.`);
+    broadcastRecordLine(realm, `${nameOf(actorId)} is refiled — back on their feet.`);
     // ═══ THE BOARD IS RESENT, AND ONLY THIS LINE CAN DO IT ═══
     // A respawn rewrites three things no delta carries: the SPRITE (back from
     // the `_downed_s` variant), the POSITION (a spawn tile — an erased body does
     // not block, so it may have been lying under somebody) and the hp. The same
     // deliberately dumb answer `needsFullResync` gives, for the same reason.
-    broadcast({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) },
+      undefined,
+      audienceFor(realm.id),
+    );
     // ═══ AND THE SKY WITH IT, FOR THE THIRD AND LAST TIME IN THIS FILE ═══
     // Every `state` broadcast clears the client's orb list (src/client/main.ts's
     // `case 'state'`), and the memo suppresses the restate because the list
@@ -6249,7 +6953,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `pumpAndBroadcast`, the rename in `hello`, and this one. All three carry
     // the sky. If a fourth is ever added it must too — an orb the party cannot
     // see has no counterplay, which is the whole point of the feature.
-    sendProjectilesIfAny();
+    sendProjectilesIfAny(realm);
     // A CRITICAL EVENT, like a death and a disconnect: the state worth keeping
     // is the one that just changed, and it changed because somebody was stuck.
     saveNow('respawn');
@@ -6284,7 +6988,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * change costs one string compare and sends nothing.
    */
   const handleParty = (session: Session, msg: ClientParty): void => {
-    const { engine } = realmFor(session);
+    const realm = realmFor(session);
+    const { engine } = realm;
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before forming a party');
@@ -6313,7 +7018,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // is broadcast rather than sent to the party, because a party forming is
     // the reason the floor's barrier just changed shape and everybody on it is
     // entitled to know why the person beside them stopped being waited for.
-    broadcastRecordLine(result.notice);
+    broadcastRecordLine(realm, result.notice);
 
     for (const memberId of result.affected) {
       const conn = connByActor.get(memberId);
@@ -6662,7 +7367,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   // disconnected body — so shutting the app down has to cancel them or a test
   // process hangs waiting on a ten-minute recall.
   app.addHook('onClose', (_instance, done) => {
-    clearBell();
+    // EVERY REALM'S BELL. One per floor now (see `bells`), and a timer left
+    // running is what makes a test process hang after the app is shut down.
+    for (const realmId of [...bells.keys()]) clearBell(realmId);
     for (const timer of graceTimers.values()) clearTimeout(timer);
     graceTimers.clear();
     // The speaking sweep is the fourth timer that outlives a socket. Unref'd, so
@@ -6811,7 +7518,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         }
 
         connByActor.delete(actorId);
-        engine.setConnected(actorId, false);
+        realmFor(session).engine.setConnected(actorId, false);
         startGrace(actorId);
         // A CRITICAL SAVE (saves.ts's `SaveReason.Disconnect`): the body stays in
         // the world for ten minutes, but the person is gone NOW and the process

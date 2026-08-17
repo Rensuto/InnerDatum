@@ -695,7 +695,20 @@ export function buildServer() {
 
   const gatewayEngine = wrapForGateway(engine);
 
-  app.register(wsGateway, { world, engine: gatewayEngine, realms, downed, sessions, persist });
+  // `parties` IS THE SAME TABLE EVERY REALM'S ENGINE ALREADY HAS. The gateway
+  // reads it for exactly one question — whose instance is this, when somebody
+  // steps onto a site cell — and `Realms.open` is idempotent on the answer, so a
+  // second table would put two friends who walked through the same door into two
+  // private copies of the same floor.
+  app.register(wsGateway, {
+    world,
+    engine: gatewayEngine,
+    realms,
+    parties,
+    downed,
+    sessions,
+    persist,
+  });
 
   return app;
 }
