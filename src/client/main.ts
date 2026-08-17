@@ -2842,6 +2842,10 @@ const paintHud: HudPainter = (ctx, width, height) => {
       focus: invFocus,
       hovered: invHovered,
       hoveredDrop: invDropHovered,
+      // THE PURSE, off the same frame the bag came from — see `InventoryMsg.money`
+      // for why they ride together. `null` is a client that has not been sent an
+      // inventory yet, which draws the plain title rather than "0 GOLD".
+      money: inventory?.money ?? 0,
     });
   }
 

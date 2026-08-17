@@ -432,6 +432,27 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 15 -> 16 (A PURSE). `InventoryMsg` gains a REQUIRED `money`.
+ *
+ * REQUIRED, which is what forces this. The rule this file has applied since v5
+ * is that an addition an old client can ignore does not force a bump -- and a
+ * v15 client WOULD ignore this one, parse the rest of the frame, and draw an
+ * inventory with no gold on it. That is not the permanently-stuck shape of
+ * 6 -> 7, 9 -> 10 or 11: nothing on screen would be a lie.
+ *
+ * IT BUMPS ANYWAY, for the reason 14 -> 15 did. Gold is now a thing a player
+ * spends, and a client that cannot show a purse is a client whose owner cannot
+ * tell whether picking up a coin pile did anything. A silently goldless
+ * inventory is indistinguishable from a broken drop table, which is exactly the
+ * class of report that costs an evening to chase.
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered rather than carried along, for the third
+ * release running. `CharacterFile.money` is OPTIONAL and
+ * docs/data-schemas.md:48-49 reads verbatim: adding an optional field needs no
+ * bump. A v1 file without the key loads as a character holding the birth purse,
+ * and a rollback costs a player what they had earned rather than quarantining
+ * the character.
+ *
  * 14 -> 15 (THE MAP YOU EARNED). `RealmMsg` gains an optional `explored`.
  *
  * AN ADDITION AN OLD CLIENT IGNORES, AND HERE THAT IS GENUINELY HARMLESS --
@@ -522,7 +543,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

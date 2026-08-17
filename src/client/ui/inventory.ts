@@ -463,6 +463,26 @@ const FONT_ICON_FALLBACK = 'bold 14px ui-monospace, Consolas, monospace';
 const PANEL_TITLE = 'INVENTORY';
 
 /**
+ * The purse, on the header strip beside the title.
+ *
+ * ═══ WHY HERE AND NOT IN A ROW OF ITS OWN ═══
+ * A row would need geometry, a hit region and a place in the tab order, and it
+ * would push the grid down by its own height on the smallest window this panel
+ * is allowed to be — where `inventoryPanelRows` is already fighting for the
+ * tail row. The header strip is drawn on every frame the panel is open, is
+ * never scrolled, and is the first thing the eye lands on.
+ *
+ * IT IS PART OF THE TITLE STRING rather than a second `fillText`, so it inherits
+ * the strip's own clipping and truncation for free: a four-digit purse on a
+ * narrow panel loses characters off the end like any other long title, instead
+ * of drawing over the close control.
+ */
+function panelTitle(money: number): string {
+  if (!Number.isFinite(money) || money <= 0) return PANEL_TITLE;
+  return `${PANEL_TITLE}  ${String(Math.floor(money))} GOLD`;
+}
+
+/**
  * The strip's own instruction, drawn only while nothing is pointed at.
  *
  * It is not furniture: hover-to-compare and click-to-wear is the one interaction
@@ -1943,6 +1963,12 @@ export type InventoryPanelDrawOptions = {
   readonly hovered: InventoryFocus | null;
   /** Highlights the DROP control. */
   readonly hoveredDrop: boolean;
+  /**
+   * Gold, straight off the inventory frame. Defaults to 0 so a caller that has
+   * not been taught to pass it draws `INVENTORY` exactly as it did before —
+   * which is what keeps the existing panel tests honest rather than updated.
+   */
+  readonly money?: number;
 };
 
 /**
@@ -1960,6 +1986,7 @@ export type InventoryPanelDrawOptions = {
  */
 export function drawInventoryPanel(options: InventoryPanelDrawOptions): void {
   const { ctx, sprites, rect, rows, hoveredClose, focus, hovered, hoveredDrop } = options;
+  const money = options.money ?? 0;
   if (rect.w <= 0 || rect.h <= 0) return;
 
   ctx.save();
@@ -1972,7 +1999,7 @@ export function drawInventoryPanel(options: InventoryPanelDrawOptions): void {
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
   ctx.clip();
 
-  drawHeader(ctx, sprites, PANEL_TITLE, rect, FONT_META);
+  drawHeader(ctx, sprites, panelTitle(money), rect, FONT_META);
 
   const geometry = inventoryPanelGeometry(rect, rows);
   for (const placed of geometry.placed) {

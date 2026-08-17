@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { STARTING_MONEY } from '../../src/server/engine/actor.ts';
 import { SCHEMA_VERSION } from '../../src/shared/version.ts';
 import {
   MAX_CHARACTER_LEVEL,
@@ -1505,6 +1506,75 @@ describe('character files: the bag and the paper doll', () => {
       "equipped.body: 'item_watchmans_coat~ba2' is not an item this build knows — dropped",
       "carried[1]: 'item_watchmans_coat~ba2.wd1' is not an item this build knows — dropped",
     ]);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PURSE. A SOURCE OF TRUTH, UNLIKE EVERY OTHER NUMBER AROUND IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `unspentPoints` is a cache and is recomputed from the ledger; `level` and
+   * `xp` are checked against each other. A purse has NOTHING to reconcile
+   * against — there is no ledger of what anybody has spent — so the number on
+   * disk is the number, and `parseMoney`'s clamp is the only thing standing
+   * between a hand-edited file and a balance that every later subtraction makes
+   * worse.
+   */
+  it('carries a purse through create, serialise and parse', () => {
+    const created = createCharacterFile({
+      id: CHAR,
+      ownerId: OWNER,
+      name: 'Sergeant Vell',
+      classId: 'watchman',
+      money: 240,
+      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+    });
+    expect(created.money).toBe(240);
+
+    const parsed = parseCharacterFile(JSON.parse(serialiseCharacter(created)));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.money).toBe(240);
+    expect(parsed.problems).toEqual([]);
+  });
+
+  it('gives a character who never mentioned money the birth purse, not zero', () => {
+    // A file written before currency existed belongs to somebody who has simply
+    // never spent anything. Loading them broke would be a silent penalty for
+    // having played early — the same failure `explored` and `keybinds` each
+    // argue against in their own docblocks.
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.money).toBe(15);
+  });
+
+  it('repairs a negative, fractional or nonsense purse rather than refusing the file', () => {
+    const negative = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, money: -80 });
+    expect(negative.ok).toBe(true);
+    if (negative.ok) {
+      expect(negative.file.money).toBe(0);
+      expect(negative.problems).toContain('money: -80 is negative — clamped to 0');
+    }
+
+    const fractional = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, money: 12.7 });
+    expect(fractional.ok).toBe(true);
+    if (fractional.ok) expect(fractional.file.money).toBe(12);
+
+    const nonsense = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, money: 'lots' });
+    expect(nonsense.ok).toBe(true);
+    if (nonsense.ok) expect(nonsense.file.money).toBe(15);
+  });
+
+  it('keeps the birth purse in step between the save layer and the engine', () => {
+    // `saves.ts` declares `BIRTH_MONEY` locally rather than importing
+    // `STARTING_MONEY`, exactly as it declares `BIRTH_LEVEL` and `BIRTH_XP` —
+    // its import note draws the line at `persist -> content` and will not put
+    // engine code on the save path for one integer. Two copies that must agree
+    // are two copies that can drift, so this is the pin that stops them.
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.money).toBe(STARTING_MONEY);
   });
 
   /**

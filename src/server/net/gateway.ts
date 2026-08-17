@@ -106,6 +106,7 @@ import { classById, classForJoin } from '../content/classes.ts';
  * catalogue), so a layer that has to validate one has to be able to ask.
  */
 import { SLOT_ORDER } from '../content/items.ts';
+import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { resolveItem } from '../content/resolve.ts';
 /**
  * THE ONE ENGINE VALUE THIS FILE IMPORTS, AND IT IS A VOCABULARY WORD.
@@ -121,7 +122,7 @@ import { resolveItem } from '../content/resolve.ts';
  * at the chooser owes no decision anybody may wait for, and `standingOrder` is
  * the field engine/barrier.ts:302-303 already reads to mean exactly that.
  */
-import { StandingOrder } from '../engine/actor.ts';
+import { StandingOrder, incMoney } from '../engine/actor.ts';
 /**
  * THE SINGLE WRITER OF `actor.combat`, IMPORTED RATHER THAN INJECTED, AND THE
  * ASYMMETRY WITH `attachClass` IS DELIBERATE.
@@ -1257,6 +1258,18 @@ export type CharacterSnapshot = {
    */
   readonly unspentPoints?: number;
   /**
+   * Gold. Straight off `PlayerActor.money`, and NOT a cache of anything — there
+   * is no ledger to recompute a purse from, so unlike `unspentPoints` the value
+   * that arrives here is the value that is kept.
+   *
+   * `?` for the same reason every field around it carries one: a producer that
+   * cannot say must leave the disk as it found it. A fixture-shaped snapshot
+   * that filled this unconditionally would write the birth purse over an
+   * evening's takings — the one-way valve progression and items each shipped
+   * once already.
+   */
+  readonly money?: number;
+  /**
    * Namespaced talent id -> RAW points, 1..`TALENT_MAX_LEVEL`. THE ONLY THING
    * HERE THAT IS GENUINELY THE TRUTH; everything else about progression is
    * derivable from it and `level`. docs/data-schemas.md § 1: never persist a
@@ -1412,6 +1425,12 @@ export type CharacterRestore = {
   readonly unspentPoints?: number;
   /** Namespaced talent id -> RAW points. The only non-derived one of the four. */
   readonly talentPoints?: Readonly<Record<string, number>>;
+  /**
+   * Gold, as the file holds it. NOT reconciled against anything, because there
+   * is nothing to reconcile it against — see `CharacterSnapshot.money`. Absent
+   * means "this port cannot say" and the birth purse stands.
+   */
+  readonly money?: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE BAG AND THE PAPER DOLL, COMING BACK. THE OTHER HALF OF THE LOOP.
@@ -2808,6 +2827,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         level: actor.level,
         xp: actor.xp,
         unspentPoints: actor.unspentPoints,
+        // NOT under the `classChoiceOwed` rule below: a purse is not a claim
+        // about a class, exactly as a keymap is not.
+        money: actor.money,
         // ═══ AND THE RAW SPREAD — BUT NOT WHILE THE CLASS IS PROVISIONAL ═══
         // Same discipline as the class sentinel above, for the same reason and
         // in the same breath. A body whose owner has not answered the chooser
@@ -4201,6 +4223,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
     if (restore.xp !== undefined && Number.isFinite(restore.xp)) {
       actor.xp = Math.max(0, restore.xp);
+    }
+    // ═══ AND THE PURSE, WHICH IS RECONCILED AGAINST NOTHING ═══
+    // `unspentPoints` below is recomputed from the ledger because it is a cache
+    // of a derived quantity. A purse has no ledger — the file's number is the
+    // number — so this trusts it, and the only defence is the same clamp
+    // `parseMoney` already applied on the way in. Restated rather than assumed,
+    // because a restore can be handed a `CharacterRestore` by a port that never
+    // went through `parseCharacterFile` at all.
+    if (restore.money !== undefined && Number.isFinite(restore.money)) {
+      actor.money = Math.max(0, Math.floor(restore.money));
     }
 
     // ═══ THE BAG AND THE DOLL, AND IT IS ABOVE THE TALENT LEDGER ON PURPOSE ═══
@@ -7088,6 +7120,39 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const top = pile[0];
     if (top === undefined) {
       sendError(session.socket, ErrorCode.IllegalMove, 'there is nothing to pick up here');
+      return;
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * MONEY NEVER ENTERS THE BAG. money.lua:29-36's `on_prepickup`, exactly.
+     * ═══════════════════════════════════════════════════════════════════════
+     * Upstream's coin pile is an object whose `on_prepickup` adds to
+     * `who.money` and returns true, which is its way of saying "I handled it,
+     * do not put me in an inventory". Ours is the same shape and the same
+     * order: remove from the floor FIRST, credit second, so a race that loses
+     * the removal cannot credit anybody.
+     *
+     * IT SKIPS EVERY RULE BELOW IT, and each skip is deliberate. Not
+     * `alreadyOwns` — a purse is not a set, and "you already have 14 gold"
+     * would be nonsense. Not `INVENTORY_CAP` — a full bag must never stop you
+     * picking up gold, or the cap becomes an economic penalty nobody designed.
+     */
+    const coins = moneyAmountOf(top.itemId);
+    if (coins !== undefined) {
+      if (!world.removeGroundItem(top.id)) {
+        sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+        return;
+      }
+      incMoney(body, coins);
+      broadcastRecordLine(homeOf(body.id), `${nameOf(body.id)} picks up ${moneyName(coins)}.`);
+      // THE SAME THREE THINGS THE ITEM PATH DOES, and for the same reasons.
+      // It costs the turn (Player.lua:1313-1315), and it saves IMMEDIATELY
+      // rather than riding the debounce — the floor is not persisted, so an
+      // unsaved take does not put the gold back, it destroys it.
+      spendLootTurn(body, 'pickup');
+      saveLoot('pickup');
+      pumpAndBroadcast();
       return;
     }
 

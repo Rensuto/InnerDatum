@@ -35,7 +35,7 @@
 import type { TileXY } from '../../shared/coords.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { canWalk } from '../../shared/level.ts';
-import { partyMaxLevel, rollEgos } from './loot.ts';
+import { partyMaxLevel, rollLoot } from './loot.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { World } from '../world/world.ts';
 import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
@@ -191,7 +191,7 @@ function embellish(world: World, actorId: string, baseId: string | undefined): s
   const level = partyMaxLevel(
     world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])),
   );
-  return rollEgos(world.lootRng.fork(`loot.ego:${actorId}:0`), baseId, level);
+  return rollLoot(world.lootRng.fork(`loot.ego:${actorId}:0`), baseId, level);
 }
 
 /**

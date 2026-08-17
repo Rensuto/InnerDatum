@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { rollDrop, seedTestEncounter } from '../../src/server/content/encounter.ts';
 import { ITEMS, SLOT_ORDER } from '../../src/server/content/items.ts';
+import { isMoneyId } from '../../src/server/content/money.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import {
   INDEX_HUSK,
@@ -419,7 +420,12 @@ describe('the ego roll costs the loot stream nothing', () => {
       seedTestEncounter(world);
       for (const id of SEEDED_IDS) {
         for (const itemId of world.getActor(id)?.carried ?? []) {
-          expect(resolveItem(itemId), `${itemId} did not resolve`).not.toBeUndefined();
+          // Either a real item or a real coin pile. Money is deliberately not an
+          // `Item` — content/money.ts says why — so the invariant is a
+          // disjunction, and a corpse carrying an id that is NEITHER is a drop
+          // that vanishes on the next save/load with nothing recorded.
+          if (isMoneyId(itemId)) continue;
+          expect(resolveItem(itemId), `${itemId} is neither an item nor money`).not.toBeUndefined();
         }
       }
     }

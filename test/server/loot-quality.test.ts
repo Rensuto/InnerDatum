@@ -6,10 +6,17 @@ import {
   bandFor,
   egoCountFor,
   partyMaxLevel,
-  rollEgos,
+  rollLoot,
   rollQuality,
 } from '../../src/server/content/loot.ts';
+import {
+  MAX_MONEY_PILE,
+  MIN_MONEY_PILE,
+  isMoneyId,
+  moneyAmountOf,
+} from '../../src/server/content/money.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
+import { ITEM_ID_MAX_CHARS } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 
 /**
@@ -110,8 +117,9 @@ describe('rollQuality', () => {
     expect(egoCountFor(LootQuality.Plain)).toBe(0);
     expect(egoCountFor(LootQuality.Ego)).toBe(1);
     expect(egoCountFor(LootQuality.DoubleEgo)).toBe(2);
-    // Money is not an item with egos on it. It becomes currency in its own step;
-    // until then it produces the plain base, so the WEIGHTS never have to move.
+    // Money is not an item with egos on it at all — it replaces the item. The
+    // weights did not move when currency landed, which was the point of keeping
+    // the column in the table while it still produced a plain base.
     expect(egoCountFor(LootQuality.Money)).toBe(0);
   });
 });
@@ -135,15 +143,59 @@ describe('partyMaxLevel', () => {
   });
 });
 
-describe('rollEgos', () => {
-  it('returns an id that always resolves', () => {
-    // The failure that would hurt: an id nothing can turn back into an item is
-    // an item that vanishes on the next save/load, silently.
+describe('rollLoot', () => {
+  it('returns an id that is either a real item or a real coin pile — never neither', () => {
+    // The failure that would hurt: an id nothing downstream can interpret is a
+    // drop that vanishes on the next save/load, silently.
+    //
+    // TWO KINDS OF VALID, because money is deliberately NOT an `Item` — it has
+    // no slot, and content/money.ts argues at length why inventing one would be
+    // worse. So the invariant is a disjunction, and asserting only the first
+    // half is what made this test fail the moment coins landed.
     const rng = createRng('ego-resolvable');
+    let coins = 0;
     for (let i = 0; i < 400; i += 1) {
-      const id = rollEgos(rng, BASE, 1);
-      expect(resolveItem(id), `${id} did not resolve`).not.toBeUndefined();
+      const id = rollLoot(rng, BASE, 1);
+      if (isMoneyId(id)) {
+        coins += 1;
+        continue;
+      }
+      expect(resolveItem(id), `${id} is neither an item nor money`).not.toBeUndefined();
     }
+    // And money really is reachable, so the branch above is not passing because
+    // it is never taken.
+    expect(coins).toBeGreaterThan(0);
+  });
+
+  it('makes a coin pile that is worth something and fits the wire', () => {
+    const rng = createRng('coins');
+    let seen = 0;
+    for (let i = 0; i < 600; i += 1) {
+      const id = rollLoot(rng, BASE, 1);
+      const amount = moneyAmountOf(id);
+      if (amount === undefined) continue;
+      seen += 1;
+      expect(amount).toBeGreaterThanOrEqual(MIN_MONEY_PILE);
+      expect(amount).toBeLessThanOrEqual(MAX_MONEY_PILE);
+      expect(Number.isInteger(amount)).toBe(true);
+      expect(id.length).toBeLessThanOrEqual(ITEM_ID_MAX_CHARS);
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+
+  it('pays more at depth, because the pile scales with the band', () => {
+    // ToME's own pile has ZERO depth scaling (money.lua:38-45) because its gold
+    // comes from selling. Ours scales, so a coin pile stays a real but small
+    // fraction of a sale rather than becoming rounding by level 20.
+    const purse = (level: number): number => {
+      const rng = createRng(`purse-${String(level)}`);
+      let total = 0;
+      for (let i = 0; i < 800; i += 1) {
+        total += moneyAmountOf(rollLoot(rng, BASE, level)) ?? 0;
+      }
+      return total;
+    };
+    expect(purse(25)).toBeGreaterThan(purse(1));
   });
 
   it('returns the base unchanged for an id this build does not know', () => {
@@ -151,7 +203,7 @@ describe('rollEgos', () => {
     // shift the stream for everything rolled after it.
     const rng = createRng('ego-unknown');
     const before = rng.getState().count;
-    expect(rollEgos(rng, 'item_cut_before_ship', 1)).toBe('item_cut_before_ship');
+    expect(rollLoot(rng, 'item_cut_before_ship', 1)).toBe('item_cut_before_ship');
     expect(rng.getState().count).toBe(before);
   });
 
@@ -161,14 +213,14 @@ describe('rollEgos', () => {
     // this rolls.
     const rng = createRng('ego-slots');
     for (let i = 0; i < 400; i += 1) {
-      expect(rollEgos(rng, BASE, 1)).not.toContain('wt');
+      expect(rollLoot(rng, BASE, 1)).not.toContain('wt');
     }
     // ...and it is genuinely reachable where it IS allowed, so the assertion
     // above is not passing because the ego is unreachable everywhere.
     const buckler = createRng('ego-slots-offhand');
     let sawWeighted = false;
     for (let i = 0; i < 600 && !sawWeighted; i += 1) {
-      if (rollEgos(buckler, 'item_watchmans_buckler', 1).includes('wt')) sawWeighted = true;
+      if (rollLoot(buckler, 'item_watchmans_buckler', 1).includes('wt')) sawWeighted = true;
     }
     expect(sawWeighted).toBe(true);
   });
@@ -178,7 +230,7 @@ describe('rollEgos', () => {
     // resolveItem's refusal of the other spellings.
     const rng = createRng('ego-order');
     for (let i = 0; i < 400; i += 1) {
-      const id = rollEgos(rng, BASE, 1);
+      const id = rollLoot(rng, BASE, 1);
       if (!id.includes('.')) continue;
       const [first, second] = id.slice(id.indexOf('~') + 1).split('.');
       expect(['rf', 'ol', 'wt', 'wd']).toContain(first?.slice(0, 2));
@@ -189,7 +241,7 @@ describe('rollEgos', () => {
   it('is reproducible from a seed', () => {
     const draw = (): string[] => {
       const rng = createRng('ego-replay');
-      return Array.from({ length: 25 }, () => rollEgos(rng, BASE, 1));
+      return Array.from({ length: 25 }, () => rollLoot(rng, BASE, 1));
     };
     expect(draw()).toEqual(draw());
   });
@@ -201,13 +253,13 @@ describe('rollEgos', () => {
     const shallow = createRng('ego-depth-1');
     let earlyCoroner = 0;
     for (let i = 0; i < 500; i += 1) {
-      if (rollEgos(shallow, BASE, 1).includes('cr')) earlyCoroner += 1;
+      if (rollLoot(shallow, BASE, 1).includes('cr')) earlyCoroner += 1;
     }
 
     const deep = createRng('ego-depth-2');
     let lateCoroner = 0;
     for (let i = 0; i < 500; i += 1) {
-      if (rollEgos(deep, BASE, 20).includes('cr')) lateCoroner += 1;
+      if (rollLoot(deep, BASE, 20).includes('cr')) lateCoroner += 1;
     }
 
     expect(lateCoroner).toBeGreaterThan(earlyCoroner);

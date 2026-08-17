@@ -1364,6 +1364,7 @@ describe('the floor is broadcast and the bag is not', () => {
         desc: 'Reinforced felt with a brass band.',
       },
     },
+    money: 27,
   };
 
   it('puts `ground` in ServerMsg and NOT in ViewerMsg', () => {
@@ -1459,7 +1460,9 @@ describe('the floor is broadcast and the bag is not', () => {
     // The normal state for most of a delve. `carried: []` and `equipped: {}` are
     // real answers meaning "nothing" — as distinct from the frame never arriving,
     // which means the server has not spoken about this player at all.
-    const bare: InventoryMsg = { v: V, t: 'inventory', carried: [], equipped: {} };
+    // `money: 0` and not an omission: every character HAS a purse, so unlike the
+    // two halves above there is no "absent means nothing was said" case here.
+    const bare: InventoryMsg = { v: V, t: 'inventory', carried: [], equipped: {}, money: 0 };
     expect(bare.carried).toEqual([]);
     expect(Object.keys(bare.equipped)).toEqual([]);
   });

@@ -128,6 +128,7 @@ function frame(over: Partial<InventoryMsg> = {}): InventoryMsg {
     t: 'inventory',
     carried: BAG,
     equipped: DOLL,
+    money: 0,
     ...over,
   };
 }

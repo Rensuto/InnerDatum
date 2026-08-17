@@ -561,6 +561,16 @@ export type CharacterFile = {
    * quarantining their character.
    */
   readonly explored?: string;
+  /**
+   * GOLD. Optional, so NO SCHEMA BUMP — docs/data-schemas.md:48-49, the same
+   * ground `keybinds` and `explored` set out above. A v1 file without it loads
+   * as a character with the birth purse.
+   *
+   * UNLIKE `unspentPoints` THIS IS A SOURCE OF TRUTH. There is no ledger to
+   * recompute a purse from, so the number on disk is the number — which is why
+   * `parseMoney` clamps a hand-edited negative rather than recomputing it.
+   */
+  readonly money?: number;
 
   readonly resources: SavedResources;
   /** Talent id → GAME TURNS remaining. Soft references, like `classId`. */
@@ -621,6 +631,19 @@ const BIRTH_LEVEL = 1;
 
 /** No progress into level 2 yet. Per-level xp, so this is a real zero. */
 const BIRTH_XP = 0;
+
+/**
+ * The birth purse. `data/birth/descriptors.lua:74`.
+ *
+ * DECLARED HERE RATHER THAN IMPORTED, exactly as `BIRTH_LEVEL` and `BIRTH_XP`
+ * are — this file's import note draws the line at `persist -> content`, and
+ * pulling `STARTING_MONEY` off `engine/actor.ts` would put engine code on the
+ * save path for the sake of one integer.
+ *
+ * It must AGREE with `STARTING_MONEY`, and `test/server/persist.test.ts` pins
+ * the two against each other so the copies cannot drift.
+ */
+const BIRTH_MONEY = 15;
 
 /**
  * A birth rank of 1, and 1 rather than 0 is load-bearing: `combatTalentScale`
@@ -707,6 +730,8 @@ export type CharacterInit = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
+  /** Gold. Omit for a fresh character — `createCharacterFile` supplies the birth purse. */
+  readonly money?: number;
   readonly resources: SavedResources;
   readonly talentCooldowns?: Readonly<Record<string, number>>;
   readonly effects?: readonly SavedEffect[];
@@ -758,6 +783,11 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     equipped: init.equipped,
     keybinds: init.keybinds,
     explored: init.explored,
+    // A DEFAULT, unlike the three lines above it: every character HAS a purse,
+    // exactly as every character has a level. `??` and not a bare pass-through,
+    // so a caller that supplies a level and nothing else gets the birth grant
+    // rather than a file that says nothing about money and loads as zero.
+    money: init.money ?? BIRTH_MONEY,
     resources: init.resources,
     talentCooldowns: init.talentCooldowns ?? {},
     effects: init.effects ?? [],
@@ -957,6 +987,37 @@ function parseTalentPoints(value: unknown, problems: string[]): Record<string, n
  * a hand-edit, and both are things the host should be able to see in the log
  * line the store already prints.
  */
+/**
+ * A purse off the disk, repaired.
+ *
+ * REPAIR, NEVER REJECT, like every other field here — and CLAMP rather than
+ * recompute, because unlike `unspentPoints` there is no ledger to recompute a
+ * purse from. The file's number IS the number, so this is the only thing
+ * standing between a hand-edited save and a negative balance that every later
+ * subtraction would make worse.
+ *
+ * ABSENT IS THE BIRTH GRANT, not zero. A file written before money existed
+ * belongs to a character who has simply never spent anything, and loading them
+ * broke would be a silent penalty for having played early.
+ */
+function parseMoney(value: unknown, problems: string[]): number {
+  if (value === undefined) return BIRTH_MONEY;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    problems.push(
+      `money: not a finite number — reset to the birth purse of ${String(BIRTH_MONEY)}`,
+    );
+    return BIRTH_MONEY;
+  }
+  const whole = Math.floor(value);
+  if (whole < 0) {
+    problems.push(`money: ${String(value)} is negative — clamped to 0`);
+    return 0;
+  }
+  if (whole !== value)
+    problems.push(`money: ${String(value)} is not whole — floored to ${String(whole)}`);
+  return whole;
+}
+
 function parseUnspentPoints(
   value: unknown,
   level: number,
@@ -1412,6 +1473,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // a string is dropped and the character loads with no fog rather than
       // failing to load at all. `fogFromBase64` is itself lenient about length.
       explored: typeof doc.explored === 'string' ? doc.explored : undefined,
+      money: parseMoney(doc.money, problems),
       resources,
       talentCooldowns: parseCooldowns(doc.talentCooldowns, problems),
       effects: parseEffects(doc.effects, problems),
@@ -1516,6 +1578,9 @@ export function serialiseCharacter(file: CharacterFile): string {
     xp: file.xp ?? BIRTH_XP,
     unspentPoints: file.unspentPoints ?? unspentFromLedger(file.level ?? BIRTH_LEVEL, talentPoints),
     talentPoints,
+    // WRITTEN UNCONDITIONALLY, joining the four above rather than the loadout
+    // below: every character has a purse and a file should say what is in it.
+    money: file.money ?? BIRTH_MONEY,
     // ═══ AND THESE TWO ARE THE EXCEPTION TO THE PARAGRAPH ABOVE ═══
     // The four progression fields are written UNCONDITIONALLY, defaults and all,
     // because every character has a level and a file should say what it is.
@@ -2235,6 +2300,18 @@ type Binding = {
   readonly unspentPoints: number;
   readonly talentPoints: Readonly<Record<string, number>>;
   /**
+   * ═══ THE PURSE JOINS THE REQUIRED FOUR, NOT THE OPTIONAL THREE ═══
+   * It is world-given state that the engine changes under the player, like a
+   * level and unlike a keymap — so it is deliberately NOT on `SavedPrefs`,
+   * whose docblock reserves that type for "a setting the PLAYER chose, which
+   * nothing in the world may touch".
+   *
+   * And required rather than optional because, unlike a bag, there IS a right
+   * default for a purse: the birth grant. `[]` would be a claim that a
+   * character owns nothing; 15 is simply what a character starts with.
+   */
+  readonly money: number;
+  /**
    * ═══ THE SAME FALLBACK, FOR THE SAME REASON, FOR THE BAG AND THE PAPER DOLL ═══
    * Carried forward from the file exactly as the four above are, and joining
    * them rather than being defaulted: a producer that cannot speak for a
@@ -2327,6 +2404,9 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: snapshot.xp ?? binding.xp,
       unspentPoints: snapshot.unspentPoints ?? binding.unspentPoints,
       talentPoints: snapshot.talentPoints ?? binding.talentPoints,
+      // THE SAME RULE ONE MORE TIME. A producer that cannot say what somebody
+      // is carrying must not write the birth purse over an evening's takings.
+      money: snapshot.money ?? binding.money,
       // ═══ AND THE SNAPSHOT WINS FOR THE LOADOUT, ON THE IDENTICAL ARGUMENT ═══
       // Reading `binding.carried` unconditionally is the exact one-way-valve bug
       // the four lines above were written to fix, restated for items: the
@@ -2429,6 +2509,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: file?.xp ?? BIRTH_XP,
       unspentPoints: file?.unspentPoints ?? 0,
       talentPoints: file?.talentPoints ?? {},
+      money: file?.money ?? BIRTH_MONEY,
       // NO `??` AND NO DEFAULT: an absent inventory is carried forward AS an
       // absence, so `fileFor` leaves the key off the file rather than asserting
       // an empty bag on behalf of a file that never mentioned one. `file` being
@@ -2485,6 +2566,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: file.xp,
       unspentPoints: file.unspentPoints,
       talentPoints: file.talentPoints,
+      money: file.money,
       // ═══ AND THE LOADOUT COMING BACK — THE OTHER HALF, AGAIN ═══
       // `fileFor` above now writes the live bag to disk. A load that did not
       // read it back would be the identical one-way valve progression shipped

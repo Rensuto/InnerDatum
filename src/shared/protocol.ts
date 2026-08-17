@@ -3609,6 +3609,23 @@ export type InventoryMsg = {
    * `Partial` is, deliberately, and a renderer must handle it.
    */
   equipped: Readonly<Partial<Record<Slot, ItemView>>>;
+  /**
+   * GOLD. A whole number, never negative — `PlayerActor.money`, straight
+   * through.
+   *
+   * ON THE INVENTORY FRAME rather than on a frame of its own, because a purse
+   * changes for exactly the reasons a bag does (you picked something up, you
+   * bought something, you sold something) and a second frame would be a second
+   * thing that can arrive out of order with the first. The panel that lists
+   * what you are carrying is also where a player looks to find out what they
+   * can afford.
+   *
+   * REQUIRED, not optional: every character has a purse, exactly as every
+   * character has a level, so there is no "this producer cannot say" case to
+   * spell — and an optional field here would let a renderer quietly draw
+   * nothing instead of drawing zero.
+   */
+  money: number;
 };
 
 // ---------------------------------------------------------------------------

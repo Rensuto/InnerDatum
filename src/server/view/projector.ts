@@ -58,6 +58,7 @@ import {
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { SLOT_ORDER } from '../content/items.ts';
+import { isMoneyId } from '../content/money.ts';
 import { resolveItem } from '../content/resolve.ts';
 import {
   combatAPR,
@@ -1119,6 +1120,20 @@ export function projectGroundItems(world: World): GroundMsg {
   const items: GroundItemView[] = [];
 
   for (const dropped of world.groundItems()) {
+    // MONEY FIRST, because `resolveItem` cannot answer for it and never will —
+    // a coin pile has no `slot`, so it is not an `Item` (content/money.ts). It
+    // draws at the plainest tier: a pile of gold is not a rare find, it is the
+    // most ordinary thing on the floor.
+    if (isMoneyId(dropped.itemId)) {
+      items.push({
+        id: dropped.id,
+        cell: [dropped.x, dropped.y],
+        itemId: dropped.itemId,
+        tier: 'common',
+      });
+      continue;
+    }
+
     const item = resolveItem(dropped.itemId);
     if (item === undefined) continue;
     items.push({
@@ -1434,7 +1449,18 @@ export function projectInventory(viewer: Actor): InventoryMsg {
     });
   }
 
-  return { v: PROTOCOL_VERSION, t: 'inventory', carried, equipped };
+  // NARROWED, NOT ASSERTED. `money` lives on `PlayerActor` alone, exactly as
+  // `level` and `xp` do — a monster with a purse would be a monster somebody
+  // could rob, which is a design nobody has made. Zero is the honest reading
+  // for a body that cannot have money, unlike a bag where absent and empty are
+  // different claims.
+  return {
+    v: PROTOCOL_VERSION,
+    t: 'inventory',
+    carried,
+    equipped,
+    money: viewer.kind === ActorKind.Player ? viewer.money : 0,
+  };
 }
 
 /**

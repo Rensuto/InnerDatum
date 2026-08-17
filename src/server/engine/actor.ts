@@ -575,6 +575,29 @@ export type PlayerActor = ActorCommon & {
    */
   unspentPoints: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * GOLD. A WHOLE NUMBER, NEVER NEGATIVE, AND NOT A DERIVED VALUE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Actor.lua:260` (`money = 0`) with the birth grant from
+   * `descriptors.lua:74` — a character starts with `STARTING_MONEY`.
+   *
+   * ON THE BODY, for the same reason `level`, `xp` and `carried` are: the save
+   * layer cannot reach the engine, so anything a file must write down has to be
+   * readable straight off the actor.
+   *
+   * UNLIKE `unspentPoints` THIS IS A SOURCE OF TRUTH, not a cache — there is no
+   * ledger to recompute it from, so the file's number is the number. That makes
+   * `parseMoney`'s repair the only thing standing between a hand-edited save and
+   * a negative purse, which is why it clamps rather than rejects.
+   *
+   * WHOLE GOLD, NEVER FRACTIONAL. ToME rounds prices to 0.01 and carries a
+   * float; we floor and carry an integer, on the same argument that keeps ego
+   * magnitudes integral — a currency that can hold 0.30000000000000004 will
+   * eventually show it to somebody.
+   */
+  money: number;
+  /**
    * LEVELS CROSSED THIS PUMP WHOSE POINTS HAVE NOT BEEN HANDED OUT YET.
    *
    * ═══ THE REPLAY-DIVERGENCE SPLIT, IN ONE FIELD ═══
@@ -667,6 +690,19 @@ const DEFAULT_PLAYER_MAX_HP = 60;
 const DEFAULT_PLAYER_HP_REGEN = 0.5;
 const DEFAULT_PLAYER_DAMAGE_MIN = 4;
 const DEFAULT_PLAYER_DAMAGE_MAX = 7;
+
+/**
+ * What a character is born with. `data/birth/descriptors.lua:74`.
+ *
+ * HERE AND NOT IN content/money.ts, because the engine owns the birth values —
+ * `level: 1` and `xp: 0` are three lines below and this is the same kind of
+ * fact. content/ may import engine/ (items.ts already does); the reverse is the
+ * edge scheduler.ts:515-527 routes the whole talent system around.
+ *
+ * Fifteen is enough to matter and not enough to skip the first sale, which is
+ * exactly what a starting purse is for.
+ */
+export const STARTING_MONEY = 15;
 
 const DEFAULT_MONSTER_MAX_HP = 24;
 const DEFAULT_MONSTER_HP_REGEN = 0;
@@ -870,6 +906,7 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     level: 1,
     xp: 0,
     unspentPoints: 0,
+    money: STARTING_MONEY,
     pendingLevels: 0,
     cooldowns: new Map<string, number>(),
     pendingIntent: null,
@@ -877,6 +914,24 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     connected: true,
     standingBy: false,
   };
+}
+
+/**
+ * Add to (or take from) a purse. `Actor.lua:1686-1699`.
+ *
+ * THE ONE MUTATOR, and it clamps at zero exactly as upstream does — a debit
+ * larger than the purse empties it rather than going negative. Everything else
+ * in `incMoney` is ToME's: a summoner redirect (no summons here), three
+ * achievements (none here) and two sound effects (the client owns audio).
+ *
+ * FLOORS ITS INPUT. Every caller passes an integer today; flooring here means a
+ * fractional price arriving from a future shop cannot put 0.30000000000000004
+ * in somebody's purse, which is a number a player would eventually see.
+ */
+export function incMoney(actor: PlayerActor, delta: number): number {
+  if (!Number.isFinite(delta)) return actor.money;
+  actor.money = Math.max(0, actor.money + Math.floor(delta));
+  return actor.money;
 }
 
 /** A monster body. Speed is free here, in both directions — that is the point. */

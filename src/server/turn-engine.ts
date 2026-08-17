@@ -28,6 +28,7 @@ import type { Dir, TileXY } from '../shared/coords.ts';
 import type { LoadoutTalent, ResourceView, TurnEvent } from '../shared/protocol.ts';
 import { seedTestEncounter } from './content/encounter.ts';
 import { SLOT_ORDER } from './content/items.ts';
+import { isMoneyId } from './content/money.ts';
 import { resolveItem } from './content/resolve.ts';
 import { HOLD_INTENT, IntentKind, cooldownOf } from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
@@ -593,7 +594,11 @@ function spillOrderOf(actor: Actor): readonly string[] {
   const take = (id: string | undefined): void => {
     if (id === undefined || seen.has(id)) return;
     // The catalogue is the only thing that can tell a live id from a stale one.
-    if (resolveItem(id) === undefined) return;
+    // MONEY IS THE ONE ID IT CANNOT ANSWER FOR — a coin pile is not an `Item`
+    // and deliberately has no `slot` (content/money.ts says why). Without this
+    // clause a corpse carrying gold would spill nothing, and the failure would
+    // read as "the drop table stopped working" rather than as a missing case.
+    if (!isMoneyId(id) && resolveItem(id) === undefined) return;
     seen.add(id);
     out.push(id);
   };

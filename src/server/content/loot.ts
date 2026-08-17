@@ -56,6 +56,7 @@ import { EGO_TAG_ORDER, egosForTag } from './egos.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
 import { MAX_EGO_POWER, formatItemId } from './resolve.ts';
 import { itemById } from './items.ts';
+import { moneyIdFor, rollMoney } from './money.ts';
 import type { ItemEgoRef } from './resolve.ts';
 import type { Rng } from '../../shared/rng.ts';
 
@@ -193,7 +194,8 @@ export function egoCountFor(quality: LootQuality): number {
 }
 
 /**
- * Roll the egos for one base item and return the instance id.
+ * Roll what actually dropped, given the base `loot.pick` chose, and return its
+ * id — which may be an ego'd item or may be a coin pile.
  *
  * @param rng THE PER-DROP FORK, not `world.lootRng`. See the file header.
  * @param baseId what `loot.pick` returned. Returned unchanged if it names
@@ -207,16 +209,20 @@ export function egoCountFor(quality: LootQuality): number {
  * so there is nothing to choose and the draw would be a coin flip whose outcome
  * is ignored. It is not taken. (`ego.money` lands with the currency.)
  */
-export function rollEgos(rng: Rng, baseId: string, level: number): string {
+export function rollLoot(rng: Rng, baseId: string, level: number): string {
   const base = itemById(baseId);
   if (base === undefined) return baseId;
 
-  const quality = rollQuality(rng, bandFor(level));
+  const band = bandFor(level);
+  const quality = rollQuality(rng, band);
+
+  // MONEY REPLACES THE ITEM ENTIRELY. The weights did not move when this
+  // landed, and that was the point of keeping the column in the table while it
+  // still produced a plain base: changing a weight moves every seed's loot for
+  // everybody, and changing what a category PRODUCES moves only that category.
+  if (quality === LootQuality.Money) return moneyIdFor(rollMoney(rng, band));
+
   const wanted = egoCountFor(quality);
-  // MONEY IS PLAIN FOR NOW, and the column stays in the table on purpose: when
-  // currency lands, that is a change to what `money` PRODUCES rather than a
-  // change to the weights, and changing the weights would move every seed's
-  // loot for everyone.
   if (wanted === 0) return baseId;
 
   const refs: ItemEgoRef[] = [];
