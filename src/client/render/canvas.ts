@@ -612,13 +612,27 @@ function require2dContext(target: HTMLCanvasElement): CanvasRenderingContext2D {
  * with anything unrecognised falling back to `gate` — a door is the right guess
  * for an unknown kind of place, and drawing nothing is not.
  */
-const SITE_MARKERS: ReadonlySet<string> = new Set([
-  'town',
-  'gate',
-  'stair',
-  'altar',
-  'archive',
-  'breach',
+/**
+ * Marker family -> the sprite that draws it.
+ *
+ * A MAP RATHER THAN A SET, because the two names are allowed to differ and
+ * currently do. `town` is the right word for what a settlement IS on a world
+ * map; `tile_ow_site_office` is the art that exists, drawn for the first brief
+ * as "the detective's office door — the one warm light on the map", which is
+ * exactly what a settlement should read as from outside. Renaming the family to
+ * match the file would make the DATA wrong to keep the art tidy.
+ *
+ * A dedicated `tile_ow_site_town` — a cluster of roofs rather than a doorway —
+ * would read better at world-map scale. Until it exists this is not a
+ * placeholder, it is a deliberate reuse, and swapping it is one line here.
+ */
+const SITE_MARKERS: ReadonlyMap<string, string> = new Map([
+  ['town', 'tile_ow_site_office'],
+  ['gate', 'tile_ow_site_gate'],
+  ['stair', 'tile_ow_site_stair'],
+  ['altar', 'tile_ow_site_altar'],
+  ['archive', 'tile_ow_site_archive'],
+  ['breach', 'tile_ow_site_breach'],
 ]);
 
 const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
@@ -978,8 +992,8 @@ export function createRenderer(options: RendererOptions): Renderer {
       const sy = site.y * TILE_PX - camY;
       if (sx < -TILE_PX || sy < -TILE_PX || sx > logicalW || sy > logicalH) continue;
 
-      const known = SITE_MARKERS.has(site.marker) ? site.marker : 'gate';
-      const sprite = sprites.sprite(`tile_ow_site_${known}`);
+      const id = SITE_MARKERS.get(site.marker) ?? SITE_MARKERS.get('gate');
+      const sprite = id === undefined ? undefined : sprites.sprite(id);
       if (sprite !== undefined) {
         backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
         continue;

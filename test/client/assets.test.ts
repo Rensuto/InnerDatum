@@ -562,3 +562,41 @@ describe('interiors stay flat, and the overworld does not', () => {
     for (const id of ids) expect(id).toMatch(/^tile_ow_/);
   });
 });
+
+describe('every marker family the server can send has art behind it', () => {
+  // THE GAP THIS CAUGHT. `SITES` labels its settlements `town`, and the marker
+  // set Codex delivered contains `office` — so all four settlements silently
+  // drew the gold-ring fallback on a finished tileset, which reads as missing
+  // art rather than as the deliberate reuse it is.
+  //
+  // Families and filenames are allowed to differ (a settlement IS a town; the
+  // art that exists is a lit doorway), so the renderer maps one to the other.
+  // What must never differ is the set of families the SERVER can send and the
+  // set the CLIENT can draw — that mismatch is invisible until someone looks at
+  // the map and sees rings.
+  const canvas = readFileSync(
+    new URL('../../src/client/render/canvas.ts', import.meta.url),
+    'utf8',
+  );
+  const realms = readFileSync(new URL('../../src/server/world/realms.ts', import.meta.url), 'utf8');
+
+  it('draws every family the site table names', () => {
+    const drawn = new Set([...canvas.matchAll(/\['([a-z]+)', 'tile_ow_site_/g)].map((m) => m[1]));
+    const sent = new Set([...realms.matchAll(/marker: '([a-z]+)'/g)].map((m) => m[1]));
+    // Also the ones declared inline in the SITES table rows.
+    for (const m of realms.matchAll(/RealmKind\.\w+, '([a-z]+)'\]/g)) sent.add(m[1]);
+
+    expect(sent.size).toBeGreaterThan(0);
+    for (const family of sent) {
+      expect(
+        drawn.has(family),
+        `server can send marker '${family}' but the renderer cannot draw it`,
+      ).toBe(true);
+    }
+  });
+
+  it('keeps a gate fallback, so an unknown family still draws a door', () => {
+    // A newer server inventing a family must not produce an invisible site.
+    expect(canvas).toContain("SITE_MARKERS.get('gate')");
+  });
+});
