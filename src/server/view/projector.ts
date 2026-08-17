@@ -57,7 +57,8 @@ import {
 } from '../../shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
-import { ITEM_CATALOGUE, SLOT_ORDER, itemById } from '../content/items.ts';
+import { SLOT_ORDER } from '../content/items.ts';
+import { resolveItem } from '../content/resolve.ts';
 import {
   combatAPR,
   combatArmor,
@@ -1118,7 +1119,7 @@ export function projectGroundItems(world: World): GroundMsg {
   const items: GroundItemView[] = [];
 
   for (const dropped of world.groundItems()) {
-    const item = itemById(dropped.itemId);
+    const item = resolveItem(dropped.itemId);
     if (item === undefined) continue;
     items.push({
       // THE WORLD'S id, not the catalogue's — see `GroundItemView`. Two
@@ -1406,7 +1407,7 @@ export function projectInventory(viewer: Actor): InventoryMsg {
   for (const slot of SLOT_ORDER) {
     const id = viewer.equipped?.[slot];
     if (id === undefined) continue;
-    const item = itemById(id);
+    const item = resolveItem(id);
     if (item === undefined || item.slot !== slot) continue;
     equipped[slot] = toItemView(item);
   }
@@ -1415,11 +1416,11 @@ export function projectInventory(viewer: Actor): InventoryMsg {
   // the "before" side of every comparison is the sheet the player is actually
   // wearing rather than one this function guessed at.
   const base = viewer.baseCombat ?? viewer.combat;
-  const worn = wornOf(viewer.equipped, ITEM_CATALOGUE);
+  const worn = wornOf(viewer.equipped, resolveItem);
 
   const carried: CarriedItemView[] = [];
   for (const id of viewer.carried ?? []) {
-    const item = itemById(id);
+    const item = resolveItem(id);
     if (item === undefined) continue;
     carried.push({
       ...toItemView(item),

@@ -1475,6 +1475,39 @@ describe('character files: the bag and the paper doll', () => {
   });
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SAME DOCTRINE, AIMED FORWARD RATHER THAN BACKWARD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The test above is a save written by an OLDER build naming an item that has
+   * since been cut. This is a save written by a LATER one, naming an item that
+   * has not been authored yet: `~ba2` is the ego grammar, and no ego with the
+   * code `ba` exists in this build.
+   *
+   * That case is the whole reason the grammar shipped before the content. A
+   * player who plays a newer build, then rolls back — a live session on a
+   * self-hosted server, so rolling back is a real Friday-evening event — must
+   * lose the coat, keep the character, and be told which. If this ever starts
+   * failing by REJECTING the file, the fail-soft path has been broken by
+   * somebody who thought an unparseable id deserved an exception.
+   */
+  it('drops an ego id from a build that does not have egos yet, and says so', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      carried: ['item_leather_chest', 'item_watchmans_coat~ba2.wd1'],
+      equipped: { head: 'item_watchmans_cap', body: 'item_watchmans_coat~ba2' },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.carried).toEqual(['item_leather_chest']);
+    expect(parsed.file.equipped).toEqual({ head: 'item_watchmans_cap' });
+    expect(parsed.problems).toEqual([
+      "equipped.body: 'item_watchmans_coat~ba2' is not an item this build knows — dropped",
+      "carried[1]: 'item_watchmans_coat~ba2.wd1' is not an item this build knows — dropped",
+    ]);
+  });
+
+  /**
    * A slot key and an item id are coherent together or not at all, and only the
    * catalogue knows which. This is the one field in the file where two values
    * have to AGREE, which is why it is validated where a talent id is kept

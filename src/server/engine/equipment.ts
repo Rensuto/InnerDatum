@@ -289,7 +289,7 @@ export function wornOf(
   for (const slot of SLOT_ORDER) {
     const id = equipped[slot];
     if (id === undefined) continue;
-    const item = catalogue.get(id);
+    const item = catalogue(id);
     if (item === undefined) continue;
     if (item.slot !== slot) continue;
     worn.push(item);

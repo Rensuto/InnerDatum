@@ -33,13 +33,15 @@
  * it would drift silently.
  *
  * ═══ THE ONE CONTENT IMPORT, AND WHY IT IS NOT THE CYCLE THE OTHER ONE WOULD BE
- * `content/items.ts` is imported for `ITEM_CATALOGUE`. `content/classes.ts` is
+ * `content/resolve.ts` is imported for `resolveItem`. `content/classes.ts` is
  * still forbidden, and the note on `PLAYER_SPRITES` below says why:
  * `world -> content/classes -> engine/talents -> world` is a real cycle, closed
  * by engine/talents.ts:103's VALUE import of `hasLineOfSight` from this file,
  * and a module cycle in a project with no build step is a ReferenceError at
- * import time rather than a warning. `content/items.ts` imports TYPES ONLY and
- * therefore sits at the bottom of the graph with nothing to close.
+ * import time rather than a warning. `content/resolve.ts` reaches only
+ * `content/items.ts` (which imports TYPES ONLY) and one constant from
+ * `shared/protocol.ts`, so it sits at the bottom of the graph with nothing to
+ * close.
  */
 
 import { bresenham, step } from '../../shared/coords.ts';
@@ -47,7 +49,7 @@ import { createTurnClock } from '../../shared/energy.ts';
 import { blocksSightAt, canWalk, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
-import { ITEM_CATALOGUE } from '../content/items.ts';
+import { resolveItem } from '../content/resolve.ts';
 import { createMonsterActor, createPlayerActor } from '../engine/actor.ts';
 import { createProjectile } from '../engine/projectile.ts';
 import { recomposeCombat } from '../engine/effects.ts';
@@ -266,7 +268,7 @@ export type PlayerOverlay = Partial<
 export type GroundItem = {
   /** Unique within this world, monotonic, never reused. */
   readonly id: string;
-  /** A key into `ITEM_CATALOGUE`. */
+  /** An id `resolveItem` can turn into an item — see content/resolve.ts. */
   readonly itemId: string;
   readonly x: number;
   readonly y: number;
@@ -818,7 +820,7 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
       // which is what keeps "the class was applied WHOLESALE, never blended"
       // assertable with `toBe` in class-choice.test.ts and class-wiring.test.ts.
       actor.baseCombat = overlay.combat;
-      recomposeCombat(actor, null, ITEM_CATALOGUE);
+      recomposeCombat(actor, null, resolveItem);
     }
     if (overlay.classId !== undefined) actor.classId = overlay.classId;
 

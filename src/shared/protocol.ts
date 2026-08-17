@@ -1955,8 +1955,12 @@ const SpendPointSchema = z.strictObject({
  * `ACTOR_ID_MAX_CHARS`, `CLASS_ID_MAX_CHARS` and `TALENT_ID_MAX_CHARS` so there
  * is ONE number to remember across the whole file, and it is headroom rather
  * than a place to park a payload.
+ *
+ * EXPORTED so `content/resolve.ts` can prove at import time that the longest id
+ * its grammar can ever build still fits. A cap that lives only in the schema is
+ * a cap nothing checks until a save file is silently truncated by it.
  */
-const ITEM_ID_MAX_CHARS = 64;
+export const ITEM_ID_MAX_CHARS = 64;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

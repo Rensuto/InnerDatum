@@ -1547,6 +1547,13 @@ export function validateTemplate(template: MonsterTemplate): readonly string[] {
     }
     const seen = new Set<string>();
     for (const itemId of pick) {
+      // `itemById`, DELIBERATELY, AND NOT `resolveItem`. Everywhere else an id
+      // may be an ego'd one, because it came off the wire or out of a save file
+      // and describes an item that was rolled. A drop table is the other side of
+      // that: it names the BASE the roll starts from, and the egos are added
+      // afterwards from the quality table. Accepting `item_x~ba2` here would let
+      // an authored row hand out a fixed ego'd item and bypass the roll — which
+      // is a design decision, and would arrive disguised as a content typo.
       if (itemById(itemId) === undefined) {
         problems.push(`${where} drops.pick names '${itemId}', which is not in the item catalogue`);
       }

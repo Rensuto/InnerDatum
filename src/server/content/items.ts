@@ -611,13 +611,36 @@ export const ITEMS: readonly Item[] = Object.freeze([
   ...GENERIC_ITEMS,
 ]);
 
-/** What `wornOf` and every persistence path look ids up in. */
-export type ItemCatalogue = ReadonlyMap<string, Item>;
+/**
+ * What `wornOf` and every persistence path turn an id into an item WITH.
+ *
+ * ═══ A FUNCTION, NOT A MAP, AND THAT IS WHAT MAKES EGOS FREE ═══
+ * It was `ReadonlyMap<string, Item>` while every id was a key in a table of 22.
+ * An ego'd id is not — `item_watchmans_coat~ba2` names an item that is computed
+ * from two rows rather than stored in one, and `content/resolve.ts` is where
+ * that computation lives.
+ *
+ * Taking the LOOKUP rather than the TABLE keeps the reason equipment.ts:98-104
+ * gives for taking it as a parameter at all ("a function that reaches for a
+ * module-level table is a function a test cannot aim at a fixture") and gets
+ * strictly better at it: a fixture is now a two-line arrow function rather than
+ * a hand-built Map, and no caller can iterate the catalogue by accident.
+ */
+export type ItemCatalogue = (id: string) => Item | undefined;
 
-/** id → item. Insertion order is `ITEMS` order, which is stable across runs. */
-export const ITEM_CATALOGUE: ItemCatalogue = new Map(ITEMS.map((item) => [item.id, item]));
+/**
+ * id → the AUTHORED item under that exact id. Insertion order is `ITEMS` order,
+ * which is stable across runs.
+ *
+ * The base registry, and only that. Nothing outside `itemById` should reach for
+ * it: an id off the wire or out of a save file may name an item that is not a
+ * key here, and `resolveItem` is what knows the difference.
+ */
+export const ITEM_CATALOGUE: ReadonlyMap<string, Item> = new Map(
+  ITEMS.map((item) => [item.id, item]),
+);
 
-/** One item, or undefined for an id this build does not know. */
+/** One AUTHORED item, or undefined for an id this build does not know. */
 export function itemById(id: string): Item | undefined {
   return ITEM_CATALOGUE.get(id);
 }

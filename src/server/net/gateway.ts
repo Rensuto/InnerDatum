@@ -90,18 +90,23 @@ import { classById, classForJoin } from '../content/classes.ts';
 /**
  * THE SECOND CONTENT IMPORT, AND IT IS DATA ONLY — THE SAME TERMS AS THE FIRST.
  *
- * `itemById` says whether an id off the wire or out of a save file still names
- * an authored item, `SLOT_ORDER` is what narrows a `string` key from a character
- * file into a `Slot`, and `ITEM_CATALOGUE` is handed STRAIGHT THROUGH to
- * `recomposeCombat` without this file reading a row out of it. What an item DOES
- * — its `wielder` table, what it is worth, what it costs — is never read here,
- * exactly as no class's sheet is.
+ * `resolveItem` says whether an id off the wire or out of a save file still
+ * names an item this build can produce, `SLOT_ORDER` is what narrows a `string`
+ * key from a character file into a `Slot`, and `resolveItem` is ALSO handed
+ * STRAIGHT THROUGH to `recomposeCombat` without this file reading a row out of
+ * the catalogue. What an item DOES — its `wielder` table, what it is worth, what
+ * it costs — is never read here, exactly as no class's sheet is.
+ *
+ * It used to be `itemById` and `ITEM_CATALOGUE`, one of which asked a Map and
+ * the other of which WAS the Map. Both became one function when an id stopped
+ * being guaranteed to be a key in a table of 22 — see content/resolve.ts.
  *
  * persist/saves.ts already took the same edge and argued it at its import site:
  * an item id carries NOTHING on its own (slot, icon and wielder all live in the
  * catalogue), so a layer that has to validate one has to be able to ask.
  */
-import { ITEM_CATALOGUE, SLOT_ORDER, itemById } from '../content/items.ts';
+import { SLOT_ORDER } from '../content/items.ts';
+import { resolveItem } from '../content/resolve.ts';
 /**
  * THE ONE ENGINE VALUE THIS FILE IMPORTS, AND IT IS A VOCABULARY WORD.
  *
@@ -4045,7 +4050,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const wornIds = new Set<string>();
     for (const [key, id] of Object.entries(restore.equipped ?? {})) {
       const slot = asSlot(key);
-      const item = itemById(id);
+      const item = resolveItem(id);
       // A WRONG-SLOT ENTRY IS DROPPED, not demoted to the bag and not re-filed
       // into the slot the catalogue names. persist/saves.ts's `parseEquipped`
       // considered and rejected both repairs in writing: re-filing changes a
@@ -4071,7 +4076,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // same rule is enforced here and in `handlePickup`, so a party that finds
       // two identical pairs of trousers keeps one and learns that immediately
       // rather than at the next reload.
-      if (itemById(id) === undefined || wornIds.has(id) || bag.includes(id)) {
+      if (resolveItem(id) === undefined || wornIds.has(id) || bag.includes(id)) {
         dropped.push(id);
         continue;
       }
@@ -4096,7 +4101,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // genuinely cannot speak for stage three, and `null` carries the live flags
     // across unchanged — which is exactly right, since nothing in stages one and
     // two can alter a flag. Same argument world.ts makes at `reclothePlayer`.
-    recomposeCombat(actor, opts.effects ?? null, ITEM_CATALOGUE);
+    recomposeCombat(actor, opts.effects ?? null, resolveItem);
 
     if (dropped.length > 0) {
       // LOGGED RATHER THAN SILENT, on the shape `applyTalentPoints`'s refund
@@ -5294,7 +5299,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // which states the same contract for the load path.
     if (from.carried !== undefined) to.carried = [...from.carried];
     if (from.equipped !== undefined) to.equipped = { ...from.equipped };
-    recomposeCombat(to, opts.effects ?? null, ITEM_CATALOGUE);
+    recomposeCombat(to, opts.effects ?? null, resolveItem);
   };
 
   /**
@@ -7086,7 +7091,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    const item = itemById(top.itemId);
+    const item = resolveItem(top.itemId);
     if (item === undefined) {
       // A content reload deleted an authored item out from under a live floor.
       // Answered rather than swallowed, and the item is LEFT WHERE IT IS: a
@@ -7197,7 +7202,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.BadMessage, 'you are not carrying that');
       return;
     }
-    const item = itemById(msg.itemId);
+    const item = resolveItem(msg.itemId);
     if (item === undefined) {
       sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
       return;
@@ -7211,7 +7216,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     body.equipped = { ...body.equipped, [item.slot]: msg.itemId };
     body.carried = bagAfter;
-    recomposeCombat(body, opts.effects ?? null, ITEM_CATALOGUE);
+    recomposeCombat(body, opts.effects ?? null, resolveItem);
 
     // NO CASE LOG LINE, and the asymmetry with `pickup`/`drop` is deliberate:
     // those two change the SHARED floor, which is the thing the party is
@@ -7275,7 +7280,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     delete next[msg.slot];
     body.equipped = next;
     body.carried = [...bag, worn];
-    recomposeCombat(body, opts.effects ?? null, ITEM_CATALOGUE);
+    recomposeCombat(body, opts.effects ?? null, resolveItem);
 
     // AND IT COSTS THE TURN — Actor.lua:7420, the takeoff half of the same rule.
     spendLootTurn(body, 'unequip');
@@ -7320,7 +7325,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.BadMessage, 'you are not carrying that');
       return;
     }
-    const item = itemById(msg.itemId);
+    const item = resolveItem(msg.itemId);
     if (item === undefined) {
       sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
       return;

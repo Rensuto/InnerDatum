@@ -175,10 +175,11 @@ import {
 // in `problems` every time it happens, which is the difference between a trade
 // and an accident.
 //
-// RUNTIME-SAFE: content/items.ts imports TYPES ONLY (from engine/derived.ts), so
-// this edge is persist -> content and stops there. It does not put engine code
-// on the save path and it closes no cycle.
-import { itemById } from '../content/items.ts';
+// RUNTIME-SAFE: content/resolve.ts imports content/items.ts and one CONSTANT
+// from shared/protocol.ts, and content/items.ts imports TYPES ONLY (from
+// engine/derived.ts). So this edge is persist -> content -> shared and stops
+// there. It does not put engine code on the save path and it closes no cycle.
+import { resolveItem } from '../content/resolve.ts';
 import { CURRENT_VERSIONS, MigrateOutcome, SchemaKind, migrateDoc } from './migrate.ts';
 import { backupPathFor, errorCode, writeFileAtomic } from './atomic.ts';
 import type { AtomicWarning, AtomicWriteOptions } from './atomic.ts';
@@ -494,7 +495,7 @@ export type CharacterFile = {
    * shipping a new default reaches every player who never touched that action.
    *
    * ═══ THE ACTION ID IS A SOFT REFERENCE — THE `classId` RULE, NOT `equipped`'s ═══
-   * The note on the `itemById` import (:151-181) draws the line and this field
+   * The note on the `resolveItem` import (:151-182) draws the line and this field
    * lands on the talent side of it. A TALENT ID CARRIES A NUMBER; AN ITEM ID
    * CARRIES NOTHING. A key string carries a MEANING — `key:h`, `code:Numpad8`
    * is a physical press, readable and restorable with no registry anywhere in
@@ -1010,7 +1011,7 @@ function parseEffects(value: unknown, problems: string[]): SavedEffect[] {
  * WHAT IS WORN, VALIDATED AGAINST THE CATALOGUE. Slot name -> item id.
  *
  * ═══ WHY THIS VALIDATES WHERE `parseTalentPoints` KEEPS THE KEY VERBATIM ═══
- * See the note on the `itemById` import: a talent id carries a number that means
+ * See the note on the `resolveItem` import: a talent id carries a number that means
  * something without the registry, an item id carries nothing at all. There is a
  * second reason that is specific to this field — `equipped` is the only place in
  * the file where TWO values have to AGREE. A slot key and an item id are
@@ -1049,7 +1050,7 @@ function parseEquipped(value: unknown, problems: string[]): Record<string, strin
       problems.push(`equipped.${slot}: not an item id — dropped`);
       continue;
     }
-    const item = itemById(id);
+    const item = resolveItem(id);
     if (item === undefined) {
       problems.push(`equipped.${slot}: '${id}' is not an item this build knows — dropped`);
       continue;
@@ -1101,7 +1102,7 @@ function parseCarried(
       problems.push(`carried[${index}]: not an item id — dropped`);
       continue;
     }
-    if (itemById(id) === undefined) {
+    if (resolveItem(id) === undefined) {
       problems.push(`carried[${index}]: '${id}' is not an item this build knows — dropped`);
       continue;
     }

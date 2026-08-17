@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  ITEMS,
-  ITEM_CATALOGUE,
-  SLOT_ORDER,
-  Slot,
-  itemById,
-} from '../../src/server/content/items.ts';
+import { ITEMS, SLOT_ORDER, Slot, itemById } from '../../src/server/content/items.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
 import { composeSheet, wornOf } from '../../src/server/engine/equipment.ts';
 import {
   createEffectState,
@@ -311,13 +306,13 @@ describe('equip and unequip round-trip exactly', () => {
 
     const equip = (slot: Slot, id: string): void => {
       actor.equipped = { ...actor.equipped, [slot]: id };
-      recomposeCombat(actor, null, ITEM_CATALOGUE);
+      recomposeCombat(actor, null, resolveItem);
     };
     const unequip = (slot: Slot): void => {
       const next = { ...actor.equipped };
       delete next[slot];
       actor.equipped = next;
-      recomposeCombat(actor, null, ITEM_CATALOGUE);
+      recomposeCombat(actor, null, resolveItem);
     };
 
     equip(Slot.Head, 'item_watchmans_cap'); // 1
@@ -372,17 +367,17 @@ describe('equip and unequip round-trip exactly', () => {
     // class-choice.test.ts and class-wiring.test.ts — those assertions are how
     // those suites say "the class was applied WHOLESALE, never blended".
     const actor = fixtureActor();
-    recomposeCombat(actor, null, ITEM_CATALOGUE);
+    recomposeCombat(actor, null, resolveItem);
     expect(actor.combat).toBe(BASE);
   });
 
   it('is idempotent — recomposing twice changes nothing', () => {
     const actor = fixtureActor();
     actor.equipped = { [Slot.Body]: 'item_watchmans_coat' };
-    recomposeCombat(actor, null, ITEM_CATALOGUE);
+    recomposeCombat(actor, null, resolveItem);
     const once = structuredClone(actor.combat);
-    recomposeCombat(actor, null, ITEM_CATALOGUE);
-    recomposeCombat(actor, null, ITEM_CATALOGUE);
+    recomposeCombat(actor, null, resolveItem);
+    recomposeCombat(actor, null, resolveItem);
     expect(actor.combat).toEqual(once);
     // AND THE CONTRIBUTION IS PRESENT EXACTLY ONCE. If `recomposeCombat` folded
     // onto the LIVE sheet rather than onto `baseCombat`, this would read 14 then
@@ -441,7 +436,7 @@ describe('gear, statuses and re-clothing all write one sheet without treading on
     const GEARED_ARMOUR = 10;
     const GEARED_HARDINESS = 50;
     actor.equipped = { [Slot.Body]: 'item_watchmans_coat' };
-    recomposeCombat(actor, state, ITEM_CATALOGUE);
+    recomposeCombat(actor, state, resolveItem);
     expect(combatArmor(actor.combat ?? {})).toBe(GEARED_ARMOUR);
     expect(combatArmorHardiness(actor.combat ?? {})).toBe(GEARED_HARDINESS);
 
@@ -483,7 +478,7 @@ describe('gear, statuses and re-clothing all write one sheet without treading on
 
     // --- and taking the coat off returns everything ------------------------
     actor.equipped = {};
-    recomposeCombat(actor, state, ITEM_CATALOGUE);
+    recomposeCombat(actor, state, resolveItem);
     expect(combatArmor(actor.combat ?? {})).toBe(6);
     expect(combatArmorHardiness(actor.combat ?? {})).toBe(40 / 2);
     expect(actor.combat?.flags?.scoured).toBe(true);
@@ -555,7 +550,7 @@ describe('wornOf', () => {
         body: 'item_watchmans_coat',
         ring: 'item_watchmans_brass_ring',
       },
-      ITEM_CATALOGUE,
+      resolveItem,
     );
     const backwards = wornOf(
       {
@@ -563,7 +558,7 @@ describe('wornOf', () => {
         body: 'item_watchmans_coat',
         head: 'item_watchmans_cap',
       },
-      ITEM_CATALOGUE,
+      resolveItem,
     );
 
     expect(forwards.map((i) => i.id)).toEqual([
@@ -579,8 +574,8 @@ describe('wornOf', () => {
   });
 
   it('answers empty for an actor that has never equipped anything', () => {
-    expect(wornOf(undefined, ITEM_CATALOGUE)).toEqual([]);
-    expect(wornOf({}, ITEM_CATALOGUE)).toEqual([]);
+    expect(wornOf(undefined, resolveItem)).toEqual([]);
+    expect(wornOf({}, resolveItem)).toEqual([]);
   });
 
   it('REPAIRS rather than rejects: an unknown id and a mis-filed slot are skipped', () => {
@@ -597,7 +592,7 @@ describe('wornOf', () => {
         feet: 'item_watchmans_coat',
         legs: 'item_watchmans_trousers',
       },
-      ITEM_CATALOGUE,
+      resolveItem,
     );
     expect(worn.map((i) => i.id)).toEqual(['item_watchmans_trousers']);
   });

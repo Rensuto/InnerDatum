@@ -27,7 +27,8 @@ import { ErasedReason, ErrorCode, PartyAction, TalentShape } from '../shared/pro
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type { LoadoutTalent, ResourceView, TurnEvent } from '../shared/protocol.ts';
 import { seedTestEncounter } from './content/encounter.ts';
-import { SLOT_ORDER, itemById } from './content/items.ts';
+import { SLOT_ORDER } from './content/items.ts';
+import { resolveItem } from './content/resolve.ts';
 import { HOLD_INTENT, IntentKind, cooldownOf } from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
 import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
@@ -592,7 +593,7 @@ function spillOrderOf(actor: Actor): readonly string[] {
   const take = (id: string | undefined): void => {
     if (id === undefined || seen.has(id)) return;
     // The catalogue is the only thing that can tell a live id from a stale one.
-    if (itemById(id) === undefined) return;
+    if (resolveItem(id) === undefined) return;
     seen.add(id);
     out.push(id);
   };
