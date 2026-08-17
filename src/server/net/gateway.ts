@@ -188,6 +188,16 @@ import type { ClassDef } from '../content/classes.ts';
 import type { Slot } from '../content/items.ts';
 import type { PlayerActor } from '../engine/actor.ts';
 import type { PartyOffer, TurnState } from '../view/projector.ts';
+/**
+ * THE REGISTRY OF PLACES, AND IT IS A TYPE-ONLY EDGE.
+ *
+ * `import type` erases completely, so net/ gains no runtime dependency on
+ * world/realms.ts — which matters here more than usual, because realms.ts
+ * imports `createTurnEngine` and turn-engine.ts imports `TurnEngine` back out of
+ * THIS file. That triangle only stays acyclic at runtime because both of those
+ * arrows are type-only; a value import here would close the loop.
+ */
+import type { Realms } from '../world/realms.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
 /**
@@ -330,6 +340,24 @@ type Session = {
   readonly socket: GatewaySocket;
   /** Set once, at `hello`. The only place an identity is ever established. */
   actorId: string | null;
+  /**
+   * WHICH PLACE THIS SOCKET'S BODY IS IN, or null for "the default one".
+   *
+   * NULL IS A REAL ANSWER AND NOT AN UNINITIALISED ONE. It means `opts.world` /
+   * `opts.engine` — the single world this gateway was built around — and it is
+   * what a socket carries from the moment it opens until something places its
+   * body in a named realm. A build with no `opts.realms` never leaves that
+   * state, which is precisely why adding this field changes nothing: see
+   * `realmFor`.
+   *
+   * PER CONNECTION RATHER THAN PER ACTOR, like `viewerKey` and the three memo
+   * keys beside it, and for a different reason: a resumed socket has to be told
+   * where its body is, and the body is the thing that knows. `hello` reads it
+   * back off the registry rather than trusting anything a client sent — there is
+   * no realm field on the wire and there never will be, for CLAUDE.md
+   * non-negotiable 5's reason.
+   */
+  realmId: string | null;
   helloDone: boolean;
   /**
    * `hello` is in flight. It is the one handler that awaits (it reads a
@@ -1438,8 +1466,35 @@ export type PersistPort = {
 };
 
 export type WsGatewayOptions = {
+  /**
+   * THE DEFAULT REALM — the world a session is in until it is told otherwise.
+   *
+   * KEPT BESIDE `realms` RATHER THAN REPLACED BY IT, and not as a transitional
+   * courtesy. A session's realm is `null` until something places its body
+   * somewhere else (see `Session.realmId`), and `null` resolves to exactly this
+   * pair. So every construction that predates realms — `{ world, engine }` and
+   * nothing more, which is what tools/e2e-m1.mjs and every gateway test build —
+   * keeps describing the whole game, with no branch anywhere below behaving
+   * differently than it did.
+   */
   readonly world: World;
   readonly engine: TurnEngine;
+  /**
+   * EVERYWHERE ELSE THERE IS TO BE. Absent → there is one world and it is the
+   * pair above, which is the M1-M10 shape of this server and still the right
+   * shape for a test that boots a floor in memory.
+   *
+   * OPTIONAL FOR THAT REASON AND NOT MERELY FOR CONVENIENCE. `realmFor` falls
+   * back to `{ world, engine }` when this is undefined, so wiring the registry
+   * in (src/server/main.ts, a later commit) is the ONLY thing that can change
+   * where a frame lands. Until then this file is realm-aware and single-world at
+   * the same time, which is what makes the change reviewable in two pieces
+   * rather than one.
+   *
+   * The SAME instance src/server/main.ts pumps. Two would be two answers to
+   * "which floor is Sam standing on".
+   */
+  readonly realms?: Realms;
   /** Defaults to ten minutes. Shorten it in tests, never in production. */
   readonly disconnectGraceMs?: number;
   /**
@@ -1738,6 +1793,48 @@ const INVENTORY_CAP = 12;
 export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts) => {
   const { world, engine } = opts;
   const disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULT_DISCONNECT_GRACE_MS;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH WORLD IS THIS FRAME ABOUT? — the one lookup every handler starts with.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Each handler destructures this into locals named `world` and `engine`, which
+   * SHADOW the two bindings above for the length of that function. That is the
+   * whole mechanism: the body of `handleMove` still reads `engine.submitMove`,
+   * `handlePickup` still reads `world.itemsAt`, and neither had to learn that
+   * more than one of either exists. A handler that referenced a realm through
+   * some third name would be a handler somebody could forget to convert, and the
+   * compiler would not say a word.
+   *
+   * ═══ THE TWO FALLBACKS ARE WHAT MAKE THIS COMMIT A NO-OP ═══
+   *
+   *   NO REGISTRY — `opts.realms` is undefined, which is every construction that
+   *   predates realms: tools/e2e-m1.mjs, every test under test/server/, and
+   *   src/server/main.ts until the commit that wires it. There is one world and
+   *   this returns it, unconditionally.
+   *
+   *   NO REALM ON THE SESSION — `session.realmId` is null, which is every socket
+   *   from the instant it opens until a body of its is placed in a named realm.
+   *   Same answer.
+   *
+   * ═══ AND A THIRD, WHICH IS ABOUT A REALM THAT WENT AWAY UNDERNEATH SOMEBODY
+   * ═══
+   * `Realms.close` refuses to close a realm that still holds a player body
+   * (realms.ts:396) precisely so this cannot happen in the ordinary course. It is
+   * still answered rather than asserted, because the consequence of being wrong
+   * is not a wrong frame but a dead process: a `get` returning undefined would
+   * throw inside a `ws` message handler, and this file's header is explicit that
+   * an escaping exception costs every player their session rather than one player
+   * their frame. Falling back to the overworld-shaped default leaves that socket
+   * rendering a place it is not in — visibly wrong, recoverable by reconnecting,
+   * and logged by whatever closed the realm. Wrong beats gone.
+   */
+  const realmFor = (session: Session): { world: World; engine: TurnEngine } => {
+    if (opts.realms === undefined || session.realmId === null) return { world, engine };
+    const realm = opts.realms.get(session.realmId);
+    return realm === undefined ? { world, engine } : { world: realm.world, engine: realm.engine };
+  };
 
   /** Every live connection, keyed by connection id. The broadcast list. */
   const sessions = new Map<string, Session>();
@@ -2503,11 +2600,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * the boss, what they can no longer escape with — and leaking them is a build
    * failure here rather than a rule someone has to remember while adding a fifth
    * viewer frame at one in the morning.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `realmId` IS LAST AND OPTIONAL, AND OMITTING IT IS THE PRE-REALM BEHAVIOUR
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Omitted, this goes to EVERY session that has completed `hello`, which is
+   * exactly what it did before realms existed and what all nineteen call sites
+   * in this file still ask for. That is deliberate for this commit: the audience
+   * of a `moved` or a `sweep` is a question about where the two bodies are, and
+   * answering it site by site is a behaviour change that belongs in the commit
+   * that actually moves players — not in the one that adds the parameter.
+   *
+   * Passed, it skips every session whose `realmId` differs, INCLUDING the
+   * null-vs-named case: a socket still on the default world is not in
+   * `realm:underworks:3`, and a frame about a floor you are not standing on is
+   * either noise or a leak. That is the narrowing the follow-up commit turns on,
+   * one call site at a time, with the argument for each written where it goes.
    */
-  const broadcast = (msg: BroadcastMsg, exceptConnId?: string): void => {
+  const broadcast = (msg: BroadcastMsg, exceptConnId?: string, realmId?: string): void => {
     for (const session of sessions.values()) {
       if (!session.helloDone) continue;
       if (session.connId === exceptConnId) continue;
+      if (realmId !== undefined && session.realmId !== realmId) continue;
       send(session.socket, msg);
     }
   };
@@ -4082,6 +4196,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * rejection and therefore a dead process, so the whole body is wrapped.
    */
   const handleHello = async (session: Session, msg: ClientHello): Promise<void> => {
+    const { world, engine } = realmFor(session);
     if (session.helloDone || session.helloPending) {
       sendError(session.socket, ErrorCode.BadMessage, 'hello has already been completed');
       return;
@@ -4120,6 +4235,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const actor = resolved.actor;
     session.actorId = actor.id;
+    // ═══ AND WHERE THAT BODY IS, READ BACK OFF THE REGISTRY ═══
+    // `resolveActor` placed it (or found it already placed) in the world
+    // `realmFor` handed this function, so this is a read of the fact rather than
+    // a second decision about it — which is what keeps the routing and the
+    // placement from ever being two different answers. `realmOf` is a scan over
+    // realms, run once per `hello`; with no registry it is not run at all and the
+    // field stays null, which is the pre-realm state and the reason this line is
+    // behaviour-neutral today.
+    session.realmId = opts.realms?.realmOf(actor.id)?.id ?? null;
     session.helloDone = true;
 
     // The body is attended again: cancel the recall and clear Standing By. Order
@@ -4347,6 +4471,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   const handleMove = (session: Session, msg: ClientMove): void => {
+    const { engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before moving');
@@ -4392,6 +4517,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * people are aiming.
    */
   const handleTalent = (session: Session, msg: ClientTalent): void => {
+    const { engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before using a talent');
@@ -4418,6 +4544,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * and the error path, which is where a divergence would eventually hide.
    */
   const handleTurnVerb = (session: Session, verb: 'commit' | 'hold'): void => {
+    const { engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, `send hello before ${verb}`);
@@ -4807,6 +4934,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * escape into. eslint.config.js § group 6 is the other half of that guarantee.
    */
   const handleSay = (session: Session, msg: ClientSay): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before speaking');
@@ -4838,6 +4966,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * 4000) is a marker nobody can see attached to a log line that lies.
    */
   const handlePoint = (session: Session, msg: ClientPoint): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before pointing');
@@ -4905,6 +5034,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * selected.
    */
   const handleInspect = (session: Session, msg: ClientInspect): void => {
+    const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before inspecting');
@@ -5007,6 +5137,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * sender nothing must not be a way to make the server advance the world.
    */
   const handleChooseClass = (session: Session, msg: ClientChooseClass): void => {
+    const { world, engine } = realmFor(session);
     // A NARROWING, NOT A GATE. The dispatch switch sits below the `helloDone`
     // check, so this branch is unreachable without an actor; the compiler still
     // needs the null gone, and answering honestly beats a non-null assertion.
@@ -5276,6 +5407,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * of "this was a real press".
    */
   const handleSpendPoint = (session: Session, msg: ClientSpendPoint): void => {
+    const { world, engine } = realmFor(session);
     // A NARROWING, NOT A GATE — the dispatch switch sits below the `helloDone`
     // check, so this branch is unreachable without an actor. The compiler still
     // needs the null gone, and answering honestly beats a non-null assertion.
@@ -5742,6 +5874,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * persistence when it is here.
    */
   const handlePickup = (session: Session): void => {
+    const { world } = realmFor(session);
     const body = lootActor(session, 'pickup');
     if (body === undefined) return;
 
@@ -5978,6 +6111,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * of it that makes the social answer possible at all.
    */
   const handleDrop = (session: Session, msg: ClientDrop): void => {
+    const { world } = realmFor(session);
     const body = lootActor(session, 'drop');
     if (body === undefined) return;
 
@@ -6023,6 +6157,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * prints the server's own sentence for exactly that class of failure.
    */
   const handleRevive = (session: Session, msg: ClientRevive): void => {
+    const { engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before reviving');
@@ -6074,6 +6209,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * done here, in the order the pump would have done them.
    */
   const handleRespawn = (session: Session): void => {
+    const { world, engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before respawning');
@@ -6148,6 +6284,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * change costs one string compare and sends nothing.
    */
   const handleParty = (session: Session, msg: ClientParty): void => {
+    const { engine } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before forming a party');
@@ -6258,6 +6395,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * leaving a menu open.
    */
   const handleSetKeybinds = (session: Session, msg: ClientSetKeybinds): void => {
+    const { world } = realmFor(session);
     // A NARROWING, NOT A GATE — `handleChooseClass`'s shape. The dispatch switch
     // sits below the `helloDone` check so this branch is unreachable without an
     // actor; the compiler still needs the null gone, and answering honestly beats
@@ -6542,6 +6680,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       connId: randomUUID(),
       socket,
       actorId: null,
+      // NULL IS "THE DEFAULT WORLD", not "not yet known" — see `Session.realmId`
+      // and `realmFor`. A socket with no body cannot be anywhere, and a build
+      // with no `opts.realms` never leaves this value.
+      realmId: null,
       helloDone: false,
       // Set true for the whole of `hello`, attempted or completed, and never
       // cleared: one hello per connection. A socket whose hello failed hard
