@@ -485,7 +485,17 @@ describe('the projectiles frame', () => {
     // combat sheet, `ActorView.maxHp` and `InspectView.rows` stop being facts
     // about a CLASS and become facts about a class PLUS its gear. A field a v9
     // client already knows how to read, now silently meaning something narrower.
-    expect(PROTOCOL_VERSION).toBe(10);
+    // THE ABSOLUTE PIN LIVES IN test/shared/version.test.ts AND ONLY THERE.
+    // It was duplicated here, and the duplicate did exactly what a duplicated
+    // pin does: the 10 -> 11 bump for the overworld's `realm` frame broke a test
+    // about the PROJECTILES frame, in a file that has nothing to say about
+    // versioning. Two places to update is one place to forget, and a pin that
+    // fails for an unrelated reason trains people to bump numbers without
+    // reading the argument attached to them.
+    //
+    // What this test actually needs is the RELATIVE claim — that the frame on
+    // the wire carries the version this build compiled against — which is a
+    // real thing to get wrong here and is unaffected by any bump.
     expect(welcome?.['v']).toBe(PROTOCOL_VERSION);
 
     const seen = await rejoined.waitFor('projectiles');

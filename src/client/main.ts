@@ -777,6 +777,22 @@ function setMarginText(speaker: string | undefined, text: string): void {
 const actors = new Map<string, ActorView>();
 let level: LevelView | null = null;
 let selfId: string | null = null;
+/**
+ * WHERE THIS CLIENT IS, as the server last stated it.
+ *
+ * Both null until a `realm` frame arrives, which is the honest state: `welcome`
+ * does not carry a realm, so a freshly connected client genuinely does not know
+ * the name of the place it is standing in and must not invent one. Anything
+ * rendering these has to handle null rather than defaulting to 'Alderbrook' —
+ * a label that is confidently wrong is worse than a label that is absent.
+ *
+ * `realmKind` is a bare string rather than a union on purpose: it is a HUD
+ * affordance ("is there combat here"), and a client that meets a kind a newer
+ * server invented should fall through to the cautious branch rather than fail
+ * to compile against a protocol it cannot see.
+ */
+let realmKind: string | null = null;
+let realmName: string | null = null;
 let connection = 'connecting';
 let lastError: string | null = null;
 
@@ -3319,6 +3335,20 @@ async function boot(): Promise<void> {
   function updateStatus(): void {
     const me = selfId === null ? undefined : actors.get(selfId);
     const parts = [connection, turnPhase()];
+    // WHERE YOU ARE, FIRST AFTER THE PHASE, and only once the server has said.
+    // This is the aria-live region, so it is the ONLY way a player using a
+    // screen reader learns they have changed place at all — the canvas can show
+    // a new map, but a map is not something the live region can announce.
+    //
+    // Null until a `realm` frame arrives. Nothing is pushed in that case rather
+    // than guessing 'Alderbrook': `welcome` carries no realm, and a confidently
+    // wrong location is worse than an absent one.
+    if (realmName !== null) {
+      // A town or the city is stated as safe, because that is the RULE and not
+      // just the scenery: no hostiles means nothing ever makes you wait, and a
+      // player needs to know that changed without waiting to be attacked.
+      parts.push(realmKind === 'inner' ? realmName : `${realmName} — safe`);
+    }
     // THE CRIMSON FRAME'S ACCESSIBLE TWIN, and it is a persistent state rather
     // than an event on purpose. `#log` is the aria-live region, and it is
     // announced only when the whole string changes — so this line says itself
@@ -7495,6 +7525,71 @@ function applyServerMessage(msg: ServerMsg): void {
       reviveArmed = false;
       caseLog?.clear();
       setMarginText(undefined, '');
+      break;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * YOU WALKED THROUGH A DOOR. A NEW MAP, AND ONLY WHAT THE MAP OWNS RESET.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This arm is deliberately NOT a second `welcome`, and the list of what it
+     * does NOT clear is the entire design. `welcome` is the reconnect path: it
+     * empties the case log, the party pane, the invites and the bag, and it is
+     * entitled to, because a resume genuinely starts a new session and `seq`
+     * restarts with it.
+     *
+     * Stepping into the office is not a new session. The rule applied below is
+     * one question per piece of state — IS THIS A FACT ABOUT THE MAP?
+     *
+     *   CLEARED, because it describes a map that is no longer under you: the
+     *   route, the pings, the orbs in flight, the floor, the hover cards, the
+     *   targeting ring, the armed talent, the turn strip and the Bell. Each is
+     *   the same argument `welcome` makes — a stale orb is a thing a player
+     *   gets up and RUNS from; a stale pile is one they walk across the map for
+     *   and then say out loud that a friend took it.
+     *
+     *   KEPT, because a door does not change any of it: the case log (the
+     *   conversation continues), the party and its invites (membership is a
+     *   social fact that outlives every map, and is the very thing that decided
+     *   which instance you are standing in), the bag (it came with you), and
+     *   progress (you are the same character).
+     *
+     * `effects` IS THE ONE JUDGEMENT CALL. The badges are still true — the same
+     * body carries the same statuses through a door — but they are keyed by
+     * actor id and most of those actors are not here any more. Cleared, and the
+     * next pump restates them: one frame of a missing badge beats a badge
+     * attached to somebody standing on another map.
+     */
+    case 'realm':
+      selfId = msg.selfId;
+      level = msg.level;
+      replaceActors(msg.actors);
+      realmKind = msg.kind;
+      realmName = msg.name;
+      lastError = null;
+
+      // Mid-flight and about to be about the wrong world — the same four
+      // `welcome` settles, for the same reason.
+      sweep?.settle();
+      turn = null;
+      bellEndsAt = null;
+      combatBanner?.reset();
+
+      // Aimed at, drawn on, or routed across a map that is no longer under us.
+      targeting?.cancel();
+      pendingTalentId = null;
+      talentsArmedId = null;
+      tokenMenu?.close();
+      cancelTravel();
+      forgetInspections();
+      pings = [];
+      projectiles = clearProjectiles();
+      ground = [];
+      effects = new Map();
+      reviveArmed = false;
+
+      // NOT cleared, and each one is load-bearing: caseLog, party, partyState,
+      // inviteDeadlines, inventory, progress. See the block above.
+      setMarginText(undefined, `You are in ${msg.name}.`);
       break;
     case 'state':
       // The dumb recovery path: a full list replaces everything known.

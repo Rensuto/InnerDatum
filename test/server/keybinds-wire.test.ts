@@ -862,16 +862,29 @@ describe('set_keybinds, over a real socket', () => {
 // ===========================================================================
 
 describe('neither version number moves for a keyboard preference', () => {
-  it('PROTOCOL_VERSION stays 10', () => {
+  it('did not move PROTOCOL_VERSION, which has since moved for something else', () => {
     // A bump is forced by what an OLD CLIENT would silently get WRONG, never by
     // an addition it can ignore (protocol.ts:127-128). `set_keybinds` is inbound,
-    // so a v10 client never sends one; `keybinds` is outbound and
+    // so an older client never sends one; `keybinds` is outbound and
     // `applyServerMessage` has no `default:` arm, so a client that cannot name it
     // drops it and keeps its compiled defaults. No field narrowed, no `TurnEvent`
     // variant, no `ErrorCode` member, and nothing writes a keymap on behalf of a
     // client that did not send one — so there is no v8-style one-way door either.
-    // Bumping refuses every shipped client for none of that.
-    expect(PROTOCOL_VERSION).toBe(10);
+    // Bumping would have refused every shipped client for none of that.
+    //
+    // ═══ THIS ASSERTION IS ABOUT A CAUSE, NOT ABOUT A NUMBER ═══
+    // The constant was 10 when this suite was written and is 11 now, moved by
+    // the overworld's `realm` frame — the first frame other than `welcome` to
+    // carry a `LevelView`. That is somebody else's bump and it does not weaken
+    // the argument above; keybinds still did not force one.
+    //
+    // So this pins the FLOOR rather than the value. Re-pinning it to today's
+    // number on every unrelated bump is how a test quietly turns into a
+    // restatement of the constant, which proves nothing and fails for reasons
+    // that have nothing to do with keyboards. What must never happen is the
+    // version moving BECAUSE of a keyboard preference, and the guard for that is
+    // the changelog entry in src/shared/version.ts, which names its own cause.
+    expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(10);
   });
 
   it('SCHEMA_VERSION stays 1', () => {

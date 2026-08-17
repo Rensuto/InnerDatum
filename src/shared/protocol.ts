@@ -3649,8 +3649,51 @@ export type ErrorMsg = {
  * intended cost of extending this union: a new frame nobody handles is a frame
  * that silently does nothing.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * YOU ARE SOMEWHERE ELSE NOW. The frame that carries a new map mid-session.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * WHY THIS IS NOT A SECOND `welcome`. `welcome` was the only frame carrying a
+ * `LevelView`, so re-sending it is the obvious way to deliver a new map — and
+ * it is wrong, because `welcome` is also the RESUME frame. The client's handler
+ * for it clears the case log, the party panel, the invite deadlines, the floor,
+ * the bag, the orbs in flight, the pings, the badges, the turn strip and the
+ * Bell, and it is entitled to: a resume genuinely starts a new session, and the
+ * case log's `seq` restarts with it.
+ *
+ * Walking through a door is not a new session. Losing the transcript of the
+ * conversation you were having, and the bag you were carrying, because you
+ * stepped into the office would be a bizarre thing for a door to do.
+ *
+ * So this frame carries exactly what CHANGES when a body moves between realms —
+ * the map, who is on it, and where you are — and says nothing about everything
+ * that does not, which the client therefore keeps.
+ *
+ * VIEWER-SCOPED, and that is not an optimisation. A realm change is true for
+ * exactly one person: the map in it is the map THEY are now looking at. Sent to
+ * the room, it would hand everybody else a level they are not standing on, and
+ * `ViewerMsg` membership makes `broadcast(realmChangeMsg)` a compile error
+ * rather than a rule somebody has to remember at one in the morning.
+ */
+export type RealmMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'realm';
+  /** Opaque. The client echoes nothing and stores it only to ignore stale frames. */
+  realmId: string;
+  /** `overworld` | `common` | `inner`. Drives HUD affordances, not rendering. */
+  kind: string;
+  /** What the player calls this place. Shown; keep it prose. */
+  name: string;
+  level: LevelView;
+  actors: ActorView[];
+  /** Which actor in `actors` is the recipient — the client re-centres on it. */
+  selfId: string;
+};
+
 export type ServerMsg =
   | WelcomeMsg
+  | RealmMsg
   | StateMsg
   | MovedMsg
   | JoinedMsg
@@ -3798,7 +3841,11 @@ export type ViewerMsg =
   | ClassOptionsMsg
   | ProgressMsg
   | InventoryMsg
-  | KeybindsMsg;
+  | KeybindsMsg
+  // A realm change is true for exactly one person — the map in it is the map
+  // THEY are now standing on. Membership here makes `broadcast(realmMsg)` a
+  // compile error rather than a rule to remember. See `RealmMsg`.
+  | RealmMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

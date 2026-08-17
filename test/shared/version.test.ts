@@ -34,40 +34,35 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 10 — loot, equipment, and the floor it lies on', () => {
+  it('pins PROTOCOL_VERSION at 11 — a second map can arrive mid-session', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
     // comment still argues the previous version is worse than no pin, because it
     // reads as deliberate and is not.
     //
-    // v10 added four inbound verbs (`pickup`, `equip`, `unequip`, `drop`) and
-    // two outbound frames: `ground` broadcast, `inventory` per-recipient. NONE
-    // of the inbound four forces a bump — `respawn` set that precedent at v5 and
-    // it has held at every bump since — and `inventory` alone would not either,
-    // because an outbound frame an old client cannot name is one it ignores. No
-    // `TurnEvent` variant and no `ErrorCode` member were added, both
-    // deliberately, so neither of the two shapes this file records as
-    // INDEPENDENTLY forcing a bump applies.
+    // v11 adds ONE outbound frame, `realm`, and by the rule this file has
+    // applied since v5 that alone would NOT force a bump: an outbound frame an
+    // old client cannot name is one it ignores, and ignoring it is usually
+    // harmless.
     //
-    // WHAT FORCES IT IS THE PERMANENTLY-STUCK SHAPE, 5 -> 6's and 6 -> 7's. A v9
-    // client cannot name `ground`, so it draws no floor item — and it has no
-    // verb with which to take one. Both halves fail at once, which is worse than
-    // the orb at 6 -> 7: the orb announced itself by landing on you, and a coat
-    // on the floor announces itself to nobody. The drop arrives as a `log` line
-    // the client renders as prose it cannot act on, while the party divides loot
-    // around it in a voice channel. Every item that drops for that party is gone
-    // for the evening, silently, with the screen looking entirely normal.
+    // IT IS NOT HARMLESS HERE, and that is the entire argument. `realm` is the
+    // first frame other than `welcome` ever to carry a `LevelView`. For the
+    // whole of v1-v10 a client could assume the map handed to it at `hello` was
+    // its map for the lifetime of the connection — and every v10 client is
+    // ENTITLED to that assumption, because it was true when it was built.
     //
-    // AND INDEPENDENTLY, `ActorView.maxHp` and `InspectView.rows` NARROWED from
-    // class facts to class-plus-gear facts once worn items fold onto the combat
-    // sheet — the same shape as 8 -> 9's `LoadoutTalent.range`, in the frames
-    // every player looks at rather than in one talent's ring. The bump log in
-    // src/shared/version.ts is the long version.
-    expect(PROTOCOL_VERSION).toBe(10);
+    // A v10 client dropping the frame keeps rendering Alderbrook while the
+    // server moves its body into an instance. It draws its own token standing
+    // in a canal, its friends walking through terraces, and every step refused
+    // by a server reading a different grid. This is the PERMANENTLY-STUCK shape
+    // that forced 6 -> 7 and 9 -> 10, in its worst form yet: at 9 -> 10 a coat
+    // on the floor announced itself to nobody, but the screen was at least
+    // telling the truth about the room. Here the screen itself is the lie.
+    expect(PROTOCOL_VERSION).toBe(11);
   });
 
-  it('keeps the 9 -> 10 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 10 -> 11 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -86,7 +81,7 @@ describe('shared constants', () => {
       'utf8',
     );
 
-    const afterHeading = source.split('9 -> 10')[1] ?? '';
+    const afterHeading = source.split('10 -> 11')[1] ?? '';
     // The entry ends where the constant it explains begins.
     const entry = afterHeading.split('export const PROTOCOL_VERSION')[0] ?? '';
 
@@ -95,7 +90,7 @@ describe('shared constants', () => {
     // It must name the frame that FORCES the bump, not merely list what was
     // added — an entry that only enumerates additions is an entry arguing for
     // NOT bumping.
-    expect(entry).toContain('ground');
+    expect(entry).toContain('realm');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');

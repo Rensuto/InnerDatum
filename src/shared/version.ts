@@ -428,8 +428,31 @@
  * QUARANTINE the character file in every older build and cost a friend the
  * evening. Two prior passes reached this decision and wrote the argument down; a
  * third must not undo it out of tidiness.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 10 -> 11 (THE OVERWORLD). A SECOND MAP CAN ARRIVE MID-SESSION: `realm`
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `ServerMsg` gains `RealmMsg`, and it is the first frame other than `welcome`
+ * that carries a `LevelView`. That is the bump: for the whole of v1-v10 a
+ * client could assume the map it was given at `hello` was the map for the
+ * lifetime of the connection, and every one of them is entitled to that
+ * assumption because it was true.
+ *
+ * A v10 client handed a `realm` frame would ignore it — an unknown `t` falls
+ * through its dispatch — and would then keep rendering Alderbrook while the
+ * server moved its body into an instance. It would draw its own token standing
+ * in a canal, its friends teleporting through terraces, and every step refused
+ * by a server reading a different grid. Silently, with no error on either end.
+ * That is precisely the failure the version gate exists to convert into an
+ * honest "your client is out of date".
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered rather than carried along. Nothing about
+ * a saved character changed shape in this pass: a body's realm is not persisted
+ * at all yet, and where a returning player is placed is decided by the join
+ * path rather than read from disk. When that changes it will be an OPTIONAL
+ * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a
