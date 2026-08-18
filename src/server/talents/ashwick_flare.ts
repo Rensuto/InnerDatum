@@ -60,8 +60,34 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. 4 of 6 AP: one flare a round, with a step left over. */
-const AP_COST = 4;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 3 OF 6, AND IT WAS 4 — THE ONE NUMBER THAT MADE THE BUDGET REAL FOR HER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `DECISIONS.md` D1 is Accepted and reads *"Intra-turn budget: 6 AP / 3 MP,
+ * spendable across several talents in one park"*. Every talent in the game is
+ * priced against that round; the engine has never enforced it, and the work to
+ * make it enforce it is under way.
+ *
+ * At 4, the Alchemist's kit was {4, 5, 4, 4} — Flare, Vial, Backdraft, Mend —
+ * and her cheapest PAIR was 8. **She had no two-talent round at all, ever.** So
+ * the feature the whole budget exists to create, sequencing two cheap actions
+ * instead of spending the round on one heavy one, would have shipped for two
+ * classes out of three and silently skipped hers.
+ *
+ * At 3 she has Flare twice, Flare and Mend, or Mend twice — a burst round, a
+ * mixed round, and a defensive round. That is the decision arriving, rather than
+ * the mechanism arriving and the decision not.
+ *
+ * ═══ IT COSTS NOTHING TODAY, WHICH IS WHY IT LANDS FIRST ═══
+ * One submitted action still ends the actor's turn and `actBase` refills the bar
+ * before anyone can observe it, so this deduction is currently unobservable.
+ * That is the point of landing the CONTENT before the ENGINE: no deploy is ever
+ * half-tuned, and if the numbers are wrong they are wrong while nobody can feel
+ * them.
+ */
+const AP_COST = 3;
 /**
  * FROZEN AT 1, and this is the Alchemist's whole gate. Reagents are a countable
  * stock of eight that only refills on a kill or at the stairs, so the cost IS

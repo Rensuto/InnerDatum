@@ -69,8 +69,20 @@ import {
 } from '../engine/talents.ts';
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
-/** FROZEN. 4 of 6 AP: the heal is the turn you did not spend killing anything. */
-const AP_COST = 4;
+/**
+ * 3 OF 6, AND IT WAS 4.
+ *
+ * The heal is still the turn you did not spend killing anything — a 6-AP round
+ * buys two Mends or nothing else worth having beside one. What it is NOT any
+ * more is the turn you did not spend doing ANYTHING else: at 3 it pairs with
+ * Ashwick Flare, so an Alchemist can answer a hurt friend and still contribute
+ * to the fight in the same round.
+ *
+ * That pairing is the whole reason this moved. See `ashwick_flare.ts` for the
+ * arithmetic — at 4 and 4 her cheapest pair was 8 against a budget of 6, so the
+ * Alchemist was the one class the intra-turn budget could never reach.
+ */
+const AP_COST = 3;
 /**
  * FROZEN AT 3 — the most expensive thing in the Alchemist's book, and it is
  * three-eighths of the whole stock. That price is what makes the party's only
