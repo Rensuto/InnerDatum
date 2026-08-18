@@ -2463,13 +2463,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
-   * A comparison key for "has this viewer's bag or doll changed?".
+   * A comparison key for "has this viewer's bag, doll or purse changed?".
    *
-   * The two ID LISTS and nothing derived from them. `compare` rows are a pure
-   * function of (`baseCombat`, `equipped`, the item) — so any change that could
-   * move a row moves one of these two fields FIRST, with the single exception of
-   * a class being chosen under a full bag, which `handleChooseClass` pushes
-   * explicitly for that reason.
+   * The two ID LISTS AND THE PURSE, and nothing derived from any of them.
+   * `compare` rows are a pure function of (`baseCombat`, `equipped`, the item) —
+   * so any change that could move a row moves one of the two lists FIRST, with
+   * the single exception of a class being chosen under a full bag, which
+   * `handleChooseClass` pushes explicitly for that reason.
+   *
+   * ═══ THE PURSE IS HERE BECAUSE GOLD MOVES WITHOUT EITHER LIST MOVING ═══
+   * A coin pile is not a bag entry — `handlePickup` credits `money` and puts
+   * nothing in `carried` (content/money.ts says why). So picking one up changed
+   * NEITHER list, this key did not move, and `sendInventoryIfChanged` sent
+   * nothing: the gold on the panel stayed where it was until the player
+   * happened to pick up or equip an item, at which point it jumped.
+   *
+   * That shipped. It is exactly the failure a memo key is for — a frame
+   * suppressed because the thing that changed was not in the key — and it is
+   * why anything `InventoryMsg` carries has to be in here, not merely anything
+   * the BAG carries.
    *
    * A string rather than a field-by-field compare, for `turnKey`'s stated
    * reason: `carried` is replaced rather than spliced (engine/actor.ts says so),
@@ -2477,7 +2489,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * reference to it would compare equal to itself forever.
    */
   const inventoryKeyOf = (actor: Actor): string =>
-    JSON.stringify([actor.carried ?? [], actor.equipped ?? {}]);
+    JSON.stringify([
+      actor.carried ?? [],
+      actor.equipped ?? {},
+      actor.kind === ActorKind.Player ? actor.money : 0,
+    ]);
 
   /**
    * THIS VIEWER'S BAG AND DOLL, unconditionally, updating the memo.

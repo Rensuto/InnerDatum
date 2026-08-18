@@ -12,6 +12,7 @@ import {
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
+import { moneyIdFor } from '../../src/server/content/money.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -504,6 +505,46 @@ describe('the four loot verbs advance the world', () => {
     // 4. `pickup` — off it again.
     expect(await moved({ t: 'pickup' })).toBe(true);
     expect(body.carried).toEqual(['item_watchmans_cap']);
+  });
+
+  it('SENDS THE NEW PURSE after a coin pickup, which the memo key used to suppress', async () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE BUG THIS PINS, AND IT SHIPPED.
+    // ═══════════════════════════════════════════════════════════════════════
+    // A coin pile is not a bag entry — `handlePickup` credits `money` and puts
+    // nothing in `carried` (content/money.ts says why). `inventoryKeyOf` hashed
+    // `[carried, equipped]` and nothing else, so picking one up moved NEITHER
+    // list, the key did not change, and `sendInventoryIfChanged` sent nothing:
+    // the gold on the panel sat still until the player happened to pick up or
+    // equip an item, at which point it jumped by however much they had earned
+    // since.
+    //
+    // It is the exact failure a memo key is for — a frame suppressed because
+    // the thing that changed was not in the key — and the rule it costs is
+    // worth writing down: anything `InventoryMsg` CARRIES has to be in that
+    // key, not merely anything the BAG carries.
+    server = await boot('coin-frame');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    await ren.settle();
+
+    const before = body.money;
+    server.world.addGroundItem({ x: 10, y: 10 }, moneyIdFor(14));
+    ren.clear();
+    ren.send({ t: 'pickup' });
+    await ren.settle();
+
+    // The purse really moved...
+    expect(body.money).toBe(before + 14);
+    // ...and it never entered the bag, which is the whole reason the key missed.
+    expect(body.carried ?? []).toEqual([]);
+    // ...and the client was TOLD. Before the fix there was no inventory frame
+    // here at all.
+    const inventory = ren.last('inventory');
+    expect(inventory).toBeDefined();
+    expect(inventory?.['money']).toBe(before + 14);
   });
 
   it('CHARGES the sender a turn mid-fight, where pumping alone charges nothing', async () => {
