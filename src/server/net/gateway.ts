@@ -56,7 +56,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import websocket from '@fastify/websocket';
 
-import { DIR_ORDER, dirVector, inBounds } from '../../shared/coords.ts';
+import { inBounds } from '../../shared/coords.ts';
 import {
   ActorKind,
   ErasedReason,
@@ -108,6 +108,7 @@ import { classById, classForJoin } from '../content/classes.ts';
 import { SLOT_ORDER } from '../content/items.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
+import { blurbFor } from '../content/places.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -5306,6 +5307,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND THE SHELVES, if this room has any. Silent everywhere else, which is
     // how a client knows not to offer the tab: no `shop` frame, no shop.
     sendShopIfAny(session);
+    // AND THE ROOM NAMES ITSELF. Last of the join frames on purpose: it is the
+    // first thing the player will READ, and it should be sitting under a board
+    // that is already drawn rather than above one that is not.
+    // THE NAME COMES OFF THE REGISTRY, not off `PumpTarget` — a gateway booted
+    // with no realms has one nameless fallback world, and "you are in ''" is
+    // worse than saying nothing. That build gets the blurb-free path.
+    announceArrival(session, realmFor(session), opts.realms?.get(realmFor(session).id)?.name ?? '');
 
     // THEIR OWN BAG AND DOLL, on the memo, which is seeded EMPTY. So a
     // brand-new character gets nothing (they own nothing, and the client already
@@ -5699,6 +5707,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // so this resolves to the room they arrived in — and silent when that room
     // has no shelves, which is what takes the tab away again.
     sendShopIfAny(session);
+    announceArrival(session, to, to.name);
     broadcast(
       {
         v: PROTOCOL_VERSION,
@@ -5869,6 +5878,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A town is the common destination, so this is the frame that makes the
     // shop tab appear at the moment somebody steps through the door.
     sendShopIfAny(session);
+    // AND THE ROOM SAYS WHAT IT IS. The one movement worth narrating — see
+    // `announceArrival`, and `recordFor`'s `move` case for why a step is not.
+    announceArrival(session, to, to.name);
 
     // AND THE TOKEN, TO EVERYONE ALREADY IN THERE. `joined` is how a body
     // appears on a client that has a board already; the crosser's own copy came
@@ -6318,15 +6330,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       .engine.loadoutOf(casterId)
       .find((talent) => talent.id === talentId)?.name ?? prettyId(talentId);
 
-  /** Which compass word a step took, or '' when the two tiles are not adjacent. */
-  const stepWord = (fromX: number, fromY: number, x: number, y: number): string => {
-    const dir = DIR_ORDER.find((candidate) => {
-      const vec = dirVector(candidate);
-      return fromX + vec.dx === x && fromY + vec.dy === y;
-    });
-    return dir === undefined ? '' : dir.toUpperCase();
-  };
-
   /**
    * One turn event -> zero or more Record lines.
    *
@@ -6335,18 +6338,44 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * headline and its `damage` and `death` are the consequences, which is why a
    * landed blow does not repeat the victim's name at depth 0.
    */
-  const recordFor = (event: TurnEvent, isSweep: boolean): { text: string; depth: number }[] => {
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * IT NO LONGER NEEDS TO KNOW WHETHER THIS WAS A SWEEP.
+   * ═════════════════════════════════════════════════════════════════════════
+   * The `isSweep` parameter existed for exactly one case: monster movement,
+   * suppressed so a room full of husks did not narrate every step. Now that no
+   * movement is narrated at all, the distinction has nothing left to decide —
+   * and a parameter nothing reads is a lie about what a function depends on.
+   */
+  const recordFor = (event: TurnEvent): { text: string; depth: number }[] => {
     switch (event.k) {
       case 'move': {
-        // PLAYERS ONLY. See the block comment above.
-        if (isSweep) return [];
-        const word = stepWord(event.fromX, event.fromY, event.x, event.y);
-        return [
-          {
-            text: word === '' ? `${nameOf(event.id)} moves.` : `${nameOf(event.id)} moves ${word}.`,
-            depth: 0,
-          },
-        ];
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * A STEP IS NOT NEWS. THE LOG IS FOR THINGS YOU CANNOT SEE.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * This used to emit `Ren moves E.` for every step by every player, and
+         * driving a real first session is what showed the cost: after a minute
+         * of walking, the Case Log's ENTIRE contents were seven identical
+         * movement lines. Not "mostly" — the log had nothing else in it at all.
+         *
+         * The panel is the most valuable strip of text on the screen and it was
+         * spending all of it narrating the one thing a player can already see:
+         * their own token, moving, on the map they are looking at. Every line
+         * that matters — a hit, a drop, a level, "Vell catches up", "Ren buys
+         * the coat" — was going to be pushed off the top by footsteps, and with
+         * six people walking around a shared overworld it would have scrolled
+         * faster than anybody could read.
+         *
+         * ToME's log agrees and always has: it narrates combat, pickups, level
+         * ups and effects. Walking is not in it.
+         *
+         * ARRIVALS ARE THE EXCEPTION AND THEY ARE SAID ELSEWHERE — see
+         * `announceArrival`. Crossing a threshold IS news, because the map
+         * changes under you and the people you left cannot see where you went.
+         */
+        return [];
       }
       case 'attack':
         return [
@@ -6477,8 +6506,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const lines: LogLine[] = [];
     const gameTurn = result.turn.gameTurn;
 
-    const emit = (event: TurnEvent, isSweep: boolean): void => {
-      for (const line of recordFor(event, isSweep)) {
+    const emit = (event: TurnEvent): void => {
+      for (const line of recordFor(event)) {
         logSeq += 1;
         lines.push({
           seq: logSeq,
@@ -6490,8 +6519,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       }
     };
 
-    for (const event of result.playerEvents) emit(event, false);
-    for (const event of result.sweep) emit(event, true);
+    for (const event of result.playerEvents) emit(event);
+    for (const event of result.sweep) emit(event);
 
     /**
      * ═════════════════════════════════════════════════════════════════════════
@@ -6600,6 +6629,69 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ],
       },
       undefined,
+      audienceFor(realm.id),
+    );
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * ARRIVING SOMEWHERE IS THE ONE MOVEMENT WORTH SAYING OUT LOUD.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A step is not news (`recordFor`'s `move` case says why). Crossing a
+   * threshold is: the map changes under you, and the people you just left
+   * cannot see where you went.
+   *
+   * TWO LINES, NOT ONE, and they say different things because the two audiences
+   * know different things. The arriver is told WHERE THEY ARE — they are
+   * looking at a board that changed a frame ago and nothing else on screen
+   * names it. The room is told WHO WALKED IN, which is the half they cannot
+   * see coming.
+   *
+   * A REALM WITH A DESCRIPTION SAYS IT ONCE, on arrival, to the person who
+   * arrived. That is the whole of this game's environmental writing today and
+   * it is deliberately one sentence: a paragraph nobody asked for, printed
+   * every time somebody re-enters a town, becomes something players learn to
+   * scroll past — and the log is where the things they must not scroll past
+   * live.
+   */
+  const announceArrival = (session: Session, realm: PumpTarget, name: string): void => {
+    const actorId = session.actorId;
+    if (actorId === null) return;
+
+    logSeq += 1;
+    const line = (text: string): LogLine => ({
+      seq: logSeq,
+      lane: LogLane.Record,
+      gameTurn: realm.world.turn.clock.gameTurn,
+      text,
+      depth: 0,
+    });
+
+    // TO THEM: where they are, and what it is.
+    const full = opts.realms?.get(realm.id);
+    const blurb = blurbFor(realm.id, full?.siteId);
+    // A NAMELESS REALM SAYS NOTHING AT ALL. A gateway booted with no registry
+    // has one fallback world with no name, and "you are in ''" is worse than
+    // silence — that build behaves exactly as it did before this existed.
+    if (name !== '') {
+      send(session.socket, {
+        v: PROTOCOL_VERSION,
+        t: 'log',
+        lines: blurb === undefined ? [line(name)] : [line(name), { ...line(blurb), depth: 1 }],
+      });
+    }
+
+    // TO EVERYBODY ELSE IN THE ROOM: who just walked in. Excluded from the
+    // arriver's own socket, which has the better version of this line above.
+    logSeq += 1;
+    broadcast(
+      {
+        v: PROTOCOL_VERSION,
+        t: 'log',
+        lines: [{ ...line(`${nameOf(actorId)} arrives.`), seq: logSeq }],
+      },
+      session.connId,
       audienceFor(realm.id),
     );
   };
