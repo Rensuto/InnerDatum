@@ -59,6 +59,7 @@ import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { SLOT_ORDER } from '../content/items.ts';
 import { isMoneyId } from '../content/money.ts';
+import { buyPrice, sellPrice } from '../content/shops.ts';
 import { resolveItem } from '../content/resolve.ts';
 import {
   combatAPR,
@@ -89,6 +90,8 @@ import type {
   EffectsMsg,
   GroundItemView,
   GroundMsg,
+  ShopItemView,
+  ShopMsg,
   InspectRow,
   InventoryMsg,
   ItemView,
@@ -1461,6 +1464,41 @@ export function projectInventory(viewer: Actor): InventoryMsg {
     equipped,
     money: viewer.kind === ActorKind.Player ? viewer.money : 0,
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT IS ON THE SHELVES, PRICED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * TAKES THE SHELF AND THE LEVEL RATHER THAN THE REALM, so this directory does
+ * not have to know what a `Realm` is — the same seam `bellMs` and `speaking`
+ * use, and the reason it can be tested with an array of strings.
+ *
+ * BOTH PRICES ARE COMPUTED HERE AND SENT. A client that derived them would be a
+ * second copy of the economy, and the first thing to drift would be the ~24:1
+ * spread — silently, because a wrong price still looks like a price.
+ *
+ * A SLOT THAT DOES NOT RESOLVE IS SKIPPED, exactly as `projectGroundItems`
+ * skips a floor item a content reload deleted. It is reachable the same way and
+ * deserves the same answer: show what can be shown rather than refusing the
+ * whole shelf over one row.
+ */
+export function projectShop(name: string, stock: readonly string[], level: number): ShopMsg {
+  const items: ShopItemView[] = [];
+  for (const itemId of stock) {
+    const item = resolveItem(itemId);
+    if (item === undefined) continue;
+    items.push({
+      itemId,
+      name: item.name,
+      icon: item.icon,
+      tier: item.tier,
+      buy: buyPrice(itemId, level),
+      sell: sellPrice(itemId),
+    });
+  }
+  return { v: PROTOCOL_VERSION, t: 'shop', name, stock: items };
 }
 
 /**

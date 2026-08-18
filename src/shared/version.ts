@@ -432,6 +432,29 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 17 -> 18 (SOMEWHERE TO SPEND IT). `ShopMsg` is a new outbound frame and
+ * `shop_buy` / `shop_sell` are two new inbound verbs.
+ *
+ * BY THE RULE THIS FILE HAS APPLIED SINCE 2 -> 3, A NEW OUTBOUND FRAME ALONE
+ * WOULD NOT FORCE A BUMP: an old client cannot name `shop`, so it falls through
+ * its dispatch and ignores it, and ignoring it is harmless here in a way it was
+ * NOT at 11 — a v17 client that never draws a shop tab is a client with no
+ * shop, which is exactly what it had yesterday. Nothing on its screen is a lie.
+ *
+ * IT BUMPS FOR THE INBOUND HALF. `shop_buy` and `shop_sell` are verbs the
+ * SERVER must be able to assume it will never receive from a client that has
+ * not been told what a shop is — and more sharply, a v17 client would be
+ * standing in a room where other people are visibly buying things it cannot
+ * see, with its own gold counter moving for reasons it cannot explain. That is
+ * not a missing line; it is a room that behaves differently for two people
+ * standing in it.
+ *
+ * `SCHEMA_VERSION` STAYS 1, for the fourth release running. A shop's shelves
+ * and its restock epoch are process state on a `Realm`, not character state:
+ * the shelf is a pure function of (world seed, shop, epoch), so a restart
+ * rebuilds it rather than reading it. What a restart loses is what was bought
+ * and sold today, which is the honest cost of not persisting realms at all yet.
+ *
  * 16 -> 17 (THEY ARE STILL IN YOUR PARTY). `PartyStateMember` gains a REQUIRED
  * `away`, and the client gains a `follow` verb.
  *
@@ -571,7 +594,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

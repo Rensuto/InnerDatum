@@ -477,9 +477,15 @@ const PANEL_TITLE = 'INVENTORY';
  * narrow panel loses characters off the end like any other long title, instead
  * of drawing over the close control.
  */
-function panelTitle(money: number): string {
-  if (!Number.isFinite(money) || money <= 0) return PANEL_TITLE;
-  return `${PANEL_TITLE}  ${String(Math.floor(money))} GOLD`;
+function panelTitle(money: number, shop?: { name: string; count: number } | null): string {
+  const purse = !Number.isFinite(money) || money <= 0 ? '' : `  ${String(Math.floor(money))} GOLD`;
+  // THE SHOP LAST, so the purse sits next to the title where a player already
+  // looks for it and the room's name reads as context rather than as a heading.
+  const here =
+    shop === null || shop === undefined
+      ? ''
+      : `  ·  ${shop.name.toUpperCase()} (${String(shop.count)})`;
+  return `${PANEL_TITLE}${purse}${here}`;
 }
 
 /**
@@ -1969,6 +1975,15 @@ export type InventoryPanelDrawOptions = {
    * which is what keeps the existing panel tests honest rather than updated.
    */
   readonly money?: number;
+  /**
+   * THE SHOP IN THIS ROOM, or null for a room with no shop.
+   *
+   * NAME AND COUNT ONLY, not the shelf itself. This panel does not sell
+   * anything yet; what it does is stop a player walking past a shop without
+   * knowing it is there, which is the single most expensive thing a town can do
+   * to a first session.
+   */
+  readonly shop?: { readonly name: string; readonly count: number } | null;
 };
 
 /**
@@ -1987,6 +2002,7 @@ export type InventoryPanelDrawOptions = {
 export function drawInventoryPanel(options: InventoryPanelDrawOptions): void {
   const { ctx, sprites, rect, rows, hoveredClose, focus, hovered, hoveredDrop } = options;
   const money = options.money ?? 0;
+  const shop = options.shop ?? null;
   if (rect.w <= 0 || rect.h <= 0) return;
 
   ctx.save();
@@ -1999,7 +2015,7 @@ export function drawInventoryPanel(options: InventoryPanelDrawOptions): void {
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
   ctx.clip();
 
-  drawHeader(ctx, sprites, panelTitle(money), rect, FONT_META);
+  drawHeader(ctx, sprites, panelTitle(money, shop), rect, FONT_META);
 
   const geometry = inventoryPanelGeometry(rect, rows);
   for (const placed of geometry.placed) {

@@ -2474,6 +2474,39 @@ const SetKeybindsSchema = z.strictObject({
  * party with is refused, and naming somebody you ARE in a party with takes you
  * to a room you were already entitled to walk into.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `shop_buy` / `shop_sell` — TWO VERBS, EACH NAMING ONE ITEM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * NEITHER NAMES A SUBJECT, a price, or a quantity, and all three omissions are
+ * the point:
+ *
+ *   NO SUBJECT. Who is buying comes from the session, like every other verb.
+ *   NO PRICE. A frame carrying what the client thinks it owes is a frame that
+ *     can be edited. The server prices it from `priceOf` and the margins, and
+ *     the number on screen is something the server sent in the first place.
+ *   NO QUANTITY. `Store.lua` carries `nb` for stacks; nothing here stacks, and
+ *     a count would be a second thing to bounds-check for no gain.
+ *
+ * `shop_buy` resolves the id against THE SHELF OF THE REALM THE SENDER IS
+ * STANDING IN, and `shop_sell` against the SENDER'S OWN BAG — the same shape
+ * `equip` and `drop` use, and the same reason: there is no cross-inventory
+ * lookup a forged id could reach into, so the worst a made-up one achieves is a
+ * refusal.
+ */
+const ShopBuySchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('shop_buy'),
+  itemId: z.string().min(1).max(ITEM_ID_MAX_CHARS),
+});
+
+const ShopSellSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('shop_sell'),
+  itemId: z.string().min(1).max(ITEM_ID_MAX_CHARS),
+});
+
 const FollowSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('follow'),
@@ -2496,6 +2529,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   EquipSchema,
   UnequipSchema,
   DropSchema,
+  ShopBuySchema,
+  ShopSellSchema,
   FollowSchema,
   PartySchema,
   InspectSchema,
@@ -2520,6 +2555,8 @@ export type ClientPickup = z.infer<typeof PickupSchema>;
 export type ClientEquip = z.infer<typeof EquipSchema>;
 export type ClientUnequip = z.infer<typeof UnequipSchema>;
 export type ClientDrop = z.infer<typeof DropSchema>;
+export type ClientShopBuy = z.infer<typeof ShopBuySchema>;
+export type ClientShopSell = z.infer<typeof ShopSellSchema>;
 export type ClientFollow = z.infer<typeof FollowSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
@@ -3622,6 +3659,81 @@ export type GroundMsg = {
 };
 
 /**
+ * ONE THING ON A SHOP'S SHELF, WITH BOTH PRICES ALREADY WORKED OUT.
+ *
+ * ═══ THE NUMBERS ARE THE SERVER'S, AND THE CLIENT MUST NOT DERIVE THEM ═══
+ * `buy` and `sell` are whole gold, computed from `priceOf` and the two margins
+ * (content/shops.ts). A client that recomputed them would be a second copy of
+ * the economy: the first thing to drift would be the ~24:1 spread, which is the
+ * single number that stops a shop being farmable, and it would drift silently
+ * because a wrong price still LOOKS like a price.
+ *
+ * Same rule `GroundItemView.tier` states for the floor marker, applied to the
+ * thing a player is about to spend on.
+ */
+export type ShopItemView = {
+  /** The instance id, and what `shop_buy` names. */
+  readonly itemId: string;
+  /** Already through the display-name filter; egos folded in. */
+  readonly name: string;
+  /** A manifest asset key, never a path. */
+  readonly icon: string;
+  readonly tier: ItemTier;
+  /** What it costs YOU, in whole gold. Never zero — nothing here is free. */
+  readonly buy: number;
+  /**
+   * What the shop would pay for one of these, in whole gold.
+   *
+   * SHOWN ON THE SHELF ON PURPOSE, even though you cannot sell a thing you have
+   * not bought. It is how a player learns the spread without being told it, and
+   * learning it is what makes the decision to sell a decision rather than a
+   * shrug.
+   */
+  readonly sell: number;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT IS ON THE SHELVES. A WHOLE-LIST REPLACEMENT, LIKE THE FLOOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Sent to everybody standing in a realm that HAS a shop, and never otherwise —
+ * a client that has had no `shop` frame has no shop, which is how it knows not
+ * to offer the tab.
+ *
+ * NOT A `ViewerMsg`, unlike `inventory`. A shelf is the same shelf for
+ * everybody in the room: two players looking at the same shop see the same four
+ * coats at the same prices, and one of them buying one is a fact the other
+ * needs immediately. `CarriedItemView.compare` is what makes the inventory
+ * viewer-private; nothing here is a delta against anybody's doll.
+ */
+export type ShopMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'shop';
+  /** The shop's name, for the tab. "Threadneedle Row". */
+  name: string;
+  /**
+   * EVERY item on the shelf, in the shop's own order — what it stocked first
+   * comes first, so a shelf reads as a history rather than as a leaderboard.
+   * The client must not sort it: `shop_buy` names an id, and two identical
+   * coats are two entries.
+   */
+  stock: readonly ShopItemView[];
+};
+
+/**
+ * ═══ WHY THE PURSE IS NOT ON THIS FRAME, THOUGH THE TAB NEEDS IT ═══
+ * A first draft carried `money` here so the shop tab could grey what you
+ * cannot afford. That was wrong twice over: a purse is per-VIEWER and this
+ * frame is a broadcast, so it would have been one player's balance sent to
+ * everybody in the room — and it would have been a second copy of a number
+ * `InventoryMsg` already carries, free to disagree with it.
+ *
+ * The tab reads the purse off the inventory frame instead, and a transaction
+ * sends BOTH, which is what keeps affordability from drawing one frame stale.
+ */
+
+/**
  * WHAT YOU ARE CARRYING, WHAT YOU ARE WEARING, AND WHAT SWAPPING WOULD DO.
  *
  * ONE FRAME FOR BOTH HALVES, WHICH IS THE PORT AND NOT A SIMPLIFICATION. ToME's
@@ -3941,6 +4053,7 @@ export type ServerMsg =
   | ClassOptionsMsg
   | ProgressMsg
   | GroundMsg
+  | ShopMsg
   | InventoryMsg
   | KeybindsMsg
   | PongMsg

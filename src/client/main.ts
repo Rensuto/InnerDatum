@@ -307,6 +307,7 @@ import type {
   GroundItemView,
   InspectView,
   InventoryMsg,
+  ShopMsg,
   ItemTier,
   LevelView,
   LoadoutTalent,
@@ -1515,6 +1516,14 @@ let ground: readonly GroundItemView[] = [];
  * already changed.
  */
 let inventory: InventoryMsg | null = null;
+/**
+ * THE SHELVES OF THE ROOM YOU ARE IN, or null for a room with no shop.
+ *
+ * NULL IS THE WHOLE SIGNAL. The server sends a `shop` frame only for a realm
+ * that HAS one, so "no frame" is how a client knows there is no shop here —
+ * there is no second "is there a shop" flag free to disagree with it.
+ */
+let shop: ShopMsg | null = null;
 
 /**
  * WAITING FOR A DIRECTION TO REVIVE IN.
@@ -2846,6 +2855,11 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // for why they ride together. `null` is a client that has not been sent an
       // inventory yet, which draws the plain title rather than "0 GOLD".
       money: inventory?.money ?? 0,
+      // THE ROOM'S SHELVES, when the room has any. The panel says the shop's
+      // name and how much is on it; the tab that lets you spend is the next
+      // step, and until it lands this is how a player learns a shop exists at
+      // all rather than walking past it.
+      shop: shop === null ? null : { name: shop.name, count: shop.stock.length },
     });
   }
 
@@ -7856,6 +7870,7 @@ function applyServerMessage(msg: ServerMsg): void {
       // correction, because the floor itself had not changed.
       ground = [];
       inventory = null;
+      shop = null;
       reviveArmed = false;
       caseLog?.clear();
       setMarginText(undefined, '');
@@ -8449,6 +8464,12 @@ function applyServerMessage(msg: ServerMsg): void {
         if (pinnedInspectId === selfId) refreshPinnedInspect();
       }
       refreshSelfSheet();
+      break;
+    case 'shop':
+      // A WHOLE-LIST REPLACEMENT, like the floor and the party: a client that
+      // dropped a frame is corrected by the next one rather than showing a coat
+      // somebody else bought twenty minutes ago.
+      shop = msg;
       break;
     case 'party':
       // COMPLETE, and low-frequency by construction — it changes when somebody

@@ -107,6 +107,9 @@ import { classById, classForJoin } from '../content/classes.ts';
  */
 import { SLOT_ORDER } from '../content/items.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
+import { partyMaxLevel } from '../content/loot.ts';
+import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
+import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
 /**
  * THE ONE ENGINE VALUE THIS FILE IMPORTS, AND IT IS A VOCABULARY WORD.
@@ -182,6 +185,7 @@ import {
   projectLoadout,
   projectParty,
   projectPartyState,
+  projectShop,
   projectProjectiles,
   projectResource,
   projectTurn,
@@ -219,6 +223,9 @@ import type {
   ClientChooseClass,
   ClientDrop,
   ClientFollow,
+  ClientShopBuy,
+  ClientShopSell,
+  ShopMsg,
   ClientEquip,
   ClientHello,
   ClientInspect,
@@ -2193,6 +2200,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * empty sky, missing row and all. See `NO_GROUND_KEY`.
    */
   const lastGroundKeys = new Map<string, string>();
+  /** Per realm, like the floor. A shelf is shared, so this is not per socket. */
+  const lastShopKeys = new Map<string, string>();
 
   /**
    * Actor id -> when that player last put a line in the Margin.
@@ -2431,6 +2440,54 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (key === (lastGroundKeys.get(realm.id) ?? NO_GROUND_KEY)) return;
     lastGroundKeys.set(realm.id, key);
     broadcast(msg, undefined, audienceFor(realm.id));
+  };
+
+  /**
+   * Build this realm's shop frame, or null when the realm has no shop.
+   *
+   * THE LEVEL IS THE PARTY'S, and it is read off the bodies standing here
+   * rather than off a party table: a shop prices for the room it is in, which
+   * is also the level its shelves were stocked for.
+   */
+  const shopFrameFor = (realm: PumpTarget): ShopMsg | null => {
+    const full = opts.realms?.get(realm.id);
+    if (full?.shop === undefined) return null;
+    const level = partyMaxLevel(
+      full.world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])),
+    );
+    return projectShop(
+      full.name,
+      full.shop.stock.map((slot) => slot.id),
+      stockLevelFor(level),
+    );
+  };
+
+  /**
+   * THE SHELVES, ON CHANGE, TO THE ROOM.
+   *
+   * A BROADCAST AND NOT A VIEWER FRAME, unlike the inventory: two players
+   * looking at one shop see the same four coats at the same prices, and one of
+   * them buying one is a fact the other needs immediately — otherwise the
+   * second player clicks a coat that is not there any more and gets a refusal
+   * for a reason their screen cannot explain.
+   */
+  const broadcastShopIfChanged = (realm: PumpTarget): void => {
+    const msg = shopFrameFor(realm);
+    if (msg === null) return;
+    const key = JSON.stringify(msg.stock);
+    if (key === lastShopKeys.get(realm.id)) return;
+    lastShopKeys.set(realm.id, key);
+    broadcast(msg, undefined, audienceFor(realm.id));
+  };
+
+  /**
+   * The shelves, to somebody who has just arrived — `welcome`, a resume, or a
+   * body that walked through the door. Unconditional, because a memo shared
+   * with the room says nothing about what THIS socket has seen.
+   */
+  const sendShopIfAny = (session: Session): void => {
+    const msg = shopFrameFor(realmFor(session));
+    if (msg !== null) send(session.socket, msg);
   };
 
   /**
@@ -5246,6 +5303,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // that frame is the level and the actors, and a ground item is neither.
     // Silent on an empty floor; see `sendGroundIfAny`.
     sendGroundIfAny(realmFor(session), session.socket);
+    // AND THE SHELVES, if this room has any. Silent everywhere else, which is
+    // how a client knows not to offer the tab: no `shop` frame, no shop.
+    sendShopIfAny(session);
 
     // THEIR OWN BAG AND DOLL, on the memo, which is seeded EMPTY. So a
     // brand-new character gets nothing (they own nothing, and the client already
@@ -5512,6 +5572,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     lastEffectsKeys.delete(realmId);
     lastProjectilesKeys.delete(realmId);
     lastGroundKeys.delete(realmId);
+    lastShopKeys.delete(realmId);
   };
 
   const reaps = new Map<string, NodeJS.Timeout>();
@@ -5634,6 +5695,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     to.engine.setConnected(actorId, true);
     session.realmId = to.id;
     sendRealm(session);
+    // WALKING OUT OF A SHOP IS ALSO A SHOP EVENT. Sent after the routing moves,
+    // so this resolves to the room they arrived in — and silent when that room
+    // has no shelves, which is what takes the tab away again.
+    sendShopIfAny(session);
     broadcast(
       {
         v: PROTOCOL_VERSION,
@@ -5800,6 +5865,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // for it clears the case log, the bag and the party panel, and walking
     // through a door is not a new session. See `RealmMsg`.
     sendRealm(session);
+    // AND THE SHELVES OF THE ROOM THEY WALKED INTO, or silence if it has none.
+    // A town is the common destination, so this is the frame that makes the
+    // shop tab appear at the moment somebody steps through the door.
+    sendShopIfAny(session);
 
     // AND THE TOKEN, TO EVERYONE ALREADY IN THERE. `joined` is how a body
     // appears on a client that has a board already; the crosser's own copy came
@@ -5822,6 +5891,183 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     pumpAndBroadcast(from);
     pumpAndBroadcast(to);
   };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `shop_buy` / `shop_sell` — VALIDATE, DEBIT, MOVE, LOG.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * FOUR STEPS AND NOT FIVE FUNCTIONS. ToME's transaction is `tryBuy` ->
+   * `doBuy` -> `onBuy(before)` -> `transfer` -> `onBuy(after)`, and `doBuy`
+   * re-finds the object and re-checks `who.money` a SECOND time inside the
+   * confirm — because a modal dialog fires its callbacks across frames and the
+   * world can move in between. Non-negotiable #2 says turn resolution here is
+   * fully synchronous: there is no interleaving window, so there is nothing to
+   * re-check.
+   *
+   * ═══ NEITHER COSTS A TURN, AND THAT IS OURS RATHER THAN A PORT ═══
+   * `spendLootTurn` charges for reaching into the world, and upstream charges
+   * for a pickup on exactly that argument (Player.lua:1313-1315). A shop is not
+   * in the world: it is a menu you stand in front of, in a town, where
+   * `assertNoCombatInSharedSpace` guarantees nothing is hunting you. Charging a
+   * turn per purchase would make outfitting a character cost a dozen turns of a
+   * clock with no reason to be running.
+   *
+   * ═══ THE SHELF IS THE REALM'S, SO THE DOOR IS THE PERMISSION ═══
+   * There is no "are you next to the shopkeeper" check because there is no
+   * shopkeeper: the shop belongs to the realm, and being in the realm is being
+   * at it. A player in a breach naming a coat on Threadneedle Row is refused
+   * because THEIR realm has no shelf, not because a distance test failed.
+   */
+  const handleShopBuy = (session: Session, msg: ClientShopBuy): void => {
+    const realm = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before shopping');
+      return;
+    }
+    unparkOnCommand(session);
+
+    const full = opts.realms?.get(realm.id);
+    const shop = full?.shop;
+    if (full === undefined || shop === undefined) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'there is no shop here');
+      return;
+    }
+    const body = realm.world.getActor(actorId);
+    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'you cannot shop right now');
+      return;
+    }
+
+    // THE SHELF CATCHES UP ON THE DOOR, not on a timer — see world/shopstate.ts.
+    // Before the lookup, so a player who levelled since arriving can buy the
+    // thing the restock just put out.
+    catchUpShop(full, partyLevelIn(full));
+
+    /**
+     * BY INDEX, and the first match. Two identical coats are two slots (see
+     * `ShopSlot`), so "the one with this id" is ambiguous about WHICH — and the
+     * first is the only answer that matches what the player clicked, because
+     * the client draws them in this order.
+     */
+    const index = shop.stock.findIndex((slot) => slot.id === msg.itemId);
+    if (index < 0) {
+      // Somebody in the room bought it between the frame and the click. The
+      // shelf frame is already on its way; this says why the click did nothing.
+      sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+      return;
+    }
+
+    const price = buyPrice(msg.itemId, stockLevelFor(partyLevelIn(full)));
+    /**
+     * THE AFFORDABILITY TEST IS EXPLICIT, AND IT HAS TO BE. `incMoney` CLAMPS
+     * AT ZERO, so debiting first and checking afterwards would hand the item
+     * over and quietly set the purse to nothing. The clamp is right for a purse
+     * and exactly wrong as a test.
+     */
+    if (body.money < price) {
+      sendError(session.socket, ErrorCode.IllegalMove, `that costs ${String(price)} gold`);
+      return;
+    }
+
+    const bag = bagOf(body);
+    if (alreadyOwns(body, msg.itemId)) {
+      sendError(session.socket, ErrorCode.BadMessage, 'you already have one of those');
+      return;
+    }
+    if (bag.length >= INVENTORY_CAP) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'your evidence bag is full');
+      noteBagFull(body);
+      return;
+    }
+
+    // ═══ ONE STEP, NO AWAIT, NOTHING BETWEEN THEM ═══
+    const taken = takeFromShelf(full, index);
+    if (taken === undefined) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+      return;
+    }
+    incMoney(body, -price);
+    body.carried = [...bag, taken.id];
+
+    const item = resolveItem(taken.id);
+    broadcastRecordLine(
+      realm,
+      `${nameOf(actorId)} buys the ${item?.name ?? 'item'} for ${String(price)} gold.`,
+    );
+    saveLoot('buy');
+    // BOTH FRAMES, UNCONDITIONALLY. The purse rides `inventory` and the shelf
+    // rides `shop`, and a buy moves both — sending one would draw a tab whose
+    // prices no longer match the gold beside them.
+    sendInventory(session);
+    broadcastShopIfChanged(realm);
+    pumpAndBroadcast(realm);
+  };
+
+  const handleShopSell = (session: Session, msg: ClientShopSell): void => {
+    const realm = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before shopping');
+      return;
+    }
+    unparkOnCommand(session);
+
+    const full = opts.realms?.get(realm.id);
+    if (full === undefined || full.shop === undefined) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'there is no shop here');
+      return;
+    }
+    const body = realm.world.getActor(actorId);
+    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'you cannot shop right now');
+      return;
+    }
+
+    // AGAINST THE SENDER'S OWN BAG AND NOTHING ELSE — the same resolution
+    // `equip` and `drop` use, and the reason a forged id buys nothing.
+    const bag = bagOf(body);
+    if (!bag.includes(msg.itemId)) {
+      sendError(session.socket, ErrorCode.BadMessage, 'you are not carrying that');
+      return;
+    }
+    const price = sellPrice(msg.itemId);
+    if (price <= 0) {
+      // Money, or an id this build cannot price. Refused rather than taken for
+      // nothing: a shop that accepts a thing and pays no gold for it is a bug
+      // that reads as theft.
+      sendError(session.socket, ErrorCode.BadMessage, 'the shop will not take that');
+      return;
+    }
+
+    // ONE COPY, NOT EVERY MATCH. `carried` is a set of ids today so the two are
+    // the same thing — written as "the first match" so that the day a bag holds
+    // two of something, selling one sells one.
+    const at = bag.indexOf(msg.itemId);
+    body.carried = [...bag.slice(0, at), ...bag.slice(at + 1)];
+    incMoney(body, price);
+    // FLAGGED, so the next restock clears it — the two lines upstream that stop
+    // a shop becoming free storage and stop a sell-then-rebuy loop persisting
+    // junk.
+    addSoldItem(full, msg.itemId);
+
+    const item = resolveItem(msg.itemId);
+    broadcastRecordLine(
+      realm,
+      `${nameOf(actorId)} sells the ${item?.name ?? 'item'} for ${String(price)} gold.`,
+    );
+    saveLoot('sell');
+    sendInventory(session);
+    broadcastShopIfChanged(realm);
+    pumpAndBroadcast(realm);
+  };
+
+  /** Party level as the room sees it — see `shopFrameFor`. */
+  const partyLevelIn = (realm: Realm): number =>
+    partyMaxLevel(
+      realm.world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])),
+    );
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -7202,7 +7448,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * reach, and `join` set the precedent that a label is reused rather than
    * multiplied.
    */
-  const saveLoot = (verb: 'pickup' | 'equip' | 'unequip' | 'drop'): void => {
+  const saveLoot = (verb: 'pickup' | 'equip' | 'unequip' | 'drop' | 'buy' | 'sell'): void => {
     if (verb === 'pickup') saveNow('loot');
     else queueSave('loot');
   };
@@ -8152,6 +8398,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // sender only controls one side of.
       case 'follow':
         handleFollow(session, msg);
+        return;
+      // TWO MORE THAT NAME AN OBJECT AND NEVER A SUBJECT. `shop_buy` resolves
+      // against the SHELF OF THE REALM THE SENDER IS STANDING IN; `shop_sell`
+      // against the sender's own bag.
+      case 'shop_buy':
+        handleShopBuy(session, msg);
+        return;
+      case 'shop_sell':
+        handleShopSell(session, msg);
         return;
       // Deliberately does NOT pump. A ping changes nothing, and a frame that
       // costs nothing must not be a way to make the server do work.
