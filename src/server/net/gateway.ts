@@ -3739,6 +3739,48 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     clearedRealms.add(realm.id);
     const loot = realm.world.groundItems().length;
     broadcastRecordLine(realm, `${full.name} is quiet now.`);
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════
+     * AND THE MOOR HEARS ABOUT IT. THE ONLY SIGN THAT ANYBODY ELSE IS
+     * PLAYING.
+     * ═════════════════════════════════════════════════════════════════════
+     *
+     * An instance is private by construction — that is the whole point of
+     * instancing — so everything interesting that happens in this game
+     * happens somewhere nobody else can see. On a shared overworld with five
+     * friends spread across it, the result is five people playing five
+     * single-player games in the same window.
+     *
+     * One line, on the overworld, when a party finishes a delve. It is the
+     * cheapest possible version of a world that feels inhabited, and it uses
+     * the one event that is genuinely worth interrupting somebody for.
+     *
+     * ═══ WHY THIS CANNOT BECOME SPAM, WHICH IS THE OBVIOUS OBJECTION ═══
+     * It fires ONCE PER REALM, on an event that takes a party several minutes
+     * of fighting to produce, and `clearedRealms` makes a second one
+     * impossible. Compare the movement lines this log used to carry: those
+     * fired per STEP, per player. A delve clear is rarer than a level-up and
+     * considerably rarer than a death.
+     *
+     * NAMED BY THE PARTY, not by the room, because "somebody cleared the
+     * Underworks" is a fact about people. The first name is enough — a roster
+     * of six in a log line is a list, and the pane already answers who is with
+     * whom.
+     */
+    const overworld = opts.realms?.overworld;
+    if (overworld !== undefined && overworld.id !== realm.id) {
+      const first = realm.world.allActors().find((a) => a.kind === ActorKind.Player);
+      const who = first === undefined ? 'Somebody' : nameOf(first.id);
+      const others = standingPlayers - 1;
+      const party =
+        others <= 0
+          ? who
+          : others === 1
+            ? `${who} and one other`
+            : `${who} and ${String(others)} others`;
+      broadcastRecordLine(overworld, `Word from the moor: ${party} cleared ${full.name}.`);
+    }
     if (loot > 0) {
       broadcastRecordLine(
         realm,
