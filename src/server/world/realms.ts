@@ -55,6 +55,7 @@
 
 import { makeArena } from '../../shared/arena.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
+import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
 import { makeOverworld } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
@@ -361,7 +362,15 @@ export type SiteDef = {
    * moment get two different rooms, and the same party re-entering its own
    * realm get the same room back.
    */
-  readonly map: (seed: string) => AuthoredMap;
+  /**
+   * `ground` IS WHERE THE PARTY WAS STANDING when whatever this is caught them.
+   *
+   * Optional, and every authored site ignores it: a town is the same town
+   * whether you walked in off the heath or off the road, and a delve is a place
+   * with an address. The ambush is the one site that is not a PLACE at all — it
+   * is a fight that happens where you were — so it is the one that reads this.
+   */
+  readonly map: (seed: string, ground?: Ground) => AuthoredMap;
   /**
    * Seeds the population. Called once, after the world exists.
    *
@@ -385,7 +394,7 @@ export type Realms = {
    * none. Idempotent on (partyId, siteId), which is what makes "walk in after
    * declining the prompt" join your friends rather than open a second copy.
    */
-  open(site: SiteDef, partyId: string, party?: PartyStrength): Realm;
+  open(site: SiteDef, partyId: string, party?: PartyStrength, ground?: Ground): Realm;
   /**
    * Close an instance and forget it. Refuses to close the overworld and refuses
    * to close a realm that still holds a body — a realm reaped out from under a
@@ -652,6 +661,13 @@ export function createRealms(opts: RealmsOptions): Realms {
      * session.
      */
     party: PartyStrength = { level: 1, size: 1 },
+    /**
+     * WHAT COUNTRY THEY WERE STANDING IN. Absent for a door — a town is the
+     * same town whichever direction you walked in from — and read by exactly
+     * one site, the ambush, which is the only one that is a FIGHT rather than a
+     * place. See `SiteDef.map`.
+     */
+    ground?: Ground,
   ): Realm => {
     /**
      * A COMMON SITE IGNORES THE PARTY ENTIRELY. There is one office, and
@@ -696,7 +712,11 @@ export function createRealms(opts: RealmsOptions): Realms {
 
     instanceSeq += 1;
     const id = `realm:${site.id}:${String(instanceSeq)}`;
-    const builtMap = site.map(seedFor(opts.seed, id));
+    // THE GROUND IS PASSED, NEVER STORED. It decides what this room is made of
+    // at the moment it is built and has nothing to say afterwards — a realm that
+    // remembered it would be a second answer to "what does this floor look
+    // like", and the tiles are already the first.
+    const builtMap = site.map(seedFor(opts.seed, id), ground);
     const realm = build(id, RealmKind.Inner, site.name, builtMap, {
       partyId,
       siteId: site.id,
@@ -1006,7 +1026,13 @@ export const ENCOUNTER_SITE: SiteDef = {
    * every time — entered at the same corner, with the exit two steps behind you
    * — was the wrong shape for it in every way.
    */
-  map: (seed) => makeArena(seed),
+  /**
+   * THE ONE SITE THAT IS NOT A PLACE. Every other row in `SITES` is somewhere
+   * with an address, built the same way whichever direction you arrived from;
+   * an ambush is a fight that happens WHERE YOU WERE, so it is the only map in
+   * the game that asks what you were standing on. See `Ground` in shared/level.
+   */
+  map: (seed, ground) => makeArena(seed, ground),
   // ZERO, AND THIS IS THE FIELD THAT MAKES FLEEING MEAN SOMETHING. See
   // `SiteDef.lingerMs`: a breach you ran out of must not still be there.
   lingerMs: 0,

@@ -503,3 +503,134 @@ export function makeOverworld(): AuthoredMap {
     sites: ALDERBROOK.sites,
   };
 }
+
+// ---------------------------------------------------------------------------
+// What kind of country you were standing on
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE GROUND A FIGHT INHERITS. Six answers, read off the map, no state.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The overworld has trees, mountains, a fen and a coastline, and until now every
+ * one of them was scenery: whatever you were standing on when something caught
+ * you, the room you woke up in was the same 24x24 walk through the same two tile
+ * codes. So the map was a picture you crossed rather than ground you got caught
+ * on, and the forest existed only as a shape you routed around.
+ *
+ * This is the classification that makes it matter, and it is the ONLY thing in
+ * the terrain work that changes what a fight is. Everything else the design
+ * considered — making terrain cost a turn, making it conditionally passable,
+ * raising the reveal radius — was refuted by measurement and is a closed
+ * question (see DECISIONS.md).
+ *
+ * ═══ WHY A NEIGHBOURHOOD AND NOT THE CELL ═══
+ * One tile is noise. A single MIRE cell in open grass is a puddle, not a fen,
+ * and a fight that turned into a swamp because of it would read as random. The
+ * classifier asks what the surrounding 9x9 is mostly made of, so the answer
+ * changes at the edge of a REGION rather than at the edge of a tile — which is
+ * also the boundary the player perceives.
+ *
+ * ═══ ORDER IS THE PRIORITY, AND IT IS DELIBERATE ═══
+ * Wet beats rock beats wood beats built. A cell can be several of these at once
+ * on a map with a river running through a wood, and the first match wins: the
+ * water is the thing that changes the fight most, so it is asked first.
+ *
+ * PURE, and it must stay pure — `shared/` may not read a clock, a random number
+ * or a file. Two players ambushed on the same tile get the same ground, and a
+ * test can assert the whole map's distribution without a server.
+ */
+export const Ground = {
+  /** Grass and heath. Almost no cover; a ranged monster owns you until you close. */
+  Open: 'open',
+  /** Broken high ground. Knots of dead rock, and the fight the game already had. */
+  Upland: 'upland',
+  /** Inside the trees. Sightlines of a few tiles; you meet things at arm's length. */
+  Wood: 'wood',
+  /** Scree and crag. Corridors — you can fight them one at a time if you pick well. */
+  Scree: 'scree',
+  /** A yard or a street. Real corners, and the only ground with straight lines. */
+  Walls: 'walls',
+  /** Marsh and channel. WATER STOPS A BODY AND NOT AN EYE — see `makeArena`. */
+  Fen: 'fen',
+} as const;
+export type Ground = (typeof Ground)[keyof typeof Ground];
+
+/** How far out the neighbourhood reaches. 4 gives a 9x9, which is 81 cells. */
+const GROUND_RADIUS = 4;
+
+/**
+ * How many of those 81 it takes to name the place.
+ *
+ * 8 is a tenth, which sounds low and is not: these are terrain families that
+ * come in BANDS on this map — the forest is a belt, the range is a ridge — so a
+ * cell genuinely inside one has thirty or forty of its neighbours, and a cell
+ * with eight is on the edge, which is where the answer should change.
+ */
+const GROUND_ENOUGH = 8;
+
+/** Built ground is dense where it exists at all, so it asks for twice as much. */
+const GROUND_ENOUGH_BUILT = 16;
+
+const WET: ReadonlySet<number> = new Set<number>([
+  TileCode.MIRE,
+  TileCode.WATER,
+  TileCode.DEEPWATER,
+]);
+
+const ROCK: ReadonlySet<number> = new Set<number>([TileCode.CRAG, TileCode.MOUNTAIN]);
+
+const BUILT: ReadonlySet<number> = new Set<number>([
+  TileCode.YARD,
+  TileCode.FIELD,
+  TileCode.COBBLE,
+  TileCode.PAVING,
+  TileCode.BRIDGE,
+  TileCode.RAIL,
+  TileCode.VILLAGE_ROOF,
+  TileCode.TOWN_ROOF,
+  TileCode.CITY_ROOF,
+  TileCode.TOWN_WALL,
+]);
+
+/**
+ * What kind of country surrounds this cell.
+ *
+ * Total: every cell of every map has an answer, and off the edge counts as
+ * nothing rather than throwing — a tile outside the map contributes to no
+ * family, so a coastal cell is classified by the land it actually has.
+ */
+export function groundAt(level: LevelView, x: number, y: number): Ground {
+  let wet = 0;
+  let rock = 0;
+  let wood = 0;
+  let built = 0;
+
+  for (let dy = -GROUND_RADIUS; dy <= GROUND_RADIUS; dy += 1) {
+    for (let dx = -GROUND_RADIUS; dx <= GROUND_RADIUS; dx += 1) {
+      const cx = x + dx;
+      const cy = y + dy;
+      if (cx < 0 || cy < 0 || cx >= level.w || cy >= level.h) continue;
+      const code = level.tiles[cy * level.w + cx] ?? TileCode.WALL;
+      if (WET.has(code)) wet += 1;
+      else if (ROCK.has(code)) rock += 1;
+      else if (code === TileCode.TREES) wood += 1;
+      else if (BUILT.has(code)) built += 1;
+    }
+  }
+
+  // THE CELL ITSELF SHORT-CIRCUITS THE WET CASE. Standing IN the marsh is a fen
+  // whatever the ring says, because the ground under your feet is the one fact
+  // the player is certain of.
+  const here = tileAt(level, x, y);
+  if (here === TileCode.MIRE || wet >= GROUND_ENOUGH) return Ground.Fen;
+  if (rock >= GROUND_ENOUGH) return Ground.Scree;
+  if (wood >= GROUND_ENOUGH) return Ground.Wood;
+  if (built >= GROUND_ENOUGH_BUILT) return Ground.Walls;
+  // LAST, and only from the cell: hills are scattered rather than banded on this
+  // map, so a neighbourhood test would almost never fire and the high ground
+  // would never once be the ground you fought on.
+  if (here === TileCode.HILLS) return Ground.Upland;
+  return Ground.Open;
+}

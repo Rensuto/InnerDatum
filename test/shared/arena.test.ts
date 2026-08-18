@@ -10,14 +10,21 @@
 import { describe, expect, it } from 'vitest';
 
 import { arenaCentre, makeArena } from '../../src/shared/arena.ts';
-import { TileCode } from '../../src/shared/protocol.ts';
+import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 
 const SEEDS = Array.from({ length: 40 }, (_, i) => `realm:site:encounter:${i + 1}`);
 const CENTRE = arenaCentre();
 
-function tile(m: AuthoredMap, x: number, y: number): number | undefined {
-  return m.view.tiles[y * m.view.w + x];
+/**
+ * Off the map reads as WALL, which is what `tileAt` in shared/level.ts does and
+ * what every caller here already meant. It returned `number | undefined` while
+ * every assertion compared it to a code; now that they ask a PREDICATE instead,
+ * the undefined has to land somewhere, and "outside the room is solid" is the
+ * only answer that is not a lie.
+ */
+function tile(m: AuthoredMap, x: number, y: number): number {
+  return m.view.tiles[y * m.view.w + x] ?? TileCode.WALL;
 }
 
 /** Eight-way, matching the movement rule the server enforces. */
@@ -41,7 +48,7 @@ function reachable(m: AuthoredMap): Set<string> {
       const ny = p.y + dy;
       const k = `${nx},${ny}`;
       if (nx < 0 || ny < 0 || nx >= m.view.w || ny >= m.view.h || seen.has(k)) continue;
-      if (tile(m, nx, ny) !== TileCode.FLOOR) continue;
+      if (!isWalkable(tile(m, nx, ny))) continue;
       seen.add(k);
       stack.push({ x: nx, y: ny });
     }
@@ -55,7 +62,7 @@ describe('every arena is one connected room', () => {
     // cells it stood on, so connectivity is a property of the algorithm rather
     // than something a repair pass has to go and fix afterwards.
     const m = makeArena(seed);
-    const open = m.view.tiles.filter((t) => t === TileCode.FLOOR).length;
+    const open = m.view.tiles.filter((t) => isWalkable(t)).length;
     expect(open).toBeGreaterThan(0);
     expect(reachable(m).size).toBe(open);
   });
@@ -65,12 +72,12 @@ describe('every arena is sealed', () => {
   it.each(SEEDS)('%s has a solid border', (seed) => {
     const m = makeArena(seed);
     for (let x = 0; x < m.view.w; x += 1) {
-      expect(tile(m, x, 0)).toBe(TileCode.WALL);
-      expect(tile(m, x, m.view.h - 1)).toBe(TileCode.WALL);
+      expect(isWalkable(tile(m, x, 0))).toBe(false);
+      expect(isWalkable(tile(m, x, m.view.h - 1))).toBe(false);
     }
     for (let y = 0; y < m.view.h; y += 1) {
-      expect(tile(m, 0, y)).toBe(TileCode.WALL);
-      expect(tile(m, m.view.w - 1, y)).toBe(TileCode.WALL);
+      expect(isWalkable(tile(m, 0, y))).toBe(false);
+      expect(isWalkable(tile(m, m.view.w - 1, y))).toBe(false);
     }
   });
 });
@@ -93,7 +100,7 @@ describe('you can be surrounded, which is what makes it an ambush', () => {
       for (let x = 0; x < m.view.w; x += 1) {
         const d = Math.max(Math.abs(x - CENTRE.x), Math.abs(y - CENTRE.y));
         if (d < 4 || d > 7) continue;
-        if (tile(m, x, y) !== TileCode.FLOOR) continue;
+        if (!isWalkable(tile(m, x, y))) continue;
         octants.add(Math.round(Math.atan2(y - CENTRE.y, x - CENTRE.x) / (Math.PI / 4)));
       }
     }
@@ -109,7 +116,7 @@ describe('you arrive in the middle of it', () => {
     // cannot give — this is the difference from the authored floor it replaced.
     const m = makeArena(seed);
     expect(m.spawns).toEqual([CENTRE]);
-    expect(tile(m, CENTRE.x, CENTRE.y)).toBe(TileCode.FLOOR);
+    expect(isWalkable(tile(m, CENTRE.x, CENTRE.y))).toBe(true);
   });
 });
 

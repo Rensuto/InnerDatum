@@ -223,6 +223,8 @@ import {
  */
 import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
+import { groundAt } from '../../shared/level.ts';
+import type { Ground } from '../../shared/level.ts';
 import { createFog, fogFromBase64, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import { isDowned } from '../engine/downed.ts';
@@ -6159,7 +6161,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const roamer = roamerAt(from, body.x, body.y);
     if (roamer !== undefined) {
       from.roamers.delete(roamer.id);
-      crossInto(session, ENCOUNTER_SITE, `walked into ${roamer.name}`);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WHERE THEY WERE STANDING DECIDES WHAT THE FIGHT IS.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The moor has a forest, a range, a fen and a coast, and until now every
+       * one of them was scenery: whatever ground a roamer caught you on, the room
+       * you woke up in was the same 24x24 walk through the same two tile codes.
+       * So the map was a picture you crossed rather than country you got caught
+       * in, and the trees existed only as a shape to route around.
+       *
+       * READ HERE AND NOWHERE ELSE, from the tile the body is ACTUALLY on — this
+       * runs after the pump, so the step has resolved and `body.x/y` is the cell
+       * they finished on rather than the one they aimed at. One call, no state,
+       * and `groundAt` is pure, so the same tile is the same fight for everybody.
+       */
+      const ground = groundAt(from.world.level, body.x, body.y);
+      crossInto(session, ENCOUNTER_SITE, `walked into ${roamer.name}`, ground);
       return;
     }
 
@@ -6193,7 +6212,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `why` reaches only the log. It is what makes "I was suddenly somewhere else"
    * answerable after the fact.
    */
-  const crossInto = (session: Session, site: SiteDef, why: string): void => {
+  const crossInto = (session: Session, site: SiteDef, why: string, ground?: Ground): void => {
     const realms = opts.realms;
     const actorId = session.actorId;
     if (realms === undefined || actorId === null) return;
@@ -6222,10 +6241,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     });
     crossIntoRealm(
       session,
-      realms.open(site, partyId, {
-        level: partyMaxLevel(levels),
-        size: Math.max(1, levels.length),
-      }),
+      realms.open(
+        site,
+        partyId,
+        {
+          level: partyMaxLevel(levels),
+          size: Math.max(1, levels.length),
+        },
+        // ABSENT FOR A DOOR, which is every site but one: a town is the same town
+        // whichever direction you walked in from. See `SiteDef.map`.
+        ground,
+      ),
       why,
       site.id,
     );
