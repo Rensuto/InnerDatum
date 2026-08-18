@@ -80,6 +80,23 @@ export type MapPaint = {
    * whole level. The minimap wants this; the world map does not.
    */
   readonly windowRadius?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NAME THE PLACES. THE FULL-SCREEN MAP WANTS THIS; THE MINIMAP MUST NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The world map was thirteen identical gold squares. A player pressed M to
+   * ask the one question a world map exists to answer — WHERE DO I GO — and got
+   * a black field with dots on it: no names, no difficulty, no way to tell
+   * Saint's Rest (an empty safe room) from the Outer Index ("grim"). The server
+   * had been sending `name` all along and nothing drew it.
+   *
+   * OFF BY DEFAULT AND OFF FOR THE MINIMAP, which is 200px wide and shows a
+   * 33-tile window: three labels would cover the terrain the panel exists to
+   * show. The same painter serves both, so the difference has to be a flag
+   * rather than a second painter that drifts.
+   */
+  readonly labelled?: boolean;
 };
 
 /**
@@ -89,7 +106,7 @@ export type MapPaint = {
  * test — the full-screen map has to turn a click back into a tile.
  */
 export function paintMap(paint: MapPaint): number {
-  const { ctx, level, rect, sites, self, framed, seen, windowRadius } = paint;
+  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled } = paint;
 
   /**
    * THE WINDOW. A minimap that showed the whole 170x100 region would be a
@@ -156,13 +173,66 @@ export function paintMap(paint: MapPaint): number {
     // the towns would give away the thing the fog exists to withhold.
     if (site.x < win.x0 || site.x > win.x1 || site.y < win.y0 || site.y > win.y1) continue;
     if (seen !== undefined && !seen.has(`${site.x},${site.y}`)) continue;
-    ctx.fillStyle = site.sprite === undefined ? PALETTE.GOLD : PALETTE.CRIMSON;
+    // A PLACE TAKES ITS GRADE'S COLOUR; a roamer keeps the alarm colour, because
+    // a thing that is walking towards you outranks a room that is merely bad.
+    ctx.fillStyle =
+      site.sprite !== undefined
+        ? PALETTE.CRIMSON
+        : ((site.danger === undefined ? undefined : DANGER_INK[site.danger]) ?? PALETTE.GOLD);
     ctx.fillRect(
       ox + site.x * cell - Math.floor((dot - cell) / 2),
       oy + site.y * cell - Math.floor((dot - cell) / 2),
       dot,
       dot,
     );
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT EACH ONE IS CALLED — a second pass, after every dot is down.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * SEPARATE FROM THE DOT LOOP ON PURPOSE. Text and rectangles interleaved would
+   * let one settlement's label be painted over by the next settlement's marker,
+   * and which ones depends on map order — a picture that is subtly different
+   * every time the roster changes. Two passes means every label sits above every
+   * dot, always.
+   *
+   * ROAMERS ARE NOT LABELLED. They carry a `sprite` and they move; a name that
+   * follows a wandering danger around the region turns a map into a tracker, and
+   * the fog is supposed to make "where is it now" a real question. The dot in
+   * the alarm colour is all a roamer gets.
+   */
+  if (labelled) {
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+    for (const site of sites) {
+      if (site.sprite !== undefined) continue;
+      if (site.x < win.x0 || site.x > win.x1 || site.y < win.y0 || site.y > win.y1) continue;
+      if (seen !== undefined && !seen.has(`${site.x},${site.y}`)) continue;
+
+      const dx = ox + site.x * cell;
+      const dy = oy + site.y * cell;
+      // FLIP TO THE LEFT NEAR THE RIGHT EDGE, so a name on the far side of the
+      // region is not clipped in half by the panel it is drawn in.
+      const flip = dx > rect.x + rect.w - 160;
+      ctx.textAlign = flip ? 'right' : 'left';
+      const tx = flip ? dx - dot : dx + dot + 3;
+
+      const grade = site.danger === undefined ? undefined : DANGER_INK[site.danger];
+      const label = site.danger === undefined ? site.name : `${site.name} · ${site.danger}`;
+
+      // A DARK PLATE UNDER THE TEXT. The region is mostly mid-green field and
+      // pale road; a bare 10px label on that is unreadable at exactly the
+      // moment somebody is squinting at it. Measured, not guessed at.
+      const w = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(10, 8, 19, 0.72)';
+      ctx.fillRect(flip ? tx - w - 3 : tx - 3, dy - 7, w + 6, 14);
+
+      ctx.fillStyle = grade ?? PALETTE.PARCHMENT;
+      ctx.fillText(label, tx, dy);
+    }
+    ctx.textAlign = 'left';
   }
 
   if (self !== undefined) {
@@ -181,6 +251,29 @@ export function paintMap(paint: MapPaint): number {
 
 /** Unknown ground. Near-black, and never pure black — see `miniFill`. */
 const UNSEEN = '#0b0912';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FOUR GRADES, AS COLOUR — AND THE WORD IS ALWAYS DRAWN BESIDE IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `content/delve.ts#dangerWord` weighs a delve's roster against its population
+ * band and answers one of four words. This is that scale in colour, running
+ * parchment -> gold -> amber -> crimson, so a player can read the shape of the
+ * region at a glance before reading a single label.
+ *
+ * COLOUR IS NEVER THE ONLY CHANNEL. The word itself is printed next to the dot
+ * for exactly the reason the Case Log's `LogLine.lane` is a server-set field
+ * rather than something a renderer infers: about one man in twelve cannot tell
+ * the amber from the crimson, and "where is it safe" is not a question this
+ * game gets to answer only in hue.
+ */
+const DANGER_INK: Readonly<Record<string, string>> = {
+  quiet: '#9fb08a',
+  restless: '#d8b25a',
+  dangerous: '#d98341',
+  grim: '#c9483f',
+};
 
 /**
  * How far either side of the player the minimap reaches.

@@ -4970,7 +4970,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       const def = SITES.get(siteId);
       if (def === undefined) return [];
       const parts = cell.split(',');
-      return [{ x: Number(parts[0]), y: Number(parts[1]), marker: def.marker, name: def.name }];
+      // THE GRADE, when the place has one. `delveFor` answers undefined for a
+      // town, and an absent field is how the map knows not to draw a
+      // scale that does not apply. Same source as the arrival line, so
+      // the two can never disagree about how bad a room is.
+      const spec = DELVES.get(siteId);
+      return [
+        {
+          x: Number(parts[0]),
+          y: Number(parts[1]),
+          marker: def.marker,
+          name: def.name,
+          ...(spec === undefined ? {} : { danger: dangerWord(spec) }),
+        },
+      ];
     });
 
     // THE WAY OUT, inside a site only. The overworld's edge is the edge of the

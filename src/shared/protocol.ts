@@ -3999,6 +3999,28 @@ export type SiteView = {
    * have enemy assets", which was exactly right: they had a door's.
    */
   readonly sprite?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW BAD IS IT IN THERE — one word, and the map had no way to say it.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `quiet` | `restless` | `dangerous` | `grim`, from `content/delve.ts`'s
+   * `dangerWord`, which weighs a delve's roster (an elite counts for more than
+   * a wraith, a wraith for more than a body) against the top of its population
+   * band. It is already spoken aloud on arrival — "The Drowned Chapel —
+   * north-east, 18 tiles · dangerous · hard alone" — and then scrolls away.
+   *
+   * The world map is where that sentence belongs permanently, and it was
+   * thirteen identical gold squares: a player pressed M to ask "where do I go"
+   * and got a field of dots with no way to tell Saint's Rest (an empty safe
+   * room) from the Outer Index. That is the one question a world map exists to
+   * answer.
+   *
+   * ABSENT ON ANYTHING THAT IS NOT A DELVE — a town has no danger grade and
+   * inventing "quiet" for one would imply the scale applies to it. Optional, so
+   * no version bump: an old client ignores a field it cannot name.
+   */
+  readonly danger?: string;
 };
 
 export type RealmMsg = {

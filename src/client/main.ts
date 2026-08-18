@@ -3079,6 +3079,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // The overworld's own fog, whichever realm you are standing in — the map
       // shows what you have walked, not what you can currently reach.
       seen: explored.get(overworldRealmId ?? '') ?? new Set<string>(),
+      // NAMES AND GRADES. See `MapPaint.labelled` — the minimap must not, this
+      // must. It is the whole reason somebody presses M.
+      labelled: true,
     });
     ctx.fillStyle = PALETTE.SILVER;
     ctx.font = '11px ui-monospace, monospace';
@@ -7193,6 +7196,34 @@ async function boot(): Promise<void> {
     // would jump by the distance between the two grab points. Below the two
     // interrupts above it, which fire for every press whatever else happens.
     if (cancelDrag()) {
+      event.preventDefault();
+      return;
+    }
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE WORLD MAP IS A SCREEN, AND A SCREEN SWALLOWS THE PRESS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It painted itself over the game at 92% opacity and then let every click
+     * fall straight through to the board underneath. Press M to look at the
+     * region, click a town to ask what it is, and your detective silently began
+     * a multi-turn walk toward whatever LOCAL tile happened to sit under that
+     * screen point — path preview drawn under an opaque panel, destination
+     * chosen by coincidence. Right-click opened the verb menu for a tile you
+     * could not see; a click on a party member's dot pinged a position that was
+     * not theirs.
+     *
+     * ABOVE THE TILE MATH AND BELOW THE TWO INTERRUPTS, which is exactly right:
+     * `cancelTravel()` and `cancelDrag()` have already run, so pressing anywhere
+     * on the map still stops a walk in progress — the player reached for the
+     * mouse and meant something by it — and nothing after this line can act on
+     * a coordinate the player never saw.
+     *
+     * IT DOES NOT CLOSE THE MAP. M closes it, Escape closes it (see the key
+     * handler); a stray click while reading a map should not dismiss the thing
+     * being read. That is the same rule the token menu already follows.
+     */
+    if (worldMapOpen) {
       event.preventDefault();
       return;
     }
