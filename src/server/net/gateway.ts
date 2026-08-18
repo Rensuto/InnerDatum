@@ -1827,6 +1827,35 @@ function needsFullResync(result: PumpResult): boolean {
 function isSaveWorthy(result: PumpResult): boolean {
   const fell = (event: TurnEvent): boolean =>
     event.k === 'downed' || event.k === 'revived' || event.k === 'erased' || event.k === 'death';
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ...AND A LEVEL GAINED, which rode the five-second debounce until now.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Losing a level to a restart is the one debounced loss a player genuinely
+   * resents. Hit points and explored tiles come back by playing; a level is the
+   * reward for the last twenty minutes, it arrives with a fanfare line in the
+   * Record and an unspent talent point on the panel, and re-earning it is not
+   * "re-click", it is the twenty minutes again.
+   *
+   * ═══ AND IT IS SAFE TO FLUSH, BY THIS FILE'S OWN ARGUMENT ═══
+   * The long note on the save cadence below explains why `equip`/`drop` were
+   * MOVED OFF the immediate path: they are reversible pairs, so a client can
+   * alternate them forever and the write chain — which coalesces nothing — grows
+   * without bound. It exempts `spend_point` from that reasoning in one sentence:
+   * its total is FINITE, because "a player has as many spends as they have
+   * earned levels."
+   *
+   * A LEVEL IS THE THING THAT SENTENCE IS COUNTING. It is strictly more finite
+   * than the spends it grants, it is not reversible, and no client frame can
+   * cause one — it takes the engine paying experience for a body that actually
+   * died. So this cannot be farmed, and it is bounded by the same quantity the
+   * existing exemption is already comfortable with.
+   */
+  // `?? []` because the gateway states its engine contract STRUCTURALLY and the
+  // stub engines in test/ predate this field. An engine that reports no levels
+  // is answering "none", which is the same branch as none.
+  if ((result.levelUps ?? []).length > 0) return true;
   return result.playerEvents.some(fell) || result.sweep.some(fell);
 }
 
@@ -4064,6 +4093,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // See `isSaveWorthy`. Note that a client cannot farm the immediate path
     // either: it takes somebody actually going down, which the engine decides.
     if (isSaveWorthy(result)) {
+      // `death` is the reason the store names for this path; a level gained
+      // rides it rather than inventing a second reason string, because the
+      // store's `SaveReason` union is closed and the two mean the same thing to
+      // the file — "write this now, do not wait for the window".
       saveNow('death');
     } else if (result.playerEvents.length > 0 || result.sweep.length > 0) {
       queueSave('pump');

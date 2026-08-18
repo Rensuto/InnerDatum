@@ -458,6 +458,55 @@ export function buildServer() {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * ...AND SOMETHING HAS TO ASK. THE HOOK ABOVE HAD NO TRIGGER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The hook is correct and its docblock says "a deliberate restart costs
+   * nothing — which is the whole reason the debounce is allowed to be five
+   * seconds". That was only ever true if something called `app.close()`, and
+   * NOTHING DID: no signal handler, no shutdown route, no ops listener (the
+   * `ops/` directory CLAUDE.md's layout plans does not exist yet). So every
+   * pending autosave and every in-flight write was abandoned on every stop.
+   *
+   * ═══ HONEST ABOUT WHAT THIS FIXES AND WHAT IT DOES NOT ═══
+   * This closes the case where a signal is actually delivered: Ctrl+C in a dev
+   * terminal, and any supervisor that asks politely. The production deploy on
+   * this project stops the host with `Stop-Process -Force`, which is
+   * TerminateProcess on Windows and CANNOT be intercepted by anything in this
+   * process — so this handler does not save that path, and pretending otherwise
+   * would be worse than the bug. `tools/deploy-live.ps1` now waits for the
+   * process to exit on its own before it reaches for the hammer, which gives a
+   * graceful stop the chance it never had; the durable fix is the ops listener,
+   * where a `POST /shutdown` belongs.
+   *
+   * IDEMPOTENT AND BOUNDED. Two signals must not start two shutdowns, and a
+   * flush that hangs must not leave a process that cannot be stopped — so the
+   * second signal exits immediately, which is also what a person hammering
+   * Ctrl+C is asking for.
+   */
+  let closing = false;
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => {
+      if (closing) {
+        app.log.warn({ signal }, 'second signal — exiting without finishing the flush');
+        process.exit(1);
+      }
+      closing = true;
+      app.log.info({ signal }, 'shutting down: flushing saves');
+      void app
+        .close()
+        .then(() => {
+          process.exit(0);
+        })
+        .catch((err: unknown) => {
+          app.log.error({ err }, 'shutdown failed; exiting anyway');
+          process.exit(1);
+        });
+    });
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * THE TWELVE TALENTS. THE LINE BELOW IS WHY THIS WHOLE MILESTONE EXISTS.
    * ═══════════════════════════════════════════════════════════════════════════
    *
