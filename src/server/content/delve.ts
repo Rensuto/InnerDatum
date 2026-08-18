@@ -62,6 +62,7 @@ import { rollLoot } from './loot.ts';
 import type { MonsterTemplate } from './monsters.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { TileXY } from '../../shared/coords.ts';
+import { qualified } from '../world/world.ts';
 import type { World } from '../world/world.ts';
 
 /**
@@ -246,7 +247,13 @@ export function populateDelve(world: World, map: AuthoredMap, spec: DelveSpec): 
     const at = candidates[(offset + i * stride) % candidates.length];
     if (at === undefined) continue;
 
-    const actor = world.addMonster(`delve_${String(i)}`, monsterInit(template, at));
+    // Qualified by realm — `delve_0` was the same string in every party's copy
+    // of every delve, and the status, Downed and talent tables are process-wide
+    // and keyed by it. See `World.id`.
+    const actor = world.addMonster(
+      qualified(world, `delve_${String(i)}`),
+      monsterInit(template, at),
+    );
     // THE SAME DROP ROLL THE OVERWORLD USES, on the same stream and with the
     // same labels — a delve's husk is not a different kind of husk, and a
     // second loot path would be a second place for the tables to drift.

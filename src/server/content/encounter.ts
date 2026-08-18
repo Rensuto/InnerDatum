@@ -37,6 +37,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 import { canWalk } from '../../shared/level.ts';
 import { partyMaxLevel, rollLoot } from './loot.ts';
 import type { Rng } from '../../shared/rng.ts';
+import { qualified } from '../world/world.ts';
 import type { World } from '../world/world.ts';
 import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
 import type { MonsterTemplate } from './monsters.ts';
@@ -250,7 +251,12 @@ export function seedTestEncounter(world: World): SeededMonster[] {
     if (!canWalk(world.level, at.x, at.y)) {
       continue;
     }
-    const id = `mon_${template.id}`;
+    // ═══ QUALIFIED BY REALM ═══
+    // Stable within this world — `reseedFloor` re-mints the same ids on a floor
+    // reset and `turn-engine.ts`'s enrolment check depends on that — but no
+    // longer identical to the ids in another party's copy of the same room. See
+    // `World.id` for what shared ids did to the process-wide tables.
+    const id = qualified(world, `mon_${template.id}`);
     const actor = world.addMonster(id, monsterInit(template, at));
 
     /**
@@ -420,7 +426,8 @@ export function seedAmbush(
     const template = roster[i];
     const at = candidates[(i * stride) % candidates.length];
     if (template === undefined || at === undefined) continue;
-    const id = `mon_${template.id}`;
+    // Qualified by realm, exactly as the test encounter above. See `World.id`.
+    const id = qualified(world, `mon_${template.id}`);
     const actor = world.addMonster(id, monsterInit(template, at));
     const carrying = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
     if (carrying !== undefined) actor.carried = [carrying];

@@ -276,6 +276,39 @@ export type GroundItem = {
 
 export type World = {
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH WORLD THIS IS — and everything in it used to be anonymous.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every Inner realm is a SEPARATE `World` closure, one per party
+   * (`realms.ts#open`), so two parties in the Hollow Mine hold two independent
+   * levels, actor tables and rng streams. That isolation is real and it stops
+   * exactly at the point where something outside the world keys a table by an
+   * actor id — and `main.ts` holds three such tables for the whole process: the
+   * status table, the Downed countdown, and the talent engine's sheets and
+   * marks.
+   *
+   * Monsters were minted `mon_index_husk` and `delve_0`, IDENTICALLY IN EVERY
+   * INSTANCE. So the second party to open the same delve got a roster whose ids
+   * collided with the first party's, and the process-wide tables could not tell
+   * them apart: a stun landed by one party appeared on the other party's
+   * monster, one party's Sigil mark multiplied the other's plain attacks, and a
+   * kill called `forgetActor` on a body across the map that was still standing.
+   * Nothing threw. It silently played somebody else's game onto your board.
+   *
+   * PREFIXING AT THE MINT IS WHAT FIXES ALL OF THEM AT ONCE, and none of those
+   * tables has to learn what a realm is — which is the "correct by construction
+   * rather than by vigilance" argument realms.ts's own header makes.
+   *
+   * ═══ THE DEFAULT IS THE EMPTY STRING, AND IT MEANS "DO NOT QUALIFY" ═══
+   * A world built without an id is a whole game on its own — every fixture,
+   * every pre-realms test, `createWorld(seed)` in a tool. Those mint BARE ids
+   * exactly as they always have, so this change is invisible to everything that
+   * was never at risk. Only a world that was handed a realm id qualifies, which
+   * is precisely the set of worlds that can collide with another.
+   */
+  readonly id: string;
+  /**
    * The authoritative level. Mutable in type because M4 digs doors into it; in
    * M1 and M2 nothing writes to it after construction.
    */
@@ -579,7 +612,29 @@ function spriteForJoinIndex(index: number): string {
  * instance's damage roll, and replay-from-seed would depend on what strangers
  * were doing somewhere else.
  */
-export function createWorld(seed: number | string, map?: AuthoredMap): World {
+/**
+ * An id that cannot collide with the same name in another realm.
+ *
+ * `world.id` is the realm's id, or `''` for a standalone world. Empty returns
+ * the local name untouched, so every fixture and every single-world tool mints
+ * exactly the strings it always did and only a realm-registered world qualifies
+ * — which is the only kind that can collide. See `World.id` for what shared
+ * monster ids did to the process-wide status, Downed and talent tables.
+ */
+export function qualified(world: Pick<World, 'id'>, local: string): string {
+  return world.id === '' ? local : `${world.id}:${local}`;
+}
+
+export function createWorld(
+  seed: number | string,
+  map?: AuthoredMap,
+  /**
+   * WHICH WORLD THIS IS — see `World.id`. Empty means "do not qualify": a world
+   * built without a realm registry is still a whole game, and every fixture is
+   * one, so those keep minting the bare ids they always did.
+   */
+  id = '',
+): World {
   const authored = map ?? makeTestMap();
   const level = authored.view;
   const spawns = authored.spawns;
@@ -1045,6 +1100,7 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
   };
 
   return {
+    id,
     level,
     turn,
     rng: playRng,

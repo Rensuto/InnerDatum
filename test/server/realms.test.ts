@@ -56,6 +56,93 @@ function makeRealms(seed = 'test-seed'): Realms {
   });
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TWO PARTIES IN THE SAME ROOM ARE NOT IN THE SAME ROOM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Each Inner realm is its own `World` closure keyed by party, so two groups
+ * delving the Hollow Mine at once hold two independent levels, actor tables and
+ * rng streams. That isolation was real and it stopped one layer short: the
+ * monsters inside were minted `delve_0`, `mon_index_husk` — IDENTICAL STRINGS
+ * IN EVERY INSTANCE.
+ *
+ * The tables that matter are process-wide and keyed by exactly those strings.
+ * `main.ts` builds ONE `EffectState`, ONE Downed table and ONE talent engine for
+ * the whole server, deliberately, because a stun and a five-turn countdown must
+ * follow a body through a door. So party A stunning `delve_0` put a Stunned
+ * badge on party B's monster across the map; party A's Sigil mark multiplied
+ * party B's plain attacks; and party A's kill called `forgetActor(effects,
+ * 'delve_0')` and cleared the status party B was counting on that turn.
+ *
+ * Nothing threw. It silently played one group's game onto another's board — and
+ * it only became reachable when the status system was finally wired, which is
+ * the kind of interaction that makes a "harmless" shared id worth a test.
+ *
+ * THE ASSERTION IS DISJOINTNESS, not a format. Prefixing is how it is done
+ * today; what must never regress is that two instances share no id at all.
+ */
+describe('two parties in one delve do not share a single actor id', () => {
+  const DELVES = [...SITES.values()].filter((s) => s.kind === RealmKind.Inner);
+
+  it.each(DELVES.map((d) => ({ id: d.id, name: d.name })))(
+    '$name gives each party its own roster',
+    ({ id }) => {
+      const realms = makeRealms('two-parties');
+      const alpha = realms.open(site(id), 'party-alpha');
+      const beta = realms.open(site(id), 'party-beta');
+
+      // Two genuinely separate instances, which is the premise.
+      expect(alpha.id).not.toBe(beta.id);
+
+      const idsOf = (r: typeof alpha): string[] =>
+        r.world
+          .allActors()
+          .filter((a) => a.kind === ActorKind.Monster)
+          .map((a) => a.id);
+
+      const a = idsOf(alpha);
+      const b = idsOf(beta);
+
+      // A room with nobody in it proves nothing, so say so rather than pass.
+      expect(a.length).toBeGreaterThan(0);
+      expect(b.length).toBeGreaterThan(0);
+
+      // NOT the same COUNT, deliberately. Each instance is seeded from its own
+      // realm id (`seedFor(opts.seed, id)`), so `populateDelve` rolls a
+      // different population for each party — which is the point of per-party
+      // instances and would be wrong to pin here.
+
+      const shared = a.filter((x) => b.includes(x));
+      expect(shared).toEqual([]);
+    },
+  );
+
+  it('keeps ids stable WITHIN an instance, which the floor reset depends on', () => {
+    // The other half, and the reason this is a prefix rather than a counter:
+    // `reseedFloor` re-mints the encounter with the SAME ids on a floor reset,
+    // and `turn-engine.ts`'s enrolment check identity-tests an id against the
+    // body it named before the wipe. A per-spawn unique id would break that.
+    const realms = makeRealms('stable-ids');
+    const first = realms.open(site('site:hollow_mine'), 'party-alpha');
+    const idsA = first.world
+      .allActors()
+      .filter((a) => a.kind === ActorKind.Monster)
+      .map((a) => a.id)
+      .toSorted();
+
+    const realmsAgain = makeRealms('stable-ids');
+    const again = realmsAgain.open(site('site:hollow_mine'), 'party-alpha');
+    const idsB = again.world
+      .allActors()
+      .filter((a) => a.kind === ActorKind.Monster)
+      .map((a) => a.id)
+      .toSorted();
+
+    expect(idsA).toEqual(idsB);
+  });
+});
+
 function site(id: string): SiteDef {
   const def = SITES.get(id);
   if (def === undefined) throw new Error(`no such site: ${id}`);

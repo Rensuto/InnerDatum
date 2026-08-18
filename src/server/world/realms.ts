@@ -523,7 +523,11 @@ export function createRealms(opts: RealmsOptions): Realms {
     map: AuthoredMap,
     extra: { readonly partyId?: string; readonly siteId?: string; readonly lingerMs?: number },
   ): Realm => {
-    const world = createWorld(seedFor(opts.seed, id), map);
+    // THE REALM'S OWN ID, THREADED IN. Everything minted inside this world
+    // prefixes with it, so two parties in the same delve stop sharing
+    // monster ids — and therefore stop sharing the process-wide status,
+    // Downed and talent tables that key off them. See `World.id`.
+    const world = createWorld(seedFor(opts.seed, id), map, id);
     const engine = opts.engineFor(world);
     const realm: Realm = {
       id,
