@@ -56,7 +56,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import websocket from '@fastify/websocket';
 
-import { bearingWord, inBounds } from '../../shared/coords.ts';
+import { bearingWord, inBounds, step } from '../../shared/coords.ts';
 import {
   ActorKind,
   ErasedReason,
@@ -116,6 +116,7 @@ import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
 import { DELVES, dangerWord, partyHint } from '../content/delve.ts';
+import { specForActorId } from '../content/townsfolk.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -133,7 +134,7 @@ import { resolveItem } from '../content/resolve.ts';
  * at the chooser owes no decision anybody may wait for, and `standingOrder` is
  * the field engine/barrier.ts:302-303 already reads to mean exactly that.
  */
-import { StandingOrder, incMoney } from '../engine/actor.ts';
+import { Faction, StandingOrder, incMoney, isMonster } from '../engine/actor.ts';
 /**
  * THE SINGLE WRITER OF `actor.combat`, IMPORTED RATHER THAN INJECTED, AND THE
  * ASYMMETRY WITH `attachClass` IS DELIBERATE.
@@ -256,7 +257,7 @@ import type {
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
 import type { Slot } from '../content/items.ts';
-import type { PlayerActor } from '../engine/actor.ts';
+import type { EngineActor, PlayerActor } from '../engine/actor.ts';
 import type { PartyState } from '../engine/party.ts';
 import type { AwayMember, PartyOffer, TurnState } from '../view/projector.ts';
 import type { Realm, Realms, SiteDef } from '../world/realms.ts';
@@ -5666,6 +5667,62 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     pumpAndBroadcast(realmFor(session));
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WALKING INTO SOMEBODY WHO LIVES HERE IS A CONVERSATION, NOT A REFUSAL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A townsfolk blocks her tile like any other body, so without this the answer
+   * to walking into Merrow is `move blocked: occupied` — a red error line, the
+   * same one a wall gives, about a person standing in front of you. That reads
+   * as a bug and it is the first thing anybody will do.
+   *
+   * ═══ AND IT IS THE ANSWER TO THE OTHER THING ANYBODY WILL DO ═══
+   * Six friends in a voice channel will try to kill the shopkeeper for a laugh.
+   * `areEnemies` means they cannot — the swing never resolves — so SOMETHING has
+   * to happen or the tile just refuses over and over. She talks back, and the
+   * third line escalates, which is funnier than a refusal and is the only thing
+   * a group actually wants from that interaction.
+   *
+   * ═══ THE COUNTER IS PER PLAYER, PER PERSON ═══
+   * So the greeting is a greeting: the first time YOU walk into her you get her
+   * name, and the room hears it once. Keyed by both ids because a town is shared
+   * by every party in it — one shared counter would mean the second player ever
+   * to meet her is told "still here", about somebody they have never seen.
+   */
+  const bumpCounts = new Map<string, number>();
+
+  const greetOnBump = (
+    session: Session,
+    realm: PumpTarget,
+    walker: EngineActor,
+    dir: Dir,
+  ): boolean => {
+    const to = step(walker, dir);
+    const standing = realm.world.actorAt(to.x, to.y);
+    if (standing === undefined || !isMonster(standing)) return false;
+    if (standing.faction !== Faction.Townsfolk) return false;
+
+    const spec = specForActorId(standing.id);
+    if (spec === undefined) return false;
+
+    const key = `${walker.id}|${standing.id}`;
+    const seen = bumpCounts.get(key) ?? 0;
+    bumpCounts.set(key, seen + 1);
+
+    // 0 -> her name. 1 -> she is still there. 2+ -> the deflections, cycled, so
+    // a player who keeps shoving gets an escalation rather than a loop.
+    const text =
+      seen === 0
+        ? spec.greetFirst
+        : seen === 1
+          ? spec.greetAgain
+          : (spec.deflect[(seen - 2) % spec.deflect.length] ?? spec.greetAgain);
+
+    broadcastMargin(realm, { text, speaker: standing.name });
+    return true;
+  };
+
   const handleMove = (session: Session, msg: ClientMove): void => {
     const { engine } = realmFor(session);
     const actorId = session.actorId;
@@ -5677,6 +5734,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // — and it goes above `submitMove` on purpose, because trying to walk into a
     // wall is still somebody at the keyboard.
     unparkOnCommand(session);
+
+    /**
+     * BEFORE `submitMove`, AND THAT IS THE ONLY PLACE IT WORKS.
+     *
+     * The player has not moved yet, so `step()` from their current tile is
+     * exactly the tile they tried to enter. After the submit it would be either
+     * where they now stand or nowhere, and the refusal would already have been
+     * sent. Returning here also means the move is never submitted, so no turn is
+     * spent — bumping into a shopkeeper is not an action, in the same way `say`
+     * and `point` are not.
+     */
+    const here = realmFor(session);
+    const body = here.world.getActor(actorId);
+    if (body !== undefined && greetOnBump(session, here, body, msg.dir)) return;
 
     const result = engine.submitMove(actorId, msg.dir);
     if (!result.ok) {

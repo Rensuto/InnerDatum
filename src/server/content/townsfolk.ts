@@ -167,6 +167,23 @@ export function townsfolkFor(siteId: string | undefined): readonly TownsfolkSpec
   return TOWNSFOLK.get(siteId) ?? [];
 }
 
+/**
+ * The spec behind a placed actor id, or undefined.
+ *
+ * The id is `<realmId>:town:<specId>`, so this reads the tail rather than
+ * keeping a second table keyed by actor id — one table, and an id that cannot
+ * disagree with the spec it was minted from.
+ */
+export function specForActorId(actorId: string): TownsfolkSpec | undefined {
+  const at = actorId.lastIndexOf(TOWNSFOLK_ID_MARK);
+  if (at < 0) return undefined;
+  const specId = actorId.slice(at + TOWNSFOLK_ID_MARK.length);
+  for (const specs of TOWNSFOLK.values()) {
+    for (const spec of specs) if (spec.id === specId) return spec;
+  }
+  return undefined;
+}
+
 /** Is this actor id one of ours? Used by the bump intercept and the verb menu. */
 export function isTownsfolkId(actorId: string): boolean {
   return actorId.includes(TOWNSFOLK_ID_MARK);
@@ -264,20 +281,41 @@ function findCounter(
 ): { readonly x: number; readonly y: number } | undefined {
   const wallAt = (x: number, y: number): boolean => level.tiles[y * level.w + x] === TileCode.WALL;
 
+  /**
+   * ═══ NEAREST QUALIFYING TILE, NOT THE FIRST ONE FOUND ═══
+   * "First match in row-major order" was the first version and it is always the
+   * TOP-LEFT CORNER: the scan starts at 1,1 and a corner has two wall faces, so
+   * it qualifies immediately. Driven over a real socket, Merrow stood at 1,1 —
+   * technically against a wall, four tiles from the door, and unmistakably in a
+   * corner by the entrance rather than behind a counter.
+   *
+   * So every candidate is scored by how far it is from the arrival tile and the
+   * CLOSEST one wins. That puts her on the natural line somebody walks when they
+   * come in — against a wall, in the room, visible on the first screen — instead
+   * of in whichever corner the scan reached first.
+   *
+   * STILL NO DRAW, and still row-major for ties, so the answer is a pure
+   * function of the map and identical on every machine. See `placeTownsfolk`.
+   */
+  let best: { readonly x: number; readonly y: number } | undefined;
+  let bestAway = Number.POSITIVE_INFINITY;
+
   for (let y = 1; y < level.h - 1; y += 1) {
     for (let x = 1; x < level.w - 1; x += 1) {
       if (!canWalk(level, x, y)) continue;
       if (taken.has(`${String(x)},${String(y)}`)) continue;
-      if (arrival !== undefined) {
-        const away = Math.max(Math.abs(x - arrival.x), Math.abs(y - arrival.y));
-        if (away < MIN_FROM_ARRIVAL) continue;
-      }
+      const away =
+        arrival === undefined ? 0 : Math.max(Math.abs(x - arrival.x), Math.abs(y - arrival.y));
+      if (away < MIN_FROM_ARRIVAL) continue;
       // ORTHOGONAL ONLY. A diagonal wall corner is not a counter to stand
       // behind, and a body wedged into one reads as stuck rather than as placed.
-      if (wallAt(x - 1, y) || wallAt(x + 1, y) || wallAt(x, y - 1) || wallAt(x, y + 1)) {
-        return { x, y };
+      if (!(wallAt(x - 1, y) || wallAt(x + 1, y) || wallAt(x, y - 1) || wallAt(x, y + 1))) continue;
+      // STRICTLY closer, so a tie keeps the row-major winner.
+      if (away < bestAway) {
+        bestAway = away;
+        best = { x, y };
       }
     }
   }
-  return undefined;
+  return best;
 }
