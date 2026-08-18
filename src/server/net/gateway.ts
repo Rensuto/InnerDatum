@@ -6695,13 +6695,40 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       }
       case 'effect_expired':
         return [{ text: `${prettyId(event.effectId)} leaves ${nameOf(event.id)}.`, depth: 1 }];
-      case 'downed':
+      case 'downed': {
         // DEPTH 0 AND ITS OWN LINE. This is the loudest thing that happens in a
         // fight and it starts a five-turn clock; burying it under the blow that
         // caused it would be the log editorialising in the wrong direction.
+        //
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * "TURNS TO REACH THEM" IS ADDRESSED TO SOMEBODY. ALONE, THERE IS
+         * NOBODY.
+         * ═══════════════════════════════════════════════════════════════════
+         * game-design.md § 9 calls Downed the mechanic that "does more for
+         * co-op tension than anything else: it turns 'I died' into GET TO ME".
+         * That is exactly right with a party — and read by a solo player it is
+         * an instruction addressed to nobody, about help that is not coming.
+         *
+         * The countdown is the same countdown either way. What changes is what
+         * it MEANS: with somebody else on the floor it is a rescue window, and
+         * alone it is how long the run has left. Saying the second thing as
+         * though it were the first is the game misreading the room at the one
+         * moment a player is paying complete attention.
+         */
+        const others = homeOf(event.id)
+          .world.allActors()
+          .filter((a) => a.kind === ActorKind.Player && a.id !== event.id && a.alive).length;
         return [
-          { text: `${nameOf(event.id)} is DOWN — ${event.turns} turns to reach them.`, depth: 0 },
+          {
+            text:
+              others > 0
+                ? `${nameOf(event.id)} is DOWN — ${String(event.turns)} turns to reach them.`
+                : `${nameOf(event.id)} is DOWN — ${String(event.turns)} turns, and nobody is coming.`,
+            depth: 0,
+          },
         ];
+      }
       case 'revived':
         return [
           {
