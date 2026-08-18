@@ -843,6 +843,31 @@ export function drawTurnCards(options: TurnCardsOptions): void {
     if (drawn >= room) break;
     const rect: PanelRect = { x: cursor, y: cardY, w: metrics.w, h: CARD_H };
     drawCard(ctx, sprites, card, rect, metrics.compact, secs);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "STILL GOING" — a player who has ACTED and still owes a decision.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `DECISIONS.md` D1's intra-turn budget means acting does not necessarily
+     * end your turn: Ward Rush costs 2 of 6, so the round stays open and the
+     * player parks again. `whoseTurn` is still true of them — the party IS
+     * waiting — so their chip is correctly `waiting`, and without this their
+     * card is identical to somebody who has not touched a key.
+     *
+     * That distinction is the whole reason the table can tell "he is thinking"
+     * from "he has walked away", which is what makes the Bell feel fair.
+     *
+     * ═══ DRAWN, NOT A CHIP, AND THAT IS NOT LAZINESS ═══
+     * `TurnActorState.Acting` exists but belongs to the MONSTERS card, and there
+     * is no `ui_icon_turn_acting.png` in the manifest — reusing it would paint
+     * the violet missing-asset box on a live card. A two-pixel gold rule along
+     * the bottom of the card needs no art, reads at a glance as a progress
+     * mark rather than a state change, and cannot be confused with the chip.
+     */
+    if ((turn.acting ?? []).includes(card.id)) {
+      ctx.fillStyle = PALETTE.GOLD;
+      ctx.fillRect(rect.x + 2, rect.y + rect.h - 2, rect.w - 4, 2);
+    }
     if (card.isSelf) drawCaret(ctx, rect.x + Math.floor(rect.w / 2), cardY - CARET_H);
     cursor += metrics.w + CARD_GAP;
     drawn += 1;

@@ -1906,6 +1906,24 @@ function turnKey(state: TurnState, bellArmed: boolean): string {
     state.whoseTurn.join(','),
     state.committed.join(','),
     state.standingBy.join(','),
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE SEVENTH TERM, AND WITHOUT IT THE FIELD IS NEVER SENT.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The note on `PumpResult.refusals` spells out this exact failure for the
+     * refund path: an actor parks again, "EVERY term of `turnKey` (gameTurn,
+     * engagement, whoseTurn, committed, standingBy, bellArmed) is byte-identical
+     * — `broadcastTurnIfChanged` sends nothing".
+     *
+     * A MID-ROUND ACTION IS THE SAME SHAPE. The player acts, keeps their energy,
+     * and goes straight back into the blocking set they were already in: the
+     * clock has not moved, engagement has not moved, and the three arrays are
+     * unchanged. So the frame that would say "he is halfway through a plan"
+     * would be suppressed as a duplicate of the one before it, and `acting`
+     * would be a field the client was never once told about.
+     */
+    (state.acting ?? []).join(','),
     bellArmed ? 'bell' : '-',
   ].join('|');
 }

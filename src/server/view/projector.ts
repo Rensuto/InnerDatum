@@ -253,6 +253,8 @@ export type TurnState = {
   readonly committed: readonly string[];
   /** Excluded from quorum: two silent turns, or a disconnected body. */
   readonly standingBy: readonly string[];
+  /** Blocking players who have already acted this round. See `TurnMsg.acting`. */
+  readonly acting?: readonly string[];
   /** How long a freshly-armed Bell should run, or null for no Bell at all. */
   readonly bellDurationMs: number | null;
   /**
@@ -647,6 +649,11 @@ export function projectTurn(
     whoseTurn: [...state.whoseTurn],
     committed: [...state.committed],
     standingBy: [...state.standingBy],
+    // OMITTED WHEN EMPTY, which is the common case and the whole of the game
+    // before the intra-turn budget. See `TurnMsg.acting`.
+    ...(state.acting === undefined || state.acting.length === 0
+      ? {}
+      : { acting: [...state.acting] }),
     bellMs,
   };
 }

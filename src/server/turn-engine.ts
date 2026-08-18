@@ -30,7 +30,7 @@ import { seedTestEncounter } from './content/encounter.ts';
 import { SLOT_ORDER } from './content/items.ts';
 import { isMoneyId } from './content/money.ts';
 import { resolveItem } from './content/resolve.ts';
-import { HOLD_INTENT, IntentKind, cooldownOf } from './engine/actor.ts';
+import { HOLD_INTENT, IntentKind, cooldownOf, isPlayer } from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
 import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
@@ -1287,6 +1287,22 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       whoseTurn: snapshot.blocking,
       committed: snapshot.blocking.length === 0 ? [] : [],
       standingBy: snapshot.standingBy,
+      /**
+       * WHO IS MID-ROUND. Read off the bodies rather than tracked separately,
+       * because `roundActions` is already the answer and a second copy is a
+       * second thing to keep in step — `spendTurn` clears it and nothing else
+       * has to remember to.
+       *
+       * FILTERED TO THE BLOCKING SET, so this is always a subset of
+       * `whoseTurn`: a player whose round closed is not mid-round, and one in
+       * another party is not this snapshot's business.
+       */
+      acting: snapshot.blocking.filter((id) => {
+        const body = world.getActor(id);
+        // `isPlayer` narrows the union — `roundActions` is a player-only field,
+        // which is what keeps `BarrierActor` untouched by the whole feature.
+        return body !== undefined && isPlayer(body) && body.roundActions > 0;
+      }),
       bellDurationMs:
         snapshot.total === 0
           ? null

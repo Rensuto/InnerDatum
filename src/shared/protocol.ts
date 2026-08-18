@@ -3372,6 +3372,26 @@ export type TurnMsg = {
    */
   standingBy: readonly string[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHO IS MID-ROUND — a subset of `whoseTurn`, and it is NOT the same as idle.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `DECISIONS.md` D1's intra-turn budget means a player can act and STILL owe a
+   * decision: Ward Rush at 2 AP leaves 4, so they park again with the round
+   * open. `whoseTurn` says "we are waiting on this person", which is true of
+   * somebody who has not started AND of somebody halfway through a plan — and
+   * the difference is the only thing a table needs to know to tell "he is
+   * thinking" from "he has walked away from the keyboard".
+   *
+   * Without it the card for a player who has just rushed a husk looks identical
+   * to the card for one who has not touched a key, and the Bell reads as
+   * punishing somebody who is visibly playing.
+   *
+   * OPTIONAL, SO NO VERSION BUMP: an older client ignores a field it cannot
+   * name and draws exactly the two states it always drew.
+   */
+  acting?: readonly string[];
+  /**
    * MILLISECONDS LEFT ON THE BELL, or null when no Bell is running.
    *
    * Null is the normal state: there is NO timer at all until `committed`

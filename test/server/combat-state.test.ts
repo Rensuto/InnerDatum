@@ -580,3 +580,83 @@ describe('no Discord id reaches a turn frame', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// The mid-round park — the SAME collision, one milestone later
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PLAYER WHO ACTS AND KEEPS THEIR TURN MOVES NONE OF THE SIX TERMS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `DECISIONS.md` D1's intra-turn budget lets a round stay open: Ward Rush costs
+ * 2 of 6 AP, so the player acts, keeps their energy, and goes straight back into
+ * the blocking set they were already in.
+ *
+ * That is byte-for-byte the shape `legacyKey` above was written to demonstrate.
+ * The clock has not moved (no turn was spent), engagement has not moved, and
+ * `whoseTurn` / `committed` / `standingBy` are unchanged — so a key without an
+ * `acting` term reports the two instants as one message and
+ * `broadcastTurnIfChanged` sends nothing. The field would be on the wire and the
+ * client would never once be told about it.
+ *
+ * `PumpResult.refusals` was added to fix exactly this failure for the refund
+ * path, and its docblock lists the six terms by name. This is the seventh.
+ */
+function keyWithoutActing(state: TurnState): string {
+  return [
+    state.gameTurn,
+    state.engagement,
+    state.whoseTurn.join(','),
+    state.committed.join(','),
+    state.standingBy.join(','),
+    state.bellDurationMs === null ? '-' : 'bell',
+  ].join('|');
+}
+
+function keyWithActing(state: TurnState): string {
+  return [keyWithoutActing(state), (state.acting ?? []).join(',')].join('|');
+}
+
+describe('a round that stays open is a frame, not a silence', () => {
+  it('collides without the acting term and separates with it', () => {
+    /**
+     * Two instants, one fight. BEFORE: two detectives in the blocking set,
+     * neither has touched a key. AFTER: one of them has cast Ward Rush, still
+     * has 4 AP, and is parked again. Everything the party is waiting on is
+     * unchanged — which is the point.
+     */
+    const before: TurnState = {
+      gameTurn: 7,
+      engagement: 3,
+      whoseTurn: ['actor_a', 'actor_b'],
+      committed: [],
+      standingBy: [],
+      bellDurationMs: null,
+      acting: [],
+    };
+    const after: TurnState = { ...before, acting: ['actor_a'] };
+
+    // THE BUG, DEMONSTRATED RATHER THAN DESCRIBED.
+    expect(keyWithoutActing(after)).toBe(keyWithoutActing(before));
+    // ...and the fix.
+    expect(keyWithActing(after)).not.toBe(keyWithActing(before));
+  });
+
+  it('says nothing extra when nobody is mid-round', () => {
+    // The common case, and the whole game before the budget landed: an absent or
+    // empty `acting` must not make every frame look different from the last one,
+    // or the memo stops suppressing anything and the table gets a frame a turn
+    // for no reason.
+    const idle: TurnState = {
+      gameTurn: 7,
+      engagement: 3,
+      whoseTurn: ['actor_a'],
+      committed: [],
+      standingBy: [],
+      bellDurationMs: null,
+    };
+    expect(keyWithActing(idle)).toBe(keyWithActing({ ...idle, acting: [] }));
+  });
+});
