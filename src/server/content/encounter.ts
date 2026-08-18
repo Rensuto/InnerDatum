@@ -40,6 +40,7 @@ import type { Rng } from '../../shared/rng.ts';
 import type { World } from '../world/world.ts';
 import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
 import type { MonsterTemplate } from './monsters.ts';
+import type { PartyStrength } from '../world/strength.ts';
 
 type Placement = {
   readonly template: MonsterTemplate;
@@ -336,8 +337,46 @@ export function seedTestEncounter(world: World): SeededMonster[] {
 const AMBUSH_MIN = 4;
 const AMBUSH_MAX = 7;
 
-export function seedAmbush(world: World, near: TileXY): SeededMonster[] {
-  const roster = [INDEX_HUSK, INDEX_WRAITH, INDEX_HUSK_ELITE];
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHO IS WAITING, AND IT USED TO BE EVERYBODY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The roster was the whole bestiary, always: a husk, a wraith AND the
+ * sixty-hit-point elite, in the first encounter a level-1 character ever has.
+ *
+ * Walking the full first session is what made that indefensible. A stranger
+ * joins, picks the Watchman, walks eighteen steps, meets all three, and is dead
+ * twenty seconds later at level 1 with an empty bag. That is the entire game
+ * they saw. An engine-level driver wins that fight 12 times in 12 — which is
+ * how it survived this long — but it plays every turn optimally with no latency
+ * and no misread, and a person does not.
+ *
+ * ═══ IT GROWS WITH WHAT THE PARTY CAN ANSWER ═══
+ * One husk for somebody's first fight: winnable, drops something, teaches that
+ * walking into a marker starts a fight. The wraith arrives when there is either
+ * a second body to draw it or the levels to catch it; the elite when there is a
+ * real party. ToME does the same thing by another name — a zone's population is
+ * a function of its level, and its level is a function of when you can get
+ * there.
+ *
+ * BY LEVEL **OR** BY HEADCOUNT, not both, because they are two different ways
+ * of being ready and a party of three at level 1 is as entitled to a real fight
+ * as a lone level-6.
+ */
+export function ambushRoster(party: PartyStrength): readonly MonsterTemplate[] {
+  const roster: MonsterTemplate[] = [INDEX_HUSK];
+  if (party.level >= 3 || party.size >= 2) roster.push(INDEX_WRAITH);
+  if (party.level >= 6 || party.size >= 3) roster.push(INDEX_HUSK_ELITE);
+  return roster;
+}
+
+export function seedAmbush(
+  world: World,
+  near: TileXY,
+  party: PartyStrength = { level: 1, size: 1 },
+): SeededMonster[] {
+  const roster = ambushRoster(party);
 
   /**
    * ═════════════════════════════════════════════════════════════════════════

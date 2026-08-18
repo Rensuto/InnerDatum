@@ -64,6 +64,7 @@ import type { TileXY } from '../../shared/coords.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { ReapingTurnEngine } from '../turn-engine.ts';
 import type { World } from './world.ts';
+import type { PartyStrength } from './strength.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -367,7 +368,7 @@ export type SiteDef = {
    * arms engagement for every unrelated person standing in it, and they all
    * start waiting on each other's turns with no way to discover why.
    */
-  readonly populate?: (world: World, map: AuthoredMap) => void;
+  readonly populate?: (world: World, map: AuthoredMap, party: PartyStrength) => void;
 };
 
 export type Realms = {
@@ -382,7 +383,7 @@ export type Realms = {
    * none. Idempotent on (partyId, siteId), which is what makes "walk in after
    * declining the prompt" join your friends rather than open a second copy.
    */
-  open(site: SiteDef, partyId: string): Realm;
+  open(site: SiteDef, partyId: string, party?: PartyStrength): Realm;
   /**
    * Close an instance and forget it. Refuses to close the overworld and refuses
    * to close a realm that still holds a body — a realm reaped out from under a
@@ -607,7 +608,20 @@ export function createRealms(opts: RealmsOptions): Realms {
     return undefined;
   };
 
-  const open = (site: SiteDef, partyId: string): Realm => {
+  const open = (
+    site: SiteDef,
+    partyId: string,
+    /**
+     * HOW STRONG THE PARTY WALKING IN IS, so a room can be built for them.
+     *
+     * DEFAULTED, and the default is the weakest possible party: a caller that
+     * does not know — a test, a fixture, a build with no party table — gets the
+     * gentlest room rather than the whole bestiary. Getting this wrong in the
+     * other direction is what killed a stranger twenty seconds into their first
+     * session.
+     */
+    party: PartyStrength = { level: 1, size: 1 },
+  ): Realm => {
     /**
      * A COMMON SITE IGNORES THE PARTY ENTIRELY. There is one office, and
      * everybody who walks through the door is in it — which is the whole point
@@ -657,7 +671,7 @@ export function createRealms(opts: RealmsOptions): Realms {
       siteId: site.id,
       lingerMs: site.lingerMs,
     });
-    site.populate?.(realm.world, builtMap);
+    site.populate?.(realm.world, builtMap, party);
     return realm;
   };
 
@@ -835,7 +849,7 @@ export const ENCOUNTER_SITE: SiteDef = {
   // ZERO, AND THIS IS THE FIELD THAT MAKES FLEEING MEAN SOMETHING. See
   // `SiteDef.lingerMs`: a breach you ran out of must not still be there.
   lingerMs: 0,
-  populate: (world, map) => {
+  populate: (world, map, party) => {
     // AROUND THE ARRIVAL TILE, not at the authored coordinates. seedAmbush
     // explains why: the authored encounter is placed for a floor you EXPLORE,
     // and reusing it for an ambush drops the player in a corner with the
@@ -845,6 +859,6 @@ export const ENCOUNTER_SITE: SiteDef = {
       x: Math.floor(map.view.w / 2),
       y: Math.floor(map.view.h / 2),
     };
-    seedAmbush(world, arrival);
+    seedAmbush(world, arrival, party);
   },
 };

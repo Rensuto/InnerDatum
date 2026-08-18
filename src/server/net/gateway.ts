@@ -174,7 +174,7 @@ import { recomposeCombat } from '../engine/effects.ts';
  * stated reason: `partyIdOf` is a two-line lookup over a table this process
  * already owns, it returns a string, it draws no RNG and it queues nothing.
  */
-import { partyIdOf, sameParty } from '../engine/party.ts';
+import { membersOf, partyIdOf, sameParty } from '../engine/party.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
 // difference between "this file predates classes" and "this file names a class
@@ -5992,7 +5992,33 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // rather than something invented here (engine/party.ts:276-290). With no
     // party table the actor's own id is the same statement.
     const partyId = opts.parties === undefined ? actorId : partyIdOf(opts.parties, actorId);
-    crossIntoRealm(session, realms.open(site, partyId), why, site.id);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ROOM IS BUILT FOR THE PEOPLE WALKING INTO IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     * Until this was threaded through, every ambush contained the whole
+     * bestiary — a husk, a wraith AND the sixty-hit-point elite — including
+     * the first one a level-1 stranger ever met. Walking a full first session
+     * is what surfaced it: dead in twenty seconds, level 1, empty bag, and
+     * that was the entire game they saw.
+     *
+     * MEASURED FROM THE PARTY, NOT THE CROSSER. One person opening a door for
+     * a party of four is opening it for four, and the room should know.
+     */
+    const members = opts.parties === undefined ? [actorId] : membersOf(opts.parties, actorId);
+    const levels = members.flatMap((id) => {
+      const body = opts.realms?.realmOf(id)?.world.getActor(id);
+      return body !== undefined && body.kind === ActorKind.Player ? [body.level] : [];
+    });
+    crossIntoRealm(
+      session,
+      realms.open(site, partyId, {
+        level: partyMaxLevel(levels),
+        size: Math.max(1, levels.length),
+      }),
+      why,
+      site.id,
+    );
   };
 
   /**
@@ -7334,6 +7360,46 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // block, the party would never wait for them, and every key they pressed
     // would land on a body that had already braced.
     if (body !== undefined) releaseFromClassChoice(body);
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE GAME ACKNOWLEDGES THE ONE PERMANENT DECISION IT ASKED FOR.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The picker says "this choice is permanent", takes it, and until now said
+     * NOTHING back. Walking a full first session is what made that land: the
+     * transcript went straight from the moor's description to a fight, with no
+     * record that a class had been chosen at all — so the single most
+     * consequential input in the game left no trace in the log that narrates
+     * every blow and every step onto a threshold.
+     *
+     * BROADCAST, NOT UNICAST. Who somebody is playing is the first thing the
+     * rest of the room wants to know, and on a shared overworld it is how a
+     * party works out what it is short of. It is also, for a new player, the
+     * first time the log says their name.
+     */
+    broadcastRecordLine(realm, `${nameOf(actorId)} takes up as ${definition.name}.`);
+    // THE HOOK, at depth 1: the class's own sentence, which is the writing that
+    // sold them on it a second ago and is worth reading once more now that it
+    // is theirs.
+    logSeq += 1;
+    broadcast(
+      {
+        v: PROTOCOL_VERSION,
+        t: 'log',
+        lines: [
+          {
+            seq: logSeq,
+            lane: LogLane.Record,
+            gameTurn: realm.world.turn.clock.gameTurn,
+            text: definition.description,
+            depth: 1,
+          },
+        ],
+      },
+      undefined,
+      audienceFor(realm.id),
+    );
 
     // THE HOTBAR IS DIFFERENT NOW, and both frames have to be resent. The
     // loadout is normally sent exactly once per connection because M3 loadouts

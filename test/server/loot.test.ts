@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { rollDrop, seedTestEncounter } from '../../src/server/content/encounter.ts';
+import {
+  ambushRoster,
+  rollDrop,
+  seedAmbush,
+  seedTestEncounter,
+} from '../../src/server/content/encounter.ts';
 import { ITEMS, SLOT_ORDER } from '../../src/server/content/items.ts';
 import { isMoneyId } from '../../src/server/content/money.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
@@ -766,5 +771,63 @@ describe('a corpse spills exactly once', () => {
     }
     scene.swing(3);
     expect(scene.world.groundItems()).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5 — WHO IS WAITING, AND FOR WHOM
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FIRST FIGHT A STRANGER HAS IS THE ONE THAT DECIDES WHETHER THERE IS A
+ * SECOND.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The roster used to be the whole bestiary, always — a husk, a wraith AND the
+ * sixty-hit-point elite — including in the first encounter a level-1 character
+ * ever had. Walking a full first session showed what that means: dead twenty
+ * seconds in, at level 1, with an empty bag. That was the entire game they saw.
+ *
+ * An engine-level driver wins that fight 12 times in 12, which is how it lasted
+ * this long. It also plays every turn optimally with no latency and no misread.
+ */
+describe('the ambush is built for the party walking into it', () => {
+  it('sends ONE husk at somebody on their first fight', () => {
+    const roster = ambushRoster({ level: 1, size: 1 });
+    expect(roster).toHaveLength(1);
+    expect(roster[0]).toBe(INDEX_HUSK);
+  });
+
+  it('never opens with the elite against a lone beginner', () => {
+    // THE SPECIFIC THING THAT KILLED THE STRANGER. `Overwritten Husk` has 60 hp
+    // against a level-1 Watchman's 72, and it arrived alongside two others.
+    expect(ambushRoster({ level: 1, size: 1 })).not.toContain(INDEX_HUSK_ELITE);
+    expect(ambushRoster({ level: 2, size: 1 })).not.toContain(INDEX_HUSK_ELITE);
+  });
+
+  it('grows by LEVEL or by HEADCOUNT, because they are two ways of being ready', () => {
+    // A party of three at level 1 has three bodies and three sets of talents; a
+    // lone level-6 has neither but hits far harder. Grading on one alone gets
+    // the other badly wrong, in opposite directions.
+    expect(ambushRoster({ level: 3, size: 1 })).toContain(INDEX_WRAITH);
+    expect(ambushRoster({ level: 1, size: 2 })).toContain(INDEX_WRAITH);
+    expect(ambushRoster({ level: 6, size: 1 })).toContain(INDEX_HUSK_ELITE);
+    expect(ambushRoster({ level: 1, size: 3 })).toContain(INDEX_HUSK_ELITE);
+  });
+
+  it('still reaches the full bestiary, so the game does not stay gentle', () => {
+    const late = ambushRoster({ level: 10, size: 4 });
+    expect(late).toContain(INDEX_HUSK);
+    expect(late).toContain(INDEX_WRAITH);
+    expect(late).toContain(INDEX_HUSK_ELITE);
+  });
+
+  it('defaults to the gentlest room when nobody says who is coming', () => {
+    // A caller that does not know — a test, a fixture, a build with no party
+    // table — must get the beginner's room. Getting this wrong in the other
+    // direction is exactly what shipped.
+    const seeded = seedAmbush(createWorld('ambush-default'), { x: 12, y: 12 });
+    expect(seeded.length).toBe(1);
   });
 });
