@@ -251,8 +251,14 @@ describe('realms do not bleed into each other', () => {
     const realms = makeRealms();
     const inner = realms.open(site('site:underworks'), 'party_1');
 
+    // RELATIVE TO WHAT THE DELVE STARTED WITH, because a delve is no longer an
+    // empty room: `populateDelve` scatters litter at generation. The claim here
+    // was never "an inner floor holds one thing" — it is that a floor belongs to
+    // ONE realm, and asserting an absolute count made this test quietly about
+    // the population instead.
+    const before = inner.world.groundItems().length;
     inner.world.addGroundItem({ x: 5, y: 5 }, 'item_iron_ingot');
-    expect(inner.world.groundItems()).toHaveLength(1);
+    expect(inner.world.groundItems()).toHaveLength(before + 1);
     expect(realms.overworld.world.groundItems()).toHaveLength(0);
 
     expect(inner.world.turn.clock).not.toBe(realms.overworld.world.turn.clock);

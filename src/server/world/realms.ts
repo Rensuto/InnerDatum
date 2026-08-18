@@ -57,6 +57,7 @@ import { makeArena } from '../../shared/arena.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
 import { makeOverworld } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
+import { DELVES, populateDelve } from '../content/delve.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -767,6 +768,30 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
       // that matters — `close` refuses a shared realm outright — so the number
       // is inert there and stated once rather than branched on.
       lingerMs: INSTANCE_LINGER_MS,
+      /**
+       * ═══════════════════════════════════════════════════════════════════
+       * AND SOMETHING IS IN THERE. FOR THE FIRST TIME.
+       * ═══════════════════════════════════════════════════════════════════
+       * Every one of the eight delves generated EMPTY — a player walked
+       * thirty tiles to "The Hollow Mine", read a line about paperwork, and
+       * found nothing at all. content/delve.ts carries the eight specs and
+       * argues the shape; this is only the wiring.
+       *
+       * ABSENT ON A COMMON SITE, which `createRealms` enforces at
+       * construction rather than trusting: one monster in a town arms
+       * engagement for every unrelated person standing in it, and they all
+       * start waiting on each other with nothing on screen to explain why.
+       * `DELVES` has no entry for a town, so the lookup returns undefined
+       * and the field stays absent — the rule is expressed as data.
+       */
+      ...(DELVES.has(id)
+        ? {
+            populate: (world: World, built: AuthoredMap): void => {
+              const spec = DELVES.get(id);
+              if (spec !== undefined) populateDelve(world, built, spec);
+            },
+          }
+        : {}),
     },
   ]),
 );
