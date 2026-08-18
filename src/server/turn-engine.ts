@@ -36,7 +36,7 @@ import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
 import { RespawnRefusal, forgetActor as forgetDowned, respawn } from './engine/downed.ts';
 import type { DownedState } from './engine/downed.ts';
-import { forgetActor as forgetEffects, statusPass } from './engine/effects.ts';
+import { forgetActor as forgetEffects, statusApplier, statusPass } from './engine/effects.ts';
 import type { EffectLogLine, EffectState } from './engine/effects.ts';
 import { combatDistance } from './engine/combat.ts';
 import {
@@ -1827,6 +1827,45 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        */
       const statusNotes: EffectLogLine[] = [];
 
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * ONE `EffectCtx`, SHARED BY THE CLOCK AND THE DOOR.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `PumpCtx.statusPass`'s docblock names this adapter as the only thing
+       * that holds all three of the effect state, the world rng and the talent
+       * book. It holds them for the door as well, and both closures must be cut
+       * from the same context — a second `EffectCtx` would have a second `log`,
+       * and a note written into a buffer nobody drains is a status that happens
+       * silently.
+       *
+       * `undefined` when there is no table, which is what keeps every fixture
+       * built before M4 on the M3 path exactly.
+       */
+      const statusCtx =
+        opts.effects === undefined
+          ? undefined
+          : {
+              state: opts.effects,
+              ctx: {
+                getActor: (id: string) => world.getActor(id),
+                /**
+                 * IDS, AND THE BOOK WANTS THE BODY. `TalentBook.loadoutOf`
+                 * takes an actor and returns `LoadoutTalent` rows; STUNNED's
+                 * three-talent lockout wants ids. Both conversions happen here
+                 * rather than either side widening its contract for the other.
+                 */
+                activatableTalents: (id: string): readonly string[] => {
+                  const body = world.getActor(id);
+                  if (body === undefined) return [];
+                  return (opts.talents?.loadoutOf(body) ?? []).map((talent) => talent.id);
+                },
+                log: (line: EffectLogLine): void => {
+                  statusNotes.push(line);
+                },
+              },
+            };
+
       // `downed` is threaded in rather than created here because a five-turn
       // countdown has to survive the pump that ticks it — see the option's note.
       // Undefined switches every survival branch in the scheduler off, which is
@@ -1872,23 +1911,21 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * existing fixture expects.
          */
         statusPass:
-          opts.effects === undefined
+          statusCtx === undefined
             ? undefined
-            : statusPass(opts.effects, world.rng, {
-                getActor: (id: string) => world.getActor(id),
-                /**
-                 * IDS, AND THE BOOK WANTS THE BODY. `TalentBook.loadoutOf`
-                 * takes an actor and returns `LoadoutTalent` rows; STUNNED's
-                 * lockout wants ids. Both conversions happen here rather than
-                 * either side widening its contract for the other.
-                 */
-                activatableTalents: (id: string) => {
-                  const body = world.getActor(id);
-                  if (body === undefined) return [];
-                  return (opts.talents?.loadoutOf(body) ?? []).map((talent) => talent.id);
-                },
-                log: (line) => statusNotes.push(line),
-              }),
+            : statusPass(statusCtx.state, world.rng, statusCtx.ctx),
+        /**
+         * THE DOOR, from the same `EffectCtx` as the clock above — which is the
+         * whole reason they are built together rather than wherever each is
+         * first needed. A monster's rider inflicted through here writes its note
+         * into the SAME buffer `drainStatusLog` empties, so "Dalt is Bleeding 2
+         * turn(s), not 3" lands on that monster's sweep step, under the blow
+         * that caused it. Two contexts would put the note in the wrong turn.
+         */
+        applyStatus:
+          statusCtx === undefined
+            ? undefined
+            : statusApplier(statusCtx.state, world.rng, statusCtx.ctx),
         /**
          * AND THE HALF THAT REACHES A PLAYER'S EYES.
          *

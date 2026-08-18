@@ -232,7 +232,8 @@ import { ActorRank } from '../../shared/protocol.ts';
 import { ITEMS, itemById } from './items.ts';
 import { resolveLevelup, resolveMBonus, resolveRngAvg } from './resolvers.ts';
 import type { TileXY } from '../../shared/coords.ts';
-import type { MonsterInit } from '../engine/actor.ts';
+import { BLEED_POWER, EffectId } from './effects.ts';
+import type { MonsterInit, OnHitStatus } from '../engine/actor.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { ItemTier } from './items.ts';
 
@@ -375,6 +376,22 @@ export type MonsterTemplate = {
    * so omitting it costs no draw and shifts no seeded stream.
    */
   readonly talentIn?: number;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT A LANDED BLOW FROM THIS CREATURE ALSO DOES — see `OnHitStatus`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ABSENT ON MOST OF THE ROSTER AND THAT IS THE POINT. A status every monster
+   * inflicts is not a status, it is a damage formula written twice. Upstream is
+   * the same: the overwhelming majority of ToME's NPCs have no `on_melee_hit`
+   * at all, and the ones that do are the ones you remember.
+   *
+   * Absent costs nothing at runtime — `strike` guards on it and takes the same
+   * branch it always has, with no rng draw, so adding this field shifted no
+   * seeded stream for any creature that declined it.
+   */
+  readonly onHit?: OnHitStatus;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1151,6 +1168,54 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
  * is different", which is why `ActorView.rank` exists and why the renderer keys
  * off it (Actor.lua:1198-1204 does the same thing for the same reason).
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ELITE'S CLAW — the roster's one melee rider, and the only one on purpose.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHY THE ELITE AND NOT THE HUSK ═══
+ * An Index Husk is the first thing a level-1 character ever fights, and the
+ * first fight has one job: teach that walking into a marker starts one. A
+ * status on it would put an unexplained badge on a player's portrait in the
+ * thirty seconds where they are still working out which token is theirs.
+ *
+ * The Overwritten Husk is the opposite case. Before this it was sixty hit
+ * points and a slightly bigger number — "the elite ring, and a reason to
+ * retreat" (content/encounter.ts) in intent, but mechanically just a longer
+ * version of the same fight. A rider is what makes it a DIFFERENT fight: the
+ * damage keeps arriving after you step away, so disengaging stops being free
+ * and the Alchemist's Mend Wounds stops being optional.
+ *
+ * ═══ BLEEDING, BECAUSE IT IGNORES ARMOUR ═══
+ * game-design.md § 7: "Bleeding (damage per turn, ignores armour)". That is the
+ * property that makes it the right rider for an elite — the Watchman is the
+ * body standing in front of it, the Watchman is the one wearing armour, and a
+ * rider that armour answered would be a rider that only ever hurt the people
+ * who were already fragile.
+ *
+ * ═══ THE POWER IS THE CREATURE'S, AND THE SAVE IS REAL ═══
+ * `power` is its own physical power, so a Watchman with the Strength to stand
+ * there shrugs it off more often than an Inspector caught in melee — which is
+ * the correct incentive and required no separate rule to express. A save that
+ * bites shortens the bleed rather than cancelling it, and the Record says so.
+ *
+ * THREE TURNS AND 3 DAMAGE A TURN (`BLEED_POWER`). Nine damage on a 60-hp elite
+ * fight is a real cost and not a second health bar; the point is the pressure
+ * it puts on WHEN you disengage, not the total.
+ */
+/** GAME TURNS the claw's bleed asks for, before any save scales it down. */
+const CLAW_BLEED_TURNS = 3;
+/**
+ * The elite's own `combatPhysicalpower`, as a literal.
+ *
+ * A template is DATA. Calling a derived getter from inside a frozen object
+ * literal would make the roster's numbers depend on the order two modules
+ * happened to initialise in, and `combat` is defined further down this very
+ * object. test/server/monsters.test.ts pins this against the real function, so
+ * the literal cannot drift from the sheet it describes.
+ */
+const CLAW_APPLY_POWER = 12;
+
 export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   id: 'index_husk_elite',
   displayName: 'Overwritten Husk',
@@ -1226,6 +1291,24 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   // turns the elite into a vending machine and makes the wraith's guaranteed rare
   // — which you may walk past — read as the same promise.
   drops: { chance: 70, pick: idsOfTier('uncommon') },
+
+  /**
+   * THE CLAW. See this template's header for why it is the elite and why it is
+   * Bleeding.
+   *
+   * `power` is `combatPhysicalpower` computed off the sheet below — written as
+   * a literal rather than derived, because a template is DATA and calling a
+   * derived getter from inside a frozen object literal would mean the roster's
+   * numbers depended on the order two modules happened to initialise in.
+   * `test/server/monsters.test.ts` pins it against the real function, so the
+   * literal cannot drift from the sheet it describes.
+   */
+  onHit: {
+    effectId: EffectId.Bleeding,
+    turns: CLAW_BLEED_TURNS,
+    power: CLAW_APPLY_POWER,
+    magnitude: BLEED_POWER,
+  },
 
   combat: {
     // The ghoul ladder moves no stat, so the delta is zero: the elite carries
@@ -1385,6 +1468,7 @@ export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit 
     // change every melee monster in the roster.
     projSpeed: template.projSpeed,
     talentIn: template.talentIn,
+    onHit: template.onHit,
     combat: template.combat,
   };
 }

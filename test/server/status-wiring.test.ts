@@ -8,6 +8,7 @@ import {
 } from '../../src/server/content/classes.ts';
 import { BLEEDING, EffectId, SLOWED, STUNNED } from '../../src/server/content/effects.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { INDEX_HUSK_ELITE, monsterInit } from '../../src/server/content/monsters.ts';
 import {
   createEffectState,
   effectDur,
@@ -169,6 +170,51 @@ describe('the status seam — a subsystem that existed and was reachable from no
 
     expect(hasEffect(effects, 'm_husk', EffectId.Stunned)).toBe(false);
     expect(husk.combat?.flags?.stunned ?? false).toBe(false);
+  });
+
+  it('an Overwritten Husk’s claw leaves a bleed on the body it hit', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE OTHER DIRECTION, AND IT IS THE ONE A PLAYER FEELS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Lockdown proves a PLAYER can inflict a status. This proves a MONSTER can,
+     * which is the half game-design.md § 11 puts in its own sample Record —
+     * "Dalt saves (phys 38 vs power 31, 68%) — Slowed 1 turn, not 3." A status
+     * system players can only ever hand out is a damage bonus with a badge.
+     *
+     * It runs through the SCHEDULER, not through `setEffect` directly: the
+     * whole point is `strike` consulting `MonsterActor.onHit` and calling
+     * `PumpCtx.applyStatus`, and every link in that chain was added at once.
+     */
+    const { world, effects } = arena('status-claw');
+    const dalt = world.addPlayer('p1', 'Dalt', { maxHp: 400 });
+    dalt.x = REALM_TILES.x;
+    dalt.y = REALM_TILES.y;
+    dalt.hpRegen = 0;
+
+    // THE REAL TEMPLATE, through the real mapper. A hand-built monster with an
+    // `onHit` glued on would pass while `monsterInit` dropped the field.
+    world.addMonster(
+      'm_elite',
+      monsterInit(INDEX_HUSK_ELITE, { x: REALM_TILES.x + 1, y: REALM_TILES.y }),
+    );
+
+    const engine = createTurnEngine({ world, now: () => 0, effects });
+    engine.join('p1');
+    world.turn.engagement = 3;
+
+    // Stand still and let it swing. The claw needs a LANDED hit and the elite
+    // can miss, so this is a window rather than a single turn — but the bleed
+    // is short, so the check is inside the loop rather than after it.
+    let bled = false;
+    for (let i = 0; i < 30 && !bled; i += 1) {
+      expect(engine.hold('p1').ok).toBe(true);
+      engine.pump();
+      if (hasEffect(effects, 'p1', EffectId.Bleeding)) bled = true;
+    }
+
+    expect(bled).toBe(true);
   });
 
   it('with no table at all, the engine is byte-for-byte its old self', () => {

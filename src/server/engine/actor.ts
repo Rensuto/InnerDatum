@@ -650,6 +650,8 @@ export type MonsterActor = ActorCommon & {
    * nothing else.
    */
   talentIn?: number;
+  /** What a landed blow from this creature also inflicts. See `OnHitStatus`. */
+  readonly onHit?: OnHitStatus;
   readonly ai: MonsterAi;
 };
 
@@ -658,6 +660,42 @@ export type MonsterActor = ActorCommon & {
  * unlocks the player-only fields and narrowing to a monster is what unlocks
  * `ai` — you cannot reach either by accident.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A STATUS A CREATURE'S LANDED BLOW TRIES TO INFLICT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's melee riders are per-creature data, not per-attack code — a ghoul's
+ * paralysis and a bone giant's stun are `on_melee_hit`-shaped rows on the NPC
+ * definition, and the swing itself is the same swing everything else makes.
+ * This is the same idea in this codebase's vocabulary: `strike` stays one
+ * function, and what a particular creature ADDS to a hit is authored beside its
+ * hit points.
+ *
+ * ═══ `power` IS THE APPLY POWER, AND ITS ABSENCE MEANS SOMETHING ═══
+ * Present → the victim rolls the effect's typed save, and a save that bites
+ * SHORTENS the duration rather than erasing it (Actor.lua:7004-7014). Absent →
+ * no save, no draw, full duration, every time (Actor.lua:6999). The second is a
+ * real design choice for a rider you want unconditional, and it is deliberately
+ * spelled as an absence rather than as `power: 0`, because zero is a number the
+ * save maths would happily use.
+ *
+ * ═══ IT ONLY FIRES ON A LANDED HIT ═══
+ * A miss inflicts nothing. This is checked at the one site that applies it
+ * (`strike`) rather than promised here, because "the swing connected" is a fact
+ * that site owns and this row has no way to know.
+ */
+export type OnHitStatus = {
+  /** Namespaced — `effect:<id>`, from content/effects.ts. */
+  readonly effectId: string;
+  /** GAME TURNS asked for, before any save scales it down. */
+  readonly turns: number;
+  /** Apply power for the typed save. ABSENT MEANS NO SAVE — see above. */
+  readonly power?: number;
+  /** Magnitude: Bleeding's damage per turn, Slowed's fraction. */
+  readonly magnitude?: number;
+};
+
 export type EngineActor = PlayerActor | MonsterActor;
 
 /**
@@ -844,6 +882,8 @@ export type MonsterInit = {
    * (talented.lua:122). Absent = every turn. See `MonsterActor.talentIn`.
    */
   readonly talentIn?: number;
+  /** A status this creature's landed blows inflict. See `OnHitStatus`. */
+  readonly onHit?: OnHitStatus;
   /** The real combat sheet. content/monsters.ts always supplies one. */
   readonly combat?: CombatSheet;
 };
@@ -984,6 +1024,10 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     // melee monster's turn and shift the seeded stream for the whole roster.
     projSpeed: init.projSpeed,
     talentIn: init.talentIn,
+    // Copied through as `undefined` when absent, like the two above: a creature
+    // that inflicts nothing must reach `strike`'s guard and take the branch it
+    // has always taken, with no draw and no seeded-stream shift.
+    onHit: init.onHit,
     ai: {
       profile: init.profile,
       targetId: null,

@@ -67,7 +67,7 @@ import { gainExp, pointsForLevel, worthExp } from '../../shared/progression.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { decideNpcAction } from '../ai/npc.ts';
 import { hasLineOfSight } from '../world/world.ts';
-import { HOLD_INTENT, IntentKind, actBase, isHostile, spendTurn } from './actor.ts';
+import { HOLD_INTENT, IntentKind, actBase, isHostile, isMonster, spendTurn } from './actor.ts';
 import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
 import { TalentRefusal } from './talents.ts';
 import { inQuorum, isBlocking } from './barrier.ts';
@@ -90,6 +90,7 @@ import type { TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
 import type { World } from '../world/world.ts';
 import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
+import type { StatusApply } from './effects.ts';
 import type { ActorMove, GuardCounter, TalentHit } from './talents.ts';
 import type { Projectile } from './projectile.ts';
 import type { Barrier, BellState, PartyScope } from './barrier.ts';
@@ -787,6 +788,25 @@ export type PumpCtx = {
    * Absent → no status system, and `actBase` behaves exactly as it did at M3.
    */
   readonly statusPass?: StatusPass;
+  /**
+   * THE DOOR, where `statusPass` is the CLOCK.
+   *
+   * `statusPass` ticks what is already on a body; this puts something there.
+   * They arrive as two closures rather than one `EffectState` for the reason
+   * `statusPass` gives — this module must not import `engine/effects.ts` — and
+   * because handing the whole table to a scheduler would let the clock mint
+   * effects and the door tick them.
+   *
+   * ═══ IT SHARES `drainStatusLog`'s BUFFER, WHICH IS THE HALF THAT SHOWS ═══
+   * The adapter builds both from ONE `EffectCtx`, so a status inflicted here
+   * writes its note into the same buffer `drainStatusLog` empties, and `pump`
+   * turns that note into a `status` event on the sweep step of the monster that
+   * caused it. That is what makes "Dalt is Bleeding 2 turn(s), not 3" appear
+   * under the blow rather than floating loose at the end of the turn.
+   *
+   * Absent → `strike` takes the branch it has always taken. No draw, no shift.
+   */
+  readonly applyStatus?: StatusApply;
   /**
    * Take everything `EffectCtx.log` has recorded since the last call, and CLEAR
    * it. `pump` turns each line into a `status` event, in place.
@@ -1991,6 +2011,39 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
     skipLegality: true,
     ...(mark === 1 ? {} : { mult: mark }),
   });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT THIS PARTICULAR CREATURE LEAVES BEHIND — `MonsterActor.onHit`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's melee riders (a ghoul's paralysis, a bone giant's stun) are rows on
+   * the NPC, not branches in the attack. So this is one guarded call at the one
+   * basic-attack site in the process, and every creature that declares nothing
+   * takes exactly the branch it always took.
+   *
+   * ═══ FOUR CONDITIONS, AND THREE OF THEM ARE ABOUT NOT LYING ═══
+   *   `outcome.ok` and `outcome.hit`  A MISS INFLICTS NOTHING. The log already
+   *     says "Miss (acc 28 vs def 44)"; a bleed under that line would make the
+   *     defence stat read as decoration.
+   *   `!outcome.killed`               A CORPSE DOES NOT BLEED. The badge would
+   *     pop on a body that is already unfiled, and `setEffect` refuses a dead
+   *     target anyway (Actor.lua:6951-6978) — this makes the intent explicit
+   *     rather than leaning on a refusal happening to be silent.
+   *   `attacker.onHit`                Most of the roster has none.
+   *
+   * The draw is taken AFTER the swing's own draws, always, so a creature with a
+   * rider consumes a suffix of the stream rather than shifting the swing that
+   * produced it.
+   */
+  const rider = isMonster(attacker) ? attacker.onHit : undefined;
+  if (rider !== undefined && outcome.ok && outcome.hit && !outcome.killed) {
+    run.ctx.applyStatus?.(target, rider.effectId, rider.turns, {
+      ...(rider.power === undefined ? {} : { applyPower: rider.power }),
+      ...(rider.magnitude === undefined ? {} : { power: rider.magnitude }),
+      srcId: attacker.id,
+    });
+  }
 
   // UNREACHABLE BY CONSTRUCTION — `skipLegality` is the only thing that can make
   // `attackTarget` refuse, and it is set on the line above. Written out rather

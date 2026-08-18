@@ -34,6 +34,7 @@
 import { SITES, RealmKind, createRealms } from '../src/server/world/realms.ts';
 import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
+import { createMvpEffectState } from '../src/server/content/effects.ts';
 import { CLASSES } from '../src/server/content/classes.ts';
 import { ActorKind } from '../src/shared/protocol.ts';
 import { canWalk } from '../src/shared/level.ts';
@@ -48,9 +49,12 @@ const PARTY = CLASSES.slice(0, 3);
 
 function run(site, size, seed) {
   const downed = createDownedState();
+  // THE STATUS TABLE. Without it the Overwritten Husk's bleed never lands and
+  // this tool measures a fight the game does not have.
+  const effects = createMvpEffectState();
   const realms = createRealms({
     seed,
-    engineFor: (world) => createTurnEngine({ world, downed }),
+    engineFor: (world) => createTurnEngine({ world, downed, effects }),
   });
   const realm = realms.open(site, seed);
 

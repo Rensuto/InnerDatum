@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { BLEED_POWER, EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
+import { combatPhysicalpower } from '../../src/server/engine/derived.ts';
+import { setEffect } from '../../src/server/engine/effects.ts';
+
 import { decideNpcAction } from '../../src/server/ai/npc.ts';
 import { ALCHEMIST, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import {
@@ -49,7 +53,7 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
 import { hitChance } from '../../src/shared/checkhit.ts';
-import { ActorRank } from '../../src/shared/protocol.ts';
+import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
 import type { AiCtx } from '../../src/server/ai/npc.ts';
@@ -857,6 +861,119 @@ function damagePerPlayerTurn(template: MonsterTemplate, victim: CombatSheet): nu
   const chance = hitChance(combatAttack(template.combat), combatDefense(victim)) / 100;
   return chance * meanBlow(template.combat, victim) * template.globalSpeed;
 }
+
+describe('the elite’s claw — the roster’s one melee rider', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHY THIS EXISTS: A TEMPLATE IS DATA, AND ITS `power` IS A DERIVED NUMBER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `INDEX_HUSK_ELITE.onHit.power` is the creature's own `combatPhysicalpower`,
+   * written into the frozen literal as a plain integer. It has to be a literal:
+   * `combat` is defined further down the same object, so calling the getter from
+   * inside it would make the roster's numbers depend on module initialisation
+   * order — the exact class of bug this codebase's frozen-numbers doctrine is
+   * about.
+   *
+   * The cost of a literal is drift. Retune the elite's Strength and the claw
+   * quietly keeps applying at the old power, with nothing failing anywhere. This
+   * test is the thing that fails.
+   */
+  it('applies at the elite’s real physical power, not a number that drifted', () => {
+    expect(INDEX_HUSK_ELITE.onHit?.power).toBe(combatPhysicalpower(INDEX_HUSK_ELITE.combat));
+  });
+
+  it('is the only rider on the roster, and it is Bleeding', () => {
+    // ═══ ONE, DELIBERATELY ═══
+    // A status every monster inflicts is a damage formula written twice, and
+    // the first thing a level-1 character fights must not put an unexplained
+    // badge on their portrait. If a second creature ever wants a rider that is
+    // a real decision — so it should have to come here and change this line.
+    const withRiders = MONSTER_TEMPLATES.filter((t) => t.onHit !== undefined).map((t) => t.id);
+    expect(withRiders).toEqual(['index_husk_elite']);
+    expect(INDEX_HUSK_ELITE.onHit?.effectId).toBe(EffectId.Bleeding);
+  });
+
+  it('survives `monsterInit` onto the actor — the field that never got copied', () => {
+    // `monsterInit` is the ONE mapper from template to actor, and it is a hand
+    // written field list rather than a spread. That is the right shape (an
+    // unmapped field is a compile error at `MonsterInit`, not a silent
+    // `undefined`) and it is also exactly how a new field gets forgotten.
+    const actor = createMonsterActor('m1', monsterInit(INDEX_HUSK_ELITE, { x: 4, y: 4 }));
+    expect(actor.onHit).toEqual(INDEX_HUSK_ELITE.onHit);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE GRADIENT IS THE WHOLE POINT — ARMOUR DOES NOT ANSWER A BLEED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * game-design.md § 7: "Bleeding (damage per turn, ignores armour)". So the
+   * claw cannot be shrugged off by the class wearing the most of it — which
+   * would be a rider that only ever hurt the people who were already fragile.
+   *
+   * What DOES answer it is the physical save, and the Watchman has the highest
+   * one on the roster (15, against the Inspector's 8 and the Alchemist's 7).
+   * That is the correct incentive and it needed no separate rule: the body you
+   * want standing in front of the elite is the body that shrugs its claw off
+   * most often, and it still takes real damage for doing so.
+   *
+   * MEASURED OVER MANY APPLICATIONS, not one, because a single roll is a coin
+   * and the claim is about the distribution. The assertion is the ORDERING —
+   * pinning the percentages would make this a test of the seed.
+   */
+  it('costs the armoured body less than the fragile ones, through the save', () => {
+    const claw = INDEX_HUSK_ELITE.onHit;
+    expect(claw).toBeDefined();
+    if (claw === undefined) return;
+
+    const RUNS = 400;
+    const bleedFor = (sheet: CombatSheet): number => {
+      const state = createMvpEffectState();
+      const rng = createRng('monsters.test:claw');
+      let turns = 0;
+      for (let i = 0; i < RUNS; i += 1) {
+        const body = {
+          id: 'b',
+          name: 'b',
+          kind: ActorKind.Player,
+          hp: 9999,
+          maxHp: 9999,
+          alive: true,
+          combat: sheet,
+          cooldowns: new Map<string, number>(),
+        };
+        const landed = setEffect(
+          state,
+          body,
+          claw.effectId,
+          claw.turns,
+          {
+            ...(claw.power === undefined ? {} : { applyPower: claw.power }),
+            ...(claw.magnitude === undefined ? {} : { power: claw.magnitude }),
+          },
+          rng,
+        );
+        turns += landed.dur;
+        state.byActor.delete('b');
+      }
+      return (turns * BLEED_POWER) / RUNS;
+    };
+
+    const watchman = bleedFor(WATCHMAN.combat);
+    const inspector = bleedFor(INSPECTOR.combat);
+    const alchemist = bleedFor(ALCHEMIST.combat);
+
+    // The Watchman takes the least, and by a margin worth feeling rather than a
+    // rounding difference — under two thirds of what the Alchemist takes.
+    expect(watchman).toBeLessThan(inspector);
+    expect(watchman).toBeLessThan(alchemist * 0.66);
+
+    // AND IT IS NEVER FREE. A save that reduced the claw to nothing for the
+    // tank would make the elite a fight the Watchman solos by standing still.
+    expect(watchman).toBeGreaterThan(0);
+  });
+});
 
 describe('the balance table the wraith’s retune rests on', () => {
   const SHEETS = [
