@@ -109,6 +109,7 @@ import { SLOT_ORDER } from '../content/items.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
+import { shouldAnnounceCleared } from '../world/cleared.ts';
 import { DELVES, dangerWord } from '../content/delve.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
@@ -2204,6 +2205,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const lastGroundKeys = new Map<string, string>();
   /** Per realm, like the floor. A shelf is shared, so this is not per socket. */
   const lastShopKeys = new Map<string, string>();
+  /**
+   * Delves whose last resident has fallen, so the moment is announced ONCE.
+   *
+   * Per realm and not per socket: clearing a room is a thing that happened to
+   * the room, and somebody who follows their party in afterwards should not be
+   * told it happened again.
+   */
+  const clearedRealms = new Set<string>();
+  /**
+   * How many residents this realm had at the last pump.
+   *
+   * ═══ THE ANNOUNCE HAS TO BE AN EDGE, AND MY FIRST VERSION WAS A LEVEL ═══
+   * It announced whenever the count was zero and somebody was watching, which
+   * fires for any reason the room is momentarily empty — including
+   * `resetFloor`, which REAPS every monster before re-seeding. A party wiping
+   * therefore got "An Index Breach is quiet now." in the middle of losing,
+   * which is the exact opposite of the moment the line exists for. Observed in
+   * a driven session: the line landed between a wraith's hit and the killing
+   * blow, with three enemies still standing.
+   *
+   * So it is a TRANSITION: many, then none, seen by this process, in this
+   * realm's lifetime.
+   */
+  const residentCounts = new Map<string, number>();
 
   /**
    * Actor id -> when that player last put a line in the Margin.
@@ -3597,6 +3622,128 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   let roamerSeq = 0;
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE ROOM GOES QUIET. THE ONE MOMENT A DELVE HAS TO OFFER AND IT HAD NONE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A party walked thirty tiles to the Hollow Mine, fought eight husks, killed
+   * the last one — and nothing happened. No line, no mark, nothing to tell them
+   * they were finished except counting bodies themselves. Content without a
+   * completion beat is a chore with a health bar: the fight ends, and the only
+   * way to know is that nothing is hitting you.
+   *
+   * ═══ IT NAMES WHAT IS STILL ON THE FLOOR, WHICH IS THE USEFUL HALF ═══
+   * `populateDelve` scatters litter as well as bodies, so "cleared" and
+   * "emptied" are different states and a party that leaves at the first one
+   * walks away from the second. The line says how much is left rather than
+   * where, because a list of coordinates is a chore list and a number is a
+   * reason to look around.
+   *
+   * ═══ ONCE, AND ONLY IN A DELVE ═══
+   * The overworld's engagement drops to zero constantly — every time a roamer
+   * loses interest — and announcing that would be the movement-spam bug again
+   * in a better costume. A town has nothing to clear. So: Inner realms only,
+   * and a `Set` keyed by realm id, cleared with the rest of the realm's memos
+   * when it is reaped.
+   */
+  const announceCleared = (realm: PumpTarget, result: PumpResult): void => {
+    /**
+     * A MONSTER DIED IN THIS PUMP — not merely "something died".
+     *
+     * The third wrong version of this guard passed `some(e => e.k === 'death')`,
+     * which is true when the PLAYER dies. So a solo player being killed by the
+     * last husk standing satisfied "a death happened", the reset emptied the
+     * room, and the breach announced itself quiet over their corpse. Four runs
+     * out of four.
+     *
+     * The victim is checked against the bodies in the room rather than a kind
+     * flag on the event, because by the time this runs the dead thing may
+     * already have been reaped.
+     */
+    const players = new Set(
+      realm.world
+        .allActors()
+        .filter((a) => a.kind === ActorKind.Player)
+        .map((a) => a.id),
+    );
+    const sawKill = [...result.playerEvents, ...result.sweep].some(
+      (event) => event.k === 'death' && !players.has(event.id),
+    );
+    if (clearedRealms.has(realm.id)) return;
+    const full = opts.realms?.get(realm.id);
+    if (full === undefined || full.kind !== RealmKind.Inner) return;
+
+    // NOBODY LEFT STANDING. `alive` rather than presence: a corpse is still an
+    // actor for the rest of the pump it died in.
+    const standing = realm.world
+      .allActors()
+      .filter((a) => a.kind === ActorKind.Monster && a.alive).length;
+
+    // ═══ AN EDGE, NOT A LEVEL, AND IT MUST HAVE BEEN A KILL ═══
+    // Many, then none — and the pump that emptied the room contained a DEATH.
+    //
+    // Both guards were arrived at the expensive way, and the second only after
+    // instrumenting the server:
+    //
+    //     realmId: realm:site:encounter:1  previous: 3  standing: 0
+    //     standingPlayers: 1  actors: ["player:...:alive=true"]
+    //
+    // A wiped party's floor is RESET: `resetFloor` reaps every monster and the
+    // erased player is restored. So "many, then none, with somebody standing"
+    // is exactly as true of losing as of winning, and the room announced
+    // itself quiet in the middle of a defeat. The only thing that tells the two
+    // apart is whether anything actually died.
+    const previous = residentCounts.get(realm.id) ?? 0;
+    residentCounts.set(realm.id, standing);
+
+    /**
+     * AND SOMEBODY IS STILL STANDING, which is the other half of the same
+     * mistake. A wipe empties the room too — `resetFloor` reaps every monster
+     * before re-seeding — so "many, then none" is ALSO true of a party that
+     * just lost. The difference between clearing a room and being carried out
+     * of it is whether anybody is on their feet.
+     *
+     * ALIVE AND NOT DOWNED: a body on the floor is a body being counted on,
+     * not a witness, and telling a downed player their delve is quiet while
+     * they bleed out is the worst line in the game.
+     */
+    const standingPlayers = realm.world
+      .allActors()
+      .filter(
+        (a) =>
+          a.kind === ActorKind.Player &&
+          a.alive &&
+          (opts.downed === undefined || !isDowned(opts.downed, a.id)),
+      ).length;
+
+    // THE DECISION IS world/cleared.ts's, not this function's — see there for
+    // the three wrong versions this replaced.
+    if (
+      !shouldAnnounceCleared({
+        previous,
+        standing,
+        sawMonsterKill: sawKill,
+        standingPlayers,
+        already: false,
+      })
+    ) {
+      return;
+    }
+
+    clearedRealms.add(realm.id);
+    const loot = realm.world.groundItems().length;
+    broadcastRecordLine(realm, `${full.name} is quiet now.`);
+    if (loot > 0) {
+      broadcastRecordLine(
+        realm,
+        loot === 1
+          ? 'Something is still on the floor.'
+          : `${String(loot)} things are still on the floor.`,
+      );
+    }
+  };
+
   const pumpRealm = (realm: PumpTarget): void => {
     const { world, engine } = realm;
 
@@ -3645,6 +3792,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (result.status === 'budget') {
       app.log.warn({ gameTurn: result.turn.gameTurn }, 'pump exhausted its tick budget');
     }
+
+    // AFTER THE PUMP RESOLVED, so the body that just fell is already dead and
+    // the count is the one the players are looking at. `sawKill` is what
+    // separates a room somebody cleared from a room that was reset under them.
+    announceCleared(realm, result);
 
     for (const event of result.playerEvents) {
       // Null means "this kind has no immediate-lane wrapper" — see
@@ -5582,6 +5734,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     lastProjectilesKeys.delete(realmId);
     lastGroundKeys.delete(realmId);
     lastShopKeys.delete(realmId);
+    clearedRealms.delete(realmId);
+    residentCounts.delete(realmId);
   };
 
   const reaps = new Map<string, NodeJS.Timeout>();
