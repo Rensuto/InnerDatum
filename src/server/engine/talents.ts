@@ -120,7 +120,8 @@ import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../world/world.ts';
-import { cooldownOf, setCooldown } from './actor.ts';
+import { Faction, areEnemies, cooldownOf, setCooldown } from './actor.ts';
+import type { Sided } from './actor.ts';
 import { attackTarget, combatDistance } from './combat.ts';
 import { DamageType, applyDamage } from './damage.ts';
 import { combatDamage } from './derived.ts';
@@ -773,6 +774,14 @@ export type TalentActor = {
   readonly cooldowns: Map<string, number>;
   /** Monsters only. Written by the taunt talents — this is ToME's `setTarget`. */
   readonly ai?: { targetId: string | null };
+  /**
+   * WHICH SIDE. Declared here because `isEnemy` and `isFriend` read it, and a
+   * type that did not mention it would let the whole faction rule work only by
+   * runtime luck — the object really is a `MonsterActor` and really does carry
+   * the field, but nothing would have said so and the next reader would have
+   * removed the check as dead. See `Faction` in engine/actor.ts.
+   */
+  readonly faction?: Faction;
   /** The ACT clock. Read-modify-written ONLY by Lockdown; see the note there. */
   energy?: number;
 };
@@ -1640,10 +1649,13 @@ function checkTargeting(
   const victim = targetActor(world, target);
   if (victim === undefined) return TalentRefusal.NoTarget;
   if (victim.id === actor.id && targeting.affinity === Affinity.Hostile) return TalentRefusal.Self;
-  if (targeting.affinity === Affinity.Hostile && victim.kind === actor.kind) {
+  // THE THIRD COPY, written inline rather than as a call, which is why fixing
+  // the other two would still have let the Inspector shoot a shopkeeper:
+  // `'player' === 'monster'` is false, so this never refused. See `areEnemies`.
+  if (targeting.affinity === Affinity.Hostile && !areEnemies(actor, victim)) {
     return TalentRefusal.NotHostile;
   }
-  if (targeting.affinity === Affinity.Ally && victim.kind !== actor.kind) {
+  if (targeting.affinity === Affinity.Ally && areEnemies(actor, victim)) {
     return TalentRefusal.NotAlly;
   }
   return null;
@@ -1840,12 +1852,36 @@ export function targetActor(world: TalentWorld, target: TalentTarget): TalentAct
 }
 
 /** Are these two on opposite sides? M3 factions are players vs monsters. */
-export function isEnemy(a: TalentActor, b: TalentActor): boolean {
-  return a.kind !== b.kind;
+export function isEnemy(a: Sided, b: Sided): boolean {
+  // THE SECOND COPY OF `a.kind !== b.kind`, now delegating. It was invisible to
+  // a grep for `isHostile` and it feeds `pullAggro` and `resolveGuardCounter`,
+  // both of which come right for free. See `areEnemies` in engine/actor.ts.
+  return areEnemies(a, b);
 }
 
 /** Same side. True for yourself — bracing is guarding yourself. */
-export function isFriend(a: TalentActor, b: TalentActor): boolean {
+export function isFriend(a: Sided, b: Sided): boolean {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TOWNSFOLK IS NOBODY'S FRIEND EITHER, AND THAT IS NOT PEDANTRY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `areEnemies` takes her out of the fight on one side; this takes her out on
+   * the other. Without it `a.kind === b.kind` makes a shopkeeper the ALLY of
+   * every husk in the game — she is a `Monster` — and the Ally affinity is not
+   * decoration: Iron Curtain guards the worst-off adjacent friend and pulls
+   * their hunters onto the Watchman. A husk standing next to Merrow would have
+   * counted as somebody to protect.
+   *
+   * Read the other way it is just as wrong. If she is a `Player`'s ally she is
+   * healable, guardable, and counted in the party's own arithmetic — a body the
+   * Alchemist is obliged to keep alive, in a party nobody invited her to.
+   *
+   * SHE IS NEITHER. Not an enemy, not an ally, simply not a participant — which
+   * is the honest shape of a person standing behind a counter while a fight goes
+   * on somewhere else.
+   */
+  if (a.faction === Faction.Townsfolk || b.faction === Faction.Townsfolk) return false;
   return a.kind === b.kind;
 }
 

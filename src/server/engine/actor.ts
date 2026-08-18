@@ -652,6 +652,8 @@ export type MonsterActor = ActorCommon & {
   talentIn?: number;
   /** What a landed blow from this creature also inflicts. See `OnHitStatus`. */
   readonly onHit?: OnHitStatus;
+  /** Which side. `Redacted` for the whole bestiary; see `Faction`. */
+  readonly faction: Faction;
   readonly ai: MonsterAi;
 };
 
@@ -695,6 +697,78 @@ export type OnHitStatus = {
   /** Magnitude: Bleeding's damage per turn, Slowed's fraction. */
   readonly magnitude?: number;
 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH SIDE A BODY IS ON — because "which KIND" was never the same question.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Hostility in this game has always been `a.kind !== b.kind`: players fight
+ * monsters, monsters fight players, and nothing else exists. That is exactly
+ * right for a bestiary and it has no way to express a shopkeeper.
+ *
+ * A THIRD `ActorKind` WAS THE OTHER OPTION AND IS NOT TAKEN. `ActorKind` is
+ * switched exhaustively across the client renderer, the projector and the
+ * scheduler, and `protocol.ts` notes that adding a member deliberately breaks
+ * every one of those at lint time. That is a good property when a new kind
+ * genuinely needs every site to decide something — and a townsfolk does not.
+ * She is a body on a tile with hit points and a sprite, drawn by the same
+ * painter, seen by the same FOV, inspected by the same panel. The ONLY thing
+ * about her that differs is who may hit her. So the answer is a field on the
+ * body, not a new category of body.
+ *
+ * `Redacted` is the default and the name is the fiction's: everything hostile
+ * in this game is something the Index has been editing.
+ */
+export const Faction = {
+  /** The Index's work. Every monster in the roster today. */
+  Redacted: 'redacted',
+  /** Alderbrook's living. Cannot be attacked and never attacks. */
+  Townsfolk: 'townsfolk',
+} as const;
+export type Faction = (typeof Faction)[keyof typeof Faction];
+
+/**
+ * The narrowest view of "a body with a side", so ONE predicate can serve three
+ * modules that must not import each other.
+ *
+ * `faction` is optional because a PLAYER has none — players are one side by
+ * construction and giving them a field would invite somebody to set it.
+ */
+export type Sided = {
+  readonly kind: ActorKind;
+  readonly faction?: Faction;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ARE THESE TWO ENEMIES? THE ONE ANSWER, AND THERE USED TO BE THREE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `a.kind !== b.kind` was written out THREE independent times:
+ *
+ *   `engine/actor.ts#isHostile`     — this file, the one everybody knows about
+ *   `engine/talents.ts#isEnemy`     — a second copy, same line
+ *   `engine/talents.ts#canUseTalent` — a third, written inline as
+ *                                      `victim.kind === actor.kind`
+ *
+ * NONE of the other two is reachable from a `grep isHostile`, none is a compile
+ * error, and none is a lint error. Fixing only this function would have left the
+ * Inspector's Revolver Shot landing on a shopkeeper on day one — `'player' ===
+ * 'monster'` is false, so `canUseTalent` would never refuse — and put her inside
+ * an Alchemic Vial through `actorsInShape(..., Affinity.Hostile)`.
+ *
+ * Two more callers ride `isEnemy` and come right for free: `pullAggro` and
+ * `resolveGuardCounter`.
+ *
+ * THE RULE: a Townsfolk is nobody's enemy and has none. It is stated once, as
+ * two lines, in a predicate both modules can reach — `Sided` is structural, so
+ * `engine/talents.ts` uses it without importing anything it must not.
+ */
+export function areEnemies(a: Sided, b: Sided): boolean {
+  if (a.faction === Faction.Townsfolk || b.faction === Faction.Townsfolk) return false;
+  return a.kind !== b.kind;
+}
 
 export type EngineActor = PlayerActor | MonsterActor;
 
@@ -884,6 +958,11 @@ export type MonsterInit = {
   readonly talentIn?: number;
   /** A status this creature's landed blows inflict. See `OnHitStatus`. */
   readonly onHit?: OnHitStatus;
+  /**
+   * Which side. DEFAULTS TO `Redacted`, so every existing roster entry is
+   * byte-identical and no seeded stream moves.
+   */
+  readonly faction?: Faction;
   /** The real combat sheet. content/monsters.ts always supplies one. */
   readonly combat?: CombatSheet;
 };
@@ -1028,6 +1107,9 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     // that inflicts nothing must reach `strike`'s guard and take the branch it
     // has always taken, with no draw and no seeded-stream shift.
     onHit: init.onHit,
+    // DEFAULTED, not required: the three roster templates author nothing, so
+    // they stay exactly the bodies they were.
+    faction: init.faction ?? Faction.Redacted,
     ai: {
       profile: init.profile,
       targetId: null,
@@ -1188,5 +1270,8 @@ export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
  * with one row.
  */
 export function isHostile(a: EngineActor, b: EngineActor): boolean {
-  return a.kind !== b.kind;
+  // ONE ANSWER. See `areEnemies` — this line used to be written out three times
+  // across two modules, and two of the copies were unreachable from a grep for
+  // this function's name.
+  return areEnemies(a, b);
 }
