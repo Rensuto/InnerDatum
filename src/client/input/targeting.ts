@@ -57,8 +57,8 @@
  */
 
 import { bresenham, DIR_VECTORS, inBounds } from '../../shared/coords.ts';
-import { tileAt } from '../../shared/level.ts';
-import { TalentShape, TileCode } from '../../shared/protocol.ts';
+import { blocksSightAt } from '../../shared/level.ts';
+import { TalentShape } from '../../shared/protocol.ts';
 import { MarkerKind } from '../render/canvas.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { LevelView, LoadoutTalent } from '../../shared/protocol.ts';
@@ -159,7 +159,25 @@ function distance(a: TileXY, b: TileXY): number {
 }
 
 /**
- * Walls block. Endpoints excluded.
+ * WHAT BLOCKS SIGHT BLOCKS SIGHT. Endpoints excluded.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT SAID `=== TileCode.WALL`, AND THAT WAS A LIVE BUG ON THE OVERWORLD
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The server's trace (`world.ts:199`) asks `blocksSightAt`, which is
+ * `protocol.ts`'s closed-default predicate: MOUNTAIN, CRAG, TREES, roofs and
+ * ERASED all stop an eye, and water does not. This file compared to ONE code.
+ *
+ * So on the 170x100 overworld — where `TileCode.WALL` does not appear at all —
+ * the ring offered a clear shot straight through a mountain range, the player
+ * took it, and the server refused with `NoLos`. The doc block below calls that
+ * out as the one thing this reimplementation must never do: *"the ring never
+ * offers a shot the server will refuse for a corner the player cannot see."*
+ * It has been doing exactly that everywhere outside a two-code room.
+ *
+ * Interiors were the only place it was ever right, because every interior is
+ * built out of FLOOR and WALL and nothing else. That stops being true the moment
+ * a room's walls are trees or crag.
  *
  * A DELIBERATE REIMPLEMENTATION of `hasLineOfSight` in src/server/world/world.ts
  * — six lines over the shared, symmetric `bresenham`, which coords.ts says in as
@@ -179,7 +197,7 @@ function hasLineOfSight(level: LevelView, from: TileXY, to: TileXY): boolean {
   for (let i = 1; i < line.length - 1; i += 1) {
     const tile = line[i];
     if (tile === undefined) continue;
-    if (tileAt(level, tile.x, tile.y) === TileCode.WALL) return false;
+    if (blocksSightAt(level, tile.x, tile.y)) return false;
   }
   return true;
 }
@@ -277,7 +295,10 @@ export function createTargeting(options: TargetingOptions): Targeting {
     // `<`, not `<=`: minRange 3 makes 3 the closest LEGAL tile, matching both the
     // authored `min_range` in content/skills/*.json and `canAttack`.
     if (talent.minRange > 0 && d < talent.minRange) return TargetAdvice.TooClose;
-    if (tileAt(level, tile.x, tile.y) === TileCode.WALL) return TargetAdvice.Blocked;
+    // SOLID TO AN EYE, not merely code 1 — see `hasLineOfSight` above. The
+    // server reaches the same refusal one line later through `requiresLos`, so
+    // this stays the friendlier name for the same no.
+    if (blocksSightAt(level, tile.x, tile.y)) return TargetAdvice.Blocked;
     // Adjacent needs no sight check — you are standing on them. Mirrors the
     // `distance > 1` guard in `canAttack`.
     if (d > 1 && !hasLineOfSight(level, origin, tile)) return TargetAdvice.NoLos;
@@ -335,9 +356,11 @@ export function createTargeting(options: TargetingOptions): Targeting {
         const isOrigin = dx === 0 && dy === 0;
         if (isOrigin && active.minRange <= 0) continue;
 
-        // Walls are already the most legible thing on the map. Marking them
+        // Solid ground is already the most legible thing on the map. Marking it
         // would put a marker on every cell of a corridor wall and bury the ring.
-        if (tileAt(lv, x, y) === TileCode.WALL) continue;
+        // WATER IS DELIBERATELY NOT SOLID HERE: it stops a body and not an eye,
+        // so a channel you can shoot across must keep its range markers.
+        if (blocksSightAt(lv, x, y)) continue;
 
         const d = Math.sqrt(dx * dx + dy * dy);
         if (active.minRange > 0 && d < active.minRange) {
@@ -497,7 +520,7 @@ export function createTargeting(options: TargetingOptions): Targeting {
     // splashes against.
     for (const tile of stampTiles(active.shape, active.radius, from, at)) {
       if (!inBounds(tile.x, tile.y, lv.w, lv.h)) continue;
-      if (tileAt(lv, tile.x, tile.y) === TileCode.WALL) continue;
+      if (blocksSightAt(lv, tile.x, tile.y)) continue;
       out.push({ x: tile.x, y: tile.y, marker: MarkerKind.Aoe, shaded: false });
     }
 

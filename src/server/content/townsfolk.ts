@@ -46,7 +46,7 @@
 
 import { AiProfile, Faction } from '../engine/actor.ts';
 import { canWalk } from '../../shared/level.ts';
-import { TileCode, TopicId } from '../../shared/protocol.ts';
+import { TileCode, TopicId, isWalkable } from '../../shared/protocol.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { World } from '../world/world.ts';
 
@@ -362,7 +362,18 @@ function findCounter(
   arrival: { readonly x: number; readonly y: number } | undefined,
   taken: ReadonlySet<string>,
 ): { readonly x: number; readonly y: number } | undefined {
-  const wallAt = (x: number, y: number): boolean => level.tiles[y * level.w + x] === TileCode.WALL;
+  /**
+   * SOLID, not "is code 1". A shopkeeper's whole placement rule is *"stand with
+   * your back to something"*, and once a town's walls are TERRACE or CIVIC
+   * rather than `TileCode.WALL` a comparison to the one code says every tile in
+   * the room is open ground — so Merrow would be scored as standing in the
+   * middle of the floor and would end up wherever the tie-break sent her.
+   *
+   * `isWalkable` and not `blocksSight`: what she wants at her back is something
+   * a body cannot walk through, which is the same thing the counter is.
+   */
+  const wallAt = (x: number, y: number): boolean =>
+    !isWalkable(level.tiles[y * level.w + x] ?? TileCode.WALL);
 
   /**
    * ═══ NEAREST QUALIFYING TILE, NOT THE FIRST ONE FOUND ═══
