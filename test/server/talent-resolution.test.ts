@@ -22,7 +22,7 @@ import {
   talentId,
   useTalent,
 } from '../../src/server/engine/talents.ts';
-import { hasAffordableAction } from '../../src/server/engine/talents.ts';
+import { MOVE_MP_COST, hasAffordableAction } from '../../src/server/engine/talents.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { TalentShape, TileCode } from '../../src/shared/protocol.ts';
@@ -105,9 +105,17 @@ function runtimeFor(talents: TalentEngine, world: World): TalentRuntime {
     noteStruck: (actorId: string): void => talents.noteStruck(actorId),
     // THE REAL PREDICATE, because this fixture drives real talents — a stub
     // would test the closed-round path while the file is about the open one.
+    // THE REAL CHARGE, because this fixture drives real talents and real MP.
+    spendMove: (actorId: string): boolean => {
+      const sheet = talents.sheetOf(actorId);
+      if (sheet === undefined) return true;
+      if (sheet.mp < MOVE_MP_COST) return false;
+      sheet.mp -= MOVE_MP_COST;
+      return true;
+    },
     roundOpen: (actorId: string): boolean => {
       const actor = world.getActor(actorId);
-      return actor === undefined ? false : hasAffordableAction(talents, actor, 0);
+      return actor === undefined ? false : hasAffordableAction(talents, actor, MOVE_MP_COST);
     },
     // THE TWO THAT MAKE A RANK VISIBLE ON THE BASIC SWING. Forwarded exactly as
     // `talentRuntimeFor` (src/server/main.ts) forwards them, because this
@@ -259,7 +267,28 @@ function inspectorScene(seed: string): {
       sheet.resource.value = 0;
       const before = sheet.resource.value;
       act();
+      /**
+       * ═══ ONE GAME TURN, WHICH IS NO LONGER ONE PUMP ═══
+       * The intra-turn budget means an action can PARK rather than spend the
+       * turn: a step costs 1 MP of 3, so a player who walks once is still
+       * mid-round and no base pass has run. This helper's contract is "what the
+       * resource gained across one TURN", so it now pumps until the clock
+       * actually moves rather than assuming one pump did it.
+       *
+       * Bounded, because a helper that could spin forever on a bug is a test
+       * suite that hangs instead of failing.
+       */
+      const startedAt = world.turn.clock.gameTurn;
       engine.pump();
+      // STILL MID-ROUND? THEN FINISH IT, which is what a player does. A step
+      // costs 1 MP of 3, so walking once leaves the round open and the world
+      // waits — more pumps change nothing, because the pump is waiting for THIS
+      // actor. A hold is not a talent and not a move, so `roundStaysOpen`
+      // refuses it and the turn is spent.
+      if (world.turn.clock.gameTurn === startedAt) {
+        engine.hold('p1');
+        engine.pump();
+      }
       return sheet.resource.value - before;
     },
   };
@@ -353,7 +382,20 @@ describe('with the runtime wired in, a talent resolves', () => {
     // Written as an expression so that a future rate change fails at the RATE,
     // naming it, instead of at a copied decimal that somebody then "fixes".
     const IRON_CURTAIN_RESOLVE = 25;
-    const BASE_PASSES_AFTER_THE_ACT = 1;
+    /**
+     * ═══ ZERO NOW, AND IT WAS ONE — THE ROUND STAYED OPEN ═══
+     * Iron Curtain costs 5 of 6 AP, so a Watchman who casts it has 1 AP left and
+     * cannot afford anything — but he has 3 MP, a step costs 1, and
+     * `hasAffordableAction` therefore says the round may continue. The pump
+     * parks him rather than spending his turn, so NO base pass runs after the
+     * cast and the trickle is not paid.
+     *
+     * That is the intra-turn budget working, not a regression: a player who has
+     * acted but not finished has not had a turn yet. The count is still written
+     * out rather than folded into the figure, for the reason the note above
+     * gives — a future rate change should fail at the RATE.
+     */
+    const BASE_PASSES_AFTER_THE_ACT = 0;
     expect(table.sheet.resource.value).toBeCloseTo(
       100 - IRON_CURTAIN_RESOLVE + RESOLVE_PER_TURN * BASE_PASSES_AFTER_THE_ACT,
       6,

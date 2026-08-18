@@ -661,21 +661,58 @@ export function hasResource(pool: ResourcePool, amount: number): boolean {
  * on the class resource — the same three questions `canUseTalent` asks, in the
  * same order, for the same reason.
  *
- * ═══ `moveAp` IS A PARAMETER, NOT AN IMPORT ═══
+ * ═══ `moveCost` IS A PARAMETER, NOT AN IMPORT ═══
  * eslint forbids `engine/** -> content/**`, and the cost of a step is content's
  * to own. Passing it keeps this module pure and keeps the number in one place.
  * Zero means a step is free, which is the game as it shipped.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A STEP COSTS — `docs/game-design.md` § 6, authored and never charged.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * *"The 6-AP / 3-MP round (from `city_watchman.json`'s `max_ap: 6` / `max_mp:
+ * 3`). **Move = 1 MP**; talents cost their authored `ap_cost`."*
+ *
+ * MP existed, was refilled every turn, and was spent by exactly one talent (Fog
+ * Step). Nothing charged for walking, so the entire M column was decorative —
+ * and so was SLOWED, whose player half is `-1 MP` and therefore subtracted from
+ * a pool nothing drew on.
+ *
+ * ONE MP, NOT THE AP THE IMPLEMENTATION PLAN PROPOSED. The plan priced a step
+ * at 2 AP; the design document prices it at 1 MP, and `city_watchman.json` is
+ * where both numbers come from. When a plan and the design authority disagree
+ * about an authored number, the authored number wins — and it is the better
+ * mechanic here, because it keeps movement and casting on separate budgets, so
+ * a Watchman cannot trade his whole round for six steps.
+ */
+export const MOVE_MP_COST = 1;
+
+/**
+ * What a status is taking off this body's round.
+ *
+ * DECLARED HERE RATHER THAN IMPORTED from engine/effects.ts, structurally, for
+ * the reason `TalentCallCtx.status` gives at length: this module runs a small
+ * effect system of its own, and two modules exporting "effects" into each other
+ * is how a cycle starts. The shape is two numbers, and the adapter in main.ts is
+ * the one place that holds both sides.
+ */
+export type BudgetPenalty = { readonly ap: number; readonly mp: number };
+
 export function hasAffordableAction(
   engine: TalentEngine,
   actor: TalentActor,
-  moveAp: number,
+  /**
+   * What a step costs, in MP. `MOVE_MP_COST` in play; 0 in a build where
+   * walking is free, which is every fixture that does not thread the seam.
+   */
+  moveCost: number,
 ): boolean {
   const sheet = engine.sheetOf(actor.id);
   if (sheet === undefined) return false;
   // A STEP IS AN ACTION. Checked first because it is the cheapest thing anybody
   // can do and the commonest reason a round is still worth holding open.
-  if (moveAp > 0 && sheet.ap >= moveAp) return true;
+  if (moveCost > 0 && sheet.mp >= moveCost) return true;
 
   for (const id of sheet.loadout) {
     const talent = engine.registry.get(id);
@@ -1350,7 +1387,11 @@ export type TalentEngine = {
    * refills the AP/MP budget. Nothing in here may read `globalSpeed` or
    * `speedFactor`; see this file's header for why that is the invariant.
    */
-  actBase(actorId: string, world: TalentWorld): void;
+  /**
+   * @param penalty what a status is taking off this round — SLOWED's `-1 MP`.
+   *   Absent is no penalty, which is every caller that has no status table.
+   */
+  actBase(actorId: string, world: TalentWorld, penalty?: BudgetPenalty): void;
 
   /**
    * A kill happened. Reagents are a stock and this is half of how it refills.
@@ -1425,15 +1466,36 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       else effects.set(actorId, kept);
     },
 
-    actBase: (actorId: string, world: TalentWorld): void => {
+    actBase: (actorId: string, world: TalentWorld, penalty?: BudgetPenalty): void => {
       tickEffects(effects, actorId);
       const sheet = sheets.get(actorId);
       if (sheet === undefined) return;
       const actor = world.getActor(actorId);
       if (actor === undefined || !actor.alive) return;
       regenResource(engine, sheet, actor, world);
-      sheet.ap = sheet.maxAp;
-      sheet.mp = sheet.maxMp;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE REFILL, MINUS WHATEVER IS BEING DONE TO THIS BODY.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * SLOWED's player half is `-1 MP` and it has never been subtracted from
+       * anything: `budgetPenalty` in engine/effects.ts had ZERO production
+       * callers, so a Slowed detective moved exactly as far and acted exactly as
+       * often as an unslowed one. The badge was the whole effect.
+       *
+       * HERE AND NOT EARLIER, because this line is the reason. `budgetPenalty`'s
+       * own docblock says so: *"The caller applies this immediately after the
+       * refill … a QUERY rather than a stateful subtraction, precisely because
+       * that refill would clobber anything subtracted earlier in the turn."*
+       * Anything that took MP off a Slowed player mid-round would be handed it
+       * straight back on the next base pass.
+       *
+       * FLOORED AT ZERO. A penalty larger than the pool is a body that cannot
+       * act, not a body with negative movement — and `hasAffordableAction` reads
+       * these, so a negative would answer "affordable" through a sign error.
+       */
+      sheet.ap = Math.max(0, sheet.maxAp - (penalty?.ap ?? 0));
+      sheet.mp = Math.max(0, sheet.maxMp - (penalty?.mp ?? 0));
       sheet.movedThisTurn = false;
     },
 

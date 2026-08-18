@@ -702,6 +702,22 @@ export type TalentResolution = {
   roundOpen(actorId: string): boolean;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * CHARGE A STEP. `docs/game-design.md` § 6: **Move = 1 MP**.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Returns whether the body could pay. False means the round is over for them
+   * — they have walked as far as the round allows — and the caller closes it.
+   *
+   * MP EXISTED, WAS REFILLED EVERY TURN AND WAS SPENT BY ONE TALENT. Nothing
+   * charged for walking, so the whole column was decorative and so was SLOWED,
+   * whose player half is `-1 MP` off a pool nothing drew on.
+   *
+   * ABSENT IS FREE MOVEMENT, which is the game as it shipped and what every
+   * fixture without a talent runtime still gets.
+   */
+  spendMove(actorId: string): boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * HOW MUCH HARDER A MARKED BODY IS HIT — the Inspector's Sigil, on the swing
    * that is not a talent.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1631,7 +1647,38 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
      * comes back to them before the world moves.
      */
     actor.roundActions += 1;
-    if (roundStaysOpen(actor, intent, run)) {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * A STEP COSTS 1 MP — `docs/game-design.md` § 6, authored and never charged.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * AFTER THE MOVE RESOLVED, not before, and the ordering is deliberate: the
+     * step may have been refused by terrain or an occupant, and charging for a
+     * wall would be charging for nothing. `resolveIntent` has already answered.
+     *
+     * `spendMove` ABSENT IS FREE MOVEMENT, which is the game as it shipped and
+     * what every fixture without a talent runtime still gets — so a `?? true`
+     * here means "nothing is keeping score", not "the body is out of legs".
+     */
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * A BUMP ATTACK IS SUBMITTED AS A MOVE, AND IT MUST NOT CHAIN.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `IntentKind.Move` covers two different acts: walking, and walking INTO
+     * something, which `resolveIntent` turns into a swing. Treating both as
+     * steps made melee cost 1 MP of 3 and repeat three times a round — roughly
+     * tripling basic-attack throughput, which is a bigger balance change than
+     * the whole budget and one nobody asked for. `class-wiring.test.ts` caught
+     * it as a base-turn count falling from two to one.
+     *
+     * So the round stays open only for a step that was actually a STEP. An
+     * attack closes it, exactly as it did before this commit, and the walk that
+     * chains is the one that moved a body.
+     */
+    const wasStep = intent.kind === IntentKind.Move && outcome.effect.kind !== 'attack';
+    const paidForStep = wasStep ? (run.ctx.talents?.spendMove(actor.id) ?? true) : true;
+    if (paidForStep && roundStaysOpen(actor, intent, run, wasStep)) {
       actor.roundTailMs = run.ctx.nowMs + ROUND_TAIL_MS;
       return ActResult.Park;
     }
@@ -3273,10 +3320,28 @@ function updateEngagement(
  * runtime — which is most of the test suite, every fixture, and every tool —
  * closes every round after one action exactly as it always has.
  */
-function roundStaysOpen(actor: PlayerActor, intent: Intent, run: Run): boolean {
+function roundStaysOpen(
+  actor: PlayerActor,
+  intent: Intent,
+  run: Run,
+  /** True only for a move that actually moved — see `actPlayer`. */
+  wasStep: boolean,
+): boolean {
   if (run.world.turn.engagement <= 0) return false;
-  if (intent.kind !== IntentKind.Talent) return false;
   if (actor.roundActions >= MAX_ACTIONS_PER_ROUND) return false;
+  /**
+   * A MOVE MAY NOW KEEP THE ROUND OPEN, and it did not in C3.
+   *
+   * That commit refused every non-talent deliberately, because a step that left
+   * the round open while nothing charged for it would have handed everybody
+   * "swing then walk away for free" from the first fight. `spendMove` is what
+   * removed that objection: a step costs 1 MP out of 3, so walking is bounded
+   * by the same round everything else is.
+   *
+   * THE CHARGE HAPPENS AT THE SITE THAT RESOLVES THE MOVE, not here — this
+   * predicate must stay a question. See `actPlayer`.
+   */
+  if (intent.kind !== IntentKind.Talent && !wasStep) return false;
   return run.ctx.talents?.roundOpen(actor.id) === true;
 }
 

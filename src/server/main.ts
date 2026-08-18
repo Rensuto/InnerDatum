@@ -32,13 +32,20 @@ import {
 import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
-import { createEffectState, registerEffect, statusApplier } from './engine/effects.ts';
+import {
+  budgetPenalty,
+  createEffectState,
+  registerEffect,
+  statusApplier,
+} from './engine/effects.ts';
 import type { StatusApply } from './engine/effects.ts';
+import type { BudgetPenalty } from './engine/talents.ts';
 import { BLEEDING, SLOWED, STUNNED } from './content/effects.ts';
 import {
   RESOURCE_RULES,
   markMultiplier,
   resolveGuardCounter,
+  MOVE_MP_COST,
   hasAffordableAction,
   useTalent,
 } from './engine/talents.ts';
@@ -139,6 +146,15 @@ export function talentRuntimeFor(
    * throws.
    */
   status?: StatusApply,
+  /**
+   * WHAT A STATUS IS TAKING OFF THIS ROUND — `budgetPenalty` from the status
+   * table, curried by whoever holds it. Absent is no penalty, which is every
+   * fixture that wires no effects.
+   *
+   * A CLOSURE RATHER THAN THE TABLE, exactly like `status` beside it: this
+   * adapter must not decide what an effect means, only forward the answer.
+   */
+  penaltyFor?: (actorId: string) => BudgetPenalty,
 ): TalentRuntime {
   return {
     use: (actor: EngineActor, id: string, target: TileXY | undefined): TalentResolutionResult => {
@@ -186,7 +202,11 @@ export function talentRuntimeFor(
       };
     },
     actBase: (actorId: string): void => {
-      talents.actBase(actorId, world);
+      // THE REFILL TAKES THE PENALTY. `budgetPenalty` reads the status table
+      // and answers what SLOWED is taking off this round — the caller applies it
+      // "immediately after the refill", which is exactly here, because the refill
+      // would clobber anything subtracted earlier in the turn.
+      talents.actBase(actorId, world, penaltyFor?.(actorId));
     },
     noteMoved: (actorId: string): void => {
       const sheet = talents.sheetOf(actorId);
@@ -217,7 +237,22 @@ export function talentRuntimeFor(
     roundOpen: (actorId: string): boolean => {
       const actor = world.getActor(actorId);
       if (actor === undefined) return false;
-      return hasAffordableAction(talents, actor, 0);
+      return hasAffordableAction(talents, actor, MOVE_MP_COST);
+    },
+    /**
+     * CHARGE A STEP — `docs/game-design.md` § 6, "Move = 1 MP".
+     *
+     * False means the round is over for them: they have walked as far as this
+     * round allows. `spendResource` is not used because MP is not the class
+     * resource — it is the movement half of the intra-turn budget, and it lives
+     * on the sheet beside AP.
+     */
+    spendMove: (actorId: string): boolean => {
+      const sheet = talents.sheetOf(actorId);
+      if (sheet === undefined) return true;
+      if (sheet.mp < MOVE_MP_COST) return false;
+      sheet.mp -= MOVE_MP_COST;
+      return true;
     },
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -601,7 +636,9 @@ export function buildServer() {
       downed,
       parties,
       talents: createTalentBook(talentEngine, forWorld),
-      talentRuntime: talentRuntimeFor(talentEngine, forWorld, statusFor(forWorld)),
+      talentRuntime: talentRuntimeFor(talentEngine, forWorld, statusFor(forWorld), (actorId) =>
+        budgetPenalty(effects, actorId),
+      ),
       // THE OTHER HALF OF THE STATUS SEAM. `turn-engine.ts` builds
       // `PumpCtx.statusPass` from this, the world's rng and the talent book —
       // it is the only place that holds all three, which is why the seam sat
