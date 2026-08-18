@@ -673,7 +673,7 @@ describe('inventoryPanelHitAt', () => {
     );
     expect(
       inventoryPanelHitAt(rect, rows, box.x + Math.floor(box.w / 2), box.y + Math.floor(box.h / 2)),
-    ).toEqual({ kind: InventoryHitKind.Drop, itemId: 'item_signet' });
+    ).toEqual({ kind: InventoryHitKind.Drop, itemId: 'item_signet', enabled: true });
   });
 
   it('answers null on the panel but off every control, which the caller swallows', () => {
@@ -823,7 +823,9 @@ describe('inventoryPanelHitAt', () => {
     // A tab, the ×, the DROP control and a miss are all "not about a thing", so
     // none of them may quietly change what the strip is describing.
     expect(focusForHit({ kind: InventoryHitKind.Tab, tab: InventoryTab.Carried })).toBeNull();
-    expect(focusForHit({ kind: InventoryHitKind.Drop, itemId: 'item_signet' })).toBeNull();
+    expect(
+      focusForHit({ kind: InventoryHitKind.Drop, itemId: 'item_signet', enabled: true }),
+    ).toBeNull();
     expect(focusForHit(null)).toBeNull();
   });
 });
@@ -1106,7 +1108,9 @@ describe('the comparison strip', () => {
     );
     expect(row.rows).toEqual([]);
     expect(row.meta).toContain('worn');
-    expect(row.dropId).toBeNull();
+    // NO CONTROL ON A WORN ITEM, in a shop or out of one — selling the coat off
+    // your own back is one click from being an accident.
+    expect(row.action).toBeNull();
   });
 
   it('names an empty slot instead of leaving the strip blank', () => {

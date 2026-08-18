@@ -1891,7 +1891,13 @@ function lootAt(tile: TileXY): TileLoot {
 function inventoryPanelView(): InventoryPanelView {
   return {
     inventory,
-    tab: invTab,
+    // THE SHELF OF THE ROOM YOU ARE IN, or null. It is what makes the third tab
+    // exist at all — see `tabsFor`.
+    shop,
+    // A ROOM WITH NO SHOP CANNOT LEAVE YOU ON THE SHOP TAB. Walking out of a
+    // town with the tab open would otherwise leave the panel showing a shelf
+    // that is not there, with no box to click to get off it.
+    tab: shop === null && invTab === InventoryTab.Shop ? InventoryTab.Carried : invTab,
     focus: invFocus,
     // ═══ THE FACE IN THE MIDDLE OF THE DOLL, JOINED FROM THE `turn` FRAME ═══
     // NOT BUILT HERE FROM THE CLASS NAME. src/server/view/projector.ts:387-393
@@ -4648,6 +4654,22 @@ async function boot(): Promise<void> {
         // irreversible act near here is walking away from it, and no button
         // can warn about that.
         sendDrop(hit.itemId);
+        return;
+      case InventoryHitKind.Buy:
+        // A DISABLED CONTROL STILL ANSWERS, and says why. A press that does
+        // nothing at all is the one outcome a player reads as the game being
+        // broken; "you cannot afford that" is a sentence.
+        if (!hit.enabled) {
+          showNotice('you cannot afford that');
+          return;
+        }
+        socket.send({ v: PROTOCOL_VERSION, t: 'shop_buy', itemId: hit.itemId });
+        return;
+      case InventoryHitKind.Sell:
+        // NO CONFIRMATION, on the same argument DROP makes and one more: the
+        // shop keeps what you sold it until its next restock, so a mis-sale is
+        // buyable back — for the spread, which is the cost of not thinking.
+        socket.send({ v: PROTOCOL_VERSION, t: 'shop_sell', itemId: hit.itemId });
         return;
     }
   }

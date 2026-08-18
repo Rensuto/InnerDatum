@@ -215,6 +215,7 @@ import {
 } from './panel.ts';
 import type {
   CarriedItemView,
+  ShopMsg,
   InspectRow,
   InventoryMsg,
   ItemView,
@@ -499,6 +500,20 @@ const DETAIL_HINT = 'point at an item to see what it changes';
 /** The strip's control. A word, because a bin icon would be a new sprite id. */
 const DROP_LABEL = 'DROP';
 
+/**
+ * The control's ink.
+ *
+ * GOLD FOR BUY EVEN UNHOVERED, because it is the one control on this panel that
+ * spends something — and the palette already reserves GOLD for "this is the
+ * thing worth looking at". A disabled control goes flat grey rather than
+ * disappearing, so the strip's layout does not move under the pointer.
+ */
+function buttonInk(action: DetailAction, hovered: boolean): string {
+  if (!action.enabled) return PALETTE.GREY;
+  if (hovered) return PALETTE.GOLD;
+  return action.kind === 'buy' ? PALETTE.GOLD : PALETTE.GREY_HI;
+}
+
 // ---------------------------------------------------------------------------
 // Tabs, cells and rows
 // ---------------------------------------------------------------------------
@@ -514,11 +529,38 @@ export const InventoryTab = {
   Equipped: 'equipped',
   /** The bag — up to twelve things, in the server's own order. */
   Carried: 'carried',
+  /**
+   * THE SHELF, AND ONLY WHEN YOU ARE STANDING IN A ROOM THAT HAS ONE.
+   *
+   * A TAB RATHER THAN A SECOND PANEL, deliberately. ToME's shop is a
+   * two-column dialog — their goods left, yours right — because it has no other
+   * way to answer "is this better than what I have". This panel already answers
+   * that: hovering anything fills the comparison strip with a delta against the
+   * doll you are wearing. So a tab reuses the cells, the hover-compare, the
+   * drag and the close control, and the one thing a second panel would have
+   * bought is a thing we already have.
+   */
+  Shop: 'shop',
 } as const;
 export type InventoryTab = (typeof InventoryTab)[keyof typeof InventoryTab];
 
 /** Left to right, which is also the order the hit test answers in. */
 const TAB_ORDER: readonly InventoryTab[] = [InventoryTab.Equipped, InventoryTab.Carried];
+
+/**
+ * The tabs on screen right now.
+ *
+ * THE SHOP TAB EXISTS ONLY WHERE A SHOP DOES. A greyed third tab in every room
+ * would be a permanent advertisement for something most rooms do not have, and
+ * a player who pressed it once in a corridor would learn to stop looking at it
+ * — which is exactly the wrong lesson for the one tab that has gold in it.
+ *
+ * A FUNCTION AND NOT A CONSTANT, so the hit test and the painter cannot
+ * disagree about how many boxes there are. Both call this.
+ */
+export function tabsFor(hasShop: boolean): readonly InventoryTab[] {
+  return hasShop ? [...TAB_ORDER, InventoryTab.Shop] : TAB_ORDER;
+}
 
 /**
  * ONE CELL OF THE GRID: something worn, something carried, or a slot with
@@ -553,6 +595,22 @@ export type InventoryCell =
        * was looking at when the menu was built.
        */
       readonly worn: boolean;
+      /**
+       * WHAT IT COSTS, on the shop tab only. Null everywhere else.
+       *
+       * THE SERVER'S NUMBER, off `ShopItemView.buy`, never derived here — see
+       * that type: a client that computed its own prices would be a second copy
+       * of the economy, and the first thing to drift would be the spread that
+       * stops a shop being farmable.
+       */
+      readonly price?: number | null;
+      /**
+       * FALSE WHEN THE VIEWER CANNOT AFFORD IT. Cosmetic — the server refuses
+       * the purchase either way — but a shelf that looks identical whether or
+       * not you can buy from it makes a player click to find out, and a refusal
+       * is a worse answer than a greyed price.
+       */
+      readonly affordable?: boolean;
     };
 
 /**
@@ -576,6 +634,29 @@ function sameFocus(a: InventoryFocus | null, b: InventoryFocus | null): boolean 
   if (a.kind === 'slot' && b.kind === 'slot') return a.slot === b.slot;
   return false;
 }
+
+/**
+ * WHAT THE STRIP'S BUTTON DOES, when it has one.
+ *
+ * ONE BUTTON, THREE MEANINGS, AND THE ROW DECIDES WHICH. It was `dropId: string
+ * | null` while DROP was the only thing a strip could offer. A shop makes that
+ * three: you drop a thing you are carrying, you sell it if there is somebody
+ * here to sell it to, and you buy what is on the shelf. Keeping one control and
+ * naming what it means is what stops the strip growing a row of buttons that
+ * are mostly disabled.
+ */
+export type DetailAction = {
+  readonly kind: 'drop' | 'buy' | 'sell';
+  /** What the verb will name. */
+  readonly itemId: string;
+  /** The word on the button, already including the price where there is one. */
+  readonly label: string;
+  /**
+   * FALSE GREYS IT AND THE HIT TEST STILL ANSWERS. A control that vanished when
+   * you could not afford it would move the strip's layout under the pointer.
+   */
+  readonly enabled: boolean;
+};
 
 export const InventoryRowKind = {
   /** The `[EQUIPPED]` / `[CARRIED]` pair. Always the first row. */
@@ -607,6 +688,15 @@ export type InventoryRow =
       /** How many of the seven slots are filled. Drawn on the tab, never inferred. */
       readonly wornCount: number;
       readonly carriedCount: number;
+      /**
+       * WHICH TABS EXIST, left to right. Two in most rooms, three where there is
+       * a shop — carried on the ROW so the painter and the hit test read one
+       * list. Deriving it twice is how a box appears that can be clicked and not
+       * seen, or seen and not clicked.
+       */
+      readonly tabs: readonly InventoryTab[];
+      /** How many things are on the shelf. Zero when there is no shop. */
+      readonly shopCount: number;
     }
   | { readonly kind: typeof InventoryRowKind.Cells; readonly cells: readonly InventoryCell[] }
   | {
@@ -651,7 +741,7 @@ export type InventoryRow =
       /** How many the cap held back. 0 in every ordinary case. */
       readonly hiddenRows: number;
       /** What DROP would drop, or null — a worn item and an empty slot have none. */
-      readonly dropId: string | null;
+      readonly action: DetailAction | null;
     }
   | { readonly kind: typeof InventoryRowKind.Note; readonly text: string };
 
@@ -667,6 +757,14 @@ export type InventoryRow =
 export type InventoryPanelView = {
   /** The `inventory` frame, or null before the first one arrives. */
   readonly inventory: InventoryMsg | null;
+  /**
+   * THE SHELF OF THE ROOM YOU ARE IN, or null for a room with no shop.
+   *
+   * NULL IS THE WHOLE SIGNAL, all the way from the server: a `shop` frame is
+   * sent only for a realm that has one, so there is no second "is there a shop
+   * here" flag free to disagree with the shelf itself.
+   */
+  readonly shop?: ShopMsg | null;
   readonly tab: InventoryTab;
   /** The strip's subject. See `InventoryFocus` — the caller must not clear it. */
   readonly focus: InventoryFocus | null;
@@ -736,6 +834,32 @@ function carriedCells(inventory: InventoryMsg): readonly InventoryCell[] {
 }
 
 /**
+ * The shelf, as cells.
+ *
+ * `affordable` is computed HERE and not on the wire: it is a comparison between
+ * two numbers the client already holds (the shelf's price and the purse off the
+ * inventory frame), and putting it on the wire would have meant a broadcast
+ * carrying one player's balance to the whole room.
+ */
+function shopCells(shop: ShopMsg, money: number): readonly InventoryCell[] {
+  return shop.stock.slice(0, CARRIED_MAX).map((row): InventoryCell => ({
+    kind: 'item',
+    itemId: row.itemId,
+    name: row.name,
+    icon: row.icon,
+    tier: row.tier,
+    // THE SHELF HAS NO SLOT COLUMN — `ShopItemView` deliberately omits it,
+    // because what a coat is worn on is a fact about the coat and the strip
+    // reads it off the resolved item. `body` is a placeholder the grid never
+    // shows; the strip prints the real one.
+    slot: 'body',
+    worn: false,
+    price: row.buy,
+    affordable: money >= row.buy,
+  }));
+}
+
+/**
  * WHERE A LIVE DRAG COULD LAND ON THE DOLL, or null.
  *
  * CARRIED ONLY. A worn item dragged OFF the doll has no destination on the doll —
@@ -793,6 +917,42 @@ function tierWord(tier: ItemTier): string {
  * player who wants its contribution takes it off, or reads the character sheet,
  * which is the screen that owns totals.
  */
+/**
+ * The SELL control for a carried item, or null when there is nobody to sell to.
+ *
+ * The price is the server's, off the shelf frame — but a thing in your bag is
+ * not necessarily on the shelf, so this asks the frame for the shop's own
+ * quote. When the shop has never quoted this item the control is offered
+ * anyway, unpriced: the server prices it on arrival and refuses what it will
+ * not take, and a missing label is better than a client inventing a number.
+ */
+function sellAction(view: InventoryPanelView, itemId: string): DetailAction | null {
+  const shop = view.shop;
+  if (shop == null) return null;
+  const quoted = shop.stock.find((row) => row.itemId === itemId);
+  return {
+    kind: 'sell',
+    itemId,
+    label: quoted === undefined ? 'SELL' : `SELL ${String(quoted.sell)}`,
+    enabled: true,
+  };
+}
+
+/**
+ * The carried view of a shelved item, when the player happens to own one.
+ *
+ * WHY THIS IS NOT ALWAYS AVAILABLE: `CarriedItemView.compare` is computed by
+ * the server against the RECIPIENT'S doll, so it exists only for things in
+ * their bag. A coat on the shelf that the player does not own has no compare
+ * rows yet — the strip prints the description and the price, and the comparison
+ * arrives the moment they buy it. Inventing one here would mean a second copy
+ * of the arithmetic, in the browser, against a sheet the client only partly
+ * knows.
+ */
+function itemOnShelf(view: InventoryPanelView, itemId: string): CarriedItemView | undefined {
+  return view.inventory?.carried.find((row) => row.itemId === itemId);
+}
+
 function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): InventoryRow {
   // THE HEIGHT IS THE TAB'S AND NEVER THE FOCUS'S. See `DETAIL_COMPACT_H` and the
   // header: a strip that grew when a cell was pointed at would drop the tail row
@@ -808,7 +968,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
     desc: '',
     rows: [] as readonly InspectRow[],
     hiddenRows: 0,
-    dropId: null,
+    action: null,
   } as const;
 
   const focus = view.focus;
@@ -828,7 +988,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       desc: '',
       rows: [],
       hiddenRows: 0,
-      dropId: null,
+      action: null,
     };
   }
 
@@ -850,7 +1010,18 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       // DROP IS OFFERED FOR A CARRIED ITEM ONLY. ToME's `playerDrop`
       // (Game.lua:2173-2176 -> `DROP_FLOOR`) drops out of INVEN, and taking a
       // worn thing off is a separate act there and here.
-      dropId: carried.itemId,
+      //
+      // ═══ AND IT BECOMES SELL WHERE THERE IS SOMEBODY TO SELL TO ═══
+      // One control, because the two acts are alternatives rather than
+      // companions: nobody standing in a shop wants to throw a coat on the
+      // floor when the shop will pay for it. Outside a shop there is nobody to
+      // pay, so DROP is the only honest offer.
+      action: sellAction(view, carried.itemId) ?? {
+        kind: 'drop',
+        itemId: carried.itemId,
+        label: DROP_LABEL,
+        enabled: true,
+      },
     };
   }
 
@@ -865,7 +1036,38 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       desc: worn.desc,
       rows: [],
       hiddenRows: 0,
-      dropId: null,
+      // NO CONTROL ON A WORN ITEM, in a shop or out of one. Selling the coat off
+      // your own back is one click from being an accident, and taking it off is
+      // already a separate act.
+      action: null,
+    };
+  }
+
+  // ═══ THE SHELF ═══
+  const shelved = view.shop?.stock.find((row) => row.itemId === focus.itemId);
+  if (shelved !== undefined) {
+    const item = itemOnShelf(view, shelved.itemId);
+    const money = inventory.money;
+    return {
+      kind: InventoryRowKind.Detail,
+      compact,
+      title: shelved.name,
+      meta: `${tierWord(shelved.tier)} · ${String(shelved.buy)} gold · sells back for ${String(shelved.sell)}`,
+      desc: item?.desc ?? '',
+      // THE SAME COMPARISON A CARRIED ITEM GETS, which is the whole reason this
+      // is a tab on this panel rather than a shop dialog of its own: the
+      // question at a shop is never "what is this", it is "is it better than
+      // what I am wearing", and this strip already answers that.
+      rows: item?.compare ?? [],
+      hiddenRows: 0,
+      action: {
+        kind: 'buy',
+        itemId: shelved.itemId,
+        label: `BUY ${String(shelved.buy)}`,
+        // GREYED, NOT HIDDEN. A control that vanished when you could not afford
+        // it would move the strip's layout under the pointer.
+        enabled: money >= shelved.buy,
+      },
     };
   }
 
@@ -900,6 +1102,11 @@ export function inventoryPanelRows(view: InventoryPanelView): readonly Inventory
       tab: view.tab,
       wornCount: inventory === null ? 0 : Object.keys(inventory.equipped).length,
       carriedCount: inventory === null ? 0 : inventory.carried.length,
+      // ON THE ROW rather than derived twice. The painter draws these boxes and
+      // the hit test names them, and a third tab that existed for one of them
+      // would be a box you could click and not see, or see and not click.
+      tabs: tabsFor(view.shop != null),
+      shopCount: view.shop?.stock.length ?? 0,
     },
   ];
 
@@ -917,7 +1124,15 @@ export function inventoryPanelRows(view: InventoryPanelView): readonly Inventory
     return rows;
   }
 
-  if (view.tab === InventoryTab.Equipped) {
+  if (view.tab === InventoryTab.Shop && view.shop != null) {
+    const cells = shopCells(view.shop, view.inventory?.money ?? 0);
+    rows.push(...intoRows(cells));
+    if (cells.length === 0) {
+      // A SHOP CAN BE EMPTY and it is worth saying so plainly: the shelves top
+      // up when somebody levels, so "come back" is the actual answer.
+      rows.push({ kind: InventoryRowKind.Note, text: 'the shelves are bare — come back later' });
+    }
+  } else if (view.tab === InventoryTab.Equipped) {
     // ONE ROW, NOT THREE. The doll is a placed grid — see `InventoryRowKind.Doll`
     // — and `equippedCells` still hands over all seven in `SLOT_ORDER`, so
     // `cells` and `places` stay parallel and the doll's LIST order and its
@@ -1100,10 +1315,17 @@ function dollRowsThatFit(avail: number): number {
   return fit;
 }
 
-/** The two tab boxes. Positional, so a click names a tab without reading state. */
-function tabRects(row: PanelRect): readonly PanelRect[] {
-  const w = Math.floor((row.w - TAB_GAP) / 2);
-  return TAB_ORDER.map((_tab, index) => ({
+/**
+ * The tab boxes. Positional, so a click names a tab without reading state.
+ *
+ * WIDTH IS DIVIDED BY HOW MANY THERE ARE, so the third tab does not overflow the
+ * panel when a shop appears — the panel has exactly one width (see the header),
+ * and three boxes in a two-box strip would have run the last one off the edge.
+ */
+function tabRects(row: PanelRect, count: number): readonly PanelRect[] {
+  const n = Math.max(1, count);
+  const w = Math.floor((row.w - TAB_GAP * (n - 1)) / n);
+  return Array.from({ length: n }, (_unused, index) => ({
     x: row.x + index * (w + TAB_GAP),
     y: row.y,
     w,
@@ -1202,7 +1424,7 @@ export function inventoryPanelGeometry(
       row,
       rect: rowRect,
       cells: row.kind === InventoryRowKind.Cells ? cellRects(rowRect, row.cells.length) : [],
-      tabs: row.kind === InventoryRowKind.Tabs ? tabRects(rowRect) : [],
+      tabs: row.kind === InventoryRowKind.Tabs ? tabRects(rowRect, row.tabs.length) : [],
       drop: null,
       portrait: null,
     });
@@ -1243,7 +1465,7 @@ export function inventoryPanelGeometry(
       cells: [],
       tabs: [],
       drop:
-        detail.kind === InventoryRowKind.Detail && detail.dropId !== null
+        detail.kind === InventoryRowKind.Detail && detail.action !== null
           ? {
               x: stripRect.x + stripRect.w - DROP_W,
               y: stripRect.y,
@@ -1273,6 +1495,10 @@ export const InventoryHitKind = {
   EmptySlot: 'empty_slot',
   /** The strip's DROP control. Only ever offered for a CARRIED item. */
   Drop: 'drop',
+  /** The strip's BUY control, on the shop tab. `enabled` says if it is affordable. */
+  Buy: 'buy',
+  /** The strip's SELL control — a carried item, in a room with a shop. */
+  Sell: 'sell',
   /**
    * The header strip, minus the close control — the DRAG HANDLE.
    *
@@ -1302,7 +1528,20 @@ export type InventoryHit =
       readonly worn: boolean;
     }
   | { readonly kind: typeof InventoryHitKind.EmptySlot; readonly slot: Slot }
-  | { readonly kind: typeof InventoryHitKind.Drop; readonly itemId: string };
+  | {
+      /**
+       * THE STRIP'S ONE CONTROL, whichever of the three it currently is.
+       *
+       * `enabled` travels with the hit rather than being re-derived by the
+       * caller: the hit test already knows, and a second copy of "can they
+       * afford it" in main.ts is a second copy free to disagree with the ink
+       * the player is looking at.
+       */
+      readonly kind:
+        typeof InventoryHitKind.Drop | typeof InventoryHitKind.Buy | typeof InventoryHitKind.Sell;
+      readonly itemId: string;
+      readonly enabled: boolean;
+    };
 
 /**
  * WHAT A PRESS AT A POINT WOULD PICK UP. Two outcomes, and a separate type.
@@ -1376,14 +1615,26 @@ export function inventoryPanelHitAt(
     // strip first would make the button unreachable while looking pressable.
     if (placed.drop !== null && inside(placed.drop)) {
       const row = placed.row;
-      if (row.kind === InventoryRowKind.Detail && row.dropId !== null) {
-        return { kind: InventoryHitKind.Drop, itemId: row.dropId };
+      if (row.kind === InventoryRowKind.Detail && row.action !== null) {
+        // THE HIT ANSWERS EVEN WHEN THE CONTROL IS GREYED. The caller decides
+        // what a disabled press means — today it says why, which is a better
+        // answer than a click that does nothing at all.
+        return {
+          kind:
+            row.action.kind === 'buy'
+              ? InventoryHitKind.Buy
+              : row.action.kind === 'sell'
+                ? InventoryHitKind.Sell
+                : InventoryHitKind.Drop,
+          itemId: row.action.itemId,
+          enabled: row.action.enabled,
+        };
       }
     }
 
     for (let i = 0; i < placed.tabs.length; i += 1) {
       const box = placed.tabs[i];
-      const tab = TAB_ORDER[i];
+      const tab = placed.row.kind === InventoryRowKind.Tabs ? placed.row.tabs[i] : undefined;
       if (box === undefined || tab === undefined || !inside(box)) continue;
       return { kind: InventoryHitKind.Tab, tab };
     }
@@ -1801,9 +2052,9 @@ function drawDetail(
     ctx.font = FONT_NAME;
     ctx.fillStyle = PALETTE.PARCHMENT;
     ctx.fillText(fitText(ctx, row.title, Math.floor(titleW / 2)), rect.x, y);
-    if (placed.drop !== null) {
-      drawButton(ctx, placed.drop, DROP_LABEL, {
-        ink: hoveredDrop ? PALETTE.GOLD : PALETTE.GREY_HI,
+    if (placed.drop !== null && row.action !== null) {
+      drawButton(ctx, placed.drop, row.action.label, {
+        ink: buttonInk(row.action, hoveredDrop),
       });
       return;
     }
@@ -1827,9 +2078,11 @@ function drawDetail(
     // reversible for the price of a turn. The irreversible thing near here is
     // walking away from it — ground items are deliberately not persisted — and
     // no button can warn about that.
-    drawButton(ctx, placed.drop, DROP_LABEL, {
-      ink: hoveredDrop ? PALETTE.GOLD : PALETTE.GREY_HI,
-    });
+    if (row.action !== null) {
+      drawButton(ctx, placed.drop, row.action.label, {
+        ink: buttonInk(row.action, hoveredDrop),
+      });
+    }
   }
   y += ROW_H;
 
@@ -1884,7 +2137,7 @@ function drawRow(
     case InventoryRowKind.Tabs: {
       for (let i = 0; i < placed.tabs.length; i += 1) {
         const box = placed.tabs[i];
-        const tab = TAB_ORDER[i];
+        const tab = row.tabs[i];
         if (box === undefined || tab === undefined) continue;
         const selected = tab === row.tab;
         // THE COUNT IS ON THE TAB, which is how the bag says "five of twelve"
@@ -1894,7 +2147,9 @@ function drawRow(
         const label =
           tab === InventoryTab.Equipped
             ? `EQUIPPED ${String(row.wornCount)}/${String(SLOT_ORDER.length)}`
-            : `CARRIED ${String(row.carriedCount)}/${String(CARRIED_MAX)}`;
+            : tab === InventoryTab.Carried
+              ? `CARRIED ${String(row.carriedCount)}/${String(CARRIED_MAX)}`
+              : `SHOP ${String(row.shopCount)}`;
         drawButton(ctx, box, selected ? `[${label}]` : label, {
           ink: selected ? PALETTE.GOLD : PALETTE.GREY_HI,
         });

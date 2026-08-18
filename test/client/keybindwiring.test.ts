@@ -244,6 +244,12 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       'revive',
       'say',
       'set_keybinds',
+      // THE PANEL'S TWO, and the only frames the shop tab sends. Opening,
+      // paging and browsing a shelf are told to nobody: the shelf is a
+      // broadcast the server already sends, and a "I opened the shop" frame
+      // would be one more thing the barrier could be made to wait for.
+      'shop_buy',
+      'shop_sell',
       'spend_point',
       'talent',
       'unequip',
