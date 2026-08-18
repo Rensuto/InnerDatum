@@ -1,0 +1,168 @@
+import { describe, expect, it } from 'vitest';
+
+import { LINE_MAX, TOWNSFOLK, isTownsfolkId } from '../../src/server/content/townsfolk.ts';
+import { Faction, isMonster } from '../../src/server/engine/actor.ts';
+import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import { ActorKind, isWalkable } from '../../src/shared/protocol.ts';
+import type { Realms } from '../../src/server/world/realms.ts';
+
+const ROW = 'site:threadneedle_row';
+
+function realms(seed: string): Realms {
+  return createRealms({ seed, engineFor: (world) => createTurnEngine({ world }) });
+}
+
+function site(id: string) {
+  const def = SITES.get(id);
+  if (def === undefined) throw new Error(`no site ${id}`);
+  return def;
+}
+
+function folkIn(realm: ReturnType<Realms['open']>) {
+  return realm.world
+    .allActors()
+    .filter((a) => a.kind === ActorKind.Monster && a.faction === Faction.Townsfolk);
+}
+
+describe('somebody lives here', () => {
+  it('stands Merrow in Threadneedle Row', () => {
+    const realm = realms('folk-1').open(site(ROW), 'party-a');
+    const folk = folkIn(realm);
+    expect(folk).toHaveLength(1);
+    expect(folk[0]?.name).toBe('Merrow Stitch');
+    expect(isTownsfolkId(folk[0]?.id ?? '')).toBe(true);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BOTH CONSTRUCTION PATHS, BECAUSE THIS REPO HAS SHIPPED THIS BUG BEFORE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `realms.ts`'s own note on the `shop` field: *"IN `build` AND NOT IN THE BOOT
+   * LOOP. There are TWO call sites — the eager pass that opens every shared realm
+   * at startup, and `open`, which builds a Common realm lazily if it was never
+   * opened. A shop wired into only the first would leave a town with no shelves
+   * on the second path, and the only thing that would notice is a test supplying
+   * its own sites."*
+   *
+   * That is this test. `createRealms` eagerly opens every shared realm, so
+   * reading the registry exercises the boot path; calling `open` on a fresh
+   * registry that was given no sites exercises the lazy one. A townsfolk wired
+   * into only one would leave a town with nobody in it on the other, and nothing
+   * in the toolchain would say so.
+   */
+  it('is there on the eager boot path as well as the lazy one', () => {
+    const eager = realms('folk-boot');
+    const fromRegistry = [...eager.all()].find((r) => r.siteId === ROW);
+    expect(fromRegistry, 'the boot loop never built Threadneedle Row').toBeDefined();
+    if (fromRegistry !== undefined) expect(folkIn(fromRegistry)).toHaveLength(1);
+
+    const lazy = realms('folk-lazy').open(site(ROW), 'party-b');
+    expect(folkIn(lazy)).toHaveLength(1);
+  });
+
+  it('stands on the same tile every boot, with no rng draw', () => {
+    /**
+     * A town's map is derived from the SITE seed so its streets are the same
+     * every visit. Placing her with a draw would do two bad things at once: move
+     * her between boots, so "she is by the north wall" stops being learnable —
+     * and shift the seeded stream for everything that draws after her.
+     *
+     * Two DIFFERENT registry seeds, same tile: proof she is found rather than
+     * rolled.
+     */
+    const a = folkIn(realms('seed-a').open(site(ROW), 'p'))[0];
+    const b = folkIn(realms('seed-b').open(site(ROW), 'p'))[0];
+    expect({ x: a?.x, y: a?.y }).toEqual({ x: b?.x, y: b?.y });
+  });
+
+  it('stands on walkable ground, away from the door', () => {
+    const realm = realms('folk-tile').open(site(ROW), 'p');
+    const her = folkIn(realm)[0];
+    expect(her).toBeDefined();
+    if (her === undefined) return;
+
+    const code = realm.world.level.tiles[her.y * realm.world.level.w + her.x];
+    expect(code === undefined ? false : isWalkable(code)).toBe(true);
+
+    // Not on top of the arrival tile: being body-checked by six people the
+    // instant they cross is a poor first impression for the one friendly face in
+    // the game.
+    const arrival = realm.spawns[0];
+    if (arrival !== undefined) {
+      const away = Math.max(Math.abs(her.x - arrival.x), Math.abs(her.y - arrival.y));
+      expect(away).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it('does not put the town into combat', () => {
+    // THE PROPERTY THAT MAKES A SHARED TOWN SHAREABLE. `anyContact` asked `kind`
+    // under a docblock reading "hostile pair", so one shopkeeper in line of sight
+    // set engagement for every party standing there at once — permanently,
+    // because she never leaves. See realms.test.ts.
+    const realm = realms('folk-calm').open(site(ROW), 'p');
+    const her = folkIn(realm)[0];
+    expect(her).toBeDefined();
+    if (her === undefined) return;
+
+    const player = realm.world.addPlayer('p1', 'Ren');
+    player.x = her.x;
+    player.y = her.y + 1;
+
+    /**
+     * ═══ HER AGGRO RANGE IS RAISED ON PURPOSE, OR THIS TEST PROVES NOTHING ═══
+     * She is authored at `aggroRange: 0`, so `chebyshev > aggroRange` skips her
+     * before the faction is ever consulted — and this test passed with the
+     * `areEnemies` fix stashed. That is a belt, not the braces: the moment
+     * anybody authors a townsfolk who should NOTICE you (a guard, a crier), the
+     * kind-based check comes straight back and takes every shared town with it.
+     *
+     * So the belt is removed here and the braces are what is measured.
+     */
+    // `isMonster` narrows the union — `folkIn` filters on `kind` at runtime but
+    // returns `EngineActor`, and a player has no `ai`.
+    if (isMonster(her)) her.ai.aggroRange = 8;
+
+    realm.engine.join('p1');
+    realm.engine.hold('p1');
+    realm.engine.pump();
+
+    // ENGAGEMENT IS THE WHOLE PROPERTY. `inCombat` is a projected view field,
+    // not state on `TurnState` — engagement above zero is what `isBlocking`
+    // reads and what puts a stranger's town into turn-by-turn.
+    expect(realm.world.turn.engagement).toBe(0);
+  });
+});
+
+describe('every line fits the Margin lane', () => {
+  it(`holds each authored line to ${String(LINE_MAX)} characters`, () => {
+    /**
+     * The lane is ~32 glyphs wide with a three-row floor and renders as
+     * `${speaker}: ${text}`, so "Merrow Stitch: " is already fifteen of the first
+     * row. A 140-character line is five or six wrapped rows — the entire band
+     * that `ui/caselog.ts` reserved so machine output could never bury human
+     * speech, spent on one greeting, with the attribution scrolled away.
+     *
+     * `townsfolk.ts` throws at module load on a long line; this reports WHICH,
+     * which is the difference between a failing boot and a fixable one.
+     */
+    const tooLong: string[] = [];
+    for (const specs of TOWNSFOLK.values()) {
+      for (const spec of specs) {
+        for (const line of [spec.greetFirst, spec.greetAgain, ...spec.deflect]) {
+          if (line.length > LINE_MAX) tooLong.push(`${spec.id}: ${String(line.length)} — ${line}`);
+        }
+      }
+    }
+    expect(tooLong).toEqual([]);
+  });
+
+  it('authors somebody for a Common site and nowhere else', () => {
+    // A townsfolk in a delve would be a body that cannot be killed standing in a
+    // room whose whole purpose is that everything in it can be.
+    for (const siteId of TOWNSFOLK.keys()) {
+      expect(SITES.get(siteId)?.kind, siteId).toBe(RealmKind.Common);
+    }
+  });
+});

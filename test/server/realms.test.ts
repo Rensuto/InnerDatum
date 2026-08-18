@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { Faction } from '../../src/server/engine/actor.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -216,11 +217,33 @@ describe('a town is open to everybody', () => {
     expect(mine.partyId).toBeUndefined();
   });
 
-  it('never spawns anything, which is what makes it shareable', () => {
+  it('never spawns a HOSTILE, which is what makes it shareable', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE RULE IS "NOTHING HOSTILE", AND IT USED TO BE SPELLED "NOTHING AT ALL".
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This asserted an empty monster list, which was the same statement while
+     * the only bodies in the game were things that wanted to kill you. Towns now
+     * hold townsfolk, so the two have come apart — and the ENGAGEMENT assertion
+     * below is the one that was always load-bearing. The test immediately after
+     * this one spells out why: one hostile in an open town lifts engagement above
+     * zero, and `isBlocking` then answers true for every unrelated player
+     * standing in it, all waiting on people they never agreed to play with.
+     *
+     * Placing one shopkeeper really did break it, because `anyContact` asked
+     * `kind` under a docblock that said "hostile pair" — a fourth copy of that
+     * substitution, and the only one of the four found by running rather than
+     * reading. Fixed to `areEnemies`; this is what holds it fixed.
+     */
     const realms = makeRealms();
     for (const id of COMMON_SITES) {
       const town = realms.open(site(id), 'party_1');
-      expect(town.world.allActors().filter((a) => a.kind === ActorKind.Monster)).toEqual([]);
+      const hostiles = town.world
+        .allActors()
+        .filter((a) => a.kind === ActorKind.Monster && a.faction !== Faction.Townsfolk);
+      expect(hostiles).toEqual([]);
+      // THE ONE THAT MATTERS. A town with somebody in it is still a town.
       expect(town.world.turn.engagement).toBe(0);
     }
   });

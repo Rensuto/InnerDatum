@@ -67,7 +67,15 @@ import { gainExp, pointsForLevel, worthExp } from '../../shared/progression.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { decideNpcAction } from '../ai/npc.ts';
 import { hasLineOfSight } from '../world/world.ts';
-import { HOLD_INTENT, IntentKind, actBase, isHostile, isMonster, spendTurn } from './actor.ts';
+import {
+  HOLD_INTENT,
+  IntentKind,
+  actBase,
+  areEnemies,
+  isHostile,
+  isMonster,
+  spendTurn,
+} from './actor.ts';
 import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
 import { TalentRefusal } from './talents.ts';
 import { inQuorum, isBlocking } from './barrier.ts';
@@ -3167,12 +3175,40 @@ function updateEngagement(
   }
 }
 
-/** Is any hostile pair currently in view of each other? */
+/**
+ * Is any hostile pair currently in view of each other?
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FOURTH COPY OF "SAME KIND MEANS SAME SIDE", AND THE WORST PLACED OF THEM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The docblock said "hostile pair" and the code asked `kind`. Three other sites
+ * made the same substitution — `isHostile`, `talents.ts#isEnemy`, and an inline
+ * comparison in `canUseTalent` — and all three were found by looking for them.
+ * THIS ONE WAS FOUND BY RUNNING THE TESTS, because what it does is not subtle:
+ *
+ * A Common realm is a TOWN, shared by every party in it, and it is shareable
+ * precisely because nothing in it ever lifts `engagement` above zero. Put one
+ * friendly shopkeeper in line of sight of a player and this function returns
+ * true, `updateEngagement` sets `ENGAGEMENT_TURNS`, and `isBlocking` then
+ * answers true for every unrelated player standing in that town — all of them
+ * waiting on people they never agreed to play with, with a Bell running and
+ * nothing on screen explaining why. Permanently, because she never leaves.
+ *
+ * `test/server/realms.test.ts` already spelled that consequence out in full,
+ * under a test asserting towns hold no monsters at all. It is the reason the
+ * emptiness assertion existed, and it is why placing one person broke it.
+ *
+ * `areEnemies` is the one answer. A townsfolk is nobody's enemy, so she is not
+ * contact, so a town stays a town.
+ */
 function anyContact(world: World, actors: readonly EngineActor[]): boolean {
   for (const monster of actors) {
     if (monster.kind !== ActorKind.Monster || !monster.alive) continue;
     for (const player of actors) {
       if (player.kind !== ActorKind.Player || !player.alive) continue;
+      // FACTION, NOT KIND. See the header.
+      if (!areEnemies(monster, player)) continue;
       if (chebyshev(monster, player) > monster.ai.aggroRange) continue;
       if (hasLineOfSight(world.level, monster, player)) return true;
     }

@@ -4,6 +4,7 @@ import { DELVES, dangerWord, partyHint } from '../../src/server/content/delve.ts
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
+import { Faction } from '../../src/server/engine/actor.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -37,6 +38,19 @@ function monstersIn(seed: string, siteId: string): number {
   return realm.world.allActors().filter((a) => a.kind === ActorKind.Monster).length;
 }
 
+/**
+ * Bodies that want to kill you, which is a narrower question than `monstersIn`
+ * since townsfolk arrived. A town may hold people; it may not hold hostiles.
+ */
+function hostilesIn(seed: string, siteId: string): number {
+  const def = SITES.get(siteId);
+  if (def === undefined) throw new Error(`no site ${siteId}`);
+  const realm = realms(seed).open(def, 'party');
+  return realm.world
+    .allActors()
+    .filter((a) => a.kind === ActorKind.Monster && a.faction !== Faction.Townsfolk).length;
+}
+
 describe('a delve is not an empty room', () => {
   it('puts somebody in EVERY inner site', () => {
     // THE REGRESSION, stated as the thing it was. If this ever reads zero
@@ -58,10 +72,14 @@ describe('a delve is not an empty room', () => {
     }
   });
 
-  it('leaves every town empty, which the engine would otherwise punish', () => {
+  it('puts no HOSTILE in a town, which the engine would otherwise punish', () => {
+    // Towns hold townsfolk now, so "empty" and "safe" are no longer the same
+    // statement — see the matching note in realms.test.ts. What the engine
+    // punishes is a HOSTILE in a shared space: it lifts engagement for every
+    // party standing there at once.
     for (const [id, def] of SITES) {
       if (def.kind !== RealmKind.Common) continue;
-      expect(monstersIn(`town-${id}`, id), `${def.name} has a monster in it`).toBe(0);
+      expect(hostilesIn(`town-${id}`, id), `${def.name} has a hostile in it`).toBe(0);
     }
   });
 });

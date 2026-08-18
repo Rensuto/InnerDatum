@@ -60,6 +60,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 import { DELVES, populateDelve } from '../content/delve.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
+import { placeTownsfolk, townsfolkFor } from '../content/townsfolk.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { ReapingTurnEngine } from '../turn-engine.ts';
@@ -550,6 +551,31 @@ export function createRealms(opts: RealmsOptions): Realms {
       sealed: false,
       ...extra,
     };
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE PEOPLE WHO LIVE HERE — IN `build`, FOR THE `shop` FIELD'S REASON.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The note on `shop` above is the whole argument and it applies verbatim:
+     * there are TWO call sites — the eager pass that opens every shared realm at
+     * startup, and `open`, which builds a Common realm lazily if it was never
+     * opened. Wire townsfolk into only the first and a town has nobody in it on
+     * the second path, and *"the only thing that would notice is a test supplying
+     * its own sites"*. This repo has shipped that exact bug once and written it
+     * up; putting the call here is what makes both paths the same path.
+     *
+     * AFTER `realms.set`, so a failure to place somebody cannot leave a
+     * half-registered realm — and before anything can walk in, because nothing
+     * can reach a realm the registry has not returned yet.
+     *
+     * `map` NOT `builtMap`: `build` is the function that HAS the authored map,
+     * which is the other half of why this belongs here rather than beside
+     * `site.populate` — that seam runs only for sites carrying a populate hook,
+     * and a town does not have one.
+     */
+    const folk = townsfolkFor(extra.siteId);
+    if (folk.length > 0) placeTownsfolk(world, map, folk);
+
     realms.set(id, realm);
     return realm;
   };
