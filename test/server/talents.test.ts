@@ -686,7 +686,13 @@ describe('THE REFUND RULE — an illegal intent costs nothing at all', () => {
     const sheet = f.engine.sheetOf('dalt');
     expect(sheet).toBeDefined();
     if (sheet === undefined) return;
-    expect(sheet.resource.value).toBe(0); // Resolve starts empty; it is EARNED
+    // ═══ DRAINED BY HAND, BECAUSE THE BAR IS NOW BORN FULL ═══
+    // Resolve starts at its maximum (ActorResource.lua:131 — an actor is
+    // created holding `maxname`; only a `switch_direction` resource like
+    // Equilibrium starts at its minimum). This test is about the REFUSAL, so it
+    // has to manufacture the one state in which a refusal is correct rather
+    // than inherit it from a constant.
+    sheet.resource.value = 0;
     const result = useTalent(f.engine, watchman, talentId('iron_curtain'), { x: 5, y: 5 }, f.ctx);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe(TalentRefusal.NoResource);
@@ -1182,6 +1188,11 @@ describe('REAGENTS ARE A COUNTED STOCK THAT REFILLS IN WHOLE UNITS — game-desi
 
     expect(alchemistSheet.resource.value).toBe(2);
     expect(alchemistSheet.resource.regenCounter).toBe(0);
+    // Born full, then emptied here: what follows measures what a DOWNED body
+    // earns, and a clamped-at-max pool cannot show the difference between
+    // "earned nothing" and "earned something it could not hold".
+    watchmanSheet.resource.value = 0;
+    inspectorSheet.resource.value = 0;
     expect(watchmanSheet.resource.value).toBe(0);
     expect(inspectorSheet.resource.value).toBe(0);
   });
@@ -1194,6 +1205,13 @@ describe('Resolve and Focus are earned by STANDING SOMEWHERE, on a thin trickle'
     const sheet = f.engine.sheetOf('dalt');
     expect(sheet).toBeDefined();
     if (sheet === undefined) return;
+
+    // ═══ EMPTIED FIRST — THE BAR IS BORN FULL ═══
+    // ActorResource.lua:131 creates an actor holding `maxname`. A test that
+    // measures what a clause EARNS must set its own floor, or every gain is
+    // clamped away at the maximum and the assertion quietly becomes "the bar is
+    // still full", which is true no matter what the clause does.
+    sheet.resource.value = 0;
 
     f.engine.actBase(watchman.id, f.world);
     // Alone: the unconditional trickle and NOTHING ELSE. It is deliberately a
@@ -1216,6 +1234,10 @@ describe('Resolve and Focus are earned by STANDING SOMEWHERE, on a thin trickle'
     const sheet = f.engine.sheetOf('sam');
     expect(sheet).toBeDefined();
     if (sheet === undefined) return;
+
+    // EMPTIED FIRST — Focus is born full (ActorResource.lua:131). See the
+    // Resolve test above for why a gain test has to set its own floor.
+    sheet.resource.value = 0;
 
     f.engine.actBase(inspector.id, f.world);
     expect(sheet.resource.value).toBe(12 + FOCUS_PER_TURN);

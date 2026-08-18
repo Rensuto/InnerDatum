@@ -685,6 +685,9 @@ function toWireEvents(
           shape: ev.shape,
           radius: ev.radius,
           ...(ev.targetId === undefined ? {} : { targetId: ev.targetId }),
+          // OMITTED WHEN EMPTY, not sent as `[]`: most talents author none, and
+          // an absent key is the shape `TalentEvent.notes` documents.
+          ...(ev.notes === undefined || ev.notes.length === 0 ? {} : { notes: ev.notes }),
         });
         break;
       case 'sweep':

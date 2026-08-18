@@ -521,8 +521,52 @@ export const RESOURCE_RULES: Readonly<
     }
   >
 > = {
-  [ResourceKind.Resolve]: { max: 100, start: 0, regenPerTurn: RESOLVE_PER_TURN, discrete: false },
-  [ResourceKind.Focus]: { max: 100, start: 0, regenPerTurn: FOCUS_PER_TURN, discrete: false },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BORN FULL — ActorResource.lua:131, and it used to be born empty.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * -- engines/default/engine/interface/ActorResource.lua:130-131
+   * self[r.maxname]    = t[r.maxname] or r.max
+   * self[r.short_name] = t[r.short_name] or (r.switch_direction and self[r.minname] or self[r.maxname])
+   * ```
+   *
+   * An actor is created holding its resource at **`maxname`** unless the
+   * resource is `switch_direction` — the flag Equilibrium carries because it
+   * prefers its minimum. Stamina and Psi are not switch_direction, so a ToME
+   * Bulwark is born with a full stamina bar and a Psionic with full Psi. Both
+   * `start: 0`s here were a port deviation, and CLAUDE.md's rule is that when
+   * the docs and the Lua disagree, the Lua wins.
+   *
+   * ═══ WHAT IT DID TO A FIRST SESSION, MEASURED ═══
+   * A stranger picks the Watchman — the control class, the one whose whole
+   * pitch is holding the choke — and gets a hotbar of four talents with two of
+   * them greyed out. Lockdown costs 30 and Resolve accrues at 6 a blow taken
+   * plus a 0.6 trickle, so it is FIVE TURNS OF BEING HIT EVERY TURN away. The
+   * opening solo ambush is one 25-hp husk that dies in three swings:
+   * `tools/status-live.mjs` walked it and reached **22 of the 30** as the husk
+   * fell. So the class's signature button cannot be pressed in the fight that
+   * introduces it. The Inspector is the same story at 35 for Sniper's Mark; the
+   * Alchemist, whose stock is discrete and already started at 8 of 8, showed a
+   * new player everything she had on turn one.
+   *
+   * ═══ THIS IS A BURST, NOT AN INCOME, AND THE ECONOMY IS UNCHANGED ═══
+   * Nothing here refills these two pools. `noteStairs` tops up Reagents only,
+   * and has no call site anyway (there are no stairs yet). So a full bar buys
+   * exactly one opening play; the moment it is spent, the earned clauses —
+   * struck, adjacent ally, held ground — are the only way back, which is the
+   * economy game-design.md § 2 describes and this does not touch. The doc's own
+   * framing gives it away: the trickle is "a floor under a SPENT Inspector",
+   * and you cannot be spent if you never had any.
+   *
+   * NOT MEASURABLE BY THE EXISTING TOOLS, stated plainly: `first-fight.mjs` and
+   * `delve-run.mjs` drive a bump-attacking body that presses no talents at all,
+   * so neither can see this change. What can see it is a person, and
+   * `tools/status-live.mjs`, which presses Lockdown over a real socket.
+   */
+  [ResourceKind.Resolve]: { max: 100, start: 100, regenPerTurn: RESOLVE_PER_TURN, discrete: false },
+  [ResourceKind.Focus]: { max: 100, start: 100, regenPerTurn: FOCUS_PER_TURN, discrete: false },
   // 0-8, COUNTABLE. Starts full: you walked in carrying eight vials, and the
   // first fight should be about spending them rather than about waiting.
   [ResourceKind.Reagents]: {

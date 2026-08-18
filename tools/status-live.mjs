@@ -144,7 +144,9 @@ const printEffects = (label) => {
     return false;
   }
   for (const a of carrying) {
-    const badges = a.effects.map((e) => `${e.effectId} (${String(e.turns)}t)`).join(', ');
+    // `EffectView.id` / `.name`, not `.effectId` — the row names itself the way
+    // every other id-carrying view in protocol.ts does.
+    const badges = a.effects.map((e) => `${e.name} [${e.id}] ${String(e.turns)}t`).join(', ');
     console.log(`  ${label}: ${a.id} -> ${badges}`);
   }
   return true;

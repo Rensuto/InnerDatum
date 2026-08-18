@@ -228,6 +228,28 @@ function inspectorScene(seed: string): {
     engine,
     sheet,
     focusDelta: (act) => {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * EMPTIED BEFORE EVERY MEASUREMENT, BECAUSE A FULL BAR CANNOT GAIN.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Focus is born at its maximum (ActorResource.lua:131 — an actor is
+       * created holding `maxname`; only a `switch_direction` resource like
+       * Equilibrium starts at its minimum). `gainResource` is a BOUNDED add, so
+       * every clause this helper exists to measure — holding ground, the
+       * trickle, the move that forfeits them — adds its number and has it
+       * clamped straight back off at the cap.
+       *
+       * The delta would then be 0 for every case, and the two tests that read
+       * it would agree that holding ground and moving are worth exactly the
+       * same. Both would be measuring the ceiling rather than the clause.
+       *
+       * Zeroing HERE rather than in each caller keeps the property where the
+       * helper's contract is ("report what the resource gained across one
+       * turn"), which is only a truthful description of the return value if
+       * there is headroom to gain into.
+       */
+      sheet.resource.value = 0;
       const before = sheet.resource.value;
       act();
       engine.pump();

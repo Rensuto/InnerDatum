@@ -6700,6 +6700,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       case 'talent':
         return [
           { text: `${nameOf(event.id)} uses ${talentName(event.id, event.talentId)}.`, depth: 0 },
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * ...AND WHAT IT DID, WHICH THE DAMAGE LINES CANNOT SAY.
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * `TalentEvent.notes` — sentences the talent composed about itself.
+           * They were authored by all twelve talents, carried the whole way
+           * here, and rendered by nobody: "is pinned against the wall",
+           * "raises the curtain over Sam for 3 turns", "Cross, radius 1.",
+           * "turns on Dalt.", "Nothing was hunting Sam." A Ward Rush that shoved
+           * somebody into a wall used to log its damage and stop.
+           *
+           * DEPTH 1, under the "uses" line, which is exactly where
+           * game-design.md § 11's sample Record puts them — indented beneath
+           * the verb they belong to, in the same band as the damage they sit
+           * beside.
+           *
+           * ALREADY FINISHED SENTENCES. Nothing is composed here: the talent
+           * knows its own numbers and this function does not, which is the same
+           * division that keeps every displayed number server-side.
+           */
+          ...(event.notes ?? []).map((text) => ({ text, depth: 1 })),
         ];
       case 'effect_applied': {
         const effect = prettyId(event.effectId);

@@ -167,6 +167,12 @@ export function talentRuntimeFor(
           radius: talent.targeting.radius ?? 0,
           ...(standing === undefined ? {} : { targetId: standing.id }),
           hits: result.hits,
+          // ═══ AND WHAT IT SAID ═══
+          // `useTalent` has always returned these and this adapter has always
+          // dropped them. See `TalentEvent.notes`: sixteen `talentDone` calls
+          // author sentences that reached nobody, including two that
+          // game-design.md § 11 prints in its own sample Record.
+          ...(result.notes.length === 0 ? {} : { notes: result.notes }),
           // ═══ AND WHO IT MOVED ═══
           // Fog Step, Ward Rush and Backdraft all reposition a body. Straight
           // through: `useTalent` recorded it at the one function that can move

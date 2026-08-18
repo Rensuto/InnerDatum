@@ -395,6 +395,8 @@ export type GameEvent =
       readonly radius: number;
       /** Set when the talent named an ACTOR rather than a bare tile. */
       readonly targetId?: string;
+      /** The talent's own sentences. See `TalentLanding.notes`. */
+      readonly notes?: readonly string[];
     }
   | { readonly t: 'refunded'; readonly id: string; readonly reason: Refusal }
   /**
@@ -546,6 +548,12 @@ export type TalentLanding = {
   /** Set when the talent named an ACTOR rather than a bare tile. */
   readonly targetId?: string;
   readonly hits: readonly TalentHit[];
+  /**
+   * The talent's own sentences, already composed. See `TalentEvent.notes` —
+   * they are the half `hits` cannot express, and until this field existed they
+   * were built by every talent and read by nothing.
+   */
+  readonly notes?: readonly string[];
   /**
    * EVERY BODY THE CAST PUT SOMEWHERE ELSE — see `ActorMove` in
    * engine/talents.ts for the desync this exists to close.
@@ -2279,6 +2287,12 @@ function emitPlayerEffect(actor: PlayerActor, effect: Effect, sink: EventSink): 
         shape: effect.landing.shape,
         radius: effect.landing.radius,
         ...(effect.landing.targetId === undefined ? {} : { targetId: effect.landing.targetId }),
+        // WHAT IT SAID, straight through. Composed in the talent body, rendered
+        // in the gateway's Record lane; nothing between the two reads a word of
+        // it. See `TalentEvent.notes` for the milestone they spent unread.
+        ...(effect.landing.notes === undefined || effect.landing.notes.length === 0
+          ? {}
+          : { notes: effect.landing.notes }),
       });
       /**
        * ═══════════════════════════════════════════════════════════════════════

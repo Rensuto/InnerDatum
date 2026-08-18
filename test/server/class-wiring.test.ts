@@ -702,6 +702,12 @@ describe('AP and MP are structurally incapable of being short', () => {
     engine.pump();
 
     const delta = (act: () => void): number => {
+      // EMPTIED BEFORE EACH MEASUREMENT. Focus is born at its maximum
+      // (ActorResource.lua:131), and `gainResource` is a bounded add — so with
+      // no headroom every clause below would report a delta of 0 and the test
+      // would conclude that holding ground and moving are worth the same. See
+      // the same note on `focusDelta` in talent-resolution.test.ts.
+      sheet.resource.value = 0;
       const before = sheet.resource.value;
       act();
       engine.pump();
@@ -966,6 +972,13 @@ describe('a class resource that can only be earned in play', () => {
     table.player.combat = { ...WATCHMAN.combat, mods: { def: 10_000 } };
     table.player.maxHp = 100_000;
     table.player.hp = 100_000;
+
+    // ═══ EMPTIED FIRST — RESOLVE IS BORN FULL ═══
+    // ActorResource.lua:131 creates an actor holding `maxname`. Every figure
+    // below is an ACCRUAL measured from a floor, and `gainResource` is a
+    // bounded add: leave the bar at 100 and the assertions become "still 100",
+    // which is equally true whether the miss paid nothing or paid six.
+    table.sheet.resource.value = 0;
 
     const before = table.player.hp;
     // ═══ THE TURN COUNT IS PINNED, BECAUSE THE FLOOR IS TIME-BASED ═══

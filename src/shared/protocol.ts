@@ -2775,6 +2775,39 @@ export type TalentEvent = {
   radius: number;
   /** Set when the talent named an ACTOR rather than a bare tile. */
   targetId?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE TALENT SAID ABOUT ITSELF — and for a milestone it said it to nobody.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every talent body returns `talentDone(hits, notes)`, and the notes are the
+   * half a `hits` array cannot express: the shove that ended against a wall, the
+   * ally a guard actually covered, how many bodies a cross caught, who turned to
+   * face the Watchman, whether a stun was shrugged off or merely shortened.
+   * Sixteen `talentDone` calls across the twelve talents author them.
+   *
+   * `grep -rn "\.notes" src/` returned exactly ONE line — the one that sets the
+   * field — and `test/` returned zero. They were produced, carried through
+   * `TalentUseResult`, and read by nothing, so a Ward Rush that pinned somebody
+   * against a wall logged the damage and not the pin.
+   *
+   * docs/game-design.md § 11's sample Record is largely made of them:
+   *
+   *     [Record] Rey uses Alchemic Vial -> (12,8). Cross, radius 1.
+   *     [Record]   Index Glut detonates - 18 to Index Cairn.
+   *
+   * "Cross, radius 1." is a note, verbatim, from `alchemic_vial.ts`.
+   *
+   * ═══ SERVER-RENDERED, LIKE EVERY OTHER RECORD LINE ═══
+   * These are finished sentences, composed where the formulas live. The client
+   * never assembles one — `LogLine.lane` exists precisely so a renderer never
+   * has to parse prose to know which band a line belongs in.
+   *
+   * OPTIONAL, so no version bump: an old client ignores a field it cannot name,
+   * which this file's own history calls "textbook... precisely what does NOT
+   * force a bump". Most talents author none, and absent is not an empty array.
+   */
+  notes?: readonly string[];
 };
 
 /**
