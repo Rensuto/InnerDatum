@@ -3103,7 +3103,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       app.log.error({ err }, 'engine.bellExpired threw');
       return;
     }
-    pumpAndBroadcast();
+    // ONE REALM'S BELL RANG, so one realm moves. The timer closed over the
+    // realm it was armed for precisely so this cannot reach another floor's
+    // barrier — pumping all of them would have thrown that away at the last
+    // step.
+    pumpAndBroadcast(realm);
   };
 
   // -------------------------------------------------------------------------
@@ -3806,7 +3810,43 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * The overwhelmingly common shape today is ONE realm — the fallback — which is
    * exactly the loop this function used to be without one.
    */
-  const pumpAndBroadcast = (): void => {
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * ONE REALM WHEN THE CALLER KNOWS WHICH, EVERY REALM WHEN IT GENUINELY
+   * DOES NOT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE MEASUREMENT THAT FORCED THIS. Every player action used to pump every
+   * realm in the process. With 24 players on one map and six realms open, one
+   * round of everybody acting cost about 57 ms of pure projection — six times
+   * what it needed to, because five of those realms had not changed and their
+   * frames were rebuilt, stringified and thrown away. It grows with the number
+   * of OPEN INSTANCES, which is exactly the number that grows on a busy
+   * evening: five parties in five breaches and the cost is quadratic in the
+   * wrong place.
+   *
+   * WHY ONE REALM IS ENOUGH FOR AN ACTION. This is a turn-based game and a
+   * realm advances when somebody standing in it acts. Liveness for a realm
+   * nobody is acting in does not come from other people's keystrokes — it comes
+   * from that realm's OWN Bell timer, which closes over the realm it was armed
+   * for, and from the reap timers. Neither ever needed this loop.
+   *
+   * THE OPTIONAL ARGUMENT DEGRADES SAFELY, which is why it is optional rather
+   * than required: forgetting it pumps everything, which is what the code did
+   * for its whole life and is merely slower. A required argument would make the
+   * cheap mistake a wrong realm instead of a slow one.
+   *
+   * THREE CALLERS STILL PASS NOTHING, ON PURPOSE — `handleParty`, `handleRevive`
+   * / `handleRespawn`'s quorum changes, and the socket-close handler. A party
+   * can now span realms (see `follow`), so changing its shape changes a barrier
+   * in every realm holding a member, and none of the three is a per-keystroke
+   * verb.
+   */
+  const pumpAndBroadcast = (only?: PumpTarget): void => {
+    if (only !== undefined) {
+      pumpRealm(only);
+      return;
+    }
     for (const realm of pumpTargets()) pumpRealm(realm);
   };
 
@@ -3905,7 +3945,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     home.world.removePlayer(actorId);
     broadcast({ v: PROTOCOL_VERSION, t: 'left', id: actorId }, undefined, audienceFor(home.id));
     app.log.info({ actorId, realmId: home.id }, 'reconnect grace expired — body recalled');
-    pumpAndBroadcast();
+    pumpAndBroadcast(home);
   };
 
   const startGrace = (actorId: string): void => {
@@ -5276,7 +5316,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     );
 
     // Rejoining changes the quorum, so the barrier may be able to move.
-    pumpAndBroadcast();
+    pumpAndBroadcast(realmFor(session));
   };
 
   const handleMove = (session: Session, msg: ClientMove): void => {
@@ -5301,7 +5341,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // The step itself comes back out of the pump as a `moved` to EVERYONE, the
     // mover included. See the header note: there is no optimistic path.
-    pumpAndBroadcast();
+    pumpAndBroadcast(realmFor(session));
 
     // ═══ AND WAS THAT STEP ONTO A DOOR? ═══
     // AFTER the pump, never before it: the tile the body is standing on is only
@@ -5606,7 +5646,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     app.log.info({ actorId, from: from.id, sealed: from.sealed, to: to.id }, 'a body left a realm');
     reapIfEmpty(from);
-    pumpAndBroadcast();
+    // BOTH ENDS OF THE DOOR, and `from` may already have been reaped — pumping
+    // a realm that no longer exists is why this names them rather than looking
+    // them up again.
+    pumpAndBroadcast(to);
+    if (opts.realms?.get(from.id) !== undefined) pumpAndBroadcast(from);
     return true;
   };
 
@@ -5771,9 +5815,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       'a body crossed into a site',
     );
 
-    // BOTH BARRIERS JUST CHANGED SHAPE — one lost a member, one gained one — and
-    // `pumpAndBroadcast` ticks every realm, so both are settled by one call.
-    pumpAndBroadcast();
+    // BOTH BARRIERS JUST CHANGED SHAPE — one lost a member, one gained one — so
+    // BOTH are named. This used to rely on `pumpAndBroadcast` ticking every
+    // realm in the process; naming them is the same settlement at a fraction of
+    // the cost, and it says which two realms this act was actually about.
+    pumpAndBroadcast(from);
+    pumpAndBroadcast(to);
   };
 
   /**
@@ -5900,7 +5947,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    pumpAndBroadcast();
+    pumpAndBroadcast(realmFor(session));
   };
 
   /**
@@ -7326,7 +7373,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // unsaved take does not put the gold back, it destroys it.
       spendLootTurn(body, 'pickup');
       saveLoot('pickup');
-      pumpAndBroadcast();
+      pumpAndBroadcast(realmFor(session));
       return;
     }
 
@@ -7384,7 +7431,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     saveLoot('pickup');
     // The floor frame and the bag frame both ride the pump's memos — see
     // `broadcastGroundIfChanged` and `refreshViewers`.
-    pumpAndBroadcast();
+    pumpAndBroadcast(realmFor(session));
   };
 
   /**
@@ -7471,7 +7518,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // and without this line a player at 5 hp bought all of it between two swings.
     spendLootTurn(body, 'equip');
     saveLoot('equip');
-    pumpAndBroadcast();
+    pumpAndBroadcast(realmFor(session));
   };
 
   /**
@@ -7524,7 +7571,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND IT COSTS THE TURN — Actor.lua:7420, the takeoff half of the same rule.
     spendLootTurn(body, 'unequip');
     saveLoot('unequip');
-    pumpAndBroadcast();
+    pumpAndBroadcast(realmFor(session));
   };
 
   /**
@@ -7583,7 +7630,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // coat to the person the wraith is standing next to is a real tactical act.
     spendLootTurn(body, 'drop');
     saveLoot('drop');
-    pumpAndBroadcast();
+    pumpAndBroadcast(realmFor(session));
   };
 
   /**
