@@ -3232,7 +3232,32 @@ function refusalText(code: ErrorCode, fallback: string): string {
 
   switch (code) {
     case ErrorCode.TooClose:
-      return talent === null ? 'too close' : `too close — ${name} needs ${talent.minRange} tiles`;
+      /**
+       * ═══════════════════════════════════════════════════════════════════
+       * A BARE "too close" IS THE FAILURE content/classes.ts WARNS ABOUT BY
+       * NAME.
+       * ═══════════════════════════════════════════════════════════════════
+       * With a talent pending this already says the whole lesson —
+       * "too close — Sniper's Mark needs 3 tiles". Without one it used to say
+       * two words, and the case where there is no talent pending is exactly
+       * the case that matters most: an Inspector who WALKED INTO a husk.
+       *
+       * `minRange: 3` is on the Inspector's combat SHEET as well as on its
+       * talents, so a basic bump-attack from inside the hole is refused —
+       * deliberately, because "the Inspector cannot shoot adjacent" is the
+       * class. game-design.md § 2 is quoted in classes.ts on the danger:
+       * *"if the dead zone is invisible the class reads as broken."* Two
+       * words, on a screen where the player just walked into a monster and
+       * watched nothing happen, IS invisible. It reads as the attack being
+       * bugged rather than as the one rule the class is built around.
+       *
+       * Driving a first session is what surfaced it: a scripted Inspector
+       * bump-attacking the opening ambush stalled 3 runs in 12, doing
+       * nothing, forever — which is precisely what a new player does.
+       */
+      return talent === null
+        ? 'too close to shoot — back off a step and fire, or use a talent'
+        : `too close — ${name} needs ${talent.minRange} tiles`;
     case ErrorCode.OutOfRange:
       return talent === null
         ? 'out of range'
