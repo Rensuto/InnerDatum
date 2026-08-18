@@ -187,8 +187,24 @@ export function rollDrop(rng: Rng, drops: MonsterTemplate['drops']): string | un
  * belt is the one that keeps working when somebody reorders the loop.
  *
  * LEVEL IS PARTY MAX. There is no zone level here; see `partyMaxLevel`.
+ *
+ * ═══ EXPORTED, BECAUSE THE DELVES WERE NOT CALLING IT ═══
+ * Both seeding paths in this file wrap their `rollDrop` in this. `delve.ts` did
+ * not: it called `rollDrop` alone and handed the bare base id straight onto the
+ * corpse. So every body in all eight delves dropped a plain, unnamed item, and
+ * no kill inside the game's actual combat content had ever produced an egoed
+ * weapon or a coin pile — the 45%/20% ego weights and the money column existed
+ * and were unreachable from the only place a party goes on purpose.
+ *
+ * Its own comment said "THE SAME DROP ROLL THE OVERWORLD USES … a second loot
+ * path would be a second place for the tables to drift", which was true of the
+ * half it copied and blind to the half it did not.
  */
-function embellish(world: World, actorId: string, baseId: string | undefined): string | undefined {
+export function embellish(
+  world: World,
+  actorId: string,
+  baseId: string | undefined,
+): string | undefined {
   if (baseId === undefined) return undefined;
   const level = partyMaxLevel(
     world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])),

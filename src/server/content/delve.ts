@@ -56,6 +56,7 @@
  */
 
 import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
+import { embellish } from './encounter.ts';
 import { canWalk } from '../../shared/level.ts';
 import { rollDrop } from './encounter.ts';
 import { rollLoot } from './loot.ts';
@@ -254,10 +255,21 @@ export function populateDelve(world: World, map: AuthoredMap, spec: DelveSpec): 
       qualified(world, `delve_${String(i)}`),
       monsterInit(template, at),
     );
-    // THE SAME DROP ROLL THE OVERWORLD USES, on the same stream and with the
-    // same labels — a delve's husk is not a different kind of husk, and a
-    // second loot path would be a second place for the tables to drift.
-    const carrying = rollDrop(world.lootRng, template.drops);
+    /**
+     * THE SAME DROP ROLL THE OVERWORLD USES — AND NOW THE SAME EGO ROLL TOO.
+     *
+     * This used to be `rollDrop` alone, under a comment about not growing "a
+     * second place for the tables to drift". The comment was right and the code
+     * only copied half of it: `seedAmbush` wraps its `rollDrop` in `embellish`,
+     * which is what rolls quality, applies egos and turns a drop into money.
+     * Without it every body in all eight delves dropped a plain, unnamed item,
+     * and the ego weights and the money column were unreachable from the only
+     * content a party enters on purpose.
+     *
+     * The litter three lines below had `rollLoot` all along, so a delve's FLOOR
+     * could produce a named item while nothing that died in it ever could.
+     */
+    const carrying = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
     if (carrying !== undefined) actor.carried = [carrying];
     placed += 1;
   }

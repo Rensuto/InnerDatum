@@ -123,6 +123,60 @@ describe('the map has a gradient now', () => {
   });
 });
 
+describe('what the bodies are carrying', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY CORPSE IN EVERY DELVE DROPPED A PLAIN, UNNAMED ITEM. ALL OF THEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `populateDelve` called `rollDrop` and put the bare base id on the body.
+   * `rollDrop` picks WHICH item; `embellish` — which both of `encounter.ts`'s
+   * seeding paths wrap around it — is what rolls quality, applies egos, and
+   * turns a drop into a coin pile.
+   *
+   * So across the eight delves, the only content a party enters on purpose, the
+   * measurement was **100% plain, 0 egoed, 0 money**. The 45%/20% ego weights
+   * and the whole money column were live, tested, and unreachable from the game.
+   * The litter on the floor had `rollLoot` all along, so a delve's FLOOR could
+   * produce a named item while nothing that died in it ever could.
+   *
+   * The rule this asserts is not a percentage — the weights are `loot.ts`'s to
+   * own and pinning them here would make two files argue about one table. It is
+   * that the delve path REACHES the generator at all.
+   */
+  it('rolls egos and money, not bare base ids', () => {
+    const delves = [...SITES.values()].filter((site) => site.kind === RealmKind.Inner);
+    let carried = 0;
+    let embellished = 0;
+
+    for (const site of delves) {
+      for (let run = 0; run < 4; run += 1) {
+        const realms = createRealms({
+          seed: `delve-loot:${site.id}:${String(run)}`,
+          engineFor: (world) => createTurnEngine({ world }),
+        });
+        const realm = realms.open(site, `party-${String(run)}`);
+        for (const actor of realm.world.allActors()) {
+          if (actor.kind !== ActorKind.Monster) continue;
+          for (const id of actor.carried ?? []) {
+            carried += 1;
+            // ANY MARK OF THE GENERATOR. `~` is the ego separator and `@` is the
+            // money quantity — both from content/resolve.ts's id grammar. A bare
+            // `item_foo` carries neither, which is exactly what shipped.
+            if (id.includes('~') || id.includes('@')) embellished += 1;
+          }
+        }
+      }
+    }
+
+    // A roster carrying nothing at all would pass a "some are embellished"
+    // check vacuously, so the sample size is asserted first.
+    expect(carried).toBeGreaterThan(20);
+    // Not a rate — see above. Zero is the bug; the weights live elsewhere.
+    expect(embellished).toBeGreaterThan(0);
+  });
+});
+
 describe('what is lying about', () => {
   it('leaves loot on the floor, so a delve rewards exploring and not only clearing', () => {
     let withLitter = 0;
