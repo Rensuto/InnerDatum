@@ -794,8 +794,68 @@ function syncCommandLinePlaceholder(): void {
 }
 
 /** textContent, never innerHTML: actor names come from Discord nicknames. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE SENTENCE FOR THE EAR, TWO GROUPS FOR THE EYE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `#log` is `role="status" aria-live="polite"`, so for a screen reader it is a
+ * SENTENCE and the whole thing is announced whenever it changes. For everybody
+ * else it is a STATUS BAR, and those are different jobs: a sentence wants to
+ * read in order, a bar wants to be scanned — the thing about the world on the
+ * left, the thing about the connection tucked away on the right where it can be
+ * ignored until it matters.
+ *
+ * Serving both from one flat run of ` · ` separators is why the bar read
+ * "connected · free movement · The Alderbrook Moor — safe · clear — free
+ * movement · 1 actor(s) · Ren @ 150,53 · 1x · …": a sentence's worth of words,
+ * laid out as a list, with the phase said twice.
+ *
+ * ═══ SPANS DO NOT COST THE ANNOUNCEMENT ANYTHING ═══
+ * `aria-live` reads the element's text content, and text inside child spans is
+ * still its text content. So the announced string is exactly what a single
+ * `textContent =` would have produced — the separators are real characters, not
+ * CSS — while the boxes let the visible bar group, dim and right-align.
+ *
+ * THE ORDER IS THE SENTENCE'S ORDER, not the layout's. `world` comes first in
+ * the DOM and reads first; the session group is pushed right by `margin-left:
+ * auto`, which moves the pixels without moving the words.
+ */
+/**
+ * The BOOT line: one sentence, no groups.
+ *
+ * Kept beside `setStatusParts` rather than folded into it. Booting has no world
+ * to describe and no session to dim — "loading assets..." is a whole status —
+ * and routing it through the two-group writer would mean every caller inventing
+ * an empty array to say so.
+ */
 function setStatusText(text: string): void {
   if (logEl !== null) logEl.textContent = text;
+}
+
+function setStatusParts(world: readonly string[], session: readonly string[]): void {
+  if (logEl === null) return;
+  logEl.replaceChildren();
+
+  const group = (parts: readonly string[], cls: string): HTMLSpanElement | null => {
+    if (parts.length === 0) return null;
+    const el = document.createElement('span');
+    el.className = cls;
+    el.textContent = parts.join(' · ');
+    return el;
+  };
+
+  const left = group(world, 'st-world');
+  if (left !== null) logEl.append(left);
+
+  const right = group(session, 'st-session');
+  if (right !== null) {
+    // THE SEPARATOR IS A REAL CHARACTER AND IT LIVES IN THE RIGHT-HAND GROUP.
+    // Without it the announcement runs "…1 talent pointconnected". A screen
+    // reader cannot see the gap that CSS puts there.
+    right.textContent = ` · ${right.textContent ?? ''}`;
+    logEl.append(right);
+  }
 }
 
 /**
@@ -3622,7 +3682,20 @@ async function boot(): Promise<void> {
   let lastStatus = '';
   function updateStatus(): void {
     const me = selfId === null ? undefined : actors.get(selfId);
-    const parts = [connection, turnPhase()];
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * TWO GROUPS. THE WORLD, THEN THE SESSION.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `parts` is what is happening in the game — where you are, what the rules
+     * are right now, who you are, what you have to spend. `session` is what is
+     * happening to the CONNECTION: whether the socket is up, how many bodies
+     * the client is tracking, who else is in the Activity, the zoom. That
+     * second group is diagnostic. It mattered enough to keep and never enough
+     * to read first, and it used to open the bar.
+     */
+    const parts: string[] = [];
+    const session: string[] = [connection];
     // WHERE YOU ARE, FIRST AFTER THE PHASE, and only once the server has said.
     // This is the aria-live region, so it is the ONLY way a player using a
     // screen reader learns they have changed place at all — the canvas can show
@@ -3644,12 +3717,30 @@ async function boot(): Promise<void> {
     // The canvas has the banner and the border; this is the heard copy, and it
     // names the RULE CHANGE rather than just the fact, because "combat" does
     // not tell a new player that their next step now costs a turn.
+    /**
+     * THE RULE IN FORCE — and it used to be said twice.
+     *
+     * `turnPhase()` already answers "free movement" out of combat, and this
+     * line then pushed "clear — free movement" beside it, so the bar read
+     * "…free movement · The Alderbrook Moor — safe · clear — free movement · …".
+     * Reported from play, and it is exactly the kind of thing that only shows
+     * up in a screenshot.
+     *
+     * IN COMBAT THEY ARE NOT THE SAME and both are kept: `turnPhase()` says
+     * whose turn it is ("YOUR TURN", "waiting on 2"), which changes every few
+     * seconds; this says the RULE CHANGE, which is the thing a new player needs
+     * spelled out — "combat" does not tell anybody that their next step now
+     * costs a turn.
+     */
     if (turn !== null) {
       parts.push(turn.inCombat ? 'CONTACT — turn by turn' : 'clear — free movement');
+      if (turn.inCombat) parts.push(turnPhase());
+    } else {
+      parts.push(turnPhase());
     }
-    parts.push(`${actors.size} actor(s)`);
     if (me !== undefined) parts.push(`${me.name} @ ${me.x},${me.y}`);
-    parts.push(`${renderer.metrics().scale}x`);
+    session.push(`${actors.size} actor(s)`);
+    session.push(`${renderer.metrics().scale}x`);
     // The refusal goes through the aria-live region too. The canvas line is the
     // seen copy; this is the heard one, and a refusal nobody can hear is a
     // silent no-op for exactly the players who most need to be told.
@@ -3733,7 +3824,7 @@ async function boot(): Promise<void> {
     if (invite !== undefined) {
       parts.push(`${invite.fromName} invites you to a party`);
     }
-    if (participants.length > 0) parts.push(`${participants.length} in the activity`);
+    if (participants.length > 0) session.push(`${participants.length} in the activity`);
     if (notice !== null) parts.push(notice);
     // The sign-in failure OUTLIVES every other line here on purpose: it is the
     // one condition that does not fix itself, and a player who missed the
@@ -3741,10 +3832,13 @@ async function boot(): Promise<void> {
     if (authError !== null) parts.push(`sign-in failed: ${authError}`);
     if (lastError !== null) parts.push(`! ${lastError}`);
 
-    const next = parts.join('  ·  ');
+    // THE MEMO SPANS BOTH GROUPS. `lastStatus` suppresses a repeat announcement,
+    // and a key built from only the left half would go silent on a reconnect —
+    // the one change in the right-hand group that a player most needs told.
+    const next = [...parts, ...session].join('  ·  ');
     if (next === lastStatus) return;
     lastStatus = next;
-    setStatusText(next);
+    setStatusParts(parts, session);
   }
 
   // --- the notice ----------------------------------------------------------

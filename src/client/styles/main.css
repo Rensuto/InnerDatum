@@ -231,3 +231,41 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE STATUS BAR'S TWO GROUPS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `#log` is one aria-live sentence and two visual groups — see `setStatusParts`
+ * in main.ts. The world group reads first and keeps the parchment; the session
+ * group (socket, actor count, zoom, who else is in the Activity) is diagnostic,
+ * so it is dimmed and pushed right, where it can be ignored until it matters.
+ *
+ * `margin-left: auto` MOVES PIXELS AND NOT WORDS. The DOM order is the sentence
+ * order, so a screen reader still hears the world before the connection; only
+ * the layout puts the connection at the far end.
+ *
+ * The row was already `nowrap` with an ellipsis and a fixed height, so this
+ * changes no geometry — under pressure the WORLD group is what survives, which
+ * is the right half to keep.
+ */
+#log {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+}
+
+.st-world {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-session {
+  margin-left: auto;
+  padding-left: 12px;
+  color: #8b849a; /* GREY_HI — present, never first */
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
