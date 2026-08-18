@@ -263,7 +263,49 @@ function connect(g: Grid, from: TileXY): void {
  * `seed` should name the realm, so two parties in the same place get the same
  * floor and a re-entry finds the room it left.
  */
-export function makeSiteMap(seed: string, shape: SiteShape): AuthoredMap {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A ROOM IS MADE OF. Two codes, and it is a SUBSTITUTION, not a generator.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Thirteen destinations were one destination with thirteen doors, then `shape`
+ * made them four; they were still every one of them the same grey box, because
+ * every interior in the game is built out of exactly two tile codes and the
+ * player has been looking at those two codes since M1.
+ *
+ * The palette is applied as a POST-PASS over the finished grid rather than
+ * threaded into the carvers, and that is the whole safety argument: the
+ * generator runs unchanged, draws the same numbers off the same seeded stream in
+ * the same order, and produces the same walkable cells bit for bit. Only the two
+ * codes it wrote are renamed on the way out. A room cannot become unreachable by
+ * being repainted, and `sitemap.test.ts` asserts exactly that — the walkable
+ * index set is identical to the FLOOR/WALL build for every shape and palette.
+ *
+ * BOTH HALVES CARRY A REAL RULE, checked by that same test rather than trusted:
+ * the floor must be `isWalkable` and the wall must not be, or a repaint would
+ * quietly change where a body may stand.
+ *
+ * AND IT IS FREE. Every code any palette names already has a PNG on disk and a
+ * `tileFill` colour — six of them (GREEN, SOOT, RAIL, WORKS, TERRACE, CIVIC) are
+ * finished art that until now drew nothing anywhere in the game, because their
+ * codes appear on no overworld row and in no interior.
+ */
+export type SitePalette = {
+  readonly floor: TileCode;
+  readonly wall: TileCode;
+};
+
+/** What every site was, and what a caller that names no palette still gets. */
+export const DEFAULT_SITE_PALETTE: SitePalette = {
+  floor: TileCode.FLOOR,
+  wall: TileCode.WALL,
+};
+
+export function makeSiteMap(
+  seed: string,
+  shape: SiteShape,
+  palette: SitePalette = DEFAULT_SITE_PALETTE,
+): AuthoredMap {
   const rng = createRng(seed);
   const g = blank();
 
@@ -280,6 +322,22 @@ export function makeSiteMap(seed: string, shape: SiteShape): AuthoredMap {
   // here, and `leaveRealm` treats it as the door.
   put(g, spawn.x, spawn.y, TileCode.FLOOR);
   connect(g, spawn);
+
+  /**
+   * THE REPAINT, LAST, over the finished grid. Two codes in, two codes out —
+   * `blank()` fills with WALL and `put` only ever writes FLOOR or WALL, so this
+   * loop sees nothing else and a third code appearing here would be a bug in
+   * the carvers rather than something for this line to guess about.
+   *
+   * Skipped entirely for the default palette: identity work on 900 cells per
+   * realm is cheap, but a no-op that is visibly a no-op is easier to reason
+   * about than one that has to be traced.
+   */
+  if (palette.floor !== TileCode.FLOOR || palette.wall !== TileCode.WALL) {
+    for (let i = 0; i < g.length; i += 1) {
+      g[i] = g[i] === TileCode.FLOOR ? palette.floor : palette.wall;
+    }
+  }
 
   return {
     view: { w: W, h: H, tiles: g },

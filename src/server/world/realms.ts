@@ -55,6 +55,7 @@
 
 import { makeArena } from '../../shared/arena.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
+import { TileCode } from '../../shared/protocol.ts';
 import { makeOverworld } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { DELVES, populateDelve } from '../content/delve.ts';
@@ -764,6 +765,32 @@ export function createRealms(opts: RealmsOptions): Realms {
  * MINUS its population, because `populate` is absent, and that is exactly what
  * a town is for now — an empty room you can stand in with other people.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SIX COLUMNS, AND THE LAST TWO ARE WHAT THE PLACE IS MADE OF.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `SiteShape` already stopped thirteen destinations being one destination with
+ * thirteen doors — a mine of winding galleries reads as a different PLACE from a
+ * market that is an open plaza. But all four shapes were built out of the same
+ * two tile codes, so every one of them was the same grey box in a different
+ * outline, and those two codes are what the player has been looking at since M1.
+ *
+ * The floor/wall pair is a POST-PASS over the finished grid (`makeSiteMap`), so
+ * the generator is untouched and the walkable cells are identical bit for bit —
+ * `test/shared/sitemap.test.ts` is the proof, and it asserts the rule both
+ * halves carry: the floor must be `isWalkable`, the wall must not be.
+ *
+ * ═══ THE OUTER INDEX'S WALLS ARE `ERASED`, AND THAT IS THE FICTION IN A CELL ═══
+ * The building at the end of the road is not built OUT of anything. It is built
+ * out of the absence — the same code that eats the edges of the moor.
+ *
+ * ═══ AND IT COST NO ART ═══
+ * Every code here already had a PNG on disk and a `tileFill` colour. Six of them
+ * — GREEN, SOOT, RAIL, WORKS, TERRACE, CIVIC — were finished tiles that drew
+ * NOTHING anywhere in the game, because their codes appeared on no overworld row
+ * and in no interior. This table spends them.
+ */
 export const SITES: ReadonlyMap<string, SiteDef> = new Map(
   (
     [
@@ -771,22 +798,126 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
       // the SETTLEMENTS, and with the overworld now being open country they are
       // where the game is social — the road between them is meant to feel empty.
       //
-      ['site:alderbrook', 'Alderbrook', RealmKind.Common, 'city', SiteShape.Town],
-      ['site:threadneedle_row', 'Threadneedle Row', RealmKind.Common, 'town', SiteShape.Town],
-      ['site:ashwick_row', 'Ashwick Alchemy Row', RealmKind.Common, 'town', SiteShape.Town],
-      ['site:wayfarers_camp', "A Wayfarers' Camp", RealmKind.Common, 'village', SiteShape.Ruin],
-      ['site:saints_rest', "Saint's Rest", RealmKind.Common, 'town', SiteShape.Town],
+      [
+        'site:alderbrook',
+        'Alderbrook',
+        RealmKind.Common,
+        'city',
+        SiteShape.Town,
+        TileCode.PAVING,
+        TileCode.CIVIC,
+      ],
+      [
+        'site:threadneedle_row',
+        'Threadneedle Row',
+        RealmKind.Common,
+        'town',
+        SiteShape.Town,
+        TileCode.COBBLE,
+        TileCode.TERRACE,
+      ],
+      [
+        'site:ashwick_row',
+        'Ashwick Alchemy Row',
+        RealmKind.Common,
+        'town',
+        SiteShape.Town,
+        TileCode.COBBLE,
+        TileCode.WORKS,
+      ],
+      [
+        'site:wayfarers_camp',
+        "A Wayfarers' Camp",
+        RealmKind.Common,
+        'village',
+        SiteShape.Ruin,
+        TileCode.YARD,
+        TileCode.TREES,
+      ],
+      [
+        'site:saints_rest',
+        "Saint's Rest",
+        RealmKind.Common,
+        'town',
+        SiteShape.Town,
+        TileCode.YARD,
+        TileCode.TERRACE,
+      ],
       // ─── one party at a time: combat, so a shared barrier would be wrong ───
-      ['site:blackwood_outskirts', 'Blackwood Outskirts', RealmKind.Inner, 'gate', SiteShape.Cave],
-      ['site:gearford_ward', 'Gearford Industrial Ward', RealmKind.Inner, 'gate', SiteShape.Works],
-      ['site:underworks', 'The Underworks', RealmKind.Inner, 'mine', SiteShape.Cave],
-      ['site:glass_archive', 'The Glass Archive', RealmKind.Inner, 'city', SiteShape.Works],
-      ['site:watchers_altar', "The Watcher's Altar", RealmKind.Inner, 'ruin', SiteShape.Ruin],
-      ['site:hollow_mine', 'The Hollow Mine', RealmKind.Inner, 'mine', SiteShape.Cave],
-      ['site:drowned_chapel', 'The Drowned Chapel', RealmKind.Inner, 'ruin', SiteShape.Ruin],
-      ['site:outer_index', 'The Outer Index', RealmKind.Inner, 'city', SiteShape.Works],
+      [
+        'site:blackwood_outskirts',
+        'Blackwood Outskirts',
+        RealmKind.Inner,
+        'gate',
+        SiteShape.Cave,
+        TileCode.HEATH,
+        TileCode.TREES,
+      ],
+      [
+        'site:gearford_ward',
+        'Gearford Industrial Ward',
+        RealmKind.Inner,
+        'gate',
+        SiteShape.Works,
+        TileCode.SOOT,
+        TileCode.WORKS,
+      ],
+      [
+        'site:underworks',
+        'The Underworks',
+        RealmKind.Inner,
+        'mine',
+        SiteShape.Cave,
+        TileCode.SOOT,
+        TileCode.CRAG,
+      ],
+      [
+        'site:glass_archive',
+        'The Glass Archive',
+        RealmKind.Inner,
+        'city',
+        SiteShape.Works,
+        TileCode.PAVING,
+        TileCode.CIVIC,
+      ],
+      [
+        'site:watchers_altar',
+        "The Watcher's Altar",
+        RealmKind.Inner,
+        'ruin',
+        SiteShape.Ruin,
+        TileCode.PLAINS,
+        TileCode.CRAG,
+      ],
+      [
+        'site:hollow_mine',
+        'The Hollow Mine',
+        RealmKind.Inner,
+        'mine',
+        SiteShape.Cave,
+        TileCode.SOOT,
+        TileCode.CRAG,
+      ],
+      [
+        'site:drowned_chapel',
+        'The Drowned Chapel',
+        RealmKind.Inner,
+        'ruin',
+        SiteShape.Ruin,
+        TileCode.SHORE,
+        TileCode.TERRACE,
+      ],
+      [
+        'site:outer_index',
+        'The Outer Index',
+        RealmKind.Inner,
+        'city',
+        SiteShape.Works,
+        TileCode.PAVING,
+        TileCode.ERASED,
+      ],
     ] as const
-  ).map(([id, name, kind, marker, shape]): [string, SiteDef] => [
+  ).map(([id, name, kind, marker, shape, floor, wall]): [string, SiteDef] => [
     id,
     {
       id,
@@ -807,7 +938,7 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
        * is a different floor — and after the five-minute linger reaps it, the
        * next party through the door gets somewhere new.
        */
-      map: (seed) => makeSiteMap(seed, shape),
+      map: (seed) => makeSiteMap(seed, shape, { floor, wall }),
       // A delve is a place you can go back to. A town never empties in the sense
       // that matters — `close` refuses a shared realm outright — so the number
       // is inert there and stated once rather than branched on.
