@@ -697,7 +697,32 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
    *
    * The cluster is walked deterministically rather than drawn from the RNG
    * because two people joining a session should land next to each other every
-   * time; the seeded draw is the overflow path, for the seventh player onwards.
+   * time.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE OVERFLOW USED TO SAY "FOR THE SEVENTH PLAYER ONWARDS". IT MEANT SECOND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * That sentence was written against the TEST level, whose 3x2 cluster really
+   * does hold six. The shipped OVERWORLD carried exactly ONE tile with
+   * `spawn: true` — a single `O` at Alderbrook's gate on a 170x100 map — so the
+   * cluster was exhausted by player TWO and everybody from the second person
+   * onward was placed by `spawnRng.pick` over every free tile on the level. A
+   * uniform draw across the whole moor.
+   *
+   * For a co-op game played by friends in a voice channel that is close to the
+   * worst possible first frame: you open the Activity together and are scattered
+   * up to a hundred tiles apart, in fog, with no way to find one another — the
+   * world map draws only `self`, `PartyMember` carries no position, and `follow`
+   * refuses because you are technically already in the same realm.
+   *
+   * Every test covering spawn adjacency runs on the test level, which is exactly
+   * why nothing caught it: the fixture had the cluster the shipped map lacked.
+   *
+   * TWO CHANGES, BELT AND BRACES. `shared/level.ts` now paints ten more spawn
+   * tiles around the gate (the `o` glyph, an identical YARD tile that changes
+   * nothing but the flag), and the fallback below tries the gate's own
+   * neighbourhood before it will consider the rest of the world.
    *
    * UNDEFINED when the level has no free tile at all — which takes more than 761
    * players. `addPlayer` turns that into the throw it has always been; the
@@ -723,8 +748,33 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
       }
     }
 
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * BEFORE THE WHOLE WORLD, TRY NEXT DOOR.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * A full cluster means a lot of people arrived at once, and the honest
+     * answer to that is "stand behind them", not "be somewhere else entirely".
+     * `nearestFreeTile` rings outward from a requested tile in row-major order
+     * with no draw at all, so this is deterministic and reproducible in the same
+     * way the cluster walk above is — and it puts the eleventh arrival one step
+     * further out rather than a hundred tiles away.
+     *
+     * FROM `spawns[0]`, the first authored tile, so the ring is anchored to the
+     * gate even if every tile of the cluster is occupied. A level with no
+     * authored spawn at all falls straight through to the draw below, which is
+     * the behaviour it has always had.
+     */
+    const anchor = spawns[0];
+    if (anchor !== undefined) {
+      const near = nearestFreeTile(anchor.x, anchor.y);
+      if (near !== undefined) return near;
+    }
+
     // Row-major, so the candidate list is identical on every machine and the
-    // draw below is reproducible.
+    // draw below is reproducible. Reached only when the gate's whole
+    // neighbourhood out to `SPAWN_SEARCH_RADIUS` is full, or the level authored
+    // no spawn at all.
     const free: TileXY[] = [];
     for (let y = 0; y < level.h; y += 1) {
       for (let x = 0; x < level.w; x += 1) {

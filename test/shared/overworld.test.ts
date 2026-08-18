@@ -73,9 +73,39 @@ describe('the region — shape', () => {
   });
 
   it('spawns every player at Alderbrook and nowhere else', () => {
-    // ONE spawn is deliberate: the first thing you see on connecting should be
-    // another player, not empty country.
-    expect(OVERWORLD.spawns).toEqual([ALDERBROOK]);
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE REASON WAS RIGHT AND THE NUMBER WAS BACKWARDS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This used to read `expect(OVERWORLD.spawns).toEqual([ALDERBROOK])` under
+     * the comment "ONE spawn is deliberate: the first thing you see on
+     * connecting should be another player, not empty country."
+     *
+     * That intent is exactly right, and ONE SPAWN TILE IS THE ONE ARRANGEMENT
+     * THAT CANNOT DELIVER IT. `world.ts#findSpawn` walks the authored cluster
+     * and falls through to a uniform draw over every free tile on the level, so
+     * with a single tile the second player to join — and every player after them
+     * — was placed somewhere random on a 170x100 moor. The first thing they saw
+     * on connecting was empty country, which is the precise outcome this test
+     * was written to prevent while asserting the thing that caused it.
+     *
+     * So the assertion is now the intent rather than the number: the gate is
+     * still where everybody lands, and there is room there for a party.
+     */
+    // Every spawn is at the gate, none anywhere else. Chebyshev, because
+    // "the same courtyard" is a square in a grid game.
+    const strays = OVERWORLD.spawns.filter(
+      (s) => Math.max(Math.abs(s.x - ALDERBROOK.x), Math.abs(s.y - ALDERBROOK.y)) > 2,
+    );
+    expect(strays).toEqual([]);
+
+    // ...and there are enough of them for a Discord voice channel, which is the
+    // whole reason the map exists.
+    expect(OVERWORLD.spawns.length).toBeGreaterThanOrEqual(8);
+
+    // The gate itself is still one of them, and still the site marker.
+    expect(OVERWORLD.spawns).toContainEqual(ALDERBROOK);
   });
 
   it('is sealed by erased ground on all four edges', () => {

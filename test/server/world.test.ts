@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { MoveBlock, createWorld } from '../../src/server/world/world.ts';
 import { DIR_ORDER, dirVector } from '../../src/shared/coords.ts';
-import { TEST_LEVEL_SPAWNS, canWalk } from '../../src/shared/level.ts';
+import { TEST_LEVEL_SPAWNS, canWalk, makeOverworld } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { Dir, TileXY } from '../../src/shared/coords.ts';
@@ -67,6 +67,84 @@ function placements(seed: string, count: number): string[] {
   }
   return out;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ON THE MAP PEOPLE ACTUALLY PLAY ON — which no test in this file used to touch.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every spawn test below runs `createWorld(seed)`, which builds the TEST level:
+ * a 30x30 room whose docblock says "Spawns are a 3x2 cluster near the top-left,
+ * so two players see each other on their first frame". Six tiles.
+ *
+ * The OVERWORLD — the only map anybody joins — carried exactly ONE tile with
+ * `spawn: true`, a single `O` at Alderbrook's gate on a grid of 170x100. So
+ * `findSpawn` exhausted its cluster at player TWO and fell through to
+ * `spawnRng.pick('world.spawn.overflow', free)`, a uniform draw over every free
+ * tile on the level. From the second person to open the Activity, a party of
+ * friends was scattered across the moor, in fog, with no way to find each other:
+ * the world map draws only `self`, `PartyMember` carries no position, and
+ * `follow` refuses because they are already in the same realm.
+ *
+ * The fixture had the cluster the shipped map lacked, so the suite was green
+ * while the game did the one thing a co-op game must never do on frame one.
+ *
+ * These two tests are the ones that would have failed. They assert against
+ * `makeOverworld()` and against no hard-coded coordinate, so moving the gate
+ * moves the expectation with it.
+ */
+describe('the overworld gate seats a whole party, not one person', () => {
+  /** Everyone who could plausibly be in a Discord voice channel at once. */
+  const A_FULL_CHANNEL = 8;
+
+  it('lands every arrival within sight of the first', () => {
+    const world = createWorld('overworld-spawn', makeOverworld());
+    const seats: TileXY[] = [];
+    for (let i = 0; i < A_FULL_CHANNEL; i += 1) {
+      const actor = world.addPlayer(`p${String(i)}`, `Player ${String(i)}`);
+      seats.push({ x: actor.x, y: actor.y });
+    }
+
+    const first = seats[0];
+    expect(first).toBeDefined();
+    if (first === undefined) return;
+
+    // ═══ CHEBYSHEV, AND THE NUMBER IS "THE SAME COURTYARD" ═══
+    // Not a tuned constant: 6 is comfortably inside a viewport and comfortably
+    // outside anything the old behaviour could produce. The failing version put
+    // people up to 110 tiles out, so any bound in this neighbourhood catches it
+    // while leaving room for the cluster to be redrawn later.
+    const strays = seats
+      .map((seat, i) => ({
+        i,
+        d: Math.max(Math.abs(seat.x - first.x), Math.abs(seat.y - first.y)),
+      }))
+      .filter((row) => row.d > 6);
+    expect(strays).toEqual([]);
+  });
+
+  it('gives every arrival a walkable tile of their own', () => {
+    // The invariant the rest of this file depends on, restated on the real map:
+    // two bodies on one tile is unrecoverable, because neither can then step off
+    // without the occupancy check refusing.
+    const world = createWorld('overworld-spawn-distinct', makeOverworld());
+    const seen = new Set<string>();
+    for (let i = 0; i < A_FULL_CHANNEL; i += 1) {
+      const actor = world.addPlayer(`p${String(i)}`, `Player ${String(i)}`);
+      expect(canWalk(world.level, actor.x, actor.y)).toBe(true);
+      seen.add(`${String(actor.x)},${String(actor.y)}`);
+    }
+    expect(seen.size).toBe(A_FULL_CHANNEL);
+  });
+
+  it('authors more than one spawn tile at all — the root cause, stated directly', () => {
+    // The two tests above would both pass on a one-tile map if `findSpawn`'s
+    // fallback were doing all the work, and the fallback is the belt rather than
+    // the braces. A party should be seated by the AUTHORED cluster.
+    const overworld = makeOverworld();
+    expect(overworld.spawns.length).toBeGreaterThanOrEqual(A_FULL_CHANNEL);
+  });
+});
 
 describe('world.addPlayer', () => {
   it('puts every joining player on a walkable tile of their own', () => {
@@ -490,22 +568,54 @@ describe('world.tryMove', () => {
 
 describe('world determinism', () => {
   it('places identical players from an identical seed and join order', () => {
-    // Twelve, not two: the first six take the authored spawn cluster and never
-    // touch the RNG at all. Only the overflow joins prove the seed is genuinely
-    // plumbed through createWorld -> createRng -> fork('world.spawn') -> pick.
     expect(placements('shared-seed', 12)).toEqual(placements('shared-seed', 12));
   });
 
-  it('separates two seeds once placement starts drawing from the RNG', () => {
-    // The other half of the same guarantee: if the seed were ignored, the test
-    // above would still pass and a restart would silently reuse one world's
-    // layout for another.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PLACEMENT IS THE SAME IN EVERY WORLD, AND THAT IS NOW THE POINT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This pair used to read "separates two seeds once placement starts drawing
+   * from the RNG", and it was a true statement about a behaviour that turned out
+   * to be the wrong one. `findSpawn` walked its authored cluster and then drew
+   * `spawnRng.pick('world.spawn.overflow', free)` from EVERY free tile on the
+   * level — which on the one-tile overworld gate meant the second player to join
+   * a co-op session was thrown somewhere random on a 170x100 moor.
+   *
+   * `findSpawn` now rings outward from the gate with `nearestFreeTile`, which
+   * takes no draw at all, so overflow placement is a pure function of the map.
+   * WHERE YOU STAND SHOULD NOT DEPEND ON THE WORLD SEED: two parties opening the
+   * Activity on different evenings should both find themselves at the gate, and
+   * a placement that varied with the seed was only ever variance nobody asked
+   * for. The seeded draw survives below the ring as a last resort for a map with
+   * no room within `SPAWN_SEARCH_RADIUS`, which no shipped map is.
+   *
+   * The guarantee the old test was really protecting — that the seed reaches the
+   * world at all — is asserted directly below, on the stream itself, rather than
+   * inferred from a placement side-effect it no longer has.
+   */
+  it('seats a party identically whatever the seed, because arrival is not a roll', () => {
     const seats = TEST_LEVEL_SPAWNS.length;
     const alpha = placements('seed-alpha', 12).slice(seats);
     const beta = placements('seed-beta', 12).slice(seats);
 
     expect(alpha).toHaveLength(12 - seats);
-    expect(alpha).not.toEqual(beta);
+    expect(alpha).toEqual(beta);
+  });
+
+  it('still plumbs the seed into the world stream, which is what that proved', () => {
+    // Directly, on the thing that actually consumes it. Every draw in the game —
+    // damage, loot, saves, monster placement — comes off this generator, so a
+    // seed that failed to reach it would make two evenings identical in every
+    // respect that matters. Asserting it here rather than through where somebody
+    // happened to be standing is strictly the stronger check.
+    const alpha = createWorld('seed-alpha').rng.int('test.probe', 0, 1_000_000);
+    const beta = createWorld('seed-beta').rng.int('test.probe', 0, 1_000_000);
+    expect(alpha).not.toBe(beta);
+
+    // ...and the same seed answers the same thing, which is the other half.
+    expect(createWorld('seed-alpha').rng.int('test.probe', 0, 1_000_000)).toBe(alpha);
   });
 
   it("keeps each world's level and actors to itself", () => {

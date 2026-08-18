@@ -377,9 +377,9 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXWwTTTTTTTTppppppppp..pppjjjjjjjjjjjjjjjpppppppppppphhhhhhhhhhhhpppphhhhhpphhhhppppppppppphhhhhhhhhhhhppppppppppppjjyyyyyyyyyyy.....pppppppppppppppppppppTTTTTT;swwwwWWXX',
   'XXWwTTTTTTTTpppppppppp......yyyyyyyyyyyjjppppppppppppphhhhhhhhhhhpppppphhpppphhppppppppppppppphhhhhhhhpppppppppppppjjkkkkyyykkkkjjpp..........pppppppppppTTTTTT;swwwwwWWXX',
   'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjppppppppppppphhhhhhhhhppppppppppppppppppppppppppppppphhhhhhhhpppppppppppppjjkkkkyyykkkkjjppppppppppp.ppppppppppTTTTTT;swwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjppppppppppppphhhhhhhhhpppppppppppppppppppppppppppppppphhhhhhppppppppppppppjjkkkkyyykkkkjjppppppppppp.pppppppppTTTTTT;swwwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjpppppppppppppppppphhhpppppppppppppppppppppppppppppppppphhpppppppppppppppppjjyyyyyOyyyyyjjTpppppppppp.......jjjjjjjjT;swwwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjyyyyyIyyyyyjjppppppppppppppppppphppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyyyyyyyyjjTTTppppppppppjjjj.jjjjjjjjTsswwwwwwwWWXX',
+  'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjppppppppppppphhhhhhhhhpppppppppppppppppppppppppppppppphhhhhhppppppppppppppjjkkkkoookkkkjjppppppppppp.pppppppppTTTTTT;swwwwwwwWWXX',
+  'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjpppppppppppppppppphhhpppppppppppppppppppppppppppppppppphhpppppppppppppppppjjyyyooOooyyyjjTpppppppppp.......jjjjjjjjT;swwwwwwwWWXX',
+  'XXWwTTTTTTTTppppppppppppppjjyyyyyIyyyyyjjppppppppppppppppppphppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyoooyyyyjjTTTppppppppppjjjj.jjjjjjjjTsswwwwwwwWWXX',
   'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyyyyyyyyjjTTTTpppppppppjjyyyyyyyyyjjTsswwwwwwwWWXX',
   'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyyyyyyyyjjTTTTTppppppppjjtttyyytttjjssswwwwwwwWWXX',
   'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjLLLLLyLLLLLssTTTTTTpppppppjjtttyyytttjjsswwwwwwwwWWXX',
@@ -445,6 +445,37 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
    * empty country. The generator SCORED this spot rather than being told it.
    */
   O: { tile: TileCode.PAVING, spawn: true, site: 'site:alderbrook' },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE REST OF THE GATE — ten more spawn tiles, and the game needed them badly.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `O` above was the ONLY tile on this 170x100 map carrying `spawn: true`. Its
+   * own docblock states the intent — "Every player starts at its gate, so the
+   * first thing you see on connecting is another player rather than empty
+   * country" — and with a single tile that is true of exactly one player.
+   *
+   * `world.ts#findSpawn` walks the authored cluster and falls through to
+   * `spawnRng.pick('world.spawn.overflow', free)` over EVERY free tile on the
+   * level. Its comment says that draw is "the overflow path, for the seventh
+   * player onwards", which was true of the 3x2 cluster on the TEST level — and
+   * every test covering spawn adjacency runs on that level, which is why this
+   * survived. On the shipped overworld the cluster is exhausted by player TWO,
+   * so from the second person to open the Activity, everybody is dropped at a
+   * uniformly random point up to a hundred tiles away, in fog, with no way to
+   * find each other: the world map draws only `self`, `PartyMember` carries no
+   * position, and `follow` refuses because they are already in the same realm.
+   *
+   * For a game whose entire premise is friends in a voice channel, that fires
+   * on every multiplayer session, on the first frame.
+   *
+   * ═══ YARD, NOT PAVING, AND THAT IS THE POINT ═══
+   * Identical tile to the `y` it replaces, so the map looks and walks exactly as
+   * it did — this adds spawn points and changes nothing else. Paving would have
+   * drawn a stone apron around the gate that nobody asked for, and a map edit
+   * that is invisible is a map edit that cannot regress the map.
+   */
+  o: { tile: TileCode.YARD, spawn: true },
   R: { tile: TileCode.PAVING, site: 'site:threadneedle_row' },
   H: { tile: TileCode.PAVING, site: 'site:ashwick_row' },
   P: { tile: TileCode.PAVING, site: 'site:wayfarers_camp' },
