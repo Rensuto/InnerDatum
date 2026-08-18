@@ -350,7 +350,17 @@ describe('the adopted ToME entries survive the port', () => {
     // its own talent, and `resolvers.rngavg(40,60)` = 50 is simply what
     // losgoroth.lua:63 says. The two assertions stayed in this order on purpose:
     // the citation is one line below the number it produced.
-    expect(INDEX_WRAITH.maxHp).toBe(50);
+    /**
+     * ═══ 80, AND THE PORT SAYS 50 — A DEVIATION, RE-OPENED DELIBERATELY ═══
+     * `resolvers.rngavg(40,60)` = 50 is still exactly what losgoroth.lua:63
+     * says, and the assertion below still proves this file can read it. What
+     * changed is the denominator: the intra-turn budget lets a party chain two
+     * at-will talents a round, so party damage went from ~25.7 to ~51.4 and at
+     * 50 life this creature died in 0.97 rounds — before the orb it exists to
+     * fire could cross its own stand-off. See the sizing test below, which is
+     * where the argument lives.
+     */
+    expect(INDEX_WRAITH.maxHp).toBe(80);
     expect(resolveRngAvg(40, 60)).toBe(50);
 
     // tome/resolvers.lua:901 — the `ranged` tactic preset's `safe_range = 4` is
@@ -769,7 +779,16 @@ describe('index_husk_elite, derived', () => {
     // the swing moved onto `attackTarget` — so this deviation is due a re-argue
     // the next time the elite is tuned; it is left alone here because retuning
     // is a separate job with its own measurements.
-    expect(INDEX_HUSK_ELITE.maxHp).toBe(60);
+    /**
+     * ═══ THE DEVIATION IS CLOSED. 95 IS THE PORT. ═══
+     * This assertion read 60 under a note saying the deviation was *"due a
+     * re-argue the next time the elite is tuned"*. This is that retune: the
+     * intra-turn budget doubled party throughput, 60 became 1.17 rounds, and the
+     * value that fixes it is the one ToME already authors across all three ghoul
+     * tiers. The two lines below are now the same number, which is the whole
+     * point of them being adjacent.
+     */
+    expect(INDEX_HUSK_ELITE.maxHp).toBe(95);
     expect(resolveRngAvg(90, 100)).toBe(95);
     // ...and it is genuinely a step up from the creature it upgrades, which is
     // the property the deviation exists to preserve.
@@ -1107,20 +1126,46 @@ describe('the balance table the wraith’s retune rests on', () => {
     expect(revolverDpt).toBeCloseTo(8.108, 3);
     expect(flareDpt).toBeCloseTo(13.814, 3);
 
-    const party = crudeBlowDpt + revolverDpt + flareDpt;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A ROUND, NOT A USE — and this line measured a use until the budget landed.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `DECISIONS.md` D1's intra-turn budget is real now: 6 AP a round, and the
+     * three figures above are 3-AP talents, so each class casts TWICE. Crude
+     * Blow and Revolver Shot are both `cooldownTurns: 0`, so the second cast is
+     * genuinely available rather than theoretical; Ashwick Flare is gated by
+     * reagents (1 of a stock of 8) rather than by cooldown, which is four rounds
+     * of doubles before she is dry.
+     *
+     * Summing one use each modelled a party that no longer exists, and it is
+     * exactly why the throughput change could ship without a single test
+     * failing: nothing in this file knew how many actions a round allows.
+     */
+    const CASTS_PER_ROUND = 2;
+    const party = (crudeBlowDpt + revolverDpt + flareDpt) * CASTS_PER_ROUND;
     // At 22 the creature died in under one party turn, while its orb needs 1.5
     // GAME turns to cross the stand-off — so it usually died before its first
     // orb ever landed. That is the argument for 50, and it is about time to
     // kill, not about how hard players hit.
-    expect(22 / party).toBeCloseTo(0.856, 3);
-    expect(INDEX_WRAITH.maxHp / party).toBeCloseTo(1.945, 3);
+    // THE INVARIANT IS THE POINT, AND THE FIGURE IS DERIVED FROM IT.
+    // `> 1.5` is the rule: the orb needs 1.5 game turns to cross the stand-off,
+    // so anything at or under that dies without ever firing. The ported 50 now
+    // fails it outright against a chaining party, which is why the life moved.
+    expect(50 / party).toBeLessThan(1.5);
     expect(INDEX_WRAITH.maxHp / party).toBeGreaterThan(1.5);
+    expect(INDEX_WRAITH.maxHp / party).toBeCloseTo(1.556, 3);
 
     // OUT OF FRAME, REPORTED ANYWAY. A solo Watchman needs 13.206 player turns,
     // during which a wraith standing off at four tiles deals more than his whole
     // bar. A lone Watchman trading shots at range LOSES; his answer is to close,
     // because the creature cannot fire inside two tiles at all.
-    expect(INDEX_WRAITH.maxHp / crudeBlowDpt).toBeCloseTo(13.206, 3);
+    // PER USE, not per round: this is the SOLO frame, and a lone Watchman
+    // chaining Crude Blow twice still spends the same two casts on the same
+    // creature. 21.1 swings at 80 life, up from 13.2 at 50 — the point of the
+    // line is unchanged and gets stronger, which is that trading shots at range
+    // with a kiter loses.
+    expect(INDEX_WRAITH.maxHp / crudeBlowDpt).toBeCloseTo(21.13, 2);
     const takenSolo =
       (INDEX_WRAITH.maxHp / crudeBlowDpt) * damagePerPlayerTurn(INDEX_WRAITH, WATCHMAN.combat);
     expect(takenSolo).toBeGreaterThan(WATCHMAN.maxHp);
@@ -1818,8 +1863,9 @@ describe('the wire carries what the ring needs', () => {
       talent: elite.talentIn,
     }).toEqual({
       rank: ActorRank.Elite,
-      hp: 60,
-      maxHp: 60,
+      // 95 — the ported `resolvers.rngavg(90,100)`; see the sizing test.
+      hp: 95,
+      maxHp: 95,
       reach: 1,
       // The ghoul ladder moves no speed field, so the delta is zero and the
       // elite inherits the husk's `global_speed_base = 0.9` (ant.lua:58). It

@@ -857,7 +857,45 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // is not the frame: his answer is to close, because the creature cannot fire
   // inside two tiles at all and gives ground instead. If solo play ever becomes
   // a frame this game supports, this number is the first one to re-argue.
-  maxHp: 50,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 80, AND IT WAS 50 — THE ORB HAS TO LAND AT LEAST ONCE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This number has never been about how hard it is to kill. It is about TIME
+   * TO KILL: the orb takes 1.5 game turns to cross the stand-off, so a wraith
+   * that dies inside one party round never fires at all, and the whole kiting
+   * creature is a stationary 50 hit points. `monsters.test.ts` pins that as
+   * `maxHp / party > 1.5` and records the argument.
+   *
+   * THE INTRA-TURN BUDGET MOVED THE DENOMINATOR. A party that can chain two
+   * at-will talents in one round deals ~51.4 instead of ~25.7 — Crude Blow and
+   * Revolver Shot are both `cooldownTurns: 0`, so the second cast is real — and
+   * at 50 the ratio fell to 0.97. The creature died before its first orb.
+   *
+   * ═══ 1.6x, NOT THE FULL 2x, AND THAT IS THE JUDGEMENT ═══
+   * Doubling would hold the designed time-to-kill exactly, for a party that
+   * chains optimally every single round. No real party does: the Alchemist's
+   * Flare is reagent-gated to about four rounds of doubles, cooldowns interrupt
+   * chains, and a new player who has not worked out that talents beat walking
+   * into things got no faster at all. Scaling the full 2x would make the game
+   * measurably harder for the person least equipped to notice why.
+   *
+   * 80 restores the invariant (80 / 51.4 = 1.56) with the least movement that
+   * does. If play shows parties chaining more reliably than this assumes, the
+   * honest next step is to raise it again — not to have guessed higher now.
+   *
+   * ═══ AND IT RE-OPENS A DEVIATION THE PORT HAD JUST CLOSED. SAID PLAINLY. ═══
+   * 50 was `resolvers.rngavg(40,60)` from losgoroth.lua:63 — a real ported
+   * number, and `monsters.test.ts` records the moment it stopped being a
+   * deviation. 80 is not upstream's. The trade is deliberate: upstream has no
+   * intra-turn budget, so its life values were never sized against a party that
+   * acts twice a round, and holding a ported number that makes the creature's
+   * own orb unreachable would be fidelity to the digit at the cost of the
+   * design. The elite went the other way in the same commit — to 95, which IS
+   * the port — so this is a judgement about one creature, not a policy.
+   */
+  maxHp: 80,
   hpRegen: 0,
 
   // DEVIATION 2 OF 7, HELD AGAIN AND THIS TIME WITH THE MEASUREMENT. Upstream's
@@ -1280,7 +1318,28 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   // expired: the sheet is wired and this creature spends it (5.888 hp per player
   // turn against 4.378 for the husk). 60 is HELD here only because retuning the
   // elite is not this pass's job; the argument for moving it is in the header.
-  maxHp: 60,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 95, AND IT WAS 60 — WHICH IS THE PORT, AND CLOSES A STANDING DEVIATION.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `resolvers.rngavg(90,100)` = 95 is what ToME's ghoul ladder authors across
+   * ALL THREE tiers (ghoul.lua:54, :71, :92), buying the top tier's threat
+   * entirely with dam/atk/apr/def/armour/cadence rather than with life.
+   * `monsters.test.ts` has carried 60 as an explicit deviation and said what
+   * would end it: *"this deviation is due a re-argue the next time the elite is
+   * tuned; it is left alone here because retuning is a separate job with its own
+   * measurements."*
+   *
+   * This is that job, and the measurement points the same way. The intra-turn
+   * budget lets a party chain two at-will talents a round — Crude Blow and
+   * Revolver Shot are both `cooldownTurns: 0` — so party damage went from ~25.7
+   * a round to ~51.4. At 60 the elite is 1.17 rounds: the thing
+   * `content/encounter.ts` calls *"a reason to retreat"*, dying before anybody
+   * decides anything. At 95 it is 1.85, and the number is upstream's rather than
+   * one this project invented to hit a feel.
+   */
+  maxHp: 95,
   hpRegen: 0,
 
   // The ghoul ladder moves no speed field, so the delta is zero and the elite
