@@ -69,6 +69,9 @@ function spyTalents(): TalentRuntime & { readonly forgotten: string[] } {
     noteMoved: () => undefined,
     noteKill: () => undefined,
     noteStruck: () => undefined,
+    // The intra-turn budget's seam; a stub closes every round after one action,
+    // which is this fixture's existing behaviour. See `TalentResolution.roundOpen`.
+    roundOpen: () => false,
     // The identity mark and "nobody is guarding" — this spy exists to record
     // `forget` and must not change a single damage number on the way past.
     markMultiplier: () => 1,

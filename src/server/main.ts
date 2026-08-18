@@ -39,6 +39,7 @@ import {
   RESOURCE_RULES,
   markMultiplier,
   resolveGuardCounter,
+  hasAffordableAction,
   useTalent,
 } from './engine/talents.ts';
 import { authRoutes, readAuthConfig } from './http/auth.ts';
@@ -202,6 +203,21 @@ export function talentRuntimeFor(
     },
     noteStruck: (actorId: string): void => {
       talents.noteStruck(actorId);
+    },
+    /**
+     * MAY THIS ROUND STAY OPEN? See `TalentResolution.roundOpen`.
+     *
+     * `MOVE_AP` is passed rather than imported because eslint forbids
+     * `engine/** -> content/**` and the cost of a step is content's to own.
+     * ZERO TODAY — a step still costs no budget, so a round stays open only
+     * while there is a TALENT left to cast. Movement joins the budget with the
+     * rest of C4; until then answering otherwise would hold rounds open for a
+     * step nothing charges for.
+     */
+    roundOpen: (actorId: string): boolean => {
+      const actor = world.getActor(actorId);
+      if (actor === undefined) return false;
+      return hasAffordableAction(talents, actor, 0);
     },
     /**
      * ═══════════════════════════════════════════════════════════════════════

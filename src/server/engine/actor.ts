@@ -504,6 +504,30 @@ export type PlayerActor = ActorCommon & {
   /** Pinned. Action COST multiplier; every player action costs exactly one turn. */
   readonly speedFactor: 1;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY TIMES THIS BODY HAS ACTED INSIDE THE ROUND IT IS STILL IN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `DECISIONS.md` D1: *"Intra-turn budget: 6 AP / 3 MP, spendable across
+   * several talents in one park"*. Zero means the round has not started; above
+   * zero means the player is MID-ROUND — parked, holding budget, and owed
+   * another decision.
+   *
+   * PLAYER-ONLY, which keeps `BarrierActor` (a structural subset) untouched and
+   * therefore keeps `engine/barrier.ts` out of this change entirely.
+   */
+  roundActions: number;
+  /**
+   * WHEN THIS ROUND CLOSES ITSELF. Wall clock, absolute; null when no round is
+   * open.
+   *
+   * WALL CLOCK AND NOT GAME TURNS, and the reason is the same one that nearly
+   * broke the townsfolk dialogue: `shared/energy.ts` advances `gameTurn` only
+   * while something can gain energy, so a table sitting mid-round thinking is by
+   * definition not advancing it. A game-turn deadline would never arrive.
+   */
+  roundTailMs: number | null;
+  /**
    * WHICH CLASS THIS BODY IS, AS A LABEL. Absent for a classless body.
    *
    * ═══ SOFT ON PURPOSE — A PLAIN STRING, NOT `ClassId` ═══
@@ -988,6 +1012,9 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     // change to how a clock is initialised lands in one place.
     ...createEnergyActor(id, { globalSpeed: 1 }),
     kind: ActorKind.Player,
+    // NO ROUND IS OPEN ON A BODY THAT HAS NEVER ACTED. See `PlayerActor`.
+    roundActions: 0,
+    roundTailMs: null,
     name: init.name,
     sprite: init.sprite,
     // A detective is never an elite. Rank exists to warn you about the room, and
@@ -1150,7 +1177,41 @@ export function actionCostMultiplier(actor: EngineActor): number {
  * @returns the energy actually deducted.
  */
 export function spendTurn(actor: EngineActor): number {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ROUND ENDS WHERE THE TURN IS SPENT, AND NOWHERE ELSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This function's own docblock calls it "THE ONLY sanctioned way for the
+   * engine to spend energy", and that is exactly why the reset belongs here
+   * rather than at the call sites. `actPlayer` is not the only one: `autoHold`,
+   * the Bell's expiry pass and anything added later all route through here, and
+   * a reset written at three call sites is a reset the fourth forgets.
+   *
+   * A body that has spent its turn is not mid-round by definition, so clearing
+   * unconditionally is correct even for a monster — `clearRound` is a no-op on
+   * anything without the fields.
+   */
+  clearRound(actor);
   return spendForAction(actor, actionCostMultiplier(actor));
+}
+
+/**
+ * Forget that a round was open.
+ *
+ * EXPORTED because two places need it that are not `spendTurn`: a floor reset,
+ * which stands bodies back up in the spawn cluster and must not leave one
+ * holding a deadline from the fight that was just annulled, and `actPlayer`'s
+ * out-of-combat fallthrough — engagement can drop while somebody is mid-round,
+ * and a stale deadline would then sit on them until the next fight.
+ *
+ * A NO-OP ON A MONSTER. Written against the union rather than `PlayerActor` so
+ * callers holding an `EngineActor` do not each have to narrow first.
+ */
+export function clearRound(actor: EngineActor): void {
+  if (actor.kind !== ActorKind.Player) return;
+  actor.roundActions = 0;
+  actor.roundTailMs = null;
 }
 
 // ---------------------------------------------------------------------------

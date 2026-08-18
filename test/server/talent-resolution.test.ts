@@ -22,6 +22,7 @@ import {
   talentId,
   useTalent,
 } from '../../src/server/engine/talents.ts';
+import { hasAffordableAction } from '../../src/server/engine/talents.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { TalentShape, TileCode } from '../../src/shared/protocol.ts';
@@ -102,6 +103,12 @@ function runtimeFor(talents: TalentEngine, world: World): TalentRuntime {
     },
     noteKill: (actorId: string): void => talents.noteKill(actorId),
     noteStruck: (actorId: string): void => talents.noteStruck(actorId),
+    // THE REAL PREDICATE, because this fixture drives real talents — a stub
+    // would test the closed-round path while the file is about the open one.
+    roundOpen: (actorId: string): boolean => {
+      const actor = world.getActor(actorId);
+      return actor === undefined ? false : hasAffordableAction(talents, actor, 0);
+    },
     // THE TWO THAT MAKE A RANK VISIBLE ON THE BASIC SWING. Forwarded exactly as
     // `talentRuntimeFor` (src/server/main.ts) forwards them, because this
     // fixture's whole purpose is to be that adapter.

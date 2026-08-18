@@ -643,6 +643,52 @@ export function hasResource(pool: ResourcePool, amount: number): boolean {
   return pool.value >= amount;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THERE ANYTHING LEFT THIS BODY COULD ACTUALLY DO THIS ROUND?
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The question `roundStaysOpen` asks after every action. If the answer is no,
+ * the round closes and the world moves; if it is yes, the player is parked and
+ * owed another decision.
+ *
+ * ═══ IT HAS TO BE HONEST ABOUT ALL THREE BUDGETS, NOT JUST AP ═══
+ * Answering on `sheet.ap` alone is the tempting version and it strands people:
+ * a Watchman sitting on 5 AP with Lockdown cooling and 12 Resolve has budget and
+ * NOTHING TO SPEND IT ON. He would be parked with every button grey, waiting for
+ * a Tail he has no reason to wait out, wondering what the game wants. So a
+ * talent counts only if it is off cooldown AND affordable on AP AND affordable
+ * on the class resource — the same three questions `canUseTalent` asks, in the
+ * same order, for the same reason.
+ *
+ * ═══ `moveAp` IS A PARAMETER, NOT AN IMPORT ═══
+ * eslint forbids `engine/** -> content/**`, and the cost of a step is content's
+ * to own. Passing it keeps this module pure and keeps the number in one place.
+ * Zero means a step is free, which is the game as it shipped.
+ */
+export function hasAffordableAction(
+  engine: TalentEngine,
+  actor: TalentActor,
+  moveAp: number,
+): boolean {
+  const sheet = engine.sheetOf(actor.id);
+  if (sheet === undefined) return false;
+  // A STEP IS AN ACTION. Checked first because it is the cheapest thing anybody
+  // can do and the commonest reason a round is still worth holding open.
+  if (moveAp > 0 && sheet.ap >= moveAp) return true;
+
+  for (const id of sheet.loadout) {
+    const talent = engine.registry.get(id);
+    if (talent === undefined) continue;
+    if (cooldownOf(actor, talent.id) > 0) continue;
+    if (sheet.ap < (talent.cost.ap ?? 0)) continue;
+    if (sheet.mp < (talent.cost.mp ?? 0)) continue;
+    if (!hasResource(sheet.resource, talent.cost.resource ?? 0)) continue;
+    return true;
+  }
+  return false;
+}
+
 /** Spend, or refuse and change nothing. Never goes negative. */
 export function spendResource(pool: ResourcePool, amount: number): boolean {
   if (amount <= 0) return true;

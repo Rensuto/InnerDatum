@@ -138,6 +138,36 @@ const DEFAULT_MAX_TICKS = 200;
  */
 const ENGAGEMENT_TURNS = 3;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW LONG AN OPEN ROUND WAITS BEFORE CLOSING ITSELF. See `applyRoundTails`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * DELIBERATELY BESIDE THE BELL so nobody tunes one without seeing the other,
+ * and they answer opposite questions. The Bell asks *"is this player still
+ * here?"* and runs for twenty seconds, because being wrong means benching
+ * somebody who was reading their screen. The Tail asks *"is this player still
+ * DECIDING?"* — they have already acted this round, so they are demonstrably at
+ * the keyboard — and six seconds is long enough for a second choice and short
+ * enough that the table does not notice somebody forgot to press space.
+ *
+ * SIX IS A GUESS AND IT IS SUPPOSED TO BE CHECKED. The honest measurement is
+ * the ratio of self-closed rounds to committed ones in a real session: if the
+ * game is closing more rounds than players are, the number is wrong, not the
+ * players.
+ */
+const ROUND_TAIL_MS = 6_000;
+
+/**
+ * The most actions one round may ever contain.
+ *
+ * AP is the real limiter — the cheapest talent is 2 of a 6-AP round — and this
+ * should never bind. It exists because a bug in the budget that let a round run
+ * forever would freeze the floor for everybody standing on it, and a constant is
+ * a cheaper guarantee than a proof.
+ */
+const MAX_ACTIONS_PER_ROUND = 3;
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -656,6 +686,20 @@ export type TalentResolution = {
    * A MISS DOES NOT COUNT and neither does a 0-damage blow: see `noteBlows`.
    */
   noteStruck(actorId: string): void;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MAY THIS BODY'S ROUND STAY OPEN? — the intra-turn budget's one question.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * True when the actor still has something it could afford to do: a step, or a
+   * talent that is off cooldown and payable on AP, MP and its class resource.
+   * `engine/talents.ts#hasAffordableAction` is the answer and it is pure.
+   *
+   * ABSENT IS TODAY'S GAME. `roundStaysOpen` reads `=== true`, so a scheduler
+   * built without a talent runtime — which is most of the test suite — closes
+   * every round after one action exactly as it always has.
+   */
+  roundOpen(actorId: string): boolean;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * HOW MUCH HARDER A MARKED BODY IS HIT — the Inspector's Sigil, on the swing
@@ -1237,6 +1281,10 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   // right here, which means the whole countdown is exercised by calling pump
   // twice with two different `nowMs` values and no timers at all.
   for (const scope of scopes) applyBellExpiry(world, actors, ctx, sink, scope);
+  // AND THE OPEN ROUNDS, beside the Bell and per party for the same reason.
+  // Without this the floor freezes the moment two people hold budget at once —
+  // see `applyRoundTails`, which is the entire argument.
+  for (const scope of scopes) applyRoundTails(actors, ctx, scope);
 
   const result = tickLevel(ticking, {
     clock: world.turn.clock,
@@ -1565,8 +1613,31 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     // player-on-player case today — `resolveGuardCounter` refuses a guardian who
     // is not the attacker's enemy — and costs one Map miss to say so.
     noteGuardCounter(outcome.effect, run, null, actor.id);
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ROUND MAY STAY OPEN — `DECISIONS.md` D1, four milestones late.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * D1 is Accepted and its table reads *"Intra-turn budget: 6 AP / 3 MP,
+     * spendable across several talents in one park"*. Every one of the twelve
+     * talents is priced against that round and `ward_rush.ts` derives its own
+     * cooldown from "an Inner Datum turn holds ~2 actions from a 6 AP budget" —
+     * and until this line, one submitted action ended the actor's turn, so Ward
+     * Rush at 2 AP and Iron Curtain at 5 cost a player exactly the same thing.
+     *
+     * `ActResult.Park` is not a new mechanism: it is byte-for-byte what the
+     * refund path twenty lines up already returns, and it means "this actor
+     * still owes a decision". The energy is simply not spent yet, so the loop
+     * comes back to them before the world moves.
+     */
+    actor.roundActions += 1;
+    if (roundStaysOpen(actor, intent, run)) {
+      actor.roundTailMs = run.ctx.nowMs + ROUND_TAIL_MS;
+      return ActResult.Park;
+    }
     // D1: exactly ENERGY_TO_ACT, always. `spendTurn` derives that from the
-    // actor's kind so no call site can get it wrong.
+    // actor's kind so no call site can get it wrong — and it is what clears
+    // `roundActions` and `roundTailMs`, for the same reason.
     spendTurn(actor);
     return ActResult.Done;
   }
@@ -3176,7 +3247,105 @@ function updateEngagement(
 }
 
 /**
- * Is any hostile pair currently in view of each other?
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAY THIS ACTOR KEEP GOING? Four clauses, and three of them are refusals.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * OUT OF COMBAT, NEVER. Free movement is the whole point of a quiet floor —
+ * `engagement <= 0` means nothing is waiting on anybody, the pump idles at a
+ * fixed point, and holding a round open there would invent a turn structure
+ * where the game deliberately has none.
+ *
+ * ONLY A TALENT, and this is the clause that makes the change balance-neutral
+ * on movement. If a step left the round open, "swing then walk away for free"
+ * would be available to everybody from the first fight, which is a bigger
+ * change to how combat feels than the budget itself. A move closes the round,
+ * so step-then-act is impossible too — both directions cost a round, exactly as
+ * they do today. Movement joins the budget with its own commit and its own
+ * price, deliberately.
+ *
+ * A HARD CEILING, belt-and-braces. AP is the real limiter and this should never
+ * bind — the cheapest talent is 2 of 6 — but a bug in the budget that let a
+ * round run forever would freeze the floor for everybody in it, and a constant
+ * is a cheaper guarantee than a proof.
+ *
+ * AND THE SEAM ANSWERS `=== true`, so a scheduler built without a talent
+ * runtime — which is most of the test suite, every fixture, and every tool —
+ * closes every round after one action exactly as it always has.
+ */
+function roundStaysOpen(actor: PlayerActor, intent: Intent, run: Run): boolean {
+  if (run.world.turn.engagement <= 0) return false;
+  if (intent.kind !== IntentKind.Talent) return false;
+  if (actor.roundActions >= MAX_ACTIONS_PER_ROUND) return false;
+  return run.ctx.talents?.roundOpen(actor.id) === true;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TAIL — a per-player deadline, and WITHOUT IT THE FLOOR FREEZES FOREVER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This is not a nicety. Three independent design reviews found the same hole
+ * and none of the three proposed designs had closed it.
+ *
+ * `barrier.ts` arms the Bell only when `blocking.length <= 1`. Today that is
+ * safe because the blocking set drains monotonically: everybody owes exactly one
+ * decision, so it only ever shrinks. UNDER AN OPEN ROUND A PLAYER WHO ACTS
+ * RE-ENTERS THE BLOCKING SET — their intent is cleared and their energy is
+ * unspent, which is precisely what `isBlocking` reads.
+ *
+ * So two people holding leftover budget who have mentally finished and turned
+ * back to the voice channel leave `blocking.length === 2` permanently. `armed`
+ * is false, so no countdown starts; `expire` returns `EMPTY_PASSES` on
+ * `!state.running`, so Standing By cannot rescue it either. The level stops:
+ * no monsters, no orbs, no sweep, no server-side recovery, until a human
+ * happens to press a key.
+ *
+ * ═══ WHY IT IS NOT THE BELL, AND MUST NOT BE ═══
+ * The Bell is about a player who is ABSENT. It counts `autoPasses`, and two of
+ * those is Standing By — a bench. The Tail is about a player who is PRESENT and
+ * still thinking, and benching them for taking six seconds over a second action
+ * would punish exactly the behaviour this feature exists to create. So it
+ * installs `HOLD_INTENT` and touches no barrier bookkeeping at all: the close
+ * routes through the ordinary path, `roundStaysOpen` refuses a hold,
+ * `spendTurn` fires, and both fields clear.
+ *
+ * ═══ WALL CLOCK, FOR THE REASON A TOWN TAUGHT US ═══
+ * `shared/energy.ts` advances `gameTurn` only while something can gain energy,
+ * and a table sitting mid-round thinking is by definition not advancing it. A
+ * game-turn deadline would never arrive — the same trap that nearly shipped in
+ * the townsfolk dialogue.
+ *
+ * ═══ SOLO IS NEVER HURRIED ═══
+ * At a quorum of one there is nobody to keep waiting, and a six-second clock on
+ * a person playing alone is a stopwatch nobody asked for. The Solo Bell already
+ * covers the absent case at 120s.
+ */
+function applyRoundTails(
+  actors: readonly EngineActor[],
+  ctx: PumpCtx,
+  scope: PartyScope | undefined,
+): void {
+  // SOLO IS NEVER HURRIED. `inQuorum` is the same test the Bell's `canDecide`
+  // uses, so "how many people are we waiting on" has one answer in this file.
+  let inParty = 0;
+  for (const actor of actors) {
+    if (inScope(actor.id, scope) && inQuorum(actor)) inParty += 1;
+  }
+  if (inParty <= 1) return;
+
+  for (const actor of actors) {
+    if (actor.kind !== ActorKind.Player) continue;
+    if (!inScope(actor.id, scope)) continue;
+    if (actor.roundTailMs === null || ctx.nowMs < actor.roundTailMs) continue;
+    // THE ORDINARY PATH. A hold is refused by `roundStaysOpen`, so it resolves,
+    // spends the turn, and clears the round — no special close to keep in step.
+    actor.pendingIntent = HOLD_INTENT;
+    actor.roundTailMs = null;
+  }
+}
+
+/** Is any hostile pair currently in view of each other?
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * THE FOURTH COPY OF "SAME KIND MEANS SAME SIDE", AND THE WORST PLACED OF THEM.
