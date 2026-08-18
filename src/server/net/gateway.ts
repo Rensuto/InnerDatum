@@ -3840,11 +3840,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       app.log.warn({ gameTurn: result.turn.gameTurn }, 'pump exhausted its tick budget');
     }
 
-    // AFTER THE PUMP RESOLVED, so the body that just fell is already dead and
-    // the count is the one the players are looking at. `sawKill` is what
-    // separates a room somebody cleared from a room that was reset under them.
-    announceCleared(realm, result);
-
     for (const event of result.playerEvents) {
       // Null means "this kind has no immediate-lane wrapper" — see
       // `messageForEvent`. It is delivered by the `effects`/`party` snapshots
@@ -3892,6 +3887,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // One batch for the whole pump — see `broadcastRecord`. It is silent on an
     // idle pump, so a client spamming frames cannot farm log traffic either.
     broadcastRecord(realm, result);
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════
+     * AND THEN THE ROOM GOES QUIET — AFTER the narration, never before it.
+     * ═════════════════════════════════════════════════════════════════════
+     *
+     * This used to sit immediately after `engine.pump()`, reasoning that the
+     * body which just fell was already dead by then and the count was therefore
+     * the right one. THAT PART WAS TRUE AND IT WAS NOT THE WHOLE QUESTION.
+     * `announceCleared` broadcasts a Record line of its own, at once; the pump's
+     * own lines are batched and go out at `broadcastRecord` above. So the
+     * completion beat overtook the blow that caused it, every single time:
+     *
+     *     12 damage. Index Husk 3/25.
+     *     Index Husk hits Player 1.
+     *     An Index Breach is quiet now.        <- the conclusion...
+     *     2 damage. Index Husk 0/25.
+     *     Index Husk is unfiled.               <- ...above its own cause
+     *
+     * Read in order, that says the room fell silent while something was still
+     * hitting you, and it is deterministic — it reproduced identically on three
+     * consecutive runs. No test caught it because no test reads FRAME ORDER over
+     * a socket; `tools/status-live.mjs` does, and this is what it was for.
+     *
+     * THE COUNT IS UNCHANGED BY THE MOVE. Nothing between the pump and here
+     * kills, revives or reaps anything — the reap window is deliberately BELOW
+     * this line, and its own contract note says why (`broadcastRecord` must have
+     * run first). So the guard sees exactly what it saw before; only the frame
+     * that carries the answer has stopped arriving early.
+     */
+    announceCleared(realm, result);
 
     // ═════════════════════════════════════════════════════════════════════
     // THE REAP WINDOW. DEAD MONSTERS LEAVE THE MAP, AND THIS IS THE ONE

@@ -12,6 +12,24 @@ import type { ClearedFacts } from '../../src/server/world/cleared.ts';
  * a wrong line into a live log. They are written as the failures rather than as
  * the rules, because the rules read as obvious afterwards and the failures do
  * not.
+ *
+ * ═══ AND ONE FAILURE THIS FILE STRUCTURALLY CANNOT SEE ═══
+ * A fifth wrong line shipped after these four, and every test here passed while
+ * it did. The predicate was correct: given a room with nothing standing, it
+ * said "announce", which was right. The GATEWAY then broadcast that answer
+ * before it flushed the pump's own batched Record lines, so a live log read:
+ *
+ *     An Index Breach is quiet now.
+ *     2 damage. Index Husk 0/25.
+ *     Index Husk is unfiled.
+ *
+ * — the room falling silent above the blow that silenced it, deterministically,
+ * every time. A pure function of `ClearedFacts` has no access to the question
+ * "when was the frame carrying this sent", so no test in this file could ever
+ * fail on it. `tools/status-live.mjs` reads frame ORDER off a real socket and
+ * checks exactly that; the fix was moving one call below `broadcastRecord` in
+ * net/gateway.ts. Kept here because the next person to extend this file will
+ * reasonably assume it covers the whole beat, and it does not.
  */
 
 /** A room somebody has just cleared, honestly. */
