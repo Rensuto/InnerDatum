@@ -981,9 +981,30 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
        */
       ...(DELVES.has(id)
         ? {
-            populate: (world: World, built: AuthoredMap): void => {
+            /**
+             * ═══════════════════════════════════════════════════════════════
+             * THE THIRD ARGUMENT, WHICH WAS BEING SILENTLY DROPPED.
+             * ═══════════════════════════════════════════════════════════════
+             *
+             * `SiteDef.populate` is typed `(world, map, party) => void` and the
+             * registry has always CALLED it with all three (`site.populate?.(
+             * realm.world, builtMap, party)`). This lambda declared two, so
+             * TypeScript accepted it — a function of fewer parameters is
+             * assignable to one of more, which is correct and is exactly why
+             * nothing ever complained — and the party was dropped on the floor.
+             *
+             * SO NO DELVE HAS EVER SCALED TO ANYBODY. A lone level-1 detective
+             * and a party of four walked into the identical room, which is
+             * backwards twice over: the ambush DOES scale (`ambushRoster`), so
+             * the fight you stumble into answered the party while the dungeon
+             * you deliberately brought three friends to did not — and D12 pays
+             * every member a FULL experience share, so four people clearing a
+             * solo-sized room earn four times the experience for a quarter of
+             * the work.
+             */
+            populate: (world: World, built: AuthoredMap, party: PartyStrength): void => {
               const spec = DELVES.get(id);
-              if (spec !== undefined) populateDelve(world, built, spec);
+              if (spec !== undefined) populateDelve(world, built, spec, party);
             },
           }
         : {}),

@@ -61,6 +61,8 @@ import { canWalk } from '../../shared/level.ts';
 import { rollDrop } from './encounter.ts';
 import { rollLoot } from './loot.ts';
 import type { MonsterTemplate } from './monsters.ts';
+import { LONE_BEGINNER } from '../world/strength.ts';
+import type { PartyStrength } from '../world/strength.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import { qualified } from '../world/world.ts';
@@ -227,14 +229,60 @@ function roomFor(world: World, door: TileXY): TileXY[] {
  *   silently generated nothing is the bug this whole file was written about,
  *   and it should never be able to happen quietly twice.
  */
-export function populateDelve(world: World, map: AuthoredMap, spec: DelveSpec): number {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MUCH BIGGER A ROOM GETS FOR THE PEOPLE WHO BROUGHT FRIENDS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * SUB-LINEAR, and deliberately: four players are worth more than four solo
+ * players, because they focus one target, they cover each other, and D1's
+ * intra-turn budget lets each of them chain two at-will talents a round. A
+ * straight multiply by headcount would make a full party the hardest way to
+ * play, which is the exact opposite of what this game is for.
+ *
+ *   1 -> x1.0   2 -> x1.5   3 -> x2.0   4 -> x2.5
+ *
+ * SIZE ONLY, NEVER LEVEL. A delve's roster is its identity — the Underworks is
+ * the Underworks whoever walks in — so the party answers the SIZE of the room
+ * and never what is in it. That is the opposite rule to `ambushRoster`, which
+ * grows its roster by level, and the difference is the point: an ambush is
+ * generic and happens TO you, a delve is a place you chose.
+ *
+ * A LONE PLAYER GETS EXACTLY WHAT THEY GET TODAY. `x1.0` is not a coincidence
+ * to be tuned away: every number in `DELVES` was authored and measured against
+ * a single body, and a solo run must not become harder because parties were
+ * fixed.
+ */
+export function delveHeadroom(party: PartyStrength): number {
+  return 1 + 0.5 * (Math.max(1, party.size) - 1);
+}
+
+export function populateDelve(
+  world: World,
+  map: AuthoredMap,
+  spec: DelveSpec,
+  party: PartyStrength = LONE_BEGINNER,
+): number {
   const door = map.spawns[0] ?? { x: Math.floor(map.view.w / 2), y: Math.floor(map.view.h / 2) };
   const candidates = roomFor(world, door);
   // A ROOM WITH NO FAR CORNER. Small or badly-shaped floors happen; leaving it
   // empty is honest, and the caller's log line is what makes it visible.
   if (candidates.length === 0) return 0;
 
-  const wanted = world.rng.int('delve.count', spec.monsters[0], spec.monsters[1]);
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * SCALED AFTER THE DRAW, NEVER INSIDE IT, AND THAT IS NOT A STYLE CHOICE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Every draw in this game is labelled and ordered, and `rng.ts` states the
+   * consequence: adding, removing or re-ranging a draw shifts every later draw
+   * from that seed forever. Widening `delve.count`'s bounds by party size would
+   * therefore give a party of three a different FLOOR — different loot, different
+   * litter, different everything downstream — rather than the same floor with
+   * more in it. So the draw is untouched and the multiply happens to its answer.
+   */
+  const rolled = world.rng.int('delve.count', spec.monsters[0], spec.monsters[1]);
+  const wanted = Math.max(1, Math.round(rolled * delveHeadroom(party)));
   let placed = 0;
   for (let i = 0; i < wanted; i += 1) {
     const template = spec.roster[i % spec.roster.length];
