@@ -874,6 +874,9 @@ export function buildServer() {
     // THE STATUS TABLE, so badges reach the party pane and a status can change
     // a sheet. Without it `broadcastEffectsIfChanged` sends nothing at all.
     effects,
+    // THE TALENT LAYER'S TABLE, so Sigil's mark and Iron Curtain's guard reach
+    // the badge row. One method, narrowed at the option — see `talentEffects`.
+    talentEffects: talentEngine,
     sessions,
     persist,
   });

@@ -55,6 +55,7 @@ import {
   TurnActorState,
   VoiceState,
 } from '../../shared/protocol.ts';
+import { TalentEffect } from '../engine/talents.ts';
 import { Faction } from '../engine/actor.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
@@ -961,16 +962,105 @@ function toClassOptionView(definition: ClassDef): ClassOptionView {
  * draws over a body on the floor is the Downed countdown from `PartyMsg`, which
  * is the only number about them that is still going down.
  */
-export function projectEffects(world: World, effects: EffectState): EffectsMsg {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TALENT LAYER'S OWN EFFECTS, ON THE BADGE ROW THE STATUS SYSTEM ALREADY HAS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * There are TWO effect systems in this server and only one of them was ever
+ * drawn. `engine/effects.ts` holds Stunned, Bleeding and Slowed and has a badge
+ * channel; `engine/talents.ts` holds Marked, Guarding and Taunted and had
+ * nothing — so the Inspector's Sigil, whose whole purpose is to tell the party
+ * WHICH of six husks to focus, was invisible to every client. The only way a
+ * player learned which one was sigiled was one Case Log line that scrolls away,
+ * or the Inspector saying it out loud.
+ *
+ * `docs/game-design.md` § 10 names *"it's sigiled, hit it"* as the conversation
+ * the design is trying to manufacture. It cannot be manufactured by a mechanic
+ * nobody can see.
+ *
+ * ═══ THE SAME ROW, NOT A SECOND ONE ═══
+ * A separate frame would mean a second badge strip, a second thing for the token
+ * renderer to stack, and two answers to "what is on this body". The client
+ * already draws `EffectView` badges on tokens and in the party pane; these are
+ * the same kind of fact and belong in the same list.
+ *
+ * ═══ THE ART ALREADY EXISTS AND WAS NEVER ASKED FOR ═══
+ * `icon_status_marked` and `icon_status_guarded` are cut, in the manifest, and
+ * loaded by the `icon_status_` prefix — they have simply never been requested by
+ * anything. No new art, no missing-asset box.
+ *
+ * TAUNTED IS DELIBERATELY NOT HERE. It is a fact about the MONSTER'S mind — who
+ * it has decided to chase — and the honest place for that is the creature's
+ * behaviour, which a player reads by watching it walk at the Watchman. A badge
+ * would state it more loudly than the game can guarantee it: the taunt expires,
+ * the AI retargets on its own, and a badge that outlived either would be a
+ * confident lie about what a monster is about to do.
+ */
+type TalentBadgeSource = {
+  effectOn(actorId: string, kind: TalentEffect): { readonly turns: number } | undefined;
+};
+
+const TALENT_BADGES: readonly {
+  readonly kind: TalentEffect;
+  readonly id: string;
+  readonly name: string;
+  readonly icon: string;
+  readonly harmful: boolean;
+}[] = [
+  {
+    kind: TalentEffect.Marked,
+    id: 'effect:marked',
+    name: 'Marked',
+    icon: 'icon_status_marked',
+    // HARMFUL TO THE BEARER, which is a monster. `harmful` is "is this being
+    // done TO you", and the party reading a red pip over the thing they should
+    // hit is exactly the right reading.
+    harmful: true,
+  },
+  {
+    kind: TalentEffect.Guarding,
+    id: 'effect:guarded',
+    name: 'Guarded',
+    icon: 'icon_status_guarded',
+    // The Watchman's Iron Curtain, on the ALLY being covered. Good for them.
+    harmful: false,
+  },
+];
+
+export function projectEffects(
+  world: World,
+  effects: EffectState,
+  /**
+   * The talent engine's effect table. Absent means the talent layer is not
+   * wired — every fixture, and the game before this — and the badge row is
+   * exactly what it always was.
+   */
+  talents?: TalentBadgeSource,
+): EffectsMsg {
   const actors: ActorEffects[] = [];
 
   for (const actor of world.allActors()) {
     if (!actor.alive) continue;
 
     const live = effectsOn(effects, actor.id);
-    if (live.length === 0) continue;
-
     const badges: EffectView[] = [];
+
+    for (const row of TALENT_BADGES) {
+      const held = talents?.effectOn(actor.id, row.kind);
+      if (held === undefined) continue;
+      badges.push({
+        id: row.id,
+        name: row.name,
+        icon: row.icon,
+        // Clamped for the reason the status badges are: a negative number on a
+        // HUD is a bug report.
+        turns: Math.max(0, held.turns),
+        harmful: row.harmful,
+      });
+    }
+
+    if (live.length === 0 && badges.length === 0) continue;
     for (const eff of live) {
       const def = effectDef(effects, eff.effectId);
       // An instance whose definition is gone is a content reload that dropped an

@@ -117,6 +117,7 @@ import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
 import { DELVES, dangerWord, partyHint } from '../content/delve.ts';
 import { specForActorId } from '../content/townsfolk.ts';
+import type { TalentEffect } from '../engine/talents.ts';
 import type { TopicId } from '../../shared/protocol.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
@@ -1660,6 +1661,25 @@ export type WsGatewayOptions = {
    */
   readonly effects?: EffectState;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TALENT LAYER'S EFFECT TABLE, so Marked and Guarded reach a screen.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * There are two effect systems and only one was ever drawn. Sigil marks a
+   * husk and Iron Curtain covers an ally, and neither was visible to any
+   * client — so `docs/game-design.md` § 10's *"it's sigiled, hit it"* was a
+   * conversation about a mechanic nobody could see.
+   *
+   * NARROWED TO ONE METHOD (`effectOn`) rather than taking the whole engine:
+   * the projector needs to read one table and must not be handed something it
+   * could cast a talent with.
+   *
+   * Absent → the badge row is byte-for-byte what it was.
+   */
+  readonly talentEffects?: {
+    effectOn(actorId: string, kind: TalentEffect): { readonly turns: number } | undefined;
+  };
+  /**
    * The survival table (engine/downed.ts). Absent → nobody is ever Downed, and
    * the party panel says so honestly rather than inventing a timer.
    *
@@ -2418,7 +2438,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // exactly as the Downed countdown does — world/realms.ts:188-199), and
     // `projectEffects` filters it against the actors it can see. So each realm's
     // frame lists that realm's badges and nobody else's.
-    const msg = projectEffects(realm.world, effects);
+    const msg = projectEffects(realm.world, effects, opts.talentEffects);
     const key = JSON.stringify(msg.actors);
     if (key === lastEffectsKeys.get(realm.id)) return;
     lastEffectsKeys.set(realm.id, key);
