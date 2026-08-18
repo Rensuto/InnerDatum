@@ -8,7 +8,7 @@ import {
 } from '../../src/server/content/classes.ts';
 import { BLEEDING, EffectId, SLOWED, STUNNED } from '../../src/server/content/effects.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
-import { INDEX_HUSK_ELITE, monsterInit } from '../../src/server/content/monsters.ts';
+import { INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
 import {
   createEffectState,
   effectDur,
@@ -215,6 +215,50 @@ describe('the status seam — a subsystem that existed and was reachable from no
     }
 
     expect(bled).toBe(true);
+  });
+
+  it('an Index Wraith’s orb slows the body it lands on, three turns of flight later', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE RANGED RIDER, AND THE FLIGHT IS THE POINT OF THE TEST.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The melee rider is read off the attacker at the instant it swings. This
+     * one is FROZEN ONTO THE ORB at the muzzle and applied two or three game
+     * turns later, by which time the shooter may have moved, been stunned, or
+     * died. Reading it off the shooter at impact would compile, pass a
+     * point-blank test, and be wrong the moment anything happened mid-flight.
+     *
+     * So the wraith is placed at its preferred range rather than adjacent: the
+     * orb has to actually cross the gap for this to prove anything.
+     */
+    const { world, effects } = arena('status-orb');
+    const dalt = world.addPlayer('p1', 'Dalt', { maxHp: 900 });
+    dalt.x = REALM_TILES.x;
+    dalt.y = REALM_TILES.y;
+    dalt.hpRegen = 0;
+
+    world.addMonster(
+      'm_wraith',
+      monsterInit(INDEX_WRAITH, { x: REALM_TILES.x + 4, y: REALM_TILES.y }),
+    );
+
+    const engine = createTurnEngine({ world, now: () => 0, effects });
+    engine.join('p1');
+    world.turn.engagement = 3;
+
+    // A long window on purpose: the wraith's `talentIn: 2` is a 1-in-2 chance
+    // per turn (not a cadence), the orb needs two to three turns to arrive, and
+    // the slow can be saved against. None of that is what is under test — that
+    // it EVER lands is.
+    let slowed = false;
+    for (let i = 0; i < 60 && !slowed; i += 1) {
+      expect(engine.hold('p1').ok).toBe(true);
+      engine.pump();
+      if (hasEffect(effects, 'p1', EffectId.Slowed)) slowed = true;
+    }
+
+    expect(slowed).toBe(true);
   });
 
   it('with no table at all, the engine is byte-for-byte its old self', () => {

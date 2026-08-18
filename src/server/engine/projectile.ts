@@ -156,6 +156,7 @@ import { bresenham } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT, canAct, spendForAction } from '../../shared/energy.ts';
 import { canWalk } from '../../shared/level.ts';
 import { DamageType, applyDamage } from './damage.ts';
+import type { OnHitStatus } from './actor.ts';
 import { combatArmor, combatArmorHardiness } from './derived.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
@@ -276,6 +277,27 @@ export type Projectile = {
   /** Frozen at fire. See `ProjectileDamage`. */
   readonly damage: ProjectileDamage;
   /**
+   * A STATUS THIS ORB INFLICTS WHERE IT LANDS — frozen at the muzzle, exactly
+   * like `damage` one line above, and for the identical reason.
+   *
+   * `damage` is rolled at the cast and carried (`ActorProject.lua:353` stores
+   * the fixed number in `project.def.dam` for the projectile to hold). Reading
+   * either off the shooter at IMPACT would mean an orb's effect depended on
+   * what happened to the creature during two or three game turns of flight —
+   * whether it was stunned, whether it died, whether it walked out of the
+   * realm. An orb in the air is a fact, not a promise.
+   *
+   * ═══ THIS FILE CARRIES IT AND DOES NOT APPLY IT ═══
+   * The scheduler does, one line after `stepProjectile` returns, off
+   * `ProjectileImpact.targetId`. That is not a layering nicety: `applyDamage`
+   * takes a `ProjectileVictim`, which is deliberately the narrowest view of a
+   * body this module can work with, and `setEffect` needs a whole actor. Rather
+   * than widen the narrow type or thread an effect table into a flight
+   * simulation, the orb carries the DATA and the caller — which already holds
+   * both the world and the status door — performs the act.
+   */
+  readonly onHit?: OnHitStatus;
+  /**
    * Upstream's `dead` (Projectile.lua:211, :213). Once true the orb has already
    * detonated: `isActive` stops ticking it and the world drops it. It is a FLAG
    * rather than "absent from the table" because the scheduler ticks a SNAPSHOT
@@ -322,6 +344,8 @@ export type ProjectileInit = {
   readonly projSpeed: number;
   readonly range: number;
   readonly damage: ProjectileDamage;
+  /** The rider this shot carries. See `Projectile.onHit` — frozen at the muzzle. */
+  readonly onHit?: OnHitStatus;
 };
 
 /**
@@ -368,6 +392,10 @@ export function createProjectile(id: string, init: ProjectileInit): Projectile {
     cursor: 1,
     range: init.range,
     damage: Object.freeze({ ...init.damage }),
+    // FROZEN AND COPIED, like the damage above. The template's row is already
+    // frozen, but copying means a live orb can never be a window onto content
+    // that some later edit reaches through.
+    ...(init.onHit === undefined ? {} : { onHit: Object.freeze({ ...init.onHit }) }),
     landed: false,
     radiusAt: origin,
   };

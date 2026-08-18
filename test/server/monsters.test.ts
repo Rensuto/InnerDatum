@@ -883,15 +883,40 @@ describe('the elite’s claw — the roster’s one melee rider', () => {
     expect(INDEX_HUSK_ELITE.onHit?.power).toBe(combatPhysicalpower(INDEX_HUSK_ELITE.combat));
   });
 
-  it('is the only rider on the roster, and it is Bleeding', () => {
-    // ═══ ONE, DELIBERATELY ═══
-    // A status every monster inflicts is a damage formula written twice, and
-    // the first thing a level-1 character fights must not put an unexplained
-    // badge on their portrait. If a second creature ever wants a rider that is
-    // a real decision — so it should have to come here and change this line.
+  it('two riders on the roster, and the husk has none', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * TWO, AND THE ONE THAT MATTERS IS THE ONE WITHOUT.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * A status every monster inflicts is a damage formula written twice. More
+     * to the point, the INDEX HUSK must never have one: it is the first thing a
+     * level-1 character fights, and that fight has a single job — teach that
+     * walking into a marker starts one. An unexplained badge on a portrait in
+     * the thirty seconds where somebody is still working out which token is
+     * theirs teaches the opposite.
+     *
+     * The other two each got a rider for a reason written in their template
+     * headers, and each rider answers something specific about that creature:
+     * the elite's claw makes disengaging cost something, the wraith's orb makes
+     * closing cost something. Adding a third is a real design decision, so it
+     * should have to come here and change this line.
+     */
     const withRiders = MONSTER_TEMPLATES.filter((t) => t.onHit !== undefined).map((t) => t.id);
-    expect(withRiders).toEqual(['index_husk_elite']);
+    expect(withRiders.toSorted()).toEqual(['index_husk_elite', 'index_wraith']);
+    expect(INDEX_HUSK.onHit).toBeUndefined();
+
+    // AND EACH ONE IS THE STATUS ITS HEADER ARGUES FOR. Bleeding ignores armour,
+    // so it punishes the body that stands still; Slowed costs a third of a
+    // player's legs, so it punishes the body trying to close.
     expect(INDEX_HUSK_ELITE.onHit?.effectId).toBe(EffectId.Bleeding);
+    expect(INDEX_WRAITH.onHit?.effectId).toBe(EffectId.Slowed);
+  });
+
+  it('the wraith’s orb applies at the wraith’s real physical power', () => {
+    // Same drift guard as the elite's, for the same literal-in-frozen-data
+    // reason. See the note above.
+    expect(INDEX_WRAITH.onHit?.power).toBe(combatPhysicalpower(INDEX_WRAITH.combat));
   });
 
   it('survives `monsterInit` onto the actor — the field that never got copied', () => {

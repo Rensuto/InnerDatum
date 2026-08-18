@@ -2128,6 +2128,9 @@ function fire(
     // The same reach the legality check above measured with, and with the same
     // metric — see the deviation note on `blockPath` in engine/projectile.ts.
     range: attacker.attackRange,
+    // THE RIDER, FROZEN AT THE MUZZLE alongside the damage below. See
+    // `ProjectileInit.onHit` for why it is read here and not at impact.
+    ...(attacker.onHit === undefined ? {} : { onHit: attacker.onHit }),
     damage: {
       dam: rolled,
       type: sheet?.damageType ?? DEFAULT_PROJECTILE_DAMAGE_TYPE,
@@ -2163,6 +2166,41 @@ function actProjectile(proj: Projectile, run: Run): ActResult {
   // Landed on empty floor: the target died, or stepped off the tile it was
   // aimed at. THAT IS THE COUNTERPLAY and it costs the shooter its shot.
   if (impact === null) return ActResult.Done;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE ORB LEAVES BEHIND — the ranged half of `MonsterActor.onHit`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ IT IS APPLIED HERE AND CARRIED THERE ═══
+   * The rider was frozen onto the projectile at the muzzle, beside its damage
+   * and for the same reason (`ProjectileInit.onHit`): an orb in the air is a
+   * fact, not a promise about whatever has happened to the shooter during two
+   * or three game turns of flight. But `engine/projectile.ts` works with
+   * `ProjectileVictim`, the narrowest possible view of a body, and `setEffect`
+   * needs a whole actor — so the orb carries the data and this function, which
+   * already holds both the world and the status door, performs the act.
+   *
+   * ═══ NO `hit` CHECK, AND THAT IS NOT AN OMISSION ═══
+   * `strike`'s melee rider guards on `outcome.hit` because a swing can miss. An
+   * orb cannot: there is no to-hit roll at fire or at impact, deliberately and
+   * permanently (see `fire`). The counterplay to an orb is STEPPING OFF THE
+   * TILE, and that has already been resolved three lines above — a body that
+   * moved leaves `impact === null` and this is never reached.
+   *
+   * A corpse still takes nothing. Same rule as melee, same reason.
+   */
+  const rider = proj.onHit;
+  if (rider !== undefined && !impact.killed) {
+    const victim = world.getActor(impact.targetId);
+    if (victim !== undefined) {
+      run.ctx.applyStatus?.(victim, rider.effectId, rider.turns, {
+        ...(rider.power === undefined ? {} : { applyPower: rider.power }),
+        ...(rider.magnitude === undefined ? {} : { power: rider.magnitude }),
+        srcId: proj.sourceId,
+      });
+    }
+  }
 
   /**
    * THE IMPACT IS A SWEEP STEP, NOT AN ORDINARY EVENT, and it is attributed to

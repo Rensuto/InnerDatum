@@ -764,6 +764,50 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  * tough floater that is HARD TO CONNECT WITH and takes a third more damage from
  * anything physical that does connect. The "sniper" reading was invented.
  */
+/** GAME TURNS the orb's slow asks for, before any save scales it down. */
+const ORB_SLOW_TURNS = 3;
+/** The wraith's own `combatPhysicalpower`. See `CLAW_APPLY_POWER` for why it is a literal. */
+const ORB_APPLY_POWER = 10;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ORB DRAGS — the roster's ranged rider, and the wraith's whole argument.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHAT WAS WRONG WITH THE WRAITH ═══
+ * Its intent line reads "kites — punishes a party that clumps"
+ * (content/encounter.ts) and its numbers back the first half: `minRange 2`,
+ * `preferredRange` out at the edge, an orb that takes two to three game turns
+ * to cross. But a kiter is only a problem while you cannot close, and nothing
+ * it did made closing harder. Walk at it for three turns and the fight is a
+ * melee fight — which is to say, the fight the husk already gives you.
+ *
+ * ═══ SLOWED IS EXACTLY THE COUNTER TO THE COUNTER ═══
+ * A player has 3 MP a round (4 for the Inspector) and a move costs 1, so −1 MP
+ * is a THIRD of your legs. Against a creature whose entire plan is to stay four
+ * tiles away, losing a third of your closing speed is the difference between
+ * "walk at it" and "you need a plan". game-design.md § 7 lists Slowed as −1 MP
+ * for exactly this kind of moment.
+ *
+ * AND IT CREATES A ROLE PROBLEM RATHER THAN A DAMAGE PROBLEM. The Inspector
+ * barely cares — she can shoot from where she is standing. The Watchman cares
+ * enormously, and he is the one who has to get there. That is a thing a party
+ * talks about in a voice channel, which is the entire point of the game.
+ *
+ * ═══ THREE TURNS ASKED, AND THE SAVE IS MEANT TO BITE ═══
+ * `docs/game-design.md` § 11's sample Record is *"Dalt saves (phys 38 vs power
+ * 31, 68%) — Slowed 1 turn, not 3."* — this is that line, with these numbers.
+ * Measured over 400 applications the ask of 3 lands as 1.4 turns on a Watchman
+ * (32% of the time) and 2.0 on an Alchemist (63%). The tank shrugs it off most
+ * often, which is the same incentive the elite's claw creates, arrived at by
+ * the same route: the physical save, and no separate rule.
+ *
+ * ═══ IT RIDES THE ORB AND THE SWING ALIKE ═══
+ * `MonsterActor.onHit` is read by BOTH `strike` and the fire site, so a wraith
+ * cornered into melee drags at you too. That is one creature with one property
+ * rather than two rules, and a cornered kiter making it harder to stay on top
+ * of it is the correct behaviour for the one situation it least wants to be in.
+ */
 export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   id: 'index_wraith',
   displayName: 'Index Wraith',
@@ -1016,6 +1060,9 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // test/server/loot.test.ts, because "how many draws" is the only property of a
   // seeded stream that a later pass can break without any test going red.
   drops: { chance: 100, pick: idsOfTier('rare') },
+
+  /** THE ORB DRAGS. See this template's header. */
+  onHit: { effectId: EffectId.Slowed, turns: ORB_SLOW_TURNS, power: ORB_APPLY_POWER },
 
   combat: {
     // losgoroth.lua:44 `stats = { str=10, dex=8, mag=6, con=16 }`, VERBATIM.
