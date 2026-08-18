@@ -7327,6 +7327,28 @@ async function boot(): Promise<void> {
     // land on the Case Log would be the most confusing possible outcome.
     cancelTravel();
     sweep?.settle();
+    /**
+     * ═══ TRAVEL INTERRUPT (1b) — AND IT IS THE OTHER HALF OF THE TAB BUG ═══
+     *
+     * A press on the canvas means "I am playing the map now", and the browser
+     * would normally act on that by moving focus off whatever had it. IT CANNOT
+     * HERE: almost every branch below `preventDefault`s — for the reasons each
+     * one gives — and `preventDefault` on mousedown suppresses the browser's own
+     * focus change. That is not a new discovery in this file; `setCommandLineReachable`
+     * records the same mechanism trapping a player behind the class chooser.
+     *
+     * So a player who clicked the chat row — which invites exactly that, it reads
+     * "T or / to talk" — and then clicked back on the map to carry on playing had
+     * a dead keyboard and no way to mend it with the mouse. `isTextEntry` drops
+     * every key while `#cmd` holds focus, and clicking the map could not take it
+     * back. Same dead game as the unbound Tab (input/keys.ts), reached by the
+     * mouse instead of the keyboard, so it is fixed beside the same interrupt.
+     *
+     * ONLY THE CANVAS. This listener is on `canvas`, so a press on the chat row
+     * itself is a different element's event and still focuses the field — the
+     * deliberate route in is untouched.
+     */
+    if (cmdEl !== null && document.activeElement === cmdEl) cmdEl.blur();
     // ═══ v12 — A SECOND PRESS WHILE A GESTURE IS LIVE ABANDONS IT ═══
     // Reachable with a right-click during a left drag, and with a mouse whose
     // button state the browser has lost track of after an alt-tab. Abandoning is

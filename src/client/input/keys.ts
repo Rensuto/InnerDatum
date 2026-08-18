@@ -372,6 +372,51 @@ function directionFor(event: KeyboardEvent, keymap: Keymap): Dir | undefined {
   return keymap.dirByCode.get(event.code) ?? keymap.dirByKey.get(event.key.toLowerCase());
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ONE UNBOUND KEY THAT CANNOT BE ALLOWED TO REACH THE BROWSER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every other unmapped key sails past untouched, and a test says so on purpose
+ * — main.ts's travel-cancel listener rides the same event, and "any keyboard
+ * input cancels the walk" is unreachable through a keymap that drops what it has
+ * no meaning for. Tab is the exception, and the reason is not the key: it is
+ * TAB'S DEFAULT ACTION.
+ *
+ * `#cmd` is the only tabbable element on the page — index.html has no other
+ * control, and the canvas has no tabindex. So one press of an unbound Tab moved
+ * focus into the chat box, `isTextEntry` above then correctly dropped EVERY
+ * subsequent keypress, and the game went completely dead: no movement, no
+ * talents, no hotbar, no Escape menu. The row that had stolen the focus says
+ * "Esc back to the map" in ~29px at the bottom of a Discord activity, so a
+ * player watching their character learns none of it. Reported from play as
+ * *"all other hotkeys stop responding until you happen to type something in the
+ * chat box"* — typing and pressing Enter sends and blurs, which is the accident
+ * that ends it.
+ *
+ * `preventDefault` AND NOT `stopPropagation`, WHICH IS THE WHOLE DISTINCTION.
+ * The first suppresses the browser's focus move; the second would hide the press
+ * from main.ts's travel-cancel listener and make Tab the one key that cannot
+ * stop a walk. Tab keeps meaning what every unbound key means. It just stops
+ * meaning "and also disable the game".
+ *
+ * ═══ IT RUNS ONLY WHEN TAB IS UNBOUND, AND BINDING IT IS SUPPORTED ═══
+ * The eight lookups above come first, so a player who has bound Tab to a talent
+ * gets the talent (and that path `preventDefault`s already). The keybind capture
+ * field is untouched for a different reason — it is a capture-phase listener
+ * that `stopImmediatePropagation`s, so an armed capture never reaches this file
+ * at all. Tab remains fully bindable; see keymap.ts's `['tab', 'Tab']` row.
+ *
+ * ═══ AND NOBODY IS STRANDED WITHOUT IT ═══
+ * The chat box has its own verb — the rebindable `say` key, which the row's own
+ * placeholder names — plus a click. Tab was never the documented route in, only
+ * the accidental one.
+ */
+function stealsFocusFromTheMap(event: KeyboardEvent): boolean {
+  // Shift+Tab is the same `key` and the same hazard in the other direction.
+  return event.key === 'Tab';
+}
+
 function commandFor(event: KeyboardEvent, keymap: Keymap): TurnCommand | undefined {
   return keymap.commandByCode.get(event.code) ?? keymap.commandByKey.get(event.key.toLowerCase());
 }
@@ -472,7 +517,13 @@ export function bindGameKeys(
     }
 
     const command = commandFor(event, keymap);
-    if (command === undefined) return;
+    if (command === undefined) {
+      // LAST, after every lookup, so this can only ever see an UNBOUND Tab.
+      // No handler call and no `stopPropagation`: the press still means nothing
+      // and still reaches main.ts's travel cancel. See `stealsFocusFromTheMap`.
+      if (stealsFocusFromTheMap(event)) event.preventDefault();
+      return;
+    }
     event.preventDefault();
     handlers.onCommand(command);
   };

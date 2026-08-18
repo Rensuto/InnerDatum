@@ -539,6 +539,69 @@ describe('what the keymap deliberately does NOT do', () => {
     expect(prevented).toBe(false);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TAB IS THE EXCEPTION, AND IT IS A SHIPPED BUG THIS PINS SHUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Reported from play: *"if you press tab key while playing, all other hotkeys
+   * stop responding until you happen to type something in the chat box."*
+   *
+   * `#cmd` is the ONLY tabbable element on the page — index.html has no other
+   * control and the canvas has no tabindex — so an unbound Tab fell through to
+   * the browser, whose default action moved focus into the chat box. `isTextEntry`
+   * then correctly dropped every subsequent key, and the game was completely
+   * dead: no movement, no talents, no hotbar, not even the Escape menu. The
+   * player's only way out was to type a sentence and press Enter, which sends and
+   * blurs by accident.
+   */
+  it('swallows an unbound Tab, because its default action kills the game', () => {
+    const { calls, prevented } = press({ key: 'Tab' });
+    // NO HANDLER FIRED. Tab still means nothing — this is not a new binding.
+    expect(calls).toEqual([]);
+    // But the BROWSER does not get to act on it. That is the whole fix.
+    expect(prevented).toBe(true);
+  });
+
+  it('swallows Shift+Tab too — the same key, the same hazard backwards', () => {
+    expect(press({ key: 'Tab', shiftKey: true }).prevented).toBe(true);
+  });
+
+  it('still lets Tab reach the listeners beside this one', () => {
+    /**
+     * `preventDefault` AND NOT `stopPropagation`, which is the whole distinction
+     * and the reason the fix is one word rather than two. main.ts registers its
+     * travel-cancel listener BESIDE this handler on the same target because "any
+     * keyboard input cancels the walk" cannot be phrased through a keymap that
+     * drops what it has no meaning for. Stopping propagation would have made Tab
+     * the one key on the keyboard that cannot stop a walk — a smaller bug than
+     * the one being fixed, and a much harder one to ever find.
+     */
+    const target = new EventTarget();
+    const beside: KeyboardEvent[] = [];
+    const binding = bindGameKeys(target, recorder([]));
+    target.addEventListener('keydown', (e) => beside.push(e as KeyboardEvent));
+    const event = new FakeKeyboardEvent({ key: 'Tab' });
+    target.dispatchEvent(event);
+    binding.dispose();
+
+    expect(beside).toHaveLength(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves a BOUND Tab to its binding, which still prevents its own default', () => {
+    // Tab is a legitimate key to bind — keymap.ts carries a `['tab', 'Tab']`
+    // label row precisely so the binder can PRINT it — and the swallow runs last,
+    // after all eight lookups, so a binding wins. The hotbar is not the action to
+    // prove it with: those four rows are `rebindable: false` with `fixed` digits.
+    const live = createLiveKeymap();
+    setKeymap({ show_inventory: ['key:tab'] }, live);
+    const s = session(live);
+    s.send({ key: 'Tab' });
+    s.dispose();
+    expect(s.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowInventory }]);
+  });
+
   it('stops listening once disposed', () => {
     const calls: Call[] = [];
     const target = new EventTarget();
