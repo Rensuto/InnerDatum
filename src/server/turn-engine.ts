@@ -1272,6 +1272,17 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     const level = levelOf(world);
     const scope = scopeFor(viewerId);
     const snapshot = barrier.survey(playersOf(world), level, scope);
+    /**
+     * The countdown, only when one is genuinely on somebody. See the note on
+     * `bellDurationMs` below — this exists as a named function so the two facts
+     * `BellState` carries cannot be confused again by a one-line edit.
+     */
+    const bellToArm = (): number | null => {
+      if (snapshot.total === 0) return null;
+      const state = barrier.bell(playersOf(world), level, now(), scope);
+      return state.running ? state.durationMs : null;
+    };
+
     return {
       gameTurn: world.turn.clock.gameTurn,
       // THE COMBAT CLOCK, TAKEN FROM THE SAME `BarrierLevel` THE SURVEY WAS RUN
@@ -1303,10 +1314,42 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         // which is what keeps `BarrierActor` untouched by the whole feature.
         return body !== undefined && isPlayer(body) && body.roundActions > 0;
       }),
-      bellDurationMs:
-        snapshot.total === 0
-          ? null
-          : barrier.bell(playersOf(world), level, now(), scope).durationMs,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * HOW LONG TO ARM FOR — AND `null` UNLESS A BELL IS ACTUALLY RUNNING.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `BellState` carries two different facts and its own doc comments draw
+       * the line: `running` is *"true while a countdown is actually running"*,
+       * `durationMs` is *"what the countdown WOULD be, EVEN WHEN IT IS NOT
+       * RUNNING"*. This field used to be the second one — and the gateway's
+       * `syncBell` reads it as *arm a real wall-clock timer for this long*.
+       *
+       * So the moment three people were in a fight, a 20-second timer was armed
+       * and a 20-second countdown was drawn on three screens with nobody having
+       * committed to anything. When it reached zero `barrier.expire` re-derived
+       * the rule, correctly found the Bell had never been armed, and returned no
+       * passes — so the clock hit zero, NOTHING HAPPENED, and it started again.
+       * Forever, in every group fight.
+       *
+       * That is worse than a cosmetic bug. The Bell's whole force is social: the
+       * clock appearing means *the table is waiting on you now*. A countdown that
+       * is always running is a countdown that is never information, so the one
+       * moment it should have meant something — everybody else committed, the
+       * table waiting on one person — was indistinguishable from the twenty
+       * minutes of noise before it.
+       *
+       * `barrier.ts` states the rule this restores, and states why it is safe to
+       * be aggressive: *"`committed >= total - 1` is the same thing as
+       * `blocking.length <= 1`: the Bell only ever rings for the LAST straggler,
+       * which is why it can be aggressive without ever hurrying somebody who has
+       * company."*
+       *
+       * SOLO IS UNTOUCHED. At a quorum of one, `blocking.length <= 1` holds from
+       * the first blocker, so `running` is already true and the two-minute clock
+       * appears exactly when it always did.
+       */
+      bellDurationMs: bellToArm(),
       // THE MEMBERSHIP THE THREE ARRAYS ABOVE WERE COMPUTED AGAINST. Absent for
       // the level-wide snapshot, which is what it has always meant. The
       // projector filters the card strip on it so that one card can never be
