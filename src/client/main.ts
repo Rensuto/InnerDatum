@@ -5281,6 +5281,22 @@ async function boot(): Promise<void> {
         if (targetId === null) return;
         socket.send({ v: PROTOCOL_VERSION, t: 'talk', targetId });
         return;
+      case MapVerb.Ask:
+        /**
+         * THE SAME FRAME, WITH A SUBJECT. `talk` carries an optional `topic`
+         * from the closed `TopicId` set — a vocabulary rather than a question
+         * string, so a client cannot make a shopkeeper say something nobody
+         * wrote. The server falls back to a greeting for a topic this person has
+         * no answer to, which is also what a person does.
+         */
+        if (targetId === null) return;
+        socket.send({
+          v: PROTOCOL_VERSION,
+          t: 'talk',
+          targetId,
+          ...(item.topic === undefined ? {} : { topic: item.topic }),
+        });
+        return;
     }
   }
 

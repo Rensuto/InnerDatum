@@ -117,6 +117,7 @@ import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
 import { DELVES, dangerWord, partyHint } from '../content/delve.ts';
 import { specForActorId } from '../content/townsfolk.ts';
+import type { TopicId } from '../../shared/protocol.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -7418,10 +7419,33 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // WHAT SHE SAYS TO A CLICK is her greeting, and the bump counter is shared
     // with `greetOnBump` on purpose: talking to her and walking into her are the
     // same conversation, so the second one does not start over with her name.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A NAMED QUESTION GETS ITS ANSWER; ANYTHING ELSE GETS A GREETING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `topic` is validated as a bounded string on the wire and looked up in a
+     * table here — so an id nobody authored, or one this particular person has
+     * nothing to say about, falls through to the greeting rather than erroring.
+     * That is deliberately not a refusal: being asked something you cannot help
+     * with is a conversation, not a fault, and an error frame for it would put a
+     * red line on screen for asking a shopkeeper about the weather.
+     *
+     * THE GREETING COUNTER IS SHARED with `greetOnBump` and is NOT advanced by a
+     * topic. Asking Merrow about parties is not "meeting her again", so the next
+     * time somebody walks into her she still says her name if they have not
+     * heard it.
+     */
+    const answer = msg.topic === undefined ? undefined : spec.topics[msg.topic as TopicId];
     const key = `${me.id}|${them.id}`;
-    const seen = bumpCounts.get(key) ?? 0;
-    bumpCounts.set(key, seen + 1);
-    const text = seen === 0 ? spec.greetFirst : spec.greetAgain;
+    let text: string;
+    if (answer !== undefined) {
+      text = answer;
+    } else {
+      const seen = bumpCounts.get(key) ?? 0;
+      bumpCounts.set(key, seen + 1);
+      text = seen === 0 ? spec.greetFirst : spec.greetAgain;
+    }
 
     const line = { text, speaker: them.name };
 

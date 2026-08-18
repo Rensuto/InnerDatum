@@ -461,6 +461,34 @@ export type ActorRank = (typeof ActorRank)[keyof typeof ActorRank];
  * a bar for a monster it has never hit, and could not tell a corpse from a
  * living body it has not seen take damage.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE QUESTIONS A TOWNSFOLK CAN BE ASKED. WIRE VOCABULARY, SO IT LIVES HERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It began in `content/townsfolk.ts` beside the answers, which is where the
+ * CONTENT belongs — and the client cannot import a server module (the
+ * dependency rule is one-way and eslint enforces it), so the closed set moved
+ * to `shared/` and the answers stayed put. That split is the right one anyway:
+ * the ids are a contract between two processes; what Merrow says is not.
+ *
+ * The closed set of questions. On the wire, so it is a vocabulary rather than a
+ * string a client makes up.
+ */
+export const TopicId = {
+  /** "Where should we go?" — routed through the danger grades she can see. */
+  Where: 'where',
+  /** "Is it worth partying up?" — see `TownsfolkSpec.topics`. */
+  Party: 'party',
+} as const;
+export type TopicId = (typeof TopicId)[keyof typeof TopicId];
+
+/** What the menu row says, per topic. Short: it is a row, not a sentence. */
+export const TOPIC_LABEL: Readonly<Record<TopicId, string>> = {
+  [TopicId.Where]: 'Ask where to go',
+  [TopicId.Party]: 'Ask about parties',
+};
+
 export type ActorView = {
   id: string;
   name: string;
@@ -1969,6 +1997,16 @@ const TalkSchema = z.strictObject({
   t: z.literal('talk'),
   /** WHO. Re-checked server-side; see the note above. */
   targetId: z.string().min(1).max(ACTOR_ID_MAX_CHARS),
+  /**
+   * WHAT ABOUT. Absent is a greeting — walking up and saying hello.
+   *
+   * A CLOSED VOCABULARY, not free text: `content/townsfolk.ts#TopicId` is the
+   * set, the server answers only from a table keyed by it, and an id it does
+   * not know gets the greeting rather than an error. That is the whole reason
+   * this is a topic ID and not a question string — a shopkeeper cannot be made
+   * to say something nobody wrote.
+   */
+  topic: z.string().min(1).max(32).optional(),
 });
 
 /**

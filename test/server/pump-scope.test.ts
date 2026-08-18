@@ -70,9 +70,22 @@ describe('a realm advances only when somebody in it acts', () => {
     // than merely cheaper: an empty realm has nothing to advance. Pumping it
     // from another realm's keystroke was never doing work — it was doing
     // arithmetic and throwing it away.
+    /**
+     * ═══ "EMPTY" NOW MEANS NO ACTORS, NOT MERELY NO PLAYERS ═══
+     * This used to take the first realm that was not the overworld, which was a
+     * town — and towns were empty rooms with shelves in them. They have people
+     * in them now (`content/townsfolk.ts`), and a realm with a body in it has
+     * something to advance when it is pumped, which is correct rather than a
+     * regression: the narrowing this file is about is that ANOTHER realm's
+     * keystroke does not advance this one, not that a populated realm is inert.
+     *
+     * So the fixture picks a genuinely empty realm and the claim is unchanged.
+     */
     const { realms, overworld } = scene('pump-empty');
-    const empty = realms.all().find((realm) => realm.id !== overworld.id);
-    if (empty === undefined) throw new Error('unreachable');
+    const empty = realms
+      .all()
+      .find((realm) => realm.id !== overworld.id && realm.world.allActors().length === 0);
+    if (empty === undefined) throw new Error('no realm without a body in it');
 
     const before = empty.world.turn.clock.tick;
     for (let i = 0; i < 50; i += 1) empty.engine.pump();

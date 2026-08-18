@@ -80,6 +80,15 @@ export const MapVerb = {
    * depending on who is under the cursor is the row people misclick.
    */
   Talk: 'talk',
+  /**
+   * ASK ABOUT A NAMED THING. One row per topic, on the menu that already exists.
+   *
+   * A SEPARATE VERB FROM `Talk` so `runMenuItem` can carry the topic id, and NOT
+   * a second panel: the context menu already renders rows, already closes on a
+   * click, and already greys what is out of reach. A dialogue panel would be a
+   * new surface to lay out, theme and dismiss for something the menu does.
+   */
+  Ask: 'ask',
 } as const;
 export type MapVerb = (typeof MapVerb)[keyof typeof MapVerb];
 
@@ -108,6 +117,15 @@ export type MenuItem = {
    * slot on cooldown.
    */
   readonly enabled: boolean;
+  /**
+   * WHICH TOPIC, for an `Ask` row and nothing else.
+   *
+   * Carried on the row rather than encoded into `action` so the verb set stays
+   * a closed union the compiler can switch over exhaustively — one `Ask` verb
+   * with a payload, not one verb per question that every switch has to grow an
+   * arm for.
+   */
+  readonly topic?: string;
 };
 
 export type ContextMenuOptions = {

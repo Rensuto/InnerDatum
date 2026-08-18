@@ -53,6 +53,7 @@
  */
 
 import { MapVerb } from './contextmenu.ts';
+import { TOPIC_LABEL, TopicId } from '../../shared/protocol.ts';
 import { PartyAction } from '../../shared/protocol.ts';
 import type { MenuItem } from './contextmenu.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -155,6 +156,17 @@ const ATTACK = 'Attack';
 const WALK_UP_TO = 'Walk up to';
 const INSPECT = 'Inspect';
 const TALK_TO = 'Talk to';
+/**
+ * The questions, in menu order.
+ *
+ * The ids and labels are `content/townsfolk.ts`'s — imported rather than
+ * retyped, so a topic added there appears here and cannot drift into two
+ * spellings of the same question.
+ */
+const TOPIC_ROWS = [
+  { topic: TopicId.Where, label: TOPIC_LABEL[TopicId.Where] },
+  { topic: TopicId.Party, label: TOPIC_LABEL[TopicId.Party] },
+] as const;
 const TRAVEL_HERE = 'Travel here';
 const POINT_HERE = 'Point here';
 const PICK_UP = 'Pick up';
@@ -228,10 +240,33 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
        * `Talk to` GREYS OUT OF REACH, because that one really is a step away.
        */
       if (target.actor.faction === 'townsfolk') {
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * ONE ROW PER QUESTION — the menu IS the dialogue.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * No new panel. The context menu already renders rows, closes on a
+         * click and greys what is out of reach, and a dialogue box would be a
+         * whole surface to lay out, theme and dismiss for something this does.
+         *
+         * THE ROWS ARE THE SAME FOR EVERY TOWNSFOLK, and that is deliberate: the
+         * client does not hold the content table, so it cannot know which
+         * questions a given person answers. The server does, and it falls back
+         * to a greeting for a topic somebody has nothing to say about — which
+         * is also what a person does when asked something they cannot help with.
+         * A menu that changed shape per NPC would need the whole table on the
+         * wire to save one wasted click.
+         */
         return {
           title: target.actor.name,
           items: [
             { action: MapVerb.Talk, label: TALK_TO, enabled: ctx.adjacent },
+            ...TOPIC_ROWS.map((row) => ({
+              action: MapVerb.Ask,
+              label: row.label,
+              enabled: ctx.adjacent,
+              topic: row.topic,
+            })),
             { action: MapVerb.Travel, label: WALK_UP_TO, enabled: true },
             { action: MapVerb.Inspect, label: INSPECT, enabled: true },
           ],

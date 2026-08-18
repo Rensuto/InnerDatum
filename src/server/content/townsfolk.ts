@@ -46,7 +46,7 @@
 
 import { AiProfile, Faction } from '../engine/actor.ts';
 import { canWalk } from '../../shared/level.ts';
-import { TileCode } from '../../shared/protocol.ts';
+import { TileCode, TopicId } from '../../shared/protocol.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { World } from '../world/world.ts';
 
@@ -103,6 +103,27 @@ export type TownsfolkSpec = {
    * from that interaction.
    */
   readonly deflect: readonly [string, string, string];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT SHE CAN BE ASKED ABOUT — and the second one is the point of all this.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Keyed by `TopicId`, so the wire carries a closed set rather than free text
+   * and a client cannot invent a question.
+   *
+   * `Party` IS THE HIGHEST-VALUE LINE IN THE GAME. `DECISIONS.md` D12 and
+   * `scheduler.ts` both state it: `awardExperience` pays every party member a
+   * FULL share, with no division by headcount and no proximity radius. So three
+   * people partied earn three times what three people standing in the same room
+   * unpartied do — and `delve.ts` says why that matters: *"A player has no way
+   * to discover that by playing, and every other co-op game they have touched
+   * divides a kill — so the SAFE assumption is that partying costs them."*
+   *
+   * A player acting on the safe assumption plays the game wrong for their whole
+   * first session. Teaching an invisible rule is the one thing dialogue is
+   * uniquely good at, and it costs one sentence.
+   */
+  readonly topics: Readonly<Partial<Record<TopicId, string>>>;
 };
 
 /**
@@ -132,6 +153,60 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           'You will not move me, and I have tried.',
           'Push a third time and I stop being pleasant.',
         ],
+        topics: {
+          // 56 characters is the Margin lane's whole budget — see `LINE_MAX`.
+          [TopicId.Where]: 'Blackwood first. It is the one that lets you leave.',
+          [TopicId.Party]: 'Party up. You each get a full share, not a split.',
+        },
+      },
+    ],
+  ],
+  /**
+   * ═══ THREE TOWNS, BECAUSE ONE WAS WORSE THAN NONE ═══
+   * A single populated settlement makes the other four read as deserted rather
+   * than as quiet — the player learns "towns have people in them" and then finds
+   * four that do not. These two are content only: the code that places them, the
+   * verb that talks to them and the lines' length cap are all already in place.
+   */
+  [
+    'site:alderbrook',
+    [
+      {
+        id: 'reeve',
+        name: 'Reeve Ashcombe',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Ashcombe. I keep the gate and the gate keeps me.',
+        greetAgain: 'Gate is still here. So am I.',
+        deflect: [
+          'The gate, not me.',
+          'I have stood here through worse than you.',
+          'Try that once more and we will both be sorry.',
+        ],
+        topics: {
+          [TopicId.Where]: 'Threadneedle for goods. Blackwood if you must.',
+          [TopicId.Party]: 'Travel together. Nobody earns less for sharing.',
+        },
+      },
+    ],
+  ],
+  [
+    'site:ashwick_row',
+    [
+      {
+        id: 'thessaly',
+        name: 'Thessaly Vaunt',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Vaunt. I mix what the Index has not read yet.',
+        greetAgain: 'Still mixing. Mind the fumes.',
+        deflect: [
+          'Not the shelves.',
+          'Break one of those and we will both regret it.',
+          'I have a bottle here I would rather not open.',
+        ],
+        topics: {
+          [TopicId.Where]: 'Gearford, if you can stand the noise of it.',
+          [TopicId.Party]: 'Go in threes. The Index counts you one at a time.',
+        },
       },
     ],
   ],
@@ -148,7 +223,15 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
 function assertLinesFit(): void {
   for (const specs of TOWNSFOLK.values()) {
     for (const spec of specs) {
-      const lines = [spec.greetFirst, spec.greetAgain, ...spec.deflect];
+      const lines = [
+        spec.greetFirst,
+        spec.greetAgain,
+        ...spec.deflect,
+        // TOPICS TOO. They land in the same lane and a long one eats the same
+        // band; a cap that covered only greetings would be a cap with a hole in
+        // it exactly where the longest sentences live.
+        ...Object.values(spec.topics),
+      ];
       for (const line of lines) {
         if (line.length <= LINE_MAX) continue;
         throw new Error(
