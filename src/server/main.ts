@@ -19,6 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
+import { startOps } from './ops/routes.ts';
 
 import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
@@ -844,5 +845,39 @@ if (import.meta.url === entry) {
   } catch (err) {
     app.log.error(err);
     exit(1);
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE OPS SURFACE BESIDE IT — a SECOND listener, on loopback.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `docs/control-panel.md`: "Ops :3001 -> 127.0.0.1, behind nothing, never
+   * public". A separate Fastify instance rather than a route prefix, because the
+   * game app is reachable from the internet through the tunnel that serves the
+   * Discord Activity and anything mounted on it is reachable by anyone who can
+   * load the game. See `ops/routes.ts` for why the bind is the whole boundary.
+   *
+   * IT CLOSES THE *GAME* APP, not itself: `POST /shutdown` exists to run the
+   * game's `onClose` hook, which flushes every pending autosave. Closing this
+   * listener instead would flush nothing.
+   *
+   * FAIL-SOFT. `startOps` answers null if :3001 is taken and the game carries on
+   * regardless — an ops surface that can stop the game from booting is a worse
+   * trade than one that is occasionally missing, and the deploy script already
+   * handles its absence.
+   */
+  // `loggerInstance`, NOT `logger`. Fastify 5's `logger` field takes a CONFIG
+  // OBJECT and throws `FST_ERR_LOG_INVALID_LOGGER_CONFIG` on an instance —
+  // which it did, from outside the fail-soft guard below, and killed a game
+  // server that had already bound its port. Sharing the instance is what keeps
+  // both surfaces on one stream, so a deploy reads one log and not two.
+  const started = await startOps(() => Fastify({ loggerInstance: app.log }), {
+    closeGame: () => app.close(),
+  });
+  if (started === null) {
+    app.log.warn('ops: :3001 unavailable — a deploy will fall back to forcing the stop');
+  } else {
+    app.log.info({ port: started.port }, 'ops listening on loopback');
   }
 }
