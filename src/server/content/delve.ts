@@ -129,6 +129,48 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
 ]);
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW BAD IS IT IN THERE, IN ONE WORD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The gradient above is real and, until this existed, entirely invisible: the
+ * world map showed thirteen markers and a player had no way to tell Blackwood
+ * from the Outer Index except by walking into one and finding out. A map whose
+ * destinations cannot be told apart is a list, and a list is not a decision.
+ *
+ * DERIVED FROM THE SPEC, NEVER AUTHORED BESIDE IT. A `danger: 'grim'` field
+ * would be a second opinion about the same room, free to disagree with the
+ * population the day somebody retunes one and not the other — and it would
+ * disagree silently, because nothing downstream compares them.
+ *
+ * FOUR WORDS AND NOT A NUMBER. "8-10 monsters" is a stat block; a player
+ * choosing between two markers on a moor wants to know whether to go there yet.
+ * The bands are wide on purpose — this is a hint, and a hint that pretends to
+ * be precise is a promise the content has to keep.
+ */
+export function dangerWord(spec: DelveSpec): string {
+  /**
+   * THE TOP OF THE BAND, because what decides whether a room hurts is its
+   * worst night rather than its average one.
+   *
+   * AND WHAT IS IN IT COUNTS SEPARATELY FROM HOW MUCH. A first version added a
+   * flat bonus for "has anything nastier than a husk" and called the Watcher's
+   * Altar — three to four WRAITHS AND ELITES — "quiet", which is worse than
+   * saying nothing: a hint that lies is a hint a player stops reading. An elite
+   * is worth more than a wraith, and a wraith more than a body, so they are
+   * weighted apart.
+   */
+  const elite = spec.roster.includes(INDEX_HUSK_ELITE) ? 3 : 0;
+  const ranged = spec.roster.includes(INDEX_WRAITH) ? 2 : 0;
+  const weight = spec.monsters[1] + elite + ranged;
+
+  if (weight <= 7) return 'quiet';
+  if (weight <= 9) return 'restless';
+  if (weight <= 12) return 'dangerous';
+  return 'grim';
+}
+
+/**
  * Every tile a resident could legally stand on, far enough from the door.
  *
  * SEARCHED, NOT COMPUTED — `seedAmbush`'s hard-won lesson. A generated floor

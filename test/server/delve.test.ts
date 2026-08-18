@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DELVES } from '../../src/server/content/delve.ts';
+import { DELVES, dangerWord } from '../../src/server/content/delve.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
@@ -139,5 +139,35 @@ describe('what is lying about', () => {
     const foes = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster);
     const carrying = foes.filter((f) => (f.carried ?? []).length > 0).length;
     expect(carrying).toBeGreaterThan(0);
+  });
+});
+
+describe('how bad it is in there, in one word', () => {
+  it('never calls a room full of wraiths and elites quiet', () => {
+    // THE BUG THE FIRST VERSION HAD. A flat "has anything nastier than a husk"
+    // bonus called the Watcher's Altar — three to four WRAITHS AND ELITES —
+    // "quiet", which is worse than saying nothing: a hint that lies is a hint a
+    // player stops reading. What is in a room is weighted apart from how much
+    // of it there is.
+    const altar = DELVES.get('site:watchers_altar');
+    if (altar === undefined) throw new Error('unreachable');
+    expect(dangerWord(altar)).not.toBe('quiet');
+  });
+
+  it('is derived from the spec, so it cannot disagree with the population', () => {
+    // A `danger:` field authored beside the band would be a second opinion
+    // about the same room, free to drift the day somebody retunes one and not
+    // the other — silently, because nothing downstream compares them.
+    const near = DELVES.get('site:blackwood_outskirts');
+    const far = DELVES.get('site:outer_index');
+    if (near === undefined || far === undefined) throw new Error('unreachable');
+    const rank = ['quiet', 'restless', 'dangerous', 'grim'];
+    expect(rank.indexOf(dangerWord(far))).toBeGreaterThan(rank.indexOf(dangerWord(near)));
+  });
+
+  it('uses more than one word across the eight, or it is not telling anybody anything', () => {
+    // A gradient every marker reports identically is not a gradient.
+    const words = new Set([...DELVES.values()].map(dangerWord));
+    expect(words.size).toBeGreaterThanOrEqual(3);
   });
 });

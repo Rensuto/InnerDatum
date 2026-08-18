@@ -109,6 +109,7 @@ import { SLOT_ORDER } from '../content/items.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
+import { DELVES, dangerWord } from '../content/delve.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -6671,11 +6672,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     fromX: number,
     fromY: number,
     take: number,
-  ): { name: string; bearing: string; distance: number }[] => {
+  ): { name: string; bearing: string; distance: number; danger: string | null }[] => {
     const full = opts.realms?.get(realm.id);
     if (full === undefined) return [];
 
-    const out: { name: string; bearing: string; distance: number }[] = [];
+    const out: { name: string; bearing: string; distance: number; danger: string | null }[] = [];
     for (const [cell, siteId] of full.sites) {
       const [sx, sy] = cell.split(',').map(Number);
       if (sx === undefined || sy === undefined || Number.isNaN(sx) || Number.isNaN(sy)) continue;
@@ -6686,7 +6687,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (distance === 0) continue;
       const def = SITES.get(siteId);
       if (def === undefined) continue;
-      out.push({ name: def.name, bearing: bearingWord(sx - fromX, sy - fromY), distance });
+      /**
+       * AND HOW BAD IT IS IN THERE, for a delve.
+       *
+       * The eight have a real difficulty gradient and it was entirely
+       * invisible: the map showed thirteen markers and the only way to tell
+       * Blackwood from the Outer Index was to walk into one and find out. A map
+       * whose destinations cannot be told apart is a list, and a list is not a
+       * decision.
+       *
+       * TOWNS SAY NOTHING, because there is nothing to warn about — and a
+       * "quiet" beside every settlement would train a player to stop reading
+       * the word exactly where it matters.
+       */
+      const spec = DELVES.get(siteId);
+      out.push({
+        name: def.name,
+        bearing: bearingWord(sx - fromX, sy - fromY),
+        distance,
+        danger: spec === undefined ? null : dangerWord(spec),
+      });
     }
     out.sort((a, b) => a.distance - b.distance);
     return out.slice(0, take);
@@ -6750,7 +6770,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             seq: logSeq + index,
             lane: LogLane.Record,
             gameTurn: realm.world.turn.clock.gameTurn,
-            text: `${entry.name} — ${entry.bearing}, ${String(entry.distance)} tiles`,
+            text:
+              entry.danger === null
+                ? `${entry.name} — ${entry.bearing}, ${String(entry.distance)} tiles`
+                : `${entry.name} — ${entry.bearing}, ${String(entry.distance)} tiles · ${entry.danger}`,
             depth: 1,
           })),
         });
