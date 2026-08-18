@@ -275,10 +275,42 @@ describe('every settlement can be reached on foot', () => {
     // `[]` and null are different answers (path.ts:303-311): [] means "you are
     // already there", null means "no route". Neither is acceptable here.
     expect(route).not.toBeNull();
-    // The Watcher's Altar in the northern range to Ashwick on the far south
-    // coast — Chebyshev 98, and anything SHORTER would mean the pathfinder
-    // cheated through a mountain.
     expect(route?.length ?? 0).toBeGreaterThanOrEqual(98);
+  });
+
+  it('walks AROUND the range rather than through it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT THE ASSERTION ABOVE DOES NOT CATCH, AND WHY THIS ONE EXISTS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * That route is exactly 98 steps long and its Chebyshev distance is exactly
+     * 98 — the two points have clear ground the whole way between them, so
+     * `>= 98` is the straight-line floor and NOTHING can go below it. It would
+     * pass unchanged on a map with no terrain on it at all. It is a real test of
+     * the pathfinder's BUDGET and no test whatever of the map's SHAPE.
+     *
+     * This is the shape. Blackwood Outskirts to the Glass Archive is 68 tiles as
+     * the crow flies and 158 on foot, because the Archive sits behind high
+     * ground with one way round it — the single largest terrain-forced detour
+     * between any two sites on the moor, and the only kind of assertion that
+     * fails the moment somebody flattens a range or opens a pass.
+     *
+     * Measured rather than chosen: 45 of the 78 site pairs have NO detour at
+     * all, which is the honest state of this map and the reason the one that
+     * does is worth pinning.
+     */
+    const blackwood = { x: 13, y: 6 };
+    const archive = { x: 81, y: 6 };
+    const straight = Math.max(Math.abs(blackwood.x - archive.x), Math.abs(blackwood.y - archive.y));
+
+    const route = findPath(blackwood, archive, (x, y) => canWalk(OVERWORLD.view, x, y), {
+      maxNodes: OVERWORLD.view.w * OVERWORLD.view.h + 1,
+    });
+
+    expect(route).not.toBeNull();
+    // MORE THAN TWICE the straight line. On an empty field this is `straight`.
+    expect(route?.length ?? 0).toBeGreaterThan(straight * 2);
   });
 });
 

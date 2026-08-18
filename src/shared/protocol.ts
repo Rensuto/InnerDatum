@@ -372,6 +372,51 @@ const BLOCKS_SIGHT: ReadonlySet<number> = new Set<number>([
 ]);
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE DANGER MAY STAND — and therefore, by its absence, where it may not.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The wild ground: grass, heath, high ground, the marsh, the soot and the rail
+ * bed. What is NOT here is the promise — the road, the paving, a settlement's
+ * yard, the fields, the bridges and the strand — and `roamers.ts` states why
+ * that promise matters: *"the road and a settlement's approach are SAFE, and
+ * that is a promise a player learns to rely on."*
+ *
+ * ═══ IT LIVES HERE BECAUSE TWO SIDES NEED THE SAME ANSWER ═══
+ * The server enforces it (a roamer may not be placed off this set) and the
+ * client DRAWS it (the world map picks the safe network out in road colour). A
+ * `client -> server` import is banned and correctly so, so the two would
+ * otherwise have been two lists — and the day they disagreed, the map would
+ * have been promising safety on ground that a roamer was standing on. A promise
+ * a player learns to rely on is the worst possible thing to keep two copies of.
+ *
+ * FAIL-CLOSED THE OTHER WAY from `isWalkable`: an unrecognised code is
+ * dangerous, because drawing unknown ground as safe road is the failure that
+ * gets somebody killed.
+ */
+const HAUNTS: ReadonlySet<number> = new Set<number>([
+  TileCode.PLAINS,
+  TileCode.HEATH,
+  TileCode.HILLS,
+  TileCode.GREEN,
+  TileCode.MIRE,
+  TileCode.SOOT,
+  TileCode.RAIL,
+]);
+
+export function isHaunt(code: number): boolean {
+  return HAUNTS.has(code);
+}
+
+/**
+ * Walkable ground that nothing may lie in wait on. THE SAFE NETWORK, as one
+ * expression, so the map and the rule cannot drift apart.
+ */
+export function isSafeGround(code: number): boolean {
+  return isWalkable(code) && !isHaunt(code);
+}
+
+/**
  * Takes a plain number because `LevelView.tiles` is `number[]` on the wire and
  * the alternative is a cast at every call site.
  *

@@ -24,7 +24,7 @@
  */
 
 import { PALETTE } from '../render/canvas.ts';
-import { TileCode, isWalkable } from '../../shared/protocol.ts';
+import { TileCode, isWalkable, isSafeGround } from '../../shared/protocol.ts';
 import type { LevelView, SiteView } from '../../shared/protocol.ts';
 
 /** Where the minimap sits and how big it is allowed to get. */
@@ -44,11 +44,29 @@ function miniFill(code: TileCode): string {
   if (code === TileCode.WATER || code === TileCode.DEEPWATER) return '#141d33';
   if (code === TileCode.ERASED) return '#0c0a14';
   if (isWalkable(code)) {
-    // The road and a settlement's ground are picked out, because "where are the
-    // roads" is the question a world map is opened to answer.
-    if (code === TileCode.COBBLE || code === TileCode.PAVING || code === TileCode.YARD) {
-      return '#8a8070';
-    }
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THIS LINE DRAWS THE SAFE NETWORK, AND THAT IS A RULE, NOT A COLOUR.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * It used to name three codes by hand — COBBLE, PAVING, YARD — for the good
+     * reason that *"where are the roads"* is what a world map is opened to
+     * answer. But the game already had a second, invisible fact about exactly
+     * this ground: nothing may lie in wait on it. `roamers.ts` has enforced that
+     * since roamers existed and says why — *"the road and a settlement's
+     * approach are SAFE, and that is a promise a player learns to rely on"* —
+     * and no screen in the game had ever said so.
+     *
+     * A promise nobody can see is not a promise. `isSafeGround` is the same
+     * predicate the server places roamers by, so the strand, the fields and the
+     * bridges join the roads and the picture becomes one continuous thing you
+     * can plan a journey along.
+     *
+     * ONE DEFINITION, IN `shared/`, for the reason the note there gives: a
+     * hand-kept copy on this side would eventually promise safety on ground a
+     * roamer was standing on.
+     */
+    if (isSafeGround(code)) return '#8a8070';
     return '#4e5a44';
   }
   return '#2a2733';

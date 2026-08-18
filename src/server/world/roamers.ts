@@ -34,7 +34,7 @@
  */
 
 import { canWalk } from '../../shared/level.ts';
-import { TileCode } from '../../shared/protocol.ts';
+import { isHaunt } from '../../shared/protocol.ts';
 import { tileAt } from '../../shared/level.ts';
 import type { Realm, Roamer } from './realms.ts';
 
@@ -64,15 +64,12 @@ const MOVE_EVERY_TURNS = 3;
  * promise a player learns to rely on. A roamer sitting on the road would break
  * it more visibly than an invisible roll ever did.
  */
-const HAUNTS: ReadonlySet<number> = new Set<number>([
-  TileCode.PLAINS,
-  TileCode.HEATH,
-  TileCode.HILLS,
-  TileCode.GREEN,
-  TileCode.MIRE,
-  TileCode.SOOT,
-  TileCode.RAIL,
-]);
+/**
+ * WHERE THE LIST WENT: `isHaunt` in shared/protocol.ts, because the client has
+ * to draw the same answer that this file enforces and cannot import it from
+ * here. Two lists would have meant that the day they disagreed, the world map
+ * promised safety on ground a roamer was standing on.
+ */
 
 /**
  * What wanders, paired with what it looks like.
@@ -102,7 +99,7 @@ const STEPS: readonly (readonly [number, number])[] = [
 
 function canHaunt(realm: Realm, x: number, y: number): boolean {
   if (!canWalk(realm.world.level, x, y)) return false;
-  return HAUNTS.has(tileAt(realm.world.level, x, y));
+  return isHaunt(tileAt(realm.world.level, x, y));
 }
 
 /**
