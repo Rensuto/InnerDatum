@@ -74,7 +74,12 @@ import {
  * (`applyRestore` clamps a hand-edited file to it), the xp bar's denominator
  * (`expChart`), and the ledger `unspentPoints` is reconciled against.
  */
-import { MAX_CHARACTER_LEVEL, expChart, totalPointsAtLevel } from '../../shared/progression.ts';
+import {
+  MAX_CHARACTER_LEVEL,
+  expChart,
+  pointsForLevel,
+  totalPointsAtLevel,
+} from '../../shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 /**
  * THE ONE CONTENT IMPORT IN THIS FILE, AND IT IS DATA ONLY.
@@ -6707,9 +6712,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         seq: logSeq,
         lane: LogLane.Record,
         gameTurn,
-        text: `${nameOf(note.id)} reaches level ${note.level}.`,
+        text: `${nameOf(note.id)} reaches level ${String(note.level)}.`,
         depth: 0,
       });
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * AND WHAT TO DO ABOUT IT, WHICH THE LEVEL LINE ALONE NEVER SAID.
+       * ═════════════════════════════════════════════════════════════════════
+       * The line above exists because `ProgressMsg` is viewer-private and a
+       * party could otherwise cross three levels without anybody learning a
+       * point had been granted. It half-solved that: it announced the LEVEL and
+       * still never mentioned the POINT, so the reader is told something
+       * happened and not what it bought them.
+       *
+       * The count comes from `pointsForLevel`, which is the same function that
+       * granted it — a literal "1" here would be wrong on every fifth level,
+       * silently, and only for the players who got the better one.
+       */
+      const granted = pointsForLevel(note.level);
+      if (granted > 0) {
+        logSeq += 1;
+        lines.push({
+          seq: logSeq,
+          lane: LogLane.Record,
+          gameTurn,
+          text:
+            granted === 1
+              ? 'A talent point to spend.'
+              : `${String(granted)} talent points to spend.`,
+          depth: 1,
+        });
+      }
     }
 
     if (lines.length === 0) return;
