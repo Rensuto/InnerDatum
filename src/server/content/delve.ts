@@ -117,19 +117,70 @@ const DEEP: readonly MonsterTemplate[] = [INDEX_WRAITH, INDEX_HUSK_ELITE, INDEX_
  * the entire reason a player picks one marker over another, and until now every
  * marker was worth exactly the same as every other one — nothing.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ORDERED BY HOW FAR THE WALK IS, BECAUSE THE GRADIENT WAS INVERTED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The comment above this table has always promised a difficulty gradient and
+ * called it *"the entire reason a player picks one marker over another"*. It was
+ * real. It also pointed the wrong way. Measured — eight-way BFS from the
+ * Alderbrook spawn to each site cell on the shipped map:
+ *
+ *   BEFORE                                     steps   was          says
+ *   The Drowned Chapel                            17   DEEP, elite  dangerous
+ *   The Underworks                                30   6-8          dangerous
+ *   ...
+ *   Gearford Industrial Ward                     108   5-7          restless
+ *   Blackwood Outskirts                          131   3-5          quiet
+ *
+ * A player leaves Alderbrook, walks seventeen steps, finds the nearest marker on
+ * the map and it is one of the two hardest rooms in the game — a DEEP roster
+ * with a ninety-five hit point elite in it. Meanwhile the row commented *"the
+ * near country: where a level-1 party learns the game"* sat on the site that is
+ * a hundred and thirty-one steps away, the furthest thing on the moor.
+ *
+ * That is worse than no gradient at all. With no gradient a player learns
+ * nothing; with an inverted one they learn something FALSE on their first
+ * evening — *the markers near town are the dangerous ones* — and every decision
+ * they make afterwards is built on it. `dangerWord` had been faithfully
+ * publishing that lie to the world map since the day it was written.
+ *
+ * ═══ DATA ONLY. NO MAP ROW MOVES. ═══
+ * The eight specs are exactly the eight that shipped — same counts, same
+ * rosters, same litter — re-attached to different doors. `test/shared/
+ * overworld.test.ts` is untouched by construction, and the total amount of
+ * content in the game is unchanged.
+ *
+ * ═══ AND THE FICTION ALREADY AGREED ═══
+ * No blurb needed rewriting, which is the part that says this ordering is right
+ * rather than merely consistent. `places.ts` describes Blackwood as *"the trees
+ * start here and the road stops pretending it goes anywhere"* — an endpoint, in
+ * the text, since before it had numbers to match. The Outer Index is *"the EDGE
+ * of the Index"*, and an edge is not a heart.
+ */
 export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>([
   // ─── the near country: where a level-1 party learns the game ────────────
-  ['site:blackwood_outskirts', { monsters: [3, 5], roster: RANK_AND_FILE, litter: [1, 2] }],
-  ['site:hollow_mine', { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3] }],
+  //     17 steps out, and the first marker most people will ever walk to.
+  ['site:drowned_chapel', { monsters: [3, 5], roster: RANK_AND_FILE, litter: [1, 2] }],
+  //     30 steps.
+  ['site:underworks', { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3] }],
   // ─── worked places: more of them, and more to carry home ────────────────
-  ['site:gearford_ward', { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4] }],
-  ['site:underworks', { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4] }],
+  //     70 steps.
+  ['site:watchers_altar', { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4] }],
+  //     87 steps.
+  ['site:hollow_mine', { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4] }],
   // ─── quiet and wrong: fewer bodies, harder ones ─────────────────────────
-  ['site:drowned_chapel', { monsters: [3, 5], roster: DEEP, litter: [2, 3] }],
-  ['site:watchers_altar', { monsters: [3, 4], roster: DEEP, litter: [3, 4] }],
+  //     88 steps. The roster changes here, which is the real threshold on the
+  //     map: from this marker outward, things bite.
+  ['site:outer_index', { monsters: [3, 4], roster: DEEP, litter: [3, 4] }],
+  //     92 steps.
+  ['site:glass_archive', { monsters: [3, 5], roster: DEEP, litter: [2, 3] }],
   // ─── the far end ────────────────────────────────────────────────────────
-  ['site:glass_archive', { monsters: [6, 8], roster: DEEP, litter: [3, 5] }],
-  ['site:outer_index', { monsters: [8, 10], roster: DEEP, litter: [4, 6] }],
+  //     108 steps.
+  ['site:gearford_ward', { monsters: [6, 8], roster: DEEP, litter: [3, 5] }],
+  //     131 steps, the furthest walk on the moor, and now the worst room on it.
+  ['site:blackwood_outskirts', { monsters: [8, 10], roster: DEEP, litter: [4, 6] }],
 ]);
 
 /**

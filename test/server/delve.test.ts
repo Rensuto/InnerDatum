@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DELVES, dangerWord, partyHint } from '../../src/server/content/delve.ts';
+import type { DelveSpec } from '../../src/server/content/delve.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
@@ -113,16 +114,60 @@ describe('where they stand', () => {
   });
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE GENTLEST ROOM AND THE WORST ONE, ASKED FOR RATHER THAN NAMED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * These used to be spelled `site:blackwood_outskirts` and `site:outer_index`,
+ * which baked in an assumption that turned out to be the bug: the gradient ran
+ * the wrong way down the map, so the site this file called "near" was 131 steps
+ * out and the one it called "far" was not the far end of anything.
+ *
+ * The assertions were about the right PROPERTY the whole time — a real spread
+ * between the top and bottom of the table — so they now ASK which rooms those
+ * are. That makes them survive a re-key instead of enforcing one, and it leaves
+ * the question of which room sits at which door to
+ * `test/server/delve-gradient.test.ts`, which measures the actual walk.
+ */
+const BANDS = ['quiet', 'restless', 'dangerous', 'grim'] as const;
+
+function byDanger(): readonly DelveSpec[] {
+  return [...DELVES.values()].sort(
+    (a, b) =>
+      BANDS.indexOf(dangerWord(a) as (typeof BANDS)[number]) -
+      BANDS.indexOf(dangerWord(b) as (typeof BANDS)[number]),
+  );
+}
+
+/** The room the table considers gentlest. */
+function gentlest(): DelveSpec {
+  const spec = byDanger()[0];
+  if (spec === undefined) throw new Error('DELVES is empty');
+  return spec;
+}
+
+/** The room the table considers worst. */
+function worst(): DelveSpec {
+  const all = byDanger();
+  const spec = all[all.length - 1];
+  if (spec === undefined) throw new Error('DELVES is empty');
+  return spec;
+}
+
 describe('the map has a gradient now', () => {
   it('makes the far end meaningfully worse than the near end', () => {
     // THE REASON A PLAYER PICKS ONE MARKER OVER ANOTHER. Until there was a
     // gradient, every destination was worth exactly the same as every other
     // one: nothing.
-    const blackwood = DELVES.get('site:blackwood_outskirts');
-    const outer = DELVES.get('site:outer_index');
-    if (blackwood === undefined || outer === undefined) throw new Error('unreachable');
-    expect(outer.monsters[0]).toBeGreaterThan(blackwood.monsters[1]);
-    expect(outer.litter[0]).toBeGreaterThan(blackwood.litter[1]);
+    const easy = gentlest();
+    const hard = worst();
+    // A SPREAD WIDE ENOUGH TO BE A DECISION. The worst room's FLOOR is above the
+    // gentlest room's CEILING, for bodies and for loot alike — so the two are
+    // not merely different, they do not overlap, and walking further out is
+    // always more of both.
+    expect(hard.monsters[0]).toBeGreaterThan(easy.monsters[1]);
+    expect(hard.litter[0]).toBeGreaterThan(easy.litter[1]);
   });
 
   it('is reproducible from the realm that opened it', () => {
@@ -230,11 +275,8 @@ describe('how bad it is in there, in one word', () => {
     // A `danger:` field authored beside the band would be a second opinion
     // about the same room, free to drift the day somebody retunes one and not
     // the other — silently, because nothing downstream compares them.
-    const near = DELVES.get('site:blackwood_outskirts');
-    const far = DELVES.get('site:outer_index');
-    if (near === undefined || far === undefined) throw new Error('unreachable');
-    const rank = ['quiet', 'restless', 'dangerous', 'grim'];
-    expect(rank.indexOf(dangerWord(far))).toBeGreaterThan(rank.indexOf(dangerWord(near)));
+    const rank = [...BANDS] as string[];
+    expect(rank.indexOf(dangerWord(worst()))).toBeGreaterThan(rank.indexOf(dangerWord(gentlest())));
   });
 
   it('uses more than one word across the eight, or it is not telling anybody anything', () => {
@@ -247,12 +289,10 @@ describe('how bad it is in there, in one word', () => {
 describe('whether to bring somebody', () => {
   it('suggests a party only where a solo player would actually struggle', () => {
     // ADVICE THAT IS WRONG ONCE IS ADVICE NOBODY READS AGAIN. Suggesting a
-    // party for Blackwood is something a solo player disproves in four minutes.
-    const near = DELVES.get('site:blackwood_outskirts');
-    const far = DELVES.get('site:outer_index');
-    if (near === undefined || far === undefined) throw new Error('unreachable');
-    expect(partyHint(near)).toBeNull();
-    expect(partyHint(far)).toBe('bring a party');
+    // party for the gentlest room in the game is something a solo player
+    // disproves in four minutes.
+    expect(partyHint(gentlest())).toBeNull();
+    expect(partyHint(worst())).toBe('bring a party');
   });
 
   it('says nothing at all for the quiet rooms, rather than saying "go alone"', () => {
