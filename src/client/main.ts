@@ -5263,6 +5263,24 @@ async function boot(): Promise<void> {
         // `mousedown`), so this cannot be reached from the greyed form.
         sendPickup();
         return;
+      case MapVerb.Talk:
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * A TARGET ID, NOT A TILE — see `TalkSchema` in protocol.ts.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `point` names a tile because a player is pointing at ground. Talking
+         * names a PERSON: if she steps aside between the click and the frame,
+         * the honest answer is "there is nobody there" rather than a
+         * conversation with whoever moved into the square.
+         *
+         * The row is only enabled when `ctx.adjacent`, and the server re-checks
+         * range, line of sight and faction anyway — the grey is a courtesy, the
+         * server is the rule.
+         */
+        if (targetId === null) return;
+        socket.send({ v: PROTOCOL_VERSION, t: 'talk', targetId });
+        return;
     }
   }
 

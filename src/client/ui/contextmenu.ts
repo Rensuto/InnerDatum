@@ -72,6 +72,14 @@ export const MapVerb = {
   Inspect: 'inspect',
   Point: 'point',
   Pickup: 'pickup',
+  /**
+   * SPEAK TO SOMEBODY WHO LIVES HERE.
+   *
+   * A separate verb from `Attack` rather than a mode of it, because they are
+   * mutually exclusive by faction and a menu row that means two different things
+   * depending on who is under the cursor is the row people misclick.
+   */
+  Talk: 'talk',
 } as const;
 export type MapVerb = (typeof MapVerb)[keyof typeof MapVerb];
 

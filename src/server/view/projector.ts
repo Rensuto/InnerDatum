@@ -55,6 +55,7 @@ import {
   TurnActorState,
   VoiceState,
 } from '../../shared/protocol.ts';
+import { Faction } from '../engine/actor.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { SLOT_ORDER } from '../content/items.ts';
@@ -298,6 +299,11 @@ export function toActorView(actor: Actor): ActorView {
     // client cannot infer it from hp or from the sprite key. It drives the
     // under-token ring, exactly as `boss_rank_circles` does in ToME.
     rank: actor.rank,
+    // WHICH SIDE, when it is not the default. Omitted for every hostile, so a
+    // client that ignores it is unchanged — see `ActorView.faction`.
+    ...(actor.kind === ActorKind.Monster && actor.faction !== Faction.Redacted
+      ? { faction: actor.faction }
+      : {}),
     // Vitals, from M2. Note what is still NOT copied even though the engine's
     // actor carries it: `energy` and `energyBase` (a client that knew them could
     // compute the turn order in advance), `pendingIntent` (what someone is about

@@ -241,6 +241,7 @@ import type {
   ClientMove,
   ClientParty,
   ClientPoint,
+  ClientTalk,
   ClientRevive,
   ClientSay,
   ClientSetKeybinds,
@@ -7037,9 +7038,44 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * Two counters, or two increments, and a client's de-duplication quietly stops
    * working the day the second one is added.
    */
+  /**
+   * ONE MARGIN LINE, TO ONE PERSON.
+   *
+   * `broadcastMargin`'s twin, and it exists because a reply that travels only in
+   * a broadcast cannot be suppressed for the room without also being suppressed
+   * for the person who asked. See `handleTalk` for the failure that shape
+   * produces in a town where the game clock does not run.
+   *
+   * It takes the same `seq` counter, so the asker's copy and the room's copy sort
+   * into one conversation rather than two.
+   */
+  const sendMargin = (
+    session: Session,
+    realm: PumpTarget,
+    line: Omit<LogLine, 'seq' | 'lane' | 'gameTurn'>,
+  ): void => {
+    logSeq += 1;
+    const full: LogLine = {
+      seq: logSeq,
+      lane: LogLane.Margin,
+      gameTurn: realm.world.turn.clock.gameTurn,
+      ...line,
+    };
+    send(session.socket, { v: PROTOCOL_VERSION, t: 'log', lines: [full] });
+  };
+
   const broadcastMargin = (
     realm: PumpTarget,
     line: Omit<LogLine, 'seq' | 'lane' | 'gameTurn'>,
+    /**
+     * WHO ALREADY HAS THIS LINE.
+     *
+     * `handleTalk` unicasts the answer to the asker first — see the note there —
+     * so without this the asker is in the room's audience too and hears every
+     * reply twice. Verified over a socket: one click produced two identical
+     * Margin lines.
+     */
+    exceptConnId?: string,
   ): void => {
     logSeq += 1;
     const full: LogLine = {
@@ -7052,7 +7088,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // voice from nowhere — the Margin's `speaker` names somebody the recipient
     // has no token for, and `point` puts its marker on a tile of a map they are
     // not looking at. The voice channel is where the party talks across floors.
-    broadcast({ v: PROTOCOL_VERSION, t: 'log', lines: [full] }, undefined, audienceFor(realm.id));
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'log', lines: [full] },
+      exceptConnId,
+      audienceFor(realm.id),
+    );
   };
 
   /**
@@ -7273,6 +7313,92 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `fillText` and mirrored with `textContent`, so there is no markup context to
    * escape into. eslint.config.js § group 6 is the other half of that guarantee.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TALKING TO SOMEBODY WHO LIVES HERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ THE ASKER ALWAYS HEARS THE ANSWER. THE ROOM HEARS IT ONCE. ═══
+   * This is the shape a design review forced, and it is worth stating why the
+   * obvious version is broken.
+   *
+   * The obvious version broadcasts the reply and suppresses repeats so six
+   * people cannot flood the Margin lane. But if the reply travels ONLY in the
+   * broadcast, suppressing the broadcast suppresses it for the person who asked
+   * — so players two through six click and see nothing at all. No answer, no
+   * refusal, no error.
+   *
+   * And it never recovers, because the natural key for "recently" is the game
+   * turn and A TOWN'S CLOCK IS FROZEN. `shared/energy.ts` only advances
+   * `gameTurn` while something can gain energy, and six people standing around a
+   * shopkeeper clicking rows are by definition not moving. So the window never
+   * expires. The one act that WOULD advance the clock is walking — which means
+   * the only reliable way to get a reaction out of her would be to body-slam
+   * her, in a game where five of six players had just concluded she was broken.
+   *
+   * Hence: `sendLog` to the asker, unconditionally, every time. `broadcastMargin`
+   * to the room only when nobody has heard that line lately. And "lately" is
+   * `Date.now()`, which runs whether or not anybody is moving.
+   */
+  const lastHeard = new Map<string, number>();
+  /** How long the room is spared a repeat. Wall clock — see `handleTalk`. */
+  const ROOM_REPEAT_MS = 12_000;
+
+  const handleTalk = (session: Session, msg: ClientTalk): void => {
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before talking');
+      return;
+    }
+    const realm = realmFor(session);
+    const me = realm.world.getActor(actorId);
+    if (me === undefined) return;
+
+    const them = realm.world.getActor(msg.targetId);
+    // NOT AN ERROR WORTH A CODE. She stepped away, or the id was stale, or a
+    // client invented one — all three are "there is nobody there", and the
+    // player's own answer to that is to look. `BadMessage` is reused rather than
+    // growing the `ErrorCode` union, which `version.ts` counts as a forced bump.
+    if (them === undefined || !isMonster(them) || them.faction !== Faction.Townsfolk) {
+      sendError(session.socket, ErrorCode.BadMessage, 'there is nobody there to talk to');
+      return;
+    }
+
+    // ═══ ADJACENT, AND CHECKED HERE BECAUSE THE CLIENT'S GREY IS ADVISORY ═══
+    // The verb menu greys `Talk to` out of reach, exactly as it greys `Attack`.
+    // That is a courtesy; this is the rule.
+    if (Math.max(Math.abs(me.x - them.x), Math.abs(me.y - them.y)) > 1) {
+      sendError(session.socket, ErrorCode.OutOfRange, 'step closer to talk');
+      return;
+    }
+
+    const spec = specForActorId(them.id);
+    if (spec === undefined) return;
+
+    // WHAT SHE SAYS TO A CLICK is her greeting, and the bump counter is shared
+    // with `greetOnBump` on purpose: talking to her and walking into her are the
+    // same conversation, so the second one does not start over with her name.
+    const key = `${me.id}|${them.id}`;
+    const seen = bumpCounts.get(key) ?? 0;
+    bumpCounts.set(key, seen + 1);
+    const text = seen === 0 ? spec.greetFirst : spec.greetAgain;
+
+    const line = { text, speaker: them.name };
+
+    // THE ASKER, ALWAYS.
+    sendMargin(session, realm, line);
+
+    // THE ROOM, IF IT HAS NOT JUST HEARD IT. Wall clock, because the game clock
+    // does not run in a town — see the header.
+    const roomKey = `${realm.id}|${them.id}|${text}`;
+    const now = Date.now();
+    const heard = lastHeard.get(roomKey) ?? 0;
+    if (now - heard >= ROOM_REPEAT_MS) {
+      lastHeard.set(roomKey, now);
+      broadcastMargin(realm, line, session.connId);
+    }
+  };
+
   const handleSay = (session: Session, msg: ClientSay): void => {
     const realm = realmFor(session);
     const { world } = realm;
@@ -9024,6 +9150,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'point':
         handlePoint(session, msg);
+        return;
+      // NON-PUMPING, like `say` and `point` above: talking spends no turn and
+      // makes the server do no work, which is why it is safe on the same rate
+      // limit as speech.
+      case 'talk':
+        handleTalk(session, msg);
         return;
       // ALSO NON-PUMPING, and for the reason the `ping` case gives below: an
       // inspect changes nothing — no energy, no intent, no RNG draw — so a

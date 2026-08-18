@@ -252,6 +252,18 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       'shop_sell',
       'spend_point',
       'talent',
+      // NOT THE KEYS SCREEN'S EITHER, and listed for the same reason `follow`
+      // is: it is the townsfolk verb, sent when somebody picks `Talk to` off a
+      // right-click menu. It names a TARGET ID rather than a tile, because if
+      // she steps aside between the click and the frame the honest answer is
+      // "there is nobody there" rather than a conversation with whoever moved
+      // into the square.
+      //
+      // IT COSTS THE BARRIER NOTHING, which is what this assertion is really
+      // guarding. `handleTalk` spends no turn and pumps nothing — the same rule
+      // `say` and `point` follow — so growing the set by this one entry does not
+      // grow the set of things the barrier can be made to wait for.
+      'talk',
       'unequip',
     ]);
   });

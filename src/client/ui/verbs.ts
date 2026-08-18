@@ -154,6 +154,7 @@ const INVITE = 'Invite to party';
 const ATTACK = 'Attack';
 const WALK_UP_TO = 'Walk up to';
 const INSPECT = 'Inspect';
+const TALK_TO = 'Talk to';
 const TRAVEL_HERE = 'Travel here';
 const POINT_HERE = 'Point here';
 const PICK_UP = 'Pick up';
@@ -207,6 +208,36 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
       // arrival would spend a turn nobody asked for, and it would fire straight
       // through the "a hostile became visible" interrupt that travel exists to
       // honour.
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * SOMEBODY WHO LIVES HERE GETS A DIFFERENT LIST, AND NO `Attack` ROW.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A townsfolk is a `Monster` on the server — deliberately, so she is drawn
+       * by the same painter and seen by the same FOV — so without this branch she
+       * arrives in this case and is offered `Attack`.
+       *
+       * THE ROW IS ABSENT, NOT GREYED, and that is the opposite of what this file
+       * does everywhere else. A greyed row exists to teach that the thing is
+       * possible and needs one more step: `Attack` greys out of reach because
+       * walking closer makes it work. Greying it here would promise that standing
+       * next to Merrow lets you hit her, which is false in a way no number of
+       * steps fixes — `areEnemies` refuses it at three separate sites. A row that
+       * can never become enabled is a lie with a tooltip.
+       *
+       * `Talk to` GREYS OUT OF REACH, because that one really is a step away.
+       */
+      if (target.actor.faction === 'townsfolk') {
+        return {
+          title: target.actor.name,
+          items: [
+            { action: MapVerb.Talk, label: TALK_TO, enabled: ctx.adjacent },
+            { action: MapVerb.Travel, label: WALK_UP_TO, enabled: true },
+            { action: MapVerb.Inspect, label: INSPECT, enabled: true },
+          ],
+        };
+      }
+
       return {
         title: target.actor.name,
         items: [

@@ -469,6 +469,26 @@ export type ActorView = {
   y: number;
   kind: ActorKind;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH SIDE — and without it a shopkeeper is drawn as something to kill.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `kind` cannot answer this. A townsfolk is a `Monster` on the server for a
+   * deliberate reason (`engine/actor.ts#Faction`: she is a body on a tile, drawn
+   * by the same painter and seen by the same FOV, and only who may hit her
+   * differs) — so a client reading `kind` alone puts a hostile ring under her,
+   * offers `Attack` on right-click, and lets a travel path end in a swing.
+   *
+   * ABSENT MEANS HOSTILE-AS-BEFORE, not "unknown". Every monster in the roster
+   * is `Redacted` and the field is omitted for them, so a client that ignores
+   * this behaves exactly as it always has — which is why adding it forces no
+   * version bump.
+   *
+   * `'townsfolk'` is the only value a client ever needs to branch on. The string
+   * is the server's `Faction` value verbatim so there is nothing to translate.
+   */
+  faction?: string;
+  /**
    * THE UNDER-TOKEN RING, and the only reason this field is on the wire.
    *
    * `ui_token_ring_elite.png` cannot be chosen from anything else the client
@@ -1919,6 +1939,39 @@ const RespawnSchema = z.strictObject({
 const ACTOR_ID_MAX_CHARS = 64;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `talk` — SPEAK TO SOMEBODY WHO LIVES HERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ A TARGET ID, NOT A TILE, AND THAT IS THE DIFFERENCE FROM `point` ═══
+ * `point` names a TILE because a player is pointing at ground and the server
+ * resolves whatever happens to be on it. Talking names a PERSON: if the
+ * shopkeeper steps aside between the click and the frame, the honest answer is
+ * "she is not there" rather than a conversation with whoever moved into the
+ * square. The id is re-checked server-side against range, line of sight and
+ * faction — the client's opinion about who it clicked is an opinion.
+ *
+ * ═══ NO VERSION BUMP, AND THE REASON IS THE DIRECTION ═══
+ * This is a member of `ClientMsg`, the INBOUND union. An older client simply
+ * never sends it; nothing it already sends changes shape, and nothing it
+ * receives does either. `src/shared/version.ts` forces a bump when an older
+ * client would MISREAD something, and a frame it never emits cannot be misread.
+ * The reply is an ordinary Margin `log` line, which every client since v3 draws.
+ *
+ * ═══ IT DOES NOT ADVANCE THE WORLD ═══
+ * Like `say` and `point`, and for the reason those two carry a rate limit: a
+ * frame that costs the sender nothing must not be a way to make the server do
+ * work. Talking spends no turn and pumps nothing — a town has no clock running
+ * anyway, which is a fact the reply logic depends on rather than ignores.
+ */
+const TalkSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('talk'),
+  /** WHO. Re-checked server-side; see the note above. */
+  targetId: z.string().min(1).max(ACTOR_ID_MAX_CHARS),
+});
+
+/**
  * Longest class id a client may name. `watchman` is 8 characters and the longest
  * one MVP authors is `alchemist` at 9; 64 matches `ACTOR_ID_MAX_CHARS` and
  * `TalentSchema`'s own cap so there is one number to remember, and it is headroom
@@ -2554,6 +2607,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   HoldSchema,
   SaySchema,
   PointSchema,
+  TalkSchema,
   ReviveSchema,
   RespawnSchema,
   ChooseClassSchema,
@@ -2580,6 +2634,7 @@ export type ClientCommit = z.infer<typeof CommitSchema>;
 export type ClientHold = z.infer<typeof HoldSchema>;
 export type ClientSay = z.infer<typeof SaySchema>;
 export type ClientPoint = z.infer<typeof PointSchema>;
+export type ClientTalk = z.infer<typeof TalkSchema>;
 export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
 export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
