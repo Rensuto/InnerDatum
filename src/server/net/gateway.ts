@@ -4262,6 +4262,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // dropped inside an instance must be removed from THAT world, not from the
     // one their session happened to start in. See `homeOf`.
     const home = homeOf(actorId);
+    // THE REALM ITSELF, resolved WHILE THE BODY IS STILL IN IT. `homeOf` answers
+    // a `PumpTarget`, which is deliberately the three fields a pump needs and
+    // not a realm — but the reaper needs `kind` and `lingerMs`, and after
+    // `removePlayer` below there is no body left to resolve a realm from.
+    const homeRealm = opts.realms?.get(home.id);
     graceTimers.delete(actorId);
     dropResumeToken(actorId);
     connByActor.delete(actorId);
@@ -4310,7 +4315,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     home.world.removePlayer(actorId);
     broadcast({ v: PROTOCOL_VERSION, t: 'left', id: actorId }, undefined, audienceFor(home.id));
     app.log.info({ actorId, realmId: home.id }, 'reconnect grace expired — body recalled');
-    pumpAndBroadcast(home);
+    /**
+     * AND THE INSTANCE THEY DROPPED IN MAY NOW BE EMPTY — see the long note in
+     * `crossIntoRealm`, which is the other half of this same gap.
+     *
+     * THIS PATH IS THE LAST CHANCE THERE IS. The only occupant's session is gone
+     * and nothing will ever visit that realm again, so a reap not armed here is
+     * never armed at all: the realm, its world, its monsters and its six memo
+     * rows live for the lifetime of the process. `forgetRealmMemos` calls that
+     * shape *"small, unbounded, and exactly the kind of leak nobody finds
+     * because nothing ever breaks"*.
+     */
+    if (homeRealm !== undefined) reapIfEmpty(homeRealm);
+    // GUARDED, because the reap may just have closed it.
+    if (opts.realms === undefined || opts.realms.get(home.id) !== undefined) {
+      pumpAndBroadcast(home);
+    }
   };
 
   const startGrace = (actorId: string): void => {
@@ -6314,11 +6334,42 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       'a body crossed into a site',
     );
 
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE ROOM THEY LEFT MAY NOW BE EMPTY. `leaveRealm` HAS ALWAYS DONE THIS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * There are three ways the last body leaves an instance — walking back out
+     * of the door (`leaveRealm`), FOLLOWING somebody into another realm (here),
+     * and the reconnect grace expiring where they stood (`recallBody`) — and
+     * only the first armed the reaper. So `INSTANCE_LINGER_MS`, which says a
+     * delve waits five minutes for you and is then thrown away, waited FOREVER
+     * through this path: `Realms.open` hands a party back its existing
+     * non-sealed instance, so a party that cleared the Underworks in the
+     * morning, followed a friend out and came back that evening got their
+     * morning floor — every monster dead, every chest open, no loot and no
+     * fight.
+     *
+     * IT IS WORSE FOR AN AMBUSH, whose `lingerMs` is 0 for a reason of its own:
+     * *"fleeing has to MEAN something. If the breach you ran out of were still
+     * there thirty seconds later, running would be a way to save-scum a fight."*
+     * Following a party member out of a breach left the breach standing.
+     *
+     * The overworld and the towns are refused twice over — `reapIfEmpty` returns
+     * on `isShared` before it asks anything, and `Realms.close` refuses a shared
+     * realm outright — which matters because this is the path a body takes out
+     * of Alderbrook, and Alderbrook is routinely empty at four in the morning.
+     */
+    reapIfEmpty(from);
+
     // BOTH BARRIERS JUST CHANGED SHAPE — one lost a member, one gained one — so
     // BOTH are named. This used to rely on `pumpAndBroadcast` ticking every
     // realm in the process; naming them is the same settlement at a fraction of
     // the cost, and it says which two realms this act was actually about.
-    pumpAndBroadcast(from);
+    //
+    // GUARDED, because the line above may just have closed `from` — pumping a
+    // realm that no longer exists is the same trap `leaveRealm` names.
+    if (realms.get(from.id) !== undefined) pumpAndBroadcast(from);
     pumpAndBroadcast(to);
   };
 
