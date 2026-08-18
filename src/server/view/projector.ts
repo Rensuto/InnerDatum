@@ -765,11 +765,31 @@ export function projectResource(
   return {
     v: PROTOCOL_VERSION,
     t: 'resource',
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * REBUILT FIELD BY FIELD, WHICH IS WHY `ap` HAD TO BE ADDED HERE TOO.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `toResourceView` was taught to carry the acting budget and the gateway's
+     * memo key was taught to notice it change — and the number still never
+     * reached a socket, because this function copies four named fields and
+     * silently drops everything else. `tools/status-live.mjs` said so in one
+     * line: "NO `resource` frame carried `ap`".
+     *
+     * The explicit copy stays rather than becoming a spread: it is what makes
+     * this the ONE place that decides what a viewer is told about their own
+     * budgets, and a spread would forward whatever a future `ResourceView`
+     * happens to gain — which is how a server-only field ends up on a wire
+     * nobody audited. The cost is exactly this: a new field is two edits, and
+     * the second one is easy to forget. A live probe is what catches it.
+     */
     resource: {
       kind: resource.kind,
       current: resource.current,
       max: resource.max,
       discrete: resource.discrete,
+      ...(resource.ap === undefined ? {} : { ap: resource.ap }),
+      ...(resource.maxAp === undefined ? {} : { maxAp: resource.maxAp }),
     },
   };
 }

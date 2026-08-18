@@ -2419,17 +2419,28 @@ function talentById(id: string | null): LoadoutTalent | null {
  * ADVISORY, and used only to grey a button. The server re-checks every budget on
  * arrival and answers `no_resource`; nothing here refuses to send.
  *
- * ONLY THE CLASS RESOURCE IS CHECKED, because only the class resource is on the
- * wire. `TalentCostView` also carries `ap` and `mp` — the intra-turn budget — and
- * there is no frame yet that says how much of either the viewer has left, so a
- * talent that is unaffordable purely on AP shows as ready and is refused by the
- * server with a sentence. That is the honest failure: guessing at a number
- * nobody sent would grey buttons that are fine. When an AP/MP frame lands, the
- * two extra comparisons go here and nothing else changes.
+ * THE AP FRAME LANDED, AND THIS IS THE COMPARISON IT WAS WAITING FOR.
+ *
+ * This note used to end *"When an AP/MP frame lands, the two extra comparisons
+ * go here and nothing else changes"*, and that turned out to be exactly right —
+ * `ResourceView` now carries `ap`/`maxAp` and the AP half is below. It is still
+ * ADVISORY: the server re-checks every budget on arrival and answers
+ * `no_resource`, and nothing here refuses to send.
+ *
+ * MP IS STILL NOT CHECKED, deliberately. Only one talent in the game spends any
+ * (Fog Step, 1), and a client that greyed a button on a budget the engine does
+ * not yet gate would be lying in the other direction. It goes in beside the AP
+ * line when a move costs MP — one comparison, same shape.
+ *
+ * `ap === undefined` MEANS "AN OLDER SERVER", not "no budget". The field is
+ * optional so that no version bump was needed, which means a client can outlive
+ * a server that never sends it; treating absent as zero would grey every button
+ * on the bar.
  */
 function affordable(talent: LoadoutTalent): boolean {
-  if (talent.cost.resource <= 0) return true;
   if (resource === null) return true;
+  if (resource.ap !== undefined && talent.cost.ap > resource.ap) return false;
+  if (talent.cost.resource <= 0) return true;
   return resource.current >= talent.cost.resource;
 }
 

@@ -595,6 +595,11 @@ export function toResourceView(sheet: TalentSheet): ResourceView {
     current: sheet.resource.value,
     max: sheet.resource.max,
     discrete: RESOURCE_RULES[sheet.resource.kind].discrete,
+    // THE ACTING BUDGET. See `ResourceView.ap` — the twelve talents have always
+    // been priced against it and no frame ever carried it, so the client could
+    // not draw the number its own hotbar was printing a cost for.
+    ap: sheet.ap,
+    maxAp: sheet.maxAp,
   };
 }
 

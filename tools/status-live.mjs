@@ -542,6 +542,44 @@ if (quietAt === -1) {
   console.log(`  ok — "${allLines[lastKillAt]}" then "${allLines[quietAt]}"`);
 }
 
+/**
+ * THE ACTING BUDGET, AS IT CROSSED THE WIRE.
+ *
+ * `ResourceView.ap` is memoised by `sendHotbarIfChanged`'s viewer key, and a
+ * field missing from that key is a field the client is never told changed — so
+ * the first thing to check is that it arrives at all. It did not, on the first
+ * run of this check: `projectResource` rebuilds the view field by field and
+ * silently dropped it, two files downstream of where it was added.
+ *
+ * ═══ A CONSTANT READING IS CORRECT TODAY, AND WILL NOT BE LATER ═══
+ * Under the current engine one submitted action ends the actor's turn, and
+ * `actBase` refills `sheet.ap = sheet.maxAp` inside the same pump — so the
+ * budget is always back to full before any frame is composed. Seeing 6/6 on
+ * every frame is the TRUTH, not a stuck memo.
+ *
+ * That stops being true when the round stays open (DECISIONS.md D1: "spendable
+ * across several talents in one park"). At that point a mid-round reading of
+ * 3/6 has to appear here, and a constant 6/6 becomes the memo-key bug this
+ * check was originally written to catch. Both readings are printed rather than
+ * judged, because which one is correct depends on a change this tool cannot
+ * see.
+ */
+const apSeen = frames
+  .filter((f) => f.t === 'resource' && f.resource?.ap !== undefined)
+  .map((f) => `${String(f.resource.ap)}/${String(f.resource.maxAp)}`);
+beat('THE AP BUDGET, ON THE WIRE');
+if (apSeen.length === 0) {
+  console.log('  NO `resource` FRAME CARRIED `ap` — the projection is not wired.');
+} else {
+  const distinct = [...new Set(apSeen)];
+  console.log(`  ${String(apSeen.length)} frame(s) carried ap; values seen: ${distinct.join(' ')}`);
+  console.log(
+    distinct.length === 1
+      ? '  constant — correct while one action ends the round; a bug once it stays open.'
+      : '  it moves mid-round, which is what an open round should look like.',
+  );
+}
+
 const effectFrames = kinds.get('effects') ?? 0;
 console.log(`\n  'effects' frames: ${String(effectFrames)}`);
 console.log(`  a stun reached this client: ${stunSeen ? 'YES' : 'no'}`);

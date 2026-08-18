@@ -805,6 +805,39 @@ export type ResourceView = {
   current: number;
   max: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ACTING BUDGET — and for four milestones no frame carried it.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `DECISIONS.md` D1 is **Accepted** and its table reads *"Intra-turn budget:
+   * 6 AP / 3 MP, spendable across several talents in one park"*. Every one of
+   * the twelve talents is priced against it — Ward Rush at 2 is called "the
+   * cheapest engage in the game" and `ward_rush.ts` derives its own cooldown
+   * from *"an Inner Datum turn holds ~2 actions from a 6 AP budget"*.
+   *
+   * The CONTENT was priced for that round. The ENGINE was not: one submitted
+   * action ends the actor's turn, so Ward Rush at 2 and Iron Curtain at 5 cost
+   * a player exactly the same thing. And with no frame carrying the budget, the
+   * client could not even show the number — `affordable()` in client/main.ts
+   * says so in its own docblock: *"a talent that is unaffordable purely on AP
+   * shows as ready and is refused by the server with a sentence."*
+   *
+   * This is the frame that note is waiting for. It makes the number VISIBLE and
+   * TRUE; it does not yet make the round open — that is the engine change, and
+   * it lands separately so a deploy is never half-tuned.
+   *
+   * ═══ OPTIONAL, SO NO VERSION BUMP ═══
+   * An old client ignores a field it cannot name, which this file's history
+   * calls *"textbook… precisely what does NOT force a bump"*. That matters more
+   * than tidiness here: a bump forces every player to reload, and there is no
+   * reason to interrupt a session in progress to show them a pip row.
+   *
+   * VIEWER-PRIVATE, like the rest of `ResourceView`. Another detective's AP is
+   * not yours to see, and the party pane has never claimed otherwise.
+   */
+  ap?: number;
+  maxAp?: number;
+  /**
    * Draw PIPS, not a bar.
    *
    * ═══ THE FLAG DID NOT CHANGE. ITS JUSTIFICATION DID. ═══

@@ -211,6 +211,51 @@ export function drawResource(options: ResourceOptions): void {
     cursor += PIP_PX + PIP_GAP;
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ACTING BUDGET, ON THE SAME ROW, AFTER A GAP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * AP is what the twelve talents are priced in — Ward Rush 2, Iron Curtain 5,
+   * out of 6 — and until `ResourceView.ap` landed no frame carried it, so the
+   * hotbar printed a cost against a number the player could not see.
+   *
+   * ═══ SMALLER, DIMMER, AND SECOND ═══
+   * The class resource is the thing a player builds a plan around across a
+   * whole fight; AP is spent and refilled every single turn. Drawing them at
+   * equal weight would make the round's small change compete with the fight's
+   * big one. So these are half-height ticks in the muted ink, set after the
+   * resource label — present, countable, and never the first thing the eye
+   * lands on.
+   *
+   * ═══ TICKS AND NOT PIPS, ON PURPOSE ═══
+   * `drawPip` reaches for authored 12px art keyed by `ResourceKind`, and there
+   * is no AP art in the manifest — inventing a key here would draw the pink
+   * missing-asset square on every frame. A tick is a rectangle, needs no
+   * manifest entry, and reads correctly at six across.
+   *
+   * ABSENT MEANS AN OLDER SERVER, not a budget of zero: the field is optional
+   * so that adding it forced no version bump, so a client can outlive a server
+   * that never sends it. Drawing nothing is the honest answer.
+   */
+  if (resource.ap !== undefined && resource.maxAp !== undefined && resource.maxAp > 0) {
+    cursor += PIP_GAP * 3;
+    const tickW = 3;
+    const tickH = Math.max(4, Math.floor(PIP_PX / 2));
+    const tickY = y + Math.floor((PIP_PX - tickH) / 2);
+    const spent = Math.max(0, Math.min(resource.maxAp, Math.floor(resource.ap)));
+    for (let i = 0; i < resource.maxAp; i += 1) {
+      if (cursor + tickW > x + width) break;
+      ctx.fillStyle = i < spent ? PALETTE.SILVER : 'rgba(255,255,255,0.18)';
+      ctx.fillRect(cursor, tickY, tickW, tickH);
+      cursor += tickW + 2;
+    }
+    cursor += PIP_GAP;
+    ctx.fillStyle = PALETTE.SILVER;
+    if (cursor < x + width) ctx.fillText('AP', cursor, y + PIP_PX / 2);
+    cursor += 16;
+  }
+
   cursor += PIP_GAP * 2;
   ctx.fillStyle = PALETTE.BONE;
   // The figure is printed unless the pips ARE the figure. A discrete pool with a

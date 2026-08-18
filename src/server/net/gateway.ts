@@ -3489,7 +3489,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // exactly the part nothing can render.
       resource === null
         ? '-'
-        : `${resource.resource.kind}:${Math.floor(resource.resource.current)}/${resource.resource.max}`,
+        : `${resource.resource.kind}:${Math.floor(resource.resource.current)}/${resource.resource.max}` +
+          // ═══ AP IS PART OF THE KEY OR THE ROW NEVER MOVES ═══
+          // This memo is what suppresses a duplicate `resource` frame, so a
+          // field that is not in the key is a field the client is never told
+          // changed. AP is spent and refilled every single turn; leaving it out
+          // would ship the pip row and leave it frozen at whatever it happened
+          // to hold the first time somebody's class resource moved.
+          `|ap:${String(resource.resource.ap ?? -1)}/${String(resource.resource.maxAp ?? -1)}`,
     ].join('|');
     if (key === session.viewerKey) return;
     session.viewerKey = key;
