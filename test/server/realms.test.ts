@@ -67,7 +67,11 @@ describe('the overworld', () => {
     const realms = makeRealms();
     expect(realms.overworld.id).toBe(OVERWORLD_ID);
     expect(realms.overworld.kind).toBe(RealmKind.Overworld);
-    expect(realms.overworld.name).toBe('Alderbrook');
+    // THE REGION, NOT THE CITY. They shared the name until a first-session
+    // walkthrough showed a player being told they were in "Alderbrook" while
+    // standing at the gate of a different Alderbrook they could walk into.
+    expect(realms.overworld.name).toBe('The Alderbrook Moor');
+    expect(realms.overworld.name).not.toBe(SITES.get('site:alderbrook')?.name);
     expect(realms.all().filter((r) => r.kind === RealmKind.Overworld)).toHaveLength(1);
   });
 

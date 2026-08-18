@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  bearingWord,
   DIR_ORDER,
   DIR_VECTORS,
   bresenham,
@@ -234,5 +235,56 @@ describe('bresenham', () => {
     }
 
     expect(violations).toEqual([]);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   WHICH WAY IS THE TOWN. THE ANSWER A PLAYER WALKS ON.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This is read once, in a sentence, and then somebody walks for forty tiles on
+ * it. Getting it subtly wrong is worse than not saying it: a player who walks
+ * north-east when the honest answer was east is wrong for the whole journey and
+ * blames the map.
+ */
+describe('bearingWord', () => {
+  it('names the four cardinals, with north being screen-up', () => {
+    // `dy` is screen-down everywhere in this file, so north is NEGATIVE — the
+    // one sign error that would send every player in the game backwards.
+    expect(bearingWord(0, -5)).toBe('north');
+    expect(bearingWord(0, 5)).toBe('south');
+    expect(bearingWord(5, 0)).toBe('east');
+    expect(bearingWord(-5, 0)).toBe('west');
+  });
+
+  it('names a diagonal only when the two axes are comparable', () => {
+    expect(bearingWord(10, -10)).toBe('north-east');
+    expect(bearingWord(-8, 8)).toBe('south-west');
+    expect(bearingWord(-10, -12)).toBe('north-west');
+  });
+
+  it('COLLAPSES TO A CARDINAL when one axis dominates — the whole point', () => {
+    // Forty east and four north is EAST. The naive version returns a diagonal
+    // whenever both offsets are non-zero, and somebody walking north-east from
+    // here is wrong for almost the entire journey.
+    expect(bearingWord(40, -4)).toBe('east');
+    expect(bearingWord(-40, 4)).toBe('west');
+    expect(bearingWord(4, -40)).toBe('north');
+    expect(bearingWord(-4, 40)).toBe('south');
+  });
+
+  it('holds the boundary at exactly twice, so the rule has one reading', () => {
+    // 2:1 is still a diagonal; past 2:1 it is not. Stated as a test because
+    // "more than twice" and "at least twice" are one character apart in the
+    // source and produce different words for a real distance.
+    expect(bearingWord(20, -10)).toBe('north-east');
+    expect(bearingWord(21, -10)).toBe('east');
+  });
+
+  it('says `here` for no offset rather than an empty string', () => {
+    // An empty string would render as `Alderbrook — , 0 tiles`, which looks
+    // like a bug in the sentence rather than a place you are standing on.
+    expect(bearingWord(0, 0)).toBe('here');
   });
 });

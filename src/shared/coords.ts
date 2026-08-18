@@ -219,3 +219,33 @@ export function bresenham(from: TileXY, to: TileXY): TileXY[] {
 
   return flipped ? path.reverse() : path;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A COARSE COMPASS BEARING, FOR A SENTENCE SOMEBODY READS ONCE AND WALKS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Eight points, never degrees. This is used to tell a player which way a town
+ * is — "Ashwick Alchemy Row — east, 27 tiles" — and "east-north-east" is a
+ * number pretending to be a direction.
+ *
+ * ═══ A CARDINAL WHEN ONE AXIS DOMINATES, AND THAT IS THE WHOLE SUBTLETY ═══
+ * The naive version returns a diagonal whenever both offsets are non-zero, so
+ * a place forty tiles east and four north reads as "north-east" — and somebody
+ * who walks north-east from there is wrong for almost the entire journey. When
+ * one axis is more than twice the other, the smaller one is noise and the
+ * honest answer is the cardinal.
+ *
+ * `dy` IS SCREEN-DOWN, as everywhere else in this file, so north is negative.
+ */
+export function bearingWord(dx: number, dy: number): string {
+  const ns = dy < 0 ? 'north' : dy > 0 ? 'south' : '';
+  const ew = dx > 0 ? 'east' : dx < 0 ? 'west' : '';
+  if (ns === '' && ew === '') return 'here';
+  if (ns !== '' && ew !== '') {
+    if (Math.abs(dx) > Math.abs(dy) * 2) return ew;
+    if (Math.abs(dy) > Math.abs(dx) * 2) return ns;
+    return `${ns}-${ew}`;
+  }
+  return ns === '' ? ew : ns;
+}

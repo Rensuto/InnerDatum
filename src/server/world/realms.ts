@@ -549,7 +549,26 @@ export function createRealms(opts: RealmsOptions): Realms {
   };
 
   const overworldMap = makeOverworld();
-  const overworld = build(OVERWORLD_ID, RealmKind.Overworld, 'Alderbrook', overworldMap, {});
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE REGION IS NOT THE CITY, AND IT USED TO SHARE ITS NAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Both were called Alderbrook. Driving a first session is what made that
+   * indefensible: a player spawns at the CITY's gate and is told, by the
+   * arrival line, that they are in "Alderbrook" — while the marker under their
+   * feet, the one they can walk into, is also "Alderbrook". Two different
+   * places, one word, three seconds into a first session.
+   *
+   * ToME keeps them apart for the same reason: the world map is Maj'Eyal and
+   * the town you are standing outside is Derth.
+   */
+  const overworld = build(
+    OVERWORLD_ID,
+    RealmKind.Overworld,
+    'The Alderbrook Moor',
+    overworldMap,
+    {},
+  );
 
   /**
    * COMMON REALMS ARE BUILT AT BOOT, NOT ON FIRST ENTRY.

@@ -56,7 +56,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import websocket from '@fastify/websocket';
 
-import { inBounds } from '../../shared/coords.ts';
+import { bearingWord, inBounds } from '../../shared/coords.ts';
 import {
   ActorKind,
   ErasedReason,
@@ -6655,6 +6655,43 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * scroll past — and the log is where the things they must not scroll past
    * live.
    */
+  /**
+   * The nearest named places, with a compass bearing and a distance.
+   *
+   * CHEBYSHEV DISTANCE, because movement is eight-way — a diagonal step covers
+   * the same ground as an orthogonal one, so a Euclidean number would tell a
+   * player something their legs disagree with.
+   *
+   * THE BEARING IS COARSE ON PURPOSE. Eight compass points, not degrees: this
+   * is a sentence somebody reads once and then walks, and "east-north-east" is
+   * a number pretending to be a direction.
+   */
+  const nearestSites = (
+    realm: PumpTarget,
+    fromX: number,
+    fromY: number,
+    take: number,
+  ): { name: string; bearing: string; distance: number }[] => {
+    const full = opts.realms?.get(realm.id);
+    if (full === undefined) return [];
+
+    const out: { name: string; bearing: string; distance: number }[] = [];
+    for (const [cell, siteId] of full.sites) {
+      const [sx, sy] = cell.split(',').map(Number);
+      if (sx === undefined || sy === undefined || Number.isNaN(sx) || Number.isNaN(sy)) continue;
+      const distance = Math.max(Math.abs(sx - fromX), Math.abs(sy - fromY));
+      // NOT THE ONE YOU ARE STANDING ON. "Alderbrook — here, 0 tiles" is a line
+      // that costs a slot and says nothing; the place's own name is already the
+      // headline above it.
+      if (distance === 0) continue;
+      const def = SITES.get(siteId);
+      if (def === undefined) continue;
+      out.push({ name: def.name, bearing: bearingWord(sx - fromX, sy - fromY), distance });
+    }
+    out.sort((a, b) => a.distance - b.distance);
+    return out.slice(0, take);
+  };
+
   const announceArrival = (session: Session, realm: PumpTarget, name: string): void => {
     const actorId = session.actorId;
     if (actorId === null) return;
@@ -6680,6 +6717,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         t: 'log',
         lines: blurb === undefined ? [line(name)] : [line(name), { ...line(blurb), depth: 1 }],
       });
+    }
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════
+     * AND ON THE OPEN COUNTRY, WHICH WAY THE NEAREST PLACES ARE.
+     * ═════════════════════════════════════════════════════════════════════
+     * The second thing a first session showed: a stranger stands at
+     * Alderbrook's gate looking at a 170x100 moor with thirteen markers on
+     * it and NOTHING telling them that any of them is worth walking to, or
+     * which way. The map answers "where am I" and nothing answers "where do
+     * I go", which for a thirty-minute session is the more important
+     * question by a wide margin.
+     *
+     * THREE, NOT THIRTEEN. A list of every destination is a table, and a
+     * table is something a player reads once and never again. Three is a
+     * choice — near, a little further, and one that is clearly a trek — and
+     * it is short enough to sit under the place's own line without pushing
+     * anything off the top.
+     *
+     * ONLY ON THE OVERWORLD. Inside a room, "what is near" is the room.
+     */
+    if (full?.kind === RealmKind.Overworld) {
+      const body = realm.world.getActor(actorId);
+      const near = body === undefined ? [] : nearestSites(realm, body.x, body.y, 3);
+      if (near.length > 0) {
+        logSeq += 1;
+        send(session.socket, {
+          v: PROTOCOL_VERSION,
+          t: 'log',
+          lines: near.map((entry, index) => ({
+            seq: logSeq + index,
+            lane: LogLane.Record,
+            gameTurn: realm.world.turn.clock.gameTurn,
+            text: `${entry.name} — ${entry.bearing}, ${String(entry.distance)} tiles`,
+            depth: 1,
+          })),
+        });
+        logSeq += near.length;
+      }
     }
 
     // TO EVERYBODY ELSE IN THE ROOM: who just walked in. Excluded from the
