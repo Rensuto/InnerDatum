@@ -171,6 +171,34 @@ export function dangerWord(spec: DelveSpec): string {
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND WHETHER TO BRING SOMEBODY, WHICH IS THE PART A NUMBER CANNOT SAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The danger word grades a room; this answers the question the grade raises.
+ * It matters because the co-op incentive in this game is enormous and entirely
+ * invisible: `awardExperience` pays every party member a FULL share with no
+ * division by headcount, so three people partied earn three times what three
+ * people standing together unpartied do.
+ *
+ * A player has no way to discover that by playing, and every other co-op game
+ * they have touched divides a kill — so the SAFE assumption is that partying
+ * costs them. Two words on the worst rooms is the cheapest correction:
+ * somebody who reads "grim · bring a party" and does will find out the rest by
+ * levelling twice as fast.
+ *
+ * ONLY ON THE ROOMS WHERE IT IS TRUE. Suggesting a party for Blackwood would
+ * be advice a solo player can disprove in four minutes, and advice that is
+ * wrong once is advice nobody reads again.
+ */
+export function partyHint(spec: DelveSpec): string | null {
+  const word = dangerWord(spec);
+  if (word === 'grim') return 'bring a party';
+  if (word === 'dangerous') return 'hard alone';
+  return null;
+}
+
+/**
  * Every tile a resident could legally stand on, far enough from the door.
  *
  * SEARCHED, NOT COMPUTED — `seedAmbush`'s hard-won lesson. A generated floor

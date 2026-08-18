@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DELVES, dangerWord } from '../../src/server/content/delve.ts';
+import { DELVES, dangerWord, partyHint } from '../../src/server/content/delve.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
@@ -169,5 +169,36 @@ describe('how bad it is in there, in one word', () => {
     // A gradient every marker reports identically is not a gradient.
     const words = new Set([...DELVES.values()].map(dangerWord));
     expect(words.size).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('whether to bring somebody', () => {
+  it('suggests a party only where a solo player would actually struggle', () => {
+    // ADVICE THAT IS WRONG ONCE IS ADVICE NOBODY READS AGAIN. Suggesting a
+    // party for Blackwood is something a solo player disproves in four minutes.
+    const near = DELVES.get('site:blackwood_outskirts');
+    const far = DELVES.get('site:outer_index');
+    if (near === undefined || far === undefined) throw new Error('unreachable');
+    expect(partyHint(near)).toBeNull();
+    expect(partyHint(far)).toBe('bring a party');
+  });
+
+  it('says nothing at all for the quiet rooms, rather than saying "go alone"', () => {
+    // A hint on every room is furniture. The absence IS the signal for the ones
+    // a player can walk into without thinking about it.
+    const hinted = [...DELVES.values()].filter((spec) => partyHint(spec) !== null).length;
+    expect(hinted).toBeGreaterThan(0);
+    expect(hinted).toBeLessThan(DELVES.size);
+  });
+
+  it('tracks the danger word rather than being a second opinion about it', () => {
+    // Derived, like the word itself. Two hand-authored fields describing the
+    // same room drift the day somebody retunes one of them.
+    for (const spec of DELVES.values()) {
+      const word = dangerWord(spec);
+      const hint = partyHint(spec);
+      if (word === 'grim' || word === 'dangerous') expect(hint).not.toBeNull();
+      else expect(hint).toBeNull();
+    }
   });
 });

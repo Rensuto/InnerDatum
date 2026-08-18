@@ -115,7 +115,7 @@ import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
-import { DELVES, dangerWord } from '../content/delve.ts';
+import { DELVES, dangerWord, partyHint } from '../content/delve.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -6930,11 +6930,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
        * the word exactly where it matters.
        */
       const spec = DELVES.get(siteId);
+      const hint = spec === undefined ? null : partyHint(spec);
       out.push({
         name: def.name,
         bearing: bearingWord(sx - fromX, sy - fromY),
         distance,
-        danger: spec === undefined ? null : dangerWord(spec),
+        // THE GRADE, AND WHAT IT IMPLIES. `partyHint` says why the second half
+        // exists: the co-op incentive here is enormous and invisible, and a
+        // player's prior from every other co-op game is that partying costs
+        // them.
+        danger:
+          spec === undefined
+            ? null
+            : hint === null
+              ? dangerWord(spec)
+              : `${dangerWord(spec)} · ${hint}`,
       });
     }
     out.sort((a, b) => a.distance - b.distance);
@@ -8477,6 +8487,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // the reason the floor's barrier just changed shape and everybody on it is
     // entitled to know why the person beside them stopped being waited for.
     broadcastRecordLine(realm, result.notice);
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE REASON TO HAVE DONE IT, SAID ONCE, AT THE MOMENT IT BECOMES TRUE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `awardExperience` pays EVERY party member a FULL share, computed from
+     * their own level, with no division by headcount and no proximity check
+     * (scheduler.ts states all three as deliberate). So a party of three earns
+     * three times the experience of three people standing in the same room not
+     * partied — which is the single largest mechanical incentive in the game,
+     * and it was completely invisible.
+     *
+     * A player could reasonably conclude the opposite. Every other co-op game
+     * they have played divides a kill, so the safe assumption is that partying
+     * COSTS them, and nothing here contradicted it.
+     *
+     * ONCE, WHEN THE PARTY GROWS, and never on a leave or a kick: the fact is
+     * about being in a party, and repeating it every time somebody joins would
+     * turn the one line that teaches the game's best decision into furniture.
+     */
+    if (result.affected.length > 1) {
+      broadcastRecordLine(realm, 'Every kill pays the whole party in full — nothing is split.');
+    }
 
     for (const memberId of result.affected) {
       const conn = connByActor.get(memberId);
