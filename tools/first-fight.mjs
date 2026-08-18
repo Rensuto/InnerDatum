@@ -44,6 +44,8 @@ import { createRealms, ENCOUNTER_SITE } from '../src/server/world/realms.ts';
 import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
 import { CLASSES } from '../src/server/content/classes.ts';
+import { canWalk } from '../src/shared/level.ts';
+import { firstStep } from './walk.mjs';
 
 /** Enough that one lucky seed cannot carry a column. */
 const RUNS = Number(process.argv[2] ?? 24);
@@ -78,9 +80,14 @@ function fight(cls, seed) {
     const near = foes
       .map((f) => ({ f, d: Math.max(Math.abs(f.x - p.x), Math.abs(f.y - p.y)) }))
       .sort((a, b) => a.d - b.d)[0];
-    const dx = Math.sign(near.f.x - p.x);
-    const dy = Math.sign(near.f.y - p.y);
-    const dir = `${dy < 0 ? 'n' : dy > 0 ? 's' : ''}${dx > 0 ? 'e' : dx < 0 ? 'w' : ''}` || 'e';
+    // PATHFOUND, NOT STRAIGHT-LINE. See tools/walk.mjs: a straight-line walker
+    // pins itself on the first wall and reports the room as unclearable.
+    const dir =
+      firstStep(
+        (x, y) => canWalk(arena.world.level, x, y),
+        { x: p.x, y: p.y },
+        { x: near.f.x, y: near.f.y },
+      ) ?? 'e';
     arena.engine.submitMove('p1', dir);
     arena.engine.pump();
     worst = Math.min(worst, p.hp / p.maxHp);

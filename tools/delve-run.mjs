@@ -36,6 +36,8 @@ import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
 import { CLASSES } from '../src/server/content/classes.ts';
 import { ActorKind } from '../src/shared/protocol.ts';
+import { canWalk } from '../src/shared/level.ts';
+import { firstStep } from './walk.mjs';
 
 const RUNS = Number(process.argv[2] ?? 8);
 /** Long enough to cross a 34x30 room several times and kill ten things. */
@@ -80,9 +82,13 @@ function run(site, size, seed) {
         .map((f) => ({ f, d: Math.max(Math.abs(f.x - b.x), Math.abs(f.y - b.y)) }))
         .sort((x, y) => x.d - y.d)[0];
       if (near === undefined) break;
-      const dx = Math.sign(near.f.x - b.x);
-      const dy = Math.sign(near.f.y - b.y);
-      const dir = `${dy < 0 ? 'n' : dy > 0 ? 's' : ''}${dx > 0 ? 'e' : dx < 0 ? 'w' : ''}` || 'e';
+      // PATHFOUND, NOT STRAIGHT-LINE — see tools/walk.mjs.
+      const dir =
+        firstStep(
+          (x, y) => canWalk(realm.world.level, x, y),
+          { x: b.x, y: b.y },
+          { x: near.f.x, y: near.f.y },
+        ) ?? 'e';
       realm.engine.submitMove(b.id, dir);
     }
     realm.engine.pump();
