@@ -95,6 +95,31 @@ export const opsRoutes: FastifyPluginAsync<OpsOptions> = async (app, options) =>
   const startedAt = (options.now ?? Date.now)();
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BODYLESS POST IS THE NORMAL THING AN OPS TOOL SENDS. ACCEPT IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Fastify answers **415 Unsupported Media Type** to a POST carrying no
+   * `Content-Type`, and that is exactly what `Invoke-RestMethod -Method Post`
+   * sends with no `-Body`. So the deploy script's shutdown call was refused
+   * before it reached the handler, every time, and the script correctly went on
+   * to report `stopped (forced -- pending autosaves may not have flushed)`.
+   *
+   * The instrumentation did its job: the line was true, the feature was inert,
+   * and nothing pretended otherwise. But a shutdown route that only works if the
+   * caller remembers to send `{}` with a JSON header is a trap, and the next
+   * caller — curl, a browser, a person — will fall into it too.
+   *
+   * `POST /shutdown` TAKES NO ARGUMENTS AND NEVER WILL. There is nothing to
+   * parse, so parse nothing and hand the handler `undefined`. This is scoped to
+   * this listener alone — a plugin's content-type parsers do not escape it — and
+   * this listener has two routes, neither of which reads a body.
+   */
+  app.addContentTypeParser('*', (_request, _payload, done) => {
+    done(null, undefined);
+  });
+
+  /**
    * Is the ops surface itself up? Distinct from the GAME's `/healthz`, which
    * says whether players can connect. A deploy script needs both answers and
    * they are not the same question — the game app can be wedged while this one
