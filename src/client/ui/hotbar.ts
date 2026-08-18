@@ -120,27 +120,53 @@
 import { PALETTE } from '../render/canvas.ts';
 import { SLOT_ORDER } from '../../shared/protocol.ts';
 import { DragKind } from './drag.ts';
+import { PanelSkin, drawPanel } from './panel.ts';
 import type { DragSubject } from './drag.ts';
 import type { LoadoutTalent, Slot } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 
 /**
- * The authored frame size. `ui_hotbar_slot_*` are all 72x72.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SLOT, AND IT IS NO LONGER TIED TO A 72-PIXEL PNG.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * ═══ THIS NUMBER IS AN ART CONTRACT AND MAY NOT BE SHRUNK ═══
- * `drawFrame` blits at `sprite.w`/`sprite.h` and IGNORES the rect it is handed —
- * deliberately, because a scaled 72px frame is exactly the resampling the whole
- * integer-scaled backbuffer exists to prevent. So any `SLOT_PX` below 72 leaves
- * a 72-pixel PICTURE sitting over a smaller HIT BOX, with nothing anywhere
- * throwing: clicks along the right and bottom edges would land on the map. The
- * bar was made smaller by trimming the pad and the label strip, which are the
- * only two art-safe levers here.
+ * This used to read 72, under a note headed "THIS NUMBER IS AN ART CONTRACT AND
+ * MAY NOT BE SHRUNK": `ui_hotbar_slot_*` are 72x72, `drawFrame` blitted at the
+ * sprite's own size and ignored the rect it was handed, so a smaller number
+ * left a 72-pixel PICTURE over a smaller HIT BOX and clicks along two edges
+ * landed on the map. The only levers left were the pad and the label strip, and
+ * both were already spent on an earlier request to make the bar smaller.
+ *
+ * That note was right about the blit and wrong about the conclusion. THE
+ * CONSTRAINT WAS THE BLIT, NOT THE ART. `ui_panel_9slice_inset` is a 48x48
+ * NINE-SLICE with 16-pixel corners and `ui/panel.ts` already draws it at any
+ * requested size — that is the entire point of a nine-slice, and the Case Log
+ * has been wearing one all along. Corners are blitted 1:1 and only the flat
+ * edges and centre stretch, so nothing is resampled and the frame is crisp at
+ * 44 exactly as it is at 480.
+ *
+ * ═══ 88 LOGICAL PIXELS OF A 480-PIXEL VIEWPORT WAS EIGHTEEN PER CENT ═══
+ * Reported twice from play, the second time as "massive and covers a LOT of
+ * screen space". The row is now 60 tall and 380 wide instead of 88 and 604 —
+ * two and a half tile rows of world handed back.
+ *
+ * 44 AND NOT LESS: a 16-pixel corner needs 32 before the corners meet, and the
+ * icon inside wants 32 (below). 44 leaves a six-pixel margin all round, which is
+ * what stops the art reading as a sticker on a box.
  */
-export const SLOT_PX = 72;
-/** The authored icon size. `icon_active_*` and `item_*` are all 64x64. */
-const ICON_PX = 64;
-/** The authored plate size. `ui_inventory_cell_*` are 40x40. */
-const PLATE_PX = 40;
+export const SLOT_PX = 44;
+/**
+ * How big an icon is DRAWN in a slot.
+ *
+ * `icon_active_*` and `item_*` are all authored at 64, and this is exactly
+ * half. A 2:1 reduction with smoothing off — which the whole backbuffer already
+ * has — takes every other pixel, so it stays sharp rather than blurring; it is
+ * not the fractional resample the old 72-pixel art contract existed to refuse.
+ * The ratio is fixed here by construction rather than falling out of whatever
+ * size a slot happens to be, which is the part that made the old rule right.
+ */
+const ICON_DRAW_PX = 32;
+
 const SLOT_GAP = 4;
 /**
  * Breathing room above and below the row, inside the backing strip.
@@ -150,6 +176,12 @@ const SLOT_GAP = 4;
  * nothing measures against it, so it is free in a way `SLOT_PX` is not.
  */
 const SLOT_PAD = 2;
+/**
+ * How far the icon sits inside the frame. `(44 - 32) / 2` — stated as the
+ * arithmetic so it follows the two constants rather than being a third number
+ * that has to be kept in step with them.
+ */
+const ICON_INSET = Math.floor((SLOT_PX - ICON_DRAW_PX) / 2);
 
 /**
  * Vertical bite the hotbar's BUTTON ROW takes out of the bottom of the viewport.
@@ -227,7 +259,7 @@ const CAPTION_BASELINE = 9;
 
 const FONT_KEY = 'bold 10px ui-monospace, Consolas, monospace';
 const FONT_COST = '10px ui-monospace, Consolas, monospace';
-const FONT_WIPE = 'bold 20px ui-monospace, Consolas, monospace';
+const FONT_WIPE = 'bold 14px ui-monospace, Consolas, monospace';
 const FONT_NAME = '10px ui-monospace, Consolas, monospace';
 const FONT_CAPTION = 'bold 10px ui-monospace, Consolas, monospace';
 
@@ -241,10 +273,17 @@ const FONT_CAPTION = 'bold 10px ui-monospace, Consolas, monospace';
  * and art nobody has cut resolves to the loud violet missing-asset box on every
  * clone, for a feature that otherwise works.
  */
-const FRAME_IDLE = 'ui_hotbar_slot_idle';
-const FRAME_HOVER = 'ui_hotbar_slot_hover';
-const FRAME_DISABLED = 'ui_hotbar_slot_disabled';
-const CELL_EMPTY = 'ui_inventory_cell_empty';
+/**
+ * WHAT A SLOT'S FRAME IS SAYING. Three states, exactly the three the retired
+ * `ui_hotbar_slot_*` PNGs carried — the set is unchanged, only the way it is
+ * drawn is. See `drawFrame`.
+ */
+const FrameState = {
+  Idle: 'idle',
+  Hover: 'hover',
+  Disabled: 'disabled',
+} as const;
+type FrameState = (typeof FrameState)[keyof typeof FrameState];
 
 /**
  * WHAT A SLOT IS. Three kinds, and the set is closed.
@@ -649,16 +688,21 @@ function isItemDrag(drag: DragSubject | null | undefined): boolean {
  * nothing, so it must not look pressable; hovering it with an item in hand is a
  * drop that will land, so it must.
  */
-function frameIdFor(slot: HotbarSlot, hovered: boolean, armed: boolean, dragging: boolean): string {
+function frameIdFor(
+  slot: HotbarSlot,
+  hovered: boolean,
+  armed: boolean,
+  dragging: boolean,
+): FrameState {
   switch (slot.kind) {
     case HotbarSlotKind.Empty:
-      return dragging ? FRAME_HOVER : FRAME_IDLE;
+      return dragging ? FrameState.Hover : FrameState.Idle;
     case HotbarSlotKind.Item:
-      if (isSlotDisabled(slot)) return FRAME_DISABLED;
-      return hovered ? FRAME_HOVER : FRAME_IDLE;
+      if (isSlotDisabled(slot)) return FrameState.Disabled;
+      return hovered ? FrameState.Hover : FrameState.Idle;
     case HotbarSlotKind.Talent:
-      if (isSlotDisabled(slot)) return FRAME_DISABLED;
-      return hovered || armed ? FRAME_HOVER : FRAME_IDLE;
+      if (isSlotDisabled(slot)) return FrameState.Disabled;
+      return hovered || armed ? FrameState.Hover : FrameState.Idle;
   }
 }
 
@@ -719,12 +763,16 @@ function drawIconArt(
 ): void {
   const sprite = sprites.sprite(iconId);
   if (sprite !== undefined) {
-    ctx.drawImage(sprite.image, x, y, sprite.w, sprite.h);
+    // DRAWN AT `ICON_DRAW_PX`, NOT AT THE SPRITE'S OWN SIZE. Every hotbar icon
+    // is authored at 64 and this is exactly half — see `ICON_PX`. Smoothing is
+    // already off for the whole backbuffer, so a 2:1 reduction takes every
+    // other pixel and stays sharp; it is the one ratio this may use.
+    ctx.drawImage(sprite.image, x, y, ICON_DRAW_PX, ICON_DRAW_PX);
     return;
   }
 
   ctx.fillStyle = PALETTE.VOID;
-  ctx.fillRect(x, y, ICON_PX, ICON_PX);
+  ctx.fillRect(x, y, ICON_DRAW_PX, ICON_DRAW_PX);
   ctx.fillStyle = PALETTE.SILVER;
   ctx.font = FONT_WIPE;
   ctx.textAlign = 'center';
@@ -733,7 +781,7 @@ function drawIconArt(
     .map((word) => word.charAt(0).toUpperCase())
     .join('')
     .slice(0, 2);
-  ctx.fillText(initials, x + ICON_PX / 2, y + ICON_PX / 2);
+  ctx.fillText(initials, x + ICON_DRAW_PX / 2, y + ICON_DRAW_PX / 2);
   ctx.textAlign = 'left';
 }
 
@@ -757,25 +805,26 @@ function drawEmptyPlate(
   x: number,
   y: number,
 ): void {
-  const sprite = sprites.sprite(CELL_EMPTY);
-  if (sprite !== undefined && sprite.w <= ICON_PX && sprite.h <= ICON_PX) {
-    ctx.drawImage(
-      sprite.image,
-      x + Math.floor((ICON_PX - sprite.w) / 2),
-      y + Math.floor((ICON_PX - sprite.h) / 2),
-      sprite.w,
-      sprite.h,
-    );
-    return;
-  }
-
-  const px = x + Math.floor((ICON_PX - PLATE_PX) / 2);
-  const py = y + Math.floor((ICON_PX - PLATE_PX) / 2);
+  /**
+   * THE 40-PIXEL PLATE NO LONGER FITS, so it is not drawn.
+   *
+   * `ui_inventory_cell_empty` is 40x40 and the icon well is now 32. The rule
+   * this function has always followed is NEVER SCALED — "a plate that does not
+   * fit its well is a pipeline fault, and drawing a stretched one would hide
+   * that fault behind something that looks almost right". 40 into 32 is 4:5,
+   * which is precisely the fractional resample that rule exists to refuse, so
+   * the honest answer is the traced square: it was already the refusal path and
+   * the bare-clone path, and it reads correctly at any size.
+   *
+   * The paperdoll still blits the real plate — its wells are 40 and always were.
+   */
+  const px = x;
+  const py = y;
   ctx.fillStyle = PALETTE.GREY;
-  ctx.fillRect(px, py, PLATE_PX, 1);
-  ctx.fillRect(px, py + PLATE_PX - 1, PLATE_PX, 1);
-  ctx.fillRect(px, py, 1, PLATE_PX);
-  ctx.fillRect(px + PLATE_PX - 1, py, 1, PLATE_PX);
+  ctx.fillRect(px, py, ICON_DRAW_PX, 1);
+  ctx.fillRect(px, py + ICON_DRAW_PX - 1, ICON_DRAW_PX, 1);
+  ctx.fillRect(px, py, 1, ICON_DRAW_PX);
+  ctx.fillRect(px + ICON_DRAW_PX - 1, py, 1, ICON_DRAW_PX);
 }
 
 /**
@@ -829,12 +878,12 @@ function drawCooldownWipe(
   total: number,
 ): void {
   const fraction = total > 0 ? Math.min(1, Math.max(0, remaining / total)) : 1;
-  const cx = x + ICON_PX / 2;
-  const cy = y + ICON_PX / 2;
+  const cx = x + ICON_DRAW_PX / 2;
+  const cy = y + ICON_DRAW_PX / 2;
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(x, y, ICON_PX, ICON_PX);
+  ctx.rect(x, y, ICON_DRAW_PX, ICON_DRAW_PX);
   ctx.clip();
 
   ctx.globalAlpha = WIPE_ALPHA;
@@ -864,24 +913,67 @@ function drawCooldownWipe(
 }
 
 /** The frame, or a traced box, so a missing PNG never removes the button. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FRAME: ONE NINE-SLICE SKIN, THEN THE STATE DRAWN OVER IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It used to blit one of three 72x72 PNGs — idle, hover, disabled — which is
+ * what pinned `SLOT_PX` at 72 and made the bar eighteen per cent of the screen.
+ *
+ * Now the WELL is `ui_panel_9slice_inset`, the same skin the Case Log wears,
+ * drawn at whatever size the slot is; and the STATE is drawn on top as a border
+ * and, when refused, a hatch. That is a better division than three baked
+ * pictures anyway: the state is a one-pixel edge that can be tuned without
+ * re-cutting art, and the three sizes can never drift apart.
+ *
+ * ═══ THE HATCH IS NOW DRAWN, AND IT HAS TO BE ═══
+ * `ui_hotbar_slot_disabled` carried a diagonal hatch across the frame, and that
+ * hatch is the only channel that says "you cannot press this" without relying
+ * on colour — which matters here for the same reason it does on the world map's
+ * danger grades. It is reproduced in code rather than dropped.
+ *
+ * NO NEW SPRITE ID IS INVENTED. `ui_panel_9slice_inset` is already in the
+ * manifest and already loaded; the three `ui_hotbar_slot_*` ids simply stop
+ * being asked for, which costs nothing at runtime.
+ */
 function drawFrame(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
-  id: string,
+  state: FrameState,
   rect: SlotRect,
 ): void {
-  const sprite = sprites.sprite(id);
-  if (sprite !== undefined) {
-    ctx.drawImage(sprite.image, rect.x, rect.y, sprite.w, sprite.h);
-    return;
+  drawPanel(ctx, sprites, PanelSkin.Inset, rect);
+
+  if (state === FrameState.Disabled) {
+    // THE HATCH, corner to corner, clipped to the well. Spaced at 6 so it reads
+    // as "struck through" rather than as a texture.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(12, 10, 20, 0.55)';
+    ctx.lineWidth = 1;
+    for (let i = -rect.h; i < rect.w; i += 6) {
+      ctx.beginPath();
+      ctx.moveTo(rect.x + i + 0.5, rect.y + rect.h);
+      ctx.lineTo(rect.x + i + rect.h + 0.5, rect.y);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
-  ctx.fillStyle = PALETTE.PANEL;
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-  ctx.fillStyle = PALETTE.SLATE;
-  ctx.fillRect(rect.x, rect.y, rect.w, 1);
-  ctx.fillRect(rect.x, rect.y + rect.h - 1, rect.w, 1);
-  ctx.fillRect(rect.x, rect.y, 1, rect.h);
-  ctx.fillRect(rect.x + rect.w - 1, rect.y, 1, rect.h);
+
+  // THE EDGE LAST, so neither the well's own border nor the hatch sits over it.
+  // Hover is the only state that brightens: an armed slot is already saying so
+  // with its caption and its icon, and two loud signals for one fact reads as a
+  // bug rather than as emphasis.
+  if (state === FrameState.Hover) {
+    ctx.fillStyle = PALETTE.GOLD;
+    ctx.fillRect(rect.x, rect.y, rect.w, 1);
+    ctx.fillRect(rect.x, rect.y + rect.h - 1, rect.w, 1);
+    ctx.fillRect(rect.x, rect.y, 1, rect.h);
+    ctx.fillRect(rect.x + rect.w - 1, rect.y, 1, rect.h);
+  }
 }
 
 /**
@@ -906,8 +998,8 @@ function paintSlot(
 ): void {
   drawFrame(ctx, sprites, frameIdFor(slot, hovered, armed, dragging), rect);
 
-  const iconX = rect.x + Math.round((SLOT_PX - ICON_PX) / 2);
-  const iconY = rect.y + Math.round((SLOT_PX - ICON_PX) / 2);
+  const iconX = rect.x + ICON_INSET;
+  const iconY = rect.y + ICON_INSET;
 
   switch (slot.kind) {
     case HotbarSlotKind.Empty: {

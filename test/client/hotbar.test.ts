@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { PANEL_CORNER } from '../../src/client/ui/panel.ts';
+
 import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import {
   HOTBAR_H,
@@ -170,9 +172,9 @@ function itemView(itemId: string): ItemView {
  * painter is handed those ids by the server and never spells one itself.
  */
 const CHROME_IDS = [
-  'ui_hotbar_slot_idle',
-  'ui_hotbar_slot_hover',
-  'ui_hotbar_slot_disabled',
+  // The frame is now `ui_panel_9slice_inset`, drawn at the slot's size — see
+  // the SLOT_PX test. The three `ui_hotbar_slot_*` PNGs are no longer asked for.
+  'ui_panel_9slice_inset',
   'ui_inventory_cell_empty',
   'ui_inventory_cell_hover',
 ];
@@ -186,34 +188,53 @@ const WIDTHS = [640, 800, 1280, 1920];
 // ---------------------------------------------------------------------------
 
 describe('geometry', () => {
-  it('is 76 tall with an 88-pixel total, and the total is DERIVED', () => {
-    // The two numbers main.ts:534-541 subtracts from the viewport to get panelBand.
-    // 80/94 before the shrink; the six pixels went straight to the four
-    // draggable panels with no edit in main.ts, which only works while the total
-    // stays derived.
-    expect(HOTBAR_H).toBe(76);
+  it('is 48 tall with a 60-pixel total, and the total is DERIVED', () => {
+    // The two numbers main.ts:534-541 subtracts from the viewport to get
+    // panelBand. 76/88 before the nine-slice rebuild; the 28 pixels went
+    // straight to the four draggable panels with no edit in main.ts, which only
+    // works while the total stays derived.
+    expect(HOTBAR_H).toBe(48);
     expect(HOTBAR_LABEL_H).toBe(12);
-    expect(HOTBAR_TOTAL_H).toBe(88);
+    expect(HOTBAR_TOTAL_H).toBe(60);
     expect(HOTBAR_TOTAL_H).toBe(HOTBAR_H + HOTBAR_LABEL_H);
-    // Pad is 2 either side of a 72px slot. Stated as a relation so a change to
+    // Pad is 2 either side of the slot. Stated as a relation so a change to
     // SLOT_PX cannot leave HOTBAR_H behind.
     expect(HOTBAR_H).toBe(SLOT_PX + 4);
   });
 
-  it('keeps SLOT_PX at 72, which is an ART CONTRACT and not a layout choice', () => {
-    // `drawFrame` blits `ui_hotbar_slot_*` at the SPRITE's own 72x72 and ignores
-    // the rect it is handed — deliberately, because scaling it is the resampling
-    // the integer-scaled backbuffer exists to prevent. So a smaller SLOT_PX
-    // leaves a 72-pixel PICTURE over a smaller HIT BOX and nothing throws:
-    // clicks along the right and bottom edges would fall through to the map.
-    // The bar was shrunk through the pad and the label strip instead.
-    expect(SLOT_PX).toBe(72);
+  it('sizes SLOT_PX for the NINE-SLICE, which is what freed it from 72', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE OLD RULE WAS RIGHT ABOUT THE BLIT AND WRONG ABOUT THE CONCLUSION.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This test used to read `expect(SLOT_PX).toBe(72)` under a comment calling
+     * it "an ART CONTRACT and not a layout choice": `drawFrame` blitted
+     * `ui_hotbar_slot_*` at the sprite's own 72x72 and ignored the rect, so a
+     * smaller slot left a 72-pixel PICTURE over a smaller HIT BOX and clicks
+     * along two edges fell through to the map. All true.
+     *
+     * But the constraint was the BLIT, not the art. The frame is now
+     * `ui_panel_9slice_inset` — 48x48 with 16-pixel corners, drawn through
+     * `ui/panel.ts` at whatever size it is asked for, which is the entire point
+     * of a nine-slice and which the Case Log has relied on all along. Corners
+     * blit 1:1; only the flat edges and centre stretch. Nothing is resampled.
+     *
+     * So the number is now a LAYOUT choice with two floors, and both are
+     * asserted rather than described:
+     */
+    // A 16-pixel corner needs 32 before opposite corners would overlap.
+    expect(SLOT_PX).toBeGreaterThanOrEqual(PANEL_CORNER * 2);
+    // ...and the icon inside is drawn at 32, so the slot cannot be smaller than
+    // its own contents.
+    expect(SLOT_PX).toBeGreaterThanOrEqual(32);
+    expect(SLOT_PX).toBe(44);
   });
 
   it('fits all eight slots on the narrowest backbuffer this client can render', () => {
-    // 8*72 + 7*4 = 604 against the 640 floor render/canvas.ts:344 pins with
-    // DEFAULT_VIEWPORT.tilesW 20. 36 pixels of slack.
-    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(604);
+    // 8*44 + 7*4 = 380 against the 640 floor render/canvas.ts:344 pins with
+    // DEFAULT_VIEWPORT.tilesW 20. 260 pixels of slack, up from 36.
+    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(380);
     expect(hotbarVisibleCount(HOTBAR_SLOTS, 640)).toBe(HOTBAR_SLOTS);
 
     const first = slotRect(0, HOTBAR_SLOTS, 640, 480);
@@ -451,9 +472,7 @@ describe('drawing', () => {
    */
   function art(asked: string[]): SpriteSource {
     const sizes: Record<string, readonly [number, number]> = {
-      ui_hotbar_slot_idle: [72, 72],
-      ui_hotbar_slot_hover: [72, 72],
-      ui_hotbar_slot_disabled: [72, 72],
+      ui_panel_9slice_inset: [48, 48],
       ui_inventory_cell_empty: [40, 40],
       ui_inventory_cell_hover: [40, 40],
     };
@@ -489,7 +508,18 @@ describe('drawing', () => {
       width,
       height: 480,
     });
-    return { calls, texts, asked };
+    /**
+     * HOW MANY STROKES THE PAINTER MADE.
+     *
+     * The disabled state used to be a PNG with a hatch baked into it, so a test
+     * could assert it by sprite id. `drawFrame` now draws the hatch — which is
+     * strictly better, because the hatch is the one channel that says "you
+     * cannot press this" without relying on colour — and a drawn thing has no
+     * id to assert. The stroke count is what is left, and it is enough: no other
+     * state strokes anything at all.
+     */
+    const strokes = calls.filter((c) => c.startsWith('stroke(')).length;
+    return { calls, texts, asked, strokes };
   }
 
   it('pairs every save with a restore', () => {
@@ -502,10 +532,15 @@ describe('drawing', () => {
     );
   });
 
-  it('names ui_hotbar_slot_idle and ui_inventory_cell_empty for an empty item slot', () => {
+  it('wears the nine-slice inset well, and draws the empty plate itself', () => {
     const { asked, texts } = paint(view());
-    expect(asked).toContain('ui_hotbar_slot_idle');
-    expect(asked).toContain('ui_inventory_cell_empty');
+    expect(asked).toContain('ui_panel_9slice_inset');
+    // NOT `ui_inventory_cell_empty` any more: that plate is 40x40 and the icon
+    // well is now 32, and this file's own rule is that a plate which does not
+    // fit its well is never scaled to make it. `drawEmptyPlate` traces the
+    // square instead — the path that was already the refusal and bare-clone
+    // path — so the empty slot asks for no content sprite at all.
+    expect(asked).not.toContain('ui_inventory_cell_empty');
     // The word is what makes it a SLOT and not a gap — the player's own
     // complaint. Four of them, one per empty item slot.
     expect(texts.filter((t) => t === 'ITEM').length).toBe(HOTBAR_ITEM_SLOTS);
@@ -515,7 +550,10 @@ describe('drawing', () => {
     const carried = paint(
       view({ drag: { kind: DragKind.Carried, itemId: 'item_watchmans_coat' } }),
     );
-    expect(carried.asked).toContain('ui_hotbar_slot_hover');
+    // The well is the same skin in every state now; HOVER is a drawn gold edge
+    // rather than a second PNG, so what this pins is that the slot is PAINTED
+    // during a live item drag at all. The edge itself is a fill, not a sprite.
+    expect(carried.asked).toContain('ui_panel_9slice_inset');
     // BIND, not ITEM: while something droppable is in hand the caption says what
     // the release will DO.
     expect(carried.texts).toContain('BIND');
@@ -534,17 +572,24 @@ describe('drawing', () => {
   it('draws EQUIP, REMOVE and GONE, and hatches only the GONE slot', () => {
     const equip = paint(view({ slots: eightSlots([itemSlot(ItemSlotAction.Equip)]) }));
     expect(equip.texts).toContain('EQUIP');
-    expect(equip.asked).not.toContain('ui_hotbar_slot_disabled');
+    // GONE is hatched by `drawFrame` with strokes rather than by a disabled
+    // PNG, so the distinction is no longer visible as a sprite id. What still
+    // separates the three is the CAPTION, asserted above — and the hatch itself
+    // is exercised by the stroke count below.
+    expect(equip.strokes).toBe(0);
     // The item's own icon, which the server named. Never spelled here.
     expect(equip.asked).toContain('item_watchmans_coat');
 
     const remove = paint(view({ slots: eightSlots([itemSlot(ItemSlotAction.Unequip)]) }));
     expect(remove.texts).toContain('REMOVE');
-    expect(remove.asked).not.toContain('ui_hotbar_slot_disabled');
+    expect(remove.strokes).toBe(0);
 
     const gone = paint(view({ slots: eightSlots([itemSlot(ItemSlotAction.Gone)]) }));
     expect(gone.texts).toContain('GONE');
-    expect(gone.asked).toContain('ui_hotbar_slot_disabled');
+    // The hatch: a run of diagonal strokes across the well, and the only state
+    // that draws any. This is the colour-independent channel that says "you
+    // cannot press this" — see `drawFrame`.
+    expect(gone.strokes).toBeGreaterThan(0);
   });
 
   it('draws the talent icons the manifest actually holds, and a digit only on keys 1-4', () => {
@@ -684,24 +729,28 @@ describe('a row that does not fit', () => {
   }
 
   it('drops to the four TALENT slots — the half with keys — and says so in the strip', () => {
-    // 604 is needed for eight; 600 is not enough. This viewport cannot occur on a
-    // real backbuffer (the floor is 640), which is exactly why the behaviour has
-    // to be pinned: nothing in a session would ever surface it.
-    expect(hotbarVisibleCount(HOTBAR_SLOTS, 600)).toBe(HOTBAR_TALENT_SLOTS);
+    // WIDTHS RESCALED FOR THE NINE-SLICE ROW. Eight slots are 380 wide now and
+    // four are 188, so the band that shows only the talents runs 188..379 —
+    // it was 604 and 300 when a slot was 72. Stated as arithmetic on the real
+    // constants so the next size change moves it automatically.
+    expect(hotbarVisibleCount(HOTBAR_SLOTS, hotbarRowWidth(HOTBAR_SLOTS) - 1)).toBe(
+      HOTBAR_TALENT_SLOTS,
+    );
 
-    const { texts } = paintAt(600);
+    const { texts } = paintAt(hotbarRowWidth(HOTBAR_SLOTS) - 1);
     // The four talent digits are still drawn; the item captions are gone.
     expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(['1', '2', '3', '4']);
     expect(texts).not.toContain('ITEM');
     // AND THE SENTENCE. The old painter had a bare `continue` here: four drop
     // targets simply were not painted and nothing anywhere said why.
     expect(texts.some((t) => t.includes('4 of 8 slots'))).toBe(true);
-    expect(texts.some((t) => t.includes('604px'))).toBe(true);
+    // The refusal names the width it needs, whatever that width currently is.
+    expect(texts.some((t) => t.includes(`${String(hotbarRowWidth(HOTBAR_SLOTS))}px`))).toBe(true);
   });
 
   it('hides the bar entirely rather than half-drawing it, and still explains itself', () => {
-    expect(hotbarVisibleCount(HOTBAR_SLOTS, 200)).toBe(0);
-    const { texts } = paintAt(200);
+    expect(hotbarVisibleCount(HOTBAR_SLOTS, hotbarRowWidth(HOTBAR_TALENT_SLOTS) - 1)).toBe(0);
+    const { texts } = paintAt(hotbarRowWidth(HOTBAR_TALENT_SLOTS) - 1);
     expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual([]);
     expect(texts.some((t) => t.includes('hotbar hidden'))).toBe(true);
   });
@@ -709,7 +758,7 @@ describe('a row that does not fit', () => {
   it('keeps the hit test and the painter agreeing about a refused row', () => {
     // THE PROPERTY THAT MATTERS: a slot the painter refused must not be
     // clickable, and a slot it drew must be. Both read hotbarVisibleCount.
-    const width = 600;
+    const width = hotbarRowWidth(HOTBAR_SLOTS) - 1;
     for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
       const r = slotRect(i, HOTBAR_TALENT_SLOTS, width, 480);
       const hit = hotbarSlotAt(r.x + 1, r.y + 1, HOTBAR_SLOTS, width, 480);
