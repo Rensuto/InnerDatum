@@ -8,6 +8,7 @@ import {
 } from '../../src/server/content/classes.ts';
 import { BLEEDING, EffectId, SLOWED, STUNNED } from '../../src/server/content/effects.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { createDownedState } from '../../src/server/engine/downed.ts';
 import { INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
 import {
   createEffectState,
@@ -259,6 +260,53 @@ describe('the status seam — a subsystem that existed and was reachable from no
     }
 
     expect(slowed).toBe(true);
+  });
+
+  it('a party wipe takes the statuses off with everything else', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * "A RESET MEANS THE FIGHT DID NOT HAPPEN" — turn-engine.ts's own words.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Every other clause of `resetFloor` obeys that: full health, hostiles back
+     * on their authored tiles, floor loot swept, orbs cleared, and `reap`
+     * emptying all five talent side-tables. Statuses were the one thing that
+     * survived — so a party that wiped while bleeding, which is the ordinary way
+     * to wipe now the elite's claw exists, stood up at full health with the
+     * badge still lit and three damage a turn still arriving from a fight the
+     * game had just annulled. `dispel` existed with no production caller.
+     */
+    const { world, effects } = arena('status-wipe');
+    const dalt = world.addPlayer('p1', 'Dalt', { maxHp: 40 });
+    dalt.x = REALM_TILES.x;
+    dalt.y = REALM_TILES.y;
+
+    const engine = createTurnEngine({ world, now: () => 0, effects, downed: createDownedState() });
+    engine.join('p1');
+    world.turn.engagement = 3;
+
+    // ═══ LONGER THAN THE WINDOW, OR THIS TEST PROVES NOTHING ═══
+    // A five-turn bleed simply EXPIRES inside a dozen pumps, so the first
+    // version of this passed with the fix stashed — natural expiry wearing the
+    // fix's clothes. Fifty turns cannot run out here, so the only thing that can
+    // clear it is the reset.
+    const LONGER_THAN_THE_TEST = 50;
+    setEffect(effects, dalt, EffectId.Bleeding, LONGER_THAN_THE_TEST, {}, world.rng);
+    expect(effectDur(effects, 'p1', EffectId.Bleeding)).toBe(LONGER_THAN_THE_TEST);
+
+    // Put the only player down, which is a wipe: `resetFloor` runs and the
+    // engine reports the party restored.
+    dalt.hp = 0;
+    for (let i = 0; i < 12 && hasEffect(effects, 'p1', EffectId.Bleeding); i += 1) {
+      engine.hold('p1');
+      engine.pump();
+    }
+
+    // The wipe really did happen — full health in the spawn cluster — so a
+    // surviving badge would be the bug rather than a fight still in progress.
+    expect(dalt.hp).toBe(dalt.maxHp);
+
+    expect(hasEffect(effects, 'p1', EffectId.Bleeding)).toBe(false);
   });
 
   it('with no table at all, the engine is byte-for-byte its old self', () => {

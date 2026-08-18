@@ -36,7 +36,12 @@ import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
 import { RespawnRefusal, forgetActor as forgetDowned, respawn } from './engine/downed.ts';
 import type { DownedState } from './engine/downed.ts';
-import { forgetActor as forgetEffects, statusApplier, statusPass } from './engine/effects.ts';
+import {
+  dispel,
+  forgetActor as forgetEffects,
+  statusApplier,
+  statusPass,
+} from './engine/effects.ts';
 import type { EffectLogLine, EffectState } from './engine/effects.ts';
 import { combatDistance } from './engine/combat.ts';
 import {
@@ -490,11 +495,52 @@ function resetFloor(
   reseedFloor: (world: World) => void,
   log: TurnLogger,
   reap: (actorId: string) => boolean,
+  /**
+   * THE STATUS TABLE, so a restored body is restored. Optional, like every other
+   * seam in this file: absent is the behaviour before the status system existed.
+   */
+  effects: EffectState | undefined,
 ): void {
   // 1 — the party, out of the fight.
   for (const id of restored) {
     if (world.placeAtSpawn(id) !== undefined) continue;
     log.warn({ actorId: id }, 'floor reset: no free spawn tile — the body stays where it fell');
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ...AND OFF THEM. A RESET MEANS THE FIGHT DID NOT HAPPEN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * That is this function's own stated principle, and every other clause obeys
+   * it: hit points go back to full, the hostiles return to their authored tiles,
+   * the loot on the floor is swept, the orbs in the air are cleared, and `reap`
+   * empties all five talent side-tables so a re-seeded husk is not still Marked.
+   *
+   * STATUSES WERE THE ONE THING LEFT ON THE BODY. So a party that wiped while
+   * bleeding — which is the ordinary way to wipe now that the Overwritten Husk's
+   * claw exists — was stood back up at full health in the spawn cluster with the
+   * Bleeding badge still lit and three damage a turn still arriving from a fight
+   * the game had just declared did not happen. `dispel` existed and had no
+   * production caller.
+   *
+   * ═══ EVERYTHING, NOT JUST THE HARMFUL HALF ═══
+   * The filter is `() => true` rather than "detrimental only", and that is the
+   * same rule the rest of the reset follows. A wipe is not a cure: it is an
+   * UNDO. Keeping a beneficial effect through it would hand a party a buff they
+   * paid for in a fight that no longer exists, and the asymmetry would be worth
+   * farming the moment anybody noticed.
+   *
+   * `world.rng` because `dispel` may draw — an effect's `onRemove` is allowed
+   * to, and taking the draw off the world's own labelled stream is what keeps a
+   * seeded replay a replay.
+   */
+  if (effects !== undefined) {
+    for (const id of restored) {
+      const body = world.getActor(id);
+      if (body === undefined) continue;
+      dispel(effects, body, () => true, world.rng);
+    }
   }
 
   // 2 — the hostiles, back at their authored positions.
@@ -2006,7 +2052,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       }
 
       for (const wipe of wipes) {
-        resetFloor(world, wipe.restored, reseedFloor, log, reap);
+        resetFloor(world, wipe.restored, reseedFloor, log, reap, opts.effects);
 
         // THE CHURN ALARM. See `lastWipeTurn` and `WIPE_CHURN_TURNS`: a party
         // that wipes again this close to its last wipe never got out of the
