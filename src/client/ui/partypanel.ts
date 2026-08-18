@@ -138,6 +138,16 @@ export const PARTY_PANE_MARGIN = 3;
 const INVITE_H = 34;
 const BUTTON_H = 14;
 
+/**
+ * The FOLLOW control on the row of a member who is in another realm.
+ *
+ * A WORD, NOT A SPRITE, for the reason the pane's DROP and ACCEPT controls are
+ * words: a new icon is a new asset, and the art tree is the one thing in this
+ * project that cannot be added to from a keyboard.
+ */
+const FOLLOW_W = 44;
+const FOLLOW_H = 11;
+
 /** Authored token size for `chr_player_*`. Blitted 1:1, cropped, never scaled. */
 const TOKEN_W = 24;
 const TOKEN_H = 32;
@@ -249,6 +259,8 @@ export type PartyPaneOptions = {
 /** What a click on the pane landed on. Null is "the panel, but nothing in it". */
 export type PartyPaneHit =
   | { readonly kind: 'member'; readonly id: string }
+  /** The FOLLOW word on the row of a member who is in another realm. */
+  | { readonly kind: 'follow'; readonly id: string }
   | { readonly kind: 'accept'; readonly fromId: string }
   | { readonly kind: 'decline'; readonly fromId: string };
 
@@ -363,7 +375,18 @@ type InviteSlot = {
 
 type PaneGeometry = {
   readonly invites: readonly InviteSlot[];
-  readonly rows: readonly { readonly row: PartyPaneRow; readonly rect: PanelRect }[];
+  readonly rows: readonly {
+    readonly row: PartyPaneRow;
+    readonly rect: PanelRect;
+    /**
+     * The FOLLOW word, when this member is somewhere else and can be reached.
+     *
+     * IT SITS IN THE STATE-WORD SLOT, which is free for exactly these rows: the
+     * state word says what the BARRIER is doing about somebody, and a member in
+     * another realm is counting down under a different Bell entirely.
+     */
+    readonly follow: PanelRect | null;
+  }[];
 };
 
 /**
@@ -412,10 +435,18 @@ function paneGeometry(view: PartyPaneView, layout: PartyPaneLayout): PaneGeometr
   }
 
   const rowH = compact ? PARTY_ROW_COMPACT_H : PARTY_ROW_H;
-  const rows: { row: PartyPaneRow; rect: PanelRect }[] = [];
+  const rows: { row: PartyPaneRow; rect: PanelRect; follow: PanelRect | null }[] = [];
   for (const row of view.rows) {
     if (y + rowH > bottom) break;
-    rows.push({ row, rect: { x, y, w, h: rowH } });
+    // NOT IN THE COMPACT FORM. `FOLLOW` is a word, and the portraits mode has
+    // no room for a word — the same reason its invites carry a mark rather than
+    // two buttons. A player on a narrow window uses the row menu instead.
+    const canFollow = !compact && row.member.away?.canFollow === true;
+    rows.push({
+      row,
+      rect: { x, y, w, h: rowH },
+      follow: canFollow ? { x: x + w - FOLLOW_W, y: y + 1, w: FOLLOW_W, h: FOLLOW_H } : null,
+    });
     y += rowH;
   }
 
@@ -446,6 +477,10 @@ export function partyPaneHitAt(
     if (inside(slot.decline)) return { kind: 'decline', fromId: slot.invite.fromId };
   }
   for (const slot of geometry.rows) {
+    // THE CONTROL BEFORE THE ROW, so the word wins over the menu it sits on.
+    if (slot.follow !== null && inside(slot.follow)) {
+      return { kind: 'follow', id: slot.row.member.id };
+    }
     if (inside(slot.rect)) return { kind: 'member', id: slot.row.member.id };
   }
   return null;
@@ -744,7 +779,7 @@ function drawRow(
   drawToken(ctx, sprites, row, token);
   // A body nobody is driving, and a body on the floor, are both HATCHED. The
   // hatch is the shape half of "not with us"; the word half is below.
-  if (away || downed !== null) hatchOver(ctx, token);
+  if (away || downed !== null || member.away !== null) hatchOver(ctx, token);
   if (member.isLeader) drawLeaderPennant(ctx, token.x, token.y);
   drawVoice(ctx, sprites, row.voice, token.x + TOKEN_W - VOICE_PX, token.y + TOKEN_H - VOICE_PX);
 
@@ -772,8 +807,28 @@ function drawRow(
 
   // --- the name line --------------------------------------------------------
   let nameRight = contentRight;
-  const state = inCombat ? stateWord(row) : null;
-  if (state !== null) {
+  /**
+   * SOMEWHERE ELSE, WHICH IS NOT THE SAME AS NOBODY DRIVING.
+   *
+   * `away` above is `!member.online` — a body whose owner has dropped. This is
+   * a body in ANOTHER REALM, with somebody at the keyboard, in a fight you are
+   * entitled to join. The two look alike on a row and mean opposite things, so
+   * this one names the place and offers the way in.
+   */
+  const elsewhere = member.away;
+  const state = inCombat && elsewhere === null ? stateWord(row) : null;
+  if (elsewhere !== null) {
+    // THE CONTROL SITS IN THE STATE-WORD SLOT, which is free for exactly this
+    // row: the state word says what YOUR barrier is doing about somebody, and a
+    // member in another realm is counting down under a different Bell.
+    ctx.font = FONT_META;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = elsewhere.canFollow ? PALETTE.GOLD : PALETTE.GREY;
+    const word = elsewhere.canFollow ? 'FOLLOW' : 'AWAY';
+    ctx.fillText(word, contentRight, y + 8);
+    nameRight -= Math.ceil(ctx.measureText(word).width) + 4;
+    ctx.textAlign = 'left';
+  } else if (state !== null) {
     ctx.font = FONT_META;
     ctx.textAlign = 'right';
     ctx.fillStyle = state.ink;
@@ -793,10 +848,20 @@ function drawRow(
   }
 
   ctx.font = member.isSelf ? FONT_NAME_SELF : FONT_NAME;
-  ctx.fillStyle = member.isSelf ? PALETTE.GOLD : away ? PALETTE.GREY_HI : PALETTE.BONE;
+  ctx.fillStyle = member.isSelf
+    ? PALETTE.GOLD
+    : away || elsewhere !== null
+      ? PALETTE.GREY_HI
+      : PALETTE.BONE;
   // THE WORD "away", NOT A DIMMER NAME. This is the fact the bug report was
   // about — somebody who is not there must be readable AS not there.
-  const label = `${member.isSelf ? '>' : ''}${member.name}${away ? ' (away)' : ''}`;
+  //
+  // AND WHEN THEY ARE SOMEWHERE, IT NAMES THE SOMEWHERE. "Ren (An Index
+  // Breach)" is the difference between a party member who is busy and a party
+  // member who is gone, which is the whole of the second bug report: the row
+  // used to vanish, and a vanished row reads as being thrown out of the party.
+  const suffix = elsewhere !== null ? ` (${elsewhere.place})` : away ? ' (away)' : '';
+  const label = `${member.isSelf ? '>' : ''}${member.name}${suffix}`;
   ctx.fillText(fitText(ctx, label, Math.max(0, nameRight - textX)), textX, y + 8);
 
   // --- the hp bar, or the countdown ----------------------------------------

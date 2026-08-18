@@ -228,6 +228,12 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       'commit',
       'drop',
       'equip',
+      // NOT THE KEYS SCREEN'S. `follow` is the party pane's, added because a
+      // member who crossed into an instance had no door back to the party — see
+      // protocol.ts on `follow`. It is listed here so that the verb set stays a
+      // thing somebody has to decide to grow, which is the whole point of this
+      // assertion: every entry is a frame the barrier can be made to wait for.
+      'follow',
       'hold',
       'inspect',
       'move',

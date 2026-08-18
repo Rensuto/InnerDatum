@@ -77,6 +77,9 @@ function member(over: Partial<PartyStateMember> & { id: string; name: string }):
     isLeader: false,
     isSelf: false,
     online: true,
+    // NULL, NOT ABSENT. Every member row says where they are, and "here" is a
+    // real answer rather than a missing one — see `PartyStateMember.away`.
+    away: null,
     ...over,
   };
 }

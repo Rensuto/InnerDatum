@@ -163,7 +163,7 @@ import { recomposeCombat } from '../engine/effects.ts';
  * stated reason: `partyIdOf` is a two-line lookup over a table this process
  * already owns, it returns a string, it draws no RNG and it queues nothing.
  */
-import { partyIdOf } from '../engine/party.ts';
+import { partyIdOf, sameParty } from '../engine/party.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
 // difference between "this file predates classes" and "this file names a class
@@ -210,6 +210,7 @@ import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
 import { createFog, fogFromBase64, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
+import { isDowned } from '../engine/downed.ts';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -217,6 +218,7 @@ import type {
   BroadcastMsg,
   ClientChooseClass,
   ClientDrop,
+  ClientFollow,
   ClientEquip,
   ClientHello,
   ClientInspect,
@@ -241,7 +243,7 @@ import type { ClassDef } from '../content/classes.ts';
 import type { Slot } from '../content/items.ts';
 import type { PlayerActor } from '../engine/actor.ts';
 import type { PartyState } from '../engine/party.ts';
-import type { PartyOffer, TurnState } from '../view/projector.ts';
+import type { AwayMember, PartyOffer, TurnState } from '../view/projector.ts';
 import type { Realm, Realms, SiteDef } from '../world/realms.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
@@ -3165,6 +3167,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // down under a different Bell entirely.
       bellRemainingMs(realm.id),
       snapshot.invites,
+      awayMembers(viewer, realm, snapshot.members),
     );
 
     // `expiresInMs` is deliberately EXCLUDED from the key: it changes on every
@@ -3179,6 +3182,58 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (key === session.partyKey) return;
     session.partyKey = key;
     send(session.socket, msg);
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHICH OF YOUR PARTY ARE SOMEWHERE ELSE, AND CAN YOU GET TO THEM.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE BUG THIS EXISTS TO FIX, stated plainly: `projectPartyState` walked one
+   * world and skipped any member it could not find, so the instant somebody
+   * walked into a breach their row vanished from everyone else's party pane.
+   * From the chair that is indistinguishable from being thrown out of the party
+   * when a fight starts, and it was reported as exactly that. The party table
+   * was never touched — two projections were simply per-realm.
+   *
+   * ONLY THE GATEWAY CAN ANSWER THIS. src/server/view/** may not reach the
+   * realm registry, exactly as it may not read a clock, so the answer arrives
+   * already made — the same shape as `bellMs` and `speaking`.
+   *
+   * `canFollow` IS PER VIEWER, which is why this takes one. A body that is
+   * Downed cannot walk through a door, and offering a control whose only
+   * possible outcome is a refusal is worse than not offering it.
+   */
+  const awayMembers = (
+    viewer: Actor,
+    // STRUCTURAL, not `Realm`: the caller holds a `PumpTarget`, and the only
+    // two things this needs are which realm it is and whose bodies are in it.
+    here: { readonly id: string; readonly world: World },
+    members: readonly string[],
+  ): ReadonlyMap<string, AwayMember> => {
+    const realms = opts.realms;
+    const out = new Map<string, AwayMember>();
+    if (realms === undefined) return out;
+
+    // Can the VIEWER travel at all? Asked once rather than per member.
+    // A body that is Downed or dead cannot walk through a door. `opts.downed`
+    // is the same survival table the engine mutates, so this is the live answer
+    // rather than a copy that can lag a pump behind it.
+    const able = viewer.alive && (opts.downed === undefined || !isDowned(opts.downed, viewer.id));
+
+    for (const id of members) {
+      if (id === viewer.id) continue;
+      if (here.world.getActor(id) !== undefined) continue;
+      const theirs = realms.realmOf(id);
+      // No realm at all is somebody who has genuinely left the game. Their row
+      // SHOULD disappear — a party row naming a person who is not playing is
+      // the opposite mistake, and the old code was right about that case.
+      if (theirs === undefined || theirs.id === here.id) continue;
+      const body = theirs.world.getActor(id);
+      if (body === undefined) continue;
+      out.set(id, { actor: body, place: theirs.name, canFollow: able });
+    }
+    return out;
   };
 
   /**
@@ -5595,20 +5650,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const crossInto = (session: Session, site: SiteDef, why: string): void => {
     const realms = opts.realms;
     const actorId = session.actorId;
+    if (realms === undefined || actorId === null) return;
+
+    // A SOLO PLAYER IS A PARTY OF ONE, which is what `partyOf` mints on demand
+    // rather than something invented here (engine/party.ts:276-290). With no
+    // party table the actor's own id is the same statement.
+    const partyId = opts.parties === undefined ? actorId : partyIdOf(opts.parties, actorId);
+    crossIntoRealm(session, realms.open(site, partyId), why, site.id);
+  };
+
+  /**
+   * Move a body into a realm that ALREADY EXISTS.
+   *
+   * SPLIT OUT OF `crossInto` SO FOLLOWING A FRIEND CROSSES IDENTICALLY TO
+   * WALKING THROUGH A DOOR. `crossInto` decides WHICH room by opening a site
+   * keyed to the party; `follow` decides which room by asking where somebody
+   * already is. Everything after that decision must not differ at all — the same
+   * carry-across of hp and bag and doll, the same removal from the old floor,
+   * the same frame order — or a followed body arrives without its coat and the
+   * bug is reported as "following loses your gear".
+   */
+  const crossIntoRealm = (session: Session, to: Realm, why: string, label: string): void => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
     if (realms === undefined || actorId === null || session.realmId === null) return;
     const from = realms.get(session.realmId);
     if (from === undefined) return;
     const body = from.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return;
 
-    // A SOLO PLAYER IS A PARTY OF ONE, which is what `partyOf` mints on demand
-    // rather than something invented here (engine/party.ts:276-290). With no
-    // party table the actor's own id is the same statement.
-    const partyId = opts.parties === undefined ? actorId : partyIdOf(opts.parties, actorId);
-    const to = realms.open(site, partyId);
-    // Already there. Unreachable while sites live only on the overworld, and
-    // free to answer: `open` is idempotent, so this is what a second step onto
-    // the same tile would produce if one were ever possible.
+    // Already there. `open` is idempotent and `realmOf` answers the realm they
+    // are in, so both callers can produce this and both mean "nothing to do".
     if (to.id === from.id) return;
 
     // WHERE TO PUT THEM BACK. Recorded only when leaving the overworld, so a
@@ -5679,13 +5751,99 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     );
 
     app.log.info(
-      { actorId, site: site.id, why, from: from.id, to: to.id, kind: to.kind },
+      { actorId, site: label, why, from: from.id, to: to.id, kind: to.kind },
       'a body crossed into a site',
     );
 
     // BOTH BARRIERS JUST CHANGED SHAPE — one lost a member, one gained one — and
     // `pumpAndBroadcast` ticks every realm, so both are settled by one call.
     pumpAndBroadcast();
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `follow` — GO TO A PARTY MEMBER WHO IS SOMEWHERE ELSE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE HOLE THIS FILLS. An instance is opened keyed by PARTY, so when one
+   * member walks into a breach the room belongs to the whole party — but the
+   * roamer that pulled them in is consumed by the crossing, so the tile that
+   * was the door is gone. The second player stood on the overworld watching a
+   * fight they were entitled to join and had no way to reach. Reported from
+   * play as "there is no way to enter the encounter space".
+   *
+   * ═══ THE PERMISSION IS STRUCTURAL, NOT A LOOKUP THE CLIENT CAN AIM ═══
+   * The check is `sameParty(sender, target)` — a question about two ids, only
+   * one of which the sender controls. Naming somebody you are not in a party
+   * with is refused; naming somebody you ARE in a party with takes you to a
+   * room that was already yours. So a forged `targetId` buys nothing, which is
+   * a stronger property than an ownership check because there is no query here
+   * that could be written to span two parties.
+   *
+   * ═══ IT COSTS NO TURN, DELIBERATELY ═══
+   * `spendLootTurn` charges for reaching into the world (Player.lua:1313-1315).
+   * This is not that: it is the client half of a social act that already
+   * happened when your friend walked through a door. Charging for it would mean
+   * a party member who followed arrived a turn behind the fight they were
+   * invited into, which is the opposite of the point.
+   */
+  const handleFollow = (session: Session, msg: ClientFollow): void => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before following');
+      return;
+    }
+    if (realms === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'this server has no realms to follow into');
+      return;
+    }
+    // Somebody is at the keyboard, so the class-choice park comes off — the
+    // same rule `handleMove` and `handleTalent` apply before their rulings.
+    unparkOnCommand(session);
+
+    const { world } = realmFor(session);
+    const body = world.getActor(actorId);
+    if (body === undefined || !body.alive) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'you cannot follow anyone right now');
+      return;
+    }
+    // A body on the floor is being carried, not walking. The party pane already
+    // greys the control for this case (`canFollow`); this is the ruling behind
+    // it, because a control the client draws is never the rule.
+    if (opts.downed !== undefined && isDowned(opts.downed, actorId)) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'you are down — somebody has to reach you');
+      return;
+    }
+
+    // THE ONE PERMISSION. Not "is this id in a party" but "is it in MINE".
+    if (opts.parties !== undefined && !sameParty(opts.parties, actorId, msg.targetId)) {
+      sendError(session.socket, ErrorCode.BadMessage, 'they are not in your party');
+      return;
+    }
+    if (opts.parties === undefined && msg.targetId !== actorId) {
+      sendError(session.socket, ErrorCode.BadMessage, 'they are not in your party');
+      return;
+    }
+
+    const theirs = realms.realmOf(msg.targetId);
+    if (theirs === undefined) {
+      // Their body is nowhere — they left the game between the frame being
+      // drawn and the click. Answered rather than swallowed: the pane is about
+      // to correct itself, and a silent no-op reads as a dead button.
+      sendError(session.socket, ErrorCode.IllegalMove, 'they are not anywhere you can reach');
+      return;
+    }
+    if (theirs.id === session.realmId) {
+      sendError(session.socket, ErrorCode.IllegalMove, 'they are already here with you');
+      return;
+    }
+
+    crossIntoRealm(session, theirs, `followed ${nameOf(msg.targetId)}`, theirs.id);
+    // THE ROOM THEY ARRIVED IN, and after the crossing so the arriving player's
+    // own socket is already addressed to it. `homeOf` is how every other
+    // player-visible act finds its audience; a follow is one.
+    broadcastRecordLine(homeOf(actorId), `${nameOf(actorId)} catches up.`);
   };
 
   /**
@@ -7925,6 +8083,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'drop':
         handleDrop(session, msg);
+        return;
+      // NAMES A TARGET, NOT A SUBJECT — see `handleFollow`. Who is asking comes
+      // from the session; what is named is checked with `sameParty`, which the
+      // sender only controls one side of.
+      case 'follow':
+        handleFollow(session, msg);
         return;
       // Deliberately does NOT pump. A ping changes nothing, and a frame that
       // costs nothing must not be a way to make the server do work.

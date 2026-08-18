@@ -4883,6 +4883,17 @@ async function boot(): Promise<void> {
   }
 
   /**
+   * "Take me to them." The client half of `handleFollow`.
+   *
+   * NAMES A TARGET AND NOTHING ELSE. Who is asking comes from the socket's own
+   * session, as it does for every other verb — see protocol.ts on `follow`.
+   */
+  function sendFollow(targetId: string): void {
+    const sent = socket.send({ v: PROTOCOL_VERSION, t: 'follow', targetId });
+    if (!sent) showNotice('not connected — that did not go out');
+  }
+
+  /**
    * Open the menu for one classified target at a backbuffer point. False when
    * there is nothing to offer, so the caller can fall back to right-click's older
    * meaning.
@@ -7619,6 +7630,13 @@ async function boot(): Promise<void> {
             return;
           case 'decline':
             sendParty(PartyAction.Decline, hit.fromId);
+            return;
+          case 'follow':
+            // THE WAY INTO A ROOM THAT IS ALREADY YOURS. An instance is keyed
+            // by party, so a member in a breach is in a breach the party owns —
+            // there was simply no door, because the roamer that made one was
+            // consumed by their crossing.
+            sendFollow(hit.id);
             return;
           case 'member':
             openPartyRowMenu(hit.id, point.x, point.y);

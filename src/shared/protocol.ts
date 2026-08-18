@@ -1234,6 +1234,31 @@ export type PingedMsg = {
  * when the party's own comparison key changes, which is when these numbers
  * change anyway, so a stale bar cannot sit next to a fresher one for long.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PARTY MEMBER WHO IS SOMEWHERE ELSE — AND STILL IN YOUR PARTY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Instances are keyed by party, so a member who walked into a breach is in a
+ * room that is ALREADY YOURS. Before this existed, `projectPartyState` skipped
+ * any member whose body was not in the viewer's world, and the pane simply lost
+ * the row — which is indistinguishable, from the chair, from being thrown out
+ * of the party the moment a fight started. It was reported as exactly that.
+ *
+ * The party table never changed. Only the projection lied.
+ */
+export type PartyAway = {
+  /** Where they are, by name. "An Index Breach", "Threadneedle". */
+  readonly place: string;
+  /**
+   * Whether `follow` would work for THIS viewer right now — they are alive, on
+   * their feet, and the room still exists. The control is drawn from this
+   * rather than from `away !== null`, so a button that cannot work is never
+   * offered.
+   */
+  readonly canFollow: boolean;
+};
+
 export type PartyStateMember = {
   /** The actor id. Joins to `ActorView`, `PartyMember` and `TurnActor`. */
   id: string;
@@ -1276,6 +1301,16 @@ export type PartyStateMember = {
    * is what the barrier is doing (nothing), this is why.
    */
   online: boolean;
+  /**
+   * WHERE THEY ARE, WHEN IT IS NOT WHERE YOU ARE. Null when they are standing
+   * on your floor, which is the common case.
+   *
+   * A member with `away` set has NO ROW IN `ActorView` for this viewer — they
+   * are not in this world — so every field above that would normally be joined
+   * from the actor is projected from their real body in the realm they are
+   * actually in. `hp` and `state` are therefore live and true, not stale.
+   */
+  away: PartyAway | null;
 };
 
 /**
@@ -2417,6 +2452,34 @@ const SetKeybindsSchema = z.strictObject({
  * on the tag instead of trying every branch, and the failure message names the
  * field that is wrong instead of dumping eight parallel errors.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `follow` — "TAKE ME TO THEM." THE DOOR INTO A ROOM THAT IS ALREADY YOURS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An instance is opened keyed by PARTY (`realms.open(site, partyId)`), so when
+ * one member walks into a breach the room that opens belongs to the whole
+ * party. There was simply no way to reach it: the roamer that pulled the first
+ * player in is consumed, so the tile that was the door is gone, and the second
+ * player stood on the overworld watching a fight they could not join.
+ *
+ * ═══ IT NAMES A TARGET, NEVER A SUBJECT ═══
+ * `targetId` is who to follow, exactly as `attack` and `revive` name who to act
+ * on. WHO IS ASKING still comes from the session and never from the wire
+ * (non-negotiable #5) — and the server's check is not "is this id in my party"
+ * as a lookup on a table the client can name, but `sameParty(sender, target)`,
+ * which is a question about two ids the sender does not control both of.
+ *
+ * A forged `targetId` therefore buys nothing: naming somebody you are not in a
+ * party with is refused, and naming somebody you ARE in a party with takes you
+ * to a room you were already entitled to walk into.
+ */
+const FollowSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('follow'),
+  targetId: z.string().min(1).max(ACTOR_ID_MAX_CHARS),
+});
+
 export const ClientMsg = z.discriminatedUnion('t', [
   HelloSchema,
   MoveSchema,
@@ -2433,6 +2496,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   EquipSchema,
   UnequipSchema,
   DropSchema,
+  FollowSchema,
   PartySchema,
   InspectSchema,
   SetKeybindsSchema,
@@ -2456,6 +2520,7 @@ export type ClientPickup = z.infer<typeof PickupSchema>;
 export type ClientEquip = z.infer<typeof EquipSchema>;
 export type ClientUnequip = z.infer<typeof UnequipSchema>;
 export type ClientDrop = z.infer<typeof DropSchema>;
+export type ClientFollow = z.infer<typeof FollowSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;

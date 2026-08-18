@@ -1600,6 +1600,25 @@ export type PartyOffer = {
  * @param bellMs milliseconds left on the Bell, or null. Computed by the
  *   gateway; the wall clock is not allowed in this directory.
  */
+/**
+ * A member who is not in the viewer's world, and where to find them.
+ *
+ * SUPPLIED BY THE GATEWAY because only the gateway can see across realms — this
+ * directory may not reach the realm registry, exactly as it may not call
+ * `Date.now`. The ACTOR comes through whole rather than pre-shaped into a row,
+ * so every field below is projected here, once, in one place: a gateway that
+ * built half a `PartyStateMember` would be a second copy of this projection
+ * that drifts the first time a field is added.
+ */
+export type AwayMember = {
+  /** Their real body, in the realm they are actually in. */
+  readonly actor: Actor;
+  /** That realm's name, for the row. */
+  readonly place: string;
+  /** Whether `follow` would work for this viewer right now. */
+  readonly canFollow: boolean;
+};
+
 export function projectPartyState(
   viewer: Actor,
   world: World,
@@ -1607,13 +1626,31 @@ export function projectPartyState(
   state: TurnState,
   bellMs: number | null,
   offers: readonly PartyOffer[] = [],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MEMBERS WHO ARE ELSEWHERE. DEFAULTS TO EMPTY, WHICH IS THE OLD BEHAVIOUR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A member with no body in this world and no entry here is still dropped —
+   * that is right for somebody who has genuinely left the game, whose party row
+   * would name a person who is not playing.
+   *
+   * What it is NOT right for is a member who walked into an instance, which is
+   * the case that reached play: the row vanished, and losing your row the
+   * instant a fight starts is indistinguishable from being thrown out of the
+   * party. The party table was never touched; this projection was the whole bug.
+   */
+  away: ReadonlyMap<string, AwayMember> = EMPTY_AWAY,
 ): PartyStateMsg {
   const blocking = new Set(state.whoseTurn);
   const standingBy = new Set(state.standingBy);
   const members: PartyStateMember[] = [];
 
   for (const id of roster.members) {
-    const actor = world.getActor(id);
+    // THE VIEWER'S WORLD FIRST, then the away table. A body can only be in one
+    // realm, so these never both answer — and preferring the local one keeps
+    // the common case a single Map lookup.
+    const elsewhere = world.getActor(id) === undefined ? away.get(id) : undefined;
+    const actor = world.getActor(id) ?? elsewhere?.actor;
     if (actor === undefined) continue;
     members.push({
       id: actor.id,
@@ -1643,6 +1680,11 @@ export function projectPartyState(
       // for its ten-minute grace and stays in the party for all of it; this is
       // the field that says nobody is driving it. See `PartyStateMember.online`.
       online: actor.connected,
+      // NULL FOR THE COMMON CASE, and the field is what turns "their row
+      // disappeared" into "they are in An Index Breach, and here is the way
+      // in".
+      away:
+        elsewhere === undefined ? null : { place: elsewhere.place, canFollow: elsewhere.canFollow },
     });
   }
 
@@ -1664,6 +1706,9 @@ export function projectPartyState(
  * is a refusal. Shared by both projections so the two lists cannot disagree
  * about which offers exist.
  */
+/** Allocated once — `projectPartyState` runs per party per pump. */
+const EMPTY_AWAY: ReadonlyMap<string, AwayMember> = new Map<string, AwayMember>();
+
 function toInviteViews(world: World, offers: readonly PartyOffer[]): PartyInviteView[] {
   const views: PartyInviteView[] = [];
   for (const offer of offers) {

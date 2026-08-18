@@ -432,6 +432,34 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 16 -> 17 (THEY ARE STILL IN YOUR PARTY). `PartyStateMember` gains a REQUIRED
+ * `away`, and the client gains a `follow` verb.
+ *
+ * THIS ONE IS A BUG FIX AND THE BUMP IS NOT THE INTERESTING PART. Reported from
+ * play: "i am unable to join a party member in combat (there is no way to enter
+ * the encounter space). it also seems to remove them from party when the combat
+ * starts."
+ *
+ * The party table was never touched. `projectPartyState` walked ONE WORLD and
+ * skipped any member it could not find there, so the instant somebody crossed
+ * into an instance their row vanished from everyone else's pane — which from
+ * the chair is indistinguishable from being thrown out of the party. Two
+ * projections were per-realm for a social fact that is not.
+ *
+ * `follow` is the other half: an instance is opened keyed by PARTY, so the room
+ * already belonged to everybody — but the roamer that pulled the first player
+ * in is consumed by the crossing, so the tile that was the door is gone.
+ *
+ * THE BUMP IS FORCED BY `away` BEING REQUIRED, and it is the strong form of the
+ * rule this file has applied since 2 -> 3: a v16 client would not merely miss a
+ * line, it would keep drawing the pane it drew before, which is the pane that
+ * loses the row. It would render a LIE about who is in your party — the same
+ * shape as 6 -> 7, 9 -> 10 and 11, and the reason the gate exists.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about a saved character changed shape:
+ * party membership is process-local (engine/party.ts) and has never been
+ * persisted.
+ *
  * 15 -> 16 (A PURSE). `InventoryMsg` gains a REQUIRED `money`.
  *
  * REQUIRED, which is what forces this. The rule this file has applied since v5
@@ -543,7 +571,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

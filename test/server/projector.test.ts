@@ -11,6 +11,7 @@ import {
   projectGroundItems,
   projectInventory,
   projectParty,
+  projectPartyState,
   projectProjectiles,
   projectTurn,
   toActorView,
@@ -24,7 +25,7 @@ import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { TICKS_PER_GAME_TURN, energyGainPerTick, grantEnergy } from '../../src/shared/energy.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { Projectile } from '../../src/server/engine/projectile.ts';
-import type { TurnState } from '../../src/server/view/projector.ts';
+import type { AwayMember, TurnState } from '../../src/server/view/projector.ts';
 import type { World } from '../../src/server/world/world.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 
@@ -1114,5 +1115,103 @@ describe('toActorView', () => {
     expect(Object.keys(toActorView(body)).sort()).toEqual(
       ['alive', 'hp', 'id', 'kind', 'maxHp', 'name', 'rank', 'sprite', 'x', 'y'].sort(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// projectPartyState — the bug reported from play
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * "IT SEEMS TO REMOVE THEM FROM PARTY WHEN THE COMBAT STARTS."
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It never did. `projectPartyState` walked ONE WORLD and skipped any roster
+ * member whose body it could not find there — so the instant somebody crossed
+ * into an instance, their row vanished from everyone else's pane. From the
+ * chair that is indistinguishable from being thrown out of the party, and it
+ * was reported as exactly that.
+ *
+ * The distinction this file has to keep is the one the old code collapsed:
+ *
+ *   NO BODY ANYWHERE      → drop the row. They have left the game, and a party
+ *                           row naming somebody who is not playing is the
+ *                           opposite mistake. This case was always right.
+ *   A BODY IN ANOTHER     → KEEP the row, name the place, and offer the door.
+ *   REALM                   This is the case that reached play.
+ */
+describe('projectPartyState keeps a member who is somewhere else', () => {
+  const roster = { leaderId: 'p1', members: ['p1', 'p2'] };
+
+  function scene(): {
+    here: ReturnType<typeof createWorld>;
+    there: ReturnType<typeof createWorld>;
+  } {
+    const here = createWorld('pane-here');
+    const there = createWorld('pane-there');
+    here.addPlayer('p1', 'Ren');
+    there.addPlayer('p2', 'Vell');
+    return { here, there };
+  }
+
+  it('DROPS a member with no body anywhere — that case was always right', () => {
+    const { here } = scene();
+    const viewer = here.getActor('p1');
+    if (viewer === undefined) throw new Error('unreachable');
+
+    const msg = projectPartyState(viewer, here, roster, barrier(), null);
+    expect(msg.members.map((m) => m.id)).toEqual(['p1']);
+  });
+
+  it('KEEPS a member who is in another realm, and names the place', () => {
+    // THE REGRESSION. Before the fix this returned ['p1'] and the second row
+    // was simply gone.
+    const { here, there } = scene();
+    const viewer = here.getActor('p1');
+    const body = there.getActor('p2');
+    if (viewer === undefined || body === undefined) throw new Error('unreachable');
+
+    const away = new Map<string, AwayMember>([
+      ['p2', { actor: body, place: 'An Index Breach', canFollow: true }],
+    ]);
+    const msg = projectPartyState(viewer, here, roster, barrier(), null, [], away);
+
+    expect(msg.members.map((m) => m.id)).toEqual(['p1', 'p2']);
+    const them = msg.members.find((m) => m.id === 'p2');
+    expect(them?.away).toEqual({ place: 'An Index Breach', canFollow: true });
+    expect(them?.name).toBe('Vell');
+    // AND THEIR HP IS LIVE, off their real body in the realm they are actually
+    // in — not a stale copy and not a zero. The pane's whole job during a fight
+    // you cannot see is to say how it is going.
+    expect(them?.hp).toBe(body.hp);
+    expect(them?.maxHp).toBe(body.maxHp);
+  });
+
+  it('says a member on your own floor is not away', () => {
+    const here = createWorld('pane-together');
+    here.addPlayer('p1', 'Ren');
+    here.addPlayer('p2', 'Vell');
+    const viewer = here.getActor('p1');
+    if (viewer === undefined) throw new Error('unreachable');
+
+    const msg = projectPartyState(viewer, here, roster, barrier(), null);
+    expect(msg.members.map((m) => m.away)).toEqual([null, null]);
+  });
+
+  it('offers no door to a viewer who cannot walk through one', () => {
+    // `canFollow` is per VIEWER and the gateway decides it — a body on the
+    // floor is being carried, not walking. Drawing a control whose only
+    // possible outcome is a refusal is worse than drawing none.
+    const { here, there } = scene();
+    const viewer = here.getActor('p1');
+    const body = there.getActor('p2');
+    if (viewer === undefined || body === undefined) throw new Error('unreachable');
+
+    const away = new Map<string, AwayMember>([
+      ['p2', { actor: body, place: 'An Index Breach', canFollow: false }],
+    ]);
+    const msg = projectPartyState(viewer, here, roster, barrier(), null, [], away);
+    expect(msg.members.find((m) => m.id === 'p2')?.away?.canFollow).toBe(false);
   });
 });

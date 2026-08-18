@@ -34,7 +34,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 16 — the inventory frame carries a purse', () => {
+  it('pins PROTOCOL_VERSION at 17 — the party pane keeps members who are elsewhere', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -66,10 +66,16 @@ describe('shared constants', () => {
     // permanently-stuck shape above. It bumps because a silently goldless purse
     // is indistinguishable from a broken drop table, and that is the class of
     // report that costs an evening to chase.
-    expect(PROTOCOL_VERSION).toBe(16);
+    //
+    // v17 IS THE STRONG FORM AGAIN, and it is a bug fix. `PartyStateMember`
+    // gains a REQUIRED `away`. A v16 client would keep drawing the pane it drew
+    // before — the pane that DROPS a member the moment they cross into an
+    // instance — so it would render a lie about who is in your party. That is
+    // the 6 -> 7 / 9 -> 10 / 11 shape, not the 15 -> 16 one.
+    expect(PROTOCOL_VERSION).toBe(17);
   });
 
-  it('keeps the 15 -> 16 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 16 -> 17 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -88,7 +94,7 @@ describe('shared constants', () => {
       'utf8',
     );
 
-    const afterHeading = source.split('15 -> 16')[1] ?? '';
+    const afterHeading = source.split('16 -> 17')[1] ?? '';
     // The entry ends where the constant it explains begins.
     const entry = afterHeading.split('export const PROTOCOL_VERSION')[0] ?? '';
 
@@ -97,7 +103,7 @@ describe('shared constants', () => {
     // It must name the frame that FORCES the bump, not merely list what was
     // added — an entry that only enumerates additions is an entry arguing for
     // NOT bumping.
-    expect(entry).toContain('money');
+    expect(entry).toContain('away');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');
