@@ -1346,6 +1346,38 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // disconnect path — see `forgetActor`'s own note: a dropped socket keeps
       // its seat at the table for the whole reconnect grace.
       if (opts.parties !== undefined) forgetParty(opts.parties, actorId);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE TWO TABLES THIS FORGOT — THE COUNTDOWN AND THE STATUSES.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `reap` — twelve lines up, for a MONSTER leaving — empties all five
+       * tables, and names the reason in its own docblock. This path, for a
+       * PLAYER leaving, emptied three. The two it missed are the two that
+       * describe a body's condition rather than its relationships.
+       *
+       * ═══ THE SCENARIO, AND IT IS NOT EXOTIC ═══
+       * Somebody's Discord drops mid-fight while they are DOWNED. The reconnect
+       * grace expires and their body is recalled through here. They come back
+       * that evening — and `actorIdForUser` is a stable hash, so the same player
+       * IS the same id — to a brand-new, full-health body that the Downed table
+       * still has a record for. They are drawn prone under a countdown marker,
+       * they are outside the quorum so the barrier waits on somebody who cannot
+       * act, and a party of one wipes: `resetFloor` runs on a floor where
+       * nothing happened.
+       *
+       * The status table is the same shape of bug and arrived this milestone:
+       * they would come back still Bleeding, from a fight they left.
+       *
+       * ═══ WHY `leave` AND NOT `setConnected(false)` ═══
+       * Exactly the reason the party line above gives. A dropped socket KEEPS
+       * its seat for the whole reconnect grace — its countdown must keep running
+       * and its statuses must keep ticking, because the body is still on the
+       * floor and its friends can still reach it. This is the other path: the
+       * body is leaving the world, so everything keyed to it goes with it.
+       */
+      if (opts.downed !== undefined) forgetDowned(opts.downed, actorId);
+      if (opts.effects !== undefined) forgetEffects(opts.effects, actorId);
       world.removePlayer(actorId);
     },
 

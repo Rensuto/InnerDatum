@@ -8,7 +8,7 @@ import {
 } from '../../src/server/content/classes.ts';
 import { BLEEDING, EffectId, SLOWED, STUNNED } from '../../src/server/content/effects.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
-import { createDownedState } from '../../src/server/engine/downed.ts';
+import { createDownedState, isDowned } from '../../src/server/engine/downed.ts';
 import { INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
 import {
   createEffectState,
@@ -307,6 +307,47 @@ describe('the status seam — a subsystem that existed and was reachable from no
     expect(dalt.hp).toBe(dalt.maxHp);
 
     expect(hasEffect(effects, 'p1', EffectId.Bleeding)).toBe(false);
+  });
+
+  it('leaving takes the countdown and the statuses with the body', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * A RECALLED BODY CAME BACK PHANTOM-DOWNED, AND STILL BLEEDING.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `reap`, for a MONSTER leaving, empties all five side tables. `leave`, for
+     * a PLAYER leaving, emptied three — barrier, talent sheet, party row — and
+     * missed the two that describe a body's CONDITION.
+     *
+     * The scenario is ordinary. Somebody's Discord drops mid-fight while Downed;
+     * the reconnect grace expires and the body is recalled through `leave`. They
+     * return that evening to the same stable actor id and a brand-new
+     * full-health body that the Downed table still has a record for: drawn prone
+     * under a countdown, outside the quorum so the barrier waits on somebody who
+     * cannot act, and a party of one wipes — `resetFloor` running on a floor
+     * where nothing happened. With statuses wired they also came back bleeding
+     * from a fight they left.
+     */
+    const { world, effects } = arena('status-leave');
+    const downed = createDownedState();
+    const dalt = world.addPlayer('p1', 'Dalt', { maxHp: 60 });
+    dalt.x = REALM_TILES.x;
+    dalt.y = REALM_TILES.y;
+
+    const engine = createTurnEngine({ world, now: () => 0, effects, downed });
+    engine.join('p1');
+
+    setEffect(effects, dalt, EffectId.Bleeding, 20, {}, world.rng);
+    expect(hasEffect(effects, 'p1', EffectId.Bleeding)).toBe(true);
+
+    engine.leave('p1');
+
+    // The body is gone, and so is everything that described it.
+    expect(world.getActor('p1')).toBeUndefined();
+    expect(hasEffect(effects, 'p1', EffectId.Bleeding)).toBe(false);
+    // The Downed table too — asserted through the public reader rather than the
+    // map, so this keeps holding if the storage changes.
+    expect(isDowned(downed, 'p1')).toBe(false);
   });
 
   it('with no table at all, the engine is byte-for-byte its old self', () => {
