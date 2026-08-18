@@ -6615,7 +6615,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    pumpAndBroadcast();
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS REALM, NOT EVERY REALM — and SPACE is the most-pressed key there is.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `pumpAndBroadcast()` with no argument walks `pumpTargets()` and pumps the
+     * WHOLE PROCESS: the overworld, five towns, and every open delve instance.
+     * `handleMove` and `handleTalent` both pass `realmFor(session)` and always
+     * have; these two did not, so committing cost six to nine times the work a
+     * step did — and `refreshViewers` and `broadcastTurnIfChanged` each walk
+     * every session in the process once per realm, so the cost scales with
+     * players times realms.
+     *
+     * ═══ THE OPEN ROUND MADE IT WORSE, WHICH IS WHY IT IS FIXED NOW ═══
+     * SPACE used to be one keypress per player per turn. With the round staying
+     * open it is one per ROUND — pressed whenever somebody finishes early rather
+     * than spending their whole budget — so the frequency went up at the same
+     * moment the per-press cost mattered most.
+     *
+     * A commit changes THIS party's quorum and nothing else. No other realm's
+     * barrier can move because somebody in a different world pressed a key.
+     */
+    pumpAndBroadcast(realmFor(session));
   };
 
   // -------------------------------------------------------------------------
@@ -8742,7 +8764,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.IllegalMove, `revive refused: ${result.reason}`);
       return;
     }
-    pumpAndBroadcast();
+    // THIS REALM. Same argument as `handleTurnVerb`: a player verb changes one
+    // party's quorum, and pumping the whole process on every keypress scales with
+    // players times realms.
+    pumpAndBroadcast(realmFor(session));
   };
 
   /**
@@ -8818,7 +8843,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     saveNow('respawn');
 
     // The quorum just grew by one. The party may have been idling on nobody.
-    pumpAndBroadcast();
+    // THIS REALM. Same argument as `handleTurnVerb`: a player verb changes one
+    // party's quorum, and pumping the whole process on every keypress scales with
+    // players times realms.
+    pumpAndBroadcast(realmFor(session));
   };
 
   /**
