@@ -1556,6 +1556,40 @@ export function statusPass(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OTHER DIRECTION: SOMETHING WANTS TO *CAUSE* A STATUS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `statusPass` is the CLOCK — it ticks what is already on a body. This is the
+ * DOOR: a talent connects, and asks for a stun. They are deliberately separate
+ * closures because they are wanted in different places (the clock by `actBase`,
+ * the door by a talent body) and giving either caller the whole `EffectState`
+ * would let a talent tick the clock, or `actBase` mint an effect.
+ *
+ * ═══ WHY A CLOSURE RATHER THAN THE STATE ═══
+ * Same reason `statusPass` is one: `engine/talents.ts` must not import this
+ * module. The talent layer already owns a small effect system of its own
+ * (`TalentEffect` — taunts, marks) and two modules that both export "effects"
+ * into each other is how a cycle starts. The closure carries the state, the
+ * rng and the log with it, and the talent layer sees a function.
+ *
+ * THE RNG AND THE LOG COME FROM THE ADAPTER, not from the caller, which is
+ * what guarantees a stun rolled inside a talent draws from the same labelled
+ * stream — and writes into the same Record — as one rolled anywhere else.
+ */
+export type StatusApply = (
+  target: EffectActor,
+  effectId: string,
+  duration: number,
+  params?: EffectParams,
+) => SetEffectResult;
+
+export function statusApplier(state: EffectState, rng: Rng, ctx: EffectCtx = NO_CTX): StatusApply {
+  return (target, effectId, duration, params = {}): SetEffectResult =>
+    setEffect(state, target, effectId, duration, params, rng, ctx);
+}
+
+/**
  * Put `count` of an actor's ready talents on a 1-turn cooldown.
  *
  * physical.lua:495-504 — STUNNED's talent lockout, and the reason its comment

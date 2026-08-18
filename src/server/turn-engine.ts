@@ -36,7 +36,7 @@ import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
 import { RespawnRefusal, forgetActor as forgetDowned, respawn } from './engine/downed.ts';
 import type { DownedState } from './engine/downed.ts';
-import { forgetActor as forgetEffects } from './engine/effects.ts';
+import { forgetActor as forgetEffects, statusPass } from './engine/effects.ts';
 import type { EffectLogLine, EffectState } from './engine/effects.ts';
 import { combatDistance } from './engine/combat.ts';
 import {
@@ -1820,6 +1820,13 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        */
       const levelUps: LevelUpNote[] = [];
 
+      /**
+       * WHAT THE STATUS SYSTEM WANTED TO SAY THIS PUMP. See `drainStatusLog`
+       * below — declared here, out here with `levelUps`, because both are
+       * buffers the ctx writes into and the pump reads back out.
+       */
+      const statusNotes: EffectLogLine[] = [];
+
       // `downed` is threaded in rather than created here because a five-turn
       // countdown has to survive the pump that ticks it — see the option's note.
       // Undefined switches every survival branch in the scheduler off, which is
@@ -1848,6 +1855,57 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         // reach the floor on the production path rather than only in a test that
         // remembered to wire it up.
         loot: { spillOrder: spillOrderOf },
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * THE STATUS SEAM, WHICH HAS NEVER BEEN FILLED ON ANY PATH.
+         * ═══════════════════════════════════════════════════════════════════
+         * `PumpCtx.statusPass` documents this exact construction and says
+         * "the adapter in turn-engine.ts is the only thing that holds all
+         * three" — and then no adapter ever built one. Nor did `main.ts`
+         * create an `EffectState` to hold. So Stunned, Bleeding and Slowed,
+         * their typed saves and their partial-save duration scaling — a core
+         * MVP subsystem with 115 test references — were unreachable in the
+         * running game.
+         *
+         * ABSENT STAYS ABSENT: without an `EffectState` this is undefined and
+         * `actBase` behaves exactly as it did at M3, which is what every
+         * existing fixture expects.
+         */
+        statusPass:
+          opts.effects === undefined
+            ? undefined
+            : statusPass(opts.effects, world.rng, {
+                getActor: (id: string) => world.getActor(id),
+                /**
+                 * IDS, AND THE BOOK WANTS THE BODY. `TalentBook.loadoutOf`
+                 * takes an actor and returns `LoadoutTalent` rows; STUNNED's
+                 * lockout wants ids. Both conversions happen here rather than
+                 * either side widening its contract for the other.
+                 */
+                activatableTalents: (id: string) => {
+                  const body = world.getActor(id);
+                  if (body === undefined) return [];
+                  return (opts.talents?.loadoutOf(body) ?? []).map((talent) => talent.id);
+                },
+                log: (line) => statusNotes.push(line),
+              }),
+        /**
+         * AND THE HALF THAT REACHES A PLAYER'S EYES.
+         *
+         * `statusPass` alone makes statuses REAL; this makes them VISIBLE. The
+         * partial save — "Dalt saves (phys 38 vs power 31, 68%) — Slowed 1
+         * turn, not 3" — is the single line game-design.md § 7 puts in its
+         * sample Record to explain the whole subsystem, and without a drain it
+         * is computed correctly and then discarded.
+         *
+         * A DRAIN AND NOT A CALLBACK, for the reason `PumpCtx.drainStatusLog`
+         * gives: a push from inside the effect system would close whatever
+         * event batch happened to be open and split one sweep into several.
+         * The buffer is per-pump — declared beside the call, spliced empty by
+         * whoever asks — so a note can never survive into the turn after the
+         * one that produced it.
+         */
+        drainStatusLog: () => statusNotes.splice(0, statusNotes.length),
       });
 
       /**

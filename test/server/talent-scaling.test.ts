@@ -17,10 +17,19 @@ import {
   talentId,
   useTalent,
 } from '../../src/server/engine/talents.ts';
-import { ENERGY_TO_ACT } from '../../src/shared/version.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { scriptedRng } from '../helpers/scripted-rng.ts';
+import { createRng } from '../../src/shared/rng.ts';
+import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
+import { statusApplier } from '../../src/server/engine/effects.ts';
+
+/** One `ctx.status` call, as the talent authored it. See `fixture`. */
+type StatusRequest = {
+  readonly targetId: string;
+  readonly effectId: string;
+  readonly duration: number;
+};
 import type { ClassDef } from '../../src/server/content/classes.ts';
 import type {
   TalentActor,
@@ -111,6 +120,12 @@ type Fixture = {
   readonly world: TalentWorld;
   readonly engine: TalentEngine;
   readonly ctx: TalentCtx;
+  /**
+   * EVERY STATUS THIS FIXTURE'S TALENTS ASKED FOR, in order — the duration as
+   * AUTHORED, before any save touched it. See the note on `status` below for
+   * why this file reads the request and not the outcome.
+   */
+  readonly statusCalls: readonly StatusRequest[];
   add(definition: ClassDef, id: string, x: number, y: number): TalentActor;
   addMonster(id: string, x: number, y: number, hp?: number): TalentActor;
   /** Buy this talent up to `level` — the spend path's effect, without the path. */
@@ -154,12 +169,46 @@ function fixture(): Fixture {
   // `talentLevel` here is only ever read by the direct-call helpers
   // (`resolveGuardCounter`); `useTalent` computes its own from the caster's
   // sheet and overwrites it.
-  const ctx: TalentCtx = { engine, world, rng, talentLevel: 1 };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE STATUS DOOR, WITH A NOTEBOOK — and the notebook is the point.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This file asks ONE kind of question: what number did the author freeze, and
+   * does a rank move it. For a stun that number is the duration REQUESTED —
+   * `STUN_TURNS` in lockdown.ts — and it is emphatically NOT the duration that
+   * survived, because a save stands between them.
+   *
+   * Reading the landed effect instead was tried and was wrong within one run:
+   * the seed's first roll was a 17% save that bit, the stun was negated, and
+   * the test reported that Lockdown's frozen number was `undefined`. Nothing
+   * about the talent had changed. A doctrine test that a legitimate die roll
+   * can fail is not testing doctrine.
+   *
+   * So the applier is wrapped: the request is written down, then delegated to
+   * the real one so the effect genuinely lands (or genuinely does not) and the
+   * rest of the talent runs against a real table.
+   */
+  const effects = createMvpEffectState();
+  const applier = statusApplier(effects, createRng('talent-scaling.test:status'));
+  const statusCalls: StatusRequest[] = [];
+
+  const ctx: TalentCtx = {
+    engine,
+    world,
+    rng,
+    talentLevel: 1,
+    status: (target, effectId, duration, params) => {
+      statusCalls.push({ targetId: target.id, effectId, duration });
+      return applier(target, effectId, duration, params);
+    },
+  };
 
   return {
     world,
     engine,
     ctx,
+    statusCalls,
     add: (definition, id, x, y) => {
       const actor: TalentActor = {
         id,
@@ -577,24 +626,30 @@ describe('THE FROZEN NUMBERS — a rank buys damage, never a discount or a solut
     }
   });
 
-  it('Lockdown strips exactly 2 of 6 AP at every rank', () => {
-    // lockdown.ts: an INTEGER OUT OF SIX. Scaled to 6 it would delete a whole
-    // monster turn, which is a stun — a different mechanic, with none of the
-    // typed-save machinery game-design.md § 7 says a stun needs.
-    const PLAYER_MAX_AP = 6;
-    const AP_STRIPPED = 2;
+  it('Lockdown stuns for exactly 2 turns at every rank', () => {
+    // lockdown.ts. This test used to guard `AP_STRIPPED = 2` — an integer out
+    // of six — with the note that scaling it to six "would delete a whole
+    // monster turn, which is a stun, a different mechanic with none of the
+    // typed-save machinery game-design.md § 7 says a stun needs". The machinery
+    // landed, the talent became the stun, and the DOCTRINE IS UNCHANGED: the
+    // number a rank must not move is now a duration instead of an AP count.
+    //
+    // A rank-5 Lockdown holds a body for the same two turns as a rank-1 one.
+    // What rank bought is in the damage test above; what the CHARACTER buys is
+    // reliability, through `combatPhysicalpower` — which is not a rank at all.
+    const STUN_TURNS = 2;
     for (const level of RANKS) {
       const f = fixture();
       const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
-      const husk = f.addMonster('husk', 6, 5);
-      const before = husk.energy ?? 0;
+      f.addMonster('husk', 6, 5);
       f.setLevel('dalt', 'lockdown', level);
       f.refill('dalt');
       useTalent(f.engine, watchman, talentId('lockdown'), { x: 6, y: 5, actorId: 'husk' }, f.ctx);
-      expect(before - (husk.energy ?? 0)).toBeCloseTo(
-        (ENERGY_TO_ACT * AP_STRIPPED) / PLAYER_MAX_AP,
-        6,
-      );
+
+      // WHAT IT ASKED FOR, not what survived the save. See `statusCalls`.
+      expect(f.statusCalls).toEqual([
+        { targetId: 'husk', effectId: EffectId.Stunned, duration: STUN_TURNS },
+      ]);
     }
   });
 

@@ -41,7 +41,11 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
+import { EffectId } from '../content/effects.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
+import { combatPhysicalpower } from '../engine/derived.ts';
+import { SetEffectOutcome } from '../engine/effects.ts';
+import type { SetEffectResult } from '../engine/effects.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -49,7 +53,6 @@ import {
   TalentEffect,
   TalentRefusal,
   TargetShape,
-  drainActionBudget,
   talentAttack,
   talentId,
   percent,
@@ -105,26 +108,97 @@ function damageMult(talentLevel: number): number {
 }
 
 /**
- * `{ type: "debuff_ap", value: 2 }`. FROZEN, and this one is an INTEGER OUT OF
- * SIX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE STUN THIS TALENT SPENT THREE MILESTONES NOT BEING.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * `drainActionBudget` converts it as `ENERGY_TO_ACT * AP_STRIPPED /
- * PLAYER_MAX_AP` — two of six is a third of a monster's turn. Scaled to 6 it
- * would delete a whole monster turn outright, which is not a stronger debuff
- * but a DIFFERENT MECHANIC: a stun, with none of the typed-save machinery
- * game-design.md § 7 says a stun needs (M4 owns that, and this file's header is
- * explicit that it is not the status system). Four of six would be a stun most
- * of the time and a debuff the rest, which is worse than either.
+ * What stood here was `AP_STRIPPED = 2` — `{ type: "debuff_ap", value: 2 }`
+ * from the donor content, an integer out of six, converted by
+ * `drainActionBudget` as `ENERGY_TO_ACT * 2 / 6`: a third of a monster's turn.
+ * Its note explained at length why it was not simply scaled to six:
  *
- * The talent's rank is paid out in damage instead. See `DAMAGE_MULT_HIGH`.
+ * > Scaled to 6 it would delete a whole monster turn outright, which is not a
+ * > stronger debuff but a DIFFERENT MECHANIC: a stun, with none of the
+ * > typed-save machinery game-design.md § 7 says a stun needs (M4 owns that).
+ * > Four of six would be a stun most of the time and a debuff the rest, which
+ * > is worse than either.
+ *
+ * ONE STATED REASON, AND IT IS NOW SPENT. M4's machinery exists, is registered
+ * in main.ts, and is threaded to this file as `ctx.status`. So the talent
+ * becomes what its name always claimed.
+ *
+ * ═══ THE AP STRIP IS GONE, NOT STACKED ═══
+ * A stun and a third of a turn's momentum are the same idea twice. Keeping both
+ * would make one control talent worth two, and the strip was explicitly the
+ * SUBSTITUTE for this, never a companion to it. What is left is damage, a stun
+ * that has to get past a save, and the taunt.
+ *
+ * ═══ WHY A SAVE MAKES IT BETTER, NOT WEAKER ═══
+ * The strip always landed for exactly the same amount, so the decision to press
+ * it never depended on who was standing there. A typed save makes an
+ * Overwritten Husk genuinely harder to lock down than an Index Husk — and, the
+ * part worth having, a NARROW save SHORTENS the stun rather than erasing it
+ * (Actor.lua:7004-7014). "Index Husk saves — stunned 1 turn, not 3" is a
+ * different sentence from "nothing happened", and it is the sentence
+ * game-design.md § 7 puts in its own sample Record to explain the subsystem.
+ *
+ * ═══ THE POWER IS THE WATCHMAN'S PHYSICAL POWER ═══
+ * `combatPhysicalpower` (Combat.lua:1689-1733) — Strength through the same
+ * rescale everything else uses, which ties the stun's reliability to the stat
+ * the class already levels rather than to a number invented here. It is checked
+ * against the victim's PHYSICAL save, because that is `STUNNED.type` and
+ * Actor.lua:7002 reads the effect's own type when the caller names none.
  */
-const AP_STRIPPED = 2;
-/** The 6-AP round (game-design.md § 6, from `city_watchman.json`'s `max_ap`). */
-const PLAYER_MAX_AP = 6;
+/**
+ * ═══ AND IT IS FROZEN AT 2, WHICH IS THE SAME RULE THE STRIP OBEYED ═══
+ * The note this replaced ended "the talent's rank is paid out in damage
+ * instead", and that sentence outlived the mechanic it was written about.
+ * test/server/talent-scaling.test.ts is an entire file enforcing it — "a rank
+ * buys damage, never a discount or a solution" — and a stun that grew from two
+ * turns to three with rank would be a rank buying a solution, which is the one
+ * thing the doctrine names.
+ *
+ * WHAT DOES SCALE IS THE CASTER, not the talent: `applyPower` is
+ * `combatPhysicalpower`, so a Watchman who put levels into Strength lands this
+ * more often and for longer against the same husk. Reliability grows with the
+ * CHARACTER and length is fixed by the TALENT, which keeps a rank-1 Lockdown a
+ * real answer at level 20 rather than a slot you are obliged to top up.
+ *
+ * TWO AND NOT THREE because two is what a party can build a turn around. Three
+ * turns of a monster at 40% damage with its cooldowns frozen, on a five-turn
+ * cooldown, is close to taking a body off the board for its whole cycle.
+ */
+const STUN_TURNS = 2;
 /** ToME Taunt, summon-utility.lua:24 — `cooldown = 5` ToME actions. */
 const TOME_COOLDOWN = 5;
 /** How long the target stays fixed on the Watchman, in GAME TURNS. */
 const TAUNT_TURNS = 3;
+
+/**
+ * WHAT THE RECORD SAYS ABOUT THE STUN — the honest three-way.
+ *
+ * The entire reason for a partial save is that "it worked" and "it didn't" are
+ * not the only two outcomes, so a log printing only those two throws the
+ * mechanic away at the last step. Three sentences, one per real outcome:
+ *
+ *   landed whole      "Index Husk is stunned (3 turns)."
+ *   the save bit      "Index Husk saves — stunned 1 turn, not 3."
+ *   the save held      "Index Husk shrugs it off."
+ *
+ * The middle one is the sentence a player learns the system from, which is why
+ * it is the one that names both numbers.
+ */
+function stunLine(name: string, maximum: number, landed: SetEffectResult | undefined): string[] {
+  if (landed === undefined) return [];
+  if (landed.outcome === SetEffectOutcome.Immune || landed.dur <= 0) {
+    return [`${name} shrugs it off.`];
+  }
+  if (landed.dur < maximum) {
+    const turns = landed.dur === 1 ? '1 turn' : `${String(landed.dur)} turns`;
+    return [`${name} saves — stunned ${turns}, not ${String(maximum)}.`];
+  }
+  return [`${name} is stunned (${String(landed.dur)} turns).`];
+}
 
 export const lockdown: Talent = {
   id: talentId('lockdown'),
@@ -153,10 +227,22 @@ export const lockdown: Talent = {
     // (damage.ts makes the same guarantee for the same reason).
     if (!victim.alive) return talentDone([hit], [`${victim.name} is unfiled.`]);
 
-    const drained = drainActionBudget(victim, AP_STRIPPED, PLAYER_MAX_AP);
+    // ═══ THE STUN ═══
+    // `ctx.status` absent is a fixture with no status table, not an error: the
+    // tackle still hits and still taunts. Every seam in the talent layer reads
+    // this way — see `TalentCallCtx.status`.
+    const landed = ctx.status?.(victim, EffectId.Stunned, STUN_TURNS, {
+      applyPower: combatPhysicalpower(self.combat ?? {}),
+      srcId: self.id,
+    });
 
     // The taunt half. `ai.targetId` is what src/server/ai/npc.ts reads, so this
     // is a real retarget and not a flag nobody consults.
+    //
+    // IT HAPPENS WHETHER OR NOT THE STUN DID. A victim that shrugged the stun
+    // off is precisely the one you most want walking at the Watchman rather
+    // than past him, and a talent whose halves fail together is a coin flip
+    // instead of a decision.
     const ai = victim.ai;
     if (ai !== null && ai !== undefined) ai.targetId = self.id;
     ctx.engine.addEffect(victim.id, {
@@ -168,15 +254,12 @@ export const lockdown: Talent = {
 
     return talentDone(
       [hit],
-      [
-        `${victim.name} loses ${AP_STRIPPED} AP of momentum (${Math.round(drained)} energy).`,
-        `${victim.name} turns on ${self.name}.`,
-      ],
+      [...stunLine(victim.name, STUN_TURNS, landed), `${victim.name} turns on ${self.name}.`],
     );
   },
 
   describe: (_self, level) =>
-    `Tackle an adjacent enemy for ${percent(damageMult(level))} weapon damage, strip ` +
-    `${AP_STRIPPED} AP from its next turn and force it onto you for ${TAUNT_TURNS} turns. ` +
-    `${AP_COST} AP, ${RESOLVE_COST} Resolve.`,
+    `Tackle an adjacent enemy for ${percent(damageMult(level))} weapon damage, stun it for ` +
+    `${String(STUN_TURNS)} turns (physical save) and force it onto you for ` +
+    `${TAUNT_TURNS} turns. ${AP_COST} AP, ${RESOLVE_COST} Resolve.`,
 };

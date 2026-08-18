@@ -31,6 +31,9 @@ import {
 import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
+import { createEffectState, registerEffect, statusApplier } from './engine/effects.ts';
+import type { StatusApply } from './engine/effects.ts';
+import { BLEEDING, SLOWED, STUNNED } from './content/effects.ts';
 import {
   RESOURCE_RULES,
   markMultiplier,
@@ -123,7 +126,18 @@ const startedAt = hrtime.bigint();
  * rather than against a copy of it written in a test file. A copy would keep
  * passing on the day this one stopped calling `actBase`.
  */
-export function talentRuntimeFor(talents: TalentEngine, world: World): TalentRuntime {
+export function talentRuntimeFor(
+  talents: TalentEngine,
+  world: World,
+  /**
+   * THE STATUS DOOR (engine/effects.ts#statusApplier). A talent that lands a
+   * stun calls this; see `TalentCallCtx.status` for why it is a closure and not
+   * the table. Optional so the four fixtures that build a runtime by hand keep
+   * compiling — absent means a talent's status half is skipped, never that it
+   * throws.
+   */
+  status?: StatusApply,
+): TalentRuntime {
   return {
     use: (actor: EngineActor, id: string, target: TileXY | undefined): TalentResolutionResult => {
       const talent = talents.registry.get(id);
@@ -140,7 +154,7 @@ export function talentRuntimeFor(talents: TalentEngine, world: World): TalentRun
         actor,
         id,
         { x: at.x, y: at.y, ...(standing === undefined ? {} : { actorId: standing.id }) },
-        { engine: talents, world, rng: world.rng },
+        { engine: talents, world, rng: world.rng, ...(status === undefined ? {} : { status }) },
       );
       if (!result.ok) return { ok: false, reason: result.reason };
 
@@ -385,6 +399,32 @@ export function buildServer() {
   const parties = createPartyState();
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE STATUS TABLE — WHICH THIS FILE HAS NEVER BUILT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Stunned, Bleeding and Slowed exist in content/effects.ts with typed saves
+   * and partial-save duration scaling, engine/effects.ts implements the whole
+   * machine, the party pane draws a badge row for it, `EffectsMsg` is on the
+   * wire, and 115 test references exercise it.
+   *
+   * NONE OF IT WAS CONNECTED. `wsGateway` was registered without `effects`, so
+   * `broadcastEffectsIfChanged` was permanently silent and `recomposeCombat`
+   * folded a null status table; `createTurnEngine` was called without it, so
+   * `PumpCtx.statusPass` — whose own docblock spells out the exact construction
+   * and names this adapter as the only thing that can build it — was undefined
+   * on every path. A core MVP subsystem (game-design.md § "In": "Three
+   * statuses ... with typed saves and partial-save duration scaling") was
+   * unreachable in the running game.
+   *
+   * ONE INSTANCE, for the reason `downed` states above: two tables are two
+   * answers to "is Sam still bleeding", and the second one is drawn on the same
+   * screen as the first.
+   */
+  const effects = createEffectState();
+  for (const def of [STUNNED, BLEEDING, SLOWED]) registerEffect(effects, def);
+
+  /**
    * CHARACTER FILES, and the one thing that knows whose body is whose.
    *
    * The store owns the disk (atomic writes, the `.bak`, the R9 rename retry);
@@ -472,13 +512,29 @@ export function buildServer() {
    *   the BARRIER is per realm, built inside `createTurnEngine` — two realms
    *             sharing one would collide on its level-wide countdown key.
    */
+  /**
+   * ONE APPLIER PER REALM, because the rng is per-realm.
+   *
+   * The status TABLE is global — one `effects` for the whole process, for the
+   * reason `downed` states. The DOOR is not: it folds in the world's seeded
+   * stream, and the Overworld's stream is not the Hollow Mine's. Building it
+   * here, inside `engineFor`'s neighbourhood, is what keeps a stun rolled in a
+   * delve drawing from that delve's stream.
+   */
+  const statusFor = (forWorld: World): StatusApply => statusApplier(effects, forWorld.rng);
+
   const engineFor = (forWorld: World): ReapingTurnEngine =>
     createTurnEngine({
       world: forWorld,
       downed,
       parties,
       talents: createTalentBook(talentEngine, forWorld),
-      talentRuntime: talentRuntimeFor(talentEngine, forWorld),
+      talentRuntime: talentRuntimeFor(talentEngine, forWorld, statusFor(forWorld)),
+      // THE OTHER HALF OF THE STATUS SEAM. `turn-engine.ts` builds
+      // `PumpCtx.statusPass` from this, the world's rng and the talent book —
+      // it is the only place that holds all three, which is why the seam sat
+      // empty until both ends were wired in the same breath.
+      effects,
       log: app.log,
     });
 
@@ -706,6 +762,9 @@ export function buildServer() {
     realms,
     parties,
     downed,
+    // THE STATUS TABLE, so badges reach the party pane and a status can change
+    // a sheet. Without it `broadcastEffectsIfChanged` sends nothing at all.
+    effects,
     sessions,
     persist,
   });

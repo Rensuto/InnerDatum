@@ -127,6 +127,7 @@ import { combatDamage } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
+import type { StatusApply } from './effects.ts';
 import type { World } from '../world/world.ts';
 import type { CombatSheet } from './combat.ts';
 
@@ -857,6 +858,28 @@ export type TalentCallCtx = {
   readonly world: TalentWorld;
   /** The world's seeded stream. Every draw carries a label. */
   readonly rng: Rng;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * THE DOOR TO THE STATUS SYSTEM. A CLOSURE, AND THAT IS DELIBERATE.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * This module must not import `engine/effects.ts`. It already runs a small
+   * effect system of its own — `TalentEffect`, which is taunts and marks and
+   * guards, per-talent bookkeeping the scheduler reads — and two modules that
+   * each export "effects" into the other is how a cycle starts. So the real
+   * status table arrives as `statusApplier(state, rng, ctx)`: one function,
+   * carrying its own state, rng and log.
+   *
+   * The rng is the WORLD's, folded in by whoever built the closure rather than
+   * taken from `ctx.rng` here, so a stun rolled inside a talent draws from the
+   * same labelled stream as one rolled anywhere else — which is what keeps a
+   * seeded replay a replay.
+   *
+   * OPTIONAL, LIKE EVERY OTHER SEAM IN THIS FILE. Absent → a talent that wants
+   * a status silently does the rest of its job, which is what every fixture
+   * built before the status table existed expects.
+   */
+  readonly status?: StatusApply;
 };
 
 /**

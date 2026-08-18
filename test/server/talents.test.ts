@@ -49,6 +49,10 @@ import {
 } from '../../src/shared/energy.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
+import { createRng } from '../../src/shared/rng.ts';
+import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
+import { effectDur, hasEffect, statusApplier } from '../../src/server/engine/effects.ts';
+import type { EffectState } from '../../src/server/engine/effects.ts';
 import type { ClassDef } from '../../src/server/content/classes.ts';
 import type {
   Talent,
@@ -108,6 +112,8 @@ type Fixture = {
   readonly engine: TalentEngine;
   readonly ctx: TalentCtx;
   readonly rng: Rng;
+  /** The real status table `ctx.status` writes into. See the note in `fixture`. */
+  readonly effects: EffectState;
   add(definition: ClassDef, id: string, x: number, y: number): TalentActor;
   addMonster(id: string, x: number, y: number, hp?: number): TalentActor;
 };
@@ -153,13 +159,45 @@ function fixture(
   // (`createTalentSheet`). `useTalent` overwrites it from the caster's own
   // sheet, so it only matters for the direct-call helpers — `resolveGuardCounter`
   // below is the one that takes a ctx without going through `useTalent`.
-  const ctx: TalentCtx = { engine, world, rng, talentLevel: 1 };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A REAL STATUS TABLE, ON ITS OWN REAL STREAM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The TABLE is here because Lockdown now lands a stun through `ctx.status`,
+   * and a fixture that left the seam out would pin the absent-seam fallback
+   * forever while the production path went untested.
+   *
+   * THE STREAM IS `createRng`, NOT THE SCRIPTED ONE ABOVE, and the difference
+   * matters. `scriptedRng` is a SCRIPT — every draw returns the next literal in
+   * a list, which is exactly right for "did this stage draw, and how many
+   * times" (`drawCount`) and exactly wrong for a save, whose whole behaviour is
+   * a DISTRIBUTION: three normal samples, a stochastic round, and a hit roll.
+   * Feeding it a constant does not produce a typical save, it produces the
+   * extreme, and pinning the extreme would assert the opposite of the mechanic.
+   *
+   * The seed is fixed, so this is deterministic in the way that matters — the
+   * assertions below are stable — while the numbers are ones the real system
+   * actually produces. Production correctly shares ONE stream (main.ts hands
+   * `statusApplier` the world's rng); a fixture splitting them only means the
+   * scripted script stays untouched by status draws, which is what keeps every
+   * `drawCount` assertion in this file reading the same as before.
+   */
+  const effects = createMvpEffectState();
+  const ctx: TalentCtx = {
+    engine,
+    world,
+    rng,
+    talentLevel: 1,
+    status: statusApplier(effects, createRng('talents.test:status')),
+  };
 
   return {
     world,
     engine,
     ctx,
     rng,
+    effects,
     add: (definition, id, x, y) => {
       const actor: TalentActor = {
         id,
@@ -1242,7 +1280,7 @@ describe('the Watchman anchors — guard, taunt, and the punish', () => {
     expect(counter?.guardianId).toBe('dalt');
   });
 
-  it('Lockdown drains a third of a turn and turns the target on the Watchman', () => {
+  it('Lockdown stuns through the status table and turns the target on the Watchman', () => {
     const f = fixture(PLENTY);
     const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
     const husk = f.addMonster('husk', 6, 5, 400);
@@ -1253,11 +1291,56 @@ describe('the Watchman anchors — guard, taunt, and the punish', () => {
     if (sheet === undefined) return;
     sheet.resource.value = 100;
 
-    useTalent(f.engine, watchman, talentId('lockdown'), { x: 6, y: 5, actorId: 'husk' }, f.ctx);
+    const result = useTalent(
+      f.engine,
+      watchman,
+      talentId('lockdown'),
+      { x: 6, y: 5, actorId: 'husk' },
+      f.ctx,
+    );
+    expect(result.ok).toBe(true);
 
-    // `debuff_ap 2` against something with no AP: 2/6 of ENERGY_TO_ACT.
-    expect(husk.energy).toBeCloseTo(1000 - (1000 * 2) / 6, 6);
+    // ═══ THE STUN IS ON THE BODY, IN THE REAL TABLE ═══
+    // Not a flag the talent set on itself: `hasEffect` reads the same
+    // `EffectState` that `statusPass` ticks, which is the whole point of the
+    // seam — a stun landed here is a stun `actBase` will count down.
+    expect(hasEffect(f.effects, 'husk', EffectId.Stunned)).toBe(true);
+    // The rank-1 maximum. `combatTalentScale(1, 2, 3)` rounds to 2, and against
+    // a 17% save this seed keeps the whole of it.
+    expect(effectDur(f.effects, 'husk', EffectId.Stunned)).toBe(2);
+
+    // AND THE MOMENTUM STRIP IS GONE. The old talent took a third of a turn
+    // off the act clock; this one must leave it exactly where the fixture set
+    // it, or the talent is quietly doing both jobs.
+    expect(husk.energy).toBe(1000);
+
     expect(husk.ai?.targetId).toBe('dalt');
+    expect(f.engine.effectOn('husk', TalentEffect.Taunted)?.otherId).toBe('dalt');
+  });
+
+  it('Lockdown still tackles and taunts with no status table at all', () => {
+    // THE ABSENT SEAM, which every fixture built before M4 relies on. A talent
+    // whose optional half is missing does the rest of its job; it does not
+    // throw and it does not refuse.
+    const f = fixture(PLENTY);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    const husk = f.addMonster('husk', 6, 5, 400);
+
+    const sheet = f.engine.sheetOf('dalt');
+    if (sheet === undefined) return;
+    sheet.resource.value = 100;
+
+    const bare: TalentCtx = { engine: f.engine, world: f.world, rng: f.rng, talentLevel: 1 };
+    const result = useTalent(
+      f.engine,
+      watchman,
+      talentId('lockdown'),
+      { x: 6, y: 5, actorId: 'husk' },
+      bare,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(husk.hp).toBeLessThan(400);
     expect(f.engine.effectOn('husk', TalentEffect.Taunted)?.otherId).toBe('dalt');
   });
 
