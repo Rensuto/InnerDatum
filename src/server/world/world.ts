@@ -319,6 +319,16 @@ export type World = {
    */
   readonly lootRng: Rng;
   /**
+   * THE SHOP'S OWN STREAM. See the fork for why it is a fourth one.
+   *
+   * A shop is opened at a moment decided by somebody's mouse, so browsing must
+   * never be able to move a combat roll. Fork again per restock batch on
+   * `stockSeedLabel(shopId, epoch)` — that makes a shelf a pure function of
+   * (seed, shop, epoch), so a catch-up loop is idempotent and a lost batch can
+   * be regenerated rather than guessed at.
+   */
+  readonly shopRng: Rng;
+  /**
    * Place a player on a free tile and return it.
    *
    * IDEMPOTENT on `id`: calling it again for an actor that already exists
@@ -627,6 +637,21 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
   const spawnRng = root.fork('world.spawn');
   const playRng = root.fork('world.turn');
   const lootRng = root.fork('world.loot');
+  /**
+   * THE FOURTH FORK, AND IT IS FREE FOR THE REASON THE THIRD WAS.
+   *
+   * `fork` is pure over (state, inc, label) and does NOT advance its parent
+   * (rng.ts:273-274), so adding this line moved no seeded test — the same
+   * property `world.loot` relies on, checked the same way.
+   *
+   * A SHOP'S OWN STREAM, because a shop is opened at an arbitrary moment
+   * decided by somebody's mouse. Browsing must not be able to move a combat
+   * roll, which is the "network timing nobody controls" argument this file
+   * already makes for splitting placement from play. Per restock, fork again on
+   * `stockSeedLabel(shopId, epoch)` so a batch is a pure function of
+   * (seed, shop, epoch) and a lost one can be re-derived.
+   */
+  const shopRng = root.fork('world.shop');
 
   /** Where the next join starts scanning the authored spawn cluster. */
   let spawnCursor = 0;
@@ -974,6 +999,7 @@ export function createWorld(seed: number | string, map?: AuthoredMap): World {
     turn,
     rng: playRng,
     lootRng,
+    shopRng,
     addPlayer,
     reclothePlayer,
     addMonster,

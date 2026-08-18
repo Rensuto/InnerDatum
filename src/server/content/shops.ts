@@ -205,8 +205,18 @@ export function sellPrice(id: string): number {
 // Stock
 // ---------------------------------------------------------------------------
 
-/** `basic.lua:27`. How many pieces a restock tops the shelves up to. */
+/** `basic.lua:27`. How many pieces one restock batch is worth. */
 export const NB_FILL = 4;
+
+/**
+ * The most a shelf may ever hold.
+ *
+ * A shop that grew a batch per epoch forever would be a wall of items by level
+ * 50 and a scrolling problem nobody asked for. Three batches is enough that the
+ * shelf visibly improves as a party levels and small enough to read at a
+ * glance.
+ */
+export const SHELF_CAP = 12;
 
 /**
  * The generation attempt cap, which upstream does not have.
@@ -294,10 +304,30 @@ function rollStockItem(rng: Rng, level: number): string | undefined {
  * @param keep what survived the restock — shop-generated stock, never
  *   player-sold goods. The caller owns that filter because it owns the flag.
  */
-export function restock(rng: Rng, keep: readonly string[], level: number): string[] {
+export function restock(
+  rng: Rng,
+  keep: readonly string[],
+  level: number,
+  /**
+   * HOW FULL THE SHELF SHOULD END UP. Defaults to one batch.
+   *
+   * ═══ WHY THIS IS A PARAMETER AND NOT ALWAYS `NB_FILL` ═══
+   * Upstream tops up to a fixed `nb_fill` every restock, which means a shop
+   * nobody buys from is DONE after its first batch: four items, generated for a
+   * level-1 party, sitting there unchanged at level 40. Upstream gets away with
+   * it because it has 33 shops and a catalogue of thousands; here it would make
+   * the restock epoch a number that changes nothing a player can see.
+   *
+   * So a shop's shelf grows a batch per epoch, bounded — see `SHELF_CAP`. That
+   * makes levelling up visibly worth walking back into town for, which is the
+   * only thing the epoch was ever for.
+   */
+  target: number = NB_FILL,
+): string[] {
   const stock = [...keep];
+  const want = Math.max(0, Math.min(SHELF_CAP, Math.floor(target)));
   let attempts = 0;
-  while (stock.length < NB_FILL && attempts < MAX_FILL_ATTEMPTS) {
+  while (stock.length < want && attempts < MAX_FILL_ATTEMPTS) {
     attempts += 1;
     const id = rollStockItem(rng, level);
     if (id === undefined) continue;
