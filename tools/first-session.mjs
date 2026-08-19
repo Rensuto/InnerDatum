@@ -265,9 +265,44 @@ if (breach !== null) {
   const at = new Map();
   for (const a of breach.actors) at.set(a.id, { x: a.x, y: a.y, alive: true, name: a.name });
   let seen = frames.length;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MONSTERS MOVE INSIDE THE SWEEP, AND THIS ONLY EVER READ THE OTHER LANE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The gateway is explicit: a monster turn is "ONE frame for the whole monster
+   * turn. Never one per monster" — a `sweep` carrying a `TurnEvent[]`. Top-level
+   * `moved` frames are the immediate lane, which is mostly YOUR OWN steps.
+   *
+   * So every monster sat frozen at the coordinate its `enter` frame gave it, for
+   * the entire fight. That is the whole of the "monster standing on the player's
+   * tile" I nearly filed as a server bug and a retention disaster: the Eidolon
+   * had walked off that square long before, the player walked onto it, and this
+   * tracker never heard about either step. No two actors ever shared a tile.
+   *
+   * A tool that silently freezes half the world reports the world as broken. The
+   * sweep is unpacked here so that stops being true.
+   */
+  const step = (id, x, y) => {
+    const e = at.get(id);
+    if (e) {
+      e.x = x;
+      e.y = y;
+    }
+    if (id === selfId) pos = { x, y };
+  };
   const track = () => {
     for (; seen < frames.length; seen += 1) {
       const f = frames[seen];
+      if (f.t === 'sweep') {
+        for (const ev of f.events ?? []) {
+          if (ev.k === 'move') step(ev.id, ev.x, ev.y);
+          if (ev.k === 'death') {
+            const e = at.get(ev.id);
+            if (e) e.alive = false;
+          }
+        }
+      }
       if (f.t === 'moved') {
         const e = at.get(f.id);
         if (e) {
@@ -318,6 +353,10 @@ if (breach !== null) {
   // pathing failure if this stays large and a combat failure if it reaches 1.
   let closest = 99;
   const frameMark = frames.length;
+  // NAMED WHILE THEY ARE STILL STANDING. Reading the room after the fight lists
+  // the survivors, which on a win is nobody -- the report said "nothing this
+  // driver could see" about a fight it had just won 2-0.
+  const metNames = new Set();
   // WHICH KIND OF STUCK. `noPath` is the pathfinder refusing to route at all;
   // `blocked` is a step that was routed and then went nowhere. They are
   // different bugs and the transcript used to show neither.
@@ -356,6 +395,7 @@ if (breach !== null) {
      * failed" made the driver pause after every single swing, which is why an
      * early run produced one exchange in twenty-two seconds.
      */
+    for (const [, e] of foes) if (e.name !== undefined) metNames.add(e.name);
     const gap = Math.max(Math.abs(f0.x - pos.x), Math.abs(f0.y - pos.y));
     closest = Math.min(closest, gap);
     const adjacent = gap <= 1;
@@ -379,33 +419,26 @@ if (breach !== null) {
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * This driver bump-attacks, and the header already says what that costs: a
-   * class with a dead zone cannot do it. The same is true from the other side —
-   * a RANGED opponent keeps its distance and a bumper never lands a blow.
+   * class with a dead zone cannot do it. Without a name in the transcript that
+   * reads exactly like "combat is broken", which is how a silent beat here sent
+   * me after three inventions in a row — a dead-zone class, then a monster
+   * kiting the bumper (it was a MeleeChaser at preferredRange 1), then a monster
+   * standing on the player's own tile that I was ready to file as a server bug.
    *
-   * Without a name in the transcript, both of those read exactly like "combat is
-   * broken". On the redesigned moor this reported an empty fight and it took
-   * `first-fight.mjs` — 24 runs a class, Watchman and Alchemist 24/24 — to show
-   * the game was fine and the driver had met a kiter.
+   * ALL THREE WERE THIS TOOL. Monster movement arrives inside the `sweep` frame
+   * and the tracker read only the immediate lane, so every monster was frozen at
+   * the tile it was first seen on and the driver chased ghosts. Fixed above.
+   *
+   * So the line below names what it MET, how near it got and how it stalled —
+   * because every wrong answer so far came from a transcript that said nothing
+   * and an author happy to fill the silence.
    */
-  const met = [...at.entries()]
-    .filter(([id, e]) => id !== selfId && e.name !== undefined)
-    .map(([, e]) => e);
-  const names = [...new Set(met.map((e) => e.name))];
   console.log(
-    `  in the room: ${names.length === 0 ? 'nothing this driver could see' : names.join(', ')}` +
+    `  in the room: ${metNames.size === 0 ? 'nothing this driver could see' : [...metNames].join(', ')}` +
       ` -- ${String(rounds)} round(s), closest approach ${String(closest)}` +
       (noPath > 0 || blocked > 0
         ? ` (no route ${String(noPath)}x, step refused ${String(blocked)}x)`
-        : '') +
-      `, ${String(log.length - mark)} log line(s)`,
-  );
-  // WHAT CAME BACK. 300 swings that log nothing is either a silent refusal or a
-  // driver that never sent one; the frame tally tells them apart.
-  console.log(
-    `  raw: me[${String(selfId)}] ${String(pos.x)},${String(pos.y)} | ` +
-      [...at.entries()]
-        .map(([id, e]) => `${String(e.name)}[${String(id)}] ${String(e.x)},${String(e.y)}`)
-        .join(' | '),
+        : ''),
   );
   const tally = new Map();
   for (const f of frames.slice(frameMark)) tally.set(f.t, (tally.get(f.t) ?? 0) + 1);
