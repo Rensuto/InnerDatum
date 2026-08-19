@@ -470,11 +470,38 @@ if (breach !== null) {
   // `.y`, got two undefineds, and walked nowhere — which is how a tool reports
   // "(nothing)" about a floor with a pair of trousers on it.
   const dropped = frames.filter((f) => f.t === 'ground').at(-1)?.items ?? [];
-  const cell = dropped[0]?.cell;
-  if (Array.isArray(cell)) await stepTo({ x: cell[0], y: cell[1] });
-  for (let i = 0; i < 6; i += 1) {
+
+  /**
+   * ONE `stepTo` IS ONE STEP, NOT A WALK.
+   *
+   * Measured on this seed: the drop is at 9,14 and the fight ends at 9,6 --
+   * eight tiles apart. A single step reached 10,7 and then six `pickup`s fired
+   * at a bare tile, so a floor with two items on it printed "(nothing)" while
+   * the beat above it said "2 things are still on the floor". The fight loop
+   * gets away with calling `stepTo` once per iteration because it iterates; this
+   * called it once and walked nowhere.
+   */
+  const walkTo = async (target, cap = 40) => {
+    for (let i = 0; i < cap; i += 1) {
+      if (pos.x === target.x && pos.y === target.y) return true;
+      if (!(await stepTo(target))) return false;
+    }
+    return pos.x === target.x && pos.y === target.y;
+  };
+
+  // EVERY drop, not just the first -- a kill that leaves two items and a tool
+  // that collects one is still reporting the wrong session.
+  let reached = 0;
+  for (const item of dropped.slice(0, 4)) {
+    const cell = item?.cell;
+    if (!Array.isArray(cell)) continue;
+    if (!(await walkTo({ x: cell[0], y: cell[1] }))) continue;
+    reached += 1;
     send({ t: 'pickup' });
     await sleep(220);
+  }
+  if (dropped.length > 0) {
+    console.log(`  walked to ${String(reached)} of ${String(dropped.length)} drop(s)`);
   }
   beat('LOOTS THE ROOM');
   show(mark, 8);
