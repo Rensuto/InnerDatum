@@ -5,7 +5,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { MINIMAP_RADIUS, minimapRect, partyMarks } from '../../src/client/ui/mapview.ts';
+import {
+  MINIMAP_RADIUS,
+  doorwayAt,
+  doorwayLine,
+  minimapRect,
+  partyMarks,
+} from '../../src/client/ui/mapview.ts';
+import type { SiteView } from '../../src/shared/protocol.ts';
 
 describe('where your party is on the map you plan on', () => {
   /**
@@ -98,5 +105,74 @@ describe('the minimap is a window, not the whole world', () => {
     // the screen plus a margin of what is about to matter. A minimap showing
     // exactly what is already on screen would be decoration.
     expect(MINIMAP_RADIUS * 2 + 1).toBeGreaterThan(20);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DOOR YOU ARE STANDING NEXT TO
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The board never said what a place IS. Every answer the game has lives
+ * somewhere else — spoken on arrival and scrolled away, on the world map behind
+ * a key, or in a warning that fires once you are already inside — and none of
+ * them is on screen at the moment a player is beside a door deciding whether to
+ * open it.
+ */
+const ALDERBROOK: SiteView = { x: 10, y: 10, marker: 'city', name: 'Alderbrook' };
+const CHAPEL: SiteView = {
+  x: 10,
+  y: 12,
+  marker: 'breach',
+  name: 'The Drowned Chapel',
+  danger: 'dangerous',
+};
+
+describe('doorwayAt', () => {
+  it('names the place you are standing beside', () => {
+    expect(doorwayAt([ALDERBROOK], { x: 11, y: 11 })?.name).toBe('Alderbrook');
+  });
+
+  it('says nothing about a door two tiles off', () => {
+    // Adjacent is the whole point: this is a prompt about a step you can take
+    // now, not a directory of the county.
+    expect(doorwayAt([ALDERBROOK], { x: 12, y: 10 })).toBeUndefined();
+  });
+
+  it('says nothing while you are standing ON it', () => {
+    // Stepping onto a site cell IS the door, so a body on one has just come
+    // out. "Step in" there reads as an instruction to leave and come back.
+    expect(doorwayAt([ALDERBROOK], { x: 10, y: 10 })).toBeUndefined();
+  });
+
+  it('never calls a roamer a door', () => {
+    // A wandering danger carries `sprite` and stepping onto it starts a fight.
+    // Labelling that "step in" would invite exactly the wrong act.
+    const roamer: SiteView = { ...ALDERBROOK, sprite: 'mon_husk', name: 'something moving' };
+    expect(doorwayAt([roamer], { x: 11, y: 11 })).toBeUndefined();
+  });
+
+  it('picks the same one of two corners every frame', () => {
+    // Ordered by position, not by the order the server happened to send, or the
+    // line flickers between two names while the player stands still.
+    const a = doorwayAt([ALDERBROOK, CHAPEL], { x: 11, y: 11 });
+    const b = doorwayAt([CHAPEL, ALDERBROOK], { x: 11, y: 11 });
+    expect(a?.name).toBe(b?.name);
+  });
+
+  it('is quiet before a body is on the map', () => {
+    expect(doorwayAt([ALDERBROOK], null)).toBeUndefined();
+  });
+});
+
+describe('doorwayLine', () => {
+  it('carries the grade when there is one', () => {
+    expect(doorwayLine(CHAPEL)).toBe('The Drowned Chapel — dangerous · step in');
+  });
+
+  it('invents no grade for a town', () => {
+    // A "quiet" beside every settlement would train a player to stop reading
+    // the word — the same argument `nearestSites` makes.
+    expect(doorwayLine(ALDERBROOK)).toBe('Alderbrook — step in');
   });
 });

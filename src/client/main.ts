@@ -281,6 +281,8 @@ import { drawTooltip } from './ui/tooltip.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
 import {
   CROSSING_INK,
+  doorwayAt,
+  doorwayLine,
   MINIMAP_MARGIN,
   MINIMAP_MAX_H,
   MINIMAP_RADIUS,
@@ -4064,6 +4066,12 @@ async function boot(): Promise<void> {
     if (shop !== null && inventory !== null && hasSomethingToBuy(shop.stock, inventory.money)) {
       parts.push(`something you can afford — press ${keyHint('show_inventory')}`);
     }
+    /**
+     * AND WHAT THE PLACE BESIDE YOU IS — see `doorwayAt` for why the board is
+     * where this belongs and why every existing answer is somewhere else.
+     */
+    const door = doorwayAt(sites, standing);
+    if (door !== undefined) parts.push(doorwayLine(door));
     const invite = liveInvites()[0];
     if (invite !== undefined) {
       parts.push(`${invite.fromName} invites you to a party`);

@@ -416,20 +416,46 @@ if (level === undefined) {
 }
 
 const me = (realm.actors ?? []).find((a) => a.id === selfId) ?? { x: 0, y: 0 };
-const view = WHOLE
-  ? { x0: 0, y0: 0, w: level.w, h: level.h }
-  : {
-      x0: Math.max(
-        0,
-        Math.min(level.w - DEFAULT_VIEWPORT.tilesW, me.x - (DEFAULT_VIEWPORT.tilesW >> 1)),
-      ),
-      y0: Math.max(
-        0,
-        Math.min(level.h - DEFAULT_VIEWPORT.tilesH, me.y - (DEFAULT_VIEWPORT.tilesH >> 1)),
-      ),
-      w: DEFAULT_VIEWPORT.tilesW,
-      h: DEFAULT_VIEWPORT.tilesH,
-    };
+/**
+ * `--at x,y --size WxH` — LOOK AT A PLACE, not at wherever you happen to spawn.
+ *
+ * The viewport is what a player sees and is the right frame for "is this
+ * readable in play". It is the wrong frame for "does this settlement read as a
+ * settlement", which needs the whole footprint at once and does not fit in
+ * twenty by ten.
+ */
+const AT = argOf('--at', null);
+const SIZE = argOf('--size', '40x30');
+const window =
+  AT === null
+    ? null
+    : (() => {
+        const [cx, cy] = AT.split(',').map(Number);
+        const [w, h] = SIZE.split('x').map(Number);
+        return {
+          x0: Math.max(0, Math.min(level.w - w, cx - (w >> 1))),
+          y0: Math.max(0, Math.min(level.h - h, cy - (h >> 1))),
+          w: Math.min(w, level.w),
+          h: Math.min(h, level.h),
+        };
+      })();
+
+const view =
+  window ??
+  (WHOLE
+    ? { x0: 0, y0: 0, w: level.w, h: level.h }
+    : {
+        x0: Math.max(
+          0,
+          Math.min(level.w - DEFAULT_VIEWPORT.tilesW, me.x - (DEFAULT_VIEWPORT.tilesW >> 1)),
+        ),
+        y0: Math.max(
+          0,
+          Math.min(level.h - DEFAULT_VIEWPORT.tilesH, me.y - (DEFAULT_VIEWPORT.tilesH >> 1)),
+        ),
+        w: DEFAULT_VIEWPORT.tilesW,
+        h: DEFAULT_VIEWPORT.tilesH,
+      });
 
 const canvas = makeCanvas(view.w * PX, view.h * PX);
 const missing = new Map();
@@ -484,6 +510,9 @@ if (process.argv.includes('--codes')) {
   const nameOfCode = Object.fromEntries(Object.entries(TileCode).map(([k, v]) => [v, k]));
   const seen = new Map();
   const lines = [];
+  // The grid is for reading by eye; past about sixty columns it is a wall of
+  // text and only the tally below is useful.
+  const drawGrid = view.w <= 60;
   for (let y = 0; y < view.h; y += 1) {
     let row = '';
     for (let x = 0; x < view.w; x += 1) {
@@ -492,9 +521,9 @@ if (process.argv.includes('--codes')) {
       seen.set(n, (seen.get(n) ?? 0) + 1);
       row += n.slice(0, 3).padEnd(4);
     }
-    lines.push(row);
+    if (drawGrid) lines.push(row);
   }
-  console.log(`\n${lines.join('\n')}`);
+  if (drawGrid) console.log(`\n${lines.join('\n')}`);
   console.log('\n  in view:');
   for (const [n, c] of [...seen.entries()].sort((a, b) => b[1] - a[1])) {
     console.log(`    ${String(c).padStart(4)}  ${n}`);

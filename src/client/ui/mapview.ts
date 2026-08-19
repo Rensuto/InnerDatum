@@ -590,3 +590,61 @@ export function minimapRect(viewW: number): MapRect {
   const size = cell * span;
   return { x: viewW - size - MINIMAP_MARGIN, y: MINIMAP_MARGIN, w: size, h: size };
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DOOR YOU ARE STANDING NEXT TO, IF ANY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A player photographed the overworld and said it is hard to tell the area they
+ * are standing in is a town. The art half of that is answered by `landmark`;
+ * this is the other half, and it is the older gap: the board never says what a
+ * place IS.
+ *
+ * Everything the game knows gets said somewhere ELSE. `nearestSites` speaks the
+ * name, the bearing, the distance and the grade on arrival — and then it scrolls
+ * away. The world map carries the grade permanently, behind a key. The solo
+ * warning fires once you are already inside. None of those is on the screen at
+ * the moment a player is standing beside a door deciding whether to open it,
+ * which is the moment the fact is worth anything.
+ *
+ * ═══ ADJACENT, AND NOT THE CELL UNDERFOOT ═══
+ * Stepping onto a site's own cell IS the door (`crossIntoSite`), so a body
+ * standing on one has just come OUT. Prompting there would read as an
+ * instruction to step off and back on, which is both wrong and annoying.
+ *
+ * ═══ A ROAMER IS NOT A DOOR ═══
+ * A wandering danger carries `sprite`, is drawn as a token with a hostile ring,
+ * and stepping onto it starts a fight rather than opening a room. It is already
+ * legible as a threat; labelling it "step in" would invite exactly the wrong
+ * act.
+ *
+ * ORDERED BY POSITION rather than by the order the server happened to send, so
+ * two doors on the same corner do not swap places between frames.
+ */
+export function doorwayAt(
+  sites: readonly SiteView[],
+  self: { readonly x: number; readonly y: number } | null,
+): SiteView | undefined {
+  if (self === null) return undefined;
+  return sites
+    .filter(
+      (s) =>
+        s.sprite === undefined && Math.max(Math.abs(s.x - self.x), Math.abs(s.y - self.y)) === 1,
+    )
+    .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y))[0];
+}
+
+/**
+ * How that door reads on the status line.
+ *
+ * THE GRADE COMES ALONG WHEN THERE IS ONE. A town has no grade and inventing
+ * "quiet" for one would imply the scale applies to it — `nearestSites` already
+ * argues why: *"a 'quiet' beside every settlement would train a player to stop
+ * reading the word"*.
+ */
+export function doorwayLine(site: SiteView): string {
+  return site.danger === undefined
+    ? `${site.name} — step in`
+    : `${site.name} — ${site.danger} · step in`;
+}
