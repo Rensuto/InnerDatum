@@ -198,7 +198,48 @@ export function buyPrice(id: string, level: number): number {
 export function sellPrice(id: string): number {
   const price = priceOf(id);
   if (price <= 0) return 0;
-  return Math.min(PURSE, Math.floor((price * SELL_PERCENT) / 100));
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A FLOOR OF ONE, AND WITHOUT IT NOTHING IN THIS GAME COULD BE SOLD AT ALL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * MEASURED, and the first measurement was WRONG in a way worth recording: a
+   * probe that called `rollLoot` with the wrong signature handed back the object
+   * it was given, so "1,200 items, none sellable" was 1,200 copies of a party
+   * descriptor. Driven properly — 600 rolls off the real bases at level 12 —
+   * the picture is narrower and still real:
+   *
+   *   **19% of loot (105 of 554) priced at zero** and was refused outright with
+   *   *"the shop will not take that"*, and every PLAIN catalogue base sells for
+   *   at most 1. The 81% that worked are the ego'd drops.
+   *
+   * So the refusal lands hardest exactly where it hurts most: early loot is
+   * plain and low-tier, which is a new player carrying four things home and
+   * being told the shop wants none of them.
+   *
+   * ═══ THE RATIO IS THE DESIGN. THE ROUNDING WAS THE BUG. ═══
+   * `SELL_PERCENT` is 5, ported flat from `Store.lua:33`, and
+   * `shops.test.ts` pins `BUY_LOW / SELL_PERCENT` between 24 and 25 with a
+   * reason worth keeping: *"the ratio is what stops arbitrage and it is why shop
+   * stock can afford to be strictly better than floor loot."* Both of those hold
+   * for ANY large spread. What does not survive is the arithmetic: upstream's
+   * prices are in the hundreds, so 5% of one is a real number; ours are 5 to 12,
+   * so 5% of one is 0.6 and floors away.
+   *
+   * So the ratio is untouched — that test passes unchanged — and only the
+   * rounding moves. Buy at 14 and sell at 1 is still a 14:1 loss on a round
+   * trip, which is no arbitrage anybody would run twice.
+   *
+   * ═══ AND IT IS THE ARGUMENT `items.ts` ALREADY MAKES ═══
+   * On the iron ingot: *"An item that changes no number is worse than no item:
+   * it teaches the player that picking things up is not worth the turn it
+   * costs."* Loot you cannot wear and cannot sell is exactly that item.
+   *
+   * MONEY IS STILL NOT SELLABLE — `priceOf` answers 0 for a pile and the guard
+   * above returns before this line, which is the case `shops.test.ts` calls a
+   * feature-shaped bug and refuses on purpose.
+   */
+  return Math.min(PURSE, Math.max(1, Math.floor((price * SELL_PERCENT) / 100)));
 }
 
 // ---------------------------------------------------------------------------

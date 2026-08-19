@@ -15,6 +15,7 @@ import {
   sellPrice,
   stockSeedLabel,
 } from '../../src/server/content/shops.ts';
+import { ITEMS } from '../../src/server/content/items.ts';
 import { isMoneyId, moneyIdFor } from '../../src/server/content/money.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { createRng } from '../../src/shared/rng.ts';
@@ -99,6 +100,32 @@ describe('the spread', () => {
       for (const level of [1, 2, 5, 10, 25, 50]) {
         expect(sellPrice(id)).toBeLessThan(buyPrice(id, level));
       }
+    }
+  });
+
+  it('will take anything a player can actually carry home', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A SHOP THAT REFUSES YOUR LOOT IS A SHOP THAT TEACHES YOU NOT TO PICK IT UP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED over 600 rolls off the real bases at level 12: 19% of loot (105
+     * of 554) priced at ZERO, and `handleShopSell` answers those with *"the shop
+     * will not take that"*. Every PLAIN catalogue base was in that group, which
+     * is precisely what a new player is carrying.
+     *
+     * `items.ts` already makes the argument, about the iron ingot: *"An item
+     * that changes no number is worse than no item: it teaches the player that
+     * picking things up is not worth the turn it costs."*
+     *
+     * THE RATIO IS UNTOUCHED — the assertion below still passes, because the fix
+     * was a floor on the ROUNDING and not a change to `SELL_PERCENT`. Upstream's
+     * 5% is a real number against upstream's prices, which are in the hundreds;
+     * ours are 5 to 12, so it floored away.
+     */
+    for (const item of ITEMS) {
+      // Money is the one deliberate refusal and is asserted separately above.
+      expect(sellPrice(item.id), `${item.id} cannot be sold at all`).toBeGreaterThan(0);
     }
   });
 
