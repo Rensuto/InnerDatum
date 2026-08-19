@@ -6957,6 +6957,33 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND THEIR PARTY'S MAPS ARE NOW WRONG. See `refreshPartySites`.
     refreshPartySites(actorId);
     sendRealm(session);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE CROSSER'S OWN MAP, WHICH `refreshPartySites` DELIBERATELY SKIPS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * That helper updates every OTHER member — its subject is `SiteView.party`,
+     * who is standing behind which door — and it excludes the person who moved
+     * because their map was assumed to be handled. Nothing handled it. `sites`
+     * is realm-scoped (a non-overworld realm reports its spawns as *The way
+     * out*), so a body that changes realm and is sent no `sites` frame keeps the
+     * list belonging to the room it left.
+     *
+     * MEASURED, and it is the first delve every player ever clears: filing a
+     * case calls `sendSites` while they are still INSIDE, which hands them the
+     * delve's one-marker list. They walk out holding it. Standing on the moor
+     * the world map showed ONE marker — "The way out" — for as long as they
+     * stood still; ten seconds later it was still one. It came back on the
+     * twelfth step, because `pumpRealm` re-sends `sites` on `tickRoamers` and
+     * roamers move once every three pumps.
+     *
+     * That is the same incidental path `refreshPartySites`' own docblock refuses
+     * to rely on — *"real, frequent, and not a guarantee"* — and the same shape
+     * as `PumpResult.displaced`: the fact was computed correctly and nothing
+     * delivered it. You clear your first room, open the map to choose where to
+     * go next, and the moor is empty.
+     */
+    sendSites(session);
     // WALKING OUT OF A SHOP IS ALSO A SHOP EVENT. Sent after the routing moves,
     // so this resolves to the room they arrived in — and silent when that room
     // has no shelves, which is what takes the tab away again.
@@ -7226,6 +7253,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // for it clears the case log, the bag and the party panel, and walking
     // through a door is not a new session. See `RealmMsg`.
     sendRealm(session);
+    // AND THE MARKERS OF THE REALM THEY WALKED INTO — the twin of the call in
+    // `leaveRealm`, and it is here for the same reason: `refreshPartySites`
+    // skips the crosser, so without this a body entering a delve keeps the moor's
+    // markers until a roamer happens to shuffle. See that call's essay.
+    sendSites(session);
     // AND THE SHELVES OF THE ROOM THEY WALKED INTO, or silence if it has none.
     // A town is the common destination, so this is the frame that makes the
     // shop tab appear at the moment somebody steps through the door.
