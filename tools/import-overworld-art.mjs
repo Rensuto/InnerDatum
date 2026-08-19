@@ -75,6 +75,44 @@ const FAMILIES = [
 
 const SUFFIX = 'bcdefghijk';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TRANSPORT OVERLAYS — road, rail and bridge, drawn ON TOP of the ground.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED: these are ~70% transparent with BINARY alpha (zero soft pixels), so
+ * they composite over the terrain tile rather than replacing it. The handoff
+ * warns that transport art MAY use intentional soft alpha and to blend
+ * source-over rather than enforce a binary validator — this set happens not to,
+ * and the renderer blends source-over regardless.
+ *
+ * Named for what they ARE rather than for the family they came from, because
+ * `canvas.ts` indexes them by a connection mask and a reader of that table
+ * should not have to know the word "topology".
+ */
+const TRANSPORT = [
+  ['roads_paving_road_cross', 'tile_ow_road_cross'],
+  ['roads_paving_road_horizontal', 'tile_ow_road_horizontal'],
+  ['roads_paving_road_vertical', 'tile_ow_road_vertical'],
+  ['roads_paving_road_n', 'tile_ow_road_n'],
+  ['roads_paving_road_ne', 'tile_ow_road_ne'],
+  ['roads_paving_road_nw', 'tile_ow_road_nw'],
+  ['roads_paving_road_se', 'tile_ow_road_se'],
+  ['roads_paving_road_sw', 'tile_ow_road_sw'],
+  ['roads_paving_road_t_n', 'tile_ow_road_t_n'],
+  ['roads_paving_road_t_e', 'tile_ow_road_t_e'],
+  ['roads_paving_road_t_s', 'tile_ow_road_t_s'],
+  ['roads_paving_road_t_w', 'tile_ow_road_t_w'],
+  ['rails_road_horizontal', 'tile_ow_rail_horizontal'],
+  ['rails_road_vertical', 'tile_ow_rail_vertical'],
+  ['rails_road_n', 'tile_ow_rail_n'],
+  ['rails_road_s', 'tile_ow_rail_s'],
+  ['rails_road_ne', 'tile_ow_rail_ne'],
+  ['rails_road_sw', 'tile_ow_rail_sw'],
+  ['bridges_horizontal', 'tile_ow_bridge_horizontal'],
+  ['bridges_vertical', 'tile_ow_bridge_vertical'],
+];
+
 function incoming() {
   if (!existsSync(SRC)) throw new Error(`no art at ${SRC}`);
   return readdirSync(SRC).filter((f) => f.endsWith('.png'));
@@ -117,12 +155,23 @@ for (const family of FAMILIES) {
   }
 }
 
+const transport = [];
+for (const [from, to] of TRANSPORT) {
+  // NO `base_tome_wilderness_` PREFIX on these — the transport art is named
+  // `transport_topology_*` outright, unlike the terrain families. Guessed wrong
+  // twice; read one filename instead.
+  const name = `transport_topology_${from}.png`;
+  if (!files.includes(name)) throw new Error(`the handoff has no ${name}`);
+  transport.push({ from: name, to: `${to}.png` });
+}
+
 console.log(`incoming assets: ${String(files.length)}`);
 console.log(`  ${String(upgrades.length)} replace this repo's own tiles with richer versions`);
 for (const u of upgrades.slice(0, 4)) {
   console.log(`      ${u.to.padEnd(24)} ${String(u.was)} -> ${String(u.now)} bytes`);
 }
 console.log(`  ${String(variants.length)} install as variants the renderer can already pick from`);
+console.log(`  ${String(transport.length)} transport overlays (road, rail, bridge) by connection`);
 for (const family of FAMILIES) {
   const mine = variants.filter((v) => v.stem === family.stem);
   console.log(`      ${family.stem.padEnd(20)} ${String(mine.length)} variants`);
@@ -131,8 +180,9 @@ for (const family of FAMILIES) {
 if (process.argv.includes('--write')) {
   for (const u of upgrades) copyFileSync(`${SRC}${u.from}`, `${TILES}${u.to}`);
   for (const v of variants) copyFileSync(`${SRC}${v.from}`, `${TILES}${v.to}`);
+  for (const t of transport) copyFileSync(`${SRC}${t.from}`, `${TILES}${t.to}`);
   console.log(
-    `  installed ${String(upgrades.length + variants.length)} files into client/public/assets/tiles/`,
+    `  installed ${String(upgrades.length + variants.length + transport.length)} files into client/public/assets/tiles/`,
   );
   console.log('  now re-run: python tools/build_asset_manifest.py');
 

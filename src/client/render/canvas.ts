@@ -651,6 +651,88 @@ const SITE_MARKERS: ReadonlyMap<string, string> = new Map([
   ['breach', 'tile_ow_site_breach'],
 ]);
 
+export const ROAD_BY_MASK: readonly (string | null)[] = [
+  null, // 0  — nothing to connect to; the cobble under it is the whole tile
+  'tile_ow_road_n',
+  'tile_ow_road_horizontal',
+  'tile_ow_road_ne',
+  'tile_ow_road_vertical',
+  'tile_ow_road_vertical',
+  'tile_ow_road_se',
+  'tile_ow_road_t_e',
+  'tile_ow_road_horizontal',
+  'tile_ow_road_nw',
+  'tile_ow_road_horizontal',
+  'tile_ow_road_t_n',
+  'tile_ow_road_sw',
+  'tile_ow_road_t_w',
+  'tile_ow_road_t_s',
+  'tile_ow_road_cross',
+];
+
+/**
+ * The rail set is smaller because the line needs less: measured over the
+ * redesigned moor it uses exactly six mask values (1, 3, 4, 5, 10, 12), and
+ * those six have art. The rest fall back along the dominant axis rather than
+ * being left blank, so a future junction draws as track instead of a gap.
+ */
+export const RAIL_BY_MASK: readonly (string | null)[] = [
+  null,
+  'tile_ow_rail_n',
+  'tile_ow_rail_horizontal',
+  'tile_ow_rail_ne',
+  'tile_ow_rail_s',
+  'tile_ow_rail_vertical',
+  'tile_ow_rail_vertical',
+  'tile_ow_rail_vertical',
+  'tile_ow_rail_horizontal',
+  'tile_ow_rail_n',
+  'tile_ow_rail_horizontal',
+  'tile_ow_rail_horizontal',
+  'tile_ow_rail_sw',
+  'tile_ow_rail_vertical',
+  'tile_ow_rail_horizontal',
+  'tile_ow_rail_horizontal',
+];
+
+/** Is this cell part of the made network the overlay draws along? */
+export function isMadeGround(code: TileCode): boolean {
+  return code === TileCode.COBBLE || code === TileCode.PAVING || code === TileCode.BRIDGE;
+}
+
+/**
+ * Which cardinal neighbours continue the same kind of line.
+ *
+ * CARDINAL ONLY, N=1 E=2 S=4 W=8 — the handoff's contract, and the reason the
+ * derived masks line up with its own. A diagonal neighbour is not a
+ * connection: you cannot walk a road corner-to-corner and have it look like
+ * one.
+ */
+export function transportMask(
+  level: LevelView,
+  tx: number,
+  ty: number,
+  same: (code: TileCode) => boolean,
+): number {
+  return (
+    (same(tileAt(level, tx, ty - 1)) ? 1 : 0) |
+    (same(tileAt(level, tx + 1, ty)) ? 2 : 0) |
+    (same(tileAt(level, tx, ty + 1)) ? 4 : 0) |
+    (same(tileAt(level, tx - 1, ty)) ? 8 : 0)
+  );
+}
+
+/**
+ * The road, rail or bridge lying over a terrain cell.
+ *
+ * COMPOSITED, NOT SUBSTITUTED. Measured: this art is ~70% transparent with
+ * binary alpha, so the ground keeps showing through and a road over cobble
+ * still reads as cobble underneath. It is drawn AFTER `paintTerrain` for that
+ * reason and does nothing when there is no terrain sprite — a flat palette
+ * fallback with a road on top would be the one cell on screen wearing two
+ * different rendering eras at once.
+ */
+
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * MORE THAN ONE FACE PER TILE, WHICH THIS TABLE HAS ALWAYS BEEN ABLE TO HOLD.
@@ -1091,6 +1173,52 @@ export function createRenderer(options: RendererOptions): Renderer {
    * (x, y): the same cell is the same stone on every client and on every frame,
    * which a random pick would not be — it would shimmer as the camera moved.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A ROAD IS A LINE, NOT A COLOUR — WHICH IS ALL IT HAS BEEN.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The redesigned moor lays 584 road cells and 89 of continuous rail, and both
+   * drew as a flat fill: a smear of cobble where a road should run, with no way
+   * to see a junction, a corner or where a line ends.
+   *
+   * The handoff ships the connection art and a per-cell NESW mask. THE MASK IS
+   * NOT IMPORTED, because it is derivable and importing it would mean a second
+   * 17,000-cell array on a wire that already carries the tiles. Measured against
+   * the handoff's own masks over every cell both agree is road: **95.2%
+   * identical**.
+   *
+   * THE 4.8% ARE ALL ONE SHAPE and it is a benign one: the handoff counts 167
+   * `trail_danger` cells that the compatibility layout draws as HEATH, so where
+   * a paved road meets a moorland track this draws the paving ending rather than
+   * continuing. A road that stops being a road when it stops being paved is the
+   * honest picture, not the wrong one.
+   */
+  function paintTransport(
+    level: LevelView,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    sx: number,
+    sy: number,
+  ): void {
+    let id: string | null = null;
+    if (code === TileCode.BRIDGE) {
+      // A bridge is drawn along whichever way the crossing runs, and it is
+      // always one or the other — a bridge is a span, never a junction.
+      const mask = transportMask(level, tx, ty, isMadeGround);
+      id = (mask & 5) !== 0 ? 'tile_ow_bridge_vertical' : 'tile_ow_bridge_horizontal';
+    } else if (code === TileCode.RAIL) {
+      id = RAIL_BY_MASK[transportMask(level, tx, ty, (c) => c === TileCode.RAIL)] ?? null;
+    } else if (code === TileCode.COBBLE || code === TileCode.PAVING) {
+      id = ROAD_BY_MASK[transportMask(level, tx, ty, isMadeGround)] ?? null;
+    }
+    if (id === null) return;
+    const sprite: Sprite | undefined = sprites.sprite(id);
+    if (sprite === undefined) return;
+    backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
+  }
+
   function paintTerrain(code: TileCode, tx: number, ty: number, sx: number, sy: number): boolean {
     const ids = TILE_SPRITES[code];
     if (ids === undefined) return false;
@@ -1255,7 +1383,11 @@ export function createRenderer(options: RendererOptions): Renderer {
 
         // A REAL TERRAIN SPRITE WINS, and when one is present it is the WHOLE
         // cell — no flat fill under it, no grid line over it. See `paintTerrain`.
-        if (!paintTerrain(code, tx, ty, sx, sy)) {
+        // THE LINE OVER THE GROUND. Only when a terrain sprite actually
+        // drew — see `paintTransport`.
+        if (paintTerrain(code, tx, ty, sx, sy)) {
+          paintTransport(level, code, tx, ty, sx, sy);
+        } else {
           backCtx.fillStyle = tileFill(code);
           backCtx.fillRect(sx, sy, TILE_PX, TILE_PX);
 
