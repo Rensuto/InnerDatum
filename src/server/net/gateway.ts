@@ -3805,6 +3805,36 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * @returns whether a frame actually went out. Silent for a socket with no
    *   body and for a monster, which cannot be a viewer anyway.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MEMO KEY — ONE FUNCTION, BECAUSE TWO COPIES ALREADY DIVERGED ONCE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `sendProgress` SETS this key and `sendProgressIfChanged` COMPUTES one to
+   * compare against it. They were two separate template literals, and adding
+   * the case count to the setter alone made them permanently unequal — so the
+   * memo matched never.
+   *
+   * MEASURED, because the first version of this note overstated it as "a frame
+   * per socket per pump forever": an IDLE player costs nothing either way, since
+   * this world is turn-based and an idle player generates no pumps. Over twelve
+   * steps of walking it is 0 extra frames with this function and 12 without —
+   * one per action, per socket, which for six friends in a voice channel is six
+   * wasted frames a step.
+   *
+   * A FIELD ON THE FRAME MUST BE A FIELD IN THE KEY, and one function is the
+   * only version of that rule a reader cannot half-apply.
+   */
+  const progressKeyFor = (viewer: {
+    id: string;
+    level: number;
+    xp: number;
+    unspentPoints: number;
+  }): string =>
+    `${String(viewer.level)}|${String(viewer.xp)}|${String(viewer.unspentPoints)}|${String(
+      knownFiled(filed.get(viewer.id) ?? [], SITES).length,
+    )}`;
+
   const sendProgress = (session: Session): boolean => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -3822,6 +3852,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `LoadoutTalent.descNext: null` uses, a fact the renderer must handle
     // rather than a number it can divide by and be quietly wrong.
     const atCap = viewer.level >= MAX_CHARACTER_LEVEL;
+    // FILTERED THROUGH `knownFiled`, like the save is: a set carrying an id this
+    // build no longer recognises must not produce "filed 18 of 17" on the one
+    // screen a player reads to feel like they are getting somewhere.
+    const closedCases = knownFiled(filed.get(viewer.id) ?? [], SITES).length;
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'progress',
@@ -3829,8 +3863,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       xp: viewer.xp,
       xpToNext: atCap ? 0 : expChart(viewer.level + 1),
       unspent: viewer.unspentPoints,
+      filed: closedCases,
+      cases: fileableCount(SITES),
     });
-    session.progressKey = `${viewer.level}|${viewer.xp}|${viewer.unspentPoints}`;
+    /**
+     * `closedCases` IS IN THE KEY, AND LEAVING IT OUT WOULD HAVE BEEN A SILENT
+     * BUG OF THE EXACT KIND THIS PROJECT KEEPS FINDING.
+     *
+     * This key is the dedupe: the pump re-sends `progress` only when the string
+     * changes. Closing a case moves no level, no xp and no talent point, so a
+     * key built from those three alone would have held steady while the count
+     * underneath it changed — and the sheet would have gone on reading the
+     * number from before the case closed until the player happened to gain
+     * experience. Every field ON the frame belongs IN the key.
+     */
+    session.progressKey = progressKeyFor(viewer);
     return true;
   };
 
@@ -3848,7 +3895,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
     if (viewer === undefined || viewer.kind !== 'player') return;
-    const key = `${viewer.level}|${viewer.xp}|${viewer.unspentPoints}`;
+    const key = progressKeyFor(viewer);
     if (key === session.progressKey) return;
     sendProgress(session);
   };
@@ -4081,11 +4128,48 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // THE COUNT IS THE POINT. "Filed." alone is a receipt; "filed 3 of 17"
         // is the first time this game has ever told a player how big it is, and
         // a gap in a file is a thing somebody can decide to go and close.
+        const closed = knownFiled(mine, SITES).length;
+        const total = fileableCount(SITES);
         sendMargin(session, realm, {
-          text: `Filed. ${String(knownFiled(mine, SITES).length)} of ${String(fileableCount(SITES))}.`,
+          text: `Filed. ${String(closed)} of ${String(total)}.`,
           depth: 0,
         });
+        /**
+         * ═══════════════════════════════════════════════════════════════════════
+         * AND IF THAT WAS THE LAST ONE, THE GAME HAS AN ENDING NOW.
+         * ═══════════════════════════════════════════════════════════════════════
+         *
+         * MEASURED, WHICH IS WHY THIS LINE EXISTS AT ALL: a solo run to
+         * `MAX_CHARACTER_LEVEL` is about 149 normal kills, and there are 17
+         * rooms holding five to sixteen residents each. The level cap and the
+         * last case therefore land at ROUGHLY THE SAME TIME — the two
+         * progression tracks were tuned independently and finish together.
+         *
+         * So this is the moment a character is done, and until now the game
+         * marked it with nothing whatsoever: the seventeenth room printed
+         * `Filed. 17 of 17.` in the same voice as the first, and then the player
+         * stood in a quiet room wondering if that was it.
+         *
+         * ═══ A LINE, NOT A SCREEN ═══
+         * No modal, no fanfare, no credits. This game's whole register is a case
+         * log — the loudest thing it has ever said to a player is
+         * *"YOU ARE ERASED"* on a plate, and that is for somebody who cannot act.
+         * A detective who closes the last file on the moor gets a sentence, in
+         * the Record lane, that the rest of the room can see. Broadcast rather
+         * than unicast deliberately: finishing is worth the party knowing.
+         *
+         * ONCE PER CHARACTER, BY CONSTRUCTION. The `mine.has(siteId)` guard
+         * above means a re-cleared room never reaches here, so the count can
+         * only arrive at the total on the step that completes it.
+         */
+        if (closed >= total) {
+          broadcastRecordLine(realm, `${nameOf(body.id)} has closed every case on the moor.`);
+        }
         sendSites(session);
+        // AND THE SHEET, WHICH READS THE COUNT OFF `progress`. Closing a case
+        // moves no level and no xp, so nothing else on that frame would have
+        // changed and nothing else would have re-sent it.
+        sendProgress(session);
       }
     }
     const loot = realm.world.groundItems().length;

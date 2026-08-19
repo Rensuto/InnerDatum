@@ -3883,6 +3883,29 @@ export type ProgressMsg = {
    * doing that subtraction itself would need the whole spend history.
    */
   unspent: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MUCH OF THE GAME THIS CHARACTER HAS FINISHED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `filed` of `cases` — see `world/casefile.ts`. It rides on THIS frame rather
+   * than a new one because it is the same kind of fact as `level` and `xp`: a
+   * per-character progress number, unicast, absolute, and re-sent whenever it
+   * changes. A second frame would be a second thing to keep in step.
+   *
+   * ═══ WHY A COUNT AND NOT THE LIST ═══
+   * "Which ones are left" is a question about PLACES and the world map already
+   * answers it — a closed case is dimmed there, in position, with its danger
+   * grade still readable. A list of seventeen names with no coordinates would be
+   * a worse version of a screen that exists. What the map cannot say is HOW
+   * MANY, because you would have to count dots.
+   *
+   * BOTH ADDITIVE AND OPTIONAL, so no protocol bump. A client that does not know
+   * them draws the sheet it always drew.
+   */
+  filed?: number;
+  /** How many there are to close. Read off the registry — never a literal. */
+  cases?: number;
 };
 
 // ---------------------------------------------------------------------------

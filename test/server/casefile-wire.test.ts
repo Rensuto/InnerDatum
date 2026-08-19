@@ -82,6 +82,8 @@ type Client = {
   actorId: string;
   send(frame: Record<string, unknown>): void;
   lines(): string[];
+  progress(): Record<string, unknown> | undefined;
+  progressCount(): number;
   markers(): Record<string, unknown>[];
 };
 
@@ -125,6 +127,12 @@ async function hello(port: number): Promise<Client> {
             }
           }
           return out;
+        },
+        progress(): Record<string, unknown> | undefined {
+          return [...frames].reverse().find((f) => f['t'] === 'progress');
+        },
+        progressCount(): number {
+          return frames.filter((f) => f['t'] === 'progress').length;
         },
         markers(): Record<string, unknown>[] {
           const latest = [...frames]
@@ -275,6 +283,104 @@ describe('closing a case', () => {
     // marked them all would be worse than one that marked none.
     const all = client.markers().filter((m) => m['danger'] !== undefined);
     expect(all.length).toBeGreaterThan(1);
+  });
+
+  it('tells the character sheet, on the frame the sheet already reads', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE COUNT HAS TO ARRIVE WITHOUT A LEVEL-UP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `progress` is deduped by `session.progressKey`, and closing a case moves
+     * no level, no xp and no talent point. A key built from those three alone
+     * would have held steady while the count underneath it changed, so the
+     * sheet would go on showing the number from before the case closed until
+     * the player happened to gain experience. That is the whole risk in this
+     * change and it is invisible from every other angle.
+     */
+    const client = await hello(server.port);
+    await enterADelve(server.realms, client);
+    await sleep(200);
+
+    const before = client.progress();
+    expect(before?.['cases'], 'the frame never carried a denominator').toBe(fileableCount(SITES));
+    expect(before?.['filed']).toBe(0);
+
+    leaveOneAlmostDead(server.realms, client.actorId);
+    await sleep(200);
+    await keepSwinging(server.realms, client);
+
+    expect(client.progress()?.['filed'], 'the sheet was never told').toBe(1);
+    expect(client.progress()?.['cases']).toBe(fileableCount(SITES));
+  });
+
+  it('says nothing about being finished while cases are still open', async () => {
+    /**
+     * The NEGATIVE half of the completion line. Driving the positive half means
+     * clearing all seventeen rooms over a socket, which is minutes of wall clock
+     * to prove one comparison — and the comparison itself is proved reachable in
+     * `casefile.test.ts`, which asserts `knownFiled` of every site equals
+     * `fileableCount`. So what is worth guarding here is the thing that would
+     * actually go wrong: an off-by-one firing the ending on the FIRST case.
+     */
+    const client = await hello(server.port);
+    await enterADelve(server.realms, client);
+    await sleep(200);
+    leaveOneAlmostDead(server.realms, client.actorId);
+    await sleep(200);
+    await keepSwinging(server.realms, client);
+
+    expect(client.lines().some((l) => l.startsWith('Filed.'))).toBe(true);
+    expect(client.lines().some((l) => l.includes('closed every case'))).toBe(false);
+  });
+
+  it('does not send a progress frame every pump forever', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE BUG THIS CHANGE ACTUALLY INTRODUCED, AND ALMOST SHIPPED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `progress` is memoised per socket by `session.progressKey`. TWO places
+     * built that key from separate template literals — `sendProgress` set it,
+     * `sendProgressIfChanged` computed one to compare — and adding the case
+     * count to the setter alone made them permanently unequal, so the memo
+     * matched never.
+     *
+     * ═══ AND THE FIRST VERSION OF THIS COMMENT OVERSTATED IT ═══
+     * It said "a frame per socket per pump for the rest of the session". That
+     * is not what happens and the test proved it: an IDLE player reads zero
+     * frames either way, because this world is turn-based and an idle player
+     * generates no pumps at all. The first draft of this test idled, measured
+     * 0 against 0, and passed with the bug present.
+     *
+     * MEASURED PROPERLY, over twelve steps of walking: 0 extra frames with the
+     * shared key, 12 with the divergence — one per action, per socket. Six
+     * friends walking around is six wasted frames a step. Real, worth fixing,
+     * and a quarter of what the first draft claimed.
+     *
+     * Nothing else would have failed. The counts were right, the sheet was
+     * right, every other test passed. The only symptom is traffic.
+     */
+    const client = await hello(server.port);
+    await sleep(250);
+    const settled = client.progressCount();
+
+    // WALKING, NOT IDLING. This world is turn-based: an idle player generates no
+    // pumps at all, so an idle test would read zero frames whatever the memo
+    // did. The frames only flow while somebody is acting, which is exactly when
+    // a broken memo costs something.
+    for (let step = 0; step < 12; step += 1) {
+      client.send({ t: 'move', dir: step % 2 === 0 ? 'e' : 'w' });
+      await sleep(60);
+    }
+    await sleep(200);
+
+    expect(
+      client.progressCount() - settled,
+      'the progress memo is not matching, so every pump is sending a frame',
+      // ZERO, NOT "a small number". The memo either matches or it does not; a
+      // tolerance here would let the divergence back in at half strength.
+    ).toBe(0);
   });
 
   it('does not file a room somebody else cleared', async () => {

@@ -518,6 +518,48 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
         label: 'Experience',
         value: experienceText(progress),
       });
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND HOW MUCH OF THE GAME IS BEHIND THEM. NOT A ToME ROW — AN EARNED ONE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This header lists gold, equipment, inventory and inscriptions as things
+       * still ABSENT rather than drawn as empty rows, on the standard that *"a
+       * row reading Gold: 0 on a screen with no economy is a promise of a system
+       * that does not exist"* — and it ends *"this sentence is the reminder of
+       * what it takes to earn a row here"*.
+       *
+       * THE CASE FILE EARNS ONE BY THAT STANDARD. It is a real system a player
+       * can feel: seventeen rooms, filed at the moment one goes quiet, persisted
+       * across sessions, and drawn on the world map. See `world/casefile.ts`.
+       *
+       * ═══ A ROW, NOT A FOURTH SECTION ═══
+       * The three headings are the PORTED CONTRACT — General/Attack+Defense/
+       * Talents, pinned by a test — and a CASES section would be inventing a
+       * fourth tab ToME does not have. A row is also the honest size of the
+       * fact: the count is the part the map cannot say, because "which ones are
+       * left" is a question about places and the map answers it in position,
+       * dimmed, with the danger grade still readable.
+       *
+       * IMMEDIATELY AFTER EXPERIENCE, because it is the same kind of statement —
+       * how far along this character is — and because at the cap `Experience`
+       * reads "top level" and this becomes the only row still counting.
+       *
+       * ONLY WHEN THE SERVER SAID SO. Both fields are optional on the wire; a
+       * client talking to a build that does not send them draws no row rather
+       * than "Cases: 0 of 0", which is the same rule the `Class` row above
+       * follows and for the same reason.
+       */
+      if (progress.filed !== undefined && progress.cases !== undefined) {
+        rows.push({
+          kind: SheetRowKind.Field,
+          label: 'Cases',
+          value:
+            progress.filed >= progress.cases
+              ? `${String(progress.filed)} of ${String(progress.cases)} — closed`
+              : `${String(progress.filed)} of ${String(progress.cases)}`,
+        });
+      }
       // ═══ ...AND THE POINTS ROW, WHICH IS NOT A STAT ═══
       // ONLY WHILE THERE IS SOMETHING TO SPEND, mirroring ToME's own conditional
       // (uiset/Minimalist.lua:1512-1516 draws the levelup glow, :1587-1589 makes
