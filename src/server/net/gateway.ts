@@ -5771,11 +5771,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═════════════════════════════════════════════════════════════════════════
    *
    * `SiteView.party` names who is behind each door, so the moment a member
-   * crosses, every OTHER member's map is out of date. Nothing else would send
-   * one: `sendSites` fires when a case is filed, when the roamers move, and when
-   * fog uncovers a hidden site — and a friend walking into the Underworks is
-   * none of those. The mark would appear whenever a roamer next happened to
-   * shuffle, which is indistinguishable from a bug.
+   * crosses, every OTHER member's map is out of date.
+   *
+   * ═══ AND SOMETHING ELSE ALMOST DOES THIS, WHICH IS WHY IT IS WORTH STATING ═══
+   * `crossIntoRealm` ends in `pumpAndBroadcast()` with no argument, so every
+   * realm pumps and `pumpRealm` re-sends `sites` to everyone standing in the
+   * overworld. That looks like it covers this — and it covers exactly TWO
+   * CROSSINGS IN THREE, because the re-send is gated on `tickRoamers` and
+   * roamers step once every `MOVE_EVERY_TURNS` (3) pumps.
+   *
+   * The third crossing leaves a friend marked on a door they walked out of
+   * until a roamer next happens to shuffle. Traced with a stack probe after two
+   * reverts failed to show any difference at all: the incidental path is real,
+   * frequent, and not a guarantee.
    *
    * THE SAME SHAPE AS `PumpResult.displaced`: the fact was computed correctly and
    * nothing delivered it, which is the half that is easy to miss because the

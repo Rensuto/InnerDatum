@@ -838,18 +838,20 @@ describe('somebody else turns up', () => {
      * same problem — the exit lands them on the overworld and `handleMove` pumps
      * it. Both versions of this test stayed green with the delivery removed.
      *
-     * `handleFollow` is the one crossing that pumps NOTHING — it calls
-     * `crossIntoRealm` and returns, because following is instant and costs no
-     * turn — so this is the closest thing to an isolated case there is.
+     * ═══ AND IT DOES NOT ISOLATE THE HOOK. THE REASON IS WORTH KNOWING ═══
+     * Reverting `refreshPartySites` leaves this green, and chasing why is what
+     * finally explained the delivery. `crossIntoRealm` ends in
+     * `pumpAndBroadcast()` — no argument, so EVERY realm pumps, the overworld
+     * included — and `pumpRealm` re-sends `sites` to everyone standing there.
      *
-     * ═══ AND IT STILL DOES NOT ISOLATE THE DELIVERY. SAID PLAINLY ═══
-     * Reverting `refreshPartySites` leaves this green too. Measured: the viewer
-     * receives TWO `sites` frames across the follow with the hook and ONE
-     * without, so something else refreshes them and I could not identify it —
-     * `sendSites` has four call sites and none of the other three should fire
-     * here. The hook stays because delivery of a fact ought to be something you
-     * can point at rather than something that happens; this test asserts the
-     * OUTCOME a player sees, which is true either way, and that is all it claims.
+     * But only `if (tickRoamers(...))`, and roamers step once every
+     * `MOVE_EVERY_TURNS` = **3** pumps. So the incidental refresh covers two
+     * crossings in three, and the third leaves a friend marked on a door they
+     * have walked out of until a roamer happens to move.
+     *
+     * The hook is what makes it every crossing. This test asserts the OUTCOME a
+     * player sees, which is true either way; the guarantee is the arithmetic
+     * above, and a test that pinned it would be pinning the roamer schedule.
      */
     const outside = await connect(server.port);
     const outsideId = await outside.hello();
@@ -886,7 +888,6 @@ describe('somebody else turns up', () => {
       .flatMap((site) => site.party as readonly string[]);
     expect(before, 'the first player is not on the door yet').toEqual(['Player 2']);
 
-    // AND NOW THE FOLLOW. No move, no turn, no overworld pump.
     second.send({ t: 'follow', targetId: firstId });
     await sleep(350);
     expect(server.realms.realmOf(secondId)?.id, 'the second did not follow').toBe(
