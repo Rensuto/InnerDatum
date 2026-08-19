@@ -45,7 +45,7 @@ import { talentRuntimeFor } from '../src/server/main.ts';
 import { ActorKind } from '../src/shared/protocol.ts';
 import { canWalk } from '../src/shared/level.ts';
 import { areEnemies } from '../src/server/engine/actor.ts';
-import { firstStep } from './walk.mjs';
+import { STEPS, firstStep } from './walk.mjs';
 import { rangedAttacks, takeShot } from './fightlib.mjs';
 
 const RUNS = Number(process.argv[2] ?? 8);
@@ -131,7 +131,7 @@ function run(site, size, seed) {
 
   let turns = 0;
   let worst = 1;
-  const tally = { shot: 0, moved: 0, held: 0 };
+  const tally = { shot: 0, moved: 0, held: 0, revived: 0 };
   if (process.env.DELVE_DIAG === 'roster') {
     const n = hostiles().length;
     console.log(`  [roster] ${site.name ?? site.id} size=${String(size)} monsters=${String(n)}`);
@@ -142,7 +142,61 @@ function run(site, size, seed) {
     const up = bodies.filter((m) => m.body.alive && !isDowned(downed, m.body.id));
     if (foes.length === 0 || up.length === 0) break;
 
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * SOMEBODY GOES AND PICKS THEM UP. THE PARTY DID NOT, AND IT SHOWED.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This driver dropped a downed member out of `up` and fought on with two,
+     * while a five-turn countdown ran out on the floor beside it. game-design.md
+     * calls Downed the mechanic that turns "I died" into GET TO ME, and the
+     * party section of this tool has been measuring a party that walks away.
+     *
+     * IT IS WHY A PARTY LOOKED WORSE THAN A SOLO WATCHMAN. Measured across all
+     * 27 floors: where the party WON it won comfortably (low-water 39% against
+     * the solo 26%, 72% against 28%), and where it lost it lost as a 900-turn
+     * stall at 0% — a member on the floor and nobody coming.
+     *
+     * ONE RESCUER, NOT ALL OF THEM. The nearest able body breaks off; the rest
+     * keep fighting, because a party that all downs tools to fetch one person is
+     * a different and equally wrong reading.
+     */
+    const fallen = bodies.find(({ body }) => body.alive === false || isDowned(downed, body.id));
+    const rescuer =
+      fallen === undefined
+        ? undefined
+        : up
+            .map((m) => ({
+              m,
+              d: Math.max(Math.abs(m.body.x - fallen.body.x), Math.abs(m.body.y - fallen.body.y)),
+            }))
+            .sort((x, y) => x.d - y.d)[0]?.m;
+
     for (const { body: b, attacks } of up) {
+      if (fallen !== undefined && rescuer !== undefined && b.id === rescuer.body.id) {
+        const gapToFallen = Math.max(Math.abs(b.x - fallen.body.x), Math.abs(b.y - fallen.body.y));
+        if (gapToFallen <= 1) {
+          // A direction, per `submitRevive` — and the server prefers a body
+          // underfoot, which is where a run to a friend actually ends.
+          const step = STEPS.find(
+            ([dx, dy]) => b.x + dx === fallen.body.x && b.y + dy === fallen.body.y,
+          );
+          realm.engine.submitRevive(b.id, step === undefined ? 'n' : step[2]);
+          tally.revived += 1;
+          continue;
+        }
+        const toFallen = firstStep(
+          (x, y) => canWalk(realm.world.level, x, y),
+          { x: b.x, y: b.y },
+          { x: fallen.body.x, y: fallen.body.y },
+        );
+        if (toFallen !== null) {
+          realm.engine.submitMove(b.id, toFallen);
+          tally.moved += 1;
+          continue;
+        }
+      }
+
       const living = foes.filter((f) => f.alive);
       const near = living
         .map((f) => ({ f, d: Math.max(Math.abs(f.x - b.x), Math.abs(f.y - b.y)) }))
