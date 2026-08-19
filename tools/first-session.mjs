@@ -622,7 +622,27 @@ if (folk.length > 0) {
  */
 if (frames.filter((f) => f.t === 'shop').length === 0) {
   mark = log.length;
-  for (const next of byDistance.slice(1, 3)) {
+  /**
+   * GO WHERE THE REEVE SAID, not to whatever happens to be second nearest.
+   *
+   * This walked `byDistance.slice(1, 3)` and reported `NO SHOP FRAME` — because
+   * it had strolled to The Glass Archive and then A Wayfarers' Camp, neither of
+   * which sells anything. Exactly two sites carry a shelf (realms.ts: Threadneedle
+   * Row is the Outfitter, Ashwick Alchemy Row the Apothecary) and blind distance
+   * order does not find them.
+   *
+   * A PLAYER WOULD NOT SEARCH AT RANDOM EITHER. They asked the Reeve where to go
+   * and were told *"Threadneedle for goods"*, so heading there is not the tool
+   * cheating with knowledge the player lacks — it is the tool finally using the
+   * knowledge the game just handed it. The distance order stays as the fallback
+   * for a map where those names have moved.
+   */
+  const shopNames = ['Threadneedle', 'Ashwick'];
+  const shopFirst = [
+    ...byDistance.filter((c) => shopNames.some((n) => (c.site.name ?? '').includes(n))),
+    ...byDistance.slice(1, 3),
+  ];
+  for (const next of shopFirst) {
     // Out of this town first: the way out is a marker here too.
     const gateHere = (realmNow()?.sites ?? []).find((site) => site.name === 'The way out');
     if (gateHere !== undefined) {
