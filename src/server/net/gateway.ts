@@ -9207,6 +9207,40 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // And the readout, because the point that was in hand is not any more.
     sendProgress(session);
 
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND SAY IT OUT LOUD, WHICH THE SPEND HAS NEVER DONE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED, driving a Watchman to level 2 and spending the point: the panel
+     * changed and the Record lane said NOTHING. Every other beat in the arc
+     * narrates itself — *"Player 1 takes up as The Watchman."*, *"Player 1
+     * reaches level 2."*, *"A talent point to spend."*, even *"Reinforced
+     * Watchman's Boots on. Armour 6 -> 10."* for a pair of boots. The one
+     * irreversible choice a player makes about who their character IS was the
+     * only silent one.
+     *
+     * THIS IS THE OTHER HALF OF A SENTENCE THE LEVEL-UP ALREADY STARTS. That
+     * code says a point is waiting and its own comment records why it had to:
+     * the reader is otherwise *"told something happened and not what it bought
+     * them."* Announcing the grant and not the spend leaves the same gap one
+     * step later.
+     *
+     * ═══ THE RECORD LANE, NOT THE MARGIN ═══
+     * Same argument the level line makes: a rank is not private. It is a fact
+     * about a body the rest of the party is standing next to, they are about to
+     * watch it used, and this game is three to six friends in a voice channel —
+     * "Player 1 trains Ward Rush to rank 2" is the kind of line that makes a
+     * party feel like one. The Margin is for advice addressed to you alone.
+     *
+     * `raised` rather than a literal `2`: a point can go into a talent at any
+     * rank, and a hardcoded number would be wrong every time after the first.
+     */
+    broadcastRecordLine(
+      homeOf(body.id),
+      `${nameOf(body.id)} trains ${talent.name} to rank ${String(raised)}.`,
+    );
+
     app.log.info(
       { actorId, talentId: talent.id, level: raised, unspent: body.unspentPoints },
       'talent point spent',

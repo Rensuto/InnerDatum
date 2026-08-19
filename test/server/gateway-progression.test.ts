@@ -853,6 +853,58 @@ describe('a successful spend', () => {
     expect(alex.all('progress')).toHaveLength(0);
     expect(alex.all('loadout')).toHaveLength(0);
   });
+
+  it('says which talent went up, and says it to the whole room', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE CHOICE THAT MATTERS WAS THE ONLY SILENT ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED, driving a Watchman to level 2 and spending the point: the panel
+     * changed and the Record lane said nothing. Every other beat narrates
+     * itself — *"Player 1 takes up as The Watchman."*, *"Player 1 reaches level
+     * 2."*, *"A talent point to spend."*, even *"Reinforced Watchman's Boots
+     * on. Armour 6 -> 10."* for a pair of boots — while the irreversible
+     * decision about who this character IS produced no line at all.
+     *
+     * ═══ AND IT IS THE ROOM'S LINE, WHICH IS THE HALF WORTH PINNING ═══
+     * The test directly above proves `progress` reaches the spender and NOBODY
+     * else, because an unspent point is intent and intent is private. A spent
+     * one is the opposite: it is a fact about a body the party is standing next
+     * to and is about to watch in use. Getting that backwards is silent either
+     * way — a Margin line would look correct to the person who pressed the
+     * button and vanish for everyone else — so the assertion that matters is
+     * ALEX's, not Ren's.
+     */
+    server = await boot('spend-says-so');
+    playsThe(WATCHMAN);
+    const ren = await connect(server.port);
+    const alex = await connect(server.port);
+    const renBody = bodyOf(await ren.hello('ren-handle'));
+    await alex.hello('alex-handle');
+    renBody.unspentPoints = 3;
+    await ren.settle();
+    await alex.settle();
+    ren.clear();
+    alex.clear();
+
+    ren.send({ t: 'spend_point', talentId: 'talent:lockdown' });
+    await ren.settle();
+    await alex.settle();
+
+    const linesOf = (client: Awaited<ReturnType<typeof connect>>): string[] =>
+      client
+        .all('log')
+        .flatMap((frame) => (frame['lines'] ?? []) as { text?: string }[])
+        .map((line) => String(line.text ?? ''));
+
+    expect(linesOf(ren).join(' | '), 'the spender was told nothing').toMatch(
+      /trains Lockdown to rank \d+\./,
+    );
+    expect(linesOf(alex).join(' | '), 'the party watched it happen in silence').toMatch(
+      /trains Lockdown to rank \d+\./,
+    );
+  });
 });
 
 // ===========================================================================
