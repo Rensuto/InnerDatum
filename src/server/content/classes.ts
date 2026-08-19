@@ -79,6 +79,7 @@
  * is the only layer allowed to see both.
  */
 
+import { treeById } from './talent-trees.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
@@ -507,6 +508,12 @@ export function toLoadoutView(talent: Talent, level: number, self: TalentActor):
     // not reach into src/server/; the string values make them interchangeable.
     shape: talent.targeting.shape,
     radius: talent.targeting.radius ?? 0,
+    // THE TREE, BY ID AND BY NAME. Both, because src/client/ may not import the
+    // content table to resolve one from the other — the same reason `maxLevel`
+    // travels rather than being assumed.
+    tree: talent.tree,
+    treeName: treeById(talent.tree)?.name ?? talent.tree,
+    kind: talent.kind,
     level,
     // ON THE WIRE RATHER THAN ASSUMED BY THE RENDERER — protocol.ts argues it:
     // a client that hard-coded 5 would keep drawing "3/5" and a live `+` the

@@ -55,6 +55,7 @@ import {
   talentProject,
   talentRefused,
   targetActor,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -103,6 +104,8 @@ export const backdraft: Talent = {
   id: talentId('backdraft'),
   name: 'Backdraft',
   classId: ClassId.Alchemist,
+  tree: 'ashwick/ministration',
+  kind: TalentKind.Active,
   iconId: 'icon_active_backdraft',
   cost: { ap: AP_COST, resource: REAGENT_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),

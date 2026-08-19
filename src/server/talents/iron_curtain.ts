@@ -70,6 +70,7 @@ import {
   talentDone,
   tomeCooldownToTurns,
   withinTiles,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent, TalentActor, TalentHit, TalentWorld } from '../engine/talents.ts';
 
@@ -243,6 +244,8 @@ export const ironCurtain: Talent = {
   id: talentId('iron_curtain'),
   name: 'Iron Curtain',
   classId: ClassId.Watchman,
+  tree: 'watch/the-line',
+  kind: TalentKind.Active,
   iconId: 'icon_active_iron_curtain',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),

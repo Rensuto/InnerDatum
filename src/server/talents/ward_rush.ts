@@ -52,6 +52,7 @@ import {
   talentRefused,
   targetActor,
   tomeCooldownToTurns,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -141,6 +142,8 @@ export const wardRush: Talent = {
   id: talentId('ward_rush'),
   name: 'Ward Rush',
   classId: ClassId.Watchman,
+  tree: 'watch/discipline',
+  kind: TalentKind.Active,
   iconId: 'icon_active_shield_bash',
   cost: { ap: AP_COST },
   // 6 ToME actions -> 3 Inner Datum turns (an Inner Datum turn holds ~2

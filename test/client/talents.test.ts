@@ -885,3 +885,77 @@ describe('a description is never cut off', () => {
     expect(placed.rect.h).toBeGreaterThanOrEqual(lastBaseline);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE PANEL GIVES UP FIRST WHEN THE BAND IS SHORT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Three things now compete for the same pixels: the talents, their descriptions,
+ * and the tree headings that group them. The ORDER they are surrendered in is a
+ * design decision and this is where it is written down.
+ *
+ * A heading NAMES a grouping and carries nothing a player cannot infer from the
+ * talents under it. A description is content. A talent row IS the content. So:
+ * headings, then prose lines, then — only then — the tail, with a note.
+ *
+ * The floor is 640x320, which is `DEFAULT_VIEWPORT` at 20x10 tiles: four talent
+ * rows cannot be made shorter than their icon blocks, so something has to go,
+ * and what goes is the grouping. The panel degrades to exactly the flat list it
+ * drew before trees existed — never to a list with a talent missing.
+ */
+describe('the tree headings are the first thing given up', () => {
+  const treeRows = (): readonly TalentRow[] => {
+    const rows: TalentRow[] = [
+      { kind: TalentRowKind.Points, unspent: 1, text: '1 point to spend' },
+    ];
+    let index = 0;
+    for (const [tree, names] of [
+      ['Discipline', ['Crude Blow', 'Ward Rush']],
+      ['The Line', ['Iron Curtain', 'Lockdown']],
+    ] as const) {
+      rows.push({ kind: TalentRowKind.Tree, text: tree });
+      for (const name of names) {
+        rows.push({
+          kind: TalentRowKind.Talent,
+          index: index++,
+          id: `talent:${name}`,
+          name,
+          icon: 'icon_active_basic_attack',
+          level: 1,
+          maxLevel: 5,
+          desc: 'Loose a flare at a target up to 5 tiles away for 130% fire damage',
+          descNext: 'Loose a flare at a target up to 5 tiles away for 160% fire damage',
+          canSpend: true,
+        });
+      }
+    }
+    return rows;
+  };
+
+  const placedAt = (size: { width: number; height: number; top: number; bottom: number }) => {
+    const rect = talentPanelRect(size);
+    if (rect === null) throw new Error('no panel');
+    return talentPanelGeometry(rect, treeRows(), wrapAt).placed;
+  };
+
+  it('keeps every talent at the smallest window the game guarantees', () => {
+    const placed = placedAt({ width: 640, height: 320, top: 40, bottom: 280 });
+    expect(placed.filter((p) => p.row.kind === TalentRowKind.Talent)).toHaveLength(4);
+    // ...and says nothing was hidden, because nothing was.
+    expect(placed.some((p) => p.row.kind === TalentRowKind.Note)).toBe(false);
+  });
+
+  it('drops the headings rather than a talent when it must', () => {
+    const placed = placedAt({ width: 640, height: 320, top: 40, bottom: 280 });
+    expect(placed.filter((p) => p.row.kind === TalentRowKind.Tree)).toHaveLength(0);
+  });
+
+  it('draws the headings wherever there is room for them', () => {
+    // The concession must be a concession, not the normal case — a grouping that
+    // never appears is a feature nobody has.
+    const placed = placedAt({ width: 772, height: 367, top: 40, bottom: 320 });
+    expect(placed.filter((p) => p.row.kind === TalentRowKind.Tree)).toHaveLength(2);
+    expect(placed.filter((p) => p.row.kind === TalentRowKind.Talent)).toHaveLength(4);
+  });
+});

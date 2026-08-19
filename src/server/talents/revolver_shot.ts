@@ -50,6 +50,7 @@ import {
   talentDone,
   talentRefused,
   targetActor,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -89,6 +90,8 @@ export const revolverShot: Talent = {
   id: talentId('revolver_shot'),
   name: 'Revolver Shot',
   classId: ClassId.Inspector,
+  tree: 'index/marksmanship',
+  kind: TalentKind.Active,
   iconId: 'icon_active_revolver_shot',
   cost: { ap: AP_COST },
   // At-will, like every reliable slot: skills/*.json carry no cooldown field

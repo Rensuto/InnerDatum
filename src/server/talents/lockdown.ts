@@ -60,6 +60,7 @@ import {
   talentRefused,
   targetActor,
   tomeCooldownToTurns,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -204,6 +205,8 @@ export const lockdown: Talent = {
   id: talentId('lockdown'),
   name: 'Lockdown',
   classId: ClassId.Watchman,
+  tree: 'watch/the-line',
+  kind: TalentKind.Active,
   iconId: 'icon_active_lockdown',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),

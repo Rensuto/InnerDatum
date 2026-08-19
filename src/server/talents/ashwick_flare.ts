@@ -57,6 +57,7 @@ import {
   talentProject,
   talentRefused,
   targetActor,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -132,6 +133,8 @@ export const ashwickFlare: Talent = {
   id: talentId('ashwick_flare'),
   name: 'Ashwick Flare',
   classId: ClassId.Alchemist,
+  tree: 'ashwick/reagents',
+  kind: TalentKind.Active,
   iconId: 'icon_active_fire_bolt',
   cost: { ap: AP_COST, resource: REAGENT_COST },
   // At-will, like the other two reliable slots. The Reagent IS the cooldown:

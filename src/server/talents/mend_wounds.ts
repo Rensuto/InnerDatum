@@ -66,6 +66,7 @@ import {
   talentDone,
   TargetShape,
   tomeCooldownToTurns,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
@@ -141,6 +142,8 @@ export const mendWounds: Talent = {
   id: talentId('mend_wounds'),
   name: 'Mend Wounds',
   classId: ClassId.Alchemist,
+  tree: 'ashwick/ministration',
+  kind: TalentKind.Active,
   iconId: 'icon_active_mend_wounds',
   cost: { ap: AP_COST, resource: REAGENT_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),

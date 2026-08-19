@@ -56,6 +56,7 @@ import {
   percent,
   talentDone,
   talentProject,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
@@ -106,6 +107,8 @@ export const alchemicVial: Talent = {
   id: talentId('alchemic_vial'),
   name: 'Alchemic Vial',
   classId: ClassId.Alchemist,
+  tree: 'ashwick/reagents',
+  kind: TalentKind.Active,
   iconId: 'icon_active_alchemic_vial',
   cost: { ap: AP_COST, resource: REAGENT_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),

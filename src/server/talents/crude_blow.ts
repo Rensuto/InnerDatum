@@ -42,6 +42,7 @@ import {
   talentDone,
   talentRefused,
   targetActor,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -92,6 +93,8 @@ export const crudeBlow: Talent = {
   id: talentId('crude_blow'),
   name: 'Crude Blow',
   classId: ClassId.Watchman,
+  tree: 'watch/discipline',
+  kind: TalentKind.Active,
   iconId: 'icon_active_basic_attack',
   cost: { ap: AP_COST },
   // At-will. See the header — the donor's 2.0 s is declined on purpose.

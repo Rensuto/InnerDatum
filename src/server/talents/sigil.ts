@@ -55,6 +55,7 @@ import {
   talentDone,
   talentRefused,
   targetActor,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 import { INSPECTOR_MIN_RANGE } from './revolver_shot.ts';
@@ -126,6 +127,8 @@ export const sigil: Talent = {
   id: talentId('sigil'),
   name: 'Sigil',
   classId: ClassId.Inspector,
+  tree: 'index/fieldcraft',
+  kind: TalentKind.Active,
   iconId: 'icon_active_sigil',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),

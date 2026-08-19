@@ -151,6 +151,34 @@ export const ClassId = {
 export type ClassId = (typeof ClassId)[keyof typeof ClassId];
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT PRESSING A TALENT DOES, OR THAT YOU CANNOT PRESS IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's three, verbatim in meaning (`ActorTalents.lua` — `mode = "activated"`,
+ * `"sustained"`, `"passive"`). Every talent this game has ever had is `Active`,
+ * which is why the field did not exist: a set of one needs no name.
+ *
+ * IT IS ON THE WIRE because the hotbar and the talent panel both have to draw
+ * the difference — a passive with a keybind is a key that does nothing, and a
+ * sustained that does not show whether it is ON is the one state the player
+ * needs. `LoadoutTalent.kind` is optional and additive, so no protocol bump.
+ */
+export const TalentKind = {
+  /** Costs its resources and resolves now. Everything shipped so far. */
+  Active: 'active',
+  /**
+   * Toggled. Pays once, stays on, and reserves something until it is toggled
+   * off. Nothing implements this yet — the value is declared so the panel can
+   * be built once rather than twice.
+   */
+  Sustained: 'sustained',
+  /** Never pressed. True for as long as there is a point in it. */
+  Passive: 'passive',
+} as const;
+export type TalentKind = (typeof TalentKind)[keyof typeof TalentKind];
+
+/**
  * The three class resources, and the one that is COUNTED rather than measured.
  *
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1127,6 +1155,17 @@ export type Talent = {
   readonly id: string;
   readonly name: string;
   readonly classId: ClassId;
+  /**
+   * WHICH TREE THIS BELONGS TO — `content/talent-trees.ts`'s `TalentTree.id`.
+   *
+   * A SOFT REFERENCE, exactly as `classId` is: a string rather than a union of
+   * the authored tree ids, so adding a tree is a content edit and not a change
+   * to the engine's type. The panel groups by it and falls back to ungrouped for
+   * an id nothing authored, which is the same treatment a missing class gets.
+   */
+  readonly tree: string;
+  /** Active, sustained or passive. See `TalentKind` — everything is Active today. */
+  readonly kind: TalentKind;
   /**
    * `manifest.icons` key. All twelve already exist as 64x64 art
    * (docs/assets-needed.md, "Talent and ability icons": *zero needed, at any

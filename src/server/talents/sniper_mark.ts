@@ -52,6 +52,7 @@ import {
   talentRefused,
   targetActor,
   tomeCooldownToTurns,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 import { INSPECTOR_MIN_RANGE } from './revolver_shot.ts';
@@ -126,6 +127,8 @@ export const snipersMark: Talent = {
   id: talentId('snipers_mark'),
   name: "Sniper's Mark",
   classId: ClassId.Inspector,
+  tree: 'index/marksmanship',
+  kind: TalentKind.Active,
   iconId: 'icon_active_sniper_mark',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),

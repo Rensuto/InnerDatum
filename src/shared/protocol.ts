@@ -908,6 +908,29 @@ export type LoadoutTalent = {
    */
   radius: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH TREE IT SITS IN, AND WHAT PRESSING IT DOES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME groups talents into TYPES and the panel draws them under their type's
+   * name; this game shipped one flat list per class, which PLAN.md § 5 records
+   * as *0 trees* against a v1.0 ceiling of eight. `treeName` is the heading a
+   * player reads and `tree` is the id the panel groups on — both, because the
+   * client may not import the server's content table to look one up from the
+   * other.
+   *
+   * `kind` is `activated`/`sustained`/`passive` in ToME's words. Everything
+   * shipped so far is active; the field exists so the panel and the hotbar can
+   * be built once for all three rather than rewritten when the first passive
+   * lands — a passive with a keybind is a key that does nothing.
+   *
+   * ALL THREE OPTIONAL AND ADDITIVE, so no protocol bump: an older client
+   * ignores fields it cannot name and draws the flat list it always drew.
+   */
+  tree?: string;
+  treeName?: string;
+  kind?: string;
+  /**
    * THE TALENT'S RAW LEVEL. 1 through `maxLevel`, and NEVER 0 — a talent on the
    * hotbar is one this detective has already learned.
    *

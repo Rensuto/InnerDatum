@@ -56,6 +56,7 @@ import {
   talentDone,
   talentRefused,
   tomeCooldownToTurns,
+  TalentKind,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -115,6 +116,8 @@ export const fogStep: Talent = {
   id: talentId('fog_step'),
   name: 'Fog Step',
   classId: ClassId.Inspector,
+  tree: 'index/fieldcraft',
+  kind: TalentKind.Active,
   iconId: 'icon_active_fog_step',
   cost: { ap: AP_COST, mp: MP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),

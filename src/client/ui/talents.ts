@@ -184,6 +184,8 @@ const ICON_GAP = 6;
 const TALENT_ROW_H = ICON_PX + LEVEL_LABEL_H + 8;
 /** The points badge, and the note that replaces a dropped row. */
 const POINTS_ROW_H = 14;
+/** A tree's heading and the hairline under it. */
+const TREE_ROW_H = 15;
 const NOTE_ROW_H = 12;
 
 /** The `+` control. Square-ish, so it is a target rather than a glyph. */
@@ -296,12 +298,28 @@ export const TalentRowKind = {
   Points: 'points',
   /** Icon, name, `n/max`, the current->next diff, and the `+`. The workhorse. */
   Talent: 'talent',
+  /**
+   * A TREE'S HEADING — "Discipline", with the talents in it underneath.
+   *
+   * ToME draws talents under their type's name and this game shipped one flat
+   * list per class; PLAN.md § 5 records that as *0 trees* against a v1.0 ceiling
+   * of eight. The heading is what turns four talents into two decisions.
+   *
+   * DRAWN FROM `LoadoutTalent.treeName`, which the server sends, because the
+   * client may not import the content table that owns the names.
+   */
+  Tree: 'tree',
   /** A sentence about the panel itself — what was dropped, or that nothing came. */
   Note: 'note',
 } as const;
 export type TalentRowKind = (typeof TalentRowKind)[keyof typeof TalentRowKind];
 
 export type TalentRow =
+  | {
+      /** A tree's heading. Its talents follow until the next one. */
+      readonly kind: typeof TalentRowKind.Tree;
+      readonly text: string;
+    }
   | {
       readonly kind: typeof TalentRowKind.Points;
       /** Points in hand. ZERO IS A VALID VALUE and draws the second or third state. */
@@ -432,9 +450,24 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     return rows;
   }
 
+  /**
+   * A HEADING WHENEVER THE TREE CHANGES, and never when it does not.
+   *
+   * The loadout arrives in the class table's order, which groups a tree's
+   * talents together — so a change of tree is a boundary and re-sorting here
+   * would be a second opinion about an order the content already states. A
+   * loadout from a server too old to send `tree` produces NO headings and the
+   * flat list this panel always drew, which is the additive-field contract.
+   */
+  let openTree: string | undefined;
   for (let i = 0; i < view.loadout.length; i += 1) {
     const talent = view.loadout[i];
     if (talent === undefined) continue;
+    const tree = talent.tree;
+    if (tree !== undefined && tree !== openTree) {
+      openTree = tree;
+      rows.push({ kind: TalentRowKind.Tree, text: talent.treeName ?? tree });
+    }
     rows.push({
       kind: TalentRowKind.Talent,
       id: talent.id,
@@ -592,6 +625,8 @@ const DESC_LINE_H = 12;
  */
 function rowHeight(row: TalentRow, lines: number): number {
   switch (row.kind) {
+    case TalentRowKind.Tree:
+      return TREE_ROW_H;
     case TalentRowKind.Points:
       return POINTS_ROW_H;
     case TalentRowKind.Talent:
@@ -682,26 +717,79 @@ export function talentPanelGeometry(
       next: row.descNext === null ? [] : wrap(`${ARROW} ${row.descNext}`, proseW),
     };
   };
-  const wrapped = rows.map(linesOf);
+  let live: readonly TalentRow[] = rows;
+  let wrapped = live.map(linesOf);
 
-  const total = rows.reduce(
-    (sum, row, i) =>
-      sum + rowHeight(row, (wrapped[i]?.desc.length ?? 0) + (wrapped[i]?.next.length ?? 0)),
-    0,
-  );
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A LINE OF PROSE IS GIVEN UP BEFORE A WHOLE TALENT IS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Wrapping made rows taller and tree headings added two more, and at the
+   * 640x320 floor that was enough to push the fourth talent off the panel — the
+   * drop policy did exactly what it says and hid it, with a note. But a talent
+   * the player cannot see at all is worse than a sentence that ends in an
+   * ellipsis, and this is the second panel to learn it: `ui/inventory.ts` gives
+   * up the item description's second line before it gives up the comparison.
+   *
+   * So the budget tightens until everything fits, and only then does the tail
+   * get dropped. The mark is a CHARACTER SWAP rather than an append, so a
+   * clamped line is exactly as wide as the line that fitted — these faces are
+   * monospace by declaration, which is what makes that exact rather than close.
+   */
+  const measure = (): number =>
+    live.reduce(
+      (sum, row, i) =>
+        sum + rowHeight(row, (wrapped[i]?.desc.length ?? 0) + (wrapped[i]?.next.length ?? 0)),
+      0,
+    );
+  const clampTo = (lines: readonly string[], cap: number): readonly string[] => {
+    if (lines.length <= cap) return lines;
+    const kept = lines.slice(0, cap);
+    const last = kept[cap - 1] ?? '';
+    kept[cap - 1] = last.length > 1 ? `${last.slice(0, -1)}…` : '…';
+    return kept;
+  };
+
+  let total = measure();
+
+  /**
+   * THE HEADINGS GO FIRST, BEFORE ANY PROSE AND LONG BEFORE ANY TALENT.
+   *
+   * A tree heading NAMES a grouping; it carries nothing a player cannot work out
+   * from the four talents under it. A talent row carries the talent. So on a band
+   * too short for both — measured: the 640x320 floor, where four talent rows
+   * cannot be made shorter than their icon blocks — the grouping is what is given
+   * up, and the panel degrades to exactly the flat list it drew before trees
+   * existed rather than to a list with one talent missing.
+   */
+  if (top + total > bottom && live.some((row) => row.kind === TalentRowKind.Tree)) {
+    live = live.filter((row) => row.kind !== TalentRowKind.Tree);
+    wrapped = live.map(linesOf);
+    total = measure();
+  }
+
+  for (let cap = 3; cap >= 1 && top + total > bottom; cap -= 1) {
+    wrapped = wrapped.map((entry) => ({
+      desc: clampTo(entry.desc, cap),
+      next: clampTo(entry.next, cap),
+    }));
+    total = measure();
+  }
   const limit = top + total <= bottom ? bottom : bottom - NOTE_ROW_H;
+  const source = live;
 
   const placed: PlacedTalentRow[] = [];
   let cursor = top;
   let dropped = 0;
 
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i];
+  for (let i = 0; i < source.length; i += 1) {
+    const row = source[i];
     if (row === undefined) continue;
     const lines = wrapped[i] ?? { desc: [], next: [] };
     const h = rowHeight(row, lines.desc.length + lines.next.length);
     if (cursor + h > limit) {
-      dropped = rows.length - i;
+      dropped = source.length - i;
       break;
     }
 
@@ -939,6 +1027,25 @@ function drawRow(
   const { row, rect } = placed;
 
   switch (row.kind) {
+    case TalentRowKind.Tree: {
+      /**
+       * A TREE'S HEADING — the name, and a hairline running to the panel's edge.
+       *
+       * Drawn in the meta face rather than the talent face, and in `GREY_HI`
+       * rather than parchment, because a heading that competes with the talent
+       * names under it turns a grouping into a list of eight things. The rule is
+       * what does the grouping; the word only names it.
+       */
+      ctx.font = FONT_META;
+      ctx.fillStyle = PALETTE.GOLD;
+      ctx.textAlign = 'left';
+      ctx.fillText(fitText(ctx, row.text, rect.w), rect.x, rect.y + 6);
+      const under = rect.y + TREE_ROW_H - 4;
+      const wordW = Math.min(rect.w, ctx.measureText(row.text).width + 6);
+      ctx.fillStyle = PALETTE.SLATE;
+      ctx.fillRect(rect.x + wordW, under, Math.max(0, rect.w - wordW), 1);
+      return;
+    }
     case TalentRowKind.Points: {
       // ═══ THE COUNT IS ALWAYS DRAWN. THE PLATE IS THE EMPHASIS AND IS NOT ═══
       // LevelupDialog.lua:757-784 keeps its four counters on screen at zero;
