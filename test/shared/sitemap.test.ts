@@ -137,15 +137,27 @@ describe('every shipped site is painted with a legal pair', () => {
      */
     if (site.kind === RealmKind.Overworld) continue;
     it(`${id} opens onto ground you can stand on, behind walls you cannot`, () => {
+      /**
+       * TWO CODES, OR THREE FOR A TOWN. This used to demand exactly two, which
+       * was right while a site was floor-and-wall. A town now paints its
+       * BOUNDARY separately from its BLOCKS — measured on Alderbrook, 732
+       * PAVING streets, 164 CIVIC buildings and a 124-cell TOWN_WALL ring —
+       * because drawing the edge of the world in the same code as a house is
+       * what made a player unable to tell they were standing in a town.
+       *
+       * THE CLAIM IS UNCHANGED AND IS THE PART THAT MATTERS: exactly one code
+       * you can stand on, and every other code solid AND opaque. A third code
+       * that was walkable, or that you could see through, would still fail.
+       */
       const codes = new Set(site.map(`palette-check-${id}`).view.tiles);
-      expect(codes.size).toBe(2);
+      expect(codes.size).toBeGreaterThanOrEqual(2);
+      expect(codes.size).toBeLessThanOrEqual(3);
 
-      const [floor, wall] = [...codes].sort(
-        (a, b) => Number(isWalkable(b)) - Number(isWalkable(a)),
-      );
-      expect(isWalkable(floor ?? TileCode.WALL)).toBe(true);
-      expect(isWalkable(wall ?? TileCode.FLOOR)).toBe(false);
-      expect(blocksSight(wall ?? TileCode.FLOOR)).toBe(true);
+      const walkable = [...codes].filter((c) => isWalkable(c));
+      expect(walkable, `${id} has ${String(walkable.length)} kinds of ground`).toHaveLength(1);
+      for (const solid of [...codes].filter((c) => !isWalkable(c))) {
+        expect(blocksSight(solid), `${id} has a solid code you can see through`).toBe(true);
+      }
     });
   }
 
@@ -163,10 +175,67 @@ describe('every shipped site is painted with a legal pair', () => {
       'site:ashwick_row',
       'site:saints_rest',
     ];
-    const walls = towns.map((id) => {
+    /**
+     * THE BUILDINGS, NOT THE RING. Every town now shares `TOWN_WALL` for its
+     * boundary — a wall around a place is the same idea everywhere — so "the
+     * first solid code" stopped being the one that tells two towns apart.
+     *
+     * That distinction is exactly what a first attempt at the boundary got
+     * backwards: it gave the blocks a roof chosen by marker tier, which made
+     * Threadneedle, Ashwick and Saint's Rest identical inside, and this test is
+     * what caught it. Asking for the BLOCK code keeps it doing that job.
+     */
+    const blocks = towns.map((id) => {
       const codes = [...new Set(SITES.get(id)?.map(`wall-check-${id}`).view.tiles ?? [])];
-      return codes.find((c) => !isWalkable(c));
+      return codes.find((c) => !isWalkable(c) && c !== TileCode.TOWN_WALL);
     });
-    expect(new Set(walls).size).toBeGreaterThan(1);
+    expect(new Set(blocks).size).toBeGreaterThan(1);
+  });
+
+  it('draws the edge of a town in a different code from its buildings', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "HOW HARD IT IS TO TELL THE AREA IM AT IS A TOWN" — A PLAYER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Measured on Alderbrook before this: 1,020 cells, exactly two codes, 732
+     * PAVING and 288 CIVIC — and the ring around the town was THE SAME CODE as
+     * the blocks inside it. The streets and the blocks are really there and the
+     * layout is a real town; a player standing in the middle of it simply could
+     * not tell a building from the edge of the world.
+     *
+     * Three things are needed to read a place as a town, and now all three are
+     * distinct: a street you walk on, a building you walk round, and a boundary
+     * that says the town stops here.
+     *
+     * PINNED SEPARATELY from the size band above, which permits two codes so
+     * that a cave stays a cave. Without this, a town quietly losing its ring
+     * would pass everything.
+     */
+    /**
+     * THE FOUR TOWN-SHAPED SITES, and `site:wayfarers_camp` is deliberately not
+     * among them: it is a `SiteShape.Ruin`, and a ruin's rim and a ruin's rubble
+     * are the same rubble. A first version of this test asked it the town
+     * question and it answered honestly with one solid code.
+     */
+    for (const id of [
+      'site:alderbrook',
+      'site:threadneedle_row',
+      'site:ashwick_row',
+      'site:saints_rest',
+    ]) {
+      const view = SITES.get(id)?.map(`edge-check-${id}`).view;
+      if (view === undefined) throw new Error(`no such site ${id}`);
+
+      const solid = new Set([...new Set(view.tiles)].filter((c) => !isWalkable(c)));
+      expect(solid.size, `${id} draws its edge and its buildings the same`).toBe(2);
+
+      // And the ring really is the ring: the corner cell is the boundary code,
+      // and it is not what the blocks are made of.
+      const corner = view.tiles[0];
+      const middleBlocks = [...solid].filter((c) => c !== corner);
+      expect(corner).toBe(TileCode.TOWN_WALL);
+      expect(middleBlocks).toHaveLength(1);
+    }
   });
 });

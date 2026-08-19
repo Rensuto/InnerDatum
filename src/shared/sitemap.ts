@@ -316,6 +316,26 @@ function connect(g: Grid, from: TileXY): void {
 export type SitePalette = {
   readonly floor: TileCode;
   readonly wall: TileCode;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT A BLOCK IN THE MIDDLE OF TOWN IS MADE OF, AS OPPOSED TO THE EDGE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Optional, and absent means "the same as `wall`" — which is what every site
+   * did before and is still right for a cave, where the rock at the edge and the
+   * rock in the middle are the same rock.
+   *
+   * IT IS NOT RIGHT FOR A TOWN. Measured on Alderbrook: 1,020 cells, exactly two
+   * codes — PAVING 732 and CIVIC 288 — and the outer ring is the SAME CODE as
+   * the building blocks inside it. The layout is a real town, streets and all,
+   * and a player standing in it cannot tell a house from the edge of the map
+   * because they are drawn identically. A player put it as "how hard it is to
+   * tell the area im at is a town".
+   *
+   * Three codes give a town the three things it needs to read as one: a street,
+   * a building, and a boundary. All the art already exists.
+   */
+  readonly roof?: TileCode;
 };
 
 /** What every site was, and what a caller that names no palette still gets. */
@@ -356,9 +376,25 @@ export function makeSiteMap(
    * realm is cheap, but a no-op that is visibly a no-op is easier to reason
    * about than one that has to be traced.
    */
-  if (palette.floor !== TileCode.FLOOR || palette.wall !== TileCode.WALL) {
+  const roof = palette.roof ?? palette.wall;
+  if (palette.floor !== TileCode.FLOOR || palette.wall !== TileCode.WALL || roof !== palette.wall) {
     for (let i = 0; i < g.length; i += 1) {
-      g[i] = g[i] === TileCode.FLOOR ? palette.floor : palette.wall;
+      if (g[i] === TileCode.FLOOR) {
+        g[i] = palette.floor;
+        continue;
+      }
+      /**
+       * THE EDGE IS THE BOUNDARY; EVERYTHING ELSE SOLID IS A BUILDING.
+       *
+       * A border test rather than a flood fill, because the grid always has a
+       * closed ring — `blank()` fills with WALL and no carver opens the rim, so
+       * "on the edge" and "is the wall around this place" are the same set.
+       * Anything solid further in was put there by a carver as a block.
+       */
+      const x = i % W;
+      const y = (i - x) / W;
+      const edge = x === 0 || y === 0 || x === W - 1 || y === H - 1;
+      g[i] = edge ? palette.wall : roof;
     }
   }
 

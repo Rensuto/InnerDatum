@@ -1127,7 +1127,40 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
      * is a different floor — and after the five-minute linger reaps it, the
      * next party through the door gets somewhere new.
      */
-    map: (seed) => makeSiteMap(seed, shape, { floor, wall }),
+    /**
+     * ═════════════════════════════════════════════════════════════════════
+     * A TOWN GETS A THIRD CODE: STREET, BUILDING, BOUNDARY.
+     * ═════════════════════════════════════════════════════════════════════
+     *
+     * Measured on Alderbrook's interior: 1,020 cells and exactly two codes —
+     * PAVING 732, CIVIC 288 — with the ring around the town drawn in the SAME
+     * code as the blocks inside it. The streets and blocks are really there,
+     * and a player standing in the middle of them cannot tell a building from
+     * the edge of the world.
+     *
+     * THE AUTHORED CODE STAYS ON THE BUILDINGS, and that ordering is the whole
+     * of it. `wall` is what makes Alderbrook's civic stone different from
+     * Threadneedle's terraces — four settlements a player walks between in one
+     * session, which `sitemap.test.ts` pins so a new site has to make a choice
+     * rather than inherit a default. A first version of this handed the tier
+     * roof to the blocks and the shared `TOWN_WALL` to the ring, which made
+     * three of the four towns identical inside; the test caught it.
+     *
+     * So the NEW code goes on the boundary, where sharing is correct: the wall
+     * around a place is the same idea in every town, and what is inside it is
+     * not.
+     *
+     * ONLY FOR A TOWN SHAPE. A cave's rim and a cave's pillars are the same
+     * rock, and `SitePalette.roof` is optional for exactly that reason.
+     */
+    map: (seed) =>
+      makeSiteMap(
+        seed,
+        shape,
+        shape === SiteShape.Town
+          ? { floor, wall: TileCode.TOWN_WALL, roof: wall }
+          : { floor, wall },
+      ),
     // A delve is a place you can go back to. A town never empties in the sense
     // that matters — `close` refuses a shared realm outright — so the number
     // is inert there and stated once rather than branched on.
