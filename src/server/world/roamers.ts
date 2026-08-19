@@ -33,9 +33,16 @@
  * argument `rollForEncounter` makes for its d100.
  */
 
-import { canWalk } from '../../shared/level.ts';
+import { REDACTION_SITE_ID, canWalk } from '../../shared/level.ts';
 import { isHaunt } from '../../shared/protocol.ts';
-import { INDEX_CAIRN, INDEX_GLUT, INDEX_HUSK, INDEX_WRAITH } from '../content/monsters.ts';
+import {
+  INDEX_CAIRN,
+  INDEX_GLUT,
+  INDEX_HUSK,
+  INDEX_INQUISITOR,
+  INDEX_INSPECTOR,
+  INDEX_WRAITH,
+} from '../content/monsters.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import { tileAt } from '../../shared/level.ts';
 import type { LevelView } from '../../shared/protocol.ts';
@@ -173,6 +180,61 @@ export const ROAMER_KINDS: readonly {
   { label: 'A Wrong Shadow', template: INDEX_CAIRN },
 ];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND WHAT WANDERS ON THE OTHER MAP, WHICH WAS THE SAME FOUR UNTIL NOW.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Redaction shipped with harder DELVES and Alderbrook's open country. That
+ * is the wrong way round: a player who crosses the door spends most of their
+ * time WALKING, and walking was identical on both maps — so the dark territory
+ * read as the moor with holes in it until they happened to open a door.
+ *
+ * ═══ WHAT IS GONE IS AS MUCH OF THE STATEMENT AS WHAT IS ADDED ═══
+ * No husk and no wrong shadow. The husk is the game's baseline threat, the
+ * thing a player learns first and stops reading after an hour — and its absence
+ * is the fastest way to say that the ordinary population of this country is not
+ * here any more. What is left of Alderbrook's four are the two that were never
+ * ordinary: the glut, which the Index made out of something, and the wraith,
+ * which is a citation of an absence.
+ *
+ * THE CAIRN IS NOT LOST BY DROPPING IT. `ambushRoster` still adds one on
+ * `Ground.Fen` wherever the fight happens, so the fen keeps its firing line on
+ * both maps — the ground supplies it and the marker no longer has to. The two
+ * systems being independent is what makes this subtraction cheap.
+ *
+ * FOUR HERE AS WELL, AND NOT BECAUSE FOUR IS A RULE. It happens to be what the
+ * design wanted, and the length carries no seed contract across maps: each
+ * realm has its own `World` and therefore its own rng stream, so this list's
+ * length cannot disturb Alderbrook's `roamer.kind` draws. Alderbrook's own list
+ * is the one that must not be reordered.
+ */
+export const REDACTED_KINDS: readonly {
+  readonly label: string;
+  readonly template: MonsterTemplate;
+}[] = [
+  { label: 'A Disgraced Inspector', template: INDEX_INSPECTOR },
+  { label: 'A High Inquisitor', template: INDEX_INQUISITOR },
+  { label: 'Something Redacted', template: INDEX_GLUT },
+  { label: 'An Index Wraith', template: INDEX_WRAITH },
+];
+
+/**
+ * Which pool this realm draws from.
+ *
+ * BY `siteId` AND NOT BY REALM ID. A realm id is minted by the registry and an
+ * instanced one carries a sequence number; the site id is the authored identity
+ * and is the thing that means "this is the Redaction". Comparing the realm id
+ * string would work today and break the first time anything about instancing
+ * changes underneath it.
+ */
+export function kindsFor(realm: Realm): readonly {
+  readonly label: string;
+  readonly template: MonsterTemplate;
+}[] {
+  return realm.siteId === REDACTION_SITE_ID ? REDACTED_KINDS : ROAMER_KINDS;
+}
+
 /** The eight steps. Fixed order — the index is a draw, so order is seed contract. */
 const STEPS: readonly (readonly [number, number])[] = [
   [1, 0],
@@ -223,9 +285,9 @@ export function tickRoamers(realm: Realm, seq: number): boolean {
       if (realm.world.actorAt(x, y) !== undefined) continue;
       if ([...realm.roamers.values()].some((r) => r.x === x && r.y === y)) continue;
       const id = `roam_${String(seq)}_${String(realm.roamers.size)}`;
-      const kind =
-        ROAMER_KINDS[realm.world.rng.int('roamer.kind', 0, ROAMER_KINDS.length - 1)] ??
-        ROAMER_KINDS[0];
+      // WHICH MAP THIS IS. See `kindsFor` — the Redaction has its own people.
+      const kinds = kindsFor(realm);
+      const kind = kinds[realm.world.rng.int('roamer.kind', 0, kinds.length - 1)] ?? kinds[0];
       const template = kind?.template ?? INDEX_HUSK;
       realm.roamers.set(id, {
         id,

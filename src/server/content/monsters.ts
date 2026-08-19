@@ -1815,8 +1815,18 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
     weapon: {
       // troll.lua:30 `dam=resolvers.levelup(resolvers.mbonus(45, 10), 1, 1)`.
       dam: resolveLevelup(resolveMBonus(45, 10)),
-      // troll.lua:30 `atk=2`, VERBATIM, and it is not a typo upstream either —
-      // the roster runs 8 to 18 and this is 2.
+      /**
+       * troll.lua:30 `atk=2`, VERBATIM, and it is not a typo upstream either.
+       *
+       * IT IS NO LONGER UNIQUE, and the correction belongs here rather than in
+       * a commit message: INDEX_INQUISITOR carries the same 2 from
+       * `elven-caster.lua:30`, because upstream reuses that combat line as
+       * boilerplate across unrelated base NPCs. What is still true, and is what
+       * the creature is built on, is that this is the least accurate thing in
+       * the game THAT HAS TO WALK UP TO YOU — the Inquisitor's melee swing is
+       * the pitiful thing that happens after you have already cornered it, and
+       * its real weapon is an orb that takes no accuracy roll at all.
+       */
       atk: 2,
       // troll.lua:30 `apr=6`. When it does land, your armour is most of the way
       // to irrelevant, which is what keeps a miss streak from being free.
@@ -1841,6 +1851,306 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
   },
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO THAT LIVE ON THE OTHER MAP — AND WHY THEY ARE A PAIR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Redaction shipped with harder DELVES and Alderbrook's open country. That
+ * is backwards: a player crossing the door spends most of their time walking,
+ * and walking was identical on both maps, so the second landmass read as the
+ * first one with holes until you happened to open a door.
+ *
+ * These are its roamers. They are deliberately not "the husk but bigger" —
+ * `monsters.test.ts` argues that a creature has to belong to something the
+ * player chose, and a bigger husk belongs to nothing. What these two belong to
+ * is EACH OTHER:
+ *
+ *   THE INSPECTOR hunts whoever is alone.  → so the party stays together
+ *   THE INQUISITOR out-ranges and out-walks
+ *     everyone, and must be closed down.   → so somebody has to leave
+ *
+ * That is one decision with no free answer, and it is the first time this game
+ * has asked a party to solve two problems that contradict. Six friends in a
+ * voice channel arguing about who goes is the entire pitch, and until now the
+ * bestiary gave them nothing to argue about.
+ *
+ * BOTH SPRITES WERE CUT AND DRAWING NOTHING. `enemy_disgraced_inspector_s` was
+ * referenced by no file at all; `enemy_high_inquisitor_s` appeared once, in a
+ * comment in `content/items.ts` explaining that it is a monster sprite and NOT
+ * a player class. They were the last two enemies in the manifest with nothing
+ * behind them.
+ */
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DISGRACED INSPECTOR — it did your job here, before here stopped.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Inspector is a PLAYER CLASS (`content/classes.ts`), and that is the whole
+ * idea: the thing coming across the erased ground at you is what happened to
+ * somebody who was doing exactly what you are doing, on this exact map, before
+ * the Index finished with it. It is the only creature in the game that is a
+ * person rather than a thing the Index made.
+ *
+ * ═══ IT IS THE ONLY ROAMER THAT PICKS ITS TARGET ═══
+ * `huntsIsolated` is OURS, not upstream's, and it is the entire creature.
+ * `ai/npc.ts` reads it and calls `mostIsolated(visible, ctx)` instead of taking
+ * the nearest body — so this thing walks PAST the group to reach whoever
+ * wandered off. Until now `INDEX_HUSK_ELITE` was the only template that set it,
+ * which meant the mechanic existed only inside delves, where a party is already
+ * standing in one room. Out on open country it means something completely
+ * different: the moor is 170x100, splitting up is efficient, and this is the
+ * cost of it.
+ *
+ * At `globalSpeed` 1.25 the person it picked cannot outrun it. That is not a
+ * death sentence — sixty hit points and no armour at all means the party kills
+ * it quickly once they turn around — it is a demand that they turn around.
+ *
+ * ═══ PORTED FROM `feline.lua:25-30` (base) AND `feline.lua:41-49` (snow cat) ═══
+ *
+ *     stats = { str=10, dex=20, mag=3, cun=18, con=6 },
+ *     global_speed_base = 1.25,
+ *     rank = 2,
+ *     level_range = {3, nil},
+ *     max_life = resolvers.rngavg(40,80),
+ *     combat_armor = 0, combat_def = 8,
+ *     combat = { dam=resolvers.levelup(5, 1, 0.7), atk=12, apr=15,
+ *                dammod={str=0.5, dex=0.5} },
+ *
+ * `cun=18` HAS NOWHERE TO GO — this engine's `PrimaryStats` is str/dex/mag/con,
+ * because nothing in the ported combat maths reads cunning. Dropped rather than
+ * folded into another stat, which would be inventing a number and citing a
+ * source for it.
+ *
+ * A SNOW CAT because the profile is exactly right and the fiction is ours to
+ * write over it: fastest thing in the game, highest dexterity in the game,
+ * dodges well, wears nothing, and `apr=15` means the armour the party is
+ * wearing does not help. Upstream is a predator that runs down the straggler.
+ * So is this.
+ */
+export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
+  id: 'index_inspector',
+  displayName: 'A Disgraced Inspector',
+  description:
+    'Somebody who worked this ground before it was taken, still working it. The badge is legible. ' +
+    'Nothing else is.',
+  sprite: 'enemy_disgraced_inspector_s',
+  /**
+   * ELITE, AND `validateTemplate` IS WHY — IT REFUSED THE NORMAL VERSION.
+   *
+   *   > A creature that behaves like an elite must LOOK like one. The ring is
+   *   > the only warning the player gets, and an unringed thing that hunts the
+   *   > isolated detective and walks around a chokepoint is a bug report, not a
+   *   > monster.
+   *
+   * It was authored as `Normal` and the rule caught it, which is the rule
+   * earning its keep rather than an inconvenience: this creature's whole
+   * behaviour is that it IGNORES the nearest body and goes for whoever wandered
+   * off. Without the ring that reads as broken pathfinding for the ten seconds
+   * before somebody dies, and as a cheap trick afterwards. With it, the party
+   * saw a marked thing arrive and chose to stay spread out.
+   *
+   * The rank costs it nothing in stats — see the essay on INDEX_HUSK_ELITE and
+   * ToME's three-tier ghoul ladder, where all three ranks hold identical life
+   * and every point of threat is bought with `dam`/`atk`/`apr`/`def`/armour.
+   */
+  rank: ActorRank.Elite,
+
+  // feline.lua:46 `max_life = resolvers.rngavg(40,80)` = 60.
+  maxHp: resolveRngAvg(40, 80),
+  hpRegen: 0,
+
+  // feline.lua:30 `global_speed_base = 1.25`, VERBATIM — the fastest thing in
+  // the game, ahead of INDEX_EIDOLON's 1.2. Whoever it chose does not get away.
+  globalSpeed: 1.25,
+  speedFactor: 1,
+
+  profile: AiProfile.MeleeChaser,
+  aggroRange: 8,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  /**
+   * OURS, AND IT IS THE POINT OF THE CREATURE.
+   *
+   * The second template in the game to set it and the first outside a delve.
+   * See the essay above: on a 170x100 map where splitting up is the efficient
+   * thing to do, a creature that walks past the group to reach the person who
+   * wandered off is the only argument against it that is not a lecture.
+   */
+  huntsIsolated: true,
+  shoulderAfter: 0,
+
+  // THE DARK TERRITORY PAYS BETTER, which is the other half of `redactedSpec`'s
+  // +1 litter: danger with no upside is a place you visit once.
+  drops: { chance: 100, pick: idsOfTier('rare') },
+
+  combat: {
+    // feline.lua:25, VERBATIM but for `cun=18`, which this engine has no home
+    // for. Dexterity 20 is the highest in the game.
+    stats: { str: 10, dex: 20, mag: 3, con: 6 },
+    // feline.lua:48 `combat_armor = 0, combat_def = 8`, VERBATIM. It dodges and
+    // it wears nothing: hard to hit, and it folds the moment you connect.
+    mods: { armour: 0, def: 8 },
+    weapon: {
+      // feline.lua:49 `dam=resolvers.levelup(5, 1, 0.7)`.
+      dam: resolveLevelup(5),
+      atk: 12,
+      // feline.lua:49 `apr=15`, matching INDEX_WRAITH's. Whatever the party is
+      // wearing is most of the way to irrelevant — the answer to this creature
+      // is to kill it, not to tank it.
+      apr: 15,
+      damMod: { str: 0.5, dex: 0.5 },
+    },
+    profile: {
+      resists: {
+        // OURS. Half of the Index's own element slides off everything the Index
+        // made — and whatever this used to be, it belongs to the Index now.
+        [DamageType.Darkness]: 50,
+      },
+    },
+    range: 1.5,
+    minRange: 0,
+  },
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HIGH INQUISITOR — a kiter you cannot walk away from, or up to.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The game has two ranged creatures and the party's answer to both is its legs.
+ * INDEX_CAIRN never moves — reach it and it is over, and the fen exists to make
+ * reaching it hard. INDEX_WRAITH kites at `globalSpeed` 0.84, which is slower
+ * than a player, so a party that commits to the walk always closes.
+ *
+ * THIS ONE IS AS FAST AS YOU ARE. `globalSpeed` 1.0 on a `RangedKiter` with the
+ * longest reach in the game means walking at it does not work: it gives ground
+ * for exactly as long as you advance. The only things that close the distance
+ * are cutting it off — which needs somebody going the other way — or ignoring
+ * it, which costs 7 damage a player turn for as long as you ignore it.
+ *
+ * THE SECOND ELITE, AND THE FIRST ONE THAT IS NOT A BRAWL. `INDEX_HUSK_ELITE`
+ * is a heavier melee problem; this is a different KIND of problem, which is
+ * what makes a second elite content rather than escalation.
+ *
+ * ═══ NO ON-HIT EFFECT, AND THAT IS A DECISION ═══
+ * The wraith's orb applies `Slowed` and the elite's claw applies `Bleeding`, so
+ * this creature having neither looks like an omission. It is not. Slowing the
+ * party from nine tiles, on a kiter that already retreats at their walking
+ * speed, does not make closing the distance harder — it makes it IMPOSSIBLE,
+ * and "somebody has to go and deal with it" would become "nobody can". The
+ * pressure is meant to be a decision, not a wall.
+ *
+ * ═══ PORTED FROM `elven-caster.lua:24-52` (base) AND `:56-64` (elven mage) ═══
+ *
+ *     combat = { dam=resolvers.rngavg(5,12), atk=2, apr=6, physspeed=2 },
+ *     ai_state = { talent_in=1 },
+ *     stats = { str=20, dex=8, mag=6, con=16 },
+ *     level_range = {2, nil},
+ *     max_life = resolvers.rngavg(70, 80),
+ *     combat_armor = 0, combat_def = 0,
+ *
+ * THE STAT LINE IS THE SAME ONE `INDEX_GLUT` CITES FROM `troll.lua:45`, and it
+ * is worth saying so out loud because the coincidence reads as a copied
+ * citation: upstream reuses `str=20, dex=8, mag=6, con=16` and `atk=2, apr=6,
+ * physspeed=2` as boilerplate across unrelated base NPCs. Both citations were
+ * checked against the files. They also barely overlap in play — the glut is a
+ * strength-driven melee swing and this creature's damage is an ORB, which takes
+ * no stats at all.
+ *
+ * `rank`, THE ORB AND THE RANGES ARE OURS. `damageMin`/`damageMax` 12-16 is
+ * INDEX_WRAITH's orb, taken deliberately rather than tuned: this creature is not
+ * a bigger gun, it is the same gun that you cannot walk away from. What upstream
+ * supplies is a robed thing with seventy-five hit points and no armour or
+ * defence whatsoever, which is exactly right — corner it and it dies.
+ */
+export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
+  id: 'index_inquisitor',
+  displayName: 'A High Inquisitor',
+  description:
+    'It decided what stayed. It is still deciding, out here, where there is nothing left to ' +
+    'decide about but you.',
+  sprite: 'enemy_high_inquisitor_s',
+  rank: ActorRank.Elite,
+
+  // elven-caster.lua:60 `max_life = resolvers.rngavg(70, 80)` = 75.
+  maxHp: resolveRngAvg(70, 80),
+  hpRegen: 0,
+
+  // The base declares no `global_speed_base`, so 1.0 — VERBATIM, and it is the
+  // whole creature. A player is pinned at 1.0 by D1, so this is the only ranged
+  // thing in the game that does not lose a walking race.
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  profile: AiProfile.RangedKiter,
+  aggroRange: 10,
+  /**
+   * THE OPERATIVE REACH — see the essay on INDEX_WRAITH's `attackRange`: `kite`
+   * returns `advance` for anything beyond `preferredRange`, so this is the band
+   * it actually fights in and `attackRange` below is a legality ceiling.
+   *
+   * 7 against the cairn's 6 and the wraith's 4. Longest in the game, and unlike
+   * the cairn's it moves.
+   */
+  preferredRange: 7,
+  /**
+   * 3, NOT THE 4 THIS WAS AUTHORED WITH, and `validateTemplate` is the reason:
+   *
+   *   > At `minRange` 4 the pure diagonal at offset (3, 3) is Chebyshev 3
+   *   > (inside the hole, so the AI backs off) and Euclidean 4.243 (outside it,
+   *   > so `canAttack` would have allowed the shot).
+   *
+   * A creature that retreats from a tile it is willing to shoot from reads as
+   * the server being broken, not as a weakness. 3 is `MAX_SAFE_MIN_RANGE` and
+   * is the cairn's, and it costs this design nothing — the dead zone was never
+   * the point. `preferredRange` is, and that is still the longest in the game.
+   */
+  minRange: 3,
+  attackRange: 9,
+  // NOT `huntsIsolated`. That belongs to the Inspector, and the two of them
+  // pulling in opposite directions is the design — see the header. A creature
+  // that both out-ranged the party AND chased the straggler would collapse the
+  // decision into one answer.
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  projSpeed: 2,
+  talentIn: 2,
+  // INDEX_WRAITH's orb, deliberately identical. See the note above.
+  damageMin: 12,
+  damageMax: 16,
+
+  drops: { chance: 100, pick: idsOfTier('rare') },
+
+  combat: {
+    // elven-caster.lua:51, VERBATIM. See the note above on why this matches the
+    // glut's line and why it does not matter in play.
+    stats: { str: 20, dex: 8, mag: 6, con: 16 },
+    // elven-caster.lua:64 `combat_armor = 0, combat_def = 0`, VERBATIM. Nothing
+    // at all, on an elite: the whole of its survival is the distance.
+    mods: { armour: 0, def: 0 },
+    weapon: {
+      // elven-caster.lua:30 `dam=resolvers.rngavg(5,12)` = 8, `atk=2`, `apr=6`.
+      // The melee swing is what happens when the party finally corners it, and
+      // it is deliberately pitiful.
+      dam: resolveRngAvg(5, 12),
+      atk: 2,
+      apr: 6,
+      damMod: { mag: 0.8 },
+    },
+    profile: {
+      resists: {
+        [DamageType.Darkness]: 50,
+      },
+    },
+    range: 9,
+    minRange: 3,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
@@ -1848,6 +2158,8 @@ export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_EIDOLON,
   INDEX_CAIRN,
   INDEX_GLUT,
+  INDEX_INSPECTOR,
+  INDEX_INQUISITOR,
 ]);
 
 /** Their ids, same order. */

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { ambushRoster } from '../../src/server/content/encounter.ts';
 import { MONSTER_TEMPLATES, monsterById } from '../../src/server/content/monsters.ts';
-import { ROAMER_KINDS } from '../../src/server/world/roamers.ts';
+import { createDownedState } from '../../src/server/engine/downed.ts';
+import { createPartyState } from '../../src/server/engine/party.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import { createRealms } from '../../src/server/world/realms.ts';
+import { REDACTED_KINDS, ROAMER_KINDS, kindsFor } from '../../src/server/world/roamers.ts';
+import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
 import { Ground } from '../../src/shared/level.ts';
 
 /**
@@ -136,8 +141,19 @@ describe('the Index Glut', () => {
     const armourOf = (t: (typeof MONSTER_TEMPLATES)[number]): number => t.combat.mods?.armour ?? 0;
     const others = MONSTER_TEMPLATES.filter((t) => t.id !== 'index_glut');
     expect(Math.max(...others.map(armourOf))).toBeLessThan(armourOf(glut));
+    /**
+     * THE LEAST ACCURATE THING THAT HAS TO WALK UP TO YOU, which is narrower
+     * than the claim this made when it was written and is the claim that is
+     * true. `INDEX_INQUISITOR` also carries `atk: 2` — upstream reuses that
+     * combat line as boilerplate — but it is a kiter whose real weapon is an
+     * orb with no accuracy roll at all, so its swing is what happens after the
+     * party has already won the positioning. Comparing a melee creature's
+     * accuracy against a kiter's vestigial one measures nothing.
+     */
     const atkOf = (t: (typeof MONSTER_TEMPLATES)[number]): number => t.combat.weapon?.atk ?? 0;
-    expect(Math.min(...others.map(atkOf))).toBeGreaterThan(atkOf(glut));
+    const melee = others.filter((t) => t.projSpeed === undefined);
+    expect(melee.length).toBeGreaterThan(2);
+    expect(Math.min(...melee.map(atkOf))).toBeGreaterThan(atkOf(glut));
   });
 
   it('is not the wall the first draft of its own comment claimed', () => {
@@ -147,6 +163,83 @@ describe('the Index Glut', () => {
     // a difficulty argument from a number that was never true.
     const glut = monsterById('index_glut');
     const bigger = MONSTER_TEMPLATES.filter((t) => t.maxHp > (glut?.maxHp ?? 0));
-    expect(bigger.map((t) => t.id).sort()).toEqual(['index_husk_elite', 'index_wraith']);
+    expect(bigger.map((t) => t.id).sort()).toEqual([
+      'index_husk_elite',
+      'index_inquisitor',
+      'index_wraith',
+    ]);
+  });
+});
+
+describe('the other map has its own people', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE REDACTION SHIPPED WITH HARDER DELVES AND ALDERBROOK'S OPEN COUNTRY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Which is backwards. A player who crosses the door spends most of their time
+   * WALKING, and walking was identical on both maps — so the dark territory read
+   * as the moor with holes in it until they happened to open a door. These
+   * assertions are the fix stated as properties rather than as a headcount, so
+   * the pools can be retuned without any of them needing an edit.
+   */
+  it('does not wander the same creatures as the moor', () => {
+    const moor = new Set(ROAMER_KINDS.map((k) => k.template.id));
+    const dark = new Set(REDACTED_KINDS.map((k) => k.template.id));
+    expect(dark).not.toEqual(moor);
+    // AND THE DIFFERENCE IS SUBSTANTIAL, not one swapped row. Half is the design
+    // — two carried over so the country is recognisable, two that are not on the
+    // moor at all. See `REDACTED_KINDS`.
+    const shared = [...dark].filter((id) => moor.has(id));
+    expect(shared.length).toBeLessThanOrEqual(dark.size / 2);
+  });
+
+  it('has no husks, which is the statement', () => {
+    // The husk is the game's baseline threat, the thing a player learns first.
+    // Its ABSENCE is the fastest way to say the ordinary population of this
+    // country is not here any more.
+    expect(REDACTED_KINDS.map((k) => k.template.id)).not.toContain('index_husk');
+  });
+
+  it('still lets the fen supply its own, which is why dropping the cairn is cheap', () => {
+    /**
+     * `REDACTED_KINDS` has no wrong shadow, and that costs the fen nothing:
+     * `ambushRoster` adds an INDEX_CAIRN on `Ground.Fen` wherever the fight
+     * happens, on either map. The two systems being independent is what made
+     * the subtraction safe, and this is the assertion that keeps it safe.
+     */
+    const lead = REDACTED_KINDS[0]?.template;
+    const fen = ambushRoster({ level: 1, size: 1 }, Ground.Fen, lead);
+    expect(fen.some((t) => t.id === 'index_cairn')).toBe(true);
+    expect(fen[0]).toBe(lead);
+  });
+
+  it('is a real creature for every kind here too, and four different pictures', () => {
+    for (const kind of REDACTED_KINDS) {
+      expect(monsterById(kind.template.id), kind.label).toBeDefined();
+      expect(kind.template.sprite.startsWith('enemy_'), kind.label).toBe(true);
+    }
+    expect(new Set(REDACTED_KINDS.map((k) => k.template.sprite)).size).toBe(REDACTED_KINDS.length);
+  });
+
+  it('picks the pool by the site it is, not by the realm id string', () => {
+    /**
+     * A realm id is minted by the registry and an instanced one carries a
+     * sequence number; the SITE id is the authored identity. `kindsFor` reads
+     * `realm.siteId`, and this drives the real registry rather than a fixture so
+     * that a rename of either would be caught here.
+     */
+    const downed = createDownedState();
+    const parties = createPartyState();
+    const realms = createRealms({
+      seed: 'roamer-pool',
+      engineFor: (world) => createTurnEngine({ world, downed, parties }),
+    });
+
+    expect(kindsFor(realms.overworld)).toBe(ROAMER_KINDS);
+    const dark = realms.get(`realm:${REDACTION_SITE_ID}`);
+    expect(dark, 'the Redaction was not built at boot').toBeDefined();
+    if (dark === undefined) return;
+    expect(kindsFor(dark)).toBe(REDACTED_KINDS);
   });
 });

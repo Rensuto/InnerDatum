@@ -250,6 +250,8 @@ describe('the roster is well formed', () => {
       'index_eidolon/melee_chaser/normal',
       'index_cairn/ranged_kiter/normal',
       'index_glut/melee_chaser/normal',
+      'index_inspector/melee_chaser/elite',
+      'index_inquisitor/ranged_kiter/elite',
     ]);
     expect(monsterById('index_wraith')).toBe(INDEX_WRAITH);
     expect(monsterById('index_glut')).toBe(INDEX_GLUT);
@@ -502,6 +504,8 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_eidolon', 'Index Eidolon', 'enemy_index_eidolon_s'],
       ['index_cairn', 'Index Cairn', 'enemy_index_cairn_s'],
       ['index_glut', 'Index Glut', 'enemy_index_glut_s'],
+      ['index_inspector', 'A Disgraced Inspector', 'enemy_disgraced_inspector_s'],
+      ['index_inquisitor', 'A High Inquisitor', 'enemy_high_inquisitor_s'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
     expect(INDEX_WRAITH.description).toContain('A cited absence given shape');
@@ -1131,6 +1135,28 @@ describe('the balance table the wraith’s retune rests on', () => {
       // It survives by being unreachable, never by being tough.
       ['index_cairn', 7, 7, 7],
       ['index_glut', 5.527, 5.527, 6.633],
+      /**
+       * THE INQUISITOR'S 7/7/7 WAS PREDICTED BEFORE IT WAS MEASURED, and the
+       * prediction is the reason to trust the creature rather than the number:
+       * the orb is INDEX_WRAITH's 12-16 (mean 14) at `globalSpeed` 1.0 over
+       * `talentIn` 2, and the model is `perShot * globalSpeed * (1/talentIn)`.
+       * 14 x 1.0 / 2 = 7.0, which is exactly INDEX_CAIRN's.
+       *
+       * THAT WAS THE POINT. A second elite must not raise the sustained-damage
+       * ceiling — it ties the existing top rather than beating it, and what
+       * makes it elite is that unlike the cairn it MOVES, at the player's own
+       * speed, with the longest reach in the game. You cannot walk away from it
+       * and you cannot walk up to it.
+       *
+       * THE INSPECTOR IS EIDOLON-TIER AND FLAT ACROSS THE THREE CLASSES, which
+       * is `apr = 15` doing exactly what the eidolon's `apr = 3` does not:
+       * whatever the party is wearing, it punches through. The eidolon swings
+       * between 6.169 and 10.251 depending on who it is hitting; this one does
+       * not care. It is also the most fragile thing on either map at sixty hit
+       * points with no armour — see `bestiary`.
+       */
+      ['index_inspector', 9.233, 9.233, 9.422],
+      ['index_inquisitor', 7, 7, 7],
     ]);
   });
 

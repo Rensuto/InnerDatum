@@ -1,3 +1,4 @@
+import { ROAMER_KINDS } from '../../src/server/world/roamers.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -8,6 +9,8 @@ import {
   MONSTER_TEMPLATES,
   validateTemplate,
   INDEX_GLUT,
+  INDEX_INSPECTOR,
+  INDEX_INQUISITOR,
 } from '../../src/server/content/monsters.ts';
 import { ambushRoster } from '../../src/server/content/encounter.ts';
 import { resolveRngAvg } from '../../src/server/content/resolvers.ts';
@@ -68,7 +71,7 @@ describe('the two new creatures are ported, not invented', () => {
     for (const template of MONSTER_TEMPLATES) {
       expect(validateTemplate(template), `${template.id} is malformed`).toEqual([]);
     }
-    expect(MONSTER_TEMPLATES).toHaveLength(6);
+    expect(MONSTER_TEMPLATES).toHaveLength(8);
   });
 
   it('spends art that was already cut and drawing nothing', () => {
@@ -85,21 +88,49 @@ describe('the two new creatures are ported, not invented', () => {
     expect(INDEX_EIDOLON.sprite).toBe('enemy_index_eidolon_s');
     expect(INDEX_CAIRN.sprite).toBe('enemy_index_cairn_s');
     expect(INDEX_GLUT.sprite).toBe('enemy_index_glut_s');
+    // AND THE LAST TWO IN THE MANIFEST. `enemy_disgraced_inspector_s` was
+    // referenced by no file at all; `enemy_high_inquisitor_s` appeared once, in
+    // a comment in content/items.ts explaining that it is a monster sprite and
+    // NOT a player class. Every enemy sprite that ships now has a creature.
+    expect(INDEX_INSPECTOR.sprite).toBe('enemy_disgraced_inspector_s');
+    expect(INDEX_INQUISITOR.sprite).toBe('enemy_high_inquisitor_s');
   });
 });
 
 describe('each one is dangerous on its own ground and nowhere else', () => {
-  it('makes the eidolon the fastest thing in the game', () => {
+  it('makes the eidolon the fastest thing on the moor, and not on the other map', () => {
     /**
-     * THE WHOLE CREATURE IS IN THIS NUMBER. It is the only monster that acts
-     * more often than a player does, and in a room whose sightlines are four
-     * tiles that is the difference between "something is coming" and "something
-     * is here". If this ever drops to 1 the wood has nothing in it.
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS SAID "THE FASTEST THING IN THE GAME" AND IS NOW TWO CLAIMS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE WHOLE CREATURE IS IN THIS NUMBER. It acts more often than a player
+     * does, and in a room whose sightlines are four tiles that is the difference
+     * between "something is coming" and "something is here". If it ever drops to
+     * 1 the wood has nothing in it.
+     *
+     * `INDEX_INSPECTOR` is 1.25 — `feline.lua:30`, verbatim — so the superlative
+     * had to be narrowed rather than defended. NARROWED HONESTLY AND NOT
+     * DELETED: the eidolon is still the fastest thing a player will meet for as
+     * long as they stay on Alderbrook, which is the map its essay is about, and
+     * the one thing that is faster lives on a landmass 99 tiles and a door away.
+     *
+     * That the dark territory holds something faster than anything on the moor
+     * is the intended shape of a second map, and it is a claim worth asserting
+     * rather than a fact to apologise for. See `ROAMER_KINDS` / `REDACTED_KINDS`.
      */
     for (const other of MONSTER_TEMPLATES) {
       if (other.id === INDEX_EIDOLON.id) continue;
-      expect(INDEX_EIDOLON.globalSpeed).toBeGreaterThan(other.globalSpeed);
+      if (other.id === INDEX_INSPECTOR.id) continue;
+      expect(INDEX_EIDOLON.globalSpeed, other.id).toBeGreaterThan(other.globalSpeed);
     }
+
+    // AND THE ONE EXCEPTION IS ON THE OTHER MAP AND ONLY THERE. If the Inspector
+    // ever joins Alderbrook's pool, this fails — and it should, because the
+    // eidolon's essay would then be describing a creature that is no longer the
+    // thing it says it is.
+    expect(INDEX_INSPECTOR.globalSpeed).toBeGreaterThan(INDEX_EIDOLON.globalSpeed);
+    expect(ROAMER_KINDS.map((k) => k.template.id)).not.toContain(INDEX_INSPECTOR.id);
   });
 
   it('makes the cairn out-range the party, and pays for it in life', () => {
