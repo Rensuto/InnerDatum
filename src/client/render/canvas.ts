@@ -1383,6 +1383,25 @@ export function createRenderer(options: RendererOptions): Renderer {
         continue;
       }
 
+      /**
+       * THIS PLACE'S OWN ART FIRST, THE FAMILY SECOND.
+       *
+       * `SITE_MARKERS` draws a marker per KIND — three size tiers for
+       * village/town/city — so every city on the map looked identical. A player
+       * reported the result plainly: hard to tell the area you are standing in
+       * is a town. `SiteView.landmark` is the same 32x32 slot with Alderbrook's
+       * own clocktower in it.
+       *
+       * A PREFERENCE, NOT A REPLACEMENT. `site:redaction` ships no landmark, so
+       * the lookup misses and the family marker draws exactly as before — which
+       * is also what happens for any place whose art has not been installed yet.
+       */
+      const landmark = site.landmark === undefined ? undefined : sprites.sprite(site.landmark);
+      if (landmark !== undefined) {
+        backCtx.drawImage(landmark.image, sx, sy, TILE_PX, TILE_PX);
+        continue;
+      }
+
       const id = SITE_MARKERS.get(site.marker) ?? SITE_MARKERS.get('gate');
       const sprite = id === undefined ? undefined : sprites.sprite(id);
       if (sprite !== undefined) {

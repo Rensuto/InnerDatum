@@ -41,6 +41,8 @@ type Client = {
   hello(): Promise<string>;
   /** Every site NAME the server has ever shown this socket. */
   markers(): Set<string>;
+  /** Site name -> the landmark sprite id sent with it, where one was sent. */
+  landmarks(): Map<string, string>;
   close(): void;
 };
 
@@ -89,6 +91,20 @@ async function connect(port: number): Promise<Client> {
         for (const row of list) {
           const name = (row as Record<string, unknown>)['name'];
           if (typeof name === 'string') out.add(name);
+        }
+      }
+      return out;
+    },
+    landmarks(): Map<string, string> {
+      const out = new Map<string, string>();
+      for (const frame of frames) {
+        const list = frame['sites'];
+        if (!Array.isArray(list)) continue;
+        for (const row of list) {
+          const site = row as Record<string, unknown>;
+          const name = site['name'];
+          const landmark = site['landmark'];
+          if (typeof name === 'string' && typeof landmark === 'string') out.set(name, landmark);
         }
       }
       return out;
@@ -224,5 +240,35 @@ describe('the three hidden sites have to be found', () => {
 
     expect(finder.markers().has('The Weir')).toBe(true);
     expect(other.markers().has('The Weir')).toBe(false);
+  });
+
+  it('gives every place its own silhouette to draw, not just its kind', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "HARD TO TELL THE AREA IM AT IS A TOWN" — A PLAYER, WITH A SCREENSHOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The client draws a site from `SITE_MARKERS`, which is keyed by KIND: three
+     * size tiers for village/town/city, told apart by outline. So every city on
+     * the map drew identically, and the map does not make up the difference —
+     * Alderbrook is 49 YARD and 41 COBBLE of open ground with eight roof tiles
+     * and six of wall, out of twenty-four roof/wall cells in the whole world.
+     *
+     * `SiteView.landmark` is the same 32x32 slot with this place's own art in
+     * it. Asserted on the WIRE rather than in the renderer because that is where
+     * it was missing: the art has been sitting in the handoff since the redesign
+     * and nothing ever asked for it.
+     */
+    const client = await connect(server.port);
+    await client.hello();
+    await sleep(80);
+
+    const landmarks = client.landmarks();
+
+    expect(landmarks.get('Alderbrook')).toBe('tile_ow_landmark_alderbrook');
+    expect(landmarks.get('The Underworks')).toBe('tile_ow_landmark_underworks');
+    // …and it is not one shared id for everybody, which is the failure that
+    // would look identical from the renderer's side.
+    expect(new Set(landmarks.values()).size).toBe(landmarks.size);
   });
 });

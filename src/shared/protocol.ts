@@ -4457,6 +4457,27 @@ export type SiteView = {
   readonly sprite?: string;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * THIS PLACE'S OWN SILHOUETTE, WHERE ONE EXISTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `marker` says what KIND of place this is and the client draws it from a
+   * family — three size tiers for village/town/city, told apart by outline. That
+   * makes every city look like every other city, and a player reported the
+   * consequence in as many words: it is hard to tell the area you are standing in
+   * is a town.
+   *
+   * A landmark is the same 32x32 slot with this place's own art in it —
+   * Alderbrook's is a clocktower and a civic gate rather than a generic
+   * settlement. Sent as a SPRITE ID for the same reason `sprite` above is: the
+   * client already owns the question of what art exists, and a site whose art is
+   * missing falls back to its family marker rather than drawing nothing.
+   *
+   * OPTIONAL AND ADDITIVE, so no protocol bump — `site:redaction` has no
+   * landmark and is not meant to.
+   */
+  readonly landmark?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * HOW BAD IS IT IN THERE — one word, and the map had no way to say it.
    * ═══════════════════════════════════════════════════════════════════════════
    *

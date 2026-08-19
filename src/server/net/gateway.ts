@@ -5688,6 +5688,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           y: Number(parts[1]),
           marker: def.marker,
           name: def.name,
+          /**
+           * THIS PLACE'S OWN SILHOUETTE. See `SiteView.landmark`: the family
+           * marker says "a city" and this says "Alderbrook".
+           *
+           * DERIVED FROM THE ID RATHER THAN AUTHORED, because it is a naming
+           * convention and a second table would be one more list to keep in step
+           * with `SITES`. The client already decides what art exists, so a site
+           * with no landmark installed falls back to its family marker.
+           */
+          landmark: `tile_ow_landmark_${siteId.replace('site:', '')}`,
           ...(spec === undefined ? {} : { danger: dangerWord(spec) }),
           // AND WHETHER THIS PLAYER HAS ALREADY CLOSED IT. Per viewer, like the
           // hidden-site filter above — two people looking at the same map see

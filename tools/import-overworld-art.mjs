@@ -154,6 +154,48 @@ const COLD = [
   ['charred_scar_patch5', 'tile_ow_charred_f'],
 ];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE SILHOUETTE PER NAMED PLACE — the art that makes a town read as a town.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A player's screenshot of the moor came with the note that it was "hard to tell
+ * the area im at is a town", and the map bears it out: Alderbrook is 49 YARD and
+ * 41 COBBLE of open ground with EIGHT roof tiles and six of wall. Across all
+ * 17,000 cells the redesign authored 24 roof/wall cells in total. A city drawn
+ * as ninety cells of yard is a car park.
+ *
+ * `SITE_MARKERS` already draws a marker per FAMILY — three size tiers told apart
+ * by silhouette — so every city looks like every other city. The handoff ships
+ * something better and it has never been imported: sixteen LANDMARKS, one per
+ * named site, 32x32 and drop-in. Alderbrook's own art direction reads *"Gaslit
+ * fixed point: detective office, civic gate, slate roofs, and one readable
+ * clocktower"*, which is the difference between a marker meaning "a city" and a
+ * marker meaning "Alderbrook".
+ *
+ * `site:redaction` has no landmark and is meant not to: it falls back to its
+ * family marker, which is why the client treats this as a preference rather than
+ * a replacement.
+ */
+const LANDMARKS = [
+  'alderbrook',
+  'ashwick_row',
+  'barrow_end',
+  'blackwood_outskirts',
+  'cairnfoot',
+  'drowned_chapel',
+  'gearford_ward',
+  'glass_archive',
+  'hollow_mine',
+  'outer_index',
+  'saints_rest',
+  'the_weir',
+  'threadneedle_row',
+  'underworks',
+  'watchers_altar',
+  'wayfarers_camp',
+];
+
 function incoming() {
   if (!existsSync(SRC)) throw new Error(`no art at ${SRC}`);
   return readdirSync(SRC).filter((f) => f.endsWith('.png'));
@@ -213,6 +255,13 @@ for (const [from, to] of COLD) {
   cold.push({ from: name, to: `${to}.png` });
 }
 
+const landmarks = [];
+for (const site of LANDMARKS) {
+  const name = `site_landmarks_landmark_${site}.png`;
+  if (!files.includes(name)) throw new Error(`the handoff has no ${name}`);
+  landmarks.push({ from: name, to: `tile_ow_landmark_${site}.png` });
+}
+
 console.log(`incoming assets: ${String(files.length)}`);
 console.log(`  ${String(upgrades.length)} replace this repo's own tiles with richer versions`);
 for (const u of upgrades.slice(0, 4)) {
@@ -221,6 +270,7 @@ for (const u of upgrades.slice(0, 4)) {
 console.log(`  ${String(variants.length)} install as variants the renderer can already pick from`);
 console.log(`  ${String(transport.length)} transport overlays (road, rail, bridge) by connection`);
 console.log(`  ${String(cold.length)} for the cold north and the burnt scar`);
+console.log(`  ${String(landmarks.length)} landmarks, one per named place`);
 for (const family of FAMILIES) {
   const mine = variants.filter((v) => v.stem === family.stem);
   console.log(`      ${family.stem.padEnd(20)} ${String(mine.length)} variants`);
@@ -231,8 +281,9 @@ if (process.argv.includes('--write')) {
   for (const v of variants) copyFileSync(`${SRC}${v.from}`, `${TILES}${v.to}`);
   for (const t of transport) copyFileSync(`${SRC}${t.from}`, `${TILES}${t.to}`);
   for (const c of cold) copyFileSync(`${SRC}${c.from}`, `${TILES}${c.to}`);
+  for (const l of landmarks) copyFileSync(`${SRC}${l.from}`, `${TILES}${l.to}`);
   console.log(
-    `  installed ${String(upgrades.length + variants.length + transport.length + cold.length)} files into client/public/assets/tiles/`,
+    `  installed ${String(upgrades.length + variants.length + transport.length + cold.length + landmarks.length)} files into client/public/assets/tiles/`,
   );
   console.log('  now re-run: python tools/build_asset_manifest.py');
 
@@ -259,7 +310,25 @@ if (process.argv.includes('--write')) {
       .filter((f) => f.endsWith('.png'))
       .map((f) => f.slice(0, -4)),
   );
-  const dead = [...onDisk].filter((f) => !drawn.has(f));
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * ONE FAMILY IS NAMED ON THE SERVER, NOT IN THE RENDERER.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The scan above looks for `'tile_ow_...'` literals in canvas.ts, which is
+   * true of every tile the renderer picks itself. A landmark is chosen by the
+   * SERVER — `SiteView.landmark` carries the id — so none of the sixteen appears
+   * as a literal and all sixteen looked dead.
+   *
+   * The exemption is CONDITIONAL rather than a hardcoded pass: it applies only
+   * while the client actually reads `site.landmark`. Delete that line and the
+   * sixteen files go back to being reported as dead, which is the whole job of
+   * this check.
+   */
+  const drawsLandmarks = readFileSync(CANVAS, 'utf8').includes('site.landmark');
+  const dead = [...onDisk].filter(
+    (f) => !drawn.has(f) && !(drawsLandmarks && f.startsWith('tile_ow_landmark_')),
+  );
   const holes = [...drawn].filter((f) => !onDisk.has(f));
   if (dead.length > 0) console.log(`  WARN installed and never drawn: ${dead.join(', ')}`);
   if (holes.length > 0) console.log(`  WARN drawn and not installed: ${holes.join(', ')}`);
