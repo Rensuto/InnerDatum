@@ -71,6 +71,17 @@ const RUNS = Number(process.argv[2] ?? 24);
  */
 const GROUND = process.argv[3] ?? Ground.Upland;
 /** Long enough for a slow win, short enough that a stall is obvious. */
+/**
+ * WHICH LEVEL THE PARTY IS — `node tools/first-fight.mjs 24 upland 3`.
+ *
+ * One point is not a curve. The opening reads as safe for two classes of three,
+ * and "safe at level 1" and "safe forever" are different findings with different
+ * answers: the first is a deliberate on-ramp, the second is a game that never
+ * threatens anybody. `seedAmbush` scales its roster with `PartyStrength`, so this
+ * is the knob that shows which one is true.
+ */
+const LEVEL = Number(process.argv[4] ?? 1);
+
 const TURN_CAP = 200;
 
 /** One fight, driven the way somebody who has never played would drive it. */
@@ -109,7 +120,7 @@ function fight(cls, seed) {
         talentRuntime: talentRuntimeFor(talentEngine, world),
       }),
   });
-  const arena = realms.open(ENCOUNTER_SITE, seed, { level: 1, size: 1 }, GROUND);
+  const arena = realms.open(ENCOUNTER_SITE, seed, { level: LEVEL, size: 1 }, GROUND);
 
   const p = arena.world.addPlayer('p1', 'Ren');
   // THE SHEET IS WHAT MAKES THE BOOK ANSWER. `createTalentBook` reads a per-actor
@@ -135,22 +146,26 @@ function fight(cls, seed) {
    * question about where to aim it, and this is a difficulty probe rather than
    * an AI.
    */
-  const attack =
-    (cls.loadout ?? [])
-      /**
-       * `>= 2`, NOT `> 1`. Melee in this engine is range 1.5 — the
-       * diagonal-inclusive adjacency — so `> 1` matched the Watchman's Crude
-       * Blow and had him "shooting" people he was standing next to. The class
-       * card's shorthand was caught by the same trap: read the numbers, do not
-       * assume 1 means melee.
-       */
-      .filter((t) => t.targeting?.shape === 'single' && (t.targeting.range ?? 0) >= 2)
-      .map((t) => ({
-        id: t.id,
-        range: t.targeting.range ?? 1,
-        minRange: t.targeting.minRange ?? 0,
-      }))
-      .sort((a, b) => b.range - a.range)[0] ?? null;
+  const attacks = (cls.loadout ?? [])
+    /**
+     * `>= 2`, NOT `> 1`. Melee in this engine is range 1.5 — the
+     * diagonal-inclusive adjacency — so `> 1` matched the Watchman's Crude
+     * Blow and had him "shooting" people he was standing next to. The class
+     * card's shorthand was caught by the same trap: read the numbers, do not
+     * assume 1 means melee.
+     */
+    .filter((t) => t.targeting?.shape === 'single' && (t.targeting.range ?? 0) >= 2)
+    .map((t) => ({
+      id: t.id,
+      range: t.targeting.range ?? 1,
+      minRange: t.targeting.minRange ?? 0,
+    }))
+    .sort((a, b) => b.range - a.range);
+
+  // HOW MANY WERE ACTUALLY IN THERE. `seedAmbush`'s own note says "exactly one
+  // monster in the room" at level 1, which is a claim worth printing rather than
+  // trusting — `first-session.mjs` has met two.
+  const roster = arena.world.allActors().filter((a) => a.kind === 'monster').length;
 
   let turns = 0;
   let worst = 1;
@@ -177,25 +192,44 @@ function fight(cls, seed) {
      * the driver now asks, in order: can I shoot this from here — am I too
      * close and should back off — otherwise close the distance.
      */
-    const ranged = attack === null ? null : attack;
-    const gap = near.d;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * EVERY SHOT IT OWNS, NOT ITS BEST ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Picking the single longest-reaching talent looked reasonable and made the
+     * Inspector unplayable: its longest is Sniper's Mark, which HAS A COOLDOWN,
+     * and once it was cooling the driver had nothing and shuffled until the turn
+     * cap. `FIGHT_DIAG=1` said so in one word — `on_cooldown` — after two
+     * measurements that read as "this class cannot win with two foes".
+     *
+     * Revolver Shot is the bread-and-butter attack, cooldown zero, and was never
+     * tried. So the driver now does what a player does: take the best shot that
+     * is actually available, longest first, and fall back through the rest.
+     */
     let acted = false;
-
-    if (ranged !== null && gap >= ranged.minRange && gap <= ranged.range) {
-      const shot = arena.engine.submitTalent('p1', ranged.id, { x: near.f.x, y: near.f.y });
-      acted = shot?.ok !== false;
-      /**
-       * `FIGHT_DIAG=1` prints the first few shots and what the engine said to
-       * them. It is here because the answer to "why is this class at 0/24" was
-       * a REFUSAL — `no such talent in this loadout` — and no amount of staring
-       * at win rates would have produced it.
-       */
-      if (process.env.FIGHT_DIAG === '1' && turns < 3) {
-        console.log(
-          `  [diag] ${cls.name}: ${ranged.id} at gap ${String(gap)} -> ${JSON.stringify(shot)}`,
-        );
+    let shootableGap = null;
+    for (const ranged of attacks) {
+      const shootable = foes
+        .map((f) => ({ f, d: Math.max(Math.abs(f.x - p.x), Math.abs(f.y - p.y)) }))
+        .filter((c) => c.d >= ranged.minRange && c.d <= ranged.range)
+        .sort((a, b) => a.d - b.d)[0];
+      if (shootable === undefined) continue;
+      shootableGap = shootable.d;
+      const shot = arena.engine.submitTalent('p1', ranged.id, {
+        x: shootable.f.x,
+        y: shootable.f.y,
+      });
+      if (process.env.FIGHT_DIAG === '1' && shot?.ok === false && turns < 6) {
+        console.log(`  [diag] ${cls.name} ${ranged.id}: ${JSON.stringify(shot)}`);
+      }
+      if (shot?.ok !== false) {
+        acted = true;
+        break;
       }
     }
+    const gap = near.d;
+    const nearest = attacks[attacks.length - 1] ?? null;
 
     if (!acted) {
       /**
@@ -203,7 +237,10 @@ function fight(cls, seed) {
        * revolver is useless and the only correct move is a step away — which is
        * exactly the decision the dead zone exists to force.
        */
-      const away = ranged !== null && gap < ranged.minRange;
+      // Inside the dead zone of the SHORTEST-ranged shot is the only case where
+      // backing off is the whole answer; `shootableGap` being null means nothing
+      // at all was in a band this turn.
+      const away = nearest !== null && shootableGap === null && gap < nearest.minRange;
       const goal = away
         ? { x: p.x + Math.sign(p.x - near.f.x), y: p.y + Math.sign(p.y - near.f.y) }
         : { x: near.f.x, y: near.f.y };
@@ -221,6 +258,7 @@ function fight(cls, seed) {
   const down = !p.alive || isDowned(downed, 'p1');
   return {
     outcome: down ? 'down' : left === 0 ? 'win' : 'stall',
+    roster,
     turns,
     hp: p.hp / p.maxHp,
     // THE LOW-WATER MARK IS THE INTERESTING NUMBER. Ending on 94% can mean a
@@ -230,9 +268,9 @@ function fight(cls, seed) {
   };
 }
 
-console.log(`the opening ambush, ${RUNS} runs per class\n`);
+console.log(`the opening ambush at level ${String(LEVEL)}, ${RUNS} runs per class\n`);
 console.log(
-  `${'class'.padEnd(30)} ${'won'.padStart(7)} ${'down'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp end'.padStart(6)}  ${'hp low'.padStart(6)}`,
+  `${'class'.padEnd(30)} ${'won'.padStart(7)} ${'down'.padStart(5)} ${'stall'.padStart(5)}  ${'foes'.padStart(4)}  ${'turns'.padStart(5)}  ${'hp end'.padStart(6)}  ${'hp low'.padStart(6)}`,
 );
 
 for (const cls of CLASSES) {
@@ -246,6 +284,9 @@ for (const cls of CLASSES) {
 
   console.log(
     `${cls.name.padEnd(30)} ${`${wins.length}/${RUNS}`.padStart(7)} ${String(downs).padStart(5)} ${String(stalls).padStart(5)}  ` +
+      `${avg(results.map((r) => r.roster))
+        .toFixed(1)
+        .padStart(4)}  ` +
       `${String(Math.round(avg(results.map((r) => r.turns)))).padStart(5)}  ` +
       `${`${Math.round(100 * avg(wins.map((r) => r.hp)))}%`.padStart(6)}  ` +
       `${`${Math.round(100 * avg(wins.map((r) => r.worst)))}%`.padStart(6)}`,
@@ -256,7 +297,10 @@ console.log(
   `\nhp low is the LOW-WATER MARK across the fight. A high "hp end" with a high\n` +
     `"hp low" is an encounter that never threatened anybody; a high "hp end" with\n` +
     `a low "hp low" is one that did and was regenerated out of afterwards.\n\n` +
-    `A stall is still this driver rather than the class -- but no longer because\n` +
-    `it can only punch. It shoots now, and steps out of a dead zone to do it, so\n` +
-    `a stall is a kiter that ran out of room. See the header.`,
+    `A stall is still this driver rather than the class. It shoots now, takes the\n` +
+    `best shot that is off cooldown, and steps out of a dead zone -- which was\n` +
+    `worth three fixes: aiming at the nearest foe rather than a reachable one,\n` +
+    `and picking one talent rather than trying each, both read as 'this class\n` +
+    `cannot win'. It still stalls against THREE pursuers, so the level-8 row is\n` +
+    `a fact about kiting in a small room and not about The Inspector.`,
 );
