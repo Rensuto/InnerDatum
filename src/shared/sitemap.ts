@@ -285,6 +285,29 @@ function connect(g: Grid, from: TileXY): void {
  * the floor must be `isWalkable` and the wall must not be, or a repaint would
  * quietly change where a body may stand.
  *
+ * ═══ WATER WAS TRIED HERE AND MEASURED OUT. DO NOT ADD IT BACK BLIND. ═══
+ * The Drowned Chapel is named for a tide — *"the tide took the nave and left the
+ * arches"* — and has no water in it, which looks exactly like the broken
+ * promises this game has spent a lot of effort fixing. So the fen arena's
+ * channel logic was lifted in behind a `channels` palette field and measured
+ * with `tools/delve-run.mjs`, solo, 8 runs:
+ *
+ *     dry (shipped)      8/8 cleared   166 turns   50% low-water
+ *     one channel        7/8           206 turns   49%
+ *     two channels       6/8           315 turns   48%
+ *
+ * IT IS NOT THE DAMAGE — the low-water mark barely moves. It is the CHASE. An
+ * arena works with water because it is a short fight you are surrounded in; a
+ * delve is a floor you have to CLEAR, so one kiting monster on the far bank is a
+ * long walk to a ford and back, repeatedly. Removing the cairn and leaving the
+ * water still gave 7/8 at 252 turns, so the ranged monster is not the variable
+ * either — any kiter behind a cut does this.
+ *
+ * The Drowned Chapel is seventeen steps from the gate and the first marker most
+ * players will ever walk to. Doubling its length and adding a one-in-eight
+ * chance of a chase, to make a name literal, is a bad trade. The name stays
+ * unfulfilled and that is the smaller cost.
+ *
  * AND IT IS FREE. Every code any palette names already has a PNG on disk and a
  * `tileFill` colour — six of them (GREEN, SOOT, RAIL, WORKS, TERRACE, CIVIC) are
  * finished art that until now drew nothing anywhere in the game, because their
