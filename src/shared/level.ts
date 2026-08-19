@@ -20,7 +20,7 @@
  */
 
 import { inBounds, tileIndex } from './coords.ts';
-import { TileCode, blocksSight, isWalkable } from './protocol.ts';
+import { TileCode, blocksSight, isWalkable, isKnownTile } from './protocol.ts';
 import type { TileXY } from './coords.ts';
 import type { LevelView } from './protocol.ts';
 
@@ -239,10 +239,23 @@ export function tileAt(level: LevelView, x: number, y: number): TileCode {
    * fail-closed looks exactly like working when the input is wrong.
    *
    * So: pass a code THIS BUILD KNOWS through unchanged, and collapse only what
-   * it genuinely cannot name. `isWalkable`/`blocksSight` in protocol.ts are the
-   * authority on what is known, which is what keeps the vocabulary in one file.
+   * it genuinely cannot name. protocol.ts is the authority on what is known,
+   * which is what keeps the vocabulary in one file.
+   *
+   * ═══ AND THE QUESTION IS ASKED ONCE, THERE, RATHER THAN REBUILT HERE ═══
+   * This read `isWalkable(raw) || blocksSight(raw) || raw === TileCode.WATER`,
+   * which looks complete and is not: those two sets cover every tile except one
+   * that is unwalkable AND transparent, and `WATER` is bolted on for exactly
+   * that case. `DEEPWATER` is the same shape, was added later, and this clause
+   * never learned it — so 716 cells of open sea came out of here as `WALL`. The
+   * renderer drew them as rock (its own deep-sea colour, written so *"a
+   * shoreline is legible"*, was unreachable) and `blocksSightAt` said an eye
+   * cannot cross the water while `blocksSight` said it can.
+   *
+   * `isKnownTile` is derived from `TileCode` itself, so the next tile that is
+   * solid and see-through works on the day somebody adds it.
    */
-  if (isWalkable(raw) || blocksSight(raw) || raw === TileCode.WATER) {
+  if (isKnownTile(raw)) {
     return raw as TileCode;
   }
   return TileCode.WALL;

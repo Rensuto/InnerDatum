@@ -196,6 +196,91 @@ describe('it is wilderness, not a town', () => {
     expect(inland).toBe(0);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY REGION NAME IS A PROMISE ABOUT WHAT IS UNDERFOOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The overworld announces these by name as you cross them — *"You come to the
+   * Long Strand."* — and that line is the only thing most of the map ever says
+   * to a player. A region called a WOOD with no trees in it, or a STRAND with no
+   * shore, is a sentence the game prints about country it did not draw.
+   *
+   * ═══ THE TEST BELOW ALREADY BELIEVED THIS, FOR ONE REGION OUT OF TWELVE ═══
+   * *"has a real mountain range rather than scattered rocks"* is exactly this
+   * argument, applied to the Kettle Range and nowhere else. It was right; it was
+   * just eleven regions short. MEASURED when this was written (`tools/world.mjs`
+   * prints the whole table): every promise below is kept, several of them
+   * comfortably.
+   *
+   * ═══ ONLY THE UNAMBIGUOUS ONES ═══
+   * Three regions are deliberately absent because their names do not name a
+   * terrain and a threshold would be invention rather than a guard: **the Cold
+   * Furrows** (ploughed country by name, crag and mountain in fact — it is the
+   * industrial north), **the Sedge** (wetland by implication, plains and hills in
+   * fact), and **Ashwick Reach** (a "reach" is an approach, not a surface). Those
+   * are named for what happened there or what they lead to, and a test that
+   * demanded soil of them would be asserting a reading rather than a rule.
+   *
+   * THE FLOORS ARE WELL UNDER THE MEASURED VALUES, on purpose. This exists to
+   * catch a region being renamed, moved, or drained of the thing it is named
+   * for — not to freeze a generator whose output legitimately drifts by a few
+   * per cent when anything upstream of it changes.
+   */
+  const PROMISES: readonly {
+    readonly region: string;
+    readonly word: string;
+    readonly tiles: readonly TileCode[];
+    readonly atLeast: number;
+  }[] = [
+    { region: 'the Saintswood', word: 'wood', tiles: [TileCode.TREES], atLeast: 0.2 },
+    { region: 'the Blackwater Wood', word: 'wood', tiles: [TileCode.TREES], atLeast: 0.3 },
+    {
+      region: 'the Kettle Range',
+      word: 'range',
+      tiles: [TileCode.MOUNTAIN, TileCode.CRAG],
+      atLeast: 0.5,
+    },
+    { region: 'the Long Strand', word: 'strand', tiles: [TileCode.SHORE], atLeast: 0.08 },
+    {
+      region: 'the Drowned Coast',
+      word: 'coast',
+      tiles: [TileCode.WATER, TileCode.DEEPWATER],
+      atLeast: 0.5,
+    },
+    { region: 'the Grey Downs', word: 'downs', tiles: [TileCode.HILLS], atLeast: 0.3 },
+    { region: 'the Bracken Waste', word: 'bracken', tiles: [TileCode.HEATH], atLeast: 0.4 },
+    { region: 'Kettleflat', word: 'flat', tiles: [TileCode.PLAINS], atLeast: 0.3 },
+    { region: 'Alderbrook Common', word: 'common', tiles: [TileCode.PLAINS], atLeast: 0.3 },
+  ];
+
+  it.each(PROMISES)('$region is actually $word', ({ region, tiles, atLeast }) => {
+    const bounds = (OVERWORLD.regions ?? []).find((r) => r.name === region);
+    // THE SETUP FIRST. A renamed or deleted region must fail as "there is no
+    // such country" rather than as a share of zero, which reads like a terrain
+    // bug and is not one.
+    expect(bounds, `no region named ${region} — was it renamed?`).toBeDefined();
+    if (bounds === undefined) return;
+
+    const want = new Set<number>(tiles);
+
+    let matching = 0;
+    let cells = 0;
+    for (let y = bounds.y0; y <= bounds.y1; y += 1) {
+      for (let x = bounds.x0; x <= bounds.x1; x += 1) {
+        if (x < 0 || y < 0 || x >= OVERWORLD.view.w || y >= OVERWORLD.view.h) continue;
+        cells += 1;
+        if (want.has(tileAt(OVERWORLD.view, x, y))) matching += 1;
+      }
+    }
+    expect(cells, `${region} covers no cells at all`).toBeGreaterThan(0);
+    const share = matching / cells;
+    expect(
+      share,
+      `${region} is ${(share * 100).toFixed(1)}% of what it is named for, wanted at least ${(atLeast * 100).toFixed(0)}%`,
+    ).toBeGreaterThanOrEqual(atLeast);
+  });
+
   it('has a real mountain range rather than scattered rocks', () => {
     // A range is the longest continuous run of one tile in the game, and it is
     // what makes the north-west a barrier instead of scenery. Counted rather

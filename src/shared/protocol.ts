@@ -429,6 +429,36 @@ export function isWalkable(code: number): boolean {
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THIS A CODE THIS BUILD KNOWS AT ALL — DERIVED, NEVER LISTED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tileAt` has to answer this before it can pass a code through, and it used to
+ * answer it by hand: `isWalkable(raw) || blocksSight(raw) || raw === WATER`.
+ *
+ * That reads as complete and is not. The two sets between them cover everything
+ * EXCEPT a tile that is unwalkable AND transparent — which is exactly the water
+ * family, which is why `WATER` is bolted on the end. **`DEEPWATER` is the same
+ * shape and was added later, and the clause never learned it**, so all 716 of
+ * its cells came out of `tileAt` as `WALL`: the open sea drew as rock, and
+ * `blocksSightAt` said an eye cannot cross it while `blocksSight` — three lines
+ * below, correctly updated — says it can.
+ *
+ * BUILT FROM `TileCode` ITSELF so the question cannot be got wrong again. A code
+ * that exists is a code this build knows; there is no list to forget to update,
+ * and the next tile that is solid and see-through works on the day it is added.
+ *
+ * The fail-closed default it guards is unchanged: a number that is not a
+ * `TileCode` at all — a corrupt frame, a map from a newer build — is still
+ * collapsed to `WALL` by the caller.
+ */
+const KNOWN: ReadonlySet<number> = new Set<number>(Object.values(TileCode));
+
+export function isKnownTile(code: number): boolean {
+  return KNOWN.has(code);
+}
+
+/**
  * FAIL-CLOSED IN THE OTHER DIRECTION, and the asymmetry is the point.
  *
  * An unrecognised code blocks sight. Both defaults resolve the same way — the

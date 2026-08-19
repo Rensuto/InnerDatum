@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import type { LevelView } from '../../src/shared/protocol.ts';
 
-import { TEST_LEVEL_SPAWNS, canWalk, makeTestLevel, tileAt } from '../../src/shared/level.ts';
+import {
+  TEST_LEVEL_SPAWNS,
+  canWalk,
+  makeTestLevel,
+  tileAt,
+  blocksSightAt,
+} from '../../src/shared/level.ts';
 import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 
 /**
@@ -99,6 +106,73 @@ describe('tileAt', () => {
     expect(tileAt(level, 1.5, 1.5)).toBe(TileCode.WALL);
     expect(tileAt(level, Number.NaN, 4)).toBe(TileCode.WALL);
     expect(tileAt(level, 4, Number.POSITIVE_INFINITY)).toBe(TileCode.WALL);
+  });
+
+  it('hands back every code this build knows, unchanged', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `DEEPWATER` CAME OUT OF HERE AS `WALL`, AND ONLY `DEEPWATER`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The recognition clause used to be written out by hand:
+     *
+     *     isWalkable(raw) || blocksSight(raw) || raw === TileCode.WATER
+     *
+     * which reads as complete and is not. Those two sets between them cover
+     * every tile EXCEPT one that is unwalkable AND transparent — which is
+     * exactly the water family, and exactly why `WATER` is bolted on the end.
+     * `DEEPWATER` is the same shape, was added later, and the clause never
+     * learned it.
+     *
+     * MEASURED on the overworld: 716 cells of open sea, the only code affected.
+     * The renderer reads through `tileAt`, so the sea drew as rock — its own
+     * deep-sea colour, written because *"two values of water is what makes a
+     * shoreline legible"*, was unreachable — and `blocksSightAt` said an eye
+     * cannot cross the water while `blocksSight`, correctly updated, said it can.
+     *
+     * ASSERTED OVER THE WHOLE VOCABULARY rather than over `DEEPWATER`, because
+     * the bug is the class and not the instance: the next tile that is solid and
+     * see-through would land in the same hole.
+     */
+    const lost: string[] = [];
+    for (const [name, code] of Object.entries(TileCode)) {
+      const one: LevelView = { w: 1, h: 1, tiles: [code] };
+      if (tileAt(one, 0, 0) !== code) lost.push(`${name} (${String(code)})`);
+    }
+    expect(lost, 'codes this build defines and tileAt refuses to name').toEqual([]);
+  });
+
+  it('still collapses a code this build does not define', () => {
+    /**
+     * THE HALF THAT MUST NOT BE LOST, and the reason the fix derives from
+     * `TileCode` rather than passing everything through.
+     *
+     * Fail-closed is the whole contract: a corrupt frame or a map from a newer
+     * build must read as solid rock, because *"seeing an ambush through an
+     * unknown wall"* is an information leak the server cannot take back.
+     */
+    const bogus: LevelView = { w: 1, h: 1, tiles: [254] };
+    expect(tileAt(bogus, 0, 0)).toBe(TileCode.WALL);
+  });
+
+  it('lets an eye cross deep water, exactly as it crosses the canal', () => {
+    /**
+     * THE CONSEQUENCE THAT WAS VISIBLE IN PLAY. `blocksSight` names both water
+     * codes as transparent — *"solid, and transparent"* is the canal's whole
+     * design and the sea is the same — but `blocksSightAt` asks `tileAt` first,
+     * so while the sea came back as `WALL` the answer was the opposite of the
+     * one protocol.ts gives.
+     *
+     * Both are asserted together: fixing one and not the other is how the two
+     * files disagreed in the first place.
+     */
+    for (const code of [TileCode.WATER, TileCode.DEEPWATER]) {
+      const one: LevelView = { w: 1, h: 1, tiles: [code] };
+      expect(blocksSightAt(one, 0, 0), `code ${String(code)} blocked sight`).toBe(false);
+      // AND IS STILL NOT SOMETHING YOU CAN STAND ON. The fix must not have
+      // turned the sea into ground.
+      expect(canWalk(one, 0, 0), `code ${String(code)} became walkable`).toBe(false);
+    }
   });
 
   it('reads row-major, so x and y are not transposed', () => {
