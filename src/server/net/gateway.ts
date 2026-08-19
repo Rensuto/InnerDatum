@@ -115,7 +115,7 @@ import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
-import { DELVES, dangerWord, partyHint } from '../content/delve.ts';
+import { DELVES, specFor, dangerWord, partyHint } from '../content/delve.ts';
 import { specForActorId } from '../content/townsfolk.ts';
 import { healActor } from '../engine/talents.ts';
 import type { TalentEffect } from '../engine/talents.ts';
@@ -7664,7 +7664,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
        * "quiet" beside every settlement would train a player to stop reading
        * the word exactly where it matters.
        */
-      const spec = DELVES.get(siteId);
+      /**
+       * `specFor` AND NOT `DELVES.get`, WHICH IS WHAT THIS SAID.
+       *
+       * The Redaction's six doors are not rows in `DELVES` — they are derived
+       * from their Alderbrook originals — so this lookup answered `undefined`
+       * for every one of them, and `undefined` is the TOWN case: no grade, no
+       * party hint, nothing. The six hardest rooms in the game would have been
+       * the only markers on any map wearing the same blank label as a shop.
+       *
+       * That is worse than an unrated map. A player who has learned that a
+       * missing grade means "somewhere safe" is being told, by a system they
+       * have every reason to trust, to walk into the worst floor in the game
+       * alone. See `redactedSpec`.
+       */
+      const spec = specFor(siteId);
       const hint = spec === undefined ? null : partyHint(spec);
       out.push({
         name: def.name,

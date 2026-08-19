@@ -76,6 +76,40 @@ export const PLACE_BLURBS: ReadonlyMap<string, string> = new Map<string, string>
   ],
   ['site:outer_index', 'The edge of the Index, where the city stops agreeing with itself.'],
 
+  // ─── the other map ──────────────────────────────────────────────────────
+  //     One sentence for the landmass and one for each door that survived on
+  //     it. THE NAMES ARE THE SAME NAMES on purpose (shared/redaction.ts argues
+  //     it at length: recognising where you are is the whole point of that
+  //     map), so the blurb is the only thing on screen that can tell a player
+  //     which Underworks they just walked into. It is doing more work here than
+  //     anywhere else in this table, and each one is written to answer the same
+  //     question: what is different about this one.
+  [
+    'site:redaction',
+    'The same moor, and a sixth of it simply not there. The road gives out after a few hundred yards and does not start again.',
+  ],
+  [
+    'site:redaction:threadneedle_row',
+    'The shopfronts are intact and the doors are open. Nobody came out of any of them.',
+  ],
+  [
+    'site:redaction:watchers_altar',
+    'Whoever was leaving things here never stopped. The pile has been added to since the country ended.',
+  ],
+  [
+    'site:redaction:underworks',
+    'The shafts go down into a map that no longer has a surface above them.',
+  ],
+  [
+    'site:redaction:drowned_chapel',
+    'The tide still comes in. There is nothing left for it to reach.',
+  ],
+  ['site:redaction:cairnfoot', 'The stones are still standing. That is all that is.'],
+  [
+    'site:redaction:barrow_end',
+    'The trees came through untouched, which is the part nobody has an answer for.',
+  ],
+
   // ─── the roaming encounter ──────────────────────────────────────────────
   ['site:encounter', 'It has your attention now. There is one way out and it is behind you.'],
 ]);

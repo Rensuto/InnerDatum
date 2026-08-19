@@ -6,7 +6,7 @@ import {
   SiteShape,
   makeSiteMap,
 } from '../../src/shared/sitemap.ts';
-import { SITES } from '../../src/server/world/realms.ts';
+import { RealmKind, SITES } from '../../src/server/world/realms.ts';
 import { TileCode, blocksSight, isWalkable } from '../../src/shared/protocol.ts';
 import type { SitePalette } from '../../src/shared/sitemap.ts';
 
@@ -119,6 +119,23 @@ describe('every shipped site is painted with a legal pair', () => {
    * hand back a map.
    */
   for (const [id, site] of SITES) {
+    /**
+     * EXCEPT THE ONE SITE THAT IS NOT A ROOM.
+     *
+     * Every other entry in `SITES` answers `map()` with a generated floor in
+     * two colours, which is what makes the assertion below meaningful. The
+     * Redaction answers with a whole second overworld — nineteen tile codes,
+     * a coastline, mountains and a forest belt — so "exactly two codes, one
+     * walkable and one not" is not a weaker claim about it, it is a claim about
+     * a different kind of object.
+     *
+     * SKIPPED BY KIND RATHER THAN BY ID, so the next authored map is skipped
+     * too and nobody has to remember to add it here. Its own soundness — that
+     * every door on it can be reached from where you land — is
+     * `test/shared/redaction.test.ts`, which is the equivalent promise for a
+     * map you cannot paint in two colours.
+     */
+    if (site.kind === RealmKind.Overworld) continue;
     it(`${id} opens onto ground you can stand on, behind walls you cannot`, () => {
       const codes = new Set(site.map(`palette-check-${id}`).view.tiles);
       expect(codes.size).toBe(2);

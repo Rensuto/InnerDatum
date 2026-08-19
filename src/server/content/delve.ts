@@ -63,6 +63,7 @@ import {
   INDEX_WRAITH,
   monsterInit,
 } from './monsters.ts';
+import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
 import { canWalk } from '../../shared/level.ts';
 import { rollDrop } from './encounter.ts';
@@ -366,6 +367,118 @@ function roomFor(world: World, door: TileXY): TileXY[] {
  */
 export function delveHeadroom(party: PartyStrength): number {
   return 1 + 0.5 * (Math.max(1, party.size) - 1);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME DOOR, ON THE OTHER MAP.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Six of Alderbrook's sites came through the Redaction still standing, and the
+ * registry builds each one as a twin of its original — same shape, same
+ * palette, same name (see `REDACTED_SITES` in world/realms.ts, and the argument
+ * for keeping the name in shared/redaction.ts: recognising where you are is the
+ * whole point of that map). This is the one thing about them that is NOT
+ * inherited, and it is the one that decides whether going there is worth it.
+ *
+ * ═══ THE ROSTER STAYS. THE COUNTS DO NOT. ═══
+ * Swapping every twin to one late-game roster was the obvious move and is
+ * wrong: it would make four destinations one destination again, which is
+ * exactly the monotony that giving each site its own SHAPE was meant to fix.
+ * The Underworks is husks on both maps and the Drowned Chapel is cairns on
+ * both, because that is what those places ARE.
+ *
+ * What changed is how much of it there is. +2 monsters, and +1 litter at both
+ * ends — harder, and paying for it. A player who has cleared the Underworks and
+ * walks fourteen tiles into the Sedge to find another one should meet a room
+ * they recognise and cannot handle the same way, and should come out with more
+ * than they went in for. Danger with no upside is a place you visit once.
+ *
+ * ═══ IT IS APPLIED BEFORE PARTY SCALING, WHICH IS WHAT MAKES IT WORK ═══
+ * `populateDelve` rolls this range and THEN multiplies by `delveHeadroom`, so
+ * the +2 grows with the party rather than being a fixed tax that a strong group
+ * stops noticing. Measured against the Underworks, hostiles placed:
+ *
+ *     party        Alderbrook   Redaction
+ *     lvl 1 solo        5            8      1.6x
+ *     lvl 1 x3         10           12      1.2x
+ *     lvl 4 x3          8           12      1.5x
+ *     lvl 8 x5         15           21      1.4x
+ *
+ * A consistent half-again across the whole range, and +6 rather than +2 for the
+ * party that can take it.
+ *
+ * ═══ AND THE LONE LEVEL-1 WHO WANDERS IN IS GATED BY GEOGRAPHY, NOT BY MERCY ═══
+ * Eight hostiles would end that character. The reason it is not a trap is that
+ * the door is 99 tiles from the spawn, out in the Sedge, fourteen tiles from
+ * the nearest marker and behind an overworld crossing that names itself — a
+ * player who gets there has been playing for a while. Softening the floor
+ * instead would have made the whole map a reskin, which is the failure this
+ * table exists to avoid.
+ */
+const REDACTED_TOWN: DelveSpec = {
+  /**
+   * AND THE ONE TOWN THAT SURVIVED IS NOT A TOWN OVER THERE.
+   *
+   * Threadneedle Row came through with its streets intact, and inheriting its
+   * kind would have made it a `Common` realm on the far map: no shop (the
+   * shelves are keyed by site id), no townsfolk (likewise), no monsters (a
+   * shared space asserts there are none) and never reaped. Thirty tiles of
+   * empty street grid with nothing in it and nothing to do — a dead end, not an
+   * eerie one, and the fifth time this repo has built a room connected to
+   * nothing.
+   *
+   * So a redacted town is an `Inner` site like the rest, and this is what is in
+   * it: `DEEP`, because the things that took the country are what is standing
+   * in the street now, and the litter is generous because a town that nobody
+   * has walked out of still has everything people left in it.
+   */
+  monsters: [5, 7],
+  roster: DEEP,
+  litter: [3, 5],
+};
+
+/**
+ * What is behind a redacted door — `undefined` if `originalId` has no delve.
+ *
+ * IT LIVES HERE AND NOT IN THE REGISTRY because the rosters live here. Handing
+ * `world/realms.ts` a way to reach `DEEP` in order to build one spec would put
+ * a content decision in a wiring file, and the next one would follow it.
+ */
+export function redactedSpec(originalId: string): DelveSpec | undefined {
+  const spec = DELVES.get(originalId);
+  // NO ENTRY MEANS A TOWN. `DELVES` is keyed only by the sites that are fights,
+  // so the absence IS the classification — the same way the registry already
+  // reads it when it decides whether to attach a `populate` hook at all.
+  if (spec === undefined) return REDACTED_TOWN;
+  return {
+    monsters: [spec.monsters[0] + 2, spec.monsters[1] + 2],
+    roster: spec.roster,
+    litter: [spec.litter[0] + 1, spec.litter[1] + 1],
+  };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT IS BEHIND ANY DOOR ON ANY MAP — THE ONE LOOKUP EVERYTHING SHOULD USE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `DELVES.get(siteId)` is right for Alderbrook and silently wrong for the
+ * Redaction, whose sites are DERIVED and therefore absent from that table. The
+ * absence is meaningful — it is how this file says "town" — so a caller that
+ * asks the table directly cannot tell a settlement from the hardest floor in
+ * the game, and gets the town answer for both.
+ *
+ * ONE FUNCTION SO THERE IS ONE ANSWER. The danger grade on the map, the party
+ * hint beside it, and the monsters actually placed in the room all have to
+ * agree, and they agree by asking the same question here rather than by three
+ * call sites each remembering the prefix rule.
+ */
+export function specFor(siteId: string): DelveSpec | undefined {
+  const direct = DELVES.get(siteId);
+  if (direct !== undefined) return direct;
+  if (!siteId.startsWith(`${REDACTION_SITE_ID}:`)) return undefined;
+  return redactedSpec(siteId.replace(`${REDACTION_SITE_ID}:`, 'site:'));
 }
 
 export function populateDelve(

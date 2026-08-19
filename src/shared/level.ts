@@ -365,7 +365,7 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeehhhhhhKhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeepppppp.peeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
   'XXwwTTTTThhh.hhhhpppphhhhhhhheeehhhhhhheeeeeeeeeeeeeehhhhhheehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeepppppp..pppeeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
   'XXwwTTTTTThh.hhhppppphhhhhhheeeeehhhhhheeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeppppppp.pppppeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
-  'XXWwTTTTTTTT.hhhpppppphhhhhpeeeeehhhhheeeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeepppppppp.ppppppeeeeeeppppppppppppppppTTTTTT;;wwWXX',
+  'XXWwTTTTTTTT.hhhppppppEhhhhpeeeeehhhhheeeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeepppppppp.ppppppeeeeeeppppppppppppppppTTTTTT;;wwWXX',
   'XXWwTTTTTTTT..ppppppppppppppeeeeeehhhhppeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeppppppppp.pppppppeeeeeppppppppppppppppTTTTTT;;wwWXX',
   'XXWwTTTTTTTTp.ppppppppppppppeeeeepphhhppppeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeepppppppppp.ppppppppeeeeppppppppppppppppTTTTTT;;wwWXX',
   'XXWwTTTTTTTTp..pppppppppppppeeppppphhhppppppeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhepppeeepeeeeeeppppppppppp.pppppppppeeeppppppppppppppppTTTTTT;;wwWXX',
@@ -406,6 +406,17 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
 ];
+
+/**
+ * THE DARK TERRITORY'S SITE ID.
+ *
+ * DEFINED HERE RATHER THAN IN `redaction.ts`, WHICH IS THE FILE ABOUT IT. That
+ * file imports this one — it is a transformation OF this map — so a constant
+ * living there and read by the legend below would be a cycle, and under ESM the
+ * glyph would quietly read `undefined` at module-eval time rather than failing
+ * loudly. `redaction.ts` re-exports it, so it is still where a reader looks.
+ */
+export const REDACTION_SITE_ID = 'site:redaction';
 
 /** The legend. Every character is a real TileCode; nothing defaults. */
 const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
@@ -525,6 +536,29 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
    *                       on the entire map: a beach behind the wood, on a coast
    *                       that had 273 cells and not one destination.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND ONE DOOR THAT DOES NOT OPEN ONTO A ROOM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every other site glyph here opens thirty tiles of somewhere, built when you
+   * step on it and reaped when you leave. This one opens a SECOND MOOR: the
+   * whole of this map again with a sixth of it taken out, shared, persistent,
+   * and walkable back. See `shared/redaction.ts` — the transform, and the four
+   * numbers that were measured before any of it was written.
+   *
+   * ═══ FOURTEEN TILES FROM ANYTHING, AND THAT IS THE MEASUREMENT ═══
+   * A door to another world standing between two towns is a fast-travel node.
+   * (22,60) is the furthest cell in the western low country from any marker
+   * already drawn — so it is somewhere you went looking, which is the same
+   * argument and the same measurement that placed the three hidden sites.
+   *
+   * `TileCode.HILLS` BECAUSE THAT IS WHAT WAS ALREADY THERE. Every site glyph
+   * in this table keeps the tile of the character it replaced, so adding a
+   * destination never changes the shape of the ground — and `test/shared`
+   * holds the walkable count at 9327 so that stays true for the next door.
+   */
+  E: { tile: TileCode.HILLS, site: REDACTION_SITE_ID },
   K: { tile: TileCode.HILLS, site: 'site:cairnfoot' },
   V: { tile: TileCode.PLAINS, site: 'site:barrow_end' },
   Z: { tile: TileCode.SHORE, site: 'site:the_weir' },

@@ -208,7 +208,7 @@ describe('it is wilderness, not a town', () => {
 describe('every settlement can be reached on foot', () => {
   const reach = reachableFrom(OVERWORLD.view, ALDERBROOK);
 
-  it('places all sixteen sites, three of which nobody is told about', () => {
+  it('places all seventeen sites, three hidden and one on another map', () => {
     /**
      * THIRTEEN OF THESE ARE ON YOUR MAP FROM THE FIRST FRAME. The last three are
      * `SiteDef.hidden` and appear only once your own fog holds their cell — see
@@ -219,6 +219,13 @@ describe('every settlement can be reached on foot', () => {
      * the SAME TileCode as the character it replaced (K was h, V was p, Z was
      * s), so no cell changed walkability or sight, and `reach.size === 9327`
      * held unchanged when they landed.
+     *
+     * AND THE SEVENTEENTH IS NOT A PLACE ON THIS MAP AT ALL. `site:redaction`
+     * is a door onto a second overworld — the same moor with a sixth of it
+     * taken out — and it is in this list because on THIS side it is a glyph
+     * like any other. It obeys the same constraint as the hidden three and for
+     * the same reason: `E` carries the TileCode of the `h` it replaced, so the
+     * count below moved and `reach.size === 9327` did not.
      */
     expect([...OVERWORLD.sites.values()].sort()).toEqual([
       'site:alderbrook',
@@ -231,6 +238,7 @@ describe('every settlement can be reached on foot', () => {
       'site:glass_archive',
       'site:hollow_mine',
       'site:outer_index',
+      'site:redaction',
       'site:saints_rest',
       'site:the_weir',
       'site:threadneedle_row',

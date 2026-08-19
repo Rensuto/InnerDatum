@@ -58,9 +58,10 @@ import { ShopShelf } from '../content/shops.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
 import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
-import { makeOverworld } from '../../shared/level.ts';
+import { REDACTION_SITE_ID, makeOverworld } from '../../shared/level.ts';
+import { makeRedaction } from '../../shared/redaction.ts';
 import { ActorKind } from '../../shared/protocol.ts';
-import { DELVES, populateDelve } from '../content/delve.ts';
+import { DELVES, populateDelve, redactedSpec } from '../content/delve.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
 import { placeTownsfolk, townsfolkFor } from '../content/townsfolk.ts';
@@ -756,7 +757,14 @@ export function createRealms(opts: RealmsOptions): Realms {
       assertNoCombatInSharedSpace(site);
       const built = build(
         `realm:${site.id}`,
-        RealmKind.Common,
+        // `site.kind`, NOT `RealmKind.Common`, WHICH IS WHAT THIS SAID. The
+        // branch above reads "not Inner" and there are now two kinds that
+        // satisfy it, so hard-coding one of them meant a second landmass
+        // reaching this path would be built as a town — walkable, boots, and
+        // with the roamer tick, the fog, the region names and the way home all
+        // silently off. Unreachable today (the boot loop builds every shared
+        // site eagerly) and one refactor away from not being.
+        site.kind,
         site.name,
         site.map(`realm:${site.id}`),
         {
@@ -893,241 +901,361 @@ const HIDDEN_SITES: ReadonlySet<string> = new Set([
   'site:the_weir',
 ]);
 
-export const SITES: ReadonlyMap<string, SiteDef> = new Map(
-  (
+const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
+  [
+    // ─── open to everybody: no combat, so nothing to coordinate. These are
+    // the SETTLEMENTS, and with the overworld now being open country they are
+    // where the game is social — the road between them is meant to feel empty.
+    //
     [
-      // ─── open to everybody: no combat, so nothing to coordinate. These are
-      // the SETTLEMENTS, and with the overworld now being open country they are
-      // where the game is social — the road between them is meant to feel empty.
-      //
-      [
-        'site:alderbrook',
-        'Alderbrook',
-        RealmKind.Common,
-        'city',
-        SiteShape.Town,
-        TileCode.PAVING,
-        TileCode.CIVIC,
-      ],
-      [
-        'site:threadneedle_row',
-        'Threadneedle Row',
-        RealmKind.Common,
-        'town',
-        SiteShape.Town,
-        TileCode.COBBLE,
-        TileCode.TERRACE,
-      ],
-      [
-        'site:ashwick_row',
-        'Ashwick Alchemy Row',
-        RealmKind.Common,
-        'town',
-        SiteShape.Town,
-        TileCode.COBBLE,
-        TileCode.WORKS,
-      ],
-      [
-        'site:wayfarers_camp',
-        "A Wayfarers' Camp",
-        RealmKind.Common,
-        'village',
-        SiteShape.Ruin,
-        TileCode.YARD,
-        TileCode.TREES,
-      ],
-      [
-        'site:saints_rest',
-        "Saint's Rest",
-        RealmKind.Common,
-        'town',
-        SiteShape.Town,
-        TileCode.YARD,
-        TileCode.TERRACE,
-      ],
-      // ─── one party at a time: combat, so a shared barrier would be wrong ───
-      [
-        'site:blackwood_outskirts',
-        'Blackwood Outskirts',
-        RealmKind.Inner,
-        'gate',
-        SiteShape.Cave,
-        TileCode.HEATH,
-        TileCode.TREES,
-      ],
-      [
-        'site:gearford_ward',
-        'Gearford Industrial Ward',
-        RealmKind.Inner,
-        'gate',
-        SiteShape.Works,
-        TileCode.SOOT,
-        TileCode.WORKS,
-      ],
-      [
-        'site:underworks',
-        'The Underworks',
-        RealmKind.Inner,
-        'mine',
-        SiteShape.Cave,
-        TileCode.SOOT,
-        TileCode.CRAG,
-      ],
-      [
-        'site:glass_archive',
-        'The Glass Archive',
-        RealmKind.Inner,
-        'city',
-        SiteShape.Works,
-        TileCode.PAVING,
-        TileCode.CIVIC,
-      ],
-      [
-        'site:watchers_altar',
-        "The Watcher's Altar",
-        RealmKind.Inner,
-        'ruin',
-        SiteShape.Ruin,
-        TileCode.PLAINS,
-        TileCode.CRAG,
-      ],
-      [
-        'site:hollow_mine',
-        'The Hollow Mine',
-        RealmKind.Inner,
-        'mine',
-        SiteShape.Cave,
-        TileCode.SOOT,
-        TileCode.CRAG,
-      ],
-      [
-        'site:drowned_chapel',
-        'The Drowned Chapel',
-        RealmKind.Inner,
-        'ruin',
-        SiteShape.Ruin,
-        TileCode.SHORE,
-        TileCode.TERRACE,
-      ],
-      [
-        'site:outer_index',
-        'The Outer Index',
-        RealmKind.Inner,
-        'city',
-        SiteShape.Works,
-        TileCode.PAVING,
-        TileCode.ERASED,
-      ],
-      // ─── and three nobody is told about ─────────────────────────────────
-      //     See `SiteDef.hidden`. Each sits on ground measured to be as far
-      //     from any existing marker as this map allows, and each rewards a
-      //     different instinct: climb the downs, go into the trees, follow the
-      //     coast past where anything is drawn.
-      [
-        'site:cairnfoot',
-        'Cairnfoot',
-        RealmKind.Inner,
-        'stair',
-        SiteShape.Cave,
-        TileCode.HEATH,
-        TileCode.CRAG,
-      ],
-      [
-        'site:barrow_end',
-        'Barrow End',
-        RealmKind.Inner,
-        'altar',
-        SiteShape.Ruin,
-        TileCode.GREEN,
-        TileCode.TREES,
-      ],
-      [
-        'site:the_weir',
-        'The Weir',
-        RealmKind.Inner,
-        'archive',
-        SiteShape.Works,
-        TileCode.SHORE,
-        TileCode.WORKS,
-      ],
-    ] as const
-  ).map(([id, name, kind, marker, shape, floor, wall]): [string, SiteDef] => [
+      'site:alderbrook',
+      'Alderbrook',
+      RealmKind.Common,
+      'city',
+      SiteShape.Town,
+      TileCode.PAVING,
+      TileCode.CIVIC,
+    ],
+    [
+      'site:threadneedle_row',
+      'Threadneedle Row',
+      RealmKind.Common,
+      'town',
+      SiteShape.Town,
+      TileCode.COBBLE,
+      TileCode.TERRACE,
+    ],
+    [
+      'site:ashwick_row',
+      'Ashwick Alchemy Row',
+      RealmKind.Common,
+      'town',
+      SiteShape.Town,
+      TileCode.COBBLE,
+      TileCode.WORKS,
+    ],
+    [
+      'site:wayfarers_camp',
+      "A Wayfarers' Camp",
+      RealmKind.Common,
+      'village',
+      SiteShape.Ruin,
+      TileCode.YARD,
+      TileCode.TREES,
+    ],
+    [
+      'site:saints_rest',
+      "Saint's Rest",
+      RealmKind.Common,
+      'town',
+      SiteShape.Town,
+      TileCode.YARD,
+      TileCode.TERRACE,
+    ],
+    // ─── one party at a time: combat, so a shared barrier would be wrong ───
+    [
+      'site:blackwood_outskirts',
+      'Blackwood Outskirts',
+      RealmKind.Inner,
+      'gate',
+      SiteShape.Cave,
+      TileCode.HEATH,
+      TileCode.TREES,
+    ],
+    [
+      'site:gearford_ward',
+      'Gearford Industrial Ward',
+      RealmKind.Inner,
+      'gate',
+      SiteShape.Works,
+      TileCode.SOOT,
+      TileCode.WORKS,
+    ],
+    [
+      'site:underworks',
+      'The Underworks',
+      RealmKind.Inner,
+      'mine',
+      SiteShape.Cave,
+      TileCode.SOOT,
+      TileCode.CRAG,
+    ],
+    [
+      'site:glass_archive',
+      'The Glass Archive',
+      RealmKind.Inner,
+      'city',
+      SiteShape.Works,
+      TileCode.PAVING,
+      TileCode.CIVIC,
+    ],
+    [
+      'site:watchers_altar',
+      "The Watcher's Altar",
+      RealmKind.Inner,
+      'ruin',
+      SiteShape.Ruin,
+      TileCode.PLAINS,
+      TileCode.CRAG,
+    ],
+    [
+      'site:hollow_mine',
+      'The Hollow Mine',
+      RealmKind.Inner,
+      'mine',
+      SiteShape.Cave,
+      TileCode.SOOT,
+      TileCode.CRAG,
+    ],
+    [
+      'site:drowned_chapel',
+      'The Drowned Chapel',
+      RealmKind.Inner,
+      'ruin',
+      SiteShape.Ruin,
+      TileCode.SHORE,
+      TileCode.TERRACE,
+    ],
+    [
+      'site:outer_index',
+      'The Outer Index',
+      RealmKind.Inner,
+      'city',
+      SiteShape.Works,
+      TileCode.PAVING,
+      TileCode.ERASED,
+    ],
+    // ─── and three nobody is told about ─────────────────────────────────
+    //     See `SiteDef.hidden`. Each sits on ground measured to be as far
+    //     from any existing marker as this map allows, and each rewards a
+    //     different instinct: climb the downs, go into the trees, follow the
+    //     coast past where anything is drawn.
+    [
+      'site:cairnfoot',
+      'Cairnfoot',
+      RealmKind.Inner,
+      'stair',
+      SiteShape.Cave,
+      TileCode.HEATH,
+      TileCode.CRAG,
+    ],
+    [
+      'site:barrow_end',
+      'Barrow End',
+      RealmKind.Inner,
+      'altar',
+      SiteShape.Ruin,
+      TileCode.GREEN,
+      TileCode.TREES,
+    ],
+    [
+      'site:the_weir',
+      'The Weir',
+      RealmKind.Inner,
+      'archive',
+      SiteShape.Works,
+      TileCode.SHORE,
+      TileCode.WORKS,
+    ],
+  ] as const
+).map(([id, name, kind, marker, shape, floor, wall]): [string, SiteDef] => [
+  id,
+  {
     id,
-    {
-      id,
-      name,
-      kind,
-      marker,
-      /**
-       * THE SHAPE IS THE IDENTITY at this scale. Every site used to open onto
-       * the same authored 30x30 room, which made thirteen destinations one
-       * destination with thirteen doors. A mine of winding galleries and a
-       * market that is an open plaza read as different PLACES before a single
-       * sprite is drawn. See shared/sitemap.ts.
-       *
-       * STATIC FOR A TOWN, FRESH FOR A DELVE, and the seed is what decides
-       * which: a Common realm is built once with an id derived from the SITE,
-       * so its streets are the same every time and a player can learn them. An
-       * Inner realm's id carries a monotonic instance number, so every opening
-       * is a different floor — and after the five-minute linger reaps it, the
-       * next party through the door gets somewhere new.
-       */
-      map: (seed) => makeSiteMap(seed, shape, { floor, wall }),
-      // A delve is a place you can go back to. A town never empties in the sense
-      // that matters — `close` refuses a shared realm outright — so the number
-      // is inert there and stated once rather than branched on.
-      lingerMs: INSTANCE_LINGER_MS,
-      /**
-       * ═══════════════════════════════════════════════════════════════════
-       * AND SOMETHING IS IN THERE. FOR THE FIRST TIME.
-       * ═══════════════════════════════════════════════════════════════════
-       * Every one of the eight delves generated EMPTY — a player walked
-       * thirty tiles to "The Hollow Mine", read a line about paperwork, and
-       * found nothing at all. content/delve.ts carries the eight specs and
-       * argues the shape; this is only the wiring.
-       *
-       * ABSENT ON A COMMON SITE, which `createRealms` enforces at
-       * construction rather than trusting: one monster in a town arms
-       * engagement for every unrelated person standing in it, and they all
-       * start waiting on each other with nothing on screen to explain why.
-       * `DELVES` has no entry for a town, so the lookup returns undefined
-       * and the field stays absent — the rule is expressed as data.
-       */
-      // THE THREE THAT ARE NOT ON YOUR MAP YET. Data, so a reviewer can see
-      // the whole set at a glance rather than reading a predicate.
-      ...(HIDDEN_SITES.has(id) ? { hidden: true } : {}),
-      ...(DELVES.has(id)
-        ? {
-            /**
-             * ═══════════════════════════════════════════════════════════════
-             * THE THIRD ARGUMENT, WHICH WAS BEING SILENTLY DROPPED.
-             * ═══════════════════════════════════════════════════════════════
-             *
-             * `SiteDef.populate` is typed `(world, map, party) => void` and the
-             * registry has always CALLED it with all three (`site.populate?.(
-             * realm.world, builtMap, party)`). This lambda declared two, so
-             * TypeScript accepted it — a function of fewer parameters is
-             * assignable to one of more, which is correct and is exactly why
-             * nothing ever complained — and the party was dropped on the floor.
-             *
-             * SO NO DELVE HAS EVER SCALED TO ANYBODY. A lone level-1 detective
-             * and a party of four walked into the identical room, which is
-             * backwards twice over: the ambush DOES scale (`ambushRoster`), so
-             * the fight you stumble into answered the party while the dungeon
-             * you deliberately brought three friends to did not — and D12 pays
-             * every member a FULL experience share, so four people clearing a
-             * solo-sized room earn four times the experience for a quarter of
-             * the work.
-             */
-            populate: (world: World, built: AuthoredMap, party: PartyStrength): void => {
-              const spec = DELVES.get(id);
-              if (spec !== undefined) populateDelve(world, built, spec, party);
-            },
-          }
-        : {}),
-    },
-  ]),
-);
+    name,
+    kind,
+    marker,
+    /**
+     * THE SHAPE IS THE IDENTITY at this scale. Every site used to open onto
+     * the same authored 30x30 room, which made thirteen destinations one
+     * destination with thirteen doors. A mine of winding galleries and a
+     * market that is an open plaza read as different PLACES before a single
+     * sprite is drawn. See shared/sitemap.ts.
+     *
+     * STATIC FOR A TOWN, FRESH FOR A DELVE, and the seed is what decides
+     * which: a Common realm is built once with an id derived from the SITE,
+     * so its streets are the same every time and a player can learn them. An
+     * Inner realm's id carries a monotonic instance number, so every opening
+     * is a different floor — and after the five-minute linger reaps it, the
+     * next party through the door gets somewhere new.
+     */
+    map: (seed) => makeSiteMap(seed, shape, { floor, wall }),
+    // A delve is a place you can go back to. A town never empties in the sense
+    // that matters — `close` refuses a shared realm outright — so the number
+    // is inert there and stated once rather than branched on.
+    lingerMs: INSTANCE_LINGER_MS,
+    /**
+     * ═══════════════════════════════════════════════════════════════════
+     * AND SOMETHING IS IN THERE. FOR THE FIRST TIME.
+     * ═══════════════════════════════════════════════════════════════════
+     * Every one of the eight delves generated EMPTY — a player walked
+     * thirty tiles to "The Hollow Mine", read a line about paperwork, and
+     * found nothing at all. content/delve.ts carries the eight specs and
+     * argues the shape; this is only the wiring.
+     *
+     * ABSENT ON A COMMON SITE, which `createRealms` enforces at
+     * construction rather than trusting: one monster in a town arms
+     * engagement for every unrelated person standing in it, and they all
+     * start waiting on each other with nothing on screen to explain why.
+     * `DELVES` has no entry for a town, so the lookup returns undefined
+     * and the field stays absent — the rule is expressed as data.
+     */
+    // THE THREE THAT ARE NOT ON YOUR MAP YET. Data, so a reviewer can see
+    // the whole set at a glance rather than reading a predicate.
+    ...(HIDDEN_SITES.has(id) ? { hidden: true } : {}),
+    ...(DELVES.has(id)
+      ? {
+          /**
+           * ═══════════════════════════════════════════════════════════════
+           * THE THIRD ARGUMENT, WHICH WAS BEING SILENTLY DROPPED.
+           * ═══════════════════════════════════════════════════════════════
+           *
+           * `SiteDef.populate` is typed `(world, map, party) => void` and the
+           * registry has always CALLED it with all three (`site.populate?.(
+           * realm.world, builtMap, party)`). This lambda declared two, so
+           * TypeScript accepted it — a function of fewer parameters is
+           * assignable to one of more, which is correct and is exactly why
+           * nothing ever complained — and the party was dropped on the floor.
+           *
+           * SO NO DELVE HAS EVER SCALED TO ANYBODY. A lone level-1 detective
+           * and a party of four walked into the identical room, which is
+           * backwards twice over: the ambush DOES scale (`ambushRoster`), so
+           * the fight you stumble into answered the party while the dungeon
+           * you deliberately brought three friends to did not — and D12 pays
+           * every member a FULL experience share, so four people clearing a
+           * solo-sized room earn four times the experience for a quarter of
+           * the work.
+           */
+          populate: (world: World, built: AuthoredMap, party: PartyStrength): void => {
+            const spec = DELVES.get(id);
+            if (spec !== undefined) populateDelve(world, built, spec, party);
+          },
+        }
+      : {}),
+  },
+]);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SECOND MOOR, AND THE DOORS THAT SURVIVED ON IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `shared/redaction.ts` is the argument for the place; this is the wiring, and
+ * there are only two pieces of it.
+ *
+ * ═══ THE MAP ITSELF IS A SITE LIKE ANY OTHER ═══
+ * A `SiteDef` with `kind: Overworld`, which the boot loop builds exactly the
+ * way it builds a town — one copy, made at startup, never reaped, everybody who
+ * steps through the glyph is in the same one. The kind is doing real work: six
+ * subsystems ask `realm.kind === RealmKind.Overworld` and every one of them is
+ * a thing this place needs — the roamer tick, the fog reveal, the `explored`
+ * frame, the region names, the exit marker and `leaveRealm`'s refusal. Building
+ * it as `Common` would have typechecked, booted, been walkable, and silently
+ * turned all six off. See the essay on `SiteDef.kind`.
+ *
+ * ═══ AND ITS DOORS ARE DERIVED, NOT AUTHORED ═══
+ * Which of Alderbrook's sites came through the erasure is decided by the
+ * erasure — `makeRedaction` keeps a site only if its cell survived AND is in
+ * the one big walkable piece, so nothing over there can be marooned behind a
+ * hole. Writing the survivors out by hand would be a second answer to that
+ * question and would drift the moment the threshold moved.
+ *
+ * Each twin SPREADS its original, so it inherits the shape, the palette and —
+ * the part that matters — the `populate` hook that puts monsters in it. Six
+ * hand-written rows would have inherited none of that, and an empty delve is a
+ * bug this repo has already shipped once.
+ *
+ * WHAT IT DELIBERATELY DOES NOT INHERIT IS ITS ID, and therefore: no shop
+ * (`SHOP_SITES` is keyed by id), no townsfolk (`townsfolkFor` likewise), and a
+ * generation seed of its own so the floor is not the same floor. Nothing sells
+ * you anything in the Redaction and nobody lives there, which is not an
+ * omission — it is what the place is.
+ */
+const REDACTION: SiteDef = {
+  id: REDACTION_SITE_ID,
+  name: 'The Redaction',
+  kind: RealmKind.Overworld,
+  // A DOOR, drawn with the same art as every other door. The thing on the far
+  // side is unlike anything else in the game; the marker promising it should
+  // look exactly like the ones that promise a mine, or the surprise is spent
+  // before the player has walked anywhere.
+  marker: 'gate',
+  // THE SEED IS IGNORED, and that is the one difference from every other row.
+  // A delve is rebuilt per instance and a town is built once from a seeded
+  // generator; this map is a deterministic transformation of an authored one,
+  // so there is nothing for a seed to vary. See `makeRedaction`.
+  map: () => makeRedaction(),
+  lingerMs: 0,
+};
+
+/**
+ * The surviving doors, read off the map rather than listed.
+ *
+ * Built from its own `makeRedaction()` call and not from the realm's: this runs
+ * at module load, before any realm exists, and the two agree because the
+ * transform is pure — which is the property that lets a `shared/` module be the
+ * single authority on what is over there.
+ */
+const REDACTED_SITES: readonly (readonly [string, SiteDef])[] = [
+  ...makeRedaction().sites.values(),
+].flatMap((twinId) => {
+  const original = AUTHORED_SITES.find(
+    ([id]) => id === twinId.replace(`${REDACTION_SITE_ID}:`, 'site:'),
+  );
+  // A twin with no original is a wiring bug rather than a runtime state, and
+  // dropping it silently would leave a marker on the map that opens nothing.
+  if (original === undefined) throw new Error(`no site behind ${twinId}`);
+  const [originalId, def] = original;
+  return [
+    [
+      twinId,
+      {
+        ...def,
+        id: twinId,
+        /**
+         * ═════════════════════════════════════════════════════════════════════
+         * `Inner` FOR ALL OF THEM, INCLUDING THE ONE THAT IS A TOWN.
+         * ═════════════════════════════════════════════════════════════════════
+         *
+         * Threadneedle Row came through the erasure with its streets intact,
+         * and inheriting `Common` would have built it on the far map as a
+         * shared space: no shop (the shelves are keyed by site id), no
+         * townsfolk (likewise), no monsters at all (a shared space asserts
+         * there are none) and never reaped. Thirty tiles of empty street with
+         * nothing to do — which reads as broken rather than as haunted.
+         *
+         * THERE ARE NO TOWNS IN THE REDACTION. That is not a limitation of the
+         * wiring, it is the single clearest statement the place makes: the
+         * Index took the country and everybody who lived in it, and what is
+         * left standing is somewhere you go INTO rather than somewhere you
+         * rest. See `redactedSpec` for what is in there instead.
+         */
+        kind: RealmKind.Inner,
+        lingerMs: INSTANCE_LINGER_MS,
+        /**
+         * AND ITS OWN CONTENTS — the one thing deliberately not inherited.
+         *
+         * The spread would have carried the original's `populate`, which
+         * closes over the ORIGINAL's spec, so every twin would have been its
+         * Alderbrook counterpart with a different seed. `redactedSpec` keeps
+         * the roster (The Underworks is husks on both maps) and raises the
+         * counts, and it answers a town with a fight rather than with
+         * `undefined`.
+         */
+        populate: (world: World, built: AuthoredMap, party: PartyStrength): void => {
+          const spec = redactedSpec(originalId);
+          if (spec !== undefined) populateDelve(world, built, spec, party);
+        },
+      },
+    ] as const,
+  ];
+});
+
+export const SITES: ReadonlyMap<string, SiteDef> = new Map([
+  ...AUTHORED_SITES,
+  [REDACTION_SITE_ID, REDACTION] as const,
+  ...REDACTED_SITES,
+]);
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DELVES, dangerWord, partyHint } from '../../src/server/content/delve.ts';
+import { DELVES, specFor, dangerWord, partyHint } from '../../src/server/content/delve.ts';
 import type { DelveSpec } from '../../src/server/content/delve.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -64,12 +64,23 @@ describe('a delve is not an empty room', () => {
   });
 
   it('has a spec for every inner site and for no town', () => {
-    // The rule expressed as data: `populate` is attached only where `DELVES`
-    // has an entry, and `createRealms` THROWS for a Common site that carries
-    // one — because a single monster in a town arms engagement for every
-    // unrelated person standing in it.
+    /**
+     * The rule expressed as data: `populate` is attached only where a spec
+     * exists, and `createRealms` THROWS for a Common site that carries one —
+     * because a single monster in a town arms engagement for every unrelated
+     * person standing in it.
+     *
+     * ═══ `specFor` AND NOT `DELVES.has`, WHICH IS WHAT THIS ASKED ═══
+     * The Redaction's doors are DERIVED from their Alderbrook originals and are
+     * therefore absent from `DELVES`, so the raw table now answers "town" for
+     * six `Inner` sites. That absence is not a hole in the content — it is the
+     * table being asked a question it does not answer any more. `specFor` is
+     * the lookup that knows about both maps, and it is the one the gateway's
+     * danger grade and the registry's `populate` both use, which is exactly why
+     * it is the one this invariant should be stated over.
+     */
     for (const [id, def] of SITES) {
-      expect(DELVES.has(id), `${def.name}`).toBe(def.kind === RealmKind.Inner);
+      expect(specFor(id) !== undefined, `${def.name}`).toBe(def.kind === RealmKind.Inner);
     }
   });
 
