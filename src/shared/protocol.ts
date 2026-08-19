@@ -4482,10 +4482,26 @@ export type SiteView = {
  */
 export type RegionView = {
   readonly name: string;
-  readonly x0: number;
-  readonly y0: number;
-  readonly x1: number;
-  readonly y1: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE THE LABEL GOES — AN ANCHOR, NOT A BOX.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This carried a rectangle, because the country used to BE rectangles. The
+   * redesigned moor draws its regions per cell and their bounding boxes overlap
+   * so heavily that one spans x 5 to 157 and another fills 17% of its own box —
+   * a rectangle on this wire would put "the Long Strand" over the mountains.
+   *
+   * The SHAPE stays on the server, where `regionAt` needs it and the crossing
+   * announcement is decided. The client needs one thing the server cannot
+   * choose for it — where to draw the name — and that is this.
+   *
+   * TWELVE SMALL RECORDS RATHER THAN A SECOND 17,000-CELL ARRAY. The realm frame
+   * already carries the tiles; doubling it to tell a renderer which country each
+   * cell is in would be paying for a fact only the label needs.
+   */
+  readonly x: number;
+  readonly y: number;
 };
 
 export type RealmMsg = {

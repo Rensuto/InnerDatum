@@ -82,7 +82,10 @@ describe('a roamer is a marker, not a monster', () => {
      * justify a number somebody liked.
      */
     const realms = makeRealms();
-    expect(maxRoamersFor(realms.overworld)).toBe(18);
+    // 15 on the redesigned moor: the cap is a DENSITY over haunt-able ground and
+    // the new landmass holds less of it. That the number followed the map is the
+    // whole point of the change this test was written for.
+    expect(maxRoamersFor(realms.overworld)).toBe(15);
 
     // AND IT IS THE HAUNTABLE GROUND, not the walkable ground. The road and the
     // settlements are SAFE by promise, so counting them would let a map with

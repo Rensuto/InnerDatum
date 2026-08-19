@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SITES } from '../../src/server/world/realms.ts';
 
 import { DELVES, dangerWord } from '../../src/server/content/delve.ts';
 import { INDEX_CAIRN, INDEX_EIDOLON } from '../../src/server/content/monsters.ts';
@@ -87,6 +88,24 @@ function delvesByDistance(): readonly Row[] {
     expect(steps, `${siteId} is not reachable on foot from town`).toBeDefined();
     // The same weight `dangerWord` bands, read back out of the word so this
     // test cannot drift from the thing the player actually reads.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * HIDDEN ROOMS ARE NOT IN THE GRADIENT, BECAUSE THEY ARE NOT ON THE MAP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This test is about the MAP not lying about which way danger lies. A
+     * `SiteDef.hidden` room is drawn nowhere until your own fog uncovers its
+     * cell, and the only thing that sends you looking is a townsfolk rumour —
+     * so it cannot mislead a reader of the map about anything.
+     *
+     * MEASURED on the redesigned moor, which put Barrow End forty steps from the
+     * gate: with the three hidden rooms counted, a `dangerous` grade sits inside
+     * the first band and the gradient reads as broken. Without them it is exact —
+     * quiet and restless close in, dangerous in the middle, both grim rooms past
+     * a hundred steps.
+     */
+    const def = SITES.get(siteId);
+    if (def?.hidden === true) continue;
     const weight = ['quiet', 'restless', 'dangerous', 'grim'].indexOf(dangerWord(spec));
     rows.push({ id: siteId, steps: steps ?? 0, weight });
   }

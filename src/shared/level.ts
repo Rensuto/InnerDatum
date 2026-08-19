@@ -341,102 +341,102 @@ export function canWalk(level: LevelView, x: number, y: number): boolean {
 const ALDERBROOK_ROWS: readonly string[] = [
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-  'XXwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
-  'XXwwwwsswyyyyyyyyyj............yyyyywyyyjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;jjkkkkyyykkkk...................wwwwwwwwwwyyswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWXX',
-  'XXwwTTTjjtttyyytttj.TTTTTTTTTjjtttyyytttjjhhhhhhhhhhhhhhhhhhhhhhhhhhhTTTTTjjkkkkyyykkkkjjTTTTTTTTTTTTTTTT.TjjtttyyytttjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTwwwwwwwwwwwwwwwwwwWWXX',
-  'XXwwThhjjtttyyyttt..ccccccccccctttyyytttccccccccccccccccccccccccccccccccccjjkkkkyyykkkkjjcccchhhhhhhhhhhh.hjjtttyyytttjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;;;;;;sssswwwWWXX',
-  'XXwwThhjjyywyByyyyjccccccccccccyyyyFyywycccccccccccccccccccccccccccccccccccjyyywyGyyyyyccccccchhhhhhhhhhh....yyyySyyyyjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;;;;ssswwwWWXX',
-  'XXwTThhjjywyyyyyyycccccccccccccyyyyyywyycccccccccccccMMMMMMMccccccccccccccccyywyyyyyyyycccccccccccchhhhhhh.jjyyyyyyyyyjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTssswwWWXX',
-  'XXwTThhjjywyyyyyyycccccccccccccyyyyywyyycccccccccccMMMMMMMMMccccccccccccccccywyyyyyyyyyccccccccccccccchhhh.jjyyyyyyyyyjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;swwwWWXX',
-  'XXwTTcccjwyyyyyyyycccccccccccccyyyyywyyyccccccccccMMMMMMMMMMMcccccccccccccccywyyyyyyyyycccccccccccccccchhh.jjyyyyyyyyyjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;swwwWWXX',
-  'XXTTTccccwccccccccccccccccccccccccc.wccccccccccMMMMMMMMMMMMMMMMcccccccccccccLwLLLyLLLLLccccccccccccccccchh.jjjjjj.jjjjjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTsswwWWXX',
-  'XXTTTcccccwcccccccccccccccccccccccc.wcccccccccMMMMMMMMMMMMMMMMMMccccccccccccwcccccccccccccccccccccccccccch.jjjjjj.jjjjjjTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTsswwWWXX',
-  'XXTTTcccccwcccccccccccccccccccccccc.wcccccccMMMMMMMMMMMMMMMMMMMMMcccccccccccwcccccMMMMMMMcccccMMMMccccccch.hhhhhp.pppppppppppppppppppppppppppppppppppTTTTTTTTTTTTTsswwWWXX',
-  'XXTTcccccccwccccccccccccccccccccccc.wccccccMMMMMMMMMMMMMMMMMMMMMMMMcccMMMcccwccccMMMMMMMMMMMMMMMMMMccccccc.hhhhhp..pppppppppppppppppppppppppppppppppppppppppTTTTTT;swwWWXX',
-  'XXTTccccccccwccccccccMMMMMMMMMMcccc=cccccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccwccMMMMMMMMMMMMMMMMMMMMccccccc.hhhhhpp.pppppppppppppppppppppppppppppppppppppppppTTTTTT;swwWWXX',
-  'XXTTccccccccwcccccccMMMMMMMMMMMMMMc.wMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccwcMMMMMMMMMMMMMMMMMMMMMccccccc.hhhhhpp.pppppppppppppppppppppppppppppppppppjjjjjjjjjjjjjswwWWXX',
-  'XXTTcMMMMMccwccccccMMMMMMMMMMMMMMMM.MwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMcwMMMMMMMMMMMMMMMMMMMMMMccccccc.hhhhhpp.pppppppppppppppppppppppppppppppppppjjjjjjjjjjjjjsswWWXX',
-  'XXTTcMMMMMMMwccMMMMMMMMMMMMMMMMMMMM.MMwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMMMMMMMMMMMMMcccccccc.hhhhhpp.pppppppppppppppppppppppppppppppppppjjyyyyyyyyyjjsswWWXX',
-  'XXTTcMMMMMMwMMMMMMMMMMMMMMMMMMMMMMM.MMMwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMMMMMMMMcccccccccccc.hhhhppp.pppppppppppppppppppppppppppppppppppjjtttyyytttjjsswWWXX',
-  'XXTTcMMMMMwMMMMMMMMMMMMMMMMMMMMMMMM.MMMMwMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMMMMMcccccccccccccc.hhhhppp.pppppppppppppppppppppppppppppppppppjjtttyyytttjssswWWXX',
-  'XXTTcMMMMwMMMMMMMMMMMMMccccccMMMMMM.MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMccMMMMMMMMMMMMMMMMMMMMMMcccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppjjyyyyRyyyyjssswWWXX',
-  'XXTTcMMMwMMMMMMMMMMMccccccccccccccc.cMMMMMMMMMMMMMMMMMMMMMMMMMMMMccccccccccMMMMMMMMMMMMMMMccccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppjjyyyyyyyyyssswwWWXX',
-  'XXTTcMMMMMMMMMMMMcccccccccccccccccc.ccMMMMMMMMMcccccccccccMMMMMMcccccccccccccMMMMMMMMMMMMcccccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppjjyyyyyyyyyssswwWWXX',
-  'XXTTcMMMMMMMMMMcccccccccccccccccccc.cccccccccccccccccccccccMMMMccccccccccccccccMMMMMMMMcccccccccccccccccch.hhhhppp.pppppppppppppppppppppppppppppppppppjjyyyyyyyyyswwwwWWXX',
-  'XXTTcMMMMMMMMcccccccccccccccccccccc.ccccccccccccccccccccccccMMcccccccccccccccccccMMMcccccccccccccccccccchh.hhhpppp.pppppppppppppppppppppppppppppppppppjjj.jjjjjjsswwwwWWXX',
-  'XXTTcMMMMMMMccccccccccccccccccccccc.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccchhh.hhhpppp.pppppppppppppppppppppppppppppppppppjjj.jjjjjjsswwwwWWXX',
-  'XXTTcMMMMMMcccccccccccccccccccccccc.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccchhhhh.hhhpppp..ppppppppppppppppppppppppppppppppppppp.pTTTTTssswwwWWXX',
-  'XXTTcMMMMccccccccccccccchhcchhhhccc.ccccccccccccccccccccccccccccccccccchcccccccccccccccccccccccccccchhhhhh.hhpppppp.eeepppppppppppppppppppppppppppppppppp.ppTTTTTsssswWWXX',
-  'XXTTcMccccccccccccccccchhhhhhhhhhhh.cccccccccccccccccccccccccccccchhhhhhhhcccccccccccccccccchhccchhhhhhhhh.hheeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTssswWWXX',
-  'XXTTccccccccccccchhhhhhhhhhhhhhhhhh.hccccccccccccccccccccccccccchhhhhhhhhhccccccccccccccchhhhhhhhhhhhhhhhh.hheeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTTsswWWXX',
-  'XXTTccccccccccchhhhhhhhhhhhhhhhh..N.hhccccccccccccccccccccccccchhhhhhhhhhhhccccccccccccchhhhhhhhhhhhhhhhhh.hheeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTTsswWWXX',
-  'XXTTcccccccccchhhhhhhhhhhhhhhhhh.hh.hhhcccccccccch.A.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh.heeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;swWWXX',
-  'XXTTccccccccchhhhhhhhhhhhhhhhhhh.hh.hhhhhccccch....h.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh..eeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;swWWXX',
-  'XXTTcccccchhhhhhhhhhhhhhhhhhhhhh.hh.............hhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh..eeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wWWXX',
-  'XXTTccccchhhhhhhhhhhhhhhhhhhhhh..hhhhhhhhhhhhhhhhhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhee.eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wWWXX',
-  'XXTTcccchhhhhhhhhh..............hhhhhhhhhhhhhhhhhhhh...eeeeehhhhhhhhhhhhhhhhhhhhhpppppppeehhhhhhhhhhheee.eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTss;wWWXX',
-  'XXTTccchhhhhhhhhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhee.eeeeeeehhhhhhhhhhhhhhhhpppppppppeeeehhhhhhhhhheee.eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTs;;wWWXX',
-  'XXwTTchhhhhhhphhhh.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheee.eeeeeeeehhhhhhhheehhhhpppppppppeeeeeeehhhhhhheee..eeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wWWXX',
-  'XXwTThhhhhhp.......hhhhhhhhhhhhhhhhhhhhhhhhhhpehhheeee.......eeehhhhhhheeephpppppppppeeeeeeeeehhhhheeee.eeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppppp.pppTTTTTT;;wwWXX',
-  'XXw;Thhhhhh..ppphhhhhhhhhhhhhhhhhhhhhhhhhhhppeeeeeeeeeeeeeee....hhhhhheeeeepppppppppeeeeeeeeeeehhhe.....eeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppp...pppTTTTTT;;wwWXX',
-  'XXw;Thhhhh..pppphhhhhhhhhhhhhhhhhhhhhhhhhpppeeeeeeeeeeeeeeeeeee.....................................eeeeeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppppp.pppppTTTTTT;;wwWXX',
-  'XXw;Thhhhh.hppphhhhhhhhhhhhhhhhhhhheeepppppeeeeeeeeeeeeeeeeeeeeeehhhhheeeeeeepppppeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeepppppppp...pppppTTTTTT;;wwWXX',
-  'XXw;Thhhhh.hhhhhhhhhhhhhhhhhhhhhhhheeeepppeeeeeeeeeeeeeeeeeeeeeeeehhhheeeeeeeepppeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehU......eeeeeeeeeeeeeeeeeeepppppppp.pppppppTTTTTTT;wwWXX',
-  'XXw;Thhhhh.hhhhhhhhhhhhhhhhhhhhhhhheeeeepeeeeeeeeeeeeeeeeeeeeeeeehhhheeeeeeeeeepeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhheeee..eeeeeeeeeeeeeeeeeepppppppp.pppppppTTTTTTTTwwWXX',
-  'XXw;Thhhh..hhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhheehhe..eeeeeeeeeeeeeeeeepppppppp.pppppppTTTTTTTTwwWXX',
-  'XXw;Th....hhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhehhhhe.......eeeeeeeeeeeppppp....pppppppTTTTTTTTwwWXX',
-  'XXw;Th.hhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhheeeeee.eeeeeeeeeeepppp..ppppppppppTTTTTTTTwwWXX',
-  'XXw;Th.hhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhheeeeheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhhheeeee.eeeeeeeeeeeepp..ppppppppppppTTTTTTTwwWXX',
-  'XXwsTh.hhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhheeehheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhhheeeee.eeeeeeeeeeeepp.pppppppppppppTTTTTTTwwWXX',
-  'XXwsjj.jjjjhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhheeeheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhhhheeeee.eeeeeeeeeeeep..pppppppppppppTTTTTTTwwWXX',
-  'XXwyyyyyyyjhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeehheeeeeehhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhhhheeeeeee.eeeeeeeeee....ppppppppppppppTTTTTTTwwWXX',
-  'XXwvvyyyvvjhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeehheeeeeehhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhhhhhhhheeeeeeeee..eeeee.....eppppppppppppppppTTTTTTTwwWXX',
-  'XXwyyyPyyy.hhhhhhhhhhhhhhhhhhhhhhhhheeheeeeeeeeeeeeeeeeeeeeehheeeeeehhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeehhheeeeeeeeeeee.eee...eeeeeppppppppppppppppTTTTTTTwwWXX',
-  'XXwyyyyyyy.hhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeehhhhheeeehhhhhhhhheeeehheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee...e.eeeeeeeppppppppppppppppTTTTTTTwwWXX',
-  'XXwwyyyyyy...hhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeehhhhhhheehhhhhhhhhhhehhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeppeeee.e.eeeeeeeppppppppppppppppTTTTTTTwwWXX',
-  'XXwwjjjjjjjh.hhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeehhheeeeeeeeeeeeeeeeeeeeeeeppppe..D..eeeeeeeppppppppppppppppTTTTTTTwwWXX',
-  'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeehhhhheeeeeeeeeeeeeeeeeeeeeppppp..eeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
-  'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeehhhhhhKhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeepppppp.peeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
-  'XXwwTTTTThhh.hhhhpppphhhhhhhheeehhhhhhheeeeeeeeeeeeeehhhhhheehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeepppppp..pppeeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
-  'XXwwTTTTTThh.hhhppppphhhhhhheeeeehhhhhheeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeppppppp.pppppeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
-  'XXWwTTTTTTTT.hhhppppppEhhhhpeeeeehhhhheeeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeepppppppp.ppppppeeeeeeppppppppppppppppTTTTTT;;wwWXX',
-  'XXWwTTTTTTTT..ppppppppppppppeeeeeehhhhppeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeppppppppp.pppppppeeeeeppppppppppppppppTTTTTT;;wwWXX',
-  'XXWwTTTTTTTTp.ppppppppppppppeeeeepphhhppppeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeepppppppppp.ppppppppeeeeppppppppppppppppTTTTTT;;wwWXX',
-  'XXWwTTTTTTTTp..pppppppppppppeeppppphhhppppppeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhepppeeepeeeeeeppppppppppp.pppppppppeeeppppppppppppppppTTTTTT;;wwWXX',
-  'XXWwTTTTTTTTpp.pppppppppppppeppppppphpppppppppeeephhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhphhhhhhhhhhhhhhhhhhpppppppppeeeepppppppppppp.ppppppppppeeppppppppppppppppTTTTTT;;wWWXX',
-  'XXWwTTTTTTTTpp..pppppppppppppppppppppppppppppppppphhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhppphhhhhhhhhhhhhhhhhppppppppppeeppppppppppppp.pppppppppppeppppppppppppppppTTTTTT;;wWWXX',
-  'XXWwTTTTTTTTppp...pppppppppppppppppppppppppppppppphhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhppphhhhhhhhhhhhhhhhhhpppppppppppppppppppppppp.ppppppppppppppppppppppppppppTTTTTT;;wWWXX',
-  'XXWwTTTTTTTTppppp.pppppppppppppppppppppppppppppppphhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhppppphhhhhhhhhhhhhhhhhpppppppppppjjjjjjjjjjjj..jppppppppppppppppppppppppppTTTTTT;;swWWXX',
-  'XXWwTTTTTTTTppppp.....ppppjjjjjjjjjjjjjjjpppppppppphhhhhhhhhhhhhhhphhhhhhhhhhhhhhppppppphhhhhhhhhhhhhhhppppppppppppjjjjjjjjj....jjpppppppppppppppppppppppppTTTTTTsswwwWWXX',
-  'XXWwTTTTTTTTppppppppp..pppjjjjjjjjjjjjjjjpppppppppppphhhhhhhhhhhhpppphhhhhpphhhhppppppppppphhhhhhhhhhhhppppppppppppjjyyyyyyyyyyy.....pppppppppppppppppppppTTTTTT;swwwwWWXX',
-  'XXWwTTTTTTTTpppppppppp......yyyyyyyyyyyjjppppppppppppphhhhhhhhhhhpppppphhpppphhppppppppppppppphhhhhhhhpppppppppppppjjkkkkyyykkkkjjpp..........pppppppppppTTTTTT;swwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjppppppppppppphhhhhhhhhppppppppppppppppppppppppppppppphhhhhhhhpppppppppppppjjkkkkyyykkkkjjppppppppppp.ppppppppppTTTTTT;swwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjppppppppppppphhhhhhhhhpppppppppppppppppppppppppppppppphhhhhhppppppppppppppjjkkkkoookkkkjjppppppppppp.pppppppppTTTTTT;swwwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjkkkkyyykkkkjjpppppppppppppppppphhhpppppppppppppppppppppppppppppppppphhpppppppppppppppppjjyyyooOooyyyjjTpppppppppp.......jjjjjjjjT;swwwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjyyyyyIyyyyyjjppppppppppppppppppphppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyoooyyyyjjTTTppppppppppjjjj.jjjjjjjjTsswwwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyyyyyyyyjjTTTTpppppppppjjyyyyyyyyyjjTsswwwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyyyyyyyyjjTTTTTppppppppjjtttyyytttjjssswwwwwwwWWXX',
-  'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjLLLLLyLLLLLssTTTTTTpppppppjjtttyyytttjjsswwwwwwwwWWXX',
-  'XXWwwTTTTTTTTpppppppppppppjjLLLLLyLLLLLjjTppppppppppppTTTTTpppppppppppppppVpppppppTTTTTppppppppppppppppppppppppppppjjjsssssssswwssTTTTTTTppppppjjyyyyHyyyyjjsswwwwwwwwWWXX',
-  'XXWwwTTTTTTTTpppppppppppppjjjjjjjjjjjjjjjTTTpppppppppTTTTTTTTTTTpppppppppppppppppTTTTTTTTTppppppppppppppTTTpppTppppjjjjssssssswwsssTTTTTTTpppppjjyyyyyyyyyssswwwwwwwwwWWXX',
-  'XXWwwTTTTTTTTpppppppppppppjjjjjjjjjjjjjjjTTTTTpppTTTTTTTTTTTTTTTTTTTTTTTTTTpppTTTTTTTTTTTTTTppTTTTTTTTTTTTTTTTTTppppppTTsssssswwsssssTTTTTTppppjjyyyyyyyyysswwwwwwwwwWWWXX',
-  'XXWWwTTTTTTTTpppppppppppppppTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppTTTTTTsswwssssssTTTTTTpppjjyyyyyyyyyswwwwwwwwwwWWWXX',
-  'XXWWw;TTTTTTTTpppppppppppppTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTppppTTTTTTsssssswwssTTTTTTppjjjjjjjjjsswwwwwwwwwwwWWWXX',
-  'XXWWw;;TTTTTTTTTpTTTTTTTTTTTTTTTTTT;;ss;TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTppTTTTTTTssswwwwssTTTTTTppjjjjjjjjjjswwwwwwwwwwwWWWXX',
-  'XXWWw;;TTTTTTTTTTTTTTTTTTTTTTTTTT;sssssss;TTTTTTTTTTTT;;ss;TTTTTTTTTTTTTTTTTTTTTTT;;;;;sTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;swwwwwwssTTTTTTpTTTTTTTTT;swwwwwwwwwwwWWWXX',
-  'XXWWw;;TTTTTTTTTTTTTTTTTTTTTTT;sssswwwwwss;;TTTTTTTTT;sssssssss;TTTTTTTTTTTTTTTTT;sssssss;TTTTTTTTTTTTTT;;;TTT;TTTTTTTTTTTTTTssswwwwwwssssTTTTTTTTTTT;;ssswwwwwwwwwwwWWWXX',
-  'XXWWw;;TTTTTTTTTTTTTTTTsssTTTsssswwwwwwwwwss;;TTT;;;sswwwwwsssssss;;;;;;;;;TTT;ssswwwwwsssssTT;sssssss;sssssssssTTTTTTTTTTTTTsswwwwwwwwsssTTTTTTTTTT;ssswwwwwwwwwwwwwWWWXX',
-  'XXWWw;;TTTTTsTTTTTTTTTsssssssswwwwwwwwwwwwwwss;;ssssswwwwwwwwwwwssssssssss;;;ZssswwwwwwwwwsssssssssssssswwwssswssTTTTTTTTTTTsswwwwwwwwwssssTTTTTTTTsswwwwwwwwwwwwwwwwWWWXX',
-  'XXWWw;;TTTTsssTTTTTsssssssssswwwwwwwwwwwwwwwwwssswwwwwwwwwwwwwwwwwwwwwwwwwwssswwwwwwwwwwwwwwsswwwwwwwwwwwwwwwwwwss;TTTTTsssssswwwwwwwwwssssTTTTTTT;swwwwwwwwwwwwwwwwwWWWXX',
-  'XXWWws;TTssssssssssssssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwssssssssssssswwwwwwwwwsssssTTTTTTsswwwwwwwwwwwwwwwwwWWWXX',
-  'XXWWws;;ssswwwsssssssssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwsssssssssssswwwwwwwwsssssssT;;;sswwwwwwwwwwwwwwwwwWWWXX',
-  'XXWWwsssswwwwwwwswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwsswwwwwwwwwwwwwwwwwsssssssssswwwwwwwwwwwwwwwwwwwWWWXX',
-  'XXWWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwsssswwwwwwwwwwwwwwwwwwwwwwWWWXX',
-  'XXWWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWXX',
-  'XXWWwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWXX',
-  'XXWWwwwwwwwwWwwwwwwwwwwwWWWWWWWWWwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWwwwwwWWWWWWwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWXX',
-  'XXWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
-  'XXWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWwwwwwwwwwwssssTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppssswwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWwwwwwwwwwwssshTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppssswwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWwwwwssswwsssshhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppppsswwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwwwsssssssshhhhhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppppssswwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwwssppssshhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppppeesswwwwwwwwWWWWWWWWWWWWWwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwssppssshhhhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppppeesswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwsspsBhhhhhhhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTppppppppsswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwsssseeeeeeehhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTppppppppssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwwssshhhhhheeeehhhhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppppppssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwssshhhhhhhhhhehhhhhTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTppppppppeesswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwssswwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwwsshhhhhhhhhhhehhhhhhTThhTTTTTTTTTTTTTThTTTTTTTTTTTTTTTTTTTTpppppppeeesssssssssssssssssswwwwwwwwwwwwwwwwwwwwwwwwssssswwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwssshhhhhhhhhhheehhhhhhhhhhhTTTTTTTTTTTeheTTTTTTTTTTTTTTTTTTTppppppppeeessssssssssssssssssssssswwwwwwwwwwwwwwwwwsspppsswwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwwsshhhhhhhhhhhhheeehhhhhhhhhhhhTTTTTTTTeheTTTTTTTTTTTTTTTTTTTppppppppeeeeeeeeeeeeeeeepppppsssssssssssssswwwwwwwsspppppsswwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwsshhhhhhhhhhhhhhhhehhhhhhhhhhhhhhhhTTTTeheTTTTTTTTTTTTTTTTTTTpppppppppeeeeeeehhhheeeeppppppeeessssssssssssssswwss..G.psswwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXwsshhhhhhhhhhhhhhhheeeeehhhhhhhhhhhhhhhTeheTTTTTTTTTTTTTTTTTTTpppppppppeeeehhhhhhhhhepppppppeeeeepppsssssss........pp.psswwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXsshhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeTTTTTTTTTTTTTTTTTppppppppppphhhhhhcccc..........................ssssssssp.sswwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXsshhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheheTTTTTTTTTTTTTTTTTpppppppphhhhhhccccccc.chhhhhhhheeeeeeeppeeeeeeeeeeesssss.swwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXshhhhhhhhhhhhhhhhhhhhhhhhhhhhhcccccchhhhheheTTTTTTTTTTTTTTTTTpppppphhhhhcccccccccc.ccccchhhhhhhhheeeeeeeeeeeeeeeeeess..sswwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXshhhhhhhhhhhhhhhhhhhhhhhhhhhccccccccccccceheTTThTTTTTTTTTTTTpppphhhhhhcccccccccMMcFcccccccccchhhhhhhhheeeeehhhhhhhhhhs..ssswwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXshhhhhhhhhhhhhhhhhhhhhhhcccccccccccccccccehhhhhhhhhTTTTTTTTTphhhhhhcccccccccMMMMMMMMMccccccccccccchhhhhhhhhhhhhhhhhhccc...sswwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXshhhhhhhhhhhhhhhhhhhhcccccccccccMMMMcccccehhhhhchhhhhhTTTTphhhhhccccccccccMMMMMMMMMMMMMMMMcccccccccccchhhhhccccccccccccch..sswwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXshhhhhhhhhhhhhhhhccccccccccccMMMMMMMMMMMMeehhhhcccchhhhhhhhhhccccccccccMMMMMMMMMMMMMMMMMMMMMMcccccccccccccccccccccccccccch....swwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWXX',
+  'XXshhhhhhhhhhhhhcccccccccccMMMMMMMMMMMMMMMMMehhhccccccccchhhccccccccccMMMMMwMMMMMMMMMMMMMMMMMMMMMMccccccccccccccccccccMMMMMMMss.sswwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWXX',
+  'XXshhhhhhhhhhccccccccccMMMMMMMMMMMMMMMMMMMMMehhhcMccccccccccccccccMMMMMMMMMwMMMMMMMMMMMMMMMMMMMMMMMMMMcccccccccMMMMMMMMMMMMMMMM....wwwwwwwwwwyyeyywwwwwwwwwwwwWWWWWWWWWWXX',
+  'XXshhhhhhhhccccccccMMMMMMMMMMMMMMMMMMMMMMMMMehhhcMMMMMcccccccccMMMMMMMMMMMMwwMMMMMMMMMMMMMMMMMMMMMMMMMMMMccMMMMMMMMMMMMMMMMMMMMMss.swwwwwwwyeyyyeyyywwwwwwwwwwwWWWWWWWWWXX',
+  'XXsshhhhhccccccccMMMMMMMMMMMMMMMMMMMMwMMMMMMeeehMMMMMMMMMMccMMMMMMMMMMMMMMMMwMMMMMccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwwMMMMMMMccccs.sswwwwwwyytyyyeyywwwwwwwwwwwwWWWWWWWWXX',
+  'XXsshhhcccccccMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMhehMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMccccccccMMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMccccccc....swwweyyyeyyyeyywwwwwwwwwwwwWWWWWWWXX',
+  'XXssshccccccMMMMMMMMMMMMMMMMMMMMMMMMwwMMMMMMMhehMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMcccccccccccMMMMMMMMMMMMMMMMMMMMMMMMMMMwwMcccccccchhhss..........SyyyeywwwwwwwwwwwwwwWWWWWXX',
+  'XXwsscccccMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMhehMMMMMMMMMMMMMMMMMMMMMMMMMMMMwcccccccccccccccccMMMMMMMMMMMMMMMMMMMMMMMcwccccccchhhhhhssssssyyeyy.eyyyewwwwwwwwwwwwwwwWWWWXX',
+  'XXwsssccMMMMMMMMMMMMMMMMMMMMMMMMMMMMwMMMMMMMMhNeeMMMMMMMMMMMMMMMMMMMMMMMMMMMwwccchhhhhhcccccccccccMMMMMMMMMMMMMMccccccwwcccchhhhhTTThsshhchyye..yeyyswwwwwwwwwwwwwwwwWWWXX',
+  'XXwwssccMMMMMMMMMMMMMMMMMMMMMMMMMMMcwMMMMMMMchhheMMMMMMMMMMMMMMMMMMMMMMMMMcccwcchhhhhhhhhhhcccccccccccMMMMMMMccccccccccwwchhhhhhhhTTTTThhhTyy..yyyeyssswwwwwwwwwwwwwwwWWXX',
+  'XXwwwssMMMMMMMMMMMMMMMMMMMMMMMMMccccwccccMMMchhheMMMMMMMMMMMMMMMMMMMMMMMMccccwhhhhppppphhhhhhcccccccccccccccccccccccccchwhhhhhhhhhhTTTTTThTTT.yeyycsssssswwwwwwwwwwwwwwWXX',
+  'XXwwwsssMMMMMMMMMMMMMMMMMMMMMMcccccwwcccccccchhheMMMMMMMMMMMMMMMMMMMMMcccccccwhhppppphhhhhhhhhhhhcccccccccccccccccchhhhhwweeehhhhheeTTTTTTTTT.hhcccccsssssswwwwwwwwwwwwwXX',
+  'XXwwwwssMMMMMMMMMMMMMMMMMMMMMccccccwccccccccchhheeMMMMMMMMMMMMMMMMMMccccccchhwpppppThhhhhhhhhhhhhhhhhccccccccchhhhhhhhhhewweeeeeeeeeTTTTTTTTT.hhhhcccccsssssswwwwwwwwwwwXX',
+  'XXwwwwwssMMMMMMMMMMMMMMMMMMccccccchwhhhcccccchhhheccMMMMMMMMMMMMMcccccccchhhhwwppppThhhhhhhhhhhhhhhhhhhhhchhhhhhhhheeeeeeeweeeeeeeeeeTTTTTTTT.hehhhccccccssssswwwwwwwwwwXX',
+  'XXwwwwwsssMMMMMMMMMMMMMMMccccccchhhwhhhhhhcchhhhheccccccMMMMMMcccccccchhhhppppwppppTThhhhhhhhhhheeeeehhhhhhhhheeeeeeeeeeeewweeeeeeeeeeTTTTTee.eeehhhhccccccsssswwwwwwwwwXX',
+  'XXwwwwwwssMMMMMMMMMMMMMccccccchhhhwwhhhhhhhhhhhhheccccccccccccccccchhhhhppppppwpppppphhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeweeeeeeeeeeeeeeeee.eeeeehhhccccccsssswwwwwwwwXX',
+  'XXwwwwwwssMMMMMMMMMMcccccccchhhheewhhhhhhhhhhhhhheecccccccccccccchhhhpppppppppwwpppppphhhhhhhheeeeeeeeeeeeeeeeeeepppppeeeeewweeeeeeeeeeeeeeee.eeeeeehhhhcccccssswwwwwwwwXX',
+  'XXwwwwwwssMMMMMMMMccccccccchhheeeewhhhhhhhhhhhhhhehhhccccccccchhhhhppppppppppppwpppppphhhhhhhheeeeeeeeeeeeeeeeeepppppppeeeeewweeeeeeeeeeeeeee.eeeeeeehhhhcccccssswwwwwwwXX',
+  'XXwwwwwssMMMMMMMccccccccchhheeeeeewehhhhhhhhheeeeehhhhhhhhhhhhhhpppppppppppppppwwpppppphhhhhheeeeeeeeeeeeeeeeeeeppppppppeeeeeweeeeeeeeeeeeeee.eeeeeeeeehhhhhhhhssswwwwwwXX',
+  'XXwwwwwscccccccccccccchhhhheeeeeewweeeeeeeeeeeeeeeeephhhhhhhhpppppppppppppppppppwwppppphhhhheeeeeeeeeeeeeeeeeeeeppppppppeeeeewweeeeeeeeeeeeee.eeeeeeeeeehhhhhhhhsssswwwwXX',
+  'XXwwwwsscccccccccccchhhheeeeeeeeeweeeeeeeeeeeeeeeepeeeeeeeeeeeeeeApppppppppppppppwpppppphhheeeeeeeeeeeeeeeeeeeeepppppppppeeeeeweeeeeeeeeeeeee.eeeeeeeeeeeehhhhheeessswwwXX',
+  'XXwwwwsccccccccccchhhheeeeeeeeeewweeeeeeeeeeeeeeeppppppppppppepppppppppppppppppppwwppppphheeeeUeeeeeeeeeeeeeeeeeppppppppppeeeewweeeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeessswwXX',
+  'XXwwwsshhccccccchhhheeeeeeeeeeeeweeeeeeeeeeeeeeee;;;;;pppppppeppppppppppppppppTpppwwppppeeeeee.eeeeeeeeeeeeeeeeeeppppppppppeeeeweeeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeessswXX',
+  'XXwwwsehhhhhhhhhhhheeeeeeeeeeeewweeeeeeeeeeeeeee;;;;;;;;;;;;pepppppppppppppppTTTpppwppppppeeee.eeeeeeeeeeeeeeeeeeeeeppppppppeeewweeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeesssXX',
+  'XXwwsseeehhhhhhhheeeeeeeeeeeeeeweeeeeeeeeeeeeee;;;;;;;;;;;;;pepppppppppppppppTTTTppwwppppppppp.eeeeeeeeeeeeeeeeeeeeeepppppppeeeeweeeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeessXX',
+  'XXwsseeeeeeeeeeeeeeeeeeeeeeeeeeweeeeeeeeeeeeeee;;;;;;;;;;;;;;epppppppppppppppTTTTTppwwpppppppp.....eeeeeeeeeeeeeeeeeepppppppeeeewweeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeesXX',
+  'XXwseeeeeeeeeeeeeeeeeeeeeeeeeewweeeeeeeeeeeeee;;;;;;;;;;;;;;;epppppppppppppppTTTTTpppwpppppppjjjrj.jjjjeeeeeeeeeeeeeeeppppppeeeeeweeeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeesXX',
+  'XXEs;;;;;eeeeeeeeeeeeeeeeeeeeeweeeeeeeeeeeeeee;;;;;;;;;;;;;;peppppppppppppppTTTTTppppwwppppppjjjrr.......jjeeeeeeeeeeeeeppppppeeewweeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXss;;;;;;;;;;;eeeeeeeeeeeeeewweeeeeeeeeeeeee;;;;;;;;;;;;;;;peppppppppppppppTTTTTpppppwwppppjjjjjrr..jjj..jppppjeeeeeeeeeeeepeeeeeweeeeeeeeee.eeeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXss;;;;;;;;;;;;;;;;;eeeeeeehweeeeeeeeeeeeeee;;;;;;;;;;;;;;ppepppppppppppppTTTTTpppppppwwpppjjjjjjrj...jj.jppppjjjjjeeeeeeeepeeeeewwjjjjjjjjj.jjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXs;;;;;;;;;eeeeeeeee;;;;;;ewweeeeeeeeeeeeee;;;;;;;;;;;;;;;ppepppppppppppTTTTTTTppppppppwwwjjjjjjjrjjj.jj.........jjjjjjeeeeeeeeeeewjjjjjjjjj.jjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXs;;;;;;;eeeeeeeeeeeee;;;;;w;;;;;eeeeeeeeee;;;;;;;;;;;;;;pppepppppppppppTTTTTTTppppppppppwwjjjjjjrjjj..jjjpppjjj.........jjeeeeeeewwyyyyyyy..jjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXs;;;;;eeeeeeeeeeeeeeeee;;;w;;;;;;;;wwweee;;;;;;;;;;;;;;;pppepppppppppppppTTTTTpppppppppppwwjjjjjrjjjj.jjjppjjjjjjjjjjjj...eeeeeeejwytyyt...yjjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXs;;;;;eeeeeeeeeeeeeeeee;;ww;;;;;;;;;;;;;;;;;;;;;;;;;;K;;pppepppppppppppppppppppppppppppppjwwjjjjrjjjj.jjjjjjjjjjjjjjjjjjj.........wwyyy...tyjjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXs;;;;eeeeeeeeeeeeeeeeeee;w;;;;;;;;;;;;;;;;;;;;;;;;;;;e;;;ppepppppppppppppppppppppppppppppjjwwjjjrjjjj.jjjjjjjjjjjjjjjjjjjjjeeeeee..b...R...yjjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXs;;;eeeeeeeXXXXXXXeeeeeeew;;;;;;;;;;;;;;;;;;;;;;;;;;;e;;;ppepppppppppppppppppppppppppppppjjjwwwjrjjjj.jjjjjjjjjjjjjjjjjjjjjeeeeeejjwwt......jjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXss;;eeeeeeXXXXXXXXXeeeeeew;;;;;;;;;;;;;;;;;;;;;;;;;;;e;;;;peppppppppppppppppppppppppppppjjjjjjwwrrjjj.jjjjjjjjjjjjjjjjjjjjjeeeeeejj.b....ty.jjeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXss;;eeeeeeXXXXXXXXXeeeeeww;;;;;;;;;;;;;;;;;p;;;;;;;;;ep;;;eeppppppppppppppppppppppppppppjjjjjjjwwrrrr...............................ww...yy..jeeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXss;;eeeeeeXXXXIeeeeeeeeew;;;;;;;;;;;;;;;;;;ppp;;;ppeeeeeeeepppppppppppppppppppppppppppppjjjjjjjjwkyyk.ykyyyjjjjjjjjjjjjjjjjjeeeeejjjjwjjjjjj..eeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXsss;eeeeeeXXXXXXXXXeeeeew;;;;;;;;;;;;;;;;;;;ppppeeeeeppppppppppppppppppppppppppppppppppjjjjjjjjwwyyooooo.yyjjjjjjjjjjjjjjjjssseeejjjjwwjjjjjj.eeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXwss;eeeeeeXXXXXXXXXeeeeww;;;;;;;;;;;;;;;;;;;ppppeppepppppppppppppppppppppppppppppppppppjjjjjjjjwyyyooooo.kyjjjjjjjjjjjjjjjjsssssseeeeeweeeeee...eeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXwssseeeeeeeXXXXXXXeeeeewe;;;;;;;;;;;;;;;;;;;;pppeppeppppppppppppppppppppppppppppppppppjjjjjjjjwwykyooOoo.yyjjjjjjjjjjjjjjjsssssssssssewweeeeeee.eeeeeeeeeeeeeeeeeeeeesXX',
+  'XXwwss;eeeeeeeeeeeeeeeeeew;;;;;;;;;;;;;;;;;;;;;peeeppepppppppppppppp............................b....ooooo.rrjjjjjjjjjjjjjjssssssssssssssweeeeeee.eeeeeeeeeeeeeeeeeeeeesXX',
+  'XXwwsss;eeeeeeeeeeeeeeeeew;;;;;;;;;;;;;;;;;;;;;;eppppeppppppppp......ppppppTTTTTTTTpppjjjjjjjjjwwjyyykooko.krjjjjjjjjjjjjjjsssssssssssssswwssssee.eeeeeeeeeeeeeeeeeeeeesXX',
+  'XXwwwss;eeeeeeeeeeeeeeeeww;;;;;;;;;;;;;;;eee;;;;e...............ppppTTTTTTTTTTTTTTTpppjjjjjjjjjwpppppp..y.....jjjjjjjjjjjjsssssssssssssssswwsssss.ssseeeeeeeeeeeeeeeeessXX',
+  'XXwwwwss;;eeeeeeeeeeeeeebeeeeeeeeeeeeeeeeeeeeeeeeppppppppppppTTTTTTTTTTTTTTTTTTTTTTTpjjjjjjjjjwwpjLLLyyyyyLLL....jjjjjjjjsssssssssssssssssswwssss.ssseeeeeeessssssssssssXX',
+  'XXwwwwwss;;;eeeeeeeee;;;w;;;;;;;;;;;;;;eeeeepe;;;ppppeTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTjjjjjjjjjwppjjjjjjjjjjjjjrr.rrrrrrrrrrrrrrrrrrrrrrrrrrrwwsss.sssseeeeesssssssssssswXX',
+  'XXwwwwwss;;;;;;;;;;;;;;ww;;;;;;;;;;;;;eeeePeeee;;TTTpTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTjjjjjjjwwppjjjjjjjjjjjjjjj.jjjjjjjsssssssssssssssseeerrwwss.jjjjjjjjjjjjsssssssswwXX',
+  'XXwwwwwwss;;;;;;;;;;;;;w;;;;;;;;;;;;;;;eeyeeee;;;TTTpTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTjjjjjjjwpppppppjjjjppppppj..jjjjjssssssssssssssss.......b.....jjjjjjjjjjsssssssswwXX',
+  'XXwwwwwwsss;;;;;;;;;;;;w;;;;;;;;;;;;;;;eyeeeey;;TTTTpTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTjjjjjwwpppppppjjjppppppppp....jssssssssssseessse.eeeeeewwerr....yyyyyjjssssssswwwXX',
+  'XXwwwwwwwss;;;;;;;;;;;ww;;;;;;;;;;;;;;;;;eee;;;;TTTTpTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTjjwwwppppppppppppppppppppppp..sssssssseeeeeeeee.eeeeeeewwjjytr.tyyyyjjsssssswwwwXX',
+  'XXWwwwwwwwss;;;;;;;;;;w;;;;;;;;;;;;;;;;;;;;;;;;;TTTTpTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTjwwjppppppppppppppppppppppppp.ssseeeeeeeeeeeeee.eeeeeeeewwwwyy....tyjjssssswwwwwXX',
+  'XXWwwwwwwwsss;;;;;;;;;w;;;;;;;;;;;;;;;;;;;;;;;;TTTTTpTTTTTTTTTTTTTTTTTTTpppppppppTTTTTTwwwjjppppppppppppppppppppppppe.eeeeeeeeeeeeeeee..eeeeeeeeewwwwy.H...yjjessswwwwwwXX',
+  'XXWWwwwwwwwsss;;;;;;www;;;;;;;;;;;;;;;;;;;;;;;;TTTTTpTTTTTTTTTTTTTTTTTppppppppppppTTTTwwTTjpppppppppppppppppppppppppe.eee..............eeeeeeeeeswwwww.....yjjsswwwwwwwwXX',
+  'XXWWWwwwwwwwsss;;;;wwww;;;;;;;;;;;;;;;;;;;;;;;TTTTTTpTTTTTTTTTTTTTTTTppppppppppppppTwwwTTTTppppppppppppppppppppppppeeD....eeeeeeeeeeeeeeeeeeeeeeswwwwww..tyyjjswwwwwwwwwXX',
+  'XXWWWwwwwwwwwsss;;;wwww;;;;;;;;;;;;;;;;;;;;;;;TTTTTTpTTTTTTTTTTTTTTTTpppppppppppppwwwTTTTTTpppppppppppppppppppppppeeeeeeeeeeeeeesssseeeeeeeeeeessjwwwwww.yyywwwwwwwwwwwwXX',
+  'XXWWWWwwwwwwwwsss;;wwww;;;;;;;;;;;;;;;;;;;;;;TTTTTTTpTTTTTTTTTTTTTTTTppppppppppppbwTTTTTTTTTpppppppppppppppppppppeeeeeeeeeeeeesssssssssssseeeeessjjwwwwwwwwwwwwwwwwwwwWWXX',
+  'XXWWWWWwwwwwwwwssswwww;;;;;;;;;;;;;;;;;;;;;;;TTTTTTTpTTTTTTTTTTTTTTTTppppppppppwwwpTTTTTTTTTTppppppppppppppppppppeeeeeeeeeeeesssswwwwssssssssssssjjjwwwwwwwwwwwwwwwwwWWWXX',
+  'XXWWWWWWwwwwwwwwwswwww;;;;;;;;;;;;;;;;;;;;;;;TTTTTTTpTTTTTTTTTTTTTTTTpppppppppwwpppppTTTTTTTTpppppppppppppppppppeeeeeeeeeeesssswwwwwwwwwwwwssswwwwwwwwwwwwwwwwwwwwwWWWWWXX',
+  'XXWWWWWWWwwwwwwwwwwwwwss;;;;;;;;;;;;;;;;;;;;TTTTTTTTpTTTTTTTTTTTTTTTTTTTpwwwwwwppppppppTTTTTTTjjpppppppppppppppeeeeeeeeeessssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWXX',
+  'XXWWWWWWWWwwwwwwwwwwwssss;;;;;;;;;;;;;;;;;;;TTTTTTTTpTTTTTTTTTTTTTTTTTTwwwwwwpVppppppppppTTTTTTjppppppppppppppeeeeeesssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWXX',
+  'XXWWWWWWWWWwwwwwwwwwwwwsss;;;;;;;;;;;;;;;;;TTTTTTTTTpTTTTTTTTTTTTTTTwwwwwwwwwppppppppppppppTTTTTpjppppppppppppeesssssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWwwwwwwwwwwwss;;;;;;;;;;;;;;;;;TTTTTTTTTpTTTTTTTTTTTTTwwwwwwwwwwpppppppppppppppppppppjjppppppppppesssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWwwwwwwwwwwss;;;;;;;;;;;;;;;;;TTTTTTTTTpTTTTTTTTTTwwwwwwwwwwwpppppppppppppppppppppTTjjpppppppppsssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWwwwwwwwwwsss;;;;;;;;;;;;;;;TTTTTTTTTepTTTTTTTTwwwwwwwwwwTTpppppppppppppppppppppppTTjppppppppssssswwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWwwwwwwwwss;;;;;;;;;;;;;;;TTTTTTTTTTpTTTTTwwwwwwwwwwwTTTTppppppppppppppp;;;pppppTTTppppppssssswwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWwwwwwwwss;;;;;;;;;;;;;;TTTTTTTTTTTpTTTwwwwwwwwwwTTTTTTppppppppppppppp;;;;;;ppppTTpssssssssswwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWwwwwwwwss;TT;;;;;;;;;;TTTTTTTTTTTZTwwwwwwwwwwTTTTTTTTppppppppppppppp;;;;;;pppssssssssssswwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWwwwwwwwssTT;;;;;;;;;;TTTTTTTTTTTwwwwwwwwwTTTTTTTTTTTTppppppppppppp;;;;;;;sssssssssssswwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWwwwwwwwwsss;;;;;;;;;TTTTTTTTTTTwwwwwwwwTTTTTTTTTTTTTTppppppppppppp;;;;;;ssssssssswwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWwwwwwwwwsss;;;;;;;;TTTTTTTTTTwwwwwwwTTTTTTTTTTTTTTTTTppppppppppppp;;ppssswwwwwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWWwwwwwwwwwsss;;;;;TTTTTTTTTwwwwwwwTTTTTTTTTTTTTTTTTTTTppppppppppppppsssswwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWWWwwwwwwwwwwsss;;;TTTTTTTTTwwwwwwTTTTTTTTTTTTTTTTTTTTTTpppppppppppsssswwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWWWWwwwwwwwwwwwssssssTTTTTTTwwwwwTTTTTTTTTTTTTTTTTTTTTTTppppppppssssswwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWWWWWWWWWWWWWWWWWWWWWWWwwwwwwwwwwwwsssssTTTTTwwwTTTTTTTTTTTTTTTTTTTTTTTTTppppppsssswwwwwwwwwwwwwwwwwwwwwwWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
 ];
@@ -461,6 +461,11 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
   e: { tile: TileCode.HEATH },
   s: { tile: TileCode.SHORE },
   ';': { tile: TileCode.MIRE },
+  // ═══ v2 ONLY: the railway and its bridges ═══
+  // The redesigned moor runs a line east from Gearford and crosses three rivers.
+  // v1 had one bridge cell and no rail at all, so neither had a glyph.
+  r: { tile: TileCode.RAIL },
+  b: { tile: TileCode.BRIDGE },
   '=': { tile: TileCode.BRIDGE },
   w: { tile: TileCode.WATER },
   W: { tile: TileCode.DEEPWATER },
@@ -791,122 +796,258 @@ export function groundAt(level: LevelView, x: number, y: number): Ground {
  */
 export type Region = {
   readonly name: string;
-  /** Inclusive. */
-  readonly x0: number;
-  readonly y0: number;
-  /** Inclusive. */
-  readonly x1: number;
-  readonly y1: number;
+  /**
+   * WHERE THE LABEL GOES, and it is an anchor rather than a box.
+   *
+   * v1 modelled country as twelve rectangles that had to TILE, and the note that
+   * used to sit here explained at length why bands were safer than a bag of
+   * boxes: a gap between two rectangles is a nameless strip that announces
+   * itself over and over on one border where nobody is looking.
+   *
+   * The redesigned moor is not rectangular. Its regions are drawn per cell —
+   * *"irregular per-cell regions; seed is label anchor, not a rectangle"* — and
+   * the bounding boxes overlap so heavily that one spans x 5 to 157 and another
+   * fills 17% of its own box. Rectangles would name the wrong country across
+   * most of the map, which is worse than the seam they were protecting against.
+   *
+   * So the SHAPE lives in `ALDERBROOK_REGION_ROWS`, one character per cell, and
+   * this is only the point a label is drawn at. A gap is now unrepresentable for
+   * a better reason than before: every cell holds exactly one index, because
+   * there is nowhere else for it to hold anything.
+   */
+  readonly x: number;
+  readonly y: number;
 };
 
 /**
- * The moor, north to south, as it actually looks on the shipped map.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH COUNTRY EACH CELL IS IN. ONE CHARACTER PER CELL, LIKE THE TILES.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- *   y 0-13    beyond the range: the cold strip where four doors sit
- *   y 14-31   the range itself, and the flat behind its eastern end
- *   y 32-57   downs in the west, heath in the middle, plains to the east
- *   y 58-77   the low country, which is where Alderbrook is
- *   y 78-87   the southern wood and the beach
- *   y 88-99   the water
+ * `0` is unregioned — the open sea and the eroded border, which are not
+ * anywhere. `1`-`c` index `REGION_NAMES`.
+ *
+ * Generated by `tools/import-overworld-v2.mjs` from the redesign's own region
+ * layer, in the same row form the tiles use, so the two can be read against each
+ * other by eye.
  */
-const BANDS: readonly { readonly y1: number; readonly cuts: readonly [number, string][] }[] = [
-  // Beyond the mountains. Blackwood, Gearford, the Archive and Saint's Rest all
-  // sit along here, which is why the walk to any of them is the long one.
-  {
-    y1: 13,
-    cuts: [
-      [104, 'the Cold Furrows'],
-      [169, 'the Saintswood'],
-    ],
-  },
-  // The range, and the open flat at its eastern end — the easy way round.
-  {
-    y1: 31,
-    cuts: [
-      [104, 'the Kettle Range'],
-      [169, 'Kettleflat'],
-    ],
-  },
-  // The middle of the map, and the most-crossed ground on it.
-  {
-    y1: 57,
-    cuts: [
-      [69, 'the Grey Downs'],
-      [139, 'the Bracken Waste'],
-      [169, 'Ashwick Reach'],
-    ],
-  },
-  // Home. The spawn is at 121,72.
-  {
-    y1: 77,
-    cuts: [
-      [69, 'the Sedge'],
-      [169, 'Alderbrook Common'],
-    ],
-  },
-  // The wood along the south coast, and the beach east of it.
-  {
-    y1: 87,
-    cuts: [
-      [124, 'the Blackwater Wood'],
-      [169, 'the Long Strand'],
-    ],
-  },
-  // The sea, which you cannot walk on — named anyway, because the world map
-  // draws it and a player pointing at it should have a word for it.
-  { y1: 99, cuts: [[169, 'the Drowned Coast']] },
+const ALDERBROOK_REGION_ROWS: readonly string[] = [
+  'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccc55555555555555555555555555111111111111111111111ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccc55555555555555555555555555511111111111111111111111ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccc555cc55555555555555555555555555555511111111111111111111111cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccc5555555555555555555555555555555555555111111111111111111111111cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccc555555555555555555555555555555555555551111111111111111111111111ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccc55555555555555555555555555555555555555551111111111111111111111111cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccc555555555555555555555555555555555555555551111111111111111111111111ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccc55555555555555555555555555555555555555555511111111111111111111111111ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccc555555555555555555555555555555555555555555111111111111111111111111111cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccc5555555555555555555555555555555555555555555111111111111111111111111111cccccccccccccccccccccccccccccccccccccccccc222cccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccc555555555555555555555555555555555555555555551111111111111111111111111111111111111111111cccccccccccccccccccccccc22222ccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccc5555555555555555555555555555555555555555555551111111111111111111111111111111111111111111111111ccccccccccccccccc2222222cccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccc5555555555555555555555555555555555555555555555111111111111111111111111111111111111111111111111111111111ccccccc442222222ccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccc555555555555555555555555555555555555555555555555111111111111111111111111111111111111111111111111111111111444444444222222ccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccc555555555555555555555555555555555555555555555555111111111111111111111111111111111111111111111111111111111444444444422222ccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cc555555555555555555555555555555555555555555555555551111111111111111111111111111333311111111111111111111111444444444444222cccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cc5555555555555555555555555555555555555555555555555551111111111111111111111113333333131111111111111111111144444444444444444ccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cc55555555555555555555555555555533333355555555555555511111111111111111111133333333333333331111111111111144444444444444444444cccccccccccccccccccccccccccccccccccccccccccccc',
+  'cc555555555555555555555555555533333333333355555555555511111111111111111133333333333333333333333111111114444444444444444444444ccccccccccccccccccccccccccccccccccccccccccccc',
+  'cc5555555555555555555555553333333333333333355555555555511111111111111333333333333333333333333333333311144444444444444433344444cccccccccccccccccccccccccccccccccccccccccccc',
+  'cc555555555555555555555333333333333333333335555555555555111111111133333333333333333333333333333333333333444443333333333333444444cccccccccccccccccccccccccccccccccccccccccc',
+  'cc55555555555555555333333333333333333333333555555333355511111113333333333333333333333333333333333333333333333333333333333334444444cccccccccccccccccccccccccccccccccccccccc',
+  'cc55555555555555333333333333333333333333333355553333333331113333333333333333333333333333333333333333333333333333333333333333344444444ccccccccccccccccccccccccccccccccccccc',
+  'cc5555555555533333333333333333333333333333335555333333333333333333333333333333333333333333333333333333333333333333333333333333344444444cccccc22222cccccccccccccccccccccccc',
+  'cc555555555333333333333333333333333333333333555533333333333333333333333333333333333333333333333333333333333333333333333333333333444244444cc222222222cccccccccccccccccccccc',
+  'cc55555553333333333333333333333333333333333355553333333333333333333333333333333333333333333333333333333333333333333333333333333334222444444c22222222cccccccccccccccccccccc',
+  'cc555553333333333333333333333333333333333333355533333333333333333333333333333333333333333333333333333333333333333333333333333333322222244444444222222ccccccccccccccccccccc',
+  'cc555533333333333333333333333333333333333333355533333333333333333333333333333333333333333333333333333333333333333333333333333333222222222444444422222ccccccccccccccccccccc',
+  'ccc55533333333333333333333333333333333333333355533333333333333333333333333333333333333333333333333333333333333333333333333333344422222222444444442222ccccccccccccccccccccc',
+  'ccc55533333333333333333333333333333333333333355553333333333333333333333333333333311111133333333333333333333333333333333333334444422222222244444442222ccccccccccccccccccccc',
+  'cccc553333333333333333333333333333333333333335555333333333333333333333333333333311111111444333333333333333333333333333333344444444222222222444444422222ccccccccccccccccccc',
+  'ccccc5533333333333333333333333333333333333333555533333333333333333333333333333661111111444444333333333333333333333333334444444444442222222222444443222222ccccccccccccccccc',
+  'ccccc555333333333333333333333333333333333333355553333333333333333333333333333666611114444444444443333333333333333334444444444444444422222222244433333222222ccccccccccccccc',
+  'cccccc5533333333333333333333333333333333333335555533333333333333333333333336666666664444444444444444433333333344444444444444444444442222222224442233333222277ccccccccccccc',
+  'ccccccc5533333333333333333333333335555533333355555333333333333333333333336666666666644444444444444444444444444444444444444444444444442222222244427733333322777cccccccccccc',
+  'ccccccc55533333333333333333333335555555555335555553333333333333333333366666666666666644444444444444444444444444444444444444444444444442222277444777773333337777ccccccccccc',
+  'cccccccc55333333333333333333335555555555555555555533333333333333333666666666666666666444444444444444444444444444444444444444444444444477777774444777773333337777cccccccccc',
+  'cccccccc55333333333333333333555555555555555555555553333333333333366666666666666666666644444444444444444444444444444444444444444444444777777777444777777733337777cccccccccc',
+  'cccccccc553333333333333333355555555555555555555555566333333333666666666666666666666666444444444444444444444444444444444444444444444447777777774447777777733777777ccccccccc',
+  'ccccccc55333333333333333355555555555555555555555555666666666666666666666666666666666666444444444444444444444444444444444444444444444777777777777777777777777777777cccccccc',
+  'ccccccc5333333333333335555555555555555555555555555566666666666666666666666666666666666644444444444444444444444444444444444444444444777777777777777777777777777777777cccccc',
+  'cccccc553333333333335555555555555555555555555555556666666666666666666666666666666666666644444444444444444444444444444444444444444447777777777777777777777777777777777ccccc',
+  'cccccc5533333333335555555555555555555555555555555666666666666666666666666666666666666666444444444444444444444444444444444444444444777777777777777777777777777777777777cccc',
+  'ccccc555533333335555555555555555555555555555555556666666666666666666666666666666666666664444444444444444444444444444444444444444477777777777777777777777777777777777777ccc',
+  'ccccc5555555555555555555555555555555555555555555666666666666666666666666666666666666666669444444444444444444444444444444444444444777777777777777777777777777777777777777cc',
+  'cccc55555555555555555555555555555555555555555556666666666666666666666666666666666666666699999994444444444444444444444444444444447777777777777777777777777777777777777777cc',
+  'ccc555555555555555555555555555555555555555555556666666666666666666666666666666666666666699999999999444444444444444444444444444447777777777777777777777777777777777777777cc',
+  'ccc555555555555555555555555555555555555555555566666666666666666666666666666666666666666999999999999999944444444444444444444444477777777777777777777777777777777777777777cc',
+  'cc8888888555555555555555555555555555555555555566666666666666666666666666666666666666666999999999999999999994444444444444444444777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888855555555555555555666666666666666666666666666666666666666666999999999999999999999999944444444444447777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888885555555555555555666666666666666666666666666666666666666666999999999999999999999999999994444444447777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888555555555555556666666666666666666666666666666666666666666999999999999999999999999999999999444477777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888855555555556666666666666666666666666666666666666666669999999999999999999999999999999999999977777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888888888855566666666666666666666666666666666666666666669999999999999999999999999999999999999977777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888888888888866666666666666666666666666666666666666666699999999999999999999999999999999999999977777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888888888888886666666666666666666666666666666666666666699999999999999999999999999999999999999997777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888888888888886666666666666666666666666666666666666666699999999999999999999999999999999999999997777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888888888888888666666666666666666666666666666666666666999999999999999999999999999999999999999997777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888888888888888666666666666666666666666666666666666666999999999999999999999999999999999999999997777777777777777777777777777777777777777777cc',
+  'cc8888888888888888888888888888888888888888888666666666666666666666666666666666666669999999999999999999999999999999999999999999777777777777777777777777777777777777777777cc',
+  'cc888888888888888888888888888888888888888888886666666666666666666666666666666666666999999999999999999999999999999999999999999bbb7777777777777777777777777777777777777777cc',
+  'ccc88888888888888888888888888888888888888888886666666666666666666666666666666666666999999999999999999999999999999999999999999bbbbbb7777777777777777777777777777777777777cc',
+  'ccc8888888888888888888888888888888888888888888866666666666666666666666666666666666999999999999999999999999999999999999999999bbbbbbbbbbbb77777777777777777777777777777777cc',
+  'cccc88888888888888888888888888888888888888888886666666666666666666666666666666666699999999999999999999999999999999999999999bbbbbbbbbbbbbbb777777777777777777777777777777cc',
+  'cccc88888888888888888888888888888888888888888888666666666666666666666666666aaaaaaaa9999999999999999999999999999999999999999bbbbbbbbbbbbbbbb77bb7777777777777777777777777cc',
+  'ccccc888888888888888888888888888888888888888888866666666666666666666aaaaaaaaaaaaaaa999999999999999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbb77777777777777777cc',
+  'cccccc8888888888888888888888888888888888888888888666666666666aaaaaaaaaaaaaaaaaaaaaaa9999999999999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcc',
+  'ccccccc88888888888888888888888888888888888888888866666aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccc',
+  'ccccccc888888888888888888888888888888888888888888aaa6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9999999999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccc',
+  'cccccccc88888888888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccc',
+  'cccccccc8888888888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9999999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccc',
+  'ccccccccc888888888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccc',
+  'cccccccccc88888888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa99999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccc',
+  'cccccccccc8888888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccc',
+  'ccccccccccc888888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa99999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccc',
+  'cccccccccccc8888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccc',
+  'ccccccccccccc888888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa99999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccc',
+  'cccccccccccccc8888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999999999999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccc',
+  'ccccccccccccccc888888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa99999999999999999999bbbbbbbbbbbbbbbbccccbbbbbbbbbbbbbbbbccccccccccccccccccccc',
+  'ccccccccccccccccc8888888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9999999999999999999bbbbbbbbbbbbbbbccccccccccccbbbcccccccccccccccccccccccccccc',
+  'ccccccccccccccccccc8888888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa99999999999999999bbbbbbbbbbbbbbbcccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccc88888888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999999999bbbbbbbbbbbbbbcccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccc88888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa99999999999999bbbbbbbbbbbbcccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccc8888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9999999999999bbbbbbbbbcccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccc8888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa99999999999bbbbbbcccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccc888888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999999bbbbbcccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccc88888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9999999bbbbcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccc8888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9999999bbbccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccccc888888888888888aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa999999bccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccccc88888888888888aaaaaaaaaaacccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9999ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccccccc888888888888aaaaaaaaaaaccccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccccccc88888888888aaaaaaaaaacccccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccccccccc88888888aaaaaaaaaaccccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccccccccccc888888aaaaaaaaaccccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccccccccccccc8888aaaaaaaaaccccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'ccccccccccccccccccccccccccccccccccccccaaaaaaaaaccccccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
 ];
 
-function buildRegions(): readonly Region[] {
-  const out: Region[] = [];
-  let y0 = 0;
-  for (const band of BANDS) {
-    let x0 = 0;
-    for (const [x1, name] of band.cuts) {
-      out.push({ name, x0, y0, x1, y1: band.y1 });
-      x0 = x1 + 1;
-    }
-    y0 = band.y1 + 1;
-  }
-  return out;
-}
-
-export const ALDERBROOK_REGIONS: readonly Region[] = buildRegions();
+/** Index -> name. Index 0 is deliberately absent: unregioned ground has none. */
+const REGION_NAMES: readonly string[] = [
+  '',
+  'the Cold Furrows',
+  'the Saintswood',
+  'the Kettle Range',
+  'Kettleflat',
+  'the Grey Downs',
+  'the Bracken Waste',
+  'Ashwick Reach',
+  'the Sedge',
+  'Alderbrook Common',
+  'the Blackwater Wood',
+  'the Long Strand',
+  'the Drowned Coast',
+];
 
 /**
- * Every cell has exactly one name. Checked at module load rather than trusted,
- * for the reason the block above gives: a gap is a line that flickers on one
- * border, and the day somebody edits a bound is the day it appears.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH MOOR THIS IS. A SAVE THAT WALKED A DIFFERENT ONE CANNOT KEEP ITS FOG.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Fog is a bitset indexed by CELL, and the redesigned moor is the same 170x100
+ * with entirely different country in it. A v1 save loaded against it would paint
+ * explored patches over places that player has never been and hide places they
+ * have — the coordinates still resolve, which is precisely what makes it
+ * dangerous. The art handoff says so in as many words: *"the world has the same
+ * dimensions as v1, which makes coordinate reuse deceptively unsafe."*
+ *
+ * So the map carries its own identity and the save carries a copy. They disagree
+ * exactly once per player, on the first load after a redesign, and the fog is
+ * dropped rather than trusted.
+ *
+ * CHANGE THIS WHENEVER THE ROWS CHANGE. It is the one line standing between a
+ * new world and every existing player seeing a map of the old one.
  */
-function assertRegionsTile(): void {
+export const LAYOUT_REVISION = 'alderbrook-moor-art-v2.0.0';
+
+const REGION_CHARS = '0123456789abc';
+
+/**
+ * The twelve names, each with the cell its label is drawn at.
+ *
+ * ORDERED BY INDEX, so `REGION_NAMES[i + 1]` and `ALDERBROOK_REGIONS[i]` are the
+ * same country and a reader can check one against the other without a lookup.
+ */
+export const ALDERBROOK_REGIONS: readonly Region[] = [
+  { name: 'the Cold Furrows', x: 84, y: 12 },
+  { name: 'the Saintswood', x: 142, y: 25 },
+  { name: 'the Kettle Range', x: 79, y: 27 },
+  { name: 'Kettleflat', x: 111, y: 37 },
+  { name: 'the Grey Downs', x: 30, y: 39 },
+  { name: 'the Bracken Waste', x: 65, y: 53 },
+  { name: 'Ashwick Reach', x: 146, y: 54 },
+  { name: 'the Sedge', x: 24, y: 67 },
+  { name: 'Alderbrook Common', x: 103, y: 63 },
+  { name: 'the Blackwater Wood', x: 70, y: 81 },
+  { name: 'the Long Strand', x: 139, y: 78 },
+  { name: 'the Drowned Coast', x: 86, y: 97 },
+];
+
+/**
+ * Every named region holds ground, and every label sits inside its own country.
+ *
+ * AT MODULE LOAD, for the reason the tiling check it replaces gave: the failure
+ * is invisible in a screenshot of anything but the exact border it happens on.
+ * The property is different now — a per-cell map cannot have gaps — so what is
+ * checked is what CAN still go wrong: a name with no cells behind it, and a
+ * label drawn over somebody else's country.
+ */
+function assertRegionsHoldGround(): void {
   const w = ALDERBROOK.view.w;
   const h = ALDERBROOK.view.h;
-  const last = ALDERBROOK_REGIONS[ALDERBROOK_REGIONS.length - 1];
-  if (last === undefined || last.x1 !== w - 1 || last.y1 !== h - 1) {
+  if (ALDERBROOK_REGION_ROWS.length !== h) {
     throw new Error(
-      `level: the region table stops at ${String(last?.x1)},${String(last?.y1)} but the map is ${String(w)}x${String(h)}`,
+      `region rows: ${String(ALDERBROOK_REGION_ROWS.length)} rows for a map ${String(h)} tall`,
     );
   }
-  for (const r of ALDERBROOK_REGIONS) {
-    if (r.x0 > r.x1 || r.y0 > r.y1) {
-      throw new Error(`level: region '${r.name}' has an inverted bound`);
+  const counts = new Array<number>(REGION_NAMES.length).fill(0);
+  for (let y = 0; y < h; y += 1) {
+    const row = ALDERBROOK_REGION_ROWS[y] ?? '';
+    if (row.length !== w) {
+      throw new Error(`region row ${String(y)} is ${String(row.length)} wide, want ${String(w)}`);
+    }
+    for (let x = 0; x < w; x += 1) {
+      const i = REGION_CHARS.indexOf(row[x] ?? '0');
+      if (i < 0)
+        throw new Error(`region row ${String(y)} has an unknown character at ${String(x)}`);
+      counts[i] = (counts[i] ?? 0) + 1;
     }
   }
+  for (let i = 1; i < REGION_NAMES.length; i += 1) {
+    if ((counts[i] ?? 0) > 0) continue;
+    throw new Error(`region "${String(REGION_NAMES[i])}" has no ground behind its name`);
+  }
+  for (const region of ALDERBROOK_REGIONS) {
+    if (regionAt(region.x, region.y) === region.name) continue;
+    throw new Error(`the label for "${region.name}" sits on "${regionAt(region.x, region.y)}"`);
+  }
 }
-assertRegionsTile();
 
 /**
- * What this ground is called. Never undefined: the bands tile the map.
+ * What this cell's country is called, or the moor when it has no name.
  *
- * A LINEAR SCAN over a dozen rectangles, run once per step and only when the
- * step actually landed. Building an index would be 17,000 strings held for the
- * life of the process to save a comparison nobody can measure.
+ * ONE INDEX AND ONE STRING LOOKUP, where the rectangle model scanned a dozen
+ * boxes. Off the map answers a name rather than crashing inside somebody's move,
+ * which is the same answer it always gave.
  */
 export function regionAt(x: number, y: number): string {
-  for (const r of ALDERBROOK_REGIONS) {
-    if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) return r.name;
-  }
-  // Off the map. Reachable only from a caller that did not bounds-check, and a
-  // name is a better answer than a crash inside somebody's move.
-  return 'the moor';
+  const row = ALDERBROOK_REGION_ROWS[y];
+  if (row === undefined) return 'the moor';
+  const i = REGION_CHARS.indexOf(row[x] ?? '0');
+  if (i <= 0) return 'the moor';
+  return REGION_NAMES[i] ?? 'the moor';
 }
+
+assertRegionsHoldGround();

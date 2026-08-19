@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { canWalk, makeOverworld, tileAt } from '../../src/shared/level.ts';
+import { canWalk, makeOverworld, regionAt, tileAt } from '../../src/shared/level.ts';
 import { findPath } from '../../src/shared/path.ts';
 import { TileCode, blocksSight, isWalkable } from '../../src/shared/protocol.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
@@ -24,7 +24,10 @@ import type { LevelView } from '../../src/shared/protocol.ts';
 const OVERWORLD = makeOverworld();
 
 /** Alderbrook's gate. Every player starts here, so it anchors every claim. */
-const ALDERBROOK = { x: 122, y: 73 };
+// The gate, and it MOVED with the redesign — v1 put it at 122,73 and the
+// redesigned moor puts Alderbrook at 103,64. Every coordinate in this file is
+// about that gate, so it is named once.
+const ALDERBROOK = { x: 103, y: 64 };
 
 /**
  * Flood fill from a tile, EIGHT-WAY WITH CORNER CUTTING.
@@ -214,13 +217,15 @@ describe('it is wilderness, not a town', () => {
    * comfortably.
    *
    * ═══ ONLY THE UNAMBIGUOUS ONES ═══
-   * Three regions are deliberately absent because their names do not name a
+   * Two regions are deliberately absent because their names do not name a
    * terrain and a threshold would be invention rather than a guard: **the Cold
-   * Furrows** (ploughed country by name, crag and mountain in fact — it is the
-   * industrial north), **the Sedge** (wetland by implication, plains and hills in
-   * fact), and **Ashwick Reach** (a "reach" is an approach, not a surface). Those
-   * are named for what happened there or what they lead to, and a test that
-   * demanded soil of them would be asserting a reading rather than a rule.
+   * Furrows** (ploughed country by name, and drawn as woodland and plains) and
+   * **Ashwick Reach** (a "reach" is an approach, not a surface). Those are named
+   * for what happened there or what they lead to, and a test that demanded soil
+   * of them would be asserting a reading rather than a rule.
+   *
+   * THE SEDGE USED TO BE A THIRD, and the redesign earned it a place: v1 put no
+   * bog in it whatsoever, v2 makes it 62% mire, and a sedge is a wetland plant.
    *
    * THE FLOORS ARE WELL UNDER THE MEASURED VALUES, on purpose. This exists to
    * catch a region being renamed, moved, or drained of the thing it is named
@@ -249,26 +254,63 @@ describe('it is wilderness, not a town', () => {
       atLeast: 0.5,
     },
     { region: 'the Grey Downs', word: 'downs', tiles: [TileCode.HILLS], atLeast: 0.3 },
-    { region: 'the Bracken Waste', word: 'bracken', tiles: [TileCode.HEATH], atLeast: 0.4 },
-    { region: 'Kettleflat', word: 'flat', tiles: [TileCode.PLAINS], atLeast: 0.3 },
+    /**
+     * WASTE IS OPEN UNCULTIVATED GROUND, AND v2 DRAWS IT AS PLAINS AND BOG.
+     * v1 made it 70% heath and this asked for heath alone. The redesign puts
+     * 61% plains, 19% mire and 5% heath there — the same idea in different
+     * soil, so the promise names the idea rather than one tile. Measured 85%.
+     */
+    {
+      region: 'the Bracken Waste',
+      word: 'bracken',
+      tiles: [TileCode.HEATH, TileCode.PLAINS, TileCode.MIRE],
+      atLeast: 0.5,
+    },
+    /**
+     * A FLAT IS FLAT COUNTRY, NOT SPECIFICALLY GRASS. v1 laid 52% plains here
+     * and v2 lays 51% heath with 10% plains. Heath is as flat as grass is;
+     * demanding the one tile would fail a region that kept its whole meaning.
+     * Measured 61%.
+     */
+    {
+      region: 'Kettleflat',
+      word: 'flat',
+      tiles: [TileCode.PLAINS, TileCode.HEATH],
+      atLeast: 0.4,
+    },
+    /**
+     * ═══ AND ONE THE REDESIGN EARNED THAT v1 COULD NOT CLAIM ═══
+     * A sedge is a wetland plant. v1's Sedge was 41% plains and 21% hills with
+     * no bog in it at all, which is why it sat in the excluded list below as a
+     * name that did not name a surface. v2 draws it 62% MIRE. The promise is
+     * real now, so it is kept.
+     */
+    { region: 'the Sedge', word: 'wetland', tiles: [TileCode.MIRE], atLeast: 0.4 },
     { region: 'Alderbrook Common', word: 'common', tiles: [TileCode.PLAINS], atLeast: 0.3 },
   ];
 
   it.each(PROMISES)('$region is actually $word', ({ region, tiles, atLeast }) => {
-    const bounds = (OVERWORLD.regions ?? []).find((r) => r.name === region);
+    const anchor = (OVERWORLD.regions ?? []).find((r) => r.name === region);
     // THE SETUP FIRST. A renamed or deleted region must fail as "there is no
     // such country" rather than as a share of zero, which reads like a terrain
     // bug and is not one.
-    expect(bounds, `no region named ${region} — was it renamed?`).toBeDefined();
-    if (bounds === undefined) return;
+    expect(anchor, `no region named ${region} — was it renamed?`).toBeDefined();
+    if (anchor === undefined) return;
 
+    /**
+     * COUNTED OVER THE REGION'S OWN CELLS, NOT A BOUNDING BOX.
+     *
+     * This walked `bounds.x0..x1` back when country was rectangles. The
+     * redesigned moor draws its regions per cell and the boxes overlap so
+     * heavily that one spans x 5 to 157 — a box scan would measure most of the
+     * map and call the answer one region's terrain.
+     */
     const want = new Set<number>(tiles);
-
     let matching = 0;
     let cells = 0;
-    for (let y = bounds.y0; y <= bounds.y1; y += 1) {
-      for (let x = bounds.x0; x <= bounds.x1; x += 1) {
-        if (x < 0 || y < 0 || x >= OVERWORLD.view.w || y >= OVERWORLD.view.h) continue;
+    for (let y = 0; y < OVERWORLD.view.h; y += 1) {
+      for (let x = 0; x < OVERWORLD.view.w; x += 1) {
+        if (regionAt(x, y) !== region) continue;
         cells += 1;
         if (want.has(tileAt(OVERWORLD.view, x, y))) matching += 1;
       }
@@ -365,7 +407,10 @@ describe('every settlement can be reached on foot', () => {
     // are bounded by the reachable cell count, so this is the number that
     // decides whether "walk to the Glass Archive" answers 'no route to that
     // tile' — a lie about the map, and the one divergence a player notices.
-    expect(reach.size).toBe(9327);
+    // 8,380 walkable cells, every one of them reachable from the gate. v1 held
+    // 9,327; the redesigned moor is a smaller, more irregular landmass with real
+    // coastline, and the number moved with it rather than drifting.
+    expect(reach.size).toBe(8380);
     expect(reach.size).toBeLessThan(OVERWORLD.view.w * OVERWORLD.view.h + 1);
   });
 
@@ -374,15 +419,19 @@ describe('every settlement can be reached on foot', () => {
     // region must return a route rather than null. At 170x100 this is also the
     // test that the pathfinder's `w * h` ceiling is still enough.
     const route = findPath(
-      { x: 51, y: 31 },
-      { x: 149, y: 78 },
+      // The Outer Index in the far west to Ashwick Alchemy Row in the far east —
+      // the longest legal journey on the redesigned moor. v1 crossed 51,31 to
+      // 149,78; both of those are open water now.
+      { x: 16, y: 61 },
+      { x: 151, y: 75 },
       (x, y) => canWalk(OVERWORLD.view, x, y),
       { maxNodes: OVERWORLD.view.w * OVERWORLD.view.h + 1 },
     );
     // `[]` and null are different answers (path.ts:303-311): [] means "you are
     // already there", null means "no route". Neither is acceptable here.
     expect(route).not.toBeNull();
-    expect(route?.length ?? 0).toBeGreaterThanOrEqual(98);
+    // Measured at 138 steps against a straight line of 135.
+    expect(route?.length ?? 0).toBeGreaterThanOrEqual(120);
   });
 
   it('walks AROUND the range rather than through it', () => {
@@ -407,8 +456,21 @@ describe('every settlement can be reached on foot', () => {
      * all, which is the honest state of this map and the reason the one that
      * does is worth pinning.
      */
-    const blackwood = { x: 13, y: 6 };
-    const archive = { x: 81, y: 6 };
+    /**
+     * GEARFORD TO THE UNDERWORKS, WHICH THE SPINE STANDS BETWEEN.
+     *
+     * v1 walked Blackwood to the Glass Archive and asked for twice the straight
+     * line. Both places moved, and on the redesigned moor that pair is a
+     * straight shot — 109 steps against a 109-step line — because the range is
+     * no longer between them.
+     *
+     * Measured across every pair of sites, this is the sharpest detour on the
+     * map: 24 tiles apart and 116 steps of walking, a ratio of 4.8. The two
+     * surface passes and the collapsed Gearford cut are exactly what makes it
+     * so, which is the redesign's own headline and now has a test behind it.
+     */
+    const blackwood = { x: 84, y: 20 };
+    const archive = { x: 94, y: 44 };
     const straight = Math.max(Math.abs(blackwood.x - archive.x), Math.abs(blackwood.y - archive.y));
 
     const route = findPath(blackwood, archive, (x, y) => canWalk(OVERWORLD.view, x, y), {

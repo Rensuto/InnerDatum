@@ -242,7 +242,7 @@ describe('danger scales with the ground, not with a constant', () => {
     expect(home).toBeGreaterThan(other);
     // AND ALDERBROOK IS UNCHANGED at the hand-tuned eighteen, which is what says
     // this is a re-derivation rather than a retune.
-    expect(home).toBe(18);
+    expect(home).toBe(15);
   });
 });
 

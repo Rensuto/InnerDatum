@@ -70,7 +70,10 @@ describe('the moor is classified into six kinds of country', () => {
      * into the trees a different decision from walking round them.
      */
     const { total, byGround } = distribution();
-    expect(total).toBeGreaterThan(7_000);
+    // 6,397 on the redesigned moor, where the old rectangle held over 7,000. The
+    // floor guards the thing that matters — enough open country for roamers to
+    // have somewhere to be — and it moved with the map rather than drifting.
+    expect(total).toBeGreaterThan(6_000);
 
     for (const ground of Object.values(Ground)) {
       const share = (byGround.get(ground) ?? 0) / total;

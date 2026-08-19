@@ -502,17 +502,20 @@ describe('somebody else turns up', () => {
     const world = server.realms.overworld.world;
     const body = world.getActor(actorId);
     if (body === undefined) throw new Error('no body');
+    /**
+     * A WALL, WALKED TO RATHER THAN ASSUMED ADJACENT.
+     *
+     * The redesigned moor gives the gate a courtyard, so the spawn now has open
+     * ground on all four sides and the old version of this found no wall at all.
+     * Stepping east until something refuses is what a player does anyway.
+     */
     let into: string | null = null;
-    for (const [dx, dy, dir] of [
-      [1, 0, 'e'],
-      [-1, 0, 'w'],
-      [0, 1, 's'],
-      [0, -1, 'n'],
-    ] as const) {
-      if (!canWalk(world.level, body.x + dx, body.y + dy)) {
-        into = dir;
+    for (let step = 0; step < 40 && into === null; step += 1) {
+      if (!canWalk(world.level, body.x + 1, body.y)) {
+        into = 'e';
         break;
       }
+      body.x += 1;
     }
     expect(into, 'the spawn has open ground on all four sides').not.toBeNull();
     if (into === null) return;

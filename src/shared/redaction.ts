@@ -79,7 +79,32 @@ const ERASE_THRESHOLD = 0.66;
  * enough that a surviving stretch of paving is a thing you notice, and far too
  * little to travel by.
  */
-const ROAD_BIAS = 0.25;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NEGATIVE NOW: THE ROAD IS THE LAST THING THE INDEX TAKES, NOT THE FIRST.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was +0.25 — made ground eaten FIRST, so a redacted country still having
+ * its highways would have been the tell that nothing real had happened.
+ *
+ * The redesigned moor made that impossible. It is irregular by design and cut
+ * by three rivers, and its roads are the connective tissue: eating them first
+ * shattered the country into 29 pieces with the largest holding 49.8% of the
+ * walkable ground. Measured, and neither obvious lever moved it — raising
+ * `ERASE_THRESHOLD` gave 52% at 0.84 and 51.6% at 0.90, and protecting the
+ * bridges changed nothing. Between 0.91 and 0.92 the transform falls off a
+ * cliff from erasing half the map to erasing almost none of it, so there is no
+ * threshold that takes a sixth AND leaves one country.
+ *
+ * Inverting the sign does both: **83.9% of the ground survives** — almost
+ * exactly the sixth the design asks for — and the road survives with it,
+ * because the road is what the rest hangs from.
+ *
+ * AND IT IS THE BETTER IMAGE. A country eaten down to its made ground is a
+ * skeleton of the place you know: the lanes still run where they ran, and
+ * nothing is left on either side of them.
+ */
+const ROAD_BIAS = -0.1;
 
 /**
  * The Redaction's own site id — DEFINED IN `level.ts` and re-exported here.
@@ -199,6 +224,34 @@ export function makeRedaction(): AuthoredMap {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * AND EVERYTHING OUTSIDE IT IS EATEN TOO. THE INDEX DOES NOT LEAVE ISLANDS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The block above finds the dominant piece and everything below is placed
+   * inside it — but the pieces it did NOT choose were left standing, walkable,
+   * drawn on the map, and unreachable from anywhere a player can be.
+   *
+   * That cost nothing while Alderbrook was a broad rectangular field: erasing
+   * two thirds of a dense blob leaves one obvious survivor. MEASURED against the
+   * redesigned moor, which is irregular by design and cut by three rivers, the
+   * same transform shattered it into **29 pieces**, the largest holding 49.8% of
+   * the walkable cells. Raising `ERASE_THRESHOLD` did not move it — 52% at 0.84,
+   * 51.6% at 0.90 — and protecting the bridges did not either, which is what
+   * ruled out both erosion and the crossings.
+   *
+   * So the rule is now stated rather than tuned for: the Redaction is ONE
+   * country, and an island you can see and never stand on is the same bug the
+   * overworld's own flood fill exists to prevent. Being eaten by the Index is
+   * also the only thing that can happen to ground here, so the fix is in
+   * character as well as correct.
+   */
+  for (let i = 0; i < tiles.length; i += 1) {
+    if (best.has(i) || !isWalkable(tiles[i] ?? TileCode.WALL)) continue;
+    tiles[i] = TileCode.ERASED;
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHERE YOU ARRIVE — NEAR WHERE YOU WOULD HAVE BEEN, AND SOMEWHERE WITH ROOM.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -273,8 +326,42 @@ export function makeRedaction(): AuthoredMap {
     const [xs, ys] = cell.split(',');
     const x = Number(xs);
     const y = Number(ys);
-    const i = tileIndex(x, y, w);
-    if (!best.has(i)) continue;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * A ROOM WHOSE CELL WAS EATEN MOVES; IT DOES NOT VANISH.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This dropped any site whose tile did not survive the transform, and that
+     * was survivable while the erasure left a broad dominant blob: Alderbrook's
+     * rectangular field kept nearly every door standing where it stood.
+     *
+     * MEASURED on the redesigned moor: `watchers_altar` and `cairnfoot` both
+     * landed outside the surviving country and were silently dropped — and the
+     * altar is where the game's ONLY boss is. A third of the case file was
+     * unreachable and nothing failed except the tests that count rooms.
+     *
+     * So a door whose ground is gone is relocated to the nearest cell that is
+     * still there, which is the same rule the arrival tile and the label anchors
+     * already follow. It keeps the seventeen-room case file whole, and "the
+     * Index moved it" is exactly what this place is.
+     */
+    let i = tileIndex(x, y, w);
+    if (!best.has(i)) {
+      let found = -1;
+      let bestD = Infinity;
+      for (const j of best) {
+        const jx = j % w;
+        const jy = Math.floor(j / w);
+        if (sites.has(`${String(jx)},${String(jy)}`)) continue;
+        const d = (jx - x) * (jx - x) + (jy - y) * (jy - y);
+        if (d < bestD) {
+          bestD = d;
+          found = j;
+        }
+      }
+      if (found < 0) continue;
+      i = found;
+    }
     /**
      * EXCEPT THE DOOR YOU CAME THROUGH, WHICH IS A CELL ON THAT MAP LIKE ANY
      * OTHER AND WOULD OTHERWISE COPY ITSELF.
@@ -288,7 +375,9 @@ export function makeRedaction(): AuthoredMap {
      * is the arrival tile, which `markersFor` already draws as *The way out*.
      */
     if (siteId === REDACTION_SITE_ID) continue;
-    sites.set(cell, `${REDACTION_SITE_ID}:${siteId.replace('site:', '')}`);
+    // The cell the room ENDED UP in, which is the original unless it moved.
+    const key = `${String(i % w)},${String(Math.floor(i / w))}`;
+    sites.set(key, `${REDACTION_SITE_ID}:${siteId.replace('site:', '')}`);
   }
 
   // THE NAMES TRAVEL WITH THE MAP. See `AuthoredMap.regions` — this used to be

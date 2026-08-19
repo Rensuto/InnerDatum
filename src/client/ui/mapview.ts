@@ -324,21 +324,28 @@ export function paintMap(paint: MapPaint): number {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const region of regions) {
-      // How much of it this player has actually walked. `seen` is the fog, and
-      // its absence means an unfogged caller, which gets every name.
-      let known = 0;
-      let total = 0;
-      for (let y = region.y0; y <= region.y1; y += 2) {
-        for (let x = region.x0; x <= region.x1; x += 2) {
-          if (x < win.x0 || x > win.x1 || y < win.y0 || y > win.y1) continue;
-          total += 1;
-          if (seen === undefined || seen.has(`${String(x)},${String(y)}`)) known += 1;
-        }
-      }
-      if (total === 0 || known * 5 < total) continue;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * DRAWN WHERE THE LABEL BELONGS, ONCE THE PLAYER HAS BEEN THERE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This used to scan a region's rectangle and show the name once a fifth of
+       * it had been walked. That was a good rule for boxes and it cannot survive
+       * their loss: the country is irregular now and the wire carries an ANCHOR
+       * rather than bounds, so there is no area left to take a fifth of.
+       *
+       * The anchor cell itself is the test, and it is a stricter and more honest
+       * one: the name appears when you have stood in the place it names, rather
+       * than when you have seen enough of a rectangle that happened to contain
+       * it. `assertRegionsHoldGround` guarantees the anchor is inside its own
+       * country, so "seen the anchor" cannot mean "seen somewhere else".
+       */
+      if (region.x < win.x0 || region.x > win.x1) continue;
+      if (region.y < win.y0 || region.y > win.y1) continue;
+      if (seen !== undefined && !seen.has(`${String(region.x)},${String(region.y)}`)) continue;
 
-      const cx = ox + ((region.x0 + region.x1) / 2 + 0.5) * cell;
-      const cy = oy + ((region.y0 + region.y1) / 2 + 0.5) * cell;
+      const cx = ox + (region.x + 0.5) * cell;
+      const cy = oy + (region.y + 0.5) * cell;
       // A HAIRLINE OF INK BEHIND THE LETTERS rather than a plate: a region name
       // sits on top of the terrain it names, and a filled box would punch a hole
       // in the very picture the label is about.

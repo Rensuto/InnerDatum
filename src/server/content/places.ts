@@ -136,6 +136,13 @@ export const PLACE_BLURBS: ReadonlyMap<string, string> = new Map<string, string>
     'site:redaction:barrow_end',
     'The trees came through untouched, which is the part nobody has an answer for.',
   ],
+  /**
+   * THE ONE HIDDEN ROOM WITH NOTHING TO SAY, and it went unnoticed because
+   * nothing on the Alderbrook side was missing. The room below it on that map
+   * has a line; its mirror never did, so the hardest place in the game to find
+   * rewarded finding it with silence.
+   */
+  ['site:redaction:the_weir', 'The weir is still holding. There is no river left to hold.'],
 
   // ─── the roaming encounter ──────────────────────────────────────────────
   ['site:encounter', 'It has your attention now. There is one way out and it is behind you.'],

@@ -115,11 +115,10 @@ describe('the rumour that leads somewhere', () => {
     const x = Number(xs);
     const y = Number(ys);
 
-    // THE DOOR IS IN THE COUNTRY THEY WERE SENT TO.
-    expect(x).toBeGreaterThanOrEqual(sedge.x0);
-    expect(x).toBeLessThanOrEqual(sedge.x1);
-    expect(y).toBeGreaterThanOrEqual(sedge.y0);
-    expect(y).toBeLessThanOrEqual(sedge.y1);
+    // THE DOOR IS IN THE COUNTRY THEY WERE SENT TO — asked of the map rather
+    // than of a rectangle, because the redesigned moor draws its regions per
+    // cell and `sedge` is now the label's anchor rather than its bounds.
+    expect(regionAt(x, y), 'the crossing is not in the country the rumours name').toBe(sedge.name);
 
     // AND IT IS WEST, which is the one word every line uses.
     const spawn = base.spawns[0];

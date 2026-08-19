@@ -289,7 +289,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Where]: 'Threadneedle for goods. The chapel to blood a coat.',
           [TopicId.Party]: 'Travel together. Nobody earns less for sharing.',
           [TopicId.Roads]: 'The made ground is safe. That is the whole of it.',
-          [TopicId.Rumour]: 'Folk come off the Grey Downs having seen a thing.',
+          [TopicId.Rumour]: 'Folk come off the Bracken Waste having seen a thing.',
         },
         later: {
           // THE REEVE KEEPS RECORDS. Hers is the administrative version.
@@ -351,7 +351,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           // happens when you ignore it, which is the half people act on.
           [TopicId.Party]: 'I went alone once. That is why I mend coats now.',
           [TopicId.Roads]: 'Made ground holds. Step off it and find out.',
-          [TopicId.Rumour]: 'A stair on the Grey Downs, on no map I own.',
+          [TopicId.Rumour]: 'A stair out on the Bracken Waste, on no map I own.',
         },
         later: {
           // SHE HAS BEEN THERE. The only first-hand account in Alderbrook.
@@ -425,7 +425,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           // about experience; this is about the other thing partying changes.
           [TopicId.Party]: 'I write fewer names when people go in pairs.',
           [TopicId.Roads]: 'Nothing has ever taken anyone off the made road.',
-          [TopicId.Rumour]: 'A stair on the Grey Downs. Nobody surveyed it.',
+          [TopicId.Rumour]: 'A stair on the Bracken Waste. Nobody surveyed it.',
         },
         later: {
           [TopicId.Rumour]: 'West of the Sedge I have no names at all.',
@@ -457,7 +457,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           // added last commit and took Carrow's line with her; the distinctness
           // test only covered `later`, so two people said one thing and nothing
           // noticed. Carrow's is now the one who has actually crossed it.
-          [TopicId.Rumour]: 'I have crossed the Grey Downs. Something is on it.',
+          [TopicId.Rumour]: 'I have crossed the Bracken Waste. Something is on it.',
         },
         later: {
           // CARROW WALKS EVERYWHERE. Hers is the only first-hand account.

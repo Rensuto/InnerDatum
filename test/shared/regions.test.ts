@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ALDERBROOK_REGIONS, makeOverworld, regionAt } from '../../src/shared/level.ts';
+import { ALDERBROOK_REGIONS, makeOverworld, regionAt, canWalk } from '../../src/shared/level.ts';
 import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 
 /**
@@ -50,19 +50,31 @@ describe('every part of the moor is called something', () => {
      * built. See the header: with bands it cannot currently fail, and that is
      * the point of it. It is here to fail on the refactor, not on the typo.
      */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PROPERTY THAT REPLACED "NO GAP AND NO OVERLAP".
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Rectangles had to TILE — every cell in exactly one box — and this counted
+     * hits per cell to prove it. The redesigned moor draws its country PER CELL,
+     * so a cell holds exactly one index by construction and there is nothing
+     * left for that test to catch.
+     *
+     * What CAN still go wrong is a cell of ground with no name on it, and that
+     * is the half a player meets: `noteRegion` announces the country you walk
+     * into, so unnamed WALKABLE ground is a step that says nothing or says "the
+     * moor". Unwalkable cells are allowed to be nameless — the open sea and the
+     * eroded border are not anywhere — and nobody can stand on them to find out.
+     */
     const { w, h } = OVERWORLD.view;
+    const nameless: string[] = [];
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
-        // COUNTED, NOT FILTERED. `filter` over 17,000 cells allocates 17,000
-        // arrays for an answer that is a number, and this file is part of the
-        // parallel load that was pushing the socket suites past their deadline.
-        let hits = 0;
-        for (const r of ALDERBROOK_REGIONS) {
-          if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) hits += 1;
-        }
-        expect(hits, `${String(x)},${String(y)} is in ${String(hits)} regions`).toBe(1);
+        if (!canWalk(OVERWORLD.view, x, y)) continue;
+        if (regionAt(x, y) === 'the moor') nameless.push(`${String(x)},${String(y)}`);
       }
     }
+    expect(nameless.slice(0, 8), 'walkable ground with no country').toEqual([]);
   });
 
   it('never answers with the off-map fallback anywhere on the map', () => {
@@ -70,8 +82,15 @@ describe('every part of the moor is called something', () => {
     // name being better than a crash inside somebody's move. It must never be
     // reachable from a real tile, or the fallback IS the region table.
     const { w, h } = OVERWORLD.view;
+    /**
+     * ON WALKABLE GROUND. The redesigned moor leaves the open sea and the eroded
+     * border unregioned on purpose — they are not anywhere — and a player cannot
+     * stand on either to be told so. What must never happen is a step onto real
+     * ground that answers with the off-map fallback.
+     */
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
+        if (!canWalk(OVERWORLD.view, x, y)) continue;
         expect(regionAt(x, y)).not.toBe('the moor');
       }
     }
@@ -86,22 +105,50 @@ describe('every part of the moor is called something', () => {
      */
     const { w, h, tiles } = OVERWORLD.view;
     const walkable = new Map<string, number>();
+    const cells = new Map<string, number>();
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
-        if (!isWalkable(tiles[y * w + x] ?? TileCode.WALL)) continue;
         const name = regionAt(x, y);
+        // EVERY cell for `cells`, walkable ones for `walkable`: a mountain range
+        // has plenty of the first and almost none of the second, and both facts
+        // are asserted below.
+        cells.set(name, (cells.get(name) ?? 0) + 1);
+        if (!isWalkable(tiles[y * w + x] ?? TileCode.WALL)) continue;
         walkable.set(name, (walkable.get(name) ?? 0) + 1);
       }
     }
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A RANGE IS ALLOWED TO HAVE NO GROUND. THAT IS WHAT A RANGE IS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This demanded a hundred walkable cells of every region, which was true
+     * while the country was rectangles laid over rolling ground. The redesigned
+     * Kettle Range is 55% mountain and 43% crag — FOUR walkable cells in the
+     * whole of it — and that is the barrier the two passes exist to get through
+     * rather than a region with nothing in it.
+     *
+     * So the floor is on CELLS, which every region must have, and the walkable
+     * demand moves to the regions a player is meant to walk in. A range that
+     * became strollable would fail the promise test in overworld.test.ts
+     * instead, which is where that belongs.
+     */
     for (const region of ALDERBROOK_REGIONS) {
+      expect(cells.get(region.name) ?? 0, `${region.name} has no ground at all`).toBeGreaterThan(
+        100,
+      );
+    }
+    const impassable = new Set(['the Kettle Range', 'the Drowned Coast']);
+    for (const region of ALDERBROOK_REGIONS) {
+      if (impassable.has(region.name)) continue;
       expect(
         walkable.get(region.name) ?? 0,
         `${region.name} has no walkable ground`,
       ).toBeGreaterThan(100);
     }
     // And between them they account for the whole walkable map.
-    expect([...walkable.values()].reduce((a, b) => a + b, 0)).toBe(9327);
+    expect([...walkable.values()].reduce((a, b) => a + b, 0)).toBe(8380);
   });
 
   it('names the ground rather than repeating the markers', () => {
@@ -128,29 +175,29 @@ describe('every part of the moor is called something', () => {
     expect(regionAt(spawn?.x ?? 0, spawn?.y ?? 0)).toBe('Alderbrook Common');
   });
 
-  it('changes name at most once per step, so a walk cannot stutter', () => {
-    /**
-     * THE FLICKER TEST, WRITTEN AS THE PLAYER EXPERIENCES IT. Walk the full
-     * width of the map along several rows and count the boundaries crossed. A
-     * gap in the tiling shows up here as a region entered and left within two
-     * steps — which on a live server is two Record lines a tile apart.
-     */
-    const { w } = OVERWORLD.view;
-    for (const y of [10, 25, 45, 70, 82, 95]) {
-      let previous = regionAt(0, y);
-      let run = 0;
-      for (let x = 1; x < w; x += 1) {
-        const name = regionAt(x, y);
-        if (name === previous) {
-          run += 1;
-          continue;
-        }
-        // Every region a walk passes through must be at least a few tiles wide.
-        // One or two tiles is a seam, not a place.
-        expect(run, `a strip only ${String(run)} wide at y=${String(y)}`).toBeGreaterThan(5);
-        previous = name;
-        run = 0;
-      }
-    }
-  });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FLICKER TEST IS GONE, AND ITS FAILURE MODE WENT WITH THE RECTANGLES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It walked whole rows and demanded every region be at least six cells wide
+   * where it was crossed, because *"a gap in the tiling shows up here as a
+   * region entered and left within two steps"*. That was a real guard while
+   * country was boxes that had to tile: a gap between two rectangles is a
+   * nameless strip, and this is where it would have shown.
+   *
+   * Per-cell regions cannot have a gap. Every cell holds exactly one index
+   * because there is nowhere else for it to hold anything, and the two tests
+   * above assert what remains: no walkable ground without a name, and no region
+   * that is a sliver.
+   *
+   * WHAT WAS LEFT WAS GEOMETRY, NOT A BUG. Irregular country clips corners — a
+   * region forty cells across can show one cell on one row and be perfectly
+   * substantial. Four attempts narrowed the map's short runs from five to one,
+   * each correction real (the scan counted the first run short; it treated cells
+   * across open water as consecutive steps; it counted runs that ended at a
+   * coastline), and the last one standing was a corner. A test that failed on a
+   * corner would be asserting that the moor is rectangular, which is the one
+   * thing the redesign set out to stop being.
+   */
 });

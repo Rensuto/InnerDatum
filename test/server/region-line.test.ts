@@ -8,7 +8,7 @@ import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
-import { ALDERBROOK_REGIONS, canWalk, regionAt } from '../../src/shared/level.ts';
+import { canWalk, regionAt } from '../../src/shared/level.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
 
@@ -148,11 +148,17 @@ afterEach(async () => {
  * down, so moving a border moves the test with it.
  */
 function aBorderStep(): { from: { x: number; y: number }; into: string } {
+  /**
+   * SWEPT OVER THE MAP, NOT OVER A LIST OF BOUNDS.
+   *
+   * This used to walk each region's rectangle edge, which was the natural thing
+   * while country had edges. The redesigned moor draws its regions per cell, so
+   * a border is wherever two neighbouring cells disagree — and that is exactly
+   * what a player crossing one experiences.
+   */
   const level = server.realms.overworld.world.level;
-  for (const region of ALDERBROOK_REGIONS) {
-    const x = region.x0;
-    if (x <= 0) continue;
-    for (let y = region.y0; y <= region.y1; y += 1) {
+  for (let y = 1; y < level.h - 1; y += 1) {
+    for (let x = 1; x < level.w - 1; x += 1) {
       if (!canWalk(level, x, y) || !canWalk(level, x - 1, y)) continue;
       if (regionAt(x - 1, y) === regionAt(x, y)) continue;
       return { from: { x: x - 1, y }, into: regionAt(x, y) };
@@ -258,7 +264,13 @@ describe('the names reach the map, not just the log', () => {
     for (const row of regions) {
       const r = row as Record<string, unknown>;
       expect(typeof r['name']).toBe('string');
-      for (const bound of ['x0', 'y0', 'x1', 'y1']) {
+      /**
+       * AN ANCHOR, NOT A BOX. `RegionView` carried `x0,y0,x1,y1` while country
+       * was rectangles; the redesigned moor draws its regions per cell, keeps
+       * the SHAPE on the server where `regionAt` needs it, and sends the client
+       * the one thing it cannot work out for itself — where to write the name.
+       */
+      for (const bound of ['x', 'y']) {
         expect(typeof r[bound], `${String(r['name'])} has no ${bound}`).toBe('number');
       }
     }

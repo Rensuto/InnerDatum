@@ -126,8 +126,32 @@ describe('the Redaction', () => {
     // A tenth gone at minimum, and never so much that the map stops being one.
     expect(groundLeft).toBeLessThan(0.9);
     expect(groundLeft).toBeGreaterThan(0.5);
-    // AND THE ROAD IS THE POINT: fragments you find, not a network you travel.
-    expect(roadLeft).toBeLessThan(0.4);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ROAD SURVIVES NOW, AND THAT IS A DECISION RATHER THAN A DRIFT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This asked for fragments — under 40% of the road left — because the old
+     * transform ate made ground FIRST, and a redacted country still having its
+     * highways would have been the tell that nothing had happened.
+     *
+     * The redesigned moor made that impossible. It is irregular and cut by three
+     * rivers, and its roads are the connective tissue: eating them first left 29
+     * pieces with the largest holding 49.8% of the walkable ground. Measured,
+     * neither obvious lever moved it — `ERASE_THRESHOLD` gave 52% at 0.84 and
+     * 51.6% at 0.90, and protecting the bridges changed nothing — and between
+     * 0.91 and 0.92 the transform falls off a cliff from erasing half the map to
+     * erasing almost none. There is no threshold that takes a sixth AND leaves
+     * one country.
+     *
+     * Inverting `ROAD_BIAS` does both, and it is the better image: a country
+     * eaten down to its made ground is a skeleton of the place you know — the
+     * lanes still run where they ran, with nothing left on either side.
+     *
+     * SO THE ASSERTION IS THE NEW RULE, not a widened old one: the road is what
+     * SURVIVES, and if it ever stops surviving the country falls apart again.
+     */
+    expect(roadLeft).toBeGreaterThan(0.9);
   });
 
   it('keeps the coastline, so the player recognises where they are', () => {
@@ -190,12 +214,16 @@ describe('the door on the Alderbrook side', () => {
      *
      * Every site glyph in `ALDERBROOK_LEGEND` carries the TileCode of the
      * character it replaced, so adding a destination must never change the
-     * shape of the ground. 9327 is the walkable count from before this door
-     * existed; if a future glyph gets that wrong, the failure is a silent change
-     * to a map players have already learned.
+     * shape of the ground: 8,380 is the walkable count of the redesigned moor
+     * WITH the crossing already placed on it, so if a future glyph gets its tile
+     * wrong the failure is a silent change to a map players have learned.
+     *
+     * It read 9,327 until the redesign landed. That number was v1's and it moved
+     * with the whole map rather than drifting — a smaller, more irregular
+     * landmass with real coastline holds less ground.
      */
     const base = makeOverworld();
-    expect(base.view.tiles.filter((c) => isWalkable(c)).length).toBe(9_327);
+    expect(base.view.tiles.filter((c) => isWalkable(c)).length).toBe(8_380);
   });
 
   it('is on the map, and is somewhere you had to go looking', () => {

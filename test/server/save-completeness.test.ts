@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LAYOUT_REVISION } from '../../src/shared/level.ts';
 
 import {
   LoadOutcome,
@@ -101,6 +102,72 @@ function storeHolding(file: CharacterFile): { store: SaveStore; written: Charact
 
 const QUIET = { info: () => undefined, warn: () => undefined, error: () => undefined };
 
+describe('fog belongs to the map it was walked on', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SAME DIMENSIONS ARE WHAT MAKE THIS DANGEROUS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `explored` is a bitset indexed by cell. The redesigned moor is the same
+   * 170x100 with entirely different country in it, so every index from a v1 save
+   * still RESOLVES — to somewhere the player has never been. The art handoff
+   * says it plainly: *"the world has the same dimensions as v1, which makes
+   * coordinate reuse deceptively unsafe."*
+   *
+   * Nothing would have failed. The player would simply have opened the map to
+   * find patches of a country they had not walked, and holes where they had.
+   */
+  const WALKED = {
+    id: SOLO_CHARACTER_ID,
+    ownerId: '222222222222222222',
+    name: 'Ren',
+    classId: 'watchman',
+    level: 3,
+    xp: 40,
+    explored: 'AAAABBBBCCCC',
+    // The producer requires these; `FULL` above is the reference for what a
+    // whole character carries and this is the smallest file that parses.
+    resources: { hp: 30, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+    position: { zoneId: 'zone:test_level', depth: 0, cell: [5, 5] },
+    createdAt: '2026-01-01T00:00:00.000Z',
+  } as const;
+
+  it('keeps the fog when the save was walked on this map', () => {
+    const file = createCharacterFile(WALKED);
+    const parsed = parseCharacterFile(JSON.parse(JSON.stringify(file)) as unknown);
+    expect(parsed.ok, `parse refused: ${parsed.problems.join('; ')}`).toBe(true);
+    if (!parsed.ok) return;
+    // THE SETUP FIRST: the producer must have stamped the map, or "kept" below
+    // would be measuring a file that never claimed anything.
+    expect(
+      (file as unknown as Record<string, unknown>)['layoutRevision'],
+      'the writer did not stamp which moor the fog belongs to',
+    ).toBe(LAYOUT_REVISION);
+    expect(parsed.file.explored).toBe(WALKED.explored);
+  });
+
+  it('drops the fog when the save was walked on another one', () => {
+    /**
+     * A FILE FROM BEFORE THE REDESIGN HAS NO STAMP AT ALL, which is exactly the
+     * case that matters: eight of them were sitting on the host when the new
+     * moor landed. Dropped rather than migrated, because there is nothing to
+     * migrate TO — the cells are not the same cells.
+     */
+    const stale = {
+      ...(JSON.parse(JSON.stringify(createCharacterFile(WALKED))) as Record<string, unknown>),
+      layoutRevision: 'alderbrook-moor-v1',
+    };
+    const parsed = parseCharacterFile(stale);
+    expect(parsed.ok, `parse refused: ${parsed.problems.join('; ')}`).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.explored, 'fog from another map survived the load').toBeUndefined();
+    // ...and the character is otherwise intact. Dropping the fog must not cost
+    // anybody a level.
+    expect(parsed.file.level).toBe(WALKED.level);
+    expect(parsed.file.xp).toBe(WALKED.xp);
+  });
+});
+
 describe('a character file keeps everything it was given', () => {
   it('round-trips every field through parse', () => {
     /**
@@ -197,7 +264,18 @@ describe('a character file keeps everything it was given', () => {
     const file = createCharacterFile(FULL) as unknown as Record<string, unknown>;
     // Written by the producer rather than by the player: nothing a save could
     // lose, and nothing a fixture should have to state.
-    const notTheirs = new Set(['schemaVersion', 'kind', 'id', 'ownerId', 'name', 'updatedAt']);
+    // `layoutRevision` joins these: it is stamped by the WRITER to say which moor
+    // the fog belongs to, not supplied by the player and not theirs to lose. Its
+    // own behaviour is covered by the two tests above.
+    const notTheirs = new Set([
+      'schemaVersion',
+      'kind',
+      'id',
+      'ownerId',
+      'name',
+      'updatedAt',
+      'layoutRevision',
+    ]);
     const uncovered = Object.keys(file).filter(
       (key) => !notTheirs.has(key) && !(key in FULL) && file[key] !== undefined,
     );

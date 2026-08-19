@@ -139,6 +139,7 @@
  *   their bag, and their bag is in this file.
  */
 
+import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -563,6 +564,22 @@ export type CharacterFile = {
   readonly explored?: string;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH MOOR THE FOG ABOVE WAS WALKED ON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `explored` is a bitset indexed by cell, and a redesigned overworld of the
+   * SAME DIMENSIONS resolves every one of those indices to somewhere else. The
+   * art handoff is blunt about it: *"the world has the same dimensions as v1,
+   * which makes coordinate reuse deceptively unsafe."*
+   *
+   * Absent means v1, which is the honest reading of every file written before
+   * this field existed — and `restoreFog` drops the fog when it does not match
+   * `LAYOUT_REVISION`. Additive and optional, so no schema bump and no
+   * quarantine: the cost of a rollback is a player re-walking country.
+   */
+  readonly layoutRevision?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * AND EVERY OTHER MAP THEY HAVE WALKED. THE FIELD `explored` SAID TO EXPECT.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -841,6 +858,11 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     equipped: init.equipped,
     keybinds: init.keybinds,
     explored: init.explored,
+    // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
+    // bitset belongs to. See `CharacterFile.layoutRevision`.
+    ...(init.explored === undefined && init.exploredElsewhere === undefined
+      ? {}
+      : { layoutRevision: LAYOUT_REVISION }),
     exploredElsewhere: init.exploredElsewhere,
     filed: init.filed,
     // A DEFAULT, unlike the three lines above it: every character HAS a purse,
@@ -1562,7 +1584,23 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
       // failing to load at all. `fogFromBase64` is itself lenient about length.
-      explored: typeof doc.explored === 'string' ? doc.explored : undefined,
+      /**
+       * FOG IS DROPPED WHEN IT BELONGS TO A DIFFERENT MOOR.
+       *
+       * A v1 file has no `layoutRevision` at all, which is exactly the case this
+       * is for: its bitset indexes a map that no longer exists, and every index
+       * still resolves. Keeping it would show a player explored country they
+       * have never walked and hide country they have.
+       *
+       * Dropped rather than migrated because there is nothing to migrate to —
+       * the cells are not the same cells. The cost is re-walking the moor, which
+       * is the thing the redesign is for.
+       */
+      ...(doc.layoutRevision === LAYOUT_REVISION
+        ? {
+            explored: typeof doc.explored === 'string' ? doc.explored : undefined,
+          }
+        : { explored: undefined }),
       // THE SAME REPAIR-NEVER-REJECT RULE, applied per entry rather than to the
       // whole record: one hand-edited key does not cost a player the other map.
       exploredElsewhere: parseExploredElsewhere(doc.exploredElsewhere),
