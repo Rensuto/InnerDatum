@@ -35,10 +35,17 @@ import { SITES, RealmKind, createRealms } from '../src/server/world/realms.ts';
 import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
 import { createMvpEffectState } from '../src/server/content/effects.ts';
-import { CLASSES } from '../src/server/content/classes.ts';
+import {
+  CLASSES,
+  createContentTalentEngine,
+  createTalentBook,
+  sheetForClass,
+} from '../src/server/content/classes.ts';
+import { talentRuntimeFor } from '../src/server/main.ts';
 import { ActorKind } from '../src/shared/protocol.ts';
 import { canWalk } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
+import { rangedAttacks, takeShot } from './fightlib.mjs';
 
 const RUNS = Number(process.argv[2] ?? 8);
 /** Long enough to cross a 34x30 room several times and kill ten things. */
@@ -52,9 +59,34 @@ function run(site, size, seed) {
   // THE STATUS TABLE. Without it the Overwritten Husk's bleed never lands and
   // this tool measures a fight the game does not have.
   const effects = createMvpEffectState();
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE TALENTS, WHICH THIS TOOL HAS NEVER HAD.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `createTurnEngine({ world, downed, effects })` with no `talents` option
+   * defaults the book to `EMPTY_TALENT_BOOK`, whose entire body is
+   * `loadoutOf: () => []`. So EVERY DELVE NUMBER THIS TOOL HAS EVER PRINTED was
+   * measured in a game where nobody could use a talent — a party of three
+   * walking up and punching seventeen floors.
+   *
+   * `first-fight.mjs` had the identical fault and src/server/main.ts carries it
+   * as a warning because the real server had it first: *"Three files of finished
+   * content, wired to nothing."* Fixed there, fixed in the sibling probe, and
+   * still here — which is the third instance and the reason `fightlib.mjs` now
+   * exists.
+   */
+  const talentEngine = createContentTalentEngine();
   const realms = createRealms({
     seed,
-    engineFor: (world) => createTurnEngine({ world, downed, effects }),
+    engineFor: (world) =>
+      createTurnEngine({
+        world,
+        downed,
+        effects,
+        talents: createTalentBook(talentEngine, world),
+        talentRuntime: talentRuntimeFor(talentEngine, world),
+      }),
   });
   const realm = realms.open(site, seed);
 
@@ -70,39 +102,157 @@ function run(site, size, seed) {
     p.hpRegen = cls.hpRegen;
     realm.engine.join(p.id);
     realm.engine.setConnected(p.id, true);
-    bodies.push(p);
+    // THE SHEET IS WHAT MAKES THE BOOK ANSWER: without one `loadoutOf` is empty
+    // and every talent is refused as "no such talent in this loadout".
+    talentEngine.attach(p.id, sheetForClass(cls));
+    bodies.push({ body: p, attacks: rangedAttacks(cls) });
   }
 
   let turns = 0;
   let worst = 1;
+  const tally = { shot: 0, moved: 0, held: 0 };
   for (; turns < TURN_CAP; turns += 1) {
     const foes = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster && a.alive);
-    const up = bodies.filter((b) => b.alive && !isDowned(downed, b.id));
+    const up = bodies.filter((m) => m.body.alive && !isDowned(downed, m.body.id));
     if (foes.length === 0 || up.length === 0) break;
 
-    for (const b of up) {
-      const near = foes
-        .filter((f) => f.alive)
+    for (const { body: b, attacks } of up) {
+      const living = foes.filter((f) => f.alive);
+      const near = living
         .map((f) => ({ f, d: Math.max(Math.abs(f.x - b.x), Math.abs(f.y - b.y)) }))
         .sort((x, y) => x.d - y.d)[0];
       if (near === undefined) break;
+
+      /**
+       * SHOOT IF YOU CAN SHOOT. Two of the three classes in this party are
+       * ranged and one of them has a dead zone, so a party that only ever walks
+       * at the nearest monster is not the party this game ships. See
+       * `fightlib.mjs`.
+       */
+      const { fired, gap } = takeShot(realm.engine, b.id, attacks, b, living);
+      if (fired) {
+        tally.shot += 1;
+        continue;
+      }
+
+      // Nothing was in a band this turn: back out of a dead zone, or close.
+      const shortest = attacks[attacks.length - 1] ?? null;
+      const away = shortest !== null && gap === null && near.d < shortest.minRange;
+      const goal = away
+        ? { x: b.x + Math.sign(b.x - near.f.x), y: b.y + Math.sign(b.y - near.f.y) }
+        : { x: near.f.x, y: near.f.y };
       // PATHFOUND, NOT STRAIGHT-LINE — see tools/walk.mjs.
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * PATH AROUND THE PARTY, NOT THROUGH IT.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The predicate was terrain only, which is correct for ONE body and wrong
+       * for three: a party in a corridor paths each member through the others,
+       * every step is refused at resolution, and nobody moves. Measured — a
+       * leader at full health, its target at full health, and TWO TILES of
+       * progress in a hundred and fifty turns:
+       *
+       *     [t300] leader 72/72 at 3,16   nearest Overwritten Husk 95hp gap 8
+       *     [t450] leader 72/72 at 5,18   nearest Overwritten Husk 95hp gap 6
+       *
+       * which is why a solo run cleared 8/8 and a party of three stalled 0/8 on
+       * the same floor. `world.actorAt` skips anything not alive — "corpses do
+       * not block" — so this routes round the living and still walks over the
+       * dead, and `firstStep` exempts the TARGET tile so a bump is still a bump.
+       */
+      const terrain = (x, y) => canWalk(realm.world.level, x, y);
+      const clear = (x, y) => terrain(x, y) && realm.world.actorAt(x, y) === undefined;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND IF THERE IS NO PATH, STAND STILL — DO NOT WALK EAST.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The fallback was `?? 'e'`: no route, so step east. That is not a
+       * fallback, it is a body wandering off, and it is what a stalled party
+       * actually looked like — a leader at FULL health with the gap to its
+       * target GROWING while it strolled:
+       *
+       *     [t300] leader 72/72 at 6,19   Overwritten Husk 95hp at gap 5
+       *     [t450] leader 72/72 at 2,15   Overwritten Husk 95hp at gap 9
+       *
+       * Routing round the party made it worse rather than better, because every
+       * ally in a corridor is one more reason for the route to come back null.
+       *
+       * So: round the party if that works, THROUGH it if it does not (the step
+       * is refused at resolution and costs a turn, which is honest — that is
+       * what a real player pressing into a friend gets), and hold only when
+       * there is no route on terrain at all.
+       */
       const dir =
-        firstStep(
-          (x, y) => canWalk(realm.world.level, x, y),
-          { x: b.x, y: b.y },
-          { x: near.f.x, y: near.f.y },
-        ) ?? 'e';
-      realm.engine.submitMove(b.id, dir);
+        firstStep(clear, { x: b.x, y: b.y }, goal) ?? firstStep(terrain, { x: b.x, y: b.y }, goal);
+      if (dir === null) {
+        tally.held += 1;
+        realm.engine.hold(b.id);
+        continue;
+      }
+      tally.moved += 1;
+      const moved = realm.engine.submitMove(b.id, dir);
+      if (process.env.DELVE_DIAG === '1' && moved?.ok === false && turns > 20 && turns < 24) {
+        console.log(
+          `  [diag] ${b.id} move ${dir} refused at gap ${String(near.d)}: ${JSON.stringify(moved)}`,
+        );
+      }
     }
     realm.engine.pump();
-    for (const b of bodies) worst = Math.min(worst, b.hp / b.maxHp);
+    if (process.env.DELVE_DIAG === '2' && turns % 150 === 0) {
+      const me = bodies[0].body;
+      const nearest = realm.world
+        .allActors()
+        .filter((a) => a.kind === ActorKind.Monster && a.alive)
+        .map((f) => ({ f, d: Math.max(Math.abs(f.x - me.x), Math.abs(f.y - me.y)) }))
+        .sort((x, y) => x.d - y.d)[0];
+      console.log(
+        `  [t${String(turns)}] leader ${String(Math.round(me.hp))}/${String(me.maxHp)} at ${String(me.x)},${String(me.y)}` +
+          (nearest === undefined
+            ? '  no foes'
+            : `  nearest ${String(nearest.f.name ?? nearest.f.id)} ${String(Math.round(nearest.f.hp))}hp at gap ${String(nearest.d)}`),
+      );
+    }
+    for (const { body: b } of bodies) worst = Math.min(worst, b.hp / b.maxHp);
   }
 
-  const foesLeft = realm.world
-    .allActors()
-    .filter((a) => a.kind === ActorKind.Monster && a.alive).length;
-  const downCount = bodies.filter((b) => !b.alive || isDowned(downed, b.id)).length;
+  const survivors = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster && a.alive);
+  const foesLeft = survivors.length;
+  /**
+   * WHAT WAS STILL STANDING, AND HOW FAR AWAY. A stall with the party at 91%
+   * health is not a difficulty reading — it is the driver failing to finish, and
+   * the only way to tell which is to look at what it left alive.
+   */
+  if (process.env.DELVE_DIAG === '1' && foesLeft > 0 && turns >= TURN_CAP) {
+    const me = bodies[0]?.body;
+    /**
+     * REACHABLE, OR JUST FAR? A stall where every survivor is unroutable is a
+     * fact about the MAP; a stall where they are all reachable is a fact about
+     * this driver. Nothing else tells the two apart.
+     */
+    const reach = survivors.map((f) => {
+      const step =
+        me === undefined
+          ? null
+          : firstStep(
+              (x, y) => canWalk(realm.world.level, x, y),
+              { x: me.x, y: me.y },
+              { x: f.x, y: f.y },
+            );
+      return step === null ? 'NO-ROUTE' : 'reachable';
+    });
+    console.log(
+      `  [diag] bodies ${String(bodies.length)} | routes: ${reach.join(' ')} | orders shot ${String(tally.shot)} moved ${String(tally.moved)} held ${String(tally.held)}`,
+    );
+    const far = survivors.map((f) =>
+      me === undefined
+        ? '?'
+        : `${f.name ?? f.templateId ?? f.id}@${String(Math.max(Math.abs(f.x - me.x), Math.abs(f.y - me.y)))}`,
+    );
+    console.log(`  [diag] stalled with ${String(foesLeft)} left: ${far.slice(0, 8).join(' ')}`);
+  }
+  const downCount = bodies.filter(({ body: b }) => !b.alive || isDowned(downed, b.id)).length;
   return {
     outcome: downCount === bodies.length ? 'wipe' : foesLeft === 0 ? 'clear' : 'stall',
     turns,

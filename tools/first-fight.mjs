@@ -53,6 +53,7 @@ import {
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { canWalk, Ground } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
+import { rangedAttacks, takeShot } from './fightlib.mjs';
 
 /** Enough that one lucky seed cannot carry a column. */
 const RUNS = Number(process.argv[2] ?? 24);
@@ -138,29 +139,13 @@ function fight(cls, seed) {
   arena.engine.setConnected('p1', true);
 
   /**
-   * The longest-reaching attack this class owns, or null for a melee class.
-   *
-   * READ OFF THE CLASS rather than hardcoded: `loadout` carries the targeting
-   * for every talent, and picking the longest range is what a player does when
-   * something is far away. `single` only — an area talent wants a different
-   * question about where to aim it, and this is a difficulty probe rather than
-   * an AI.
+   * Every shot this class owns, longest first — and `fightlib.mjs` owns the two
+   * rules that were learned here the hard way: melee is 1.5 rather than 1, and
+   * a cooldown must fall through to the next weapon rather than end the turn.
+   * `delve-run.mjs` needs both, and two copies of a rule is how one of them
+   * stops being true.
    */
-  const attacks = (cls.loadout ?? [])
-    /**
-     * `>= 2`, NOT `> 1`. Melee in this engine is range 1.5 — the
-     * diagonal-inclusive adjacency — so `> 1` matched the Watchman's Crude
-     * Blow and had him "shooting" people he was standing next to. The class
-     * card's shorthand was caught by the same trap: read the numbers, do not
-     * assume 1 means melee.
-     */
-    .filter((t) => t.targeting?.shape === 'single' && (t.targeting.range ?? 0) >= 2)
-    .map((t) => ({
-      id: t.id,
-      range: t.targeting.range ?? 1,
-      minRange: t.targeting.minRange ?? 0,
-    }))
-    .sort((a, b) => b.range - a.range);
+  const attacks = rangedAttacks(cls);
 
   // HOW MANY WERE ACTUALLY IN THERE. `seedAmbush`'s own note says "exactly one
   // monster in the room" at level 1, which is a claim worth printing rather than
@@ -192,42 +177,18 @@ function fight(cls, seed) {
      * the driver now asks, in order: can I shoot this from here — am I too
      * close and should back off — otherwise close the distance.
      */
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * EVERY SHOT IT OWNS, NOT ITS BEST ONE.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * Picking the single longest-reaching talent looked reasonable and made the
-     * Inspector unplayable: its longest is Sniper's Mark, which HAS A COOLDOWN,
-     * and once it was cooling the driver had nothing and shuffled until the turn
-     * cap. `FIGHT_DIAG=1` said so in one word — `on_cooldown` — after two
-     * measurements that read as "this class cannot win with two foes".
-     *
-     * Revolver Shot is the bread-and-butter attack, cooldown zero, and was never
-     * tried. So the driver now does what a player does: take the best shot that
-     * is actually available, longest first, and fall back through the rest.
-     */
-    let acted = false;
-    let shootableGap = null;
-    for (const ranged of attacks) {
-      const shootable = foes
-        .map((f) => ({ f, d: Math.max(Math.abs(f.x - p.x), Math.abs(f.y - p.y)) }))
-        .filter((c) => c.d >= ranged.minRange && c.d <= ranged.range)
-        .sort((a, b) => a.d - b.d)[0];
-      if (shootable === undefined) continue;
-      shootableGap = shootable.d;
-      const shot = arena.engine.submitTalent('p1', ranged.id, {
-        x: shootable.f.x,
-        y: shootable.f.y,
-      });
-      if (process.env.FIGHT_DIAG === '1' && shot?.ok === false && turns < 6) {
-        console.log(`  [diag] ${cls.name} ${ranged.id}: ${JSON.stringify(shot)}`);
-      }
-      if (shot?.ok !== false) {
-        acted = true;
-        break;
-      }
-    }
+    const { fired: acted, gap: shootableGap } = takeShot(
+      arena.engine,
+      'p1',
+      attacks,
+      p,
+      foes,
+      (id, shot) => {
+        if (process.env.FIGHT_DIAG === '1' && turns < 6) {
+          console.log(`  [diag] ${cls.name} ${id}: ${JSON.stringify(shot)}`);
+        }
+      },
+    );
     const gap = near.d;
     const nearest = attacks[attacks.length - 1] ?? null;
 
