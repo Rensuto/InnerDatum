@@ -48,12 +48,61 @@ describe('where a shop lives', () => {
     }
   });
 
-  it('exists on exactly the towns that are meant to have one', () => {
+  it('exists on exactly the towns that are meant to have one, with the shelf each keeps', () => {
+    /**
+     * TWO NOW, AND THE SECOND ONE NEEDED A SECOND SHELF TO BE WORTH ADDING.
+     *
+     * `SHOP_SITES` argued for one shop and said *"when a second shop lands it is
+     * one string here"*. A shop stocking the same catalogue would not have been
+     * a second destination, it would have been the same shop further away — so
+     * the string arrived with `ShopShelf`, and Ashwick sells what you drink
+     * while Threadneedle sells what you wear.
+     *
+     * Ashwick is named ALCHEMY ROW and has had a mixer standing in it since the
+     * towns were populated, saying "I mix what the Index has not read yet" over
+     * an empty counter.
+     */
     const withShops = realms('shop-count')
       .all()
       .filter((realm) => realm.shop !== undefined)
-      .map((realm) => realm.siteId);
-    expect(withShops).toEqual(['site:threadneedle_row']);
+      .map((realm) => [realm.siteId, realm.shop?.shelf]);
+    expect(withShops).toEqual([
+      ['site:threadneedle_row', 'outfitter'],
+      ['site:ashwick_row', 'apothecary'],
+    ]);
+  });
+
+  it('makes the apothecary the only place a draught exists', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * MEASURED, AND IT CAUGHT AN ITEM NOBODY COULD REACH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Nothing drops draughts — 300 `rollLoot` rolls produced 300 items and zero
+     * of them — so the shelf is the only source. And the shelf produced NOTHING
+     * on its first build: `SHOP_EGO_CHANCE` says shop goods are never plain and
+     * discards anything with no ego, a draught cannot take one (it has no slot,
+     * so every ego filter refuses it), and the fill loop threw it away
+     * sixty-four times and gave up.
+     *
+     * So the item shipped one commit earlier was reachable by nobody at all —
+     * the exact "built and wired to nothing" failure this project keeps finding
+     * in its own work, caught by asking the shop what was on its shelf rather
+     * than by trusting that adding an item adds an item.
+     */
+    const ashwick = realms('shop-draughts')
+      .all()
+      .find((realm) => realm.siteId === 'site:ashwick_row');
+    expect(ashwick).toBeDefined();
+    if (ashwick === undefined) return;
+
+    expect(catchUpShop(ashwick, 3)).toBe(true);
+    expect(ashwick.shop?.stock.length ?? 0).toBeGreaterThan(0);
+    for (const slot of ashwick.shop?.stock ?? []) {
+      expect(slot.id, 'the apothecary is selling something you cannot drink').toBe(
+        'item_draught_mending',
+      );
+    }
   });
 
   it('starts at epoch -1 with empty shelves, so batch 0 is still owed', () => {

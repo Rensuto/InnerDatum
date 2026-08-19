@@ -54,6 +54,7 @@
  */
 
 import { arenaGround, makeArena } from '../../shared/arena.ts';
+import { ShopShelf } from '../content/shops.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
 import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
@@ -174,6 +175,14 @@ export type ShopSlot = {
 /** A shop's whole mutable state. Two integers' worth of meaning and a list. */
 export type ShopState = {
   /**
+   * WHICH SHELF THIS SHOP KEEPS — what you wear, or what you drink.
+   *
+   * On the STATE rather than looked up from the site id at every restock,
+   * because `catchUpShop` already has the realm and asking a second table for a
+   * fact the realm could carry is how two answers to one question start.
+   */
+  readonly shelf: ShopShelf;
+  /**
    * The last restock batch this shop has caught up to. STARTS AT -1 so that
    * epoch 0 is a real batch that has not happened yet — `epochFor` returns 0
    * for every party below level 5, and a shop that began at 0 would have empty
@@ -195,7 +204,22 @@ export type ShopState = {
  * which is the difference between a shop being a destination and a shop being
  * a tollbooth.
  */
-const SHOP_SITES: ReadonlySet<string> = new Set<string>(['site:threadneedle_row']);
+const SHOP_SITES: ReadonlyMap<string, ShopShelf> = new Map<string, ShopShelf>([
+  ['site:threadneedle_row', ShopShelf.Outfitter],
+  /**
+   * ASHWICK ALCHEMY ROW, AND ITS NAME HAS BEEN PROMISING THIS THE WHOLE TIME.
+   *
+   * The note above argued for one shop and said *"when a second shop lands it is
+   * one string here"*. This is that string, and it took a second SHELF to be
+   * worth writing: a shop stocking the same catalogue is not a second
+   * destination, it is the same shop further away. Ashwick sells what you drink,
+   * Threadneedle sells what you wear, and now the two are worth different walks.
+   *
+   * Thessaly Vaunt has stood here since the towns were populated saying *"I mix
+   * what the Index has not read yet"* over an empty counter.
+   */
+  ['site:ashwick_row', ShopShelf.Apothecary],
+]);
 
 export type Realm = {
   readonly id: string;
@@ -575,7 +599,13 @@ export function createRealms(opts: RealmsOptions): Realms {
       // builds a Common realm lazily if it was never opened. A shop wired into
       // only the first would leave a town with no shelves on the second path,
       // and the only thing that would notice is a test supplying its own sites.
-      shop: SHOP_SITES.has(extra.siteId ?? '') ? { epoch: -1, stock: [] as ShopSlot[] } : undefined,
+      shop: SHOP_SITES.has(extra.siteId ?? '')
+        ? {
+            epoch: -1,
+            stock: [] as ShopSlot[],
+            shelf: SHOP_SITES.get(extra.siteId ?? '') ?? ShopShelf.Outfitter,
+          }
+        : undefined,
       // A shared space is never reaped, so its linger is meaningless; 0 is the
       // honest value rather than a large number pretending to be a policy.
       lingerMs: extra.lingerMs ?? 0,

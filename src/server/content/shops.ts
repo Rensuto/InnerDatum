@@ -64,7 +64,7 @@ import { ITEMS, itemById } from './items.ts';
 import { isMoneyId } from './money.ts';
 import { bandFor } from './loot.ts';
 import type { ItemEgoRef } from './resolve.ts';
-import type { ItemTier } from './items.ts';
+import type { Item, ItemTier } from './items.ts';
 import type { Rng } from '../../shared/rng.ts';
 
 // ---------------------------------------------------------------------------
@@ -249,12 +249,47 @@ const SHOP_EGO_CHANCE = 70;
  * It still shares the two things that matter: `computeRarities` decides which
  * ego, and `formatItemId` writes the id.
  */
-function rollStockItem(rng: Rng, level: number): string | undefined {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A SHOP SELLS. Two shelves, and the difference is why there are two shops.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A second shop stocking the same catalogue is not a second destination — it is
+ * the same shop, further away. Ashwick is named ALCHEMY ROW and has a mixer
+ * standing in it saying *"I mix what the Index has not read yet"*, and it sold
+ * nothing at all; a name that promises a trade the place does not carry on is
+ * the same broken promise as a town with nobody in it.
+ */
+export const ShopShelf = {
+  /** Everything worn. Threadneedle Row, where you go to be better dressed. */
+  Outfitter: 'outfitter',
+  /** Everything drunk. Ashwick, and the only place that reliably has one. */
+  Apothecary: 'apothecary',
+} as const;
+export type ShopShelf = (typeof ShopShelf)[keyof typeof ShopShelf];
+
+/**
+ * The catalogue a shelf draws from.
+ *
+ * AN APOTHECARY SELLS ONE THING TODAY, and that is the point rather than a
+ * limitation: the draught's tier is `uncommon`, so against the whole catalogue
+ * it would surface about one visit in four — which is not a healing supply, it
+ * is a lottery. A shelf that is only draughts is what makes "go to Ashwick and
+ * stock up" a sentence a player can act on, and it is the difference between an
+ * item existing and an item being part of how you play.
+ */
+function shelfPool(shelf: ShopShelf): readonly Item[] {
+  return shelf === ShopShelf.Apothecary
+    ? ITEMS.filter((item) => item.use !== undefined)
+    : ITEMS.filter((item) => item.use === undefined);
+}
+
+function rollStockItem(rng: Rng, level: number, shelf: ShopShelf): string | undefined {
   const base = pickEntity(
     rng,
     'shop.base',
     computeRarities(
-      ITEMS.map((item) => ({
+      shelfPool(shelf).map((item) => ({
         item,
         // The catalogue has no `rarity`/`levelRange` of its own — `tier` is the
         // drop table (items.ts:113-121). So a shop weights by tier, which is
@@ -266,6 +301,31 @@ function rollStockItem(rng: Rng, level: number): string | undefined {
     ),
   );
   if (base === undefined) return undefined;
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A DRAUGHT IS SOLD PLAIN, AND IT IS THE ONE EXCEPTION `SHOP_EGO_CHANCE`
+   * ALLOWS FOR — READ ITS REASON RATHER THAN ITS RULE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * That rule says *"if the shop sold the same plain coats the floor does, the
+   * ~24:1 spread would make buying strictly irrational"*. Every word of it is
+   * about EQUIPMENT: the floor drops coats, so a plain coat on a shelf is a
+   * worse version of something free.
+   *
+   * NOTHING DROPS DRAUGHTS. Measured: 300 `rollLoot` rolls produced 300 items
+   * and zero of them — consumables are not in the loot tables, so the shelf is
+   * the only place one exists. Applying the rule here does not make buying
+   * irrational, it makes buying IMPOSSIBLE: a draught cannot take an ego (it has
+   * no slot, so every ego filter refuses it), so `refs` is always empty and the
+   * fill loop discards it sixty-four times and gives up. The apothecary stocked
+   * literally nothing, and the item shipped in the previous commit was reachable
+   * by nobody at all.
+   *
+   * "Oiled Draught of the Ledger" is also not a thing anybody wants to read: an
+   * ego modifies what WEARING something does, and drinking is not wearing.
+   */
+  if (base.item.use !== undefined) return formatItemId(base.item.id, []);
 
   const wanted = rng.int('shop.egos', 0, 99) < SHOP_EGO_CHANCE ? 2 : 1;
   const refs: ItemEgoRef[] = [];
@@ -325,13 +385,18 @@ export function restock(
    * only thing the epoch was ever for.
    */
   target: number = NB_FILL,
+  /**
+   * WHICH SHELF THIS IS. Defaults to the outfitter, which is every caller that
+   * predates the apothecary and is the whole catalogue minus the draughts.
+   */
+  shelf: ShopShelf = ShopShelf.Outfitter,
 ): string[] {
   const stock = [...keep];
   const want = Math.max(0, Math.min(SHELF_CAP, Math.floor(target)));
   let attempts = 0;
   while (stock.length < want && attempts < MAX_FILL_ATTEMPTS) {
     attempts += 1;
-    const id = rollStockItem(rng, level);
+    const id = rollStockItem(rng, level, shelf);
     if (id === undefined) continue;
     // NOT A SET BY ID. Two Reinforced coats at different powers are different
     // strings already; two at the SAME power are genuinely the same item, and a

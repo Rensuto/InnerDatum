@@ -86,6 +86,10 @@ export function catchUpShop(realm: Realm, partyMaxLevel: number): boolean {
       keep,
       level,
       NB_FILL * (shop.epoch + 1),
+      // WHAT THIS SHOP SELLS. Ashwick's shelf is draughts and Threadneedle's is
+      // everything worn — see `ShopShelf`; a second shop stocking the same
+      // catalogue would be the same shop, further away.
+      shop.shelf,
     )
       // EVERYTHING ON THE SHELF AFTER A RESTOCK IS THE SHOP'S. What the player
       // sold in has just been cleared, and what `restock` added is new — so a
