@@ -114,7 +114,7 @@ import { SLOT_ORDER } from '../content/items.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
-import { shouldAnnounceCleared } from '../world/cleared.ts';
+import { shouldAnnounceCleared, shouldAnnounceDeparture } from '../world/cleared.ts';
 import { fileableCount, isFileable, knownFiled } from '../world/casefile.ts';
 // `DELVES` IS DELIBERATELY NOT IMPORTED HERE ANY MORE. Both of this file's
 // lookups — the danger grade on the world map and the one in the bearing list —
@@ -7114,6 +7114,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // are in, so both callers can produce this and both mean "nothing to do".
     if (to.id === from.id) return;
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WAS ANYBODY IN THERE ALREADY? Asked HERE, before the body is placed.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The departure line at the bottom of this function fires only for the
+     * FIRST body into a delve, so a party of four walking in one at a time
+     * announces one expedition rather than four arrivals — and the three who
+     * follow their leader in are exactly the case that would make it noise.
+     * By the time the line is sent, `placed` is on the floor and this count
+     * would include the crosser, which is why it is taken up here.
+     */
+    const playersInside = to.world.allActors().filter((x) => x.kind === ActorKind.Player).length;
+
     // WHERE TO PUT THEM BACK. Recorded only when leaving the overworld, so a
     // delve reached from a town would return to the town's doorstep rather than
     // to a city cell nobody was standing on.
@@ -7198,6 +7212,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       { actorId, site: label, why, from: from.id, to: to.id, kind: to.kind },
       'a body crossed into a site',
     );
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE MOOR HEARS THAT SOMEBODY WENT IN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The clear broadcast further up says an expedition ENDED, and until now it
+     * was the only thing the moor ever heard about anyone. Measured with two
+     * sockets: a friend walks off, vanishes from the board with no explanation,
+     * and the next word about them arrives ten minutes later as a result. That
+     * is precisely backwards — the moment worth hearing is the one you can still
+     * act on, because `follow` crosses realms and the party pane has a Follow
+     * button on every row. Hearing it afterwards is a fact; hearing it now is an
+     * invitation.
+     *
+     * SENT AFTER `session.realmId` MOVES, so `audienceFor(from.id)` is the
+     * people still standing on the moor and not the person who just left.
+     *
+     * DELVES ONLY. A town is `Common`, entered constantly and for shopping;
+     * announcing that is how a channel of real news becomes a channel nobody
+     * reads. `Inner` is the same domain the clear line already speaks about.
+     */
+    if (
+      shouldAnnounceDeparture({
+        fromOverworld: from.kind === RealmKind.Overworld,
+        toDelve: to.kind === RealmKind.Inner,
+        alreadyInside: playersInside,
+      })
+    ) {
+      broadcastRecordLine(from, `Word from the moor: ${nameOf(actorId)} went into ${to.name}.`);
+    }
 
     /**
      * ═════════════════════════════════════════════════════════════════════════

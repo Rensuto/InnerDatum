@@ -52,3 +52,48 @@ export function shouldAnnounceCleared(facts: ClearedFacts): boolean {
   if (!facts.sawMonsterKill) return false;
   return facts.standingPlayers > 0;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *        AND THE OTHER HALF: DID SOMEBODY JUST SET OFF? THREE FACTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `shouldAnnounceCleared` says an expedition ENDED, and for a long time it was
+ * the only thing the shared overworld ever heard about anybody. Measured with
+ * two sockets on the moor: a friend walks off, their token vanishes with no
+ * explanation, and the next word about them arrives minutes later as a result.
+ *
+ * That is backwards for the one feature that makes this a shared world rather
+ * than several single-player games in one window. `follow` crosses realms and
+ * every row of the party pane carries a Follow button, so the moment worth
+ * hearing is the one you can still ACT on. Afterwards it is news; now it is an
+ * invitation.
+ *
+ * It is pure and it is here, next to its twin, because both answer the same
+ * question — WHAT DOES THE MOOR GET TOLD — and the failure mode of the first
+ * one was a rule that read as obvious and was wrong three times.
+ */
+export type DepartureFacts = {
+  /** They were standing on the shared overworld. Descending a floor is not news. */
+  readonly fromOverworld: boolean;
+  /**
+   * They walked into a DELVE. A town is entered constantly and for shopping,
+   * and announcing that is how a channel of real news becomes one nobody reads.
+   */
+  readonly toDelve: boolean;
+  /**
+   * Players already inside, counted BEFORE this body is placed.
+   *
+   * THE WHOLE REASON THIS TAKES A COUNT AND NOT A BOOLEAN. A party of four
+   * crosses one body at a time, so the naive version announces four departures
+   * for one expedition — and the three who follow their leader in are exactly
+   * the case that turns a useful line into noise. First in speaks for the trip.
+   */
+  readonly alreadyInside: number;
+};
+
+export function shouldAnnounceDeparture(facts: DepartureFacts): boolean {
+  if (!facts.fromOverworld) return false;
+  if (!facts.toDelve) return false;
+  return facts.alreadyInside === 0;
+}

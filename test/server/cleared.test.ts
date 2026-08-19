@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldAnnounceCleared } from '../../src/server/world/cleared.ts';
-import type { ClearedFacts } from '../../src/server/world/cleared.ts';
+import { shouldAnnounceCleared, shouldAnnounceDeparture } from '../../src/server/world/cleared.ts';
+import type { ClearedFacts, DepartureFacts } from '../../src/server/world/cleared.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -89,5 +89,45 @@ describe('shouldAnnounceCleared', () => {
 
   it('happens once, not once per pump', () => {
     expect(shouldAnnounceCleared({ ...CLEARED, already: true })).toBe(false);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE DEPARTURE LINE, AND THE ONE CLAUSE THAT KEEPS IT WORTH READING
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `shouldAnnounceCleared` above is the end of an expedition. This is the start
+ * of one, and it exists because two sockets on the moor measured the gap: A
+ * heard exactly one line about B in a whole session, and it arrived after B had
+ * already finished. The line you can act on is the one sent while B is still
+ * walking in.
+ *
+ * The interesting clause is `alreadyInside`. Everything else here is a domain
+ * guard; that one is the difference between a signal and a spam channel.
+ */
+const SETS_OFF: DepartureFacts = { fromOverworld: true, toDelve: true, alreadyInside: 0 };
+
+describe('shouldAnnounceDeparture', () => {
+  it('fires when the first body walks off the moor into a delve', () => {
+    expect(shouldAnnounceDeparture(SETS_OFF)).toBe(true);
+  });
+
+  it('says nothing for the three who follow their leader in', () => {
+    // A party crosses ONE BODY AT A TIME, so the version without this clause
+    // announces four departures for one expedition. First in speaks for the trip.
+    expect(shouldAnnounceDeparture({ ...SETS_OFF, alreadyInside: 1 })).toBe(false);
+  });
+
+  it('says nothing about a shopping trip', () => {
+    // A town is `Common` and is entered constantly. This is the clause that
+    // keeps the moor's log a channel of real news rather than a door counter.
+    expect(shouldAnnounceDeparture({ ...SETS_OFF, toDelve: false })).toBe(false);
+  });
+
+  it('says nothing when descending a floor', () => {
+    // Delve to delve is not a departure from anywhere anybody is standing, and
+    // the audience for this line is the people still on the shared overworld.
+    expect(shouldAnnounceDeparture({ ...SETS_OFF, fromOverworld: false })).toBe(false);
   });
 });
