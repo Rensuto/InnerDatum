@@ -53,12 +53,14 @@ describe('every part of the moor is called something', () => {
     const { w, h } = OVERWORLD.view;
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
-        const hits = ALDERBROOK_REGIONS.filter(
-          (r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1,
-        );
-        expect(hits, `${String(x)},${String(y)} is in ${String(hits.length)} regions`).toHaveLength(
-          1,
-        );
+        // COUNTED, NOT FILTERED. `filter` over 17,000 cells allocates 17,000
+        // arrays for an answer that is a number, and this file is part of the
+        // parallel load that was pushing the socket suites past their deadline.
+        let hits = 0;
+        for (const r of ALDERBROOK_REGIONS) {
+          if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) hits += 1;
+        }
+        expect(hits, `${String(x)},${String(y)} is in ${String(hits)} regions`).toBe(1);
       }
     }
   });

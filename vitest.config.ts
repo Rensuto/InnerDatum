@@ -35,6 +35,30 @@ export default defineConfig({
     // true or false.
     expect: { requireAssertions: true },
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * 20 SECONDS, BECAUSE ELEVEN OF THESE FILES BOOT A REAL SERVER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Eleven suites call `app.listen` and open real WebSockets — the gateway
+     * cannot be tested any other way, and the bugs those files have caught
+     * (an instance leaking on every follow, a region line wired to nothing)
+     * are exactly the ones a mock would have hidden.
+     *
+     * Vitest runs files in parallel and the default timeout is five seconds.
+     * MEASURED, on one full-gate run: four socket suites timed out at 5.1s,
+     * 5.1s, 5.2s and 10.0s, and every one of them passed in isolation and on
+     * the next full run. Nothing was wrong with the code; a hundred-odd files
+     * competing for the CPU delayed a handshake past the deadline.
+     *
+     * A SUITE THAT FAILS AT RANDOM IS WORSE THAN A SLOW ONE, because the next
+     * random failure is the one nobody looks at properly. This is not a licence
+     * for a slow test — it is the recognition that WS handshake latency under
+     * load says nothing about the server, and that a genuine hang still fails,
+     * twenty seconds later, with the same message.
+     */
+    testTimeout: 20_000,
+
     coverage: {
       provider: 'v8',
       reporter: ['text-summary'],
