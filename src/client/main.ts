@@ -2064,11 +2064,25 @@ function adjacentDowned(): { readonly id: string; readonly dir: Dir; readonly na
     if (member.downed === null || member.downed.status !== DownedStatus.Downed) continue;
     const body = actors.get(member.id);
     if (body === undefined || body.id === me.id) continue;
-    if (chebyshev(me, body) !== 1) continue;
-    const dir = DIR_ORDER.find((candidate) => {
-      const cell = step(me, candidate);
-      return cell.x === body.x && cell.y === body.y;
-    });
+    /**
+     * ZERO COUNTS, AND IT IS THE CASE THAT MATTERS MOST.
+     *
+     * A Downed body does not block — `actorAt` skips anything not alive — so the
+     * last step of a run to a friend lands ON them rather than beside them.
+     * Requiring `chebyshev === 1` made this prompt disappear at exactly that
+     * moment, with the five-turn clock still running. The server picks up
+     * whoever is under your feet first (`submitRevive`), so the direction sent
+     * for a body on your own tile is a formality; the prompt is the point.
+     */
+    const reach = chebyshev(me, body);
+    if (reach > 1) continue;
+    const dir =
+      reach === 0
+        ? DIR_ORDER[0]
+        : DIR_ORDER.find((candidate) => {
+            const cell = step(me, candidate);
+            return cell.x === body.x && cell.y === body.y;
+          });
     if (dir !== undefined) out.push({ id: member.id, dir, name: member.name });
   }
   return out;

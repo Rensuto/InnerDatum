@@ -1713,8 +1713,40 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       const actor = requireLiveActor(actorId);
       if (actor === undefined) return refuse('no_actor');
 
-      const tile = step(actor, dir);
-      const bodies = world.allActors().filter((a) => a.x === tile.x && a.y === tile.y);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE TILE YOU NAMED — OR THE ONE YOU ARE STANDING ON.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A DOWNED BODY DOES NOT BLOCK. `actorAt` skips anything not alive
+       * ("corpses do not block", world.ts) and a Downed body is `alive === false`
+       * by design, so a rescuer running to a friend does not stop beside them —
+       * they walk ONTO them. That is the natural last step of the run, and it is
+       * where the whole mechanic was quietly failing:
+       *
+       *   - `revive` names a DIRECTION, and there is no direction to your own
+       *     tile, so nothing you can press picks them up.
+       *   - the client's `adjacentDowned` requires `chebyshev === 1`, so the
+       *     gold prompt VANISHES at the exact moment you arrive.
+       *
+       * Measured, driving two players into a grim site: the rescuer reached the
+       * body and the driver reported "adjacent but no direction: gap 0" while a
+       * five-turn countdown ran out. game-design.md § 9 calls Downed the
+       * mechanic that "does more for co-op tension than anything else" because
+       * it turns "I died" into GET TO ME — and getting to them was the one thing
+       * that did not work.
+       *
+       * OWN TILE FIRST, because standing on somebody is unambiguous: there is
+       * exactly one body under you and it is the one you ran to. The named
+       * direction still works for every other case, which is all of them.
+       */
+      const here = world.allActors().filter((a) => a.x === actor.x && a.y === actor.y);
+      const underfoot = here.find((a) => a.kind === 'player' && !a.alive && a.id !== actor.id);
+      const tile = underfoot === undefined ? step(actor, dir) : { x: actor.x, y: actor.y };
+      const bodies =
+        underfoot === undefined
+          ? world.allActors().filter((a) => a.x === tile.x && a.y === tile.y)
+          : here.filter((a) => a.id !== actor.id);
       if (bodies.length === 0) return refuse('nobody is lying there');
 
       // A monster is not somebody to pick up. Refused here rather than at

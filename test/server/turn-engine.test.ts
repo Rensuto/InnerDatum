@@ -472,6 +472,55 @@ describe('submitRevive', () => {
     expect(rescuer.pendingIntent).toEqual({ kind: 'revive', targetId: 'actor_fallen' });
   });
 
+  it('picks up a body the rescuer is STANDING ON, which is where a run to a friend ends', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * GET TO ME, AND THEN WHAT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A Downed body is `alive === false` and therefore does not block — the test
+     * directly above depends on that. So a rescuer running to a friend does not
+     * stop beside them, they walk ONTO them, and that is the ordinary last step
+     * rather than a corner case.
+     *
+     * And there it failed. `revive` names a DIRECTION and no direction points at
+     * your own tile, so nothing a player could press picked them up; the client
+     * prompt vanished at the same instant, because `adjacentDowned` required
+     * `chebyshev === 1`. Measured by driving two players into a grim site:
+     * "adjacent but no direction: gap 0", and then "Player 2 is erased. Nobody
+     * reached them in time."
+     *
+     * game-design.md § 9 calls this the mechanic that "does more for co-op
+     * tension than anything else". Reaching them was the part that did not work.
+     */
+    const { world, engine, rescuer } = scene();
+    const fallen = world.addPlayer('actor_fallen', 'Fallen');
+    fallen.x = CASTER.x;
+    fallen.y = CASTER.y;
+
+    goDown(createDownedState(), fallen, 1);
+    expect(fallen.alive).toBe(false);
+
+    // The direction is a formality here and deliberately points at empty floor:
+    // there is nothing east, and the body underfoot is still the one picked up.
+    expect(engine.submitRevive?.('actor_caster', 'e').ok).toBe(true);
+    expect(rescuer.pendingIntent).toEqual({ kind: 'revive', targetId: 'actor_fallen' });
+  });
+
+  it('still uses the named direction when nobody is underfoot', () => {
+    // The other half, so "own tile first" cannot quietly become "own tile only".
+    const { world, engine, rescuer } = scene();
+    const fallen = world.addPlayer('actor_fallen', 'Fallen');
+    fallen.x = CASTER.x - 1;
+    fallen.y = CASTER.y;
+    goDown(createDownedState(), fallen, 1);
+
+    expect(engine.submitRevive?.('actor_caster', 'w').ok).toBe(true);
+    expect(rescuer.pendingIntent).toEqual({ kind: 'revive', targetId: 'actor_fallen' });
+    // …and a direction with nothing in it is still a refusal.
+    expect(engine.submitRevive?.('actor_caster', 'e').ok).toBe(false);
+  });
+
   it('prefers the body ON THE FLOOR when an ally is standing on the same tile', () => {
     // A corpse does not block, so an ally really can be standing on one. The
     // person you are reaching for is the one lying down.
