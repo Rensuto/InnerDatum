@@ -222,7 +222,7 @@ import {
  * injected as `opts.realms`, so a build with no registry is still a build with
  * one world, and `crossIntoSite` returns on its first line.
  */
-import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
+import { ENCOUNTER_SITE, OVERWORLD_ID, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
 import { ALDERBROOK_REGIONS, groundAt, regionAt } from '../../shared/level.ts';
 import type { Ground } from '../../shared/level.ts';
@@ -2953,7 +2953,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // anything for them, which `saveCharacter` reads as "cannot say" and leaves
     // the disk alone — the same carry-forward rule the keymap gets, and the
     // same reason: a producer that does not know must not erase.
-    ...(fog.has(actor.id) ? { explored: fogToBase64(fogFor(actor.id)) } : {}),
+    /**
+     * ONE OVERWORLD, ONE STRING — and the shape does not change until there are
+     * two. `CharacterFile.explored` is a base64 bitset and stays one, because a
+     * record keyed by realm is a save migration that buys nothing while there is
+     * a single map to key it by, and an optional field nobody writes is the
+     * thing this session has spent its time deleting.
+     *
+     * WHAT DID CHANGE is that the string is now read out of a bitset that KNOWS
+     * which map it is about, so the day a second overworld exists this line
+     * widens to a record and the in-memory side is already correct.
+     */
+    ...(fogSeen(actor.id, OVERWORLD_ID)
+      ? { explored: fogToBase64(fogFor(actor.id, opts.realms?.overworld)) }
+      : {}),
   });
 
   /**
@@ -2972,16 +2985,52 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * could never be matched again, and a 24x24 arena is not somewhere anybody
    * explores. See `CharacterFile.explored`.
    */
-  const fog = new Map<string, Uint8Array>();
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * KEYED BY ACTOR **AND REALM**, AND THE SECOND KEY IS THE WHOLE POINT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * This was `Map<actorId, Uint8Array>`. One bitset per player, sized from
+   * `realms.overworld`, written by `revealFor` for ANY realm whose kind is
+   * Overworld — and there is one of those today, so it was correct and would
+   * have gone on being correct right up until the day it was not.
+   *
+   * THE FAILURE IT WOULD HAVE HAD IS THE WORST SHAPE AVAILABLE. Two overworlds
+   * do not misalign; they **MERGE**. Walking the second map would reveal the
+   * first and the other way round, into one bitset that `prefsFields` then
+   * persists as one `explored` string — and the client MERGES rather than
+   * replaces (deliberately: *"a frame that arrived after some walking must not
+   * un-see ground the player just crossed"*), so it would never self-correct.
+   * A player would simply find their map filling itself in.
+   *
+   * AND IDENTICAL DIMENSIONS HIDE IT RATHER THAN PREVENT IT. With different
+   * sizes the bits scramble and somebody notices in a minute; at the same size
+   * it is a clean, silent, persisted lie. Every argument for building a second
+   * landmass at 170x100 was therefore an argument for the bug being invisible.
+   *
+   * SIZED PER REALM rather than from the overworld, so the second key carries
+   * its own dimensions and a map of another size is simply another entry.
+   */
+  const fog = new Map<string, Map<string, Uint8Array>>();
 
-  const fogFor = (actorId: string): Uint8Array => {
-    const existing = fog.get(actorId);
+  const fogFor = (actorId: string, realm?: Realm): Uint8Array => {
+    const byRealm = fog.get(actorId) ?? new Map<string, Uint8Array>();
+    fog.set(actorId, byRealm);
+    // ABSENT REALM MEANS THE ONE OVERWORLD, which is what every caller that
+    // predates the second key meant and is the only thing it could have meant.
+    const home = realm ?? opts.realms?.overworld;
+    const key = home?.id ?? OVERWORLD_ID;
+    const existing = byRealm.get(key);
     if (existing !== undefined) return existing;
-    const level = opts.realms?.overworld.world.level;
+    const level = home?.world.level;
     const made = createFog(level?.w ?? 1, level?.h ?? 1);
-    fog.set(actorId, made);
+    byRealm.set(key, made);
     return made;
   };
+
+  /** Has this character walked anywhere on this map? Drives the `explored` field. */
+  const fogSeen = (actorId: string, realmId: string): boolean =>
+    fog.get(actorId)?.has(realmId) === true;
 
   /**
    * Reveal around a body, and answer whether anything was newly seen.
@@ -2993,7 +3042,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const revealFor = (realm: Realm, actorId: string, x: number, y: number): boolean => {
     if (realm.kind !== RealmKind.Overworld) return false;
     const level = realm.world.level;
-    return revealDisc(fogFor(actorId), level.w, level.h, x, y);
+    return revealDisc(fogFor(actorId, realm), level.w, level.h, x, y);
   };
 
   /**
@@ -4754,8 +4803,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * why this decodes with an explicit length instead of trusting the string.
      */
     if (restore.explored !== undefined && opts.realms !== undefined) {
-      const level = opts.realms.overworld.world.level;
-      fog.set(actor.id, fogFromBase64(restore.explored, Math.ceil((level.w * level.h) / 8)));
+      const home = opts.realms.overworld;
+      const level = home.world.level;
+      const byRealm = fog.get(actor.id) ?? new Map<string, Uint8Array>();
+      // INTO THE OVERWORLD'S SLOT, because a v1 file's single string can only
+      // ever have been about the one map that existed when it was written.
+      byRealm.set(home.id, fogFromBase64(restore.explored, Math.ceil((level.w * level.h) / 8)));
+      fog.set(actor.id, byRealm);
     }
     if (restore.keybinds === undefined) return;
     actor.keybinds = keybindsRecord(restore.keybinds);
@@ -5230,8 +5284,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * The server's copy is the one that persists.
      */
     const explored =
-      realm.kind === RealmKind.Overworld && fog.has(actorId)
-        ? fogToBase64(fogFor(actorId))
+      realm.kind === RealmKind.Overworld && fogSeen(actorId, realm.id)
+        ? fogToBase64(fogFor(actorId, realm))
         : undefined;
 
     send(session.socket, {

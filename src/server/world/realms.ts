@@ -352,7 +352,28 @@ export type SiteDef = {
    * site, and it is not a matter of taste — see the essay on `RealmKind`.
    * `Common` requires that nothing ever spawns here.
    */
-  readonly kind: typeof RealmKind.Common | typeof RealmKind.Inner;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SHARED, PRIVATE TO A PARTY, OR A WHOLE OTHER MAP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The first two are the essay on `RealmKind`. The third is new and is the
+   * blocker that made the other two second-landmass fixes untestable:
+   * `SiteDef.kind` was `Common | Inner`, so there was NO CODE PATH that put a
+   * body into a second Overworld realm — and building one as `Common` would have
+   * typechecked, booted, been walkable, and silently disabled six subsystems
+   * that gate on `kind === Overworld` (the roamer tick, the fog reveal, the
+   * `explored` frame, the exit rule, the nearest-site bearings and
+   * `leaveRealm`'s refusal).
+   *
+   * AN OVERWORLD SITE IS A DOOR BETWEEN MAPS. It behaves like a Common one — one
+   * shared copy, built once, never reaped, everybody who walks in is in it —
+   * and differs only in the kind it carries, which is what those six subsystems
+   * read. `Common` requires that nothing ever spawns; an overworld is the one
+   * shared space where roamers are the whole point, so the no-combat assertion
+   * deliberately does not apply to it.
+   */
+  readonly kind: typeof RealmKind.Common | typeof RealmKind.Inner | typeof RealmKind.Overworld;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * HOW LONG AN EMPTIED INSTANCE WAITS BEFORE IT IS REAPED. 0 = immediately.
@@ -678,17 +699,13 @@ export function createRealms(opts: RealmsOptions): Realms {
    */
   const commonBySite = new Map<string, Realm>();
   for (const site of sites.values()) {
-    if (site.kind !== RealmKind.Common) continue;
-    assertNoCombatInSharedSpace(site);
-    const realm = build(
-      `realm:${site.id}`,
-      RealmKind.Common,
-      site.name,
-      site.map(`realm:${site.id}`),
-      {
-        siteId: site.id,
-      },
-    );
+    if (site.kind === RealmKind.Inner) continue;
+    // A SECOND MAP IS NOT A ROOM, so the no-combat rule that guards a town does
+    // not apply to it: roamers on an overworld are the entire point of one.
+    if (site.kind === RealmKind.Common) assertNoCombatInSharedSpace(site);
+    const realm = build(`realm:${site.id}`, site.kind, site.name, site.map(`realm:${site.id}`), {
+      siteId: site.id,
+    });
     commonBySite.set(site.id, realm);
   }
 
@@ -727,7 +744,11 @@ export function createRealms(opts: RealmsOptions): Realms {
      * rather than being absent from the signature: the caller should not have
      * to know which kind of place it is asking about in order to ask.
      */
-    if (site.kind === RealmKind.Common) {
+    // BOTH SHARED KINDS TAKE THIS BRANCH. A town and a second landmass are the
+    // same statement about ownership — there is one of it, and everybody who
+    // walks through the door is in the same one — and they differ only in the
+    // kind they carry. See `SiteDef.kind`.
+    if (site.kind !== RealmKind.Inner) {
       const shared = commonBySite.get(site.id);
       if (shared !== undefined) return shared;
       // A common site that was not built at boot means the SITES table and this
