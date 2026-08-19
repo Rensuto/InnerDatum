@@ -5193,6 +5193,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return seen;
   };
 
+  /**
+   * Which overworld this character walked in from, or null. Resolved through the
+   * connection table because `markersFor` is handed an actor id and the record
+   * lives on the SESSION — see `Session.enteredFromRealm`.
+   */
+  const enteredFromRealmOf = (actorId: string): string | null => {
+    const conn = connByActor.get(actorId);
+    const owner = conn === undefined ? undefined : sessions.get(conn);
+    return owner?.enteredFromRealm ?? null;
+  };
+
   const markersFor = (realm: Realm, actorId?: string): SiteView[] => {
     const authored = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
       const def = SITES.get(siteId);
@@ -5219,12 +5230,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       ];
     });
 
-    // THE WAY OUT, inside a site only. The overworld's edge is the edge of the
-    // world and is already drawn as erased ground.
-    const exits =
-      realm.kind === RealmKind.Overworld
-        ? []
-        : realm.spawns.map((t) => ({ x: t.x, y: t.y, marker: 'gate', name: 'The way out' }));
+    /**
+     * THE WAY OUT — from a site, and from a second landmass you walked into.
+     *
+     * This was "inside a site only", on the reasoning that *"the overworld's
+     * edge is the edge of the world"*. True of the map you wake up on. A player
+     * standing on a second overworld needs the door drawn or the ground they
+     * arrived on is indistinguishable from the seven thousand cells around it —
+     * and `leaveRealm` requires them to stand on that exact tile.
+     *
+     * THE SAME CONDITION AS `leaveRealm`'s, deliberately: a marker offering a
+     * door the server would refuse is worse than no marker, so both ask whether
+     * there is anywhere to go back to rather than what kind of place this is.
+     */
+    const canLeave =
+      realm.kind !== RealmKind.Overworld ||
+      (actorId !== undefined && enteredFromRealmOf(actorId) !== null);
+    const exits = canLeave
+      ? realm.spawns.map((t) => ({ x: t.x, y: t.y, marker: 'gate', name: 'The way out' }))
+      : [];
 
     // A ROAMER IS DRAWN AS A CREATURE, not as a place. `marker` stays only as
     // the fallback for a client with no creature art; `sprite` is what it
@@ -6257,7 +6281,36 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (realms === undefined || actorId === null || session.realmId === null) return false;
 
     const from = realms.get(session.realmId);
-    if (from === undefined || from.kind === RealmKind.Overworld) return false;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * YOU MAY LEAVE ANY MAP YOU WALKED INTO. YOU MAY NOT LEAVE THE ONE YOU WOKE
+     * UP ON.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * THIS READ `from.kind === RealmKind.Overworld` AND IT WOULD HAVE STRANDED
+     * SOMEBODY PERMANENTLY. The rule it encoded — *"the overworld's edge is the
+     * edge of the world"* — is true of Alderbrook and is a statement about the
+     * ONE map that existed when it was written. A second landmass is an
+     * overworld too, so the first player to cross into the dark territory would
+     * have found the door refusing to open from the far side, with no verb in
+     * the protocol that could have brought them home. It is the fifth of the
+     * four second-landmass blockers, and the only one that ends somebody's
+     * character.
+     *
+     * The honest test is not what KIND of place this is, it is whether there is
+     * anywhere to go back TO. `Session.enteredFromRealm` is set only by
+     * `crossIntoRealm` when leaving an overworld, so:
+     *
+     *   Alderbrook — you woke up there, nothing recorded, refused. Unchanged.
+     *   The Redaction — you walked in from Alderbrook, so the way back is the
+     *     way you came, which is what `leaveRealm` already computes below.
+     *
+     * A body that arrives by reconnect rather than by walking has no record and
+     * is refused, which is the same conservative answer as before and the reason
+     * this is a `null` check rather than a kind check.
+     */
+    if (from === undefined) return false;
+    if (from.kind === RealmKind.Overworld && session.enteredFromRealm === null) return false;
 
     const body = from.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return false;

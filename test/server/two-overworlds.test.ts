@@ -245,3 +245,65 @@ describe('danger scales with the ground, not with a constant', () => {
     expect(home).toBe(18);
   });
 });
+
+describe('you can get home again', () => {
+  it('refuses to let anybody walk off the map they woke up on', async () => {
+    /**
+     * ALDERBROOK IS UNCHANGED. `leaveRealm` used to refuse on `kind ===
+     * Overworld`, which is exactly right for the one map a character is born on:
+     * its edge is the edge of the world, and it is already drawn as erased
+     * ground. The rule now asks whether there is anywhere to go BACK to, and for
+     * somebody who woke up here the answer is no.
+     */
+    const { actorId } = await hello(server.port);
+    const home = server.realms.overworld;
+    const body = home.world.getActor(actorId);
+    expect(body).toBeDefined();
+    if (body === undefined) return;
+
+    const before = server.realms.realmOf(actorId)?.id;
+    const spawn = home.spawns[0];
+    if (spawn === undefined) throw new Error('no spawn');
+    body.x = spawn.x;
+    body.y = spawn.y;
+
+    openSockets[0]?.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'move', dir: 'e' }));
+    await sleep(60);
+    body.x = spawn.x;
+    body.y = spawn.y;
+    openSockets[0]?.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'move', dir: 'w' }));
+    await sleep(120);
+
+    expect(server.realms.realmOf(actorId)?.id, 'walked off the edge of the world').toBe(before);
+  });
+
+  it('is the fifth blocker, and it would have stranded somebody permanently', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE THAT ENDS A CHARACTER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `leaveRealm` began `if (from.kind === RealmKind.Overworld) return false;`
+     * — a statement about the ONE map that existed when it was written. A second
+     * landmass is an overworld too, so the first player to cross into the dark
+     * territory would have found the door refusing to open from the far side,
+     * with no verb in the protocol that could bring them home. Not a teleport,
+     * not a merged map: a character that can never leave.
+     *
+     * It was not on the list of four. It was found by asking "how does the
+     * player get back" BEFORE building the door, which is the only reason it is
+     * a comment rather than a bug report from somebody's evening.
+     *
+     * The rule is now about whether there is anywhere to go back to, and
+     * `markersFor` asks the SAME question so the map never offers a door the
+     * server would refuse. Asserted here as the shape of the condition, because
+     * the round trip itself needs a door on the Alderbrook rows and that is
+     * content which does not exist yet.
+     */
+    const second = server.realms.all().find((r) => r.siteId === SECOND_MAP.id);
+    expect(second?.kind).toBe(RealmKind.Overworld);
+    // A second overworld HAS a threshold to stand on, which is what `leaveRealm`
+    // requires and what `markersFor` now draws as "The way out".
+    expect((second?.spawns ?? []).length).toBeGreaterThan(0);
+  });
+});
