@@ -88,7 +88,7 @@ import {
   PanelSkin,
   wrapText,
 } from './panel.ts';
-import type { ClassOptionView } from '../../shared/protocol.ts';
+import type { ClassOptionView, LoadoutTalent } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 
@@ -384,6 +384,52 @@ function drawLetterPlate(
  * string's character count — every line is clamped by `fitText` or `wrapText`
  * against the real inner width.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A TALENT ACTUALLY DOES, IN THE WIDTH A CARD HAS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The picker drew four talent NAMES per class and nothing else, while the frame
+ * it was drawing from already carried `cost`, `range`, `minRange` and
+ * `cooldownTurns` for every one of them. "Iron Curtain" and "Fog Step" are good
+ * names and they are not information: a player choosing their character for an
+ * evening could not tell a melee talent from a ranged one, and the FIRST
+ * decision in the game was the one they had least to go on.
+ *
+ * ═══ THE DEAD ZONE IS THE REASON THIS IS SHORTHAND AND NOT PROSE ═══
+ * game-design.md § 2 calls the Inspector's `min_range 3` *"the single most
+ * important thing"* about the class — they are helpless in a doorway. A player
+ * who learns that after choosing has been told the most important fact too
+ * late, and it fits in five characters: `3-5`.
+ *
+ * A CARD IS ~175px WIDE, so this is the same label-left/value-right grammar the
+ * Life and resource rows above already use, rather than a wrapped paragraph
+ * there is no room for.
+ */
+export function talentShorthand(talent: LoadoutTalent): string {
+  /**
+   * THE NUMBERS ARE READ OFF THE REAL CLASSES, NOT GUESSED. Measured:
+   *
+   *     Crude Blow     range=1.5 min=0     Revolver Shot  range=5 min=3
+   *     Iron Curtain   range=1.5 min=0     Sniper's Mark  range=7 min=3
+   *     Fog Step       range=3   min=0     Mend Wounds    range=0 min=0
+   *
+   * MELEE IS 1.5, not 1 — it is the diagonal-inclusive adjacency the engine
+   * uses — and a first version testing `range <= 1` printed "1.5 tiles" on every
+   * Watchman talent. RANGE 0 IS SELF, and that same version called Mend Wounds,
+   * which heals every ally within two tiles, "melee".
+   */
+  const reach =
+    talent.range <= 0
+      ? 'self'
+      : talent.range < 2
+        ? 'melee'
+        : talent.minRange > 0
+          ? `${String(talent.minRange)}-${String(talent.range)}`
+          : `${String(talent.range)} tiles`;
+  return `${String(talent.cost.ap)} AP · ${reach}`;
+}
+
 function drawCard(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
@@ -514,10 +560,20 @@ function drawCard(
     if (!blitCropped(ctx, sprites, talent.icon, box)) {
       drawLetterPlate(ctx, box, initialsOf(talent.name), FONT_ICON_FALLBACK);
     }
+    // The shorthand first, right-aligned, so the name is fitted to whatever is
+    // actually left rather than to the whole card. Same order and same reason as
+    // `field` above.
+    const meta = talentShorthand(talent);
     ctx.font = FONT_BODY;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = PALETTE.SLATE;
+    const metaShown = fitText(ctx, meta, Math.max(0, w - TALENT_ICON - 4));
+    ctx.fillText(metaShown, x + w, y + TALENT_ROW_H / 2);
+    const metaW = Math.ceil(ctx.measureText(metaShown).width);
+    ctx.textAlign = 'left';
     ctx.fillStyle = PALETTE.BONE;
     ctx.fillText(
-      fitText(ctx, talent.name, Math.max(0, w - TALENT_ICON - 4)),
+      fitText(ctx, talent.name, Math.max(0, w - TALENT_ICON - 4 - metaW - CHAR_W)),
       x + TALENT_ICON + 4,
       y + TALENT_ROW_H / 2,
     );

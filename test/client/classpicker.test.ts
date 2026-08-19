@@ -8,6 +8,7 @@ import {
   classPickerHitAt,
   classPickerRect,
   drawClassPicker,
+  talentShorthand,
 } from '../../src/client/ui/classpicker.ts';
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
@@ -288,5 +289,65 @@ describe('drawing', () => {
     // unselected pass still draws text and rects, and still clips to the panel.
     expect(calls.some((c) => c.startsWith('fillText('))).toBe(true);
     expect(clips.length).toBeGreaterThan(0);
+  });
+});
+
+describe('what a talent is, in the width a card has', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FIRST DECISION IN THE GAME HAD THE LEAST INFORMATION BEHIND IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The picker drew four talent NAMES per class while the frame it was drawing
+   * from already carried `cost`, `range`, `minRange` and `cooldownTurns` for
+   * every one. "Iron Curtain" and "Fog Step" are good names and they are not
+   * information — a player picking a character for an evening could not tell a
+   * melee talent from a ranged one.
+   *
+   * THE NUMBERS BELOW ARE THE REAL ONES, read off a live `class_options` frame
+   * rather than invented, which is the only reason this test is worth anything:
+   * a first version of `talentShorthand` tested `range <= 1` and printed
+   * "1.5 tiles" on every Watchman talent, and called Mend Wounds — a heal for
+   * every ally within two tiles — "melee".
+   */
+  const shaped = (over: Partial<LoadoutTalent>): LoadoutTalent => ({
+    ...talent('t', 'T'),
+    ...over,
+  });
+
+  it('calls the diagonal-inclusive adjacency melee, not "1.5 tiles"', () => {
+    // Crude Blow, Ward Rush, Iron Curtain and Lockdown are all range 1.5.
+    expect(
+      talentShorthand(shaped({ range: 1.5, minRange: 0, cost: { ap: 3, mp: 0, resource: 0 } })),
+    ).toBe('3 AP · melee');
+  });
+
+  it('shows the dead zone as a band, because it is the thing to know', () => {
+    /**
+     * game-design.md § 2 calls the Inspector's `min_range 3` "the single most
+     * important thing" about the class — they are helpless in a doorway. A
+     * player who finds that out after choosing was told too late, and it fits
+     * in three characters.
+     */
+    expect(
+      talentShorthand(shaped({ range: 5, minRange: 3, cost: { ap: 3, mp: 0, resource: 0 } })),
+    ).toBe('3 AP · 3-5');
+    expect(
+      talentShorthand(shaped({ range: 7, minRange: 3, cost: { ap: 5, mp: 0, resource: 0 } })),
+    ).toBe('5 AP · 3-7');
+  });
+
+  it('gives a plain reach when there is no hole in it', () => {
+    // Fog Step, Ashwick Flare, Backdraft — range with minRange 0.
+    expect(
+      talentShorthand(shaped({ range: 3, minRange: 0, cost: { ap: 4, mp: 0, resource: 0 } })),
+    ).toBe('4 AP · 3 tiles');
+  });
+
+  it('calls a self-centred talent self rather than melee', () => {
+    // Mend Wounds is range 0 and heals everybody within two tiles of YOU.
+    expect(
+      talentShorthand(shaped({ range: 0, minRange: 0, cost: { ap: 3, mp: 0, resource: 0 } })),
+    ).toBe('3 AP · self');
   });
 });
