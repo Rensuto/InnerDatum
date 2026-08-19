@@ -141,6 +141,7 @@ import {
   drawHeader,
   drawPanel,
   fitText,
+  wrapText,
   headerDragRect,
   HEADER_H,
   PANEL_PAD,
@@ -192,10 +193,26 @@ const PLUS_H = 14;
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
 
-/** Preferred and minimum size of the panel itself. */
-const PANEL_W = 320;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PREFERRED AND MINIMUM SIZE — AND 320 WAS TOO NARROW TO SAY ANYTHING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A player photographed this panel with every description cut off mid-sentence:
+ * *"Loose a flare at a target up to 5 tiles away for…"*. The prose column at 320
+ * is about 250 pixels, which is forty monospace characters, and a talent
+ * description is sixty to ninety — so the panel whose entire subject is WHAT A
+ * TALENT DOES was showing less than half of every sentence, on both the current
+ * line and the next-rank line under it.
+ *
+ * WIDER *AND* WRAPPED, because widening alone only moves the cut. 480 still
+ * fits the guaranteed floor with room (`DEFAULT_VIEWPORT` is 20 tiles = 640
+ * logical pixels, and this needs 480 + 12 of margin), and the height grows with
+ * the text rather than the text being trimmed to the height.
+ */
+const PANEL_W = 480;
 const PANEL_MIN_W = 176;
-const PANEL_MAX_H = 252;
+const PANEL_MAX_H = 300;
 /**
  * A panel that cannot hold its header plus ONE talent row is not worth drawing.
  *
@@ -524,13 +541,61 @@ function closeRect(rect: PanelRect): PanelRect {
   };
 }
 
-/** How many vertical pixels one row wants. */
-function rowHeight(row: TalentRow): number {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ONE WRAPPER BOTH THE PAINTER AND THE HIT TEST USE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Wrapping decides how tall a row is, and this file's header spends a paragraph
+ * on why the painter and `talentPanelHitAt` must agree about that to the pixel:
+ * a second copy of the arithmetic is a button that lands a row above where it is
+ * drawn, on somebody else's window size only.
+ *
+ * IT IS ITS OWN OFFSCREEN CONTEXT, and that is not the thing the header forbids.
+ * What a hit test may not do is remember a RECT from the last frame — stale
+ * geometry that swallows clicks at 0,0 on a surface never drawn. A measuring
+ * context is not state about a frame; it answers the same question at any time,
+ * and using it rather than the painter's own context also means measuring cannot
+ * clobber the font the painter had set.
+ *
+ * INJECTED INTO THE GEOMETRY ANYWAY, so a test can hand it a wrapper with known
+ * arithmetic instead of depending on how a headless environment measures a font
+ * it does not have.
+ */
+let measurer: CanvasRenderingContext2D | null | undefined;
+export function talentWrapper(): (text: string, maxPx: number) => readonly string[] {
+  if (measurer === undefined) {
+    measurer =
+      typeof document === 'undefined'
+        ? null
+        : (document.createElement('canvas').getContext('2d') ?? null);
+  }
+  const ctx = measurer;
+  if (ctx === null) return (text) => [text];
+  return (text, maxPx) => {
+    ctx.font = FONT_BODY;
+    return wrapText(ctx, text, maxPx);
+  };
+}
+
+/** Baseline of the first description line, from the top of a talent row. */
+const DESC_TOP = 21;
+/** Distance between two wrapped description lines. */
+const DESC_LINE_H = 12;
+
+/**
+ * How many vertical pixels one row wants, GIVEN HOW MANY LINES ITS PROSE TOOK.
+ *
+ * The icon block is 43 tall and two lines of description fit inside it, which is
+ * why this was a constant for as long as the description was truncated to one
+ * line each. It is not a constant now: a row grows to hold its own sentences.
+ */
+function rowHeight(row: TalentRow, lines: number): number {
   switch (row.kind) {
     case TalentRowKind.Points:
       return POINTS_ROW_H;
     case TalentRowKind.Talent:
-      return TALENT_ROW_H;
+      return Math.max(TALENT_ROW_H, DESC_TOP + (lines - 1) * DESC_LINE_H + 4);
     case TalentRowKind.Note:
       return NOTE_ROW_H;
   }
@@ -540,6 +605,16 @@ function rowHeight(row: TalentRow): number {
 export type PlacedTalentRow = {
   readonly row: TalentRow;
   readonly rect: PanelRect;
+  /**
+   * THE DESCRIPTION, ALREADY BROKEN INTO LINES — and the next-rank one under it.
+   *
+   * Wrapped HERE rather than in the painter, because the row's height is decided
+   * by how many lines there are and a painter that wrapped independently would
+   * be the second opinion. The drop policy below reads these heights; if the two
+   * disagreed, the panel would reserve room for two lines and draw four.
+   */
+  readonly descLines: readonly string[];
+  readonly nextLines: readonly string[];
   /**
    * The `+` control, or null when there is nothing to buy.
    *
@@ -570,6 +645,16 @@ export type TalentPanelGeometry = {
 export function talentPanelGeometry(
   rect: PanelRect,
   rows: readonly TalentRow[],
+  /**
+   * HOW THIS CLIENT BREAKS A SENTENCE, injected rather than imported.
+   *
+   * Wrapping needs to MEASURE, and measuring needs a canvas context this module
+   * has no business owning — the painter has one and hands its measuring over.
+   * It is required rather than optional on purpose: an optional wrapper would
+   * default to one line per description, which is the truncation this parameter
+   * exists to end, silently and only for whoever forgot.
+   */
+  wrap: (text: string, maxPx: number) => readonly string[],
 ): TalentPanelGeometry {
   const close = closeRect(rect);
   const x = rect.x + INSET;
@@ -582,7 +667,28 @@ export function talentPanelGeometry(
   // lookahead would hold back twelve pixels on a panel where everything fits,
   // and the fourth talent — the one the drop policy exists to protect — would be
   // dropped to make room for a message saying it had been dropped.
-  const total = rows.reduce((sum, row) => sum + rowHeight(row), 0);
+  /**
+   * THE PROSE, WRAPPED ONCE, before anything asks how tall a row is.
+   *
+   * The column stops short of the `+` for the name only; the description runs
+   * the full width under it, which is where the extra characters come from.
+   */
+  const textX = INSET + 2 + ICON_PX + ICON_GAP;
+  const proseW = Math.max(0, rect.w - textX - INSET - 2);
+  const linesOf = (row: TalentRow): { desc: readonly string[]; next: readonly string[] } => {
+    if (row.kind !== TalentRowKind.Talent) return { desc: [], next: [] };
+    return {
+      desc: wrap(row.desc, proseW),
+      next: row.descNext === null ? [] : wrap(`${ARROW} ${row.descNext}`, proseW),
+    };
+  };
+  const wrapped = rows.map(linesOf);
+
+  const total = rows.reduce(
+    (sum, row, i) =>
+      sum + rowHeight(row, (wrapped[i]?.desc.length ?? 0) + (wrapped[i]?.next.length ?? 0)),
+    0,
+  );
   const limit = top + total <= bottom ? bottom : bottom - NOTE_ROW_H;
 
   const placed: PlacedTalentRow[] = [];
@@ -592,7 +698,8 @@ export function talentPanelGeometry(
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i];
     if (row === undefined) continue;
-    const h = rowHeight(row);
+    const lines = wrapped[i] ?? { desc: [], next: [] };
+    const h = rowHeight(row, lines.desc.length + lines.next.length);
     if (cursor + h > limit) {
       dropped = rows.length - i;
       break;
@@ -603,7 +710,7 @@ export function talentPanelGeometry(
       row.kind === TalentRowKind.Talent && row.canSpend
         ? { x: rowRect.x + rowRect.w - PLUS_W, y: rowRect.y + 1, w: PLUS_W, h: PLUS_H }
         : null;
-    placed.push({ row, rect: rowRect, plus });
+    placed.push({ row, rect: rowRect, plus, descLines: lines.desc, nextLines: lines.next });
     cursor += h;
   }
 
@@ -613,6 +720,8 @@ export function talentPanelGeometry(
       row: { kind: TalentRowKind.Note, text: `${what} — panel too small` },
       rect: { x, y: cursor, w: innerW, h: NOTE_ROW_H },
       plus: null,
+      descLines: [],
+      nextLines: [],
     });
   }
 
@@ -721,7 +830,7 @@ export function talentPanelHitAt(
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
 
-  const geometry = talentPanelGeometry(rect, rows);
+  const geometry = talentPanelGeometry(rect, rows, talentWrapper());
   if (inside(geometry.close)) return { kind: TalentHitKind.Close };
 
   for (const placed of geometry.placed) {
@@ -903,15 +1012,21 @@ function drawRow(
       // --- the current -> next diff, which is the point of the panel --------
       // Two lines rather than ToME's inline `[-> ]` because our two values are
       // whole sentences; the ARROW on the second line carries the relation.
-      const wideW = Math.max(0, rect.x + rect.w - textX - 2);
+      // EVERY LINE THE GEOMETRY DECIDED ON, and not one it did not: the row was
+      // made tall enough for exactly these, so re-wrapping here — or trimming to
+      // a fixed two — is how a panel comes to reserve room it does not use, or
+      // draw past its own bottom edge.
       ctx.font = FONT_BODY;
+      let lineY = rect.y + DESC_TOP;
       ctx.fillStyle = PALETTE.BONE;
-      ctx.fillText(fitText(ctx, row.desc, wideW), textX, rect.y + 21);
-
-      if (row.descNext !== null) {
-        ctx.font = FONT_BODY;
-        ctx.fillStyle = PALETTE.GOLD;
-        ctx.fillText(fitText(ctx, `${ARROW} ${row.descNext}`, wideW), textX, rect.y + 33);
+      for (const line of placed.descLines) {
+        ctx.fillText(line, textX, lineY);
+        lineY += DESC_LINE_H;
+      }
+      ctx.fillStyle = PALETTE.GOLD;
+      for (const line of placed.nextLines) {
+        ctx.fillText(line, textX, lineY);
+        lineY += DESC_LINE_H;
       }
 
       // --- the button slot: `+`, MAX, or nothing ---------------------------
@@ -986,7 +1101,7 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
 
   drawHeader(ctx, sprites, panelTitle(options.level), rect, FONT_META);
 
-  const geometry = talentPanelGeometry(rect, rows);
+  const geometry = talentPanelGeometry(rect, rows, talentWrapper());
   for (const placed of geometry.placed) drawRow(ctx, sprites, placed, armedId, hovered);
 
   // ONE SENTENCE ABOUT THE PRESS, and only while something is armed. A permanent

@@ -24,6 +24,39 @@ import type { TalentPanelView, TalentRow } from '../../src/client/ui/talents.ts'
 import type { LoadoutTalent, ProgressMsg } from '../../src/shared/protocol.ts';
 
 /**
+ * A WRAPPER WITH ARITHMETIC A TEST CAN PREDICT — six pixels a character, which
+ * is what `10px ui-monospace` measures to in the browser this ships in.
+ *
+ * Injected rather than measured, which is the reason `talentPanelGeometry` takes
+ * the wrapper as a parameter at all: these assertions are about how many rows fit
+ * and where they land, and they must not depend on how a headless environment
+ * renders a font it does not have installed.
+ */
+const CHAR_PX = 6;
+function wrapAt(text: string, maxPx: number): readonly string[] {
+  const per = Math.max(1, Math.floor(maxPx / CHAR_PX));
+  if (text === '') return [''];
+  const out: string[] = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    const candidate = line === '' ? word : `${line} ${word}`;
+    if (candidate.length <= per) {
+      line = candidate;
+      continue;
+    }
+    if (line !== '') out.push(line);
+    let rest = word;
+    while (rest.length > per) {
+      out.push(rest.slice(0, per));
+      rest = rest.slice(per);
+    }
+    line = rest;
+  }
+  if (line !== '' || out.length === 0) out.push(line);
+  return out;
+}
+
+/**
  * ═══════════════════════════════════════════════════════════════════════════
  * THE TALENT PANEL, READ THE WAY A CLICK READS IT. NO PIXELS ARE ASSERTED.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -367,7 +400,7 @@ describe('talentPanelHitAt', () => {
       const rect = talentPanelRect(size);
       if (rect === null) continue;
       const rows = talentPanelRows(view());
-      const geometry = talentPanelGeometry(rect, rows);
+      const geometry = talentPanelGeometry(rect, rows, wrapAt);
 
       for (const placed of geometry.placed) {
         if (placed.row.kind !== TalentRowKind.Talent) continue;
@@ -430,7 +463,7 @@ describe('talentPanelHitAt', () => {
   it('offers no `+` at all when the hand is empty, so nothing looks pressable', () => {
     const rect = roomyRect();
     const rows = talentPanelRows(view({ progress: progressFrame({ unspent: 0 }) }));
-    for (const placed of talentPanelGeometry(rect, rows).placed) {
+    for (const placed of talentPanelGeometry(rect, rows, wrapAt).placed) {
       expect(placed.plus).toBeNull();
     }
     // ...and a full sweep of the panel finds no Spend anywhere on it.
@@ -450,7 +483,7 @@ describe('talentPanelHitAt', () => {
       talent({ id: 'b', name: 'Room', level: 2 }),
     ];
     const rows = talentPanelRows(view({ loadout: mixed }));
-    const placed = talentPanelGeometry(rect, rows).placed.flatMap((entry) =>
+    const placed = talentPanelGeometry(rect, rows, wrapAt).placed.flatMap((entry) =>
       entry.row.kind === TalentRowKind.Talent ? [entry] : [],
     );
     expect(placed[0]?.plus).toBeNull();
@@ -531,7 +564,7 @@ describe('the drop policy', () => {
     // everything must never make the reader infer it.
     const rect = { x: 0, y: 0, w: 300, h: 110 };
     const rows = talentPanelRows(view());
-    const placed = talentPanelGeometry(rect, rows).placed;
+    const placed = talentPanelGeometry(rect, rows, wrapAt).placed;
     const shown = placed.filter((entry) => entry.row.kind === TalentRowKind.Talent);
     expect(shown.length).toBeLessThan(4);
 
@@ -546,7 +579,7 @@ describe('the drop policy', () => {
     // per-row lookahead would have dropped it to make room for a message saying
     // it had been dropped.
     const rect = roomyRect();
-    const placed = talentPanelGeometry(rect, talentPanelRows(view())).placed;
+    const placed = talentPanelGeometry(rect, talentPanelRows(view()), wrapAt).placed;
     expect(placed.filter((entry) => entry.row.kind === TalentRowKind.Talent)).toHaveLength(4);
     expect(placed.some((entry) => entry.row.kind === TalentRowKind.Note)).toBe(false);
   });
@@ -554,7 +587,7 @@ describe('the drop policy', () => {
   it('never places a row below the panel’s own inner bottom', () => {
     for (const h of [80, 110, 150, 200, 252]) {
       const rect = { x: 0, y: 0, w: 300, h };
-      for (const placed of talentPanelGeometry(rect, talentPanelRows(view())).placed) {
+      for (const placed of talentPanelGeometry(rect, talentPanelRows(view()), wrapAt).placed) {
         expect(placed.rect.y + placed.rect.h, `h=${h}`).toBeLessThanOrEqual(rect.y + rect.h);
       }
     }
@@ -736,7 +769,7 @@ describe('drawing', () => {
     // rects — see the recorder's note for why counting cannot work here.
     const plateAt = (panelView: TalentPanelView, painted: ReturnType<typeof paint>) => {
       const rows = talentPanelRows(panelView);
-      const placed = talentPanelGeometry(painted.rect, rows).placed.find(
+      const placed = talentPanelGeometry(painted.rect, rows, wrapAt).placed.find(
         (entry) => entry.row.kind === TalentRowKind.Points,
       );
       if (placed === undefined) throw new Error('unreachable: the points row is unconditional');
@@ -782,5 +815,73 @@ describe('drawing', () => {
     });
     expect(clips[0]).toEqual(rect);
     expect(texts.some((t) => t.includes('hidden'))).toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PANEL SAYS WHAT THE TALENT DOES, WHICH IS THE ONLY REASON IT EXISTS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A player photographed this panel with every description cut off mid-sentence —
+ * "Loose a flare at a target up to 5 tiles away for…" — on both the current line
+ * and the next-rank line under it. The prose column at 320 pixels was forty
+ * monospace characters against descriptions of sixty to ninety, so the panel
+ * whose whole subject is WHAT A TALENT DOES was showing under half of it, and
+ * the next-rank diff — the reason there are two lines — compared two truncations.
+ */
+describe('a description is never cut off', () => {
+  const LONG = 'Loose a flare at a target up to 5 tiles away for 130% fire damage';
+  const NEXT = 'Loose a flare at a target up to 5 tiles away for 160% fire damage';
+
+  const oneTalent = (): readonly TalentRow[] => [
+    {
+      kind: TalentRowKind.Talent,
+      index: 0,
+      id: 'talent:ashwick_flare',
+      name: 'Ashwick Flare',
+      icon: 'ui_icon_talent_ashwick_flare',
+      level: 1,
+      maxLevel: 5,
+      desc: LONG,
+      descNext: NEXT,
+      canSpend: true,
+    },
+  ];
+
+  it('keeps every word of both lines', () => {
+    const rect = talentPanelRect({ width: 640, height: 400, top: 20, bottom: 360 });
+    expect(rect).not.toBeNull();
+    if (rect === null) return;
+
+    const placed = talentPanelGeometry(rect, oneTalent(), wrapAt).placed.find(
+      (p) => p.row.kind === TalentRowKind.Talent,
+    );
+    expect(placed).toBeDefined();
+    if (placed === undefined) return;
+
+    // NO ELLIPSIS ANYWHERE, and the words survive the wrap — joining the lines
+    // back up has to give the sentence that went in.
+    expect(placed.descLines.join(' ')).toBe(LONG);
+    expect(placed.nextLines.join(' ')).toContain(NEXT);
+    for (const line of [...placed.descLines, ...placed.nextLines]) {
+      expect(line).not.toContain('…');
+    }
+  });
+
+  it('grows the row to hold the lines it wrapped', () => {
+    const rect = talentPanelRect({ width: 640, height: 400, top: 20, bottom: 360 });
+    if (rect === null) return;
+    const placed = talentPanelGeometry(rect, oneTalent(), wrapAt).placed.find(
+      (p) => p.row.kind === TalentRowKind.Talent,
+    );
+    if (placed === undefined) return;
+
+    // THE HEIGHT AND THE LINE COUNT ARE ONE DECISION. A row that wrapped to four
+    // lines and reserved room for two draws over the row beneath it, and the hit
+    // test — which reads these same rects — then puts the `+` a row out of place.
+    const lines = placed.descLines.length + placed.nextLines.length;
+    const lastBaseline = 21 + (lines - 1) * 12;
+    expect(placed.rect.h).toBeGreaterThanOrEqual(lastBaseline);
   });
 });

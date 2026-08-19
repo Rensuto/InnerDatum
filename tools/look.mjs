@@ -364,17 +364,53 @@ if (process.argv.includes('--sheet')) {
   process.exit(0);
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `--redaction` — THE SECOND LANDMASS, WITHOUT WALKING THERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Everything below joins a socket and draws whatever realm that socket is in,
+ * which is the right default and is why the header argues for it — a
+ * reconstruction stops reproducing the bug you are hunting. It also means this
+ * tool could only ever see the spawn map, and getting a socket to the Redaction
+ * costs three minutes of clearing delves to earn the directions.
+ *
+ * `makeRedaction()` is PURE. `shared/redaction.ts` is the single authority on
+ * what is over there — the realm itself calls the same function — so rendering
+ * from it is not a second answer to the question, it is the same one. The site
+ * ids come off the same map, and `landmarkIdFor` is the function the gateway
+ * uses, imported rather than restated.
+ *
+ * WHAT THIS MODE CANNOT SHOW is anything the SERVER decides: danger grades,
+ * roamers, who is standing where. Those are gateway facts and they are already
+ * measured by `the-long-road.mjs`, which walks there properly.
+ */
+let pureLevel = null;
+let pureSites = null;
+if (process.argv.includes('--redaction')) {
+  const { makeRedaction, landmarkIdFor } = await import('../src/shared/redaction.ts');
+  const map = makeRedaction();
+  pureLevel = { w: map.view.w, h: map.view.h, tiles: map.view.tiles };
+  pureSites = [...map.sites.entries()].map(([cell, siteId]) => {
+    const [x, y] = cell.split(',').map(Number);
+    return { x, y, name: String(siteId), marker: 'gate', landmark: landmarkIdFor(String(siteId)) };
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // A SOCKET, BECAUSE THE FRAME IS THE TRUTH.
 // ═══════════════════════════════════════════════════════════════════════════
-const server = spawn(process.execPath, ['src/server/main.ts'], {
-  cwd: CWD,
-  env: { ...process.env, PORT, HOST: '127.0.0.1', LOG_LEVEL: 'error' },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const server =
+  pureLevel !== null
+    ? { kill() {} }
+    : spawn(process.execPath, ['src/server/main.ts'], {
+        cwd: CWD,
+        env: { ...process.env, PORT, HOST: '127.0.0.1', LOG_LEVEL: 'error' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 process.on('exit', () => server.kill());
 
-let up = false;
+let up = pureLevel !== null;
 for (let i = 0; i < 60 && !up; i += 1) {
   await sleep(250);
   try {
@@ -389,7 +425,8 @@ if (!up) {
 }
 
 const frames = [];
-const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+const ws =
+  pureLevel !== null ? { close() {}, on() {} } : new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
 ws.on('message', (r) => {
   try {
     frames.push(JSON.parse(r.toString()));
@@ -397,18 +434,21 @@ ws.on('message', (r) => {
     /* a frame this tool cannot read is not a frame it needs */
   }
 });
-await new Promise((r) => ws.on('open', r));
-const send = (o) => ws.send(JSON.stringify({ v: 18, ...o }));
-send({ t: 'hello' });
-await sleep(900);
-const selfId = frames.find((f) => f.t === 'welcome')?.selfId;
-const opts = frames.find((f) => f.t === 'class_options')?.options ?? [];
-send({ t: 'choose_class', classId: opts[0].id });
-await sleep(1100);
+let selfId;
+if (pureLevel === null) {
+  await new Promise((r) => ws.on('open', r));
+  const send = (o) => ws.send(JSON.stringify({ v: 18, ...o }));
+  send({ t: 'hello' });
+  await sleep(900);
+  selfId = frames.find((f) => f.t === 'welcome')?.selfId;
+  const opts = frames.find((f) => f.t === 'class_options')?.options ?? [];
+  send({ t: 'choose_class', classId: opts[0].id });
+  await sleep(1100);
+}
 
 const latest = (t) => frames.filter((f) => f.t === t).at(-1);
-const realm = latest('realm');
-const sites = latest('sites')?.sites ?? [];
+const realm = pureLevel === null ? latest('realm') : { name: 'The Redaction', level: pureLevel };
+const sites = pureSites ?? latest('sites')?.sites ?? [];
 const level = realm?.level;
 if (level === undefined) {
   console.log('no level frame');
