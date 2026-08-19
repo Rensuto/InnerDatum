@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { DELVES, dangerWord } from '../../src/server/content/delve.ts';
+import { INDEX_CAIRN, INDEX_EIDOLON } from '../../src/server/content/monsters.ts';
+import type { DelveSpec } from '../../src/server/content/delve.ts';
 import { makeOverworld } from '../../src/shared/level.ts';
 import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 
@@ -145,6 +147,43 @@ describe('the map stops lying about which way danger lies', () => {
     expect(worstOf.get(0)).toBeLessThan(bestOf.get(2) ?? 99);
     expect(worstOf.get(0)).toBeLessThanOrEqual(bestOf.get(1) ?? 99);
     expect(worstOf.get(1)).toBeLessThan(bestOf.get(2) ?? 99);
+  });
+
+  it('gives the two delves whose names promised something a roster to match', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * CHARACTER, NOT DEPTH — the other axis of what a delve is.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `RANK_AND_FILE` and `DEEP` answer "how far out is this", which after the
+     * re-key is exactly what they should answer. `THICKET` and `DROWNED` answer
+     * "what is this place", and they go to the two rooms whose names have
+     * promised something the bestiary could not deliver: Blackwood, where
+     * `places.ts` has said *"the trees start here"* since before there was
+     * anything in them, and the Drowned Chapel.
+     *
+     * AUTHORED, NOT DERIVED, and the other way was measured first: reading the
+     * ground off the site's own overworld cell classifies Blackwood Outskirts as
+     * FEN, because the 9x9 around its marker holds fourteen water cells of the
+     * northern coastline. The classifier is right about the country; a dungeon's
+     * interior is not its doorstep.
+     *
+     * MEASURED with `tools/delve-run.mjs`, solo, 8 runs: Blackwood went from 142
+     * turns at an 11% low-water mark to 115 at 8% — sharper rather than longer,
+     * which is what the far end of the road should be — and the Drowned Chapel
+     * went from 243 turns at 30% to 166 at 50%, which is what the first marker
+     * anybody walks to should be.
+     */
+    const chapel = DELVES.get('site:drowned_chapel');
+    const blackwood = DELVES.get('site:blackwood_outskirts');
+    expect(chapel?.roster).toContain(INDEX_CAIRN);
+    expect(blackwood?.roster).toContain(INDEX_EIDOLON);
+
+    // AND THE CAIRN IS IN THE EASIEST ROOM ON PURPOSE. It is only dangerous
+    // across water it cannot be reached over, and a delve has none — so here it
+    // is a weak shooter you walk up to. Meeting it somewhere harmless is how you
+    // learn what it does before meeting one on the far bank of a channel.
+    expect(dangerWord(chapel as DelveSpec)).toBe('quiet');
   });
 
   it('still holds all eight rooms, unchanged', () => {

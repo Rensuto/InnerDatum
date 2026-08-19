@@ -55,7 +55,14 @@
  * what makes "the same party re-entering finds the room they left" true.
  */
 
-import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
+import {
+  INDEX_CAIRN,
+  INDEX_EIDOLON,
+  INDEX_HUSK,
+  INDEX_HUSK_ELITE,
+  INDEX_WRAITH,
+  monsterInit,
+} from './monsters.ts';
 import { embellish } from './encounter.ts';
 import { canWalk } from '../../shared/level.ts';
 import { rollDrop } from './encounter.ts';
@@ -106,6 +113,39 @@ export type DelveSpec = {
 const RANK_AND_FILE: readonly MonsterTemplate[] = [INDEX_HUSK, INDEX_HUSK, INDEX_WRAITH];
 /** Where the Index has thinned. Fewer bodies, and the ones there are bite. */
 const DEEP: readonly MonsterTemplate[] = [INDEX_WRAITH, INDEX_HUSK_ELITE, INDEX_HUSK];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TWO ROSTERS THAT BELONG TO A PLACE RATHER THAN TO A TIER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `RANK_AND_FILE` and `DEEP` are DEPTH — they answer "how far out is this", and
+ * with the gradient re-keyed by distance that is exactly what they should
+ * answer. These two are CHARACTER: they answer "what is this place", and they
+ * are attached to the two delves whose names have always promised something the
+ * bestiary could not deliver.
+ *
+ * ═══ AUTHORED, NOT DERIVED, AND I CHECKED THE OTHER WAY FIRST ═══
+ * The obvious move is to read the ground off the site's own overworld cell —
+ * `groundAt` already exists and the ambush uses it. MEASURED, it gives nonsense
+ * here: Blackwood Outskirts classifies as **fen**, because the 9x9 around its
+ * marker holds fourteen water cells of the northern coastline. The classifier is
+ * not wrong; it answers a question about the COUNTRY, and a dungeon's interior
+ * is not its doorstep. `populateDelve`'s own note already draws this line — *"a
+ * delve's roster is its identity"* — and identity is authored.
+ *
+ * ═══ THE CAIRN GOES IN THE EASIEST ROOM ON PURPOSE ═══
+ * It is the creature that is only dangerous across water it cannot be reached
+ * over, and a delve has no water — so in the Drowned Chapel it is a weak
+ * shooter you walk up to and kill in three turns. THAT IS THE POINT. The chapel
+ * is seventeen steps from town and the first marker most players will ever walk
+ * to; meeting the thing somewhere it is harmless is how you learn what it does
+ * before meeting one on the far bank of a channel where it is not.
+ */
+const THICKET: readonly MonsterTemplate[] = [INDEX_EIDOLON, INDEX_HUSK, INDEX_HUSK_ELITE];
+
+/** The chapel: things that shoot, and one of them barely there. */
+const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK, INDEX_WRAITH];
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -161,8 +201,10 @@ const DEEP: readonly MonsterTemplate[] = [INDEX_WRAITH, INDEX_HUSK_ELITE, INDEX_
  */
 export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>([
   // ─── the near country: where a level-1 party learns the game ────────────
-  //     17 steps out, and the first marker most people will ever walk to.
-  ['site:drowned_chapel', { monsters: [3, 5], roster: RANK_AND_FILE, litter: [1, 2] }],
+  //     17 steps out, and the first marker most people will ever walk to. The
+  //     roster is the gentlest in the game AND it is where you meet a cairn for
+  //     the first time, on dry ground, where it cannot hurt you — see `DROWNED`.
+  ['site:drowned_chapel', { monsters: [3, 5], roster: DROWNED, litter: [1, 2] }],
   //     30 steps.
   ['site:underworks', { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3] }],
   // ─── worked places: more of them, and more to carry home ────────────────
@@ -180,7 +222,11 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     108 steps.
   ['site:gearford_ward', { monsters: [6, 8], roster: DEEP, litter: [3, 5] }],
   //     131 steps, the furthest walk on the moor, and now the worst room on it.
-  ['site:blackwood_outskirts', { monsters: [8, 10], roster: DEEP, litter: [4, 6] }],
+  //     THE TREES START HERE, which `places.ts` has said since before there was
+  //     anything in them. Now there is: `THICKET` is a third eidolons, and eight
+  //     to ten bodies of which a third move faster than you do is what the far
+  //     end of the road should feel like.
+  ['site:blackwood_outskirts', { monsters: [8, 10], roster: THICKET, litter: [4, 6] }],
 ]);
 
 /**
