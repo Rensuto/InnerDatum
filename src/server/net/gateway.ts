@@ -2578,6 +2578,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const level = partyMaxLevel(
       full.world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])),
     );
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE SHELF CATCHES UP HERE, AND WITHOUT THIS EVERY SHOP IS EMPTY.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `catchUpShop` had exactly one caller — `handleShopBuy` — and its comment
+     * there says *"the shelf catches up on the door"*. It does not: this
+     * function is the door. A shop is born at `epoch: -1` with `stock: []`
+     * (world/realms.ts, and shopstate.ts explains why -1 rather than 0), so the
+     * FIRST frame a player ever receives on walking in was built from an empty
+     * array — and the only thing that would have filled it was a purchase they
+     * had no way to make, because the client can only buy what it was shown.
+     *
+     * A shop that is empty until you buy from it, and cannot be bought from
+     * while it is empty. Threadneedle Row has been in the game for weeks and has
+     * been doing this the whole time; the draught's shelf is simply the first
+     * one anybody drove a socket at.
+     *
+     * BEFORE THE LOOKUP, for the same reason `handleShopBuy` does it before its
+     * own: a party that levelled since arriving should see the batch the
+     * restock just put out, not the one from when they opened the door.
+     */
+    catchUpShop(full, level);
     return projectShop(
       full.name,
       full.shop.stock.map((slot) => slot.id),
