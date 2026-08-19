@@ -284,10 +284,67 @@ if (breach !== null) {
     }
   };
   mark = log.length;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WAIT FOR THE ROOM TO ARRIVE BEFORE DECIDING IT IS EMPTY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The loop below breaks the instant it sees no living foe, and on entering a
+   * delve it saw exactly that: the descent frame lands first and the entities
+   * follow a beat later, so iteration zero found an empty room and left. The
+   * proof it was a race and not an empty room is that the line above — printed
+   * AFTER the loop — names an Index Husk and an Index Eidolon standing in it.
+   *
+   * This cost a real diagnosis. The fight reported `(nothing)`, I read that as
+   * the driver meeting a kiter, and the monster it had supposedly failed to
+   * catch turns out to be a MeleeChaser at preferredRange 1 — it would have
+   * walked straight onto the sword. The instrument was broken, not the game.
+   *
+   * A DEADLINE, NOT A FIXED SLEEP: it leaves as soon as something is there, and
+   * a genuinely empty room costs one second rather than hanging.
+   */
+  for (
+    let i = 0;
+    i < 20 && [...at.entries()].filter(([id, e]) => id !== selfId && e.alive).length === 0;
+    i += 1
+  ) {
+    track();
+    await sleep(50);
+  }
+
+  let rounds = 0;
+  // How near it ever got. THE DISCRIMINATOR: a fight that logs nothing is a
+  // pathing failure if this stays large and a combat failure if it reaches 1.
+  let closest = 99;
+  const frameMark = frames.length;
+  // WHICH KIND OF STUCK. `noPath` is the pathfinder refusing to route at all;
+  // `blocked` is a step that was routed and then went nowhere. They are
+  // different bugs and the transcript used to show neither.
+  let noPath = 0;
+  let blocked = 0;
   for (let i = 0; i < 300; i += 1) {
     track();
-    const foes = [...at.entries()].filter(([id, e]) => id !== selfId && e.alive);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A FOE ON YOUR OWN TILE IS NOT A FOE YOU CAN SWING AT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Measured, on the Bracken Waste: `Index Eidolon` sits at 8,14 and so does
+     * the player. Every direction toward it is no direction at all — `firstStep`
+     * correctly returns null when `from === to` — so the driver sent nothing,
+     * three hundred times, while an `Index Husk` nine tiles north went
+     * unfought. The transcript for that was one word: `(nothing)`.
+     *
+     * NEAREST IS NOT THE SAME AS REACHABLE, and this loop had quietly assumed
+     * it was. Skipping the coincident entity makes it walk to the foe it can
+     * actually hit, which is what the beat was always meant to measure.
+     */
+    const foes = [...at.entries()].filter(
+      ([id, e]) => id !== selfId && e.alive && (e.x !== pos.x || e.y !== pos.y),
+    );
     if (foes.length === 0) break;
+    rounds += 1;
     const [, f0] = foes.sort(
       (a, b) =>
         Math.max(Math.abs(a[1].x - pos.x), Math.abs(a[1].y - pos.y)) -
@@ -299,17 +356,66 @@ if (breach !== null) {
      * failed" made the driver pause after every single swing, which is why an
      * early run produced one exchange in twenty-two seconds.
      */
-    const adjacent = Math.max(Math.abs(f0.x - pos.x), Math.abs(f0.y - pos.y)) <= 1;
+    const gap = Math.max(Math.abs(f0.x - pos.x), Math.abs(f0.y - pos.y));
+    closest = Math.min(closest, gap);
+    const adjacent = gap <= 1;
     if (adjacent) {
       const lvl = realmNow().level;
       const dir = firstStep(lvl, pos, { x: f0.x, y: f0.y });
       if (dir !== null) send({ t: 'move', dir });
       await sleep(45);
-    } else if (!(await stepTo({ x: f0.x, y: f0.y }))) {
-      await sleep(45);
+    } else {
+      if (firstStep(realmNow().level, pos, { x: f0.x, y: f0.y }) === null) noPath += 1;
+      if (!(await stepTo({ x: f0.x, y: f0.y }))) {
+        blocked += 1;
+        await sleep(45);
+      }
     }
   }
   await sleep(900);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHO IT MET, AND WHY THAT DECIDES WHETHER SILENCE IS A BUG.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This driver bump-attacks, and the header already says what that costs: a
+   * class with a dead zone cannot do it. The same is true from the other side —
+   * a RANGED opponent keeps its distance and a bumper never lands a blow.
+   *
+   * Without a name in the transcript, both of those read exactly like "combat is
+   * broken". On the redesigned moor this reported an empty fight and it took
+   * `first-fight.mjs` — 24 runs a class, Watchman and Alchemist 24/24 — to show
+   * the game was fine and the driver had met a kiter.
+   */
+  const met = [...at.entries()]
+    .filter(([id, e]) => id !== selfId && e.name !== undefined)
+    .map(([, e]) => e);
+  const names = [...new Set(met.map((e) => e.name))];
+  console.log(
+    `  in the room: ${names.length === 0 ? 'nothing this driver could see' : names.join(', ')}` +
+      ` -- ${String(rounds)} round(s), closest approach ${String(closest)}` +
+      (noPath > 0 || blocked > 0
+        ? ` (no route ${String(noPath)}x, step refused ${String(blocked)}x)`
+        : '') +
+      `, ${String(log.length - mark)} log line(s)`,
+  );
+  // WHAT CAME BACK. 300 swings that log nothing is either a silent refusal or a
+  // driver that never sent one; the frame tally tells them apart.
+  console.log(
+    `  raw: me[${String(selfId)}] ${String(pos.x)},${String(pos.y)} | ` +
+      [...at.entries()]
+        .map(([id, e]) => `${String(e.name)}[${String(id)}] ${String(e.x)},${String(e.y)}`)
+        .join(' | '),
+  );
+  const tally = new Map();
+  for (const f of frames.slice(frameMark)) tally.set(f.t, (tally.get(f.t) ?? 0) + 1);
+  console.log(
+    `  frames: ${[...tally]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([t, n]) => `${t}x${String(n)}`)
+      .join(' ')}`,
+  );
   beat('THE FIGHT');
   show(mark, 16);
 
