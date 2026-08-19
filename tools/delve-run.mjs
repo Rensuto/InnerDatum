@@ -42,9 +42,13 @@ import {
   sheetForClass,
 } from '../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../src/server/main.ts';
-import { ActorKind } from '../src/shared/protocol.ts';
+import { ActorKind, ErasedReason } from '../src/shared/protocol.ts';
 import { canWalk } from '../src/shared/level.ts';
 import { areEnemies } from '../src/server/engine/actor.ts';
+import { moneyAmountOf } from '../src/server/content/money.ts';
+import { itemById } from '../src/server/content/items.ts';
+import { parseItemId } from '../src/server/content/resolve.ts';
+import { sellPrice } from '../src/server/content/shops.ts';
 import { STEPS, firstStep } from './walk.mjs';
 import { rangedAttacks, takeShot } from './fightlib.mjs';
 
@@ -129,8 +133,42 @@ function run(site, size, seed) {
     realm.world.allActors().filter((a) => bodies.some(({ body }) => areEnemies(body, a)));
   const livingHostiles = () => hostiles().filter((a) => a.alive);
 
+  // How many were in the room to begin with — so "pays little" can be told apart
+  // from "held little", which are different facts with different answers.
+  const startRoster = hostiles().length;
+  // BY IDENTITY, because a reaped body leaves `allActors` altogether — counting
+  // "not alive" at the end undercounts every kill the reaper has already tidied.
+  const startIds = new Set(hostiles().map((a) => a.id));
+  if (process.env.DELVE_DIAG === 'carry' && size === 1) {
+    const carrying = hostiles().filter(
+      (a) => (a.carried ?? []).length > 0 || Object.keys(a.equipped ?? {}).length > 0,
+    );
+    console.log(
+      `  [carry] ${String(site.name).padEnd(26)} ${String(carrying.length)}/${String(startRoster)} carry something` +
+        ` | e.g. ${carrying
+          .slice(0, 3)
+          .map(
+            (a) =>
+              `${a.name}:${[...(a.carried ?? []), ...Object.values(a.equipped ?? {})].join('+') || 'none'}`,
+          )
+          .join(' ')}`,
+    );
+  }
+  if (process.env.DELVE_DIAG === 'who' && size === 1) {
+    const names = {};
+    for (const a of hostiles()) names[a.name ?? a.id] = (names[a.name ?? a.id] ?? 0) + 1;
+    console.log(
+      `  [who] ${(site.id.startsWith('site:redaction:') ? site.name + ' (redacted)' : site.name).padEnd(30)} ${Object.entries(
+        names,
+      )
+        .map(([n, c]) => n + 'x' + String(c))
+        .join(', ')}`,
+    );
+  }
+
   let turns = 0;
   let worst = 1;
+  let wipes = 0;
   const tally = { shot: 0, moved: 0, held: 0, revived: 0 };
   if (process.env.DELVE_DIAG === 'roster') {
     const n = hostiles().length;
@@ -309,7 +347,38 @@ function run(site, size, seed) {
         );
       }
     }
-    realm.engine.pump();
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A RUN THAT WIPED IS NOT A RUN THAT CLEARED, AND THIS SCORED IT AS ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The outcome was judged at the END — "no foes left" — which a party wipe
+     * satisfies for the worst possible reason. `resetFloor` deliberately clears
+     * the ground and RE-SEEDS the room ("a reset means the fight did not
+     * happen"), so after a wipe the original monsters are gone from the world
+     * and a fresh set is fighting. Measured on Blackwood:
+     *
+     *     [t0]  alive 9/9   ground 4      <- the floor's authored litter
+     *     [t25] alive 1/9   ground 0      <- wiped; floor cleared and re-seeded
+     *
+     * and the run was reported `clear`, with the vanished originals counted as
+     * kills and the emptied floor counted as the pay. That is what made the
+     * grim floors look like they paid nothing: they were not paying badly, they
+     * were wiping the party and resetting.
+     *
+     * The pump says so plainly — a wipe returns `erased` with reason `Wipe` —
+     * so it is read here rather than inferred from the wreckage.
+     */
+    const pumped = realm.engine.pump();
+    for (const ev of [...(pumped?.playerEvents ?? []), ...(pumped?.sweep ?? [])]) {
+      if (ev.k === 'erased' && ev.reason === ErasedReason.Wipe) wipes += 1;
+    }
+    if (process.env.DELVE_DIAG === 'track' && size === 1 && turns % 25 === 0) {
+      const alive = livingHostiles().length;
+      console.log(
+        `    [t${String(turns)}] ${String(site.name).slice(0, 18).padEnd(18)} alive ${String(alive)}/${String(startRoster)}  ground ${String(realm.world.groundItems().length)}`,
+      );
+    }
     if (process.env.DELVE_DIAG === '2' && turns % 150 === 0) {
       const me = bodies[0].body;
       const nearest = realm.world
@@ -325,6 +394,56 @@ function run(site, size, seed) {
       );
     }
     for (const { body: b } of bodies) worst = Math.min(worst, b.hp / b.maxHp);
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT IT PAID. NOTHING HAS EVER MEASURED THIS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Difficulty is only half the question a player asks. `seedAmbush` establishes
+   * that the OPENING pays deliberately — "an item 35% of the time" — and there
+   * the argument stops: what a DELVE pays has never been measured at all, and it
+   * is what decides whether anybody walks to a second one.
+   *
+   * READ OFF THE FLOOR, which is sound precisely because this driver never picks
+   * anything up: everything a corpse spilled is still lying there when the room
+   * goes quiet. `WEARABLE` is the number that matters most — gold accumulates
+   * and a draught is a consumable, but a thing with a SLOT is the only drop that
+   * changes what your character is.
+   */
+  let gold = 0;
+  let items = 0;
+  let wearable = 0;
+  let worth = 0;
+  for (const drop of realm.world.groundItems()) {
+    const coins = moneyAmountOf(drop.itemId);
+    if (coins !== undefined) {
+      gold += coins;
+      continue;
+    }
+    items += 1;
+    // WHAT A SHOP WOULD ACTUALLY HAND OVER for it, not what it is "worth":
+    // `SELL_PERCENT` is 5, so the two numbers are an order of magnitude apart and
+    // only one of them is money a player can spend.
+    worth += sellPrice(drop.itemId);
+    const base = itemById(parseItemId(drop.itemId)?.base ?? '');
+    if (base?.slot !== undefined) wearable += 1;
+  }
+
+  if (process.env.DELVE_DIAG === 'loot' && size === 1) {
+    const ground = realm.world.groundItems();
+    const stillThere = new Set(realm.world.allActors().map((a) => a.id));
+    const killed = [...startIds].filter(
+      (id) => !stillThere.has(id) || realm.world.getActor(id)?.alive === false,
+    ).length;
+    const dead = killed;
+    console.log(
+      `  [loot] ${String(site.name).padEnd(26)} started ${String(startRoster)} dead ${String(dead)} ground ${String(ground.length)}: ${ground
+        .map((g) => g.itemId)
+        .slice(0, 6)
+        .join(' ')}`,
+    );
   }
 
   const survivors = livingHostiles();
@@ -364,7 +483,15 @@ function run(site, size, seed) {
   }
   const downCount = bodies.filter(({ body: b }) => !b.alive || isDowned(downed, b.id)).length;
   return {
-    outcome: downCount === bodies.length ? 'wipe' : foesLeft === 0 ? 'clear' : 'stall',
+    // A WIPE ANYWHERE IN THE RUN OUTRANKS THE ENDING. The party may well be
+    // standing in a quiet room at the end — the reset put them there.
+    outcome: wipes > 0 || downCount === bodies.length ? 'wipe' : foesLeft === 0 ? 'clear' : 'stall',
+    wipes,
+    roster: startRoster,
+    gold,
+    items,
+    wearable,
+    worth,
     turns,
     worst,
     downCount,
@@ -389,7 +516,7 @@ const label = (site) =>
 for (const size of [1, 3]) {
   console.log(`\n${size === 1 ? 'ALONE' : 'A PARTY OF THREE'} — ${RUNS} runs each\n`);
   console.log(
-    `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}`,
+    `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}  ${'gold'.padStart(5)}  ${'items'.padStart(5)}  ${'worn'.padStart(4)}  ${'sells for'.padStart(9)}  ${'foes'.padStart(4)}  ${'drop/foe'.padStart(8)}`,
   );
   for (const site of delves) {
     const rs = Array.from({ length: RUNS }, (_u, i) =>
@@ -405,7 +532,22 @@ for (const size of [1, 3]) {
         `${`${Math.round(100 * avg(rs.map((r) => r.worst)))}%`.padStart(6)}  ` +
         `${avg(rs.map((r) => r.downCount))
           .toFixed(1)
-          .padStart(6)}`,
+          .padStart(6)}  ` +
+        // THE PAY, AVERAGED OVER THE RUNS THAT ACTUALLY CLEARED. A stalled run
+        // left half the room alive, so its floor is not what the room is worth.
+        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.gold))).toFixed(0).padStart(5)}  ` +
+        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.items))).toFixed(1).padStart(5)}  ` +
+        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.wearable))).toFixed(1).padStart(4)}  ` +
+        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.worth))).toFixed(0).padStart(9)}  ` +
+        `${avg(rs.map((r) => r.roster))
+          .toFixed(1)
+          .padStart(4)}  ` +
+        `${(clears.length === 0
+          ? 0
+          : avg(clears.map((r) => (r.roster === 0 ? 0 : r.items / r.roster)))
+        )
+          .toFixed(2)
+          .padStart(8)}`,
     );
   }
 }
