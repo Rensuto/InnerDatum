@@ -252,6 +252,9 @@ describe('the roster is well formed', () => {
       'index_glut/melee_chaser/normal',
       'index_inspector/melee_chaser/elite',
       'index_inquisitor/ranged_kiter/elite',
+      // AND THE ONE AUTHORED BODY. Every other row is a roster entry rolled into
+      // a generated floor; this is placed. See `DelveSpec.boss`.
+      'index_watcher/ranged_kiter/boss',
     ]);
     expect(monsterById('index_wraith')).toBe(INDEX_WRAITH);
     expect(monsterById('index_glut')).toBe(INDEX_GLUT);
@@ -506,6 +509,7 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_glut', 'Index Glut', 'enemy_index_glut_s'],
       ['index_inspector', 'A Disgraced Inspector', 'enemy_disgraced_inspector_s'],
       ['index_inquisitor', 'A High Inquisitor', 'enemy_high_inquisitor_s'],
+      ['index_watcher', 'The Watcher', 'enemy_index_cairn_s'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
     expect(INDEX_WRAITH.description).toContain('A cited absence given shape');
@@ -969,7 +973,7 @@ describe('the elite’s claw — the roster’s one melee rider', () => {
     expect(INDEX_HUSK_ELITE.onHit?.power).toBe(combatPhysicalpower(INDEX_HUSK_ELITE.combat));
   });
 
-  it('two riders on the roster, and the husk has none', () => {
+  it('three riders on the roster, and the husk has none', () => {
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * TWO, AND THE ONE THAT MATTERS IS THE ONE WITHOUT.
@@ -988,8 +992,23 @@ describe('the elite’s claw — the roster’s one melee rider', () => {
      * closing cost something. Adding a third is a real design decision, so it
      * should have to come here and change this line.
      */
+    /**
+     * THREE NOW, AND THE THIRD IS THE ONE THAT IS NOT A TAX.
+     *
+     * The wraith slows and the elite bleeds: both make a fight harder without
+     * taking it away. `INDEX_WATCHER` STUNS, which is different in kind — it
+     * removes turns — and it is the only creature in the game that does. Before
+     * it, `EffectId.Stunned` was applied by exactly one call site in the whole
+     * codebase, the Watchman's own `lockdown`; being stunned was something this
+     * game did TO monsters.
+     *
+     * That asymmetry is why the boss is a boss rather than a bigger cairn, and
+     * why `boss.test.ts` guards the stun's duration against its own cadence: an
+     * unavoidable ranged stun that outlasts the gap between shots is not a hard
+     * fight, it is a player who never acts again.
+     */
     const withRiders = MONSTER_TEMPLATES.filter((t) => t.onHit !== undefined).map((t) => t.id);
-    expect(withRiders.toSorted()).toEqual(['index_husk_elite', 'index_wraith']);
+    expect(withRiders.toSorted()).toEqual(['index_husk_elite', 'index_watcher', 'index_wraith']);
     expect(INDEX_HUSK.onHit).toBeUndefined();
 
     // AND EACH ONE IS THE STATUS ITS HEADER ARGUES FOR. Bleeding ignores armour,
@@ -1157,6 +1176,15 @@ describe('the balance table the wraith’s retune rests on', () => {
        */
       ['index_inspector', 9.233, 9.233, 9.422],
       ['index_inquisitor', 7, 7, 7],
+      /**
+       * AND THE BOSS IS BELOW BOTH KITERS, WHICH IS THE POINT. 5.95 against the
+       * cairn's 7.00: a boss is the LONGEST fight in the game, not the sharpest.
+       * Its threat is two hundred and twenty hit points — more than double
+       * anything else — and the turns it takes away, never the number per shot.
+       * A boss that also topped this table would be a damage race with a health
+       * bar attached.
+       */
+      ['index_watcher', 5.95, 5.95, 5.95],
     ]);
   });
 

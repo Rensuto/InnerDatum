@@ -166,6 +166,7 @@ describe('the Index Glut', () => {
     expect(bigger.map((t) => t.id).sort()).toEqual([
       'index_husk_elite',
       'index_inquisitor',
+      'index_watcher',
       'index_wraith',
     ]);
   });

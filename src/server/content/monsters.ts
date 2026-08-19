@@ -2151,6 +2151,224 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
   },
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WATCHER — the first boss, and the first thing in this game that stuns.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ActorRank.Boss` has been in the protocol since it was written. It has an
+ * experience worth (`RANK_WORTH` 25, against the elite's 3), a render weight in
+ * `view/projector.ts`, and its own assertions in `progression.test.ts`. NOTHING
+ * IN THE GAME HAS EVER BEEN ONE. Seventeen destinations, a danger gradient
+ * across two landmasses, and not a single set piece — every room is a generated
+ * floor with a roster rolled into it, so the case file could be closed from end
+ * to end without ever meeting something that was PUT there.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FICTION WROTE THIS BEFORE THE CODE DID
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `places.ts` on the Redaction's Watcher's Altar: *"Whoever was leaving things
+ * here never stopped. The pile has been added to since the country ended."*
+ *
+ * And `INDEX_CAIRN` is *"a stack of citations weathered into the shape of a
+ * marker stone"*. THE PILE IS THE CREATURE. The blurb describes a thing that
+ * outlasted the erasure and is still growing, on an altar, in a country that
+ * ended — and the game already had a monster made of stacked citations. This
+ * is that, at the size the sentence implies.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT MAKES IT A BOSS AND NOT A BIGGER CAIRN
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `monsters.test.ts` sets the bar and it is the right one: *"a creature has to
+ * BELONG TO SOMETHING THE PLAYER CHOSE... one that was merely a bigger husk
+ * would still be scope creep."* Hit points alone do not qualify.
+ *
+ * SO IT STUNS, AND NOTHING ELSE IN THIS GAME EVER HAS. Measured across the
+ * whole roster: two of eight creatures carry an `onHit` at all — the wraith
+ * slows, the elite bleeds — and `EffectId.Stunned` is applied by exactly ONE
+ * thing in the entire codebase, the Watchman's own `lockdown` talent. Being
+ * stunned is a thing this game does TO monsters and has never done to a player.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE FIGHT ACTUALLY IS — READ OFF `ai/npc.ts`, NOT ASSUMED
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE FIRST VERSION OF THIS PARAGRAPH CALLED IT STATIONARY THREE TIMES AND THAT
+ * WAS WRONG. `never_move` is upstream's flag and is not ported here, for the
+ * same reason `INDEX_CAIRN` does not port it. `kite` decides everything, and it
+ * has three branches:
+ *
+ *   beyond `preferredRange` 9   it ADVANCES — you cannot walk away from it
+ *   between 3 and 9             it fires
+ *   inside `minRange` 3         it BACKS AWAY, and if it cannot,
+ *                               *"CORNERED. hold rather than fire a shot that
+ *                               will be refused"* — it does nothing at all
+ *
+ * So it is mobile artillery holding a band, and the fight has a shape and a
+ * counter. It moves at 0.7 against a player pinned at 1.0 by D1, so a party
+ * that COMMITS closes on it; `populateDelve` puts it at the point furthest from
+ * the door, which in a generated ruin is a corner, so the ground it can retreat
+ * into is the ground it has already used. Drive it into that corner and this
+ * creature — two hundred and twenty hit points of it — cannot act.
+ *
+ * MEASURED ON A REAL FLOOR: the room generates 34x30 with the door at (2,15)
+ * and the Watcher at (32,1). The shortest path between them is 30 steps, of
+ * which 12 fall inside its reach and all 12 have line of sight. At 5.95 damage
+ * a player turn plus a lost turn every third, the crossing costs roughly 107
+ * damage to whoever it has picked. That is a hard approach, not a wall.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE NUMBERS, AND WHICH OF THEM ARE PORTED
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ PORTED, from `crystal.lua:28-48` — the same base INDEX_CAIRN cites ═══
+ *
+ *     stats = { str=1, dex=5, mag=20, con=1 },
+ *     global_speed_base = 0.7,
+ *     combat_def = 1,
+ *     never_move = 1,       <- NOT ported; see the fight, and INDEX_CAIRN's note
+ *     ai_state = { talent_in=1 },   <- halved; see `talentIn`
+ *
+ * ═══ OURS, AND SAID SO PLAINLY ═══
+ * `max_life`. Upstream cannot supply it: EVERY crystal in that file inherits
+ * `resolvers.rngavg(12,34)` = 23 and the variants differ only by `level_range`,
+ * because ToME scales a monster by the level it spawns at and this engine does
+ * not. A verbatim port would be a 23 hit point boss.
+ *
+ * So it is derived from what the party can actually do, and the arithmetic is
+ * here to be argued with. Measured `combatDamage`: Watchman 12.4, Inspector
+ * 11.5, Alchemist 9.7 — about 33 a round for a party of three before gear or
+ * talents. `INDEX_HUSK_ELITE` is 95, which is roughly three rounds. A boss
+ * should be the longest fight in the game without being a slog, so: eight
+ * rounds of standing damage, 8/3 x 95 = 253, taken as **250**.
+ *
+ * ═══ AND IT IS NOT A SOLO FIGHT, WHICH IS DELIBERATE AND IS DISCLOSED ═══
+ * At about 11 a round a lone player needs roughly twenty-three rounds, under
+ * artillery, being stunned. That is not winnable and is not meant to be. It
+ * sits in the Redaction, behind a level-5 rumour and a ninety-nine tile walk,
+ * and `partyHint` publishes "bring a party" on the world map from the grade —
+ * so the game says so out loud before anybody walks in. This is a co-op game
+ * whose whole premise is three to six friends in a voice channel, and the one
+ * fight that requires them is a feature, not an oversight.
+ *
+ * No new art: `enemy_index_cairn_s` draws it, and the elite ring draws around
+ * it — `canvas.ts` maps every non-Normal rank to `ui_token_ring_elite`, and
+ * there is no boss ring in the manifest. That is the same art-family argument
+ * the site markers make, and it is stated here rather than left to be noticed.
+ */
+export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
+  id: 'index_watcher',
+  displayName: 'The Watcher',
+  description:
+    'The altar, still being added to. Every citation ever filed against this country is in it, ' +
+    'and it has had a long time to read them.',
+  sprite: 'enemy_index_cairn_s',
+  rank: ActorRank.Boss,
+
+  // OURS — see the derivation above. Upstream's crystals are all 23.
+  maxHp: 220,
+  hpRegen: 0,
+
+  // crystal.lua:36 `global_speed_base = 0.7`, VERBATIM, and the same value
+  // INDEX_CAIRN carries. It acts slowly; it simply does not need to move.
+  globalSpeed: 0.7,
+  speedFactor: 1,
+
+  profile: AiProfile.RangedKiter,
+  /**
+   * IT SEES THE WHOLE ROOM. `roomFor` builds the candidate floor around the
+   * door and this creature is placed at the far end of it, so an aggro range
+   * shorter than the room would mean a boss that ignores you until you are
+   * halfway across — which reads as the server not having noticed.
+   */
+  aggroRange: 14,
+  // FURTHER THAN ANYTHING ELSE IN THE GAME. INDEX_INQUISITOR's 7 was the
+  // longest and it MOVES; this does not, so the reach is the whole of its
+  // threat and the room is sized to make crossing it a decision.
+  preferredRange: 9,
+  minRange: 3,
+  attackRange: 11,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  projSpeed: 2,
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * 2, AND UPSTREAM'S 1 WOULD HAVE SHIPPED A SOFT-LOCK.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `crystal.lua:30` declares `talent_in = 1` and the first version of this
+   * creature ported it verbatim. Then the approach was measured and the port
+   * turned out to be unplayable for a reason that has nothing to do with
+   * upstream: THIS ENGINE'S ORB HAS NO TO-HIT ROLL. `scheduler.ts:1709` and the
+   * note on `damageMin` both say it — *"counterplay against a travelling shot is
+   * 100% POSITIONAL"* — so every shot lands, and a stun on every shot means a
+   * player who is stunned cannot move out of the way of the next one. Permanent
+   * lock from eleven tiles, with no roll anywhere to save them.
+   *
+   * ToME's crystal can afford `talent_in = 1` because its bolt can miss and
+   * because being stunned there is a save, not a certainty. Neither is true
+   * here, so the cadence carries the whole cost of the deviation and it is
+   * stated rather than quietly halved.
+   *
+   * At `globalSpeed` 0.7 over a cadence of 2 it fires about once every three
+   * player turns. See the fight arithmetic in the header.
+   */
+  talentIn: 2,
+  damageMin: 14,
+  damageMax: 20,
+
+  drops: { chance: 100, pick: idsOfTier('rare') },
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE FIRST THING IN THIS GAME THAT STUNS A PLAYER.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Measured before it was written: `EffectId.Stunned` is applied by exactly
+   * one call site in the whole codebase — `talents/lockdown.ts`, the Watchman's
+   * own. Two of eight monsters carry any `onHit`. So the effect is proven
+   * machinery that has only ever pointed one way, and turning it around is new
+   * content that needs no new system.
+   *
+   * ONE TURN, AND THE FIRST DRAFT SAID TWO. The wraith's `Slowed` runs three
+   * and merely taxes movement; a stun takes the turn away entirely. With no
+   * to-hit roll on the orb (see `talentIn`), a stun longer than the gap between
+   * shots is not a hard fight, it is a player who never acts again — so the
+   * duration has to stay strictly under the cadence, and one is what fits.
+   *
+   * `ORB_APPLY_POWER` is shared with the wraith deliberately: this is the same
+   * kind of application, not a second set of rules.
+   */
+  onHit: { effectId: EffectId.Stunned, turns: 1, power: ORB_APPLY_POWER },
+
+  combat: {
+    // crystal.lua:35, VERBATIM — the cairn's own line. Everything it has is in
+    // the shot, and there is nothing at all behind it if you arrive.
+    stats: { str: 1, dex: 5, mag: 20, con: 1 },
+    // crystal.lua:38 `combat_def = 1`; no `combat_armor` upstream, so 0 here.
+    // TWO HUNDRED AND FIFTY HIT POINTS AND NO ARMOUR: every hit the party lands
+    // counts in full, so the fight is long because it is BIG, never because it
+    // is absorbing. A boss that ate chip damage would be the glut again.
+    mods: { armour: 0, def: 1 },
+    weapon: {
+      dam: resolveLevelup(resolveMBonus(30, 10)),
+      atk: 8,
+      apr: 6,
+      damMod: { mag: 0.8 },
+    },
+    profile: {
+      resists: {
+        [DamageType.Darkness]: 50,
+      },
+    },
+    range: 11,
+    minRange: 3,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
@@ -2160,6 +2378,7 @@ export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_GLUT,
   INDEX_INSPECTOR,
   INDEX_INQUISITOR,
+  INDEX_WATCHER,
 ]);
 
 /** Their ids, same order. */

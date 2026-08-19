@@ -62,6 +62,7 @@ import {
   INDEX_HUSK_ELITE,
   INDEX_WRAITH,
   monsterInit,
+  INDEX_WATCHER,
 } from './monsters.ts';
 import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
@@ -108,6 +109,20 @@ export type DelveSpec = {
    * room reward the corner you did not have to walk into.
    */
   readonly litter: readonly [number, number];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND ONE THING THAT IS PUT THERE RATHER THAN ROLLED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `roster` is a cycle and `monsters` is a count, so everything else in a delve
+   * is a die falling — which is right for the population of a room and wrong for
+   * the reason a room exists. A boss is not a heavier entry in a list; it is the
+   * thing the door was for.
+   *
+   * ABSENT ON EVERY SPEC BUT ONE, which is what keeps it meaning anything: a
+   * boss in each of seventeen rooms is a difficulty tier, not a set piece.
+   */
+  readonly boss?: MonsterTemplate;
 };
 
 /** The common roster. Husks with a wraith or two behind them. */
@@ -445,6 +460,15 @@ const REDACTED_TOWN: DelveSpec = {
  * `world/realms.ts` a way to reach `DEEP` in order to build one spec would put
  * a content decision in a wiring file, and the next one would follow it.
  */
+/**
+ * The one room in the game with something authored in it. See `redactedSpec`.
+ *
+ * The ALDERBROOK id, because that is what `redactedSpec` is handed — the twin's
+ * own id is derived from it and comparing against the derived form would couple
+ * this decision to how the prefix is spelled.
+ */
+const WATCHERS_ALTAR = 'site:watchers_altar';
+
 export function redactedSpec(originalId: string): DelveSpec | undefined {
   const spec = DELVES.get(originalId);
   // NO ENTRY MEANS A TOWN. `DELVES` is keyed only by the sites that are fights,
@@ -455,6 +479,32 @@ export function redactedSpec(originalId: string): DelveSpec | undefined {
     monsters: [spec.monsters[0] + 2, spec.monsters[1] + 2],
     roster: spec.roster,
     litter: [spec.litter[0] + 1, spec.litter[1] + 1],
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND ONE OF THE SIX HAS SOMETHING IN IT. EXACTLY ONE, IN THE WHOLE GAME.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * THE BLURB CHOSE THE ROOM, not a difficulty table. `places.ts` on the
+     * Redaction's Watcher's Altar: *"Whoever was leaving things here never
+     * stopped. The pile has been added to since the country ended."* That is a
+     * sentence about a thing that outlasted the erasure and is still growing,
+     * and `INDEX_WATCHER` is that thing. Every other candidate would have needed
+     * its blurb rewritten to justify a boss, which is the tell that it was the
+     * wrong room.
+     *
+     * ═══ WHY THE REDACTED ONE AND NOT ALDERBROOK'S ═══
+     * Alderbrook's Watcher's Altar is a `restless` room seventy steps out that a
+     * level-3 party clears. Its twin sits on the far landmass, behind a level-5
+     * rumour and a ninety-nine tile walk, and `redactedSpec` has already put two
+     * more residents in it. The country that ENDED is where the thing that
+     * outlasted the ending lives.
+     *
+     * ═══ AND ONE IS THE WHOLE DESIGN ═══
+     * A boss behind each of seventeen doors is a difficulty tier. One, in a room
+     * the fiction already pointed at, is a place people tell each other about.
+     * If a second ever lands it should be argued for here, next to this.
+     */
+    ...(originalId === WATCHERS_ALTAR ? { boss: INDEX_WATCHER } : {}),
   };
 }
 
@@ -544,6 +594,61 @@ export function populateDelve(
     const carrying = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
     if (carrying !== undefined) actor.carried = [carrying];
     placed += 1;
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE THING THE DOOR WAS FOR, AT THE FAR END OF THE ROOM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * FURTHEST FROM THE DOOR, COMPUTED AND NOT ROLLED, and both halves matter.
+   *
+   * FURTHEST, because `INDEX_WATCHER` is stationary artillery with the longest
+   * reach in the game: the fight IS the crossing, and a boss that generated
+   * three tiles from the entrance would be a boss you walk up to. The room's
+   * own candidate list is the measure, so this works in whatever shape the
+   * generator produced rather than assuming a layout.
+   *
+   * NOT ROLLED, because a new `rng.int` here would consume a position in the
+   * world's labelled stream and shift every draw after it — the litter, and
+   * every delve any player has ever seen. `pop.ts`'s rule: adding a draw
+   * re-rolls the past. A `for` loop over candidates costs nothing and moves
+   * nobody's floor.
+   *
+   * AFTER THE ROSTER LOOP for the same reason, so the ordinary population is
+   * placed from exactly the draws it always was.
+   *
+   * IT DOES NOT COUNT TOWARDS `placed`. That number is the room's population
+   * and feeds `delveHeadroom`'s scaling; a boss is additive to the room, not a
+   * substitution for part of it.
+   */
+  if (spec.boss !== undefined) {
+    let far = candidates[0];
+    let best = -1;
+    for (const cell of candidates) {
+      const away = Math.max(Math.abs(cell.x - door.x), Math.abs(cell.y - door.y));
+      if (away > best) {
+        best = away;
+        far = cell;
+      }
+    }
+    if (far !== undefined) {
+      // `qualified` FOR THE ID, like every other body in this room: it prefixes
+      // with the realm, so two parties in two copies of this delve do not share
+      // a monster id — and therefore do not share the process-wide status,
+      // Downed and talent tables that key off one. See `World.id`.
+      const boss = world.addMonster(qualified(world, 'delve_boss'), monsterInit(spec.boss, far));
+      /**
+       * AND IT IS HOLDING SOMETHING, GUARANTEED.
+       *
+       * `rollDrop` is a chance for the ordinary population; the one authored
+       * body in the game does not roll for whether the walk was worth it. The
+       * FIRST entry of its own `drops.pick` rather than a new table — the same
+       * shape `encounter.ts` uses for the guaranteed opening drop.
+       */
+      const prize = embellish(world, boss.id, spec.boss.drops?.pick[0]);
+      if (prize !== undefined) boss.carried = [prize];
+    }
   }
 
   // ─── AND SOMETHING ON THE FLOOR ───

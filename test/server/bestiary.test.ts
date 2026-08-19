@@ -11,6 +11,7 @@ import {
   INDEX_GLUT,
   INDEX_INSPECTOR,
   INDEX_INQUISITOR,
+  INDEX_WATCHER,
 } from '../../src/server/content/monsters.ts';
 import { ambushRoster } from '../../src/server/content/encounter.ts';
 import { resolveRngAvg } from '../../src/server/content/resolvers.ts';
@@ -71,7 +72,7 @@ describe('the two new creatures are ported, not invented', () => {
     for (const template of MONSTER_TEMPLATES) {
       expect(validateTemplate(template), `${template.id} is malformed`).toEqual([]);
     }
-    expect(MONSTER_TEMPLATES).toHaveLength(8);
+    expect(MONSTER_TEMPLATES).toHaveLength(9);
   });
 
   it('spends art that was already cut and drawing nothing', () => {
@@ -94,6 +95,23 @@ describe('the two new creatures are ported, not invented', () => {
     // NOT a player class. Every enemy sprite that ships now has a creature.
     expect(INDEX_INSPECTOR.sprite).toBe('enemy_disgraced_inspector_s');
     expect(INDEX_INQUISITOR.sprite).toBe('enemy_high_inquisitor_s');
+
+    /**
+     * AND THE BOSS SPENDS NO ART AT ALL, WHICH IS A DIFFERENT STATEMENT.
+     *
+     * `INDEX_WATCHER` RE-USES `enemy_index_cairn_s` rather than asking for a
+     * sprite. That is not a shortcut, it is the fiction: `places.ts` describes
+     * its room as *"the pile has been added to since the country ended"* and
+     * INDEX_CAIRN is *"a stack of citations weathered into the shape of a marker
+     * stone"* — the boss IS that, at the size the sentence implies.
+     *
+     * There is also no boss ring in the manifest: `canvas.ts` maps every
+     * non-Normal rank to `ui_token_ring_elite`, so it wears the elite's. Stated
+     * here rather than left to be noticed, because a reader who assumes a boss
+     * looks distinct will go looking for the asset.
+     */
+    expect(INDEX_WATCHER.sprite).toBe(INDEX_CAIRN.sprite);
+    expect(MONSTER_TEMPLATES.filter((t) => t.sprite === INDEX_WATCHER.sprite)).toHaveLength(2);
   });
 });
 
