@@ -79,6 +79,12 @@
  * is the only layer allowed to see both.
  */
 
+import { contingencies } from '../talents/contingencies.ts';
+import { scorchedCoat } from '../talents/scorched_coat.ts';
+import { seenWorse } from '../talents/seen_worse.ts';
+import { softPlaces } from '../talents/soft_places.ts';
+import { steadyHands } from '../talents/steady_hands.ts';
+import { theLongShift } from '../talents/the_long_shift.ts';
 import { coldReading } from '../talents/cold_reading.ts';
 import { measuredDoses } from '../talents/measured_doses.ts';
 import { standingOrders } from '../talents/standing_orders.ts';
@@ -230,7 +236,7 @@ export const WATCHMAN: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [crudeBlow, wardRush, ironCurtain, lockdown],
-  passives: [standingOrders],
+  passives: [standingOrders, softPlaces, seenWorse, theLongShift],
 };
 
 // ---------------------------------------------------------------------------
@@ -283,7 +289,7 @@ export const INSPECTOR: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [revolverShot, snipersMark, fogStep, sigil],
-  passives: [coldReading],
+  passives: [coldReading, steadyHands, contingencies],
 };
 
 // ---------------------------------------------------------------------------
@@ -343,7 +349,7 @@ export const ALCHEMIST: ClassDef = {
     damageType: DamageType.Fire,
   },
   loadout: [ashwickFlare, alchemicVial, backdraft, mendWounds],
-  passives: [measuredDoses],
+  passives: [measuredDoses, scorchedCoat],
 };
 
 // ---------------------------------------------------------------------------
