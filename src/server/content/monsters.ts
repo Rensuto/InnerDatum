@@ -1673,12 +1673,181 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
   },
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE INDEX GLUT — the roamer that had a name, a sprite, and no creature.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `world/roamers.ts` has drawn *"Something Redacted"* on the overworld since
+ * roamers landed, wearing `enemy_index_glut_s`. Walk into it and you fought two
+ * husks, because the ambush roster never consulted the marker. That file's own
+ * header states the promise it was breaking:
+ *
+ *   > The sprites are the AMBUSH ROSTER's own, so the thing you decided to walk
+ *   > into is the thing you meet — a roamer that looked like a husk and produced
+ *   > a wraith would make the decision it exists to offer a lie.
+ *
+ * There was no glut to produce. This is it, and it is the fourth piece of cut
+ * art connected to a creature rather than the first — `INDEX_CAIRN` ends with
+ * the same sentence.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A WALL THAT HITS BACK, WHICH IS A FIGHT THIS GAME HAS NOT HAD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE WHOLE ROSTER, MEASURED, because the first draft of this comment claimed
+ * three things about it that were not true and the table is what caught them:
+ *
+ *     creature           hp  regen  armour  def  atk  apr  str  dex
+ *     Index Cairn        23      0       0    1    8    6    1    5
+ *     Index Husk         25      0       1    1   15    7   12   10
+ *     Index Eidolon      55      0       1    1   12    3   10   17
+ *     Index Glut         60      2       4    0    2    6   20    8
+ *     Index Wraith       80      0       0   20   15   15   10    8
+ *     Overwritten Husk   95      0       2    4   18    8   12   10
+ *
+ * SO IT IS NOT THE BIGGEST THING IN THE GAME. It is fourth of six on hit
+ * points, and the wraith a level-3 party already meets has twenty more. Saying
+ * otherwise would have oversold the creature and, worse, would have justified
+ * softening it later against a number that was never real.
+ *
+ * WHAT IS ACTUALLY UNIQUE IS THE ONE COLUMN NOTHING ELSE HAS A NUMBER IN:
+ *
+ *   regen 2 per turn  — the only creature in the game whose health goes UP
+ *   armour 4          — twice the next highest, so chip damage is nearly free
+ *   def 0             — the lowest; it dodges nothing at all
+ *   atk 2             — the lowest by a factor of four; the roster runs 8 to 18
+ *
+ * Read together those four are one creature and one question, and it is a
+ * question this game has never asked: not whether the party can deal ENOUGH
+ * damage, but whether it can deal damage FASTER THAN A THRESHOLD. Everything
+ * else on the moor dies to patience. A party that pokes at this does not win
+ * slowly, it does not win — the armour eats the small hits and the regen takes
+ * back what is left. A party that commits kills it in a handful of rounds.
+ *
+ * AND IT IS NOT A DIFFICULTY SPIKE, because it can barely hit you. `atk = 2`
+ * against a roster that runs 8 to 18: it misses, and misses, and then lands for
+ * a great deal. You are rarely in danger of dying to it quickly; you are in
+ * danger of standing there for ten rounds achieving nothing. Those are
+ * different fears and this is the only creature that supplies the second.
+ *
+ * ═══ PORTED FROM `troll.lua:24-45` (base) AND `troll.lua:53-60` (forest troll) ═══
+ *
+ *     combat = { dam=resolvers.levelup(resolvers.mbonus(45, 10), 1, 1),
+ *                atk=2, apr=6, physspeed=2, dammod={str=0.8} },
+ *     life_regen = 2,
+ *     rank = 2,
+ *     size_category = 4,
+ *     stats = { str=20, dex=8, mag=6, con=16 },
+ *     fear_immune = 1,
+ *     max_life = resolvers.rngavg(50,70),
+ *     combat_armor = 4, combat_def = 0,
+ *
+ * `physspeed = 2` IS THE ONE THING NOT PORTED, and it is worth saying why
+ * rather than leaving it as an omission. ToME separates PHYSICAL speed from
+ * GLOBAL speed: upstream's troll walks at full pace and swings at half. This
+ * engine has one `speedFactor` for what an action costs, and every monster in
+ * the file leaves it at 1 — slowness is expressed through `globalSpeed`, which
+ * scales moving and swinging together (see `actor.ts`, the two clocks).
+ *
+ * Spending `globalSpeed` on it was tried in the head and rejected: at half rate
+ * this creature cannot corner anybody, and a wall you can simply walk away from
+ * is not a wall. So it keeps upstream's 1.0 and the slowness lives where the
+ * source already put most of it — `atk = 2` and DEX 8, a thing that swings
+ * often and connects rarely. The deviation makes it MORE dangerous than
+ * upstream, which the sixty hit points and the four armour are already paying
+ * for.
+ *
+ * `combat_def = 0`, VERBATIM: it dodges nothing. Every attack the party makes
+ * lands. The armour is what makes them cheap, and that is the distinction the
+ * fight is built on — you are never missing, you are being absorbed.
+ *
+ * No new art: `enemy_index_glut_s` was cut, shipped in the manifest, and has
+ * drawn a marker that opened onto somebody else's fight until now.
+ */
+export const INDEX_GLUT: MonsterTemplate = Object.freeze({
+  id: 'index_glut',
+  displayName: 'Index Glut',
+  description:
+    'Something the Index took and did not finish reading. It has kept growing in the parts that ' +
+    'were left, and it closes the distance the way a filing cabinet would.',
+  sprite: 'enemy_index_glut_s',
+  rank: ActorRank.Normal,
+
+  // troll.lua:59 `max_life = resolvers.rngavg(50,70)` = 60. Fourth of six — see
+  // the table above; the armour and the regen are what make it feel like more.
+  maxHp: resolveRngAvg(50, 70),
+  /**
+   * troll.lua:39 `life_regen = 2`, VERBATIM, AND IT IS THE WHOLE CREATURE.
+   *
+   * Every other template in this file is `hpRegen: 0`, so this is the first
+   * monster in the game whose health bar can go BACKWARDS. Two a turn against
+   * sixty is small enough that a committed party never notices it and large
+   * enough that a cautious one never finishes. That gap is the fight.
+   */
+  hpRegen: 2,
+
+  // troll.lua declares no `global_speed_base`, so 1.0 — VERBATIM. See the note
+  // above on `physspeed`, which is the field that is deliberately not here.
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  profile: AiProfile.MeleeChaser,
+  // The roster's standard eight. It is not given a longer leash to compensate
+  // for being slow to kill: noticing you sooner would make it a chase, and this
+  // creature is meant to be a decision you walked into on purpose.
+  aggroRange: 8,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  drops: { chance: 100, pick: idsOfTier('common') },
+
+  combat: {
+    // troll.lua:45, VERBATIM. Strength 20 IS the highest in the game; dexterity
+    // 8 is not the lowest (the cairn is 5) but it is the lowest on anything that
+    // has to walk up to you. Everything this creature has is in the swing.
+    stats: { str: 20, dex: 8, mag: 6, con: 16 },
+    // troll.lua:60 `combat_armor = 4, combat_def = 0`, VERBATIM.
+    mods: { armour: 4, def: 0 },
+    weapon: {
+      // troll.lua:30 `dam=resolvers.levelup(resolvers.mbonus(45, 10), 1, 1)`.
+      dam: resolveLevelup(resolveMBonus(45, 10)),
+      // troll.lua:30 `atk=2`, VERBATIM, and it is not a typo upstream either —
+      // the roster runs 8 to 18 and this is 2.
+      atk: 2,
+      // troll.lua:30 `apr=6`. When it does land, your armour is most of the way
+      // to irrelevant, which is what keeps a miss streak from being free.
+      apr: 6,
+      // troll.lua:30 `dammod={str=0.8}`, VERBATIM.
+      damMod: { str: 0.8 },
+    },
+    profile: {
+      resists: {
+        // OURS, not a port — upstream's troll takes +50% from fire and this
+        // engine has no fire. The Index's own half-resistance to darkness is
+        // the identity every made thing in this file carries; physical is left
+        // alone, because the answer to a wall is to hit it and it must not also
+        // be resistant to being hit.
+        [DamageType.Darkness]: 50,
+      },
+    },
+    // 1.5, matching the rest of the melee roster. `validateTemplate` refuses
+    // anything below the diagonal step.
+    range: 1.5,
+    minRange: 0,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
   INDEX_HUSK_ELITE,
   INDEX_EIDOLON,
   INDEX_CAIRN,
+  INDEX_GLUT,
 ]);
 
 /** Their ids, same order. */

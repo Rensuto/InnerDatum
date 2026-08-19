@@ -62,6 +62,7 @@ import { REDACTION_SITE_ID, makeOverworld } from '../../shared/level.ts';
 import { makeRedaction } from '../../shared/redaction.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { DELVES, populateDelve, redactedSpec } from '../content/delve.ts';
+import type { MonsterTemplate } from '../content/monsters.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
 import { placeTownsfolk, townsfolkFor } from '../content/townsfolk.ts';
@@ -126,6 +127,22 @@ export type Roamer = {
   y: number;
   /** What a player is told they walked into. */
   readonly name: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT IT ACTUALLY IS, WHICH IS THE FIELD THAT MAKES THE REST HONEST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The `name` and `sprite` below were chosen from a table that had no creature
+   * behind it, so a marker showing a wrong shadow opened onto a room of husks.
+   * The roamer now carries the template it depicts, `open()` forwards it, and
+   * `ambushRoster` puts it in the room. See the essay on `ambushRoster`'s
+   * `lead` parameter for what was broken and why it mattered.
+   *
+   * AN ID RATHER THAN THE TEMPLATE, because a `Realm` is state and a template
+   * is content: roamers are rebuilt from a save, and a live object reference in
+   * a persisted structure is the one shape that cannot survive one.
+   */
+  readonly templateId: string;
   /**
    * WHAT IT LOOKS LIKE, and it is a CREATURE, not a marker.
    *
@@ -425,7 +442,12 @@ export type SiteDef = {
    * arms engagement for every unrelated person standing in it, and they all
    * start waiting on each other's turns with no way to discover why.
    */
-  readonly populate?: (world: World, map: AuthoredMap, party: PartyStrength) => void;
+  readonly populate?: (
+    world: World,
+    map: AuthoredMap,
+    party: PartyStrength,
+    lead?: MonsterTemplate,
+  ) => void;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -461,7 +483,13 @@ export type Realms = {
    * none. Idempotent on (partyId, siteId), which is what makes "walk in after
    * declining the prompt" join your friends rather than open a second copy.
    */
-  open(site: SiteDef, partyId: string, party?: PartyStrength, ground?: Ground): Realm;
+  open(
+    site: SiteDef,
+    partyId: string,
+    party?: PartyStrength,
+    ground?: Ground,
+    lead?: MonsterTemplate,
+  ): Realm;
   /**
    * Close an instance and forget it. Refuses to close the overworld and refuses
    * to close a realm that still holds a body — a realm reaped out from under a
@@ -737,6 +765,15 @@ export function createRealms(opts: RealmsOptions): Realms {
      * place. See `SiteDef.map`.
      */
     ground?: Ground,
+    /**
+     * AND WHAT THEY WALKED INTO, for the one site that is a fight.
+     *
+     * Threaded exactly like `ground` and for the same reason: it decides what
+     * this room is at the moment it is built and has nothing to say afterwards.
+     * Absent for a door — a town does not change because of what was standing
+     * outside it.
+     */
+    lead?: MonsterTemplate,
   ): Realm => {
     /**
      * A COMMON SITE IGNORES THE PARTY ENTIRELY. There is one office, and
@@ -802,7 +839,7 @@ export function createRealms(opts: RealmsOptions): Realms {
       siteId: site.id,
       lingerMs: site.lingerMs,
     });
-    site.populate?.(realm.world, builtMap, party);
+    site.populate?.(realm.world, builtMap, party, lead);
     return realm;
   };
 
@@ -1302,7 +1339,7 @@ export const ENCOUNTER_SITE: SiteDef = {
   // ZERO, AND THIS IS THE FIELD THAT MAKES FLEEING MEAN SOMETHING. See
   // `SiteDef.lingerMs`: a breach you ran out of must not still be there.
   lingerMs: 0,
-  populate: (world, map, party) => {
+  populate: (world, map, party, lead) => {
     // AROUND THE ARRIVAL TILE, not at the authored coordinates. seedAmbush
     // explains why: the authored encounter is placed for a floor you EXPLORE,
     // and reusing it for an ambush drops the player in a corner with the
@@ -1316,6 +1353,8 @@ export const ENCOUNTER_SITE: SiteDef = {
     // handed the map and not the ground, and it does not need to be:
     // every ground paints a different floor, so the room is its own
     // record of what made it. See `arenaGround`.
-    seedAmbush(world, arrival, party, arenaGround(map));
+    // AND THE ROAMER ITSELF, so the creature on the map is the creature in the
+    // room. `ambushRoster` carries the argument for why this was worth fixing.
+    seedAmbush(world, arrival, party, arenaGround(map), lead);
   },
 };

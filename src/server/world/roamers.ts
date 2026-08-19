@@ -35,6 +35,8 @@
 
 import { canWalk } from '../../shared/level.ts';
 import { isHaunt } from '../../shared/protocol.ts';
+import { INDEX_CAIRN, INDEX_GLUT, INDEX_HUSK, INDEX_WRAITH } from '../content/monsters.ts';
+import type { MonsterTemplate } from '../content/monsters.ts';
 import { tileAt } from '../../shared/level.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { Realm, Roamer } from './realms.ts';
@@ -122,17 +124,53 @@ const MOVE_EVERY_TURNS = 3;
  */
 
 /**
- * What wanders, paired with what it looks like.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT WANDERS — AND IT IS A CREATURE NOW, NOT A NAME AND A PICTURE OF ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * The sprites are the AMBUSH ROSTER's own (content/monsters.ts), so the thing
- * you decided to walk into is the thing you meet — a roamer that looked like a
- * husk and produced a wraith would make the decision it exists to offer a lie.
+ * The version this replaces was a table of `{ name, sprite }` pairs, under a
+ * comment that stated the promise it was breaking:
+ *
+ *   > The sprites are the AMBUSH ROSTER's own, so the thing you decided to walk
+ *   > into is the thing you meet — a roamer that looked like a husk and produced
+ *   > a wraith would make the decision it exists to offer a lie.
+ *
+ * NOTHING CARRIED THE MARKER'S IDENTITY INTO THE FIGHT. `ambushRoster` was
+ * given the party and the ground and never the roamer, so all four kinds
+ * resolved to the same room: a husk, plus a wraith above level 3, plus an elite
+ * above level 6. A player who crossed half the moor to reach the wrong shadow
+ * rather than the husk beside them got the husk.
+ *
+ * ═══ WHY IT MATTERED MORE THAN IT LOOKS ═══
+ * Roamers exist to turn danger on the overworld from a die roll into a DECISION
+ * — the encounter roll they replaced was invisible and this is meant to be
+ * something you see coming and choose. Four options that resolve identically is
+ * not a decision, it is four coats of paint on one. And it quietly stranded the
+ * bestiary: the cairn and the eidolon could only ever be met on the two grounds
+ * that summon them, however many of them a player walked past.
+ *
+ * So a kind IS a template. The sprite is read off the creature rather than
+ * typed beside it, which is what makes the two incapable of drifting again.
+ *
+ * ═══ THE LABEL IS STILL WRITTEN, AND DELIBERATELY ═══
+ * `displayName` is what the Case Log calls a thing once you are fighting it;
+ * this is what the MOOR calls it at four hundred yards, and they are not the
+ * same register. "A Wrong Shadow" is what an Index Cairn looks like when it is
+ * a shape on a hill you have not reached yet. The creature is the same creature
+ * either way, which is the whole point — the fix is that the room now agrees,
+ * not that the map has to stop being atmospheric.
+ *
+ * FIXED ORDER: the kind is a seeded draw, so this is seed contract. Appending
+ * is safe; reordering or removing shifts every roamer that has ever spawned.
  */
-const KINDS: readonly { readonly name: string; readonly sprite: string }[] = [
-  { name: 'An Index Husk', sprite: 'enemy_index_husk_s' },
-  { name: 'An Index Wraith', sprite: 'enemy_index_wraith_s' },
-  { name: 'Something Redacted', sprite: 'enemy_index_glut_s' },
-  { name: 'A Wrong Shadow', sprite: 'enemy_index_cairn_s' },
+export const ROAMER_KINDS: readonly {
+  readonly label: string;
+  readonly template: MonsterTemplate;
+}[] = [
+  { label: 'An Index Husk', template: INDEX_HUSK },
+  { label: 'An Index Wraith', template: INDEX_WRAITH },
+  { label: 'Something Redacted', template: INDEX_GLUT },
+  { label: 'A Wrong Shadow', template: INDEX_CAIRN },
 ];
 
 /** The eight steps. Fixed order — the index is a draw, so order is seed contract. */
@@ -185,13 +223,20 @@ export function tickRoamers(realm: Realm, seq: number): boolean {
       if (realm.world.actorAt(x, y) !== undefined) continue;
       if ([...realm.roamers.values()].some((r) => r.x === x && r.y === y)) continue;
       const id = `roam_${String(seq)}_${String(realm.roamers.size)}`;
-      const kind = KINDS[realm.world.rng.int('roamer.kind', 0, KINDS.length - 1)] ?? KINDS[0];
+      const kind =
+        ROAMER_KINDS[realm.world.rng.int('roamer.kind', 0, ROAMER_KINDS.length - 1)] ??
+        ROAMER_KINDS[0];
+      const template = kind?.template ?? INDEX_HUSK;
       realm.roamers.set(id, {
         id,
         x,
         y,
-        name: kind?.name ?? 'An Index Husk',
-        sprite: kind?.sprite ?? 'enemy_index_husk_s',
+        name: kind?.label ?? 'An Index Husk',
+        // BOTH READ OFF THE CREATURE. The sprite the player sees on the moor and
+        // the sprite standing in the room are now one field, so they cannot be
+        // separately edited into disagreeing.
+        templateId: template.id,
+        sprite: template.sprite,
       });
       changed = true;
       break;

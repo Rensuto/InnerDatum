@@ -7,6 +7,7 @@ import {
   INDEX_WRAITH,
   MONSTER_TEMPLATES,
   validateTemplate,
+  INDEX_GLUT,
 } from '../../src/server/content/monsters.ts';
 import { ambushRoster } from '../../src/server/content/encounter.ts';
 import { resolveRngAvg } from '../../src/server/content/resolvers.ts';
@@ -67,15 +68,23 @@ describe('the two new creatures are ported, not invented', () => {
     for (const template of MONSTER_TEMPLATES) {
       expect(validateTemplate(template), `${template.id} is malformed`).toEqual([]);
     }
-    expect(MONSTER_TEMPLATES).toHaveLength(5);
+    expect(MONSTER_TEMPLATES).toHaveLength(6);
   });
 
   it('spends art that was already cut and drawing nothing', () => {
-    // Both sprites have been in the manifest since the day they were made and
-    // had never been requested by anything. No new art, and no risk of the
-    // violet missing-asset box.
+    /**
+     * All three sprites have been in the manifest since the day they were made.
+     * No new art, and no risk of the violet missing-asset box.
+     *
+     * THE GLUT'S CASE IS THE WORST OF THE THREE AND IS WORTH THE EXTRA LINE:
+     * `enemy_index_glut_s` was not merely unused, it was BEING DRAWN — as a
+     * roamer named *Something Redacted* on the overworld — and there was no
+     * creature behind it. Walking into that marker produced a room of husks.
+     * See `test/server/roamer-identity.test.ts` for the join that was missing.
+     */
     expect(INDEX_EIDOLON.sprite).toBe('enemy_index_eidolon_s');
     expect(INDEX_CAIRN.sprite).toBe('enemy_index_cairn_s');
+    expect(INDEX_GLUT.sprite).toBe('enemy_index_glut_s');
   });
 });
 

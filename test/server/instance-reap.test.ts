@@ -8,6 +8,7 @@ import { accept, createPartyState, invite } from '../../src/server/engine/party.
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { RealmKind, createRealms } from '../../src/server/world/realms.ts';
+import { INDEX_HUSK } from '../../src/server/content/monsters.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PartyState } from '../../src/server/engine/party.ts';
@@ -228,6 +229,10 @@ async function walkIntoAnAmbush(client: Client, actorId: string): Promise<void> 
     x: from.x + 1,
     y: from.y,
     name: 'a test breach',
+    // THE CREATURE IT DEPICTS, which is now what the ambush is built around —
+    // see `ambushRoster`'s `lead`. A husk keeps this fixture's fight exactly
+    // what it was before roamers carried an identity.
+    templateId: INDEX_HUSK.id,
     sprite: 'enemy_index_husk_s',
   });
 

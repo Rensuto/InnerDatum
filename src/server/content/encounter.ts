@@ -397,8 +397,34 @@ const AMBUSH_MAX = 7;
 export function ambushRoster(
   party: PartyStrength,
   ground: Ground = Ground.Upland,
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE CREATURE THE PLAYER WAS LOOKING AT WHEN THEY DECIDED TO DO THIS.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `world/roamers.ts` draws four kinds on the overworld and its header states
+   * the promise plainly: *"the thing you decided to walk into is the thing you
+   * meet — a roamer that looked like a husk and produced a wraith would make
+   * the decision it exists to offer a lie"*. THE PROMISE WAS NOT KEPT. Nothing
+   * ever passed the marker's identity down here, so a player who picked their
+   * way around two husks to reach the wrong shadow fought two husks.
+   *
+   * That is worse than cosmetic. Roamers exist so danger on the overworld is a
+   * DECISION rather than a die roll — and a decision between four options that
+   * all resolve to the same fight is not one. It also quietly wasted the whole
+   * bestiary: the cairn and the eidolon could only ever be met on the two
+   * grounds that summon them, however many wrong shadows a player walked past.
+   *
+   * FIRST IN THE LIST AND NEVER DEDUPLICATED. `seedAmbush` fills the ring by
+   * cycling the roster, so being first means being the one placed when only one
+   * fits — the guarantee is that it is IN the room, at any party size.
+   *
+   * OPTIONAL, because not every ambush comes from a marker: an encounter opened
+   * by anything else still gets the roster it always had.
+   */
+  lead?: MonsterTemplate,
 ): readonly MonsterTemplate[] {
-  const roster: MonsterTemplate[] = [INDEX_HUSK];
+  const roster: MonsterTemplate[] = lead === undefined ? [INDEX_HUSK] : [lead, INDEX_HUSK];
   if (party.level >= 3 || party.size >= 2) roster.push(INDEX_WRAITH);
   if (party.level >= 6 || party.size >= 3) roster.push(INDEX_HUSK_ELITE);
 
@@ -442,8 +468,10 @@ export function seedAmbush(
   near: TileXY,
   party: PartyStrength = { level: 1, size: 1 },
   ground: Ground = Ground.Upland,
+  /** The roamer that was standing there. See `ambushRoster`. */
+  lead?: MonsterTemplate,
 ): SeededMonster[] {
-  const roster = ambushRoster(party, ground);
+  const roster = ambushRoster(party, ground, lead);
 
   /**
    * ═════════════════════════════════════════════════════════════════════════

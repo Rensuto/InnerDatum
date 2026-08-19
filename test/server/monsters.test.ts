@@ -14,6 +14,7 @@ import {
   monsterById,
   monsterInit,
   validateTemplate,
+  INDEX_GLUT,
 } from '../../src/server/content/monsters.ts';
 import {
   resolveLevelup,
@@ -219,15 +220,28 @@ describe('the roster is well formed', () => {
      * design independently named the bestiary rather than the cartography as the
      * real problem.
      *
-     * SO THE RULE THAT REPLACES THE CAP IS NOT "FIVE": it is that a creature has
-     * to belong to a ground. The eidolon is lethal where sightlines are four
-     * tiles and target practice on the open moor; the cairn is deadly across
-     * water and irrelevant the moment you find the ford. A sixth that was merely
-     * a bigger husk would still be scope creep, and this comment is the argument
-     * against it.
+     * SO THE RULE THAT REPLACES THE CAP IS NOT A NUMBER: it is that a creature
+     * has to BELONG TO SOMETHING THE PLAYER CHOSE. The eidolon is lethal where
+     * sightlines are four tiles and target practice on the open moor; the cairn
+     * is deadly across water and irrelevant the moment you find the ford. One
+     * that was merely a bigger husk would still be scope creep, and this comment
+     * is the argument against it.
      *
-     * The old assertion that `index_cairn` did not exist is left in the history
-     * on purpose — whoever wrote it named the creature four commits early.
+     * THE GLUT EXTENDS THE RULE RATHER THAN BREAKING IT, and the extension is
+     * worth stating because it is not obvious: it belongs to a MARKER instead of
+     * to a ground. `world/roamers.ts` draws four kinds on the overworld and one
+     * of them was *Something Redacted*, wearing `enemy_index_glut_s` — a choice
+     * the player was offered, with nothing behind it. A ground and a marker are
+     * the same kind of thing here: both are something a player looked at and
+     * decided about, and a creature that answers one of them is content rather
+     * than escalation.
+     *
+     * THE OLD ASSERTION THAT `index_cairn` DID NOT EXIST WAS LEFT IN THE HISTORY
+     * ON PURPOSE — *"whoever wrote it named the creature four commits early"* —
+     * and then this file did it AGAIN, one line down, with
+     * `expect(monsterById('index_glut')).toBeUndefined()`. Twice is a pattern:
+     * an assertion that a thing does not exist is a note about what the roster
+     * is missing, written by somebody who could already see the hole.
      */
     expect(MONSTER_TEMPLATES.map((t) => `${t.id}/${t.profile}/${t.rank}`)).toEqual([
       'index_husk/melee_chaser/normal',
@@ -235,9 +249,10 @@ describe('the roster is well formed', () => {
       'index_husk_elite/melee_chaser/elite',
       'index_eidolon/melee_chaser/normal',
       'index_cairn/ranged_kiter/normal',
+      'index_glut/melee_chaser/normal',
     ]);
     expect(monsterById('index_wraith')).toBe(INDEX_WRAITH);
-    expect(monsterById('index_glut')).toBeUndefined();
+    expect(monsterById('index_glut')).toBe(INDEX_GLUT);
   });
 
   it('passes every invariant the type system cannot state', () => {
@@ -486,6 +501,7 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_husk_elite', 'Overwritten Husk', 'enemy_index_husk_elite_s'],
       ['index_eidolon', 'Index Eidolon', 'enemy_index_eidolon_s'],
       ['index_cairn', 'Index Cairn', 'enemy_index_cairn_s'],
+      ['index_glut', 'Index Glut', 'enemy_index_glut_s'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
     expect(INDEX_WRAITH.description).toContain('A cited absence given shape');
@@ -1083,6 +1099,21 @@ describe('the balance table the wraith’s retune rests on', () => {
     // this test ever generated the expectation it would assert nothing.
     // In `MONSTER_TEMPLATES` order, which is roster order, not alphabetical.
     //                       Watchman  Inspector  Alchemist
+    /**
+     * THE GLUT'S ROW IS THE ONE WORTH READING TWICE: 5.527 / 5.527 / 6.633, the
+     * second-lowest output in the game behind the husk, and below the wraith,
+     * the elite, the eidolon and the cairn.
+     *
+     * That is the whole design confirmed rather than assumed. `damagePerPlayerTurn`
+     * runs a real `hitChance(combatAttack, combatDefense)`, so `atk = 2` — the
+     * lowest in the game by a factor of four — is already priced into these
+     * numbers, and STR 20 through a 0.8 dammod is what pulls them back to
+     * mid-pack. It misses, and misses, and then lands for a great deal.
+     *
+     * So a creature with sixty hit points, four armour and the only regeneration
+     * in the game is NOT a difficulty spike. What it is dangerous to is a party
+     * that will not commit, which is a different thing and is the fight.
+     */
     expect(table).toEqual([
       ['index_husk', 4.378, 4.378, 4.875],
       ['index_wraith', 5.88, 5.88, 5.88],
@@ -1099,6 +1130,7 @@ describe('the balance table the wraith’s retune rests on', () => {
       // so `applyArmour` removes nothing. At 23 life that is three player turns.
       // It survives by being unreachable, never by being tough.
       ['index_cairn', 7, 7, 7],
+      ['index_glut', 5.527, 5.527, 6.633],
     ]);
   });
 

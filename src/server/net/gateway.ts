@@ -116,6 +116,8 @@ import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
 import { DELVES, specFor, dangerWord, partyHint } from '../content/delve.ts';
+import { monsterById } from '../content/monsters.ts';
+import type { MonsterTemplate } from '../content/monsters.ts';
 import { specForActorId } from '../content/townsfolk.ts';
 import { healActor } from '../engine/talents.ts';
 import type { TalentEffect } from '../engine/talents.ts';
@@ -6436,7 +6438,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
        * and `groundAt` is pure, so the same tile is the same fight for everybody.
        */
       const ground = groundAt(from.world.level, body.x, body.y);
-      crossInto(session, ENCOUNTER_SITE, `walked into ${roamer.name}`, ground);
+      /**
+       * AND THE CREATURE THEY WERE LOOKING AT.
+       *
+       * `roamer.name` has been in this log line since roamers landed — the
+       * player was always TOLD what they walked into, and then fought whatever
+       * the roster produced regardless. The identity was right here and simply
+       * never went any further. `ambushRoster` carries the full argument.
+       *
+       * `monsterById` rather than the roamer holding a template: a realm is
+       * state and a template is content, so the roamer stores an id. An id this
+       * build does not know resolves to `undefined` and the ambush is the one
+       * it always was, which is the correct answer for a save written by a
+       * build that had a creature this one does not.
+       */
+      crossInto(
+        session,
+        ENCOUNTER_SITE,
+        `walked into ${roamer.name}`,
+        ground,
+        monsterById(roamer.templateId),
+      );
       return;
     }
 
@@ -6470,7 +6492,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `why` reaches only the log. It is what makes "I was suddenly somewhere else"
    * answerable after the fact.
    */
-  const crossInto = (session: Session, site: SiteDef, why: string, ground?: Ground): void => {
+  const crossInto = (
+    session: Session,
+    site: SiteDef,
+    why: string,
+    ground?: Ground,
+    lead?: MonsterTemplate,
+  ): void => {
     const realms = opts.realms;
     const actorId = session.actorId;
     if (realms === undefined || actorId === null) return;
@@ -6509,6 +6537,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // ABSENT FOR A DOOR, which is every site but one: a town is the same town
         // whichever direction you walked in from. See `SiteDef.map`.
         ground,
+        // AND SO IS THIS, for the same reason and the same one site.
+        lead,
       ),
       why,
       site.id,
