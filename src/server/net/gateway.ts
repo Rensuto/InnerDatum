@@ -223,7 +223,7 @@ import {
  */
 import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
-import { groundAt } from '../../shared/level.ts';
+import { groundAt, regionAt } from '../../shared/level.ts';
 import type { Ground } from '../../shared/level.ts';
 import { createFog, fogFromBase64, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
@@ -470,6 +470,18 @@ type Session = {
    * not.
    */
   exitArmed: boolean;
+  /**
+   * WHICH PART OF THE MOOR THIS BODY WAS LAST IN, or null before it has taken a
+   * step. Compared against the region of the tile a step LANDED on, so crossing
+   * a boundary says so once and walking about inside one says nothing.
+   *
+   * ON THE SESSION AND NOT THE ACTOR, because it is a fact about what this
+   * screen has been TOLD rather than about where the body is — the body's own
+   * answer is its coordinates, and `regionAt` derives the rest. It resets with
+   * the socket, which is right: somebody who reconnects should be told where
+   * they are.
+   */
+  region: string | null;
   helloDone: boolean;
   /**
    * `hello` is in flight. It is the one handler that awaits (it reads a
@@ -5844,6 +5856,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // same street would otherwise ask for a write on every step, and the
         // debounce would coalesce them into a file that says nothing new.
         if (revealFor(here, walker, body.x, body.y)) queueSave('explored');
+        noteRegion(session, here, body.x, body.y);
       }
     }
 
@@ -7245,6 +7258,61 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * It shares `logSeq` with the Margin and the Record batch, and it must: two
    * counters is how a client's de-duplication quietly stops working.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE MOOR TELLS YOU WHAT IT IS CALLED, ONCE, WHEN YOU WALK INTO IT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Thirteen markers had names. The 9,327 tiles between them had one, and it was
+   * "the overworld" — so everything that happened out there was reported the
+   * same way, and six friends in a voice channel had no way to say WHERE
+   * anything happened except by reading coordinates at each other.
+   *
+   * *"I got jumped in the Bracken Waste"* is a sentence. *"I got jumped at
+   * 94, 41"* is a bug report. This game is played by people talking to each
+   * other and the evening's story IS the product; ground nobody can name is
+   * ground nobody can talk about.
+   *
+   * ═══ UNICAST, AND ON PURPOSE ═══
+   * Where you are is your fact. Broadcasting it would put a line on five other
+   * screens every time anybody crossed a boundary, which on a six-person server
+   * is the Record lane turned into a movement ticker — and the lane exists for
+   * the handful of things worth reading. The player says it out loud; that is
+   * the mechanism, and it is better than the one the server could provide.
+   *
+   * ═══ THE OVERWORLD ONLY ═══
+   * `regionAt` names Alderbrook's ground. A town interior is one room with a
+   * name already on the door, and an ambush arena is not anywhere.
+   *
+   * ═══ SILENT ON THE FIRST STEP, WHICH IS THE DETAIL THAT MAKES IT PLEASANT ═══
+   * A null `region` is filled in without announcing, so arriving in a realm does
+   * not immediately tell you the name of the ground you are standing on —
+   * `announceArrival` has already said where you are, and two lines about the
+   * same act read as a stutter.
+   */
+  const noteRegion = (session: Session, realm: Realm, x: number, y: number): void => {
+    if (realm.kind !== RealmKind.Overworld) return;
+    const name = regionAt(x, y);
+    const was = session.region;
+    session.region = name;
+    if (was === null || was === name) return;
+
+    logSeq += 1;
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'log',
+      lines: [
+        {
+          seq: logSeq,
+          lane: LogLane.Record,
+          gameTurn: realm.world.turn.clock.gameTurn,
+          text: `You come to ${name}.`,
+          depth: 0,
+        },
+      ],
+    });
+  };
+
   const broadcastRecordLine = (realm: PumpTarget, text: string): void => {
     logSeq += 1;
     broadcast(
@@ -9464,6 +9532,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       realmId: null,
       enteredFrom: null,
       exitArmed: false,
+      region: null,
       helloDone: false,
       // Set true for the whole of `hello`, attempted or completed, and never
       // cleared: one hello per connection. A socket whose hello failed hard

@@ -634,3 +634,166 @@ export function groundAt(level: LevelView, x: number, y: number): Ground {
   if (here === TileCode.HILLS) return Ground.Upland;
   return Ground.Open;
 }
+
+// ---------------------------------------------------------------------------
+// What the moor calls its own parts
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE GROUND HAS NAMES, AND THAT IS THE WHOLE FEATURE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Thirteen markers had names. The 9,327 tiles between them had one, and it was
+ * "the overworld". So everything that happened out there was reported the same
+ * way — you died on the overworld, you found it on the overworld, you got jumped
+ * on the overworld — and six friends in a voice channel had no way to say WHERE
+ * anything happened except by reading coordinates to each other.
+ *
+ * *"I got jumped in the Bracken Waste"* is a sentence. *"I got jumped at 94, 41"*
+ * is a bug report. This game is played by people talking to each other, and the
+ * evening's story is the product; a world whose parts cannot be named cannot be
+ * talked about, and a place nobody can talk about is a place nobody remembers.
+ *
+ * ToME does this at `zone.lua`'s `zonename`, and for the same reason.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BANDS, NOT A BAG OF RECTANGLES, BECAUSE A GAP FLICKERS
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A list of hand-placed rectangles has to TILE — cover every cell, overlap
+ * nowhere — or walking along a seam crosses in and out of a nameless strip and
+ * announces itself over and over. One typo in one coordinate is enough, and the
+ * symptom appears on one tile of one border where nobody is looking.
+ *
+ * So the regions are authored as horizontal BANDS, each cut into columns. Every
+ * bound is an exclusive upper edge and the last of each list is the edge of the
+ * map, which makes a gap unrepresentable rather than merely tested for.
+ * `assertRegionsTile` runs at module load anyway, because the property is worth
+ * two microseconds at boot.
+ *
+ * ═══ NAMED FOR THE COUNTRY, NEVER FOR THE SITE ═══
+ * A marker already says "Threadneedle Row". A region that repeated it would tell
+ * the player nothing they could not see, and the useful thing to name is the
+ * ground BETWEEN the markers — which is precisely the part that had no name.
+ */
+export type Region = {
+  readonly name: string;
+  /** Inclusive. */
+  readonly x0: number;
+  readonly y0: number;
+  /** Inclusive. */
+  readonly x1: number;
+  readonly y1: number;
+};
+
+/**
+ * The moor, north to south, as it actually looks on the shipped map.
+ *
+ *   y 0-13    beyond the range: the cold strip where four doors sit
+ *   y 14-31   the range itself, and the flat behind its eastern end
+ *   y 32-57   downs in the west, heath in the middle, plains to the east
+ *   y 58-77   the low country, which is where Alderbrook is
+ *   y 78-87   the southern wood and the beach
+ *   y 88-99   the water
+ */
+const BANDS: readonly { readonly y1: number; readonly cuts: readonly [number, string][] }[] = [
+  // Beyond the mountains. Blackwood, Gearford, the Archive and Saint's Rest all
+  // sit along here, which is why the walk to any of them is the long one.
+  {
+    y1: 13,
+    cuts: [
+      [104, 'the Cold Furrows'],
+      [169, 'the Saintswood'],
+    ],
+  },
+  // The range, and the open flat at its eastern end — the easy way round.
+  {
+    y1: 31,
+    cuts: [
+      [104, 'the Kettle Range'],
+      [169, 'Kettleflat'],
+    ],
+  },
+  // The middle of the map, and the most-crossed ground on it.
+  {
+    y1: 57,
+    cuts: [
+      [69, 'the Grey Downs'],
+      [139, 'the Bracken Waste'],
+      [169, 'Ashwick Reach'],
+    ],
+  },
+  // Home. The spawn is at 121,72.
+  {
+    y1: 77,
+    cuts: [
+      [69, 'the Sedge'],
+      [169, 'Alderbrook Common'],
+    ],
+  },
+  // The wood along the south coast, and the beach east of it.
+  {
+    y1: 87,
+    cuts: [
+      [124, 'the Blackwater Wood'],
+      [169, 'the Long Strand'],
+    ],
+  },
+  // The sea, which you cannot walk on — named anyway, because the world map
+  // draws it and a player pointing at it should have a word for it.
+  { y1: 99, cuts: [[169, 'the Drowned Coast']] },
+];
+
+function buildRegions(): readonly Region[] {
+  const out: Region[] = [];
+  let y0 = 0;
+  for (const band of BANDS) {
+    let x0 = 0;
+    for (const [x1, name] of band.cuts) {
+      out.push({ name, x0, y0, x1, y1: band.y1 });
+      x0 = x1 + 1;
+    }
+    y0 = band.y1 + 1;
+  }
+  return out;
+}
+
+export const ALDERBROOK_REGIONS: readonly Region[] = buildRegions();
+
+/**
+ * Every cell has exactly one name. Checked at module load rather than trusted,
+ * for the reason the block above gives: a gap is a line that flickers on one
+ * border, and the day somebody edits a bound is the day it appears.
+ */
+function assertRegionsTile(): void {
+  const w = ALDERBROOK.view.w;
+  const h = ALDERBROOK.view.h;
+  const last = ALDERBROOK_REGIONS[ALDERBROOK_REGIONS.length - 1];
+  if (last === undefined || last.x1 !== w - 1 || last.y1 !== h - 1) {
+    throw new Error(
+      `level: the region table stops at ${String(last?.x1)},${String(last?.y1)} but the map is ${String(w)}x${String(h)}`,
+    );
+  }
+  for (const r of ALDERBROOK_REGIONS) {
+    if (r.x0 > r.x1 || r.y0 > r.y1) {
+      throw new Error(`level: region '${r.name}' has an inverted bound`);
+    }
+  }
+}
+assertRegionsTile();
+
+/**
+ * What this ground is called. Never undefined: the bands tile the map.
+ *
+ * A LINEAR SCAN over a dozen rectangles, run once per step and only when the
+ * step actually landed. Building an index would be 17,000 strings held for the
+ * life of the process to save a comparison nobody can measure.
+ */
+export function regionAt(x: number, y: number): string {
+  for (const r of ALDERBROOK_REGIONS) {
+    if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) return r.name;
+  }
+  // Off the map. Reachable only from a caller that did not bounds-check, and a
+  // name is a better answer than a crash inside somebody's move.
+  return 'the moor';
+}
