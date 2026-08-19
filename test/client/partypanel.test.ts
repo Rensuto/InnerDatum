@@ -212,6 +212,87 @@ describe('the pane draws the party frame and joins only what that frame cannot c
     expect(view.rows[2]?.member.hp).toBe(40);
   });
 
+  it('takes the countdown off the party frame for a member on another floor', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ROSTER CANNOT DESCRIBE SOMEBODY WHO IS NOT ON YOUR FLOOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `PartyMember.downed` is scoped to one world, so a member who walked into
+     * an instance is in no roster of yours — and this join read `null` for them
+     * and drew no countdown, which is the one thing Downed exists to show. See
+     * `PartyStateMember.downed`.
+     */
+    const view = partyPaneView({
+      state: state([
+        member({
+          id: 'actor_gone',
+          name: 'Sam',
+          hp: 0,
+          away: { place: 'Blackwood Outskirts', canFollow: true },
+          downed: {
+            status: DownedStatus.Downed,
+            marker: 'ui_marker_downed',
+            turnsLeft: 3,
+            total: 5,
+          },
+        }),
+      ]),
+      invites: [],
+      // EMPTY, AND THAT IS THE POINT — they are not on this floor.
+      roster: [],
+      actors: new Map(),
+      effects: new Map(),
+      inCombat: false,
+    });
+    expect(view.rows[0]?.downed).toEqual({
+      status: DownedStatus.Downed,
+      marker: 'ui_marker_downed',
+      turnsLeft: 3,
+      total: 5,
+    });
+  });
+
+  it('prefers the floor roster where both frames describe the same body', () => {
+    /**
+     * THE PRECEDENCE, AND WHY IT IS NOT ARBITRARY. Both fields are `downedView`
+     * reading one survival table, so on your own floor they agree — and reading
+     * the roster first keeps a body you can see described by the frame that has
+     * always described it. Asserted with two DIFFERENT values so the test can
+     * tell which one was used, rather than passing on the agreement.
+     */
+    const view = partyPaneView({
+      state: state([
+        member({
+          id: 'actor_b',
+          name: 'Sam',
+          downed: {
+            status: DownedStatus.Erased,
+            marker: 'ui_marker_erased',
+            turnsLeft: 0,
+            total: 5,
+          },
+        }),
+      ]),
+      invites: [],
+      roster: [
+        rosterRow('actor_b', 'Sam', {
+          downed: {
+            status: DownedStatus.Downed,
+            marker: 'ui_marker_downed',
+            turnsLeft: 2,
+            total: 5,
+          },
+        }),
+      ],
+      actors: new Map(),
+      effects: new Map(),
+      inCombat: false,
+    });
+    expect(view.rows[0]?.downed?.status).toBe(DownedStatus.Downed);
+    expect(view.rows[0]?.downed?.turnsLeft).toBe(2);
+  });
+
   it('NEVER RE-SORTS. The order is the server’s, self included', () => {
     const view = partyPaneView({
       state: state([

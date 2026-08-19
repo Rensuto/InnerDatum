@@ -5,7 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createDownedState } from '../../src/server/engine/downed.ts';
+import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createPartyState, membersOf } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -117,7 +117,13 @@ async function connect(port: number): Promise<Client> {
   return client;
 }
 
-type Harness = { port: number; realms: Realms; parties: PartyState; close: () => Promise<void> };
+type Harness = {
+  downed: ReturnType<typeof createDownedState>;
+  port: number;
+  realms: Realms;
+  parties: PartyState;
+  close: () => Promise<void>;
+};
 let server: Harness;
 
 beforeEach(async () => {
@@ -144,6 +150,7 @@ beforeEach(async () => {
     port: address.port,
     realms,
     parties,
+    downed,
     close: async (): Promise<void> => {
       await app.close();
     },
@@ -238,6 +245,106 @@ describe('somebody else turns up', () => {
 
     expect(membersIn(second.latest('party'))).toHaveLength(2);
     expect(membersIn(second.latest('party_state'))).toHaveLength(1);
+  });
+
+  it('shows a party member elsewhere the clock they have to beat', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "GET TO ME" IS ADDRESSED TO SOMEBODY WHO HAS TO BE TOLD.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * game-design.md § 9 says Downed exists because it turns *"I died"* into
+     * *"GET TO ME"*. The countdown rode `PartyMember.downed`, which is scoped to
+     * ONE FLOOR — so a member who walked into an instance and went down inside
+     * it was described to the rest of their party by `hp` alone, and `hp: 0` is
+     * what Downed, Erased and dead all read.
+     *
+     * ═══ AND THE FRAME DID NOT ARRIVE EITHER ═══
+     * `refreshViewers` skipped every socket outside the pumped realm, on a note
+     * saying that was *"a cost saving rather than a correctness one"* — true
+     * when written, and untrue from the day `awayMembers` made this the one
+     * frame that describes people who are not in the realm.
+     *
+     * MEASURED BEFORE THE FIX: the town player's pane read `60/60, committed`
+     * — full health, taking their turn — while their friend lay at 0 hp on a
+     * five-turn clock, and it stayed that way until they happened to take a
+     * step.
+     *
+     * SO THIS ASSERTS BOTH HALVES AT ONCE, and the second one is the reason the
+     * viewer here never moves: the frame must be PUSHED by the pump that is
+     * happening somewhere else.
+     */
+    const town = await connect(server.port);
+    const townId = await town.hello();
+    const delver = await connect(server.port);
+    const delverId = await delver.hello();
+    const helper = await connect(server.port);
+    const helperId = await helper.hello();
+    await sleep(200);
+
+    for (const [client, id] of [
+      [town, delverId],
+      [town, helperId],
+    ] as const) {
+      client.send({ t: 'party', action: 'invite', targetId: id });
+      await sleep(120);
+    }
+    delver.send({ t: 'party', action: 'accept', targetId: townId });
+    await sleep(150);
+    helper.send({ t: 'party', action: 'accept', targetId: townId });
+    await sleep(250);
+    expect(membersOf(server.parties, townId)).toHaveLength(3);
+
+    // BOTH OF THEM THROUGH THE DOOR, and the helper first.
+    const door = [...server.realms.overworld.sites][0];
+    if (door === undefined) throw new Error('the overworld has no doors');
+    const [xs, ys] = door[0].split(',');
+    for (const [client, id] of [
+      [helper, helperId],
+      [delver, delverId],
+    ] as const) {
+      const body = server.realms.overworld.world.getActor(id);
+      if (body === undefined) throw new Error('no body');
+      body.x = Number(xs) - 1;
+      body.y = Number(ys);
+      client.send({ t: 'move', dir: 'e' });
+      await sleep(350);
+    }
+    const inner = server.realms.realmOf(delverId);
+    expect(inner?.siteId, 'the delver never crossed').toBe(door[1]);
+    expect(server.realms.realmOf(helperId)?.id, 'the two are not in one instance').toBe(inner?.id);
+
+    // THE SCENARIO HAS TO BE SURVIVABLE TO BE THE ONE UNDER TEST. Downing the
+    // only party member inside an instance is a WIPE, and the engine resolves
+    // it by resetting the floor — correct, and not a rescue window. The helper
+    // is standing here first for exactly that reason.
+    const body = inner?.world.getActor(delverId);
+    if (body === undefined) throw new Error('no delve body');
+    expect(goDown(server.downed, body, 1), 'the engine refused to put them down').not.toBeNull();
+    expect(body.hp).toBe(0);
+
+    // ONE PUMP IN THE DELVE — in play the body goes down inside one, and it is
+    // that pump which has to reach a party member who is somewhere else.
+    helper.send({ t: 'move', dir: 'n' });
+    await sleep(400);
+
+    // AND THE VIEWER HAS NOT MOVED SINCE BEFORE ANY OF IT. That is the half a
+    // memoised frame cannot fake.
+    const row = (
+      town.latest('party_state')?.members as readonly Record<string, unknown>[] | undefined
+    )?.find((member) => member.id === delverId);
+    expect(row, 'the party pane lost the row for a member in an instance').toBeDefined();
+    expect(
+      row?.downed,
+      `told nothing about a member on the floor — the row read ${JSON.stringify(row)}`,
+    ).toBeTruthy();
+    const view = row?.downed as { status: string; turnsLeft: number; total: number };
+    expect(view.status).toBe('downed');
+    expect(view.total).toBe(5);
+    // STILL RUNNING. A clock already at zero is not a rescue window, and a test
+    // that passed on one would be asserting the wrong thing.
+    expect(view.turnsLeft, 'the clock had already run out').toBeGreaterThan(0);
+    expect(view.turnsLeft).toBeLessThanOrEqual(view.total);
   });
 
   it('tells a lone player at the door what the map already knew', async () => {

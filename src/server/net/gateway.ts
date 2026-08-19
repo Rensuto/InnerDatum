@@ -3578,6 +3578,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       bellRemainingMs(realm.id),
       snapshot.invites,
       awayMembers(viewer, realm, snapshot.members),
+      // AND THE SURVIVAL TABLE, so the row for a member who is elsewhere says
+      // whether they are on the floor and how long is left — see
+      // `PartyStateMember.downed`. One table, shared by every realm, which is
+      // why an instance's countdown is legible from the overworld at all.
+      opts.downed,
     );
 
     // `expiresInMs` is deliberately EXCLUDED from the key: it changes on every
@@ -3919,12 +3924,40 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const refreshViewers = (realm: PumpTarget): void => {
     for (const session of sessions.values()) {
       if (!session.helloDone) continue;
-      // ONLY THE SOCKETS THIS PUMP WAS ABOUT. Every one of the four frames below
-      // is memoised per socket and would send nothing for a viewer whose realm
-      // did not move — so this is a cost saving rather than a correctness one,
-      // and it is still worth stating: with N realms the unfiltered loop is N
-      // passes over every socket in the process on every pump.
-      if (realmFor(session).id !== realm.id) continue;
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * THREE OF THESE FRAMES ARE ABOUT THIS REALM. THE PARTY PANE IS NOT.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * This filter used to carry a note saying it was *"a cost saving rather
+       * than a correctness one"*, because every frame below described the
+       * viewer's own floor and a viewer whose realm did not move had nothing to
+       * be told. That was true when it was written.
+       *
+       * `awayMembers` then made the party pane the one frame here that
+       * describes people who are NOT in this realm — their place, whether you
+       * can follow, their hit points — and the sentence quietly stopped being
+       * true without anybody editing it.
+       *
+       * MEASURED, over a socket, with two players in a party: one walks into an
+       * instance and goes down on a five-turn clock, and the other's pane keeps
+       * reading `60/60, committed` — full health, taking their turn — because
+       * no pump in the town realm ever happened. It catches up the moment they
+       * take a step, and not before. A rescue window nobody is shown is not a
+       * rescue window, and this is the whole of game-design.md § 9's *"GET TO
+       * ME"*.
+       *
+       * SO THE PANE IS REFRESHED EVERYWHERE AND THE OTHER THREE ARE NOT. The
+       * cost is one projection and one string compare per out-of-realm socket
+       * per pump; it is memoised on `partyKey` and sends nothing when nothing
+       * moved. This server is capped under ten players — the bound the original
+       * note worried about is ten, and correctness is worth ten string
+       * compares.
+       */
+      if (realmFor(session).id !== realm.id) {
+        sendPartyStateIfChanged(session);
+        continue;
+      }
       sendHotbarIfChanged(session);
       sendPartyStateIfChanged(session);
       // THE THIRD MEMOISED VIEWER FRAME, and it rides this loop for the same

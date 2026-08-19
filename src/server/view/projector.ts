@@ -1816,6 +1816,15 @@ export function projectPartyState(
    * party. The party table was never touched; this projection was the whole bug.
    */
   away: ReadonlyMap<string, AwayMember> = EMPTY_AWAY,
+  /**
+   * The survival table. Undefined for an engine with no survival system, which
+   * is the same door every other projection in this file leaves open.
+   *
+   * TURNS, NOT MILLISECONDS — which is why this one, unlike `bellMs` directly
+   * above, needs no note about whose floor the recipient is standing on. A
+   * countdown of 5 is 5 wherever it is read.
+   */
+  downed?: DownedState,
 ): PartyStateMsg {
   const blocking = new Set(state.whoseTurn);
   const standingBy = new Set(state.standingBy);
@@ -1870,6 +1879,11 @@ export function projectPartyState(
       // in".
       away:
         elsewhere === undefined ? null : { place: elsewhere.place, canFollow: elsewhere.canFollow },
+      // AND WHETHER THEY ARE ON THE FLOOR. `downedView` answers Downed vs Erased
+      // and the turns left in one read, off the same table the floor roster
+      // uses — see `PartyStateMember.downed` for why the party pane needs it on
+      // this frame as well as that one.
+      downed: downed === undefined ? null : (downedView(downed, actor.id) ?? null),
     });
   }
 

@@ -1480,6 +1480,35 @@ export type PartyStateMember = {
    * actually in. `hp` and `state` are therefore live and true, not stale.
    */
   away: PartyAway | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ON THE FLOOR, AND HOW LONG YOU HAVE — FOR A MEMBER YOU CANNOT SEE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `PartyMember.downed` already carries this, and carries it well, for everyone
+   * on YOUR floor. game-design.md § 9 is explicit about what the mechanic is for:
+   * it turns *"I died"* into *"GET TO ME"*.
+   *
+   * GET TO ME IS ADDRESSED TO SOMEBODY WHO HAS TO KNOW. The floor roster is
+   * scoped to one world, so a member who walked into an instance and went down
+   * inside it was described to the rest of the party by `hp` alone — and `hp: 0`
+   * is what a Downed body, an Erased body and a dead one all read. A five-turn
+   * clock nobody can see is not a rescue window.
+   *
+   * SO IT IS CARRIED HERE TOO, and this is the field for the member who is
+   * ELSEWHERE — `away` says where they are and whether you can follow; this says
+   * whether you should be running. The two are one sentence, and they were split
+   * across two frames, one of which does not describe that person at all.
+   *
+   * NOT A SECOND SOURCE OF TRUTH: both fields are `downedView` reading the same
+   * survival table, exactly as `PartyMember.downed` does. The pane prefers the
+   * roster where both answer, so a body on your own floor is described by the
+   * frame that has always described it.
+   *
+   * OPTIONAL, so no protocol bump — a client that does not know it draws the row
+   * it always drew.
+   */
+  downed?: DownedView | null;
 };
 
 /**

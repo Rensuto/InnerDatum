@@ -291,7 +291,19 @@ export function partyPaneView(options: {
       return {
         member,
         sprite: options.actors.get(member.id)?.sprite ?? null,
-        downed: level?.downed ?? null,
+        /**
+         * THE ROSTER FIRST, AND THE PARTY FRAME FOR EVERYBODY ELSE.
+         *
+         * Both are `downedView` reading one survival table, so where both answer
+         * they agree — and preferring the roster keeps a body on your own floor
+         * described by the frame that has always described it.
+         *
+         * The fallback is the whole point: a member who walked into an instance
+         * is in NO floor roster of yours, so until now this read `null` for them
+         * and the countdown that makes a rescue matter was invisible to the only
+         * people who could act on it.
+         */
+        downed: level?.downed ?? member.downed ?? null,
         voice: level?.voice ?? VoiceState.Silent,
         effects: options.effects.get(member.id) ?? [],
       };
