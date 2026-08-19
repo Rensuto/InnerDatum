@@ -525,6 +525,24 @@ export const TopicId = {
   Where: 'where',
   /** "Is it worth partying up?" — see `TownsfolkSpec.topics`. */
   Party: 'party',
+  /**
+   * "Is the road safe?" — AND IT IS, WHICH NOTHING HAS EVER SAID OUT LOUD.
+   *
+   * `isSafeGround` is enforced by the server (a roamer may not stand on made
+   * ground) and drawn by the world map in road colour. Both of those are the
+   * rule being TRUE; neither is the rule being TOLD. A player who has not
+   * noticed the colour has no way to learn it except by surviving long enough
+   * to infer it, and a promise you have to infer is not one you travel on.
+   */
+  Roads: 'roads',
+  /**
+   * "Is there anything out there?" — the only hint that `SiteDef.hidden` exists.
+   *
+   * Three sites are off the map until you stand near them, and a secret nobody
+   * suspects is not a secret, it is content nobody finds. This is the sentence
+   * that makes somebody walk into the trees on purpose.
+   */
+  Rumour: 'rumour',
 } as const;
 export type TopicId = (typeof TopicId)[keyof typeof TopicId];
 
@@ -532,6 +550,8 @@ export type TopicId = (typeof TopicId)[keyof typeof TopicId];
 export const TOPIC_LABEL: Readonly<Record<TopicId, string>> = {
   [TopicId.Where]: 'Ask where to go',
   [TopicId.Party]: 'Ask about parties',
+  [TopicId.Roads]: 'Ask about the roads',
+  [TopicId.Rumour]: 'Ask what is out there',
 };
 
 export type ActorView = {

@@ -155,8 +155,15 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         ],
         topics: {
           // 56 characters is the Margin lane's whole budget — see `LINE_MAX`.
-          [TopicId.Where]: 'Blackwood first. It is the one that lets you leave.',
+          // WAS "Blackwood first", WHICH IS NOW THE WORST ROOM IN THE GAME.
+          // The difficulty gradient used to run backwards down the map and this
+          // line was written against it; re-keying the delves by distance turned
+          // three helpful sentences into three ways to get a beginner killed.
+          // The chapel is seventeen steps out and the gentlest room there is.
+          [TopicId.Where]: 'The chapel first. It is close and it is quiet.',
           [TopicId.Party]: 'Party up. You each get a full share, not a split.',
+          [TopicId.Roads]: 'Nothing waits on made ground. Keep to the road.',
+          [TopicId.Rumour]: 'There is more out there than the map admits to.',
         },
       },
     ],
@@ -183,8 +190,77 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           'Try that once more and we will both be sorry.',
         ],
         topics: {
-          [TopicId.Where]: 'Threadneedle for goods. Blackwood if you must.',
+          // WAS "Blackwood if you must" — see Merrow's line. Blackwood is now
+          // a hundred and thirty-one steps out and the far end of everything.
+          [TopicId.Where]: 'Threadneedle for goods. The chapel to blood a coat.',
           [TopicId.Party]: 'Travel together. Nobody earns less for sharing.',
+          [TopicId.Roads]: 'The made ground is safe. That is the whole of it.',
+          [TopicId.Rumour]: 'Folk come back from the downs having seen a thing.',
+        },
+      },
+    ],
+  ],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE LAST TWO, BECAUSE THREE OF FIVE IS STILL FOUR-FIFTHS OF A PROBLEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The note at the top of this table already made the argument for going from
+   * one town to three: *"A single populated settlement makes the other four read
+   * as deserted rather than as quiet — the player learns 'towns have people in
+   * them' and then finds four that do not."* The same sentence applies at three
+   * of five, and it applies hardest to these two: Saint's Rest is one of the
+   * four doors on the far side of the range, so it is the first settlement a
+   * player reaches after the longest walk in the game, and the Wayfarers' Camp
+   * is the only thing in the western downs at all.
+   *
+   * Arriving at either after that walk and finding nobody home is the moment a
+   * world stops feeling inhabited.
+   */
+  [
+    'site:saints_rest',
+    [
+      {
+        id: 'sexton',
+        name: 'Sexton Pell',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Pell. I dig, and lately I do not dig much.',
+        greetAgain: 'Nothing new in the ground today.',
+        deflect: [
+          'Not over the plots.',
+          'I have buried better-mannered than you.',
+          'One more and I find you a spot of your own.',
+        ],
+        topics: {
+          [TopicId.Where]: 'Down to the chapel. Everyone starts there.',
+          [TopicId.Party]: 'Bring somebody. The stones here are all singles.',
+          [TopicId.Roads]: 'The road is kept. What is off it is not.',
+          [TopicId.Rumour]: 'There are older markers than mine in the downs.',
+        },
+      },
+    ],
+  ],
+  [
+    'site:wayfarers_camp',
+    [
+      {
+        id: 'carrow',
+        name: 'Carrow Ninefold',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Ninefold. I walk it all and I write none of it.',
+        greetAgain: 'Still walking. Still not writing.',
+        deflect: [
+          'Mind the fire.',
+          'I have walked off worse than a shove.',
+          'Do that again and you can find the road yourself.',
+        ],
+        topics: {
+          [TopicId.Where]: 'East and south. The near markers are the kind ones.',
+          [TopicId.Party]: 'Two walk further than one. That is just arithmetic.',
+          [TopicId.Roads]: 'I sleep on the road. That is not laziness.',
+          // THE STRONGEST HINT IN THE GAME, and it is on the person furthest
+          // from anywhere, in the region that holds one of the three.
+          [TopicId.Rumour]: 'There is a stair in these downs on no map I own.',
         },
       },
     ],
@@ -204,8 +280,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           'I have a bottle here I would rather not open.',
         ],
         topics: {
-          [TopicId.Where]: 'Gearford, if you can stand the noise of it.',
+          // WAS "Gearford", which the re-key made one of the two worst rooms.
+          [TopicId.Where]: 'The Underworks. Close, and it goes down gently.',
           [TopicId.Party]: 'Go in threes. The Index counts you one at a time.',
+          [TopicId.Roads]: 'Off the road is where the wandering things are.',
+          [TopicId.Rumour]: 'Something stands on the strand past the trees.',
         },
       },
     ],

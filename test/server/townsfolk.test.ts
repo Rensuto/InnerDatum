@@ -4,7 +4,8 @@ import { LINE_MAX, TOWNSFOLK, isTownsfolkId } from '../../src/server/content/tow
 import { Faction, isMonster } from '../../src/server/engine/actor.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { ActorKind, isWalkable } from '../../src/shared/protocol.ts';
+import { ActorKind, TopicId, isWalkable } from '../../src/shared/protocol.ts';
+import { DELVES, dangerWord } from '../../src/server/content/delve.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
 
 const ROW = 'site:threadneedle_row';
@@ -163,6 +164,80 @@ describe('every line fits the Margin lane', () => {
     // room whose whole purpose is that everything in it can be.
     for (const siteId of TOWNSFOLK.keys()) {
       expect(SITES.get(siteId)?.kind, siteId).toBe(RealmKind.Common);
+    }
+  });
+});
+
+describe('what they tell you is still true', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ADVICE THAT IS WRONG ONCE IS ADVICE NOBODY READS AGAIN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THIS IS A REGRESSION TEST FOR A BUG I SHIPPED. Merrow's "where should I go"
+   * line read *"Blackwood first. It is the one that lets you leave"* — written
+   * when Blackwood was the gentlest room on the map and three steps from the
+   * gate in difficulty terms. Re-keying the delve gradient by distance made
+   * Blackwood the FURTHEST and WORST room in the game, and turned three helpful
+   * sentences in three different towns into three ways to get a beginner killed.
+   *
+   * Nothing failed. Prose does not typecheck, and the one system that could have
+   * noticed — the table that decides which room is which — has no idea anybody
+   * is quoting it.
+   *
+   * So this reads the two together. It cannot check that a line is GOOD advice;
+   * it can check that no townsperson sends a stranger to a room the map itself
+   * grades `grim`, which is the specific way this broke and the specific way it
+   * will break again the next time the gradient moves.
+   */
+  it('never sends a stranger to a room the map calls grim', () => {
+    const grimWords = [...DELVES.entries()]
+      .filter(([, spec]) => dangerWord(spec) === 'grim')
+      .map(([siteId]) => SITES.get(siteId)?.name.split(' ')[0] ?? '')
+      .filter((word) => word.length > 3);
+
+    expect(grimWords.length, 'no grim delves — has the gradient gone flat?').toBeGreaterThan(0);
+
+    for (const [siteId, specs] of TOWNSFOLK) {
+      for (const spec of specs) {
+        const advice = spec.topics[TopicId.Where];
+        if (advice === undefined) continue;
+        for (const word of grimWords) {
+          expect(advice.includes(word), `${siteId} sends people to ${word}: "${advice}"`).toBe(
+            false,
+          );
+        }
+      }
+    }
+  });
+
+  it('has somebody in every town, because a partly-lived-in world reads as empty', () => {
+    /**
+     * The note on this table already made the argument for one town becoming
+     * three: *"A single populated settlement makes the other four read as
+     * deserted rather than as quiet."* The same sentence applies at three of
+     * five, and hardest to the two that were left: Saint's Rest is the first
+     * settlement past the range after the longest walk in the game, and the
+     * Wayfarers' Camp is the only thing in the western downs at all.
+     */
+    const towns = [...SITES.entries()].filter(([, def]) => def.kind === RealmKind.Common);
+    expect(towns.length).toBeGreaterThan(3);
+    for (const [siteId] of towns) {
+      expect(TOWNSFOLK.get(siteId)?.length ?? 0, `${siteId} is deserted`).toBeGreaterThan(0);
+    }
+  });
+
+  it('gives everybody every topic, so no row is a dead button', () => {
+    // A menu row that answers with a fallback greeting is a row the player
+    // learns to stop pressing, and one silent person teaches that about all of
+    // them. `verbs.ts` builds the rows from `TOPIC_LABEL`, so a topic added
+    // there appears on every townsperson whether or not they have a line.
+    for (const [siteId, specs] of TOWNSFOLK) {
+      for (const spec of specs) {
+        for (const topic of Object.values(TopicId)) {
+          expect(spec.topics[topic], `${siteId}/${spec.id} has nothing for ${topic}`).toBeDefined();
+        }
+      }
     }
   });
 });

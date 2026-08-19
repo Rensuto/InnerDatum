@@ -71,21 +71,25 @@ describe('a realm advances only when somebody in it acts', () => {
     // from another realm's keystroke was never doing work — it was doing
     // arithmetic and throwing it away.
     /**
-     * ═══ "EMPTY" NOW MEANS NO ACTORS, NOT MERELY NO PLAYERS ═══
-     * This used to take the first realm that was not the overworld, which was a
-     * town — and towns were empty rooms with shelves in them. They have people
-     * in them now (`content/townsfolk.ts`), and a realm with a body in it has
-     * something to advance when it is pumped, which is correct rather than a
-     * regression: the narrowing this file is about is that ANOTHER realm's
-     * keystroke does not advance this one, not that a populated realm is inert.
+     * ═══ "EMPTY" MEANS NO ACTORS, AND THE FIXTURE NOW MAKES ONE ═══
+     * This has been rewritten twice by the same pressure, which is worth
+     * recording. It first took the first realm that was not the overworld — a
+     * town, back when towns were empty rooms with shelves in them. Then
+     * `content/townsfolk.ts` gave three towns a shopkeeper, so it was changed to
+     * SEARCH for a realm with no actors in it. Now all five have somebody and
+     * that search finds nothing.
      *
-     * So the fixture picks a genuinely empty realm and the claim is unchanged.
+     * Both versions tied this test to a fact about the world's POPULATION, which
+     * has nothing to do with what it is asserting. So the fixture stops looking
+     * for an empty realm and empties one: the claim is *"an empty realm has
+     * nothing to advance"*, and the honest way to test it is to hand it an empty
+     * realm rather than to hope the content happens to leave one lying about.
      */
     const { realms, overworld } = scene('pump-empty');
-    const empty = realms
-      .all()
-      .find((realm) => realm.id !== overworld.id && realm.world.allActors().length === 0);
-    if (empty === undefined) throw new Error('no realm without a body in it');
+    const empty = realms.all().find((realm) => realm.id !== overworld.id);
+    if (empty === undefined) throw new Error('the registry built no realm but the overworld');
+    for (const actor of [...empty.world.allActors()]) empty.world.removeActor(actor.id);
+    expect(empty.world.allActors()).toEqual([]);
 
     const before = empty.world.turn.clock.tick;
     for (let i = 0; i < 50; i += 1) empty.engine.pump();
