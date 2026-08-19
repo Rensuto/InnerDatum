@@ -557,7 +557,13 @@ describe('interiors stay flat, and the overworld does not', () => {
   });
 
   it('names only tile_ow_ sprites, so no interior art can creep in', () => {
-    const ids = [...table.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    // COMMENTS STRIPPED FIRST. This reads the table out of the source text, so
+    // it used to fail on any quoted lowercase word in a comment INSIDE the
+    // table — a doc block explaining why a legacy sprite had been removed cited
+    // `SUFFIX = 'bcdefghijk'` and the scrape reported it as a sprite id. The
+    // assertion is about the code; prose about the code is not the code.
+    const code = table.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const ids = [...code.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
     expect(ids.length).toBeGreaterThan(0);
     for (const id of ids) expect(id).toMatch(/^tile_ow_/);
   });

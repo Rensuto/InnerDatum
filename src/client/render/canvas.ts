@@ -815,7 +815,13 @@ export function transportMask(
  * THE BASE STEM STAYS FIRST. A tile whose variants are ever removed falls back
  * to the drawing it always had rather than to nothing.
  */
-const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
+/**
+ * EXPORTED FOR `tools/look.mjs`, which composites this same table offline so a
+ * change to the world's art can be LOOKED AT without a browser. Exported rather
+ * than copied: a second hand-written copy of a table one file owns is the exact
+ * shape this codebase has been bitten by repeatedly.
+ */
+export const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.COBBLE]: ['tile_ow_cobble', 'tile_ow_cobble_b'],
   [TileCode.PAVING]: ['tile_ow_paving'],
   [TileCode.GREEN]: ['tile_ow_green'],
@@ -826,8 +832,35 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.TERRACE]: ['tile_ow_terrace'],
   [TileCode.CIVIC]: ['tile_ow_civic'],
   [TileCode.WORKS]: ['tile_ow_works'],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * THE BARE STEM IS NOT IN THESE SETS, AND THAT IS THE POINT.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * A player photographed the overworld to say it "looks checkerboarded", and
+   * this is what they were looking at. `import-overworld-art.mjs` writes the
+   * handoff's variants starting at `_b` (`SUFFIX = 'bcdefghijk'`), so it never
+   * overwrites `tile_ow_<stem>.png` — and the pre-redesign sprite sitting at
+   * that name stayed in the set while the whole world around it was repainted.
+   *
+   * MEASURED, mean colour over the installed art:
+   *
+   *     field    rgb(162,151,105)   field_b..f    rgb( 52, 51, 30)
+   *     hills    rgb(141,141, 95)   hills_b..g    rgb( 72, 72, 34)
+   *     mountain rgb( 63, 64, 61)   mountain_b..g rgb(131,138,147)
+   *
+   * — so one field tile in six was drawn pale tan on dark olive, scattered by
+   * the position hash. That is not a variant of a terrain; it is a different
+   * terrain dealt out at random, which is exactly what a checkerboard is. A
+   * hash of all 115 installed tiles says the same thing another way: 91 are
+   * byte-identical to the handoff and these four bases are not.
+   *
+   * `trees` was the same mistake and did not show, because its legacy base
+   * happened to land within 19 units of the new set. It goes for the same
+   * reason: `tools/look.mjs --variants` measures the spread, and a set that is
+   * coherent by luck is one nobody will notice going wrong.
+   */
   [TileCode.TREES]: [
-    'tile_ow_trees',
     'tile_ow_trees_b',
     'tile_ow_trees_c',
     'tile_ow_trees_d',
@@ -839,7 +872,6 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.WATER]: ['tile_ow_water'],
   [TileCode.PLAINS]: ['tile_ow_plains', 'tile_ow_plains_b'],
   [TileCode.HILLS]: [
-    'tile_ow_hills',
     'tile_ow_hills_b',
     'tile_ow_hills_c',
     'tile_ow_hills_d',
@@ -851,7 +883,6 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.SHORE]: ['tile_ow_shore'],
   [TileCode.YARD]: ['tile_ow_yard'],
   [TileCode.FIELD]: [
-    'tile_ow_field',
     'tile_ow_field_b',
     'tile_ow_field_c',
     'tile_ow_field_d',
@@ -863,7 +894,6 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.CITY_ROOF]: ['tile_ow_city_roof'],
   [TileCode.TOWN_WALL]: ['tile_ow_wall'],
   [TileCode.MOUNTAIN]: [
-    'tile_ow_mountain',
     'tile_ow_mountain_b',
     'tile_ow_mountain_c',
     'tile_ow_mountain_d',

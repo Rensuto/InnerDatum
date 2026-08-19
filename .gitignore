@@ -221,6 +221,13 @@ NEXUS/
 /scratch_*.png
 *.contact.png
 
+# `tools/look.mjs` writes a PNG so the world can be looked at without a browser.
+# Its defaults land in the repo root, and art is never committed here — see the
+# `client/public/assets/` rule above and `tools/check-assets.mjs`.
+/view.png
+/world.png
+/sheet.png
+
 # ===========================================================================
 # PERSONAL INFRASTRUCTURE — local only, never published
 # ===========================================================================
