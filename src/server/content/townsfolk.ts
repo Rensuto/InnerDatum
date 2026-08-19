@@ -124,7 +124,68 @@ export type TownsfolkSpec = {
    * uniquely good at, and it costs one sentence.
    */
   readonly topics: Readonly<Partial<Record<TopicId, string>>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT SHE TELLS SOMEBODY WHO HAS BEEN AROUND — AND WHY IT HAD TO EXIST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE SECOND LANDMASS WAS UNFINDABLE. Not hard to find — unfindable. Three
+   * commits built the Redaction: a whole second overworld, six delves, two
+   * creatures nothing else in the game has. Then a player audit of the client
+   * turned up every one of the channels that could have led anybody there, and
+   * every one was shut:
+   *
+   *   - The door is at (22,60), 99 tiles from the spawn and 14 from the nearest
+   *     marker, which was a deliberate choice: *"somewhere you went looking"*.
+   *   - Site markers on the world map are FOG-GATED (`mapview.ts`: `if (seen
+   *     !== undefined && !seen.has(...)) continue`), so the marker does not
+   *     appear until you have already walked onto the cell.
+   *   - Region captions need a fifth of the region walked, so even "the Sedge"
+   *     is not a signpost until you are standing in it.
+   *   - `nearestSites` reports the three nearest and the door is ninety-ninth.
+   *
+   * So the only route to the largest content in the game was to walk the entire
+   * western moor on spec. Nobody does that. THIS TABLE IS THE FIX, and it is
+   * here rather than on the map because a rumour is what this game already uses
+   * to point at things it has hidden — the three `hidden` sites are hinted the
+   * same way, in the same topic, and that mechanism was already working.
+   *
+   * ═══ EARNED, NOT GIVEN, AND THAT IS THE WHOLE REASON IT IS A SECOND TABLE ═══
+   * Telling a level-1 character to walk west would be a trap: `redactedSpec`'s
+   * own note says the floors over there are not softened for somebody who
+   * wandered in, and the reason that is fair is that the walk is long. Handing
+   * out directions removes the gate, so the DIRECTIONS are gated instead. Below
+   * `STANDING_LEVEL` she says what she always said.
+   *
+   * It also gives the topic a reason to be asked twice, which is the first time
+   * anything in this game rewards going back to talk to somebody.
+   *
+   * KEYED BY TOPIC RATHER THAN BEING ONE `rumourLater` STRING because it is the
+   * same size either way and the next thing that deepens will not be a rumour.
+   * Only `Rumour` is populated today; a topic absent here simply falls through
+   * to `topics`, so a person with nothing more to say needs no entry at all.
+   */
+  readonly later?: Readonly<Partial<Record<TopicId, string>>>;
 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHEN SOMEBODY STOPS BEING A STRANGER. HALF WAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `MAX_CHARACTER_LEVEL` is 10, so this is the midpoint, and it is chosen
+ * against what is actually on the other side rather than for tidiness. The
+ * Redaction's roamers are half elite — `INDEX_INSPECTOR` hunts whoever is alone
+ * and `INDEX_INQUISITOR` out-walks the party — and its delves carry
+ * `redactedSpec`'s +2. Measured: a lone level-1 opening the redacted Underworks
+ * meets eight hostiles.
+ *
+ * A character at 5 has talents bought, gear on, and has cleared some of the
+ * near country. They can make the walk and decide for themselves at the far end
+ * of it. A character at 1 would be told to go and die, by the one system in
+ * this game whose entire job is to be trustworthy.
+ */
+export const STANDING_LEVEL = 5;
 
 /**
  * Who stands where, keyed by SITE id.
@@ -165,6 +226,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Roads]: 'Nothing waits on made ground. Keep to the road.',
           [TopicId.Rumour]: 'There is more out there than the map admits to.',
         },
+        later: {
+          // MERROW MENDS THINGS. She is the one who would notice a hole.
+          [TopicId.Rumour]:
+            'West, where the Sedge runs up against the downs. The road stops. It does not pick up again — I have asked.',
+        },
       },
     ],
   ],
@@ -196,6 +262,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Party]: 'Travel together. Nobody earns less for sharing.',
           [TopicId.Roads]: 'The made ground is safe. That is the whole of it.',
           [TopicId.Rumour]: 'Folk come back from the downs having seen a thing.',
+        },
+        later: {
+          // THE REEVE KEEPS RECORDS. Hers is the administrative version.
+          [TopicId.Rumour]:
+            'There is country west of the Sedge that I am still required to file returns for. Nobody has sent one in a long time.',
         },
       },
     ],
@@ -237,6 +308,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Roads]: 'The road is kept. What is off it is not.',
           [TopicId.Rumour]: 'There are older markers than mine in the downs.',
         },
+        later: {
+          // THE SEXTON BURIES PEOPLE. His version is about who is not buried.
+          [TopicId.Rumour]:
+            'Go west far enough, past the Sedge, and there are no stones at all. Not even bare ground where stones were. That is the part I mind.',
+        },
       },
     ],
   ],
@@ -262,6 +338,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           // from anywhere, in the region that holds one of the three.
           [TopicId.Rumour]: 'There is a stair in these downs on no map I own.',
         },
+        later: {
+          // CARROW WALKS EVERYWHERE. Hers is the only first-hand account.
+          [TopicId.Rumour]:
+            'I walked west once, past the Sedge, until the ground stopped being ground. I turned round. Somebody with a party might not have to.',
+        },
       },
     ],
   ],
@@ -285,6 +366,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Party]: 'Go in threes. The Index counts you one at a time.',
           [TopicId.Roads]: 'Off the road is where the wandering things are.',
           [TopicId.Rumour]: 'Something stands on the strand past the trees.',
+        },
+        later: {
+          // THESSALY IS AN ALCHEMIST. Hers is the one that names the mechanism.
+          [TopicId.Rumour]:
+            'The Index does not only take people. West past the Sedge it took the ground, and what it left is still standing there being taken.',
         },
       },
     ],

@@ -118,7 +118,7 @@ import { shouldAnnounceCleared } from '../world/cleared.ts';
 import { DELVES, specFor, dangerWord, partyHint } from '../content/delve.ts';
 import { monsterById } from '../content/monsters.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
-import { specForActorId } from '../content/townsfolk.ts';
+import { STANDING_LEVEL, specForActorId } from '../content/townsfolk.ts';
 import { healActor } from '../engine/talents.ts';
 import type { TalentEffect } from '../engine/talents.ts';
 import type { ClientUse, TopicId } from '../../shared/protocol.ts';
@@ -7909,7 +7909,36 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * time somebody walks into her she still says her name if they have not
      * heard it.
      */
-    const answer = msg.topic === undefined ? undefined : spec.topics[msg.topic as TopicId];
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * WHAT SHE TELLS A STRANGER, AND WHAT SHE TELLS SOMEBODY WHO HAS BEEN HERE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `spec.later` is the second answer and `STANDING_LEVEL` is the line. See
+     * the essay on the field: the Redaction was UNFINDABLE — every channel that
+     * could have led a player to a whole second landmass was shut, and this is
+     * the one that opens. It is gated because directions to that map handed to a
+     * level-1 character are directions into a fight they cannot win.
+     *
+     * THE ASKER'S LEVEL, NOT THE PARTY'S. `me` is the body that clicked, and
+     * standing is a fact about a character rather than about who they are
+     * walking with — a level-8 friend should not be able to have the door
+     * pointed out to somebody on their first evening by standing next to them.
+     *
+     * FALLS THROUGH RATHER THAN BRANCHING TWICE: a topic absent from `later` is
+     * one she has nothing more to say about, which is most of them, so the
+     * ordinary answer is the default and the deeper one is the exception.
+     */
+    // `!isMonster` NARROWS TO THE PLAYER BODY, which is the only thing that can
+    // reach this handler anyway — `level` lives on `PlayerActor` and the union
+    // does not carry it. A monster asking would fail closed to the ordinary
+    // answer rather than throwing, which is the right shape for a fact about
+    // standing.
+    const deeper = !isMonster(me) && me.level >= STANDING_LEVEL ? spec.later : undefined;
+    const answer =
+      msg.topic === undefined
+        ? undefined
+        : (deeper?.[msg.topic as TopicId] ?? spec.topics[msg.topic as TopicId]);
     const key = `${me.id}|${them.id}`;
     let text: string;
     if (answer !== undefined) {
