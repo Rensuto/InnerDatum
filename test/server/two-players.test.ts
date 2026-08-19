@@ -1,3 +1,5 @@
+import { partyHint, specFor } from '../../src/server/content/delve.ts';
+import { RealmKind, SITES } from '../../src/server/world/realms.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
@@ -236,6 +238,92 @@ describe('somebody else turns up', () => {
 
     expect(membersIn(second.latest('party'))).toHaveLength(2);
     expect(membersIn(second.latest('party_state'))).toHaveLength(1);
+  });
+
+  it('tells a lone player at the door what the map already knew', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE WARNING WAS ON A SCREEN THEY MAY NOT HAVE OPEN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `partyHint` publishes *"hard alone"* and *"bring a party"* beside every
+     * marker on the world map — the right place for choosing where to go, and
+     * the wrong place for the moment the advice becomes actionable. Arrival
+     * carried the room's name and its blurb and nothing else.
+     *
+     * IT IS STILL ACTIONABLE AT THE DOOR, which is why it earns a line: the
+     * arrival tile IS the way out, so somebody just told they are
+     * under-strength can turn round having lost a step.
+     */
+    const client = await connect(server.port);
+    const actorId = await client.hello();
+    await sleep(150);
+
+    // A GRADED ROOM, chosen from the registry rather than named, so the test
+    // does not pin which site happens to carry which grade today.
+    const graded = [...SITES].find(([id, def]) => {
+      const spec = specFor(id);
+      return def.kind === RealmKind.Inner && spec !== undefined && partyHint(spec) !== null;
+    });
+    expect(graded, 'no room in the game is graded high enough to warn about').toBeDefined();
+    if (graded === undefined) return;
+
+    const door = [...server.realms.overworld.sites].find(([, id]) => id === graded[0]);
+    expect(door, `${graded[0]} has no door on the overworld`).toBeDefined();
+    if (door === undefined) return;
+    const [xs, ys] = door[0].split(',');
+    const body = server.realms.overworld.world.getActor(actorId);
+    if (body === undefined) throw new Error('no body');
+    body.x = Number(xs) - 1;
+    body.y = Number(ys);
+    client.send({ t: 'move', dir: 'e' });
+    await sleep(300);
+
+    expect(server.realms.realmOf(actorId)?.siteId, 'never crossed').toBe(graded[0]);
+    const warned = client.lines().filter((text) => text.startsWith('Graded '));
+    expect(
+      warned,
+      `no warning — the log ended: ${client.lines().slice(-3).join(' | ')}`,
+    ).toHaveLength(1);
+    expect(warned[0]).toContain('You are one.');
+  });
+
+  it('says nothing at the door to a party that brought somebody', async () => {
+    /**
+     * THE HALF THAT KEEPS IT FROM BECOMING NOISE. `nearestSites` argues it about
+     * the map and it applies here: *"a 'quiet' beside every settlement would
+     * train a player to stop reading the word"*. The hints are about being
+     * ALONE, so a party of two hears nothing — and a warning that fired for
+     * everybody would be read by nobody.
+     */
+    const first = await connect(server.port);
+    const firstId = await first.hello();
+    const second = await connect(server.port);
+    const secondId = await second.hello();
+    await sleep(150);
+    first.send({ t: 'party', action: 'invite', targetId: secondId });
+    await sleep(150);
+    second.send({ t: 'party', action: 'accept', targetId: firstId });
+    await sleep(200);
+    expect(membersOf(server.parties, firstId)).toHaveLength(2);
+
+    const graded = [...SITES].find(([id, def]) => {
+      const spec = specFor(id);
+      return def.kind === RealmKind.Inner && spec !== undefined && partyHint(spec) !== null;
+    });
+    if (graded === undefined) throw new Error('no graded room');
+    const door = [...server.realms.overworld.sites].find(([, id]) => id === graded[0]);
+    if (door === undefined) throw new Error('no door');
+    const [xs, ys] = door[0].split(',');
+    const body = server.realms.overworld.world.getActor(firstId);
+    if (body === undefined) throw new Error('no body');
+    body.x = Number(xs) - 1;
+    body.y = Number(ys);
+    first.send({ t: 'move', dir: 'e' });
+    await sleep(300);
+
+    expect(server.realms.realmOf(firstId)?.siteId).toBe(graded[0]);
+    expect(first.lines().filter((text) => text.startsWith('Graded '))).toHaveLength(0);
   });
 
   it('shows how strong the people you are playing with are', async () => {

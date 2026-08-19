@@ -8058,12 +8058,49 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A NAMELESS REALM SAYS NOTHING AT ALL. A gateway booted with no registry
     // has one fallback world with no name, and "you are in ''" is worse than
     // silence — that build behaves exactly as it did before this existed.
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND WHETHER THIS PARTY IS THE ONE THE GRADE WAS WARNING ABOUT.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `partyHint` publishes *"hard alone"* and *"bring a party"* beside every
+     * marker on the world map. That is the right place for it — it is a fact you
+     * use while choosing where to go — but it is a screen a player may not have
+     * open, and the moment the advice becomes actionable is the moment they are
+     * standing in the room.
+     *
+     * AND IT IS STILL ACTIONABLE THERE, which is the whole reason this is worth
+     * a line: the arrival tile IS the way out, drawn as *The way out*, so a
+     * party that has just been told they are under-strength can turn round
+     * having lost a step.
+     *
+     * ═══ ONLY WHEN IT IS TRUE OF THE PEOPLE WHO ACTUALLY WALKED IN ═══
+     * Repeating the map's generic label on every entry would be noise, and
+     * `nearestSites` already argues why that is worse than silence: *"a 'quiet'
+     * beside every settlement would train a player to stop reading the word"*.
+     * So this fires only when `partyHint` has something to say AND the body that
+     * arrived is on its own — which is precisely what both hints are about.
+     * A party of three opening the same door hears nothing.
+     *
+     * ONE LINE, IN THE MARGIN. The Record lane is what happened; this is advice,
+     * and it is the same register as *"Nothing on your back yet."*
+     */
+    const spec = full?.siteId === undefined ? undefined : specFor(full.siteId);
+    const hint = spec === undefined ? null : partyHint(spec);
+    const alone = opts.parties === undefined ? true : membersOf(opts.parties, actorId).length <= 1;
+
     if (name !== '') {
       send(session.socket, {
         v: PROTOCOL_VERSION,
         t: 'log',
         lines: blurb === undefined ? [line(name)] : [line(name), { ...line(blurb), depth: 1 }],
       });
+      if (spec !== undefined && hint !== null && alone) {
+        sendMargin(session, realm, {
+          text: `Graded ${dangerWord(spec)} — ${hint}. You are one.`,
+          depth: 1,
+        });
+      }
     }
 
     /**
