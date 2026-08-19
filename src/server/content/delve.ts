@@ -221,6 +221,20 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   // ─── the far end ────────────────────────────────────────────────────────
   //     108 steps.
   ['site:gearford_ward', { monsters: [6, 8], roster: DEEP, litter: [3, 5] }],
+  // ─── and the three nobody is told about ─────────────────────────────────
+  //     All three sit in the MIDDLE band by distance (47-62 steps), which is
+  //     deliberate: a secret that is also the hardest room in the game is a
+  //     secret you can only survive after you no longer need it, and one that is
+  //     trivial is a disappointment. They pay in LITTER instead — finding
+  //     something should be worth more than the same danger elsewhere, and loot
+  //     is the axis that rewards exploring without punishing it.
+  //     62 steps, in the western downs.
+  ['site:cairnfoot', { monsters: [4, 6], roster: RANK_AND_FILE, litter: [3, 4] }],
+  //     47 steps, in the clearing inside the southern wood — so it draws on the
+  //     wood's own roster, which is the same rule Blackwood follows.
+  ['site:barrow_end', { monsters: [5, 7], roster: THICKET, litter: [3, 5] }],
+  //     62 steps, on the beach behind the wood.
+  ['site:the_weir', { monsters: [4, 6], roster: DROWNED, litter: [3, 4] }],
   //     131 steps, the furthest walk on the moor, and now the worst room on it.
   //     THE TREES START HERE, which `places.ts` has said since before there was
   //     anything in them. Now there is: `THICKET` is a third eidolons, and eight

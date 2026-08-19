@@ -380,6 +380,27 @@ export type SiteDef = {
    * start waiting on each other's turns with no way to discover why.
    */
   readonly populate?: (world: World, map: AuthoredMap, party: PartyStrength) => void;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NOT ON YOUR MAP UNTIL YOU HAVE PERSONALLY STOOD NEAR IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Thirteen markers arrive with the first frame, so the overworld has never
+   * once rewarded looking: everything worth walking to was handed over before
+   * the player took a step.
+   *
+   * The gate is the character's OWN fog bitset — already computed, already
+   * persisted (`CharacterFile.explored`), already on the wire — so a hidden site
+   * costs no new state and no new save field. It is also per PLAYER and not per
+   * party, which is the correct reading: finding something is yours, and telling
+   * the others is the good part.
+   *
+   * ABSENT ON EVERY SITE THAT SHIPPED BEFORE. Nothing a player has been reading
+   * for weeks is ever taken away — a feature that makes the map smaller is not
+   * the feature, and the whole point is to add somewhere to find.
+   */
+  readonly hidden?: boolean;
 };
 
 export type Realms = {
@@ -811,6 +832,16 @@ export function createRealms(opts: RealmsOptions): Realms {
  * NOTHING anywhere in the game, because their codes appeared on no overworld row
  * and in no interior. This table spends them.
  */
+/**
+ * The sites a player has to FIND. See `SiteDef.hidden`, and the note in
+ * shared/level.ts on how the three cells were measured.
+ */
+const HIDDEN_SITES: ReadonlySet<string> = new Set([
+  'site:cairnfoot',
+  'site:barrow_end',
+  'site:the_weir',
+]);
+
 export const SITES: ReadonlyMap<string, SiteDef> = new Map(
   (
     [
@@ -936,6 +967,38 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
         TileCode.PAVING,
         TileCode.ERASED,
       ],
+      // ─── and three nobody is told about ─────────────────────────────────
+      //     See `SiteDef.hidden`. Each sits on ground measured to be as far
+      //     from any existing marker as this map allows, and each rewards a
+      //     different instinct: climb the downs, go into the trees, follow the
+      //     coast past where anything is drawn.
+      [
+        'site:cairnfoot',
+        'Cairnfoot',
+        RealmKind.Inner,
+        'stair',
+        SiteShape.Cave,
+        TileCode.HEATH,
+        TileCode.CRAG,
+      ],
+      [
+        'site:barrow_end',
+        'Barrow End',
+        RealmKind.Inner,
+        'altar',
+        SiteShape.Ruin,
+        TileCode.GREEN,
+        TileCode.TREES,
+      ],
+      [
+        'site:the_weir',
+        'The Weir',
+        RealmKind.Inner,
+        'archive',
+        SiteShape.Works,
+        TileCode.SHORE,
+        TileCode.WORKS,
+      ],
     ] as const
   ).map(([id, name, kind, marker, shape, floor, wall]): [string, SiteDef] => [
     id,
@@ -979,6 +1042,9 @@ export const SITES: ReadonlyMap<string, SiteDef> = new Map(
        * `DELVES` has no entry for a town, so the lookup returns undefined
        * and the field stays absent — the rule is expressed as data.
        */
+      // THE THREE THAT ARE NOT ON YOUR MAP YET. Data, so a reviewer can see
+      // the whole set at a glance rather than reading a predicate.
+      ...(HIDDEN_SITES.has(id) ? { hidden: true } : {}),
       ...(DELVES.has(id)
         ? {
             /**

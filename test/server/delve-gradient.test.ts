@@ -194,14 +194,21 @@ describe('the map stops lying about which way danger lies', () => {
      * construction. If this count changes, somebody added or dropped a room
      * while claiming to reorder them.
      */
-    expect(DELVES.size).toBe(8);
+    // ELEVEN NOW: the eight that shipped, re-attached to different doors by the
+    // gradient re-key, plus the three hidden sites. All three of those sit in
+    // the MIDDLE band on purpose — a secret that is also the hardest room in the
+    // game is one you can only survive after you no longer need it.
+    expect(DELVES.size).toBe(11);
     const words = [...DELVES.values()].map(dangerWord).sort();
     expect(words).toEqual([
+      'dangerous',
       'dangerous',
       'dangerous',
       'grim',
       'grim',
       'quiet',
+      'restless',
+      'restless',
       'restless',
       'restless',
       'restless',

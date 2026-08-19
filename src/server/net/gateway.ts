@@ -225,7 +225,7 @@ import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
 import { groundAt, regionAt } from '../../shared/level.ts';
 import type { Ground } from '../../shared/level.ts';
-import { createFog, fogFromBase64, fogToBase64, revealDisc } from '../../shared/fog.ts';
+import { createFog, fogFromBase64, fogHas, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import { isDowned } from '../engine/downed.ts';
 import type { DownedState } from '../engine/downed.ts';
@@ -482,6 +482,12 @@ type Session = {
    * they are.
    */
   region: string | null;
+  /**
+   * How many hidden markers this socket has been shown. Compared after a reveal
+   * so the `sites` frame is re-sent at the MOMENT one is uncovered rather than
+   * whenever a roamer next happens to move. See `SiteDef.hidden`.
+   */
+  hiddenSeen: number;
   helloDone: boolean;
   /**
    * `hello` is in flight. It is the one handler that awaits (it reads a
@@ -5047,11 +5053,52 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * disagree about what a marker is — a settlement that changed shape depending
    * on which frame last described it would be indistinguishable from a bug.
    */
-  const markersFor = (realm: Realm): SiteView[] => {
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE MARKERS THIS PLAYER HAS EARNED THE RIGHT TO SEE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Thirteen markers arrived with the first frame, so the overworld had never
+   * once rewarded LOOKING: everything worth walking to was handed over before
+   * the player took a step, and a map with no unknown on it is a list of
+   * destinations rather than a place.
+   *
+   * `SiteDef.hidden` sites are filtered out until this character's OWN fog holds
+   * their cell. The gate costs no new state and no new save field — the bitset
+   * is already computed by `revealFor`, already persisted as
+   * `CharacterFile.explored`, and already sent on the `realm` frame.
+   *
+   * PER PLAYER, NOT PER PARTY, and that is the correct reading rather than the
+   * cheap one: finding something is yours, and telling the others about it is
+   * the good part. Four people in a voice channel discovering a marker at four
+   * different moments is the mechanic working.
+   *
+   * `actorId` OPTIONAL, and absent means show everything. Every caller that
+   * predates the flag takes that path, and no site was hidden before today — so
+   * the fallback is not a hole, it is the behaviour the whole map used to have.
+   */
+  /** How many hidden markers this character can currently see in this realm. */
+  const hiddenVisible = (realm: Realm, actorId: string): number => {
+    let seen = 0;
+    for (const [cell, siteId] of realm.sites) {
+      if (SITES.get(siteId)?.hidden !== true) continue;
+      const parts = cell.split(',');
+      const level = realm.world.level;
+      if (fogHas(fogFor(actorId), level.w, Number(parts[0]), Number(parts[1]))) seen += 1;
+    }
+    return seen;
+  };
+
+  const markersFor = (realm: Realm, actorId?: string): SiteView[] => {
     const authored = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
       const def = SITES.get(siteId);
       if (def === undefined) return [];
       const parts = cell.split(',');
+      if (def.hidden === true && actorId !== undefined) {
+        const level = realm.world.level;
+        const seen = fogHas(fogFor(actorId), level.w, Number(parts[0]), Number(parts[1]));
+        if (!seen) return [];
+      }
       // THE GRADE, when the place has one. `delveFor` answers undefined for a
       // town, and an absent field is how the map knows not to draw a
       // scale that does not apply. Same source as the arrival line, so
@@ -5104,7 +5151,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       v: PROTOCOL_VERSION,
       t: 'sites',
       realmId: realm.id,
-      sites: markersFor(realm),
+      sites: markersFor(realm, session.actorId ?? undefined),
     });
   };
 
@@ -5145,7 +5192,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       name: realm.name,
       level: view.level,
       actors: view.actors,
-      sites: markersFor(realm),
+      sites: markersFor(realm, actorId),
       explored,
       selfId: actorId,
     });
@@ -5855,7 +5902,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // Only queue a save when something was NEWLY seen. A party pacing the
         // same street would otherwise ask for a write on every step, and the
         // debounce would coalesce them into a file that says nothing new.
-        if (revealFor(here, walker, body.x, body.y)) queueSave('explored');
+        if (revealFor(here, walker, body.x, body.y)) {
+          queueSave('explored');
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * AND DID THAT STEP UNCOVER SOMETHING NOBODY TOLD THEM ABOUT?
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * `sendSites` is otherwise only re-sent when a roamer moves, which is
+           * every few pumps — so a hidden marker would appear a handful of turns
+           * after the step that found it, attached to nothing the player did.
+           * The whole feeling of the feature is in the timing: you walk over a
+           * rise and something you have never seen is on your map.
+           *
+           * COUNTED RATHER THAN DIFFED. Recomputing the visible-hidden count is
+           * three comparisons on a sixteen-row table, and it answers exactly the
+           * question — "is there more to show than last time" — without a second
+           * copy of what was already sent.
+           */
+          const shown = hiddenVisible(here, walker);
+          if (shown !== session.hiddenSeen) {
+            session.hiddenSeen = shown;
+            sendSites(session);
+          }
+        }
         noteRegion(session, here, body.x, body.y);
       }
     }
@@ -9533,6 +9603,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       enteredFrom: null,
       exitArmed: false,
       region: null,
+      hiddenSeen: 0,
       helloDone: false,
       // Set true for the whole of `hello`, attempted or completed, and never
       // cleared: one hello per connection. A socket whose hello failed hard

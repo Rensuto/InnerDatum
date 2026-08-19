@@ -362,7 +362,7 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXwwyyyyyy...hhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeehhhhhhheehhhhhhhhhhhehhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeppeeee.e.eeeeeeeppppppppppppppppTTTTTTTwwWXX',
   'XXwwjjjjjjjh.hhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeehhheeeeeeeeeeeeeeeeeeeeeeeppppe..D..eeeeeeeppppppppppppppppTTTTTTTwwWXX',
   'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeehhhhheeeeeeeeeeeeeeeeeeeeeppppp..eeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
-  'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeepppppp.peeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
+  'XXwwTTTThhhh.hhhhppphhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeehhhhhhKhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeepppppp.peeeeeeeeeeeppppppppppppppppTTTTTTTwwWXX',
   'XXwwTTTTThhh.hhhhpppphhhhhhhheeehhhhhhheeeeeeeeeeeeeehhhhhheehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeepppppp..pppeeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
   'XXwwTTTTTThh.hhhppppphhhhhhheeeeehhhhhheeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeppppppp.pppppeeeeeeeppppppppppppppppTTTTTTTTwwWXX',
   'XXWwTTTTTTTT.hhhpppppphhhhhpeeeeehhhhheeeeeeeeeeeeeeehhhheeeeehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeepppppppp.ppppppeeeeeeppppppppppppppppTTTTTT;;wwWXX',
@@ -383,7 +383,7 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyyyyyyyyjjTTTTpppppppppjjyyyyyyyyyjjTsswwwwwwwWWXX',
   'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjyyyyyyyyyyyjjTTTTTppppppppjjtttyyytttjjssswwwwwwwWWXX',
   'XXWwTTTTTTTTppppppppppppppjjyyyyyyyyyyyjjppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppjjLLLLLyLLLLLssTTTTTTpppppppjjtttyyytttjjsswwwwwwwwWWXX',
-  'XXWwwTTTTTTTTpppppppppppppjjLLLLLyLLLLLjjTppppppppppppTTTTTpppppppppppppppppppppppTTTTTppppppppppppppppppppppppppppjjjsssssssswwssTTTTTTTppppppjjyyyyHyyyyjjsswwwwwwwwWWXX',
+  'XXWwwTTTTTTTTpppppppppppppjjLLLLLyLLLLLjjTppppppppppppTTTTTpppppppppppppppVpppppppTTTTTppppppppppppppppppppppppppppjjjsssssssswwssTTTTTTTppppppjjyyyyHyyyyjjsswwwwwwwwWWXX',
   'XXWwwTTTTTTTTpppppppppppppjjjjjjjjjjjjjjjTTTpppppppppTTTTTTTTTTTpppppppppppppppppTTTTTTTTTppppppppppppppTTTpppTppppjjjjssssssswwsssTTTTTTTpppppjjyyyyyyyyyssswwwwwwwwwWWXX',
   'XXWwwTTTTTTTTpppppppppppppjjjjjjjjjjjjjjjTTTTTpppTTTTTTTTTTTTTTTTTTTTTTTTTTpppTTTTTTTTTTTTTTppTTTTTTTTTTTTTTTTTTppppppTTsssssswwsssssTTTTTTppppjjyyyyyyyyysswwwwwwwwwWWWXX',
   'XXWWwTTTTTTTTpppppppppppppppTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTpppppTTTTTTsswwssssssTTTTTTpppjjyyyyyyyyyswwwwwwwwwwWWWXX',
@@ -392,7 +392,7 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXWWw;;TTTTTTTTTTTTTTTTTTTTTTTTTT;sssssss;TTTTTTTTTTTT;;ss;TTTTTTTTTTTTTTTTTTTTTTT;;;;;sTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT;swwwwwwssTTTTTTpTTTTTTTTT;swwwwwwwwwwwWWWXX',
   'XXWWw;;TTTTTTTTTTTTTTTTTTTTTTT;sssswwwwwss;;TTTTTTTTT;sssssssss;TTTTTTTTTTTTTTTTT;sssssss;TTTTTTTTTTTTTT;;;TTT;TTTTTTTTTTTTTTssswwwwwwssssTTTTTTTTTTT;;ssswwwwwwwwwwwWWWXX',
   'XXWWw;;TTTTTTTTTTTTTTTTsssTTTsssswwwwwwwwwss;;TTT;;;sswwwwwsssssss;;;;;;;;;TTT;ssswwwwwsssssTT;sssssss;sssssssssTTTTTTTTTTTTTsswwwwwwwwsssTTTTTTTTTT;ssswwwwwwwwwwwwwWWWXX',
-  'XXWWw;;TTTTTsTTTTTTTTTsssssssswwwwwwwwwwwwwwss;;ssssswwwwwwwwwwwssssssssss;;;sssswwwwwwwwwsssssssssssssswwwssswssTTTTTTTTTTTsswwwwwwwwwssssTTTTTTTTsswwwwwwwwwwwwwwwwWWWXX',
+  'XXWWw;;TTTTTsTTTTTTTTTsssssssswwwwwwwwwwwwwwss;;ssssswwwwwwwwwwwssssssssss;;;ZssswwwwwwwwwsssssssssssssswwwssswssTTTTTTTTTTTsswwwwwwwwwssssTTTTTTTTsswwwwwwwwwwwwwwwwWWWXX',
   'XXWWw;;TTTTsssTTTTTsssssssssswwwwwwwwwwwwwwwwwssswwwwwwwwwwwwwwwwwwwwwwwwwwssswwwwwwwwwwwwwwsswwwwwwwwwwwwwwwwwwss;TTTTTsssssswwwwwwwwwssssTTTTTTT;swwwwwwwwwwwwwwwwwWWWXX',
   'XXWWws;TTssssssssssssssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwssssssssssssswwwwwwwwwsssssTTTTTTsswwwwwwwwwwwwwwwwwWWWXX',
   'XXWWws;;ssswwwsssssssssssssswwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwsssssssssssswwwwwwwwsssssssT;;;sswwwwwwwwwwwwwwwwwWWWXX',
@@ -488,6 +488,46 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
   N: { tile: TileCode.HILLS, site: 'site:hollow_mine' },
   D: { tile: TileCode.HILLS, site: 'site:drowned_chapel' },
   I: { tile: TileCode.PAVING, site: 'site:outer_index' },
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THREE PLACES NOBODY IS TOLD ABOUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Thirteen markers are on your map from the first frame, so the overworld has
+   * never once rewarded LOOKING. Everything worth walking to was handed over
+   * before you took a step, and a map with no unknown on it is a list of
+   * destinations rather than a place.
+   *
+   * These three are hidden until you have personally stood near them — see
+   * `SiteDef.hidden` and the fog gate in the gateway. NOTHING EXISTING IS
+   * HIDDEN: taking a marker away from a player who has been reading it for
+   * weeks is a feature that makes the game smaller, and the whole point is to
+   * add somewhere to find.
+   *
+   * ═══ EACH GLYPH MAPS TO THE SAME TileCode AS THE CHARACTER IT REPLACED ═══
+   * `K` was `h` (HILLS), `V` was `p` (PLAINS), `Z` was `s` (SHORE). So no cell
+   * changed walkability, no cell changed what an eye can see through, and
+   * `overworld.test.ts`'s `reach.size === 9327` holds bit for bit. That is the
+   * design constraint, and it is what makes a three-site addition a data change
+   * rather than a re-survey of the map.
+   *
+   * ═══ THE THREE CELLS WERE MEASURED, NOT CHOSEN ═══
+   * Ranked by distance from the NEAREST existing marker, because that is what
+   * makes a place feel found rather than listed:
+   *
+   *   Cairnfoot   59,57   26 tiles from any marker, 62 steps out — the western
+   *                       downs, high ground people cross rather than visit.
+   *   Barrow End  74,78   41 tiles, 47 steps — a PLAINS pocket inside the
+   *                       southern forest band, and the first thing on this map
+   *                       that rewards walking INTO the trees.
+   *   The Weir    77,87   44 tiles, 62 steps — the most isolated walkable ground
+   *                       on the entire map: a beach behind the wood, on a coast
+   *                       that had 273 cells and not one destination.
+   */
+  K: { tile: TileCode.HILLS, site: 'site:cairnfoot' },
+  V: { tile: TileCode.PLAINS, site: 'site:barrow_end' },
+  Z: { tile: TileCode.SHORE, site: 'site:the_weir' },
 };
 
 const ALDERBROOK = parseMap(ALDERBROOK_ROWS, ALDERBROOK_LEGEND);

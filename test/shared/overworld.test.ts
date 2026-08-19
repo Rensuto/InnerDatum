@@ -208,17 +208,31 @@ describe('it is wilderness, not a town', () => {
 describe('every settlement can be reached on foot', () => {
   const reach = reachableFrom(OVERWORLD.view, ALDERBROOK);
 
-  it('places all thirteen sites', () => {
+  it('places all sixteen sites, three of which nobody is told about', () => {
+    /**
+     * THIRTEEN OF THESE ARE ON YOUR MAP FROM THE FIRST FRAME. The last three are
+     * `SiteDef.hidden` and appear only once your own fog holds their cell — see
+     * the note on the K/V/Z glyphs in shared/level.ts.
+     *
+     * THE THREE COST THE MAP NOTHING, WHICH IS THE DESIGN CONSTRAINT AND IS
+     * PROVED BY THE TEST ABOVE RATHER THAN BY THIS ONE: each new glyph maps to
+     * the SAME TileCode as the character it replaced (K was h, V was p, Z was
+     * s), so no cell changed walkability or sight, and `reach.size === 9327`
+     * held unchanged when they landed.
+     */
     expect([...OVERWORLD.sites.values()].sort()).toEqual([
       'site:alderbrook',
       'site:ashwick_row',
+      'site:barrow_end',
       'site:blackwood_outskirts',
+      'site:cairnfoot',
       'site:drowned_chapel',
       'site:gearford_ward',
       'site:glass_archive',
       'site:hollow_mine',
       'site:outer_index',
       'site:saints_rest',
+      'site:the_weir',
       'site:threadneedle_row',
       'site:underworks',
       'site:watchers_altar',
