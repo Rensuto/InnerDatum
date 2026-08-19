@@ -245,6 +245,7 @@ import {
   inventoryPanelHitAt,
   inventoryPanelRect,
   inventoryPanelRows,
+  hasSomethingToWear,
 } from './ui/inventory.ts';
 import {
   drawPartyPane,
@@ -3946,6 +3947,40 @@ async function boot(): Promise<void> {
       parts.push(
         `${progress.unspent} talent ${progress.unspent === 1 ? 'point' : 'points'} — press ${keyHint('show_talents')}`,
       );
+    }
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * SOMETHING IN THE BAG FOR A SLOT THAT IS BARE — AND THE KEY THAT OPENS IT.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The block above says a banked talent point *"was invisible to anybody who
+     * did not already know to go looking for it"*, and that the tree is *"dead
+     * content for a party that never presses `g`"*. Both sentences are true of
+     * the bag and they bite sooner: the first thing that drops in a first
+     * session is the first gear that player has ever owned.
+     *
+     * MEASURED across the client: `show_talents` is named to the player twice,
+     * `revive` and `respawn` once each — and `show_inventory` is named
+     * NOWHERE. `pickup` already nudges (*"Nothing on your back yet."*, unicast,
+     * in the Margin) and that nudge is deliberately an observation rather than a
+     * tutorial — but it is the only one of the four whose key the player is
+     * never told, so it is the one that can be followed and not acted on.
+     *
+     * PERSISTENT, LIKE THE POINTS AND UNLIKE THE NOTICE. The Margin line fires
+     * once, at the pickup, and a player who was reading the map has missed it;
+     * this stays true while the coat is in the bag and the slot is bare, and
+     * disappears the moment either changes because `inventory` is re-sent after
+     * every loot verb.
+     *
+     * IT IS ALSO THE HEARD COPY, for the same reason: `#log` is the aria-live
+     * region, so this is announced rather than only drawn.
+     *
+     * ONE LINE HOWEVER MANY ITEMS. The count is not the decision — opening the
+     * bag is — and "3 things to put on" would be a number nobody acts on
+     * differently from 1.
+     */
+    if (inventory !== null && hasSomethingToWear(inventory.carried, inventory.equipped)) {
+      parts.push(`something to put on — press ${keyHint('show_inventory')}`);
     }
     const invite = liveInvites()[0];
     if (invite !== undefined) {

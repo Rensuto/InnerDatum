@@ -21,6 +21,7 @@ import {
   inventoryPanelHitAt,
   inventoryPanelRect,
   inventoryPanelRows,
+  hasSomethingToWear,
 } from '../../src/client/ui/inventory.ts';
 import { ItemTier, SLOT_ORDER } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -192,6 +193,78 @@ function roomyRect() {
 // ---------------------------------------------------------------------------
 // THE ROWS — the doll's order, the bag's order, and the grid's shape
 // ---------------------------------------------------------------------------
+
+describe('knowing when to point at the bag', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONLY PANEL WHOSE KEY THE GAME NEVER NAMED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * MEASURED across the client: `show_talents` is named to the player twice,
+   * `revive` and `respawn` once each, `show_inventory` **nowhere**. The server
+   * nudges on pickup — *"Nothing on your back yet."* — and that nudge is
+   * deliberately an observation rather than a tutorial, but it is the only one
+   * of the four that can be followed and not acted on. A scripted first session
+   * ends with a coat in the bag and nothing worn.
+   *
+   * The talent line's own comment states the rule this borrows: a banked point
+   * *"was invisible to anybody who did not already know to go looking for it"*,
+   * and the tree is *"dead content for a party that never presses `g`"*.
+   */
+  const item = (over: Partial<CarriedItemView> & { itemId: string }): CarriedItemView => ({
+    name: 'Thing',
+    icon: 'icon',
+    tier: ItemTier.Common,
+    desc: '',
+    // REQUIRED ON `CarriedItemView`, so a `Partial<>` spread cannot supply it.
+    // The predicate never reads it; the type does.
+    compare: [],
+    ...over,
+  });
+  /** One worn piece, typed — a bare literal widens `tier` to `string`. */
+  const worn = (itemId: string): ItemView => ({
+    itemId,
+    name: itemId,
+    icon: 'i',
+    tier: ItemTier.Common,
+    desc: '',
+  });
+
+  it('points at the bag when a bare slot has something for it', () => {
+    expect(hasSomethingToWear([item({ itemId: 'coat', slot: 'body' })], {})).toBe(true);
+  });
+
+  it('says nothing once that slot is filled', () => {
+    // The line is persistent rather than an event, so it has to go away by
+    // itself the moment the player acts — otherwise it is a nag.
+    expect(
+      hasSomethingToWear([item({ itemId: 'coat', slot: 'body' })], { body: worn('coat') }),
+    ).toBe(false);
+  });
+
+  it('says nothing about a draught, which has no slot at all', () => {
+    /**
+     * THE CASE THAT WOULD HAVE MADE IT A NAG. A draught is carried, useful, and
+     * not something the doll has a place for — and the first thing a player
+     * buys, measured, is a Draught of Mending. Without this a shopper is told to
+     * go and get dressed for the rest of the session.
+     */
+    expect(hasSomethingToWear([item({ itemId: 'draught' })], {})).toBe(false);
+  });
+
+  it('finds the one wearable thing in a bag full of things that are not', () => {
+    // `some`, not `[0]`: the wearable item is rarely the first one in the bag by
+    // the time anybody has been shopping.
+    const bag = [
+      item({ itemId: 'draught' }),
+      item({ itemId: 'curio' }),
+      item({ itemId: 'cap', slot: 'head' }),
+    ];
+    expect(hasSomethingToWear(bag, {})).toBe(true);
+    // ...and honours a filled slot even when it is not the first entry either.
+    expect(hasSomethingToWear(bag, { head: worn('cap') })).toBe(false);
+  });
+});
 
 describe('inventoryPanelRows', () => {
   it('walks the doll in SLOT_ORDER and shows every empty slot', () => {

@@ -558,6 +558,35 @@ const TAB_ORDER: readonly InventoryTab[] = [InventoryTab.Equipped, InventoryTab.
  * A FUNCTION AND NOT A CONSTANT, so the hit test and the painter cannot
  * disagree about how many boxes there are. Both call this.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THERE SOMETHING IN THE BAG FOR A SLOT THAT IS BARE?
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The one question the status line needs to know whether to name this panel's
+ * key, and it lives here because this module owns the bag rather than in the
+ * painter that prints the answer.
+ *
+ * ═══ WHY THE LINE EXISTS AT ALL ═══
+ * MEASURED across the client: `show_talents` is named to the player twice,
+ * `revive` and `respawn` once each, and `show_inventory` **nowhere**. The
+ * server's `pickup` already nudges — *"Nothing on your back yet."*, unicast, in
+ * the Margin — and that nudge is deliberately an observation rather than a
+ * tutorial. But it is the only one of the four whose key the player is never
+ * told, which makes it the only one that can be followed and not acted on. A
+ * first session ends with a coat in the bag and nothing on.
+ *
+ * `slot === undefined` is a draught or a curio: carried, useful, and not
+ * something the doll has a place for. It must not raise the line, or every
+ * player who buys healing is told to go and get dressed.
+ */
+export function hasSomethingToWear(
+  carried: readonly CarriedItemView[],
+  equipped: Readonly<Partial<Record<Slot, ItemView>>>,
+): boolean {
+  return carried.some((item) => item.slot !== undefined && equipped[item.slot] === undefined);
+}
+
 export function tabsFor(hasShop: boolean): readonly InventoryTab[] {
   return hasShop ? [...TAB_ORDER, InventoryTab.Shop] : TAB_ORDER;
 }
