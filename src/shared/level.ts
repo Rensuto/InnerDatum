@@ -712,7 +712,31 @@ const WET: ReadonlySet<number> = new Set<number>([
   TileCode.MIRE,
   TileCode.WATER,
   TileCode.DEEPWATER,
+  /**
+   * A FROZEN SEA IS STILL A SEA TO A FIGHT. `Ground.Fen` is defined by the one
+   * property this shares exactly — "WATER STOPS A BODY AND NOT AN EYE" — and
+   * `FROZEN_WATER` is solid and transparent for the same reason open water is.
+   * Left out, the frozen coast fought like open moor.
+   */
+  TileCode.FROZEN_WATER,
 ]);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY KIND OF FOREST, AS A SET — BECAUSE IT WAS AN EQUALITY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `groundAt` counted wood with `code === TileCode.TREES`, which was complete
+ * exactly as long as there was one forest. The cold north added a second, and
+ * 257 cells of it classified as open grass: an ambush among the frozen pines
+ * played like one in a field, and `makeArena` builds the room you fight in FROM
+ * this answer.
+ *
+ * The same shape as `HAUNTS` missing the new codes and `blocksSight`'s
+ * hand-written water chain, both of which fired in the commit that added them.
+ * A single equality is a set with one member and no room to grow.
+ */
+const WOOD: ReadonlySet<number> = new Set<number>([TileCode.TREES, TileCode.COLD_FOREST]);
 
 const ROCK: ReadonlySet<number> = new Set<number>([TileCode.CRAG, TileCode.MOUNTAIN]);
 
@@ -750,7 +774,7 @@ export function groundAt(level: LevelView, x: number, y: number): Ground {
       const code = level.tiles[cy * level.w + cx] ?? TileCode.WALL;
       if (WET.has(code)) wet += 1;
       else if (ROCK.has(code)) rock += 1;
-      else if (code === TileCode.TREES) wood += 1;
+      else if (WOOD.has(code)) wood += 1;
       else if (BUILT.has(code)) built += 1;
     }
   }
