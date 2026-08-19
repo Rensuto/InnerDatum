@@ -588,7 +588,13 @@ export type InventoryCell =
       /** An asset KEY off the wire, never derived from the name. */
       readonly icon: string;
       readonly tier: ItemTier;
-      readonly slot: Slot;
+      /**
+       * WHERE IT WOULD GO, and ABSENT ON A DRAUGHT — which is how a cell knows
+       * it has no plate on the doll to be dragged to and no Equip to offer. One
+       * field answering "can this be worn", rather than a second boolean beside
+       * it that could disagree.
+       */
+      readonly slot?: Slot;
       /**
        * TRUE ON THE DOLL, FALSE IN THE BAG — so a click knows whether it means
        * `unequip` or `equip` without the caller having to remember which tab it
@@ -828,6 +834,7 @@ function carriedCells(inventory: InventoryMsg): readonly InventoryCell[] {
     tier: item.tier,
     // NAMED ON THE ITEM because a bag has no key to read it off — `ItemView`
     // deliberately omits `slot` for the doll, where the map KEY is the slot.
+    // ABSENT ON A DRAUGHT, which is how a cell knows it has no doll to drag to.
     slot: item.slot,
     worn: false,
   }));
@@ -883,7 +890,9 @@ function shopCells(shop: ShopMsg, money: number): readonly InventoryCell[] {
 function dropSlotFor(inventory: InventoryMsg, drag: DragSubject | null | undefined): Slot | null {
   if (drag === null || drag === undefined || drag.kind !== DragKind.Carried) return null;
   const item = inventory.carried.find((entry) => entry.itemId === drag.itemId);
-  return item === undefined ? null : item.slot;
+  // `?? null` FOR A DRAUGHT: it has no slot, so there is no plate on the doll
+  // that will take it and the drag has nowhere legal to land.
+  return item === undefined ? null : (item.slot ?? null);
 }
 
 /** Break a flat list of cells into rows of at most `COLS`. */
@@ -1141,7 +1150,11 @@ export function inventoryPanelRows(view: InventoryPanelView): readonly Inventory
     rows.push({
       kind: InventoryRowKind.Doll,
       cells,
-      places: cells.map((cell) => DOLL_PLACES[cell.slot]),
+      // The doll's cells ARE the seven plates, so every one has a slot by
+      // construction; the fallback is the type system being told that rather
+      // than a case this row can reach. A draught is never on the doll — it has
+      // no slot, so `wornOf` never files it and no plate ever holds it.
+      places: cells.flatMap((cell) => (cell.slot === undefined ? [] : [DOLL_PLACES[cell.slot]])),
       portrait: view.portrait ?? null,
       dropSlot: dropSlotFor(inventory, view.drag),
     });
@@ -1523,7 +1536,8 @@ export type InventoryHit =
   | {
       readonly kind: typeof InventoryHitKind.Item;
       readonly itemId: string;
-      readonly slot: Slot;
+      /** ABSENT ON A DRAUGHT: there is nowhere to wear it. See `Item.slot`. */
+      readonly slot?: Slot;
       /** True on the doll. The caller sends `unequip` for one and `equip` for the other. */
       readonly worn: boolean;
     }
@@ -1701,9 +1715,13 @@ export function inventoryPanelDragAt(
       if (cell.kind === 'empty') return null;
       return {
         kind: InventoryHitKind.DragStart,
-        subject: cell.worn
-          ? { kind: DragKind.Worn, slot: cell.slot }
-          : { kind: DragKind.Carried, itemId: cell.itemId },
+        // `cell.worn` implies a slot — nothing slotless can be on the doll —
+        // and a slotless cell in the bag drags as `Carried`, which is what a
+        // draught is. The comparison states the implication for the compiler.
+        subject:
+          cell.worn && cell.slot !== undefined
+            ? { kind: DragKind.Worn, slot: cell.slot }
+            : { kind: DragKind.Carried, itemId: cell.itemId },
       };
     }
   }

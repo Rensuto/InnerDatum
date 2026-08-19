@@ -127,6 +127,7 @@
  * import time, not a warning.
  */
 
+import { resolveMBonus } from './resolvers.ts';
 import type { CombatMods, PrimaryStats } from '../engine/derived.ts';
 
 // ---------------------------------------------------------------------------
@@ -248,13 +249,77 @@ export type ItemTier = 'common' | 'uncommon' | 'rare';
 export type Item = {
   readonly id: string;
   readonly name: string;
-  readonly slot: Slot;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE IT IS WORN — AND ABSENT MEANS IT IS NOT WORN AT ALL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Optional as of the draughts, and the change is smaller than it looks because
+   * almost every reader of this field COMPARES it rather than using it:
+   * `itemsForSlot` filters on equality, `wornOf` skips a mismatch, `parseEquipped`
+   * drops one, and the three ego tables ask `ego.slots.includes(base.slot)` —
+   * which is `false` for `undefined`, so **a draught can never take an ego**, and
+   * that is the right answer arrived at for free.
+   *
+   * TWO PLACES NEEDED A REAL GUARD and both are noted where they are: the equip
+   * handler, which would otherwise write `equipped["undefined"]` from a
+   * client-supplied id, and the coverage validator below.
+   *
+   * ToME says the same thing in the same shape — `Object.lua`'s
+   * `if not self.slot then return nil end` is quoted at the top of this file, and
+   * upstream's potions and scrolls are exactly this: objects with no inven.
+   */
+  readonly slot?: Slot;
   /** A manifest asset key, never a path. Must be one of `KNOWN_ICON_IDS`. */
   readonly icon: string;
   readonly tier: ItemTier;
+  /**
+   * What wearing it does. `{}` for anything that is not worn — a draught changes
+   * nothing until it is drunk, and `wornOf` folds it over nobody.
+   */
   readonly wielder: Wielder;
   /** One sentence, shown in the inventory. Flavour; it decides nothing. */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT DRINKING IT DOES. Absent on everything that is not a consumable.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE GAME HAD NO CONSUMABLES AT ALL, and that is a bigger hole than a missing
+   * item type. There was no *"I am at a fifth of my health and I drink
+   * something"* — which is the moment a roguelike fight resolves, the reason a
+   * player takes one more room, and the only thing that makes money matter after
+   * the coat you were always going to buy. Twenty-two items across seven slots
+   * meant the entire economy was one purchase deep.
+   *
+   * A DISCRIMINANT RATHER THAN A SECOND CATALOGUE. The bag is a list of ids and
+   * `resolveItem` is the one thing that turns an id into a thing; a parallel
+   * `Draught` type would have meant every reader of a bag learning that there are
+   * two kinds of id, which is the change this field exists to avoid.
+   */
+  readonly use?: ItemUse;
   readonly desc: string;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A CONSUMABLE DOES WHEN IT IS USED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONE KIND FOR NOW, and the shape is a discriminated union rather than a bare
+ * `heal: number` so the second kind is an addition instead of a rewrite. ToME's
+ * `inscription_kind` is the same idea — "heal", "wild", "shield" — with the
+ * numbers hanging off `inscription_data`.
+ */
+export const ItemUseKind = {
+  /** Restore hit points, now, to the drinker. Never to anybody else. */
+  Heal: 'heal',
+} as const;
+export type ItemUseKind = (typeof ItemUseKind)[keyof typeof ItemUseKind];
+
+export type ItemUse = {
+  readonly kind: ItemUseKind;
+  /** Hit points restored. Flat: see the note on `DRAUGHT_OF_MENDING`. */
+  readonly amount: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -288,7 +353,38 @@ export type Item = {
  * player that picking things up is not worth the turn it costs. It stays an
  * unused PNG until there is a system that wants it.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ICONS AN ITEM MAY NAME. 22 of them are the `items/` set; the 23rd is not.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `icon_active_alchemic_vial` IS AN ABILITY ICON, AND THAT IS DELIBERATE.
+ *
+ * The rule this list enforces is *"the sprite resolves, or the player sees a
+ * violet box on every frame for the rest of the session"* — not *"the id begins
+ * with `item_`"*. The vial satisfies it on both counts that matter:
+ *
+ *   IT EXISTS. `docs/assets-needed.md:290` names the exact file
+ *     (`assets/ui/icons/abilities/active/icon_active_alchemic_vial.png`) and
+ *     `docs/art-pipeline.md:322` shows it resolved in a manifest. Both are
+ *     committed; the working tree is explicitly NOT the cross-check.
+ *   IT LOADS. `icon_active_` is in `NEEDED_ASSET_PREFIXES` (client/main.ts), so
+ *     the family is fetched for the hotbar already and the bag costs nothing.
+ *
+ * WHY NOT DRAW A NEW ONE: art is not committed to this repository and cannot be
+ * added from here. Declaring `item_draught_mending.png` as required would put a
+ * violet box in front of the people playing tonight in exchange for a filename.
+ * The vial is the picture a draught should have anyway — the Alchemist's own
+ * talent uses it — and a bought vial looking like a mixed one is a join rather
+ * than a collision.
+ *
+ * THE DUPLICATE-ICON RULE IS NOT RELAXED, which is why there is one draught and
+ * not a ladder of three: a second consumable would have to share this picture,
+ * and two items that are the same image on a shop shelf is a player squinting at
+ * a tooltip to tell their healing apart.
+ */
 export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
+  'icon_active_alchemic_vial',
   'item_inquisitors_breeches',
   'item_inquisitors_cipher',
   'item_inquisitors_cowl',
@@ -604,12 +700,75 @@ const GENERIC_ITEMS: readonly Item[] = [
 ];
 
 /** Every authored item, in a fixed order. Kit order, then the generic tail. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DRAUGHTS — the first things in this game you buy to SPEND.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every other item is a permanent upgrade, so money was one decision long: you
+ * bought the best coat you could afford and then money was a number that went
+ * up. A consumable is the purchase you make again, and it is the one that
+ * changes how a fight ENDS — a party at a fifth of its health either retreats,
+ * dies, or drinks, and until now the third option did not exist.
+ *
+ * ═══ THE NUMBER IS THE PORT, AND IT IS DELIBERATELY LARGE ═══
+ * `scrolls.lua:142`, the healing infusion:
+ *
+ *     heal = resolvers.mbonus_level(80, 40, function(e, v) return v * 0.06 end),
+ *     cost = 10, rarity = 15,
+ *
+ * `resolveMBonus(80, 40)` is 40 at level 1. Against this game's health bars —
+ * Watchman 72, Inspector 60, Alchemist 54 — that restores between 55% and 74% of
+ * a bar, which sounds enormous and is the point: a heal that does not visibly
+ * change the situation is a button nobody presses at the moment it matters, and
+ * upstream sized this one to be worth an action in a fight you are losing.
+ *
+ * FLAT, NOT SCALED. Upstream's `mbonus_level` grows the roll with the item's
+ * level and we have no item levels — `loot.ts` weights by TIER instead, and the
+ * tier ladder below is where a bigger heal comes from. A curve invented here
+ * would be a number nobody could check against anything.
+ */
+const DRAUGHTS: readonly Item[] = Object.freeze([
+  /**
+   * ONE, AND NOT A LADDER OF THREE, BECAUSE THERE IS ONE VIAL ON DISK.
+   *
+   * A lesser and a greater draught is the obvious shape and it is the wrong one
+   * to build today: both would carry `icon_active_alchemic_vial`, and two items
+   * that are the same picture on a shop shelf is a player squinting at a tooltip
+   * to tell their healing apart. `assets.test.ts` says the same thing as a rule
+   * — every item has its own icon — and a rule relaxed for a convenience is a
+   * rule that stops meaning anything.
+   *
+   * The tier ladder arrives with the second vial. Until then the shop's job is
+   * to make this one reliably buyable, which is what a themed shelf is for.
+   */
+  {
+    id: 'item_draught_mending',
+    name: 'Draught of Mending',
+    // NO SLOT: it is drunk, not worn. See `Item.slot`.
+    icon: 'icon_active_alchemic_vial',
+    // UNCOMMON, matching upstream's rarity 15 against a common's 3-6. A party
+    // that can buy one every visit has no decision to make about drinking it.
+    tier: 'uncommon',
+    wielder: {},
+    // scrolls.lua:142 `resolvers.mbonus_level(80, 40, ...)` = 40 at level 1.
+    use: { kind: ItemUseKind.Heal, amount: resolveMBonus(80, 40) },
+    desc: 'Ashwick work. Whatever is written on you, this argues with it.',
+  },
+]);
+
 export const ITEMS: readonly Item[] = Object.freeze([
   ...WATCHMAN_KIT,
   ...INSPECTOR_KIT,
   ...ALCHEMIST_KIT,
   ...GENERIC_ITEMS,
+  ...DRAUGHTS,
 ]);
+
+/** Everything a player can drink. The shop and the inventory both ask. */
+export function isConsumable(item: Item): boolean {
+  return item.use !== undefined;
+}
 
 /**
  * What `wornOf` and every persistence path turn an id into an item WITH.
@@ -727,7 +886,10 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
     if (seenIcons.has(item.icon)) throw new Error(`items: duplicate icon '${item.icon}'`);
     seenIcons.add(item.icon);
 
-    populated.add(item.slot);
+    // A CONSUMABLE COVERS NO SLOT, and this counts slots. Without the guard the
+    // set would gain an `undefined` and the coverage check would pass on a
+    // phantom eighth slot.
+    if (item.slot !== undefined) populated.add(item.slot);
 
     const contributions: readonly (readonly [string, number | undefined])[] = [
       ...Object.entries(item.wielder.stats ?? {}),

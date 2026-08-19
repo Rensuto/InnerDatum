@@ -75,7 +75,11 @@ describe('the ego roster', () => {
     // no legs item would be an ego that exists and never appears.
     for (const ego of EGOS) {
       if (ego.slots === undefined) continue;
-      const wearable = ITEMS.some((item) => ego.slots?.includes(item.slot) === true);
+      // `item.slot !== undefined` because the catalogue holds draughts now, and
+      // a thing with no slot is not evidence that an ego has nowhere to go.
+      const wearable = ITEMS.some(
+        (item) => item.slot !== undefined && ego.slots?.includes(item.slot) === true,
+      );
       expect(wearable).toBe(true);
     }
   });

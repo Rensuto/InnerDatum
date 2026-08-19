@@ -234,6 +234,10 @@ export function resolveItem(id: string): Item | undefined {
   // An ego that only goes on an offhand cannot be on a ring, however the id got
   // written. The roll already respects this; a hand-edited save does not.
   for (const ego of egos) {
+    // See loot.ts: a slotless item takes no ego, so an id that claims one is an
+    // id this build cannot make sense of — which is the same answer an unknown
+    // ego code already gets.
+    if (base.slot === undefined) return undefined;
     if (ego.slots !== undefined && !ego.slots.includes(base.slot)) return undefined;
   }
 

@@ -1715,8 +1715,14 @@ export type ItemView = {
  * server will not deliver.
  */
 export type CarriedItemView = ItemView & {
-  /** WHERE IT WOULD GO. Named here because a bag has no key to read it off. */
-  readonly slot: Slot;
+  /**
+   * WHERE IT WOULD GO. Named here because a bag has no key to read it off.
+   *
+   * ABSENT ON A CONSUMABLE, which is also how the client knows not to offer
+   * "Equip" for it — see `Item.slot`. One field answering "can this be worn"
+   * rather than a second boolean that could disagree with it.
+   */
+  readonly slot?: Slot;
   /**
    * THE DELTA AGAINST WHAT IS IN `slot` RIGHT NOW, PRE-FORMATTED.
    *
@@ -2352,6 +2358,31 @@ const UnequipSchema = z.strictObject({
  * take it, I've got a coat" actually happens, and the Case Log line naming who
  * took what is the transcript that settles the argument afterwards.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `use` — DRINK SOMETHING. The verb that lets a fight end a third way.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A party at a fifth of its health could retreat or die. This is the third
+ * option, and a roguelike without it has no reason for a player to carry money
+ * past the coat they were always going to buy.
+ *
+ * ONLY AN ITEM ID, exactly like `equip`. WHAT it does is authored content the
+ * server reads off the catalogue (`Item.use`), and a client that could name an
+ * effect could name a bigger one. The same sentence `EquipSchema` uses about its
+ * destination slot, for the same reason.
+ *
+ * NO TARGET. A draught is drunk by the person holding it — healing somebody
+ * across the room is a TALENT, which is a thing you spend points on and which
+ * the Alchemist already has. Letting an item do it would make the class's
+ * defining move purchasable.
+ */
+const UseSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('use'),
+  itemId: z.string().min(1).max(ITEM_ID_MAX_CHARS),
+});
+
 const DropSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('drop'),
@@ -2717,6 +2748,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   SpendPointSchema,
   PickupSchema,
   EquipSchema,
+  UseSchema,
   UnequipSchema,
   DropSchema,
   ShopBuySchema,
@@ -2744,6 +2776,7 @@ export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
 export type ClientSpendPoint = z.infer<typeof SpendPointSchema>;
 export type ClientPickup = z.infer<typeof PickupSchema>;
 export type ClientEquip = z.infer<typeof EquipSchema>;
+export type ClientUse = z.infer<typeof UseSchema>;
 export type ClientUnequip = z.infer<typeof UnequipSchema>;
 export type ClientDrop = z.infer<typeof DropSchema>;
 export type ClientShopBuy = z.infer<typeof ShopBuySchema>;

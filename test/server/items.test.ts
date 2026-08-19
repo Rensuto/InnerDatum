@@ -39,6 +39,11 @@ import type { Item } from '../../src/server/content/items.ts';
  * client's screen, on every frame, for the rest of the session.
  */
 const MANIFEST_ITEM_ICONS: readonly string[] = [
+  // THE 23RD, AND IT IS AN ABILITY ICON. See the long note on `KNOWN_ICON_IDS`:
+  // the rule is that the sprite RESOLVES, and this one is named in
+  // docs/assets-needed.md:290 and docs/art-pipeline.md:322 and is loaded by the
+  // `icon_active_` prefix the hotbar already pulls.
+  'icon_active_alchemic_vial',
   'item_inquisitors_breeches',
   'item_inquisitors_cipher',
   'item_inquisitors_cowl',
@@ -115,13 +120,22 @@ function fullSlotSpread(): Item[] {
 }
 
 describe('the item catalogue', () => {
-  it('ships exactly 22 items, one for each icon that is not the iron ingot', () => {
-    // 23 `item_*` ids exist in the manifest. 22 are authored. The 23rd is the
-    // ingot, and cutting it is a decision rather than an oversight — see
-    // FORBIDDEN_IDS above.
-    expect(ITEMS).toHaveLength(22);
-    expect(MANIFEST_ITEM_ICONS).toHaveLength(22);
-    expect(ITEM_CATALOGUE.size).toBe(22);
+  it('ships 22 worn items and one you drink', () => {
+    // 23 `item_*` ids exist in the manifest. 22 are authored as equipment. The
+    // 23rd `item_*` id is the ingot, and cutting it is a decision rather than an
+    // oversight — see FORBIDDEN_IDS above; it draws the MONEY pile instead
+    // (content/money.ts), which is the system that finally wanted it.
+    //
+    // The 23rd ITEM is the draught, whose icon is the ability vial rather than
+    // an `item_*` file at all.
+    expect(ITEMS).toHaveLength(23);
+    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(22);
+    expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
+    // 23 ICONS AND 23 ITEMS. The 23rd icon is the ability vial (see the list
+    // above) and the 23rd item is the draught that names it — the first thing in
+    // this game you buy in order to SPEND it.
+    expect(MANIFEST_ITEM_ICONS).toHaveLength(23);
+    expect(ITEM_CATALOGUE.size).toBe(23);
   });
 
   it('names only icons that exist in the committed manifest', () => {
@@ -160,7 +174,16 @@ describe('the item catalogue', () => {
     // …and every authored item files itself under a slot that exists, so a
     // typo cannot create an eighth.
     const slots = new Set<string>(SLOT_ORDER);
-    expect(ITEMS.filter((item) => !slots.has(item.slot))).toEqual([]);
+    // WORN ITEMS ONLY. A draught has no slot at all — see `Item.slot` — and the
+    // assertion under test is that nothing files itself under an EIGHTH slot,
+    // not that everything in the catalogue is clothing.
+    expect(ITEMS.filter((item) => item.slot !== undefined && !slots.has(item.slot))).toEqual([]);
+    // AND THE ONLY THINGS WITHOUT ONE ARE THE THINGS YOU DRINK, which is the
+    // other half of the same rule and the one that catches a dropped `slot:`.
+    for (const item of ITEMS) {
+      if (item.slot === undefined)
+        expect(item.use, `${item.id} is neither worn nor drunk`).toBeDefined();
+    }
   });
 
   it('gives every item a unique id and a unique icon', () => {
@@ -239,29 +262,51 @@ describe('the item catalogue', () => {
     // DERIVED getter?) is proved per item in test/server/equipment.test.ts; this
     // one catches the case where somebody authors decoration and forgets the
     // mechanics entirely.
+    //
+    // ═══ WORN ITEMS ONLY, AND A CONSUMABLE IS NOT AN EXCEPTION TO THE RULE ═══
+    // A draught's `wielder` is `{}` BECAUSE IT IS NEVER WORN — it contributes
+    // through `use`, and the check below would read "authored decoration with no
+    // mechanics" from an item whose entire mechanic is in a different field. The
+    // rule it enforces is unchanged: everything must do something, and the
+    // `item.use` assertion after it is that same rule for the other kind.
     const inert = ITEMS.filter((item) => {
+      if (item.use !== undefined) return false;
       const stats = Object.keys(item.wielder.stats ?? {}).length;
       const mods = Object.keys(item.wielder.mods ?? {}).length;
       return stats + mods === 0;
     }).map((item) => item.id);
     expect(inert).toEqual([]);
+    // …and the things that are not worn all do something when they are drunk.
+    for (const item of ITEMS) {
+      if (item.slot !== undefined) continue;
+      expect(item.use?.amount ?? 0, `${item.id} does nothing when used`).toBeGreaterThan(0);
+    }
   });
 
-  it('lines its three tiers up with the three drop tables, 7 / 9 / 6', () => {
+  it('lines its three tiers up with the three drop tables, 7 / 10 / 6', () => {
     // NOT COSMETIC. The roster's drop tables are meant to select on `tier`
-    // rather than re-listing 22 ids somewhere else that has to stay in sync:
+    // rather than re-listing 23 ids somewhere else that has to stay in sync:
     //   common   = every LEGS and FEET item, plus the leather chest
-    //   uncommon = every HEAD, OFFHAND and TRINKET item
+    //   uncommon = every HEAD, OFFHAND and TRINKET item, AND the draught
     //   rare     = the three class BODY items and the three RINGs
+    //
+    // THE DRAUGHT IS UNCOMMON ON PURPOSE and it moved this count from 9 to 10:
+    // upstream's healing infusion carries `rarity = 15` against a common's 3-6,
+    // and a party that can buy the good one on every visit has no decision to
+    // make about drinking it.
     const byTier = (tier: string): Item[] => ITEMS.filter((item) => item.tier === tier);
     expect(byTier('common')).toHaveLength(7);
-    expect(byTier('uncommon')).toHaveLength(9);
+    expect(byTier('uncommon')).toHaveLength(10);
     expect(byTier('rare')).toHaveLength(6);
     expect(byTier('common').length + byTier('uncommon').length + byTier('rare').length).toBe(
       ITEMS.length,
     );
 
-    const slotsOf = (tier: string): Set<string> => new Set(byTier(tier).map((i) => i.slot));
+    // WORN ITEMS ONLY. The assertion is about which SLOTS a tier covers, and a
+    // draught covers none — it is uncommon and slotless, which is a fact about
+    // the tier ladder rather than a gap in the doll.
+    const slotsOf = (tier: string): Set<string> =>
+      new Set(byTier(tier).flatMap((i) => (i.slot === undefined ? [] : [i.slot])));
     expect([...slotsOf('uncommon')].sort()).toEqual(['head', 'offhand', 'trinket']);
     expect([...slotsOf('rare')].sort()).toEqual(['body', 'ring']);
   });
@@ -289,7 +334,7 @@ describe('the import-time arity check', () => {
   it('throws on an icon that is not in the manifest', () => {
     expect(() =>
       validateItems([...fullSlotSpread(), sampleItem({ id: 'x', icon: 'item_iron_sword' })]),
-    ).toThrow(/not one of the 22 ids in the committed asset manifest/);
+    ).toThrow(/not one of the 23 ids in the committed asset manifest/);
   });
 
   it('throws on the iron ingot, which is on disk but deliberately unauthored', () => {

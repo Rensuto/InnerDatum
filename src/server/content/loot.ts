@@ -236,7 +236,8 @@ export function rollLoot(rng: Rng, baseId: string, level: number): string {
     const candidates = computeRarities(
       egosForTag(tag),
       level,
-      (ego) => ego.slots === undefined || ego.slots.includes(base.slot),
+      (ego) =>
+        base.slot !== undefined && (ego.slots === undefined || ego.slots.includes(base.slot)),
     );
 
     // DRAW — one, whatever the roster size.

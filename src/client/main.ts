@@ -4788,6 +4788,12 @@ async function boot(): Promise<void> {
       showNotice('not connected — that did not go out');
     }
   }
+  /** Drink it. See `UseSchema` — the server reads what it does off the catalogue. */
+  function sendUse(itemId: string): void {
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'use', itemId })) {
+      showNotice('not connected — that did not go out');
+    }
+  }
   function sendUnequip(slot: Slot): void {
     if (!socket.send({ v: PROTOCOL_VERSION, t: 'unequip', slot })) {
       showNotice('not connected — that did not go out');
@@ -4847,7 +4853,14 @@ async function boot(): Promise<void> {
         // meant (protocol.ts's `UnequipSchema`). In the bag it is
         // `equip { itemId }`, and the destination slot is authored content the
         // server reads off the catalogue.
-        if (hit.worn) sendUnequip(hit.slot);
+        /**
+         * THREE VERBS ON ONE CLICK, AND THE SLOT DECIDES WHICH. A thing with no
+         * slot cannot be worn (`Item.slot`), so the absence IS the affordance —
+         * there is no second flag on the wire that could disagree with it, and a
+         * draught in the bag simply has nowhere for "equip" to mean anything.
+         */
+        if (hit.worn && hit.slot !== undefined) sendUnequip(hit.slot);
+        else if (hit.slot === undefined) sendUse(hit.itemId);
         else sendEquip(hit.itemId);
         requestDraw();
         return;
@@ -7210,7 +7223,9 @@ async function boot(): Promise<void> {
    */
   function sameSubject(
     subject: DragSubject,
-    hit: { readonly itemId: string; readonly slot: Slot; readonly worn: boolean },
+    // `slot` OPTIONAL because a draught has none — and a Worn drag can never
+    // match one, which the `hit.worn` term already decides.
+    hit: { readonly itemId: string; readonly slot?: Slot; readonly worn: boolean },
   ): boolean {
     if (subject.kind === DragKind.Carried) return !hit.worn && hit.itemId === subject.itemId;
     if (subject.kind === DragKind.Worn) return hit.worn && hit.slot === subject.slot;

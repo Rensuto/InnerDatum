@@ -117,8 +117,9 @@ import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
 import { DELVES, dangerWord, partyHint } from '../content/delve.ts';
 import { specForActorId } from '../content/townsfolk.ts';
+import { healActor } from '../engine/talents.ts';
 import type { TalentEffect } from '../engine/talents.ts';
-import type { TopicId } from '../../shared/protocol.ts';
+import type { ClientUse, TopicId } from '../../shared/protocol.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -8571,7 +8572,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * reach, and `join` set the precedent that a label is reused rather than
    * multiplied.
    */
-  const saveLoot = (verb: 'pickup' | 'equip' | 'unequip' | 'drop' | 'buy' | 'sell'): void => {
+  const saveLoot = (
+    verb: 'pickup' | 'equip' | 'unequip' | 'drop' | 'buy' | 'sell' | 'use',
+  ): void => {
     if (verb === 'pickup') saveNow('loot');
     else queueSave('loot');
   };
@@ -8843,6 +8846,79 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * properties back to plain `add`, the second of them commented *"Prevent
    * excessive attack speed compounding"*. We import the lesson instead of learning it twice.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `use` — THE THIRD WAY A FIGHT CAN END.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A party at a fifth of its health could retreat or it could die. This is the
+   * option that was missing, and its absence is why money in this game was one
+   * decision long: you bought the best coat you could afford and then the number
+   * only went up.
+   *
+   * ═══ IT COSTS THE TURN, FOR `handleEquip`'S REASON AND MORE SO ═══
+   * *"Getting dressed mid-fight is the single most valuable free action this
+   * game could have handed out"* — and drinking forty hit points is worth more
+   * than getting dressed. A free heal is not a decision, it is a button you
+   * press whenever the number is low, and the whole value of a consumable is
+   * that using it costs you the thing you would otherwise have done with that
+   * turn.
+   *
+   * ═══ NO OVERHEAL, AND `healActor` ALREADY OWNS THAT RULE ═══
+   * It clamps to `maxHp` and answers how much it actually restored, which is the
+   * number the log line says — so a player at full health who drinks one is told
+   * plainly that they wasted it rather than watching a bar not move.
+   */
+  const handleUse = (session: Session, msg: ClientUse): void => {
+    const body = lootActor(session, 'use');
+    if (body === undefined) return;
+
+    const bag = bagOf(body);
+    if (!bag.includes(msg.itemId)) {
+      // The same one refusal `handleEquip` gives, for the same reason: "no such
+      // item" and "somebody else's item" are the same question.
+      sendError(session.socket, ErrorCode.BadMessage, 'you are not carrying that');
+      return;
+    }
+
+    const item = resolveItem(msg.itemId);
+    if (item === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
+      return;
+    }
+    if (item.use === undefined) {
+      // A COAT IS NOT A DRINK. Authored content decides, never the wire.
+      sendError(session.socket, ErrorCode.BadMessage, 'that is not something you can use');
+      return;
+    }
+
+    const healed = healActor(body, item.use.amount);
+
+    // SPENT WHETHER OR NOT IT HELPED. A draught drunk at full health is gone —
+    // the alternative is a free "am I hurt?" probe, and worse, an item that
+    // sometimes silently declines to be used is an item a player stops trusting
+    // in the one moment they need to trust it.
+    body.carried = bag.filter((id) => id !== msg.itemId);
+
+    /**
+     * A CASE LOG LINE, WHERE `equip` DELIBERATELY HAS NONE. The asymmetry is the
+     * one `handleEquip` argues: what you are WEARING changes only your own
+     * numbers, but a heal in a fight changes what the party should do next —
+     * whether to press, whether to pull the wounded one back — and that is
+     * exactly the kind of fact the transcript exists to settle afterwards.
+     */
+    broadcastRecordLine(
+      realmFor(session),
+      healed > 0
+        ? `${nameOf(body.id)} drinks ${item.name}. (+${String(healed)})`
+        : `${nameOf(body.id)} drinks ${item.name}, and did not need it.`,
+    );
+
+    spendLootTurn(body, 'use');
+    saveLoot('use');
+    pumpAndBroadcast(realmFor(session));
+  };
+
   const handleEquip = (session: Session, msg: ClientEquip): void => {
     const body = lootActor(session, 'equip');
     if (body === undefined) return;
@@ -8860,6 +8936,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const item = resolveItem(msg.itemId);
     if (item === undefined) {
       sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
+      return;
+    }
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * A THING WITH NO SLOT CANNOT BE WORN, AND THIS IS THE ONE PLACE THAT HAD TO
+     * BE TOLD.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Nearly every reader of `Item.slot` COMPARES it and therefore fails closed
+     * on a draught for free. This one indexes with it — `body.equipped[item.slot]`
+     * — off an id that came in over the wire, so without this a player could
+     * equip a draught into a slot literally named "undefined", wear it forever,
+     * and have `recomposeCombat` fold a `{}` wielder over their sheet every time.
+     * Not a crash; a permanent junk entry in a persisted record.
+     */
+    if (item.slot === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'that is not something you can wear');
       return;
     }
 
@@ -9545,6 +9639,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'equip':
         handleEquip(session, msg);
+        return;
+      case 'use':
+        handleUse(session, msg);
         return;
       case 'unequip':
         handleUnequip(session, msg);

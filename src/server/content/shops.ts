@@ -278,7 +278,9 @@ function rollStockItem(rng: Rng, level: number): string | undefined {
       computeRarities(
         egosForTag(tag),
         level,
-        (candidate) => candidate.slots === undefined || candidate.slots.includes(base.item.slot),
+        (candidate) =>
+          base.item.slot !== undefined &&
+          (candidate.slots === undefined || candidate.slots.includes(base.item.slot)),
       ),
     );
     if (ego === undefined) continue;

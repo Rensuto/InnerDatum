@@ -1567,7 +1567,9 @@ export function projectInventory(viewer: Actor): InventoryMsg {
       ...toItemView(item),
       // NAMED HERE because a bag has no key to read it off — see `ItemView`,
       // which deliberately omits `slot` for the doll where the key IS the slot.
-      slot: item.slot,
+      // OMITTED ENTIRELY for a draught rather than sent as null: absence is what
+      // tells the client there is no Equip for this row.
+      ...(item.slot === undefined ? {} : { slot: item.slot }),
       // A body with no sheet at all (an M2-era fixture, a classless e2e body)
       // has nothing to compare against, and an invented baseline would be a
       // promise about numbers that body does not have.

@@ -490,27 +490,34 @@ describe('gear, statuses and re-clothing all write one sheet without treading on
 // ---------------------------------------------------------------------------
 
 describe('every authored item moves at least one number a player can see', () => {
-  it.each(ITEMS.map((entry) => [entry.id, entry] as const))(
-    '%s changes a derived getter when worn alone',
-    (_id, entry) => {
-      // ═══════════════════════════════════════════════════════════════════════
-      // THIS IS THE MECHANISED FORM OF "AN ITEM THAT CHANGES NOTHING".
-      // ═══════════════════════════════════════════════════════════════════════
-      // It is what would have caught `mods.apr` being inert against a roster
-      // whose armour values are 1 and 2, and it is what forces every stat grant
-      // in the catalogue to be +3 or +4: `rescaleCombatStats` FLOORS
-      // (shared/scale.ts:116), so a +1 or +2 primary can rescale to the integer
-      // it started on and move literally nothing.
-      //
-      // A BARE base rather than a class sheet, deliberately. It is the hardest
-      // case for a rounding-sensitive grant — every stat sits at its default 10
-      // and every mod at 0 — and it is also the sheet a classless body carries.
-      const bare: CombatSheet = {};
-      const before = derivedVector(bare);
-      const after = derivedVector(composeSheet(bare, [entry]));
-      expect(after).not.toEqual(before);
-    },
-  );
+  /**
+   * WORN ITEMS ONLY. A draught has no slot and is never on the doll, so "does
+   * wearing it move a number" is a question it cannot be asked — its whole
+   * mechanic is `use`, which `items.test.ts` asserts is non-zero for exactly the
+   * items that have no slot. The rule is unchanged: everything must do
+   * something, and the two halves of the catalogue prove it in the two places
+   * where the doing happens.
+   */
+  it.each(
+    ITEMS.filter((entry) => entry.slot !== undefined).map((entry) => [entry.id, entry] as const),
+  )('%s changes a derived getter when worn alone', (_id, entry) => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // THIS IS THE MECHANISED FORM OF "AN ITEM THAT CHANGES NOTHING".
+    // ═══════════════════════════════════════════════════════════════════════
+    // It is what would have caught `mods.apr` being inert against a roster
+    // whose armour values are 1 and 2, and it is what forces every stat grant
+    // in the catalogue to be +3 or +4: `rescaleCombatStats` FLOORS
+    // (shared/scale.ts:116), so a +1 or +2 primary can rescale to the integer
+    // it started on and move literally nothing.
+    //
+    // A BARE base rather than a class sheet, deliberately. It is the hardest
+    // case for a rounding-sensitive grant — every stat sits at its default 10
+    // and every mod at 0 — and it is also the sheet a classless body carries.
+    const bare: CombatSheet = {};
+    const before = derivedVector(bare);
+    const after = derivedVector(composeSheet(bare, [entry]));
+    expect(after).not.toEqual(before);
+  });
 
   it('moves a number on each of the three class sheets too, for the kit that fits it', () => {
     // The bare-base test above proves the item is not inert in principle. This
@@ -569,7 +576,9 @@ describe('wornOf', () => {
     expect(backwards.map((i) => i.id)).toEqual(forwards.map((i) => i.id));
 
     // …and that really is `SLOT_ORDER` rather than a coincidence of this fixture.
-    const order = forwards.map((i) => SLOT_ORDER.indexOf(i.slot));
+    // Everything WORN has a slot by construction; the `?? -1` is the type system
+    // being told so, not a case this fixture can reach.
+    const order = forwards.map((i) => (i.slot === undefined ? -1 : SLOT_ORDER.indexOf(i.slot)));
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 

@@ -265,6 +265,10 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // grow the set of things the barrier can be made to wait for.
       'talk',
       'unequip',
+      // ADDED WITH THE DRAUGHTS. It is a frame the barrier can be made to wait
+      // for — drinking costs the turn, exactly as equipping does — which is the
+      // property this whole list exists to make somebody decide about on purpose.
+      'use',
     ]);
   });
 });
