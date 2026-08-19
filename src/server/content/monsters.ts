@@ -2210,8 +2210,24 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
  * counter. It moves at 0.7 against a player pinned at 1.0 by D1, so a party
  * that COMMITS closes on it; `populateDelve` puts it at the point furthest from
  * the door, which in a generated ruin is a corner, so the ground it can retreat
- * into is the ground it has already used. Drive it into that corner and this
- * creature — two hundred and twenty hit points of it — cannot act.
+ * into is the ground it has already used.
+ *
+ * ═══ "GET INSIDE THREE TILES AND IT CANNOT ACT" IS WHAT THIS SAID, AND IT IS
+ *     NOT TRUE ═══
+ * Driven with a player STANDING STILL inside the dead zone, it backed from
+ * (32,1) to (32,4) and went on shooting for 4.7 a turn. `kite` retreats before
+ * it holds, and it only holds once it has nowhere left to go — so the dead zone
+ * on its own buys nothing.
+ *
+ * WHAT IS TRUE IS PURSUIT, and the difference is the whole fight. Measured over
+ * forty turns from nine tiles, alone with it, on a real floor:
+ *
+ *     standing still   198 damage, six turns spent stunned, still at 9 tiles
+ *     walking at it     22 damage, one turn stunned, ends adjacent
+ *
+ * A factor of nine. It cannot outrun a player and it cannot fight at contact,
+ * so the answer is to close and keep closing — and the punishment for treating
+ * it as a ranged trade is severe enough to teach that in one attempt.
  *
  * MEASURED ON A REAL FLOOR: the room generates 34x30 with the door at (2,15)
  * and the Watcher at (32,1). The shortest path between them is 30 steps, of
