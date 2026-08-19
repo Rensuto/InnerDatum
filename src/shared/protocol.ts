@@ -4282,6 +4282,26 @@ export type SiteView = {
    * no version bump: an old client ignores a field it cannot name.
    */
   readonly danger?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS MARKER IS A WAY OFF THIS MAP, NOT A ROOM ON IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `danger` is the grade of the room behind a marker, and it is ABSENT for
+   * anything that is not a delve — a town has nothing to warn about, and the
+   * renderer draws a gradeless marker in gold. That was a complete rule while
+   * every gradeless marker was a settlement.
+   *
+   * It stopped being one when a second landmass landed. The door to the
+   * Redaction is not a delve, so `specFor` correctly answers nothing, so the
+   * entrance to the hardest country in the game drew in the SAME INK AS
+   * ALDERBROOK — and a player who has learned that gold means a town would read
+   * it as one.
+   *
+   * ADDITIVE AND OPTIONAL, so no protocol bump: a client that does not know the
+   * field draws exactly what it drew before.
+   */
+  readonly crossing?: boolean;
 };
 
 /**

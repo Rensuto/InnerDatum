@@ -115,7 +115,13 @@ import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
-import { DELVES, specFor, dangerWord, partyHint } from '../content/delve.ts';
+// `DELVES` IS DELIBERATELY NOT IMPORTED HERE ANY MORE. Both of this file's
+// lookups — the danger grade on the world map and the one in the bearing list —
+// asked the raw table, and the raw table answers `undefined` for the Redaction's
+// derived doors, which is the TOWN case. `specFor` is the lookup that knows
+// about both maps; the import going away is the proof there is no third caller
+// still asking the old question.
+import { specFor, dangerWord, partyHint } from '../content/delve.ts';
 import { monsterById } from '../content/monsters.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import { STANDING_LEVEL, specForActorId } from '../content/townsfolk.ts';
@@ -5220,7 +5226,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // town, and an absent field is how the map knows not to draw a
       // scale that does not apply. Same source as the arrival line, so
       // the two can never disagree about how bad a room is.
-      const spec = DELVES.get(siteId);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * `specFor`, AND THIS IS THE CALL SITE THAT WAS MISSED.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `specFor` was introduced to fix exactly this — the Redaction's six doors
+       * are DERIVED from their Alderbrook originals and are therefore absent
+       * from `DELVES`, so a raw table lookup answers `undefined`, which is the
+       * TOWN case: no grade at all. The fix went into `nearestSites`, the
+       * bearing list, along with a note claiming *"the danger grade on the map,
+       * the party hint beside it, and the monsters actually placed in the room
+       * all have to agree"*.
+       *
+       * THE GRADE ON THE MAP IS THIS FUNCTION AND IT KEPT ASKING `DELVES`. So
+       * the bearing list named the twins correctly while the world map — the
+       * thing a player actually plans a trip on — drew all six of them in the
+       * ink it uses for settlements. One of two call sites is not a fix; it is a
+       * fix and a matching bug, which is worse than neither because the two
+       * surfaces now disagreed.
+       */
+      const spec = specFor(siteId);
       return [
         {
           x: Number(parts[0]),
@@ -5228,6 +5254,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           marker: def.marker,
           name: def.name,
           ...(spec === undefined ? {} : { danger: dangerWord(spec) }),
+          // AND A DOOR OFF THIS MAP SAYS SO. See `SiteView.crossing`: an
+          // Overworld-kind site is the one thing that is neither a room nor a
+          // settlement, and without this it drew as the second.
+          ...(def.kind === RealmKind.Overworld ? { crossing: true } : {}),
         },
       ];
     });

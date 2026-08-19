@@ -201,7 +201,9 @@ export function paintMap(paint: MapPaint): number {
     ctx.fillStyle =
       site.sprite !== undefined
         ? PALETTE.CRIMSON
-        : ((site.danger === undefined ? undefined : DANGER_INK[site.danger]) ?? PALETTE.GOLD);
+        : site.crossing === true
+          ? CROSSING_INK
+          : ((site.danger === undefined ? undefined : DANGER_INK[site.danger]) ?? PALETTE.GOLD);
     ctx.fillRect(
       ox + site.x * cell - Math.floor((dot - cell) / 2),
       oy + site.y * cell - Math.floor((dot - cell) / 2),
@@ -297,8 +299,18 @@ export function paintMap(paint: MapPaint): number {
       ctx.textAlign = flip ? 'right' : 'left';
       const tx = flip ? dx - dot : dx + dot + 3;
 
-      const grade = site.danger === undefined ? undefined : DANGER_INK[site.danger];
-      const label = site.danger === undefined ? site.name : `${site.name} · ${site.danger}`;
+      // A CROSSING OUTRANKS A GRADE, and cannot collide with one: `specFor`
+      // answers nothing for a site that is not a delve, so a marker never
+      // carries both. Ordered explicitly anyway — the day something does carry
+      // both, "there is a way off the map here" is the more important half.
+      const grade =
+        site.crossing === true
+          ? CROSSING_INK
+          : site.danger === undefined
+            ? undefined
+            : DANGER_INK[site.danger];
+      const suffix = site.crossing === true ? CROSSING_WORD : site.danger;
+      const label = suffix === undefined ? site.name : `${site.name} · ${suffix}`;
 
       // A DARK PLATE UNDER THE TEXT. The region is mostly mid-green field and
       // pale road; a bare 10px label on that is unreadable at exactly the
@@ -352,6 +364,30 @@ const DANGER_INK: Readonly<Record<string, string>> = {
   dangerous: '#d98341',
   grim: '#c9483f',
 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE ONE MARKER THAT IS NOT ON THIS SCALE AT ALL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A crossing is not a room, so it has no roster to weigh and no grade to earn —
+ * `specFor` answers nothing for it, correctly. That put it in the gradeless
+ * bucket with the settlements and drew it in `PALETTE.GOLD`, which is how the
+ * entrance to the hardest country in the game came to look exactly like
+ * Alderbrook.
+ *
+ * VIOLET, WHICH IS THE INDEX'S OWN COLOUR everywhere else in this client, and
+ * therefore reads as "this is Index business" rather than as a fifth danger
+ * step above grim. The scale still runs parchment -> gold -> amber -> crimson
+ * and this is deliberately beside it rather than on the end of it.
+ *
+ * AND THE WORD IS WHAT ACTUALLY CARRIES IT. The note on `DANGER_INK` is the
+ * rule: *"COLOUR IS NEVER THE ONLY CHANNEL... about one man in twelve cannot
+ * tell the amber from the crimson"*. A player who cannot see this hue reads
+ * `· another map` next to the dot, which is the whole message anyway.
+ */
+export const CROSSING_INK = '#9a7fd6';
+const CROSSING_WORD = 'another map';
 
 /**
  * How far either side of the player the minimap reaches.

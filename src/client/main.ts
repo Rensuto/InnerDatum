@@ -278,6 +278,7 @@ import {
 import { drawTooltip } from './ui/tooltip.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
 import {
+  CROSSING_INK,
   MINIMAP_MARGIN,
   MINIMAP_MAX_H,
   MINIMAP_RADIUS,
@@ -927,6 +928,20 @@ let currentRealmId: string | null = null;
  * honest thing for a map to be. It is not a live feed and must not pretend.
  */
 let overworldLevel: LevelView | null = null;
+/**
+ * WHICH MAP THE WORLD MAP IS SHOWING.
+ *
+ * The title over it was the string `'THE ALDERBROOK REGION'`, hard-coded, which
+ * was true of the only overworld that existed when it was written. A player who
+ * walks into the Redaction and presses M now gets a picture of the dark
+ * territory captioned with the name of the country they left — the most
+ * confusing possible failure on a screen whose entire job is telling somebody
+ * where they are.
+ *
+ * Set beside `overworldLevel` from the same frame, so the caption and the
+ * picture cannot come from different maps.
+ */
+let overworldName: string | null = null;
 let overworldSites: readonly SiteView[] = [];
 /**
  * WHAT THE PARTS OF THE MOOR ARE CALLED. Sent once on the `realm` frame and
@@ -3202,8 +3217,17 @@ const paintHud: HudPainter = (ctx, width, height) => {
     ctx.font = '12px ui-monospace, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
+    /**
+     * THE NAME OF THE MAP THIS ACTUALLY IS, from the server, not a literal.
+     *
+     * `realm.name` is authored next to the map itself, so this caption cannot
+     * name one place while the picture shows another — which is what the
+     * hard-coded version did the moment a second overworld existed.
+     */
     ctx.fillText(
-      onIt ? 'THE ALDERBROOK REGION' : 'THE ALDERBROOK REGION — as you left it',
+      onIt
+        ? (overworldName ?? 'THE REGION').toUpperCase()
+        : `${(overworldName ?? 'THE REGION').toUpperCase()} — as you left it`,
       Math.floor(width / 2),
       inset - 2,
     );
@@ -3232,7 +3256,12 @@ const paintHud: HudPainter = (ctx, width, height) => {
     let kx = inset + 4;
     kx = swatch(kx, '#8a8070', 'made ground — nothing waits here');
     kx = swatch(kx, '#4e5a44', 'open country');
-    swatch(kx, '#141d33', 'water');
+    kx = swatch(kx, '#141d33', 'water');
+    // THE FOURTH ROW, AND IT IS NOT A TERRAIN. The other three read straight off
+    // `miniFill`; this one is a MARKER colour, and it earns the space because a
+    // way off the map is the only thing on this screen a player cannot work out
+    // by looking at it. See `CROSSING_INK`.
+    swatch(kx, CROSSING_INK, 'a way off this map');
 
     ctx.fillStyle = PALETTE.SILVER;
     ctx.font = '10px ui-monospace, monospace';
@@ -8282,6 +8311,7 @@ function applyServerMessage(msg: ServerMsg): void {
         overworldLevel = msg.level;
         overworldSites = msg.sites;
         overworldRealmId = msg.realmId;
+        overworldName = msg.name;
         // `??` AND NOT AN `if`: a server that stopped sending the table should
         // clear the captions rather than leave the last ones floating over a map
         // it no longer describes.
