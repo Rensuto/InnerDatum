@@ -1410,3 +1410,87 @@ describe('a loadout survives a snapshot and a restore', () => {
     expect(body.carried).toEqual([]);
   });
 });
+
+describe('the first thing you ever pick up', () => {
+  /** Every Margin/Record line this socket has been shown, flattened. */
+  function saidTo(client: { all: (t: string) => Record<string, unknown>[] }): string[] {
+    return client.all('log').flatMap((frame) => {
+      const rows = frame['lines'];
+      if (!Array.isArray(rows)) return [];
+      return (rows as unknown[]).map((row) => String((row as Record<string, unknown>)['text']));
+    });
+  }
+
+  it('tells a bare-legged player that their legs are bare', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A NEW CHARACTER WEARS NOTHING, AND NOTHING SAID SO.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Measured: `projectInventory` on a fresh body answers `equipped: {}` and
+     * `carried: []` — the classes have no starting kit at all. So the first
+     * thing that drops is the first gear that player has ever owned, and putting
+     * it on is their first real upgrade.
+     *
+     * The transcript said *"picks up the Reinforced Watchman's Trousers"* and
+     * stopped. A player who never opens the bag never equips anything and
+     * quietly finds the game harder than it should be — which reads as
+     * difficulty rather than as a missed step. `tools/first-session.mjs` shows
+     * the whole opening in twenty-three lines and that was the gap in it.
+     *
+     * THE SAME VOICE AS `Something is still on the floor.` — a short observation
+     * that implies an action, rather than a tutorial naming a key.
+     */
+    server = await boot('bare-legs');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    expect(body.equipped ?? {}, 'the fixture already dressed them').toEqual({});
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_trousers');
+
+    ren.send({ t: 'pickup' });
+    await ren.settle();
+
+    expect(saidTo(ren)).toContain('Nothing on your legs yet.');
+  });
+
+  it('says nothing about a slot that is already filled', async () => {
+    /**
+     * ONCE PER EMPTY SLOT, BY CONSTRUCTION. It fires only when the slot is bare
+     * at the moment of the pickup, so a player who is already wearing trousers
+     * and picks up a second pair hears nothing — at most seven of these in a
+     * career, each at the first moment it means anything.
+     */
+    server = await boot('legs-covered');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.equipped = { legs: 'item_watchmans_trousers' };
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_inspectors_slacks');
+
+    ren.send({ t: 'pickup' });
+    await ren.settle();
+
+    expect(saidTo(ren).some((line) => line.startsWith('Nothing on your'))).toBe(false);
+  });
+
+  it('says nothing about a draught, which is not worn at all', async () => {
+    // `Item.slot` is absent on a consumable, so there is no part of you it could
+    // be talking about. A "nothing on your undefined yet" would be the interface
+    // reading its own field names back to somebody.
+    server = await boot('bare-and-thirsty');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_draught_mending');
+
+    ren.send({ t: 'pickup' });
+    await ren.settle();
+
+    expect(body.carried).toContain('item_draught_mending');
+    expect(saidTo(ren).some((line) => line.startsWith('Nothing on your'))).toBe(false);
+  });
+});

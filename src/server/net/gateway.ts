@@ -6635,6 +6635,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * at it. A player in a breach naming a coat on Threadneedle Row is refused
    * because THEIR realm has no shelf, not because a distance test failed.
    */
+  /**
+   * WHAT A PLAYER CALLS THE PART OF THEM A SLOT IS. `Slot` is a wire token —
+   * `offhand`, `trinket` — and reading one back to somebody is the interface
+   * talking about itself. "Nothing on your shield arm yet" is a sentence.
+   */
+  const SLOT_WORDS: Readonly<Record<Slot, string>> = {
+    head: 'head',
+    body: 'back',
+    legs: 'legs',
+    feet: 'feet',
+    offhand: 'shield arm',
+    ring: 'hands',
+    trinket: 'pockets',
+  };
+
   const handleShopBuy = (session: Session, msg: ClientShopBuy): void => {
     const realm = realmFor(session);
     const actorId = session.actorId;
@@ -8913,6 +8928,42 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // the transcript settles the argument afterwards. Without this line the rule
     // is just a race nobody can audit.
     broadcastRecordLine(homeOf(body.id), `${nameOf(body.id)} picks up the ${item.name}.`);
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND IF THEY ARE STANDING THERE WITH NOTHING ON THAT PART OF THEM, SAY SO.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * A NEW CHARACTER WEARS NOTHING. Measured: `projectInventory` on a fresh
+     * body answers `equipped: {}` and `carried: []` — the classes have no
+     * starting kit at all, so the first thing that drops is the first gear that
+     * player has ever owned, and putting it on is their first real upgrade.
+     *
+     * Nothing told them. The transcript said *"picks up the Reinforced
+     * Watchman's Trousers"* and stopped, and a player who never opens the bag
+     * never equips anything and quietly finds the game harder than it should be
+     * — which reads as difficulty rather than as a missed step.
+     *
+     * ═══ THE SAME VOICE AS `Something is still on the floor.` ═══
+     * That line is already this game's way of nudging: a short observation that
+     * implies an action, rather than a tutorial telling somebody which key to
+     * press. This is its twin, and it is deliberately about the BODY rather than
+     * the item — "nothing on your legs" is a fact about you, and the thing you
+     * just picked up is the obvious answer to it.
+     *
+     * ONCE PER EMPTY SLOT, BY CONSTRUCTION. It fires only when that slot is bare
+     * at the moment of the pickup, so it cannot repeat for a slot already filled
+     * — at most seven of these in a career, each at the first moment it means
+     * anything. UNICAST, because what somebody is wearing is their own business
+     * and this is advice rather than an event; `broadcastRecordLine` above is
+     * the ownership record and belongs to the room.
+     */
+    if (item.slot !== undefined && body.equipped?.[item.slot] === undefined) {
+      sendMargin(session, realmFor(session), {
+        text: `Nothing on your ${SLOT_WORDS[item.slot]} yet.`,
+        depth: 0,
+      });
+    }
 
     // AND IT COSTS THE TURN — Player.lua:1313-1315 charges for exactly this, on
     // exactly this path. See `spendLootTurn`.
