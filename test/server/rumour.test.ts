@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { STANDING_LEVEL, TOWNSFOLK } from '../../src/server/content/townsfolk.ts';
 import { SITES } from '../../src/server/world/realms.ts';
-import { ALDERBROOK_REGIONS, REDACTION_SITE_ID, makeOverworld } from '../../src/shared/level.ts';
+import {
+  ALDERBROOK_REGIONS,
+  REDACTION_SITE_ID,
+  makeOverworld,
+  regionAt,
+} from '../../src/shared/level.ts';
+import { PLACE_BLURBS } from '../../src/server/content/places.ts';
 import { MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
 import { TopicId } from '../../src/shared/protocol.ts';
 
@@ -123,6 +129,65 @@ describe('the rumour that leads somewhere', () => {
       expect(early, person.name).toBeDefined();
       expect(early).not.toBe(person.later?.[TopicId.Rumour]);
     }
+  });
+
+  it('points at every site the map does not draw, in the region it is in', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THREE ROOMS WERE UNFINDABLE, AND THE CASE FILE MADE THAT MATTER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `SiteDef.hidden` keeps a marker off the world map until the player's own
+     * fog covers its cell, and `REVEAL_RADIUS` is 12. Measured: a player who
+     * walks from the spawn to EVERY visible marker — 469 steps, 10,164 cells
+     * revealed — uncovers none of the three. They sit 26, 41 and 44 tiles from
+     * the nearest thing anybody is sent to.
+     *
+     * That was a deliberate reward for wandering, and it cost nothing while it
+     * cost nothing. Then the case file started counting all seventeen rooms, so
+     * two of them being unfindable means a counter that stops at 15 of 17 with
+     * no way to learn what is missing.
+     *
+     * ═══ AND TWO OF THE FIVE RUMOURS NAMED THE WRONG COUNTRY ═══
+     * Three said *"the downs"* — where exactly ONE of the three is. The other
+     * two are in the Blackwater Wood and nothing named it. One line even said
+     * *"the strand"*, and `the Long Strand` is a real region elsewhere on the
+     * map, so it did not merely fail to help, it sent people to the wrong place.
+     *
+     * THE PROPERTY, not the prose: every hidden site must be named by some
+     * rumour, by a region that actually contains it. The writing is meant to be
+     * rewritten and this must survive that.
+     */
+    const base = makeOverworld();
+    const said = EVERYONE.map((person) => (person.topics[TopicId.Rumour] ?? '').toLowerCase());
+    expect(said.length).toBeGreaterThanOrEqual(5);
+
+    const unpointed: string[] = [];
+    for (const [cell, siteId] of base.sites) {
+      if (SITES.get(siteId)?.hidden !== true) continue;
+      const [xs, ys] = cell.split(',');
+      const region = regionAt(Number(xs), Number(ys));
+      // `the Grey Downs` -> `grey downs`, so a line may say "off the Grey Downs"
+      // or "on the Grey Downs" and still count.
+      const needle = region.replace(/^the /i, '').toLowerCase();
+      if (!said.some((line) => line.includes(needle))) unpointed.push(`${siteId} (${region})`);
+    }
+    expect(unpointed, 'hidden rooms nobody is ever told how to find').toEqual([]);
+  });
+
+  it('gives the three nobody is told about something to say on arrival', () => {
+    /**
+     * Measured: twenty of twenty-three sites carried a blurb and the three
+     * missing were EXACTLY the three hidden ones. The hardest discovery in the
+     * game — a marker that appears because you walked somewhere nobody sent you
+     * — arrived in silence, while every signposted town had a sentence ready.
+     */
+    const silent: string[] = [];
+    for (const [id, def] of SITES) {
+      if (def.hidden !== true) continue;
+      if (PLACE_BLURBS.get(id) === undefined) silent.push(id);
+    }
+    expect(silent, 'a hidden site with nothing to say when you find it').toEqual([]);
   });
 
   it('is pointing at something that is actually there', () => {

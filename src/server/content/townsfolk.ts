@@ -228,8 +228,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         },
         later: {
           // MERROW MENDS THINGS. She is the one who would notice a hole.
-          [TopicId.Rumour]:
-            'West, where the Sedge runs up against the downs. The road stops. It does not pick up again — I have asked.',
+          [TopicId.Rumour]: 'West past the Sedge. The road stops and stays stopped.',
         },
       },
     ],
@@ -261,12 +260,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Where]: 'Threadneedle for goods. The chapel to blood a coat.',
           [TopicId.Party]: 'Travel together. Nobody earns less for sharing.',
           [TopicId.Roads]: 'The made ground is safe. That is the whole of it.',
-          [TopicId.Rumour]: 'Folk come back from the downs having seen a thing.',
+          [TopicId.Rumour]: 'Folk come off the Grey Downs having seen a thing.',
         },
         later: {
           // THE REEVE KEEPS RECORDS. Hers is the administrative version.
-          [TopicId.Rumour]:
-            'There is country west of the Sedge that I am still required to file returns for. Nobody has sent one in a long time.',
+          [TopicId.Rumour]: 'West of the Sedge is country I still file returns on.',
         },
       },
     ],
@@ -306,12 +304,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Where]: 'Down to the chapel. Everyone starts there.',
           [TopicId.Party]: 'Bring somebody. The stones here are all singles.',
           [TopicId.Roads]: 'The road is kept. What is off it is not.',
-          [TopicId.Rumour]: 'There are older markers than mine in the downs.',
+          [TopicId.Rumour]: 'Older markers than mine, out in the Blackwater Wood.',
         },
         later: {
           // THE SEXTON BURIES PEOPLE. His version is about who is not buried.
-          [TopicId.Rumour]:
-            'Go west far enough, past the Sedge, and there are no stones at all. Not even bare ground where stones were. That is the part I mind.',
+          [TopicId.Rumour]: 'West past the Sedge there are no stones at all.',
         },
       },
     ],
@@ -336,12 +333,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Roads]: 'I sleep on the road. That is not laziness.',
           // THE STRONGEST HINT IN THE GAME, and it is on the person furthest
           // from anywhere, in the region that holds one of the three.
-          [TopicId.Rumour]: 'There is a stair in these downs on no map I own.',
+          [TopicId.Rumour]: 'A stair on the Grey Downs, on no map I own.',
         },
         later: {
           // CARROW WALKS EVERYWHERE. Hers is the only first-hand account.
-          [TopicId.Rumour]:
-            'I walked west once, past the Sedge, until the ground stopped being ground. I turned round. Somebody with a party might not have to.',
+          [TopicId.Rumour]: 'I walked west past the Sedge once. I turned round.',
         },
       },
     ],
@@ -365,12 +361,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Where]: 'The Underworks. Close, and it goes down gently.',
           [TopicId.Party]: 'Go in threes. The Index counts you one at a time.',
           [TopicId.Roads]: 'Off the road is where the wandering things are.',
-          [TopicId.Rumour]: 'Something stands on the strand past the trees.',
+          [TopicId.Rumour]: 'Water moves in the Blackwater Wood. Nothing feeds it.',
         },
         later: {
           // THESSALY IS AN ALCHEMIST. Hers is the one that names the mechanism.
-          [TopicId.Rumour]:
-            'The Index does not only take people. West past the Sedge it took the ground, and what it left is still standing there being taken.',
+          [TopicId.Rumour]: 'West of the Sedge the Index took the ground itself.',
         },
       },
     ],
@@ -396,6 +391,22 @@ function assertLinesFit(): void {
         // band; a cap that covered only greetings would be a cap with a hole in
         // it exactly where the longest sentences live.
         ...Object.values(spec.topics),
+        /**
+         * ═════════════════════════════════════════════════════════════════════
+         * AND `later`, WHICH WAS THE HOLE, EXACTLY WHERE THE COMMENT SAID.
+         * ═════════════════════════════════════════════════════════════════════
+         *
+         * `later` was added for the Redaction's directions and this list was
+         * not. Measured: all five of those lines ran 106 to 132 characters
+         * against a lane that holds 56 — between fifty and seventy-six over,
+         * every one of them shipped and live.
+         *
+         * The line above says a cap covering only greetings would have a hole
+         * *"exactly where the longest sentences live"*, and that is what
+         * happened: the deepest, most-written lines in the game were the ones
+         * nothing checked.
+         */
+        ...Object.values(spec.later ?? {}),
       ];
       for (const line of lines) {
         if (line.length <= LINE_MAX) continue;

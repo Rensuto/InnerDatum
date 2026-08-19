@@ -76,6 +76,33 @@ export const PLACE_BLURBS: ReadonlyMap<string, string> = new Map<string, string>
   ],
   ['site:outer_index', 'The edge of the Index, where the city stops agreeing with itself.'],
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE THREE NOBODY IS TOLD ABOUT — AND THEY WERE THE ONLY SITES WITH NO LINE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Measured: twenty of twenty-three sites carried a blurb and the three
+   * missing were exactly the three `hidden` ones. So the hardest discovery in
+   * the game — a marker that appears on your map only because you walked
+   * somewhere nobody sent you — arrived in silence, while every signposted town
+   * had a sentence waiting.
+   *
+   * Each names what it is rather than how it feels, because a player who has
+   * just found one of these already has the feeling.
+   */
+  [
+    'site:cairnfoot',
+    'Steps cut into the hill under a cairn nobody has added to in a long time. They go down further than the hill is tall.',
+  ],
+  [
+    'site:barrow_end',
+    'The last barrow in a row of them, and the only one still closed. Whoever dug the others stopped here.',
+  ],
+  [
+    'site:the_weir',
+    'Somebody built a weir in a wood with no river. It is still holding something back.',
+  ],
+
   // ─── the other map ──────────────────────────────────────────────────────
   //     One sentence for the landmass and one for each door that survived on
   //     it. THE NAMES ARE THE SAME NAMES on purpose (shared/redaction.ts argues
