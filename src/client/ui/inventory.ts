@@ -219,6 +219,7 @@ import type {
   InspectRow,
   InventoryMsg,
   ItemView,
+  ShopItemView,
   Slot,
 } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
@@ -585,6 +586,33 @@ export function hasSomethingToWear(
   equipped: Readonly<Partial<Record<Slot, ItemView>>>,
 ): boolean {
   return carried.some((item) => item.slot !== undefined && equipped[item.slot] === undefined);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THERE ANYTHING ON THIS SHELF THIS PURSE CAN ACTUALLY BUY?
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The twin of `hasSomethingToWear`, and it exists for the identical reason.
+ * That comment records the measurement: across the client `show_talents` is
+ * named to the player twice, `revive` and `respawn` once each, and
+ * `show_inventory` NOWHERE — so it fixed the bag. The SHOP lives behind the same
+ * key, in a tab of the same panel, and was left in exactly the state the bag had
+ * been in: a player stands in Threadneedle Row reading *"somebody behind every
+ * counter who will take your gold"* and is never told which key opens it.
+ *
+ * ═══ AFFORDABILITY, NOT PRESENCE, AND THAT IS THE WHOLE DESIGN ═══
+ * "You are in a shop" is true for as long as you are in the town, and
+ * `drawClassPicker`'s neighbour in ui/canvas warns what that costs: *"a line of
+ * prose that is always there becomes furniture and stops being read"*. So this
+ * asks the actionable question instead. It goes away when you buy the thing, and
+ * it never appears in a shop that has nothing for you — which is a real state
+ * and a measured one: at level 1 the Apothecary can always be afforded and the
+ * Outfitter never can, so a fresh character is pointed at Ashwick and left in
+ * peace at Threadneedle.
+ */
+export function hasSomethingToBuy(stock: readonly ShopItemView[], money: number): boolean {
+  return stock.some((item) => item.buy <= money);
 }
 
 export function tabsFor(hasShop: boolean): readonly InventoryTab[] {

@@ -245,6 +245,7 @@ import {
   inventoryPanelHitAt,
   inventoryPanelRect,
   inventoryPanelRows,
+  hasSomethingToBuy,
   hasSomethingToWear,
 } from './ui/inventory.ts';
 import {
@@ -4018,6 +4019,25 @@ async function boot(): Promise<void> {
      */
     if (inventory !== null && hasSomethingToWear(inventory.carried, inventory.equipped)) {
       parts.push(`something to put on — press ${keyHint('show_inventory')}`);
+    }
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE SHELF, WHICH IS BEHIND THE SAME KEY AND WAS NAMED NOWHERE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The block above fixed the bag after measuring that `show_inventory` was
+     * named to the player NOWHERE. The shop lives in a TAB of that same panel
+     * and was left in exactly the state the bag had been in: you walk into
+     * Threadneedle Row, the game says *"somebody behind every counter who will
+     * take your gold"*, and nothing ever tells you which key opens the counter.
+     *
+     * AFFORDABILITY RATHER THAN PRESENCE — see `hasSomethingToBuy`. "You are in
+     * a shop" stays true for as long as you stand in the town, and a line that
+     * is always there becomes furniture. This one answers a question the player
+     * can act on and then goes quiet.
+     */
+    if (shop !== null && inventory !== null && hasSomethingToBuy(shop.stock, inventory.money)) {
+      parts.push(`something you can afford — press ${keyHint('show_inventory')}`);
     }
     const invite = liveInvites()[0];
     if (invite !== undefined) {

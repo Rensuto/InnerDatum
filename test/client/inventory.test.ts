@@ -21,6 +21,7 @@ import {
   inventoryPanelHitAt,
   inventoryPanelRect,
   inventoryPanelRows,
+  hasSomethingToBuy,
   hasSomethingToWear,
 } from '../../src/client/ui/inventory.ts';
 import { ItemTier, SLOT_ORDER } from '../../src/shared/protocol.ts';
@@ -31,7 +32,13 @@ import type {
   InventoryPanelView,
   InventoryRow,
 } from '../../src/client/ui/inventory.ts';
-import type { CarriedItemView, InventoryMsg, ItemView, Slot } from '../../src/shared/protocol.ts';
+import type {
+  CarriedItemView,
+  InventoryMsg,
+  ItemView,
+  ShopItemView,
+  Slot,
+} from '../../src/shared/protocol.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -263,6 +270,56 @@ describe('knowing when to point at the bag', () => {
     expect(hasSomethingToWear(bag, {})).toBe(true);
     // ...and honours a filled slot even when it is not the first entry either.
     expect(hasSomethingToWear(bag, { head: worn('cap') })).toBe(false);
+  });
+});
+
+describe('hasSomethingToBuy', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SHOP WAS IN THE STATE THE BAG HAD BEEN IN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `hasSomethingToWear` above exists because `show_inventory` was named to the
+   * player NOWHERE. It fixed the bag — and the shop lives in a TAB of that same
+   * panel, behind that same key, and was left exactly as it was. A player walks
+   * into Threadneedle Row, reads "somebody behind every counter who will take
+   * your gold", and nothing ever says which key opens the counter.
+   *
+   * IT ASKS ABOUT AFFORDABILITY, NOT PRESENCE. "You are in a shop" is true for
+   * as long as you stand in the town, and this file's neighbours are explicit
+   * that a line which is always there becomes furniture. This one can be acted
+   * on and then goes quiet.
+   */
+  const onSale = (itemId: string, buy: number): ShopItemView => ({
+    itemId,
+    name: itemId,
+    icon: `icon_${itemId}`,
+    tier: 'common',
+    buy,
+    sell: Math.floor(buy / 20),
+  });
+
+  it('points at the counter when the purse covers something on it', () => {
+    // The measured opening: 15 gold, and a Draught of Mending at 14.
+    expect(hasSomethingToBuy([onSale('draught', 14)], 15)).toBe(true);
+  });
+
+  it('says nothing in a shop that has nothing for this purse', () => {
+    /**
+     * A REAL STATE AND A MEASURED ONE. Over 400 rolled shelves at level 1 the
+     * Outfitter's cheapest item is 24g against a 15g purse — 0% buyable — while
+     * the Apothecary is 100%. So a fresh character is pointed at Ashwick and
+     * left in peace at Threadneedle, which is the correct advice in both places.
+     */
+    expect(hasSomethingToBuy([onSale('oxfords', 24), onSale('slacks', 46)], 15)).toBe(false);
+  });
+
+  it('counts an exact match, because a purse that covers it can spend it', () => {
+    expect(hasSomethingToBuy([onSale('draught', 15)], 15)).toBe(true);
+  });
+
+  it('says nothing about an empty shelf', () => {
+    expect(hasSomethingToBuy([], 999)).toBe(false);
   });
 });
 
