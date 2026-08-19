@@ -343,10 +343,39 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           'Push again and I will stop being polite about it.',
         ],
         topics: {
-          // THE ONE A NEWCOMER NEEDS. The Reeve names the chapel too, but as an
-          // errand; this says the thing a first-timer is actually asking, which
-          // is whether they will survive it.
-          [TopicId.Where]: 'The chapel. Small, and it lets you leave.',
+          /**
+           * THE ONE A NEWCOMER NEEDS. The Reeve names the chapel too, but as an
+           * errand; this says the thing a first-timer is actually asking, which
+           * is whether they will survive it.
+           *
+           * ═══ AND NAMES THE SHOP THEY CAN ACTUALLY AFFORD ═══
+           * MEASURED, walking a fresh Watchman through the opening: a new
+           * character reaches town with 15 gold. The Reeve says *"Threadneedle
+           * for goods"*, which is a hundred-odd steps away, and the cheapest
+           * thing on that shelf is 24g — so the first shop a player is sent to
+           * sells them nothing. The one person who says *"Ashwick for draughts"*
+           * is Pinnock Vane, and he is STANDING INSIDE THREADNEEDLE ROW: you
+           * learn where the affordable shop is only after the trip to the
+           * expensive one.
+           *
+           * A Draught of Mending is 14g at level 1 (uncommon, base 12, ×123%).
+           * That is a deliberately tight fit against a 15g purse and it is the
+           * first purchase in a career — it only works if somebody in the
+           * STARTING town says the word.
+           *
+           * Bell is the right mouth for it. This topic already exists to answer
+           * "will I survive", a draught is the answer to that question, and a
+           * coat-mender pricing one against a coat is how this town talks.
+           *
+           * THE CHAPEL IS NOT LOST, it moved to the mouth that was already
+           * naming it: the Reeve says *"The chapel to blood a coat"* two steps
+           * away in the same town. A Margin line holds 56 characters — enforced
+           * at module load, which is how a 99-character version of this failed
+           * 41 test files at once — so this is a choice between the two, not a
+           * chance to say both. Of the pair, only one of them is a thing a
+           * player with 15 gold can act on today.
+           */
+          [TopicId.Where]: 'Ashwick first. A draught costs less than a coat.',
           // D12 FROM THE OTHER SIDE. The Reeve states the rule; Bell states what
           // happens when you ignore it, which is the half people act on.
           [TopicId.Party]: 'I went alone once. That is why I mend coats now.',
