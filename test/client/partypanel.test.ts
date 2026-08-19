@@ -12,6 +12,7 @@ import {
   partyPaneHitAt,
   partyPaneLayout,
   partyPaneView,
+  survivalWord,
 } from '../../src/client/ui/partypanel.ts';
 import { respawnPromptHit, respawnPromptRect } from '../../src/client/ui/respawnprompt.ts';
 import { ActorKind, ActorRank, DownedStatus, PartyAction } from '../../src/shared/protocol.ts';
@@ -210,6 +211,51 @@ describe('the pane draws the party frame and joins only what that frame cannot c
     const view = trio();
     expect(view.rows[2]?.sprite).toBeNull();
     expect(view.rows[2]?.member.hp).toBe(40);
+  });
+
+  it('does not put a stopwatch on a race that cannot be run', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE NUMBER IS ONLY TRUE ADVICE IF YOU ARE ON THEIR FLOOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED, over a socket and across the content: following is instant and
+     * costs no turn, but it drops you at the way out, `DOOR_CLEARANCE` puts no
+     * body nearer than eight tiles to that spot, and one step is exactly one
+     * tick. The follower closed from seven tiles to three as the clock went
+     * 5, 4, 3, 2, 1, 0 — in the friendliest delve in the game. None of the
+     * seventeen has a median body within the whole five turns.
+     *
+     * So the row keeps what is true — they are down, and the name still says
+     * where — and drops the countdown, which from another floor is an
+     * instruction to run that always ends three tiles short.
+     */
+    const clock = {
+      status: DownedStatus.Downed,
+      marker: 'ui_marker_downed',
+      turnsLeft: 3,
+      total: 5,
+    };
+    expect(survivalWord(clock, false)).toBe('DOWN 3/5');
+    expect(survivalWord(clock, true)).toBe('DOWN');
+  });
+
+  it('says ERASED the same way wherever you are standing', () => {
+    /**
+     * NOT A COUNTDOWN IN EITHER PLACE, so there is nothing to withhold. Erased
+     * is a state rather than a window — `revive` refuses an erased body by
+     * design — and a body on your own floor is no more rescuable than one two
+     * realms away. Asserted so a later edit to the branch above cannot quietly
+     * take the word with it.
+     */
+    const gone = {
+      status: DownedStatus.Erased,
+      marker: 'ui_marker_erased',
+      turnsLeft: 0,
+      total: 5,
+    };
+    expect(survivalWord(gone, false)).toBe('ERASED');
+    expect(survivalWord(gone, true)).toBe('ERASED');
   });
 
   it('takes the countdown off the party frame for a member on another floor', () => {

@@ -753,6 +753,41 @@ function stateWord(row: PartyPaneRow): { readonly word: string; readonly ink: st
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A STOPWATCH ON A RACE THAT IS NOT RUNNING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `DOWN 3/5` is exactly right for a body on YOUR floor. `REVIVE_REACH` is one
+ * tile, the clock is five turns, and a party member fighting beside them is
+ * already within a step or two — that is the mechanic game-design.md § 9 is
+ * describing, and the number is what makes it a decision.
+ *
+ * ═══ AND IT CANNOT BE WON FROM ANOTHER FLOOR. MEASURED, NOT ASSUMED ═══
+ * `handleFollow` crosses instantly and costs no turn, so the whole of the
+ * question is the walk from where it drops you — and it drops you at the way
+ * out. `DOOR_CLEARANCE` is 8, so no body can be placed nearer than eight tiles
+ * to that spot, and one step is exactly one tick of the clock. Driven over a
+ * socket in the friendliest delve in the game: the follower closed from seven
+ * tiles to three as the clock went 5, 4, 3, 2, 1, 0. Across all seventeen
+ * delves the MEDIAN body is 11 to 30 tiles from the door, and **none** of them
+ * has a median within the whole five turns. (`tools/rescue-reach.mjs`.)
+ *
+ * So the number, shown to somebody in another realm, is an instruction to run
+ * that always ends three tiles short. It manufactures an urgency the player
+ * cannot discharge and then reads as the game having cheated — and § 9 is clear
+ * that what is actually at stake is a setback, not a character: *"the floor
+ * resets and the party restarts it. No permadeath, no loss."*
+ *
+ * WHAT IS TRUE STAYS ON THE ROW. They are down, and the name still carries
+ * where. What goes is the stopwatch, because the useful move from town is to
+ * follow — and that is a control, not a countdown.
+ */
+export function survivalWord(downed: DownedView, elsewhere: boolean): string {
+  if (downed.status === DownedStatus.Erased) return 'ERASED';
+  return elsewhere ? 'DOWN' : `DOWN ${String(downed.turnsLeft)}/${String(downed.total)}`;
+}
+
+/**
  * ONE FULL ROW.
  *
  * LAYOUT, inside 34 pixels:
@@ -906,7 +941,7 @@ function drawRow(
     // matters about a body on the floor, and printing 0/58 beside it would put
     // the irrelevant one first.
     const erased = downed.status === DownedStatus.Erased;
-    const text = erased ? 'ERASED' : `DOWN ${downed.turnsLeft}/${downed.total}`;
+    const text = survivalWord(downed, member.away !== null);
     ctx.textAlign = 'right';
     ctx.fillStyle = erased ? PALETTE.GREY_HI : PALETTE.ORANGE;
     ctx.fillText(text, contentRight, barY + BAR_H / 2);
