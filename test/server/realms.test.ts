@@ -163,6 +163,68 @@ describe('the overworld', () => {
     expect(realms.all().filter((r) => r.kind === RealmKind.Overworld)).toHaveLength(1);
   });
 
+  it('is the ONLY overworld, and here is the list of what assumes that', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * THIS ASSERTION IS A LOAD-BEARING CONSTRAINT, NOT A HEADCOUNT.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * The design has an open intention to add a second landmass — the dark
+     * territory, a Redaction of this map. Four things in this codebase assume
+     * there is exactly one overworld, and **every one of them fails silently**:
+     * a second `RealmKind.Overworld` realm would boot, be walkable, and be wrong
+     * in ways nobody would see for an evening.
+     *
+     * They are written down HERE, next to the assertion that currently holds
+     * them, because a constraint whose reasons live in somebody's head is a
+     * constraint that gets deleted by whoever finds the assertion inconvenient.
+     *
+     *   1. `gateway.ts` `leaveRealm` does `const to = realms.overworld` with no
+     *      condition. Walking out of a delve on landmass two puts the body on
+     *      landmass ONE, at landmass two's coordinates — a teleport to wherever
+     *      those numbers happen to land. `session.enteredFrom` records a TileXY
+     *      and would have to carry a realm id.
+     *
+     *   2. THE WORST ONE. `gateway.ts`'s fog is `Map<actorId, Uint8Array>` —
+     *      keyed by actor ALONE — `fogFor` sizes it from
+     *      `realms.overworld.world.level`, and `revealFor` fires for ANY realm
+     *      whose kind is Overworld. So two overworlds do not misalign, they
+     *      **MERGE**: walking the Redaction reveals the moor and the other way
+     *      round, into one bitset that `prefsFields` then persists as one
+     *      `explored` string. The client merges rather than replaces
+     *      (deliberately — "a frame that arrived after some walking must not
+     *      un-see ground the player just crossed"), so it never self-corrects.
+     *      Identical dimensions HIDE this rather than prevent it: with different
+     *      sizes the bits scramble and somebody notices in a minute.
+     *
+     *   3. `SiteDef.kind` is typed `Common | Inner` and `open()` has no third
+     *      branch, so there is no code path that puts a body into a second
+     *      Overworld realm at all. Building one as `Common` typechecks, boots
+     *      and is walkable — and silently disables the roamer tick, the fog
+     *      reveal, the `explored` frame, the exit rule, the nearest-site
+     *      bearings and `leaveRealm`'s refusal, because all six gate on
+     *      `kind === Overworld`.
+     *
+     *   4. `MAX_ROAMERS` is a flat 18 tuned against 9,327 walkable cells, so a
+     *      second landmass would halve the danger on both.
+     *
+     * WHEN THE SECOND MAP LANDS, this test should be REPLACED by the invariant
+     * the fog code actually depends on and which nobody has ever written down:
+     * every Overworld realm has identical `w` and `h`. Not deleted — replaced.
+     */
+    const realms = makeRealms();
+    const overworlds = realms.all().filter((r) => r.kind === RealmKind.Overworld);
+    expect(overworlds).toHaveLength(1);
+
+    // AND THE FOG'S UNSTATED ASSUMPTION, ASSERTED WHILE IT IS STILL TRIVIALLY
+    // TRUE: one bitset size for every overworld. It holds vacuously today, and
+    // the day it stops holding vacuously is the day it starts earning its keep.
+    const sizes = new Set(
+      overworlds.map((r) => `${String(r.world.level.w)}x${String(r.world.level.h)}`),
+    );
+    expect(sizes.size).toBe(1);
+  });
+
   it('boots with the city plus every town, and no instances', () => {
     // Common realms are built eagerly so `all()` is a stable set the pump can
     // iterate, and so two people stepping through the office door in the same

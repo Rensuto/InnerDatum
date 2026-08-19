@@ -320,3 +320,47 @@ describe('the reaper covers every way an instance can empty', () => {
     expect(server.realms.get(server.realms.overworld.id)).toBeDefined();
   });
 });
+
+describe('the door leads back to the map you came in from', () => {
+  it('returns a body to the realm it entered from, not to a hardcoded one', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONE OF THE FOUR THINGS THAT WOULD BREAK SILENTLY ON A SECOND LANDMASS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `leaveRealm` read `realms.overworld` unconditionally — correct while there
+     * is exactly one, and a silent teleport the moment there are two: walking
+     * out of a delve on the second map would put the body on the FIRST, at the
+     * second map's coordinates, wherever those numbers happen to land.
+     *
+     * It now leaves by `Session.enteredFromRealm`.
+     *
+     * ═══ AND THIS TEST CANNOT FAIL TODAY. CHECKED, AND SAID OUT LOUD. ═══
+     * Deleting the line that records the realm leaves all four tests in this
+     * file green, because with one overworld the fallback answers the same. So
+     * this is a FORWARD assertion, in the same spirit as the region-tiling sweep
+     * that "is here to fail on the refactor, not on the typo": it pins the
+     * behaviour a second landmass needs, in the place somebody would look, and
+     * it starts biting the day `createRealms` can build two overworlds.
+     *
+     * It is not a guard yet. Pretending otherwise would be worse than the gap.
+     * `test/server/realms.test.ts` lists the other three blockers.
+     */
+    const client = await connect(server.port);
+    const actorId = await client.hello();
+    const home = server.realms.overworld.id;
+
+    await walkIntoAnAmbush(client, actorId);
+    expect(server.realms.realmOf(actorId)?.id, 'never got into the breach').not.toBe(home);
+
+    // Step off the threshold and back onto it — `Session.exitArmed` requires the
+    // door to be armed, which is deliberately two steps so a stray key cannot
+    // eject you on arrival.
+    client.send({ t: 'move', dir: 'n' });
+    await sleep(60);
+    client.send({ t: 'move', dir: 's' });
+    await sleep(150);
+
+    expect(server.realms.realmOf(actorId)?.id).toBe(home);
+  });
+});

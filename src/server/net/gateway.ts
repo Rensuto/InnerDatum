@@ -446,6 +446,26 @@ type Session = {
    */
   enteredFrom: TileXY | null;
   /**
+   * WHICH overworld that tile is on. Null when they have not come in from one.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TODAY THIS IS ALWAYS `realm:overworld` AND THAT IS THE POINT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `leaveRealm` used to read `realms.overworld` unconditionally, which is
+   * correct while there is exactly one — and is a silent teleport the moment
+   * there are two: walking out of a delve on a second landmass would put the
+   * body on the FIRST one, at the second one's coordinates, wherever those
+   * numbers happen to land.
+   *
+   * The design has a standing intention to add that second landmass (the dark
+   * territory), and `test/server/realms.test.ts` lists this as one of the four
+   * things that would break silently. This is the cheapest of the four to close
+   * and the only one that can be exercised today: with one overworld the
+   * behaviour is identical, and the test that proves you come back to the realm
+   * you left from goes on passing when there are two.
+   */
+  enteredFromRealm: string | null;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * HAS THIS BODY STEPPED OFF THE THRESHOLD YET? THE EXIT IS NOT LIVE UNTIL IT
    * HAS, AND SHIPPING WITHOUT THIS COST AN ENTIRE PLAYTEST.
@@ -6199,7 +6219,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `Session.exitArmed`.
     if (!session.exitArmed) return false;
 
-    const to = realms.overworld;
+    /**
+     * BACK THE WAY YOU CAME IN, and `realms.overworld` only as the fallback.
+     *
+     * The fallback is not dead code: a body can be standing in a delve without
+     * this session having recorded an entry — a reconnect resolves into whatever
+     * realm holds the body, and `hello` does not replay the walk that put it
+     * there. Sending that player to the one overworld is the same answer this
+     * line has always given, and it is the right one while there is one map.
+     */
+    const cameFrom =
+      session.enteredFromRealm === null ? undefined : realms.get(session.enteredFromRealm);
+    const to =
+      cameFrom !== undefined && cameFrom.kind === RealmKind.Overworld ? cameFrom : realms.overworld;
     // ONE-WAY, AND ONLY FOR AN AMBUSH. A delve stays open behind you.
     if (from.lingerMs === 0) from.sealed = true;
 
@@ -6226,6 +6258,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (!moved) app.log.warn({ actorId, back }, 'could not restore the entry tile');
     }
     session.enteredFrom = null;
+    // CLEARED WITH THE TILE IT DESCRIBES. Two halves of one fact, and a stale
+    // realm id under a null coordinate would be a doorway to nowhere.
+    session.enteredFromRealm = null;
     // Back in the open. The next door they walk into arms from scratch.
     session.exitArmed = false;
 
@@ -6400,7 +6435,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // WHERE TO PUT THEM BACK. Recorded only when leaving the overworld, so a
     // delve reached from a town would return to the town's doorstep rather than
     // to a city cell nobody was standing on.
-    if (from.kind === RealmKind.Overworld) session.enteredFrom = { x: body.x, y: body.y };
+    if (from.kind === RealmKind.Overworld) {
+      session.enteredFrom = { x: body.x, y: body.y };
+      // AND WHICH MAP THOSE COORDINATES BELONG TO. See `Session.enteredFromRealm`.
+      session.enteredFromRealm = from.id;
+    }
 
     // ═══ REMOVE, THEN PLACE, AND THE ORDER MATTERS FOR THE OLD FLOOR ═══
     // `left` is what takes the token off everybody else's screen in the realm
@@ -9730,6 +9769,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // with no `opts.realms` never leaves this value.
       realmId: null,
       enteredFrom: null,
+      enteredFromRealm: null,
       exitArmed: false,
       region: null,
       hiddenSeen: 0,
