@@ -204,12 +204,18 @@ export function paintMap(paint: MapPaint): number {
         : site.crossing === true
           ? CROSSING_INK
           : ((site.danger === undefined ? undefined : DANGER_INK[site.danger]) ?? PALETTE.GOLD);
+    // A CLOSED CASE KEEPS ITS COLOUR AND LOSES ITS EMPHASIS. `globalAlpha` and
+    // not a second palette: the grade still has to be readable, because "have I
+    // done this" and "how bad is it" are two questions and the map answers both.
+    const wasAlpha = ctx.globalAlpha;
+    if (site.filed === true) ctx.globalAlpha = wasAlpha * FILED_ALPHA;
     ctx.fillRect(
       ox + site.x * cell - Math.floor((dot - cell) / 2),
       oy + site.y * cell - Math.floor((dot - cell) / 2),
       dot,
       dot,
     );
+    ctx.globalAlpha = wasAlpha;
   }
 
   /**
@@ -310,7 +316,16 @@ export function paintMap(paint: MapPaint): number {
             ? undefined
             : DANGER_INK[site.danger];
       const suffix = site.crossing === true ? CROSSING_WORD : site.danger;
-      const label = suffix === undefined ? site.name : `${site.name} · ${suffix}`;
+      /**
+       * `filed` IS APPENDED, NOT SUBSTITUTED. The grade of a room you have
+       * cleared is still the grade of that room — a player deciding whether to
+       * go back needs both facts, and dropping the danger word to make space
+       * for the new one would trade a warning for a receipt.
+       */
+      const parts = [suffix, site.filed === true ? FILED_WORD : undefined].filter(
+        (part): part is string => part !== undefined,
+      );
+      const label = parts.length === 0 ? site.name : `${site.name} · ${parts.join(' · ')}`;
 
       // A DARK PLATE UNDER THE TEXT. The region is mostly mid-green field and
       // pale road; a bare 10px label on that is unreadable at exactly the
@@ -319,8 +334,15 @@ export function paintMap(paint: MapPaint): number {
       ctx.fillStyle = 'rgba(10, 8, 19, 0.72)';
       ctx.fillRect(flip ? tx - w - 3 : tx - 3, dy - 7, w + 6, 14);
 
+      // THE TEXT RECEDES WITH THE DOT. Dimming one and not the other reads as a
+      // rendering fault rather than as a closed case — and the plate behind it
+      // is deliberately NOT dimmed, because the label still has to be legible
+      // against the field it sits on.
+      const wasTextAlpha = ctx.globalAlpha;
+      if (site.filed === true) ctx.globalAlpha = wasTextAlpha * FILED_ALPHA;
       ctx.fillStyle = grade ?? PALETTE.PARCHMENT;
       ctx.fillText(label, tx, dy);
+      ctx.globalAlpha = wasTextAlpha;
     }
     ctx.textAlign = 'left';
   }
@@ -388,6 +410,30 @@ const DANGER_INK: Readonly<Record<string, string>> = {
  */
 export const CROSSING_INK = '#9a7fd6';
 const CROSSING_WORD = 'another map';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND A CASE THIS PLAYER HAS ALREADY CLOSED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The map's job is to answer *"where should I go"*, and until now it answered
+ * it identically on your first evening and your fifth: twenty-odd markers, no
+ * mark on any of them, no way to tell the room you cleared last week from the
+ * one you have never opened. See `world/casefile.ts`.
+ *
+ * DIMMED RATHER THAN RECOLOURED, and the grade is KEPT. A closed case is not a
+ * different KIND of place and its danger word is still true — a player deciding
+ * to go back to a `grim` room they have already done needs to know it is still
+ * grim. So the marker keeps its colour and loses its emphasis, which is what a
+ * map does with somewhere you have been.
+ *
+ * AND THE WORD IS STILL THE CHANNEL. `DANGER_INK`'s rule — *"about one man in
+ * twelve cannot tell the amber from the crimson"* — applies to a dimmed hue far
+ * harder than to a distinct one, so `filed` is printed. A player who cannot see
+ * the dimming reads `· filed` and has the whole message.
+ */
+const FILED_ALPHA = 0.45;
+const FILED_WORD = 'filed';
 
 /**
  * How far either side of the player the minimap reaches.

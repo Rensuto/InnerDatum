@@ -3268,7 +3268,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillText(
-      'a marker names the room and how bad it is · M to close',
+      'a marker names the room, how bad it is, and whether you closed it · M to close',
       width - inset - 4,
       keyY + 1,
     );

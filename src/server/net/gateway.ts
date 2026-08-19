@@ -115,6 +115,7 @@ import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
 import { shouldAnnounceCleared } from '../world/cleared.ts';
+import { fileableCount, isFileable, knownFiled } from '../world/casefile.ts';
 // `DELVES` IS DELIBERATELY NOT IMPORTED HERE ANY MORE. Both of this file's
 // lookups — the danger grade on the world map and the one in the bearing list —
 // asked the raw table, and the raw table answers `undefined` for the Redaction's
@@ -1422,6 +1423,8 @@ export type CharacterSnapshot = {
   readonly explored?: string;
   /** The same for every OTHER overworld, keyed by realm id. See `applyRestore`. */
   readonly exploredElsewhere?: Readonly<Record<string, string>>;
+  /** Site ids this character has cleared. See `world/casefile.ts`. */
+  readonly filed?: readonly string[];
 };
 
 /**
@@ -1575,6 +1578,8 @@ export type CharacterRestore = {
   readonly explored?: string;
   /** The same for every OTHER overworld, keyed by realm id. */
   readonly exploredElsewhere?: Readonly<Record<string, string>>;
+  /** Site ids this character has cleared. See `world/casefile.ts`. */
+  readonly filed?: readonly string[];
 };
 
 /**
@@ -3002,6 +3007,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     keybinds?: Readonly<Record<string, readonly string[]>>;
     explored?: string;
     exploredElsewhere?: Readonly<Record<string, string>>;
+    filed?: readonly string[];
   } => ({
     ...(actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) }),
     // WHAT THEY HAVE WALKED. Absent when this process has never revealed
@@ -3034,6 +3040,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     ...(() => {
       const elsewhere = exploredElsewhere(actor.id);
       return elsewhere === undefined ? {} : { exploredElsewhere: elsewhere };
+    })(),
+    /**
+     * AND THE CASE FILE, under the same carry-forward rule as the two above: an
+     * absent field means "this producer cannot say" and leaves the disk alone,
+     * so a process that has never seen this character clear anything cannot
+     * erase what they closed last week.
+     *
+     * FILTERED THROUGH `knownFiled` ON THE WAY OUT AS WELL AS IN. An id this
+     * build no longer recognises is dropped rather than written back, so a save
+     * cannot accumulate the names of places that stopped existing.
+     */
+    ...(() => {
+      const mine = filed.get(actor.id);
+      if (mine === undefined || mine.size === 0) return {};
+      const known = knownFiled(mine, SITES);
+      return known.length === 0 ? {} : { filed: known };
     })(),
   });
 
@@ -3080,6 +3102,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * its own dimensions and a map of another size is simply another entry.
    */
   const fog = new Map<string, Map<string, Uint8Array>>();
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT EACH CHARACTER HAS FINISHED. See `world/casefile.ts` for the argument.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * PER CHARACTER AND NOT PER PARTY, which is the same call the fog makes and
+   * for a stronger reason: six people can walk into the Underworks together and
+   * each of them closed that case, so each of their files records it. A party
+   * that splits up next week does not un-clear anything.
+   *
+   * KEYED BY SITE, NOT BY REALM. A delve's realm id carries a per-opening
+   * sequence number (`realm:site:underworks:3`) and can never match again — the
+   * file is about the PLACE, which is the thing on the map with a name.
+   */
+  const filed = new Map<string, Set<string>>();
+
+  const filedFor = (actorId: string): Set<string> => {
+    const mine = filed.get(actorId) ?? new Set<string>();
+    filed.set(actorId, mine);
+    return mine;
+  };
 
   const fogFor = (actorId: string, realm?: Realm): Uint8Array => {
     const byRealm = fog.get(actorId) ?? new Map<string, Uint8Array>();
@@ -4001,6 +4045,49 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     clearedRealms.add(realm.id);
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND IT GOES IN EVERY WITNESS'S CASE FILE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * HERE, AND NOT ANYWHERE ELSE, because `shouldAnnounceCleared` is this
+     * game's ONE definition of a room being finished and it was arrived at the
+     * expensive way — three wrong versions, each of which shipped a line into a
+     * live log, including one that congratulated a solo player over their own
+     * corpse. A second definition of "cleared" written for the file would be
+     * that whole argument had again, and it would drift.
+     *
+     * EVERYBODY STILL STANDING, which is the same population the announcement
+     * is for: `standingPlayers` counts players who are alive and not down, so a
+     * body being carried is not a witness and does not get the credit. That is
+     * harsh and it is right — the file is what YOU finished.
+     */
+    const siteId = full.siteId;
+    const siteDef = siteId === undefined ? undefined : SITES.get(siteId);
+    if (siteId !== undefined && siteDef !== undefined && isFileable(siteDef)) {
+      for (const body of realm.world.allActors()) {
+        if (body.kind !== ActorKind.Player || !body.alive) continue;
+        if (opts.downed !== undefined && isDowned(opts.downed, body.id)) continue;
+        const mine = filedFor(body.id);
+        if (mine.has(siteId)) continue;
+        mine.add(siteId);
+        // THE FILE IS RECORDED EVEN IF NOBODY IS LISTENING. The line below is
+        // unicast and needs a socket; the entry above does not, so a player
+        // whose connection dropped between the killing blow and this line still
+        // closed the case. `continue` after the record, never before it.
+        const conn = connByActor.get(body.id);
+        const session = conn === undefined ? undefined : sessions.get(conn);
+        if (session === undefined) continue;
+        // THE COUNT IS THE POINT. "Filed." alone is a receipt; "filed 3 of 17"
+        // is the first time this game has ever told a player how big it is, and
+        // a gap in a file is a thing somebody can decide to go and close.
+        sendMargin(session, realm, {
+          text: `Filed. ${String(knownFiled(mine, SITES).length)} of ${String(fileableCount(SITES))}.`,
+          depth: 0,
+        });
+        sendSites(session);
+      }
+    }
     const loot = realm.world.groundItems().length;
     broadcastRecordLine(realm, `${full.name} is quiet now.`);
 
@@ -4901,6 +4988,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       }
       fog.set(actor.id, byRealm);
     }
+    /**
+     * THE CASES THEY HAD ALREADY CLOSED.
+     *
+     * `knownFiled` drops anything this build does not recognise, which is the
+     * only honest answer to a save written under an older content set: the
+     * alternative is a counter reading "filed 18 of 17" in the one place a
+     * player looks to feel like they are getting somewhere.
+     */
+    if (restore.filed !== undefined && restore.filed.length > 0) {
+      filed.set(actor.id, new Set(knownFiled(restore.filed, SITES)));
+    }
     if (restore.keybinds === undefined) return;
     actor.keybinds = keybindsRecord(restore.keybinds);
     app.log.info(
@@ -5336,6 +5434,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           marker: def.marker,
           name: def.name,
           ...(spec === undefined ? {} : { danger: dangerWord(spec) }),
+          // AND WHETHER THIS PLAYER HAS ALREADY CLOSED IT. Per viewer, like the
+          // hidden-site filter above — two people looking at the same map see
+          // their own progress, because a case file is a fact about a character.
+          ...(actorId !== undefined && filed.get(actorId)?.has(siteId) === true
+            ? { filed: true }
+            : {}),
           // AND A DOOR OFF THIS MAP SAYS SO. See `SiteView.crossing`: an
           // Overworld-kind site is the one thing that is neither a room nor a
           // settlement, and without this it drew as the second.

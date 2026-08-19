@@ -4302,6 +4302,20 @@ export type SiteView = {
    * field draws exactly what it drew before.
    */
   readonly crossing?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE VIEWER HAS ALREADY CLOSED THIS ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * PER VIEWER, like `hidden`'s fog filter and unlike everything else on this
+   * type: `danger` and `crossing` are facts about the place, and this is a fact
+   * about the person looking. Two players standing on the same tile see the
+   * same map with different marks on it, which is correct — a case file belongs
+   * to a character.
+   *
+   * ADDITIVE AND OPTIONAL, so no protocol bump. See `world/casefile.ts`.
+   */
+  readonly filed?: boolean;
 };
 
 /**

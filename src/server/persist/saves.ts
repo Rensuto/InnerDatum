@@ -597,6 +597,25 @@ export type CharacterFile = {
    */
   readonly exploredElsewhere?: Readonly<Record<string, string>>;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CASES THIS CHARACTER HAS CLOSED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Site ids, not realm ids — a delve's realm carries a per-opening sequence
+   * number and can never match again, while the site is the thing on the map
+   * with a name. See `world/casefile.ts` for what is fileable and why towns,
+   * ambushes and the crossing are not.
+   *
+   * SMALL AND BOUNDED, unlike the two fog fields above it: seventeen ids at
+   * most, and the producer filters through `knownFiled` on the way out so a
+   * save cannot accumulate the names of places that stopped existing.
+   *
+   * NO SCHEMA BUMP — docs/data-schemas.md:48-49, an OPTIONAL field needs none.
+   * A v1 file loads as a character who has closed nothing, which is the honest
+   * answer: nothing recorded it at the time.
+   */
+  readonly filed?: readonly string[];
+  /**
    * GOLD. Optional, so NO SCHEMA BUMP — docs/data-schemas.md:48-49, the same
    * ground `keybinds` and `explored` set out above. A v1 file without it loads
    * as a character with the birth purse.
@@ -767,6 +786,8 @@ export type CharacterInit = {
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
   readonly exploredElsewhere?: Readonly<Record<string, string>>;
+  /** Site ids this character has cleared. See CharacterFile. */
+  readonly filed?: readonly string[];
   /** Gold. Omit for a fresh character — `createCharacterFile` supplies the birth purse. */
   readonly money?: number;
   readonly resources: SavedResources;
@@ -821,6 +842,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     keybinds: init.keybinds,
     explored: init.explored,
     exploredElsewhere: init.exploredElsewhere,
+    filed: init.filed,
     // A DEFAULT, unlike the three lines above it: every character HAS a purse,
     // exactly as every character has a level. `??` and not a bare pass-through,
     // so a caller that supplies a level and nothing else gets the birth grant
@@ -1053,6 +1075,19 @@ function parseExploredElsewhere(raw: unknown): Readonly<Record<string, string>> 
     if (typeof bits === 'string') out[realmId] = bits;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The closed cases, dropped entry by entry.
+ *
+ * `undefined` when there is nothing usable, so `createCharacterFile`'s
+ * carry-forward rule reads "cannot say" rather than "there are none" — the same
+ * distinction `keybinds`, `explored` and `exploredElsewhere` all turn on.
+ */
+function parseFiled(raw: unknown): readonly string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = (raw as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '');
+  return out.length > 0 ? out : undefined;
 }
 
 function parseMoney(value: unknown, problems: string[]): number {
@@ -1531,6 +1566,10 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // THE SAME REPAIR-NEVER-REJECT RULE, applied per entry rather than to the
       // whole record: one hand-edited key does not cost a player the other map.
       exploredElsewhere: parseExploredElsewhere(doc.exploredElsewhere),
+      // REPAIR, NEVER REJECT: a non-array is dropped and anything in it that is
+      // not a string is skipped, so one hand-edited entry does not cost the
+      // player every case they have closed.
+      filed: parseFiled(doc.filed),
       money: parseMoney(doc.money, problems),
       resources,
       talentCooldowns: parseCooldowns(doc.talentCooldowns, problems),
@@ -2316,6 +2355,8 @@ export type SavedPrefs = {
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
   readonly exploredElsewhere?: Readonly<Record<string, string>>;
+  /** Site ids this character has cleared. See CharacterFile. */
+  readonly filed?: readonly string[];
 };
 
 /** A snapshot from a producer that may or may not know about items or keys. */
@@ -2404,6 +2445,8 @@ type Binding = {
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
   readonly exploredElsewhere?: Readonly<Record<string, string>>;
+  /** Site ids this character has cleared. See CharacterFile. */
+  readonly filed?: readonly string[];
 };
 
 export type CharacterBridgeOptions = {
@@ -2509,6 +2552,10 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // the whole record, because the producer holds every map it knows about
       // and a merge would resurrect a realm that no longer exists.
       exploredElsewhere: snapshot.exploredElsewhere ?? binding.exploredElsewhere,
+      // AND THE CASE FILE, under the same rule: a build that cannot say leaves
+      // the disk as it found it. Losing this is worse than losing fog — country
+      // can be re-walked in a minute, and a closed case is a session's work.
+      filed: snapshot.filed ?? binding.filed,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
       // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
       // are intra-turn budgets refilled from the class every turn, so a stored
@@ -2675,6 +2722,10 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // written back as absent on the next autosave. That failure is invisible
       // until somebody notices a region they walked has gone black again.
       exploredElsewhere: file.exploredElsewhere,
+      // NAMED HERE FOR THE REASON THE `explored` LINE GIVES: this literal is
+      // rebuilt rather than spread, so a field left out of it loads, is never
+      // returned, and is written back as absent on the next autosave.
+      filed: file.filed,
     };
   };
 
