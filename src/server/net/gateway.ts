@@ -5604,6 +5604,49 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return owner?.enteredFromRealm ?? null;
   };
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHICH OF THIS VIEWER'S PARTY ARE STANDING INSIDE A GIVEN SITE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The other half of `partyMarks` (ui/mapview.ts): that one marks everybody on
+   * the map, this one names everybody behind a door on it, and between them
+   * every member of a party is one or the other.
+   *
+   * BY SITE ID, NEVER BY NAME. Measured: all twenty-two realms carry their
+   * site's name and six of those names are duplicated across the two landmasses
+   * — `redaction:underworks` and `underworks` are both "The Underworks". A name
+   * join would put a friend in the Redaction onto the Alderbrook door.
+   *
+   * THE VIEWER'S OWN PARTY AND NOBODY ELSE'S — `markersFor` is already per-viewer
+   * for fog and for `filed`, and a crossing is not the room's business.
+   *
+   * ═══ AND THERE IS NO "SKIP YOURSELF" LINE, BECAUSE IT CANNOT FIRE ═══
+   * One was written and then deleted. Somebody standing in a room is not
+   * "behind a door" from their own point of view, so skipping the viewer looks
+   * obviously right — and reverting it changed nothing, twice, which is what
+   * sent me to measure instead of assume:
+   *
+   *   the OVERWORLD realm has `siteId === undefined`, so a viewer standing on
+   *   the map matches none of its doors;
+   *   an INNER realm carries ZERO site markers, so from inside a room there is
+   *   no door on screen to be named on.
+   *
+   * A viewer can therefore never be a member of this list. The day an inner
+   * realm draws the overworld's doors, the skip comes back with it.
+   */
+  const partyInside = (actorId: string | undefined, siteId: string): readonly string[] => {
+    const realms = opts.realms;
+    const parties = opts.parties;
+    if (actorId === undefined || realms === undefined || parties === undefined) return [];
+    const out: string[] = [];
+    for (const memberId of membersOf(parties, actorId)) {
+      if (realms.realmOf(memberId)?.siteId !== siteId) continue;
+      out.push(nameOf(memberId));
+    }
+    return out;
+  };
+
   const markersFor = (realm: Realm, actorId?: string): SiteView[] => {
     const authored = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
       const def = SITES.get(siteId);
@@ -5656,6 +5699,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           // Overworld-kind site is the one thing that is neither a room nor a
           // settlement, and without this it drew as the second.
           ...(def.kind === RealmKind.Overworld ? { crossing: true } : {}),
+          // AND WHO OF YOUR PARTY IS INSIDE IT. See `SiteView.party` — joined by
+          // SITE ID rather than by name, because six Redaction rooms share a
+          // name with an Alderbrook one and a name join would mark the wrong
+          // landmass.
+          ...(() => {
+            const inside = partyInside(actorId, siteId);
+            return inside.length === 0 ? {} : { party: inside };
+          })(),
         },
       ];
     });
@@ -5711,6 +5762,43 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       realmId: realm.id,
       sites: markersFor(realm, session.actorId ?? undefined),
     });
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * SOMEBODY'S PARTY NEEDS A NEW MAP — they just went through a door, or came
+   * back out of one.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `SiteView.party` names who is behind each door, so the moment a member
+   * crosses, every OTHER member's map is out of date. Nothing else would send
+   * one: `sendSites` fires when a case is filed, when the roamers move, and when
+   * fog uncovers a hidden site — and a friend walking into the Underworks is
+   * none of those. The mark would appear whenever a roamer next happened to
+   * shuffle, which is indistinguishable from a bug.
+   *
+   * THE SAME SHAPE AS `PumpResult.displaced`: the fact was computed correctly and
+   * nothing delivered it, which is the half that is easy to miss because the
+   * code that produces it reads fine.
+   *
+   * CALLED FROM BOTH CROSSINGS AND NOWHERE ELSE. A body changes realm in exactly
+   * two places — `crossIntoRealm` and `leaveRealm`, which does its own carry
+   * rather than calling the other — so this is invoked from each, at the line
+   * that moves the routing. Anything that grows a third crossing must call it
+   * too, and the grep that finds them is `session.realmId = `.
+   *
+   * ONLY THE PARTY, and only sockets that have finished `hello`: a crossing is
+   * nobody else's business and `markersFor` is per-viewer anyway.
+   */
+  const refreshPartySites = (actorId: string | null): void => {
+    const parties = opts.parties;
+    if (actorId === null || parties === undefined) return;
+    for (const memberId of membersOf(parties, actorId)) {
+      if (memberId === actorId) continue;
+      const conn = connByActor.get(memberId);
+      const mate = conn === undefined ? undefined : sessions.get(conn);
+      if (mate !== undefined && mate.helloDone) sendSites(mate);
+    }
   };
 
   const sendRealm = (session: Session): void => {
@@ -6813,6 +6901,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     to.engine.join(actorId);
     to.engine.setConnected(actorId, true);
     session.realmId = to.id;
+    // AND THEIR PARTY'S MAPS ARE NOW WRONG. See `refreshPartySites`.
+    refreshPartySites(actorId);
     sendRealm(session);
     // WALKING OUT OF A SHOP IS ALSO A SHOP EVENT. Sent after the routing moves,
     // so this resolves to the room they arrived in — and silent when that room
@@ -7061,6 +7151,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // resolves through `realmFor`, so a frame sent while this still said the old
     // realm would be addressed to the room they just left.
     session.realmId = to.id;
+    // AND THEIR PARTY'S MAPS ARE NOW WRONG. See `refreshPartySites`.
+    refreshPartySites(actorId);
 
     // THE MAP, TO THEM. Unicast, and the one frame in the protocol that carries
     // a new level mid-session — `welcome` cannot, because the client's handler

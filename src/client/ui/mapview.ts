@@ -396,6 +396,36 @@ export function paintMap(paint: MapPaint): number {
       ctx.fillStyle = 'rgba(10, 8, 19, 0.72)';
       ctx.fillRect(flip ? tx - w - 3 : tx - 3, dy - 7, w + 6, 14);
 
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND WHO IS IN THERE, ON ITS OWN LINE AND IN THE PARTY'S OWN INK.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `partyMarks` puts a mark on this map for every member standing ON it.
+       * This is the other half: a member INSIDE a room is not on the map at all,
+       * and without this the map's answer to *"where is everybody"* was silence
+       * for exactly the people who most need finding.
+       *
+       * NOT APPENDED TO THE LABEL CHAIN ABOVE. That chain is facts about the
+       * ROOM — its grade, whether you have filed it — and a person's name in the
+       * same run of middots reads as a third property of the place rather than
+       * as somebody who is in it. A separate line in `PARTY_INK` says "person"
+       * with no words spent, and it is the SAME ink `partyMarks` uses, so green
+       * means a friend everywhere on this surface.
+       *
+       * THE SERVER DID THE JOIN. See `SiteView.party`: six Redaction rooms share
+       * a name with an Alderbrook one, so this cannot be matched up here.
+       */
+      const inside = site.party ?? [];
+      if (inside.length > 0) {
+        const who = inside.join(', ');
+        const ww = ctx.measureText(who).width;
+        ctx.fillStyle = 'rgba(10, 8, 19, 0.72)';
+        ctx.fillRect(flip ? tx - ww - 3 : tx - 3, dy + 5, ww + 6, 12);
+        ctx.fillStyle = PARTY_INK;
+        ctx.fillText(who, tx, dy + 11);
+      }
+
       // THE TEXT RECEDES WITH THE DOT. Dimming one and not the other reads as a
       // rendering fault rather than as a closed case — and the plate behind it
       // is deliberately NOT dimmed, because the label still has to be legible

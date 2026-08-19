@@ -4444,6 +4444,35 @@ export type SiteView = {
    * ADDITIVE AND OPTIONAL, so no protocol bump. See `world/casefile.ts`.
    */
   readonly filed?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHO OF YOUR PARTY IS BEHIND THIS DOOR RIGHT NOW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `partyMarks` puts a mark on the map for every member standing on it, and
+   * deliberately leaves out anybody inside an instance because their
+   * coordinates belong to another level. That is honest and it is half a
+   * picture: the information exists — the party pane names their place — and the
+   * map, which draws all seventeen doors, is where "where" is actually a
+   * direction.
+   *
+   * ═══ THE SERVER ANSWERS THIS, AND THE JOIN IS WHY ═══
+   * The obvious client-side join is `away.place === site.name`, and it was
+   * MEASURED and rejected: all twenty-two realms carry their site's name, and
+   * six of them are DUPLICATES. `redaction:underworks` is "The Underworks" and
+   * so is `underworks` — different landmasses, one string. A name join would
+   * mark the Alderbrook door for a friend standing in the Redaction, which is
+   * not a missing mark but a confident lie.
+   *
+   * The site ID is unambiguous and only the server holds both halves — the realm
+   * registry and the party table — so the join happens there and the client
+   * draws what it is told, which is this protocol's whole rule anyway.
+   *
+   * PER VIEWER, like `filed` above: it names YOUR party and nobody else's.
+   * Absent rather than empty when there is nobody, so the common case costs no
+   * bytes.
+   */
+  readonly party?: readonly string[];
 };
 
 /**

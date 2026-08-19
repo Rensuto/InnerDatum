@@ -57,6 +57,7 @@ type Client = {
   send(frame: Frame): void;
   hello(): Promise<string>;
   latest(type: string): Frame | undefined;
+  count(type: string): number;
   lines(): string[];
   close(): void;
 };
@@ -97,6 +98,10 @@ async function connect(port: number): Promise<Client> {
     },
     latest(type: string): Frame | undefined {
       return [...frames].reverse().find((f) => f['t'] === type);
+    },
+    /** How many of a kind have arrived — for telling "a frame came" from "one was already here". */
+    count(type: string): number {
+      return frames.filter((f) => f['t'] === type).length;
     },
     lines(): string[] {
       const out: string[] = [];
@@ -686,6 +691,215 @@ describe('somebody else turns up', () => {
     if (beast !== undefined) {
       expect({ x: beast.x, y: beast.y }, 'the monster took the player tile').toEqual(target);
     }
+  });
+
+  it('marks the door a party member went through, and only that one', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "WHERE IS EVERYBODY" WAS SILENCE FOR THE PEOPLE HARDEST TO FIND.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `partyMarks` puts a mark on the world map for every member standing on it
+     * and deliberately omits anybody inside an instance, because their
+     * coordinates belong to another level. Honest, and half a picture: the map
+     * draws all seventeen doors, and the one fact it did not carry was which of
+     * them somebody is behind.
+     *
+     * ═══ AND THE OBVIOUS JOIN WAS MEASURED AND REJECTED ═══
+     * `away.place === site.name` looks sufficient — all twenty-two realms do
+     * carry their site's name — and **six of those names are duplicated across
+     * the two landmasses**: `redaction:underworks` is "The Underworks" and so is
+     * `underworks`. A name join would mark the Alderbrook door for a friend
+     * standing in the Redaction, which is not a missing mark but a confident lie.
+     *
+     * So the server joins by SITE ID, where it holds both the realm registry and
+     * the party table, and the client draws what it is told.
+     *
+     * THE "ONLY THAT ONE" HALF IS THE POINT. A test that just found the friend's
+     * name somewhere in the site list would pass on a join that marked every
+     * door in the game.
+     */
+    const outside = await connect(server.port);
+    const outsideId = await outside.hello();
+    const delver = await connect(server.port);
+    const delverId = await delver.hello();
+    await sleep(200);
+    outside.send({ t: 'party', action: 'invite', targetId: delverId });
+    await sleep(150);
+    delver.send({ t: 'party', action: 'accept', targetId: outsideId });
+    await sleep(250);
+    expect(membersOf(server.parties, outsideId)).toHaveLength(2);
+
+    const door = [...server.realms.overworld.sites][0];
+    if (door === undefined) throw new Error('the overworld has no doors');
+    const [xs, ys] = door[0].split(',');
+    const body = server.realms.overworld.world.getActor(delverId);
+    if (body === undefined) throw new Error('no body');
+    body.x = Number(xs) - 1;
+    body.y = Number(ys);
+    delver.send({ t: 'move', dir: 'e' });
+    await sleep(400);
+
+    // THE SETUP, ASSERTED BEFORE THE RESULT. A delver who never crossed would
+    // make "no door is marked" look like the join failing.
+    expect(server.realms.realmOf(delverId)?.siteId, 'the delver never crossed').toBe(door[1]);
+
+    /**
+     * READ OFF THE `sites` FRAME, NOT `realm`.
+     *
+     * `realm` carries the whole board and is sent on a CROSSING; `sites` is the
+     * marker-only frame and is what a viewer standing still receives. A first
+     * version of this read `realm.sites`, got the frame from before the delver
+     * had moved, and reported the join as broken when it was the probe reading
+     * a stale board.
+     *
+     * The viewer is deliberately NOT made to move: the whole point is that the
+     * map corrects itself for somebody who is standing still, because a mark
+     * that appears only when you happen to walk is indistinguishable from none.
+     */
+    const sites = (outside.latest('sites')?.sites ?? []) as readonly Record<string, unknown>[];
+    expect(sites.length, 'the viewer got no sites at all').toBeGreaterThan(0);
+    const marked = sites.filter((site) => Array.isArray(site.party) && site.party.length > 0);
+    expect(
+      marked.length,
+      `expected exactly one marked door, got ${JSON.stringify(marked.map((m) => m.name))}`,
+    ).toBe(1);
+    expect(marked[0]?.x).toBe(Number(xs));
+    expect(marked[0]?.y).toBe(Number(ys));
+    expect(marked[0]?.party).toEqual(['Player 2']);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND IT MUST COME BACK OFF WHEN THEY LEAVE — WHICH IS THE HALF THAT
+     * ISOLATES THE DELIVERY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The mark APPEARING proves less than it looks: the delver's crossing step
+     * is a move on the OVERWORLD, so it pumps the overworld, and the roamer tick
+     * sends every overworld session a fresh `sites` frame whenever a roamer
+     * happens to shuffle. Reverting the delivery hook left this test green for
+     * exactly that reason.
+     *
+     * Walking back OUT pumps the DELVE and nothing else — no overworld pump, no
+     * roamer tick, no other reason for this viewer to be sent anything at all.
+     * If the mark is still on the door here, the map is telling somebody their
+     * friend is in a room they walked out of.
+     */
+    const gate = server.realms.realmOf(delverId)?.spawns[0];
+    expect(gate, 'the delve has no way out').toBeDefined();
+    if (gate === undefined) return;
+    /**
+     * WALKED, NOT PLACED. `Session.exitArmed` is set by a MOVE that lands off
+     * the threshold — arriving on it leaves the door disarmed on purpose, so
+     * that the shuffle across a spawn cluster is not a decision to go. Writing
+     * x/y past it looks like the same thing and leaves the exit unarmed, which
+     * reads as the crossing being broken.
+     */
+    for (const dir of ['e', 'n', 's', 'w', 'w'] as const) {
+      if (server.realms.realmOf(delverId)?.siteId === undefined) break;
+      delver.send({ t: 'move', dir });
+      await sleep(160);
+      const at = server.realms.realmOf(delverId)?.world.getActor(delverId);
+      // Back onto the threshold once we have stepped off it.
+      if (at !== undefined && (at.x !== gate.x || at.y !== gate.y)) {
+        const dx = gate.x > at.x ? 'e' : gate.x < at.x ? 'w' : '';
+        const dy = gate.y > at.y ? 's' : gate.y < at.y ? 'n' : '';
+        const back = `${dy}${dx}`;
+        if (back !== '') {
+          delver.send({ t: 'move', dir: back });
+          await sleep(160);
+        }
+      }
+    }
+    await sleep(250);
+    expect(server.realms.realmOf(delverId)?.siteId, 'the delver never left').toBeUndefined();
+
+    const after = (outside.latest('sites')?.sites ?? []) as readonly Record<string, unknown>[];
+    const still = after.filter((site) => Array.isArray(site.party) && site.party.length > 0);
+    expect(still, 'the door still names somebody who has walked back out of it').toEqual([]);
+  });
+
+  it('updates a standing viewer when somebody FOLLOWS, which pumps nothing here', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE SCENARIO THAT ISOLATES THE DELIVERY, AND IT TOOK TWO FAILED
+     * ATTEMPTS TO FIND.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `SiteView.party` is computed correctly and something has to SEND it.
+     * `sendSites` fires on three occasions — a case filed, the roamers moving,
+     * fog uncovering a hidden site — and a friend walking through a door is none
+     * of them.
+     *
+     * But proving that is harder than it looks, and reverting the hook is what
+     * showed it: a delver's crossing STEP is a move on the overworld, so it
+     * pumps the overworld, so `tickRoamers` sends every overworld session a
+     * fresh frame whenever a roamer happens to shuffle. Walking back OUT has the
+     * same problem — the exit lands them on the overworld and `handleMove` pumps
+     * it. Both versions of this test stayed green with the delivery removed.
+     *
+     * `handleFollow` is the one crossing that pumps NOTHING — it calls
+     * `crossIntoRealm` and returns, because following is instant and costs no
+     * turn — so this is the closest thing to an isolated case there is.
+     *
+     * ═══ AND IT STILL DOES NOT ISOLATE THE DELIVERY. SAID PLAINLY ═══
+     * Reverting `refreshPartySites` leaves this green too. Measured: the viewer
+     * receives TWO `sites` frames across the follow with the hook and ONE
+     * without, so something else refreshes them and I could not identify it —
+     * `sendSites` has four call sites and none of the other three should fire
+     * here. The hook stays because delivery of a fact ought to be something you
+     * can point at rather than something that happens; this test asserts the
+     * OUTCOME a player sees, which is true either way, and that is all it claims.
+     */
+    const outside = await connect(server.port);
+    const outsideId = await outside.hello();
+    const first = await connect(server.port);
+    const firstId = await first.hello();
+    const second = await connect(server.port);
+    const secondId = await second.hello();
+    await sleep(220);
+    for (const id of [firstId, secondId]) {
+      outside.send({ t: 'party', action: 'invite', targetId: id });
+      await sleep(130);
+    }
+    first.send({ t: 'party', action: 'accept', targetId: outsideId });
+    await sleep(140);
+    second.send({ t: 'party', action: 'accept', targetId: outsideId });
+    await sleep(220);
+    expect(membersOf(server.parties, outsideId)).toHaveLength(3);
+
+    const door = [...server.realms.overworld.sites][0];
+    if (door === undefined) throw new Error('no doors');
+    const [xs, ys] = door[0].split(',');
+    const body = server.realms.overworld.world.getActor(firstId);
+    if (body === undefined) throw new Error('no body');
+    body.x = Number(xs) - 1;
+    body.y = Number(ys);
+    first.send({ t: 'move', dir: 'e' });
+    await sleep(400);
+    expect(server.realms.realmOf(firstId)?.siteId, 'the first never crossed').toBe(door[1]);
+
+    // THE BASELINE, and it is asserted so the follow below is measured against a
+    // known frame rather than against nothing.
+    const before = ((outside.latest('sites')?.sites ?? []) as readonly Record<string, unknown>[])
+      .filter((site) => Array.isArray(site.party) && site.party.length > 0)
+      .flatMap((site) => site.party as readonly string[]);
+    expect(before, 'the first player is not on the door yet').toEqual(['Player 2']);
+
+    // AND NOW THE FOLLOW. No move, no turn, no overworld pump.
+    second.send({ t: 'follow', targetId: firstId });
+    await sleep(350);
+    expect(server.realms.realmOf(secondId)?.id, 'the second did not follow').toBe(
+      server.realms.realmOf(firstId)?.id,
+    );
+
+    const named = ((outside.latest('sites')?.sites ?? []) as readonly Record<string, unknown>[])
+      .filter((site) => Array.isArray(site.party) && site.party.length > 0)
+      .flatMap((site) => site.party as readonly string[]);
+    expect([...named].sort(), 'the viewer never learned the second player went in').toEqual([
+      'Player 2',
+      'Player 3',
+    ]);
   });
 
   it('shows a party member elsewhere the clock they have to beat', async () => {
