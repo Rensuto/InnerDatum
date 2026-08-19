@@ -651,6 +651,24 @@ const SITE_MARKERS: ReadonlyMap<string, string> = new Map([
   ['breach', 'tile_ow_site_breach'],
 ]);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MORE THAN ONE FACE PER TILE, WHICH THIS TABLE HAS ALWAYS BEEN ABLE TO HOLD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every entry here was a one-element array, so a forest was one drawing repeated
+ * across nine per cent of the map and a mountain range was one rock. The picker
+ * below has spread variants by positional hash the whole time — it was the ART
+ * that did not exist.
+ *
+ * The redesign's handoff ships thirteen forests, seven mountain faces, seven
+ * hill slopes and five field patterns. Six of each are installed
+ * (`tools/import-overworld-art.mjs` explains why six and not thirteen), and
+ * naming them `_b`, `_c` … follows the convention `tile_ow_cobble_b` already set.
+ *
+ * THE BASE STEM STAYS FIRST. A tile whose variants are ever removed falls back
+ * to the drawing it always had rather than to nothing.
+ */
 const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.COBBLE]: ['tile_ow_cobble', 'tile_ow_cobble_b'],
   [TileCode.PAVING]: ['tile_ow_paving'],
@@ -662,20 +680,51 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   [TileCode.TERRACE]: ['tile_ow_terrace'],
   [TileCode.CIVIC]: ['tile_ow_civic'],
   [TileCode.WORKS]: ['tile_ow_works'],
-  [TileCode.TREES]: ['tile_ow_trees'],
+  [TileCode.TREES]: [
+    'tile_ow_trees',
+    'tile_ow_trees_b',
+    'tile_ow_trees_c',
+    'tile_ow_trees_d',
+    'tile_ow_trees_e',
+    'tile_ow_trees_f',
+    'tile_ow_trees_g',
+  ],
   [TileCode.ERASED]: ['tile_ow_erased'],
   [TileCode.WATER]: ['tile_ow_water'],
   [TileCode.PLAINS]: ['tile_ow_plains', 'tile_ow_plains_b'],
-  [TileCode.HILLS]: ['tile_ow_hills'],
+  [TileCode.HILLS]: [
+    'tile_ow_hills',
+    'tile_ow_hills_b',
+    'tile_ow_hills_c',
+    'tile_ow_hills_d',
+    'tile_ow_hills_e',
+    'tile_ow_hills_f',
+    'tile_ow_hills_g',
+  ],
   [TileCode.HEATH]: ['tile_ow_heath'],
   [TileCode.SHORE]: ['tile_ow_shore'],
   [TileCode.YARD]: ['tile_ow_yard'],
-  [TileCode.FIELD]: ['tile_ow_field'],
+  [TileCode.FIELD]: [
+    'tile_ow_field',
+    'tile_ow_field_b',
+    'tile_ow_field_c',
+    'tile_ow_field_d',
+    'tile_ow_field_e',
+    'tile_ow_field_f',
+  ],
   [TileCode.VILLAGE_ROOF]: ['tile_ow_village_roof'],
   [TileCode.TOWN_ROOF]: ['tile_ow_town_roof'],
   [TileCode.CITY_ROOF]: ['tile_ow_city_roof'],
   [TileCode.TOWN_WALL]: ['tile_ow_wall'],
-  [TileCode.MOUNTAIN]: ['tile_ow_mountain'],
+  [TileCode.MOUNTAIN]: [
+    'tile_ow_mountain',
+    'tile_ow_mountain_b',
+    'tile_ow_mountain_c',
+    'tile_ow_mountain_d',
+    'tile_ow_mountain_e',
+    'tile_ow_mountain_f',
+    'tile_ow_mountain_g',
+  ],
   [TileCode.CRAG]: ['tile_ow_crag'],
   [TileCode.DEEPWATER]: ['tile_ow_deepwater'],
 };
