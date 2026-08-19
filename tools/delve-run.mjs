@@ -111,6 +111,7 @@ function run(site, size, seed) {
   let turns = 0;
   let worst = 1;
   const tally = { shot: 0, moved: 0, held: 0 };
+  const refusals = new Map();
   for (; turns < TURN_CAP; turns += 1) {
     const foes = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster && a.alive);
     const up = bodies.filter((m) => m.body.alive && !isDowned(downed, m.body.id));
@@ -129,9 +130,39 @@ function run(site, size, seed) {
        * at the nearest monster is not the party this game ships. See
        * `fightlib.mjs`.
        */
-      const { fired, gap } = takeShot(realm.engine, b.id, attacks, b, living);
+      const { fired, gap } = takeShot(realm.engine, b.id, attacks, b, living, (id, shot) => {
+        if (process.env.DELVE_DIAG === '3') {
+          refusals.set(String(shot?.code), (refusals.get(String(shot?.code)) ?? 0) + 1);
+        }
+      });
       if (fired) {
         tally.shot += 1;
+        continue;
+      }
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * OUT OF FOCUS IS NOT A REASON TO WALK INTO A DOORWAY.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `gap !== null` means a foe WAS inside a firing band and the engine
+       * refused the shot anyway. Measured over a stalled floor, the refusals are
+       * overwhelmingly `no_resource` (up to 2,680) and `on_cooldown` (~897): the
+       * ranged pair empty their Focus and Reagents in the opening turns and then
+       * every shot for the rest of the run is refused.
+       *
+       * The old code closed the distance at that point, which walks The
+       * Inspector into melee — where `combat.minRange` 3 forbids her from
+       * striking at all. So the party became one Watchman and two spectators,
+       * and eight reachable monsters never died.
+       *
+       * A player waits. Holding keeps the distance that makes the class work and
+       * lets the resource come back, which is the whole shape of "lethal at
+       * range and helpless in a doorway".
+       */
+      if (gap !== null && attacks.length > 0) {
+        tally.held += 1;
+        realm.engine.hold(b.id);
         continue;
       }
 
@@ -224,7 +255,7 @@ function run(site, size, seed) {
    * health is not a difficulty reading — it is the driver failing to finish, and
    * the only way to tell which is to look at what it left alive.
    */
-  if (process.env.DELVE_DIAG === '1' && foesLeft > 0 && turns >= TURN_CAP) {
+  if (['1', '3'].includes(process.env.DELVE_DIAG ?? '') && foesLeft > 0 && turns >= TURN_CAP) {
     const me = bodies[0]?.body;
     /**
      * REACHABLE, OR JUST FAR? A stall where every survivor is unroutable is a
@@ -243,7 +274,7 @@ function run(site, size, seed) {
       return step === null ? 'NO-ROUTE' : 'reachable';
     });
     console.log(
-      `  [diag] bodies ${String(bodies.length)} | routes: ${reach.join(' ')} | orders shot ${String(tally.shot)} moved ${String(tally.moved)} held ${String(tally.held)}`,
+      `  [diag] refusals ${[...refusals].map(([k, n]) => `${k}x${String(n)}`).join(' ') || 'none'} | bodies ${String(bodies.length)} | routes: ${reach.join(' ')} | orders shot ${String(tally.shot)} moved ${String(tally.moved)} held ${String(tally.held)}`,
     );
     const far = survivors.map((f) =>
       me === undefined
