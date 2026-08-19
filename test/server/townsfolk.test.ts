@@ -30,9 +30,15 @@ describe('somebody lives here', () => {
   it('stands Merrow in Threadneedle Row', () => {
     const realm = realms('folk-1').open(site(ROW), 'party-a');
     const folk = folkIn(realm);
-    expect(folk).toHaveLength(1);
-    expect(folk[0]?.name).toBe('Merrow Stitch');
-    expect(isTownsfolkId(folk[0]?.id ?? '')).toBe(true);
+    /**
+     * SHE IS THERE — not that she is ALONE. This asserted a headcount of one,
+     * which was true when every town held a single person and became a lie the
+     * moment a second voice was written for the busiest of them. A test that
+     * pins the SIZE of the content fails on every addition while saying nothing
+     * about whether the thing it names still works.
+     */
+    expect(folk.map((who) => who.name)).toContain('Merrow Stitch');
+    for (const who of folk) expect(isTownsfolkId(who.id)).toBe(true);
   });
 
   /**
@@ -57,10 +63,16 @@ describe('somebody lives here', () => {
     const eager = realms('folk-boot');
     const fromRegistry = [...eager.all()].find((r) => r.siteId === ROW);
     expect(fromRegistry, 'the boot loop never built Threadneedle Row').toBeDefined();
-    if (fromRegistry !== undefined) expect(folkIn(fromRegistry)).toHaveLength(1);
+    // THE SAME COUNT ON BOTH PATHS, whatever that count is. The bug this guards
+    // is a town populated on one construction path and empty on the other, so
+    // what matters is that the two AGREE and that neither is empty — not the
+    // number, which is content and moves.
+    const authored = TOWNSFOLK.get(ROW)?.length ?? 0;
+    expect(authored).toBeGreaterThan(0);
+    if (fromRegistry !== undefined) expect(folkIn(fromRegistry)).toHaveLength(authored);
 
     const lazy = realms('folk-lazy').open(site(ROW), 'party-b');
-    expect(folkIn(lazy)).toHaveLength(1);
+    expect(folkIn(lazy)).toHaveLength(authored);
   });
 
   it('stands on the same tile every boot, with no rng draw', () => {

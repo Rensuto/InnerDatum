@@ -55,13 +55,40 @@ describe('the rumour that leads somewhere', () => {
     }
   });
 
-  it('says the same thing five different ways', () => {
-    // FIVE PEOPLE, FIVE VOICES. The sexton buries people and the reeve files
-    // returns; if they said the same sentence the town would be one person
-    // wearing five sprites, which is the failure the whole table exists to
-    // avoid.
-    const said = EVERYONE.map((p) => p.later?.[TopicId.Rumour] ?? '');
-    expect(new Set(said).size).toBe(said.length);
+  it('says the same thing a different way for every person', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TEN PEOPLE, TEN VOICES — AND THIS ONLY COVERED HALF OF WHAT THEY SAY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The sexton buries people and the reeve files returns; if they said the
+     * same sentence the towns would be one person wearing ten sprites, which is
+     * the failure the whole table exists to avoid.
+     *
+     * IT CHECKED `later` AND NOT `topics`, AND THAT LET A DUPLICATE THROUGH.
+     * Halloway Bell was added to Alderbrook and given *"A stair on the Grey
+     * Downs, on no map I own"* — word for word what Carrow Ninefold had been
+     * saying in the Wayfarers' Camp. Two people, one sentence, and nothing
+     * noticed, because the only distinctness this file asserted was on the
+     * OTHER tier.
+     *
+     * The same shape as `assertLinesFit` forgetting `later`: a guard that
+     * covers one of two parallel tables is a guard with a hole in it, and the
+     * hole is always in whichever half was added second.
+     */
+    const later = EVERYONE.map((person) => person.later?.[TopicId.Rumour] ?? '');
+    expect(new Set(later).size, 'two people give the same directions west').toBe(later.length);
+
+    const early = EVERYONE.map((person) => person.topics[TopicId.Rumour] ?? '');
+    expect(new Set(early).size, 'two people tell the same rumour').toBe(early.length);
+
+    // AND NOTHING ELSE THEY SAY IS SHARED EITHER. The greeting is the first
+    // thing a player reads, and two identical ones in adjacent towns is the
+    // cheapest possible way to look like a stub.
+    const greetings = EVERYONE.map((person) => person.greetFirst);
+    expect(new Set(greetings).size, 'two people introduce themselves the same way').toBe(
+      greetings.length,
+    );
   });
 
   it('names a place that is on the map and in the right direction', () => {

@@ -231,6 +231,35 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Rumour]: 'West past the Sedge. The road stops and stays stopped.',
         },
       },
+      /**
+       * THE SECOND VOICE HERE. See the note on Halloway Bell in Alderbrook for
+       * the whole argument: a town of seven hundred walkable tiles holding one
+       * person is a room with a sprite in it, and the value of a second is that
+       * the same four closed topics get answered from a different position.
+       */
+      {
+        id: 'vane',
+        name: 'Pinnock Vane',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Vane. I carry what Merrow sells, and it is heavy.',
+        greetAgain: 'Still carrying. Still heavy.',
+        deflect: [
+          'Mind the crates.',
+          'I lift for a living. Try me.',
+          'Shove once more and I put you down.',
+        ],
+        topics: {
+          // MERROW SENDS YOU TO THE CHAPEL; VANE SENDS YOU TO THE OTHER SHOP.
+          // Between them a newcomer learns that the towns are for things.
+          [TopicId.Where]: 'Ashwick for draughts. I run it twice a week.',
+          [TopicId.Party]: 'Four hands beat two. That is the whole of my trade.',
+          [TopicId.Roads]: 'I only walk made ground. My knees insist.',
+          [TopicId.Rumour]: 'Something is out in the Blackwater Wood. I go round.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West past the Sedge. I will not haul out there.',
+        },
+      },
     ],
   ],
   /**
@@ -373,6 +402,35 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Rumour]: 'West past the Sedge there are no stones at all.',
         },
       },
+      /**
+       * THE SECOND VOICE HERE. See the note on Halloway Bell in Alderbrook for
+       * the whole argument: a town of seven hundred walkable tiles holding one
+       * person is a room with a sprite in it, and the value of a second is that
+       * the same four closed topics get answered from a different position.
+       */
+      {
+        id: 'colley',
+        name: 'Wren Colley',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Colley. I write the names. Pell does the digging.',
+        greetAgain: 'Names still coming. Slowly, lately.',
+        deflect: [
+          'Mind the register.',
+          'I have buried ruder than you.',
+          'Push again and you go in the book.',
+        ],
+        topics: {
+          [TopicId.Where]: 'The chapel, and come back. That is the order.',
+          // THE BLEAKEST VERSION OF D12, from the person who counts. The rule is
+          // about experience; this is about the other thing partying changes.
+          [TopicId.Party]: 'I write fewer names when people go in pairs.',
+          [TopicId.Roads]: 'Nothing has ever taken anyone off the made road.',
+          [TopicId.Rumour]: 'A stair on the Grey Downs. Nobody surveyed it.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West of the Sedge I have no names at all.',
+        },
+      },
     ],
   ],
   [
@@ -395,11 +453,44 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Roads]: 'I sleep on the road. That is not laziness.',
           // THE STRONGEST HINT IN THE GAME, and it is on the person furthest
           // from anywhere, in the region that holds one of the three.
-          [TopicId.Rumour]: 'A stair on the Grey Downs, on no map I own.',
+          // WAS THE SAME SENTENCE AS HALLOWAY BELL'S, WORD FOR WORD. Bell was
+          // added last commit and took Carrow's line with her; the distinctness
+          // test only covered `later`, so two people said one thing and nothing
+          // noticed. Carrow's is now the one who has actually crossed it.
+          [TopicId.Rumour]: 'I have crossed the Grey Downs. Something is on it.',
         },
         later: {
           // CARROW WALKS EVERYWHERE. Hers is the only first-hand account.
           [TopicId.Rumour]: 'I walked west past the Sedge once. I turned round.',
+        },
+      },
+      /**
+       * THE SECOND VOICE HERE. See the note on Halloway Bell in Alderbrook for
+       * the whole argument: a town of seven hundred walkable tiles holding one
+       * person is a room with a sprite in it, and the value of a second is that
+       * the same four closed topics get answered from a different position.
+       */
+      {
+        id: 'ash',
+        name: 'Mabbot Ash',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Ash. I was going further. I got as far as here.',
+        greetAgain: 'Still here. Still meant to go.',
+        deflect: [
+          'Watch the fire.',
+          'Weather worse than you has tried to move me.',
+          'Again and we will fall out.',
+        ],
+        topics: {
+          [TopicId.Where]: 'South and east, and not far. Start small.',
+          // THE CAMP'S OWN BLURB IS "people who were not going to stop but did".
+          // This is that sentence answered from inside it.
+          [TopicId.Party]: 'Everyone here came alone. That is why we stopped.',
+          [TopicId.Roads]: 'The road brought all of us. Stay on it.',
+          [TopicId.Rumour]: 'Barrows out in the Blackwater Wood. Older than us.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West past the Sedge is where I did not get to.',
         },
       },
     ],
@@ -428,6 +519,35 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         later: {
           // THESSALY IS AN ALCHEMIST. Hers is the one that names the mechanism.
           [TopicId.Rumour]: 'West of the Sedge the Index took the ground itself.',
+        },
+      },
+      /**
+       * THE SECOND VOICE HERE. See the note on Halloway Bell in Alderbrook for
+       * the whole argument: a town of seven hundred walkable tiles holding one
+       * person is a room with a sprite in it, and the value of a second is that
+       * the same four closed topics get answered from a different position.
+       */
+      {
+        id: 'quill',
+        name: 'Ivo Quill',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Quill. I test what Vaunt mixes. I am still here.',
+        greetAgain: 'Still upright. Mostly.',
+        deflect: [
+          'Careful, that is glass.',
+          'I have been hit by better.',
+          'Do that again and I will not be gentle.',
+        ],
+        topics: {
+          [TopicId.Where]: 'The Underworks. It goes down, and it lets you up.',
+          // THE DRAUGHT ARGUMENT FOR PARTYING, which nobody else makes: alone
+          // you ration what you carry, and rationing is how people die slowly.
+          [TopicId.Party]: 'Alone you ration draughts. In three you share them.',
+          [TopicId.Roads]: 'The road is where nothing is waiting. Use it.',
+          [TopicId.Rumour]: 'There is a weir in the Blackwater Wood. No river.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West of the Sedge. Nothing I mix helps there.',
         },
       },
     ],
