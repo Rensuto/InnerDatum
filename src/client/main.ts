@@ -4017,6 +4017,31 @@ async function boot(): Promise<void> {
      * bag is — and "3 things to put on" would be a number nobody acts on
      * differently from 1.
      */
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * SOMETHING AT YOUR FEET — THE CORE REWARD LOOP, AND ITS KEY WAS UNNAMED.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Third instance of the measurement this file records, and the worst of the
+     * three, because it is the loop a roguelike runs on: you win a fight, the
+     * Record lane says *"2 things are still on the floor."*, you walk onto the
+     * pile — and nothing anywhere tells you which key lifts it.
+     *
+     * MEASURED: the pickup key was named ZERO times anywhere in the client. The
+     * had exactly one affordance, `lootAt` feeding the right-click menu
+     * (ui/verbs.ts), which only helps a player who already thinks to right-click
+     * the tile they are standing on. This file's own note says "press g" was one
+     * of five hard-coded letters routed through `keyHint` when the Keys screen
+     * made rebinding possible — and that one did not come back.
+     *
+     * UNDERFOOT, NOT NEARBY, so it is the same actionable shape as the two lines
+     * below: it appears when there is something to lift and goes quiet the
+     * moment it is lifted, rather than standing on the surface as furniture.
+     */
+    const standing = selfTile();
+    if (standing !== null && lootAt(standing) === TileLoot.Underfoot) {
+      parts.push(`something at your feet — press ${keyHint('pickup')}`);
+    }
     if (inventory !== null && hasSomethingToWear(inventory.carried, inventory.equipped)) {
       parts.push(`something to put on — press ${keyHint('show_inventory')}`);
     }
