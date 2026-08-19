@@ -13,6 +13,7 @@ import {
   INDEX_INQUISITOR,
   INDEX_WATCHER,
 } from '../../src/server/content/monsters.ts';
+import * as MODULE from '../../src/server/content/monsters.ts';
 import { ambushRoster } from '../../src/server/content/encounter.ts';
 import { resolveRngAvg } from '../../src/server/content/resolvers.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
@@ -72,7 +73,37 @@ describe('the two new creatures are ported, not invented', () => {
     for (const template of MONSTER_TEMPLATES) {
       expect(validateTemplate(template), `${template.id} is malformed`).toEqual([]);
     }
-    expect(MONSTER_TEMPLATES).toHaveLength(9);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * EVERY TEMPLATE IS REGISTERED — NOT "THERE ARE NINE OF THEM".
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This read `toHaveLength(9)`, and before that 8, 6 and 5. Every addition
+     * failed it, every fix was a digit, and not one of those failures said
+     * anything about whether the roster works. A test that pins the SIZE of the
+     * content is a test that fires on every commit that adds content.
+     *
+     * WHAT IT SHOULD HAVE BEEN GUARDING is the orphan: a template written,
+     * exported and never added to `MONSTER_TEMPLATES`. Nothing would spawn it,
+     * nothing would fail, and it is precisely the failure this repo has shipped
+     * more often than any other — `enemy_index_glut_s` drew a roamer for weeks
+     * with no creature behind it.
+     *
+     * So: every exported template is in the list, and the list holds nothing
+     * that is not a template. The number is free to move.
+     */
+    const exported = Object.values(MODULE).filter(
+      (value): value is (typeof MONSTER_TEMPLATES)[number] =>
+        typeof value === 'object' &&
+        value !== null &&
+        'id' in value &&
+        'sprite' in value &&
+        'maxHp' in value,
+    );
+    const registered = new Set(MONSTER_TEMPLATES.map((t) => t.id));
+    const orphans = exported.filter((t) => !registered.has(t.id)).map((t) => t.id);
+    expect(orphans, 'templates that exist and can never spawn').toEqual([]);
+    expect(MONSTER_TEMPLATES.length).toBe(exported.length);
   });
 
   it('spends art that was already cut and drawing nothing', () => {

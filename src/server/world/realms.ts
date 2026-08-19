@@ -61,7 +61,12 @@ import { TileCode } from '../../shared/protocol.ts';
 import { REDACTION_SITE_ID, makeOverworld } from '../../shared/level.ts';
 import { makeRedaction } from '../../shared/redaction.ts';
 import { ActorKind } from '../../shared/protocol.ts';
-import { DELVES, populateDelve, redactedSpec } from '../content/delve.ts';
+// `DELVES` IS GONE FROM THIS IMPORT, as it went from gateway.ts one commit
+// earlier. The authored table's ids are all Alderbrook's, so the raw lookup was
+// correct here — but `specFor` is the one that knows about both maps, and the
+// import disappearing is the proof there is no reader left asking the narrower
+// question.
+import { populateDelve, redactedSpec, specFor } from '../content/delve.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
@@ -1146,7 +1151,12 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
     // THE THREE THAT ARE NOT ON YOUR MAP YET. Data, so a reviewer can see
     // the whole set at a glance rather than reading a predicate.
     ...(HIDDEN_SITES.has(id) ? { hidden: true } : {}),
-    ...(DELVES.has(id)
+    // `specFor`, NOT `DELVES.has`. Identical for an Alderbrook id — which is
+    // all this authored table holds — so this changes nothing today, and that
+    // was measured. It is here because `specFor` is the lookup that knows about
+    // both maps, and a raw table read sitting beside it is exactly how
+    // `markersFor` came to grade the Redaction's six doors as if they were towns.
+    ...(specFor(id) !== undefined
       ? {
           /**
            * ═══════════════════════════════════════════════════════════════
@@ -1170,7 +1180,7 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
            * the work.
            */
           populate: (world: World, built: AuthoredMap, party: PartyStrength): void => {
-            const spec = DELVES.get(id);
+            const spec = specFor(id);
             if (spec !== undefined) populateDelve(world, built, spec, party);
           },
         }
