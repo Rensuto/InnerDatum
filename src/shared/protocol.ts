@@ -931,6 +931,18 @@ export type LoadoutTalent = {
   treeName?: string;
   kind?: string;
   /**
+   * THE CATEGORY'S MASTERY — the "(x1.30)" in a ToME category header.
+   *
+   * Sent because the client cannot compute it: masteries live in the server's
+   * content table, and the header is the one place a player learns that a point
+   * spent here is worth more than a point spent there. `ActorTalents.lua:834`
+   * is what makes that true rather than flavour.
+   *
+   * Optional and additive. Absent reads as 1.0, which is what a category with no
+   * opinion means — and it is what every tree ships at today.
+   */
+  mastery?: number;
+  /**
    * THE TALENT'S RAW LEVEL. 1 through `maxLevel`, and NEVER 0 — a talent on the
    * hotbar is one this detective has already learned.
    *

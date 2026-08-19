@@ -1608,7 +1608,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // `minRange` straight off the `LoadoutTalent` view, which is CORRECT
       // AUTOMATICALLY — but only because the view is built per-actor:
       // `createTalentBook.loadoutOf` resolves
-      // `effectiveTalentRange(targeting, getTalentLevel(sheet, id))` for this
+      // `effectiveTalentRange(targeting, getTalentLevelRaw(sheet, id))` for this
       // body's own rank, which is the identical call `canUseTalent` makes on the
       // authoritative path above.
       //

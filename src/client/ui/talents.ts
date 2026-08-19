@@ -494,7 +494,22 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     const tree = talent.tree;
     if (tree !== undefined && tree !== openTree) {
       openTree = tree;
-      rows.push({ kind: TalentRowKind.Tree, text: talent.treeName ?? tree });
+      /**
+       * "The Line  (x1.30)" — ToME's own header format, and the multiplier is
+       * arithmetic rather than flavour: `ActorTalents.lua:834` makes a point
+       * spent in a x1.30 category worth thirty percent more everywhere
+       * `combatTalentScale` is used. A player choosing where to spend needs it.
+       *
+       * ONE POINT OH IS LEFT UNSAID. Every category shows a multiplier only in a
+       * game where they differ; printing "(x1.00)" on all six would be six
+       * pieces of furniture teaching a player to stop reading the number.
+       */
+      const mastery = talent.mastery ?? 1;
+      const heading = talent.treeName ?? tree;
+      rows.push({
+        kind: TalentRowKind.Tree,
+        text: mastery === 1 ? heading : `${heading}  (x${mastery.toFixed(2)})`,
+      });
     }
     rows.push({
       kind: TalentRowKind.Talent,

@@ -601,7 +601,7 @@ export type PlayerActor = ActorCommon & {
    * Put `level` on the sheet as well and there are two fields called level, one
    * of which is the one that got saved.
    *
-   * NOTHING HERE IS BRANCHED ON FOR A COMBAT RULE. `getTalentLevel` reads the
+   * NOTHING HERE IS BRANCHED ON FOR A COMBAT RULE. `getTalentLevelRaw` reads the
    * SHEET, never this; a character level does not scale a talent by itself, it
    * buys the point that does. That indirection is what lets `level` change
    * mid-pump (see `pendingLevels`) without moving a single RNG draw.

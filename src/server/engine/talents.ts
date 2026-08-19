@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// Ported from t-engine4 game/engines/default/engine/interface/ActorTalents.lua:824-826 (getTalentLevel)
+// Ported from t-engine4 game/engines/default/engine/interface/ActorTalents.lua:819-822 (getTalentLevelRaw)
+//                                                                          826-834 (getTalentLevel, with mastery)
 //                                                                          1002-1013 (cooldownTalents)
 //             t-engine4 game/modules/tome/class/Actor.lua:476-609 (actBase), :606 (the stun guard)
 //             t-engine4 game/modules/tome/class/interface/Combat.lua:1774-1779 (combatTalentSpellDamage)
@@ -94,7 +95,7 @@
  *    per-TREE mastery so that a Berserker's 2h tree outranks an Arcane Blade's.
  *    We have four talents per class and no shared trees, so there is nothing to
  *    differentiate. Dropping it is what makes effective level == raw level,
- *    1..5 — see `getTalentLevel`.
+ *    1..5 — see `getTalentLevelRaw`.
  *  - LEVEL, XP AND UNSPENT POINTS. Those live on `PlayerActor`, not here. The
  *    save layer cannot reach the talent engine (`PlayerActor.classId`'s own
  *    docblock, engine/actor.ts, makes exactly that argument for exactly that
@@ -1059,7 +1060,7 @@ export type TalentCallCtx = {
  * else.
  */
 export type TalentCtx = TalentCallCtx & {
-  /** Effective talent level, 1..5 for a player. See `getTalentLevel`. */
+  /** Effective talent level, 1..5 for a player. See `getTalentLevelRaw`. */
   readonly talentLevel: number;
 };
 
@@ -1308,7 +1309,7 @@ export type TalentSheet = {
    * hotbar is a key that does nothing.
    *
    * They share `points`, because a passive is raised with the same talent point
-   * as anything else and `getTalentLevel` reads one map. Two point maps would be
+   * as anything else and `getTalentLevelRaw` reads one map. Two point maps would be
    * two answers to "what rank is this", and the spend path would have to pick.
    */
   readonly passives: readonly string[];
@@ -1400,7 +1401,7 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
 }
 
 /**
- * The EFFECTIVE talent level — `getTalentLevel`, ActorTalents.lua:824-834.
+ * The EFFECTIVE talent level — `getTalentLevelRaw`, ActorTalents.lua:824-834.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * MASTERY IS DELIBERATELY DROPPED, AND THAT IS WHY THIS IS ONE LINE.
@@ -1411,7 +1412,7 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
  *
  * (This block used to carry a PARAPHRASE — `self:getTalentTypeMastery(...) or 1`
  * — set in this file's verbatim-quote style. `getTalentTypeMastery` is a real
- * function at ActorTalents.lua:849 and it is `(x or 0) + 1`, but `getTalentLevel`
+ * function at ActorTalents.lua:849 and it is `(x or 0) + 1`, but `getTalentLevelRaw`
  * does not call it; it inlines the table read. A paraphrase indented as a quote
  * is the one thing a reader cannot check by grepping.)
  *
@@ -1452,8 +1453,36 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
  *   gets 0 asked about something the actor does not have, and `canUseTalent`
  *   answers `NotLearned` for exactly that case before anything reaches here.
  */
-export function getTalentLevel(sheet: TalentSheet, id: string): number {
+export function getTalentLevelRaw(sheet: TalentSheet, id: string): number {
   return sheet.points.get(id) ?? 0;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE EFFECTIVE LEVEL — RAW TIMES THE CATEGORY'S MASTERY. ActorTalents.lua:826-834
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     return t and (self:getTalentLevelRaw(id))
+ *                * ((self.talents_types_mastery[t.type[1]] or 0) + 1) or 0
+ *
+ * That `+ 1` is upstream storing mastery as `value - 1` (:861 writes `v - 1`,
+ * :849 reads it back as `+ 1`), so a category at "x1.30" holds 0.3 and a
+ * category with no entry at all behaves as 1.0. We store the multiplier itself,
+ * because there is no save-file compatibility reason to keep the offset and an
+ * offset nobody needs is a subtraction somebody eventually forgets.
+ *
+ * ═══ THIS IS THE NUMBER THE MATHS USES; RAW IS THE NUMBER THE PANEL PRINTS ═══
+ * ToME shows "4/5" — points SPENT — in the tree, and feeds the effective level to
+ * `combatTalentScale`. Two different questions with two different answers, and
+ * the reason this file's own name for them was wrong until now: what we called
+ * `getTalentLevel` was upstream's RAW, which meant the mastery-aware one had no
+ * name here at all and could not be missed.
+ *
+ * MASTERY DEFAULTS TO 1, so every caller that has no category to hand gets
+ * exactly the behaviour it had before this existed.
+ */
+export function getTalentLevel(sheet: TalentSheet, id: string, mastery = 1): number {
+  return getTalentLevelRaw(sheet, id) * mastery;
 }
 
 // ---------------------------------------------------------------------------
@@ -1804,7 +1833,7 @@ export function canUseTalent(
   // The sheet is already in hand, so the level costs nothing to resolve here —
   // and resolving it HERE rather than inside `checkTargeting` keeps that
   // function a function of numbers, testable without an engine.
-  const range = effectiveTalentRange(talent.targeting, getTalentLevel(sheet, talent.id));
+  const range = effectiveTalentRange(talent.targeting, getTalentLevelRaw(sheet, talent.id));
   return checkTargeting(actor, talent.targeting, target, world, range);
 }
 
@@ -1992,7 +2021,7 @@ export function useTalent(
   //
   // ═══ AND AT A LEVEL THE BODY DOES NOT HAVE TO GO LOOKING FOR ═══
   // Computed here, once, from the sheet re-read three lines above. The
-  // alternative — every body calling `getTalentLevel(engine.sheetOf(self.id),
+  // alternative — every body calling `getTalentLevelRaw(engine.sheetOf(self.id),
   // <its own id>)` — would put the talent's own id inside the talent twice
   // (once in `id`, once in the lookup) and give twelve files a chance to look
   // up the wrong one. There is no observable level anywhere else: what a talent
@@ -2001,7 +2030,7 @@ export function useTalent(
   const scoped: TalentCtx = {
     ...ctx,
     world: recordingWorld(ctx.world, recorded),
-    talentLevel: getTalentLevel(sheet, talent.id),
+    talentLevel: getTalentLevelRaw(sheet, talent.id),
   };
   // A PASSIVE HAS NO BODY. Checked here rather than at submission for the reason
   // `canAttack` gives about resolution-time legality — and note it costs nothing:

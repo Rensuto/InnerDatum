@@ -95,7 +95,7 @@ import {
   createTalentRegistry,
   createTalentSheet,
   effectiveTalentRange,
-  getTalentLevel,
+  getTalentLevelRaw,
 } from '../engine/talents.ts';
 import { alchemicVial } from '../talents/alchemic_vial.ts';
 import { ashwickFlare } from '../talents/ashwick_flare.ts';
@@ -545,6 +545,10 @@ export function toLoadoutView(talent: Talent, level: number, self: TalentActor):
     tree: talent.tree,
     treeName: treeById(talent.tree)?.name ?? talent.tree,
     kind: talent.kind,
+    // THE MASTERY, so the header can say "(x1.30)" and mean it. Absent for a
+    // tree this build does not have, which reads as 1.0 — the same answer
+    // `treeName` gives by falling back to the id.
+    ...(treeById(talent.tree) === undefined ? {} : { mastery: treeById(talent.tree)?.mastery }),
     level,
     // ON THE WIRE RATHER THAN ASSUMED BY THE RENDERER — protocol.ts argues it:
     // a client that hard-coded 5 would keep drawing "3/5" and a live `+` the
@@ -790,13 +794,13 @@ export function createTalentBook(
         // keeps the hotbar and the rule agreeing.
         if (talent === undefined) continue;
         // ═══ THE RANK COMES OFF THE SHEET, WHICH IS ALREADY IN HAND ═══
-        // `getTalentLevel` answers 0 for an id the sheet has no points in, and
+        // `getTalentLevelRaw` answers 0 for an id the sheet has no points in, and
         // 0 is unreachable here by construction: `createTalentSheet` seeds
         // every loadout id at `BIRTH_TALENT_LEVEL`. The floor is kept anyway
         // because the wire type says `level` is NEVER 0 (protocol.ts) — a sheet
         // built some other way must produce a wrong-but-legal button rather
         // than a frame the protocol calls impossible.
-        const level = Math.max(BIRTH_TALENT_LEVEL, getTalentLevel(sheet, id));
+        const level = Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id));
         out.push(toLoadoutView(talent, level, actor));
       }
       return out;
@@ -816,7 +820,7 @@ export function createTalentBook(
         const talent = engine.registry.get(id);
         if (talent === undefined) continue;
         out.push(
-          toLoadoutView(talent, Math.max(BIRTH_TALENT_LEVEL, getTalentLevel(sheet, id)), actor),
+          toLoadoutView(talent, Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id)), actor),
         );
       }
       return out;
@@ -830,7 +834,7 @@ export function createTalentBook(
     /**
      * ═══ THE ENFORCING END OF `toLoadoutView`'s RANGE INVARIANT ═══
      * `canUseTalent` resolves the range through
-     * `effectiveTalentRange(talent.targeting, getTalentLevel(sheet, id))` —
+     * `effectiveTalentRange(talent.targeting, getTalentLevelRaw(sheet, id))` —
      * the SAME function and the SAME rank `loadoutOf` above put on the wire as
      * `LoadoutTalent.range`. The ring a client draws and the tile this function
      * accepts therefore cannot disagree, because there is one implementation

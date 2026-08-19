@@ -23,7 +23,7 @@ import {
   ClassId,
   ResourceKind,
   createTalentSheet,
-  getTalentLevel,
+  getTalentLevelRaw,
 } from '../../src/server/engine/talents.ts';
 import { backupPathFor, writeFileAtomic } from '../../src/server/persist/atomic.ts';
 import {
@@ -1020,7 +1020,7 @@ describe('character files: level, xp, unspent points and raw talent points', () 
     // And through the constructor a restore would really use: four talents, each
     // at exactly its birth rank, nothing at 0 and nothing missing.
     const sheet = sheetFrom(parsed.file.talentPoints);
-    for (const id of WATCHMAN_LOADOUT) expect(getTalentLevel(sheet, id)).toBe(1);
+    for (const id of WATCHMAN_LOADOUT) expect(getTalentLevelRaw(sheet, id)).toBe(1);
     expect(sheet.points.size).toBe(4);
   });
 
@@ -1070,8 +1070,8 @@ describe('character files: level, xp, unspent points and raw talent points', () 
 
     // And the raw spread really does reach the sheet as talent levels.
     const sheet = sheetFrom(parsed.file.talentPoints);
-    expect(getTalentLevel(sheet, 'talent:crude_blow')).toBe(4);
-    expect(getTalentLevel(sheet, 'talent:iron_curtain')).toBe(1);
+    expect(getTalentLevelRaw(sheet, 'talent:crude_blow')).toBe(4);
+    expect(getTalentLevelRaw(sheet, 'talent:iron_curtain')).toBe(1);
   });
 
   /**
@@ -1145,7 +1145,7 @@ describe('character files: level, xp, unspent points and raw talent points', () 
     // owed: 3 points went into a talent that is not in the loadout any more.
     const sheet = sheetFrom(parsed.file.talentPoints);
     expect(sheet.points.has('talent:deleted_in_m7')).toBe(false);
-    expect(getTalentLevel(sheet, 'talent:crude_blow')).toBe(2);
+    expect(getTalentLevelRaw(sheet, 'talent:crude_blow')).toBe(2);
   });
 
   /**

@@ -1259,6 +1259,7 @@ describe('the loadout projection loses no field', () => {
       tree: 'watch/the-line',
       treeName: 'The Line',
       kind: 'passive',
+      mastery: 1.3,
     };
 
     const projected = projectLoadout({ id: 'a' } as never, [full]).talents[0];
@@ -1271,6 +1272,7 @@ describe('the loadout projection loses no field', () => {
     expect(projected.tree).toBe(full.tree);
     expect(projected.treeName).toBe(full.treeName);
     expect(projected.kind).toBe(full.kind);
+    expect(projected.mastery).toBe(full.mastery);
   });
 
   it('emits no passives array for a class that has none', () => {

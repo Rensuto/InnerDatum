@@ -12,7 +12,7 @@ import {
   TalentRefusal,
   canUseTalent,
   effectiveTalentRange,
-  getTalentLevel,
+  getTalentLevelRaw,
   resolveGuardCounter,
   talentId,
   useTalent,
@@ -751,13 +751,13 @@ describe('the sheet is where a rank lives', () => {
       const sheet = sheetForClass(definition);
       expect(sheet.points.size).toBe(definition.loadout.length + definition.passives.length);
       for (const talent of definition.passives) {
-        expect({ talent: talent.id, level: getTalentLevel(sheet, talent.id) }).toEqual({
+        expect({ talent: talent.id, level: getTalentLevelRaw(sheet, talent.id) }).toEqual({
           talent: talent.id,
           level: 1,
         });
       }
       for (const talent of definition.loadout) {
-        expect({ talent: talent.id, level: getTalentLevel(sheet, talent.id) }).toEqual({
+        expect({ talent: talent.id, level: getTalentLevelRaw(sheet, talent.id) }).toEqual({
           talent: talent.id,
           level: 1,
         });
@@ -770,10 +770,10 @@ describe('the sheet is where a rank lives', () => {
     // 0 would therefore not fail loudly — it would quietly deal a fraction of
     // its damage, which is the worst possible failure mode for a seeding bug.
     const sheet = sheetForClass(WATCHMAN);
-    expect(getTalentLevel(sheet, talentId('crude_blow'))).toBe(1);
+    expect(getTalentLevelRaw(sheet, talentId('crude_blow'))).toBe(1);
     // …and a talent this sheet has no points in answers 0, not 1, so a caller
     // that got 0 knows it asked about something the actor does not have.
-    expect(getTalentLevel(sheet, talentId('fog_step'))).toBe(0);
+    expect(getTalentLevelRaw(sheet, talentId('fog_step'))).toBe(0);
   });
 
   it('feeds a restored point spread through the ONE constructor', () => {
@@ -782,7 +782,7 @@ describe('the sheet is where a rank lives', () => {
     // that forgets it hands a loaded character talents at level 0.
     const restored = new Map<string, number>([[talentId('crude_blow'), 4]]);
     const sheet = sheetForClass(WATCHMAN);
-    expect(getTalentLevel(sheet, talentId('crude_blow'))).toBe(1);
+    expect(getTalentLevelRaw(sheet, talentId('crude_blow'))).toBe(1);
 
     const engine = createContentTalentEngine();
     const definition = WATCHMAN;
@@ -792,7 +792,7 @@ describe('the sheet is where a rank lives', () => {
         definition.loadout.map((talent) => [talent.id, restored.get(talent.id) ?? 1]),
       ),
     });
-    expect(getTalentLevel(loaded, talentId('crude_blow'))).toBe(4);
-    expect(getTalentLevel(loaded, talentId('ward_rush'))).toBe(1);
+    expect(getTalentLevelRaw(loaded, talentId('crude_blow'))).toBe(4);
+    expect(getTalentLevelRaw(loaded, talentId('ward_rush'))).toBe(1);
   });
 });

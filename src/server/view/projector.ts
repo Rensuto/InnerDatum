@@ -768,6 +768,7 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     ...(talent.tree === undefined ? {} : { tree: talent.tree }),
     ...(talent.treeName === undefined ? {} : { treeName: talent.treeName }),
     ...(talent.kind === undefined ? {} : { kind: talent.kind }),
+    ...(talent.mastery === undefined ? {} : { mastery: talent.mastery }),
   };
 }
 
