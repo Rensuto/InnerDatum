@@ -44,6 +44,7 @@ import {
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { ActorKind } from '../src/shared/protocol.ts';
 import { canWalk } from '../src/shared/level.ts';
+import { areEnemies } from '../src/server/engine/actor.ts';
 import { firstStep } from './walk.mjs';
 import { rangedAttacks, takeShot } from './fightlib.mjs';
 
@@ -108,12 +109,36 @@ function run(site, size, seed) {
     bodies.push({ body: p, attacks: rangedAttacks(cls) });
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TOWNSFOLK IS NOT A FOE, AND THIS TOOL HAS BEEN HUNTING THEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `kind === Monster` is the wrong question. Townsfolk are monster-KIND actors
+   * carrying `Faction.Townsfolk`, and `areEnemies` exists to say so — realms.ts
+   * leans on it for "a town stays a town". Measured: this tool counted SIX foes
+   * in Alderbrook and seven in Ashwick Alchemy Row and then spent 900 turns
+   * failing to murder the shopkeepers, which is the whole reason every
+   * settlement row read as a stall.
+   *
+   * ONE definition, used by the roster count, the fight loop and the survivor
+   * report. It was three hand-written copies of `kind === Monster`, which is the
+   * shape that lets one of them stay wrong.
+   */
+  const hostiles = () =>
+    realm.world.allActors().filter((a) => bodies.some(({ body }) => areEnemies(body, a)));
+  const livingHostiles = () => hostiles().filter((a) => a.alive);
+
   let turns = 0;
   let worst = 1;
   const tally = { shot: 0, moved: 0, held: 0 };
+  if (process.env.DELVE_DIAG === 'roster') {
+    const n = hostiles().length;
+    console.log(`  [roster] ${site.name ?? site.id} size=${String(size)} monsters=${String(n)}`);
+  }
   const refusals = new Map();
   for (; turns < TURN_CAP; turns += 1) {
-    const foes = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster && a.alive);
+    const foes = livingHostiles();
     const up = bodies.filter((m) => m.body.alive && !isDowned(downed, m.body.id));
     if (foes.length === 0 || up.length === 0) break;
 
@@ -248,7 +273,7 @@ function run(site, size, seed) {
     for (const { body: b } of bodies) worst = Math.min(worst, b.hp / b.maxHp);
   }
 
-  const survivors = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster && a.alive);
+  const survivors = livingHostiles();
   const foesLeft = survivors.length;
   /**
    * WHAT WAS STILL STANDING, AND HOW FAR AWAY. A stall with the party at 91%
@@ -294,10 +319,23 @@ function run(site, size, seed) {
 
 const delves = [...SITES.values()].filter((s) => s.kind === RealmKind.Inner);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SAY WHICH "THE WEIR" THIS ROW IS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * There are 27 inner sites and every delve on the moor has a `site:redaction:*`
+ * TWIN that inherits its display name. So the table printed two rows called
+ * "The Weir" — one 8/8, one 3/8 — with nothing to say which was which, and any
+ * reading taken off it was a coin flip between a moor floor and its dark mirror.
+ */
+const label = (site) =>
+  site.id.startsWith('site:redaction:') ? `${site.name} (redacted)` : site.name;
+
 for (const size of [1, 3]) {
   console.log(`\n${size === 1 ? 'ALONE' : 'A PARTY OF THREE'} — ${RUNS} runs each\n`);
   console.log(
-    `${'delve'.padEnd(28)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}`,
+    `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}`,
   );
   for (const site of delves) {
     const rs = Array.from({ length: RUNS }, (_u, i) =>
@@ -306,7 +344,7 @@ for (const size of [1, 3]) {
     const clears = rs.filter((r) => r.outcome === 'clear');
     const avg = (xs) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
     console.log(
-      `${site.name.padEnd(28)} ${`${clears.length}/${RUNS}`.padStart(6)} ` +
+      `${label(site).padEnd(32)} ${`${clears.length}/${RUNS}`.padStart(6)} ` +
         `${String(rs.filter((r) => r.outcome === 'wipe').length).padStart(5)} ` +
         `${String(rs.filter((r) => r.outcome === 'stall').length).padStart(5)}  ` +
         `${String(Math.round(avg(rs.map((r) => r.turns)))).padStart(5)}  ` +
