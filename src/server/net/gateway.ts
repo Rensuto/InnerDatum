@@ -874,6 +874,16 @@ export type PumpResult = {
    */
   readonly refusals: readonly RefundedIntent[];
   /**
+   * Bodies moved by somebody else's action this pump — see `PumpResult.displaced`
+   * in engine/scheduler.ts, which owns the whole argument.
+   *
+   * OPTIONAL, like every other structural member added after the fact: a test
+   * that registers this plugin against a fake scheduler must not have to grow a
+   * field to keep compiling, and an engine with no swap rule reports nothing
+   * rather than an empty array it had to remember to build.
+   */
+  readonly displaced?: readonly string[];
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * MONSTERS THAT DIED IN THIS PUMP AND ARE STILL IN THE WORLD.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -4334,6 +4344,41 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // all. The wording says "at resolution" rather than "move blocked" because a
     // refunded talent takes this path too, and a log line that named the wrong
     // verb would be the kind of small lie that costs an evening.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * SOMEBODY ELSE PUT THEM ON THE DOORSTEP. THAT IS NOT A DECISION TO LEAVE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `leaveRealm` makes standing on a delve's threshold mean *leaving* — but
+     * only once you have stepped off it under your own power, which is what
+     * `Session.exitArmed` records and why arriving clears it: *"whatever this
+     * body did on the last floor, it has not yet stepped off THIS threshold."*
+     *
+     * A swap (Combat.lua:32-74) can put a body on that tile without it having
+     * walked there. Left armed, the next move it makes that does not get it off
+     * the tile — a bump into a wall is enough — walks it out of the delve on
+     * somebody else's keystroke. So being displaced onto the threshold disarms
+     * the door exactly as arriving does.
+     *
+     * ONLY THE DISPLACED BODY. The MOVER is a different case and deliberately
+     * untouched: they pressed a direction into that tile, and walking onto the
+     * way out is how leaving has always worked. `PumpResult.displaced` is what
+     * separates the two, because the `moved` events cannot.
+     */
+    for (const id of result.displaced ?? []) {
+      const conn = connByActor.get(id);
+      const moved = conn === undefined ? undefined : sessions.get(conn);
+      if (moved === undefined) continue;
+      // THE REAL REALM, not the `PumpTarget`: only a `Realm` knows where its
+      // thresholds are, and `leaveRealm` reads them the same way.
+      const where = moved.realmId === null ? undefined : opts.realms?.get(moved.realmId);
+      const body = where?.world.getActor(id);
+      if (where === undefined || body === undefined) continue;
+      if (where.spawns.some((tile) => tile.x === body.x && tile.y === body.y)) {
+        moved.exitArmed = false;
+      }
+    }
+
     for (const refusal of result.refusals) {
       const conn = connByActor.get(refusal.id);
       const owner = conn === undefined ? undefined : sessions.get(conn);

@@ -83,6 +83,7 @@ import {
   DownedTick,
   ReviveRefusal,
   goDown,
+  isDowned,
   isErased,
   resetFloorParty,
   revive,
@@ -1137,6 +1138,10 @@ type Run = {
    * `PumpResult.reaped` — the engine ENROLS, and the caller removes.
    */
   readonly reaped: string[];
+  /**
+   * BODIES MOVED BY SOMEBODY ELSE IN THIS CALL. See `PumpResult.displaced`.
+   */
+  readonly displaced: string[];
 };
 
 export type PumpResult = {
@@ -1192,6 +1197,28 @@ export type PumpResult = {
    * crossed zero.
    */
   readonly reaped: readonly string[];
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHO WAS MOVED WITHOUT ASKING TO BE — and why the caller has to be told.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A swap (Combat.lua:32-74, `World.swapPlaces`) puts a second body on a tile
+   * it did not walk onto. The two `moved` events say WHERE everyone ended up,
+   * and that is all a renderer needs — but net/ keeps a rule that turns on HOW
+   * a body got somewhere, not just where it is: `Session.exitArmed`, which
+   * makes standing on a delve's threshold mean *leaving* only once you have
+   * stepped off it under your own power. Arriving disarms it, in as many words,
+   * *"whatever this body did on the last floor, it has not yet stepped off THIS
+   * threshold"*.
+   *
+   * Being shoved onto the doorstep by a friend is the same situation and needs
+   * the same answer, or a party member gets thrown out of a delve by somebody
+   * else's keystroke. That fact is unrecoverable from the event stream — a
+   * `moved` looks identical whoever caused it — so it is reported here, the way
+   * `reaped` and `refusals` are: bookkeeping the caller needs and the wire does
+   * not.
+   */
+  readonly displaced: readonly string[];
   readonly ticks: number;
   readonly gameTurns: number;
   /** Completed game turns since the world began. */
@@ -1217,6 +1244,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   const events: GameEvent[] = [];
   const sink = createEventSink(events);
   const reaped: string[] = [];
+  const displaced: string[] = [];
 
   /**
    * ONE SNAPSHOT of the actor array for the whole call — ToME's `tickLevel` is
@@ -1275,6 +1303,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     survival: ctx.downed === undefined ? null : { state: ctx.downed, wiped: new Set<string>() },
     scopes,
     reaped,
+    displaced,
   };
 
   // Anything the caller applied BETWEEN pumps — a GM command, a status handed
@@ -1459,6 +1488,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     parked: result.parked,
     events,
     reaped,
+    displaced,
     ticks: result.ticks,
     gameTurns: result.gameTurns,
     gameTurn: world.turn.clock.gameTurn,
@@ -1614,6 +1644,10 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
       return ActResult.Park;
     }
 
+    // WHO GOT MOVED WITHOUT ASKING. Recorded here rather than inside
+    // `emitPlayerEffect`, which takes a sink and not the run — and this is the
+    // one place that holds both. See `PumpResult.displaced`.
+    if (outcome.effect.kind === 'swapped') run.displaced.push(outcome.effect.otherId);
     emitPlayerEffect(actor, outcome.effect, sink);
     // Statuses this action applied, then anybody it put on the floor. Both in
     // the PLAYER lane rather than the sweep, because this was a human's turn.
@@ -1805,6 +1839,21 @@ type Blow = {
 /** What actually happened, once an intent survived its legality check. */
 type Effect =
   | { readonly kind: 'move'; readonly from: TileXY; readonly to: TileXY }
+  /**
+   * TWO BODIES TRADED TILES — see `World.swapPlaces` and Combat.lua:32-74.
+   *
+   * A SEPARATE EFFECT FROM `move`, even though it emits two ordinary `moved`
+   * events, because the caller needs to know somebody was moved who did not ask
+   * to be: `PumpResult.displaced` is how net/ learns to disarm that body's door
+   * (see the note there). Folding it into `move` would make that fact
+   * unrecoverable by the time the sink is read.
+   */
+  | {
+      readonly kind: 'swapped';
+      readonly from: TileXY;
+      readonly to: TileXY;
+      readonly otherId: string;
+    }
   | ({ readonly kind: 'attack' } & Blow)
   /**
    * A TALENT LANDED. One stamp, plus one `Blow` per victim.
@@ -2015,6 +2064,73 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
         const refusal = canAttack(actor, occupant, world);
         if (refusal !== null) return { ok: false, reason: attackRefusalToRefusal(refusal) };
         return { ok: true, effect: strike(actor, occupant, run) };
+      }
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WALKING INTO A FRIEND TRADES PLACES WITH THEM.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Ported from Combat.lua:32-74 — the `reaction >= 0` half of `bumpInto`,
+       * where ToME force-moves both bodies and charges the mover one move. It is
+       * on for party members by `Party.lua:271-272` (*"actor.move_others =
+       * true"*) and for the player at birth by `descriptors.lua:60`.
+       *
+       * ═══ WHY IT IS WORTH THE HOT PATH ═══
+       * Without it a party member is a WALL. Measured while probing something
+       * else entirely: a player following a friend into a delve arrives at the
+       * way out, and if anybody is standing on it the only route in is through
+       * them — twelve consecutive steps, no movement. The refusal was delivered
+       * (`refused at resolution: occupied`, unicast), so it was not silent, but
+       * an accurate error message is not the answer to *"my friend is in the
+       * doorway"*. In a co-op roguelike played down corridors this is the most
+       * repeatable friction there is.
+       *
+       * ═══ PLAYER TO PLAYER ONLY, AND THE KIND TEST EARNS ITS PLACE ═══
+       * The hostile branch above has already returned for anything that would
+       * fight, so an occupant reaching this line is never an enemy — which means
+       * this test is not about hostiles at all. It is what stops the two cases
+       * that ARE non-hostile and are not your friend:
+       *
+       *   A TOWNSFOLK. `areEnemies` returns false the moment either side is
+       *     `Faction.Townsfolk`, so a shopkeeper reaches this line. Without the
+       *     kind test a player would shove the person they came to trade with
+       *     off her own doorstep. (The gateway's `greetOnBump` intercepts a
+       *     townsfolk bump before it is ever submitted, so this is belt and
+       *     braces today — and it is the only case a test can reach, which is
+       *     what test/server/ally-swap.test.ts uses to pin the gate.)
+       *
+       *   TWO MONSTERS. A pack is not hostile to itself. Letting them trade
+       *     places would let the back rank flow through the front rank, which
+       *     turns a corridor from something a party can hold into a queue that
+       *     shuffles — and holding a line is most of the tactical geometry this
+       *     game has.
+       *
+       * ═══ AND NEVER A BODY ON THE FLOOR — WHICH IS UNREACHABLE, AND STAYS ═══
+       * A Downed body cannot reach this line at all: `goDown` clears `alive`,
+       * and `world.actorAt` returns only living bodies, so a casualty is not an
+       * occupant of anything. You walk straight over one, and always could —
+       * MEASURED, after this guard was written on the assumption it was doing
+       * work.
+       *
+       * It stays because it is the one thing standing between a future change to
+       * `actorAt` and a free tow: swapping with a casualty would drag them
+       * around the floor, and dragging one onto the threshold would walk them
+       * out of the delve entirely. ToME spells the same rule `cant_be_moved`
+       * (Combat.lua:53), and a guard that costs a Map lookup is a cheap price
+       * for a bug that would present as bodies teleporting out of dungeons.
+       */
+      if (
+        occupant !== undefined &&
+        actor.kind === ActorKind.Player &&
+        occupant.kind === ActorKind.Player &&
+        !(run.ctx.downed !== undefined && isDowned(run.ctx.downed, occupant.id))
+      ) {
+        const theirs: TileXY = { x: occupant.x, y: occupant.y };
+        if (world.swapPlaces(actor.id, occupant.id)) {
+          run.ctx.talents?.noteMoved(actor.id);
+          return { ok: true, effect: { kind: 'swapped', from, to: theirs, otherId: occupant.id } };
+        }
       }
 
       // `tryMove` remains the ONLY thing in the process allowed to change a
@@ -2392,6 +2508,24 @@ function emitPlayerEffect(actor: PlayerActor, effect: Effect, sink: EventSink): 
     case 'move':
       sink.push({ t: 'moved', id: actor.id, from: effect.from, to: effect.to });
       return;
+    /**
+     * TWO ORDINARY `moved` EVENTS, NOT A NEW WIRE KIND.
+     *
+     * The same ruling the talent lane already made about repositioning: *"The
+     * ordinary `moved` event, not a new event kind: `toWireEvents` already turns
+     * it into `{k:'move'}` and the client already has the one reader. A second
+     * event kind for the same fact is the second source of truth the client's
+     * own state rules forbid."*
+     *
+     * THE MOVER FIRST. Both orders draw the same final frame, but a client that
+     * renders them one at a time briefly shows two bodies on one tile if the
+     * displaced one is moved last — and this way round the transient overlap is
+     * on the tile being VACATED, which is the one already under the camera.
+     */
+    case 'swapped':
+      sink.push({ t: 'moved', id: actor.id, from: effect.from, to: effect.to });
+      sink.push({ t: 'moved', id: effect.otherId, from: effect.to, to: effect.from });
+      return;
     case 'attack':
       sink.push(attackedEvent(actor.id, effect));
       return;
@@ -2499,6 +2633,13 @@ function sweepStepFor(actor: MonsterActor, effect: Effect): SweepStep {
       // its damage, which is the one thing `GameEvent.talent_used` forbids.
       return { t: 'hold', id: actor.id };
     case 'hold':
+      return { t: 'hold', id: actor.id };
+    case 'swapped':
+      // UNREACHABLE, AND NOT A LIE — the same shape as `talent` above. The swap
+      // requires BOTH bodies to be players (see the note on the rule), so a
+      // monster cannot produce this effect. The arm exists because both lanes
+      // share the `Effect` union, and a monster that could swap would walk
+      // through the line a party is holding.
       return { t: 'hold', id: actor.id };
     case 'fired':
       // The shot left the muzzle. Nothing has been hit — the impact arrives as

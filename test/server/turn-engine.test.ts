@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AiProfile, setCooldown } from '../../src/server/engine/actor.ts';
+import { AiProfile, setCooldown, Faction } from '../../src/server/engine/actor.ts';
 import {
   DOWNED_TURNS,
   Survival,
@@ -657,13 +657,33 @@ describe('pump reports the intents it refunded', () => {
     const walker = world.addPlayer('actor_walker', 'Walker');
     walker.x = 10;
     walker.y = 10;
-    // AN ALLY, NOT A MONSTER. Stepping into a hostile is a bump-attack and
-    // resolves perfectly well; stepping onto a friend is `MoveBlock.Occupied`,
-    // which is exactly what a traveller hits when somebody lands on its next
-    // tile during the step's flight time.
-    const blocker = world.addPlayer('actor_blocker', 'Blocker');
-    blocker.x = 11;
-    blocker.y = 10;
+    /**
+     * A TOWNSFOLK, AND IT USED TO BE A SECOND PLAYER.
+     *
+     * The blocker has to be somebody the walker will neither fight nor swap
+     * with, because this test is about a move that survives submission and dies
+     * at RESOLUTION — which is what a traveller hits when somebody lands on its
+     * next tile during the step's flight time.
+     *
+     * An ally was the obvious choice and stopped working the day allies started
+     * trading places (Combat.lua:32-74, engine/scheduler.ts). A hostile is no
+     * good either: stepping into one is a bump-attack and resolves perfectly
+     * well. `Faction.Townsfolk` is the remaining body that blocks — `areEnemies`
+     * returns false for her so there is no attack, and the swap's kind test
+     * refuses to move her, so the step is still `MoveBlock.Occupied`.
+     */
+    const blocker = world.addMonster('actor_blocker', {
+      name: 'Merrow Stitch',
+      sprite: 'chr_npc_bent_watchman_s',
+      x: 11,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 500,
+      faction: Faction.Townsfolk,
+      aggroRange: 0,
+      attackRange: 0,
+    });
+    void blocker;
 
     const engine = createTurnEngine({ world });
     engine.join('actor_walker');

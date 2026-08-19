@@ -499,6 +499,34 @@ export type World = {
   actorAt(x: number, y: number): Actor | undefined;
   /** The one legal way to change a position. */
   tryMove(id: string, dir: Dir): MoveResult;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TWO BODIES TRADE TILES. The SECOND writer of a position, and the last.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from Combat.lua:32-74 (`Actor:bumpInto`), the friendly half: when a
+   * bump lands on somebody you are not hostile to, ToME checks that both can
+   * stand where they are about to end up, force-moves each onto the other's
+   * tile, and charges the mover one move's energy. `Party.lua:271-272` is what
+   * turns it on — *"actor.move_others = true"* is set on every actor added to
+   * the party — and `descriptors.lua:60` gives the player it at birth.
+   *
+   * WHY IT IS NOT `tryMove` TWICE: the intermediate state is illegal. Whichever
+   * body moved first would be standing on a tile the other still occupies, and
+   * `tryMove` would refuse it as `Occupied`. The exchange is atomic or it is
+   * nothing, which is exactly why it lives here beside `tryMove` rather than
+   * being assembled by a caller out of two legal-looking halves.
+   *
+   * TERRAIN IS STILL CHECKED, both ways, even though a standing body is prima
+   * facie proof its own tile is walkable. It costs two array reads and it is
+   * the guard that survives the day something makes a tile impassable underneath
+   * somebody — which is exactly the shape of bug that would otherwise put a
+   * body inside a wall and be blamed on the swap six weeks later.
+   *
+   * @returns false, having changed nothing, if either id is unknown or either
+   *   destination is not walkable.
+   */
+  swapPlaces(aId: string, bId: string): boolean;
 
   // --- projectiles ----------------------------------------------------------
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1062,6 +1090,22 @@ export function createWorld(
     return { ok: true, x: actor.x, y: actor.y };
   };
 
+  /** See the note on `World.swapPlaces`. Atomic: both tiles or neither. */
+  const swapPlaces = (aId: string, bId: string): boolean => {
+    const a = actors.get(aId);
+    const b = actors.get(bId);
+    if (a === undefined || b === undefined || a === b) return false;
+    if (!canWalk(level, b.x, b.y) || !canWalk(level, a.x, a.y)) return false;
+
+    const ax = a.x;
+    const ay = a.y;
+    a.x = b.x;
+    a.y = b.y;
+    b.x = ax;
+    b.y = ay;
+    return true;
+  };
+
   const removeActor = (id: string): boolean => actors.delete(id);
 
   const addProjectile = (init: ProjectileInit): Projectile => {
@@ -1118,6 +1162,7 @@ export function createWorld(
     actorsInTurnOrder,
     actorAt,
     tryMove,
+    swapPlaces,
     addProjectile,
     removeProjectile: (id: string): boolean => projectiles.delete(id),
     getProjectile: (id: string): Projectile | undefined => projectiles.get(id),

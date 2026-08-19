@@ -2203,6 +2203,13 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         playerEvents: toWireEvents(world, playerEvents, 'player'),
         sweep: toWireEvents(world, sweepEvents, 'sweep'),
         refusals,
+        // ═══ AND WHO WAS MOVED WITHOUT ASKING TO BE ═══
+        // Straight through, for the same reason `refusals` is assembled just
+        // above: the wire cannot carry it. Two `moved` events say where both
+        // bodies ended up and look identical whoever caused them, and net/ keeps
+        // one rule that turns on HOW a body arrived somewhere rather than where
+        // it is. See `PumpResult.displaced` in engine/scheduler.ts.
+        displaced: result.displaced,
         // ═══ STRAIGHT THROUGH, AND STILL IN THE WORLD — EXCEPT THE ONES A
         // FLOOR RESET ALREADY REPLACED ═══
         // The bodies are named, not buried. The caller reaps them AFTER it has

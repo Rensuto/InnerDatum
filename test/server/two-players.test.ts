@@ -5,6 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { AiProfile } from '../../src/server/engine/actor.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createPartyState, membersOf } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -245,6 +246,106 @@ describe('somebody else turns up', () => {
 
     expect(membersIn(second.latest('party'))).toHaveLength(2);
     expect(membersIn(second.latest('party_state'))).toHaveLength(1);
+  });
+
+  it('trades places with a party member instead of treating them as a wall', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A FRIEND IN THE DOORWAY WAS A WALL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Ported from Combat.lua:32-74 (`Actor:bumpInto`, the `reaction >= 0` half),
+     * switched on for party members by Party.lua:271-272 and for the player at
+     * birth by descriptors.lua:60.
+     *
+     * FOUND WHILE MEASURING SOMETHING ELSE: a player following a friend into a
+     * delve arrives at the way out, and with anybody standing on it the only
+     * route in is through them — twelve consecutive steps, no movement. The
+     * refusal WAS delivered (`refused at resolution: occupied`, unicast), so it
+     * was never silent; an accurate error message is simply not the answer to
+     * *"my friend is in the doorway"*.
+     */
+    const a = await connect(server.port);
+    const aId = await a.hello();
+    const b = await connect(server.port);
+    const bId = await b.hello();
+    await sleep(200);
+    a.send({ t: 'party', action: 'invite', targetId: bId });
+    await sleep(140);
+    b.send({ t: 'party', action: 'accept', targetId: aId });
+    await sleep(250);
+
+    const world = server.realms.overworld.world;
+    const ab = world.getActor(aId);
+    const bb = world.getActor(bId);
+    if (ab === undefined || bb === undefined) throw new Error('no bodies');
+    bb.x = ab.x + 1;
+    bb.y = ab.y;
+    const a0 = { x: ab.x, y: ab.y };
+    const b0 = { x: bb.x, y: bb.y };
+
+    a.send({ t: 'move', dir: 'e' });
+    // The barrier: B is standing and owes the turn too, or nothing resolves.
+    b.send({ t: 'hold' });
+    await sleep(450);
+
+    const a1 = world.getActor(aId);
+    const b1 = world.getActor(bId);
+    expect({ x: a1?.x, y: a1?.y }, 'the mover did not take the tile').toEqual(b0);
+    // BOTH HALVES. Asserting only the mover would pass if the other body were
+    // deleted, left behind, or put anywhere at all.
+    expect({ x: b1?.x, y: b1?.y }, 'the other body was not moved out').toEqual(a0);
+    expect(a.latest('error'), 'a successful swap must refuse nothing').toBeUndefined();
+  });
+
+  it('attacks a monster rather than trading places with it', async () => {
+    /**
+     * A HOSTILE BUMP IS STILL AN ATTACK, end to end over a socket.
+     *
+     * IT DOES NOT PIN THE SWAP'S KIND TEST, and the first version of this
+     * comment claimed it did. Reverting the rule is what found otherwise: with
+     * the kind test deleted this still passed, because the hostile branch
+     * returns long before the swap is reached. The gate is pinned in
+     * test/server/ally-swap.test.ts, against a TOWNSFOLK — the only non-hostile
+     * non-player an engine test can put on a tile.
+     *
+     * Asserted by POSITION rather than by hit points: the blow can miss, and a
+     * test that read damage would be flaky for a reason that has nothing to do
+     * with what it is about. Where the two bodies stand afterwards is the fact.
+     */
+    const a = await connect(server.port);
+    const aId = await a.hello();
+    await sleep(200);
+
+    const world = server.realms.overworld.world;
+    const body = world.getActor(aId);
+    if (body === undefined) throw new Error('no body');
+    const target = { x: body.x + 1, y: body.y };
+    const mob = world.addMonster('m_swap_probe', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: target.x,
+      y: target.y,
+      profile: AiProfile.MeleeChaser,
+      // ENOUGH TO SURVIVE THE BUMP. A monster that dies takes its body off the
+      // board and the position assertion below loses its subject — see the
+      // note there about measuring a corpse.
+      maxHp: 500,
+    });
+    expect(mob, 'the monster would not stand there').toBeDefined();
+    const mine = { x: body.x, y: body.y };
+
+    a.send({ t: 'move', dir: 'e' });
+    await sleep(450);
+
+    const after = world.getActor(aId);
+    expect({ x: after?.x, y: after?.y }, 'the player swapped with a MONSTER').toEqual(mine);
+    const beast = world.getActor(mob.id);
+    // Dead is a legitimate outcome of a bump; standing on the player's old tile
+    // is not.
+    if (beast !== undefined) {
+      expect({ x: beast.x, y: beast.y }, 'the monster took the player tile').toEqual(target);
+    }
   });
 
   it('shows a party member elsewhere the clock they have to beat', async () => {
