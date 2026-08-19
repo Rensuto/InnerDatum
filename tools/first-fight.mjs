@@ -44,7 +44,13 @@ import { createRealms, ENCOUNTER_SITE } from '../src/server/world/realms.ts';
 import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
 import { createMvpEffectState } from '../src/server/content/effects.ts';
-import { CLASSES } from '../src/server/content/classes.ts';
+import {
+  CLASSES,
+  createContentTalentEngine,
+  createTalentBook,
+  sheetForClass,
+} from '../src/server/content/classes.ts';
+import { talentRuntimeFor } from '../src/server/main.ts';
 import { canWalk, Ground } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 
@@ -70,16 +76,46 @@ const TURN_CAP = 200;
 /** One fight, driven the way somebody who has never played would drive it. */
 function fight(cls, seed) {
   const downed = createDownedState();
+  // ONE PER RUN, like the server's: it holds the sheets, and a fresh one per
+  // world would hand every character a full bar on every frame.
+  const talentEngine = createContentTalentEngine();
   // THE STATUS TABLE. Without it the Overwritten Husk's bleed never lands and
   // this tool measures a fight the game does not have.
   const effects = createMvpEffectState();
   const realms = createRealms({
     seed,
-    engineFor: (world) => createTurnEngine({ world, downed, effects }),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WITH THE TALENTS WIRED IN, WHICH THEY WERE NOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This probe built its engine as `createTurnEngine({ world, downed, effects })`
+     * with NO `talents` option — so the book defaulted to `EMPTY_TALENT_BOOK`,
+     * whose entire body is `loadoutOf: () => []`. Every measurement this tool has
+     * ever printed was taken in a game where NO CLASS HAD ANY TALENTS.
+     *
+     * src/server/main.ts carries the same mistake as a warning, because the real
+     * server had it first: *"Three files of finished content, wired to nothing."*
+     * It was fixed there and the probe kept the broken copy, which is worse than
+     * never having measured — the Watchman's 24/24 read as a statement about the
+     * opening fight and was a statement about punching.
+     */
+    engineFor: (world) =>
+      createTurnEngine({
+        world,
+        downed,
+        effects,
+        talents: createTalentBook(talentEngine, world),
+        talentRuntime: talentRuntimeFor(talentEngine, world),
+      }),
   });
   const arena = realms.open(ENCOUNTER_SITE, seed, { level: 1, size: 1 }, GROUND);
 
   const p = arena.world.addPlayer('p1', 'Ren');
+  // THE SHEET IS WHAT MAKES THE BOOK ANSWER. `createTalentBook` reads a per-actor
+  // sheet; without one, `loadoutOf` is empty and every talent is refused as "no
+  // such talent in this loadout" — which is exactly what The Inspector got.
+  talentEngine.attach('p1', sheetForClass(cls));
   // THE COMBAT SHEET. See the header — this one line is the whole reason the
   // tool exists.
   p.combat = cls.combat;
@@ -90,6 +126,32 @@ function fight(cls, seed) {
   arena.engine.join('p1');
   arena.engine.setConnected('p1', true);
 
+  /**
+   * The longest-reaching attack this class owns, or null for a melee class.
+   *
+   * READ OFF THE CLASS rather than hardcoded: `loadout` carries the targeting
+   * for every talent, and picking the longest range is what a player does when
+   * something is far away. `single` only — an area talent wants a different
+   * question about where to aim it, and this is a difficulty probe rather than
+   * an AI.
+   */
+  const attack =
+    (cls.loadout ?? [])
+      /**
+       * `>= 2`, NOT `> 1`. Melee in this engine is range 1.5 — the
+       * diagonal-inclusive adjacency — so `> 1` matched the Watchman's Crude
+       * Blow and had him "shooting" people he was standing next to. The class
+       * card's shorthand was caught by the same trap: read the numbers, do not
+       * assume 1 means melee.
+       */
+      .filter((t) => t.targeting?.shape === 'single' && (t.targeting.range ?? 0) >= 2)
+      .map((t) => ({
+        id: t.id,
+        range: t.targeting.range ?? 1,
+        minRange: t.targeting.minRange ?? 0,
+      }))
+      .sort((a, b) => b.range - a.range)[0] ?? null;
+
   let turns = 0;
   let worst = 1;
   for (; turns < TURN_CAP; turns += 1) {
@@ -98,15 +160,59 @@ function fight(cls, seed) {
     const near = foes
       .map((f) => ({ f, d: Math.max(Math.abs(f.x - p.x), Math.abs(f.y - p.y)) }))
       .sort((a, b) => a.d - b.d)[0];
-    // PATHFOUND, NOT STRAIGHT-LINE. See tools/walk.mjs: a straight-line walker
-    // pins itself on the first wall and reports the room as unclearable.
-    const dir =
-      firstStep(
-        (x, y) => canWalk(arena.world.level, x, y),
-        { x: p.x, y: p.y },
-        { x: near.f.x, y: near.f.y },
-      ) ?? 'e';
-    arena.engine.submitMove('p1', dir);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * SHOOT IF YOU CAN SHOOT. A BUMP DRIVER CANNOT PLAY A GUNMAN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This printed `0/24, 24 stalls` for The Inspector and explained it away in
+     * its own footer — "a stall is this driver, not the class". True, and it
+     * meant A THIRD OF THE ROSTER HAD NEVER BEEN MEASURED AT ALL. The Inspector
+     * is the one class whose defining trait is a DEAD ZONE (`minRange: 3`,
+     * which game-design.md calls "the single most important thing" about it),
+     * so the one class the driver could not play is the one whose opening fight
+     * is least predictable.
+     *
+     * A player with a revolver does not walk up and hit somebody with it. So
+     * the driver now asks, in order: can I shoot this from here — am I too
+     * close and should back off — otherwise close the distance.
+     */
+    const ranged = attack === null ? null : attack;
+    const gap = near.d;
+    let acted = false;
+
+    if (ranged !== null && gap >= ranged.minRange && gap <= ranged.range) {
+      const shot = arena.engine.submitTalent('p1', ranged.id, { x: near.f.x, y: near.f.y });
+      acted = shot?.ok !== false;
+      /**
+       * `FIGHT_DIAG=1` prints the first few shots and what the engine said to
+       * them. It is here because the answer to "why is this class at 0/24" was
+       * a REFUSAL — `no such talent in this loadout` — and no amount of staring
+       * at win rates would have produced it.
+       */
+      if (process.env.FIGHT_DIAG === '1' && turns < 3) {
+        console.log(
+          `  [diag] ${cls.name}: ${ranged.id} at gap ${String(gap)} -> ${JSON.stringify(shot)}`,
+        );
+      }
+    }
+
+    if (!acted) {
+      /**
+       * BACKING OFF IS PART OF THE CLASS, not a fallback. Inside the dead zone a
+       * revolver is useless and the only correct move is a step away — which is
+       * exactly the decision the dead zone exists to force.
+       */
+      const away = ranged !== null && gap < ranged.minRange;
+      const goal = away
+        ? { x: p.x + Math.sign(p.x - near.f.x), y: p.y + Math.sign(p.y - near.f.y) }
+        : { x: near.f.x, y: near.f.y };
+      // PATHFOUND, NOT STRAIGHT-LINE. See tools/walk.mjs: a straight-line walker
+      // pins itself on the first wall and reports the room as unclearable.
+      const dir =
+        firstStep((x, y) => canWalk(arena.world.level, x, y), { x: p.x, y: p.y }, goal) ?? 'e';
+      arena.engine.submitMove('p1', dir);
+    }
     arena.engine.pump();
     worst = Math.min(worst, p.hp / p.maxHp);
   }
@@ -150,6 +256,7 @@ console.log(
   `\nhp low is the LOW-WATER MARK across the fight. A high "hp end" with a high\n` +
     `"hp low" is an encounter that never threatened anybody; a high "hp end" with\n` +
     `a low "hp low" is one that did and was regenerated out of afterwards.\n\n` +
-    `A stall is this driver, not the class: it bump-attacks, and a class with a\n` +
-    `dead zone cannot do that. See the header.`,
+    `A stall is still this driver rather than the class -- but no longer because\n` +
+    `it can only punch. It shoots now, and steps out of a dead zone to do it, so\n` +
+    `a stall is a kiter that ran out of room. See the header.`,
 );
