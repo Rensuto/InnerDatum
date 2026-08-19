@@ -696,10 +696,18 @@ export function projectTurn(
  * gateway may hold the last frame it sent, and an aliased array compares equal to
  * itself forever. That is the same bug the copies in `projectTurn` prevent.
  */
-export function projectLoadout(viewer: Actor, talents: readonly LoadoutTalent[]): LoadoutMsg {
+export function projectLoadout(
+  viewer: Actor,
+  talents: readonly LoadoutTalent[],
+  passives: readonly LoadoutTalent[] = [],
+): LoadoutMsg {
   return {
     v: PROTOCOL_VERSION,
     t: 'loadout',
+    // ABSENT WHEN THERE ARE NONE, never an empty array: `LoadoutMsg.passives` is
+    // optional, and a class with no passives must produce the frame it always
+    // produced rather than one with a new empty field in it.
+    ...(passives.length === 0 ? {} : { passives: passives.map(toLoadoutTalent) }),
     // HOTBAR ORDER IS THE SERVER'S. Not sorted, not filtered — slot 1 is
     // talents[0] for the whole session, because muscle memory is worth more
     // than any ordering a renderer could impose.
@@ -738,6 +746,28 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     maxLevel: talent.maxLevel,
     desc: talent.desc,
     descNext: talent.descNext,
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE OPTIONAL ONES, AND THE COMMENT ABOVE DOES NOT PROTECT THEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The note on the v9 block says a field missed here never ships, and that
+     * "the compiler catches the omission because every one of these is REQUIRED
+     * on the wire type". That is true and it is exactly why these three got
+     * through: `tree`, `treeName` and `kind` are OPTIONAL — additive, so no
+     * protocol bump — so omitting them was legal, silent, and shipped.
+     *
+     * MEASURED FROM A SOCKET: the tree headings landed in the client, the panel
+     * grouped on `talent.tree`, and every frame arrived with `tree: undefined`.
+     * The feature was correct at both ends and deleted in the middle.
+     *
+     * `projector.test.ts` now compares the KEY SETS of input and output, which
+     * is the only guard that works for a field the type system has agreed to
+     * treat as skippable.
+     */
+    ...(talent.tree === undefined ? {} : { tree: talent.tree }),
+    ...(talent.treeName === undefined ? {} : { treeName: talent.treeName }),
+    ...(talent.kind === undefined ? {} : { kind: talent.kind }),
   };
 }
 

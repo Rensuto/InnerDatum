@@ -773,6 +773,7 @@ export function createTalentBook(
   world: World,
 ): {
   loadoutOf(actor: Actor): readonly LoadoutTalent[];
+  passivesOf(actor: Actor): readonly LoadoutTalent[];
   resourceOf(actor: Actor): ResourceView | undefined;
   check(actor: Actor, talentId: string, target: TileXY | undefined): RefusalCode | null;
 } {
@@ -797,6 +798,26 @@ export function createTalentBook(
         // than a frame the protocol calls impossible.
         const level = Math.max(BIRTH_TALENT_LEVEL, getTalentLevel(sheet, id));
         out.push(toLoadoutView(talent, level, actor));
+      }
+      return out;
+    },
+
+    /**
+     * THE PASSIVES, BUILT EXACTLY LIKE THE FOUR ABOVE and kept in their own
+     * array all the way to the client. See `LoadoutMsg.passives`: the hotbar
+     * reads `talents` and must never see these, which is why the split survives
+     * the wire rather than being re-derived by a filter at the far end.
+     */
+    passivesOf: (actor: Actor): readonly LoadoutTalent[] => {
+      const sheet = engine.sheetOf(actor.id);
+      if (sheet === undefined) return [];
+      const out: LoadoutTalent[] = [];
+      for (const id of sheet.passives) {
+        const talent = engine.registry.get(id);
+        if (talent === undefined) continue;
+        out.push(
+          toLoadoutView(talent, Math.max(BIRTH_TALENT_LEVEL, getTalentLevel(sheet, id)), actor),
+        );
       }
       return out;
     },

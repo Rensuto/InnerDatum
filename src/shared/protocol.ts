@@ -3880,6 +3880,29 @@ export type LoadoutMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'loadout';
   talents: readonly LoadoutTalent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PASSIVES — A SECOND ARRAY, AND THE SEPARATION IS THE WHOLE POINT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `talents` IS THE HOTBAR: slot 1 is `talents[0]` for the whole session, and
+   * the server owns that order because muscle memory is worth more than any
+   * sort a renderer could impose. A passive has nothing to press, so a passive
+   * in that array would be a hotbar key that does nothing — the failure ToME
+   * avoids by never putting a `mode = "passive"` talent on the bar.
+   *
+   * MERGING THEM AND FILTERING AT THE DRAWING END would put the rule in every
+   * surface that reads a loadout, and the first one that forgets ships the dead
+   * key. The server keeps two lists for exactly this reason
+   * (`ClassDef.passives`); flattening them here would undo that on the wire.
+   *
+   * THE TALENT PANEL READS BOTH, grouped by tree — from the player's side these
+   * are all talents they own and can raise. Only the BAR is exclusive.
+   *
+   * OPTIONAL AND ADDITIVE, so no protocol bump: an older client ignores a field
+   * it cannot name and draws the four buttons it always drew.
+   */
+  passives?: readonly LoadoutTalent[];
 };
 
 /**

@@ -345,6 +345,18 @@ export type TalentRow =
       readonly descNext: string | null;
       /** True when a point is in hand AND the talent is below its cap. */
       readonly canSpend: boolean;
+      /**
+       * TRUE FOR A PASSIVE, and it changes the ROW'S SIZE rather than only its
+       * ink. A passive has no cost to print, no cooldown, and nothing to aim —
+       * so the icon block a talent row is built around is carrying a third of a
+       * row for a talent that needs none of it.
+       *
+       * MEASURED: the Watchman's fifth row pushed a talent off the panel at the
+       * 640x320 floor AND at the window the player screenshotted. Making the
+       * lightest rows light is what buys the space back, and it is also what
+       * ToME's own tree does — a passive reads as a property, not a button.
+       */
+      readonly passive: boolean;
     }
   | { readonly kind: typeof TalentRowKind.Note; readonly text: string };
 
@@ -360,6 +372,11 @@ export type TalentRow =
 export type TalentPanelView = {
   /** The `loadout` frame, in HOTBAR ORDER. Never sorted here. */
   readonly loadout: readonly LoadoutTalent[];
+  /**
+   * The passives. A separate array all the way from `ClassDef.passives` — see
+   * `LoadoutMsg.passives`. The panel lists them; the hotbar never sees them.
+   */
+  readonly passives?: readonly LoadoutTalent[];
   /** The `progress` frame, or null before the first one arrives. */
   readonly progress: ProgressMsg | null;
 };
@@ -460,8 +477,19 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
    * flat list this panel always drew, which is the additive-field contract.
    */
   let openTree: string | undefined;
-  for (let i = 0; i < view.loadout.length; i += 1) {
-    const talent = view.loadout[i];
+  /**
+   * THE FOUR AND THE PASSIVES, IN ONE LIST — but only here, and only for
+   * reading. `LoadoutMsg` keeps them apart so the hotbar cannot show a talent
+   * with nothing to press; the PANEL is the surface where they are all just
+   * talents the player owns and can raise, which is what ToME's tree view is.
+   *
+   * APPENDED RATHER THAN SORTED, so the class table's order still decides the
+   * order — a re-sort here would be a second opinion about a sequence the
+   * content already states, and the tree headings below key off adjacency.
+   */
+  const shown = [...view.loadout, ...(view.passives ?? [])];
+  for (let i = 0; i < shown.length; i += 1) {
+    const talent = shown[i];
     if (talent === undefined) continue;
     const tree = talent.tree;
     if (tree !== undefined && tree !== openTree) {
@@ -483,6 +511,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       // and answers `bad_message` for a capped talent or an empty hand however
       // this panel looked at the time.
       canSpend: unspent > 0 && talent.level < talent.maxLevel,
+      passive: talent.kind === 'passive',
     });
   }
   return rows;
@@ -611,6 +640,15 @@ export function talentWrapper(): (text: string, maxPx: number) => readonly strin
   };
 }
 
+/**
+ * A PASSIVE ROW: the name and rank on one line, its sentence under it, no icon.
+ *
+ * `TALENT_ROW_H` is 43 and every pixel of it is the icon block plus the `n/max`
+ * under it. A passive is a property rather than a button, so it is drawn as one
+ * — which is the difference between five talents fitting and four fitting.
+ */
+const PASSIVE_TOP = 10;
+
 /** Baseline of the first description line, from the top of a talent row. */
 const DESC_TOP = 21;
 /** Distance between two wrapped description lines. */
@@ -630,7 +668,10 @@ function rowHeight(row: TalentRow, lines: number): number {
     case TalentRowKind.Points:
       return POINTS_ROW_H;
     case TalentRowKind.Talent:
-      return Math.max(TALENT_ROW_H, DESC_TOP + (lines - 1) * DESC_LINE_H + 4);
+      // A PASSIVE HAS NO ICON BLOCK TO CLEAR, so its floor is the prose alone.
+      return row.passive
+        ? PASSIVE_TOP + lines * DESC_LINE_H
+        : Math.max(TALENT_ROW_H, DESC_TOP + (lines - 1) * DESC_LINE_H + 4);
     case TalentRowKind.Note:
       return NOTE_ROW_H;
   }
@@ -1077,6 +1118,49 @@ function drawRow(
     case TalentRowKind.Talent: {
       const armed = armedId === row.id;
       const atCap = row.level >= row.maxLevel;
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════
+       * A PASSIVE DRAWS AS A PROPERTY, NOT AS A BUTTON.
+       * ═══════════════════════════════════════════════════════════════════
+       *
+       * No icon block, no `n/max` plate under it, no ring — the three things
+       * that make an active row look pressable. It keeps its `+`, because
+       * RAISING one is exactly as legal as raising anything else and that is the
+       * whole reason it is on this panel.
+       *
+       * The word ALWAYS in front of the rank is the only label that says which
+       * kind this is, and it is worth one: `TalentKind` is on the wire and a
+       * player cannot read a type.
+       */
+      if (row.passive) {
+        ctx.font = FONT_NAME;
+        ctx.fillStyle = armed ? PALETTE.GOLD : PALETTE.PARCHMENT;
+        ctx.textAlign = 'left';
+        const head = `${row.name}  ·  always  ${String(row.level)}/${String(row.maxLevel)}`;
+        const headW = Math.max(0, rect.w - PLUS_W - 6);
+        ctx.fillText(fitText(ctx, head, headW), rect.x, rect.y + PASSIVE_TOP);
+
+        ctx.font = FONT_BODY;
+        ctx.fillStyle = PALETTE.BONE;
+        let py = rect.y + PASSIVE_TOP + DESC_LINE_H;
+        for (const line of placed.descLines) {
+          ctx.fillText(line, rect.x, py);
+          py += DESC_LINE_H;
+        }
+        ctx.fillStyle = PALETTE.GOLD;
+        for (const line of placed.nextLines) {
+          ctx.fillText(line, rect.x, py);
+          py += DESC_LINE_H;
+        }
+
+        if (placed.plus !== null) {
+          drawButton(ctx, placed.plus, armed ? PLUS_ARMED_LABEL : PLUS_LABEL, {
+            ink: armed ? PALETTE.GOLD : PALETTE.PARCHMENT,
+          });
+        }
+        return;
+      }
 
       // The ring first, so everything else lands on top of it.
       ctx.fillStyle = armed ? PALETTE.GOLD : PALETTE.PARCHMENT;

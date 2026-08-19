@@ -99,6 +99,14 @@ export type TalentBook = {
    * monster in M3, and a player before a class has been chosen.
    */
   loadoutOf(actor: Actor): readonly LoadoutTalent[];
+  /**
+   * This actor's PASSIVES — never on the hotbar, and that is why they are not in
+   * `loadoutOf`. See `LoadoutMsg.passives`.
+   *
+   * OPTIONAL, so every fixture that predates passives still satisfies this port
+   * without being edited to return an empty array it does not have.
+   */
+  passivesOf?(actor: Actor): readonly LoadoutTalent[];
   /** This actor's class resource, or undefined for an actor that has none. */
   resourceOf(actor: Actor): ResourceView | undefined;
   /**
@@ -1458,6 +1466,11 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     loadoutOf(actorId: string): readonly LoadoutTalent[] {
       const actor = world.getActor(actorId);
       return actor === undefined ? [] : talents.loadoutOf(actor);
+    },
+
+    passivesOf(actorId: string): readonly LoadoutTalent[] {
+      const actor = world.getActor(actorId);
+      return actor === undefined ? [] : (talents.passivesOf?.(actor) ?? []);
     },
 
     resourceOf(actorId: string): ResourceView | undefined {

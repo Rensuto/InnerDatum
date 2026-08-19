@@ -1100,6 +1100,15 @@ let bellEndsAt: number | null = null;
  * every turn, the resource on every hit taken.
  */
 let loadout: readonly LoadoutTalent[] = [];
+/**
+ * THE PASSIVES, HELD SEPARATELY BECAUSE THE HOTBAR READS `loadout`.
+ *
+ * `LoadoutMsg.passives` is its own array on the wire for exactly this reason —
+ * merging the two here would put a talent with nothing to press into slot five,
+ * and the bar's whole contract is that slot n is `loadout[n]` for the session.
+ * The TALENT PANEL reads both; nothing else does.
+ */
+let passives: readonly LoadoutTalent[] = [];
 let cooldowns: Readonly<Record<string, number>> = {};
 let resource: ResourceView | null = null;
 
@@ -2523,13 +2532,23 @@ function charSheetView(): {
  * unicast frames that this file already holds. Sharing the accessor would tie a
  * panel that is always correct to one that has a "gathering…" state.
  */
-function talentPanelView(): { loadout: readonly LoadoutTalent[]; progress: ProgressMsg | null } {
-  return { loadout, progress };
+function talentPanelView(): {
+  loadout: readonly LoadoutTalent[];
+  passives: readonly LoadoutTalent[];
+  progress: ProgressMsg | null;
+} {
+  return { loadout, passives, progress };
 }
 
 function talentById(id: string | null): LoadoutTalent | null {
   if (id === null) return null;
-  return loadout.find((talent) => talent.id === id) ?? null;
+  // BOTH LISTS. This resolves an id the PANEL armed, and the panel shows
+  // passives — a lookup that missed them would arm a row and then find nothing.
+  return (
+    loadout.find((talent) => talent.id === id) ??
+    passives.find((talent) => talent.id === id) ??
+    null
+  );
 }
 
 /**
@@ -8717,6 +8736,9 @@ function applyServerMessage(msg: ServerMsg): void {
       // `talents[0]` and muscle memory for which key is Ward Rush outranks any
       // ordering this renderer could impose.
       loadout = msg.talents;
+      // ABSENT MEANS NONE — an older server sends no such field, and a class
+      // without passives sends no empty array either.
+      passives = msg.passives ?? [];
       // ═══ AND THIS FRAME IS THE CLASS CHOOSER'S ONLY ACKNOWLEDGEMENT ═══
       //
       // There deliberately is no "you are a Watchman now" frame. On a successful

@@ -1097,6 +1097,12 @@ export type TurnEngine = {
    * cannot answer this question inconsistently with `submitTalent`.
    */
   loadoutOf(actorId: string): readonly LoadoutTalent[];
+  /**
+   * The passives this body owns. Separate from the hotbar all the way out — see
+   * `LoadoutMsg.passives`. Optional on the port so an engine that predates them
+   * (every test fixture) still satisfies it.
+   */
+  passivesOf?(actorId: string): readonly LoadoutTalent[];
   /** This actor's own class resource, or undefined for an actor without one. */
   resourceOf(actorId: string): ResourceView | undefined;
   /** "I have finished my turn." */
@@ -3724,7 +3730,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // An actor with no talents gets no hotbar rather than an empty one. A row of
     // four blank buttons is a bug report; the absence of a row is not.
     if (talents.length === 0) return;
-    send(session.socket, projectLoadout(viewer, talents));
+    send(session.socket, projectLoadout(viewer, talents, engine.passivesOf?.(actorId) ?? []));
   };
 
   /**
@@ -9317,8 +9323,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    // THE REGISTRY'S ANSWER, THROUGH THIS BODY'S OWN SHEET. Never the string.
-    const talent = engine.loadoutOf(actorId).find((entry) => entry.id === msg.talentId);
+    /**
+     * THE REGISTRY'S ANSWER, THROUGH THIS BODY'S OWN SHEET. Never the string.
+     *
+     * BOTH LISTS, because a point is spent on a talent and a PASSIVE IS A
+     * TALENT. `loadoutOf` is the hotbar and deliberately excludes them — that
+     * separation is what stops a passive taking a key that does nothing — but
+     * reading only the hotbar here made the panel's `+` on a passive answer "no
+     * such talent in this loadout" about a talent the player owns and can see.
+     *
+     * The hotbar stays exclusive; SPENDING is not a hotbar question.
+     */
+    const owned = [...engine.loadoutOf(actorId), ...(engine.passivesOf?.(actorId) ?? [])];
+    const talent = owned.find((entry) => entry.id === msg.talentId);
     if (talent === undefined) {
       sendError(session.socket, ErrorCode.BadMessage, 'no such talent in this loadout');
       return;

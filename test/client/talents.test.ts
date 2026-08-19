@@ -846,6 +846,7 @@ describe('a description is never cut off', () => {
       desc: LONG,
       descNext: NEXT,
       canSpend: true,
+      passive: false,
     },
   ];
 
@@ -927,6 +928,7 @@ describe('the tree headings are the first thing given up', () => {
           desc: 'Loose a flare at a target up to 5 tiles away for 130% fire damage',
           descNext: 'Loose a flare at a target up to 5 tiles away for 160% fire damage',
           canSpend: true,
+          passive: false,
         });
       }
     }

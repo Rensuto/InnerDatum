@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { projectLoadout } from '../../src/server/view/projector.ts';
+import type { LoadoutTalent } from '../../src/shared/protocol.ts';
+
 import { DOWNED_TURNS, createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
 import { BLEEDING, STUNNED } from '../../src/server/content/effects.ts';
@@ -1213,5 +1216,67 @@ describe('projectPartyState keeps a member who is somewhere else', () => {
     ]);
     const msg = projectPartyState(viewer, here, roster, barrier(), null, [], away);
     expect(msg.members.find((m) => m.id === 'p2')?.away?.canFollow).toBe(false);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HAND-WRITTEN COPY DROPS OPTIONAL FIELDS, SILENTLY, AND DID
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `toLoadoutTalent` rebuilds a `LoadoutTalent` field by field rather than
+ * spreading it, and its own comment explains why that is safe: *"the compiler
+ * catches the omission because every one of these is REQUIRED on the wire
+ * type"*.
+ *
+ * That is true, and it is exactly why three fields got through. `tree`,
+ * `treeName` and `kind` were added as OPTIONAL — additive, so no protocol bump —
+ * which made omitting them legal. Measured from a socket afterwards: the server
+ * set them, the client grouped on them, and every frame arrived with
+ * `tree: undefined`. The feature was correct at both ends and deleted in the
+ * middle, and nothing failed.
+ *
+ * A KEY-SET COMPARISON IS THE ONLY GUARD THAT WORKS for a field the type system
+ * has agreed to treat as skippable. It is deliberately not a list of field names
+ * — that would be a third copy to keep in step with the other two.
+ */
+describe('the loadout projection loses no field', () => {
+  it('carries every key it was given, optional ones included', () => {
+    const full: LoadoutTalent = {
+      id: 'talent:standing_orders',
+      name: 'Standing Orders',
+      icon: 'icon_passive_standing_orders',
+      cost: { ap: 0, mp: 0, resource: 0 },
+      cooldownTurns: 0,
+      range: 0,
+      minRange: 0,
+      shape: 'self',
+      radius: 0,
+      level: 1,
+      maxLevel: 5,
+      desc: 'Always on.',
+      descNext: null,
+      tree: 'watch/the-line',
+      treeName: 'The Line',
+      kind: 'passive',
+    };
+
+    const projected = projectLoadout({ id: 'a' } as never, [full]).talents[0];
+    expect(projected).toBeDefined();
+    if (projected === undefined) return;
+
+    expect(Object.keys(projected).sort()).toEqual(Object.keys(full).sort());
+    // …and the VALUES survive, not just the keys — a copy that named the field
+    // and then wrote a default would pass the check above.
+    expect(projected.tree).toBe(full.tree);
+    expect(projected.treeName).toBe(full.treeName);
+    expect(projected.kind).toBe(full.kind);
+  });
+
+  it('emits no passives array for a class that has none', () => {
+    // `LoadoutMsg.passives` is optional, so a class without any must produce the
+    // frame it always produced rather than one carrying a new empty field.
+    const frame = projectLoadout({ id: 'a' } as never, []);
+    expect(Object.keys(frame)).not.toContain('passives');
   });
 });
