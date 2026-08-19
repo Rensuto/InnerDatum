@@ -4338,12 +4338,57 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // rides here, in the player lane, because that is the lane the sender is
     // waiting on.
     //
-    // `illegal_move` FOR EVERY REFUSAL, and deliberately no `Refusal`->ErrorCode
-    // table: the engine's refusal vocabulary is about resolution bookkeeping and
-    // most of it (`no_actor`, `no_talent_effect`) has no player-facing meaning at
-    // all. The wording says "at resolution" rather than "move blocked" because a
-    // refunded talent takes this path too, and a log line that named the wrong
-    // verb would be the kind of small lie that costs an evening.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `illegal_move` FOR EVERY REFUSAL — EXCEPT THE THREE THE CLIENT CAN SAY
+     * BETTER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The rule here used to be `illegal_move` for ALL of them, and the reason
+     * given was sound as far as it went: *"the engine's refusal vocabulary is
+     * about resolution bookkeeping and most of it (`no_actor`,
+     * `no_talent_effect`) has no player-facing meaning at all."* That is an
+     * argument against a COMPLETE table, and it still is — the default below is
+     * unchanged and everything not named keeps `illegal_move`.
+     *
+     * ═══ BUT THREE OF THEM ALREADY HAVE A BETTER SENTENCE WAITING ═══
+     * The client renders `refusalText(code)`, and it owns arms for `too_close`,
+     * `out_of_range` and `no_los` that no server could write, because only the
+     * client knows which talent is pending and what its range is. Routing those
+     * through `illegal_move` threw all three away and printed *"you cannot go
+     * that way"* instead.
+     *
+     * `too_close` IS THE ONE THAT MATTERS, AND IT WAS MEASURED END TO END: an
+     * Inspector who walks into an adjacent husk is refused with
+     * `AttackRefusal.MinRange` — the class's whole counterplay, and the note on
+     * that refusal says combat.ts:52 exists *"precisely so the log can say 'too
+     * close' instead of eating the turn silently"*. The log said *"you cannot go
+     * that way"*. Meanwhile the client's `TooClose` arm holds the sentence
+     * written for exactly this, from exactly this: *"a scripted Inspector
+     * bump-attacking the opening ambush stalled 3 runs in 12, doing nothing,
+     * forever"*. The fix for that bug was in the codebase and unreachable from
+     * the path that caused it.
+     *
+     * THIS IS A ROUTING TABLE, NOT A VOCABULARY. It adds no words anywhere; all
+     * three codes already existed on the wire and already had client arms.
+     *
+     * The message still says "at resolution" rather than "move blocked" because
+     * a refunded talent takes this path too, and a log line that named the wrong
+     * verb would be the kind of small lie that costs an evening. Only the
+     * developer sees it now — the player reads the client's sentence.
+     */
+    const codeForRefusal = (reason: string): ErrorCode => {
+      switch (reason) {
+        case 'too_close':
+          return ErrorCode.TooClose;
+        case 'out_of_range':
+          return ErrorCode.OutOfRange;
+        case 'no_los':
+          return ErrorCode.NoLos;
+        default:
+          return ErrorCode.IllegalMove;
+      }
+    };
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * SOMEBODY ELSE PUT THEM ON THE DOORSTEP. THAT IS NOT A DECISION TO LEAVE.
@@ -4383,7 +4428,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       const conn = connByActor.get(refusal.id);
       const owner = conn === undefined ? undefined : sessions.get(conn);
       if (owner === undefined || !owner.helloDone) continue;
-      sendError(owner.socket, ErrorCode.IllegalMove, `refused at resolution: ${refusal.reason}`);
+      sendError(
+        owner.socket,
+        codeForRefusal(refusal.reason),
+        `refused at resolution: ${refusal.reason}`,
+      );
     }
 
     // ONE frame for the whole monster turn. Never one per monster.
@@ -9858,7 +9907,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const result = engine.submitRevive(actorId, msg.dir);
     if (!result.ok) {
-      sendError(session.socket, ErrorCode.IllegalMove, `revive refused: ${result.reason}`);
+      // `Refused`, same argument again: `submitRevive` refuses in English
+      // (*"nobody is lying there"*) and `illegal_move` was overwriting it with
+      // *"you cannot go that way"* — a sentence about walking, for a key pressed
+      // to help somebody.
+      sendError(session.socket, ErrorCode.Refused, result.reason);
       return;
     }
     // THIS REALM. Same argument as `handleTurnVerb`: a player verb changes one
@@ -9910,7 +9963,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const result = engine.submitRespawn(actorId);
     if (!result.ok) {
-      sendError(session.socket, ErrorCode.NotYourTurn, `respawn refused: ${result.reason}`);
+      // `Refused`, for the reason spelled out on the party refusal above:
+      // `respawnRefusalText` already wrote the sentence, and `not_your_turn`
+      // replaced it with one about the clock. This is the refusal that matters
+      // most of the three — a player on the floor pressing this key is the one
+      // most likely to read a wrong answer as the game being broken.
+      sendError(session.socket, ErrorCode.Refused, result.reason);
       return;
     }
 
@@ -9993,7 +10051,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // means: the offer lapsed, they are already with you, the party filled up
       // while you were deciding. None of them is "that tile, no", so none of
       // them is `illegal_move`.
-      sendError(session.socket, ErrorCode.NotYourTurn, `party refused: ${result.reason}`);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * `Refused`, NOT `NotYourTurn` — AND THE SENTENCE UNPREFIXED.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * MEASURED: inviting yourself sent `not_your_turn` with the message
+       * *"party refused: you cannot invite yourself"*. The client renders
+       * `refusalText(code)`, so what the player actually read on the canvas was
+       * *"not your turn yet — the clock has not asked you"* — confidently wrong,
+       * about a system they were not using — while the sentence
+       * `partyRefusalText` had carefully written sat unseen in the developer's
+       * status line.
+       *
+       * A party command is not a turn. Nothing about the barrier refused it.
+       *
+       * THE PREFIX GOES TOO, because this string is now the sentence a human
+       * reads rather than a log line: *"you cannot invite yourself"*, not
+       * *"party refused: you cannot invite yourself"*. Diagnosis keeps
+       * everything it had — `lastError` still prints the code beside it and
+       * `console.warn` still logs the whole frame — and the reasons are already
+       * unique enough to name their own origin.
+       */
+      sendError(session.socket, ErrorCode.Refused, result.reason);
       return;
     }
 

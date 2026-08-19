@@ -34,7 +34,7 @@ import { HOLD_INTENT, IntentKind, cooldownOf, isPlayer } from './engine/actor.ts
 import type { Intent } from './engine/actor.ts';
 import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
-import { RespawnRefusal, forgetActor as forgetDowned, respawn } from './engine/downed.ts';
+import { RespawnRefusal, forgetActor as forgetDowned, isErased, respawn } from './engine/downed.ts';
 import type { DownedState } from './engine/downed.ts';
 import {
   dispel,
@@ -1724,6 +1724,31 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         bodies.find((a) => a.kind === 'player' && !a.alive) ??
         bodies.find((a) => a.kind === 'player');
       if (target === undefined) return refuse('nobody there to pick up');
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * ERASED IS NOT DOWNED, AND THE PLAYER HAS TO BE TOLD WHICH.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `revive` refuses an erased body by design — the clock ran out and the
+       * way back is a floor reset, not a hand. That refusal was landing at
+       * RESOLUTION as `Refusal.NotDowned`, which the gateway forwards with
+       * `illegal_move`, so a player kneeling beside a friend who had just run
+       * out of turns read *"you cannot go that way"*. Measured over a socket.
+       *
+       * REFUSED HERE, for the reason the check directly above gives about
+       * monsters: *"it is a fact about the CATEGORY of the thing, which cannot
+       * change between the packet and the tick."* An erased body stays erased
+       * until a wipe or a respawn puts it back on its feet — no tick makes it
+       * revivable — so the answer is knowable now, and answering now is what
+       * lets it be a sentence instead of a tag.
+       *
+       * THE RULE IS UNCHANGED. `revive` in engine/downed.ts still decides, and
+       * still refuses; this refuses the same case earlier and says why.
+       */
+      if (opts.downed !== undefined && isErased(opts.downed, target.id)) {
+        return refuse('they are gone — only a fresh start brings them back');
+      }
 
       const accepted = submitIntent(world, barrier, actorId, {
         kind: IntentKind.Revive,

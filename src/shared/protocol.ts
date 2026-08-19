@@ -2887,6 +2887,29 @@ export const ErrorCode = {
   NotYourTurn: 'not_your_turn',
   RateLimited: 'rate_limited',
   Internal: 'internal',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A RULE SAID NO, AND THE `message` IS ALREADY THE SENTENCE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every other code here names a CATEGORY the client turns into prose of its
+   * own — `too_close` becomes *"too close to shoot — back off a step and fire"*,
+   * which is better than anything the server could write because only the client
+   * knows which talent is pending and what its range is.
+   *
+   * This one is for the refusals where the opposite is true: the server already
+   * holds the whole fact and the client cannot improve on it. `partyRefusalText`
+   * and `respawnRefusalText` in turn-engine.ts exist for exactly that reason —
+   * *"the engine's vocabulary is a tag and the player's is a sentence"* — and
+   * *"that party is full (6)"* needs the number, which lives on the server.
+   *
+   * MEASURED, AND THIS IS WHY IT EXISTS: those sentences were being written,
+   * sent, and thrown away. Party and respawn refusals rode `not_your_turn`, so
+   * a player who invited themselves read *"not your turn yet — the clock has not
+   * asked you"* — confidently wrong, about a system they were not using — while
+   * *"you cannot invite yourself"* sat in the developer's status line.
+   */
+  Refused: 'refused',
 
   // -------------------------------------------------------------------------
   // M3: the five ways a talent frame is refused.

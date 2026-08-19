@@ -1,6 +1,7 @@
 import { partyHint, specFor } from '../../src/server/content/delve.ts';
 import { RealmKind, SITES } from '../../src/server/world/realms.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { canWalk } from '../../src/shared/level.ts';
 
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -246,6 +247,156 @@ describe('somebody else turns up', () => {
 
     expect(membersIn(second.latest('party'))).toHaveLength(2);
     expect(membersIn(second.latest('party_state'))).toHaveLength(1);
+  });
+
+  it('answers a refused rule with the sentence about that rule', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE RIGHT SENTENCE EXISTED AND THE PLAYER NEVER SAW IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The client renders `refusalText(msg.code)` on the canvas; `msg.message` is
+     * the developer's copy, in the status line and the console. So the CODE is
+     * what a player reads, and every one of these rode a code about something
+     * else:
+     *
+     *   invite yourself   -> `not_your_turn` -> "not your turn yet — the clock
+     *                        has not asked you", while `partyRefusalText`'s
+     *                        "you cannot invite yourself" went unseen.
+     *   revive empty air  -> `illegal_move`  -> "you cannot go that way", for a
+     *                        key pressed to help somebody.
+     *
+     * `Refused` means *the message IS the sentence*, and the client shows it
+     * verbatim. Asserted on BOTH halves — a code with the wrong words, or the
+     * right words under `not_your_turn`, are each the bug this fixes.
+     */
+    const a = await connect(server.port);
+    const aId = await a.hello();
+    await sleep(200);
+
+    const cases: readonly (readonly [string, Frame, string])[] = [
+      ['invite yourself', { t: 'party', action: 'invite', targetId: aId }, 'invite yourself'],
+      ['revive empty air', { t: 'revive', dir: 'n' }, 'lying there'],
+      ['respawn upright', { t: 'respawn' }, 'on your feet'],
+    ];
+
+    for (const [label, frame, fragment] of cases) {
+      a.send(frame);
+      await sleep(220);
+      const err = a.latest('error') as { code?: string; message?: string } | undefined;
+      expect(err, `${label} was not refused at all`).toBeDefined();
+      expect(err?.code, `${label} answered with a code about something else`).toBe('refused');
+      expect(err?.message, `${label} did not carry its own sentence`).toContain(fragment);
+    }
+  });
+
+  it('still calls a wall a wall', async () => {
+    /**
+     * THE CONTROL, and the reason the routing table has a default.
+     *
+     * Walking into terrain is the commonest refusal in the game and
+     * `illegal_move` is exactly right for it — the client turns it into "you
+     * cannot go that way". A change that made every refusal `refused` would have
+     * traded one wrong sentence for another, and this is what would catch it.
+     */
+    const a = await connect(server.port);
+    const actorId = await a.hello();
+    await sleep(200);
+
+    // A WALL, FOUND RATHER THAN ASSUMED. Bodies are placed through the map here
+    // for the same reason they are everywhere else in this file.
+    const world = server.realms.overworld.world;
+    const body = world.getActor(actorId);
+    if (body === undefined) throw new Error('no body');
+    let into: string | null = null;
+    for (const [dx, dy, dir] of [
+      [1, 0, 'e'],
+      [-1, 0, 'w'],
+      [0, 1, 's'],
+      [0, -1, 'n'],
+    ] as const) {
+      if (!canWalk(world.level, body.x + dx, body.y + dy)) {
+        into = dir;
+        break;
+      }
+    }
+    expect(into, 'the spawn has open ground on all four sides').not.toBeNull();
+    if (into === null) return;
+
+    a.send({ t: 'move', dir: into });
+    await sleep(300);
+    const err = a.latest('error') as { code?: string } | undefined;
+    expect(err?.code, 'a wall stopped reading as a wall').toBe('illegal_move');
+  });
+
+  it('tells an Inspector she is too close rather than that she cannot go that way', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIX FOR A PLAYTESTED BUG WAS IN THE CODEBASE AND UNREACHABLE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `minRange: 3` is on the Inspector's combat sheet, so walking into an
+     * adjacent husk is `AttackRefusal.MinRange` — the class's whole counterplay,
+     * and combat.ts:52 exists, in its own words, *"precisely so the log can say
+     * 'too close' instead of eating the turn silently"*.
+     *
+     * The refund loop forwarded every resolution refusal as `illegal_move`, so
+     * the log said *"you cannot go that way"* — while the client held the
+     * sentence written for exactly this case, from exactly this case: *"a
+     * scripted Inspector bump-attacking the opening ambush stalled 3 runs in 12,
+     * doing nothing, forever — which is precisely what a new player does."*
+     *
+     * Asserted on the CODE, because the code is what selects that sentence.
+     */
+    const a = await connect(server.port);
+    const actorId = await a.hello();
+    await sleep(200);
+    a.send({ t: 'choose_class', classId: 'inspector' });
+    await sleep(300);
+
+    const world = server.realms.overworld.world;
+    const body = world.getActor(actorId);
+    if (body === undefined) throw new Error('no body');
+    // Enough to survive whatever the husk does back; a corpse cannot be refused.
+    body.maxHp = 9000;
+    body.hp = 9000;
+
+    let spot: { x: number; y: number; dir: string } | null = null;
+    for (const [dx, dy, dir] of [
+      [1, 0, 'e'],
+      [-1, 0, 'w'],
+      [0, 1, 's'],
+      [0, -1, 'n'],
+    ] as const) {
+      const x = body.x + dx;
+      const y = body.y + dy;
+      if (canWalk(world.level, x, y) && world.actorAt(x, y) === undefined) {
+        spot = { x, y, dir };
+        break;
+      }
+    }
+    expect(spot, 'nowhere to stand a husk').not.toBeNull();
+    if (spot === null) return;
+    const husk = world.addMonster('husk_deadzone', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: spot.x,
+      y: spot.y,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 5000,
+    });
+    // THE MEASUREMENT ONLY MEANS ANYTHING IF IT IS ACTUALLY ADJACENT. A first
+    // version of this asserted against a husk `addMonster` had relocated, and
+    // read `terrain` — the player had walked into a wall.
+    expect(Math.max(Math.abs(husk.x - body.x), Math.abs(husk.y - body.y))).toBe(1);
+
+    a.send({ t: 'move', dir: spot.dir });
+    await sleep(350);
+    const err = a.latest('error') as { code?: string; message?: string } | undefined;
+    expect(err, 'the dead-zone bump was not refused').toBeDefined();
+    expect(err?.code, `the Inspector was told the wrong thing: ${JSON.stringify(err)}`).toBe(
+      'too_close',
+    );
   });
 
   it('trades places with a party member instead of treating them as a wall', async () => {

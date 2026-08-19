@@ -3468,6 +3468,18 @@ function refusalText(code: ErrorCode, fallback: string): string {
       return 'too many commands — slow down';
     case ErrorCode.BadMessage:
     case ErrorCode.VersionMismatch:
+    case ErrorCode.Refused:
+      /**
+       * A GAME RULE, AND THE SERVER ALREADY WROTE THE SENTENCE.
+       *
+       * The opposite case from every arm above: those turn a CATEGORY into
+       * prose this file is better placed to write, because only this file knows
+       * which talent is pending and what its range is. For a party or respawn
+       * refusal the server holds the whole fact — including the numbers, as in
+       * *"that party is full (6)"* — and `partyRefusalText` has already put it
+       * in a sentence. Rewriting it here would be a second copy that drifts.
+       */
+      return fallback;
     case ErrorCode.NotAuthenticated:
     case ErrorCode.Internal:
       // Not a game rule — a protocol fault. Show the server's own words; there
@@ -3507,11 +3519,18 @@ function travelStopText(code: ErrorCode): string {
     // refusal that happened to land mid-stride, or a protocol fault. Say that
     // the walk stopped and nothing more — `refusalText` has already shown the
     // server's own words for what actually went wrong.
+    //
+    // `Refused` IS IN THIS GROUP AND NOT WITH `illegal_move` ABOVE: a party or
+    // respawn refusal that lands mid-stride says nothing whatsoever about the
+    // route, and "the way was refused" would blame the floor for a rule about
+    // the party pane — the same mistake this function was written to stop
+    // `rate_limited` making.
     case ErrorCode.TooClose:
     case ErrorCode.OutOfRange:
     case ErrorCode.NoLos:
     case ErrorCode.OnCooldown:
     case ErrorCode.NoResource:
+    case ErrorCode.Refused:
     case ErrorCode.BadMessage:
     case ErrorCode.VersionMismatch:
     case ErrorCode.NotAuthenticated:
