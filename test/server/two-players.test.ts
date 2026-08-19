@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { ActorKind } from '../../src/shared/protocol.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createPartyState, membersOf } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -247,6 +248,107 @@ describe('somebody else turns up', () => {
 
     expect(membersIn(second.latest('party'))).toHaveLength(2);
     expect(membersIn(second.latest('party_state'))).toHaveLength(1);
+  });
+
+  it('says what a level bought, not only that one happened', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE MOMENT THE CLASS STOPS BEING A COSTUME, AND IT HAD NO TEST.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A character starts with four talents at rank 1 and **zero** points, which
+     * `pointsForLevel` argues for at length: *"our four loadout talents, already
+     * learned at level 1, ARE our birth grant"*, and 11 points against 16
+     * purchasable steps is what keeps the panel a choice rather than a checklist.
+     *
+     * So level 2 is the first time a player decides anything, and MEASURED it is
+     * two delves away — the quiet Drowned Chapel pays 12.8 and the Underworks
+     * 16.0 against a threshold of 27, or nine lone roamers at 3.2 each.
+     *
+     * ═══ AND THIS BEAT HAS ALREADY BEEN HALF-BROKEN ONCE ═══
+     * `ProgressMsg` is viewer-private, so before the Record line existed *"a
+     * party could cross three levels in its first fight and finish the evening
+     * with every talent at rank 1 because nothing ever suggested opening the
+     * panel."* The fix for that announced the LEVEL and still never mentioned the
+     * POINT — *"the reader is told something happened and not what it bought
+     * them"* — and the second line was added afterwards.
+     *
+     * Two lines, two separate regressions, and nothing guarded either. A
+     * refactor that dropped the `granted > 0` block would have passed the whole
+     * suite.
+     */
+    const a = await connect(server.port);
+    const actorId = await a.hello();
+    await sleep(250);
+
+    const world = server.realms.overworld.world;
+    const body = world.getActor(actorId);
+    // NARROWED ON `kind`, the way `projectPartyState` does it: `level`, `xp` and
+    // `unspentPoints` live on `PlayerActor` and the union does not carry them.
+    if (body === undefined || body.kind !== ActorKind.Player) throw new Error('no player body');
+    // Enough to survive the husk swinging back; a corpse levels nobody.
+    body.maxHp = 9000;
+    body.hp = 9000;
+
+    // ONE KILL SHORT OF THE THRESHOLD. Asserted rather than assumed, because a
+    // probe that reads a level-up it did not cause is the whole failure mode.
+    expect(body.level, 'a fresh body is not level 1').toBe(1);
+    expect(body.unspentPoints, 'a fresh body already had points').toBe(0);
+    body.xp = 26;
+
+    let spot: { x: number; y: number; dir: string } | null = null;
+    for (const [dx, dy, dir] of [
+      [1, 0, 'e'],
+      [-1, 0, 'w'],
+      [0, 1, 's'],
+      [0, -1, 'n'],
+    ] as const) {
+      const x = body.x + dx;
+      const y = body.y + dy;
+      if (canWalk(world.level, x, y) && world.actorAt(x, y) === undefined) {
+        spot = { x, y, dir };
+        break;
+      }
+    }
+    expect(spot, 'nowhere to stand a husk').not.toBeNull();
+    if (spot === null) return;
+    world.addMonster('husk_levelling', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: spot.x,
+      y: spot.y,
+      // ONE HIT POINT. This test is about what is SAID, and a husk that survives
+      // three swings makes it about the damage roll instead.
+      maxHp: 1,
+      profile: AiProfile.MeleeChaser,
+    });
+
+    const before = a.lines().length;
+    for (let i = 0; i < 8 && world.getActor('husk_levelling') !== undefined; i += 1) {
+      a.send({ t: 'move', dir: spot.dir });
+      await sleep(160);
+    }
+    await sleep(250);
+
+    expect(world.getActor('husk_levelling'), 'the husk never died').toBeUndefined();
+    const after = world.getActor(actorId);
+    expect(after !== undefined && after.kind === ActorKind.Player).toBe(true);
+    if (after === undefined || after.kind !== ActorKind.Player) return;
+    expect(after.level, 'the kill did not level them').toBe(2);
+    expect(after.unspentPoints, 'the level granted no point').toBe(1);
+
+    const said = a.lines().slice(before);
+    expect(
+      said.some((text) => text.includes('reaches level 2')),
+      `no level line — ${JSON.stringify(said)}`,
+    ).toBe(true);
+    // THE SECOND LINE, AND THE ONE THAT WAS MISSING FOR A WHILE. Asserted
+    // separately so dropping it fails on its own terms rather than hiding behind
+    // the level line.
+    expect(
+      said.some((text) => text.includes('talent point')),
+      `the level was announced and the point was not — ${JSON.stringify(said)}`,
+    ).toBe(true);
   });
 
   it('says what changed when you put something on', async () => {

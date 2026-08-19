@@ -33,7 +33,12 @@ import {
   restock,
   stockLevelFor,
 } from '../src/server/content/shops.ts';
-import { MAX_CHARACTER_LEVEL, expChart, worthExp } from '../src/shared/progression.ts';
+import {
+  MAX_CHARACTER_LEVEL,
+  expChart,
+  pointsForLevel,
+  worthExp,
+} from '../src/shared/progression.ts';
 import { createRng } from '../src/shared/rng.ts';
 import { dangerWord, partyHint, specFor } from '../src/server/content/delve.ts';
 import { SITES } from '../src/server/world/realms.ts';
@@ -144,3 +149,61 @@ console.log(
   `  ${String(total)} ordinary kills, against ${String(fileableCount(SITES))} rooms holding five to sixteen each.`,
 );
 console.log('  A party earns a FULL share each, so three friends walk it in a third of the time.');
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND HOW MANY ROOMS THAT IS — the unit a player actually experiences.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The kill count above is the honest arithmetic and it is not what anybody
+ * feels. Nobody clears 149 husks; they clear ROOMS, and the question that
+ * decides whether the opening drags is how many of those stand between a new
+ * character and the first thing they get to choose.
+ *
+ * LEVEL 2 IS THAT MOMENT. A character starts with four talents at rank 1 and
+ * zero points — `pointsForLevel` argues for it at length, *"our four loadout
+ * talents, already learned at level 1, ARE our birth grant"* — so level 2 is the
+ * first time the panel is a decision rather than a description.
+ */
+console.log('');
+console.log('──── ROOMS TO THE FIRST THING YOU GET TO CHOOSE');
+console.log('');
+
+const payouts = [];
+for (const [id, def] of SITES) {
+  if (def.kind !== 'inner') continue;
+  const spec = specFor(id);
+  if (spec === undefined) continue;
+  const [lo, hi] = spec.monsters;
+  const bodies = Math.round((lo + hi) / 2);
+  // The roster is a CYCLE `populateDelve` walks, so the ranks repeat in order.
+  let xp = 0;
+  for (let i = 0; i < bodies; i += 1) xp += worthExp(1, spec.roster[i % spec.roster.length].rank);
+  if (spec.boss !== undefined) xp += worthExp(1, spec.boss.rank);
+  payouts.push({ name: id.replace('site:', ''), bodies, xp });
+}
+payouts.sort((a, b) => a.xp - b.xp);
+
+const toTwo = expChart(2);
+const cheapest = payouts[0];
+const dearest = payouts.at(-1);
+const roamer = worthExp(1, 'normal');
+console.log(`  level 2 costs ${String(toTwo)} xp and grants ${String(pointsForLevel(2))} point.`);
+console.log('');
+console.log(
+  `    the quietest room  ${cheapest.name} pays ${cheapest.xp.toFixed(1)}  ->  ${String(Math.ceil(toTwo / cheapest.xp))} clears`,
+);
+console.log(
+  `    the richest room   ${dearest.name} pays ${dearest.xp.toFixed(1)}  ->  ${String(Math.ceil(toTwo / dearest.xp))} clear`,
+);
+console.log(
+  `    a lone roamer      pays ${roamer.toFixed(1)}  ->  ${String(Math.ceil(toTwo / roamer))} of them`,
+);
+console.log('');
+console.log(
+  `  So the first point is TWO different rooms away — ${payouts[0].name} and ${payouts[1].name}`,
+);
+console.log(
+  `  together pay ${(payouts[0].xp + payouts[1].xp).toFixed(1)} against ${String(toTwo)} — and the moment is announced:`,
+);
+console.log('    "Player 1 reaches level 2."  /  "A talent point to spend."');
