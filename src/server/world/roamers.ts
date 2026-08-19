@@ -36,22 +36,72 @@
 import { canWalk } from '../../shared/level.ts';
 import { isHaunt } from '../../shared/protocol.ts';
 import { tileAt } from '../../shared/level.ts';
+import type { LevelView } from '../../shared/protocol.ts';
 import type { Realm, Roamer } from './realms.ts';
 
 /**
- * How many wander the region at once.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MUCH GROUND ONE ROAMER IS WORTH. The density, not the headcount.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Enough that you meet one on a long crossing and have to decide something;
- * few enough that the map is not a minefield and a careful player can still
- * cross it untouched.
+ * Enough that you meet one on a long crossing and have to decide something; few
+ * enough that the map is not a minefield and a careful player can still cross it
+ * untouched.
  *
- * SCALED WITH THE REGION. Seven was tuned against 6,144 cells; the map is now
- * 17,000, so seven would have been a rumour rather than a hazard. Eighteen
- * keeps roughly the same density -- about one per five hundred cells -- which
- * is the number that was actually playtested, expressed against the map that
- * exists.
+ * THIS WAS `MAX_ROAMERS = 18`, AND ITS OWN COMMENT DESCRIBED A DENSITY: *"Seven
+ * was tuned against 6,144 cells; the map is now 17,000... Eighteen keeps roughly
+ * the same density — about one per five hundred cells — which is the number that
+ * was actually playtested, expressed against the map that exists."* The intent
+ * was always the ratio; 18 was that ratio worked out by hand for one map and
+ * then written down as if it were the rule.
+ *
+ * THAT HELD EXACTLY AS LONG AS THERE WAS ONE MAP. A second landmass under a flat
+ * cap would have HALVED the danger on both: the same eighteen creatures spread
+ * over twice the ground, on a map whose whole design premise is that it is worse
+ * than the first. It is the fourth of the four things that assumed one overworld
+ * — see `test/server/realms.test.ts` — and the only one that could be measured
+ * today, because the ratio is a fact about a single map.
+ *
+ * ═══ AGAINST HAUNTABLE GROUND, NOT WALKABLE ═══
+ * `HAUNTS` is where a roamer may stand, and it is 7,643 of the moor's 9,327
+ * walkable cells — the road and the settlements are the difference, and they are
+ * SAFE by promise. Dividing by walkable would let a map with more road quietly
+ * carry more danger per acre of wild country. Dividing by hauntable asks the
+ * question that matters: how thick is the danger where danger can be?
+ *
+ * 7,643 / 18 = 425, so that is the number, and eighteen is what it still answers
+ * for Alderbrook. Nothing about today's play changes.
  */
-export const MAX_ROAMERS = 18;
+export const CELLS_PER_ROAMER = 425;
+
+/**
+ * The ceiling for one map, from the ground it actually has.
+ *
+ * MEMOISED BY REALM ID because it is a fold over seventeen thousand cells and
+ * `tickRoamers` runs on a pump. Ids are never recycled (world/realms.ts) and
+ * roamers only ever exist on an overworld, which is never reaped — so this is
+ * bounded by the number of landmasses rather than by uptime.
+ */
+const capByRealm = new Map<string, number>();
+
+export function maxRoamersFor(realm: Realm): number {
+  const cached = capByRealm.get(realm.id);
+  if (cached !== undefined) return cached;
+
+  const level = realm.world.level;
+  let hauntable = 0;
+  for (let y = 0; y < level.h; y += 1) {
+    for (let x = 0; x < level.w; x += 1) {
+      if (canHauntTile(level, x, y)) hauntable += 1;
+    }
+  }
+  // AT LEAST ONE on any map with somewhere to stand: a landmass with a handful
+  // of wild cells should still have something on it, and a cap of zero would
+  // read as a bug rather than as a quiet region.
+  const cap = hauntable === 0 ? 0 : Math.max(1, Math.round(hauntable / CELLS_PER_ROAMER));
+  capByRealm.set(realm.id, cap);
+  return cap;
+}
 
 /** One step every this many game turns, so they drift rather than chase. */
 const MOVE_EVERY_TURNS = 3;
@@ -98,8 +148,17 @@ const STEPS: readonly (readonly [number, number])[] = [
 ];
 
 function canHaunt(realm: Realm, x: number, y: number): boolean {
-  if (!canWalk(realm.world.level, x, y)) return false;
-  return isHaunt(tileAt(realm.world.level, x, y));
+  return canHauntTile(realm.world.level, x, y);
+}
+
+/**
+ * The same question against a bare level, so `maxRoamersFor` can count the
+ * ground without a realm's other machinery. One predicate, two callers — a
+ * second copy of "where may danger stand" is the last thing this file wants.
+ */
+function canHauntTile(level: LevelView, x: number, y: number): boolean {
+  if (!canWalk(level, x, y)) return false;
+  return isHaunt(tileAt(level, x, y));
 }
 
 /**
@@ -113,7 +172,7 @@ export function tickRoamers(realm: Realm, seq: number): boolean {
   let changed = false;
 
   // ─── SPAWN, one at a time, so the map fills gradually rather than at boot ───
-  if (realm.roamers.size < MAX_ROAMERS) {
+  if (realm.roamers.size < maxRoamersFor(realm)) {
     const level = realm.world.level;
     // A bounded search rather than a scan of six thousand cells every pump.
     for (let tries = 0; tries < 24; tries += 1) {

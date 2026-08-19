@@ -19,9 +19,14 @@ import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
-import { MAX_ROAMERS, roamerAt, tickRoamers } from '../../src/server/world/roamers.ts';
+import {
+  CELLS_PER_ROAMER,
+  maxRoamersFor,
+  roamerAt,
+  tickRoamers,
+} from '../../src/server/world/roamers.ts';
 import { tileAt } from '../../src/shared/level.ts';
-import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
+import { ActorKind, TileCode, isHaunt, isWalkable } from '../../src/shared/protocol.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
 
 function makeRealms(seed = 'roam-seed'): Realms {
@@ -51,7 +56,49 @@ describe('a roamer is a marker, not a monster', () => {
   it('fills to the cap and no further', () => {
     const realms = makeRealms();
     settle(realms);
-    expect(realms.overworld.roamers.size).toBe(MAX_ROAMERS);
+    expect(realms.overworld.roamers.size).toBe(maxRoamersFor(realms.overworld));
+  });
+
+  it('takes its cap from the ground the map has, not from a number', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FOURTH THING THAT ASSUMED THERE WAS ONE OVERWORLD.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `MAX_ROAMERS` was a flat 18, and its own comment described a DENSITY:
+     * *"Seven was tuned against 6,144 cells; the map is now 17,000... Eighteen
+     * keeps roughly the same density — about one per five hundred cells."* The
+     * ratio was always the design; 18 was that ratio worked out by hand for one
+     * map and then written down as though it were the rule.
+     *
+     * A second landmass under a flat cap would have HALVED the danger on both:
+     * the same eighteen creatures spread over twice the ground, on a map whose
+     * whole premise is that it is worse than the first.
+     *
+     * ═══ AND ALDERBROOK STILL GETS EIGHTEEN, WHICH IS THE POINT ═══
+     * Nothing about today's play changes. 7,643 hauntable cells over 425 is 18,
+     * so the computed answer reproduces the hand-tuned one — which is the only
+     * evidence that the ratio was read off the map rather than invented to
+     * justify a number somebody liked.
+     */
+    const realms = makeRealms();
+    expect(maxRoamersFor(realms.overworld)).toBe(18);
+
+    // AND IT IS THE HAUNTABLE GROUND, not the walkable ground. The road and the
+    // settlements are SAFE by promise, so counting them would let a map with
+    // more road quietly carry more danger per acre of wild country.
+    const level = realms.overworld.world.level;
+    let hauntable = 0;
+    let walkable = 0;
+    for (let y = 0; y < level.h; y += 1) {
+      for (let x = 0; x < level.w; x += 1) {
+        const code = level.tiles[y * level.w + x] ?? TileCode.WALL;
+        if (isWalkable(code)) walkable += 1;
+        if (isWalkable(code) && isHaunt(code)) hauntable += 1;
+      }
+    }
+    expect(hauntable).toBeLessThan(walkable);
+    expect(maxRoamersFor(realms.overworld)).toBe(Math.round(hauntable / CELLS_PER_ROAMER));
   });
 });
 

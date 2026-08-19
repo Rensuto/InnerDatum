@@ -8,6 +8,7 @@ import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { RealmKind, createRealms } from '../../src/server/world/realms.ts';
+import { maxRoamersFor } from '../../src/server/world/roamers.ts';
 import { SiteShape, makeSiteMap } from '../../src/shared/sitemap.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
@@ -209,5 +210,38 @@ describe('the two maps are two places, not one wearing two names', () => {
     for (const frame of frames.filter((f) => f['t'] === 'realm')) {
       expect(frame['realmId']).toBe(home.id);
     }
+  });
+});
+
+describe('danger scales with the ground, not with a constant', () => {
+  it('gives each map its own roamer cap', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FOURTH BLOCKER, AND THE ONLY ONE WITH A VISIBLE FAILURE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `MAX_ROAMERS` was a flat 18 whose own comment described a DENSITY — *"about
+     * one per five hundred cells... the number that was actually playtested"*.
+     * Under a flat cap a second landmass HALVES the danger on both: the same
+     * eighteen creatures spread across twice the ground, on a map whose whole
+     * premise is that it is worse than the first.
+     *
+     * This is the one of the four that could be caught by a number rather than
+     * by a story, and it is caught here: two maps of different size, two
+     * different caps, neither of them a constant.
+     */
+    const second = server.realms.all().find((r) => r.siteId === SECOND_MAP.id);
+    expect(second).toBeDefined();
+    if (second === undefined) return;
+
+    const home = maxRoamersFor(server.realms.overworld);
+    const other = maxRoamersFor(second);
+
+    // Alderbrook is 170x100 and the test map is a 30x30 room, so the caps must
+    // differ — and the big one must be the moor.
+    expect(home).toBeGreaterThan(other);
+    // AND ALDERBROOK IS UNCHANGED at the hand-tuned eighteen, which is what says
+    // this is a re-derivation rather than a retune.
+    expect(home).toBe(18);
   });
 });
