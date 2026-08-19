@@ -15,6 +15,8 @@ import {
   priceOf,
   restock,
   sellPrice,
+  ShopShelf,
+  stockLevelFor,
   stockSeedLabel,
 } from '../../src/server/content/shops.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
@@ -309,5 +311,74 @@ describe('the restock epoch', () => {
     expect(epochFor(0)).toBe(0);
     expect(epochFor(-3)).toBe(0);
     expect(epochFor(Number.NaN)).toBe(0);
+  });
+});
+
+describe('the first purchase in a career', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A NEW PLAYER MUST ALWAYS BE ABLE TO BUY SOMETHING SOMEWHERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * MEASURED over 400 rolled shelves at level 1, against the 15 gold a character
+   * starts with (`STARTING_MONEY`):
+   *
+   *     Threadneedle (Outfitter)   buyable 0.0%    cheapest ever 24g, median 33g
+   *     Ashwick     (Apothecary)   buyable 100.0%  cheapest ever 14g, median 14g
+   *
+   * That split is the design working, not a fault, and it is worth writing down
+   * before somebody "fixes" the Outfitter: armour is the thing you save nine
+   * more gold for, and the Apothecary is where a purse that has never been
+   * filled can still buy something. The Draught of Mending is 14g at level 1 —
+   * uncommon, base 12, x123% — which is a one-gold margin and clearly authored
+   * as the opening buy.
+   *
+   * A ONE-GOLD MARGIN IS EXACTLY WHY THIS IS PINNED. Any of `baseCost`,
+   * `BUY_LOW`, the draught's tier, or `STARTING_MONEY` moving by a single point
+   * silently makes the first shop in the game sell a new player nothing, and
+   * nothing else in the suite would notice — the shelf would still roll, the
+   * price would still be correct, and the transcript would just read
+   * "15 gold buys 0 of 4" as it did before any of this was measured.
+   */
+  it('always stocks the apothecary with something a starting purse can buy', () => {
+    const STARTING_MONEY = 15;
+    let worst = 0;
+    for (let i = 0; i < 200; i += 1) {
+      const stock = restock(
+        createRng(`opening-buy:${String(i)}`),
+        [],
+        1,
+        undefined,
+        ShopShelf.Apothecary,
+      );
+      expect(stock.length, `roll ${String(i)} produced an empty shelf`).toBeGreaterThan(0);
+      const cheapest = Math.min(...stock.map((id) => buyPrice(id, stockLevelFor(1))));
+      worst = Math.max(worst, cheapest);
+    }
+    expect(worst, 'a level-1 apothecary shelf priced out a starting purse').toBeLessThanOrEqual(
+      STARTING_MONEY,
+    );
+  });
+
+  it('leaves the outfitter as something to save for rather than a second apothecary', () => {
+    /**
+     * THE OTHER HALF, so this pair cannot be satisfied by making everything
+     * cheap. If the Outfitter ever starts undercutting a starting purse the two
+     * shops have collapsed into one, which `ShopShelf`'s own docstring calls the
+     * thing that makes a second shop "the same shop, further away".
+     */
+    let cheapestSeen = Infinity;
+    for (let i = 0; i < 200; i += 1) {
+      const stock = restock(
+        createRng(`save-for-it:${String(i)}`),
+        [],
+        1,
+        undefined,
+        ShopShelf.Outfitter,
+      );
+      if (stock.length === 0) continue;
+      cheapestSeen = Math.min(cheapestSeen, ...stock.map((id) => buyPrice(id, stockLevelFor(1))));
+    }
+    expect(cheapestSeen).toBeGreaterThan(15);
   });
 });
