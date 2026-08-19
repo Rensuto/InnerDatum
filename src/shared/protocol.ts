@@ -328,6 +328,39 @@ export const TileCode = {
   YARD: 26,
   /** Ploughed strips around a settlement. Walkable. ToME's CULTIVATION. */
   FIELD: 27,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE COLD NORTH AND THE BURNT SCAR — COUNTRY THE MAP ALREADY HAD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The redesign's own cell table authors 1,107 cells of terrain this build had
+   * no code for: 425 `frozen_water`, 257 `cold_forest`, 234 `charred` and 191
+   * `snowfield`. The compatibility import resolved every one of them to the
+   * nearest thing that already existed — frozen sea drew as canal, a snowfield
+   * as plains, a burnt scar as heath — so a frozen north and a charred wound in
+   * the Sedge were on the map and invisible.
+   *
+   * WALKABILITY IS UNCHANGED BY DESIGN, and that is what makes this safe: each
+   * code below is walkable exactly where its fallback was, so no route opens, no
+   * route closes, and nothing that pathfinds notices. Measured from the handoff:
+   * charred→HEATH and snowfield→PLAINS are walkable, cold_forest→TREES and
+   * frozen_water→WATER are not. This is the map being drawn as it was authored,
+   * not the map changing.
+   *
+   * `cold_mountain` gets NO code: the handoff draws it with the same Daikara art
+   * as an ordinary mountain, so a second code would be a distinction with no
+   * picture behind it.
+   */
+  SNOWFIELD: 28,
+  CHARRED: 29,
+  COLD_FOREST: 30,
+  /**
+   * SOLID AND TRANSPARENT, like the canal it used to draw as. See `blocksSight`:
+   * a code in neither set falls to the closed default, so adding this one
+   * without saying so would put a sight-blocking wall across the frozen sea and
+   * change every FOV in the north.
+   */
+  FROZEN_WATER: 31,
 } as const;
 export type TileCode = (typeof TileCode)[keyof typeof TileCode];
 
@@ -350,6 +383,24 @@ const WALKABLE: ReadonlySet<number> = new Set<number>([
   TileCode.SHORE,
   TileCode.YARD,
   TileCode.FIELD,
+  // The north and the scar. Walkable exactly where their fallbacks were —
+  // `snowfield` drew as PLAINS and `charred` as HEATH.
+  TileCode.SNOWFIELD,
+  TileCode.CHARRED,
+]);
+
+/**
+ * SOLID, AND YET YOU CAN SEE ACROSS IT. The one family that is in neither set:
+ * open water, and now the frozen sea it becomes in the north. Named as a set
+ * rather than a chain of `||` in `blocksSight`, because a hand-written list in
+ * one function and a closed set in another is the shape this file has already
+ * been bitten by — the code that was added and forgotten drew the open sea as
+ * rock for a whole release.
+ */
+const SOLID_BUT_CLEAR: ReadonlySet<number> = new Set<number>([
+  TileCode.WATER,
+  TileCode.DEEPWATER,
+  TileCode.FROZEN_WATER,
 ]);
 
 /**
@@ -369,6 +420,8 @@ const BLOCKS_SIGHT: ReadonlySet<number> = new Set<number>([
   TileCode.TOWN_ROOF,
   TileCode.CITY_ROOF,
   TileCode.TOWN_WALL,
+  // A cold forest is still a forest.
+  TileCode.COLD_FOREST,
 ]);
 
 /**
@@ -402,6 +455,20 @@ const HAUNTS: ReadonlySet<number> = new Set<number>([
   TileCode.MIRE,
   TileCode.SOOT,
   TileCode.RAIL,
+  /**
+   * THE NORTH AND THE SCAR ARE WILD COUNTRY, and they were before they had
+   * codes of their own — a snowfield drew as PLAINS and a charred scar as
+   * HEATH, both of which are on this list.
+   *
+   * Leaving them off silently promoted 406 cells to the SAFE NETWORK: the
+   * client would have picked the frozen north out in road colour and told the
+   * player nothing waits there, while the server would have agreed and stopped
+   * placing roamers on it. Caught by the roamer cap dropping 15 -> 14 and by
+   * `ground.test.ts` finding 406 fewer cells to stand on, which is the second
+   * time this file's fail-closed note has earned itself.
+   */
+  TileCode.SNOWFIELD,
+  TileCode.CHARRED,
 ]);
 
 export function isHaunt(code: number): boolean {
@@ -472,7 +539,7 @@ export function blocksSight(code: number): boolean {
   // Walkable ground and the canal are the two transparent families. Spelled out
   // rather than derived so an added code that belongs in neither set lands on
   // the closed default below instead of quietly becoming see-through.
-  if (WALKABLE.has(code) || code === TileCode.WATER || code === TileCode.DEEPWATER) return false;
+  if (WALKABLE.has(code) || SOLID_BUT_CLEAR.has(code)) return false;
   return true;
 }
 

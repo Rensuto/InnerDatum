@@ -113,6 +113,47 @@ const TRANSPORT = [
   ['bridges_vertical', 'tile_ow_bridge_vertical'],
 ];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE COLD NORTH AND THE BURNT SCAR — the families this tool used to refuse.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The header above says `charred_scar`, `frozen_sea` and `cold_forest` are
+ * "deliberately absent" because there was no TileCode to draw them under, and
+ * that was right: installing art nothing can reach is the dead-asset shape
+ * `tile_ow_deepwater` sat in for a release.
+ *
+ * There are codes now — `SNOWFIELD`, `FROZEN_WATER`, `COLD_FOREST`, `CHARRED` —
+ * and 1,098 cells of the shipped map use them, so the reason has expired.
+ *
+ * EXPLICIT PAIRS RATHER THAN A FAMILY SCAN, unlike the four above. Those exist
+ * to pick N variants out of a pool for a stem that ALREADY HAS BASE ART; these
+ * stems have none, so the base has to be named too. It is also the honest way to
+ * say that `polar_cap` is one tile and there is no second one to find.
+ */
+const COLD = [
+  ['polar_cap', 'tile_ow_snowfield'],
+  ['frozen_sea', 'tile_ow_frozen_water'],
+  ['frozen_sea1', 'tile_ow_frozen_water_b'],
+  ['frozen_sea2', 'tile_ow_frozen_water_c'],
+  ['frozen_sea3', 'tile_ow_frozen_water_d'],
+  ['cold_forest', 'tile_ow_cold_forest'],
+  ['cold_forest1', 'tile_ow_cold_forest_b'],
+  ['cold_forest2', 'tile_ow_cold_forest_c'],
+  ['cold_forest3', 'tile_ow_cold_forest_d'],
+  ['cold_forest4', 'tile_ow_cold_forest_e'],
+  ['cold_forest5', 'tile_ow_cold_forest_f'],
+  // The patches ARE tiles here, whatever the note on the forest families says:
+  // `cells.csv` names CHARRED_SCAR_PATCH*.png in `asset_32`, which is the tile
+  // slot, for 210 of the 234 charred cells.
+  ['charred_scar', 'tile_ow_charred'],
+  ['charred_scar_patch1', 'tile_ow_charred_b'],
+  ['charred_scar_patch2', 'tile_ow_charred_c'],
+  ['charred_scar_patch3', 'tile_ow_charred_d'],
+  ['charred_scar_patch4', 'tile_ow_charred_e'],
+  ['charred_scar_patch5', 'tile_ow_charred_f'],
+];
+
 function incoming() {
   if (!existsSync(SRC)) throw new Error(`no art at ${SRC}`);
   return readdirSync(SRC).filter((f) => f.endsWith('.png'));
@@ -165,6 +206,13 @@ for (const [from, to] of TRANSPORT) {
   transport.push({ from: name, to: `${to}.png` });
 }
 
+const cold = [];
+for (const [from, to] of COLD) {
+  const name = `base_tome_wilderness_${from}.png`;
+  if (!files.includes(name)) throw new Error(`the handoff has no ${name}`);
+  cold.push({ from: name, to: `${to}.png` });
+}
+
 console.log(`incoming assets: ${String(files.length)}`);
 console.log(`  ${String(upgrades.length)} replace this repo's own tiles with richer versions`);
 for (const u of upgrades.slice(0, 4)) {
@@ -172,6 +220,7 @@ for (const u of upgrades.slice(0, 4)) {
 }
 console.log(`  ${String(variants.length)} install as variants the renderer can already pick from`);
 console.log(`  ${String(transport.length)} transport overlays (road, rail, bridge) by connection`);
+console.log(`  ${String(cold.length)} for the cold north and the burnt scar`);
 for (const family of FAMILIES) {
   const mine = variants.filter((v) => v.stem === family.stem);
   console.log(`      ${family.stem.padEnd(20)} ${String(mine.length)} variants`);
@@ -181,8 +230,9 @@ if (process.argv.includes('--write')) {
   for (const u of upgrades) copyFileSync(`${SRC}${u.from}`, `${TILES}${u.to}`);
   for (const v of variants) copyFileSync(`${SRC}${v.from}`, `${TILES}${v.to}`);
   for (const t of transport) copyFileSync(`${SRC}${t.from}`, `${TILES}${t.to}`);
+  for (const c of cold) copyFileSync(`${SRC}${c.from}`, `${TILES}${c.to}`);
   console.log(
-    `  installed ${String(upgrades.length + variants.length + transport.length)} files into client/public/assets/tiles/`,
+    `  installed ${String(upgrades.length + variants.length + transport.length + cold.length)} files into client/public/assets/tiles/`,
   );
   console.log('  now re-run: python tools/build_asset_manifest.py');
 

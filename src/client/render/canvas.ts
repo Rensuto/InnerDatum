@@ -809,6 +809,32 @@ const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
   ],
   [TileCode.CRAG]: ['tile_ow_crag'],
   [TileCode.DEEPWATER]: ['tile_ow_deepwater'],
+  // The north and the scar. Variant counts follow the art the handoff ships:
+  // one polar cap, four frozen seas, six cold forests, and a charred scar with
+  // sixteen patches of which six are installed — see `MAX_VARIANTS`.
+  [TileCode.SNOWFIELD]: ['tile_ow_snowfield'],
+  [TileCode.FROZEN_WATER]: [
+    'tile_ow_frozen_water',
+    'tile_ow_frozen_water_b',
+    'tile_ow_frozen_water_c',
+    'tile_ow_frozen_water_d',
+  ],
+  [TileCode.COLD_FOREST]: [
+    'tile_ow_cold_forest',
+    'tile_ow_cold_forest_b',
+    'tile_ow_cold_forest_c',
+    'tile_ow_cold_forest_d',
+    'tile_ow_cold_forest_e',
+    'tile_ow_cold_forest_f',
+  ],
+  [TileCode.CHARRED]: [
+    'tile_ow_charred',
+    'tile_ow_charred_b',
+    'tile_ow_charred_c',
+    'tile_ow_charred_d',
+    'tile_ow_charred_e',
+    'tile_ow_charred_f',
+  ],
 };
 
 function tileFill(code: TileCode): string {
@@ -892,6 +918,28 @@ function tileFill(code: TileCode): string {
      */
     case TileCode.DEEPWATER:
       return '#10151f';
+
+    /**
+     * ─── the cold north, and the burnt scar in the Sedge ───
+     *
+     * The flat-palette answers, for a viewport drawing without sprites. Cold
+     * first: a snowfield is the BRIGHTEST ground on the map and it should be —
+     * it is the one place the moor stops being grey — while the frozen sea sits
+     * between the canal and the deep, because that is what it is.
+     *
+     * `charred` is deliberately close to SOOT (#33303a) without being it: the
+     * two are the same idea at different scales, a burnt district and a burnt
+     * county, and drawing them identically would make the scar read as more
+     * town rather than as something that happened to the country.
+     */
+    case TileCode.SNOWFIELD:
+      return '#b9c2cc';
+    case TileCode.FROZEN_WATER:
+      return '#5d7285';
+    case TileCode.COLD_FOREST:
+      return '#22303a';
+    case TileCode.CHARRED:
+      return '#3a3230';
   }
 }
 

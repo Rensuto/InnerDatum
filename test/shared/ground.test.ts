@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { arenaCentre, makeArena } from '../../src/shared/arena.ts';
 import { Ground, groundAt, makeOverworld } from '../../src/shared/level.ts';
-import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
+import { TileCode, isHaunt, isWalkable } from '../../src/shared/protocol.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 
 /**
@@ -28,16 +28,18 @@ import type { AuthoredMap } from '../../src/shared/level.ts';
 
 const OVERWORLD: AuthoredMap = makeOverworld();
 
-/** Where a roamer may legally stand — `roamers.ts` HAUNTS, which is the input. */
-const HAUNTS: ReadonlySet<number> = new Set<number>([
-  TileCode.PLAINS,
-  TileCode.HEATH,
-  TileCode.HILLS,
-  TileCode.GREEN,
-  TileCode.MIRE,
-  TileCode.SOOT,
-  TileCode.RAIL,
-]);
+/**
+ * Where a roamer may legally stand — asked of `isHaunt`, NOT re-listed here.
+ *
+ * This file used to hold its own copy of the set, and protocol.ts's own note
+ * says why that is the worst thing to keep two of: *"the day they disagreed,
+ * the map would have been promising safety on ground that a roamer was standing
+ * on."* The copy disagreed on exactly that day. Four codes were added for the
+ * cold north and the burnt scar, `HAUNTS` learned two of them, and this file did
+ * not — so it went on counting 406 cells of wild country as if they were not
+ * there and failed with a number that looked like a map regression.
+ */
+const isHauntTile = (code: number): boolean => isHaunt(code);
 
 function distribution(): { total: number; byGround: Map<Ground, number> } {
   const byGround = new Map<Ground, number>();
@@ -45,7 +47,7 @@ function distribution(): { total: number; byGround: Map<Ground, number> } {
   let total = 0;
   for (let y = 0; y < view.h; y += 1) {
     for (let x = 0; x < view.w; x += 1) {
-      if (!HAUNTS.has(view.tiles[y * view.w + x] ?? TileCode.WALL)) continue;
+      if (!isHauntTile(view.tiles[y * view.w + x] ?? TileCode.WALL)) continue;
       total += 1;
       const g = groundAt(view, x, y);
       byGround.set(g, (byGround.get(g) ?? 0) + 1);
