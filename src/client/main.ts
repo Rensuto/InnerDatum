@@ -285,6 +285,7 @@ import {
   MINIMAP_RADIUS,
   minimapRect,
   paintMap,
+  partyMarks,
 } from './ui/mapview.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
 import { REVEAL_RADIUS as SHARED_REVEAL_RADIUS } from '../shared/fog.ts';
@@ -3205,6 +3206,28 @@ const paintHud: HudPainter = (ctx, width, height) => {
       },
       sites: overworldSites,
       self: me === undefined ? undefined : { x: me.x, y: me.y },
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * AND EVERYBODY YOU ARE PLAYING WITH WHO IS ON THIS MAP.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * GATED ON `onIt`, exactly as `self` is, and for the identical reason:
+       * this map is always the OVERWORLD's, and a body inside an instance
+       * carries instance coordinates. Painting those here would put a friend's
+       * delve position on the world map — wrong, and confidently so.
+       *
+       * READ OFF `actors` RATHER THAN `party_state`. The party frame carries who
+       * you play with and their condition; it has never carried a position, and
+       * it should not — `projectWorld` sends every body in the realm unfiltered,
+       * so the client already holds the tile of anybody standing on this map.
+       * The two are joined here: `party_state` says WHO, `actors` says WHERE.
+       *
+       * A MEMBER IN AN INSTANCE IS SIMPLY ABSENT, which is honest: they are not
+       * on this map. The party pane already answers for them by name — *"(An
+       * Index Breach)"* — and it is the surface that can, because it is the one
+       * that knows about realms.
+       */
+      party: partyMarks(partyState?.members ?? [], actors, onIt),
       framed: false,
       // The overworld's own fog, whichever realm you are standing in — the map
       // shows what you have walked, not what you can currently reach.

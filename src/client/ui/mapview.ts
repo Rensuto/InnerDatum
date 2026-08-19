@@ -120,7 +120,68 @@ export type MapPaint = {
    * has walked. See `paintRegions`.
    */
   readonly regions?: readonly RegionView[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE YOUR PARTY IS, ON THE SCREEN YOU PLAN ON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The map draws the country, the fog, all seventeen doors with their grade and
+   * whether they are filed, the names of the regions, and a mark for YOU. In a
+   * game whose whole design is three to six friends in a voice channel, it drew
+   * nothing at all for the other five.
+   *
+   * The party PANE answers "who am I with and are they upright". It cannot
+   * answer "where", and for a member on the same map as you that is the question
+   * — *"Blackwood Outskirts"* is a name until the map turns it into a direction
+   * and a distance.
+   *
+   * ═══ ONLY BODIES ON THE MAP BEING DRAWN ═══
+   * The caller passes these only when the viewer is standing on the overworld
+   * (`onIt`), and for the same reason that flag already exists: this map is the
+   * OVERWORLD's, always, and a body inside an instance has instance
+   * coordinates. Drawing those here would put a friend's delve position on the
+   * world map — a mark that is not merely unhelpful but wrong, and confidently
+   * so.
+   */
+  readonly party?: readonly { readonly x: number; readonly y: number; readonly name: string }[];
 };
+
+/** One party member's mark: where they are and what to call them. */
+export type PartyMark = { readonly x: number; readonly y: number; readonly name: string };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH OF YOUR PARTY BELONG ON THIS MAP — the join, and the whole rule.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `party_state` says WHO you are playing with and how they are; it has never
+ * carried a position and it should not. `projectWorld` sends every body in the
+ * realm unfiltered, so the client already holds the tile of anybody standing on
+ * this map. This is where the two meet.
+ *
+ * THREE THINGS IT HAS TO GET RIGHT, and each is a way to draw a lie:
+ *
+ *   `onMap` — the caller's `onIt`. This map is always the OVERWORLD's, and a
+ *     body inside an instance carries instance coordinates. Painting those would
+ *     put a friend's delve position on the world map.
+ *   SELF IS NOT A MEMBER HERE. `self` is drawn separately, larger and on top; a
+ *     second mark underneath it is a party member who does not exist.
+ *   A MEMBER WITH NO BODY IN `actors` IS ABSENT, not an error. They are in an
+ *     instance, or on another floor entirely — the party PANE answers for them
+ *     by name, because it is the surface that knows about realms.
+ */
+export function partyMarks(
+  members: readonly { readonly id: string; readonly name: string; readonly isSelf: boolean }[],
+  bodies: ReadonlyMap<string, { readonly x: number; readonly y: number }>,
+  onMap: boolean,
+): readonly PartyMark[] {
+  if (!onMap) return [];
+  return members.flatMap((member) => {
+    if (member.isSelf) return [];
+    const body = bodies.get(member.id);
+    return body === undefined ? [] : [{ x: body.x, y: body.y, name: member.name }];
+  });
+}
 
 /**
  * Paint one level into a rect, letterboxed to keep the map's aspect.
@@ -129,7 +190,8 @@ export type MapPaint = {
  * test — the full-screen map has to turn a click back into a tile.
  */
 export function paintMap(paint: MapPaint): number {
-  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled, regions } = paint;
+  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled, regions, party } =
+    paint;
 
   /**
    * THE WINDOW. A minimap that showed the whole 170x100 region would be a
@@ -347,6 +409,35 @@ export function paintMap(paint: MapPaint): number {
     ctx.textAlign = 'left';
   }
 
+  /**
+   * THE PARTY, UNDER YOUR OWN MARK AND OVER EVERYTHING ELSE.
+   *
+   * Painted before `self` so that two people standing on one tile resolve in the
+   * only order that is never confusing: you are always the mark on top. A friend
+   * hidden under your own token is a friend you go looking for.
+   *
+   * SMALLER THAN THE SELF MARK AND A DIFFERENT INK. The map already spends
+   * `PALETTE.GOLD` on doors and `CROSSING_INK` on the way between maps; a party
+   * mark that reused either would read as a place rather than a person.
+   *
+   * NAMED ONLY ON THE FULL SCREEN, exactly as the sites are — see `labelled`.
+   * The minimap is 200px wide and three names would bury the country.
+   */
+  if (party !== undefined) {
+    for (const mate of party) {
+      const size = Math.max(2, cell);
+      ctx.fillStyle = PARTY_INK;
+      ctx.fillRect(ox + mate.x * cell, oy + mate.y * cell, size, size);
+      if (labelled) {
+        ctx.fillStyle = PARTY_INK;
+        ctx.font = '10px ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(mate.name, ox + mate.x * cell + size / 2, oy + mate.y * cell - 2);
+        ctx.textAlign = 'left';
+      }
+    }
+  }
+
   if (self !== undefined) {
     const me = Math.max(3, cell + 2);
     ctx.fillStyle = PALETTE.PARCHMENT;
@@ -408,6 +499,16 @@ const DANGER_INK: Readonly<Record<string, string>> = {
  * tell the amber from the crimson"*. A player who cannot see this hue reads
  * `· another map` next to the dot, which is the whole message anyway.
  */
+/**
+ * THE INK FOR SOMEBODY YOU ARE PLAYING WITH.
+ *
+ * Not `GOLD` and not `CROSSING_INK`: this map already spends those on doors and
+ * on the way between maps, and a mark in either would read as a PLACE. A party
+ * mark has to read as a person at a glance, which means an ink nothing else on
+ * this surface uses.
+ */
+const PARTY_INK = '#6fd3a8';
+
 export const CROSSING_INK = '#9a7fd6';
 const CROSSING_WORD = 'another map';
 
