@@ -64,6 +64,7 @@ import {
   monsterInit,
   INDEX_WATCHER,
 } from './monsters.ts';
+import { ActorRank } from '../../shared/protocol.ts';
 import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
 import { canWalk } from '../../shared/level.ts';
@@ -291,9 +292,55 @@ export function dangerWord(spec: DelveSpec): string {
    * is worth more than a wraith, and a wraith more than a body, so they are
    * weighted apart.
    */
-  const elite = spec.roster.includes(INDEX_HUSK_ELITE) ? 3 : 0;
-  const ranged = spec.roster.includes(INDEX_WRAITH) ? 2 : 0;
-  const weight = spec.monsters[1] + elite + ranged;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BY PROPERTY, NOT BY NAME — AND THE OLD VERSION WENT BLIND AS THE ROSTER GREW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * These two lines read `roster.includes(INDEX_HUSK_ELITE)` and
+   * `roster.includes(INDEX_WRAITH)`, which was a complete question when the
+   * bestiary was three creatures. It is nine now, and by name the grade could
+   * not see the eidolon, the cairn, the glut, the Inspector or the Inquisitor —
+   * five of nine, including BOTH of the Redaction's elites and the only other
+   * creature in the game that shoots.
+   *
+   * ═══ AND THE FIX CHANGES NOTHING TODAY, WHICH IS WHY IT IS WORTH SAYING ═══
+   * Measured over all seventeen rooms: not one grade moves. Every roster that
+   * contains an elite already contains `INDEX_HUSK_ELITE`, and every roster
+   * that shoots already contains `INDEX_WRAITH`, so the old lines happened to
+   * be right by coincidence. This is not a behaviour change; it is the same
+   * question asked in a way that survives the next creature.
+   *
+   * PRESENCE, NOT A SUM. `roster` is a CYCLE that `populateDelve` walks, not a
+   * headcount — three entries fill a room of seven — so "can an elite appear
+   * here" is the question these weights were always answering. A per-entry sum
+   * was tried and it moved three rooms, including the Drowned Chapel from
+   * `quiet` to `restless`; that room is the first marker most players ever walk
+   * to and Merrow's own directions call it *"close and it is quiet"*. Making
+   * the map disagree with the townsfolk to fix a rounding error is a bad trade.
+   */
+  const elite = spec.roster.some((t) => t.rank !== ActorRank.Normal) ? 3 : 0;
+  const ranged = spec.roster.some((t) => t.projSpeed !== undefined) ? 2 : 0;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND A BOSS, WHICH THIS DID NOT KNOW ABOUT AT ALL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `DelveSpec.boss` landed with `INDEX_WATCHER` and this function was never
+   * told. So the one room in the game with two hundred and twenty hit points of
+   * artillery standing in it graded `dangerous` — the same word as five other
+   * rooms, including its own ordinary twin on the other map. A player planning a
+   * trip had no way to know, and `partyHint` — which is the game's only way of
+   * saying *"bring a party"* — stayed silent for the one fight that needs one.
+   *
+   * BIG ENOUGH TO DECIDE ON ITS OWN. 8 puts any room holding a boss over the
+   * `grim` threshold whatever else is in it, which is the honest answer: what
+   * makes that room hard is not its population. Deliberately not a fifth word —
+   * `grim` already carries `partyHint`'s "bring a party", and a scale a player
+   * has learned should not grow a step the day the content does.
+   */
+  const boss = spec.boss === undefined ? 0 : 8;
+  const weight = spec.monsters[1] + elite + ranged + boss;
 
   if (weight <= 7) return 'quiet';
   if (weight <= 9) return 'restless';
