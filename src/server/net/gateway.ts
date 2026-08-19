@@ -240,6 +240,7 @@ import { roamerAt, tickRoamers } from '../world/roamers.ts';
 // them (`AuthoredMap.regions`), and the constant not being reachable from here
 // is the proof no other line is still assuming which map it is describing.
 import { groundAt, regionAt } from '../../shared/level.ts';
+import { landmarkIdFor } from '../../shared/redaction.ts';
 import type { Ground } from '../../shared/level.ts';
 import { createFog, fogFromBase64, fogHas, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
@@ -5698,7 +5699,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
            * with `SITES`. The client already decides what art exists, so a site
            * with no landmark installed falls back to its family marker.
            */
-          landmark: `tile_ow_landmark_${siteId.replace('site:', '')}`,
+          /**
+           * AND A REDACTION TWIN WEARS ITS ORIGINAL'S SILHOUETTE — see
+           * `landmarkIdFor`, which lives next to the line that mints the twin id
+           * because the two are one fact read in opposite directions.
+           */
+          landmark: landmarkIdFor(siteId),
           ...(spec === undefined ? {} : { danger: dangerWord(spec) }),
           // AND WHETHER THIS PLAYER HAS ALREADY CLOSED IT. Per viewer, like the
           // hidden-site filter above — two people looking at the same map see

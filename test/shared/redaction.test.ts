@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { tileIndex } from '../../src/shared/coords.ts';
 import { REDACTION_SITE_ID, makeOverworld } from '../../src/shared/level.ts';
 import { TileCode, isSafeGround, isWalkable } from '../../src/shared/protocol.ts';
-import { makeRedaction } from '../../src/shared/redaction.ts';
+import { landmarkIdFor, makeRedaction } from '../../src/shared/redaction.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -251,5 +251,47 @@ describe('the door on the Alderbrook side', () => {
       if (ox === undefined || oy === undefined) continue;
       expect(Math.max(Math.abs(ox - x), Math.abs(oy - y))).toBeGreaterThan(4);
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SILHOUETTE A PLACE ASKS FOR, AND THE ONE THE TWINS WERE ASKING FOR
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Found by walking to the Redaction with a socket: every one of the thirteen
+ * places over there fell back to a generic family marker, because
+ * `siteId.replace('site:', '')` replaces ONCE and a twin is
+ * `site:redaction:alderbrook`. The id it produced —
+ * `tile_ow_landmark_redaction:alderbrook` — has no file behind it and could not
+ * have one, since a colon is not a legal filename character on the platform this
+ * is hosted from.
+ *
+ * These cases are the whole contract, and the last one is the point: the door is
+ * NOT a twin and must keep missing, because `SiteView.landmark` says the gate is
+ * what it is meant to draw.
+ */
+describe('landmarkIdFor', () => {
+  it('names a place its own silhouette', () => {
+    expect(landmarkIdFor('site:alderbrook')).toBe('tile_ow_landmark_alderbrook');
+    expect(landmarkIdFor('site:the_weir')).toBe('tile_ow_landmark_the_weir');
+  });
+
+  it('gives a redaction twin the silhouette of the place it was', () => {
+    // The Redaction IS Alderbrook, erased. Your own clocktower standing over a
+    // town the map now grades `dangerous` is the sentence that place exists to
+    // say, and the art for it already shipped.
+    expect(landmarkIdFor('site:redaction:alderbrook')).toBe('tile_ow_landmark_alderbrook');
+    expect(landmarkIdFor('site:redaction:the_weir')).toBe('tile_ow_landmark_the_weir');
+  });
+
+  it('never emits a colon, which cannot be a filename', () => {
+    for (const id of ['site:alderbrook', 'site:redaction:alderbrook', 'site:redaction']) {
+      expect(landmarkIdFor(id)).not.toContain(':');
+    }
+  });
+
+  it('leaves the door alone, so it still draws the gate', () => {
+    expect(landmarkIdFor('site:redaction')).toBe('tile_ow_landmark_redaction');
   });
 });

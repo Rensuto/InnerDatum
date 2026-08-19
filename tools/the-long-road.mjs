@@ -380,21 +380,40 @@ async function fightRoom() {
  * arrived somewhere else. This clears what it is thrown into, leaves, and keeps
  * going, which is what the walk actually costs a player.
  */
-async function visitTown() {
-  for (let leg = 0; leg < 6; leg += 1) {
-    for (let i = 0; i < 600 && latest('realm')?.kind === 'overworld'; i += 1) {
-      if (!(await stepTo({ x: town.s.x, y: town.s.y }))) break;
+/**
+ * Walk to a cell on the overworld, FIGHTING THROUGH WHATEVER OPENS UNDERNEATH.
+ *
+ * At level 5 the moor is thick with roamers, and stepping onto one opens an
+ * ambush arena — an `inner` realm — so a walk that assumed it would arrive
+ * arrived somewhere else instead. This clears what it is thrown into, leaves,
+ * and carries on, which is what the walk actually costs a player.
+ *
+ * @returns the realm kind it ended in, so the caller can tell "I am there" from
+ *   "I stopped short" rather than inferring it from a position.
+ */
+async function travelTo(target, arriveInner = false) {
+  for (let leg = 0; leg < 8; leg += 1) {
+    for (let i = 0; i < 900 && latest('realm')?.kind === 'overworld'; i += 1) {
+      if (!(await stepTo(target))) break;
     }
     await sleep(500);
     const kind = latest('realm')?.kind;
-    if (kind === 'common') return posOf();
-    if (kind === 'overworld') return null;
-    // An ambush. Fight out of it and carry on.
+    // AN AMBUSH AND A DOORWAY ARE THE SAME `inner`, AND THE CALLER KNOWS WHICH
+    // IT WANTED. Without `arriveInner` this walked to a delve entrance, called
+    // arriving there an ambush, cleared the room and left — then reported the
+    // Redaction's first door as holding nobody, which is exactly what a room you
+    // have just emptied and walked out of looks like.
+    if (kind !== 'inner') return kind;
+    if (arriveInner) return kind;
     const door = posOf();
     await fightRoom();
     await leaveVia(door);
   }
-  return null;
+  return latest('realm')?.kind;
+}
+
+async function visitTown() {
+  return (await travelTo({ x: town.s.x, y: town.s.y })) === 'common' ? posOf() : null;
 }
 /**
  * Walk back to the arrival tile and step onto it, which is how you leave.
@@ -563,7 +582,7 @@ for (let trip = 0; trip < 20 && levelNow() < STANDING_LEVEL && !died; trip += 1)
 // AND ASK AGAIN.
 // ═══════════════════════════════════════════════════════════════════════════
 beat(`LEVEL ${String(levelNow())} — asking ${String(town.s.name)} the same question`);
-await visitTown();
+const doorB = await visitTown();
 const after = await ask('rumour');
 console.log(`  ${String(after.name)}: ${after.said.join(' / ') || 'NOTHING'}`);
 
@@ -579,6 +598,77 @@ console.log(`  asked somebody twice  : ${bothHeard ? 'yes' : 'NO — the compari
 console.log(`  the rumour changed    : ${opened ? 'YES' : 'no'}`);
 if (bothHeard && !opened && levelNow() < STANDING_LEVEL) {
   console.log('  (and it should not have — the character never reached standing)');
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THEN GO WHERE THE SENTENCE POINTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every measurement this repo has ever taken was on Alderbrook's moor. The
+ * Redaction is a second overworld with its own delves and two creatures nothing
+ * else in the game has, and no probe has ever set foot on it — so "the rumour
+ * opens the channel" is only half an answer while the far side is unverified.
+ *
+ * The door is an ordinary `SiteDef` with `kind: Overworld` and no level gate of
+ * its own; the gate is on the DIRECTIONS, which is why this section runs after
+ * the character has earned them.
+ */
+if (levelNow() >= STANDING_LEVEL) {
+  /**
+   * OUT OF THE TOWN BEFORE READING THE MAP, AND OUT VIA THE DOOR IT CAME IN BY.
+   *
+   * `sites` is realm-scoped: standing in Alderbrook it holds Alderbrook's one
+   * marker, so the moor's doors are not in it and the first version reported
+   * that the Redaction was not on the map at all. The second version leaked the
+   * same result for a different reason — it passed `posOf()` to `leaveVia`,
+   * which wants the ARRIVAL tile and got "wherever the conversation finished",
+   * so it never left. `visitTown` already returns the doorstep; use it.
+   */
+  await leaveVia(doorB);
+  const doorSite = (latest('sites')?.sites ?? []).find((x) => String(x.name) === 'The Redaction');
+  console.log(
+    `  standing in ${String(latest('realm')?.name)} [${String(latest('realm')?.kind)}] with ` +
+      `${String((latest('sites')?.sites ?? []).length)} sites in view: ` +
+      (latest('sites')?.sites ?? []).map((x) => String(x.name)).join(', '),
+  );
+  beat(
+    `WEST OF THE SEDGE — walking to ${doorSite === undefined ? '(no door on the map)' : `${String(doorSite.x)},${String(doorSite.y)}`}`,
+  );
+  if (doorSite !== undefined) {
+    const landed = await travelTo({ x: doorSite.x, y: doorSite.y });
+    const there = latest('realm');
+    console.log(`  arrived in : ${String(there?.name)} [${String(landed)}]`);
+    if (there !== undefined && String(there.name) !== 'The Alderbrook Moor') {
+      console.log(`  the map    : ${String(there.level?.w)}x${String(there.level?.h)} tiles`);
+      const over = latest('sites')?.sites ?? [];
+      console.log(`  sites frame after the crossing: ${String(over.length)}`);
+      for (const x of over) {
+        console.log(
+          `    ${String(x.name).padEnd(26)} marker=${String(x.marker).padEnd(8)}` +
+            ` danger=${String(x.danger).padEnd(10)} landmark=${String(x.landmark)}`,
+        );
+      }
+      // And into the first door over there, to see whether anything lives in it.
+      const first = over
+        .filter((x) => x.sprite === undefined && String(x.danger) !== 'undefined')
+        .map((x) => ({ x, d: gap(x, posOf()) }))
+        .sort((a, b) => a.d - b.d)[0];
+      if (first === undefined) {
+        console.log('  NOTHING GRADED TO WALK INTO over there');
+      } else {
+        console.log(`  walking into ${String(first.x.name)} (${String(first.x.danger)})`);
+        const kind = await travelTo({ x: first.x.x, y: first.x.y }, true);
+        const room = latest('realm');
+        console.log(`  inside     : ${String(room?.name)} [${String(kind)}]`);
+        const living = (room?.actors ?? []).filter((a) => a.id !== selfId && a.kind !== 'player');
+        const names = [...new Set(living.map((a) => String(a.name)))];
+        console.log(
+          `  it holds   : ${String(living.length)} bodies — ${names.join(', ') || 'NOBODY'}`,
+        );
+      }
+    }
+  }
 }
 
 ws.close();

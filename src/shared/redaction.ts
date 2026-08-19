@@ -393,3 +393,34 @@ export function makeRedaction(): AuthoredMap {
  * and recognising where they are is the point of the entire map.
  */
 export const REDACTION_REGIONS = ALDERBROOK_REGIONS;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ART ID FOR A SITE'S OWN SILHOUETTE — AND THE INVERSE OF THE LINE ABOVE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `makeRedaction` mints a twin as `${REDACTION_SITE_ID}:${bare}` — so
+ * `site:redaction:alderbrook` — and the view layer turns a site id back into the
+ * name of a 32x32 sprite. It used to do that with `siteId.replace('site:', '')`,
+ * which replaces ONCE, so every twin asked for `tile_ow_landmark_redaction:
+ * alderbrook`. No such file exists and a colon cannot be one on the platform
+ * this is hosted from, so all thirteen places on the second landmass fell back
+ * to their generic family marker. Found by walking there: the largest and last
+ * content in the game was the only country drawn in generic ink.
+ *
+ * A TWIN WEARS ITS ORIGINAL'S SILHOUETTE, which is the right answer and not just
+ * the cheap one. The Redaction IS Alderbrook, erased — seeing your own
+ * clocktower on a map where the town under it is graded *dangerous* is the
+ * sentence that place exists to say, and it needs no new art.
+ *
+ * IT LIVES HERE, NEXT TO THE LINE THAT BUILDS THE ID, because the two are one
+ * fact read in opposite directions. Apart, they drift the first time the prefix
+ * changes — and the version that drifted is the one that shipped.
+ *
+ * THE DOOR ITSELF IS UNAFFECTED: `site:redaction` has no trailing colon, so it
+ * still resolves to `tile_ow_landmark_redaction`, still misses, and still draws
+ * the gate, which `SiteView.landmark` says is deliberate.
+ */
+export function landmarkIdFor(siteId: string): string {
+  return `tile_ow_landmark_${siteId.replace(/^site:(?:redaction:)?/, '')}`;
+}
