@@ -244,6 +244,13 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       'revive',
       'say',
       'set_keybinds',
+      // AND THE ZOOM'S, added deliberately and listed here so it stays a thing
+      // somebody had to decide. A player asked for tiles the size of Tales of
+      // Maj'Eyal's; the zoom that answers that already existed and died with the
+      // tab, because Discord partitions iframe storage and the server is the only
+      // place a preference can live. It is a PREFERENCE and not an intent: the
+      // barrier never waits for it, which is what this assertion is really about.
+      'set_zoom',
       // THE PANEL'S TWO, and the only frames the shop tab sends. Opening,
       // paging and browsing a shelf are told to nobody: the shelf is a
       // broadcast the server already sends, and a "I opened the shop" frame
@@ -545,7 +552,11 @@ describe('the mouse layer', () => {
     // ORDER, which is the thing that keeps the fall-through honest.
     const start = at("'wheel',");
     const body = CODE.slice(start, CODE.indexOf('{ passive: false }', start));
-    const zoom = body.indexOf('renderer.setZoom(renderer.zoom() +');
+    // `applyZoom` RATHER THAN `renderer.setZoom`, since the zoom became a
+    // persisted preference: the wheel and the `-`/`=` keys both go through one
+    // function so the clamp, the wire and the notice are stated once. What this
+    // test pins is unchanged — the POSITION of the zoom in the fall-through.
+    const zoom = body.indexOf('applyZoom(renderer.zoom() +');
     expect(zoom).toBeGreaterThan(-1);
     for (const guard of [
       'wheelLayout.menu',

@@ -233,7 +233,7 @@
 import { z } from 'zod';
 
 import { DIR_ORDER } from './coords.ts';
-import { PROTOCOL_VERSION } from './version.ts';
+import { PROTOCOL_VERSION, ZOOM_MAX, ZOOM_MIN } from './version.ts';
 
 // ---------------------------------------------------------------------------
 // Shared payload shapes
@@ -2802,6 +2802,36 @@ export const KEYBIND_KEYSTRING_MAX_CHARS = 32;
  * group: a frame that costs the sender nothing must never be a way to make the
  * server advance the world.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `set_zoom` — "THIS IS HOW BIG I WANT THE TILES."
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A player said the tiles read smaller than Tales of Maj'Eyal's and the world
+ * did not fill the space. Half of that was the viewport, which moved from
+ * fifteen rows to ten. The other half is that ZOOM ALREADY EXISTED and did not
+ * survive the tab: bound to `-` and `=`, listed on the Keys screen, on the
+ * wheel — and reset to default on every reconnect, so the answer to "the tiles
+ * are too small" was one a player had to re-give every session.
+ *
+ * ═══ IT CANNOT BE STORED IN THE BROWSER ═══
+ * This game runs in a Discord Activity iframe, where storage is partitioned or
+ * blocked outright. That is the same reason keybinds are server-side, and it is
+ * why a preference here means a frame rather than a `localStorage` line.
+ *
+ * ═══ A STEP, NOT A SIZE ═══
+ * The value is the same integer bias the renderer clamps, bounded by
+ * `ZOOM_MIN`/`ZOOM_MAX` from `shared/version.ts` — imported rather than restated,
+ * because a bound written down twice is the shape this codebase keeps being
+ * bitten by. Sending pixels instead would let a client pick a fractional
+ * magnification, which is the one thing this renderer will not do.
+ */
+const SetZoomSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('set_zoom'),
+  zoom: z.number().int().min(ZOOM_MIN).max(ZOOM_MAX),
+});
+
 const SetKeybindsSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('set_keybinds'),
@@ -2923,6 +2953,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   PartySchema,
   InspectSchema,
   SetKeybindsSchema,
+  SetZoomSchema,
   PingSchema,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
@@ -2951,6 +2982,7 @@ export type ClientFollow = z.infer<typeof FollowSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;
+export type ClientSetZoom = z.infer<typeof SetZoomSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
 
 // ---------------------------------------------------------------------------
@@ -4696,6 +4728,7 @@ export type ServerMsg =
   | ShopMsg
   | InventoryMsg
   | KeybindsMsg
+  | SettingsMsg
   | PongMsg
   | ErrorMsg;
 
@@ -4808,6 +4841,51 @@ export type ServerMsg =
  * while `broadcast(groundMsg)` is the correct call — which is the whole reason
  * `BroadcastMsg` is `Exclude`-derived rather than a second hand-written list.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PREFERENCES THAT ARE NOT KEYS. Currently one: how big the tiles are.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Sent at `hello` beside `keybinds`, and echoed after every accepted
+ * `set_zoom`. THE ECHO IS THE POINT, exactly as it is for `KeybindsMsg`: what
+ * the player sees is what the SERVER stored, so a value the server bounced or
+ * clamped cannot sit on screen as the client's own optimism.
+ *
+ * ═══ ITS OWN FRAME RATHER THAN A FIELD ON `keybinds` ═══
+ * `KeybindsMsg` is the Keys screen's frame and its name would start lying. The
+ * protocol already makes this argument for keeping preferences off `welcome`:
+ * *"A separate frame costs one `send` and keeps the type system doing the
+ * work."* Same trade, same answer.
+ *
+ * ═══ A `ViewerMsg`, AND THE COMPILER ENFORCES IT ═══
+ * There is no version of this frame that is correct for two recipients — how
+ * big one player wants their tiles is true for exactly one person — so
+ * membership here makes `broadcast(settingsMsg)` a build failure.
+ *
+ * ═══ NO PROTOCOL BUMP, AND THE REASON IS THE FAILURE MODE ═══
+ * `PROTOCOL_VERSION` moved to 11 for `RealmMsg` because a client that ignored
+ * that frame would render the wrong map, silently, while the server moved its
+ * body. Ignoring THIS frame costs a returning player one keypress. An old
+ * client drops an unknown `t`; an old server refuses an unknown verb and the
+ * preference simply does not stick. Neither corrupts anything, and both heal on
+ * the next deploy, which ships client and server together.
+ */
+export type SettingsMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'settings';
+  /** The integer zoom step, as stored. `ZOOM_MIN`..`ZOOM_MAX`. */
+  zoom: number;
+  /**
+   * Whether the value above will outlive the tab.
+   *
+   * `KeybindsMsg.persisted`'s twin and for its reason: an anonymous socket has
+   * no character file, so its preference lives on its body until recall. The
+   * screen can then say so rather than leaving somebody to discover a working
+   * feature looks broken.
+   */
+  persisted: boolean;
+};
+
 export type ViewerMsg =
   | LoadoutMsg
   | CooldownsMsg
@@ -4819,6 +4897,7 @@ export type ViewerMsg =
   | ProgressMsg
   | InventoryMsg
   | KeybindsMsg
+  | SettingsMsg
   // A realm change is true for exactly one person — the map in it is the map
   // THEY are now standing on. Membership here makes `broadcast(realmMsg)` a
   // compile error rather than a rule to remember. See `RealmMsg`.

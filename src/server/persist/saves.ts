@@ -140,6 +140,7 @@
  */
 
 import { LAYOUT_REVISION } from '../../shared/level.ts';
+import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -540,6 +541,16 @@ export type CharacterFile = {
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /**
+   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   *
+   * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
+   * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
+   * none. A v1 file without it loads as a character who has never touched the
+   * zoom, which is the honest reading of every file written before it existed,
+   * and a rollback costs one keypress.
+   */
+  readonly zoom?: number;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THIS CHARACTER HAS EXPLORED OF THE OVERWORLD — base64 of a bitset.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -799,6 +810,16 @@ export type CharacterInit = {
    * save written by a fixture-shaped producer.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   *
+   * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
+   * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
+   * none. A v1 file without it loads as a character who has never touched the
+   * zoom, which is the honest reading of every file written before it existed,
+   * and a rollback costs one keypress.
+   */
+  readonly zoom?: number;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -857,6 +878,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     carried: init.carried,
     equipped: init.equipped,
     keybinds: init.keybinds,
+    zoom: init.zoom,
     explored: init.explored,
     // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
     // bitset belongs to. See `CharacterFile.layoutRevision`.
@@ -1363,6 +1385,35 @@ const KEYBIND_PROBLEMS_PER_ACTION = 2;
  * said is unusable. `parseCooldowns`' rule (:943-948 states it for `equipped`),
  * applied to one more field.
  */
+/**
+ * The stored zoom step, REPAIRED RATHER THAN REJECTED like everything else here.
+ *
+ * Anything that is not an integer inside the renderer's own bounds is dropped,
+ * and the character loads at the default magnification rather than failing to
+ * load at all. The bounds come from `shared/version.ts` — the same constants the
+ * renderer clamps to and the wire schema validates against — because a bound
+ * written down twice is the shape this codebase keeps being bitten by.
+ *
+ * ABSENT STAYS ABSENT. `undefined` is "never touched it" and must not collapse
+ * into `0`, which is "deliberately back to the default": they persist the same
+ * way today, and the distinction is what stops a producer that cannot say from
+ * asserting something on a player's behalf. That collapse is the exact failure
+ * `keybinds` spends three paragraphs forbidding.
+ */
+function parseZoom(value: unknown, problems: string[]): number | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < ZOOM_MIN ||
+    value > ZOOM_MAX
+  ) {
+    problems.push('zoom: not a usable zoom step — dropped, tiles back to the default size');
+    return undefined;
+  }
+  return value;
+}
+
 function parseKeybinds(
   value: unknown,
   problems: string[],
@@ -1581,6 +1632,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       carried,
       equipped,
       keybinds: parseKeybinds(doc.keybinds, problems),
+      zoom: parseZoom(doc.zoom, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
       // failing to load at all. `fogFromBase64` is itself lenient about length.
@@ -1735,6 +1787,7 @@ export function serialiseCharacter(file: CharacterFile): string {
     // steps every `.bak` a generation for nothing, and asserts "this player
     // reset every binding" about somebody who did not.
     keybinds,
+    zoom: file.zoom,
     resources: {
       hp: file.resources.hp,
       ap: file.resources.ap,
@@ -2389,6 +2442,16 @@ export type SavedLoadout = {
  */
 export type SavedPrefs = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   *
+   * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
+   * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
+   * none. A v1 file without it loads as a character who has never touched the
+   * zoom, which is the honest reading of every file written before it existed,
+   * and a rollback costs one keypress.
+   */
+  readonly zoom?: number;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -2479,6 +2542,16 @@ type Binding = {
    * the key stays off the disk.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   *
+   * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
+   * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
+   * none. A v1 file without it loads as a character who has never touched the
+   * zoom, which is the honest reading of every file written before it existed,
+   * and a rollback costs one keypress.
+   */
+  readonly zoom?: number;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -2579,6 +2652,9 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // found it. A producer that CAN say and says `{}` writes `{}`, and that is
       // a real statement — the player pressed RESET ALL.
       keybinds: snapshot.keybinds ?? binding.keybinds,
+      // THE SAME CARRY-FORWARD RULE. A producer with no opinion about the zoom
+      // leaves the disk exactly as it found it.
+      zoom: snapshot.zoom ?? binding.zoom,
       // THE SAME CARRY-FORWARD RULE, and for the same reason: a producer that
       // cannot say what has been explored leaves the disk exactly as it found
       // it. Losing a map to a build that had not been taught to fill this in
@@ -2674,6 +2750,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // file rather than asserting "this player reset every binding" on behalf
       // of a file that never mentioned keys.
       keybinds: file?.keybinds,
+      zoom: file?.zoom,
     });
 
     if (file === null) {
@@ -2747,6 +2824,8 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // shape and the size have already been checked on the way in, and the
       // MEMBERSHIP question is one only the client can answer.
       keybinds: file.keybinds,
+      // AND HOW BIG THEY LIKE THEIR TILES, on the same argument.
+      zoom: file.zoom,
       // AND THE MAP THEY WALKED, on the same argument the line above makes:
       // nobody should have to re-explore a region because they closed a tab.
       // Named in this literal DELIBERATELY -- saves.ts:1366-1369 warns that a

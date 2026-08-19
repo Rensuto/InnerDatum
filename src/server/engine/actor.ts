@@ -458,6 +458,24 @@ type ActorCommon = {
    */
   keybinds?: Readonly<Record<string, readonly string[]>>;
 
+  /**
+   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.
+   *
+   * ON THE BODY FOR `keybinds`' REASONS, both of them: `snapshotPlayers` runs in
+   * a layer that can reach nothing but the actor table, so anything the save file
+   * must write down has to be readable from the body — and two browser tabs are
+   * one player resolving to one actor, so one body means one setting means no
+   * last-writer-wins between windows.
+   *
+   * ABSENT IS NOT ZERO. `undefined` is "never touched it"; `0` is "deliberately
+   * back to the default". They persist identically today and the distinction
+   * costs nothing to keep, which is the same care `keybinds` takes over `{}`.
+   *
+   * ANYTHING IN engine/ THAT READS THIS IS A BUG. It is a display preference and
+   * the simulation must stay byte-identical without it.
+   */
+  zoom?: number;
+
   // --- talents --------------------------------------------------------------
   /**
    * Talent id -> GAME TURNS remaining. Ticked by `actBase`, so it is immune to

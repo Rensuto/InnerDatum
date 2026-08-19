@@ -1468,6 +1468,22 @@ let menuHovered: number | null = null;
 let keybindsPersisted = false;
 
 /**
+ * Whether the zoom the player picked will outlive the tab. `keybindsPersisted`'s
+ * twin — an anonymous socket has no character file, so its preference lives on
+ * its body until recall, and the screen must be able to say so rather than let
+ * somebody discover a working feature looks broken.
+ */
+let zoomPersisted = false;
+
+/**
+ * The zoom step the server last told us it holds, or null before it has said.
+ *
+ * Written by `case 'settings'` and applied by `onMessage`, for the reason that
+ * case gives: the frame handler cannot see the renderer and the wrapper can.
+ */
+let storedZoom: number | null = null;
+
+/**
  * PUT EVERY PIECE OF THE MENU'S STATE BACK, AND NOTHING ELSE.
  *
  * ═══ WHY THIS IS MODULE SCOPE WHEN `closeMenu` IS NOT ═══
@@ -4595,6 +4611,15 @@ async function boot(): Promise<void> {
     },
     onMessage: (msg) => {
       applyServerMessage(msg);
+      // THE ECHO, APPLIED. `case 'settings'` records what the server holds and
+      // this puts it on the board — including the first one, at `hello`, which
+      // is how a returning player gets the tile size they chose last time.
+      // Cleared as it is consumed so a later frame about something else does not
+      // re-apply a stale preference over a zoom the player has since changed.
+      if (storedZoom !== null) {
+        renderer.setZoom(storedZoom);
+        storedZoom = null;
+      }
       // RE-ANCHOR THE RING. The caster can be shoved while it is open —
       // Backdraft pushes, and so will monsters — and a ring still drawn around
       // where they used to stand is a picture of a rule that is no longer true.
@@ -5777,7 +5802,7 @@ async function boot(): Promise<void> {
         // as it goes" is a fact this can state rather than a silent no-op —
         // a key that appears to do nothing is indistinguishable from one that
         // is not bound.
-        const got = renderer.setZoom(want);
+        const got = applyZoom(want);
         if (got !== want) {
           showNotice(command === UiCommand.ZoomIn ? 'already closest' : 'already widest');
         }
@@ -5945,6 +5970,44 @@ async function boot(): Promise<void> {
    * bounced corrects itself here rather than leaving the panel drawing this
    * client's optimism (protocol.ts's `KeybindsMsg`: "the echo is the point").
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * CHANGE THE ZOOM AND TELL THE SERVER, WHICH IS WHAT MAKES IT OUTLIVE THE TAB.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `-`/`=` and the mouse wheel both used to call `renderer.setZoom` directly,
+   * which is exactly two places that would have to remember to persist. One
+   * function so the clamp, the wire and the notice are stated once —
+   * `commitRemap`'s shape for the same reason.
+   *
+   * ONLY A REAL CHANGE GOES ON THE WIRE. `setZoom` is authoritative about the
+   * clamp and returns what it settled on, so a player holding the wheel at the
+   * end of the range sends nothing rather than a frame a second. The server
+   * dedupes as well — it has to, since it cannot trust a client — but not
+   * sending is better than being ignored.
+   *
+   * A FAILED SEND IS SAID OUT LOUD, the rule every send in this file keeps: a
+   * zoom that vanished into a closed socket looks exactly like one that was
+   * saved, and the player finds out next session when the tiles are small again.
+   */
+  function applyZoom(next: number): number {
+    const before = renderer.zoom();
+    const got = renderer.setZoom(next);
+    if (got !== before) {
+      if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_zoom', zoom: got })) {
+        showNotice('not connected — that zoom was not saved');
+      } else if (!zoomPersisted) {
+        // THE OTHER WAY IT SILENTLY DOES NOT STICK, and it is the one a player
+        // could never work out: an anonymous socket has no character file, so
+        // the server holds the value for as long as the body lives and no
+        // longer. `SettingsMsg.persisted` exists to make that sayable rather
+        // than leaving somebody to find a working feature looks broken.
+        showNotice('not signed in — that zoom will not be saved');
+      }
+    }
+    return got;
+  }
+
   function commitRemap(remap: KeyRemap): void {
     // The arm belonged to the slot that has just changed. Every capture outcome
     // clears it too; this is the button path's copy of the same rule.
@@ -7139,7 +7202,7 @@ async function boot(): Promise<void> {
          * `-`/`=` keys and this share `setZoom`, so the clamp is stated once.
          */
         event.preventDefault();
-        renderer.setZoom(renderer.zoom() + (event.deltaY < 0 ? 1 : -1));
+        applyZoom(renderer.zoom() + (event.deltaY < 0 ? 1 : -1));
         requestDraw();
         return;
       }
@@ -9118,6 +9181,30 @@ function applyServerMessage(msg: ServerMsg): void {
       // sentence this frame can change — the Keys screen's rows, the hint lines,
       // the aria-live copies — is rebuilt from `gameKeymap` when it is next
       // drawn, so there is nothing to invalidate here.
+      break;
+
+    case 'settings':
+      // ═══════════════════════════════════════════════════════════════════════
+      // HOW BIG THIS PLAYER WANTS THEIR TILES, AS THE SERVER HOLDS IT.
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // `keybinds` above, in miniature and for the same reasons: a `ViewerMsg`,
+      // absolute, and an ECHO rather than an acknowledgement — `setZoom` has
+      // already run locally for the instant effect, and this line runs it again
+      // with whatever the server actually stored, so a value the server clamped
+      // corrects itself here instead of leaving the board drawing this client's
+      // optimism.
+      //
+      // A player asked for tiles the size of Tales of Maj'Eyal's. Half of that
+      // was the viewport; this is the half where the answer they gave stopped
+      // dying with the tab. Discord partitions iframe storage, so the server is
+      // the only place a preference can live.
+      // THE VALUE IS RECORDED HERE AND APPLIED IN `boot`. `applyServerMessage`
+      // is module scope by construction — every case in this switch writes state
+      // the draw reads, and none of them reaches into the renderer, which lives
+      // in the boot closure. `onMessage` is the wrapper that can see both.
+      storedZoom = msg.zoom;
+      zoomPersisted = msg.persisted;
       break;
 
     case 'pong':

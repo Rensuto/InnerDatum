@@ -609,6 +609,26 @@ export const SCHEMA_VERSION = 1 as const;
 export const TILE_PX = 32;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR THE PLAYER MAY MOVE THE INTEGER SCALE. ONE STEP EACH WAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `scale` is a whole number — that is what keeps every pixel of hand-drawn art
+ * landing on a whole screen pixel — so zoom biases it by whole STEPS rather than
+ * multiplying it. At the size this runs in a Discord iframe the natural scale is
+ * 2 or 3, so one step each way is a real range and no setting is useless.
+ *
+ * ═══ IN `shared/` BECAUSE TWO PLACES NEED THE SAME NUMBER ═══
+ * The renderer clamps to it and the wire schema validates against it, and a
+ * bound written out twice is the shape this codebase keeps getting bitten by —
+ * most recently `HAUNTS`, which learned two tile codes while a duplicate did
+ * not. `src/shared/` is the only module both a client renderer and a zod schema
+ * may import.
+ */
+export const ZOOM_MIN = -1;
+export const ZOOM_MAX = 1;
+
+/**
  * Energy required before an actor may act, and the energy granted per game tick.
  *
  * Ported from T-Engine4's energy scheduler. Players always spend exactly

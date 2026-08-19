@@ -81,7 +81,7 @@
 import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
-import { TILE_PX } from '../../shared/version.ts';
+import { TILE_PX, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type {
   ActorView,
@@ -1158,10 +1158,6 @@ export function createRenderer(options: RendererOptions): Renderer {
    * scale this game uses; one disappears at 1x on a laptop screen.
    */
   const BARRIER_EDGE_PX = 2;
-
-  /** One step out and one step in. "Slightly", as asked for. */
-  const ZOOM_MIN = -1;
-  const ZOOM_MAX = 1;
 
   const MAX_TILES_W = 48;
   const MAX_TILES_H = 32;

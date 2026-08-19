@@ -265,6 +265,7 @@ import type {
   ClientRevive,
   ClientSay,
   ClientSetKeybinds,
+  ClientSetZoom,
   ClientSpendPoint,
   ClientTalent,
   ClientUnequip,
@@ -5934,6 +5935,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     });
   };
 
+  /**
+   * `settings` — the preferences that are not keys. See `SettingsMsg`.
+   *
+   * `sendKeybinds`' twin down to the `persisted` calculation, which answers the
+   * same question about the same socket and must not drift from it.
+   */
+  const sendSettings = (session: Session): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    const body = actorId === null ? undefined : world.getActor(actorId);
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'settings',
+      // 0 FOR A BODY WITH NO OPINION, and that is the honest wire value for the
+      // same reason `binds: {}` is: the frame is absolute, so the default step
+      // means "the default size" rather than "the server declined to say".
+      zoom: body?.zoom ?? 0,
+      persisted:
+        session.ownerId !== null &&
+        opts.persist !== undefined &&
+        (actorId === null ? false : (opts.persist.isBound?.(actorId) ?? true)),
+    });
+  };
+
   const classFor = (restore: CharacterRestore | null, who: string): ClassDef => {
     const saved = restore?.classId ?? null;
     const definition = classForJoin(saved, classRotation);
@@ -6350,6 +6375,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // The `persisted` flag rides along, and for an anonymous socket it is the
     // only place the truth ("this session is not signed in") appears at all.
     sendKeybinds(session);
+    // AND HOW BIG THEY LIKE THEIR TILES, beside it and for its reasons.
+    sendSettings(session);
 
     // THE TWO SNAPSHOTS, unicast, and again outside the on-change rule for the
     // same reason: this socket has seen nothing. The memo compares against the
@@ -10558,6 +10585,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendKeybinds(session);
   };
 
+  /**
+   * `set_zoom` — "THIS IS HOW BIG I WANT THE TILES." STORE IT, ECHO IT.
+   *
+   * `handleSetKeybinds`' shape, with one difference that matters: this uses
+   * `queueSave` where that uses `saveNow`. The reason is the failure that
+   * handler records — `saveNow` writes EVERY bound player's character file, each
+   * one a full atomic write with an fsync — and zoom arrives from a MOUSE WHEEL,
+   * which a player can spin faster than they can rebind a key. The idempotence
+   * check below absorbs the repeats (the step is clamped to three values, so a
+   * spin past the end changes nothing), and for the one or two real changes a
+   * session sees, the seconds between the wheel and a closed tab are not worth
+   * an fsync storm.
+   */
+  const handleSetZoom = (session: Session, msg: ClientSetZoom): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before setting the zoom');
+      return;
+    }
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+
+    // THE ECHO STILL GOES OUT ON A NO-OP: the frame's contract is that the
+    // screen renders what the SERVER holds, and a client that resent an
+    // unchanged value is still owed that answer. `handleSetKeybinds`' rule.
+    if ((body.zoom ?? 0) === msg.zoom) {
+      sendSettings(session);
+      return;
+    }
+
+    body.zoom = msg.zoom;
+    queueSave('zoom');
+    sendSettings(session);
+  };
+
   const handleFrame = (session: Session, raw: WsFrame): void => {
     if (frameBytes(raw) > MAX_FRAME_BYTES) {
       sendError(session.socket, ErrorCode.BadMessage, `frame exceeds ${MAX_FRAME_BYTES} bytes`);
@@ -10693,6 +10759,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // echo goes back with `send` and never `broadcast` — `KeybindsMsg` is a
       // `ViewerMsg`, so the compiler enforces it. See `handleSetKeybinds`, where
       // the absence of a park is written out for the next person who looks.
+      case 'set_zoom':
+        handleSetZoom(session, msg);
+        return;
       case 'set_keybinds':
         handleSetKeybinds(session, msg);
         return;

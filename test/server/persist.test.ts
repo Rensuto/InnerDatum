@@ -1359,6 +1359,10 @@ describe('character files: the bag and the paper doll', () => {
       carried: IN_THE_BAG,
       equipped: WORN_KIT,
       keybinds: REBOUND_KEYS,
+      // `zoom` rides this test for the reason the docblock gives: the hazard is
+      // per-LITERAL, not per-field, and one test naming every optional field
+      // pins both literals at once.
+      zoom: 1,
       resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
       createdAt: '2026-08-15T00:00:00.000Z',
     });
@@ -1373,6 +1377,8 @@ describe('character files: the bag and the paper doll', () => {
     expect(Object.keys(parsed.file)).toContain('carried');
     expect(Object.keys(parsed.file)).toContain('equipped');
     expect(Object.keys(parsed.file)).toContain('keybinds');
+    expect(Object.keys(parsed.file)).toContain('zoom');
+    expect(parsed.file.zoom).toBe(1);
     expect(parsed.file.equipped).toEqual(WORN_KIT);
     expect(parsed.file.carried).toEqual(IN_THE_BAG);
     expect(parsed.file.keybinds).toEqual(REBOUND_KEYS);
@@ -1727,6 +1733,49 @@ describe('character files: the rebound keymap', () => {
     if (!parsed.ok) return;
 
     expect(parsed.file.keybinds).toBeUndefined();
+    expect(parsed.problems).toEqual([]);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE SAME THREE PROPERTIES FOR THE ZOOM, WHICH IS THE NEWEST OF THESE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A player asked for tiles the size of Tales of Maj'Eyal's, and the zoom that
+   * answers it already existed and died with the tab. Every save on disk predates
+   * the field, so an absence must be silent; a hand-edited or rolled-back value
+   * must be REPAIRED rather than reject the character; and absent must stay
+   * absent rather than collapsing into 0, which is a real statement ("back to the
+   * default on purpose") and not the same fact at all.
+   */
+  it('loads a file with no zoom key clean, with the field undefined', () => {
+    const parsed = parseCharacterFile(V1_BEFORE_PROGRESSION);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.zoom).toBeUndefined();
+    expect(parsed.problems).toEqual([]);
+  });
+
+  it('repairs a zoom outside the renderer bounds rather than refusing the character', () => {
+    // A character file must never be the reason somebody cannot play tonight.
+    // 7 is not a step this renderer can reach, so it is dropped and the tiles
+    // come back at the default size — and the repair is REPORTED, because a
+    // silent one is indistinguishable from a field nobody wrote.
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, zoom: 7 });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.zoom).toBeUndefined();
+    expect(parsed.problems.join(' ')).toContain('zoom');
+  });
+
+  it('keeps a zoom the renderer can actually reach', () => {
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, zoom: -1 });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.zoom).toBe(-1);
     expect(parsed.problems).toEqual([]);
   });
 
