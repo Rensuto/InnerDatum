@@ -4,6 +4,7 @@ import {
   RAIL_BY_MASK,
   ROAD_BY_MASK,
   isMadeGround,
+  tileVariant,
   transportMask,
 } from '../../src/client/render/canvas.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
@@ -124,5 +125,86 @@ describe('every connection has a picture', () => {
      */
     expect(ROAD_BY_MASK[0]).toBeNull();
     expect(RAIL_BY_MASK[0]).toBeNull();
+  });
+});
+
+describe('the ground does not draw itself as a chequerboard', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A PLAYER SENT A SCREENSHOT, AND THE HASH WAS THE REASON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The moor drew as a regular light/dark chequer and was, in the report's own
+   * words, "hard to tell what is what". The variant picker was
+   * `((tx * 73) ^ (ty * 151)) % n`, whose comment claimed two odd multipliers
+   * stopped a diagonal run landing on one variant.
+   *
+   * They do not. `tx * 73` under `% 6` is LINEAR IN X, and a linear function
+   * modulo n is a repeating stripe — its first row is literally `012345012345`.
+   * XOR of two stripes is a stripe crossed with a stripe, which is a chequer.
+   *
+   * SO THE TEST IS STATISTICAL, because the bug was: nothing here can look at
+   * the screen, and every other test in the suite passed happily while the map
+   * was patterned. What is asserted is that a cell's variant does not predict
+   * its neighbours' — at one tile, two tiles, and diagonally, since the old hash
+   * failed all three at roughly twice chance.
+   */
+  const N = 120;
+  const VARIANTS = 6;
+
+  const agreementAt = (dx: number, dy: number): number => {
+    let same = 0;
+    for (let y = 0; y < N; y += 1) {
+      for (let x = 0; x < N; x += 1) {
+        if (tileVariant(x, y, VARIANTS) === tileVariant(x + dx, y + dy, VARIANTS)) same += 1;
+      }
+    }
+    return same / (N * N);
+  };
+
+  it('does not let a cell predict its neighbours', () => {
+    const chance = 1 / VARIANTS;
+    // A GENEROUS BAND. The claim is "no visible structure", not "cryptographic":
+    // the old hash sat at 33.9% against a 16.7% chance and would fail this by a
+    // mile, while an honest mix lands within a point of it.
+    const offsets: readonly (readonly [number, number])[] = [
+      [1, 0],
+      [2, 0],
+      [0, 1],
+      [0, 2],
+      [1, 1],
+      [3, 1],
+    ];
+    for (const [dx, dy] of offsets) {
+      const seen = agreementAt(dx, dy);
+      expect(
+        seen,
+        `offset ${String(dx)},${String(dy)} agrees ${(seen * 100).toFixed(1)}%`,
+      ).toBeLessThan(chance * 1.35);
+    }
+  });
+
+  it('uses every variant it is given, roughly evenly', () => {
+    // The other way this fails silently: a hash that is beautifully unpredictable
+    // and never returns variant 4 wastes art nobody will ever see.
+    const counts = new Array<number>(VARIANTS).fill(0);
+    for (let y = 0; y < N; y += 1) {
+      for (let x = 0; x < N; x += 1) {
+        const v = tileVariant(x, y, VARIANTS);
+        counts[v] = (counts[v] ?? 0) + 1;
+      }
+    }
+    for (const [i, n] of counts.entries()) {
+      const share = n / (N * N);
+      expect(share, `variant ${String(i)} is ${(share * 100).toFixed(1)}%`).toBeGreaterThan(0.13);
+      expect(share, `variant ${String(i)} is ${(share * 100).toFixed(1)}%`).toBeLessThan(0.2);
+    }
+  });
+
+  it('is deterministic, because the world is not sent', () => {
+    // Same cell, same tile, every frame and every client. The variety is free
+    // precisely because nobody has to agree about it over the wire.
+    expect(tileVariant(41, 77, 6)).toBe(tileVariant(41, 77, 6));
+    expect(tileVariant(0, 0, 1)).toBe(0);
   });
 });

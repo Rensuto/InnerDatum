@@ -353,7 +353,31 @@ export type Viewport = {
  * which is an ordinary Discord activity window at dpr 2 and a large one at
  * dpr 1. Change it here, in one place, if playtesting says otherwise.
  */
-export const DEFAULT_VIEWPORT: Viewport = { tilesW: 20, tilesH: 15 };
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 20x10, DOWN FROM 20x15 — BECAUSE PLAYTESTING SAID OTHERWISE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The note above invites exactly this change, and a player made the case: the
+ * tiles read much smaller than Tales of Maj'Eyal's and the world did not fill
+ * the space. The lever is HEIGHT, because a Discord activity is wide and short —
+ * `fitScale` takes the MINIMUM of the two ratios, so 15 rows of guaranteed
+ * viewport (480 logical pixels) was the number holding the magnification down.
+ *
+ * MEASURED, on the window the screenshot came from (1159x551 CSS):
+ *
+ *     tilesH 15 -> minLogicalH 480 -> 1102/480 = 2.29 -> scale 2 -> 32 CSS px
+ *     tilesH 10 -> minLogicalH 320 -> 1102/320 = 3.44 -> scale 3 -> 48 CSS px
+ *
+ * and on an ordinary 1280x720 at dpr 1, 720/320 = 2.25 clears scale 2 with room
+ * to spare, so a window a little under 720 does not fall back to 1x.
+ *
+ * WIDTH STAYS AT 20 ON PURPOSE. `ui/hotbar.ts` and `ui/xpbar.ts` both lay out
+ * against a 640-pixel floor and name `DEFAULT_VIEWPORT.tilesW` while doing it;
+ * narrowing the guarantee would quietly eat their slack. Height was the binding
+ * constraint anyway, so there is nothing to buy by touching width.
+ */
+export const DEFAULT_VIEWPORT: Viewport = { tilesW: 20, tilesH: 10 };
 
 export type RendererOptions = {
   readonly canvas: HTMLCanvasElement;
@@ -694,6 +718,46 @@ export const RAIL_BY_MASK: readonly (string | null)[] = [
   'tile_ow_rail_horizontal',
   'tile_ow_rail_horizontal',
 ];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH VARIANT A CELL DRAWS — AND WHY THE OLD ONE MADE A CHECKERBOARD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The previous version was `((tx * 73) ^ (ty * 151)) % n`, described as "two odd
+ * multipliers so a diagonal run does not land on one variant". It does not do
+ * that, and the map showed it: a player sent a screenshot of the moor drawn as a
+ * regular light/dark chequer and said it was hard to tell what anything was.
+ *
+ * MEASURED, at six variants. The first row of that hash is
+ *
+ *     012345012345012345012345
+ *
+ * a perfect period-6 repeat, and across a 200x200 field a cell matched the one
+ * TWO tiles to its right 33.9% of the time against a uniform 16.7% — twice as
+ * often as chance. That is the chequer, and it is not a tuning problem: `tx * 73`
+ * under `% 6` is a linear function of x, and a linear function modulo n can only
+ * ever be a repeating stripe. XOR of two of them is a stripe crossed with a
+ * stripe.
+ *
+ * So this is an AVALANCHE mix instead — multiply, shift-xor, multiply — where
+ * one bit of input changes about half the output bits. Same measurement on the
+ * same field: +1x 16.5%, +2x 16.5%, +2y 16.8%, diagonal 16.7%, and every variant
+ * within a point of its even share.
+ *
+ * STILL PURE AND STILL POSITIONAL: the same cell draws the same tile every
+ * frame and on every client, which is what lets the world be varied without
+ * being sent.
+ */
+export function tileVariant(tx: number, ty: number, count: number): number {
+  let h = Math.imul(tx, 0x27d4eb2d) ^ Math.imul(ty, 0x165667b1);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2545f491);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x27d4eb2d);
+  h ^= h >>> 16;
+  return (h >>> 0) % count;
+}
 
 /** Is this cell part of the made network the overlay draws along? */
 export function isMadeGround(code: TileCode): boolean {
@@ -1271,9 +1335,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     const ids = TILE_SPRITES[code];
     if (ids === undefined) return false;
 
-    // A cheap positional hash. Two odd multipliers so a diagonal run does not
-    // land on one variant, xor-folded so neither axis dominates.
-    const id = ids.length === 1 ? ids[0] : ids[((tx * 73) ^ (ty * 151)) % ids.length];
+    const id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
     if (id === undefined) return false;
 
     const sprite: Sprite | undefined = sprites.sprite(id);
