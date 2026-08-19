@@ -51,6 +51,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 
 import { isWalkable } from '../src/shared/protocol.ts';
+import { bestShot, loadoutBuffs, loadoutStrikes } from './fightlib.mjs';
 import { STANDING_LEVEL } from '../src/server/content/townsfolk.ts';
 
 const PORT = process.argv[2] ?? '32051';
@@ -225,6 +226,35 @@ async function walkUpTo(track, id) {
   return null;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SPENDING A TALENT OVER A SOCKET.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `fightlib` owns which attack to try and in what order — the 1.5 trap and the
+ * cooldown fall-through — and this owns the only part that is actually about the
+ * wire: whether the server took it.
+ *
+ * ACCEPTANCE IS THE ABSENCE OF A REFUSAL. There is no "ok" frame for a talent;
+ * `turn-engine.ts` answers a bad one with a specific `ErrorCode` and a good one
+ * with the results of the act. So the attempt is: count the error frames, send,
+ * wait a beat, count again. A driver that assumed every send landed would report
+ * a character firing forty shots that were all refused for one reason.
+ *
+ * COOLDOWNS ARE FILTERED FIRST, from the frame that exists to say so — anything
+ * in `loadout` that is NOT named in `cooldowns` is ready. That is cheaper than
+ * discovering it by refusal, and `bestShot` still falls through if the server
+ * disagrees, which it is entitled to do.
+ */
+const coolingNow = () => new Set(Object.keys(latest('cooldowns')?.cooldowns ?? {}));
+
+async function fireAt(talentId, target) {
+  const before = frames.filter((f) => f.t === 'error').length;
+  send({ t: 'talent', talentId, target });
+  await sleep(90);
+  return frames.filter((f) => f.t === 'error').length === before;
+}
+
 const levelNow = () => latest('progress')?.level ?? 1;
 const barNow = () => {
   const p = latest('progress');
@@ -249,11 +279,23 @@ const town = allSites
 
 /** Ask one person one topic and hand back what they said. */
 async function ask(topic) {
+  /**
+   * ONLY INSIDE A SETTLEMENT. On the overworld "the first actor that is not a
+   * player" is a ROAMER, and the first version of this asked an Index Wraith
+   * about rumours, got `bad_message: there is nobody there to talk to`, and then
+   * counted that refusal as the answer having CHANGED — a green result for a
+   * conversation that never happened.
+   */
+  // A SETTLEMENT, and nothing else. `!== 'overworld'` was not enough: crossing
+  // the moor at level 5 walks into roamers, an ambush is an `inner` realm too,
+  // and the first version of this guard let the probe ask an Index Cairn about
+  // rumours. Townsfolk live in `common` realms and only there.
+  if (latest('realm')?.kind !== 'common') return { name: null, said: [], answered: [] };
   const track = makeTracker();
   const person = (latest('realm')?.actors ?? []).find(
     (a) => a.id !== selfId && a.kind !== 'player',
   );
-  if (person === undefined) return { name: null, said: [] };
+  if (person === undefined) return { name: null, said: [], answered: [] };
   await walkUpTo(track, person.id);
   const before = logLines().length;
   const errs = frames.filter((f) => f.t === 'error').length;
@@ -265,15 +307,94 @@ async function ask(topic) {
   for (const e of frames.filter((f) => f.t === 'error').slice(errs)) {
     said.push(`REFUSED(${String(e.code)}): ${String(e.message)}`);
   }
-  return { name: String(person.name), said };
+  // A REFUSAL IS NOT AN ANSWER. Recorded so the transcript stays honest, then
+  // excluded from the comparison: "she said something different" and "the server
+  // said no" are opposite outcomes and must never collapse into one.
+  const answered = said.filter((l) => !l.startsWith('REFUSED('));
+  return { name: String(person.name), said, answered };
 }
 
-async function visitTown() {
-  for (let i = 0; i < 600 && latest('realm')?.kind === 'overworld'; i += 1) {
-    if (!(await stepTo({ x: town.s.x, y: town.s.y }))) break;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FIGHT WHATEVER IS IN HERE UNTIL NOTHING IS STANDING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * One function because there are two rooms worth fighting in and they are the
+ * same fight: the delve you walked into on purpose, and the ambush that opened
+ * under you on the way to town. The second used to end the run — the walk
+ * assumed it would arrive, arrived in an arena instead, and the probe asked an
+ * Index Cairn about local rumours.
+ *
+ * A BUFF, THEN THE BEST STRIKE, THEN A BUMP. `fightlib` owns which strike and in
+ * what order; this owns only the turn.
+ */
+async function fightRoom() {
+  const track = makeTracker();
+  for (let i = 0; i < 500; i += 1) {
+    const at = track();
+    const mine = posOf();
+    if (mine === undefined) break;
+    const standing = [...at.entries()]
+      .filter(([id, e]) => id !== selfId && e.alive && e.kind !== 'player')
+      .map(([, e]) => ({ e, d: gap(e, mine) }))
+      .filter((c) => c.d > 0)
+      .sort((p, q) => p.d - q.d);
+    const foe = standing[0];
+    if (foe === undefined) break;
+
+    const cooling = coolingNow();
+    // A BUFF FIRST WHEN ONE IS UP: it costs the turn a bump would have cost, and
+    // a character that never spends them is playing with part of its kit off.
+    const buff = buffs.find((b) => !cooling.has(b.id));
+    if (buff !== undefined && (await fireAt(buff.id, undefined))) {
+      shots += 1;
+      continue;
+    }
+    // AND AT WHOEVER IS REACHABLE RATHER THAN WHOEVER IS NEAREST.
+    const shot = await bestShot(
+      attacks.filter((a) => !cooling.has(a.id)),
+      mine,
+      standing.map((c) => c.e),
+      fireAt,
+    );
+    if (shot.fired) {
+      shots += 1;
+      continue;
+    }
+
+    if (foe.d <= 1) {
+      const dir = firstStep(latest('realm').level, mine, { x: foe.e.x, y: foe.e.y });
+      if (dir !== null) send({ t: 'move', dir });
+      await sleep(45);
+    } else if (!(await stepTo({ x: foe.e.x, y: foe.e.y }))) {
+      await sleep(45);
+    }
   }
-  await sleep(500);
-  return latest('realm')?.kind !== 'overworld' ? posOf() : null;
+}
+
+/**
+ * Walk to the town, FIGHTING THROUGH WHATEVER STOPS YOU.
+ *
+ * At level 5 the moor is thick with roamers and stepping onto one opens an
+ * ambush arena — an `inner` realm — so a walk that assumed it would arrive
+ * arrived somewhere else. This clears what it is thrown into, leaves, and keeps
+ * going, which is what the walk actually costs a player.
+ */
+async function visitTown() {
+  for (let leg = 0; leg < 6; leg += 1) {
+    for (let i = 0; i < 600 && latest('realm')?.kind === 'overworld'; i += 1) {
+      if (!(await stepTo({ x: town.s.x, y: town.s.y }))) break;
+    }
+    await sleep(500);
+    const kind = latest('realm')?.kind;
+    if (kind === 'common') return posOf();
+    if (kind === 'overworld') return null;
+    // An ambush. Fight out of it and carry on.
+    const door = posOf();
+    await fightRoom();
+    await leaveVia(door);
+  }
+  return null;
 }
 /**
  * Walk back to the arrival tile and step onto it, which is how you leave.
@@ -322,6 +443,20 @@ async function leaveVia(door) {
   }
 }
 
+/**
+ * THE FIGHTING KIT, HOISTED ABOVE THE FIRST TOWN VISIT.
+ *
+ * `fightRoom` closes over these and the walk to town can call it — an ambush
+ * opens on the way — so declaring them after that walk is a temporal dead zone
+ * waiting for the first roamer to step on the probe.
+ */
+const filed = new Set();
+let cleared = 0;
+let died = false;
+let shots = 0;
+const attacks = loadoutStrikes(latest('loadout')?.talents ?? []);
+const buffs = loadoutBuffs(latest('loadout')?.talents ?? []);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // WHAT THEY SAY ON DAY ONE.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -338,20 +473,56 @@ await leaveVia(doorA);
 // grim and dangerous and 7 of 8 on the two gentle grades, so sending this at a
 // grim floor would measure how fast a level-1 character dies, which is already
 // known.
-const SOLOABLE = new Set(['quiet', 'restless']);
-const filed = new Set();
-let cleared = 0;
-let died = false;
+/**
+ * WHAT A CHARACTER OF THIS LEVEL WOULD ACTUALLY WALK INTO.
+ *
+ * The gentle floors run out. There are four graded quiet-or-restless rooms on the
+ * moor, and a cleared one stays cleared until `INSTANCE_LINGER_MS` reaps it five
+ * minutes later — so a driver that only ever takes those stalls at level 3 with
+ * nothing left to do, which is a fact about the probe's shopping list rather than
+ * about whether standing is reachable. A real player levels and then takes on
+ * harder rooms, so this does too.
+ */
+const gradesFor = (level) =>
+  level >= 3 ? new Set(['quiet', 'restless', 'dangerous']) : new Set(['quiet', 'restless']);
 
-for (let trip = 0; trip < 14 && levelNow() < STANDING_LEVEL && !died; trip += 1) {
+/**
+ * GRIM IS NEVER ON THE LIST, and that is a measurement decision rather than
+ * cowardice. `partyHint` publishes *"bring a party"* beside every grim marker
+ * and `delve-run.mjs` measured a solo character at 0 of 8 on them. A run that
+ * walks into one is measuring the warning being correct, which is known — it
+ * killed this driver at level 4 on Blackwood Outskirts, sixty-four experience
+ * short of the answer.
+ */
+console.log(
+  `  fighting as ${String(opts[0].name)} with ${String(attacks.length)} strike(s) and ` +
+    `${String(buffs.length)} buff(s): ` +
+    (attacks.map((a) => `${a.id.replace('talent:', '')}@${String(a.range)}`).join(', ') || 'none'),
+);
+
+for (let trip = 0; trip < 20 && levelNow() < STANDING_LEVEL && !died; trip += 1) {
   const me = posOf();
   if (me === undefined) break;
   const target = (latest('sites')?.sites ?? [])
-    .filter((s) => s.sprite === undefined && SOLOABLE.has(String(s.danger)) && !filed.has(s.name))
+    .filter(
+      (s) =>
+        s.sprite === undefined && gradesFor(levelNow()).has(String(s.danger)) && !filed.has(s.name),
+    )
     .map((s) => ({ s, d: gap(s, me) }))
     .sort((a, b) => a.d - b.d)[0];
+  if (target === undefined && filed.size > 0) {
+    /**
+     * NOTHING LEFT THAT HAS NOT BEEN FILED — so go round again. A cleared
+     * instance is handed back cleared until `INSTANCE_LINGER_MS` reaps it five
+     * minutes later, at which point the room is re-seeded and worth the walk. A
+     * re-entered floor that is still empty costs one wasted trip and no damage.
+     */
+    console.log(`  filed everything reachable; going round again at +${secs()}s`);
+    filed.clear();
+    continue;
+  }
   if (target === undefined) {
-    console.log('  no gentle floor left that has not been filed. What the map offers:');
+    console.log('  nothing on the map this character will take on. What it offers:');
     for (const s of latest('sites')?.sites ?? []) {
       if (s.sprite !== undefined) continue;
       console.log(
@@ -372,25 +543,7 @@ for (let trip = 0; trip < 14 && levelNow() < STANDING_LEVEL && !died; trip += 1)
   }
   const door = posOf();
 
-  const track = makeTracker();
-  for (let i = 0; i < 500; i += 1) {
-    const at = track();
-    const mine = posOf();
-    if (mine === undefined) break;
-    const foe = [...at.entries()]
-      .filter(([id, e]) => id !== selfId && e.alive && e.kind !== 'player')
-      .map(([, e]) => ({ e, d: gap(e, mine) }))
-      .filter((c) => c.d > 0)
-      .sort((p, q) => p.d - q.d)[0];
-    if (foe === undefined) break;
-    if (foe.d <= 1) {
-      const dir = firstStep(latest('realm').level, mine, { x: foe.e.x, y: foe.e.y });
-      if (dir !== null) send({ t: 'move', dir });
-      await sleep(45);
-    } else if (!(await stepTo({ x: foe.e.x, y: foe.e.y }))) {
-      await sleep(45);
-    }
-  }
+  await fightRoom();
   await sleep(700);
 
   const tail = logLines().slice(-14).join(' ');
@@ -416,12 +569,15 @@ console.log(`  ${String(after.name)}: ${after.said.join(' / ') || 'NOTHING'}`);
 
 beat('WHAT A SOLO PLAYER ACTUALLY GETS');
 console.log(`  delves filed          : ${String(cleared)}`);
+console.log(`  talents actually fired: ${String(shots)}`);
 console.log(`  level reached         : ${String(levelNow())} of ${String(STANDING_LEVEL)} needed`);
 console.log(`  died on the way       : ${died ? 'YES' : 'no'}`);
 console.log(`  time                  : ${secs()}s`);
-const opened = before.said.join(' ') !== after.said.join(' ') && after.said.length > 0;
-console.log(`  the rumour changed    : ${opened ? 'YES' : 'NO'}`);
-if (!opened && levelNow() < STANDING_LEVEL) {
+const bothHeard = before.answered.length > 0 && after.answered.length > 0;
+const opened = bothHeard && before.answered.join(' ') !== after.answered.join(' ');
+console.log(`  asked somebody twice  : ${bothHeard ? 'yes' : 'NO — the comparison is void'}`);
+console.log(`  the rumour changed    : ${opened ? 'YES' : 'no'}`);
+if (bothHeard && !opened && levelNow() < STANDING_LEVEL) {
   console.log('  (and it should not have — the character never reached standing)');
 }
 
