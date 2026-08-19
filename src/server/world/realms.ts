@@ -1046,6 +1046,32 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
       TileCode.PLAINS,
       TileCode.CRAG,
     ],
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * MOUNTAIN, NOT CRAG — BECAUSE THIS ONE IS DUG INTO A MOUNTAIN.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The Hollow Mine and The Underworks were byte-identical in every authored
+     * field but their ids: same `mine` marker, same `SiteShape.Cave`, same SOOT
+     * floor, same CRAG wall — and content/delve.ts gives them the same
+     * `RANK_AND_FILE` roster. The only difference in the whole game was two more
+     * monsters. So one of the eleven delves on the moor was the other one with a
+     * different name, and a player who cleared The Underworks had already seen
+     * The Hollow Mine.
+     *
+     * MEASURED, AND THAT IS WHY IT IS THIS CODE. The eleven-by-eleven of
+     * overworld around each marker is not remotely alike:
+     *
+     *     The Hollow Mine   MOUNTAIN 61  HILLS 28  CRAG 17   <- cut into a range
+     *     The Underworks    HEATH 70  HILLS 21  PLAINS 15    <- under moorland
+     *
+     * A mine looks like the rock it goes through, and these two go through
+     * different rock. The Underworks keeps its crag under the moor.
+     *
+     * A REPAINT, NOT A RE-DESIGN: `MOUNTAIN` and `CRAG` are both unwalkable and
+     * both sight-blocking, so not one route, sightline or fight changes — only
+     * which of two already-installed tilesets the walls are drawn from.
+     */
     [
       'site:hollow_mine',
       'The Hollow Mine',
@@ -1053,7 +1079,7 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
       'mine',
       SiteShape.Cave,
       TileCode.SOOT,
-      TileCode.CRAG,
+      TileCode.MOUNTAIN,
     ],
     [
       'site:drowned_chapel',
