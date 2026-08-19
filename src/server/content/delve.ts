@@ -246,7 +246,23 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     something should be worth more than the same danger elsewhere, and loot
   //     is the axis that rewards exploring without punishing it.
   //     62 steps, in the western downs.
-  ['site:cairnfoot', { monsters: [4, 6], roster: RANK_AND_FILE, litter: [3, 4] }],
+  //     ═══ AND IT HAS CAIRNS IN IT, WHICH IT DID NOT ═══
+  //     A site called CAIRNFOOT drew `RANK_AND_FILE` — two husks and a wraith,
+  //     the same three creatures as The Underworks, The Watcher's Altar and The
+  //     Hollow Mine. Four of the eleven moor delves were the same bestiary, and
+  //     this was the one whose NAME promised otherwise.
+  //
+  //     THE MAP AGREES WITH THE NAME. The eleven-by-eleven around the marker is
+  //     MIRE 85 of 121 — this is a fen, and `INDEX_CAIRN` is the creature the
+  //     fen was written for ("only dangerous across water it cannot be reached
+  //     over").
+  //
+  //     STATED PLAINLY, BECAUSE IT WOULD BE EASY TO OVERSELL: a delve has no
+  //     water, so the cairn in here is the same weak shooter the Drowned Chapel
+  //     teaches you on. This is a change of BESTIARY, not of difficulty — the
+  //     room now belongs to its own name and stops being The Underworks with a
+  //     different floor colour.
+  ['site:cairnfoot', { monsters: [4, 6], roster: DROWNED, litter: [3, 4] }],
   //     47 steps, in the clearing inside the southern wood — so it draws on the
   //     wood's own roster, which is the same rule Blackwood follows.
   ['site:barrow_end', { monsters: [5, 7], roster: THICKET, litter: [3, 5] }],
