@@ -57,6 +57,7 @@
  * clock or an entropy source; damage rolls take an `Rng` from the caller.
  */
 
+import type { PassiveContribution } from './equipment.ts';
 import { createEnergyActor } from '../../shared/energy.ts';
 import { spendForAction } from '../../shared/energy.ts';
 import { ActorKind, ActorRank } from '../../shared/protocol.ts';
@@ -377,6 +378,18 @@ type ActorCommon = {
    * which is the pre-equipment behaviour unchanged.
    */
   baseCombat?: CombatSheet;
+  /**
+   * WHAT THIS BODY'S PASSIVE TALENTS ARE WORTH, SUMMED AT THEIR RANKS.
+   *
+   * Written by `refreshPassives` (src/server/main.ts — the one file that can see
+   * the talent registry, the world and the gateway at once) and read by
+   * `recomposeCombat` at stage two and a half. It is the same shape a worn item
+   * contributes, so a passive and a pauldron stack through one combine.
+   *
+   * ANYTHING IN engine/ THAT READS THIS DIRECTLY IS A BUG: `combat` is the
+   * composed answer and the only one a rule should consult.
+   */
+  passiveCombat?: PassiveContribution;
 
   // --- items ----------------------------------------------------------------
   /**

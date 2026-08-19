@@ -453,7 +453,18 @@ describe('every talent level moves a number — the honesty gate', () => {
     // here fails rather than being invisible to a table somebody forgot to
     // extend. This is the check that makes the rest of the file complete.
     const engine = createContentTalentEngine();
-    const registered = engine.registry.all().map((talent) => talent.id);
+    /**
+     * THE ACTIVES ONLY, and the filter is the point rather than a convenience.
+     * This file measures what a talent DOES when it resolves; a passive never
+     * resolves — it has no `onUse` at all, which is how a passive is declared —
+     * so a table of damage curves is the wrong instrument for one. Filtering on
+     * the same field the engine dispatches on means a passive cannot be quietly
+     * skipped here AND quietly pressed there.
+     */
+    const registered = engine.registry
+      .all()
+      .filter((talent) => talent.onUse !== undefined)
+      .map((talent) => talent.id);
     expect(registered).toHaveLength(12);
     expect([...CASES.map((entry) => talentId(entry.bare))].sort()).toEqual([...registered].sort());
   });
@@ -727,13 +738,24 @@ describe('THE GUARD COUNTER rides on the effect instance, not on a constant', ()
 });
 
 describe('the sheet is where a rank lives', () => {
-  it('seeds every loadout talent at 1 — the four ARE the birth grant', () => {
+  it('seeds every talent it owns at 1 — the four AND the passives are the birth grant', () => {
     // warrior.lua:80-86 hands a fresh Berserker five talents outright before a
     // point is spent; `ClassDef.loadout` hands ours four. That is why
     // `pointsForLevel` drops ToME's separate 2-point birth grant (Actor.lua:171).
+    //
+    // THE PASSIVES ARE BORN LEARNED TOO, and the count below is the two lists
+    // rather than the literal four — a passive seeded at rank 0 would not be
+    // "off": `combatTalentScale` maps 0 to 0.1, so it would be a tenth of itself
+    // and silently wrong. One is the only rank the curve reads cleanly.
     for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
       const sheet = sheetForClass(definition);
-      expect(sheet.points.size).toBe(4);
+      expect(sheet.points.size).toBe(definition.loadout.length + definition.passives.length);
+      for (const talent of definition.passives) {
+        expect({ talent: talent.id, level: getTalentLevel(sheet, talent.id) }).toEqual({
+          talent: talent.id,
+          level: 1,
+        });
+      }
       for (const talent of definition.loadout) {
         expect({ talent: talent.id, level: getTalentLevel(sheet, talent.id) }).toEqual({
           talent: talent.id,

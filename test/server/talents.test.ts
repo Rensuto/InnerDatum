@@ -319,8 +319,17 @@ describe('the loadout cap — PLAN.md § 5', () => {
 
   it('registers all twelve, and the registry rejects a duplicate', () => {
     const engine = createContentTalentEngine();
-    expect(engine.registry.all()).toHaveLength(12);
-    expect(engine.registry.forClass(WATCHMAN.id)).toHaveLength(4);
+    // TWELVE ACTIVES AND THE PASSIVES. Counted from the content rather than as
+    // a literal, so authoring a talent updates the expectation with the code
+    // instead of failing a number somebody then bumps without reading.
+    const authored = CLASSES.reduce(
+      (sum, definition) => sum + definition.loadout.length + definition.passives.length,
+      0,
+    );
+    expect(engine.registry.all()).toHaveLength(authored);
+    expect(engine.registry.forClass(WATCHMAN.id)).toHaveLength(
+      WATCHMAN.loadout.length + WATCHMAN.passives.length,
+    );
     const first = engine.registry.all()[0];
     expect(first).toBeDefined();
     if (first !== undefined) expect(() => engine.registry.register(first)).toThrow(/duplicate/);
@@ -344,8 +353,26 @@ describe('the loadout cap — PLAN.md § 5', () => {
     // that got registered by some other route and belongs to nobody's four
     // buttons shows up here as unreachable instead of being invisible to a
     // test that only ever looked at the loadouts.
-    const everyTalent = f.engine.registry.all();
+    /**
+     * THE ACTIVES. A passive is deliberately NOT reachable through
+     * `canUseTalent` — it is not in `sheet.loadout`, so the answer is
+     * `NotLearned`, and that is correct rather than a hole: a passive is never
+     * pressed. It gets its own ownership check below, which is the half of this
+     * assertion that still applies to it.
+     */
+    const everyTalent = f.engine.registry.all().filter((talent) => talent.onUse !== undefined);
     expect(everyTalent).toHaveLength(12);
+
+    for (const talent of f.engine.registry.all()) {
+      // OWNED BY EXACTLY ONE CLASS, actives and passives alike — a talent two
+      // classes can reach, or none can, is the failure this half catches.
+      const owners2 = CLASSES.filter(
+        (definition) =>
+          definition.loadout.some((owned) => owned.id === talent.id) ||
+          definition.passives.some((owned) => owned.id === talent.id),
+      );
+      expect(owners2.map((definition) => definition.id)).toEqual([talent.classId]);
+    }
 
     for (const talent of everyTalent) {
       // Registered under the id the wire and the cooldown map both use.

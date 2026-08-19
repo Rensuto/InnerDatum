@@ -1303,6 +1303,16 @@ export type TalentSheet = {
   readonly classId: ClassId;
   readonly loadout: readonly string[];
   /**
+   * THE PASSIVES THIS BODY OWNS. Separate from `loadout` for the reason
+   * `ClassDef.passives` gives: `loadout` IS the hotbar, and a passive on the
+   * hotbar is a key that does nothing.
+   *
+   * They share `points`, because a passive is raised with the same talent point
+   * as anything else and `getTalentLevel` reads one map. Two point maps would be
+   * two answers to "what rank is this", and the spend path would have to pick.
+   */
+  readonly passives: readonly string[];
+  /**
    * Namespaced talent id -> RAW points spent on it, 1..5.
    *
    * KEYED EXACTLY LIKE `actor.cooldowns` — `talent:<id>`, the registry key,
@@ -1332,6 +1342,8 @@ export type TalentSheet = {
 };
 
 export type TalentSheetInit = {
+  /** The passives this class owns. Absent is none, which is every old fixture. */
+  readonly passives?: readonly string[];
   readonly classId: ClassId;
   readonly loadout: readonly string[];
   readonly resource: ResourceKind;
@@ -1366,10 +1378,17 @@ export type TalentSheetInit = {
 export function createTalentSheet(init: TalentSheetInit): TalentSheet {
   const points = new Map<string, number>();
   for (const id of init.loadout) points.set(id, init.points?.get(id) ?? 1);
+  // A PASSIVE IS BORN LEARNED, exactly as the four are. Rank 0 would not merely
+  // be "off": `combatTalentScale` maps 0 to 0.1, so a passive at rank 0 is a
+  // tenth of itself rather than nothing — see `BIRTH_RANK`'s note. Learned at
+  // one is the honest state and the only one the scale reads cleanly.
+  const passives = init.passives ?? [];
+  for (const id of passives) points.set(id, init.points?.get(id) ?? 1);
 
   return {
     classId: init.classId,
     loadout: [...init.loadout],
+    passives: [...passives],
     points,
     resource: createResourcePool(init.resource),
     ap: init.maxAp,

@@ -12,6 +12,8 @@
  * carry an explicit `.ts` extension.
  */
 
+import { recomposeCombat } from './engine/effects.ts';
+import { resolveItem } from './content/resolve.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { argv, env, exit, hrtime } from 'node:process';
@@ -722,6 +724,57 @@ export function buildServer() {
    * methods on the gateway's `TurnEngine` port and implemented here, which is
    * unchanged; only the arity moved.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * RE-DERIVE WHAT THIS BODY'S PASSIVES ARE WORTH, AND FOLD THEM IN.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `actor.passiveCombat` is a STORED contribution, not a lookup — see the field
+   * — so something has to write it, and the something has to be this file: it is
+   * the only one that can see the talent registry, the world and the gateway at
+   * once, which is the same argument `attachClass` above makes for living here.
+   *
+   * CALLED WHEREVER A RANK CAN CHANGE and nowhere else: attaching a class, and
+   * raising a point. A passive whose contribution is computed once at birth
+   * would be a talent that never gets better, which is the one thing a rank is
+   * for.
+   *
+   * `recomposeCombat` IS THE ONLY WRITER OF `combat`, still — this writes the
+   * input and then asks it to run. Writing the composed sheet here would make
+   * two writers of the field that file spends an essay claiming one.
+   */
+  const refreshPassives = (actorId: string): void => {
+    const actor = world.getActor(actorId);
+    const sheet = talentEngine.sheetOf(actorId);
+    if (actor === undefined || sheet === undefined) return;
+
+    const stats: Record<string, number> = {};
+    const mods: Record<string, number> = {};
+    for (const id of sheet.passives) {
+      const talent = talentEngine.registry.get(id);
+      const contribute = talent?.passive;
+      if (contribute === undefined) continue;
+      const block = contribute(sheet.points.get(id) ?? 1);
+      for (const [key, value] of Object.entries(block.stats ?? {})) {
+        if (typeof value === 'number') stats[key] = (stats[key] ?? 0) + value;
+      }
+      for (const [key, value] of Object.entries(block.mods ?? {})) {
+        if (typeof value === 'number') mods[key] = (mods[key] ?? 0) + value;
+      }
+    }
+
+    // ABSENT RATHER THAN EMPTY when a body has no passives, so a class without
+    // any composes byte-identically to how it did before passives existed.
+    const any = Object.keys(stats).length > 0 || Object.keys(mods).length > 0;
+    actor.passiveCombat = any
+      ? {
+          ...(Object.keys(stats).length > 0 ? { stats } : {}),
+          ...(Object.keys(mods).length > 0 ? { mods } : {}),
+        }
+      : undefined;
+    recomposeCombat(actor, effects, resolveItem);
+  };
+
   const wrapForGateway = (base: ReapingTurnEngine): ReapingTurnEngine => ({
     ...base,
     attachClass: (actorId: string, classId: string): void => {
@@ -738,6 +791,9 @@ export function buildServer() {
         sheet.resource.value = Math.max(0, sheet.resource.value - short);
       }
       talentEngine.attach(actorId, sheet);
+      // THE SHEET IS THE INPUT AND THIS IS THE OUTPUT. A class chosen without
+      // this line attaches passives that are true on paper and worth nothing.
+      refreshPassives(actorId);
     },
 
     /**
@@ -780,6 +836,11 @@ export function buildServer() {
       if (current >= TALENT_MAX_LEVEL) return current;
       const next = current + 1;
       sheet.points.set(talentId, next);
+      // AND IF THAT WAS A PASSIVE, IT IS NOW WORTH MORE. Unconditional rather
+      // than guarded on membership: the helper reads the sheet's own passive
+      // list, so raising an active re-derives the same numbers and writes them
+      // back unchanged, which is cheaper than getting the guard wrong.
+      refreshPassives(actorId);
       return next;
     },
 

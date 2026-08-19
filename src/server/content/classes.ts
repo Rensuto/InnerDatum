@@ -79,6 +79,9 @@
  * is the only layer allowed to see both.
  */
 
+import { coldReading } from '../talents/cold_reading.ts';
+import { measuredDoses } from '../talents/measured_doses.ts';
+import { standingOrders } from '../talents/standing_orders.ts';
 import { treeById } from './talent-trees.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
@@ -150,6 +153,26 @@ export type ClassDef = {
   readonly combat: CombatSheet;
   /** EXACTLY FOUR, in hotbar order: reliable, signature, defensive, ally. */
   readonly loadout: readonly Talent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PASSIVES. A SEPARATE LIST, AND THE SEPARATION IS THE FEATURE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `loadout` is the HOTBAR — four slots, enforced by `_loadoutArityCheck` at
+   * the foot of this file, and the reason the bar reads the same for every class.
+   * A passive has nothing to press, so a passive in that list would be a hotbar
+   * key that does nothing: the exact failure ToME avoids by never putting a
+   * `mode = "passive"` talent on the bar.
+   *
+   * Solving it with a filter at the drawing end would mean every surface that
+   * reads a loadout has to remember the filter, and the first one that forgets
+   * ships the dead key. A second list cannot be forgotten — the hotbar reads
+   * `loadout` and simply never sees these.
+   *
+   * THE TALENT PANEL READS BOTH, grouped by tree, because from the player's side
+   * they are all talents they own and can raise.
+   */
+  readonly passives: readonly Talent[];
 };
 
 // ---------------------------------------------------------------------------
@@ -207,6 +230,7 @@ export const WATCHMAN: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [crudeBlow, wardRush, ironCurtain, lockdown],
+  passives: [standingOrders],
 };
 
 // ---------------------------------------------------------------------------
@@ -259,6 +283,7 @@ export const INSPECTOR: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [revolverShot, snipersMark, fogStep, sigil],
+  passives: [coldReading],
 };
 
 // ---------------------------------------------------------------------------
@@ -318,6 +343,7 @@ export const ALCHEMIST: ClassDef = {
     damageType: DamageType.Fire,
   },
   loadout: [ashwickFlare, alchemicVial, backdraft, mendWounds],
+  passives: [measuredDoses],
 };
 
 // ---------------------------------------------------------------------------
@@ -387,6 +413,10 @@ export function registerAllTalents(): TalentRegistry {
   const registry = createTalentRegistry();
   for (const definition of CLASSES) {
     for (const talent of definition.loadout) registry.register(talent);
+    // THE PASSIVES REGISTER TOO. They are looked up by id exactly as the four
+    // are — by the panel, by `spend_point`, and by the refusal that turns a press
+    // into a sentence — and an unregistered talent would be `UnknownTalent`.
+    for (const talent of definition.passives) registry.register(talent);
   }
   return registry;
 }
@@ -422,6 +452,7 @@ export function sheetForClass(definition: ClassDef): TalentSheet {
   return createTalentSheet({
     classId: definition.id,
     loadout: definition.loadout.map((talent) => talent.id),
+    passives: definition.passives.map((talent) => talent.id),
     resource: definition.resource,
     maxAp: definition.maxAp,
     maxMp: definition.maxMp,
