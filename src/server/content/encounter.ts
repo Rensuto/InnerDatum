@@ -490,7 +490,53 @@ export function seedAmbush(
     // Qualified by realm, exactly as the test encounter above. See `World.id`.
     const id = qualified(world, `mon_${template.id}`);
     const actor = world.addMonster(id, monsterInit(template, at));
-    const carrying = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE FIRST FIGHT ALWAYS PAYS. Everything after it rolls.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED, over 60 opening ambushes at level 1 solo: exactly one monster in
+     * the room, an item **35% of the time**, and no floor litter at all — an
+     * ambush is a fight rather than a place, so unlike a delve it has nothing
+     * lying about. So the median first encounter in this game is *kill the thing,
+     * get nothing, walk away with the fifteen coins you started with*.
+     *
+     * That is the single most important encounter there is. It is where somebody
+     * decides whether the loop pays, and two evenings of world design do not
+     * matter if the answer on the first swing is "no". `tools/first-session.mjs`
+     * prints it as one line — `LOOTS THE ROOM: (nothing)` — and that line is the
+     * whole argument.
+     *
+     * ═══ LEVEL 1 ONLY, AND THE HUSK'S 35% IS UNTOUCHED ═══
+     * The alternative was raising `INDEX_HUSK.drops.chance`, and the husk is the
+     * commonest creature in the game — moving it inflates every fight forever to
+     * fix the first one. This is a floor under the OPENING and nothing else: by
+     * the time a party is level 2 the rate is upstream's again, and a player who
+     * has already been paid once is being taught by the game rather than by a
+     * special case.
+     *
+     * ═══ IT DOES NOT MOVE THE SEEDED STREAM, AND THAT IS CHECKED RATHER THAN
+     *     ASSUMED ═══
+     * `rollDrop` has already spent its `loot.chance` and `loot.pick` before this
+     * line reads the answer, and re-rolling would shift every later draw from
+     * the same seed — which `rng.ts` is explicit about. So there is no second
+     * roll: the drop is taken from the template's own table BY INDEX, which also
+     * means it is a thing that creature would legitimately have carried rather
+     * than a prize nobody else can find.
+     *
+     * The `embellish` call is free for two separate reasons, both read out of
+     * the function: it returns immediately on `undefined`, and when it does work
+     * it draws from `world.lootRng.fork(...)` — a FORK, which does not advance
+     * the parent. Two calls where there used to be one therefore leave every
+     * later draw exactly where it was.
+     */
+    const rolled = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
+    const guaranteed =
+      rolled === undefined && party.level <= 1 && placed.length === 0
+        ? embellish(world, actor.id, template.drops?.pick[0])
+        : undefined;
+    const carrying = rolled ?? guaranteed;
+
     if (carrying !== undefined) actor.carried = [carrying];
     placed.push({
       id: actor.id,

@@ -295,6 +295,25 @@ if (breach !== null) {
   show(mark, 16);
 
   mark = log.length;
+  /**
+   * WALK TO WHAT DROPPED, THEN PICK IT UP.
+   *
+   * This used to press `pickup` six times from wherever the fight ended, and
+   * `pickup` takes what is under YOUR feet — so it reported "(nothing)" for
+   * every opening in which the corpse fell more than a step away, which is most
+   * of them. That is a hole in the INSTRUMENT and it was actively misleading:
+   * driven properly, twelve real kills out of twelve leave loot on the floor.
+   *
+   * The whole point of this tool is to print what a player experiences, so a
+   * step it does not take is a line it gets wrong. `ground` frames carry the
+   * tiles; walk to the first one and then take it.
+   */
+  // `cell` IS A PAIR, not an `x`/`y`. The first version of this read `.x` and
+  // `.y`, got two undefineds, and walked nowhere — which is how a tool reports
+  // "(nothing)" about a floor with a pair of trousers on it.
+  const dropped = frames.filter((f) => f.t === 'ground').at(-1)?.items ?? [];
+  const cell = dropped[0]?.cell;
+  if (Array.isArray(cell)) await stepTo({ x: cell[0], y: cell[1] });
   for (let i = 0; i < 6; i += 1) {
     send({ t: 'pickup' });
     await sleep(220);
