@@ -1,3 +1,4 @@
+import { MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -8,6 +9,7 @@ import {
   partyMaxLevel,
   rollLoot,
   rollQuality,
+  LEVELS_PER_BAND,
 } from '../../src/server/content/loot.ts';
 import {
   MAX_MONEY_PILE,
@@ -33,18 +35,76 @@ import { createRng } from '../../src/shared/rng.ts';
 const BASE = 'item_watchmans_coat';
 
 describe('the depth bands', () => {
-  it('is `bound(ceil(level / 10), 1, 5)` — GameState.lua:1324', () => {
+  it('is GameState.lua:1324 with this game’s own ceiling, not ToME’s', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS PINNED `bandFor(10) === 1` AND THAT WAS THE BUG, NOT THE CONTRACT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `bound(ceil(level / 10), 1, 5)` is upstream's formula and it was ported
+     * verbatim, divisor and all. ToME's characters go to level 50.
+     * `MAX_CHARACTER_LEVEL` here is 10 — so `ceil(10 / 10)` is 1 and EVERY
+     * CHARACTER AT EVERY LEVEL, from the first husk to the last closed case,
+     * was band 1. Four of the five authored bands were unreachable, and the
+     * test asserting `bandFor(10) === 1` was faithfully pinning that.
+     *
+     * A formula copied past the point where its assumptions hold is not
+     * fidelity, it is the appearance of it. The SHAPE is what ports — five
+     * bands across a character's whole life — so the divisor becomes this
+     * game's own: 1..10 in steps of two.
+     */
+    expect(LEVELS_PER_BAND).toBe(2);
     expect(bandFor(1)).toBe(1);
-    expect(bandFor(10)).toBe(1);
-    expect(bandFor(11)).toBe(2);
-    expect(bandFor(20)).toBe(2);
-    expect(bandFor(21)).toBe(3);
-    expect(bandFor(41)).toBe(5);
+    expect(bandFor(2)).toBe(1);
+    expect(bandFor(3)).toBe(2);
+    expect(bandFor(9)).toBe(5);
+    expect(bandFor(10)).toBe(5);
     // Clamped at both ends. A level-500 party is still band 5; a level-0 one is
     // band 1 rather than band 0, which would index nothing.
     expect(bandFor(500)).toBe(5);
     expect(bandFor(0)).toBe(1);
     expect(bandFor(-4)).toBe(1);
+  });
+
+  it('makes every band reachable inside the level cap', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE GUARD THAT WOULD HAVE CAUGHT IT, AND THE ONE WORTH KEEPING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * An authored table whose rows nobody can reach is content that does not
+     * exist, and it is invisible from every angle: the table is correct, the
+     * roll is correct, the citation is correct, and four fifths of it is dead.
+     *
+     * Stated against `MAX_CHARACTER_LEVEL` rather than against a literal, so
+     * moving the cap or the divisor either keeps the property or fails here.
+     */
+    const reachable = new Set<number>();
+    for (let level = 1; level <= MAX_CHARACTER_LEVEL; level += 1) {
+      reachable.add(bandFor(level));
+    }
+    expect([...reachable].sort((a, b) => a - b)).toEqual(
+      QUALITY_BANDS.map((_row, index) => index + 1),
+    );
+  });
+
+  it('gets better as a character grows, which is the point of having bands', () => {
+    /**
+     * The curve, asserted as a DIRECTION rather than as percentages: a higher
+     * band must never be worse at producing egos than a lower one. Measured
+     * odds today run 18% double-ego at level 1 to 82% at level 10, but pinning
+     * those numbers would make every future weight edit look like a regression.
+     */
+    const doubleWeight = (band: number): number => {
+      const row = QUALITY_BANDS[band - 1];
+      if (row === undefined) return 0;
+      const total = row.reduce((sum, entry) => sum + entry.weight, 0);
+      const two = row.find((entry) => entry.quality === LootQuality.DoubleEgo)?.weight ?? 0;
+      return two / total;
+    };
+    for (let band = 2; band <= QUALITY_BANDS.length; band += 1) {
+      expect(doubleWeight(band), `band ${String(band)}`).toBeGreaterThan(doubleWeight(band - 1));
+    }
   });
 
   it('has five bands, all four categories in each, all weights positive', () => {

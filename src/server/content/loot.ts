@@ -131,14 +131,52 @@ export const QUALITY_BANDS: readonly (readonly { quality: LootQuality; weight: n
   ]);
 
 /**
- * Which band a party is in. `bound(ceil(level / 10), 1, 5)` — GameState.lua:1324.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH BAND A PARTY IS IN — AND FOUR OF THE FIVE WERE UNREACHABLE.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Returns a 1-BASED band number, as upstream does, so the citation reads
- * straight across. Index `QUALITY_BANDS` with `band - 1`.
+ * `bound(ceil(level / 10), 1, 5)` — GameState.lua:1324, ported verbatim, and
+ * verbatim was wrong here for a reason that is invisible from inside this file:
+ * **ToME's characters go to level 50 and this game's cap is 10.**
+ * `MAX_CHARACTER_LEVEL` is 10, so `ceil(10 / 10)` is 1 and EVERY CHARACTER AT
+ * EVERY LEVEL FROM THE FIRST HUSK TO THE LAST CASE WAS BAND 1.
+ *
+ * Measured over twenty thousand rolls a band, which is what the table was
+ * quietly holding back:
+ *
+ *     band   plain     ego   double-ego   money
+ *       1    34.2%   41.5%       17.9%    6.4%   <- the only one anybody saw
+ *       2    24.8%   39.9%       27.1%    8.2%
+ *       3    10.5%   26.7%       54.2%    8.7%
+ *       4     5.9%   12.1%       74.0%    8.0%
+ *       5     4.8%    4.9%       82.5%    7.8%
+ *
+ * A whole authored progression — from mostly-plain to four in five carrying two
+ * egos — switched off by an arithmetic mismatch between a ported divisor and
+ * this game's own ceiling. It is also the answer to *"what does a finished
+ * character do"*: the gear chase was there the whole time and nobody could
+ * reach it.
+ *
+ * ═══ /2 IS THE TRANSPOSITION, NOT A TUNING KNOB ═══
+ * Five bands across a character's whole life is the upstream shape and the one
+ * worth keeping. Upstream spans 1..50 in steps of ten; this game spans 1..10, so
+ * the same five bands are steps of two. Band 5 lands at level 9, which is
+ * correct — the cap IS the end, and the last band should be what the end feels
+ * like rather than something no character can be alive long enough to see.
+ *
+ * THE CITATION STANDS AND THE DIVISOR DOES NOT, which is the honest way round:
+ * `docs/tome-port.md` is explicit that a port adapts the constant and keeps the
+ * shape, and a formula copied past the point where its assumptions hold is not
+ * fidelity — it is the appearance of it.
+ *
+ * Returns a 1-BASED band number, as upstream does. Index `QUALITY_BANDS` with
+ * `band - 1`.
  */
+export const LEVELS_PER_BAND = 2;
+
 export function bandFor(level: number): number {
   if (!Number.isFinite(level)) return 1;
-  return Math.min(QUALITY_BANDS.length, Math.max(1, Math.ceil(level / 10)));
+  return Math.min(QUALITY_BANDS.length, Math.max(1, Math.ceil(level / LEVELS_PER_BAND)));
 }
 
 /**
