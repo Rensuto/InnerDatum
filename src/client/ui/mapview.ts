@@ -25,7 +25,7 @@
 
 import { PALETTE } from '../render/canvas.ts';
 import { TileCode, isWalkable, isSafeGround } from '../../shared/protocol.ts';
-import type { LevelView, SiteView } from '../../shared/protocol.ts';
+import type { LevelView, RegionView, SiteView } from '../../shared/protocol.ts';
 
 /** Where the minimap sits and how big it is allowed to get. */
 export const MINIMAP_MARGIN = 8;
@@ -115,6 +115,11 @@ export type MapPaint = {
    * rather than a second painter that drifts.
    */
   readonly labelled?: boolean;
+  /**
+   * The names of the country, drawn UNDER the markers and only where the player
+   * has walked. See `paintRegions`.
+   */
+  readonly regions?: readonly RegionView[];
 };
 
 /**
@@ -124,7 +129,7 @@ export type MapPaint = {
  * test — the full-screen map has to turn a click back into a tile.
  */
 export function paintMap(paint: MapPaint): number {
-  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled } = paint;
+  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled, regions } = paint;
 
   /**
    * THE WINDOW. A minimap that showed the whole 170x100 region would be a
@@ -221,6 +226,61 @@ export function paintMap(paint: MapPaint): number {
    * the fog is supposed to make "where is it now" a real question. The dot in
    * the alarm colour is all a roamer gets.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE NAMES OF THE COUNTRY, AND THEY ARE EARNED RATHER THAN GIVEN.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The log has told you *"You come to the Bracken Waste"* since the regions
+   * landed, and the map — the one screen whose entire job is answering "where"
+   * — could not show you where the Bracken Waste WAS. A name you hear once and
+   * cannot look up is a name you stop using.
+   *
+   * ═══ ONLY WHERE YOU HAVE WALKED, WHICH IS THE SAME RULE THE FOG ALREADY HAS ═══
+   * A region's name appears when a fifth of it has been seen. Handing over
+   * twelve names on the first frame would label ground the player has never
+   * been near, and this map is drawn over their own fog precisely so that what
+   * it shows is what they have earned. It is also the cheap answer to a real
+   * problem: a name centred on a region the player cannot see is a caption on a
+   * black rectangle.
+   *
+   * UNDER THE MARKERS AND OVER THE TERRAIN, because a site name is a
+   * destination and a region name is context — and where they collide the
+   * destination has to win.
+   */
+  if (labelled && regions !== undefined) {
+    ctx.save();
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const region of regions) {
+      // How much of it this player has actually walked. `seen` is the fog, and
+      // its absence means an unfogged caller, which gets every name.
+      let known = 0;
+      let total = 0;
+      for (let y = region.y0; y <= region.y1; y += 2) {
+        for (let x = region.x0; x <= region.x1; x += 2) {
+          if (x < win.x0 || x > win.x1 || y < win.y0 || y > win.y1) continue;
+          total += 1;
+          if (seen === undefined || seen.has(`${String(x)},${String(y)}`)) known += 1;
+        }
+      }
+      if (total === 0 || known * 5 < total) continue;
+
+      const cx = ox + ((region.x0 + region.x1) / 2 + 0.5) * cell;
+      const cy = oy + ((region.y0 + region.y1) / 2 + 0.5) * cell;
+      // A HAIRLINE OF INK BEHIND THE LETTERS rather than a plate: a region name
+      // sits on top of the terrain it names, and a filled box would punch a hole
+      // in the very picture the label is about.
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(10, 8, 19, 0.85)';
+      ctx.strokeText(region.name.toUpperCase(), cx, cy);
+      ctx.fillStyle = 'rgba(198, 190, 214, 0.55)';
+      ctx.fillText(region.name.toUpperCase(), cx, cy);
+    }
+    ctx.restore();
+  }
+
   if (labelled) {
     ctx.font = '10px ui-monospace, monospace';
     ctx.textBaseline = 'middle';

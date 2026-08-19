@@ -318,6 +318,7 @@ import type {
   ProjectileView,
   ResourceView,
   ServerMsg,
+  RegionView,
   SiteView,
   Slot,
   TurnEvent,
@@ -345,6 +346,7 @@ import type { CombatBanner } from './ui/combatbanner.ts';
 import type { ContextMenu, MenuItem } from './ui/contextmenu.ts';
 import type { HotbarSlot, HotbarView } from './ui/hotbar.ts';
 import type { InventoryFocus, InventoryHit, InventoryPanelView } from './ui/inventory.ts';
+import { PanelSkin, drawPanel } from './ui/panel.ts';
 import type { PanelRect } from './ui/panel.ts';
 import type { PartyPaneLayout, PartyPaneView } from './ui/partypanel.ts';
 import type { TurnView } from './ui/turncards.ts';
@@ -926,6 +928,13 @@ let currentRealmId: string | null = null;
  */
 let overworldLevel: LevelView | null = null;
 let overworldSites: readonly SiteView[] = [];
+/**
+ * WHAT THE PARTS OF THE MOOR ARE CALLED. Sent once on the `realm` frame and
+ * held for the world map — see `RealmMsg.regions`. Empty until the first
+ * overworld frame, and empty forever against a server too old to send it, which
+ * is a map without captions rather than a map that breaks.
+ */
+let overworldRegions: readonly RegionView[] = [];
 /**
  * The overworld's realm id, learned rather than hard-coded. The client has no
  * business knowing the server's naming; it knows which frame said `overworld`.
@@ -3137,13 +3146,47 @@ const paintHud: HudPainter = (ctx, width, height) => {
   if (worldMapOpen && overworldLevel !== null) {
     ctx.fillStyle = 'rgba(10, 8, 19, 0.92)';
     ctx.fillRect(0, 0, width, height);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A FRAME AND A KEY, BECAUSE THIS IS A SCREEN AND NOT A PICTURE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Every other panel in this game is drawn on the 9-slice — the sheet, the
+     * bag, the talents, the menu, the cards. This one was a raw rectangle on a
+     * scrim with a line of text under it, which is what an unfinished screen
+     * looks like next to eleven finished ones.
+     *
+     * THE KEY MATTERS MORE THAN THE FRAME. This map now encodes four separate
+     * facts and explained none of them: the ROAD COLOUR is the safe network
+     * (`isSafeGround` — nothing may lie in wait on it, a rule the server has
+     * enforced since roamers existed), the DANGER WORD on each marker is the
+     * grade of the room behind it, and the captions are the regions the Case Log
+     * names as you cross into them. A player was left to infer all three.
+     *
+     * The road line is the one worth the space: it is a PROMISE, it is the only
+     * safety guarantee the overworld makes, and a promise nobody can read is not
+     * one anybody travels on.
+     */
     const inset = 24;
+    const legendH = 34;
     const onIt = realmKind === 'overworld' && selfId !== null;
     const me = onIt ? actors.get(selfId ?? '') : undefined;
+    drawPanel(ctx, sprites, PanelSkin.CaseFile, {
+      x: inset - 10,
+      y: inset - 10,
+      w: width - (inset - 10) * 2,
+      h: height - (inset - 10) * 2,
+    });
     paintMap({
       ctx,
       level: overworldLevel,
-      rect: { x: inset, y: inset, w: width - inset * 2, h: height - inset * 2 - 18 },
+      regions: overworldRegions,
+      rect: {
+        x: inset,
+        y: inset + 14,
+        w: width - inset * 2,
+        h: height - inset * 2 - 18 - legendH - 14,
+      },
       sites: overworldSites,
       self: me === undefined ? undefined : { x: me.x, y: me.y },
       framed: false,
@@ -3154,18 +3197,54 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // must. It is the whole reason somebody presses M.
       labelled: true,
     });
-    ctx.fillStyle = PALETTE.SILVER;
-    ctx.font = '11px ui-monospace, monospace';
+    // ═══ THE TITLE, ON TOP, WHERE A DOCUMENT'S TITLE GOES ═══
+    ctx.fillStyle = PALETTE.GOLD;
+    ctx.font = '12px ui-monospace, monospace';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
+    ctx.textBaseline = 'top';
     ctx.fillText(
-      onIt
-        ? 'THE ALDERBROOK REGION — M to close'
-        : 'THE ALDERBROOK REGION — as you left it — M to close',
+      onIt ? 'THE ALDERBROOK REGION' : 'THE ALDERBROOK REGION — as you left it',
       Math.floor(width / 2),
-      height - 6,
+      inset - 2,
+    );
+
+    /**
+     * THE KEY. Three rows, and each one is a rule the map is already obeying
+     * silently. Drawn as SWATCHES rather than described in a sentence, because
+     * the thing being explained is a colour.
+     */
+    const keyY = height - inset - legendH + 8;
+    const swatch = (x: number, colour: string, label: string): number => {
+      ctx.fillStyle = colour;
+      ctx.fillRect(x, keyY - 4, 9, 9);
+      ctx.strokeStyle = 'rgba(10, 8, 19, 0.8)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, keyY - 3.5, 8, 8);
+      ctx.fillStyle = PALETTE.SILVER;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, x + 14, keyY + 1);
+      return x + 14 + ctx.measureText(label).width + 18;
+    };
+
+    ctx.font = '10px ui-monospace, monospace';
+    // Read straight off `miniFill`, so the key cannot drift from the picture.
+    let kx = inset + 4;
+    kx = swatch(kx, '#8a8070', 'made ground — nothing waits here');
+    kx = swatch(kx, '#4e5a44', 'open country');
+    swatch(kx, '#141d33', 'water');
+
+    ctx.fillStyle = PALETTE.SILVER;
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      'a marker names the room and how bad it is · M to close',
+      width - inset - 4,
+      keyY + 1,
     );
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   } else if (level !== null && currentRealmId !== null) {
     const me = selfId === null ? undefined : actors.get(selfId);
     // REVEAL FIRST, THEN PAINT. The cell you are standing on has to be part of
@@ -8159,6 +8238,10 @@ function applyServerMessage(msg: ServerMsg): void {
         overworldLevel = msg.level;
         overworldSites = msg.sites;
         overworldRealmId = msg.realmId;
+        // `??` AND NOT AN `if`: a server that stopped sending the table should
+        // clear the captions rather than leave the last ones floating over a map
+        // it no longer describes.
+        overworldRegions = msg.regions ?? [];
       }
       /**
        * SEEDED FROM THE SERVER'S COPY, which is the one that persists.

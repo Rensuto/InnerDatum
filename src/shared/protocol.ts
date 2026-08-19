@@ -4234,6 +4234,19 @@ export type SiteView = {
   readonly danger?: string;
 };
 
+/**
+ * One named rectangle of a region map. Inclusive bounds, matching
+ * `ALDERBROOK_REGIONS` in shared/level.ts, which is where they are authored and
+ * where the tiling is guaranteed.
+ */
+export type RegionView = {
+  readonly name: string;
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+};
+
 export type RealmMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'realm';
@@ -4259,6 +4272,22 @@ export type RealmMsg = {
    * persists; this is the seed.
    */
   explored?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE PARTS OF THIS MAP ARE CALLED. Once, on entry. No per-step traffic.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The server has named twelve regions since the crossing line landed, and the
+   * table deliberately did NOT ride the wire then: *"an unused protocol field is
+   * the same disease"* as a subsystem wired to nothing. It ships now because
+   * something draws it — the world map, which could tell you when you ENTERED
+   * the Bracken Waste and could not tell you where it was.
+   *
+   * OPTIONAL, SO NO VERSION BUMP, and absent on every realm but an overworld: a
+   * town interior is one room with its name on the door and an arena is not
+   * anywhere.
+   */
+  readonly regions?: readonly RegionView[];
   /** Which actor in `actors` is the recipient — the client re-centres on it. */
   selfId: string;
 };

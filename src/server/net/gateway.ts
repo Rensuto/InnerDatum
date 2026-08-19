@@ -223,7 +223,7 @@ import {
  */
 import { ENCOUNTER_SITE, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
-import { groundAt, regionAt } from '../../shared/level.ts';
+import { ALDERBROOK_REGIONS, groundAt, regionAt } from '../../shared/level.ts';
 import type { Ground } from '../../shared/level.ts';
 import { createFog, fogFromBase64, fogHas, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
@@ -5193,6 +5193,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       level: view.level,
       actors: view.actors,
       sites: markersFor(realm, actorId),
+      // THE NAMES OF THE COUNTRY, on an overworld only — see `RealmMsg.regions`.
+      // One frame per entry and never again; the client holds it for the map.
+      ...(realm.kind === RealmKind.Overworld ? { regions: ALDERBROOK_REGIONS } : {}),
       explored,
       selfId: actorId,
     });

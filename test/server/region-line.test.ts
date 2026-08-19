@@ -36,6 +36,7 @@ type Client = {
   send(frame: Frame): void;
   hello(): Promise<string>;
   lines(): string[];
+  frame(type: string): Frame | undefined;
   close(): void;
 };
 
@@ -89,6 +90,9 @@ async function connect(port: number): Promise<Client> {
         }
       }
       return out;
+    },
+    frame(type: string): Frame | undefined {
+      return frames.find((f) => f['t'] === type);
     },
     close(): void {
       socket.close();
@@ -219,5 +223,50 @@ describe('crossing into a named part of the moor says so', () => {
     await sleep(120);
 
     expect(client.lines().filter((l) => l.startsWith('You come to ')).length).toBe(before);
+  });
+});
+
+describe('the names reach the map, not just the log', () => {
+  it('sends the whole region table once, on the realm frame', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIELD THAT WAS DELIBERATELY NOT SHIPPED UNTIL SOMETHING DREW IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * When the crossing line landed, the table stayed off the wire on purpose —
+     * *"an unused protocol field is the same disease"* as a subsystem wired to
+     * nothing, and this project has found four of those in its own work. It
+     * ships now because the world map draws it: the log could tell you that you
+     * had ENTERED the Bracken Waste and the map could not tell you where the
+     * Bracken Waste was.
+     *
+     * ONCE, ON ENTRY. Twelve rectangles is a few hundred bytes and the answer
+     * never changes, so re-sending it per step would be traffic that says what
+     * the client already knows.
+     */
+    const client = await connect(server.port);
+    await client.hello();
+    await sleep(80);
+
+    const realm = client.frame('realm');
+    expect(realm).toBeDefined();
+    const regions = realm?.['regions'];
+    expect(Array.isArray(regions), 'the realm frame carried no region table').toBe(true);
+    if (!Array.isArray(regions)) return;
+
+    expect(regions.length).toBeGreaterThan(6);
+    for (const row of regions) {
+      const r = row as Record<string, unknown>;
+      expect(typeof r['name']).toBe('string');
+      for (const bound of ['x0', 'y0', 'x1', 'y1']) {
+        expect(typeof r[bound], `${String(r['name'])} has no ${bound}`).toBe('number');
+      }
+    }
+
+    // AND THE NAMES ARE THE ONES THE LOG USES, or the map captions a different
+    // world from the one the Case Log is narrating.
+    const names = new Set(regions.map((row) => (row as Record<string, unknown>)['name']));
+    expect(names.has('Alderbrook Common')).toBe(true);
+    expect(names.has('the Bracken Waste')).toBe(true);
   });
 });
