@@ -208,6 +208,7 @@ import {
   drawHeader,
   drawPanel,
   fitText,
+  wrapClamped,
   headerDragRect,
   HEADER_H,
   PANEL_PAD,
@@ -388,7 +389,28 @@ const NOTE_ROW_H = ROW_H;
  * without a word looks complete and is not.
  */
 const DETAIL_ROWS_MAX = 4;
-const DETAIL_H = ROW_H * (3 + DETAIL_ROWS_MAX);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY LINES THE ITEM'S OWN SENTENCE GETS. TWO, AND IT USED TO GET ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED ACROSS THE WHOLE CATALOGUE: all twenty-three authored descriptions
+ * are longer than the strip's prose column, which is about fifty monospace
+ * characters. Every one. Median seventy-three characters, longest ninety-seven —
+ * so the bag has never once shown a player the whole of what an item is, and
+ * "Hobnailed and half a size too big. Twenty years of beat…" was as much as
+ * anybody ever read.
+ *
+ * TWO LINES COVERS NINETY-SEVEN with room, and `test/client/inventory.test.ts`
+ * asserts that against the REAL catalogue rather than against a guess — so a
+ * description written longer than this reservation fails a test instead of
+ * quietly losing its tail on somebody's screen.
+ */
+const DESC_LINES = 2;
+
+/** Name, meta, the description's lines, then the comparison rows. */
+const DETAIL_H = ROW_H * (2 + DESC_LINES + DETAIL_ROWS_MAX);
 
 /**
  * THE EQUIPPED TAB'S STRIP: ONE LINE, and that is the honest size rather than a
@@ -1309,8 +1331,8 @@ function closeRect(rect: PanelRect): PanelRect {
   };
 }
 
-/** How many vertical pixels one row wants. */
-function rowHeight(row: InventoryRow): number {
+/** How many vertical pixels one row wants, given the description's line budget. */
+function rowHeight(row: InventoryRow, descLines: number = DESC_LINES): number {
   switch (row.kind) {
     case InventoryRowKind.Tabs:
       return TAB_ROW_H;
@@ -1319,7 +1341,7 @@ function rowHeight(row: InventoryRow): number {
     case InventoryRowKind.Doll:
       return DOLL_H;
     case InventoryRowKind.Detail:
-      return row.compact ? DETAIL_COMPACT_H : DETAIL_H;
+      return row.compact ? DETAIL_COMPACT_H : ROW_H * (2 + descLines + DETAIL_ROWS_MAX);
     case InventoryRowKind.Note:
       return NOTE_ROW_H;
   }
@@ -1329,6 +1351,16 @@ function rowHeight(row: InventoryRow): number {
 export type PlacedInventoryRow = {
   readonly row: InventoryRow;
   readonly rect: PanelRect;
+  /**
+   * HOW MANY LINES THIS ROW'S DESCRIPTION WAS GIVEN ROOM FOR.
+   *
+   * Only the detail strip uses it, and only the strip sets it to anything but
+   * the default. It travels on the placed row rather than being recomputed by
+   * the painter because the HEIGHT above was reserved against this number: a
+   * painter that decided for itself would draw two lines into one line's room on
+   * exactly the window where the budget had to shrink.
+   */
+  readonly descLines?: number;
   /**
    * Cell boxes in the ROW'S OWN ORDER, index for index. Empty for every row but
    * `Cells` and `Doll`.
@@ -1446,11 +1478,32 @@ export function inventoryPanelGeometry(
   // THE STRIP'S HEIGHT IS THE TAB'S — one line on the doll, seven in the bag. It
   // comes off the ROW rather than off a constant so there is one authority for
   // it, and `rowHeight` is that authority.
-  const stripH = detail === undefined ? 0 : rowHeight(detail);
   // ROOM FOR THE STRIP MEANS ROOM FOR THE STRIP AND ONE ROW OF CELLS. A panel
   // that spent its whole height on a comparison of an item it could no longer
   // show would be a comparison with nothing to compare.
   const room = bottom - top - TAB_ROW_H;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DESCRIPTION'S SECOND LINE IS THE FIRST THING GIVEN UP, NOT THE STRIP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every authored description needs two lines and the strip grew by one row to
+   * hold them — and measured at the 640x320 floor, that extra row was enough to
+   * push the WHOLE STRIP out: `room >= CELL_ROW_H + stripH` stopped holding by a
+   * few pixels, and the panel traded a truncated sentence for no comparison at
+   * all. On the smallest screen. Which is worse than what it replaced.
+   *
+   * So the budget shrinks before the strip goes. Two lines wherever they fit,
+   * one where they do not, and the painter clamps to THIS number — with an
+   * ellipsis, so a cut sentence still says it was cut.
+   */
+  let descLines = DESC_LINES;
+  let stripH = detail === undefined ? 0 : rowHeight(detail, descLines);
+  while (descLines > 1 && room < CELL_ROW_H + stripH) {
+    descLines -= 1;
+    stripH = detail === undefined ? 0 : rowHeight(detail, descLines);
+  }
   const stripped = detail !== undefined && room >= CELL_ROW_H + stripH;
   const limit = stripped ? bottom - stripH : bottom;
 
@@ -1546,6 +1599,7 @@ export function inventoryPanelGeometry(
     placed.push({
       row: detail,
       rect: stripRect,
+      descLines,
       cells: [],
       tabs: [],
       drop:
@@ -2113,6 +2167,9 @@ function drawDetail(
   if (row.kind !== InventoryRowKind.Detail) return;
   const { rect } = placed;
   const right = rect.x + rect.w;
+  // THE BUDGET THE GEOMETRY RESERVED FOR THIS SENTENCE, never a fresh opinion:
+  // the strip's height was computed against this number.
+  const lines = placed.descLines ?? DESC_LINES;
 
   // A rule above the strip, so it reads as a different KIND of thing from the
   // grid rather than as a fourth row of something.
@@ -2183,9 +2240,16 @@ function drawDetail(
   if (row.desc !== '') {
     ctx.font = FONT_BODY;
     ctx.fillStyle = PALETTE.BONE;
-    ctx.fillText(fitText(ctx, row.desc, rect.w), rect.x, y);
+    // BOUNDED BY THE SAME NUMBER THE STRIP RESERVED. `wrapClamped` says so with
+    // an ellipsis if it ever has to, which is the honest failure — but the test
+    // over the catalogue is what keeps it from happening.
+    let descY = y;
+    for (const line of wrapClamped(ctx, row.desc, rect.w, lines)) {
+      ctx.fillText(line, rect.x, descY);
+      descY += ROW_H;
+    }
   }
-  y += ROW_H;
+  y += ROW_H * lines;
 
   for (const line of row.rows) {
     const emphasis = line.emphasis === true;

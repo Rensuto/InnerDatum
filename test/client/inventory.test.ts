@@ -24,6 +24,7 @@ import {
   hasSomethingToBuy,
   hasSomethingToWear,
 } from '../../src/client/ui/inventory.ts';
+import { ITEMS } from '../../src/server/content/items.ts';
 import { ItemTier, SLOT_ORDER } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { SpriteSource } from '../../src/client/render/assets.ts';
@@ -1030,7 +1031,7 @@ describe('the drop policy', () => {
     expect(roomy.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(true);
   });
 
-  it('reserves one line on the doll and seven in the bag, on a rect that never moves', () => {
+  it('reserves one line on the doll and eight in the bag, on a rect that never moves', () => {
     // ═══ THE PANEL RECT MUST NOT CHANGE WHEN THE TAB DOES ═══
     // `inventoryPanelRect` never sees a tab, and that is deliberate: if the panel
     // resized on a tab switch, the click that switched it would land on a panel
@@ -1045,10 +1046,11 @@ describe('the drop policy', () => {
       return placed.rect;
     };
 
-    // ONE LINE against SEVEN. The numbers are the file's own ROW_H and
-    // ROW_H * (3 + DETAIL_ROWS_MAX); what is asserted is the RATIO and the fact
-    // that the doll's is the smaller, not either literal.
-    expect(stripOf(InventoryTab.Equipped).h * 7).toBe(stripOf(InventoryTab.Carried).h);
+    // ONE LINE against EIGHT — SEVEN until the description was given its second
+    // line. The numbers are the file's own `ROW_H` and
+    // `ROW_H * (2 + DESC_LINES + DETAIL_ROWS_MAX)`; what is asserted is the RATIO
+    // and the fact that the doll's is the smaller, not either literal.
+    expect(stripOf(InventoryTab.Equipped).h * 8).toBe(stripOf(InventoryTab.Carried).h);
 
     // Both strips end at the same pixel — the strip is anchored to the bottom of
     // the panel so it holds still while the grid above it grows and shrinks.
@@ -1897,5 +1899,86 @@ describe('the inventory frame re-asks for the character sheet', () => {
     // identical shadowing bug the game-turn edge already had to fix once.
     expect(body).toContain('pinnedInspectId === selfId');
     expect(body).toContain('refreshPinnedInspect()');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BAG HAS NEVER SHOWN A PLAYER THE WHOLE OF WHAT AN ITEM IS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Measured across the authored catalogue: EVERY ONE of the descriptions is
+ * longer than the strip's prose column, which is about fifty monospace
+ * characters. Not most — all of them, median seventy-three characters and
+ * longest ninety-seven. So "Hobnailed and half a size too big. Twenty years of
+ * beat…" was as much as anyone ever read of any item in the game.
+ *
+ * The strip now reserves `DESC_LINES` lines for it, and this is the test that
+ * keeps the reservation and the prose in step: a description written longer than
+ * the panel can hold fails HERE, next to the catalogue, rather than losing its
+ * tail on somebody's screen. It reads the real content for the same reason
+ * `assets.test.ts` and `hotbar.test.ts` do.
+ */
+describe('an item description fits the room the strip reserves for it', () => {
+  /** The strip's prose column, and ~6px is what `10px ui-monospace` measures. */
+  const PROSE_PX = 304;
+  const CHAR_PX = 6;
+  const PER_LINE = Math.floor(PROSE_PX / CHAR_PX);
+  const DESC_LINES = 2;
+
+  /** Word-wrapped line count, by the same rule `wrapText` uses. */
+  const linesFor = (text: string): number => {
+    let lines = 1;
+    let width = 0;
+    for (const word of text.split(' ')) {
+      const next = width === 0 ? word.length : width + 1 + word.length;
+      if (next <= PER_LINE) {
+        width = next;
+        continue;
+      }
+      lines += 1;
+      width = word.length;
+    }
+    return lines;
+  };
+
+  it('every authored description fits in the lines reserved', () => {
+    const tooLong: string[] = [];
+    for (const item of ITEMS) {
+      const desc = item.desc;
+      if (typeof desc !== 'string' || desc === '') continue;
+      if (linesFor(desc) > DESC_LINES) tooLong.push(`${item.id}: ${String(desc.length)} chars`);
+    }
+    expect(tooLong).toEqual([]);
+  });
+
+  it('still shows the strip at the smallest window the game guarantees', () => {
+    /**
+     * THE RULE THIS FIX COULD HAVE BROKEN. Giving the description a second line
+     * makes the strip taller, and a taller strip is one the drop policy can
+     * decide not to place at all — which would trade a truncated sentence for no
+     * sentence, on the smallest screen, which is worse.
+     *
+     * `DEFAULT_VIEWPORT` is 20x10 tiles, so 640x320 logical pixels is the floor
+     * every window clears.
+     */
+    const rect = inventoryPanelRect({ width: 640, height: 320, top: 40, bottom: 280 });
+    expect(rect).not.toBeNull();
+    if (rect === null) return;
+
+    const placed = inventoryPanelGeometry(
+      rect,
+      inventoryPanelRows(view({ tab: InventoryTab.Carried })),
+    ).placed;
+    expect(placed.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(true);
+  });
+
+  it('and the catalogue really does have descriptions worth the room', () => {
+    // The guard above passes trivially against an empty catalogue, which is
+    // exactly how a test like this rots into decoration.
+    const described = ITEMS.filter(
+      (item) => typeof item.desc === 'string' && item.desc.length > PER_LINE,
+    );
+    expect(described.length).toBeGreaterThan(0);
   });
 });

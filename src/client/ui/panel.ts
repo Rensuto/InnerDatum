@@ -303,6 +303,36 @@ export function wrapText(
   return out;
 }
 
+/**
+ * `wrapText`, BOUNDED — at most `maxLines`, with the overflow said rather than
+ * dropped.
+ *
+ * A panel reserves a fixed number of lines for a paragraph, and the two numbers
+ * have to be the same number: a wrap that returns four lines into a two-line
+ * reservation draws over whatever is beneath it. So this clamps, and marks the
+ * last line with an ellipsis when it clamped — which is the difference between a
+ * sentence that ended and one that was cut, and it is the whole complaint that
+ * started this work.
+ *
+ * PREFER MAKING THE RESERVATION BIG ENOUGH. This is the backstop for prose
+ * nobody measured, not a licence to keep truncating: the caller that uses it
+ * should also have a test proving its authored content fits.
+ */
+export function wrapClamped(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxPx: number,
+  maxLines: number,
+): readonly string[] {
+  const lines = wrapText(ctx, text, maxPx);
+  if (maxLines <= 0) return [];
+  if (lines.length <= maxLines) return lines;
+  const kept = lines.slice(0, maxLines);
+  const last = kept[maxLines - 1] ?? '';
+  kept[maxLines - 1] = fitText(ctx, `${last}…`, maxPx);
+  return kept;
+}
+
 // ---------------------------------------------------------------------------
 // Controls
 //
