@@ -267,6 +267,68 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Rumour]: 'West of the Sedge is country I still file returns on.',
         },
       },
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE SECOND PERSON IN ANY TOWN, AND ALDERBROOK GETS HER FIRST.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * MEASURED: every town is 34x30 with seven to eight hundred walkable
+       * tiles and exactly ONE person standing in it. Three of the five have no
+       * shop either — so Alderbrook, which is one step from the spawn and the
+       * room every player stands in first and most, was seven hundred and
+       * twenty-seven tiles containing a single sentence.
+       *
+       * A town with one person is a room with a sprite in it.
+       *
+       * ═══ HERE FIRST, AND NOT EVERYWHERE AT ONCE ═══
+       * This table's own header argues it: *"A first commit that populated five
+       * settlements would be five times the content to get wrong before anybody
+       * had stood next to one."* The same reasoning applies to doubling them.
+       * Alderbrook is the highest-traffic room in the game by a distance, so it
+       * is where a second voice is worth the most and where it will be read
+       * enough to find out whether it works.
+       *
+       * ═══ AND SHE ANSWERS THE SAME FOUR TOPICS, DELIBERATELY ═══
+       * A second person with different topics would be a second SYSTEM. The
+       * topic set is closed on purpose (`TopicId`, so a client cannot invent a
+       * question), and the value of two people is that the same four questions
+       * get two answers from two positions. The Reeve keeps the gate and speaks
+       * administratively; Bell has been out there and speaks from having come
+       * back — which is also why hers is the line that tells a newcomer the
+       * chapel is survivable rather than merely near.
+       *
+       * SAME SPRITE AS EVERYONE ELSE. All five townsfolk share
+       * `chr_npc_bent_watchman_s` and the art ask for more is stated above and
+       * still open; a sixth person does not make that worse and waiting for art
+       * would mean shipping nothing.
+       */
+      {
+        id: 'bell',
+        name: 'Halloway Bell',
+        sprite: 'chr_npc_bent_watchman_s',
+        greetFirst: 'Bell. I came back, which is the whole of my trade.',
+        greetAgain: 'Still back. Still here.',
+        deflect: [
+          'Mind yourself.',
+          'I have been shoved by worse and colder.',
+          'Push again and I will stop being polite about it.',
+        ],
+        topics: {
+          // THE ONE A NEWCOMER NEEDS. The Reeve names the chapel too, but as an
+          // errand; this says the thing a first-timer is actually asking, which
+          // is whether they will survive it.
+          [TopicId.Where]: 'The chapel. Small, and it lets you leave.',
+          // D12 FROM THE OTHER SIDE. The Reeve states the rule; Bell states what
+          // happens when you ignore it, which is the half people act on.
+          [TopicId.Party]: 'I went alone once. That is why I mend coats now.',
+          [TopicId.Roads]: 'Made ground holds. Step off it and find out.',
+          [TopicId.Rumour]: 'A stair on the Grey Downs, on no map I own.',
+        },
+        later: {
+          // SHE HAS BEEN THERE. The only first-hand account in Alderbrook.
+          [TopicId.Rumour]: 'West past the Sedge. I got a mile in and turned.',
+        },
+      },
     ],
   ],
   /**

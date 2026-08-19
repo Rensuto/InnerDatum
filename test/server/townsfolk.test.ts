@@ -78,6 +78,62 @@ describe('somebody lives here', () => {
     expect({ x: a?.x, y: a?.y }).toEqual({ x: b?.x, y: b?.y });
   });
 
+  it('fits more than one person in a town, on separate ground', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A TOWN WITH ONE PERSON IN IT IS A ROOM WITH A SPRITE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Measured: every town is 34x30 with seven to eight hundred walkable tiles
+     * and held exactly one person, and three of the five have no shop either.
+     * Alderbrook — one step from the spawn, the room every player stands in
+     * first and most — was 727 tiles containing a single sentence.
+     *
+     * `placeTownsfolk` already looped over its specs with a `taken` set, so the
+     * capability was there and nothing had used it.
+     *
+     * ═══ AND THE FIRST VERSION OF THIS COMMENT MISATTRIBUTED THE GUARANTEE ═══
+     * It said the no-stacking half guards `placeTownsfolk`'s `taken`
+     * bookkeeping. It does not. Removing `taken.add` entirely and re-measuring:
+     * the two still land on separate tiles, (15,23) and (15,22), because
+     * `world.addMonster` will not put a body on an occupied cell. What `taken`
+     * actually buys is SPREAD — with it they stand at (15,23) and (13,24), each
+     * at its own counter rather than shoulder to shoulder.
+     *
+     * So what these two assertions really hold is worth stating plainly: every
+     * authored person reaches the floor, and no two share a tile. The second is
+     * guaranteed by the world rather than by this function, and it is still
+     * worth asserting — two bodies on one tile is one body as far as a player
+     * clicking on them is concerned, whichever layer would have to break.
+     */
+    const built = realms('two-in-a-town');
+    const populated = built
+      .all()
+      .filter((realm) => realm.kind === RealmKind.Common)
+      .map((realm) => ({
+        realm,
+        folk: [...realm.world.allActors()].filter((actor) => isTownsfolkId(actor.id)),
+      }));
+
+    // AT LEAST ONE TOWN HAS TWO, or this whole property is vacuous.
+    const crowded = populated.filter((entry) => entry.folk.length > 1);
+    expect(crowded.length, 'no town has more than one person in it').toBeGreaterThan(0);
+
+    for (const { realm, folk } of populated) {
+      // EVERY AUTHORED PERSON REACHED THE FLOOR. `findCounter` can decline a
+      // cell, and a spec that quietly failed to place is content nobody can
+      // reach — the failure this repo has shipped more than any other.
+      const authored = TOWNSFOLK.get(realm.siteId ?? '')?.length ?? 0;
+      expect(folk.length, `${String(realm.siteId)} lost somebody on the way in`).toBe(authored);
+
+      // AND NOBODY IS STANDING ON ANYBODY.
+      const tiles = new Set(folk.map((actor) => `${String(actor.x)},${String(actor.y)}`));
+      expect(tiles.size, `${String(realm.siteId)} stacked two people on one tile`).toBe(
+        folk.length,
+      );
+    }
+  });
+
   it('stands on walkable ground, away from the door', () => {
     const realm = realms('folk-tile').open(site(ROW), 'p');
     const her = folkIn(realm)[0];
