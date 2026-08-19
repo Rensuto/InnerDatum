@@ -468,4 +468,58 @@ describe('a player is never reaped', () => {
     expect(leftIds(client)).toEqual([]);
     expect(server.world.getActor(ren.id)).toBeDefined();
   });
+
+  it('tells a lone player nobody is left standing, not that "the party" is down', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A PARTY OF ONE IS NOT A PARTY, AND THE DOWNED LINE ALREADY KNEW THAT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Driving a solo Watchman into a `grim` site produced, verbatim:
+     *
+     *     Player 1 is DOWN — 5 turns, and nobody is coming.
+     *     Player 1 is erased — the party is down. The floor resets.
+     *
+     * The first line knows it is speaking to somebody by themselves — it was
+     * written for exactly that, because "N turns to reach them" is an
+     * instruction addressed to nobody when you are alone. The second announces
+     * the collapse of a party of one, one beat later, at the moment the game is
+     * explaining why the run ended.
+     *
+     * NO SECOND DETECTIVE HERE, which is the whole setup: the test above needs
+     * one precisely BECAUSE a party of one makes the first body on the floor a
+     * wipe. That is the case this asserts.
+     */
+    server = await boot('erased-alone');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+    const ren = placeAt(actorOf(String(welcome?.['selfId'])), 10, 10);
+    ren.hpRegen = 0;
+    ren.hp = 1;
+
+    const killer = server.world.addMonster('m_killer', {
+      name: 'Index Husk',
+      sprite: HUSK_SPRITE,
+      x: 11,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+      combat: NEVER_MISSES,
+    });
+    killer.hp = killer.maxHp;
+    client.clear();
+
+    for (let round = 0; round < 5; round += 1) {
+      client.send({ t: 'hold' });
+      await client.settle({ t: 'hold' });
+    }
+
+    const lines = logLines(client);
+    // It really did happen, or the two assertions below pass by finding nothing.
+    expect(lines.some((line) => line.includes('is erased'))).toBe(true);
+    expect(lines.some((line) => line.includes('nobody is left standing'))).toBe(true);
+    expect(
+      lines.some((line) => line.includes('the party is down')),
+      'a player by themselves was told a party went down',
+    ).toBe(false);
+  });
 });

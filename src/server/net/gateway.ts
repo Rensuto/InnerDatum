@@ -7915,16 +7915,44 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             depth: 0,
           },
         ];
-      case 'erased':
+      case 'erased': {
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * "THE PARTY IS DOWN" IS A SENTENCE ABOUT A PARTY. ALONE THERE IS NONE.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The same fault the DOWNED line above was already fixed for, one beat
+         * later and still live. Driving a solo Watchman into a grim site
+         * produced, verbatim:
+         *
+         *     Player 1 is DOWN — 5 turns, and nobody is coming.
+         *     Player 1 is erased — the party is down. The floor resets.
+         *
+         * The first line knows it is talking to somebody by themselves. The
+         * second announces the collapse of a party of one as though a group had
+         * just gone down together, at the exact moment the game is explaining
+         * why the run ended.
+         *
+         * EVERY PLAYER BODY, NOT EVERY LIVING ONE — which is the difference from
+         * the DOWNED case above. By the time a wipe is raised nobody is standing
+         * by definition, so counting the living would answer "alone" for a party
+         * of six and make this worse than leaving it.
+         */
+        const company = homeOf(event.id)
+          .world.allActors()
+          .filter((a) => a.kind === ActorKind.Player && a.id !== event.id).length;
         return [
           {
             text:
               event.reason === ErasedReason.Wipe
-                ? `${nameOf(event.id)} is erased — the party is down. The floor resets.`
+                ? company > 0
+                  ? `${nameOf(event.id)} is erased — the party is down. The floor resets.`
+                  : `${nameOf(event.id)} is erased — nobody is left standing. The floor resets.`
                 : `${nameOf(event.id)} is erased. Nobody reached them in time.`,
             depth: 0,
           },
         ];
+      }
     }
   };
 
