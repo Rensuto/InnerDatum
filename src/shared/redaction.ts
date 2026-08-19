@@ -291,7 +291,9 @@ export function makeRedaction(): AuthoredMap {
     sites.set(cell, `${REDACTION_SITE_ID}:${siteId.replace('site:', '')}`);
   }
 
-  return { view: { w, h, tiles }, spawns: [arrival], sites };
+  // THE NAMES TRAVEL WITH THE MAP. See `AuthoredMap.regions` — this used to be
+  // an exported constant nothing imported, while the gateway sent a literal.
+  return { view: { w, h, tiles }, spawns: [arrival], sites, regions: REDACTION_REGIONS };
 }
 
 /**

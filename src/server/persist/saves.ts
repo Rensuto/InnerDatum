@@ -562,6 +562,41 @@ export type CharacterFile = {
    */
   readonly explored?: string;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND EVERY OTHER MAP THEY HAVE WALKED. THE FIELD `explored` SAID TO EXPECT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `explored` above is documented as *"ONLY THE OVERWORLD"*, and `prefsFields`
+   * carried the matching note: *"ONE OVERWORLD, ONE STRING — and the shape does
+   * not change until there are two... the day a second overworld exists this
+   * line widens to a record and the in-memory side is already correct."*
+   *
+   * THERE ARE TWO. The Redaction shipped three commits ago and nothing here was
+   * widened, so a player could walk half the dark territory, disconnect, and
+   * come back to a black map — while Alderbrook, the map they had already
+   * finished with, was remembered perfectly. Exploration is the one thing an
+   * overworld gives you that persists, and half of it was evaporating.
+   *
+   * ═══ A SECOND FIELD RATHER THAN WIDENING THE FIRST, AND THAT IS THE POINT ═══
+   * `explored` could have become `string | Record<string, string>`. It must not.
+   * `parseCharacterDoc` reads it as `typeof doc.explored === 'string'`, so an
+   * OLDER BUILD loading a newer file would see a non-string and silently drop
+   * it — a rollback would cost a player the home region they had walked since
+   * the game existed. Keeping `explored` exactly what it always was means an old
+   * build reads it byte-for-byte and simply does not know about the rest, which
+   * is the rollback story this file's header asks for: *"a rollback costs a
+   * player some re-walked country rather than quarantining their character"*.
+   *
+   * KEYED BY REALM ID, which is safe for exactly the reason `explored`'s note
+   * says instanced realms are not: a shared realm's id is derived from its site
+   * (`realm:site:redaction`) and is stable across restarts, while an instance
+   * carries a per-opening sequence number that can never match again. Only
+   * realms that are BOTH an overworld and shared are written here.
+   *
+   * NO SCHEMA BUMP — docs/data-schemas.md:48-49, an OPTIONAL field needs none.
+   */
+  readonly exploredElsewhere?: Readonly<Record<string, string>>;
+  /**
    * GOLD. Optional, so NO SCHEMA BUMP — docs/data-schemas.md:48-49, the same
    * ground `keybinds` and `explored` set out above. A v1 file without it loads
    * as a character with the birth purse.
@@ -730,6 +765,8 @@ export type CharacterInit = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
+  /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
+  readonly exploredElsewhere?: Readonly<Record<string, string>>;
   /** Gold. Omit for a fresh character — `createCharacterFile` supplies the birth purse. */
   readonly money?: number;
   readonly resources: SavedResources;
@@ -783,6 +820,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     equipped: init.equipped,
     keybinds: init.keybinds,
     explored: init.explored,
+    exploredElsewhere: init.exploredElsewhere,
     // A DEFAULT, unlike the three lines above it: every character HAS a purse,
     // exactly as every character has a level. `??` and not a bare pass-through,
     // so a caller that supplies a level and nothing else gets the birth grant
@@ -1000,6 +1038,23 @@ function parseTalentPoints(value: unknown, problems: string[]): Record<string, n
  * belongs to a character who has simply never spent anything, and loading them
  * broke would be a silent penalty for having played early.
  */
+/**
+ * The other maps' fog, dropped entry by entry rather than all at once.
+ *
+ * `undefined` when there is nothing usable, so `createCharacterFile`'s
+ * carry-forward rule sees "cannot say" rather than "there is none" — the same
+ * distinction `keybinds` and `explored` both turn on, and getting it wrong here
+ * would erase a map on every save made by a build mid-migration.
+ */
+function parseExploredElsewhere(raw: unknown): Readonly<Record<string, string>> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [realmId, bits] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof bits === 'string') out[realmId] = bits;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function parseMoney(value: unknown, problems: string[]): number {
   if (value === undefined) return BIRTH_MONEY;
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -1473,6 +1528,9 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // a string is dropped and the character loads with no fog rather than
       // failing to load at all. `fogFromBase64` is itself lenient about length.
       explored: typeof doc.explored === 'string' ? doc.explored : undefined,
+      // THE SAME REPAIR-NEVER-REJECT RULE, applied per entry rather than to the
+      // whole record: one hand-edited key does not cost a player the other map.
+      exploredElsewhere: parseExploredElsewhere(doc.exploredElsewhere),
       money: parseMoney(doc.money, problems),
       resources,
       talentCooldowns: parseCooldowns(doc.talentCooldowns, problems),
@@ -2256,6 +2314,8 @@ export type SavedPrefs = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
+  /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
+  readonly exploredElsewhere?: Readonly<Record<string, string>>;
 };
 
 /** A snapshot from a producer that may or may not know about items or keys. */
@@ -2342,6 +2402,8 @@ type Binding = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
+  /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
+  readonly exploredElsewhere?: Readonly<Record<string, string>>;
 };
 
 export type CharacterBridgeOptions = {
@@ -2442,6 +2504,11 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // would be the keybinds failure again with a bigger blast radius -- a
       // whole region re-walked rather than a few keys re-bound.
       explored: snapshot.explored ?? binding.explored,
+      // AND THE OTHER MAPS, under the same rule and for the same reason. A build
+      // that cannot say leaves the disk as it found it; one that can, replaces
+      // the whole record, because the producer holds every map it knows about
+      // and a merge would resurrect a realm that no longer exists.
+      exploredElsewhere: snapshot.exploredElsewhere ?? binding.exploredElsewhere,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
       // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
       // are intra-turn budgets refilled from the class every turn, so a stored
@@ -2602,6 +2669,12 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // dropped here would mean the fog loaded, was never returned, and was
       // overwritten as empty on the next autosave.
       explored: file.explored,
+      // AND THE OTHER MAPS, NAMED HERE FOR THE REASON THE LINE ABOVE GIVES.
+      // This literal is rebuilt rather than spread, so a field left out of it
+      // is silently dropped — the fog would load, never be returned, and be
+      // written back as absent on the next autosave. That failure is invisible
+      // until somebody notices a region they walked has gone black again.
+      exploredElsewhere: file.exploredElsewhere,
     };
   };
 

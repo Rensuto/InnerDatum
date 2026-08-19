@@ -67,7 +67,7 @@ import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
 import { placeTownsfolk, townsfolkFor } from '../content/townsfolk.ts';
 import type { TileXY } from '../../shared/coords.ts';
-import type { AuthoredMap } from '../../shared/level.ts';
+import type { AuthoredMap, Region } from '../../shared/level.ts';
 import type { ReapingTurnEngine } from '../turn-engine.ts';
 import type { World } from './world.ts';
 import type { PartyStrength } from './strength.ts';
@@ -306,6 +306,8 @@ export type Realm = {
    * cannot immediately eject you, and stepping back on later can.
    */
   readonly spawns: readonly TileXY[];
+  /** The named country on this map, empty for anything that has none. */
+  readonly regions: readonly Region[];
   /**
    * The party this instance belongs to, for `Inner` realms. Undefined on the
    * overworld, which belongs to everybody.
@@ -643,6 +645,10 @@ export function createRealms(opts: RealmsOptions): Realms {
       engine,
       sites: map.sites,
       spawns: map.spawns,
+      // ALONGSIDE `sites` AND `spawns`, and for the same reason: they are facts
+      // about the authored map, and a realm is where the rest of the server
+      // reaches them. See `AuthoredMap.regions`.
+      regions: map.regions ?? [],
       roamers: new Map<string, Roamer>(),
       // IN `build` AND NOT IN THE BOOT LOOP. There are TWO call sites — the
       // eager pass that opens every shared realm at startup, and `open`, which

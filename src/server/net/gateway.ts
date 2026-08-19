@@ -232,7 +232,12 @@ import {
  */
 import { ENCOUNTER_SITE, OVERWORLD_ID, RealmKind, SITES, isShared } from '../world/realms.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
-import { ALDERBROOK_REGIONS, groundAt, regionAt } from '../../shared/level.ts';
+// `ALDERBROOK_REGIONS` IS DELIBERATELY GONE FROM THIS IMPORT. The realm frame
+// hard-coded it for every overworld and was correct only because the Redaction
+// keeps this map's names on purpose. Regions now travel with the map that owns
+// them (`AuthoredMap.regions`), and the constant not being reachable from here
+// is the proof no other line is still assuming which map it is describing.
+import { groundAt, regionAt } from '../../shared/level.ts';
 import type { Ground } from '../../shared/level.ts';
 import { createFog, fogFromBase64, fogHas, fogToBase64, revealDisc } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
@@ -1415,6 +1420,8 @@ export type CharacterSnapshot = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /** base64 bitset of the overworld this character had explored. */
   readonly explored?: string;
+  /** The same for every OTHER overworld, keyed by realm id. See `applyRestore`. */
+  readonly exploredElsewhere?: Readonly<Record<string, string>>;
 };
 
 /**
@@ -1566,6 +1573,8 @@ export type CharacterRestore = {
    * unexplored — see `applyRestore`.
    */
   readonly explored?: string;
+  /** The same for every OTHER overworld, keyed by realm id. */
+  readonly exploredElsewhere?: Readonly<Record<string, string>>;
 };
 
 /**
@@ -2953,9 +2962,47 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * PLAYER chose. Folding them together would mean a future producer that fills
    * "the loadout" reasonably believing it had said something about the keymap.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY OTHER MAP THIS CHARACTER HAS WALKED, FOR THE SAVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * SHARED OVERWORLDS ONLY, and both halves of that are load-bearing. An
+   * INSTANCED realm's id carries a per-opening sequence number, so persisting
+   * one would grow the file forever with keys that can never match again — the
+   * exact argument `CharacterFile.explored` already makes. A TOWN is stable but
+   * is not an overworld and reveals itself the moment you walk in.
+   *
+   * THE HOME MAP IS EXCLUDED because `explored` is still the field that carries
+   * it. Writing it in both places would be two sources of truth for one bitset,
+   * and the first time they disagreed the loser would be whichever one loaded
+   * second.
+   */
+  const exploredElsewhere = (actorId: string): Readonly<Record<string, string>> | undefined => {
+    const realms = opts.realms;
+    if (realms === undefined) return undefined;
+    const out: Record<string, string> = {};
+    for (const realm of realms.all()) {
+      if (realm.kind !== RealmKind.Overworld) continue;
+      if (realm.id === realms.overworld.id) continue;
+      if (realm.partyId !== undefined) continue;
+      if (!fogSeen(actorId, realm.id)) continue;
+      out[realm.id] = fogToBase64(fogFor(actorId, realm));
+    }
+    // `undefined` RATHER THAN `{}`. `createCharacterFile` reads the absence as
+    // "this producer cannot say" and leaves the disk alone; `{}` is a statement
+    // that there is nothing, which would erase a second map for anybody whose
+    // fog has not been touched this process. See the carry-forward note there.
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+
   const prefsFields = (
     actor: Actor,
-  ): { keybinds?: Readonly<Record<string, readonly string[]>>; explored?: string } => ({
+  ): {
+    keybinds?: Readonly<Record<string, readonly string[]>>;
+    explored?: string;
+    exploredElsewhere?: Readonly<Record<string, string>>;
+  } => ({
     ...(actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) }),
     // WHAT THEY HAVE WALKED. Absent when this process has never revealed
     // anything for them, which `saveCharacter` reads as "cannot say" and leaves
@@ -2975,6 +3022,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     ...(fogSeen(actor.id, OVERWORLD_ID)
       ? { explored: fogToBase64(fogFor(actor.id, opts.realms?.overworld)) }
       : {}),
+    /**
+     * AND THE OTHER MAPS — the widening the comment above predicted.
+     *
+     * It said the shape *"does not change until there are two"* and then a
+     * second overworld shipped without this line, so the Redaction's fog was
+     * computed correctly in memory, sent to the client correctly on every
+     * frame, and thrown away at the end of the session. The one part of an
+     * overworld that is supposed to outlast a session was the part that did not.
+     */
+    ...(() => {
+      const elsewhere = exploredElsewhere(actor.id);
+      return elsewhere === undefined ? {} : { exploredElsewhere: elsewhere };
+    })(),
   });
 
   /**
@@ -4819,6 +4879,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       byRealm.set(home.id, fogFromBase64(restore.explored, Math.ceil((level.w * level.h) / 8)));
       fog.set(actor.id, byRealm);
     }
+    /**
+     * AND EVERY OTHER MAP, EACH SIZED AGAINST ITS OWN LEVEL.
+     *
+     * Not against the home overworld's: the two happen to match today because
+     * the Redaction is a transformation of Alderbrook and is therefore exactly
+     * its size, and relying on that would be the fog's original bug — keying by
+     * something that is only accidentally the same — reintroduced one level up.
+     *
+     * A REALM THE REGISTRY NO LONGER HAS IS DROPPED, silently. That is a save
+     * written by a build with a map this one does not have, and re-walking a
+     * region that no longer exists is not something a player can do anyway.
+     */
+    if (restore.exploredElsewhere !== undefined && opts.realms !== undefined) {
+      const byRealm = fog.get(actor.id) ?? new Map<string, Uint8Array>();
+      for (const [realmId, bits] of Object.entries(restore.exploredElsewhere)) {
+        const realm = opts.realms.get(realmId);
+        if (realm === undefined || realm.kind !== RealmKind.Overworld) continue;
+        const other = realm.world.level;
+        byRealm.set(realmId, fogFromBase64(bits, Math.ceil((other.w * other.h) / 8)));
+      }
+      fog.set(actor.id, byRealm);
+    }
     if (restore.keybinds === undefined) return;
     actor.keybinds = keybindsRecord(restore.keybinds);
     app.log.info(
@@ -5353,9 +5435,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       level: view.level,
       actors: view.actors,
       sites: markersFor(realm, actorId),
-      // THE NAMES OF THE COUNTRY, on an overworld only — see `RealmMsg.regions`.
-      // One frame per entry and never again; the client holds it for the map.
-      ...(realm.kind === RealmKind.Overworld ? { regions: ALDERBROOK_REGIONS } : {}),
+      /**
+       * THE NAMES OF THE COUNTRY, on an overworld only — see `RealmMsg.regions`.
+       * One frame per entry and never again; the client holds it for the map.
+       *
+       * FROM THE REALM, NOT FROM A LITERAL. This read `ALDERBROOK_REGIONS` and
+       * was correct only by coincidence: the Redaction keeps this map's names on
+       * purpose, so the two arrays are the same array. `redaction.ts` exported
+       * `REDACTION_REGIONS` for this line and this line never imported it, which
+       * left the general value as dead code while a hard-coded one did its job —
+       * the same failure as the world map's title, on the same screen.
+       */
+      ...(realm.kind === RealmKind.Overworld ? { regions: realm.regions } : {}),
       explored,
       selfId: actorId,
     });

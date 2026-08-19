@@ -47,6 +47,27 @@ export type AuthoredMap = {
   readonly spawns: readonly TileXY[];
   /** Cells that open an inner-world. Keyed by `"x,y"`. */
   readonly sites: ReadonlyMap<string, string>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE COUNTRY ON THIS MAP IS CALLED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The gateway sent `ALDERBROOK_REGIONS` for EVERY overworld, hard-coded — the
+   * same shape as the world map's `'THE ALDERBROOK REGION'` title, and correct
+   * for the same accidental reason: `REDACTION_REGIONS` happens to be the very
+   * same array, because the dark territory is a transformation of this map and
+   * deliberately keeps its names.
+   *
+   * Correct by coincidence is not correct. `redaction.ts` exported
+   * `REDACTION_REGIONS` for the gateway to use and the gateway never imported
+   * it, so the one value that was supposed to make this general was DEAD CODE
+   * while a literal did its job. The day a third map has its own names, a client
+   * would draw this map's captions over it.
+   *
+   * OPTIONAL, because most maps have none: a delve is one room and a town is one
+   * street grid, and neither has country in it to name.
+   */
+  readonly regions?: readonly Region[];
 };
 
 /** The legend entry for one authored character. */
@@ -575,6 +596,11 @@ export function makeOverworld(): AuthoredMap {
     view: { w: ALDERBROOK.view.w, h: ALDERBROOK.view.h, tiles: ALDERBROOK.view.tiles.slice() },
     spawns: ALDERBROOK.spawns,
     sites: ALDERBROOK.sites,
+    // THE OTHER CALL SITE. `makeRedaction` was given this first and shipping
+    // only that half would have handed Alderbrook's realm an empty array —
+    // every region caption on the map players actually start on, gone, to fix a
+    // hard-coded constant that was producing exactly the right answer for it.
+    regions: ALDERBROOK_REGIONS,
   };
 }
 
