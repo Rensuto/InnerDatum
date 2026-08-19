@@ -168,6 +168,7 @@ import { Faction, StandingOrder, incMoney, isMonster } from '../engine/actor.ts'
  * player wearing a coat that changes no number — Trap 1, arriving through the
  * one door the type system cannot close.
  */
+import { combatArmor } from '../engine/derived.ts';
 import { recomposeCombat } from '../engine/effects.ts';
 /**
  * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
@@ -9735,6 +9736,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const bagAfter = bag.filter((id) => id !== msg.itemId);
     if (previous !== undefined) bagAfter.push(previous);
 
+    // BEFORE THE RECOMPOSE, because the whole point of the line below is the
+    // difference and there is exactly one moment the old number still exists.
+    const armourBefore = combatArmor(body.combat ?? {});
+
     body.equipped = { ...body.equipped, [item.slot]: msg.itemId };
     body.carried = bagAfter;
     recomposeCombat(body, opts.effects ?? null, resolveItem);
@@ -9746,6 +9751,47 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // stream of noise on the one surface the party reads to work out what killed
     // them. The party sees the effect where it belongs — on the hp bar and
     // through `inspect`.
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * BUT THE MARGIN ANSWERS, BECAUSE THE MARGIN IS WHAT ASKED.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The paragraph above is an argument about the RECORD — the shared
+     * transcript the party reads to work out what killed them — and it stands.
+     * It was never an argument for saying nothing to the person who just got
+     * dressed.
+     *
+     * MEASURED, over a socket, driving the whole first session: `pickup` sends
+     * *"Nothing on your back yet."* — unicast, margin, advice — and the player
+     * who follows it opens the bag, equips, and the game says **nothing at all**.
+     * The one surface that asked the question never answered it, so the only way
+     * to find out whether the key worked is to open another panel and compare a
+     * number nobody was shown in the first place.
+     *
+     * THE NUMBER IS THE POINT. *"Armour 4 -> 9"* is the difference the whole
+     * detour was for, and it is the same register the margin already uses for
+     * *"Graded dangerous — hard alone"*: short, private, and carrying the figure
+     * a decision turns on. `equipment.test.ts` measures a full kit at armour
+     * 6 -> 16, and a player who never sees either end of that reads their own
+     * survivability as luck.
+     *
+     * UNICAST AND IN THE MARGIN, so the asymmetry above is untouched: nothing
+     * new reaches the room, the Record lane is exactly as quiet as it was, and
+     * this cannot become the stream of noise that paragraph refuses.
+     *
+     * ONLY WHEN THE NUMBER MOVES. A badge or a dossier changes no armour, and
+     * *"Armour 9 -> 9"* would be the noise rather than the answer — so those say
+     * what went on and stop.
+     */
+    const armourAfter = combatArmor(body.combat ?? {});
+    sendMargin(session, realmFor(session), {
+      text:
+        armourAfter === armourBefore
+          ? `${item.name} on.`
+          : `${item.name} on. Armour ${String(armourBefore)} -> ${String(armourAfter)}.`,
+      depth: 0,
+    });
 
     // AND IT COSTS THE TURN — Actor.lua:7352. Getting dressed mid-fight is the
     // single most valuable free action this game could have handed out: a full

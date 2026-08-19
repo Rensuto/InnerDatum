@@ -249,6 +249,93 @@ describe('somebody else turns up', () => {
     expect(membersIn(second.latest('party_state'))).toHaveLength(1);
   });
 
+  it('says what changed when you put something on', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE MARGIN ASKED THE QUESTION AND NEVER ANSWERED IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `pickup` sends *"Nothing on your back yet."* — unicast, margin, advice —
+     * and it is a good nudge: an observation that implies an action rather than
+     * a tutorial naming a key.
+     *
+     * MEASURED by driving the whole first session over a socket
+     * (`tools/first-session.mjs`): a player who FOLLOWS that nudge, opens the
+     * bag and equips, was told **nothing at all**. The only way to learn whether
+     * the key had worked was to open another panel and compare a number they had
+     * never been shown.
+     *
+     * The Case Log stays quiet and that is deliberate — `handleEquip` argues it,
+     * and the argument is about the RECORD, which the party reads to work out
+     * what killed them. It was never an argument for silence toward the person
+     * who just got dressed.
+     *
+     * THE NUMBER IS THE POINT. `equipment.test.ts` measures a full kit at armour
+     * 6 -> 16, and a player shown neither end of that reads their own
+     * survivability as luck.
+     */
+    const a = await connect(server.port);
+    const actorId = await a.hello();
+    await sleep(250);
+
+    const body = server.realms.overworld.world.getActor(actorId);
+    if (body === undefined) throw new Error('no body');
+    // In the bag, which is where a pickup would have put it.
+    body.carried = ['item_watchmans_coat'];
+    const before = a.lines().length;
+
+    a.send({ t: 'equip', itemId: 'item_watchmans_coat' });
+    await sleep(300);
+
+    // THE SETUP IS ASSERTED BEFORE THE RESULT: an equip that silently refused
+    // would leave the bag full and make the missing line look like the bug.
+    expect(
+      server.realms.overworld.world.getActor(actorId)?.equipped?.['body'],
+      'the coat never went on',
+    ).toBe('item_watchmans_coat');
+
+    const said = a.lines().slice(before);
+    const line = said.find((text) => text.includes("Watchman's Coat"));
+    expect(line, `nothing was said — the log added: ${JSON.stringify(said)}`).toBeDefined();
+    expect(line, 'the line does not carry the number the detour was for').toMatch(
+      /Armour \d+ -> \d+/,
+    );
+  });
+
+  it('says only what went on when the number does not move', async () => {
+    /**
+     * THE CONTROL, and the reason the line is conditional.
+     *
+     * A badge changes `atk` and no armour at all. *"Armour 9 -> 9"* would be the
+     * noise `handleEquip`'s own paragraph refuses, so a piece that moves nothing
+     * says what went on and stops. Without this, a change that always printed the
+     * number would pass the test above and be wrong seven slots out of eight.
+     */
+    const a = await connect(server.port);
+    const actorId = await a.hello();
+    await sleep(250);
+
+    const body = server.realms.overworld.world.getActor(actorId);
+    if (body === undefined) throw new Error('no body');
+    body.carried = ['item_watchmans_badge'];
+    const before = a.lines().length;
+
+    a.send({ t: 'equip', itemId: 'item_watchmans_badge' });
+    await sleep(300);
+
+    expect(
+      server.realms.overworld.world.getActor(actorId)?.equipped?.['trinket'],
+      'the badge never went on',
+    ).toBe('item_watchmans_badge');
+
+    const line = a
+      .lines()
+      .slice(before)
+      .find((text) => text.includes("Watchman's Badge"));
+    expect(line, 'the badge went on in silence').toBeDefined();
+    expect(line, 'a badge reported an armour change it did not make').not.toMatch(/Armour/);
+  });
+
   it('answers a refused rule with the sentence about that rule', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

@@ -37,15 +37,34 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT IT DOES NOT DO YET, STATED PLAINLY
  * ═══════════════════════════════════════════════════════════════════════════
- * IT CANNOT DRIVE A FIGHT TO A CONCLUSION. It reaches the enemy, trades a blow,
- * and then stops making progress — the swings go out and nothing comes back.
- * The cause is not yet known and is NOT assumed to be the game: this probe has
- * already been wrong four times about exactly this (see above), and every one
- * of those looked like a bug in the server from the outside.
+ * IT DRIVES THE FIGHT TO A CONCLUSION NOW, and this paragraph used to say it
+ * could not — *"it reaches the enemy, trades a blow, and then stops making
+ * progress."* That stopped being true and the warning stayed, which is worse
+ * than never having written it: it tells the next person not to trust the one
+ * instrument that would have shown them the answer.
  *
- * So: read the opening beats from here, and read COMBAT from
- * `first-fight.mjs`, which drives the engine directly with no protocol in the
- * way and is the trustworthy instrument for anything about a fight.
+ * `first-fight.mjs` is still the trustworthy instrument for BALANCE — it drives
+ * the engine directly with no protocol or latency in the way. This one is for
+ * the SESSION, and it now walks the whole of it: join, class, fight, loot, put
+ * the loot on, walk back out, cross to a town, meet somebody, ask all four
+ * topics, walk on to a shop, and buy.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY SHAPE IT READS OFF THE WIRE HAS BEEN WRONG AT LEAST ONCE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Recorded because each one produced a confident, false finding that survived
+ * until the SETUP was asserted rather than the result:
+ *
+ *   `realm.spawns`     -> the wire has no such field. The way out is a SITE
+ *                         MARKER named "The way out". Reported a player who
+ *                         never left the room.
+ *   "a town has no creature sprite" -> so does every delve. Walked a level-1
+ *                         character into the Drowned Chapel to meet a wraith.
+ *                         A town is `marker` in {city, town, village}.
+ *   `t: 'hotbar'`      -> the frame is `t: 'loadout'` and carries `talents`.
+ *                         Reported an empty hotbar for a class that has four.
+ *   `item.price/.id`   -> `ShopItemView` is `buy`/`itemId`. Reported "15 gold
+ *                         buys 0 of 4" when it buys all four.
  *
  * Usage:  node tools/first-session.mjs [port]
  */
@@ -322,6 +341,198 @@ if (breach !== null) {
   show(mark, 8);
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THEN THE TOWN — the leg this tool had never walked.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Everything above is the fight. But a first session is also the first person
+ * you speak to and the first thing you buy, and neither had ever been driven
+ * end to end: the shops, the four closed topics and the ten townsfolk were all
+ * tested at the unit level and never from a socket in the order a player meets
+ * them.
+ *
+ * Leaving the breach is its own step and it is not a no-op: the threshold only
+ * ejects once you have stepped OFF it since arriving (`Session.exitArmed`), so
+ * this walks away from the door and back onto it.
+ */
+mark = log.length;
+if (realmNow()?.kind === 'inner') {
+  // THE WAY OUT IS A SITE MARKER, not a field on the realm frame — the first
+  // version of this read `realm.spawns`, which the wire does not carry, and
+  // reported a player who never left the room.
+  const gate = (realmNow().sites ?? []).find((site) => site.name === 'The way out');
+  const spawn = gate === undefined ? null : { x: gate.x, y: gate.y };
+  if (spawn !== null) {
+    // Off the doorstep first — standing on it on arrival means nothing.
+    for (let i = 0; i < 4; i += 1) await stepTo({ x: spawn.x + 2, y: spawn.y + 2 });
+    for (let i = 0; i < 40 && realmNow()?.kind === 'inner'; i += 1) {
+      if (!(await stepTo(spawn))) break;
+    }
+  }
+  const me = realmNow()?.actors?.find((a) => a.id === selfId);
+  if (me !== undefined) pos = { x: me.x, y: me.y };
+}
+beat('WALKS BACK OUT');
+console.log(`  now in: ${realmNow()?.name} [${realmNow()?.kind}]`);
+show(mark, 3);
+
+// ── to the nearest town ────────────────────────────────────────────────────
+// A TOWN IS A MARKER, NOT AN ABSENCE. The first version filtered on "has no
+// creature sprite", which is every delve on the map as well — and walked a
+// level-1 character straight into the Drowned Chapel to meet a wraith.
+const TOWN_MARKERS = new Set(['city', 'town', 'village']);
+const towns = (frames.filter((f) => f.t === 'sites').at(-1)?.sites ?? []).filter((site) =>
+  TOWN_MARKERS.has(site.marker),
+);
+const byDistance = towns
+  .map((site) => ({ site, d: Math.max(Math.abs(site.x - pos.x), Math.abs(site.y - pos.y)) }))
+  .sort((a, b) => a.d - b.d);
+const town = byDistance[0];
+mark = log.length;
+if (town !== undefined) {
+  for (let i = 0; i < 200 && realmNow()?.kind === 'overworld'; i += 1) {
+    if (!(await stepTo({ x: town.site.x, y: town.site.y }))) break;
+  }
+  const me = realmNow()?.actors?.find((a) => a.id === selfId);
+  if (me !== undefined) pos = { x: me.x, y: me.y };
+}
+await sleep(250);
+drain();
+beat('WALKS INTO TOWN');
+console.log(`  now in: ${realmNow()?.name} [${realmNow()?.kind}]`);
+show(mark, 4);
+
+// ── the first person they meet ─────────────────────────────────────────────
+const folk = (realmNow()?.actors ?? []).filter((a) => a.id !== selfId && a.kind !== 'player');
+console.log(`  people here: ${folk.length === 0 ? 'NOBODY' : folk.map((f) => f.name).join(', ')}`);
+mark = log.length;
+if (folk.length > 0) {
+  const who = folk
+    .map((f) => ({ f, d: Math.max(Math.abs(f.x - pos.x), Math.abs(f.y - pos.y)) }))
+    .sort((a, b) => a.d - b.d)[0].f;
+  for (let i = 0; i < 120; i += 1) {
+    const gap = Math.max(Math.abs(who.x - pos.x), Math.abs(who.y - pos.y));
+    if (gap <= 1) break;
+    if (!(await stepTo({ x: who.x, y: who.y }))) break;
+  }
+  const gap = Math.max(Math.abs(who.x - pos.x), Math.abs(who.y - pos.y));
+  console.log(`  reached ${who.name}? gap=${gap}`);
+  // BUMPING IS THE GREETING (`greetOnBump`), so a player who never learns the
+  // talk key still meets them. Walk into them.
+  const dir =
+    (who.y > pos.y ? 's' : who.y < pos.y ? 'n' : '') +
+    (who.x > pos.x ? 'e' : who.x < pos.x ? 'w' : '');
+  if (dir !== '') {
+    send({ t: 'move', dir });
+    await sleep(300);
+  }
+  drain();
+  beat('MEETS SOMEBODY');
+  show(mark, 8);
+
+  // AND ASKS THEM SOMETHING. The topic set is closed on purpose.
+  mark = log.length;
+  for (const topic of ['where', 'party', 'roads', 'rumour']) {
+    send({ t: 'talk', targetId: who.id, topic });
+    await sleep(180);
+  }
+  drain();
+  beat('ASKS ALL FOUR TOPICS');
+  show(mark, 10);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THEN TO A SHOP, WHICH MEANS LEAVING — the nearest town has none.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED: Alderbrook is ONE step from the spawn, is the room every player
+ * enters first, and has no shop. The nearest is Ashwick Alchemy Row at 28 steps
+ * and the goods shop is Threadneedle Row at 52. That is deliberate — the towns
+ * are specialised and the Reeve says so out loud, *"Threadneedle for goods"* —
+ * but it means the first purchase in a career is a long way from the first coin,
+ * and nothing had ever driven that walk to find out what happens at the end.
+ */
+if (frames.filter((f) => f.t === 'shop').length === 0) {
+  mark = log.length;
+  for (const next of byDistance.slice(1, 3)) {
+    // Out of this town first: the way out is a marker here too.
+    const gateHere = (realmNow()?.sites ?? []).find((site) => site.name === 'The way out');
+    if (gateHere !== undefined) {
+      for (let i = 0; i < 6; i += 1) await stepTo({ x: gateHere.x + 2, y: gateHere.y + 2 });
+      for (let i = 0; i < 60 && realmNow()?.kind !== 'overworld'; i += 1) {
+        if (!(await stepTo({ x: gateHere.x, y: gateHere.y }))) break;
+      }
+    }
+    const back = realmNow()?.actors?.find((a) => a.id === selfId);
+    if (back !== undefined) pos = { x: back.x, y: back.y };
+    if (realmNow()?.kind !== 'overworld') break;
+
+    let steps = 0;
+    for (; steps < 400 && realmNow()?.kind === 'overworld'; steps += 1) {
+      if (!(await stepTo({ x: next.site.x, y: next.site.y }))) break;
+    }
+    const inside = realmNow()?.actors?.find((a) => a.id === selfId);
+    if (inside !== undefined) pos = { x: inside.x, y: inside.y };
+    await sleep(300);
+    drain();
+    console.log(`  walked ${steps} steps to ${realmNow()?.name} [${realmNow()?.kind}]`);
+    if (frames.filter((f) => f.t === 'shop').length > 0) break;
+  }
+  beat('GOES LOOKING FOR A SHOP');
+  show(mark, 6);
+}
+
+// ── and the shop ───────────────────────────────────────────────────────────
+const shop = frames.filter((f) => f.t === 'shop').at(-1);
+console.log(
+  `  shop: ${shop === undefined ? 'NO SHOP FRAME' : `${shop.name} — ${(shop.stock ?? []).length} items`}`,
+);
+if (shop !== undefined && (shop.stock ?? []).length > 0) {
+  mark = log.length;
+  const money = frames.filter((f) => f.t === 'inventory').at(-1)?.money ?? 0;
+  const affordable = (shop.stock ?? []).filter((it) => (it.buy ?? Infinity) <= money);
+  console.log(
+    `  ${money} gold buys ${affordable.length} of ${(shop.stock ?? []).length}: ${affordable.map((it) => `${it.name} (${it.buy}g)`).join(', ') || '(nothing)'}`,
+  );
+  console.log(
+    `  the whole shelf: ${(shop.stock ?? []).map((it) => `${it.name} ${it.buy}g`).join(', ')}`,
+  );
+  const errsBefore = frames.filter((f) => f.t === 'error').length;
+  send({ t: 'shop_buy', itemId: (affordable[0] ?? shop.stock[0]).itemId });
+  await sleep(300);
+  drain();
+  beat('TRIES TO BUY SOMETHING');
+  show(mark, 5);
+  const errs = frames.filter((f) => f.t === 'error').slice(errsBefore);
+  console.log(
+    `  refusal: ${errs.length === 0 ? 'NONE — the key did nothing' : errs.map((e) => `${e.code}: ${e.message}`).join(' | ')}`,
+  );
+}
+
+/**
+ * AND PUTS THE COAT ON — the one action in the arc the game actually nudges.
+ *
+ * `Nothing on your ${slot} yet.` fires on the pickup and is deliberately an
+ * observation rather than a tutorial naming a key. This drives the action it
+ * implies, so the tool can say whether following the nudge WORKS rather than
+ * only that the nudge was printed.
+ */
+mark = log.length;
+const bag = frames.filter((f) => f.t === 'inventory').at(-1)?.carried ?? [];
+if (bag.length > 0) {
+  const errsBefore = frames.filter((f) => f.t === 'error').length;
+  send({ t: 'equip', itemId: bag[0].itemId });
+  await sleep(300);
+  drain();
+  beat('PUTS ON WHAT IT PICKED UP');
+  show(mark, 4);
+  const errs = frames.filter((f) => f.t === 'error').slice(errsBefore);
+  if (errs.length > 0)
+    console.log(`  refusal: ${errs.map((e) => `${e.code}: ${e.message}`).join(' | ')}`);
+}
+
 await sleep(400);
 drain();
 const inv = frames.filter((f) => f.t === 'inventory').at(-1);
@@ -334,6 +545,25 @@ console.log(
   `  ${inv?.money ?? 0} gold, bag: ${(inv?.carried ?? []).map((c) => c.name).join(', ') || '(empty)'}`,
 );
 console.log(`  standing in: ${realmNow()?.name}`);
+
+/**
+ * AND WHAT THEY CAN PRESS. The opening arc joining up is one question; having
+ * anything to DO with it is another, and the hotbar is the only surface that
+ * answers it. A row of empty slots after a first kill is the shape of a player
+ * concluding the game has nothing in it.
+ */
+// `loadout`, NOT `hotbar` — the frame is named for what it carries and the
+// first version of this looked for the button bar's name and reported an empty
+// hotbar that was never empty.
+const hot = frames.filter((f) => f.t === 'loadout').at(-1);
+const slots = hot?.talents ?? [];
+console.log(
+  `  talents: ${slots.length === 0 ? 'NONE' : slots.map((sl) => `${sl.name} L${sl.level}${sl.usable === false ? ' (unusable)' : ''}`).join(', ')}`,
+);
+const worn = Object.entries(inv?.equipped ?? {}).filter(([, v]) => v != null);
+console.log(
+  `  worn: ${worn.length === 0 ? 'nothing' : worn.map(([k, v]) => `${k}=${v.name ?? v}`).join(', ')}`,
+);
 console.log(
   `\n──── the player read ${log.length} lines in ${((Date.now() - t0) / 1000).toFixed(0)}s`,
 );
