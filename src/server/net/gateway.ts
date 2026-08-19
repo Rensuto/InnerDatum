@@ -6536,11 +6536,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // 0 -> her name. 1 -> she is still there. 2+ -> the deflections, cycled, so
     // a player who keeps shoving gets an escalation rather than a loop.
+    //
+    // AND AT 1, WHETHER THIS PLAYER HAS CLOSED ANYTHING. See `greetFiled`: the
+    // whole dialogue table keys off level and nothing keys off deeds, so a
+    // player who had filed every case in the game got the same second sentence
+    // as one who arrived an hour ago. NOT AT 0 — the first thing anybody says is
+    // their name — and not at 2+, which is the shoving escalation and would stop
+    // escalating if a filed player short-circuited it.
+    const secondTime = filedFor(walker.id).size > 0 ? spec.greetFiled : spec.greetAgain;
     const text =
       seen === 0
         ? spec.greetFirst
         : seen === 1
-          ? spec.greetAgain
+          ? secondTime
           : (spec.deflect[(seen - 2) % spec.deflect.length] ?? spec.greetAgain);
 
     broadcastMargin(realm, { text, speaker: standing.name });
@@ -8654,7 +8662,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     } else {
       const seen = bumpCounts.get(key) ?? 0;
       bumpCounts.set(key, seen + 1);
-      text = seen === 0 ? spec.greetFirst : spec.greetAgain;
+      // THE SAME RULE AS THE BUMP, and it has to be: this file's own note says
+      // talking to her and walking into her are one conversation, and they share
+      // the counter for exactly that reason. Two different second sentences
+      // depending on how you approached her would undo it.
+      text =
+        seen === 0 ? spec.greetFirst : filedFor(me.id).size > 0 ? spec.greetFiled : spec.greetAgain;
     }
 
     const line = { text, speaker: them.name };

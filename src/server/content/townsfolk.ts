@@ -93,6 +93,34 @@ export type TownsfolkSpec = {
   /** Said on every bump after that. */
   readonly greetAgain: string;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SAID INSTEAD, ONCE THIS PLAYER HAS CLOSED A CASE. THE TOWN NOTICING YOU.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tools/townsfolk-round.mjs` drove every person in every settlement and found
+   * the coverage complete — ten people, four topics and a greeting each, all
+   * answered — and one thing missing entirely: NOTHING ANYBODY SAYS DEPENDS ON
+   * WHAT THE PLAYER HAS DONE. Only on their level, through `later`. You could
+   * file every case in the game, walk back to Reeve Ashcombe, and be told
+   * Threadneedle is for goods exactly as you were in the first minute.
+   *
+   * That is the difference between a town and a vending machine, and it is a
+   * retention question rather than a writing one: the reason to come back to a
+   * place is that the place knows you were away.
+   *
+   * ═══ ONE LINE, AND DELIBERATELY NOT A COUNTER ═══
+   * "You have filed four" would need interpolation, and every line in this file
+   * is a static string precisely so `assertLinesFit` can measure it at module
+   * load. A sentence that acknowledges the FACT costs one line and cannot drift
+   * past the lane; a sentence that counts would be unmeasurable and would age
+   * badly at twenty-seven.
+   *
+   * ═══ IT REPLACES `greetAgain`, NOT `greetFirst` ═══
+   * The first thing anybody says is their name. Somebody who has never met you
+   * does not open with what you have been doing, however much they have heard.
+   */
+  readonly greetFiled: string;
+  /**
    * What she says when somebody keeps shoving. Three, cycled.
    *
    * THIS IS THE ANSWER TO A REAL QUESTION. Six friends in a voice channel will
@@ -209,6 +237,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Merrow Stitch. I mend what the Index unpicks.',
         greetAgain: 'Still here. So is the counter.',
+        greetFiled: 'Your coat has been somewhere. I can tell from here.',
         deflect: [
           'Mind the counter.',
           'You will not move me, and I have tried.',
@@ -243,6 +272,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Vane. I carry what Merrow sells, and it is heavy.',
         greetAgain: 'Still carrying. Still heavy.',
+        greetFiled: 'You come back with them closed. Good for trade.',
         deflect: [
           'Mind the crates.',
           'I lift for a living. Try me.',
@@ -278,6 +308,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Ashcombe. I keep the gate and the gate keeps me.',
         greetAgain: 'Gate is still here. So am I.',
+        greetFiled: 'You file. That is rarer here than you would think.',
         deflect: [
           'The gate, not me.',
           'I have stood here through worse than you.',
@@ -337,6 +368,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Bell. I came back, which is the whole of my trade.',
         greetAgain: 'Still back. Still here.',
+        greetFiled: 'You came back as well. That is the trade we share.',
         deflect: [
           'Mind yourself.',
           'I have been shoved by worse and colder.',
@@ -415,6 +447,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Pell. I dig, and lately I do not dig much.',
         greetAgain: 'Nothing new in the ground today.',
+        greetFiled: 'One less name I have to cut. Keep it that way.',
         deflect: [
           'Not over the plots.',
           'I have buried better-mannered than you.',
@@ -443,6 +476,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Colley. I write the names. Pell does the digging.',
         greetAgain: 'Names still coming. Slowly, lately.',
+        greetFiled: 'You give me places to name. Nobody else does.',
         deflect: [
           'Mind the register.',
           'I have buried ruder than you.',
@@ -471,6 +505,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Ninefold. I walk it all and I write none of it.',
         greetAgain: 'Still walking. Still not writing.',
+        greetFiled: 'You have been where I only walked past. Tell me.',
         deflect: [
           'Mind the fire.',
           'I have walked off worse than a shove.',
@@ -505,6 +540,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Ash. I was going further. I got as far as here.',
         greetAgain: 'Still here. Still meant to go.',
+        greetFiled: 'You got further than here. I never did.',
         deflect: [
           'Watch the fire.',
           'Weather worse than you has tried to move me.',
@@ -533,6 +569,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Vaunt. I mix what the Index has not read yet.',
         greetAgain: 'Still mixing. Mind the fumes.',
+        greetFiled: 'You have used what I mix. It shows on you.',
         deflect: [
           'Not the shelves.',
           'Break one of those and we will both regret it.',
@@ -562,6 +599,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         sprite: 'chr_npc_bent_watchman_s',
         greetFirst: 'Quill. I test what Vaunt mixes. I am still here.',
         greetAgain: 'Still upright. Mostly.',
+        greetFiled: 'You test it out there. I only test it in here.',
         deflect: [
           'Careful, that is glass.',
           'I have been hit by better.',
@@ -597,6 +635,10 @@ function assertLinesFit(): void {
       const lines = [
         spec.greetFirst,
         spec.greetAgain,
+        // AND THE FILED GREETING, NAMED HERE IN THE SAME BREATH AS THE FIELD.
+        // `later` was added and this list was not, and five lines ran 106 to 132
+        // characters into a 56-character lane, live. See the essay below.
+        spec.greetFiled,
         ...spec.deflect,
         // TOPICS TOO. They land in the same lane and a long one eats the same
         // band; a cap that covered only greetings would be a cap with a hole in

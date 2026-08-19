@@ -219,12 +219,46 @@ describe('every line fits the Margin lane', () => {
     const tooLong: string[] = [];
     for (const specs of TOWNSFOLK.values()) {
       for (const spec of specs) {
-        for (const line of [spec.greetFirst, spec.greetAgain, ...spec.deflect]) {
+        // EVERY LINE, not the greetings only. This list used to name three
+        // fields while `assertLinesFit` measured six, which is the same hole
+        // that file's own essay records: `later` was added, the load check was
+        // updated, and the five deepest-written lines in the game ran 106 to 132
+        // characters into a 56-character lane with nothing reporting WHICH.
+        for (const line of [
+          spec.greetFirst,
+          spec.greetAgain,
+          spec.greetFiled,
+          ...spec.deflect,
+          ...Object.values(spec.topics),
+          ...Object.values(spec.later ?? {}),
+        ]) {
           if (line.length > LINE_MAX) tooLong.push(`${spec.id}: ${String(line.length)} — ${line}`);
         }
       }
     }
     expect(tooLong).toEqual([]);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERYBODY HAS SOMETHING TO SAY TO A PLAYER WHO HAS CLOSED A CASE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `greetFiled` is the only line in the table that keys off what a player has
+   * DONE rather than what level they are, and a person who reuses `greetAgain`
+   * for it is silently opted out — the town would notice nine of you and not the
+   * tenth, which reads as a bug in the one place the world is supposed to feel
+   * like it is paying attention.
+   */
+  it('gives every person a different second sentence for somebody who files', () => {
+    const same: string[] = [];
+    for (const specs of TOWNSFOLK.values()) {
+      for (const spec of specs) {
+        if (spec.greetFiled.trim() === '') same.push(`${spec.id}: empty`);
+        if (spec.greetFiled === spec.greetAgain) same.push(`${spec.id}: same as greetAgain`);
+      }
+    }
+    expect(same).toEqual([]);
   });
 
   it('authors somebody for a Common site and nowhere else', () => {
