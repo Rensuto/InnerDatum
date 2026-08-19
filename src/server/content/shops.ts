@@ -62,7 +62,7 @@ import { computeRarities, pickEntity } from './rarity.ts';
 import { MAX_EGO_POWER, formatItemId, parseItemId } from './resolve.ts';
 import { ITEMS, itemById } from './items.ts';
 import { isMoneyId } from './money.ts';
-import { bandFor } from './loot.ts';
+import { LEVELS_PER_BAND, bandFor } from './loot.ts';
 import type { ItemEgoRef } from './resolve.ts';
 import type { Item, ItemTier } from './items.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -464,10 +464,38 @@ export function restock(
  * are accidents of Lua's 1-based tables. Batch 0 is explicit here.
  */
 export function epochFor(partyMaxLevel: number): number {
-  if (!Number.isFinite(partyMaxLevel) || partyMaxLevel < 5) return 0;
+  if (!Number.isFinite(partyMaxLevel) || partyMaxLevel < LEVELS_PER_BAND) return 0;
   const level = Math.floor(partyMaxLevel);
-  // One for reaching 5, then one per completed multiple of ten.
-  return 1 + Math.floor(level / 10);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `1 + floor(level / 10)` IS UPSTREAM'S CADENCE AND IT COLLAPSED HERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Same fault as `bandFor` and found by asking the same question: does this
+   * formula's input span the range it did upstream? ToME fires on level 5 and
+   * then each multiple of ten across a 1..50 career — SEVEN epochs, a shelf that
+   * turns over half a dozen times. `MAX_CHARACTER_LEVEL` here is 10, so the same
+   * arithmetic gave THREE, and the two that a player actually lives through land
+   * at level 5 and level 10.
+   *
+   * Measured across a whole career: levels 1-4 one shelf, levels 5-9 ONE SHELF,
+   * level 10 a third. The entire mid-game — where a player spends most of their
+   * time and most of their gold — is a shop whose twelve rows never change. A
+   * shop nobody has a reason to walk back into is not a shop, and shops are one
+   * of the four things this game is supposed to be about.
+   *
+   * ═══ THE SAME DIVISOR THE LOOT BANDS USE, DELIBERATELY ═══
+   * `LEVELS_PER_BAND` is 2 because five bands span this game's career the way
+   * five spanned ToME's. Sharing it means the shelf is RESTOCKED and BETTER at
+   * the same moments — `bandOf` already feeds `stockLevelFor` through the same
+   * band table — so "I levelled, the shop is worth a look" is one fact rather
+   * than two that drift.
+   *
+   * Six epochs across 1..10, one every two levels. The first is at level 2
+   * rather than 5: upstream's 5-of-50 is a tenth of the way in, and a starting
+   * shelf that lasts until the halfway point is the mid-game problem again.
+   */
+  return Math.floor(level / LEVELS_PER_BAND);
 }
 
 /** The level a shop stocks for. Same band input the loot tables use. */

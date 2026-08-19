@@ -1,6 +1,8 @@
+import { MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  bandOf,
   BUY_HIGH,
   BUY_LOW,
   NB_FILL,
@@ -217,20 +219,87 @@ describe('stock', () => {
 
 describe('the restock epoch', () => {
   it('is an integer that only ever goes up', () => {
-    // `Actor.lua:3740` fires on level 5, then on each multiple of 10.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS PINNED UPSTREAM'S CADENCE AGAINST UPSTREAM'S RANGE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `Actor.lua:3740` fires on level 5 then each multiple of ten, and the old
+     * assertions checked 5, 10, 19, 20 — levels a character in THIS game cannot
+     * reach. Across the career that actually exists it produced three epochs,
+     * and the mid-game (5 through 9) was a single shelf that never changed.
+     *
+     * Same fault as `bandFor`, same question: does the input span the range it
+     * did upstream? The cadence is now `LEVELS_PER_BAND`, shared with the loot
+     * bands so the shelf is restocked and better at the same moments.
+     */
     expect(epochFor(1)).toBe(0);
-    expect(epochFor(4)).toBe(0);
-    expect(epochFor(5)).toBe(1);
-    expect(epochFor(9)).toBe(1);
-    expect(epochFor(10)).toBe(2);
-    expect(epochFor(19)).toBe(2);
-    expect(epochFor(20)).toBe(3);
+    expect(epochFor(2)).toBe(1);
+    expect(epochFor(3)).toBe(1);
+    expect(epochFor(10)).toBe(5);
 
     let previous = -1;
-    for (let level = 1; level <= 50; level += 1) {
+    for (let level = 1; level <= MAX_CHARACTER_LEVEL; level += 1) {
       const epoch = epochFor(level);
       expect(epoch).toBeGreaterThanOrEqual(previous);
       previous = epoch;
+    }
+  });
+
+  it('turns the shelves over several times inside the level cap', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE GUARD THAT WOULD HAVE CAUGHT IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A shop nobody has a reason to walk back into is not a shop. Before this,
+     * a whole career saw three epochs and levels 5-9 — where a player spends
+     * most of their time and most of their gold — were one static shelf.
+     *
+     * Stated against `MAX_CHARACTER_LEVEL` rather than a literal, so moving the
+     * cap or the cadence either keeps the property or fails here. Four is a
+     * floor, not the design: the design is one per `LEVELS_PER_BAND`.
+     */
+    const epochs = new Set<number>();
+    for (let level = 1; level <= MAX_CHARACTER_LEVEL; level += 1) epochs.add(epochFor(level));
+    expect(epochs.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it('gives every single level-up a reason to look in', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIRST VERSION OF THIS TEST CLAIMED THEY MOVE TOGETHER. THEY DO NOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It asserted that a band change always comes with a restock, and failed at
+     * level 3: `bandOf` is `ceil(level / 2)` and `epochFor` is `floor(level /
+     * 2)`, so they are offset by one. The claim was mine and it was wrong.
+     *
+     * What is actually true is better, and is worth having as the assertion:
+     * they INTERLEAVE. Measured across the career —
+     *
+     *     2  restock          3  better quality
+     *     4  restock          5  better quality
+     *     6  restock          7  better quality
+     *     8  restock          9  better quality
+     *    10  restock
+     *
+     * — so every level from the second to the cap changes the shelves, in
+     * contents or in quality, alternately. A player who levels has a reason to
+     * put their head round the door every single time, which is more than
+     * "both at once" would have bought.
+     */
+    let lastEpoch = epochFor(1);
+    let lastBand = bandOf(1);
+    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
+      const epoch = epochFor(level);
+      const band = bandOf(level);
+      expect(
+        epoch !== lastEpoch || band !== lastBand,
+        `nothing about the shop changed on reaching level ${String(level)}`,
+      ).toBe(true);
+      lastEpoch = epoch;
+      lastBand = band;
     }
   });
 
