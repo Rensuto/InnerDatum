@@ -45,11 +45,25 @@ import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
 import { createMvpEffectState } from '../src/server/content/effects.ts';
 import { CLASSES } from '../src/server/content/classes.ts';
-import { canWalk } from '../src/shared/level.ts';
+import { canWalk, Ground } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 
 /** Enough that one lucky seed cannot carry a column. */
 const RUNS = Number(process.argv[2] ?? 24);
+
+/**
+ * WHICH GROUND THE AMBUSH HAPPENS ON — `node tools/first-fight.mjs 24 wood`.
+ *
+ * Six kinds of country now build six different rooms AND two of them put
+ * something extra in the room. "Is the first fight fair" therefore has six
+ * answers, and the two that matter most are the ones a level-1 stranger can
+ * wander into without being warned: the wood, which is a corridor system with
+ * something fast in it, and the fen, which has a turret behind water.
+ *
+ * Defaults to the ground the game has always built, so running it bare compares
+ * against every number anybody has written down before today.
+ */
+const GROUND = process.argv[3] ?? Ground.Upland;
 /** Long enough for a slow win, short enough that a stall is obvious. */
 const TURN_CAP = 200;
 
@@ -63,7 +77,7 @@ function fight(cls, seed) {
     seed,
     engineFor: (world) => createTurnEngine({ world, downed, effects }),
   });
-  const arena = realms.open(ENCOUNTER_SITE, seed);
+  const arena = realms.open(ENCOUNTER_SITE, seed, { level: 1, size: 1 }, GROUND);
 
   const p = arena.world.addPlayer('p1', 'Ren');
   // THE COMBAT SHEET. See the header — this one line is the whole reason the

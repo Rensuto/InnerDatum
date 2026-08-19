@@ -53,7 +53,7 @@
  * arbitrates turns must not learn what an invite is.
  */
 
-import { makeArena } from '../../shared/arena.ts';
+import { arenaGround, makeArena } from '../../shared/arena.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
 import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
@@ -1067,6 +1067,10 @@ export const ENCOUNTER_SITE: SiteDef = {
       x: Math.floor(map.view.w / 2),
       y: Math.floor(map.view.h / 2),
     };
-    seedAmbush(world, arrival, party);
+    // THE GROUND, READ BACK OFF THE ROOM THIS SITE JUST BUILT. `populate` is
+    // handed the map and not the ground, and it does not need to be:
+    // every ground paints a different floor, so the room is its own
+    // record of what made it. See `arenaGround`.
+    seedAmbush(world, arrival, party, arenaGround(map));
   },
 };

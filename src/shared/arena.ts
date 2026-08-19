@@ -386,6 +386,33 @@ export function makeArena(seed: string, ground: Ground = Ground.Upland): Authore
   };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT GROUND BUILT THIS ROOM — READ BACK OFF ITS OWN FLOOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The population of an ambush wants to know the ground (a cairn belongs in the
+ * fen and nowhere else), and `SiteDef.populate` is handed the map rather than
+ * the ground. The obvious move is to thread `ground` through `populate` as well
+ * — a second parameter, on a hook every site implements, to carry a fact the
+ * map already contains.
+ *
+ * IT ALREADY CONTAINS IT. Every ground paints a DIFFERENT floor code, so the
+ * room is its own record of what made it, and a reverse lookup is exact rather
+ * than a guess. One fact, one place, and nothing to keep in step.
+ *
+ * Falls back to UPLAND — the default room — for a map this file did not build,
+ * which is every fixture and every authored site.
+ */
+export function arenaGround(map: AuthoredMap): Ground {
+  const centre = arenaCentre();
+  const floor = map.view.tiles[tileIndex(centre.x, centre.y, map.view.w)];
+  for (const [ground, spec] of Object.entries(ARENAS)) {
+    if (spec.floor === floor) return ground as Ground;
+  }
+  return Ground.Upland;
+}
+
 /** Where the walk starts, exported so a test can assert against it. */
 export function arenaCentre(): TileXY {
   return { x: Math.floor(ARENA_W / 2), y: Math.floor(ARENA_H / 2) };

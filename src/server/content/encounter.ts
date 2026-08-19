@@ -35,11 +35,19 @@
 import type { TileXY } from '../../shared/coords.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { canWalk } from '../../shared/level.ts';
+import { Ground } from '../../shared/level.ts';
 import { partyMaxLevel, rollLoot } from './loot.ts';
 import type { Rng } from '../../shared/rng.ts';
 import { qualified } from '../world/world.ts';
 import type { World } from '../world/world.ts';
-import { INDEX_HUSK, INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from './monsters.ts';
+import {
+  INDEX_CAIRN,
+  INDEX_EIDOLON,
+  INDEX_HUSK,
+  INDEX_HUSK_ELITE,
+  INDEX_WRAITH,
+  monsterInit,
+} from './monsters.ts';
 import type { MonsterTemplate } from './monsters.ts';
 import type { PartyStrength } from '../world/strength.ts';
 
@@ -386,10 +394,46 @@ const AMBUSH_MAX = 7;
  * of being ready and a party of three at level 1 is as entitled to a real fight
  * as a lone level-6.
  */
-export function ambushRoster(party: PartyStrength): readonly MonsterTemplate[] {
+export function ambushRoster(
+  party: PartyStrength,
+  ground: Ground = Ground.Upland,
+): readonly MonsterTemplate[] {
   const roster: MonsterTemplate[] = [INDEX_HUSK];
   if (party.level >= 3 || party.size >= 2) roster.push(INDEX_WRAITH);
   if (party.level >= 6 || party.size >= 3) roster.push(INDEX_HUSK_ELITE);
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * AND WHAT LIVES HERE — WHICH IS THE HALF THAT MAKES THE GROUND MATTER.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `makeArena` gave six kinds of country six different SHAPES. Six shapes with
+   * one roster is still one bestiary wearing six hats: the fight changes, but
+   * the thing you are fighting does not, and a player learns the map's geometry
+   * without ever learning its wildlife.
+   *
+   * ADDED, NEVER SUBSTITUTED. The husk is in every ambush on every ground,
+   * because the roster is the game's constant and a ground that replaced it
+   * would be a different game rather than a different place. What a ground does
+   * is put ONE MORE THING in the room that belongs there.
+   *
+   * ═══ AND EACH IS DANGEROUS ON EXACTLY ITS OWN GROUND ═══
+   * The eidolon is fast and made of paper: lethal where sightlines are four
+   * tiles, target practice on the open moor. The cairn out-ranges everything the
+   * party owns and has twenty-three hit points: deadly across water it cannot be
+   * reached over, and irrelevant the moment somebody finds the ford. Neither is
+   * a straight difficulty increase; both are a reason the ground under you is
+   * worth reading.
+   *
+   * NO LEVEL OR HEADCOUNT GATE ON THESE TWO, deliberately. The gates above exist
+   * so a lone level-1 stranger does not meet the whole bestiary in their first
+   * twenty seconds — but these are not escalations, they are the local wildlife,
+   * and a level-1 player walking into a fen SHOULD meet the thing that lives in
+   * the fen. Learning it is the reward for going there.
+   */
+  if (ground === Ground.Wood) roster.push(INDEX_EIDOLON);
+  if (ground === Ground.Fen) roster.push(INDEX_CAIRN);
+
   return roster;
 }
 
@@ -397,8 +441,9 @@ export function seedAmbush(
   world: World,
   near: TileXY,
   party: PartyStrength = { level: 1, size: 1 },
+  ground: Ground = Ground.Upland,
 ): SeededMonster[] {
-  const roster = ambushRoster(party);
+  const roster = ambushRoster(party, ground);
 
   /**
    * ═════════════════════════════════════════════════════════════════════════

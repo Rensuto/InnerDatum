@@ -1465,10 +1465,220 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
 // ---------------------------------------------------------------------------
 
 /** Every template, in a fixed order — for iteration that must be reproducible. */
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE INDEX EIDOLON — dangerous in the trees and nowhere else.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Three monster templates was the ceiling on everything: sixteen destinations
+ * and six kinds of country all opened onto the same husk, the same wraith and
+ * the same elite, so a forest and a moor were the same fight in two colours.
+ * These two are keyed to the grounds `makeArena` builds, and each is dangerous
+ * on exactly one of them.
+ *
+ * THE WOOD OPENS 0.34 OF ITS ROOM — arena.ts's own words for that band are *"a
+ * corridor system and a ranged monster can never be reached"*, and sightlines
+ * run about four tiles. A creature that is FAST is lethal there and harmless
+ * anywhere else: you meet it at four tiles, it acts 1.2 times for your one, and
+ * it is on you before you get a second decision. On the open moor you see it
+ * coming from eight tiles away and shoot it to pieces, because it is made of
+ * paper.
+ *
+ * ═══ PORTED FROM `canine.lua:40-43`, THE BASE EVERY WOLF IS BUILT ON ═══
+ *
+ *     global_speed_base = 1.2,
+ *     stats = { str=10, dex=17, mag=3, con=7 },
+ *     combat_armor = 1, combat_def = 1,
+ *
+ * Dexterity leads by a mile and Constitution is the worst stat on the sheet:
+ * upstream states "fast and fragile" in the stat block itself, and it is the
+ * exact creature this ground wanted. Life is the wolf's own
+ * `resolvers.rngavg(40,70)` (canine.lua:52) = 55.
+ *
+ * No new art: `enemy_index_eidolon_s` has been cut, in the manifest and drawing
+ * nothing since the day it was made.
+ */
+export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
+  id: 'index_eidolon',
+  displayName: 'Index Eidolon',
+  description:
+    'A reading of somebody that the Index kept after it stopped keeping them. It moves the way ' +
+    'a misremembered thing moves — too quickly, and only ever towards you.',
+  sprite: 'enemy_index_eidolon_s',
+  rank: ActorRank.Normal,
+
+  // canine.lua:52 `max_life = resolvers.rngavg(40,70)` = 55.
+  maxHp: resolveRngAvg(40, 70),
+  hpRegen: 0,
+
+  // ═══ THE WHOLE CREATURE IS IN THIS NUMBER ═══
+  // canine.lua:40 `global_speed_base = 1.2`, VERBATIM. It is the only monster in
+  // the roster that acts more often than the player, and in a room with
+  // four-tile sightlines that is the difference between "something is coming"
+  // and "something is here".
+  globalSpeed: 1.2,
+  speedFactor: 1,
+
+  profile: AiProfile.MeleeChaser,
+  // The same eight as the rest of the roster. It is NOT given a short leash to
+  // make it an ambusher — THE TREES DO THAT, which is the entire point: the same
+  // creature on the open moor notices you at eight tiles and dies crossing them.
+  aggroRange: 8,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  drops: { chance: 100, pick: idsOfTier('common') },
+
+  combat: {
+    // canine.lua:41, VERBATIM.
+    stats: { str: 10, dex: 17, mag: 3, con: 7 },
+    // canine.lua:43 `combat_armor = 1, combat_def = 1`, VERBATIM. Almost nothing
+    // of either, which is what makes the trade honest: it hits first, and once.
+    mods: { armour: 1, def: 1 },
+    weapon: {
+      dam: resolveLevelup(resolveMBonus(30, 12)),
+      atk: 12,
+      apr: 3,
+      damMod: { dex: 0.8 },
+    },
+    profile: {
+      resists: {
+        // OURS, not a port. It is a thing the Index made, so half of its own
+        // element slides off — the same identity `INDEX_WRAITH` carries and for
+        // the same reason. Physical is left alone: the answer to this creature
+        // is to hit it, and it must not also be resistant to being hit.
+        [DamageType.Darkness]: 50,
+      },
+    },
+    // 1.5, MATCHING THE HUSK, and it is not 1: `validateTemplate` refuses a
+    // melee reach below the diagonal step (√2), because a creature standing
+    // corner-to-corner with you IS adjacent and a reach of exactly 1 would let
+    // it be stood next to without being able to swing.
+    range: 1.5,
+    minRange: 0,
+  },
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE INDEX CAIRN — the reason the fen is not a free win.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The fen's channels give the player something no other ground does: a place to
+ * stand where you can SHOOT and cannot be REACHED. Measured at 6.4% of visible
+ * positions against 0.0% everywhere else. That is a real tactic and it should
+ * stay — but a tactic with no answer is not a tactic, it is a bug that has not
+ * been found yet, and the first party to notice would spend every fen fight
+ * standing on one bank.
+ *
+ * SO THE FEN GETS SOMETHING THAT SHOOTS BACK. Across a channel neither of you
+ * can close, both of you can see, and the fight becomes a firing line decided by
+ * range and cover rather than by who reaches whom. That is a fight this game has
+ * never had.
+ *
+ * ═══ AND IT IS HELPLESS ANYWHERE ELSE, WHICH IS THE SAME DESIGN AS THE EIDOLON ═══
+ * `global_speed_base = 0.7` and twenty-three hit points: on open ground you walk
+ * away from it, or you walk up to it and it dies in half a round. It is only
+ * dangerous when something it cannot cross is between you — and the fen is the
+ * only ground that provides one.
+ *
+ * ═══ PORTED FROM `crystal.lua:30-39` ═══
+ *
+ *     ai = "dumb_talented_simple", ai_state = { talent_in=1 },
+ *     max_life = resolvers.rngavg(12,34),
+ *     stats = { str=1, dex=5, mag=20, con=1 },
+ *     global_speed_base = 0.7,
+ *     combat_def = 1,
+ *     never_move = 1,
+ *
+ * `never_move` HAS NO EQUIVALENT HERE AND NEEDS NONE. It is a `RangedKiter` at
+ * 0.7 speed, and the water does upstream's job for it: a kiter on the far bank
+ * cannot approach whatever it does, so the terrain supplies the behaviour that
+ * upstream had to author as a flag. The deviation is the implementation, not the
+ * creature.
+ *
+ * Twenty-three hit points against a party that deals ~51 a round is deliberately
+ * nothing — it survives because it cannot be reached, never because it is tough,
+ * and the moment a player finds the ford it is over. That is the fight.
+ *
+ * No new art: `enemy_index_cairn_s` was cut and has drawn nothing until now.
+ */
+export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
+  id: 'index_cairn',
+  displayName: 'Index Cairn',
+  description:
+    'A stack of citations weathered into the shape of a marker stone. It does not come for you. ' +
+    'It simply has a clear view, and time.',
+  sprite: 'enemy_index_cairn_s',
+  rank: ActorRank.Normal,
+
+  // crystal.lua:34 `max_life = resolvers.rngavg(12,34)` = 23.
+  maxHp: resolveRngAvg(12, 34),
+  hpRegen: 0,
+
+  // crystal.lua:36 `global_speed_base = 0.7`, VERBATIM. Half the reason you can
+  // ignore it on dry ground.
+  globalSpeed: 0.7,
+  speedFactor: 1,
+
+  profile: AiProfile.RangedKiter,
+  // THE LONGEST REACH IN THE ROSTER, and the only field that is tuned rather
+  // than ported: the wraith stands off at 4 and shoots to 6, so a cairn that did
+  // the same would be a slower wraith. At 8 it out-ranges everything the party
+  // owns at level 1, which is what makes the far bank of a channel a problem to
+  // solve rather than a place to ignore.
+  aggroRange: 9,
+  preferredRange: 6,
+  minRange: 3,
+  attackRange: 8,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  // Slower than the wraith's orb, so the water buys real time — you can see it
+  // coming across the channel and step out of the lane.
+  projSpeed: 1,
+  damageMin: 8,
+  damageMax: 12,
+
+  drops: { chance: 100, pick: idsOfTier('common') },
+
+  combat: {
+    // crystal.lua:35, VERBATIM. Magic 20 and Constitution 1 — everything it has
+    // is in the shot.
+    stats: { str: 1, dex: 5, mag: 20, con: 1 },
+    // crystal.lua:38 `combat_def = 1`; `combat_armor` is absent upstream and
+    // therefore 0 here. It dodges nothing and absorbs nothing.
+    mods: { armour: 0, def: 1 },
+    weapon: {
+      dam: resolveLevelup(resolveMBonus(30, 10)),
+      atk: 8,
+      apr: 6,
+      damMod: { mag: 0.8 },
+    },
+    profile: {
+      resists: {
+        [DamageType.Darkness]: 50,
+        // IT IS MADE OF STONE AND IT STILL BREAKS. No physical vulnerability —
+        // the wraith's −30 says "reach it and it folds", and this creature's
+        // whole problem is that you often cannot reach it, so the same line here
+        // would be a discount on a fight the terrain already decided.
+      },
+    },
+    range: 8,
+    minRange: 3,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
   INDEX_HUSK_ELITE,
+  INDEX_EIDOLON,
+  INDEX_CAIRN,
 ]);
 
 /** Their ids, same order. */

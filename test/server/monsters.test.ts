@@ -199,16 +199,45 @@ function applyMove(actor: { x: number; y: number }, intent: Intent): void {
 // ---------------------------------------------------------------------------
 
 describe('the roster is well formed', () => {
-  it('is exactly the three types M3 asks for', () => {
-    // PLAN.md § M3: "three enemy types (melee chaser, ranged kiter, one elite)".
-    // Four would be scope creep and two would be an unmet definition of done.
+  it('is the three M3 asked for, plus one per ground that needed one', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS SAID "EXACTLY THE THREE TYPES M3 ASKS FOR", AND THAT CAP HAS DONE
+     * ITS JOB AND EXPIRED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * PLAN.md § M3: *"three enemy types (melee chaser, ranged kiter, one
+     * elite)"*, and this test read *"four would be scope creep and two would be
+     * an unmet definition of done."* It was right, and it was right for a long
+     * time — a fourth creature added while the world was one grey room would
+     * have been content nobody could tell apart from the other three.
+     *
+     * THE WORLD IS NOT THAT ANY MORE. Sixteen destinations have their own
+     * ground and `makeArena` builds six different rooms — and three templates
+     * became the ceiling on all of it, because six shapes with one roster is one
+     * bestiary wearing six hats. Every judging panel that reviewed the world
+     * design independently named the bestiary rather than the cartography as the
+     * real problem.
+     *
+     * SO THE RULE THAT REPLACES THE CAP IS NOT "FIVE": it is that a creature has
+     * to belong to a ground. The eidolon is lethal where sightlines are four
+     * tiles and target practice on the open moor; the cairn is deadly across
+     * water and irrelevant the moment you find the ford. A sixth that was merely
+     * a bigger husk would still be scope creep, and this comment is the argument
+     * against it.
+     *
+     * The old assertion that `index_cairn` did not exist is left in the history
+     * on purpose — whoever wrote it named the creature four commits early.
+     */
     expect(MONSTER_TEMPLATES.map((t) => `${t.id}/${t.profile}/${t.rank}`)).toEqual([
       'index_husk/melee_chaser/normal',
       'index_wraith/ranged_kiter/normal',
       'index_husk_elite/melee_chaser/elite',
+      'index_eidolon/melee_chaser/normal',
+      'index_cairn/ranged_kiter/normal',
     ]);
     expect(monsterById('index_wraith')).toBe(INDEX_WRAITH);
-    expect(monsterById('index_cairn')).toBeUndefined();
+    expect(monsterById('index_glut')).toBeUndefined();
   });
 
   it('passes every invariant the type system cannot state', () => {
@@ -455,6 +484,8 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_husk', 'Index Husk', 'enemy_index_husk_s'],
       ['index_wraith', 'Index Wraith', 'enemy_index_wraith_s'],
       ['index_husk_elite', 'Overwritten Husk', 'enemy_index_husk_elite_s'],
+      ['index_eidolon', 'Index Eidolon', 'enemy_index_eidolon_s'],
+      ['index_cairn', 'Index Cairn', 'enemy_index_cairn_s'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
     expect(INDEX_WRAITH.description).toContain('A cited absence given shape');
@@ -466,7 +497,23 @@ describe('the adopted ToME entries survive the port', () => {
     const facing = MONSTER_TEMPLATES.map((t) => `${t.displayName} ${t.description}`)
       .join(' ')
       .toLowerCase();
-    for (const upstream of ['ant', 'ants', 'losgoroth', 'ghoul', 'ghast', 'ghoulking']) {
+    // `wolf`, `crystal` and `wisp` join the list with the two creatures ported
+    // from canine.lua and crystal.lua. The numbers and the behaviour come
+    // across; the identity stays ours, and that is a licence obligation as much
+    // as a taste one.
+    for (const upstream of [
+      'ant',
+      'ants',
+      'losgoroth',
+      'ghoul',
+      'ghast',
+      'ghoulking',
+      'wolf',
+      'wolves',
+      'warg',
+      'crystal',
+      'wisp',
+    ]) {
       const leaked = new RegExp(`\\b${upstream}\\b`).test(facing);
       expect({ upstream, leaked }).toEqual({ upstream, leaked: false });
     }
@@ -1040,6 +1087,18 @@ describe('the balance table the wraith’s retune rests on', () => {
       ['index_husk', 4.378, 4.378, 4.875],
       ['index_wraith', 5.88, 5.88, 5.88],
       ['index_husk_elite', 5.888, 5.888, 6.332],
+      // THE TWO NEW ROWS, AND THEY SAY THE DESIGN OUT LOUD.
+      //
+      // The eidolon takes the MOST damage of anything in the roster — armour 1
+      // and defence 1 (canine.lua:43) against the wraith's defence 20 — so at 55
+      // life it dies in five to nine player turns. It is not durable; it is
+      // FAST, and the wood is what makes that matter.
+      ['index_eidolon', 6.169, 9.533, 10.251],
+      // The cairn's row is FLAT across all three classes, for the reason the
+      // test below gives about the wraith: `apr` exceeds every class's armour,
+      // so `applyArmour` removes nothing. At 23 life that is three player turns.
+      // It survives by being unreachable, never by being tough.
+      ['index_cairn', 7, 7, 7],
     ]);
   });
 
