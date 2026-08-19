@@ -82,7 +82,8 @@ import { ActorKind } from '../../shared/protocol.ts';
 import { bound } from '../../shared/scale.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
 import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './derived.ts';
-import { composeSheet, wornOf } from './equipment.ts';
+import { composeSheet, composeWielders, wornOf } from './equipment.ts';
+import type { PassiveContribution } from './equipment.ts';
 import { setCooldown } from './actor.ts';
 import type { Combatant, StatusFlags } from './derived.ts';
 import type { CombatSheet } from './combat.ts';
@@ -1443,6 +1444,23 @@ export type EquippedActor = EffectActor & {
   baseCombat?: CombatSheet;
   equipped?: Partial<Record<Slot, string>>;
   carried?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS BODY'S PASSIVE TALENTS ARE WORTH, SUMMED AT THEIR RANKS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's `passives = function(self, t, p) self:talentTemporaryValue(p,
+   * "combat_def", ...) end` writes a passive's contribution onto the ACTOR, and
+   * every getter then reads it without knowing a talent was involved
+   * (buckler-training.lua:183-186). This is that, in one field.
+   *
+   * OWNED BY THE TALENT LAYER, exactly as `equipped` is owned by the equipment
+   * verbs and `baseCombat` by whatever dresses the body — see the essay on
+   * `recomposeCombat` below, which is still the only writer of `combat` itself.
+   * Keeping it a stored contribution rather than a lookup is what lets this file
+   * stay unable to import the talent registry, which it must.
+   */
+  passiveCombat?: PassiveContribution;
 };
 
 /**
@@ -1504,6 +1522,16 @@ export function recomposeCombat(
   if (base !== undefined) {
     const worn = wornOf(actor.equipped, catalogue);
     actor.combat = worn.length === 0 ? base : composeSheet(base, worn);
+  }
+
+  // Stage two and a half — THE PASSIVE TALENTS. Additive over gear and under
+  // status flags, which is where ToME puts them: a passive is a property of the
+  // body like a breastplate is, and a stun that zeroes a flag must still win.
+  // `composeSheet` is the same additive combine gear uses, so a passive and a
+  // pauldron stack the way a player expects rather than replacing each other.
+  const passive = actor.passiveCombat;
+  if (passive !== undefined && actor.combat !== undefined) {
+    actor.combat = composeWielders(actor.combat, [passive]);
   }
 
   // Stage three.

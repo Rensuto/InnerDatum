@@ -213,12 +213,45 @@ function baseMod(base: CombatMods | undefined, key: keyof AdditiveMods): number 
  * mutates them; copying them would only create a second object that has to be
  * kept in sync with `ClassDef.combat`.
  */
+/**
+ * WHAT A PASSIVE TALENT IS WORTH — the same shape a worn item contributes.
+ *
+ * Named rather than inlined as `Item['wielder']` because a passive is not an
+ * item and the type should not have to be read as one; identical in structure so
+ * `composeWielders` can take both without a second combine.
+ */
+export type PassiveContribution = NonNullable<Item['wielder']>;
+
 export function composeSheet(base: CombatSheet, worn: readonly Item[]): CombatSheet {
+  return composeWielders(
+    base,
+    worn.map((item) => item.wielder),
+  );
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE COMBINE ITSELF, OVER ANYTHING THAT CONTRIBUTES LIKE A WORN ITEM DOES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Split out of `composeSheet` when PASSIVE TALENTS arrived. A passive
+ * contributes exactly what a breastplate contributes — some stats, some mods,
+ * added — and ToME agrees: `talentTemporaryValue(p, "combat_def", ...)` puts a
+ * passive's defence in the same field a shield puts its own
+ * (buckler-training.lua:183-186, Actor.lua's `combat_def`). Two combiners would
+ * be two answers to "do a passive and a pauldron stack", and the first time they
+ * disagreed the difference would be a number on a character sheet nobody could
+ * account for.
+ */
+export function composeWielders(
+  base: CombatSheet,
+  blocks: readonly (Item['wielder'] | undefined)[],
+): CombatSheet {
   const statDelta = new Map<keyof AdditiveStats, number>();
   const modDelta = new Map<keyof AdditiveMods, number>();
 
-  for (const item of worn) {
-    const wielder = item.wielder;
+  for (const wielder of blocks) {
+    if (wielder === undefined) continue;
     const stats = wielder.stats;
     if (stats !== undefined) {
       for (const key of WIELDER_STAT_KEYS) {

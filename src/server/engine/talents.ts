@@ -116,6 +116,7 @@
  * Every draw goes through the `Rng` the caller passes, with a label.
  */
 
+import type { PassiveContribution } from './equipment.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, rescaleDamage } from '../../shared/scale.ts';
@@ -1095,6 +1096,14 @@ export type GuardCounter = {
 /** Why a talent never happened. NEVER a miss — a miss is `hit: false`. */
 export const TalentRefusal = {
   UnknownTalent: 'unknown_talent',
+  /**
+   * IT HAS NO BODY TO RUN — a passive. Pressing one is a mistake a player can
+   * make (a stale hotbar, a rebound key, a click on the panel row), so the
+   * answer is a sentence rather than a throw, and it is refused BEFORE anything
+   * is charged: a passive that ate the turn's action points would be the worst
+   * possible reading of "always on".
+   */
+  Passive: 'passive',
   /** Not in this actor's fixed loadout. */
   NotLearned: 'not_learned',
   Dead: 'dead',
@@ -1178,8 +1187,35 @@ export type Talent = {
   readonly targeting: TalentTargeting;
   /** What its damage is typed as. `physical` for anything that does none. */
   readonly damageType: DamageType;
-  /** THE body. Synchronous — targeting already arrived with the command. */
-  readonly onUse: (ctx: TalentCtx, self: TalentActor, target: TalentTarget) => TalentOutcome;
+  /**
+   * THE body. Synchronous — targeting already arrived with the command.
+   *
+   * ABSENT ON A PASSIVE, and that is the whole of how a passive is declared.
+   * ToME spells the same thing as `mode = "passive"` with no `action`; here the
+   * missing function IS the mode, so a passive cannot be given a body by
+   * accident and an active cannot lose one — `kind` and this field would then be
+   * two statements of one fact, and the compiler only checks one of them.
+   *
+   * `submitTalent` refuses a talent with no body rather than throwing: pressing
+   * one is a mistake a player can make, and the answer is a sentence.
+   */
+  readonly onUse?: (ctx: TalentCtx, self: TalentActor, target: TalentTarget) => TalentOutcome;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS PASSIVE IS WORTH AT A RANK. Absent on everything else.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's `passives = function(self, t, p) self:talentTemporaryValue(p,
+   * "combat_def", t.getDef(self, t)) end` (buckler-training.lua:183-186): a
+   * passive writes onto the ACTOR, and every derived getter then reads it
+   * without knowing a talent was involved. The port keeps that property — the
+   * return value lands in `actor.passiveCombat` and `recomposeCombat` folds it in
+   * at stage two and a half, over gear and under status flags.
+   *
+   * IT RETURNS THE SAME SHAPE A WORN ITEM CONTRIBUTES, through the same combine,
+   * so "does a passive stack with a pauldron" has one answer instead of two.
+   */
+  readonly passive?: (level: number) => PassiveContribution;
   /**
    * One line for the hotbar tooltip, rendered SERVER-SIDE, AT A GIVEN LEVEL.
    *
@@ -1948,7 +1984,12 @@ export function useTalent(
     world: recordingWorld(ctx.world, recorded),
     talentLevel: getTalentLevel(sheet, talent.id),
   };
-  const outcome = talent.onUse(scoped, actor, target);
+  // A PASSIVE HAS NO BODY. Checked here rather than at submission for the reason
+  // `canAttack` gives about resolution-time legality — and note it costs nothing:
+  // the payment block is below this line, not above it.
+  const body = talent.onUse;
+  if (body === undefined) return { ok: false, reason: TalentRefusal.Passive };
+  const outcome = body(scoped, actor, target);
   if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
   // --- past this line nothing can fail, so now we pay -----------------------

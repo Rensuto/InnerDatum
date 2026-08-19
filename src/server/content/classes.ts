@@ -680,6 +680,20 @@ const REFUSAL_TO_CODE: Readonly<Record<TalentRefusal, RefusalCode>> = {
   [TalentRefusal.NoMp]: ErrorCode.NoResource,
   [TalentRefusal.NoResource]: ErrorCode.NoResource,
   [TalentRefusal.NotLearned]: ErrorCode.BadMessage,
+  /**
+   * A PASSIVE IS NOT A MALFORMED FRAME. The client is entitled to hold a row for
+   * one — it is a talent the player owns and can raise — so asking to fire it is
+   * a rule saying no, which is what `IllegalMove` means for the four below it.
+   *
+   * `Refused` WOULD READ BETTER and is what the seventeen other rule-refusals
+   * moved to. It is not used here because `RefusalCode` is a deliberately narrow
+   * Extract of eight codes and widening it breaks the assignability of
+   * `createTalentBook` to `TalentBook`, whose `check` is annotated with the
+   * ENGINE's vocabulary rather than the client's. Those two unions overlap by
+   * five members and disagree about three, which is a knot worth untying on its
+   * own and not underneath a talent.
+   */
+  [TalentRefusal.Passive]: ErrorCode.IllegalMove,
   [TalentRefusal.UnknownTalent]: ErrorCode.BadMessage,
   [TalentRefusal.Dead]: ErrorCode.NotYourTurn,
   [TalentRefusal.Blocked]: ErrorCode.IllegalMove,
