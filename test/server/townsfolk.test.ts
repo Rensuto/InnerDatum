@@ -236,6 +236,47 @@ describe('every line fits the Margin lane', () => {
   });
 });
 
+describe('nobody has a question they will not answer', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TOPIC WITH NO ANSWER IS A BUTTON THAT APPEARS TO DO NOTHING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `TownsfolkSpec.topics` is a `Partial<Record<TopicId, string>>`, so the
+   * compiler is perfectly happy with somebody who has nothing to say about the
+   * roads. `handleTalk` then falls back to the GREETING, so asking a question
+   * and hearing *"Ashcombe. I keep the gate and the gate keeps me."* for the
+   * second time is indistinguishable from a dead control.
+   *
+   * ═══ DERIVED FROM `TopicId`, NEVER LISTED ═══
+   * A test naming today's four topics would repeat the mistake this file already
+   * records: `assertLinesFit` checked `topics` and not `later`, and five lines
+   * shipped at 106-132 characters against a 56-character lane. Walking the
+   * vocabulary means a FIFTH topic fails every existing townsfolk immediately,
+   * which is the only useful moment to learn it.
+   *
+   * `townsfolk.ts` enforces the same rule at MODULE LOAD, for the reason stated
+   * there — *"a test catches it before a deploy; this catches it before a
+   * boot"*. This is the copy that fails legibly in CI and names who is silent.
+   */
+  it('answers every topic the protocol lets a client send', () => {
+    const silent: string[] = [];
+    let counted = 0;
+    for (const [site, people] of TOWNSFOLK.entries()) {
+      for (const spec of people) {
+        counted += 1;
+        for (const topic of Object.values(TopicId)) {
+          if (spec.topics[topic] === undefined) silent.push(`${spec.id} (${site}) on "${topic}"`);
+        }
+      }
+    }
+    // THE SETUP, ASSERTED FIRST. `TOWNSFOLK` is a Map; a version of this that
+    // read `Object.values()` on it iterated nothing and passed vacuously.
+    expect(counted, 'no townsfolk were examined at all').toBeGreaterThan(0);
+    expect(silent, 'people who replay their greeting instead of answering').toEqual([]);
+  });
+});
+
 describe('what they tell you is still true', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════

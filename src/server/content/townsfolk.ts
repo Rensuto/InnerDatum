@@ -597,6 +597,46 @@ function assertLinesFit(): void {
             `Margin lane holds ${String(LINE_MAX)}: ${line}`,
         );
       }
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THAT THEY ANSWER EVERY QUESTION THE GAME LETS YOU ASK.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `TownsfolkSpec.topics` is a `Partial<Record<TopicId, string>>`, so the
+       * compiler is content with a person who has nothing to say about the
+       * roads. The player is not: `handleTalk` falls back to the GREETING when a
+       * topic has no answer, so asking a question and being told *"Ashcombe. I
+       * keep the gate and the gate keeps me."* again is a button that appears to
+       * do nothing — the exact failure this project keeps finding.
+       *
+       * DERIVED FROM `TopicId`, NEVER LISTED. A check naming today's four topics
+       * would repeat the mistake directly above it: `later` was added and the
+       * line list was not, and all five of those lines shipped over the cap.
+       * Walking the vocabulary means a FIFTH topic makes every existing
+       * townsfolk fail here, at boot, which is the correct and only useful
+       * moment to find out.
+       *
+       * MEASURED when this was written: all ten answer all four.
+       *
+       * ═══ AND IT SUBSUMES THE CHECK THAT IS NOT HERE ═══
+       * A `later` line keyed to a topic with no base answer would be the same
+       * dead button with a five-level delay on it — and it was written, and then
+       * deleted, because it cannot fire. `later` is keyed by `TopicId`, and the
+       * loop above has just proved every `TopicId` is answered, so every `later`
+       * necessarily upgrades something. Reverting the loop above is what showed
+       * it: the orphan guard passed while a person was missing a topic entirely.
+       * Two guards where one implies the other read as thoroughness and are
+       * clutter. If topics are ever made optional again, this is the note that
+       * says the orphan case comes back with them.
+       */
+      for (const topic of Object.values(TopicId)) {
+        if (spec.topics[topic] !== undefined) continue;
+        throw new Error(
+          `townsfolk: ${spec.id} has no answer for "${topic}", so asking it replays ` +
+            `their greeting and reads as a dead button`,
+        );
+      }
     }
   }
 }
