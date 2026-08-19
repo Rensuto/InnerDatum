@@ -846,7 +846,7 @@ describe('no loot frame can name anybody but its sender', () => {
     ren.clear();
     ren.send({ t: 'pickup' });
     await ren.settle();
-    expect(ren.last('error')?.['code']).toBe('illegal_move');
+    expect(ren.last('error')?.['code']).toBe('refused');
   });
 
   it('refuses an equip naming an item ANOTHER player is holding', async () => {
@@ -981,7 +981,7 @@ describe('two players standing on one item', () => {
     // signal — "no frame yet" and "no frame ever" look identical to a client —
     // and the loser's panel has to stop showing a button that will never work.
     const loser = holders[0] === renBody ? alex : ren;
-    expect(loser.last('error')?.['code']).toBe('illegal_move');
+    expect(loser.last('error')?.['code']).toBe('refused');
   });
 });
 
@@ -1023,7 +1023,7 @@ describe('what the bag refuses', () => {
     ren.send({ t: 'pickup' });
     await ren.settle();
 
-    expect(ren.last('error')?.['code']).toBe('illegal_move');
+    expect(ren.last('error')?.['code']).toBe('refused');
     expect(body.carried).toEqual(bag);
     expect(floorIds()).toEqual([spare.id]);
 
@@ -1043,7 +1043,7 @@ describe('what the bag refuses', () => {
     ren.clear();
     ren.send({ t: 'pickup' });
     await ren.settle();
-    expect(ren.last('error')?.['code']).toBe('illegal_move');
+    expect(ren.last('error')?.['code']).toBe('refused');
     expect(ren.all('log')).toHaveLength(0);
   });
 
@@ -1102,7 +1102,7 @@ describe('what the bag refuses', () => {
     ren.send({ t: 'unequip', slot: 'body' });
     await ren.settle();
 
-    expect(ren.last('error')?.['code']).toBe('illegal_move');
+    expect(ren.last('error')?.['code']).toBe('refused');
     expect(body.equipped['body']).toBe('item_watchmans_coat');
     expect(body.carried).toHaveLength(INVENTORY_CAP);
   });

@@ -7282,12 +7282,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const full = opts.realms?.get(realm.id);
     const shop = full?.shop;
     if (full === undefined || shop === undefined) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'there is no shop here');
+      sendError(session.socket, ErrorCode.Refused, 'there is no shop here');
       return;
     }
     const body = realm.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'you cannot shop right now');
+      sendError(session.socket, ErrorCode.Refused, 'you cannot shop right now');
       return;
     }
 
@@ -7306,7 +7306,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (index < 0) {
       // Somebody in the room bought it between the frame and the click. The
       // shelf frame is already on its way; this says why the click did nothing.
-      sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+      sendError(session.socket, ErrorCode.Refused, 'somebody got there first');
       return;
     }
 
@@ -7317,8 +7317,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * over and quietly set the purse to nothing. The clamp is right for a purse
      * and exactly wrong as a test.
      */
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * `Refused`, NOT `IllegalMove` — AND THE DIFFERENCE IS THE WHOLE SENTENCE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED, at Threadneedle Row with fifteen gold: the server sent *"that
+     * costs 24 gold"* and the player was shown **"you cannot go that way"**.
+     * `refusalText` maps `illegal_move` to that fixed string and DISCARDS the
+     * message, because `illegal_move` means "that tile, no" — a wall or the edge
+     * of the map — and the client is right to write its own prose for it.
+     *
+     * A price is the opposite case, which is exactly what `ErrorCode.Refused`
+     * was added for: *"the server already holds the whole fact and the client
+     * cannot improve on it."* Its own docstring records this bug happening once
+     * already — party and respawn refusals riding `not_your_turn` while the real
+     * sentence *"you cannot invite yourself"* sat unseen in a status line.
+     *
+     * IT WAS NEVER JUST THE PRICE. Seventeen refusals across shop, bag, pickup
+     * and follow wrote a specific sentence that the client threw away and
+     * replaced with a line about walking: a full bag, a shop that is not there,
+     * somebody buying the coat first. All of them are rules, none of them is a
+     * tile, and the three that ARE about a tile — a blocked move, a target off
+     * the map, and the talent-refusal fallback — keep `IllegalMove`.
+     */
     if (body.money < price) {
-      sendError(session.socket, ErrorCode.IllegalMove, `that costs ${String(price)} gold`);
+      sendError(session.socket, ErrorCode.Refused, `that costs ${String(price)} gold`);
       return;
     }
 
@@ -7328,7 +7352,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
     if (bag.length >= INVENTORY_CAP) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'your evidence bag is full');
+      sendError(session.socket, ErrorCode.Refused, 'your evidence bag is full');
       noteBagFull(body);
       return;
     }
@@ -7336,7 +7360,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // ═══ ONE STEP, NO AWAIT, NOTHING BETWEEN THEM ═══
     const taken = takeFromShelf(full, index);
     if (taken === undefined) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+      sendError(session.socket, ErrorCode.Refused, 'somebody got there first');
       return;
     }
     incMoney(body, -price);
@@ -7367,12 +7391,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const full = opts.realms?.get(realm.id);
     if (full === undefined || full.shop === undefined) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'there is no shop here');
+      sendError(session.socket, ErrorCode.Refused, 'there is no shop here');
       return;
     }
     const body = realm.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'you cannot shop right now');
+      sendError(session.socket, ErrorCode.Refused, 'you cannot shop right now');
       return;
     }
 
@@ -7465,14 +7489,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const { world } = realmFor(session);
     const body = world.getActor(actorId);
     if (body === undefined || !body.alive) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'you cannot follow anyone right now');
+      sendError(session.socket, ErrorCode.Refused, 'you cannot follow anyone right now');
       return;
     }
     // A body on the floor is being carried, not walking. The party pane already
     // greys the control for this case (`canFollow`); this is the ruling behind
     // it, because a control the client draws is never the rule.
     if (opts.downed !== undefined && isDowned(opts.downed, actorId)) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'you are down — somebody has to reach you');
+      sendError(session.socket, ErrorCode.Refused, 'you are down — somebody has to reach you');
       return;
     }
 
@@ -7491,11 +7515,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // Their body is nowhere — they left the game between the frame being
       // drawn and the click. Answered rather than swallowed: the pane is about
       // to correct itself, and a silent no-op reads as a dead button.
-      sendError(session.socket, ErrorCode.IllegalMove, 'they are not anywhere you can reach');
+      sendError(session.socket, ErrorCode.Refused, 'they are not anywhere you can reach');
       return;
     }
     if (theirs.id === session.realmId) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'they are already here with you');
+      sendError(session.socket, ErrorCode.Refused, 'they are already here with you');
       return;
     }
 
@@ -9549,7 +9573,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const pile = world.itemsAt(body.x, body.y);
     const top = pile[0];
     if (top === undefined) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'there is nothing to pick up here');
+      sendError(session.socket, ErrorCode.Refused, 'there is nothing to pick up here');
       return;
     }
 
@@ -9571,7 +9595,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const coins = moneyAmountOf(top.itemId);
     if (coins !== undefined) {
       if (!world.removeGroundItem(top.id)) {
-        sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+        sendError(session.socket, ErrorCode.Refused, 'somebody got there first');
         return;
       }
       incMoney(body, coins);
@@ -9602,7 +9626,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const bag = bagOf(body);
     if (bag.length >= INVENTORY_CAP) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'your evidence bag is full');
+      sendError(session.socket, ErrorCode.Refused, 'your evidence bag is full');
       // THE LOUD HALF, once a game turn — see `noteBagFull`. Somebody else on
       // this tile can take it, and the only way they learn that is if the
       // transcript says so.
@@ -9612,7 +9636,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // ═══ ONE STEP, NO AWAIT, NOTHING BETWEEN THEM ═══
     if (!world.removeGroundItem(top.id)) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'somebody got there first');
+      sendError(session.socket, ErrorCode.Refused, 'somebody got there first');
       return;
     }
     // REPLACED, NEVER SPLICED. engine/actor.ts states the rule at the field: a
@@ -9933,7 +9957,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const bag = bagOf(body);
     if (bag.length >= INVENTORY_CAP) {
-      sendError(session.socket, ErrorCode.IllegalMove, 'your evidence bag is full');
+      sendError(session.socket, ErrorCode.Refused, 'your evidence bag is full');
       noteBagFull(body);
       return;
     }

@@ -357,3 +357,52 @@ describe('the sell side says what it will pay', () => {
     }
   });
 });
+
+describe('a purse that is too light is not a wall', () => {
+  it('refuses an unaffordable buy with the price, not with "you cannot go that way"', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SENTENCE WAS BEING WRITTEN, SENT, AND THROWN AWAY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED, walking a fresh character to Threadneedle Row on 15 gold
+     * (`STARTING_MONEY`): the server sent `that costs 24 gold` and the player
+     * was shown **"you cannot go that way"**. `refusalText` maps `illegal_move`
+     * to that fixed string and discards `message` — correctly, because
+     * `illegal_move` means "that tile, no" and only the client can phrase a
+     * wall well.
+     *
+     * `ErrorCode.Refused` exists for the opposite case, and its own docstring
+     * records this bug happening once before: party refusals rode
+     * `not_your_turn` while *"you cannot invite yourself"* sat unseen in a
+     * status line.
+     *
+     * THE CODE IS PINNED, NOT ONLY THE TEXT. A test that checked the message
+     * alone would have passed for the entire life of the bug — the message was
+     * always right, and the code is what decided whether anybody read it.
+     */
+    const client = await connect(server.port);
+    const actorId = await client.hello();
+    await intoAshwick(client, actorId);
+
+    const stock = client.latest('shop')?.['stock'];
+    if (!Array.isArray(stock)) throw new Error('no stock');
+    const first = (stock[0] as Record<string, unknown> | undefined)?.['itemId'];
+
+    /**
+     * THE PURSE IS EMPTIED RATHER THAN THE ITEM CHOSEN. The shelf is rolled, so
+     * "something they cannot afford" is not a thing this test gets to pick — and
+     * a test that reached for the dearest row would pass or fail on the roll.
+     */
+    const body = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    if (body === undefined || body.kind !== 'player') throw new Error('no body');
+    body.money = 0;
+
+    client.send({ t: 'shop_buy', itemId: String(first) });
+    await sleep(150);
+
+    const error = client.latest('error');
+    expect(error?.['code'], 'an empty purse is a rule, not a tile').toBe('refused');
+    expect(String(error?.['message']), 'the price is the whole sentence').toMatch(/costs \d+ gold/);
+  });
+});
