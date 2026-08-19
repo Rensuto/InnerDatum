@@ -938,11 +938,25 @@ function tierWord(tier: ItemTier): string {
 function sellAction(view: InventoryPanelView, itemId: string): DetailAction | null {
   const shop = view.shop;
   if (shop == null) return null;
-  const quoted = shop.stock.find((row) => row.itemId === itemId);
+
+  /**
+   * THE PRICE OFF THE PLAYER'S OWN BAG FIRST, and the shelf only as a fallback.
+   *
+   * This used to read the number off the SHELF, which meant it could only label
+   * a sale for something the shop happened to be stocking — four items against a
+   * bag full of whatever came out of a delve. Selling was therefore an unlabelled
+   * button almost exactly when it mattered, and the player learned the spread by
+   * pressing it and watching their purse.
+   *
+   * `CarriedItemView.sell` is sent for every carried row in a room with a
+   * counter, so the label is now the number the server will actually pay.
+   */
+  const carried = view.inventory?.carried.find((row) => row.itemId === itemId);
+  const quoted = carried?.sell ?? shop.stock.find((row) => row.itemId === itemId)?.sell;
   return {
     kind: 'sell',
     itemId,
-    label: quoted === undefined ? 'SELL' : `SELL ${String(quoted.sell)}`,
+    label: quoted === undefined ? 'SELL' : `SELL ${String(quoted)}`,
     enabled: true,
   };
 }

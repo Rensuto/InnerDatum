@@ -302,3 +302,58 @@ describe('a player can buy healing and drink it', () => {
     expect(client.lines().some((line) => line.includes('drinks Draught of Mending'))).toBe(true);
   });
 });
+
+describe('the sell side says what it will pay', () => {
+  it('prices every carried row while you are standing at a counter', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * SELLING USED TO BE AN UNLABELLED BUTTON ALMOST EXACTLY WHEN IT MATTERED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The panel read the sell price off the SHELF, so it could only label a sale
+     * for something the shop happened to be stocking — four items, against a bag
+     * full of whatever came out of a delve. The two rarely intersect, so the
+     * player learned the spread by pressing SELL and watching their purse.
+     *
+     * `CarriedItemView.sell` is now sent for every carried row in a room with a
+     * counter, so the label is the number the server will actually pay.
+     */
+    const client = await connect(server.port);
+    const actorId = await client.hello();
+    await intoAshwick(client, actorId);
+
+    const stock = client.latest('shop')?.['stock'];
+    if (!Array.isArray(stock)) throw new Error('no stock');
+    client.send({ t: 'shop_buy', itemId: String((stock[0] as Record<string, unknown>)['itemId']) });
+    await sleep(150);
+
+    const bag = client.latest('inventory')?.['carried'];
+    if (!Array.isArray(bag)) throw new Error('no inventory');
+    for (const row of bag as unknown[]) {
+      const entry = row as Record<string, unknown>;
+      expect(typeof entry['sell'], `${String(entry['itemId'])} has no price at a counter`).toBe(
+        'number',
+      );
+      // AND IT IS A REAL OFFER. Every item priced at zero was refused outright
+      // by `handleShopSell` — 19% of loot, measured — until the rounding floor.
+      expect(Number(entry['sell'])).toBeGreaterThan(0);
+    }
+  });
+
+  it('says nothing about price out on the moor, where there is nobody to sell to', async () => {
+    /**
+     * ABSENT RATHER THAN ZERO. A price is a fact about a transaction that is not
+     * on offer, and a number sitting in a delve's inventory frame is one more
+     * thing that would have to be explained as meaningless.
+     */
+    const client = await connect(server.port);
+    await client.hello();
+    await sleep(120);
+
+    const bag = client.latest('inventory')?.['carried'];
+    expect(Array.isArray(bag)).toBe(true);
+    for (const row of (bag ?? []) as unknown[]) {
+      expect((row as Record<string, unknown>)['sell']).toBeUndefined();
+    }
+  });
+});

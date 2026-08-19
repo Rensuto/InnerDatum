@@ -2712,7 +2712,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
     if (viewer === undefined || viewer.kind !== 'player') return;
-    send(session.socket, projectInventory(viewer));
+    // THE SELL PRICE ONLY WHERE THERE IS A COUNTER. `sellPrice` is a pure
+    // function of the id, so this is not a lookup the projector could not do —
+    // it is a fact about the ROOM, and view/ has no business knowing what a shop
+    // is. See `CarriedItemView.sell`.
+    const counter = opts.realms?.get(session.realmId ?? '')?.shop;
+    send(session.socket, projectInventory(viewer, counter === undefined ? undefined : sellPrice));
     session.inventoryKey = inventoryKeyOf(viewer);
   };
 

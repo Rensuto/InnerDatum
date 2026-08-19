@@ -1543,7 +1543,17 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
  * `carried`, `equipped` and `baseCombat` are all fields on `ActorCommon` for the
  * stated reason that the save layer cannot reach the talent engine.
  */
-export function projectInventory(viewer: Actor): InventoryMsg {
+export function projectInventory(
+  viewer: Actor,
+  /**
+   * WHAT A SHOP HERE WOULD PAY, or absent when there is no counter in the room.
+   *
+   * A FUNCTION AND NOT A PRICE TABLE, for `ItemCatalogue`'s reason: this file
+   * must not learn what a shop is, and the gateway is the one place that knows
+   * both that a realm has one and how it prices things.
+   */
+  sellFor?: (id: string) => number,
+): InventoryMsg {
   const equipped: { [K in Slot]?: ItemView } = {};
   for (const slot of SLOT_ORDER) {
     const id = viewer.equipped?.[slot];
@@ -1570,6 +1580,9 @@ export function projectInventory(viewer: Actor): InventoryMsg {
       // OMITTED ENTIRELY for a draught rather than sent as null: absence is what
       // tells the client there is no Equip for this row.
       ...(item.slot === undefined ? {} : { slot: item.slot }),
+      // WHAT IT IS WORTH HERE, when there is somewhere to sell it. See
+      // `CarriedItemView.sell`.
+      ...(sellFor === undefined ? {} : { sell: sellFor(id) }),
       // A body with no sheet at all (an M2-era fixture, a classless e2e body)
       // has nothing to compare against, and an invented baseline would be a
       // promise about numbers that body does not have.

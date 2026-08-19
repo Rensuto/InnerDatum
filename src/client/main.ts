@@ -4859,6 +4859,35 @@ async function boot(): Promise<void> {
          * there is no second flag on the wire that could disagree with it, and a
          * draught in the bag simply has nowhere for "equip" to mean anything.
          */
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * A ROW ON THE SHELF IS SOMETHING TO READ, NOT SOMETHING TO PRESS.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * Clicking a shop row used to fall straight through to `equip` for an
+         * item the player does not own, and the server answered *"you are not
+         * carrying that"* — which is not a silent no-op: `case 'error'` puts a
+         * large refusal banner on the canvas, cancels any aim that was up and
+         * interrupts a walk in progress. So browsing a shelf punished you for
+         * looking at it.
+         *
+         * BUYING HAS ITS OWN CONTROL. The strip's BUY button is the verb, it
+         * knows the price and whether the purse covers it, and it is the only
+         * thing on this panel that should ever send `shop_buy`. A grid click
+         * sets the focus so the strip describes what was pressed, which is
+         * exactly what it does on every other tab.
+         *
+         * THIS ALSO REMOVES A LIE THAT HAD BECOME LOAD-BEARING. `shopCells`
+         * stamps `slot: 'body'` on every row and calls it *"a placeholder the
+         * grid never shows"* — true when `worn` alone chose the verb, and no
+         * longer true now that the ABSENCE of a slot means "drink this". A
+         * shelved draught carrying a borrowed `body` would have taken the equip
+         * branch for the same doomed reason.
+         */
+        if (invTab === InventoryTab.Shop && shop !== null) {
+          requestDraw();
+          return;
+        }
         if (hit.worn && hit.slot !== undefined) sendUnequip(hit.slot);
         else if (hit.slot === undefined) sendUse(hit.itemId);
         else sendEquip(hit.itemId);

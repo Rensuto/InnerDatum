@@ -1732,6 +1732,23 @@ export type CarriedItemView = ItemView & {
    * src/server/engine/damage.ts). Drawing an empty list as a blank row is the
    * correct rendering; inventing a "no change" line is not this type's job.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS SHOP WOULD PAY FOR IT. Absent outside a room with a counter.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The panel could already label a SELL control when the shelf happened to
+   * stock the same item — it read the price off the shop frame — and the note on
+   * that fallback is right that *"a missing label is better than a client
+   * inventing a number"*. But the shelf holds four things and a player's bag
+   * holds whatever they carried out of a delve, so the two rarely intersect:
+   * selling was a button with no price on it almost every time it mattered.
+   *
+   * ABSENT RATHER THAN ZERO WHEN THERE IS NO SHOP, because a price is a fact
+   * about a transaction that is not on offer, and a number sitting in a delve's
+   * inventory frame is one more thing that has to be explained as meaningless.
+   */
+  readonly sell?: number;
   readonly compare: readonly InspectRow[];
 };
 
