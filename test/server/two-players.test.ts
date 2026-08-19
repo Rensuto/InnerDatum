@@ -238,6 +238,58 @@ describe('somebody else turns up', () => {
     expect(membersIn(second.latest('party_state'))).toHaveLength(1);
   });
 
+  it('shows how strong the people you are playing with are', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "BRING A PARTY" WITH NO WAY TO SEE THE PARTY IS HALF AN INSTRUCTION.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The world map grades every room and `partyHint` turns the top of that
+     * scale into *"bring a party"*; `populateDelve` then builds the floor
+     * against `partyMaxLevel`. Both systems key off how strong the group is —
+     * and the pane that exists to show a player who they are playing with
+     * carried name, portrait, hit points and turn state, and not that number.
+     *
+     * DRIVEN OVER A SOCKET rather than asserted on the projector, because the
+     * failure worth guarding is the field being dropped somewhere between the
+     * body and the row — which is exactly what `save-completeness.test.ts` was
+     * written for on the persistence side, and the same shape here.
+     */
+    const first = await connect(server.port);
+    const firstId = await first.hello();
+    const second = await connect(server.port);
+    const secondId = await second.hello();
+    await sleep(150);
+
+    // A REAL DIFFERENCE BETWEEN THEM, so a row showing the wrong body's level
+    // cannot pass by coincidence.
+    const strong = server.realms.overworld.world.getActor(secondId);
+    expect(strong).toBeDefined();
+    if (strong === undefined || !('level' in strong)) throw new Error('no player body');
+    strong.level = 6;
+
+    first.send({ t: 'party', action: 'invite', targetId: secondId });
+    await sleep(150);
+    second.send({ t: 'party', action: 'accept', targetId: firstId });
+    await sleep(250);
+
+    const rows = first.latest('party_state')?.['members'];
+    expect(Array.isArray(rows)).toBe(true);
+    const seen = (rows as Record<string, unknown>[]).map((row) => ({
+      name: String(row['name']),
+      level: row['level'],
+    }));
+    expect(seen).toHaveLength(2);
+
+    // EVERY ROW CARRIES ONE. A party of two where only your own row has a level
+    // is the join failing in the direction nobody would notice.
+    for (const row of seen) {
+      expect(row.level, `${row.name} has no level on the pane`).toBeTypeOf('number');
+    }
+    // AND IT IS THE OTHER PLAYER'S OWN, not a copy of the viewer's.
+    expect(seen.some((row) => row.level === 6)).toBe(true);
+  });
+
   it('puts them in one party when one invites and the other accepts', async () => {
     // THE VERB EXISTS AND IS REACHABLE: `ui/verbs.ts` offers `Invite to party`
     // on a right-click of any player who is not already in yours. This is the

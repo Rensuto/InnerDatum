@@ -1420,6 +1420,29 @@ export type PartyStateMember = {
   hp: number;
   maxHp: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW STRONG THEY ARE — THE ONE NUMBER THIS PANE IS ABOUT AND DID NOT CARRY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The world map grades every room and `partyHint` turns the top of that scale
+   * into *"bring a party"*. `populateDelve` then builds the floor against
+   * `partyMaxLevel`, so the party's composition materially decides what is
+   * waiting behind the door.
+   *
+   * And the pane that exists to show a player who they are playing with showed
+   * name, portrait, hit points and turn state — everything except the number
+   * those two systems key off. "Bring a party" with no way to see whether the
+   * party is strong enough is half an instruction.
+   *
+   * CARRIED HERE RATHER THAN JOINED, for the reason `hp` is: this pane cannot
+   * rely on `ActorView`, because a member across the floor is exactly who the
+   * FOV seam will one day withhold and exactly who the pane most needs to show.
+   *
+   * OPTIONAL, so no protocol bump — a client that does not know it draws the
+   * row it always drew.
+   */
+  level?: number;
+  /**
    * WHAT THE BARRIER IS DOING ABOUT THIS MEMBER, in the turn tracker's own
    * vocabulary (`TurnActorState`) rather than a second one.
    *

@@ -1842,6 +1842,15 @@ export function projectPartyState(
       // will one day withhold and exactly who the pane most needs to show.
       hp: actor.hp,
       maxHp: actor.maxHp,
+      // AND HOW STRONG THEY ARE. Same argument as `hp` directly above:
+      // carried rather than joined, because the member this pane most needs
+      // to describe is the one the FOV seam may withhold. See
+      // `PartyStateMember.level`.
+      // NARROWED ON `kind`, the same way line 548 does it in this file.
+      // `level` lives on `PlayerActor` and the union does not carry it, so a
+      // row for anything that is not a player has no level rather than a
+      // fabricated zero.
+      ...(actor.kind === ActorKind.Player ? { level: actor.level } : {}),
       // The turn tracker's own vocabulary and the turn tracker's own precedence
       // — `playerCardState` is shared rather than reimplemented, so the chip in
       // the pane and the chip on the strip can never say different things about

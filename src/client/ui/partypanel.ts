@@ -861,7 +861,28 @@ function drawRow(
   // member who is gone, which is the whole of the second bug report: the row
   // used to vanish, and a vanished row reads as being thrown out of the party.
   const suffix = elsewhere !== null ? ` (${elsewhere.place})` : away ? ' (away)' : '';
-  const label = `${member.isSelf ? '>' : ''}${member.name}${suffix}`;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THEIR LEVEL, WHICH IS WHAT "BRING A PARTY" IS ACTUALLY ASKING ABOUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The world map grades a room and `partyHint` says *"bring a party"* at the
+   * top of that scale; `populateDelve` then builds the floor against the
+   * party's MAX level. This row showed everything except the number both of
+   * those turn on.
+   *
+   * BEFORE THE NAME, NOT AFTER IT. `fitText` truncates the label to the width
+   * available, so anything appended after a long name is the first thing to be
+   * cut — and the level is short, fixed-width and the same shape on every row,
+   * which is what makes a column of them readable at a glance. The place suffix
+   * stays last precisely because losing it to a truncation is survivable.
+   *
+   * ABSENT WHEN THE SERVER DID NOT SAY, rather than drawn as `L0`. A wrong
+   * number stated confidently is worse than a row that has not learned it yet —
+   * the same rule the character sheet's own `Level` row follows.
+   */
+  const rank = member.level === undefined ? '' : `L${String(member.level)} `;
+  const label = `${member.isSelf ? '>' : ''}${rank}${member.name}${suffix}`;
   ctx.fillText(fitText(ctx, label, Math.max(0, nameRight - textX)), textX, y + 8);
 
   // --- the hp bar, or the countdown ----------------------------------------
