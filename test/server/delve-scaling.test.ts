@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DELVES, delveHeadroom, populateDelve } from '../../src/server/content/delve.ts';
+import { DELVES, delveHeadroom, populateDelve, specFor } from '../../src/server/content/delve.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -140,5 +140,76 @@ describe('the room grows for the people who brought friends', () => {
     const rolled = populatedCount({ level: 1, size: 1 }, spec);
     const four = populatedCount({ level: 1, size: 4 }, spec);
     expect(four).toBe(Math.round(rolled * delveHeadroom({ level: 1, size: 4 })));
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FLOOR OF A DELVE PAYS THE PARTY THAT WALKED IN, NOT A LEVEL-1 ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `populateDelve` takes a `PartyStrength` and used `party.size` for the body
+ * count and NOTHING for the litter: the loot roll was handed a hard-coded `1`,
+ * which is exactly `LONE_BEGINNER.level`. So the third argument of `rollLoot` —
+ * documented there as "party max level, for both the band and
+ * `computeRarities`" — was the bottom band in every delve forever.
+ *
+ * ═══ IT CONTRADICTED THE LINE DIRECTLY ABOVE IT ═══
+ * The litter comment says it is "rolled off the loot stream through the ordinary
+ * generator, so litter is the same kind of thing a body drops rather than a
+ * second catalogue". A body's drop goes through `encounter.ts`, which passes the
+ * REAL level. So litter was not the same kind of thing a body drops, and the
+ * comment stating the intent is what makes this a bug rather than a decision.
+ *
+ * ═══ WHY IT IS NOT "SIZE ONLY, NEVER LEVEL" ═══
+ * That rule is argued at length above `partyScale` and it is about the ROSTER:
+ * the Underworks is the Underworks whoever walks in, because a delve is a place
+ * you chose rather than a fight that happened to you. It is a rule about DANGER.
+ * Loot is not danger, and applying it here meant a level-5 party clearing the
+ * furthest room on the moor picked up what a level-1 party picks up by the road.
+ *
+ * WHICH MATTERS MOST FOR THE PLACES YOU HAVE TO FIND. Cairnfoot, Barrow End and
+ * The Weir are `hidden`, carry the best litter counts on the map, and were
+ * paying that litter at the bottom band — so the reward for finding a secret was
+ * more of the cheapest thing.
+ */
+describe('delve litter is rolled for the party that is there', () => {
+  /** Every ground item in a populated delve, as ids, same seed both times. */
+  function litterOf(party: PartyStrength, spec: DelveSpec): readonly string[] {
+    const world = createWorld('delve-litter');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const map: AuthoredMap = {
+      view: world.level,
+      spawns: [{ x: 4, y: 4 }],
+      sites: new Map<string, string>(),
+    };
+    populateDelve(world, map, spec, party);
+    return world.groundItems().map((entry) => entry.itemId);
+  }
+
+  /** The furthest, richest room on the moor — and one you have to find. */
+  const BARROW = specFor('site:barrow_end');
+
+  it('has a spec to test, and it is a hidden one', () => {
+    expect(BARROW).toBeDefined();
+  });
+
+  it('drops the same NUMBER of things whatever the level', () => {
+    // The count comes off `spec.litter` and a labelled draw, so level must not
+    // move it — if this fails the fix reached further than it should have.
+    const low = litterOf({ level: 1, size: 1 }, BARROW as DelveSpec);
+    const high = litterOf({ level: 5, size: 1 }, BARROW as DelveSpec);
+    expect(high.length).toBe(low.length);
+    expect(low.length).toBeGreaterThan(0);
+  });
+
+  it('rolls DIFFERENT things for a level-5 party than for a level-1 one', () => {
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Identical output at every level is the signature of the hard-coded 1: the
+    // band and the rarities both read that argument, so a party five levels in
+    // was picking up the level-1 table off the floor of a room they had to find.
+    const low = litterOf({ level: 1, size: 1 }, BARROW as DelveSpec);
+    const high = litterOf({ level: 5, size: 1 }, BARROW as DelveSpec);
+    expect(high).not.toEqual(low);
   });
 });

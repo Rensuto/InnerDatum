@@ -717,6 +717,24 @@ export function populateDelve(
   // ─── AND SOMETHING ON THE FLOOR ───
   // Rolled off the loot stream through the ordinary generator, so litter is the
   // same kind of thing a body drops rather than a second catalogue.
+  //
+  // ═══ AT THE PARTY'S LEVEL, WHICH IT WAS NOT UNTIL NOW ═══
+  // This passed a hard-coded `1` — exactly `LONE_BEGINNER.level` — so the third
+  // argument of `rollLoot`, documented there as "party max level, for both the
+  // band and `computeRarities`", was the bottom band in every delve forever.
+  // The sentence above is what makes that a bug rather than a decision: a body's
+  // drop goes through `encounter.ts`, which passes the real level, so litter was
+  // NOT the same kind of thing a body drops.
+  //
+  // NOT A BREACH OF "SIZE ONLY, NEVER LEVEL". That rule is argued above
+  // `partyScale` and it is about the ROSTER — the Underworks is the Underworks
+  // whoever walks in, because a delve is a place you chose. It is a rule about
+  // DANGER, and loot is not danger. The room is unchanged; what it pays is not.
+  //
+  // IT MATTERS MOST WHERE THE WALK IS LONGEST. Cairnfoot, Barrow End and The
+  // Weir are `hidden`, carry the best litter counts on the map, and were paying
+  // them at the level-1 band — so the reward for finding a secret was more of
+  // the cheapest thing.
   const litter = world.rng.int('delve.litter', spec.litter[0], spec.litter[1]);
   for (let i = 0; i < litter; i += 1) {
     const at = candidates[world.rng.int('delve.litter.at', 0, candidates.length - 1)];
@@ -726,7 +744,10 @@ export function populateDelve(
         world.rng.int('delve.litter.pick', 0, (INDEX_HUSK.drops?.pick.length ?? 1) - 1)
       ];
     if (base === undefined) continue;
-    world.addGroundItem(at, rollLoot(world.lootRng.fork(`delve.litter:${String(i)}`), base, 1));
+    world.addGroundItem(
+      at,
+      rollLoot(world.lootRng.fork(`delve.litter:${String(i)}`), base, party.level),
+    );
   }
 
   return placed;
