@@ -4,6 +4,38 @@
  * report what the player has to show for it.
  *
  * ═══════════════════════════════════════════════════════════════════════════
+ * AND THERE IS NO `second-session.mjs`, ON PURPOSE. READ THIS BEFORE WRITING
+ * ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The obvious sequel is "reconnect as a character who already exists and see
+ * what they get". It cannot be driven from a probe, and the reason is worth a
+ * paragraph rather than another hour of somebody's evening.
+ *
+ * `handleHello` resolves a character through `verify(msg.sessionId)`, which
+ * reads the in-memory session store minted by the Discord OAuth routes. A
+ * token-less hello — what this file sends — is anonymous by design and gets a
+ * fresh body with a class chooser, which is why THIS tool works at all. There
+ * is no dev mint, and adding one would be an authentication bypass on a public
+ * repo's game server to test behaviour that is already covered.
+ *
+ * ═══ AND IT IS COVERED. MEASURED 2026-08-20, ALL OF IT ═══
+ *   persistence   `save-completeness.test.ts` round-trips every field of
+ *                 `CharacterFile` AND asserts the fixture covers the type's own
+ *                 key set, so a new field cannot slip past.
+ *   the map       a closed case is dimmed and printed `filed` — server sets it
+ *                 (`gateway.ts`), client draws it (`ui/mapview.ts`).
+ *   the count     the character sheet prints "N of 27", and "closed" at the end.
+ *   the townsfolk all ten have a `greetFiled`, and all ten have a `later`
+ *                 rumour at `STANDING_LEVEL`; `rumour.test.ts` pins that the
+ *                 later line DIFFERS from the early one.
+ *   the shops     the shelf grows 4 -> 8 -> 12 across restock epochs.
+ *   the curve     `tools/career.mjs` prints the whole thing offline.
+ *
+ * So the second session is provisioned and guarded. What is missing is only the
+ * ability to watch it happen live, and that costs an auth bypass.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
  * IT PATHFINDS, AND THAT IS THE WHOLE REASON IT IS A TOOL
  * ═══════════════════════════════════════════════════════════════════════════
  * Three throwaway versions of this walked in straight lines and reported that
