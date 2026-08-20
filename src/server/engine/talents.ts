@@ -117,6 +117,7 @@
  * Every draw goes through the `Rng` the caller passes, with a label.
  */
 
+import type { PrimaryStats } from './derived.ts';
 import type { PassiveContribution } from './equipment.ts';
 import { createTurnProcs } from './hooks.ts';
 import type { PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
@@ -1404,6 +1405,33 @@ export type Talent = {
    * the common case and stays the cheap one.
    */
   readonly sustainSlot?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW DEEP IN ITS TREE THIS SITS. 1 is the entry talent, 4 the deepest.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ONE INTEGER, AND IT IS WHERE UPSTREAM GETS ALL OF ITS INTRA-TREE
+   * STRUCTURE. Without it every talent in a tree is buyable at character
+   * level 1 with a player's first point, and a "tree" is a caption: the word
+   * implies an order of study that nothing enforces.
+   *
+   * See `src/shared/tiers.ts` for the three gates it drives and for the
+   * arithmetic behind why upstream's own constants could not be copied at a
+   * level cap of 10.
+   *
+   * ABSENT MEANS TIER 1 — an entry talent, gated on almost nothing. That is
+   * the right default: it is what every talent in this game already was.
+   */
+  readonly tier?: number;
+  /**
+   * WHICH ATTRIBUTE SAYS "YOU ARE NOT THAT PERSON YET".
+   *
+   * ABSENT MEANS UNGATED BY STAT, and that is deliberate rather than a
+   * loophole: upstream's generic combat-training tree is things true of a
+   * BODY rather than of a discipline, and nothing about your Cunning should
+   * gate whether you have been shouted at before.
+   */
+  readonly statGate?: keyof PrimaryStats;
   /** GAME TURNS. 0 is at-will and gated by AP alone. See the conversions above. */
   readonly cooldownTurns: number;
   readonly targeting: TalentTargeting;

@@ -24,6 +24,7 @@ import Fastify from 'fastify';
 import { startOps } from './ops/routes.ts';
 
 import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
+import { checkTier } from '../shared/tiers.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
 import {
   classById,
@@ -63,6 +64,7 @@ import type { BoundHooks, PassiveView } from './engine/hooks.ts';
 import { createTurnEngine } from './turn-engine.ts';
 import { createRealms } from './world/realms.ts';
 import { createWorld } from './world/world.ts';
+import { isPlayer } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
 import type { GuardCounter, TalentEngine } from './engine/talents.ts';
@@ -1056,6 +1058,48 @@ export function buildServer() {
       if (current === undefined) return null;
       if (current >= TALENT_MAX_LEVEL) return current;
       const next = current + 1;
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND IS THIS CHARACTER ALLOWED TO GO THAT DEEP YET?
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * THE GATE IS CHECKED AGAINST `next`, NOT `current`. The ladder is a rule
+       * about the rank being BOUGHT — asking about the rank already held would
+       * let every talent be raised one step past its own requirement, which is
+       * an off-by-one nobody would ever see except as "the cap feels wrong".
+       *
+       * `treeKnown` COUNTS OTHER TALENTS OF THE SAME TREE, excluding this one:
+       * a tier-2 talent wants one OTHER talent of its discipline known, and
+       * counting itself would satisfy that requirement with itself.
+       */
+      const talent = talentEngine.registry.get(talentId);
+      if (talent === undefined) return null;
+
+      const body = realms.realmOf(actorId)?.world.getActor(actorId) ?? world.getActor(actorId);
+      const known = [...sheet.points.keys()].filter((id) => {
+        if (id === talentId) return false;
+        return talentEngine.registry.get(id)?.tree === talent.tree;
+      }).length;
+
+      const gate = checkTier({
+        tier: talent.tier,
+        rank: next,
+        stat: talent.statGate,
+        // THE COMPOSED SHEET, not the class base: a stat gate has to see the
+        // points a player actually spent, plus whatever their gear and passives
+        // are worth, or it refuses a talent the character sheet says they qualify
+        // for.
+        statValue:
+          talent.statGate === undefined ? 0 : (body?.combat?.stats?.[talent.statGate] ?? 0),
+        // A LEVEL IS A PLAYER FACT. `MonsterActor` has none, and a monster with
+        // a talent sheet is a fixture rather than something that spends points.
+        characterLevel: body !== undefined && isPlayer(body) ? body.level : 1,
+        treeKnown: known,
+      });
+      // REFUSED IS `null`, which is exactly what this seam already answers for
+      // a talent that cannot be raised — the gateway turns it into a sentence.
+      if (!gate.ok) return null;
       sheet.points.set(talentId, next);
       // AND IF THAT WAS A PASSIVE, IT IS NOW WORTH MORE. Unconditional rather
       // than guarded on membership: the helper reads the sheet's own passive
