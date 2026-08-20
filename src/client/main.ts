@@ -280,6 +280,8 @@ import {
 } from './ui/respawnprompt.ts';
 import { drawTooltip } from './ui/tooltip.ts';
 import { drawHoverCard } from './ui/panel.ts';
+import { hotbarTipAt } from './ui/hotbar.ts';
+import { inventoryTipAt } from './ui/inventory.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
 import {
   CROSSING_INK,
@@ -3083,6 +3085,35 @@ const paintHud: HudPainter = (ctx, width, height) => {
   }
 
   drawHotbar({ ctx, sprites, view: hotbarView(), width, height });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE HOVER CARDS, LAST, OVER EVERYTHING THEY EXPLAIN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for by name for the bag, the tree and the action bar. Drawn here
+   * rather than inside each panel because a card that respected its panel's
+   * bounds would be clipped by the thing it is describing — and because the
+   * ORDER matters: the bar is at the foot of the screen and its card goes above
+   * the pointer, so it lands on top of the board rather than under the bar.
+   *
+   * ONE CARD AT MOST. A pointer is in one place, so the first surface that
+   * claims it wins, and the panels are asked in the order they are stacked.
+   */
+  if (pointerPoint !== null) {
+    const card =
+      (layout.inventory === null
+        ? null
+        : inventoryTipAt(
+            layout.inventory,
+            inventoryPanelRows(inventoryPanelView()),
+            pointerPoint.x,
+            pointerPoint.y,
+          )) ?? hotbarTipAt(hotbarView(), pointerPoint.x, pointerPoint.y, width, height);
+    if (card !== null) {
+      drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
+    }
+  }
 
   const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;
   drawResource({ ctx, sprites, resource, x: 4, y: resourceY + 3, width: width - 8 });

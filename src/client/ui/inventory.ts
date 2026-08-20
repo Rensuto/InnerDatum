@@ -200,6 +200,8 @@
  * see the long note at the top of render/canvas.ts.
  */
 
+import { wrapText } from './panel.ts';
+import type { HoverCard } from './panel.ts';
 import { ItemTier, SLOT_ORDER } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { DragKind, DraggablePanel } from './drag.ts';
@@ -827,6 +829,15 @@ export type InventoryRow =
       readonly hiddenRows: number;
       /** What DROP would drop, or null — a worn item and an empty slot have none. */
       readonly action: DetailAction | null;
+      /**
+       * WHICH ITEM THIS STRIP IS ABOUT, or null when it is the hint.
+       *
+       * Added for `inventoryTipAt`, which has to know whether the strip and the
+       * POINTER are talking about the same thing — hovering is not focusing, so
+       * a card that read the strip blindly would describe the focused item while
+       * sitting over a different one.
+       */
+      readonly focusId: string | null;
     }
   | { readonly kind: typeof InventoryRowKind.Note; readonly text: string };
 
@@ -1071,6 +1082,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
     rows: [] as readonly InspectRow[],
     hiddenRows: 0,
     action: null,
+    focusId: null,
   } as const;
 
   const focus = view.focus;
@@ -1085,6 +1097,9 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
     return {
       kind: InventoryRowKind.Detail,
       compact,
+      // AN EMPTY SLOT IS NOT AN ITEM, so there is nothing for a hover card to
+      // agree with — `inventoryTipAt` only ever fires on an Item hit anyway.
+      focusId: null,
       title: focus.slot,
       meta: 'empty',
       desc: '',
@@ -1124,6 +1139,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
         label: DROP_LABEL,
         enabled: true,
       },
+      focusId: focus.kind === 'item' ? focus.itemId : null,
     };
   }
 
@@ -1142,6 +1158,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       // your own back is one click from being an accident, and taking it off is
       // already a separate act.
       action: null,
+      focusId: focus.kind === 'item' ? focus.itemId : null,
     };
   }
 
@@ -1170,6 +1187,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
         // it would move the strip's layout under the pointer.
         enabled: money >= shelved.buy,
       },
+      focusId: focus.kind === 'item' ? focus.itemId : null,
     };
   }
 
@@ -2452,3 +2470,82 @@ export const INVENTORY_PANEL_MARGIN = PANEL_MARGIN;
 /** Three rows of four. Exported so the test does not spell the cap a second time. */
 export const INVENTORY_PANEL_COLS = COLS;
 export const INVENTORY_PANEL_CARRIED_MAX = CARRIED_MAX;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE POINTER IS OVER IN THE BAG, AS A CARD. Asked for by name.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The bag is a grid of 72-pixel cells and the only thing a cell shows is a
+ * picture. Everything else — what the item IS, what it would change if you put
+ * it on, what it is worth — lives in the strip at the foot, which means reading
+ * it costs a deliberate hover and a glance somewhere else on the panel.
+ *
+ * ═══ IT IS BUILT FROM THE DETAIL ROW, NOT FROM THE ITEM ═══
+ * `inventoryPanelRows` already assembles exactly this content — the title, the
+ * tier-and-slot line, the catalogue sentence and the comparison rows — and it
+ * assembles it from the focused item. Re-deriving any of that here would be a
+ * second opinion about what an item is worth, and the two would disagree the
+ * first time the comparison logic moved.
+ *
+ * So this is a PROJECTION of the strip, and the caller supplies the rows it
+ * already built for the frame it is drawing.
+ *
+ * ═══ THE STRIP STAYS ═══
+ * A card explains what the pointer is on; the strip explains what is FOCUSED,
+ * which survives the pointer moving away and is what a player reads while
+ * deciding. Upstream keeps both for the same reason. This is an addition rather
+ * than a replacement, and the strip's eight reserved rows are not reclaimed.
+ */
+export function inventoryTipAt(
+  rect: PanelRect,
+  rows: readonly InventoryRow[],
+  px: number,
+  py: number,
+): HoverCard | null {
+  const hit = inventoryPanelHitAt(rect, rows, px, py);
+  if (hit === null || hit.kind !== InventoryHitKind.Item) return null;
+
+  /**
+   * THE DETAIL ROW IS ABOUT THE FOCUSED ITEM, WHICH MAY NOT BE THIS ONE.
+   *
+   * Hovering is not focusing — the strip follows a click and the card follows
+   * the pointer — so the row is only usable when the two happen to agree. When
+   * they do not, the card says the one thing it can know for certain from the
+   * hit itself rather than describing the wrong item, which is the failure worth
+   * avoiding here.
+   */
+  const detail = rows.find((row) => row.kind === InventoryRowKind.Detail);
+  if (detail === undefined || detail.kind !== InventoryRowKind.Detail) return null;
+  if (detail.focusId !== hit.itemId) return null;
+
+  const lines = wrapForCard(detail.desc);
+  const stats = detail.rows.map((row) => `${row.label}  ${row.value}`);
+  return {
+    title: detail.title,
+    meta: detail.meta,
+    lines: [...lines, ...stats],
+    nextLines: [],
+  };
+}
+
+/**
+ * One wrapping, against the card's own width, through a private measurer.
+ *
+ * An offscreen context rather than the painter's, so measuring can never clobber
+ * the font the painter had set — the same argument `talentWrapper` makes.
+ */
+let cardMeasurer: CanvasRenderingContext2D | null | undefined;
+function wrapForCard(text: string): readonly string[] {
+  if (text === '') return [];
+  if (cardMeasurer === undefined) {
+    cardMeasurer =
+      typeof document === 'undefined'
+        ? null
+        : (document.createElement('canvas').getContext('2d') ?? null);
+  }
+  const ctx = cardMeasurer;
+  if (ctx === null) return [text];
+  ctx.font = '10px ui-monospace, Consolas, monospace';
+  return wrapText(ctx, text, 240);
+}

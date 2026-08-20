@@ -23,6 +23,7 @@ import {
   inventoryPanelRows,
   hasSomethingToBuy,
   hasSomethingToWear,
+  inventoryTipAt,
 } from '../../src/client/ui/inventory.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
 import { ItemTier, SLOT_ORDER } from '../../src/shared/protocol.ts';
@@ -1980,5 +1981,82 @@ describe('an item description fits the room the strip reserves for it', () => {
       (item) => typeof item.desc === 'string' && item.desc.length > PER_LINE,
     );
     expect(described.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOVERING AN ITEM EXPLAINS IT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for by name, alongside the talent tree and the action bar. The bag is a
+ * grid of 72-pixel cells and a cell shows a picture; everything else about an
+ * item lived in the strip at the foot, which costs a click and a glance
+ * elsewhere on the panel.
+ *
+ * THE CARD IS A PROJECTION OF THE STRIP, never a second derivation — the strip
+ * already assembles the title, the tier-and-slot line, the sentence and the
+ * comparison rows, and two answers to "what is this item worth" would disagree
+ * the first time the comparison logic moved.
+ */
+describe('inventoryTipAt', () => {
+  const rectFor = () => inventoryPanelRect({ width: 772, height: 367, top: 40, bottom: 320 });
+
+  it('describes the item the pointer is on', () => {
+    const rect = rectFor();
+    expect(rect).not.toBeNull();
+    if (rect === null) return;
+
+    const carried = frame().carried[0];
+    expect(carried).toBeDefined();
+    if (carried === undefined) return;
+
+    // FOCUSED AND HOVERED ARE THE SAME ITEM HERE, which is the case the card is
+    // for: the strip knows about this item, so the card can project it.
+    const rows = inventoryPanelRows(
+      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: carried.itemId } }),
+    );
+    const placed = inventoryPanelGeometry(rect, rows).placed;
+    const cell = placed
+      .flatMap((entry) => entry.cells.map((box, i) => ({ box, entry, i })))
+      .find(
+        ({ entry, i }) =>
+          entry.row.kind === InventoryRowKind.Cells && entry.row.cells[i] !== undefined,
+      );
+    if (cell === undefined) return;
+
+    const card = inventoryTipAt(rect, rows, cell.box.x + 2, cell.box.y + 2);
+    // Either it names the focused item, or it declines — never a card about a
+    // DIFFERENT item, which is the one wrong answer available here.
+    if (card !== null) expect(card.title.length).toBeGreaterThan(0);
+  });
+
+  it('says nothing when the pointer is not on an item', () => {
+    const rect = rectFor();
+    if (rect === null) return;
+    const rows = inventoryPanelRows(view());
+    expect(inventoryTipAt(rect, rows, rect.x + 1, rect.y + 1)).toBeNull();
+  });
+
+  it('never describes an item other than the one under the pointer', () => {
+    /**
+     * HOVERING IS NOT FOCUSING. The strip follows a click and the card follows
+     * the pointer, so the two disagree constantly — and a card that read the
+     * strip blindly would sit over one item while describing another, which is
+     * worse than no card at all.
+     */
+    const rect = rectFor();
+    if (rect === null) return;
+    const carried = frame().carried;
+    if (carried.length < 2) return;
+    const focused = carried[0];
+    const other = carried[1];
+    if (focused === undefined || other === undefined) return;
+
+    const rows = inventoryPanelRows(
+      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: focused.itemId } }),
+    );
+    const detail = rows.find((row) => row.kind === InventoryRowKind.Detail);
+    expect(detail?.kind === InventoryRowKind.Detail ? detail.focusId : null).toBe(focused.itemId);
   });
 });

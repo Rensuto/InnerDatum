@@ -117,6 +117,8 @@
  * render/canvas.ts.
  */
 
+import { wrapText } from './panel.ts';
+import type { HoverCard } from './panel.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { SLOT_ORDER } from '../../shared/protocol.ts';
 import { DragKind } from './drag.ts';
@@ -1187,4 +1189,104 @@ export function drawHotbar(options: HotbarOptions): void {
   }
 
   ctx.restore();
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A HOTBAR SLOT IS, AS A CARD. Asked for by name.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The bar is eight 32-pixel squares and a digit. Everything else about a slot —
+ * what the talent does, what it costs, why it is greyed, what the item in slot 6
+ * even is — was only ever discoverable by pressing it and finding out. That is a
+ * poor deal in a turn-based game where a press costs the turn.
+ *
+ * IT REUSES `hotbarSlotAt`, so the card names exactly the slot a press would hit.
+ * A second walk of the same rects is a second chance to disagree about which
+ * square the pointer is in, which is the failure `slotRect`'s own note is about.
+ *
+ * ═══ WHY A COOLING TALENT STILL GETS A CARD ═══
+ * A greyed slot is the one a player most wants explained: the question is "why
+ * can I not press this", and the answer is the meta line. Refusing to draw a card
+ * for it would withhold the information exactly when it is wanted.
+ */
+export function hotbarTipAt(
+  view: HotbarView,
+  px: number,
+  py: number,
+  width: number,
+  height: number,
+): HoverCard | null {
+  const index = hotbarSlotAt(px, py, view.slots.length, width, height);
+  if (index < 0) return null;
+  const slot = view.slots[index];
+  if (slot === undefined) return null;
+
+  if (slot.kind === HotbarSlotKind.Talent) {
+    const talent = slot.talent;
+    const passive = talent.kind === 'passive';
+    const meta = passive
+      ? 'always on'
+      : [
+          slot.cooldown > 0 ? `cooling — ${String(slot.cooldown)}t` : null,
+          `${String(talent.cost.ap)} AP`,
+          talent.cost.resource > 0 ? `${String(talent.cost.resource)} resolve` : null,
+          slot.affordable ? null : 'not affordable',
+          talent.range >= 2 ? `${String(talent.range)} tiles` : 'melee',
+        ]
+          .filter((part) => part !== null)
+          .join('  ·  ');
+    return {
+      title: `${talent.name}  ${String(talent.level)}/${String(talent.maxLevel)}`,
+      meta,
+      lines: wrapForCard(talent.desc),
+      nextLines: [],
+    };
+  }
+
+  if (slot.kind === HotbarSlotKind.Item) {
+    // AN ITEM SLOT KNOWS ITS NAME AND WHAT PRESSING IT WOULD DO, and nothing
+    // else — `HotbarItemSlot` carries no description, by design, because the
+    // binding is the only thing remembered between frames. A short card that is
+    // true beats a long one that would need the bag's catalogue on the bar.
+    return { title: slot.name, meta: itemActionWord(slot.action), lines: [] };
+  }
+
+  return null;
+}
+
+/** The verb a press on this slot would perform, in the player's words. */
+function itemActionWord(action: ItemSlotAction): string {
+  switch (action) {
+    case ItemSlotAction.Equip:
+      return 'press to put it on';
+    case ItemSlotAction.Unequip:
+      return 'worn — press to take it off';
+    case ItemSlotAction.Gone:
+      // PlayerHotkeys.lua:176-177 is this case upstream and it does not go quiet
+      // either. A bound slot whose item is gone is the one a player most needs
+      // told about, because the binding still looks live.
+      return 'you are not carrying one';
+  }
+}
+
+/**
+ * One wrapping, against the card's own width, through the shared measurer.
+ *
+ * The card is 240 logical pixels of prose — about forty monospace characters,
+ * which is a sentence and a half. Measured with an offscreen context rather than
+ * the painter's, so measuring can never clobber the font the painter had set.
+ */
+let cardMeasurer: CanvasRenderingContext2D | null | undefined;
+function wrapForCard(text: string): readonly string[] {
+  if (cardMeasurer === undefined) {
+    cardMeasurer =
+      typeof document === 'undefined'
+        ? null
+        : (document.createElement('canvas').getContext('2d') ?? null);
+  }
+  const ctx = cardMeasurer;
+  if (ctx === null) return [text];
+  ctx.font = '10px ui-monospace, Consolas, monospace';
+  return wrapText(ctx, text, 240);
 }

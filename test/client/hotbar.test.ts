@@ -20,6 +20,7 @@ import {
   hotbarDropTargetAt,
   hotbarRowWidth,
   hotbarSlotAt,
+  hotbarTipAt,
   hotbarVisibleCount,
   isItemSlotIndex,
   isSlotDisabled,
@@ -790,5 +791,54 @@ describe('a row that does not fit', () => {
       return { calls: c };
     })();
     expect(calls).toEqual([]);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOVERING A SLOT EXPLAINS IT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The bar is eight 32-pixel squares and a digit. What the talent does, what it
+ * costs, why it is greyed, what the item in slot 6 even IS — all of it was only
+ * discoverable by pressing and finding out, which is a poor deal in a game where
+ * a press costs the turn.
+ */
+describe('hotbarTipAt', () => {
+  const W = 640;
+  const H = 320;
+
+  const barView = (): HotbarView => ({ slots: eightSlots(), hovered: -1, armed: -1 });
+
+  it('names the talent under the pointer and what it costs', () => {
+    const view = barView();
+    const rect = slotRect(0, view.slots.length, W, H);
+    const card = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H);
+    expect(card).not.toBeNull();
+    expect(card?.title.length).toBeGreaterThan(0);
+    expect(card?.meta ?? '').toContain('AP');
+  });
+
+  it('still explains a slot that cannot be pressed', () => {
+    /**
+     * A GREYED SLOT IS THE ONE MOST WORTH EXPLAINING: the player's question is
+     * "why can I not press this", and the meta line is the answer. Refusing a
+     * card there would withhold the information exactly when it is wanted.
+     */
+    const base = barView();
+    const first = base.slots[0];
+    if (first === undefined || first.kind !== HotbarSlotKind.Talent) return;
+    const cooling = {
+      ...base,
+      slots: [{ ...first, cooldown: 3, affordable: false }, ...base.slots.slice(1)],
+    };
+    const rect = slotRect(0, cooling.slots.length, W, H);
+    const card = hotbarTipAt(cooling, rect.x + 2, rect.y + 2, W, H);
+    expect(card?.meta ?? '').toContain('cooling');
+    expect(card?.meta ?? '').toContain('not affordable');
+  });
+
+  it('says nothing off the bar', () => {
+    expect(hotbarTipAt(barView(), 2, 2, W, H)).toBeNull();
   });
 });
