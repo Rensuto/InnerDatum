@@ -227,7 +227,7 @@ export const HOTBAR_TOTAL_H = HOTBAR_H + HOTBAR_LABEL_H;
  * begin where the talents end, and because the key digit is only ever drawn on
  * these.
  */
-export const HOTBAR_TALENT_SLOTS = 4;
+export const HOTBAR_TALENT_SLOTS = 6;
 
 /**
  * Slots 4-7: the item slots. MOUSE-ONLY, AND THAT IS THE DECISION, NOT A GAP.

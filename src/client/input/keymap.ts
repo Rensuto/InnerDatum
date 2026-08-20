@@ -677,37 +677,53 @@ export const ACTIONS = [
   },
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * WHY THERE IS NO SLOT 5 HERE YET, AND WHAT WOULD HAVE TO LAND WITH IT.
+   * SLOTS 5 AND 6, BOUND BY CODE — which is the only reason they can exist.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `ui/hotbar.ts` argued slots 5-8 were impossible: the browser reports
+   * `ui/hotbar.ts` argued these were impossible: the browser reports
    * Numpad5-Numpad9 as the strings '5'-'9', so binding them by KEY would put
-   * four collisions on move_north, move_east, move_northwest and move_northeast
-   * — the CARDINALS, far worse than the diagonal collisions slots 1-4 carry.
+   * collisions on move_north and move_east — the CARDINALS, far worse than the
+   * diagonal collisions slots 1-4 carry.
    *
-   * That reasoning is exactly right about bindings by KEY, and it is why every
-   * numpad binding in this file is already `{ kind: 'code' }`. It says nothing
-   * about bindings by CODE: the top row reports `Digit5` and the numpad reports
-   * `Numpad5`, different strings, so a code-bound slot cannot be reached from
-   * the numpad at all. `Keymap.slotByCode` is the other half of that pair and
-   * now exists, so the KEYBOARD is no longer what caps the bar at four.
+   * That is exactly right about bindings by KEY, and it is why every numpad
+   * binding in this file is already `{ kind: 'code' }`. It says nothing about
+   * bindings by CODE: the top row reports `Digit5` and the numpad reports
+   * `Numpad5`, different strings, so a code-bound slot cannot be reached from the
+   * numpad at all. `Keymap.slotByCode` is the other half of that pair.
    *
-   * ═══ THE REMAINING CAP IS CONTENT, AND IT IS LOAD-BEARING ═══
+   * ═══ THEY ARRIVE WITH THE TALENTS THAT FILL THEM, WHICH IS THE WHOLE NOTE ═══
    * `client/main.ts` appends the item slots ONLY when the loadout is exactly
-   * `HOTBAR_TALENT_SLOTS` long. Raising that constant to 8 against classes that
-   * author four talents would therefore not add four empty squares — it would
-   * delete the item slots outright. And with the constant left at 4, a
-   * `hotbar_5` would fire `pressItemSlot`, putting a key on a surface
-   * `HOTBAR_ITEM_SLOTS` deliberately keeps mouse-only.
+   * `HOTBAR_TALENT_SLOTS` long, so raising that constant against classes that
+   * author four talents would not add empty squares — it would delete the item
+   * slots outright. `TALENTS_PER_CLASS` went 4 -> 6 in the same diff as
+   * `HOTBAR_TALENT_SLOTS`, and six actives per class landed with them. Two
+   * buttons with no key is a worse bar than four with one each.
    *
-   * So slots 5-8 arrive with the talents that fill them, in one diff, or they
-   * arrive broken. The mechanism is here; the actions are not.
-   *
-   * SLOTS 1-4 STAY ON THEIR KEY BINDINGS when that day comes. Moving them to
-   * codes would fix their diagonal collision too, and would also change what a
-   * player on a non-QWERTY layout presses, on four keys that have worked since
-   * M3. Separate decision, separate risk.
+   * SLOTS 1-4 STAY ON THEIR KEY BINDINGS. Moving them to codes would fix their
+   * diagonal collision too, and would also change what a player on a non-QWERTY
+   * layout presses, on four keys that have worked since M3. Separate decision,
+   * separate risk.
    */
+  {
+    id: 'hotbar_5',
+    name: 'Talent slot 5',
+    group: 'Hotbar',
+    order: 27,
+    effect: { kind: 'slot', slot: 4 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Digit5' }],
+    rebindable: false,
+  },
+  {
+    id: 'hotbar_6',
+    name: 'Talent slot 6',
+    group: 'Hotbar',
+    order: 28,
+    effect: { kind: 'slot', slot: 5 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Digit6' }],
+    rebindable: false,
+  },
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LOG
@@ -716,7 +732,7 @@ export const ACTIONS = [
     id: 'toggle_log',
     name: 'Case Log',
     group: 'Log',
-    order: 27,
+    order: 29,
     effect: { kind: 'ui', command: 'toggle_log' },
     // THE KEY IS CHOSEN, NOT PORTED, AND THIS SAYS SO RATHER THAN DRESSING A
     // GUESS AS A CITATION. ToME has a SHOW_MESSAGE_LOG action and its Classic HUD
@@ -744,7 +760,7 @@ export const ACTIONS = [
     id: 'scroll_back',
     name: 'Scroll the log back',
     group: 'Log',
-    order: 28,
+    order: 30,
     // +1 is BACK IN TIME, matching what Page Up does in every document ever
     // written. Shift picks the other lane, and that is a fact about a panel
     // rather than about a key, so it is not an action here.
@@ -757,7 +773,7 @@ export const ACTIONS = [
     id: 'scroll_forward',
     name: 'Scroll the log forward',
     group: 'Log',
-    order: 29,
+    order: 31,
     effect: { kind: 'scroll', steps: -1 },
     defaults: [{ kind: 'key', value: 'pagedown' }],
     fixed: [],

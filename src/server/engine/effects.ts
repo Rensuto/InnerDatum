@@ -1618,6 +1618,50 @@ export function statusApplier(state: EffectState, rng: Rng, ctx: EffectCtx = NO_
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OTHER DIRECTION: TAKE ONE OFF. `StatusApply`'s twin, and the same shape
+ * for the same reason.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A closure rather than the table, so `engine/talents.ts` still never imports
+ * this module — the whole argument is written above `StatusApply` and applies
+ * here unchanged.
+ *
+ * ═══ IT RETURNS THE NAME, WHICH IS WHAT THE TALENT NEEDS AND CANNOT GET ═══
+ * A boolean would leave the caller writing "shakes something off". The talent
+ * layer has no effect catalogue — that is the entire point of the seam — so the
+ * only place the display name exists is here. Null means there was nothing of
+ * that status on them, which is a REFUSAL upstream at the talent, not a silent
+ * success: `field_dressing.ts` refunds on it rather than spending the reagent.
+ *
+ * ═══ THE MOST RECENTLY APPLIED ONE ═══
+ * Not the longest-remaining, which sounds more generous and plays worse: a
+ * player cannot see the durations on somebody else's statuses well enough to
+ * predict which one a "best" rule would pick, so it would look like the talent
+ * chose at random. The last thing that landed is the thing they just watched
+ * land. `effectsOn` returns them in application order, so this is its tail.
+ */
+export type StatusCure = (target: EffectActor, status: EffectStatus) => string | null;
+
+export function statusCurer(state: EffectState, rng: Rng, ctx: EffectCtx = NO_CTX): StatusCure {
+  return (target, status) => {
+    const held = effectsOn(state, target.id);
+    for (let i = held.length - 1; i >= 0; i -= 1) {
+      const instance = held[i];
+      if (instance === undefined) continue;
+      const def = effectDef(state, instance.effectId);
+      if (def === undefined || def.status !== status) continue;
+      // `removeEffect` runs the effect's own `onRemove`, which is what puts back
+      // whatever it took away — so a cure goes through it rather than deleting
+      // the row, exactly as an expiry does.
+      if (!removeEffect(state, target, instance.effectId, rng, ctx)) continue;
+      return def.displayName;
+    }
+    return null;
+  };
+}
+
+/**
  * Put `count` of an actor's ready talents on a 1-turn cooldown.
  *
  * physical.lua:495-504 — STUNNED's talent lockout, and the reason its comment

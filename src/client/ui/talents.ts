@@ -203,8 +203,21 @@ const CAT_PAD = 7;
 const CAT_H = CAT_HEAD_H + ICON_PX + RANK_H + CAT_PAD;
 /** Between the two columns of categories. */
 const COL_GAP = 14;
-/** How many icons a strip is sized for. ToME's categories hold five. */
-const CELLS_PER_CAT = 5;
+/**
+ * How many icons a strip is sized for.
+ *
+ * ═══ FIVE, THEN SIX, AND THE GRID DOES NOT DISCOVER THIS FOR ITSELF ═══
+ * ToME's categories hold five and this held five to match. The strip is drawn by
+ * SLICING — `row.talents[n]` for n < this number — so a category with more than
+ * this many talents loses the extras SILENTLY: they type-check, register, reach
+ * the wire and cost a point to buy, and never appear.
+ *
+ * `test/server/talent-trees.test.ts` asserts every tree holds exactly this many
+ * for that reason, and it is what caught the sixth active landing in each tree.
+ * Six columns is 212 pixels, so two of them plus `COL_GAP` and the insets is 454
+ * against a `PANEL_W` of 480 — it fits, and a seventh would not.
+ */
+const CELLS_PER_CAT = 6;
 /** One column of categories. */
 const COL_W = CELLS_PER_CAT * ICON_PX + (CELLS_PER_CAT - 1) * CELL_GAP;
 

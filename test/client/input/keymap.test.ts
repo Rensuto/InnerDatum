@@ -191,11 +191,13 @@ describe('the action registry', () => {
     expect(ACTIONS.map((action) => action.order)).toEqual(ACTIONS.map((_, index) => index + 1));
   });
 
-  it('names 29 actions, which is the count KEYBIND_MAX_ACTIONS was sized from', () => {
-    // src/shared/protocol.ts:2138-2142 justifies the wire cap with this exact
-    // enumeration. If the table outgrows the cap, a complete keymap starts
-    // getting refused as `bad_message` and nobody would guess why.
-    expect(ACTIONS).toHaveLength(29);
+  it('names 31 actions, and stays under the cap the wire was sized for', () => {
+    // src/shared/protocol.ts justifies the wire cap with an enumeration, and if
+    // the table outgrows it a complete keymap starts getting refused as
+    // `bad_message` with nobody able to guess why. THE SECOND ASSERTION IS THE
+    // ONE THAT MATTERS; the first is here so growing the table stays a
+    // deliberate act with a diff. 29 -> 31 when the bar gained slots 5 and 6.
+    expect(ACTIONS).toHaveLength(31);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 
@@ -372,13 +374,24 @@ describe('reset', () => {
 describe('a locked action refuses every write', () => {
   const LOCKED = ACTIONS.filter((action) => !action.rebindable).map((action) => action.id);
 
-  it('is exactly cancel and the four hotbar digits', () => {
+  it('is exactly cancel and the six hotbar digits', () => {
     // Escape because it is the command line's only exit and the escape menu's
     // opener, so freezing it keeps RESET ALL one press away whatever else the
     // player has done. The digits because src/client/ui/hotbar.ts:391 PAINTS
     // `${i + 1}` on each slot, and a rebound digit makes four on-screen buttons
     // lie with no art budget to redraw them.
-    expect(LOCKED).toEqual(['cancel', 'hotbar_1', 'hotbar_2', 'hotbar_3', 'hotbar_4']);
+    // Slots 5 and 6 are locked for the same reason 1-4 are: `ui/hotbar.ts`
+    // PAINTS the slot number on every square, so a rebound digit makes an
+    // on-screen button lie.
+    expect(LOCKED).toEqual([
+      'cancel',
+      'hotbar_1',
+      'hotbar_2',
+      'hotbar_3',
+      'hotbar_4',
+      'hotbar_5',
+      'hotbar_6',
+    ]);
   });
 
   for (const id of LOCKED) {
@@ -657,6 +670,9 @@ describe('a slot bound by code', () => {
     // by key and all four have worked since M3.
     const keymap = compileKeymap(ACTIONS, {});
     expect(keymap.slotByKey.get('1')).toBe(0);
-    expect(keymap.slotByCode.size).toBe(0);
+    // AND BOTH MAPS ARE NOW POPULATED FROM THE REAL TABLE. Slots 1-4 are bound
+    // by key and 5-6 by code, which is the pair this branch exists for.
+    expect(keymap.slotByCode.get('Digit5')).toBe(4);
+    expect(keymap.slotByCode.get('Digit6')).toBe(5);
   });
 });

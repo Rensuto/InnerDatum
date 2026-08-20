@@ -305,19 +305,19 @@ describe('cooldown conversion — TURNS, from two sources that are not', () => {
 });
 
 describe('the loadout cap — PLAN.md § 5', () => {
-  it('ships exactly three classes, four talents each, twelve in all', () => {
+  it('ships exactly three classes, six talents each, eighteen in all', () => {
     expect(CLASSES).toHaveLength(3);
-    for (const definition of CLASSES) expect(definition.loadout).toHaveLength(4);
-    expect(CLASSES.flatMap((c) => c.loadout)).toHaveLength(12);
+    for (const definition of CLASSES) expect(definition.loadout).toHaveLength(6);
+    expect(CLASSES.flatMap((c) => c.loadout)).toHaveLength(18);
   });
 
   it('gives every talent a distinct, R6-namespaced id', () => {
     const ids = CLASSES.flatMap((c) => c.loadout).map((t) => t.id);
-    expect(new Set(ids).size).toBe(12);
+    expect(new Set(ids).size).toBe(18);
     for (const id of ids) expect(id.startsWith('talent:')).toBe(true);
   });
 
-  it('registers all twelve, and the registry rejects a duplicate', () => {
+  it('registers all eighteen, and the registry rejects a duplicate', () => {
     const engine = createContentTalentEngine();
     // TWELVE ACTIVES AND THE PASSIVES. Counted from the content rather than as
     // a literal, so authoring a talent updates the expectation with the code
@@ -361,7 +361,7 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * assertion that still applies to it.
      */
     const everyTalent = f.engine.registry.all().filter((talent) => talent.onUse !== undefined);
-    expect(everyTalent).toHaveLength(12);
+    expect(everyTalent).toHaveLength(18);
 
     for (const talent of f.engine.registry.all()) {
       // OWNED BY EXACTLY ONE CLASS, actives and passives alike — a talent two

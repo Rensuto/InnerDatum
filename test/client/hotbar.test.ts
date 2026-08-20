@@ -131,7 +131,14 @@ function itemSlot(action: ItemSlotAction, over: Partial<HotbarSlot> = {}): Hotba
 const EMPTY_SLOT: HotbarSlot = { kind: HotbarSlotKind.Empty };
 
 /** A bar in the shape the wiring pass will build: four talents, then four item slots. */
-function eightSlots(items: readonly HotbarSlot[] = []): HotbarSlot[] {
+/**
+ * THE FIRST ITEM SLOT, DERIVED. It was the literal 4 until the bar grew to six
+ * talents, at which point a hard-coded 4 silently became a TALENT slot and the
+ * item-slot caption tests were asserting about the wrong square.
+ */
+const FIRST_ITEM = HOTBAR_TALENT_SLOTS;
+
+function barSlots(items: readonly HotbarSlot[] = []): HotbarSlot[] {
   const out: HotbarSlot[] = [];
   for (let i = 0; i < HOTBAR_TALENT_SLOTS; i += 1) {
     out.push(
@@ -153,7 +160,7 @@ function eightSlots(items: readonly HotbarSlot[] = []): HotbarSlot[] {
 }
 
 function view(over: Partial<HotbarView> = {}): HotbarView {
-  return { slots: eightSlots(), hovered: -1, armed: -1, ...over };
+  return { slots: barSlots(), hovered: -1, armed: -1, ...over };
 }
 
 function itemView(itemId: string): ItemView {
@@ -232,10 +239,12 @@ describe('geometry', () => {
     expect(SLOT_PX).toBe(44);
   });
 
-  it('fits all eight slots on the narrowest backbuffer this client can render', () => {
-    // 8*44 + 7*4 = 380 against the 640 floor render/canvas.ts:344 pins with
-    // DEFAULT_VIEWPORT.tilesW 20. 260 pixels of slack, up from 36.
-    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(380);
+  it('fits all ten slots on the narrowest backbuffer this client can render', () => {
+    // 10*44 + 9*4 = 476 against the 640 floor render/canvas.ts:344 pins with
+    // DEFAULT_VIEWPORT.tilesW 20. 164 pixels of slack — down from 260 when the
+    // bar was eight, and the reason `TALENTS_PER_CLASS` stopped at six rather
+    // than eight: twelve slots is 572 and the slack goes to 68.
+    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(476);
     expect(hotbarVisibleCount(HOTBAR_SLOTS, 640)).toBe(HOTBAR_SLOTS);
 
     const first = slotRect(0, HOTBAR_SLOTS, 640, 480);
@@ -278,8 +287,14 @@ describe('geometry', () => {
     const cx = r.x + Math.floor(r.w / 2);
     const cy = r.y + Math.floor(r.h / 2);
     expect(hotbarSlotAt(cx, cy, HOTBAR_SLOTS, 1280, 480)).toBe(6);
-    // The same point, asked with the stale four: not on the bar at all.
-    expect(hotbarSlotAt(cx, cy, HOTBAR_TALENT_SLOTS, 1280, 480)).toBe(-1);
+    // ═══ THE SAME POINT, ASKED WITH THE STALE TALENT COUNT: A DIFFERENT SLOT ═══
+    // It used to answer -1 — off the bar entirely — because six slots of eight
+    // did not reach that far. With ten slots and six talents it answers a real
+    // but WRONG index, which is the worse failure of the two and the one this
+    // note is about: a click that lands on nothing is visible, and a click that
+    // fires the wrong talent is not. The assertion is therefore "not 6" rather
+    // than any particular number.
+    expect(hotbarSlotAt(cx, cy, HOTBAR_TALENT_SLOTS, 1280, 480)).not.toBe(6);
   });
 
   it('splits the row four and four, and says which half an index is in', () => {
@@ -527,7 +542,7 @@ describe('drawing', () => {
     // An unbalanced restore leaks a font, an alignment or an alpha into every
     // painter later in the frame, and it presents as a bug in whichever surface
     // happens to be drawn next (ui/turncards.ts:786-790 records the same trap).
-    const { calls } = paint(view({ slots: eightSlots([itemSlot(ItemSlotAction.Equip)]) }));
+    const { calls } = paint(view({ slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }));
     expect(calls.filter((c) => c.startsWith('save(')).length).toBe(
       calls.filter((c) => c.startsWith('restore(')).length,
     );
@@ -571,7 +586,7 @@ describe('drawing', () => {
   });
 
   it('draws EQUIP, REMOVE and GONE, and hatches only the GONE slot', () => {
-    const equip = paint(view({ slots: eightSlots([itemSlot(ItemSlotAction.Equip)]) }));
+    const equip = paint(view({ slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }));
     expect(equip.texts).toContain('EQUIP');
     // GONE is hatched by `drawFrame` with strokes rather than by a disabled
     // PNG, so the distinction is no longer visible as a sprite id. What still
@@ -581,11 +596,11 @@ describe('drawing', () => {
     // The item's own icon, which the server named. Never spelled here.
     expect(equip.asked).toContain('item_watchmans_coat');
 
-    const remove = paint(view({ slots: eightSlots([itemSlot(ItemSlotAction.Unequip)]) }));
+    const remove = paint(view({ slots: barSlots([itemSlot(ItemSlotAction.Unequip)]) }));
     expect(remove.texts).toContain('REMOVE');
     expect(remove.strokes).toBe(0);
 
-    const gone = paint(view({ slots: eightSlots([itemSlot(ItemSlotAction.Gone)]) }));
+    const gone = paint(view({ slots: barSlots([itemSlot(ItemSlotAction.Gone)]) }));
     expect(gone.texts).toContain('GONE');
     // The hatch: a run of diagonal strokes across the well, and the only state
     // that draws any. This is the colour-independent channel that says "you
@@ -593,7 +608,7 @@ describe('drawing', () => {
     expect(gone.strokes).toBeGreaterThan(0);
   });
 
-  it('draws the talent icons the manifest actually holds, and a digit only on keys 1-4', () => {
+  it('draws the talent icons the manifest actually holds, and a digit only on keys 1-6', () => {
     // ═══ THE INVISIBLE-PREREQUISITE CHECK ═══
     // `icon_active_*` is what every talent in src/server/talents/ declares and
     // what main.ts's loader prefix list now carries. The bar drew "AF AV B MW"
@@ -606,7 +621,7 @@ describe('drawing', () => {
     // Exactly four digits, and they are 1..4. No digit on an item slot — those
     // keys are Numpad5-9 and they walk you north (input/keymap.ts:1129-1133).
     const digits = texts.filter((t) => /^[0-9]$/.test(t));
-    expect(digits).toEqual(['1', '2', '3', '4']);
+    expect(digits).toEqual(['1', '2', '3', '4', '5', '6']);
   });
 
   it('never names a sprite id outside the manifest families that already exist', () => {
@@ -617,11 +632,11 @@ describe('drawing', () => {
       view(),
       view({ hovered: 5 }),
       view({ drag: { kind: DragKind.Carried, itemId: 'item_boots' } }),
-      view({ slots: eightSlots([itemSlot(ItemSlotAction.Equip)]) }),
-      view({ slots: eightSlots([itemSlot(ItemSlotAction.Unequip)]) }),
-      view({ slots: eightSlots([itemSlot(ItemSlotAction.Gone)]) }),
-      view({ hovered: 1, armed: 2, slots: eightSlots() }),
-      view({ slots: eightSlots().map((s, i) => (i === 0 ? talentSlot({ cooldown: 3 }) : s)) }),
+      view({ slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }),
+      view({ slots: barSlots([itemSlot(ItemSlotAction.Unequip)]) }),
+      view({ slots: barSlots([itemSlot(ItemSlotAction.Gone)]) }),
+      view({ hovered: 1, armed: 2, slots: barSlots() }),
+      view({ slots: barSlots().map((s, i) => (i === 0 ? talentSlot({ cooldown: 3 }) : s)) }),
     ];
     for (const state of states) {
       const { asked } = paint(state);
@@ -642,9 +657,9 @@ describe('drawing', () => {
     const states: readonly (readonly [string, HotbarView, string])[] = [
       ['empty', view(), 'ITEM'],
       ['empty+drag', view({ drag: { kind: DragKind.Carried, itemId: 'item_boots' } }), 'BIND'],
-      ['equip', view({ slots: eightSlots([itemSlot(ItemSlotAction.Equip)]) }), 'EQUIP'],
-      ['remove', view({ slots: eightSlots([itemSlot(ItemSlotAction.Unequip)]) }), 'REMOVE'],
-      ['gone', view({ slots: eightSlots([itemSlot(ItemSlotAction.Gone)]) }), 'GONE'],
+      ['equip', view({ slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }), 'EQUIP'],
+      ['remove', view({ slots: barSlots([itemSlot(ItemSlotAction.Unequip)]) }), 'REMOVE'],
+      ['gone', view({ slots: barSlots([itemSlot(ItemSlotAction.Gone)]) }), 'GONE'],
     ];
     for (const [label, state, word] of states) {
       const { calls, texts } = paint(state, 1280, bare);
@@ -662,7 +677,7 @@ describe('drawing', () => {
     }
     // The bound item's INITIALS, so eight boxes are still distinguishable.
     const { texts } = paint(
-      view({ slots: eightSlots([itemSlot(ItemSlotAction.Equip)]) }),
+      view({ slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }),
       1280,
       bare,
     );
@@ -672,20 +687,22 @@ describe('drawing', () => {
   it('says what the pointer is on, per kind, and says nothing when it is on nothing', () => {
     expect(paint(view()).texts.some((t) => t.includes('click to'))).toBe(false);
 
-    const onEmpty = paint(view({ hovered: 4 }));
+    const onEmpty = paint(view({ hovered: FIRST_ITEM }));
     expect(onEmpty.texts.some((t) => t.includes('drag an item here'))).toBe(true);
 
     const onEquip = paint(
-      view({ hovered: 4, slots: eightSlots([itemSlot(ItemSlotAction.Equip)]) }),
+      view({ hovered: FIRST_ITEM, slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }),
     );
     expect(onEquip.texts.some((t) => t.includes("Watchman's Coat — click to equip"))).toBe(true);
 
     const onWorn = paint(
-      view({ hovered: 4, slots: eightSlots([itemSlot(ItemSlotAction.Unequip)]) }),
+      view({ hovered: FIRST_ITEM, slots: barSlots([itemSlot(ItemSlotAction.Unequip)]) }),
     );
     expect(onWorn.texts.some((t) => t.includes('click to remove'))).toBe(true);
 
-    const onGone = paint(view({ hovered: 4, slots: eightSlots([itemSlot(ItemSlotAction.Gone)]) }));
+    const onGone = paint(
+      view({ hovered: FIRST_ITEM, slots: barSlots([itemSlot(ItemSlotAction.Gone)]) }),
+    );
     expect(onGone.texts.some((t) => t.includes('you no longer have it'))).toBe(true);
 
     const onTalent = paint(view({ hovered: 1 }));
@@ -729,22 +746,26 @@ describe('a row that does not fit', () => {
     return { calls, texts };
   }
 
-  it('drops to the four TALENT slots — the half with keys — and says so in the strip', () => {
-    // WIDTHS RESCALED FOR THE NINE-SLICE ROW. Eight slots are 380 wide now and
-    // four are 188, so the band that shows only the talents runs 188..379 —
-    // it was 604 and 300 when a slot was 72. Stated as arithmetic on the real
-    // constants so the next size change moves it automatically.
+  it('drops to the six TALENT slots — the half with keys — and says so in the strip', () => {
+    // STATED AS ARITHMETIC ON THE REAL CONSTANTS, which is what let this test
+    // survive the bar going from eight slots to ten without a number moving:
+    // ten slots are 476 wide and the six talents are 284, so the band that
+    // shows only the talents runs 284..475.
     expect(hotbarVisibleCount(HOTBAR_SLOTS, hotbarRowWidth(HOTBAR_SLOTS) - 1)).toBe(
       HOTBAR_TALENT_SLOTS,
     );
 
     const { texts } = paintAt(hotbarRowWidth(HOTBAR_SLOTS) - 1);
-    // The four talent digits are still drawn; the item captions are gone.
-    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(['1', '2', '3', '4']);
+    // The six talent digits are still drawn; the item captions are gone.
+    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(['1', '2', '3', '4', '5', '6']);
     expect(texts).not.toContain('ITEM');
     // AND THE SENTENCE. The old painter had a bare `continue` here: four drop
     // targets simply were not painted and nothing anywhere said why.
-    expect(texts.some((t) => t.includes('4 of 8 slots'))).toBe(true);
+    expect(
+      texts.some((t) =>
+        t.includes(`${String(HOTBAR_TALENT_SLOTS)} of ${String(HOTBAR_SLOTS)} slots`),
+      ),
+    ).toBe(true);
     // The refusal names the width it needs, whatever that width currently is.
     expect(texts.some((t) => t.includes(`${String(hotbarRowWidth(HOTBAR_SLOTS))}px`))).toBe(true);
   });
@@ -808,7 +829,7 @@ describe('hotbarTipAt', () => {
   const W = 640;
   const H = 320;
 
-  const barView = (): HotbarView => ({ slots: eightSlots(), hovered: -1, armed: -1 });
+  const barView = (): HotbarView => ({ slots: barSlots(), hovered: -1, armed: -1 });
 
   it('names the talent under the pointer and what it costs', () => {
     const view = barView();

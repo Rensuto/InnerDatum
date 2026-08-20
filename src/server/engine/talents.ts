@@ -130,7 +130,7 @@ import { combatDamage } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
-import type { StatusApply } from './effects.ts';
+import type { StatusApply, StatusCure } from './effects.ts';
 import type { World } from '../world/world.ts';
 import type { CombatSheet } from './combat.ts';
 
@@ -1046,6 +1046,21 @@ export type TalentCallCtx = {
    * built before the status table existed expects.
    */
   readonly status?: StatusApply;
+  /**
+   * THE SAME DOOR, OPENING OUTWARD. See `status` above for the whole argument
+   * about why this is a closure — it is unchanged, and a cure needs the effect
+   * catalogue exactly as much as an application does.
+   *
+   * It answers the DISPLAY NAME of what it took off, or null when the target had
+   * nothing of that status. Null is a refusal at the talent rather than a quiet
+   * success, so a cure aimed at a healthy ally refunds instead of spending the
+   * reagent on nothing.
+   *
+   * OPTIONAL, like every seam in this file: absent is a fixture with no status
+   * table, and a talent that wants a cure gets the same null it would get from
+   * an ally who was fine.
+   */
+  readonly cure?: StatusCure;
 };
 
 /**

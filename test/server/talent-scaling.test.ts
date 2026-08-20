@@ -22,7 +22,7 @@ import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { scriptedRng } from '../helpers/scripted-rng.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
-import { statusApplier } from '../../src/server/engine/effects.ts';
+import { statusApplier, statusCurer } from '../../src/server/engine/effects.ts';
 
 /** One `ctx.status` call, as the talent authored it. See `fixture`. */
 type StatusRequest = {
@@ -126,6 +126,8 @@ type Fixture = {
    * why this file reads the request and not the outcome.
    */
   readonly statusCalls: readonly StatusRequest[];
+  /** Display names of everything a cure actually took off, in order. */
+  readonly cureCalls: readonly string[];
   add(definition: ClassDef, id: string, x: number, y: number): TalentActor;
   addMonster(id: string, x: number, y: number, hp?: number): TalentActor;
   /** Buy this talent up to `level` — the spend path's effect, without the path. */
@@ -192,6 +194,14 @@ function fixture(): Fixture {
   const effects = createMvpEffectState();
   const applier = statusApplier(effects, createRng('talent-scaling.test:status'));
   const statusCalls: StatusRequest[] = [];
+  /**
+   * THE CURE SEAM, RECORDED THE SAME WAY AND FOR THE SAME REASON. Field
+   * Dressing scales by BREADTH -- how many conditions come off -- so the number
+   * under test is a count of calls that actually removed something, and the real
+   * table underneath is what decides whether one did.
+   */
+  const curer = statusCurer(effects, createRng('talent-scaling.test:cure'));
+  const cureCalls: string[] = [];
 
   const ctx: TalentCtx = {
     engine,
@@ -202,6 +212,11 @@ function fixture(): Fixture {
       statusCalls.push({ targetId: target.id, effectId, duration });
       return applier(target, effectId, duration, params);
     },
+    cure: (target, status) => {
+      const removed = curer(target, status);
+      if (removed !== null) cureCalls.push(removed);
+      return removed;
+    },
   };
 
   return {
@@ -209,6 +224,7 @@ function fixture(): Fixture {
     engine,
     ctx,
     statusCalls,
+    cureCalls,
     add: (definition, id, x, y) => {
       const actor: TalentActor = {
         id,
@@ -331,6 +347,114 @@ const CASES: readonly ScalingCase[] = [
   singleTargetCase('snipers_mark', INSPECTOR, 'damage dealt', '165%', 4),
   singleTargetCase('ashwick_flare', ALCHEMIST, 'damage dealt', '130%', 4),
   singleTargetCase('backdraft', ALCHEMIST, 'damage dealt', '130%', 2),
+  singleTargetCase('shin_crack', WATCHMAN, 'damage dealt', '80%', 1),
+  singleTargetCase('pistol_whip', INSPECTOR, 'damage dealt', '50%', 1),
+
+  {
+    /**
+     * THE SWEEP. One body adjacent, so the number under test is PER-TARGET
+     * damage rather than a headcount -- a case with three husks in the ring
+     * would grow when the multiplier did and also when it did not, because
+     * three times a flat number rises too.
+     */
+    bare: 'truncheon_sweep',
+    moves: 'damage dealt per adjacent body',
+    authored: '60%',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5);
+      f.addMonster('husk', 6, 5);
+      f.setLevel('caster', 'truncheon_sweep', level);
+      f.refill('caster');
+      // Self-shaped: the target is the caster's own tile, which is what the
+      // client sends for a talent it never opens an aim for.
+      const result = useTalent(
+        f.engine,
+        watchman,
+        talentId('truncheon_sweep'),
+        { x: 5, y: 5 },
+        f.ctx,
+      );
+      return { observed: damageOf(result), result, fixture: f };
+    },
+  },
+  {
+    /** The ranged ball. One body in it, for the same reason as the sweep. */
+    bare: 'scattershot',
+    moves: 'damage dealt per target',
+    authored: '50%',
+    cast: (level) => {
+      const f = fixture();
+      const inspector = f.add(INSPECTOR, 'caster', 5, 5);
+      const husk = f.addMonster('husk', 9, 5);
+      f.setLevel('caster', 'scattershot', level);
+      f.refill('caster');
+      const result = useTalent(
+        f.engine,
+        inspector,
+        talentId('scattershot'),
+        { x: husk.x, y: husk.y },
+        f.ctx,
+      );
+      return { observed: damageOf(result), result, fixture: f };
+    },
+  },
+  {
+    /**
+     * NO DAMAGE AT ALL, BY DESIGN — so the curve is the stun's DURATION, read
+     * off the authored request rather than off the effect table. `statusCalls`
+     * records what the talent ASKED FOR before any save touched it, which is
+     * exactly the scaling under test: whether the victim shrugged it off is the
+     * save's business and would make this a coin flip.
+     */
+    bare: 'concussion_flask',
+    moves: 'turns of stun',
+    authored: '2 turns',
+    cast: (level) => {
+      const f = fixture();
+      const alchemist = f.add(ALCHEMIST, 'caster', 5, 5);
+      const husk = f.addMonster('husk', 9, 5);
+      f.setLevel('caster', 'concussion_flask', level);
+      f.refill('caster');
+      const result = useTalent(
+        f.engine,
+        alchemist,
+        talentId('concussion_flask'),
+        { x: husk.x, y: husk.y, actorId: husk.id },
+        f.ctx,
+      );
+      return { observed: f.statusCalls[0]?.duration ?? 0, result, fixture: f };
+    },
+  },
+  {
+    /**
+     * THE CURE, WHOSE CURVE IS BREADTH. The ally is given all three of
+     * `MVP_EFFECTS` so a rank-5 dressing has three things to take and is not
+     * silently capped by the fixture rather than by the talent.
+     */
+    bare: 'field_dressing',
+    moves: 'conditions cleared',
+    authored: '1 most recent harmful condition',
+    cast: (level) => {
+      const f = fixture();
+      const alchemist = f.add(ALCHEMIST, 'caster', 5, 5);
+      const ally = f.add(WATCHMAN, 'sam', 6, 5);
+      for (const id of [EffectId.Stunned, EffectId.Bleeding, EffectId.Slowed]) {
+        f.ctx.status?.(ally, id, 5, {});
+      }
+      f.setLevel('caster', 'field_dressing', level);
+      f.refill('caster');
+      const before = f.cureCalls.length;
+      const result = useTalent(
+        f.engine,
+        alchemist,
+        talentId('field_dressing'),
+        { x: ally.x, y: ally.y, actorId: ally.id },
+        f.ctx,
+      );
+      return { observed: f.cureCalls.length - before, result, fixture: f };
+    },
+  },
 
   {
     // A Self shape: the curtain falls over the worst-off adjacent ally and the
@@ -448,7 +572,7 @@ const CASES: readonly ScalingCase[] = [
 ];
 
 describe('every talent level moves a number — the honesty gate', () => {
-  it('covers all twelve, with no talent quietly left off the table', () => {
+  it('covers all eighteen, with no talent quietly left off the table', () => {
     // Iterated from the REGISTRY, so a talent that exists and is not measured
     // here fails rather than being invisible to a table somebody forgot to
     // extend. This is the check that makes the rest of the file complete.
@@ -465,7 +589,7 @@ describe('every talent level moves a number — the honesty gate', () => {
       .all()
       .filter((talent) => talent.onUse !== undefined)
       .map((talent) => talent.id);
-    expect(registered).toHaveLength(12);
+    expect(registered).toHaveLength(18);
     expect([...CASES.map((entry) => talentId(entry.bare))].sort()).toEqual([...registered].sort());
   });
 

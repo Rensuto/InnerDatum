@@ -85,15 +85,21 @@ import { seenWorse } from '../talents/seen_worse.ts';
 import { softPlaces } from '../talents/soft_places.ts';
 import { steadyHands } from '../talents/steady_hands.ts';
 import { theLongShift } from '../talents/the_long_shift.ts';
+import { scattershot } from '../talents/scattershot.ts';
+import { pistolWhip } from '../talents/pistol_whip.ts';
 import { calledShot } from '../talents/called_shot.ts';
 import { powderDiscipline } from '../talents/powder_discipline.ts';
 import { boltHole } from '../talents/bolt_hole.ts';
 import { coldReading } from '../talents/cold_reading.ts';
+import { concussionFlask } from '../talents/concussion_flask.ts';
+import { fieldDressing } from '../talents/field_dressing.ts';
 import { stableCompound } from '../talents/stable_compound.ts';
 import { cutWithChalk } from '../talents/cut_with_chalk.ts';
 import { longHours } from '../talents/long_hours.ts';
 import { bedsideManner } from '../talents/bedside_manner.ts';
 import { measuredDoses } from '../talents/measured_doses.ts';
+import { truncheonSweep } from '../talents/truncheon_sweep.ts';
+import { shinCrack } from '../talents/shin_crack.ts';
 import { weightOfOffice } from '../talents/weight_of_office.ts';
 import { paradeGround } from '../talents/parade_ground.ts';
 import { standingOrders } from '../talents/standing_orders.ts';
@@ -244,7 +250,7 @@ export const WATCHMAN: ClassDef = {
     minRange: 0,
     damageType: DamageType.Physical,
   },
-  loadout: [crudeBlow, wardRush, ironCurtain, lockdown],
+  loadout: [crudeBlow, wardRush, truncheonSweep, ironCurtain, lockdown, shinCrack],
   passives: [standingOrders, softPlaces, seenWorse, theLongShift, weightOfOffice, paradeGround],
 };
 
@@ -297,7 +303,7 @@ export const INSPECTOR: ClassDef = {
     minRange: INSPECTOR_MIN_RANGE,
     damageType: DamageType.Physical,
   },
-  loadout: [revolverShot, snipersMark, fogStep, sigil],
+  loadout: [revolverShot, snipersMark, scattershot, fogStep, sigil, pistolWhip],
   passives: [coldReading, steadyHands, contingencies, calledShot, powderDiscipline, boltHole],
 };
 
@@ -357,7 +363,7 @@ export const ALCHEMIST: ClassDef = {
     minRange: 0,
     damageType: DamageType.Fire,
   },
-  loadout: [ashwickFlare, alchemicVial, backdraft, mendWounds],
+  loadout: [ashwickFlare, alchemicVial, concussionFlask, backdraft, mendWounds, fieldDressing],
   passives: [measuredDoses, scorchedCoat, stableCompound, cutWithChalk, longHours, bedsideManner],
 };
 
@@ -893,21 +899,45 @@ export function createTalentBook(
  * `readonly` for the same reason, and `TalentSheet.points` is keyed by an id
  * that must already be in it.
  *
- * So this reads "four at birth" rather than "four forever", and it still says
- * the thing worth saying: a fifth button added "just for this one idea" is how
- * a 12-talent MVP becomes a 40-talent one over three weekends, so the cap is
+ * So this reads "six at birth" rather than "six forever", and it still says the
+ * thing worth saying: a seventh button added "just for this one idea" is how a
+ * 12-talent MVP becomes a 40-talent one over three weekends, so the cap is
  * enforced by the type system rather than by remembering it. Widening this line
  * is a deliberate act with a diff, which is exactly what it should be.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FOUR -> SIX, AND WHAT HAD TO MOVE WITH IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The number here is not free-standing: `client/main.ts` appends the item slots
+ * to the bar ONLY when the loadout is exactly `HOTBAR_TALENT_SLOTS` long, so
+ * this constant and that one are one decision written in two files and they move
+ * together or the item slots vanish. `hotbar_5`/`hotbar_6` land in the same diff
+ * for the same reason — two buttons with no key is a worse bar than four with
+ * one each.
+ *
+ * WHY SIX AND NOT EIGHT. Every class had a hole a player could feel: no answer
+ * to being surrounded, and — for the two that are not the Watchman — nothing to
+ * do about a status once it landed. Six closes those. Eight would be two more
+ * buttons looking for a reason, and `hotbarRowWidth(10)` is 476px against a
+ * 640-wide floor, which still leaves room to go further when there is something
+ * worth putting there.
  */
-const TALENTS_PER_CLASS = 4;
-type FourTalents = readonly [Talent, Talent, Talent, Talent];
-const _loadoutArityCheck: readonly FourTalents[] = CLASSES.map((definition) => {
-  const [a, b, c, d] = definition.loadout;
-  if (a === undefined || b === undefined || c === undefined || d === undefined) {
+const TALENTS_PER_CLASS = 6;
+type SixTalents = readonly [Talent, Talent, Talent, Talent, Talent, Talent];
+const _loadoutArityCheck: readonly SixTalents[] = CLASSES.map((definition) => {
+  const [a, b, c, d, e, f] = definition.loadout;
+  if (
+    a === undefined ||
+    b === undefined ||
+    c === undefined ||
+    d === undefined ||
+    e === undefined ||
+    f === undefined
+  ) {
     throw new Error(`classes: ${definition.id} needs ${TALENTS_PER_CLASS} talents`);
   }
   if (definition.loadout.length !== TALENTS_PER_CLASS) {
     throw new Error(`classes: ${definition.id} has ${definition.loadout.length} talents`);
   }
-  return [a, b, c, d];
+  return [a, b, c, d, e, f];
 });

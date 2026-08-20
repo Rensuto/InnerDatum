@@ -750,14 +750,14 @@ describe('projectClassOptions', () => {
     expect(new Set(portraits).size).toBe(CLASSES.length);
   });
 
-  it('shows exactly the four hotbar buttons, in hotbar order', () => {
+  it('shows exactly the six hotbar buttons, in hotbar order', () => {
     // Slot 1 is `talents[0]` for the whole session, and the card must advertise
     // the same four in the same order the hotbar will draw them — the icons on
     // the card are the icons on the buttons because both come from
     // `loadoutViewFor`.
     for (const option of projectClassOptions().options) {
       const definition = CLASSES.find((c) => c.id === option.id);
-      expect(option.talents).toHaveLength(4);
+      expect(option.talents).toHaveLength(6);
       expect(option.talents.map((t) => t.id)).toEqual(definition?.loadout.map((t) => t.id));
       expect(option.talents.map((t) => t.name)).toEqual(definition?.loadout.map((t) => t.name));
       expect(option.talents.map((t) => t.icon)).toEqual(definition?.loadout.map((t) => t.iconId));

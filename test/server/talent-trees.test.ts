@@ -100,7 +100,9 @@ describe('every talent belongs to a tree that exists', () => {
  * wave of passives filled them.
  */
 describe('the tree grid is full', () => {
-  const CELLS_PER_CAT = 5;
+  // Mirrors `ui/talents.ts`. Raised 5 -> 6 when a sixth active landed in every
+  // tree; the grid slices at this number and drops the rest without a word.
+  const CELLS_PER_CAT = 6;
 
   /** Every talent a class ships, actives and passives together, by tree. */
   function byTree(): Map<string, string[]> {
@@ -115,7 +117,7 @@ describe('the tree grid is full', () => {
     return out;
   }
 
-  it('gives every tree exactly five talents', () => {
+  it('gives every tree exactly six talents', () => {
     const counts = byTree();
     const wrong: string[] = [];
     for (const tree of TALENT_TREES) {

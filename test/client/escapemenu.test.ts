@@ -429,7 +429,7 @@ describe('the keys screen', () => {
     expect(north?.fixed).toBe('Up / Num8');
   });
 
-  it('marks the five locked actions with a word AND a reason', () => {
+  it('marks the seven locked actions with a word AND a reason', () => {
     const locked = actionRows(keysRows()).filter((row) => row.locked);
     expect(locked.map((row) => row.actionId)).toEqual([
       'cancel',
@@ -437,6 +437,8 @@ describe('the keys screen', () => {
       'hotbar_2',
       'hotbar_3',
       'hotbar_4',
+      'hotbar_5',
+      'hotbar_6',
     ]);
     for (const row of locked) {
       expect(row.reason, row.actionId).not.toBeNull();
@@ -918,7 +920,9 @@ describe('drawing', () => {
     expect(texts).toContain('RESET ALL');
     expect(texts).toContain('BACK');
     // WORDS AND A COUNT, never a bar (ui/caselog.ts:464-478).
-    expect(texts.some((t) => /\d+–\d+ of 29/.test(t))).toBe(true);
+    // 29 -> 31 when the bar gained slots 5 and 6. The COUNT is the assertion; the
+    // pager reads it off `ACTIONS`, so it follows the table by construction.
+    expect(texts.some((t) => /\d+–\d+ of 31/.test(t))).toBe(true);
     // The permanent floor is on the row, so a rebind cannot look like a break.
     expect(texts.some((t) => t.includes('Up / Num8'))).toBe(true);
   });

@@ -39,8 +39,9 @@ import {
   createEffectState,
   registerEffect,
   statusApplier,
+  statusCurer,
 } from './engine/effects.ts';
-import type { StatusApply } from './engine/effects.ts';
+import type { StatusApply, StatusCure } from './engine/effects.ts';
 import type { BudgetPenalty } from './engine/talents.ts';
 import { BLEEDING, SLOWED, STUNNED } from './content/effects.ts';
 import {
@@ -157,6 +158,14 @@ export function talentRuntimeFor(
    * adapter must not decide what an effect means, only forward the answer.
    */
   penaltyFor?: (actorId: string) => BudgetPenalty,
+  /**
+   * THE CURE DOOR — `statusCurer`, the twin of `status` two parameters up. Field
+   * Dressing calls it; the closure argument is identical and is written out over
+   * `TalentCallCtx.cure`. Optional for the same reason: the fixtures that build
+   * a runtime by hand keep compiling, and a talent that wants a cure gets the
+   * same null an unafflicted ally would give it.
+   */
+  cure?: StatusCure,
 ): TalentRuntime {
   return {
     use: (actor: EngineActor, id: string, target: TileXY | undefined): TalentResolutionResult => {
@@ -174,7 +183,13 @@ export function talentRuntimeFor(
         actor,
         id,
         { x: at.x, y: at.y, ...(standing === undefined ? {} : { actorId: standing.id }) },
-        { engine: talents, world, rng: world.rng, ...(status === undefined ? {} : { status }) },
+        {
+          engine: talents,
+          world,
+          rng: world.rng,
+          ...(status === undefined ? {} : { status }),
+          ...(cure === undefined ? {} : { cure }),
+        },
       );
       if (!result.ok) return { ok: false, reason: result.reason };
 
@@ -631,6 +646,8 @@ export function buildServer() {
    * delve drawing from that delve's stream.
    */
   const statusFor = (forWorld: World): StatusApply => statusApplier(effects, forWorld.rng);
+  /** The same per-realm rng, for the same reason. See `statusFor` above. */
+  const cureFor = (forWorld: World): StatusCure => statusCurer(effects, forWorld.rng);
 
   const engineFor = (forWorld: World): ReapingTurnEngine =>
     createTurnEngine({
@@ -638,8 +655,12 @@ export function buildServer() {
       downed,
       parties,
       talents: createTalentBook(talentEngine, forWorld),
-      talentRuntime: talentRuntimeFor(talentEngine, forWorld, statusFor(forWorld), (actorId) =>
-        budgetPenalty(effects, actorId),
+      talentRuntime: talentRuntimeFor(
+        talentEngine,
+        forWorld,
+        statusFor(forWorld),
+        (actorId) => budgetPenalty(effects, actorId),
+        cureFor(forWorld),
       ),
       // THE OTHER HALF OF THE STATUS SEAM. `turn-engine.ts` builds
       // `PumpCtx.statusPass` from this, the world's rng and the talent book —
