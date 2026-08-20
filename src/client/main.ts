@@ -3020,6 +3020,54 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, spriteSource: SpriteSource
  */
 const paintHud: HudPainter = (ctx, width, height) => {
   if (sprites === null) return;
+  const layout = hudLayout(width, height);
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   THE SELECT SCREEN IS THE WHOLE HUD, OR IT IS NOT A SCREEN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THIS USED TO BE THE LAST BLOCK IN THIS FUNCTION, drawn on top of everything
+   * else and reasoned about as a panel: *"LAST, SO IT IS ON TOP OF EVERYTHING
+   * INCLUDING THE CLASS PICKER"*. That ordering was right and the LAYER was
+   * wrong. Reported with a screenshot: the character list over a lit moor with
+   * the party card, the case log, the minimap and a full hotbar drawn around it.
+   *
+   * ═══ WHY CLEARING THE STATE WAS NOT ENOUGH ON ITS OWN ═══
+   * `case 'roster'` now runs `forgetTheWorld` and empties the board, which does
+   * silence the world pass (render/canvas.ts paints tiles, actors, loot, the
+   * sky and the sweep only `if (level !== null)`) and the minimap with it,
+   * since that reads this file's own `level`.
+   *
+   * IT DOES NOT SILENCE THE HUD. Every layer below is gated on its OWN
+   * independent nullable — there is no screen state in this file, there are
+   * nine unrelated variables — so the hotbar, the resource bar, the xp bar, the
+   * turn bar and the prose lines would each have to be taught about the roster
+   * separately. Twenty-two gates that must all agree is twenty-two chances for
+   * the next one to be forgotten, and the failure is silent.
+   *
+   * ONE GATE INSTEAD. A roster means this client HAS NO BODY — every surface
+   * below is a fact about a character that does not exist right now — so the
+   * honest structure is that the menu replaces the HUD rather than covering it.
+   * It also keeps this file's stated invariant *"HIT-TEST ORDER MIRRORS PAINT
+   * ORDER"* trivially true, because the mirror is now a single gate on each side.
+   */
+  if (layout.roster !== null && roster !== null) {
+    drawRoster({
+      ctx,
+      sprites,
+      rect: layout.roster,
+      characters: roster.characters,
+      cases: roster.cases,
+      canCreate: roster.canCreate,
+      max: roster.max,
+      selected: selectedCharacter,
+      hovered: rosterHovered,
+      nowMs: Date.now(),
+    });
+    return;
+  }
+
   const view = turnView();
   // THE TOP HUD, IN TWO PIECES AND ONE MEASUREMENT. The banner is the sentence
   // and the playfield frame; the cards are the strip of faces under it, drawn
@@ -3027,7 +3075,6 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // stack against, so nothing below can overlap the strip by carrying its own
   // copy of how tall it is.
   drawTurnBar({ ctx, view, width, height });
-  const layout = hudLayout(width, height);
   const hudTop = layout.hudTop;
   drawTurnCards({ ctx, sprites, view, width, y: TURN_BAR_H });
 
@@ -3643,25 +3690,6 @@ const paintHud: HudPainter = (ctx, width, height) => {
       options: classOptions,
       selected: selectedClass,
       hovered: pickerHovered,
-    });
-  }
-
-  // LAST, SO IT IS ON TOP OF EVERYTHING INCLUDING THE CLASS PICKER. The two are
-  // never up together today — a roster means no body and the picker needs one —
-  // but ordering that depends on a state machine staying true is ordering that
-  // breaks quietly. This one is a fact about the paint.
-  if (layout.roster !== null && roster !== null) {
-    drawRoster({
-      ctx,
-      sprites,
-      rect: layout.roster,
-      characters: roster.characters,
-      cases: roster.cases,
-      canCreate: roster.canCreate,
-      max: roster.max,
-      selected: selectedCharacter,
-      hovered: rosterHovered,
-      nowMs: Date.now(),
     });
   }
 };
@@ -8928,6 +8956,122 @@ async function boot(): Promise<void> {
  * to `ServerMsg` breaks this switch at lint time instead of being silently
  * ignored at runtime.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   PUT THE WORLD DOWN. EVERY SURFACE THAT DESCRIBES A BOARD THIS CLIENT IS
+ *   NO LONGER LOOKING AT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THIS WAS THE TAIL OF `case 'welcome'` AND IT IS LIFTED OUT UNCHANGED,
+ * because a second caller appeared and copying it would have been the exact
+ * shape that has cost this codebase six bugs: ONE RULE WRITTEN AS A
+ * HAND-WRITTEN LIST, and the copy missing the entry that mattered. There are
+ * twenty-odd surfaces here, each with its own paragraph of reasoning, and the
+ * next one somebody adds must land in both places by construction rather than
+ * by being remembered.
+ *
+ * ═══ THE TWO CALLERS ═══
+ * `welcome` — the board is being REPLACED, and everything below describes the
+ * one being replaced. It runs AFTER `level`/`selfId`/`replaceActors` because
+ * nothing in here touches those three.
+ *
+ * `roster` — the board is being TAKEN AWAY. A roster means this client has no
+ * body at all, which is a stronger statement than a welcome makes, so it also
+ * empties the three this does not: see the note there.
+ */
+function forgetTheWorld(): void {
+  sweep?.settle();
+  turn = null;
+  bellEndsAt = null;
+  // The fight this client was in belonged to the world that has just been
+  // replaced. Forgetting which side of the crossing we were on means the
+  // next `turn` frame re-baselines silently rather than announcing a
+  // "CONTACT" or an "the Index closes" about a floor that no longer exists.
+  combatBanner?.reset();
+  // The ring was drawn around a body that may now be somewhere else, or be
+  // somebody else. A stale ring is worse than none: it is a picture of a
+  // rule that is no longer true.
+  targeting?.cancel();
+  pendingTalentId = null;
+  // The armed `+` belonged to a session that has just been replaced. The
+  // panel may stay open across a reconnect — it is local state and nothing
+  // about it is wrong — but an arm is one press from an irreversible spend
+  // and it must not survive a frame that says "here is the world again".
+  // `progress` itself is NOT cleared: the server re-sends it in this same
+  // `hello` block, and blanking the level for one frame would flicker the
+  // sheet's identity block on every reconnect.
+  talentsArmedId = null;
+  // M4. A welcome is the reconnect path AND the floor reset after a party
+  // wipe, so every snapshot-driven surface is emptied rather than carried
+  // across: the badges, the party rows and the point markers all describe a
+  // world that is about to be replaced. THE CASE LOG IS EMPTIED TOO, and
+  // that is a real cost — a transcript that survived the reset would be nice
+  // — but `seq` restarts with the session, so keeping the old lines would
+  // make the de-duplication reject every new one. The server's own log is
+  // the durable copy.
+  effects = new Map();
+  party = [];
+  // The party pane is snapshot-driven like the rest of them, and a welcome
+  // is the reconnect path: the server sends a fresh `party_state` in the
+  // same breath, so holding the old one would draw a party that may have
+  // dissolved while this client was away.
+  partyState = null;
+  // ...and the invites with it. A deadline stamped against the old session's
+  // frame would keep an ACCEPT button alive for an offer that no longer
+  // exists, which is the one kind of stale button this pane must not have.
+  inviteDeadlines = new Map();
+  // A menu is a question about somebody who may not be on this floor any
+  // more. Closing it is cheaper than answering that.
+  tokenMenu?.close();
+  // TRAVEL INTERRUPT (7): THE BOARD WAS REPLACED. A welcome is the reconnect
+  // path and the floor reset after a wipe, so the route is a plan across a
+  // map that no longer exists — and the tile it ends on may be a wall now.
+  // No sentence: the player did not do anything wrong and has a whole new
+  // floor to look at.
+  cancelTravel();
+  // ...and every hover card with it. The answers are stamped with a game
+  // turn from the old session, and the ids they are keyed by may belong to
+  // somebody else entirely on the new floor.
+  forgetInspections();
+  pings = [];
+  // ...and the sky is emptied with them. An orb carried across a welcome is
+  // aimed at a tile on a map that no longer exists and was fired by an id
+  // that may now belong to somebody else — and unlike a stale badge, a stale
+  // orb is a thing the player will get up and RUN from. The server unicasts
+  // a fresh `projectiles` frame on the welcome path when something really is
+  // in the air, so nothing true is lost by dropping this.
+  projectiles = clearProjectiles();
+  // ═══ AND THE FLOOR AND THE BAG WITH IT, ON THE SKY'S OWN ARGUMENT ═══
+  //
+  // A welcome replaces the board wholesale, so every pile in this list is a
+  // fact about a map that no longer exists — and unlike a stale badge, a stale
+  // pile is a thing a player will WALK ACROSS THE MAP FOR, conclude was taken
+  // by a friend, and say so out loud. `inventory` goes for the narrower
+  // reason: a resume builds a fresh session whose bag memo is seeded EMPTY, so
+  // whatever the body actually owns is re-sent a few frames later.
+  //
+  // THIS IS SAFE ONLY BECAUSE THE `hello` PATH RESTATES BOTH. It does:
+  // `sendGroundIfAny(session.socket)` and `sendInventoryIfChanged(session)`
+  // both run in the welcome block (src/server/net/gateway.ts), unicast and
+  // outside the on-change rule, precisely because this socket has seen
+  // nothing. The ground unicast does NOT touch the broadcast memo, so nothing
+  // suppresses it.
+  //
+  // ═══ AND THAT IS WHY `case 'state'` DELIBERATELY DOES *NOT* DO THIS ═══
+  // The sky is cleared there because all three `state` broadcast sites call
+  // `sendProjectilesIfAny` immediately afterwards. NONE of them carries the
+  // ground, and none needs to — a resync is about `ActorView` and a pile is
+  // not an actor. Clearing there would delete a real pile from every screen
+  // and `broadcastGroundIfChanged`'s memo would then actively suppress the
+  // correction, because the floor itself had not changed.
+  ground = [];
+  inventory = null;
+  shop = null;
+  reviveArmed = false;
+  caseLog?.clear();
+  setMarginText(undefined, '');
+}
+
 function applyServerMessage(msg: ServerMsg): void {
   switch (msg.t) {
     case 'welcome':
@@ -8956,96 +9100,7 @@ function applyServerMessage(msg: ServerMsg): void {
       // A welcome is also the reconnect path, and it replaces the board
       // wholesale. Anything mid-flight is about to be about the wrong world:
       // drop the beat and forget the Bell until the server states it again.
-      sweep?.settle();
-      turn = null;
-      bellEndsAt = null;
-      // The fight this client was in belonged to the world that has just been
-      // replaced. Forgetting which side of the crossing we were on means the
-      // next `turn` frame re-baselines silently rather than announcing a
-      // "CONTACT" or an "the Index closes" about a floor that no longer exists.
-      combatBanner?.reset();
-      // The ring was drawn around a body that may now be somewhere else, or be
-      // somebody else. A stale ring is worse than none: it is a picture of a
-      // rule that is no longer true.
-      targeting?.cancel();
-      pendingTalentId = null;
-      // The armed `+` belonged to a session that has just been replaced. The
-      // panel may stay open across a reconnect — it is local state and nothing
-      // about it is wrong — but an arm is one press from an irreversible spend
-      // and it must not survive a frame that says "here is the world again".
-      // `progress` itself is NOT cleared: the server re-sends it in this same
-      // `hello` block, and blanking the level for one frame would flicker the
-      // sheet's identity block on every reconnect.
-      talentsArmedId = null;
-      // M4. A welcome is the reconnect path AND the floor reset after a party
-      // wipe, so every snapshot-driven surface is emptied rather than carried
-      // across: the badges, the party rows and the point markers all describe a
-      // world that is about to be replaced. THE CASE LOG IS EMPTIED TOO, and
-      // that is a real cost — a transcript that survived the reset would be nice
-      // — but `seq` restarts with the session, so keeping the old lines would
-      // make the de-duplication reject every new one. The server's own log is
-      // the durable copy.
-      effects = new Map();
-      party = [];
-      // The party pane is snapshot-driven like the rest of them, and a welcome
-      // is the reconnect path: the server sends a fresh `party_state` in the
-      // same breath, so holding the old one would draw a party that may have
-      // dissolved while this client was away.
-      partyState = null;
-      // ...and the invites with it. A deadline stamped against the old session's
-      // frame would keep an ACCEPT button alive for an offer that no longer
-      // exists, which is the one kind of stale button this pane must not have.
-      inviteDeadlines = new Map();
-      // A menu is a question about somebody who may not be on this floor any
-      // more. Closing it is cheaper than answering that.
-      tokenMenu?.close();
-      // TRAVEL INTERRUPT (7): THE BOARD WAS REPLACED. A welcome is the reconnect
-      // path and the floor reset after a wipe, so the route is a plan across a
-      // map that no longer exists — and the tile it ends on may be a wall now.
-      // No sentence: the player did not do anything wrong and has a whole new
-      // floor to look at.
-      cancelTravel();
-      // ...and every hover card with it. The answers are stamped with a game
-      // turn from the old session, and the ids they are keyed by may belong to
-      // somebody else entirely on the new floor.
-      forgetInspections();
-      pings = [];
-      // ...and the sky is emptied with them. An orb carried across a welcome is
-      // aimed at a tile on a map that no longer exists and was fired by an id
-      // that may now belong to somebody else — and unlike a stale badge, a stale
-      // orb is a thing the player will get up and RUN from. The server unicasts
-      // a fresh `projectiles` frame on the welcome path when something really is
-      // in the air, so nothing true is lost by dropping this.
-      projectiles = clearProjectiles();
-      // ═══ AND THE FLOOR AND THE BAG WITH IT, ON THE SKY'S OWN ARGUMENT ═══
-      //
-      // A welcome replaces the board wholesale, so every pile in this list is a
-      // fact about a map that no longer exists — and unlike a stale badge, a stale
-      // pile is a thing a player will WALK ACROSS THE MAP FOR, conclude was taken
-      // by a friend, and say so out loud. `inventory` goes for the narrower
-      // reason: a resume builds a fresh session whose bag memo is seeded EMPTY, so
-      // whatever the body actually owns is re-sent a few frames later.
-      //
-      // THIS IS SAFE ONLY BECAUSE THE `hello` PATH RESTATES BOTH. It does:
-      // `sendGroundIfAny(session.socket)` and `sendInventoryIfChanged(session)`
-      // both run in the welcome block (src/server/net/gateway.ts), unicast and
-      // outside the on-change rule, precisely because this socket has seen
-      // nothing. The ground unicast does NOT touch the broadcast memo, so nothing
-      // suppresses it.
-      //
-      // ═══ AND THAT IS WHY `case 'state'` DELIBERATELY DOES *NOT* DO THIS ═══
-      // The sky is cleared there because all three `state` broadcast sites call
-      // `sendProjectilesIfAny` immediately afterwards. NONE of them carries the
-      // ground, and none needs to — a resync is about `ActorView` and a pile is
-      // not an actor. Clearing there would delete a real pile from every screen
-      // and `broadcastGroundIfChanged`'s memo would then actively suppress the
-      // correction, because the floor itself had not changed.
-      ground = [];
-      inventory = null;
-      shop = null;
-      reviveArmed = false;
-      caseLog?.clear();
-      setMarginText(undefined, '');
+      forgetTheWorld();
       break;
     /**
      * ═════════════════════════════════════════════════════════════════════════
@@ -9441,8 +9496,26 @@ function applyServerMessage(msg: ServerMsg): void {
        *
        * SENT INSTEAD OF THE WORLD, NEVER ALONGSIDE IT. There is no `welcome`, no
        * `realm`, no `state` and no token in any field — the server has not added
-       * one. That is what makes it safe to sit here reading, and it is why the
-       * modal cannot be dismissed: there is nothing behind it.
+       * one. That is what makes it safe to sit here reading.
+       *
+       * ═══ "THERE IS NOTHING BEHIND IT" WAS ONLY TRUE THE FIRST TIME ═══
+       * This paragraph used to end by saying the modal cannot be dismissed
+       * because there is nothing behind it, and that was a claim about the
+       * SERVER being read as a claim about the CLIENT. The server really does
+       * send no world — but a player changing character has been playing one,
+       * and every surface below was still holding the board they just left.
+       *
+       * Reported with a screenshot: the select screen sitting over a lit moor,
+       * with the party card, the case log and a full hotbar all still drawn
+       * around it. The scrim is `globalAlpha = 0.7`, so it dims the world it is
+       * covering rather than replacing it, and the menu read as a panel that had
+       * been dropped on top of a game still in progress.
+       *
+       * So the claim is made TRUE rather than merely restated. `forgetTheWorld`
+       * is the same teardown `welcome` runs, and the three surfaces it does not
+       * touch are cleared here because a roster is the STRONGER statement:
+       * `welcome` says "here is a different board", this says "you do not have
+       * one".
        *
        * ARRIVING TWICE IS NORMAL AND IS NOT AN ERROR. It is the server's answer
        * for "that character cannot be opened" and for "you are at the cap", so
@@ -9454,6 +9527,26 @@ function applyServerMessage(msg: ServerMsg): void {
        * character slid into that slot — and the next Enter would play them.
        */
       roster = msg;
+      forgetTheWorld();
+      /**
+       * ═══ AND THE BOARD ITSELF, WHICH `forgetTheWorld` DELIBERATELY LEAVES ═══
+       * Its other caller is replacing these three in the same breath, so it has
+       * no business writing them. Here there is nothing to replace them WITH.
+       * A null level is not a special case the renderer needs teaching: it is
+       * the state every client is in before its first `welcome`, which is
+       * exactly the state a player at the select screen is in.
+       */
+      level = null;
+      selfId = null;
+      replaceActors([]);
+      /**
+       * A REQUIRED SCREEN ARRIVING MUST DISMISS THE ONE IT IS COVERING —
+       * `case 'class_options'` makes this argument in full and the roster has
+       * the same shape: it cannot be cancelled, it is painted last, and an
+       * escape menu left open underneath it would have no keyboard route out
+       * and no pointer route out either.
+       */
+      resetMenuState();
       selectedCharacter =
         chosenCharacterId === null
           ? null

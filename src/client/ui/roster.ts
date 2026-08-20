@@ -8,7 +8,6 @@ import {
   drawButton,
   drawHeader,
   drawPanel,
-  drawScrim,
   fitText,
   HEADER_H,
   PANEL_PAD,
@@ -315,6 +314,137 @@ export type RosterDrawOptions = {
   readonly nowMs: number;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE MENU PAINTS ITS OWN GROUND. IT IS NOT A PANEL ON TOP OF A GAME.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `drawScrim` is `globalAlpha = 0.7` over whatever is already on the canvas,
+ * which is exactly right for a panel opened DURING play and exactly wrong for
+ * this one. Reported with a screenshot: the select screen sitting over a lit
+ * moor, party card and case log still drawn around it, because a player
+ * changing character had been playing one and the client had not put it down.
+ *
+ * The client half of that is fixed where it belongs — `case 'roster'` now runs
+ * the same teardown `welcome` does — and this is the other half: with nothing
+ * behind it, a 70% scrim is 70% of nothing, and the screen would read as a
+ * panel floating on a void rather than as the front door.
+ *
+ * ═══ DRAWN, NOT LOADED ═══
+ * Every mark here is canvas work: a gradient, a vignette, and letterforms from
+ * a system monospace. NO SPRITE, deliberately and permanently — the art in this
+ * project is not committed and never will be, so a title that depended on an
+ * image would render as a hole in a fresh clone. The one screen guaranteed to
+ * be seen before anything else has to be the one that cannot fail to draw.
+ */
+function drawMenuBackdrop(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  if (w <= 0 || h <= 0) return;
+  ctx.save();
+
+  // OPAQUE, FLOOR TO CEILING. Not a wash over the last frame — the ground.
+  const wash = ctx.createLinearGradient(0, 0, 0, h);
+  wash.addColorStop(0, PALETTE.INK);
+  wash.addColorStop(0.55, PALETTE.VOID);
+  wash.addColorStop(1, PALETTE.INK);
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, w, h);
+
+  /**
+   * AND A VIGNETTE, WHICH IS THE ONLY REASON THE GRADIENT ABOVE IS NOT ENOUGH.
+   * A flat field reads as a loading screen. Pulling the corners down toward INK
+   * puts the eye on the middle third, which is where the character list is, and
+   * costs one radial fill.
+   */
+  const cx = w / 2;
+  const cy = h / 2;
+  const glow = ctx.createRadialGradient(
+    cx,
+    cy,
+    Math.min(w, h) * 0.12,
+    cx,
+    cy,
+    Math.max(w, h) * 0.72,
+  );
+  glow.addColorStop(0, 'rgba(99, 64, 158, 0.16)');
+  glow.addColorStop(0.6, 'rgba(10, 8, 19, 0)');
+  glow.addColorStop(1, 'rgba(10, 8, 19, 0.72)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.restore();
+}
+
+/** Tracking, in pixels, between the title's letterforms. */
+const WORDMARK_TRACK = 6;
+const WORDMARK = 'INNER DATUM';
+const FONT_WORDMARK = 'bold 26px ui-monospace, Consolas, monospace';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE GAME SAYS ITS OWN NAME, WHICH IT HAS NEVER DONE ANYWHERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * "Inner Datum" appears in this repository only in source comments. A player
+ * could finish an evening having never seen it, which is a strange thing for
+ * the one screen every session starts on.
+ *
+ * ═══ TRACKED BY HAND, NOT BY `ctx.letterSpacing` ═══
+ * The property is Chromium-only and recent, and this also has to survive the
+ * canvas double in the client tests. Advancing per glyph is four lines and
+ * works everywhere, and it is what gives the wordmark the spacing a monospace
+ * face cannot express on its own.
+ *
+ * ═══ AND IT YIELDS RATHER THAN COLLIDES ═══
+ * Drawn only when there is genuinely room above the panel. On a short window
+ * the list is what matters and the title is what goes — a wordmark overlapping
+ * the first character row would be worse than no wordmark at all.
+ */
+function drawWordmark(ctx: CanvasRenderingContext2D, rect: PanelRect, cases: number): void {
+  const band = rect.y;
+  if (band < 78) return;
+
+  const centreX = rect.x + rect.w / 2;
+  const baseline = rect.y - 46;
+
+  ctx.save();
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.font = FONT_WORDMARK;
+
+  const glyphs = [...WORDMARK];
+  let span = 0;
+  for (const glyph of glyphs) span += ctx.measureText(glyph).width + WORDMARK_TRACK;
+  span -= WORDMARK_TRACK;
+
+  let pen = centreX - span / 2;
+  ctx.fillStyle = PALETTE.PARCHMENT;
+  for (const glyph of glyphs) {
+    ctx.fillText(glyph, pen, baseline);
+    pen += ctx.measureText(glyph).width + WORDMARK_TRACK;
+  }
+
+  // THE RULE UNDER IT, in the project's violet, no wider than the word itself.
+  ctx.strokeStyle = PALETTE.VIOLET;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(centreX - span / 2), Math.round(baseline + 17) + 0.5);
+  ctx.lineTo(Math.round(centreX + span / 2), Math.round(baseline + 17) + 0.5);
+  ctx.stroke();
+
+  /**
+   * AND THE ONE FACT THE SCREEN CAN STATE THAT IS TRUE TONIGHT. `cases` is
+   * already on this frame for the rows to read "3 of 27" — using it here costs
+   * nothing and says what the game is in the game's own words, rather than a
+   * genre label that would be true of a hundred other things.
+   */
+  ctx.font = FONT_BODY;
+  ctx.fillStyle = PALETTE.GREY_HI;
+  ctx.textAlign = 'center';
+  ctx.fillText(`${String(cases)} rooms in the file.`, centreX, baseline + 31);
+
+  ctx.restore();
+}
+
 export function drawRoster(options: RosterDrawOptions): void {
   const { ctx, sprites, rect, characters, cases, canCreate, max, selected, hovered, nowMs } =
     options;
@@ -325,7 +455,8 @@ export function drawRoster(options: RosterDrawOptions): void {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
 
-  drawScrim(ctx, ctx.canvas.width, ctx.canvas.height);
+  drawMenuBackdrop(ctx, ctx.canvas.width, ctx.canvas.height);
+  drawWordmark(ctx, rect, cases);
   drawPanel(ctx, sprites, PanelSkin.CaseFile, rect);
   ctx.beginPath();
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
