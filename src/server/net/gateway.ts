@@ -9309,6 +9309,84 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       }
     }
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND WHO ELSE IS OUT TONIGHT, WHICH ONLY THE ARRIVER WAS NEVER TOLD.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED with two clients on a real server. The player already standing
+     * there is told *"Player 2 arrives."* The player WALKING IN is told nothing
+     * about anybody — three runs, and the transcript of everything the newcomer
+     * ever saw contains no mention of the person already on the moor with them.
+     *
+     * That is exactly backwards for the question that matters. This game holds
+     * fewer than ten people, `awardExperience` pays every party member a FULL
+     * share with no division, and `partyHint` calls that incentive *"enormous
+     * and entirely invisible"*. The one person who has just decided to play, and
+     * is therefore best placed to start a party, is the one the game leaves
+     * wondering whether they are alone.
+     *
+     * ═══ NAMED HERE, COUNTED ELSEWHERE ═══
+     * Somebody in this realm is somebody you can walk up to, so they get a name.
+     * Somebody in a delve two valleys over is not, so they get a number — saying
+     * "Vell is here" about a body in another room would be a lie a player acts
+     * on, which is worse than saying nothing. The split is the same one the
+     * bearings above make between a place you can see and a place you can only
+     * be told about.
+     *
+     * NO NEW FRAME AND NO NEW PRIVACY SURFACE. Player names in a shared realm
+     * are already broadcast on arrival, and the record lane already carries
+     * *"Word from the moor: X went into Y"* across realms. This says less than
+     * either.
+     *
+     * SILENT WHEN THERE IS NOBODY, on purpose. "You are alone out here" is a
+     * true sentence and a discouraging one, and a solo player has not asked the
+     * question — the whole value of this line is on the evening somebody else IS
+     * on, which is the evening it fires.
+     */
+    {
+      const here: string[] = [];
+      let elsewhere = 0;
+      for (const other of sessions.values()) {
+        const otherId = other.actorId;
+        if (otherId === null || otherId === actorId) continue;
+        const where = homeOf(otherId);
+        if (where.id === realm.id) here.push(nameOf(otherId));
+        else elsewhere += 1;
+      }
+      const parts: string[] = [];
+      // AT MOST THREE NAMES. A line that lists nine people is a line nobody
+      // reads, and the cap is the same three the bearings above use.
+      if (here.length > 0) {
+        const shown = here.slice(0, 3).join(', ');
+        const rest = here.length - Math.min(3, here.length);
+        parts.push(rest === 0 ? shown : `${shown} and ${String(rest)} more`);
+      }
+      if (elsewhere > 0) {
+        parts.push(
+          elsewhere === 1 ? 'one more is out there' : `${String(elsewhere)} more are out there`,
+        );
+      }
+      if (parts.length > 0) {
+        logSeq += 1;
+        send(session.socket, {
+          v: PROTOCOL_VERSION,
+          t: 'log',
+          lines: [
+            {
+              seq: logSeq,
+              lane: LogLane.Margin,
+              gameTurn: realm.world.turn.clock.gameTurn,
+              // MARGIN, because it is about the evening rather than the room —
+              // the same lane the file's own advice goes in.
+              text: `${here.length > 0 ? 'Here with you: ' : 'Working tonight: '}${parts.join(' · ')}.`,
+              depth: 1,
+            },
+          ],
+        });
+      }
+    }
+
     // TO EVERYBODY ELSE IN THE ROOM: who just walked in. Excluded from the
     // arriver's own socket, which has the better version of this line above.
     logSeq += 1;

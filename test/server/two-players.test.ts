@@ -204,6 +204,73 @@ describe('somebody else turns up', () => {
     expect((seen as unknown[]).length).toBeGreaterThan(1);
   });
 
+  it('tells the newcomer who is already out here', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ARRIVAL ANNOUNCEMENT POINTED ONE WAY, AND IT WAS THE WRONG WAY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED with two clients on a real server: the player already standing
+     * there is told "Player 2 arrives", and the transcript of EVERYTHING the
+     * newcomer ever saw contains no mention of the person on the moor with them.
+     * Three runs, identical.
+     *
+     * The test above pins the half that worked, and its second assertion is why
+     * this one is separate: `welcome` carrying an actor list means the newcomer
+     * can SEE them if they happen to be on screen. That is not the same as being
+     * TOLD, and this game narrates through its log — a body two hundred tiles
+     * away is off screen by definition.
+     *
+     * IT MATTERS BECAUSE OF WHO IS BEING LEFT OUT. Fewer than ten people play
+     * this, `awardExperience` pays every party member a FULL share with no
+     * division, and `partyHint` calls that incentive "enormous and entirely
+     * invisible". The person who has just decided to play is the one best placed
+     * to start a party and the one the game left wondering if they were alone.
+     */
+    const first = await connect(server.port);
+    await first.hello();
+    await sleep(150);
+
+    const second = await connect(server.port);
+    await second.hello();
+    await sleep(300);
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    const told = second.lines().find((line) => line.startsWith('Here with you:'));
+    expect(
+      told,
+      `the newcomer was told nothing — log was: ${second.lines().join(' | ')}`,
+    ).toBeDefined();
+
+    // BY NAME, because somebody in your own realm is somebody you can walk up
+    // to. The count-only form is for people in another room; see the note in
+    // `announceArrival`.
+    const already = first.latest('welcome')?.['selfId'];
+    const whoever = (second.latest('welcome')?.['actors'] ?? []) as { id: string; name: string }[];
+    const theirName = whoever.find((a) => a.id === already)?.name;
+    expect(theirName, 'could not read the first player name').toBeDefined();
+    if (theirName !== undefined) expect(told).toContain(theirName);
+  });
+
+  it('says nothing at all to somebody who really is alone', async () => {
+    /**
+     * ═══ THE HALF THAT MUST NOT MOVE ═══
+     * "You are alone out here" is a true sentence and a discouraging one, and a
+     * solo player has not asked the question. The whole value of the line is on
+     * the evening somebody else IS on — so it fires then and only then.
+     */
+    const only = await connect(server.port);
+    await only.hello();
+    await sleep(300);
+
+    const lines = only.lines();
+    expect(lines.filter((l) => l.startsWith('Here with you:'))).toEqual([]);
+    expect(lines.filter((l) => l.startsWith('Working tonight:'))).toEqual([]);
+    // AND THE SETUP HAS TO BE WHAT IT CLAIMS. A run where the arrival never
+    // happened would pass this by saying nothing for the wrong reason.
+    expect(lines.length, 'nothing was said at all — did the player arrive?').toBeGreaterThan(0);
+  });
+
   it('does not pretend two strangers are playing together', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
