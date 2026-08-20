@@ -392,6 +392,17 @@ if (target === undefined) {
     `  B took ${String(bumps)} turns and ${cleared ? 'CLEARED the floor' : 'never finished'}`,
   );
   console.log(`  B's last lines: ${JSON.stringify(b.log().slice(-3))}`);
+  /**
+   * DID THE ROOM TELL HIM IT WAS BUILT FOR TWO?
+   *
+   * `crossIntoRealm` sizes a delve from the party ROSTER, not from who walks in,
+   * so B — partied with A, entering alone — gets a room scaled for two. The line
+   * that says so arrives with the room's blurb, long before these last three
+   * lines, which is why printing only the tail hid it and nearly had it recorded
+   * as not firing at all.
+   */
+  const warned = b.log().filter((line) => String(line).startsWith('Built for'));
+  console.log(`  was he told the room is party-sized? ${warned[0] ?? 'NO — nothing said'}`);
 }
 await sleep(1500);
 

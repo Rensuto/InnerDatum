@@ -1165,3 +1165,89 @@ describe('somebody else turns up', () => {
     expect(membersIn(second.latest('party_state'))).toHaveLength(2);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A ROOM BUILT FOR FOUR, WALKED INTO BY ONE, SAYS SO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `crossIntoRealm` sizes a delve from the PARTY ROSTER, not from who actually
+ * walks in, and its comment argues that well: *"One person opening a door for a
+ * party of four is opening it for four, and the room should know."* The others
+ * are expected to follow, and `follow` crosses instantly and costs no turn.
+ *
+ * ═══ WHAT IT COSTS WHEN THEY DO NOT FOLLOW, MEASURED ═══
+ *
+ *     bodies      solo   party of 2   party of 4
+ *     chapel       3.9      6.3          10.2
+ *     underworks   4.8      7.4          12.3
+ *     blackwood    8.9     13.5          22.4
+ *
+ * So a member of a four-party who scouts ahead alone meets two and a half times
+ * the room, and NOTHING told them. `partyHint` says "bring a party" — but it
+ * grades the ROOM off its spec, so it is silent for `restless`, and a player
+ * who has a party on paper has already satisfied it.
+ *
+ * ═══ A LINE, NOT A RULE CHANGE ═══
+ * Sizing from the crosser instead would break the case the design is built for:
+ * four people walking in together would each get a solo room because the first
+ * one through was alone for a moment. The scaling is right; the silence was not.
+ *
+ * PHRASED FORWARD, because at the instant it is said the others may be one step
+ * behind — "bring them" is true whether they follow or not, where "you are
+ * alone" would be wrong a second later.
+ */
+describe('the room is built for the party, and the first one in is told', () => {
+  it('tells a lone crosser the room was sized for everybody', async () => {
+    const outside = await connect(server.port);
+    const outsideId = await outside.hello();
+    const delver = await connect(server.port);
+    const delverId = await delver.hello();
+    await sleep(200);
+    outside.send({ t: 'party', action: 'invite', targetId: delverId });
+    await sleep(150);
+    delver.send({ t: 'party', action: 'accept', targetId: outsideId });
+    await sleep(250);
+    expect(membersOf(server.parties, outsideId)).toHaveLength(2);
+
+    const door = [...server.realms.overworld.sites][0];
+    if (door === undefined) throw new Error('the overworld has no doors');
+    const [xs, ys] = door[0].split(',');
+    const body = server.realms.overworld.world.getActor(delverId);
+    if (body === undefined) throw new Error('no body');
+    body.x = Number(xs) - 1;
+    body.y = Number(ys);
+    delver.send({ t: 'move', dir: 'e' });
+    await sleep(400);
+
+    expect(server.realms.realmOf(delverId)?.siteId, 'the delver never crossed').toBe(door[1]);
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Nothing in the log mentioned the party at all.
+    const said = delver.lines();
+    expect(
+      said.some((line) => /built for/i.test(line)),
+      said.join(' | '),
+    ).toBe(true);
+  });
+
+  it('says nothing of the kind to somebody playing alone', async () => {
+    // THE COUNTERFACTUAL. A party of one IS the room it gets, so the line would
+    // be furniture — and furniture phrased as a warning is worse than silence.
+    const solo = await connect(server.port);
+    const soloId = await solo.hello();
+    await sleep(200);
+
+    const door = [...server.realms.overworld.sites][0];
+    if (door === undefined) throw new Error('the overworld has no doors');
+    const [xs, ys] = door[0].split(',');
+    const body = server.realms.overworld.world.getActor(soloId);
+    if (body === undefined) throw new Error('no body');
+    body.x = Number(xs) - 1;
+    body.y = Number(ys);
+    solo.send({ t: 'move', dir: 'e' });
+    await sleep(400);
+
+    expect(solo.lines().some((line) => /built for/i.test(line))).toBe(false);
+  });
+});

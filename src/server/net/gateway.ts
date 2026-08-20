@@ -7364,6 +7364,55 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     /**
      * ═════════════════════════════════════════════════════════════════════════
+     * AND THE ROOM WAS BUILT FOR THE WHOLE PARTY, WHICH THE FIRST ONE IN
+     * SHOULD KNOW.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The sizing is deliberate and stated where it happens: *"One person opening
+     * a door for a party of four is opening it for four, and the room should
+     * know."* That is right for the flow it is built for — the others `follow`,
+     * which crosses instantly and costs no turn.
+     *
+     * WHAT IT COSTS WHEN THEY DO NOT FOLLOW, measured over twelve seeds:
+     *
+     *     bodies      solo   party of 2   party of 4
+     *     chapel       3.9      6.3          10.2
+     *     underworks   4.8      7.4          12.3
+     *     blackwood    8.9     13.5          22.4
+     *
+     * So somebody scouting ahead alone meets up to two and a half times the
+     * room, and nothing said so. `partyHint` does not cover it: it grades the
+     * ROOM off its spec, so it is silent for `restless`, and a player who has a
+     * party on paper has already satisfied "bring a party".
+     *
+     * ═══ A LINE, NOT A RULE CHANGE ═══
+     * Sizing from the crosser instead would break the case the design exists
+     * for: four walking in together would each get a solo room, because the
+     * first one through was briefly alone. The scaling is right; the silence was
+     * not.
+     *
+     * PHRASED FORWARD. At the instant this is said the others may be one step
+     * behind, so "bring them" is true whether they follow or not — where "you
+     * are alone in here" would be wrong a second later.
+     *
+     * FIRST ONE IN ONLY (`playersInside === 0`), and never for a party of one,
+     * whose room IS the room it gets. A line everybody sees on every crossing is
+     * furniture, and furniture phrased as a warning is worse than silence.
+     */
+    if (
+      to.kind === RealmKind.Inner &&
+      playersInside === 0 &&
+      opts.parties !== undefined &&
+      membersOf(opts.parties, actorId).length > 1
+    ) {
+      const strong = membersOf(opts.parties, actorId).length;
+      // UNICAST, through the margin — it is about THIS crossing and nobody
+      // outside can act on it. `broadcastRecordLine` would tell the moor.
+      sendMargin(session, to, { text: `Built for ${String(strong)}. Bring them.` });
+    }
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
      * AND THE ROOM THEY LEFT MAY NOW BE EMPTY. `leaveRealm` HAS ALWAYS DONE THIS.
      * ═════════════════════════════════════════════════════════════════════════
      *
