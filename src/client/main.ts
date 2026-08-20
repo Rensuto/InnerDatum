@@ -169,7 +169,13 @@ import { createSweepPlayback } from './render/sweep.ts';
 // worth reaching.
 import { applyProjectilesFrame, clearProjectiles, orbsAimedAt } from './state/projectiles.ts';
 import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
-import { charSheetHitAt, charSheetRect, charSheetRows, drawCharSheet } from './ui/charsheet.ts';
+import {
+  charSheetHitAt,
+  charSheetRect,
+  charSheetRows,
+  charSheetTipAt,
+  drawCharSheet,
+} from './ui/charsheet.ts';
 // v12 — THE DRAG PRIMITIVES. Pure arithmetic and a closed set of panel names.
 // The offsets themselves live in THIS file (see `panelOffsets`) because they are
 // session-local browser state; what lives there is the one clamp, the one
@@ -2922,12 +2928,18 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // `charSheetRows` IS CALLED EXACTLY ONCE PER FRAME and the result handed to the
   // drawer, which does not call it — ui/charsheet.ts asks for that split so the
   // join of four frames happens once rather than once per column pass.
-  if (layout.sheet !== null) {
+  // HOISTED so the hover card below can read the SAME rows the painter drew
+  // from, without breaking the once-per-frame rule above. A second
+  // `charSheetRows(charSheetView())` would be a second join of four frames AND
+  // a second opinion about which sections the short-panel ladder conceded — so
+  // the card could describe a talent that is not on screen.
+  const sheetRows = layout.sheet === null ? null : charSheetRows(charSheetView());
+  if (layout.sheet !== null && sheetRows !== null) {
     drawCharSheet({
       ctx,
       sprites,
       rect: layout.sheet,
-      rows: charSheetRows(charSheetView()),
+      rows: sheetRows,
       hoveredClose: sheetCloseHovered,
       hoveredTalents: sheetTalentsHovered,
       talentsOpen: talentsVisible,
@@ -3128,6 +3140,14 @@ const paintHud: HudPainter = (ctx, width, height) => {
       (layout.party === null || layout.pane === null
         ? null
         : partyPaneTipAt(layout.party, layout.pane, pointerPoint.x, pointerPoint.y)) ??
+      /**
+       * THE CHARACTER SHEET'S TALENT ROWS, whose description the sheet has
+       * never had room to draw anywhere. Asked after the bag and the pane and
+       * before the bar, which is the order the four are stacked on screen.
+       */
+      (layout.sheet === null || sheetRows === null
+        ? null
+        : charSheetTipAt(layout.sheet, sheetRows, pointerPoint.x, pointerPoint.y)) ??
       hotbarTipAt(hotbarView(), pointerPoint.x, pointerPoint.y, width, height);
     if (card !== null) {
       drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);

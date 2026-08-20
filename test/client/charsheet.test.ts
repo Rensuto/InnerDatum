@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   charSheetHitAt,
   charSheetRect,
+  charSheetTipAt,
   charSheetRows,
   drawCharSheet,
   SHEET_MIN_H,
@@ -985,5 +986,91 @@ describe('the sheet shows what it says it shows', () => {
         `${String(w)}x${String(h)} right`,
       ).toBeLessThanOrEqual(w);
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A TALENT DOES, WHICH THE SHEET WROTE DOWN NOWHERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The sheet lists four talents by name, cost, range and cooldown. The server
+ * sends a sentence for each and this panel never had the width to draw it, so
+ * the only way to find out what `Iron Curtain` did was to press it and spend
+ * the turn.
+ */
+describe('the character sheet card', () => {
+  const RECT = { x: 0, y: 0, w: 460, h: 268 };
+
+  /** The centre of the first talent row, found through the placer. */
+  function talentPoint(rows: readonly SheetRow[]) {
+    for (let y = RECT.y; y < RECT.y + RECT.h; y += 1) {
+      for (let x = RECT.x; x < RECT.x + RECT.w; x += 8) {
+        const card = charSheetTipAt(RECT, rows, x, y);
+        if (card !== null) return { x, y, card };
+      }
+    }
+    throw new Error('no talent row found');
+  }
+
+  it('describes the talent under the pointer', () => {
+    const { card } = talentPoint(charSheetRows(sheet()));
+    expect(card.lines.join(' ')).toContain('A talent.');
+  });
+
+  it('names it with its rank, which the row has no room for', () => {
+    const { card } = talentPoint(charSheetRows(sheet()));
+    expect(card.title).toMatch(/\d+\/\d+$/);
+  });
+
+  it('carries the FULL meta, including a range the row may have conceded', () => {
+    // `talentMeta` drops the range on a narrow column. A card is sized to its
+    // own content and never has to, so this is the one place all three fields
+    // are always present.
+    const { card } = talentPoint(charSheetRows(sheet()));
+    expect(card.meta?.split(' · ').length).toBe(3);
+  });
+
+  it('shows the NEXT rank too, which is the decision being made', () => {
+    // The sheet's `[G]` opens the levelup screen, so somebody reading this panel
+    // with a point in hand is deciding where to put it.
+    const { card } = talentPoint(charSheetRows(sheet()));
+    expect((card.nextLines ?? []).join(' ')).toContain('slightly better');
+  });
+
+  it('says nothing about the next rank at max, rather than repeating itself', () => {
+    // A card showing the same sentence twice reads as a rendering fault.
+    const maxed = LOADOUT.map((t) => ({ ...t, level: TALENT_MAX_LEVEL }));
+    const { card } = talentPoint(charSheetRows(sheet({ loadout: maxed })));
+    expect(card.nextLines ?? []).toEqual([]);
+  });
+
+  it('answers null off the rows', () => {
+    expect(charSheetTipAt(RECT, charSheetRows(sheet()), -20, -20)).toBeNull();
+  });
+
+  it('never describes a row the panel conceded', () => {
+    // ═══ THE LADDER AND THE CARD READ THE SAME PLACEMENT ═══
+    // A short panel sheds whole SECTIONS, and TALENTS is one of them. The card
+    // walks the rows `sheetGeometry` actually placed rather than the rows it was
+    // handed, so on a panel too short to hold the talents there is nothing to
+    // describe and every point answers null — instead of a card appearing over
+    // the note that says the section is hidden.
+    const tiny = { x: 0, y: 0, w: 460, h: 90 };
+    const rows = charSheetRows(sheet());
+    let answered = 0;
+    let described = 0;
+    for (let y = tiny.y; y < tiny.y + tiny.h; y += 1) {
+      for (let x = tiny.x; x < tiny.x + tiny.w; x += 16) {
+        const card = charSheetTipAt(tiny, rows, x, y);
+        if (card === null) continue;
+        answered += 1;
+        if (LOADOUT.some((t) => card.title.startsWith(t.name))) described += 1;
+      }
+    }
+    // Whatever it answered, it answered about a talent that is really placed —
+    // and on this panel it answers about none at all.
+    expect(described).toBe(answered);
+    expect(answered).toBe(0);
   });
 });

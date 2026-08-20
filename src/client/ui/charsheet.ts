@@ -130,6 +130,7 @@
  * see the long note at the top of render/canvas.ts.
  */
 
+import type { HoverCard } from './panel.ts';
 import { ResourceKind, TalentShape } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { gameKeymap } from '../input/keys.ts';
@@ -139,6 +140,7 @@ import {
   drawHeader,
   drawPanel,
   fitText,
+  wrapText,
   headerDragRect,
   HEADER_H,
   PANEL_PAD,
@@ -366,6 +368,23 @@ export type SheetRow =
       readonly range: string;
       /** "ready", "1 turn" or "3 turns". */
       readonly cooldown: string;
+      /**
+       * THE SERVER'S OWN SENTENCE ABOUT THE TALENT, AT THE RANK IT IS AT.
+       *
+       * Carried on the row rather than looked up from the loadout when the card
+       * is built, so `charSheetTipAt` can answer from the rows alone — the same
+       * shape `inventoryTipAt` has, and the reason is the same: a tip that
+       * needed the whole view could describe a talent the sheet is not showing.
+       *
+       * It is never DRAWN on the sheet. There is no width for a sentence beside
+       * three metadata fields in a column, which is what put it on a hover card
+       * instead of on the row.
+       */
+      readonly desc: string;
+      /** The same sentence one rank up, when there is one. */
+      readonly descNext?: string;
+      /** `2/5`. On the card, because the row has no room for a fourth field. */
+      readonly rank: string;
       /** Carried so the painter can mark ready with a WORD and a colour, not one. */
       readonly ready: boolean;
     }
@@ -694,6 +713,9 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
         range: rangeText(talent),
         cooldown: cooldownText(turns),
         ready: turns <= 0,
+        desc: talent.desc,
+        descNext: talent.level < talent.maxLevel ? (talent.descNext ?? undefined) : undefined,
+        rank: `${String(talent.level)}/${String(talent.maxLevel)}`,
       });
     }
   }
@@ -1308,4 +1330,81 @@ export function drawCharSheet(options: CharSheetDrawOptions): void {
   });
 
   ctx.restore();
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A TALENT ON THE SHEET ACTUALLY DOES. It was written down nowhere.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The sheet lists four talents by name, cost, range and cooldown, and the
+ * server sends a sentence describing each one that this panel never had room to
+ * draw. A player reading their own character had four names and a stat line,
+ * and the only way to find out what `Iron Curtain` did was to press it and
+ * spend the turn.
+ *
+ * ═══ IT SAYS THE NEXT RANK TOO, WHICH IS THE DECISION THE PLAYER IS MAKING ═══
+ * The sheet's `[G]` button opens the levelup screen, so somebody reading this
+ * panel with a point in hand is deciding where to put it. `descNext` is what
+ * turns "what does this do" into "what would this do", and it is exactly the
+ * pair LevelupDialog.lua:537-549 puts side by side. Absent at max rank rather
+ * than repeated, because a card that showed the same sentence twice would read
+ * as a rendering fault.
+ *
+ * ═══ IT GOES THROUGH `sheetGeometry`, WHICH IS THE ONLY PLACER ═══
+ * `charSheetHitAt` answers for the header controls and nothing else — there has
+ * never been a row-level hit test here — so this walks the placed rows instead.
+ * It walks the ones `sheetGeometry` produced, not a second copy: that function
+ * is what the painter draws from, including its section-dropping ladder, so a
+ * card can never describe a row that was conceded off the panel.
+ */
+export function charSheetTipAt(
+  rect: PanelRect,
+  rows: readonly SheetRow[],
+  px: number,
+  py: number,
+): HoverCard | null {
+  const { placed } = sheetGeometry(rect, rows);
+  for (const entry of placed) {
+    if (entry.row.kind !== SheetRowKind.Talent) continue;
+    const box = entry.rect;
+    if (px < box.x || px >= box.x + box.w) continue;
+    if (py < box.y || py >= box.y + box.h) continue;
+
+    const row = entry.row;
+    const lines = [...wrapForCard(row.desc)];
+    // THE FULL META, INCLUDING THE FIELDS THE ROW CONCEDED. `talentMeta` drops
+    // the range on a narrow column; the card is sized to its own content and
+    // never has to.
+    const meta = `${row.cost} · ${row.range} · ${row.cooldown}`;
+    return {
+      title: `${row.name}  ${row.rank}`,
+      meta,
+      lines,
+      nextLines: row.descNext === undefined ? [] : wrapForCard(row.descNext),
+    };
+  }
+  return null;
+}
+
+/**
+ * One wrapping, against the card's own width, through a private measurer.
+ *
+ * An offscreen context rather than the painter's, so measuring can never clobber
+ * the font the painter had set — the same argument every other tip in this
+ * client makes for keeping its own.
+ */
+let cardMeasurer: CanvasRenderingContext2D | null | undefined;
+function wrapForCard(text: string): readonly string[] {
+  if (text === '') return [];
+  if (cardMeasurer === undefined) {
+    cardMeasurer =
+      typeof document === 'undefined'
+        ? null
+        : (document.createElement('canvas').getContext('2d') ?? null);
+  }
+  const ctx = cardMeasurer;
+  if (ctx === null) return [text];
+  ctx.font = FONT_META;
+  return wrapText(ctx, text, 240);
 }
