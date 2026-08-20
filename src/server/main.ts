@@ -765,7 +765,37 @@ export function buildServer() {
    * two writers of the field that file spends an essay claiming one.
    */
   const refreshPassives = (actorId: string): void => {
-    const actor = world.getActor(actorId);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHEREVER THEY ACTUALLY ARE — THIS READ THE WRONG WORLD, AND EVERY
+     * PASSIVE IN THE GAME WAS INERT BECAUSE OF IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `world` is the standalone one built above for fixtures and for the M1
+     * single-level path. Players are not in it: `gateway.ts` places every body
+     * into `opts.realms?.overworld.world ?? opts.world`, and `createRealms`
+     * builds its own worlds from a seed — so with realms present, which is
+     * production, `world.getActor(playerId)` is ALWAYS undefined.
+     *
+     * The early return below then skipped the write, `actor.passiveCombat` was
+     * never set, and `recomposeCombat` never ran from this path for anybody.
+     * Measured through the real protocol against a real server: a Watchman
+     * reported Armour 6 — his authored class base — with Standing Orders and
+     * Issued Kit granting +1 each, Strength 24 against Parade Ground's +1, and
+     * Constitution 20 against Long Service's +1. All twenty-four passives, at
+     * every rank, on all three classes.
+     *
+     * ═══ THE SHAPE, AGAIN ═══
+     * This is the third instance tonight of a lookup reading a container that
+     * cannot hold the answer — after `embellish` reading a realm's players at
+     * realm-OPEN, and litter rolling at a hard-coded level 1. The tell is the
+     * same: ask WHICH world/table/moment this call actually sees, not whether
+     * the call is correct in the abstract.
+     *
+     * THE FALLBACK IS KEPT. `realms` is optional in some fixtures, and a body
+     * in the standalone world is exactly what those mean.
+     */
+    const actor = realms.realmOf(actorId)?.world.getActor(actorId) ?? world.getActor(actorId);
     const sheet = talentEngine.sheetOf(actorId);
     if (actor === undefined || sheet === undefined) return;
 
