@@ -252,6 +252,7 @@ import {
   drawPartyPane,
   partyPaneHitAt,
   partyPaneLayout,
+  partyPaneTipAt,
   partyPaneView,
   PARTY_PANE_MARGIN,
 } from './ui/partypanel.ts';
@@ -3112,7 +3113,22 @@ const paintHud: HudPainter = (ctx, width, height) => {
             inventoryPanelRows(inventoryPanelView()),
             pointerPoint.x,
             pointerPoint.y,
-          )) ?? hotbarTipAt(hotbarView(), pointerPoint.x, pointerPoint.y, width, height);
+          )) ??
+      /**
+       * THE PARTY PANE, AND IT IS ASKED BEFORE THE BAR FOR A REASON.
+       *
+       * In Portraits mode this card is not an extra — it is the ONLY place the
+       * name, the hp numbers, the state word and the downed clock exist at all.
+       * The pane paints three initials at 640 wide and says everything else in a
+       * shade, which `ui/partypanel.ts`'s own note now records. The bar is at the
+       * foot of the screen and the pane is down the left edge, so the two cannot
+       * both claim a pointer anyway; the order is stated rather than left to
+       * whichever rect happens to be tested first.
+       */
+      (layout.party === null || layout.pane === null
+        ? null
+        : partyPaneTipAt(layout.party, layout.pane, pointerPoint.x, pointerPoint.y)) ??
+      hotbarTipAt(hotbarView(), pointerPoint.x, pointerPoint.y, width, height);
     if (card !== null) {
       drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
     }

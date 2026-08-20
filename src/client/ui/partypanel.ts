@@ -104,6 +104,7 @@
  * the world, so it can never be half a pixel off the art beside it.
  */
 
+import type { HoverCard } from './panel.ts';
 import { DownedStatus, TurnActorState, VoiceState } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { drawHeader, drawPanel, fitText, HEADER_H, PANEL_PAD, PanelSkin } from './panel.ts';
@@ -1097,4 +1098,121 @@ export function drawPartyPane(options: PartyPaneOptions): void {
   }
 
   ctx.restore();
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHO THE POINTER IS OVER, AS A CARD — AND IN PORTRAITS MODE IT IS THE ONLY
+ * PLACE THE ANSWER EXISTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED, NOT ASSUMED. Painting this pane at five viewports through a context
+ * that measures six pixels a character shows it drawing exactly three strings
+ * at 640 wide: `["D","S","M"]`. Three initials. No name, no hp numbers, no
+ * `WAITING`, no `DOWN 3/5`, no header. Everything else `drawCompactRow` conveys
+ * it conveys as a SHADE -- a three-pixel gold stripe for the leader, orange for
+ * a body on the floor, grey for one that has been erased, and hatching for
+ * offline.
+ *
+ * That is the exact thing `ui/caselog.ts:467-478` forbids, and this file is not
+ * exempt from it: a surface that has stopped showing something says so in
+ * words. The trouble is that 44 pixels has no room for a word, and the pane is
+ * 44 pixels for a reason `partyPaneLayout` argues well -- at 640 there is not
+ * enough map left to justify 208, and burying the playfield to describe the
+ * party is not a trade anybody wants.
+ *
+ * ═══ SO THE WORDS GO WHERE THEY COST NO WIDTH ═══
+ * A hover card is the only surface that can hold them without taking a pixel
+ * from the map. In Portraits mode it is the whole of the row's content; in Rows
+ * mode it is the unabbreviated form of a line that is already there -- `Mo
+ * (away)` becomes the realm they are actually in, and `DOWN 3/5` gets the
+ * sentence explaining what the number means.
+ *
+ * ═══ IT REUSES `partyPaneHitAt` ═══
+ * The same rule every other tip in this client follows: the card names exactly
+ * the row a CLICK would land on. A second walk of the same rects is a second
+ * chance to disagree about which row the pointer is in, and this pane's own
+ * geometry note (two copies is a row drawn in one place and clicked in another)
+ * is about precisely that.
+ *
+ * INVITES GET NO CARD. `accept` and `decline` are buttons whose words are
+ * already on them, and a card over a control the player is reaching for covers
+ * the thing they are about to press.
+ */
+export function partyPaneTipAt(
+  view: PartyPaneView,
+  layout: PartyPaneLayout,
+  px: number,
+  py: number,
+): HoverCard | null {
+  const hit = partyPaneHitAt(view, layout, px, py);
+  if (hit === null) return null;
+  if (hit.kind !== 'member' && hit.kind !== 'follow') return null;
+
+  const row = view.rows.find((candidate) => candidate.member.id === hit.id);
+  if (row === undefined) return null;
+
+  const { member, downed } = row;
+  const elsewhere = member.away ?? null;
+
+  /**
+   * THE TITLE IS THE NAME AND THE LEVEL, in the row's own order and for the
+   * row's own reason: the level is what "bring a party" is actually asking
+   * about. `>` marks the viewer, as it does on the row.
+   */
+  const rank = member.level === undefined ? '' : `L${String(member.level)} `;
+  const title = `${member.isSelf ? '>' : ''}${rank}${member.name}`;
+
+  const lines: string[] = [];
+
+  // HP AS NUMBERS. In Portraits mode the bar is all there is, and a bar answers
+  // "roughly" when the question is "can they take another hit".
+  if (downed === null) {
+    lines.push(`Life  ${String(Math.max(0, Math.ceil(member.hp)))}/${String(member.maxHp)}`);
+  }
+
+  // WHERE THEY ARE, when it is not here. The row abbreviates this to `(away)`
+  // whenever the place would not fit; the card always has room for the place.
+  if (elsewhere !== null) {
+    lines.push(`In ${elsewhere.place}`);
+    if (elsewhere.canFollow) lines.push('Click FOLLOW to cross to them.');
+  }
+
+  /**
+   * THE DOWNED SENTENCE, WHICH THE ROW CANNOT AFFORD AND THE NUMBER NEEDS.
+   *
+   * `survivalWord` deliberately drops the stopwatch for a body in another realm
+   * -- `tools/rescue-reach.mjs` measured that the walk from the door always ends
+   * short, so the countdown there is an urgency the player cannot discharge.
+   * The card keeps that distinction and spends its extra room saying what the
+   * clock is FOR, which is the one place a beginner is likely to hesitate.
+   */
+  if (downed !== null) {
+    lines.push(survivalWord(downed, elsewhere !== null));
+    if (downed.status !== DownedStatus.Erased && elsewhere === null) {
+      lines.push('Stand beside them to bring them back up.');
+    }
+  }
+
+  if (!member.online) lines.push('Disconnected.');
+  if (row.voice === VoiceState.Speaking) lines.push('Speaking.');
+
+  // THE EFFECTS BY NAME AND REMAINING TURNS. The row has room for a count and a
+  // badge; neither says which effect, and "2" over a stunned ally is not an
+  // answer to what is wrong with them.
+  for (const effect of row.effects) {
+    lines.push(`${effect.name}  ${String(effect.turns)}t`);
+  }
+
+  /**
+   * THE STATE WORD IS THE META, and it is the reason the whole barrier is
+   * legible: it says what the turn is waiting on. `stateWord` returns null for
+   * a downed member because the countdown says it better, and that is honoured
+   * here rather than second-guessed.
+   */
+  const state = stateWord(row);
+  const meta =
+    state !== null && view.inCombat ? state.word : member.isLeader ? 'party leader' : undefined;
+
+  return { title, meta, lines };
 }

@@ -11,6 +11,7 @@ import {
   partyPaneHeight,
   partyPaneHitAt,
   partyPaneLayout,
+  partyPaneTipAt,
   partyPaneView,
   survivalWord,
 } from '../../src/client/ui/partypanel.ts';
@@ -724,5 +725,135 @@ describe('drawing', () => {
       w: layout.rect.w,
       h: layout.rect.h,
     });
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PORTRAITS MODE SAYS ALMOST NOTHING, AND THE CARD IS WHERE THE WORDS WENT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED FIRST. Painting this pane at 640 wide through a context that answers
+ * six pixels a character — the real width of the 10px monospace — draws exactly
+ * three strings: `["D","S","M"]`. Three initials, for a party of three. No
+ * name, no hp numbers, no `WAITING`, no `DOWN 3/5`, no header. Everything else
+ * the compact row conveys it conveys as a SHADE: a three-pixel gold stripe for
+ * the leader, orange for a body on the floor, grey for one erased, hatching for
+ * offline.
+ *
+ * `ui/caselog.ts:467-478` is the rule that forbids exactly that, and 44 pixels
+ * has no room to obey it. So the words go where they cost no width.
+ */
+describe('the party card carries what the pane cannot', () => {
+  /** The narrow case: a 640 viewport with the log taking its usual slice. */
+  function compactLayout(view: PartyPaneView): PartyPaneLayout {
+    const layout = partyPaneLayout({ view, width: 640, top: 20, bottom: 300, rightReserved: 214 });
+    if (layout === null) throw new Error('expected a pane on a 640px viewport');
+    return layout;
+  }
+
+  function measuring(texts: string[]): CanvasRenderingContext2D {
+    return new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'fillText')
+            return (text: string) => {
+              texts.push(text);
+            };
+          if (prop === 'canvas') return { width: 640, height: 320 };
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+  }
+
+  /** The centre of a member's row, which is where a pointer would be. */
+  function pointAt(view: PartyPaneView, layout: PartyPaneLayout, id: string) {
+    const rect = layout.rect;
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+      const hit = partyPaneHitAt(view, layout, rect.x + Math.floor(rect.w / 2), y);
+      if (hit !== null && hit.kind === 'member' && hit.id === id) {
+        return { x: rect.x + Math.floor(rect.w / 2), y };
+      }
+    }
+    throw new Error(`no row for ${id}`);
+  }
+
+  it('paints only initials in Portraits mode, which is why the card exists', () => {
+    // THE MEASUREMENT THIS FEATURE IS FOR. If a later pass gives the compact row
+    // real words, this fails and the card can be reconsidered — which is the
+    // point of pinning the premise rather than only the fix.
+    const view = trio();
+    const layout = compactLayout(view);
+    expect(layout.mode).toBe(PartyPaneMode.Portraits);
+    const texts: string[] = [];
+    drawPartyPane({ ctx: measuring(texts), sprites: { sprite: () => undefined }, view, layout });
+    expect(texts).toEqual(['D', 'S', 'M']);
+  });
+
+  it('names the member, with their level, under the pointer', () => {
+    const view = trio();
+    const layout = compactLayout(view);
+    const point = pointAt(view, layout, 'actor_b');
+    const card = partyPaneTipAt(view, layout, point.x, point.y);
+    expect(card).not.toBeNull();
+    expect(card?.title).toContain('Sam');
+  });
+
+  it('gives the hp as NUMBERS, which the bar cannot', () => {
+    // A bar answers "roughly". The question in a fight is "can they take another
+    // hit", and that is a number.
+    const view = trio();
+    const layout = compactLayout(view);
+    const point = pointAt(view, layout, 'actor_b');
+    const card = partyPaneTipAt(view, layout, point.x, point.y);
+    expect(card?.lines.some((line) => line.includes('40/58'))).toBe(true);
+  });
+
+  it('says the state word, which is what the barrier is waiting on', () => {
+    const view = trio();
+    const layout = compactLayout(view);
+    const point = pointAt(view, layout, 'actor_b');
+    expect(partyPaneTipAt(view, layout, point.x, point.y)?.meta).toBe('DONE');
+  });
+
+  it('spells out the downed clock instead of leaving it a stripe', () => {
+    // Mo is downed AND disconnected in this fixture. In Portraits mode the whole
+    // of that is a three-pixel orange bar and some hatching.
+    const view = trio();
+    const layout = compactLayout(view);
+    const point = pointAt(view, layout, 'actor_c');
+    const card = partyPaneTipAt(view, layout, point.x, point.y);
+    expect(card?.lines.some((line) => line.startsWith('DOWN'))).toBe(true);
+    expect(card?.lines).toContain('Disconnected.');
+  });
+
+  it('drops the hp line for a body on the floor, as the row does', () => {
+    // `0/58` beside a countdown is the thing the row painter already refuses to
+    // draw; the card must not reintroduce it by being more thorough.
+    const view = trio();
+    const layout = compactLayout(view);
+    const point = pointAt(view, layout, 'actor_c');
+    const card = partyPaneTipAt(view, layout, point.x, point.y);
+    expect(card?.lines.some((line) => line.startsWith('Life'))).toBe(false);
+  });
+
+  it('answers null off the rows', () => {
+    const view = trio();
+    const layout = compactLayout(view);
+    expect(partyPaneTipAt(view, layout, -50, -50)).toBeNull();
+  });
+
+  it('works in Rows mode too, where it un-abbreviates the line', () => {
+    const view = trio();
+    const layout = wideLayout(view);
+    expect(layout.mode).toBe(PartyPaneMode.Rows);
+    const point = pointAt(view, layout, 'actor_a');
+    const card = partyPaneTipAt(view, layout, point.x, point.y);
+    expect(card).not.toBeNull();
+    expect(card?.title).toContain('Dalt');
   });
 });
