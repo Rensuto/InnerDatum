@@ -118,6 +118,8 @@
  */
 
 import type { PassiveContribution } from './equipment.ts';
+import { createTurnProcs } from './hooks.ts';
+import type { TalentHooks, TurnProcs } from './hooks.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, rescaleDamage } from '../../shared/scale.ts';
@@ -1379,6 +1381,26 @@ export type Talent = {
    */
   readonly passive?: (level: number) => PassiveContribution;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHERE THIS TALENT ATTACHES TO THE RULES. See engine/hooks.ts.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `passive` above answers "what does this add to the sheet" and can say
+   * nothing else — it receives only a level and returns the shape a worn item
+   * returns. That is why 24 of the first 42 talents in this game are a number
+   * going up: it was the only sentence the type could form.
+   *
+   * This is the other half. A hook sees the body, the moment, and the figure,
+   * and `onTakeDamage` may REWRITE the figure — which is what makes blocks,
+   * caps, retaliation and last stands ordinary talents rather than engine
+   * features.
+   *
+   * ORTHOGONAL TO `kind`, deliberately. An active may carry a hook (a strike
+   * that also marks its victim); so may a sustain — upstream has 67 sustains
+   * whose entire body is a proc source.
+   */
+  readonly hooks?: TalentHooks;
+  /**
    * One line for the hotbar tooltip, rendered SERVER-SIDE, AT A GIVEN LEVEL.
    *
    * The client never computes a displayed number — eslint's
@@ -1515,6 +1537,20 @@ export type TalentSheet = {
    * by `talentActBase` after the regen pass.
    */
   movedThisTurn: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PER-TURN LATCH. What stops an on-hit rider firing four times a swing.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Lives beside `movedThisTurn` because it is cleared by the same line on the
+   * same clock, and because both answer the same question: what has already
+   * happened to this body since its turn began.
+   *
+   * ON THE SHEET AND NOT ON THE ACTOR because it is per-BODY state that only
+   * the talent layer reads, and `TalentSheet` is where that lives. See
+   * engine/hooks.ts for why a latch has to exist before any trigger does.
+   */
+  readonly turnProcs: TurnProcs;
 };
 
 export type TalentSheetInit = {
@@ -1576,6 +1612,7 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
     mp: init.maxMp,
     maxMp: init.maxMp,
     movedThisTurn: false,
+    turnProcs: createTurnProcs(),
   };
 }
 
@@ -1799,6 +1836,13 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       sheet.ap = Math.max(0, sheet.maxAp - (penalty?.ap ?? 0));
       sheet.mp = Math.max(0, sheet.maxMp - (penalty?.mp ?? 0));
       sheet.movedThisTurn = false;
+      /**
+       * AND THE LATCH WITH IT, ON THE SAME LINE THAT CLEARS THE OTHER
+       * PER-TURN FACT. A second clearing point would be a second answer to
+       * "when does a turn begin", and the two would drift the first time
+       * anybody added a phase between them.
+       */
+      sheet.turnProcs.clear();
     },
 
     noteKill: (killerId: string): void => {

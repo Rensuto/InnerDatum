@@ -58,6 +58,7 @@
  */
 
 import type { PassiveContribution } from './equipment.ts';
+import type { BoundHooks, TurnProcs } from './hooks.ts';
 import { createEnergyActor } from '../../shared/energy.ts';
 import { spendForAction } from '../../shared/energy.ts';
 import { ActorKind, ActorRank } from '../../shared/protocol.ts';
@@ -391,6 +392,24 @@ type ActorCommon = {
    * composed answer and the only one a rule should consult.
    */
   passiveCombat?: PassiveContribution;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE THIS BODY ATTACHES TO THE RULES. See engine/hooks.ts.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The other half of `passiveCombat`, written by the same fold on the same
+   * occasions. That field answers "what does this body ADD"; this one answers
+   * "what does this body DO" — and the difference is the whole reason 24 of the
+   * first 42 talents in this game were a number going up.
+   *
+   * READ BY THE RESOLUTION PATH DIRECTLY, unlike `passiveCombat` above, and
+   * that is not an inconsistency: a hook is not a contribution to a composed
+   * sheet, it is a handler for a moment. `applyDamage` folds it; nothing
+   * composes it.
+   */
+  talentHooks?: readonly BoundHooks[];
+  /** The per-turn latch those hooks read. Borrowed from the sheet, never copied. */
+  turnProcs?: TurnProcs;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE ATTRIBUTE POINTS THIS CHARACTER HAS SPENT, AS A DELTA OVER THE CLASS.

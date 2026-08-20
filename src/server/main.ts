@@ -57,6 +57,7 @@ import { authRoutes, readAuthConfig } from './http/auth.ts';
 import { createSessionStore } from './http/session.ts';
 import { wsGateway } from './net/gateway.ts';
 import { createCharacterBridge, createSaveStore } from './persist/saves.ts';
+import type { BoundHooks } from './engine/hooks.ts';
 import { createTurnEngine } from './turn-engine.ts';
 import { createRealms } from './world/realms.ts';
 import { createWorld } from './world/world.ts';
@@ -804,6 +805,23 @@ export function buildServer() {
     const mods: Record<string, number> = {};
     /**
      * ═══════════════════════════════════════════════════════════════════════
+     * AND WHERE EACH ONE ATTACHES TO THE RULES — same walk, same list.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `engine/hooks.ts` says why there is no registration step: a registry
+     * that has to be kept in step with the sheet is a second list that can
+     * disagree with the first, and that shape has cost this codebase six
+     * separate bugs. So the bound array is rebuilt from the sheet every time
+     * the sheet changes, by the function that already runs on exactly those
+     * occasions — learn a class, spend a point, toggle a sustain.
+     *
+     * A SUSTAIN THAT IS DOWN CONTRIBUTES NO HOOK, for free and with no
+     * conditional, because `sheet.sustained` holds only what is on. That is
+     * the same property that makes the stat fold below correct.
+     */
+    const bound: BoundHooks[] = [];
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
      * THE PASSIVES, AND THE SUSTAINS THAT ARE UP — ONE FOLD FOR BOTH.
      * ═══════════════════════════════════════════════════════════════════════
      *
@@ -817,6 +835,15 @@ export function buildServer() {
      */
     for (const id of [...sheet.passives, ...sheet.sustained]) {
       const talent = talentEngine.registry.get(id);
+      /**
+       * HOOKS FIRST, AND OUTSIDE THE `passive` GUARD BELOW. A talent may
+       * carry a hook and no `passive` block at all — upstream has 67 sustains
+       * whose entire body is a proc source — and the guard would skip it
+       * silently. Collecting here is what lets a talent be pure behaviour.
+       */
+      if (talent?.hooks !== undefined) {
+        bound.push({ talentId: id, level: sheet.points.get(id) ?? 1, hooks: talent.hooks });
+      }
       const contribute = talent?.passive;
       if (contribute === undefined) continue;
       const block = contribute(sheet.points.get(id) ?? 1);
@@ -837,6 +864,19 @@ export function buildServer() {
           ...(Object.keys(mods).length > 0 ? { mods } : {}),
         }
       : undefined;
+    /**
+     * ABSENT RATHER THAN EMPTY, on the same argument the passive block above
+     * makes: a body with no hooks must be byte-identical to how it was before
+     * hooks existed, and `applyDamage` short-circuits on an absent array.
+     */
+    actor.talentHooks = bound.length > 0 ? bound : undefined;
+    /**
+     * AND THE LATCH THE HOOKS READ, which lives on the SHEET and is borrowed
+     * here rather than copied. Two latches — one on the body, one on the sheet
+     * — would be two answers to "has this already fired this turn", and only
+     * one of them would be getting cleared by the base-turn tick.
+     */
+    actor.turnProcs = sheet.turnProcs;
     recomposeCombat(actor, effects, resolveItem);
   };
 

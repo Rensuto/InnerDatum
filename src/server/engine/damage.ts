@@ -87,6 +87,8 @@
 
 import { FLAT_RESIST_INTERVAL, bound, rescaleCombatStats } from '../../shared/scale.ts';
 import type { Rng } from '../../shared/rng.ts';
+import { fireTakeDamage } from './hooks.ts';
+import type { BoundHooks, TurnProcs } from './hooks.ts';
 
 // ---------------------------------------------------------------------------
 // The damage-type registry
@@ -518,6 +520,36 @@ export type DamageTarget = {
   hp: number;
   alive: boolean;
   readonly combat?: { readonly profile?: DamageProfile };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS BODY DOES ABOUT BEING HIT. See engine/hooks.ts.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * OPTIONAL, AND STRUCTURAL, so every existing caller and every fixture keeps
+   * working untouched — a target with no hooks folds to the identity and costs
+   * one array check.
+   *
+   * BOUND ONTO THE BODY RATHER THAN LOOKED UP HERE. This module must not know
+   * that talents exist: `engine -> net|persist` is forbidden and a registry
+   * lookup would drag the whole content layer into the damage path. The same
+   * fold that composes passives writes this array (see `refreshPassives`), so
+   * there is exactly one copy and nothing to keep in step.
+   */
+  readonly talentHooks?: readonly BoundHooks[];
+  readonly turnProcs?: TurnProcs;
+  /**
+   * ═══ WHO THIS BODY IS, FOR ITS OWN HOOKS ONLY ═══
+   * A hook is handed `self`, and a talent that reads "while below half health"
+   * needs a ceiling to compare against. Every production caller passes an
+   * `Actor`, which has all four already; they are OPTIONAL so that the dozens
+   * of existing fixtures — which pass `{ hp, alive }` and nothing else — keep
+   * compiling untouched.
+   */
+  readonly id?: string;
+  readonly name?: string;
+  readonly maxHp?: number;
+  readonly x?: number;
+  readonly y?: number;
 };
 
 /** Anything that can be blamed for a hit. Identity only; the maths is in the spec. */
@@ -588,7 +620,56 @@ export function applyDamage(
   // the stream does not depend on whether the target happened to die first.
   if (!target.alive || resolved.amount <= 0) return empty;
 
-  const dealt = Math.min(target.hp, resolved.amount);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS BODY DOES ABOUT IT. The rewrite chain — see engine/hooks.ts.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * HERE, AND THE POSITION IS THE WHOLE DESIGN. This is the final figure:
+   * `resolveDamage` above has already rolled the range, applied armour against
+   * penetration and hardiness, taken resists, and rolled the crit. The next
+   * statement moves hit points.
+   *
+   * A hook placed upstream of that maths would be rewriting an input three
+   * multiplications away from anything a player experiences, and a talent that
+   * says "no single blow takes more than a quarter of you" would mean the blow
+   * before mitigation — which is not what the sentence says, and not what
+   * anybody would predict from it.
+   *
+   * ═══ AND BEFORE THE CLAMP TO REMAINING HP, WHICH ALSO MATTERS ═══
+   * `lethal` is computed against the figure as it stands, so a last-stand hook
+   * can ask "would this kill me" and get an honest answer. Clamping first would
+   * make every fatal blow indistinguishable from one that left the body at zero.
+   */
+  const after =
+    target.talentHooks === undefined || target.talentHooks.length === 0
+      ? resolved.amount
+      : fireTakeDamage(
+          {
+            id: target.id ?? '',
+            name: target.name ?? '',
+            hp: target.hp,
+            maxHp: target.maxHp ?? target.hp,
+            alive: target.alive,
+            x: target.x ?? 0,
+            y: target.y ?? 0,
+            talentHooks: target.talentHooks,
+            turnProcs: target.turnProcs,
+          },
+          {
+            dam: resolved.amount,
+            type,
+            sourceId: source.id,
+            lethal: resolved.amount >= target.hp,
+          },
+        );
+
+  // A CHAIN THAT REFUSED THE BLOW OUTRIGHT still consumed the draws above and
+  // still reports the pipeline figure as `raw` — the roll happened; this body
+  // simply did not take it.
+  if (after <= 0) return empty;
+
+  const dealt = Math.min(target.hp, after);
   target.hp -= dealt;
 
   if (target.hp <= 0) {
