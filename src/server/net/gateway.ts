@@ -233,6 +233,7 @@ import {
  * one world, and `crossIntoSite` returns on its first line.
  */
 import { ENCOUNTER_SITE, OVERWORLD_ID, RealmKind, SITES, isShared } from '../world/realms.ts';
+import { regionNamedIn } from '../../shared/level.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
 // `ALDERBROOK_REGIONS` IS DELIBERATELY GONE FROM THIS IMPORT. The realm frame
 // hard-coded it for every overworld and was correct only because the Redaction
@@ -8714,14 +8715,55 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         seen === 0 ? spec.greetFirst : filedFor(me.id).size > 0 ? spec.greetFiled : spec.greetAgain;
     }
 
-    const line = { text, speaker: them.name };
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND IF THEY NAMED A PLACE, IT GOES ON THE ASKER'S MAP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Every rumour in `content/townsfolk.ts` points at a region that really
+     * exists — checked against `ALDERBROOK_REGIONS` rather than assumed — and
+     * until now naming one did NOTHING. A player was told there is a stair out
+     * on the Bracken Waste and had no more idea where the Bracken Waste was
+     * than before they asked. Talking was flavour; this makes it a direction.
+     *
+     * ToME's town NPCs do exactly this: you are told where the Trollmire is and
+     * then it is on your map.
+     *
+     * ═══ ON THE OVERWORLD'S FOG, NOT THIS REALM'S ═══
+     * The conversation happens INSIDE a town, which is a `Common` realm with no
+     * fog of its own — `revealFor` answers false for anything that is not the
+     * Overworld, by design. So the reveal is aimed at the overworld explicitly,
+     * and the player sees it the moment they step back out, which is also when
+     * it is of any use to them.
+     *
+     * ═══ IT SAYS SO, BECAUSE A SILENT MAP CHANGE IS NOT A GIFT ═══
+     * A player who never opens the map between one conversation and the next
+     * would never learn this happened. The clause is appended only when
+     * something was NEWLY revealed, so asking twice does not promise twice.
+     */
+    let text2 = text;
+    if (msg.topic === 'rumour') {
+      const named = regionNamedIn(text);
+      if (named !== undefined) {
+        // `opts.realms` is OPTIONAL — the fixtures that build a gateway without a
+        // realm set are the reason `exploredElsewhere` guards it too. No realms
+        // means no overworld to mark, and the answer is still said.
+        const moor = opts.realms?.overworld;
+        if (moor !== undefined && revealFor(moor, me.id, named.x, named.y)) {
+          queueSave('explored');
+          text2 = `${text} (${named.name} is on your map now.)`;
+        }
+      }
+    }
+
+    const line = { text: text2, speaker: them.name };
 
     // THE ASKER, ALWAYS.
     sendMargin(session, realm, line);
 
     // THE ROOM, IF IT HAS NOT JUST HEARD IT. Wall clock, because the game clock
     // does not run in a town — see the header.
-    const roomKey = `${realm.id}|${them.id}|${text}`;
+    const roomKey = `${realm.id}|${them.id}|${text2}`;
     const now = Date.now();
     const heard = lastHeard.get(roomKey) ?? 0;
     if (now - heard >= ROOM_REPEAT_MS) {

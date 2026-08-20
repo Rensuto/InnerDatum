@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { regionNamedIn } from '../../src/shared/level.ts';
+
 import { LINE_MAX, TOWNSFOLK, isTownsfolkId } from '../../src/server/content/townsfolk.ts';
 import { Faction, isMonster } from '../../src/server/engine/actor.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
@@ -382,5 +384,56 @@ describe('what they tell you is still true', () => {
         }
       }
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A RUMOUR THAT NAMES A PLACE NAMES ONE THAT EXISTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asking about a rumour marks the named country on the asker's map
+ * (`gateway.ts#handleTalk`, via `regionNamedIn`), which turns a piece of prose
+ * into a direction — and turns a TYPO into a rumour that silently marks
+ * nothing. `the Bracken Wastes` would still read fine on screen and would point
+ * at no country at all.
+ *
+ * ═══ NOT "EVERY RUMOUR NAMES A PLACE" — THAT RULE WAS WRONG ═══
+ * The first version of this asserted that, and Merrow Stitch failed it with
+ * "There is more out there than the map admits to." That line names nowhere on
+ * purpose and is the better for it: a vague rumour gives atmosphere and a
+ * specific one gives a direction, and forcing every one to be specific would
+ * flatten the difference. So what is pinned is the thing that can actually be
+ * WRONG — a place-shaped phrase that is not a place.
+ */
+describe('every rumour names a place that exists', () => {
+  const everyone = [...TOWNSFOLK.values()].flat();
+  /** "the Bracken Waste", "the Blackwater Wood" — the shape a region name has. */
+  const PLACEISH = /\bthe [A-Z][a-z]+(?: [A-Z][a-z]+)*/g;
+
+  it('has rumours at all', () => {
+    expect(everyone.length).toBeGreaterThan(5);
+  });
+
+  it('never names a country the map does not have', () => {
+    const adrift: string[] = [];
+    for (const spec of everyone) {
+      const rumour = spec.topics.rumour;
+      if (rumour === undefined) continue;
+      for (const phrase of rumour.match(PLACEISH) ?? []) {
+        if (regionNamedIn(phrase) === undefined) adrift.push(`${spec.name}: "${phrase}"`);
+      }
+    }
+    expect(adrift).toEqual([]);
+  });
+
+  it('leaves most of them pointing somewhere, or the marking has nothing to mark', () => {
+    // The feature needs content as well as correctness: if every rumour were
+    // atmospheric, asking about one would never once mark the map and the whole
+    // path would be dead code that still passes the test above.
+    const pointed = everyone.filter(
+      (spec) => spec.topics.rumour !== undefined && regionNamedIn(spec.topics.rumour) !== undefined,
+    );
+    expect(pointed.length).toBeGreaterThanOrEqual(everyone.length - 2);
   });
 });

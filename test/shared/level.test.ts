@@ -8,6 +8,8 @@ import {
   tileAt,
   blocksSightAt,
   makeOverworld,
+  regionNamedIn,
+  ALDERBROOK_REGIONS,
 } from '../../src/shared/level.ts';
 import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 
@@ -332,5 +334,54 @@ describe('a settlement reads as buildings, not as a scatter', () => {
       return across && down;
     });
     expect(deep.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A RUMOUR NAMES A REAL PLACE, AND NAMING IT IS WHAT PUTS IT ON THE MAP.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Checked rather than assumed: every rumour the townsfolk tell points at a
+ * region in `ALDERBROOK_REGIONS`. That was true before this function existed —
+ * the writing was already honest — and it is what makes marking the map a
+ * lookup rather than a new table somebody has to keep in step.
+ */
+describe('the country a sentence is about', () => {
+  it('finds a region a rumour names', () => {
+    expect(regionNamedIn('A stair out on the Bracken Waste, on no map I own.')?.name).toBe(
+      'the Bracken Waste',
+    );
+    expect(regionNamedIn('Barrows out in the Blackwater Wood. Older than us.')?.name).toBe(
+      'the Blackwater Wood',
+    );
+  });
+
+  it('answers undefined for a sentence about nowhere', () => {
+    // Most lines are not about a place, and a lookup that guessed would mark
+    // the map from "Travel together. Nobody earns less for sharing."
+    expect(regionNamedIn('Travel together. Nobody earns less for sharing.')).toBeUndefined();
+    expect(regionNamedIn('')).toBeUndefined();
+  });
+
+  it('takes the LONGEST match, which is the whole reason it is not indexOf', () => {
+    // `Alderbrook Common` contains `Alderbrook`. A shortest-match rule would
+    // send somebody asking about the Common to a town of nearly the same name,
+    // and the two are 40 tiles apart.
+    const common = ALDERBROOK_REGIONS.find((r) => r.name === 'Alderbrook Common');
+    expect(common, 'the fixture region still exists').toBeDefined();
+    expect(regionNamedIn('Out past Alderbrook Common, they say.')?.name).toBe('Alderbrook Common');
+  });
+
+  it('points at a real anchor on the map, not off the edge', () => {
+    const map = makeOverworld();
+    for (const region of ALDERBROOK_REGIONS) {
+      const found = regionNamedIn(`Something about ${region.name}.`);
+      expect(found?.name, region.name).toBe(region.name);
+      expect(found?.x ?? -1).toBeGreaterThanOrEqual(0);
+      expect(found?.x ?? Infinity).toBeLessThan(map.view.w);
+      expect(found?.y ?? -1).toBeGreaterThanOrEqual(0);
+      expect(found?.y ?? Infinity).toBeLessThan(map.view.h);
+    }
   });
 });

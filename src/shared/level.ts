@@ -872,6 +872,37 @@ export type Region = {
  * layer, in the same row form the tiles use, so the two can be read against each
  * other by eye.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH COUNTRY A SENTENCE IS ABOUT, IF ANY. The other half of a rumour.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The townsfolk already name real places — every rumour in
+ * `content/townsfolk.ts` points at a region that exists, which was checked
+ * against this table rather than assumed. What was missing is that NAMING a
+ * place did nothing: a player was told there is a stair out on the Bracken
+ * Waste and had no more idea where the Bracken Waste is than before they asked.
+ *
+ * This is what lets the answer mark the map. ToME's town NPCs do exactly this
+ * — you are told where the Trollmire is and then it is ON the map — and it is
+ * the difference between flavour and a direction.
+ *
+ * ═══ LONGEST MATCH WINS, AND THAT IS NOT PEDANTRY ═══
+ * `Alderbrook Common` contains `Alderbrook`, and a shortest-match rule would
+ * send somebody asking about the Common to the town of the same name. Sorting
+ * by length and taking the first hit is one line and removes the whole class.
+ *
+ * PURE, like everything here: a string in, a table lookup out, no state.
+ */
+export function regionNamedIn(text: string): Region | undefined {
+  let best: Region | undefined;
+  for (const region of ALDERBROOK_REGIONS) {
+    if (!text.includes(region.name)) continue;
+    if (best === undefined || region.name.length > best.name.length) best = region;
+  }
+  return best;
+}
+
 const ALDERBROOK_REGION_ROWS: readonly string[] = [
   'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
   'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
