@@ -14,6 +14,7 @@ import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
+import { STAT_POINTS_PER_LEVEL } from '../../src/shared/progression.ts';
 import type { PartyState } from '../../src/server/engine/party.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
 
@@ -420,6 +421,28 @@ describe('somebody else turns up', () => {
     expect(
       said.some((text) => text.includes('talent point')),
       `the level was announced and the point was not — ${JSON.stringify(said)}`,
+    ).toBe(true);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE OTHER CURRENCY, WHICH ARRIVED SILENTLY FOR TWO COMMITS.
+     * ═══════════════════════════════════════════════════════════════════════
+     * The assertion above exists because announcing the LEVEL and not the POINT
+     * tells a reader something happened and not what it bought them. Attributes
+     * landed with the grant wired and no sentence at all — three points a level
+     * appearing in a panel nobody had been given a reason to open, which is the
+     * same bug one currency over.
+     *
+     * THE COUNT IS READ FROM THE GRANT rather than written as `3`, exactly as
+     * the gateway composes it: a literal here would go on passing the day the
+     * grant changed and only for the players who got the other number.
+     */
+    expect(after.unspentStatPoints, 'the level granted no attribute points').toBe(
+      STAT_POINTS_PER_LEVEL,
+    );
+    expect(
+      said.some((text) => text.includes('attribute point')),
+      `the attribute points were granted and not announced — ${JSON.stringify(said)}`,
     ).toBe(true);
   });
 

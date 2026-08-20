@@ -79,6 +79,7 @@ import {
   expChart,
   canRaiseStat,
   pointsForLevel,
+  statPointsForLevel,
   totalStatPointsAtLevel,
   totalPointsAtLevel,
 } from '../../shared/progression.ts';
@@ -8983,6 +8984,43 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             granted === 1
               ? 'A talent point to spend.'
               : `${String(granted)} talent points to spend.`,
+          depth: 1,
+        });
+      }
+      /**
+       * ═══════════════════════════════════════════════════════════════════
+       * AND THE ATTRIBUTE POINTS, WHICH ARRIVED SILENTLY FOR TWO COMMITS.
+       * ═══════════════════════════════════════════════════════════════════
+       *
+       * The paragraph above this one makes the whole argument already: the
+       * level line *"announced the LEVEL and still never mentioned the POINT,
+       * so the reader is told something happened and not what it bought them"*.
+       * Attributes landed with the grant wired and no sentence, so three points
+       * a level appeared in a panel nobody had been given a reason to open —
+       * the same bug, one currency over, introduced by the commit that fixed
+       * nothing about it.
+       *
+       * THE COUNT COMES FROM `statPointsForLevel`, which is the function that
+       * granted it. A literal three here would be wrong the day the grant
+       * changes, silently, and only for the players who got the other number —
+       * which is word for word why the line above reads `pointsForLevel`.
+       *
+       * A SECOND LINE RATHER THAN A LONGER ONE. They are two different
+       * currencies spent on two different halves of the same screen, and a
+       * player who has just levelled is scanning for what they now have rather
+       * than reading a sentence.
+       */
+      const stats = statPointsForLevel(note.level);
+      if (stats > 0) {
+        logSeq += 1;
+        lines.push({
+          seq: logSeq,
+          lane: LogLane.Record,
+          gameTurn,
+          text:
+            stats === 1
+              ? 'An attribute point to spend.'
+              : `${String(stats)} attribute points to spend.`,
           depth: 1,
         });
       }
