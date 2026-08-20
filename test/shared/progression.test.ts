@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ActorRank } from '../../src/shared/protocol.ts';
 import {
+  CAP_BONUS_CLASS_POINTS,
   MAX_CHARACTER_LEVEL,
   RANK_WORTH,
   TALENT_MAX_LEVEL,
@@ -216,16 +217,21 @@ describe('talent points — Actor.lua:3749-3752', () => {
      * ported (Actor.lua:3749-3752), not the total, so the shape is what is
      * pinned: one point a level, and a second on every fifth.
      */
-    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
+    // EVERY LEVEL BUT THE LAST. The cap pays 3 more on top (Actor.lua:3768) and
+    // has its own test — see test/shared/cap-bonus.test.ts.
+    for (let level = 2; level < MAX_CHARACTER_LEVEL; level += 1) {
       const expected = level % 5 === 0 ? 2 : 1;
       expect(pointsForLevel(level), `level ${String(level)}`).toBe(expected);
     }
     // Level 1 grants nothing — it is where a character starts, not a level-up.
     expect(pointsForLevel(1)).toBe(0);
 
-    // The total is then arithmetic rather than a remembered number.
+    // The total is then arithmetic rather than a remembered number: one a level,
+    // one more per fifth, and the cap bonus once.
     const fifths = Math.floor(MAX_CHARACTER_LEVEL / 5);
-    expect(totalPointsAtLevel(MAX_CHARACTER_LEVEL)).toBe(MAX_CHARACTER_LEVEL - 1 + fifths);
+    expect(totalPointsAtLevel(MAX_CHARACTER_LEVEL)).toBe(
+      MAX_CHARACTER_LEVEL - 1 + fifths + CAP_BONUS_CLASS_POINTS,
+    );
   });
 
   /**

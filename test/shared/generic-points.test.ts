@@ -42,7 +42,14 @@ describe('the grant', () => {
      * fifth level is a moment where a character gets deeper in their profession
      * instead of broader as a person — and it costs the budget nothing.
      */
-    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
+    /**
+     * ═══ EVERY LEVEL BUT THE LAST, AND THE EXCEPTION IS DELIBERATE ═══
+     * The cap pays a bonus on top (Actor.lua:3767-3774) — 3 class and 3 generic
+     * beyond the ordinary grant — so it is the one level that does not hand out
+     * two. That is upstream's design and it has its own test; excluding it here
+     * keeps this assertion about the SWAP, which is what it is for.
+     */
+    for (let level = 2; level < MAX_CHARACTER_LEVEL; level += 1) {
       expect(
         pointsForLevel(level) + genericPointsForLevel(level),
         `level ${String(level)} does not grant two`,

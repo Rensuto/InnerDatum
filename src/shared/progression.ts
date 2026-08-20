@@ -476,8 +476,43 @@ export function pointsForLevel(level: number): number {
   // Actor.lua:3751 — and one more on every fifth level.
   if (level % 5 === 0) points = points + 1;
 
+  // Actor.lua:3768 — and three more at the cap. See `CAP_BONUS_CLASS_POINTS`.
+  if (level === MAX_CHARACTER_LEVEL) points = points + CAP_BONUS_CLASS_POINTS;
+
   return points;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE LAST LEVEL PAYS A BONUS. Actor.lua:3767-3774.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     if self.level == 50 then
+ *         self.unused_stats    = self.unused_stats    + 10
+ *         self.unused_talents  = self.unused_talents  + 3
+ *         self.unused_generics = self.unused_generics + 3
+ *
+ * ON TOP of the ordinary grant for that level rather than instead of it, so
+ * reaching the cap hands over its usual 2 class / 0 generic / 3 stats and then
+ * 3 + 3 + 10 again. Upstream pops a dialog about it, and that is the point: the
+ * last level is an EVENT, not the moment the numbers quietly stop moving.
+ *
+ * ═══ `MAX_CHARACTER_LEVEL`, NOT A LITERAL 50 ═══
+ * Upstream writes `self.level == 50` because 50 is its cap. The INTENT is "the
+ * final level", and this project has already moved its cap once — from 10 to 50,
+ * which is the only reason this bonus is reachable at all. Writing the literal
+ * would make the next move silently drop it into the middle of the game, where
+ * it means nothing and nobody would notice for months.
+ *
+ * ═══ AND IT LIVES IN THE PURE FUNCTIONS, NOT IN THE SCHEDULER ═══
+ * The level-up loop crosses one level at a time and asks these three what that
+ * level is worth. Putting the bonus here makes it testable without a world,
+ * routes it through the same path every other point takes, and means a body that
+ * crossed two levels in one award cannot miss it.
+ */
+export const CAP_BONUS_STATS = 10;
+export const CAP_BONUS_CLASS_POINTS = 3;
+export const CAP_BONUS_GENERIC_POINTS = 3;
 
 /**
  * Every point a character of `level` has ever been granted, spent or not: the
@@ -541,7 +576,16 @@ export function totalPointsAtLevel(level: number): number {
 export function genericPointsForLevel(level: number): number {
   if (level <= 1) return 0;
   // Actor.lua:3750 — the flat point, then :3752 takes it back on every fifth.
-  return level % 5 === 0 ? 0 : 1;
+  const points = level % 5 === 0 ? 0 : 1;
+  /**
+   * Actor.lua:3769 — and three more at the cap.
+   *
+   * THE CAP IS ALSO A FIFTH LEVEL, so the last level-up pays 0 + 3 rather than
+   * 1 + 3. That is upstream's arithmetic and not a rounding: the fifth-level
+   * swap fires first and takes the ordinary generic point away, then the cap
+   * bonus lands on top of nothing.
+   */
+  return level === MAX_CHARACTER_LEVEL ? points + CAP_BONUS_GENERIC_POINTS : points;
 }
 
 /** Every generic point a character of this level has been handed. */
@@ -589,7 +633,12 @@ export const STAT_POINTS_PER_LEVEL = 3;
 
 /** How many attribute points arriving at `level` grants. Nothing at birth. */
 export function statPointsForLevel(level: number): number {
-  return level <= 1 ? 0 : STAT_POINTS_PER_LEVEL;
+  if (level <= 1) return 0;
+  // Actor.lua:3767-3768 — the cap pays ten attribute points on top of its three.
+  // See `CAP_BONUS_STATS`.
+  return level === MAX_CHARACTER_LEVEL
+    ? STAT_POINTS_PER_LEVEL + CAP_BONUS_STATS
+    : STAT_POINTS_PER_LEVEL;
 }
 
 /**
