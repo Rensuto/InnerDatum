@@ -654,7 +654,12 @@ export function populateDelve(
      * The litter three lines below had `rollLoot` all along, so a delve's FLOOR
      * could produce a named item while nothing that died in it ever could.
      */
-    const carrying = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
+    const carrying = embellish(
+      world,
+      actor.id,
+      rollDrop(world.lootRng, template.drops),
+      party.level,
+    );
     if (carrying !== undefined) actor.carried = [carrying];
     placed += 1;
   }
@@ -709,7 +714,7 @@ export function populateDelve(
        * FIRST entry of its own `drops.pick` rather than a new table — the same
        * shape `encounter.ts` uses for the guaranteed opening drop.
        */
-      const prize = embellish(world, boss.id, spec.boss.drops?.pick[0]);
+      const prize = embellish(world, boss.id, spec.boss.drops?.pick[0], party.level);
       if (prize !== undefined) boss.carried = [prize];
     }
   }

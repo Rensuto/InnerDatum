@@ -213,3 +213,62 @@ describe('delve litter is rolled for the party that is there', () => {
     expect(high).not.toEqual(low);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE BODIES TOO — THE SAME BUG, ONE FUNCTION CALL AWAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Fixing the litter fixed half of `populateDelve`. The other half hands its
+ * drops to `embellish`, which derives the level ITSELF:
+ *
+ *     partyMaxLevel(world.allActors().filter(isPlayer).map(a => a.level))
+ *
+ * A delve is populated when the realm OPENS, which is before anybody walks in.
+ * So that list is empty, `partyMaxLevel` answers its documented default of 1,
+ * and every corpse in every delve carried band-1 loot at every party level.
+ *
+ * ═══ THE SAME BUG HAD ALREADY BEEN FIXED ONCE, HALF-WAY ═══
+ * `embellish`'s own header records the previous round: `delve.ts` used to call
+ * `rollDrop` alone and put the bare base id on the corpse, so "no kill inside
+ * the game's actual combat content had ever produced an egoed weapon". Routing
+ * it through `embellish` fixed that — and moved the failure from "no ego ever"
+ * to "ego at band 1 forever", which is quieter and survived longer.
+ *
+ * A SELF-DERIVING DEFAULT IS THE HAZARD. `embellish` reading the world is right
+ * where players are IN it and silently wrong where they are not, and nothing at
+ * the call site says which world it is being handed.
+ */
+describe('a body in a delve carries what the party is worth', () => {
+  function carriedIn(party: PartyStrength, spec: DelveSpec): readonly string[] {
+    const world = createWorld('delve-carried');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const map: AuthoredMap = {
+      view: world.level,
+      spawns: [{ x: 4, y: 4 }],
+      sites: new Map<string, string>(),
+    };
+    populateDelve(world, map, spec, party);
+    return world.allActors().flatMap((actor) => [...(actor.carried ?? [])]);
+  }
+
+  const BARROW = specFor('site:barrow_end') as DelveSpec;
+
+  it('puts the same NUMBER of things on the bodies whatever the level', () => {
+    // `rollDrop` decides whether a body carries anything, off its own labelled
+    // draw. Level must not reach that, or the fix rebalanced the room.
+    const low = carriedIn({ level: 1, size: 1 }, BARROW);
+    const high = carriedIn({ level: 5, size: 1 }, BARROW);
+    expect(high.length).toBe(low.length);
+    expect(low.length).toBeGreaterThan(0);
+  });
+
+  it('rolls different CONTENTS for a level-5 party', () => {
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Byte-identical at both levels, because the world `embellish` read had no
+    // players in it yet.
+    const low = carriedIn({ level: 1, size: 1 }, BARROW);
+    const high = carriedIn({ level: 5, size: 1 }, BARROW);
+    expect(high).not.toEqual(low);
+  });
+});

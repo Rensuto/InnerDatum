@@ -212,12 +212,35 @@ export function embellish(
   world: World,
   actorId: string,
   baseId: string | undefined,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LEVEL, WHEN THE CALLER KNOWS IT AND THE WORLD DOES NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Reading the world is right for an encounter — it happens around players who
+   * are standing in it — and SILENTLY WRONG for a delve, which is populated when
+   * the realm opens, before anybody walks in. That list came back empty,
+   * `partyMaxLevel` answered its documented default of 1, and every corpse in
+   * every delve carried band-1 loot at every party level.
+   *
+   * ═══ THE SAME BUG, FIXED ONCE, HALF-WAY ═══
+   * The header above records the previous round: `delve.ts` called `rollDrop`
+   * alone and put the bare base id on the body, so no kill in the game's actual
+   * combat content had ever produced an egoed weapon. Routing it through here
+   * fixed that and moved the failure from "no ego ever" to "ego at band 1
+   * forever" — quieter, and it survived longer for being quieter.
+   *
+   * OPTIONAL RATHER THAN REQUIRED, because the encounter paths derive it
+   * correctly and threading a level through them would be two more places for
+   * the same number to go stale. Absent still means "ask the world".
+   */
+  level?: number,
 ): string | undefined {
   if (baseId === undefined) return undefined;
-  const level = partyMaxLevel(
-    world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])),
-  );
-  return rollLoot(world.lootRng.fork(`loot.ego:${actorId}:0`), baseId, level);
+  const known =
+    level ??
+    partyMaxLevel(world.allActors().flatMap((a) => (a.kind === ActorKind.Player ? [a.level] : [])));
+  return rollLoot(world.lootRng.fork(`loot.ego:${actorId}:0`), baseId, known);
 }
 
 /**
