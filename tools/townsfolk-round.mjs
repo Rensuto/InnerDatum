@@ -97,11 +97,48 @@ const STEPS = [
   [-1, 0, 'w'],
   [-1, -1, 'nw'],
 ];
-const blocked = (lvl, x, y) => {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A BODY IS A WALL, AND LEAVING THAT OUT READ AS A TRAPPED PLAYER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This used to answer from the TERRAIN alone. The server does not: a step into
+ * an occupied tile is refused, no `moved` frame comes back, and `stepTo` reports
+ * false — which the caller treats as "no route" and gives up on.
+ *
+ * So the probe would plan a path straight through the shopkeeper it had just
+ * been talking to, walk into her, and print `could not get back out` about a
+ * camp whose exit was three clear tiles away. A human plays around a body
+ * without noticing; a probe that cannot is measuring itself.
+ *
+ * WHICH BODIES: every actor except this one, at its LATEST known position —
+ * `realm.actors` is the arrival snapshot and townsfolk do not move, but party
+ * members do, and reading the snapshot alone would route through where somebody
+ * used to be.
+ */
+function bodies() {
+  const at = new Map();
+  for (const a of latest('realm')?.actors ?? []) {
+    if (a.id !== selfId && a.alive !== false) at.set(a.id, { x: a.x, y: a.y });
+  }
+  let realmAt = -1;
+  for (let i = frames.length - 1; i >= 0 && realmAt < 0; i -= 1) {
+    if (frames[i].t === 'realm') realmAt = i;
+  }
+  for (let i = realmAt + 1; i < frames.length; i += 1) {
+    const f = frames[i];
+    if (f.t === 'moved' && f.id !== selfId) at.set(f.id, { x: f.x, y: f.y });
+  }
+  return new Set([...at.values()].map((p) => `${p.x},${p.y}`));
+}
+
+const blocked = (lvl, x, y, occupied) => {
   if (x < 0 || y < 0 || x >= lvl.w || y >= lvl.h) return true;
+  if (occupied !== undefined && occupied.has(`${x},${y}`)) return true;
   return !isWalkable(lvl.tiles[y * lvl.w + x]);
 };
 function firstStep(lvl, from, to) {
+  const occupied = bodies();
   const key = (x, y) => y * lvl.w + x;
   const prev = new Map([[key(from.x, from.y), null]]);
   const queue = [from];
@@ -113,7 +150,7 @@ function firstStep(lvl, from, to) {
     for (const [dx, dy] of STEPS) {
       const x = c.x + dx;
       const y = c.y + dy;
-      if ((x !== to.x || y !== to.y) && blocked(lvl, x, y)) continue;
+      if ((x !== to.x || y !== to.y) && blocked(lvl, x, y, occupied)) continue;
       if (prev.has(key(x, y))) continue;
       prev.set(key(x, y), c);
       queue.push({ x, y });
@@ -336,13 +373,47 @@ for (const { s: town } of townsOf(posOf())) {
   // walking back to the door from wherever the conversation ended and stepping
   // onto it, which re-arms and ejects.
   if (doorway !== undefined) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * STEP OFF FIRST IF WE NEVER LEFT IT. This read as a TRAPPED PLAYER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `stepTo` answers false when it is already standing on the target — there
+     * is no move to make — and the loop below treats false as "cannot get
+     * there" and breaks. So a conversation that ended ON the arrival tile, which
+     * is what happens in a camp small enough that the counter is beside the
+     * door, reported `could not get back out` while the way out was underfoot.
+     *
+     * The note above is the reason: arriving DISARMS the tile, so it ejects on
+     * being stepped ONTO and not on being stood on. That means the exit needs a
+     * step off before it can be a step on, and this probe walked to a tile it
+     * had never left.
+     *
+     * A MEASURING INSTRUMENT THAT REPORTS A TRAP THAT IS NOT THERE is worse than
+     * one that reports nothing: it sends the next session chasing a bug in the
+     * game instead of in the tool.
+     */
+    const here = posOf();
+    if (here !== undefined && here.x === doorway.x && here.y === doorway.y) {
+      const lvl = latest('realm')?.level;
+      for (const dir of ['w', 'e', 'n', 's']) {
+        const before = frames.filter((f) => f.t === 'moved' && f.id === selfId).length;
+        send({ t: 'move', dir });
+        await sleep(45);
+        if (frames.filter((f) => f.t === 'moved' && f.id === selfId).length > before) break;
+      }
+      void lvl;
+    }
     for (let i = 0; i < 80 && latest('realm')?.kind !== 'overworld'; i += 1) {
       if (!(await stepTo(doorway))) break;
     }
   }
   await sleep(400);
   if (latest('realm')?.kind !== 'overworld') {
-    console.log('  (could not get back out — stopping the round here)');
+    const at = posOf();
+    console.log(
+      `  (could not get back out — at ${JSON.stringify(at)}, doorway ${JSON.stringify(doorway)}, realm ${String(latest('realm')?.kind)})`,
+    );
     break;
   }
 }
