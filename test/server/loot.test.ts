@@ -21,6 +21,7 @@ import { AiProfile, IntentKind } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { LootResolution } from '../../src/server/engine/scheduler.ts';
@@ -829,5 +830,66 @@ describe('the ambush is built for the party walking into it', () => {
     // direction is exactly what shipped.
     const seeded = seedAmbush(createWorld('ambush-default'), { x: 12, y: 12 });
     expect(seeded.length).toBe(1);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN AMBUSH PAYS THE PARTY IT AMBUSHED, TOO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The third instance of one bug. `seedAmbush` takes a `PartyStrength`, uses it
+ * for the ROSTER (`ambushRoster` grows the fight with level, which is the whole
+ * difference between an ambush and a delve), and then handed its drops to
+ * `embellish` without it. `embellish` falls back to reading the players in the
+ * world, and an ambush realm is populated at OPEN — before the party it is an
+ * ambush of has arrived. Empty list, `partyMaxLevel` returns 1, band 1.
+ *
+ * ═══ IT LOOKED LIKE IT WAS WORKING, WHICH IS WHY IT LASTED ═══
+ * Level DOES reach this fight: a level-5 party gets more bodies and therefore
+ * more drops, so the totals move and the scaling appears to be wired. What did
+ * not move was the QUALITY of any single drop — and because the extra bodies are
+ * the roster's cheaper entries, the ego RATE actually fell as the party levelled:
+ * 58% at level 1 against 41% at level 5.
+ *
+ * A RATE, NOT A SAMPLE, because the roster size legitimately differs between the
+ * two levels — comparing item lists would pass on the count alone and prove
+ * nothing about the band.
+ */
+describe('ambush drops are rolled at the party level', () => {
+  function egoRate(level: number): number {
+    let ego = 0;
+    let total = 0;
+    for (let seed = 0; seed < 40; seed += 1) {
+      const world = createWorld(`ambush-band-${String(seed)}`);
+      world.level.tiles.fill(TileCode.FLOOR);
+      seedAmbush(world, { x: 12, y: 12 }, { level, size: 1 });
+      for (const actor of world.allActors()) {
+        for (const id of actor.carried ?? []) {
+          total += 1;
+          if (id.includes('~')) ego += 1;
+        }
+      }
+    }
+    return total === 0 ? 0 : ego / total;
+  }
+
+  it('gives a level-5 party better drops than a level-1 one', () => {
+    // ═══ THE ASSERTION THAT WAS FAILING, AND FAILING BACKWARDS ═══
+    // Before the fix this was 0.58 against 0.41: the higher-level party was
+    // getting a WORSE rate, because the fight grew and the band did not.
+    expect(egoRate(5)).toBeGreaterThan(egoRate(1));
+  });
+
+  it('still grows the fight itself with level, which is the ambush contract', () => {
+    // The half that must NOT change. `ambushRoster` scaling by level is the
+    // stated difference between a fight that happens TO you and a place you
+    // chose, and a loot fix must not have touched it.
+    function bodies(level: number): number {
+      const world = createWorld('ambush-size');
+      world.level.tiles.fill(TileCode.FLOOR);
+      return seedAmbush(world, { x: 12, y: 12 }, { level, size: 1 }).length;
+    }
+    expect(bodies(5)).toBeGreaterThan(bodies(1));
   });
 });

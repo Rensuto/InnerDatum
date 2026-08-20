@@ -581,10 +581,13 @@ export function seedAmbush(
      * the parent. Two calls where there used to be one therefore leave every
      * later draw exactly where it was.
      */
-    const rolled = embellish(world, actor.id, rollDrop(world.lootRng, template.drops));
+    // AT THE PARTY'S LEVEL, like the delve paths. `embellish` otherwise reads the
+    // players in the world, and an ambush realm is populated at OPEN — before
+    // the party it is an ambush OF has arrived. See `embellish`'s `level`.
+    const rolled = embellish(world, actor.id, rollDrop(world.lootRng, template.drops), party.level);
     const guaranteed =
       rolled === undefined && party.level <= 1 && placed.length === 0
-        ? embellish(world, actor.id, template.drops?.pick[0])
+        ? embellish(world, actor.id, template.drops?.pick[0], party.level)
         : undefined;
     const carrying = rolled ?? guaranteed;
 
