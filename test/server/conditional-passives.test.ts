@@ -130,7 +130,7 @@ describe('the per-turn recompute is wired', () => {
 
   it('hands the fold a view rather than only a level', () => {
     expect(
-      MAIN.includes('contribute(sheet.points.get(id) ?? 1, view)'),
+      MAIN.includes('contribute(talentLevelOf(sheet, talent), view)'),
       'the passive fold is not passing a PassiveView',
     ).toBe(true);
   });

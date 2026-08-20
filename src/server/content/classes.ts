@@ -123,6 +123,7 @@ import {
   createTalentSheet,
   effectiveTalentRange,
   getTalentLevelRaw,
+  talentLevelOf,
 } from '../engine/talents.ts';
 import { alchemicVial } from '../talents/alchemic_vial.ts';
 import { ashwickFlare } from '../talents/ashwick_flare.ts';
@@ -200,6 +201,20 @@ export type ClassDef = {
    * they are all talents they own and can raise.
    */
   readonly passives: readonly Talent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW GOOD THIS CLASS IS AT EACH TREE IT TOUCHES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Tree id -> multiplier on the effective talent level. Any tree left out is
+   * 1.0, so this is additive information and nothing breaks by omission.
+   *
+   * The values are upstream's measured distribution: 1.30 for a signature
+   * tree, 1.10-1.20 supporting, 1.00 borrowed, 0.90 a deliberate weakness.
+   * Negative grants are RARE upstream — five in the entire game — and that
+   * scarcity is exactly what makes one read as characterisation.
+   */
+  readonly masteries?: Readonly<Record<string, number>>;
 };
 
 // ---------------------------------------------------------------------------
@@ -214,6 +229,36 @@ export type ClassDef = {
  * (Combat.lua:1336), so his armour bites into a larger slice of every blow —
  * which is the difference between a body with armour and a body that is armour.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   HOW GOOD EACH CLASS IS AT EACH OF ITS TREES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream grades every tree a class touches and it is the cheapest
+ * differentiation lever in the game: one float, one multiply, and three classes
+ * sharing seven trees stop feeling like one class. The measured distribution is
+ * 1.30 for a signature tree (68% of all grants upstream are exactly +0.3),
+ * 1.10-1.20 supporting, 1.00 borrowed, 0.90 a deliberate weakness.
+ *
+ * ═══ EACH CLASS GETS ONE SIGNATURE AND ONE SUPPORTING, NOT TWO SIGNATURES ═══
+ * Grading both of a class's trees 1.30 differentiates it from the other classes
+ * and says nothing about the class itself. Splitting them 1.30/1.15 says what it
+ * is FOR: the Watchman is a man holding a doorway who can also hit people, the
+ * Inspector is a shot who can also disappear, the Alchemist is a chemist who can
+ * also patch you up. That is texture inside a build as well as between builds.
+ *
+ * ═══ GROUNDWORK IS 1.00 FOR EVERYBODY, AND THAT IS NOT AN OVERSIGHT ═══
+ * It is what everyone is taught. A class that was BETTER at the generic tree
+ * would be a class that is better at being a person, and upstream keeps its own
+ * generic trees ungraded for the same reason.
+ *
+ * NO NEGATIVE GRANTS YET. Upstream has five in the entire game, and that
+ * scarcity is exactly what makes one read as characterisation rather than as a
+ * nerf. When a class is given a tree it is deliberately bad at, that is a design
+ * statement and it should arrive with one.
+ */
+export const SIGNATURE = 1.3;
+export const SUPPORTING = 1.15;
 export const WATCHMAN: ClassDef = {
   id: ClassId.Watchman,
   name: 'The Watchman',
@@ -537,6 +582,12 @@ export function sheetForClass(definition: ClassDef): TalentSheet {
     resource: definition.resource,
     maxAp: definition.maxAp,
     maxMp: definition.maxMp,
+    /**
+     * THE GRANT BECOMES A LOOKUP. Joined here for the same reason the passives
+     * above are: the class definition says what this class IS, and the sheet is
+     * what every downstream reader consults.
+     */
+    mastery: new Map(Object.entries(definition.masteries ?? {})),
   });
 }
 
@@ -613,6 +664,28 @@ export function toLoadoutView(
    * no sheet at all and must not be made to invent one.
    */
   sustained?: boolean,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   THE RANK THE TALENT BEHAVES AT, WHICH IS NOT THE RANK IT DISPLAYS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `level` above is RAW — the points a player actually spent. It is drawn as
+   * "3/5" and it gates the `+` (`canSpend: level < maxLevel`).
+   *
+   * This is the same rank times the tree's mastery, and it is what the NUMBERS
+   * are computed from: range here, damage and duration in `describe`.
+   *
+   * ═══ THEY MUST NOT BE THE SAME FIELD, AND I MERGED THEM ONCE ═══
+   * Routing the displayed rank through mastery shows a Watchman "5.2/5" and,
+   * far worse, turns his `+` off a point early — 4 x 1.3 = 5.2, which is not
+   * less than the cap, so the last point becomes unspendable with no message.
+   * Upstream keeps the same split: LevelupDialog prints `traw` in the counter
+   * (quoted in protocol.ts) and uses `getTalentLevel` for every value.
+   *
+   * DEFAULTED TO `level` so every caller without a sheet — the class-picker
+   * preview most of all — behaves exactly as it did.
+   */
+  effective: number = level,
 ): LoadoutTalent {
   return {
     // Already `talent:<id>` — the registry key IS the wire id, so the cooldown
@@ -627,7 +700,7 @@ export function toLoadoutView(
     },
     cooldownTurns: talent.cooldownTurns,
     // AT THIS RANK. See the invariant above — never `talent.targeting.range`.
-    range: effectiveTalentRange(talent.targeting, level),
+    range: effectiveTalentRange(talent.targeting, effective),
     minRange: talent.targeting.minRange,
     // `TargetShape` and `TalentShape` are member-for-member identical by rule
     // (protocol.ts says so out loud). Two declarations because src/shared/ may
@@ -903,7 +976,9 @@ export function createTalentBook(
         // because the wire type says `level` is NEVER 0 (protocol.ts) — a sheet
         // built some other way must produce a wrong-but-legal button rather
         // than a frame the protocol calls impossible.
+        // RAW for the counter, EFFECTIVE for the numbers. See `toLoadoutView`.
         const level = Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id));
+        const effective = Math.max(BIRTH_TALENT_LEVEL, talentLevelOf(sheet, talent));
         // THE STANCE'S STATE, read off the sheet that owns it. A sustained
         // talent whose flag never travelled would give the player one key with
         // two opposite meanings and nothing on screen to tell them apart.
@@ -913,6 +988,7 @@ export function createTalentBook(
             level,
             actor,
             talent.sustain === undefined ? undefined : sheet.sustained.has(id),
+            effective,
           ),
         );
       }
@@ -933,7 +1009,13 @@ export function createTalentBook(
         const talent = engine.registry.get(id);
         if (talent === undefined) continue;
         out.push(
-          toLoadoutView(talent, Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id)), actor),
+          toLoadoutView(
+            talent,
+            Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id)),
+            actor,
+            undefined,
+            Math.max(BIRTH_TALENT_LEVEL, talentLevelOf(sheet, talent)),
+          ),
         );
       }
       return out;
@@ -947,7 +1029,7 @@ export function createTalentBook(
     /**
      * ═══ THE ENFORCING END OF `toLoadoutView`'s RANGE INVARIANT ═══
      * `canUseTalent` resolves the range through
-     * `effectiveTalentRange(talent.targeting, getTalentLevelRaw(sheet, id))` —
+     * `effectiveTalentRange(talent.targeting, talentLevelOf(sheet, talent))` —
      * the SAME function and the SAME rank `loadoutOf` above put on the wire as
      * `LoadoutTalent.range`. The ring a client draws and the tile this function
      * accepts therefore cannot disagree, because there is one implementation

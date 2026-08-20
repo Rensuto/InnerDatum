@@ -1624,12 +1624,37 @@ export type TalentSheet = {
    * engine/hooks.ts for why a latch has to exist before any trigger does.
    */
   readonly turnProcs: TurnProcs;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW GOOD THIS BODY IS AT EACH TREE. ActorTalents.lua:826-834.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Tree id -> multiplier. Absent means 1.0, so a tree nobody graded behaves
+   * exactly as it always has.
+   *
+   * ═══ ON THE SHEET, NOT ON THE TREE, AND THAT IS THE WHOLE POINT ═══
+   * `TalentTree.mastery` is one number per tree for the entire game, which can
+   * only ever say "this tree is strong". Upstream's lives on the ACTOR
+   * (`self.talents_types_mastery[tt]`), which says something far more useful:
+   * THIS class is strong at it and that one is passable. It is what lets three
+   * classes share seven trees without feeling like one class, and it is the
+   * cheapest differentiation lever in ToME — one float and one multiply.
+   *
+   * The measured distribution upstream, worth copying: 1.30 for a signature
+   * tree (68% of all grants are exactly +0.3), 1.10-1.20 supporting, 1.00
+   * borrowed, 0.90 for a deliberate weakness. Only FIVE negative grants exist
+   * in the whole game, and that scarcity is what makes one read as
+   * characterisation rather than as a nerf.
+   */
+  readonly mastery: ReadonlyMap<string, number>;
 };
 
 export type TalentSheetInit = {
   /** The passives this class owns. Absent is none, which is every old fixture. */
   readonly passives?: readonly string[];
   readonly classId: ClassId;
+  /** Tree id -> multiplier. Absent is 1.0 everywhere, which is every fixture. */
+  readonly mastery?: ReadonlyMap<string, number>;
   readonly loadout: readonly string[];
   readonly resource: ResourceKind;
   readonly maxAp: number;
@@ -1686,6 +1711,7 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
     maxMp: init.maxMp,
     movedThisTurn: false,
     turnProcs: createTurnProcs(),
+    mastery: init.mastery ?? new Map(),
   };
 }
 
@@ -1772,6 +1798,36 @@ export function getTalentLevelRaw(sheet: TalentSheet, id: string): number {
  */
 export function getTalentLevel(sheet: TalentSheet, id: string, mastery = 1): number {
   return getTalentLevelRaw(sheet, id) * mastery;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE EFFECTIVE LEVEL, AND THE ONLY FUNCTION ALLOWED TO ANSWER IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `getTalentLevel` above takes mastery as an ARGUMENT, which meant every
+ * caller had to know where mastery lived — so no caller did, all five read
+ * `getTalentLevelRaw` instead, and the parameter had ZERO callers anywhere in
+ * `src/` while every tree shipped at 1.0. The lever was present and unused.
+ *
+ * This is the version that looks it up itself, and it exists so there is ONE
+ * answer to "what rank is this talent behaving at". Five separate call sites
+ * computing the same thing is [M-002] — one rule written as a hand-written
+ * list, N-1 of the entries wrong — and it is how the panel comes to disagree
+ * with the damage.
+ *
+ * ═══ MULTIPLY THE LEVEL, THEN SCALE. NEVER SCALE, THEN MULTIPLY. ═══
+ * This is the one easy way to get mastery wrong and it does not look wrong.
+ * The scaling curves are sublinear, so pushing along the x-axis is not the
+ * same as scaling the output: upstream measures 1.3 mastery on Weapons
+ * Mastery as roughly +14% of actual value, not +30%. Applying the multiplier
+ * to the RESULT would produce a class gap more than twice as wide as ToME
+ * feels, and every band in the game would need re-tuning to compensate.
+ *
+ * So: this returns a LEVEL, and callers feed it to `combatTalentScale`.
+ */
+export function talentLevelOf(sheet: TalentSheet, talent: Talent): number {
+  return getTalentLevelRaw(sheet, talent.id) * (sheet.mastery.get(talent.tree) ?? 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2129,7 +2185,7 @@ export function canUseTalent(
   // The sheet is already in hand, so the level costs nothing to resolve here —
   // and resolving it HERE rather than inside `checkTargeting` keeps that
   // function a function of numbers, testable without an engine.
-  const range = effectiveTalentRange(talent.targeting, getTalentLevelRaw(sheet, talent.id));
+  const range = effectiveTalentRange(talent.targeting, talentLevelOf(sheet, talent));
   return checkTargeting(actor, talent.targeting, target, world, range);
 }
 
@@ -2326,7 +2382,7 @@ export function useTalent(
   const scoped: TalentCtx = {
     ...ctx,
     world: recordingWorld(ctx.world, recorded),
-    talentLevel: getTalentLevelRaw(sheet, talent.id),
+    talentLevel: talentLevelOf(sheet, talent),
   };
   // A PASSIVE HAS NO BODY. Checked here rather than at submission for the reason
   // `canAttack` gives about resolution-time legality — and note it costs nothing:

@@ -51,6 +51,7 @@ import {
   hasAffordableAction,
   markMultiplier,
   resolveGuardCounter,
+  talentLevelOf,
   toggleSustain,
   useTalent,
 } from './engine/talents.ts';
@@ -939,18 +940,29 @@ export function buildServer() {
      */
     for (const id of [...sheet.passives, ...sheet.sustained]) {
       const talent = talentEngine.registry.get(id);
+      // NARROWED ONCE, HERE. A talent the registry does not hold contributes
+      // nothing and hooks nothing — and narrowing at the top means neither of the
+      // two uses below has to re-ask.
+      if (talent === undefined) continue;
       /**
        * HOOKS FIRST, AND OUTSIDE THE `passive` GUARD BELOW. A talent may
        * carry a hook and no `passive` block at all — upstream has 67 sustains
        * whose entire body is a proc source — and the guard would skip it
        * silently. Collecting here is what lets a talent be pure behaviour.
        */
-      if (talent?.hooks !== undefined) {
-        bound.push({ talentId: id, level: sheet.points.get(id) ?? 1, hooks: talent.hooks });
+      if (talent.hooks !== undefined) {
+        bound.push({ talentId: id, level: talentLevelOf(sheet, talent), hooks: talent.hooks });
       }
-      const contribute = talent?.passive;
+      const contribute = talent.passive;
       if (contribute === undefined) continue;
-      const block = contribute(sheet.points.get(id) ?? 1, view);
+      /**
+       * THROUGH `talentLevelOf`, NOT OFF THE POINT MAP. This site read raw points
+       * directly, which made it the one place where a talent would behave at a
+       * different rank than the panel reported the moment mastery existed. Five
+       * call sites answering "what rank is this" independently is [M-002]; there
+       * is one answer now, and every one of them asks it.
+       */
+      const block = contribute(talentLevelOf(sheet, talent), view);
       for (const [key, value] of Object.entries(block.stats ?? {})) {
         if (typeof value === 'number') stats[key] = (stats[key] ?? 0) + value;
       }
