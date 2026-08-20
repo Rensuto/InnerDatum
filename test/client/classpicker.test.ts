@@ -351,3 +351,144 @@ describe('what a talent is, in the width a card has', () => {
     ).toBe('3 AP · self');
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FIRST SCREEN A NEW PLAYER SEES SHOWS WHOLE WORDS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * FOUND BY PAINTING IT AT FIVE SIZES. The modal was a fixed 560x340, which put
+ * three cards at about 176 pixels each and left ten monospace characters for a
+ * talent name after the icon. `Iron Curtain` is twelve, so it read
+ * `Iron Curta…` -- at the 640x320 floor and equally at 1280x720, because a
+ * fixed modal cannot be helped by a bigger window.
+ *
+ * That is the worst place in this client to truncate a string: the player is
+ * being asked to choose a class, permanently, off four talent names each.
+ *
+ * `measureText` answers six pixels a character here, which is what the 10px
+ * monospace measures, so an ellipsis in this output is one the client draws.
+ */
+describe('the class picker at every window size', () => {
+  const VIEWPORTS = [
+    [640, 320],
+    [640, 400],
+    [772, 480],
+    [1024, 600],
+    [1280, 720],
+  ] as const;
+
+  /** Measures for real, and owns a `canvas` — this painter reads one. */
+  function measuring(texts: string[]): CanvasRenderingContext2D {
+    return new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'fillText')
+            return (text: string) => {
+              texts.push(text);
+            };
+          if (prop === 'canvas') return { width: 1280, height: 720 };
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+  }
+
+  function paintAt(width: number, height: number): string[] {
+    const texts: string[] = [];
+    drawClassPicker({
+      ctx: measuring(texts),
+      sprites: { sprite: () => undefined },
+      rect: classPickerRect(width, height),
+      options: OPTIONS,
+      selected: 0,
+      hovered: null,
+    });
+    return texts;
+  }
+
+  it('ellipsises nothing at any viewport', () => {
+    const bad: string[] = [];
+    for (const [w, h] of VIEWPORTS) {
+      for (const text of paintAt(w, h)) {
+        if (text.includes('…')) bad.push(`${String(w)}x${String(h)}: ${text}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('grows with the window instead of ignoring it', () => {
+    const small = classPickerRect(640, 400);
+    const large = classPickerRect(1280, 720);
+    expect(large.w).toBeGreaterThan(small.w);
+    expect(large.h).toBeGreaterThan(small.h);
+  });
+
+  it('uses the room the SMALLEST window has, which a fraction did not', () => {
+    // ═══ THE FIRST ATTEMPT MISSED THE ONE VIEWPORT THAT WAS BROKEN ═══
+    // Sizing this as 0.78 of the width gives 499 at 640 -- LESS than the 560 it
+    // already was -- so every viewport grew except the narrow one still cutting
+    // `Iron Curtain`. There are 624 usable pixels at 640 and the modal was
+    // taking 560 of them for no reason. A modal covers the hotbar by design, so
+    // there is nothing underneath worth leaving visible.
+    expect(classPickerRect(640, 400).w).toBe(640 - 8 * 2);
+  });
+
+  it('shows every talent name whole once the window is a realistic size', () => {
+    for (const [w, h] of VIEWPORTS.filter(([, height]) => height >= 400)) {
+      const texts = paintAt(w, h);
+      for (const opt of OPTIONS) {
+        for (const t of opt.talents) {
+          expect(texts, `${String(w)}x${String(h)} ${t.name}`).toContain(t.name);
+        }
+      }
+    }
+  });
+
+  it('says how many talents it dropped rather than just stopping', () => {
+    // ═══ IT USED TO BREAK OUT OF THE LOOP AND SAY NOTHING ═══
+    // At the 640x320 floor the card cannot hold four talent rows, and it used
+    // to simply stop drawing them -- so the player chose between three classes
+    // on half the information with nothing on screen saying so.
+    // `ui/caselog.ts:467-478` is the rule this now follows: a surface that has
+    // quietly stopped showing everything says so in WORDS, never in a shade.
+    const texts = paintAt(640, 320);
+    const note = texts.find((text) => /^\+\d+ more$/.test(text));
+    expect(note, 'the card states the omission').toBeDefined();
+
+    // And the count is TRUE: names present plus the number in the note is the
+    // whole list. A note saying "+2" over three hidden rows is worse than none.
+    const perCard = OPTIONS[0]?.talents ?? [];
+    const shown = perCard.filter((t) => texts.includes(t.name)).length;
+    const claimed = Number(/\+(\d+) more/.exec(note ?? '')?.[1] ?? '0');
+    expect(shown + claimed).toBe(perCard.length);
+  });
+
+  it('says nothing when nothing was dropped', () => {
+    // The mirror. A permanent "+0 more" is furniture, and furniture that looks
+    // like a warning is worse than furniture.
+    expect(paintAt(1280, 720).some((text) => /^\+\d+ more$/.test(text))).toBe(false);
+  });
+
+  it('never runs off the viewport it is centred in', () => {
+    for (const [w, h] of VIEWPORTS) {
+      const rect = classPickerRect(w, h);
+      expect(rect.x, `${String(w)}x${String(h)} left`).toBeGreaterThanOrEqual(0);
+      expect(rect.y, `${String(w)}x${String(h)} top`).toBeGreaterThanOrEqual(0);
+      expect(rect.x + rect.w, `${String(w)}x${String(h)} right`).toBeLessThanOrEqual(w);
+      expect(rect.y + rect.h, `${String(w)}x${String(h)} bottom`).toBeLessThanOrEqual(h);
+    }
+  });
+
+  it('still shrinks rather than disappearing on a tiny viewport', () => {
+    // Unchanged, and re-asserted here because the growth rule touches the same
+    // line: a player who owes a choice cannot play until they make it, so there
+    // is no size at which this returns nothing.
+    const rect = classPickerRect(320, 200);
+    expect(rect.w).toBeGreaterThan(0);
+    expect(rect.h).toBeGreaterThan(0);
+  });
+});

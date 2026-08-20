@@ -107,9 +107,38 @@ const CHAR_W = 6;
 /** Chrome lost on each side. Mirrors `panelInner`'s inset, as ui/tooltip.ts does. */
 const INSET = PANEL_PAD + 3;
 
-/** Preferred size of the modal, and the air it leaves around itself. */
-const PICKER_W = 560;
-const PICKER_H = 340;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A CEILING AND A MARGIN. THERE IS NO PREFERRED WIDTH ANY MORE, AND THAT IS
+ * THE FIX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was `PICKER_W = 560` on every screen ever made. Three cards inside 560
+ * is a card of about 176 pixels, and after the icon and its gap the name column
+ * holds ten monospace characters -- `Iron Curtain` is twelve, so it read
+ * `Iron Curta…` at the 640x320 floor and equally at 1280x720, because a fixed
+ * modal cannot be helped by a bigger window.
+ *
+ * THIS IS THE FIRST SCREEN A NEW PLAYER SEES. They are being asked to choose a
+ * class, permanently, off four talent names each, and one of the twelve was cut
+ * mid-word with two thirds of a large monitor unused behind the box.
+ *
+ * ═══ A FRACTION WAS TRIED AND MISSED THE ONE VIEWPORT THAT WAS BROKEN ═══
+ * 0.78 of 640 is 499, which is LESS than the 560 it already was -- so every
+ * viewport grew except the narrow one still doing the clipping. A fraction is
+ * the right shape for a PANEL, which opens over a live map other players are
+ * moving on. It is the wrong shape for a MODAL: nothing under this one is
+ * pressable while it is up, which is what `classPickerRect` means by "allowed
+ * to cover the hotbar", so there is nothing to leave visible and no reason to
+ * hold pixels back. It takes the window, up to the cap.
+ *
+ * `PICKER_MAX_W` is what stops it becoming a wall of whitespace on a wide
+ * monitor: past it, more window buys nothing, because there are only three
+ * cards. The small-viewport case is untouched -- the modal still shrinks rather
+ * than refusing, for the reason `classPickerRect` records.
+ */
+const PICKER_MAX_W = 880;
+const PICKER_MAX_H = 520;
 const PICKER_MARGIN = 8;
 
 /** One line of prose under the header: what to press. */
@@ -189,8 +218,29 @@ export type ClassPickerHit =
  * is allowed to cover the hotbar: nothing under it is pressable while it is up.
  */
 export function classPickerRect(width: number, height: number): PanelRect {
-  const w = Math.max(0, Math.min(PICKER_W, width - PICKER_MARGIN * 2));
-  const h = Math.max(0, Math.min(PICKER_H, height - PICKER_MARGIN * 2));
+  /**
+   * THE WINDOW, UP TO THE CAP — not a fraction of it.
+   *
+   * A FRACTION WAS TRIED AND WAS WRONG AT THE FLOOR. 0.78 of 640 is 499, which
+   * is less than the 560 this modal already was, so the narrow viewport -- the
+   * one still clipping `Iron Curtain` -- got no growth at all while wider ones
+   * did. There are 624 usable pixels at 640 and the modal was taking 560 of
+   * them for no reason.
+   *
+   * A FRACTION IS THE RIGHT SHAPE FOR A PANEL AND THE WRONG ONE FOR A MODAL.
+   * The character sheet keeps one because it opens over a live map that other
+   * players are still moving on, so covering all of it costs something. Nothing
+   * under this one is pressable while it is up -- that is what `classPickerRect`
+   * means by "allowed to cover the hotbar" -- so there is nothing to leave
+   * visible and no reason to hold pixels back.
+   */
+  const wantW = Math.min(PICKER_MAX_W, width - PICKER_MARGIN * 2);
+  const wantH = Math.min(PICKER_MAX_H, height - PICKER_MARGIN * 2);
+
+  // The outer clamp is unchanged and still last: a modal wider than its viewport
+  // would centre to a negative x, and this one has no "not now" to fall back on.
+  const w = Math.max(0, Math.min(wantW, width - PICKER_MARGIN * 2));
+  const h = Math.max(0, Math.min(wantH, height - PICKER_MARGIN * 2));
   return {
     x: Math.floor((width - w) / 2),
     y: Math.floor((height - h) / 2),
@@ -549,7 +599,34 @@ function drawCard(
   y += 3;
 
   // --- the four talents, in HOTBAR ORDER -----------------------------------
-  for (const talent of option.talents) {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHEN THEY DO NOT ALL FIT, THE CARD SAYS SO — IT USED TO JUST STOP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The loop below `break`s when the next row would cross `bottom`, and at the
+   * 640x320 floor that is two of the four talents gone with nothing on screen
+   * saying a fourth and third existed. This is the CLASS CHOICE: a player
+   * picking between three classes off four talent names each was choosing on
+   * half the information and had no way to know it.
+   *
+   * `ui/caselog.ts:467-478` is the rule -- a surface that has quietly stopped
+   * showing everything says so in WORDS and never in a shade -- and the
+   * character sheet's dropped sections already follow it. This is the same
+   * concession made honest.
+   *
+   * THE NOTE COSTS A ROW, which is why `capacity - 1` is what gets drawn. That
+   * is the right trade: "Lockdown" and a silent gap tells the player less than
+   * "Ward Rush, Iron Curtain, +2 more", because the second one is complete about
+   * what it is leaving out. Below one row there is nowhere to put the note and
+   * nothing is claimed.
+   */
+  const capacity = Math.max(0, Math.floor((bottom - y) / TALENT_ROW_H));
+  const total = option.talents.length;
+  const shown = capacity >= total ? total : Math.max(0, capacity - 1);
+  const talentsShown = option.talents.slice(0, shown);
+
+  for (const talent of talentsShown) {
     if (y + TALENT_ROW_H > bottom) break;
     const box: PanelRect = {
       x,
@@ -578,6 +655,19 @@ function drawCard(
       y + TALENT_ROW_H / 2,
     );
     y += TALENT_ROW_H;
+  }
+
+  // THE WORDS, in the row `shown` gave up for them. Slate rather than bone: it
+  // is a statement ABOUT the list, not another entry in it.
+  if (shown < total && y + TALENT_ROW_H <= bottom) {
+    ctx.font = FONT_BODY;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = PALETTE.SLATE;
+    ctx.fillText(
+      fitText(ctx, `+${String(total - shown)} more`, w),
+      x + TALENT_ICON + 4,
+      y + TALENT_ROW_H / 2,
+    );
   }
 }
 
