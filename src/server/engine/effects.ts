@@ -85,7 +85,7 @@ import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './d
 import { composeSheet, composeWielders, wornOf } from './equipment.ts';
 import type { PassiveContribution } from './equipment.ts';
 import { setCooldown } from './actor.ts';
-import type { Combatant, StatusFlags } from './derived.ts';
+import type { Combatant, PrimaryStats, StatusFlags } from './derived.ts';
 import type { CombatSheet } from './combat.ts';
 import type { ItemCatalogue, Slot } from '../content/items.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -1442,6 +1442,12 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
 export type EquippedActor = EffectActor & {
   /** The sheet before gear and before statuses. See engine/actor.ts. */
   baseCombat?: CombatSheet;
+  /**
+   * The attribute points this character has spent, as a delta over the class
+   * sheet. Folded at stage one and a half — see `recomposeCombat` and the field's
+   * own note in engine/actor.ts.
+   */
+  spentStats?: PrimaryStats;
   equipped?: Partial<Record<Slot, string>>;
   carried?: readonly string[];
   /**
@@ -1516,7 +1522,27 @@ export function recomposeCombat(
 
   // Stage one. A fixture with neither field is an M2-era actor and keeps ToME's
   // bare defaults inside derived.ts, exactly as it did before this existed.
-  const base = actor.baseCombat ?? actor.combat;
+  const baseSheet = actor.baseCombat ?? actor.combat;
+
+  /**
+   * Stage one and a half — THE ATTRIBUTE POINTS THIS CHARACTER HAS SPENT.
+   *
+   * ABOVE THE CLASS SHEET AND BELOW EVERYTHING WORN, because this is the body
+   * growing rather than something put on it: a Watchman who has poured nine
+   * points into Strength IS stronger, and the coat he then buys adds to that
+   * rather than to who he was at level one.
+   *
+   * `composeWielders` is the same additive combine gear and passives use, so a
+   * spent point and a pauldron stack the way a player expects — and the class's
+   * authored sheet stays untouched underneath, which is what makes "take the
+   * coat off" exact and what lets a retune of any class correct every existing
+   * character instead of stranding them.
+   */
+  const grown = actor.spentStats;
+  const base =
+    grown === undefined || baseSheet === undefined
+      ? baseSheet
+      : composeWielders(baseSheet, [{ stats: grown }]);
 
   // Stage two.
   if (base !== undefined) {

@@ -472,3 +472,82 @@ export function totalPointsAtLevel(level: number): number {
   }
   return total;
 }
+
+// ---------------------------------------------------------------------------
+// THE ATTRIBUTES — the other half of a levelup, and ToME's numbers exactly
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THREE A LEVEL. `Actor.lua:3748` — `self.unused_stats + (self.stats_per_level
+ * or 3)`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported verbatim rather than retuned, because the whole point of asking for
+ * "attributes exactly as Tales of Maj'Eyal" is that a player who knows that
+ * game already knows this one. Three points, every level, freely assignable.
+ *
+ * `getRankStatAdjust` IS NOT PORTED and its absence is deliberate: it hands
+ * ELITE and BOSS ranks extra stats, and no player character is either. Adding
+ * it would be a term that is always zero.
+ */
+export const STAT_POINTS_PER_LEVEL = 3;
+
+/** How many attribute points arriving at `level` grants. Nothing at birth. */
+export function statPointsForLevel(level: number): number {
+  return level <= 1 ? 0 : STAT_POINTS_PER_LEVEL;
+}
+
+/**
+ * Every attribute point a character of `level` has ever been granted.
+ *
+ * THE SAME LEDGER SHAPE AS `totalPointsAtLevel`, and for the reason stated
+ * there: saves store the RAW per-stat points spent, never the unspent count
+ * (`docs/data-schemas.md` § 1, "NEVER persist a derived value"), so unspent is
+ * recomputed on load. Retuning the grant then corrects every existing character
+ * instead of stranding them.
+ *
+ * A loop rather than `(level - 1) * 3` for the same reason too — the closed form
+ * stops agreeing the moment the grant grows a clause, and it is nine iterations.
+ */
+export function totalStatPointsAtLevel(level: number): number {
+  let total = 0;
+  for (let l = 2; l <= level; l++) {
+    total = total + statPointsForLevel(l);
+  }
+  return total;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FLOOR AND THE CEILING — `load.lua:182-189`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ActorStats:defineStat(name, short, 10, 1, 100, ...)`: base ten, minimum one,
+ * maximum one hundred, for all six and for Luck.
+ *
+ * ═══ THE 60 IN `useBuildOrder` IS NOT THIS NUMBER ═══
+ * `Actor.lua:755-756` refuses to auto-assign past `level * 1.4 + 20` and past
+ * `60 + max(0, level - 50)`. Both belong to the AUTO-LEVELLER — the build order
+ * a player can hand the game — and neither binds a human spending their own
+ * points. Porting them as hard rules would forbid a build ToME allows.
+ *
+ * IT IS ALSO UNREACHABLE HERE AND STILL WORTH HAVING. Nine levels grant 27
+ * points against a class base near 24, so nothing can pass 51 — but a cap that
+ * exists only because the arithmetic cannot reach it is a cap that breaks the
+ * day `MAX_CHARACTER_LEVEL` moves.
+ */
+export const STAT_MIN = 1;
+export const STAT_MAX = 100;
+
+/**
+ * May this character put another point into a stat currently at `value`?
+ *
+ * PURE, AND IT ANSWERS ONLY THE CEILING. Whether a point is in hand is the
+ * caller's ledger question — `totalStatPointsAtLevel` minus what is spent — and
+ * keeping the two apart is what lets the client grey a `+` without a second copy
+ * of the ledger.
+ */
+export function canRaiseStat(value: number): boolean {
+  return value < STAT_MAX;
+}

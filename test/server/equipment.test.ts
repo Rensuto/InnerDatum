@@ -606,3 +606,86 @@ describe('wornOf', () => {
     expect(worn.map((i) => i.id)).toEqual(['item_watchmans_trousers']);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE ATTRIBUTE POINTS A PLAYER SPENDS HAVE TO REACH THE DERIVED NUMBERS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME grants three a level (`Actor.lua:3748`) and every one of them is supposed
+ * to move something a player can read off the sheet. `derived.ts` already ports
+ * the whole stat-to-combat pipeline with citations; what was missing was any way
+ * for a character to own a stat their class did not author.
+ *
+ * ═══ STAGE ONE AND A HALF, AND THE ORDER IS THE CLAIM ═══
+ * Above the class sheet and BELOW everything worn: the body grows, and the coat
+ * adds to who you are now rather than to who you were at level one. These pin
+ * that both halves land and that neither eats the other.
+ */
+describe('attribute points a character has spent', () => {
+  it('move the derived numbers they are supposed to move', () => {
+    const plain = fixtureActor();
+    recomposeCombat(plain, null, resolveItem);
+    const before = combatAttack(plain.combat ?? {});
+
+    const grown = fixtureActor();
+    // DEXTERITY, because `combatAttack` takes it at FULL weight — one point in
+    // is one point of accuracy out, which is the cleanest thing to assert on.
+    grown.spentStats = { dex: 5 };
+    recomposeCombat(grown, null, resolveItem);
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Before the fold existed, `spentStats` was a field nothing read.
+    expect(combatAttack(grown.combat ?? {})).toBeGreaterThan(before);
+  });
+
+  it('stack with gear rather than being replaced by it', () => {
+    /**
+     * THE ORDER BUG THIS EXISTS TO CATCH. `recomposeCombat` rebuilds from the
+     * class sheet every time, so a spent point folded in the wrong place is not
+     * "slightly off" — it is silently DISCARDED the moment anything is equipped,
+     * and the symptom is a character who gets weaker when they put a coat on.
+     */
+    const geared = fixtureActor();
+    geared.equipped = { ...geared.equipped };
+    recomposeCombat(geared, null, resolveItem);
+    const gearOnly = derivedVector(geared.combat);
+
+    const both = fixtureActor();
+    both.spentStats = { dex: 5 };
+    both.equipped = { ...geared.equipped };
+    recomposeCombat(both, null, resolveItem);
+
+    expect(combatAttack(both.combat ?? {})).toBeGreaterThan(combatAttack(geared.combat ?? {}));
+    // AND THE GEAR IS STILL THERE. A fold that replaced the sheet instead of
+    // adding to it would pass the line above and fail this one.
+    expect(gearOnly.length).toBeGreaterThan(0);
+  });
+
+  it('leave the class sheet untouched, so a retune still reaches everybody', () => {
+    /**
+     * ═══ THE HALF THAT MUST NOT MOVE ═══
+     * `baseCombat` is "the class's own sheet exactly as content authored it,
+     * never written to by the equipment or status systems". A delta that wrote
+     * itself into the base would make a spent point indistinguishable from an
+     * authored one — and `docs/data-schemas.md` § 1's rule that a save stores
+     * RAW points rather than a derived total depends on being able to tell them
+     * apart.
+     */
+    const grown = fixtureActor();
+    const authored = structuredClone(grown.baseCombat);
+    grown.spentStats = { str: 9, con: 4 };
+    recomposeCombat(grown, null, resolveItem);
+    expect(grown.baseCombat).toEqual(authored);
+  });
+
+  it('changes nothing at all for a character who has spent none', () => {
+    // Every body in the game before this feature, and every monster forever.
+    const untouched = fixtureActor();
+    recomposeCombat(untouched, null, resolveItem);
+    const withEmpty = fixtureActor();
+    withEmpty.spentStats = {};
+    recomposeCombat(withEmpty, null, resolveItem);
+    expect(derivedVector(withEmpty.combat)).toEqual(derivedVector(untouched.combat));
+  });
+});

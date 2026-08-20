@@ -69,6 +69,7 @@ import type { Dir, TileXY } from '../../shared/coords.ts';
 // plus the separate-type-imports lint rule), so the module graph is unchanged
 // and only the compiler ever sees the reference.
 import type { CombatSheet } from './combat.ts';
+import type { PrimaryStats } from './derived.ts';
 // TYPE-ONLY, and for the same reason as the line above. `Slot` is a content
 // type; a VALUE import of it would put a runtime edge from the engine into
 // content/, and content/classes.ts already imports engine/combat.ts. An
@@ -390,6 +391,27 @@ type ActorCommon = {
    * composed answer and the only one a rule should consult.
    */
   passiveCombat?: PassiveContribution;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ATTRIBUTE POINTS THIS CHARACTER HAS SPENT, AS A DELTA OVER THE CLASS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME grants three a level (`Actor.lua:3748`) and lets a player put them
+   * wherever they like. This is where they land: `{ str: 3, con: 1 }` means four
+   * points spent, and the class's authored sheet is untouched underneath.
+   *
+   * A DELTA AND NOT AN ABSOLUTE, which is what makes it safe to persist. The
+   * save stores the RAW points spent, exactly as it does for talents, so
+   * unspent is recomputed on load and retuning either the grant or a class's
+   * base corrects every existing character instead of stranding them
+   * (`docs/data-schemas.md` § 1: NEVER persist a derived value).
+   *
+   * FOLDED BY `recomposeCombat` AT STAGE ONE AND A HALF — after the class sheet
+   * and BEFORE gear, because this is the body growing rather than something worn
+   * on it. Anything in engine/ that reads this directly is a bug for the same
+   * reason it is for `passiveCombat`: `combat` is the composed answer.
+   */
+  spentStats?: PrimaryStats;
 
   // --- items ----------------------------------------------------------------
   /**
