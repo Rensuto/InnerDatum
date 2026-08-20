@@ -161,8 +161,46 @@ const DEEP: readonly MonsterTemplate[] = [INDEX_WRAITH, INDEX_HUSK_ELITE, INDEX_
  */
 const THICKET: readonly MonsterTemplate[] = [INDEX_EIDOLON, INDEX_HUSK, INDEX_HUSK_ELITE];
 
-/** The chapel: things that shoot, and one of them barely there. */
-const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK, INDEX_WRAITH];
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CHAPEL: THE TEACHING ROOM, AND THE WRAITH WAS NOT A LESSON.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The paragraph above puts the Cairn here on purpose — *"a weak shooter you walk
+ * up to and kill in three turns… meeting the thing somewhere it is harmless is
+ * how you learn what it does"*. That argument is right and it is the whole
+ * reason this roster exists. The Wraith never got the same treatment, and it is
+ * not harmless anywhere.
+ *
+ * ═══ MEASURED, ONE ON ONE, AGAINST A LEVEL-1 WATCHMAN ═══
+ * 72 hp, accuracy 9 with his passives live, defence 5, ~13 damage, armour 8 —
+ * all read off the real sheet through the real protocol, and the hit chances
+ * from `checkHit`'s own `hitChance`:
+ *
+ *     foe            hp  def   my hit%  their hit%   my turns  their turns
+ *     Index Cairn    23    1       70%         58%          3           62
+ *     Index Husk     25    1       70%         75%          3           96
+ *     Index Wraith   80   20       23%         75%         21           14
+ *
+ * He needs twenty-one turns and dies in fourteen, WITH the Wraith's -30%
+ * physical resistance already counted in his favour. It is not close, and it is
+ * not a roll: `populateDelve` walks the roster as a CYCLE, so three monsters in
+ * a three-entry roster is one of each, every time. The Wraith was guaranteed.
+ *
+ * ═══ AND THIS IS THE ROOM THE GAME NOW SENDS EVERY NEW PLAYER TO BY NAME ═══
+ * That is what changed. When the grade was one label among seventeen markers,
+ * `dangerWord`'s note made a fair trade — a per-entry sum "moved the Drowned
+ * Chapel from quiet to restless… making the map disagree with the townsfolk to
+ * fix a rounding error is a bad trade". It was a rounding error then. The first
+ * case names this room out loud to a character that is four minutes old, so the
+ * room has to be beatable by one.
+ *
+ * A SECOND HUSK RATHER THAN A NEW CREATURE, which is exactly how the next room
+ * out is built (`RANK_AND_FILE` is husk, husk, wraith). The chapel keeps its
+ * shooter and its identity — *things that shoot, and one of them barely there* —
+ * and the Wraith stays in the eight rooms that are graded for it.
+ */
+const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK, INDEX_HUSK];
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
