@@ -6791,6 +6791,94 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       }
     }
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     *   A DIFFERENT CHARACTER NEEDS A DIFFERENT BODY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `resolveActor` keys a body to the ACCOUNT — `findBody(verified.actorId)` —
+     * and its identity branch returns the body it finds BEFORE `applyRestore`
+     * ever runs. That is exactly right for a reconnect, which is what it was
+     * written for: the body never left the world, and re-applying the file
+     * would roll the evening back to the last save.
+     *
+     * It is exactly wrong for a character swap, and it cost two different bugs:
+     *
+     *   NEW CHARACTER duplicated the one you were playing. The id allocator did
+     *   its job, `openCharacter` bound `chr_0003`, no file existed so `restore`
+     *   was null — and then the live level-2 body was reattached and the next
+     *   autosave wrote IT into `chr_0003.json`. Three rows on the select
+     *   screen, same name, same level, same gold.
+     *
+     *   PICKING AN EXISTING CHARACTER WAS WORSE, because `restore` was
+     *   discarded on the same branch: you kept the body you were already
+     *   playing, now bound to the other character's file, and the first
+     *   autosave OVERWROTE that character with this one. A save is not
+     *   recoverable from a screen somebody was never supposed to see.
+     *
+     * So the old body is retired first and `resolveActor` finds nothing, which
+     * puts it on its create path — `addPlayer`, then `applyRestore`, in that
+     * order, which is the path that has always been correct for a character
+     * arriving from disk.
+     *
+     * ═══ THE SEQUENCE IS THE RECALL SEQUENCE, AND THE ORDER IS LOAD-BEARING ═══
+     * `saveNow` FIRST, while the body is still in the world: `snapshotPlayers`
+     * reads the actor table, so a flush queued after `removePlayer` writes
+     * nothing and the character you just walked away from loses everything
+     * since its last autosave. Then the binding, then the engine, then the
+     * world. Same order as the grace-expiry recall, for the same reasons.
+     *
+     * ═══ WHY THE TEST IS NOT "ARE THE TWO IDS DIFFERENT" ═══
+     * `openCharacter` normalises an absent id to the persist layer's default,
+     * so a bound body always reports a CONCRETE id while `wantedCharacter` may
+     * legitimately be undefined. Comparing those directly would retire a body
+     * on every ordinary reconnect. Instead: `newCharacter` is a swap by
+     * definition and needs no comparison at all, and an explicit id is compared
+     * only against an explicit id — so this file never writes the persist
+     * layer's default id down a second time, which is the duplicated-constant
+     * shape that has cost this codebase six bugs.
+     *
+     * A RECONNECT STILL RESUMES. Neither branch fires when a client re-sends
+     * the id it is already playing, which is what `characterChoice` returns.
+     */
+    if (verified !== null) {
+      const standing = homeOf(verified.actorId).world.getActor(verified.actorId);
+      if (standing !== undefined) {
+        const bound = boundCharacterOf(verified.actorId);
+        const swapping =
+          msg.newCharacter === true ||
+          (msg.characterId !== undefined && bound !== undefined && msg.characterId !== bound);
+        if (swapping) {
+          const home = homeOf(verified.actorId);
+          const actorId = verified.actorId;
+          // WHILE IT IS STILL STANDING THERE. See above — this line is the
+          // difference between changing character and losing one.
+          saveNow('character-swap');
+          graceTimers.delete(actorId);
+          dropResumeToken(actorId);
+          connByActor.delete(actorId);
+          spokeAtMs.delete(actorId);
+          classChoiceOwed.delete(actorId);
+          opts.persist?.closeCharacter?.(actorId);
+          try {
+            home.engine.leave(actorId);
+          } catch (err) {
+            app.log.error({ err, actorId }, 'engine.leave threw during a character swap');
+          }
+          home.world.removePlayer(actorId);
+          broadcast(
+            { v: PROTOCOL_VERSION, t: 'left', id: actorId },
+            undefined,
+            audienceFor(home.id),
+          );
+          app.log.info(
+            { actorId, from: bound, to: msg.characterId ?? 'a new character' },
+            'retired a body for a character swap',
+          );
+        }
+      }
+    }
+
     const restore = await openCharacter(verified, wantedCharacter);
 
     // THE SOCKET MAY HAVE DIED DURING THE READ. Building a body for a connection
