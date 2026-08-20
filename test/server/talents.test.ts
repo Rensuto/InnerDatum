@@ -44,6 +44,7 @@ import {
   talentId,
   toggleSustain,
   tomeCooldownToTurns,
+  talentLevelOf,
   useTalent,
 } from '../../src/server/engine/talents.ts';
 import {
@@ -53,6 +54,8 @@ import {
   spendForAction,
   tickLevel,
 } from '../../src/shared/energy.ts';
+import { markPower, sigil } from '../../src/server/talents/sigil.ts';
+import { healFraction, mendWounds } from '../../src/server/talents/mend_wounds.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
@@ -1466,7 +1469,13 @@ describe('the Inspector marks, and everyone collects', () => {
 
     expect(markMultiplier(f.engine, 'husk')).toBe(1);
     useTalent(f.engine, inspector, talentId('sigil'), { x: 9, y: 5, actorId: 'husk' }, f.ctx);
-    expect(markMultiplier(f.engine, 'husk')).toBeCloseTo(1.15, 6);
+    // AND THE MARK IS ASKED OF THE TALENT. The authored low is 1.15; the
+    // Inspector carries fieldcraft at 1.15 mastery, so her rank 1 resolves a
+    // shade above it. Coincidence of numbers, not a relationship.
+    const sigilSheet = f.engine.sheetOf('sam');
+    const sigilAt = sigilSheet === undefined ? 1 : talentLevelOf(sigilSheet, sigil);
+    // `markMultiplier` reads the stored power back as `1 + power/100` — sigil.ts:162.
+    expect(markMultiplier(f.engine, 'husk')).toBeCloseTo(1 + markPower(sigilAt) / 100, 6);
 
     const mark = f.engine.effectOn('husk', TalentEffect.Marked);
     expect(mark?.otherId).toBe('sam');
@@ -1546,8 +1555,12 @@ describe('the Alchemist — AoE that never touches an ally, and the party heal',
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(alchemist.hp).toBe(10 + Math.round(ALCHEMIST.maxHp * 0.2));
-    expect(watchman.hp).toBe(10 + Math.round(WATCHMAN.maxHp * 0.2));
+    // THE FRACTION IS ASKED OF THE TALENT — see the single-target case below
+    // for why a literal 0.2 stopped being right once ministration was graded.
+    const healSheet = f.engine.sheetOf('rey');
+    const healAt = healSheet === undefined ? 1 : talentLevelOf(healSheet, mendWounds);
+    expect(alchemist.hp).toBe(10 + Math.round(ALCHEMIST.maxHp * healFraction(healAt)));
+    expect(watchman.hp).toBe(10 + Math.round(WATCHMAN.maxHp * healFraction(healAt)));
     expect(farAway.hp).toBe(10); // out of the disc
     expect(husk.hp).toBe(10); // a heal is Affinity.Ally, and a husk is not one
     expect(result.hits).toHaveLength(2);
@@ -1591,7 +1604,24 @@ describe('the Alchemist — AoE that never touches an ally, and the party heal',
       ally.hp = startingHp;
       alchemist.hp = alchemist.maxHp;
 
-      const expected = Math.min(WATCHMAN.maxHp, startingHp + Math.round(WATCHMAN.maxHp * 0.2));
+      /**
+       * THE FRACTION IS ASKED OF THE TALENT, NOT WRITTEN DOWN HERE.
+       *
+       * It was a literal 0.2 — the authored `heal_pct` — and that was right
+       * until `ashwick/ministration` became the Alchemist's supporting tree at
+       * 1.15 mastery. Her rank 1 is now effective level 1.15, so the curve is
+       * sampled past its own low end and the heal is a point larger.
+       *
+       * Restating the band here would be a second copy of the arithmetic
+       * (M-007). `healFraction` is the shipped curve; `talentLevelOf` is the
+       * rank the server resolves at. Asking both is asking the game.
+       */
+      const sheet = f.engine.sheetOf('rey');
+      const at = sheet === undefined ? 1 : talentLevelOf(sheet, mendWounds);
+      const expected = Math.min(
+        WATCHMAN.maxHp,
+        startingHp + Math.round(WATCHMAN.maxHp * healFraction(at)),
+      );
       useTalent(f.engine, alchemist, talentId('mend_wounds'), { x: 5, y: 5 }, f.ctx);
 
       expect(ally.hp).toBe(expected);

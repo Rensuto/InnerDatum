@@ -303,6 +303,8 @@ export const WATCHMAN: ClassDef = {
   },
   loadout: [crudeBlow, wardRush, truncheonSweep, ironCurtain, lockdown, shinCrack],
   passives: [standingOrders, softPlaces, seenWorse, theLongShift, weightOfOffice, paradeGround],
+  // A man holding a doorway who can also hit people, in that order.
+  masteries: { 'watch/the-line': SIGNATURE, 'watch/discipline': SUPPORTING },
 };
 
 // ---------------------------------------------------------------------------
@@ -356,6 +358,8 @@ export const INSPECTOR: ClassDef = {
   },
   loadout: [revolverShot, snipersMark, scattershot, fogStep, sigil, pistolWhip],
   passives: [coldReading, steadyHands, contingencies, calledShot, powderDiscipline, boltHole],
+  // A shot who can also disappear.
+  masteries: { 'index/marksmanship': SIGNATURE, 'index/fieldcraft': SUPPORTING },
 };
 
 // ---------------------------------------------------------------------------
@@ -416,6 +420,8 @@ export const ALCHEMIST: ClassDef = {
   },
   loadout: [ashwickFlare, alchemicVial, concussionFlask, backdraft, mendWounds, fieldDressing],
   passives: [measuredDoses, scorchedCoat, stableCompound, cutWithChalk, longHours, bedsideManner],
+  // A chemist who can also patch you up.
+  masteries: { 'ashwick/reagents': SIGNATURE, 'ashwick/ministration': SUPPORTING },
 };
 
 // ---------------------------------------------------------------------------

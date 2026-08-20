@@ -944,9 +944,12 @@ describe('the ring the client draws is the ring the server enforces', () => {
     await ren.settle();
 
     const wireRange = Number(rowFor(ren, 'talent:fog_step')?.['range']);
-    // Rank 3 on the ported curve. Spelled out so the port is pinned here too,
-    // not merely round-tripped.
-    expect(wireRange).toBe(5);
+    // Rank 3 on the ported curve, THROUGH the Inspector's fieldcraft mastery
+    // (1.15) — so the effective rank is 3.45 and the ring is one tile wider
+    // than the ungraded curve gives. Spelled out so the port is pinned here
+    // too, not merely round-tripped; the number moved when the tree was graded
+    // and that is the change being recorded.
+    expect(wireRange).toBe(6);
     ren.clear();
 
     // THE SERVER'S OWN ANSWER, at exactly the distance it just advertised. A

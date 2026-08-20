@@ -12,12 +12,14 @@ import {
   TalentEffect,
   TalentRefusal,
   canUseTalent,
+  talentLevelOf,
   effectiveTalentRange,
   getTalentLevelRaw,
   resolveGuardCounter,
   talentId,
   useTalent,
 } from '../../src/server/engine/talents.ts';
+import { counterMult } from '../../src/server/talents/iron_curtain.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { scriptedRng } from '../helpers/scripted-rng.ts';
@@ -695,17 +697,47 @@ describe('FOG STEP — the one talent whose rank buys distance', () => {
     expect(step).toBeDefined();
     if (step === undefined) return;
 
+    /**
+     * ═══ THE BOUNDARY IS DERIVED, NOT WRITTEN DOWN ═══
+     * This test used to name tiles: refuse at 5 tiles on rank 1, allow at rank 3.
+     * Then Fieldcraft was graded at 1.15 mastery, rank 1's reach grew from four
+     * tiles to five, and the test went red for a change that was entirely
+     * correct.
+     *
+     * A hard-coded boundary in a test about a SCALING rule is the boundary
+     * getting written down twice — so it is asked of the shipped function
+     * instead. `effectiveTalentRange` and `talentLevelOf` are the same two the
+     * server refuses with, so this is not a second copy of the arithmetic
+     * (M-007); it is the arithmetic, sampled one tile either side.
+     */
+    const sheet = f.engine.sheetOf('sam');
+    expect(sheet, 'the fixture built no sheet').toBeDefined();
+    if (sheet === undefined) return;
+
     f.setLevel('sam', 'fog_step', 1);
-    expect(canUseTalent(f.engine, inspector, step, { x: 10, y: 5 }, f.world)).toBe(
-      TalentRefusal.OutOfRange,
-    );
+    const atOne = effectiveTalentRange(step.targeting, talentLevelOf(sheet, step));
+    expect(atOne, 'rank 1 reaches nowhere, so this proves nothing').toBeGreaterThan(0);
+
+    // One tile beyond rank 1's reach: refused.
+    expect(
+      canUseTalent(f.engine, inspector, step, { x: 5 + atOne + 1, y: 5 }, f.world),
+      'a tile outside rank 1 reach was allowed',
+    ).toBe(TalentRefusal.OutOfRange);
 
     f.setLevel('sam', 'fog_step', 3);
-    expect(canUseTalent(f.engine, inspector, step, { x: 10, y: 5 }, f.world)).toBe(null);
+    const atThree = effectiveTalentRange(step.targeting, talentLevelOf(sheet, step));
+    expect(atThree, 'a rank bought no reach at all').toBeGreaterThan(atOne);
 
-    // …and the tile one step beyond rank 3's reach is still refused, so the
-    // widening is a widening and not the removal of the check.
-    expect(canUseTalent(f.engine, inspector, step, { x: 11, y: 5 }, f.world)).toBe(
+    // ...and the SAME tile is now inside the ring. That is the whole claim: the
+    // server's refusal moves with the rank the client drew its ring from.
+    expect(
+      canUseTalent(f.engine, inspector, step, { x: 5 + atOne + 1, y: 5 }, f.world),
+      'the widening never reached the tile it should have',
+    ).toBe(null);
+
+    // And one beyond rank 3 is still refused, so this is a widening rather than
+    // the removal of the check.
+    expect(canUseTalent(f.engine, inspector, step, { x: 5 + atThree + 1, y: 5 }, f.world)).toBe(
       TalentRefusal.OutOfRange,
     );
   });
@@ -833,12 +865,39 @@ describe('THE GUARD COUNTER rides on the effect instance, not on a constant', ()
     return { f, power: guard?.power ?? 0 };
   }
 
-  it('snapshots the multiplier onto Guarding.power, at the shipped 0.7 at rank 1', () => {
-    // THE MOVED CONSTANT, PINNED AT BOTH ENDS. `GUARD_COUNTER_MULT = 0.7` lived
-    // in engine/talents.ts until the rank landed; the low end of the curve is
-    // that exact number, so the counter a rank-1 Watchman throws is the counter
-    // he always threw.
-    expect(curtainAt(1).power).toBeCloseTo(0.7, 6);
+  it('snapshots the multiplier onto Guarding.power, above the authored 0.7 at rank 1', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE MOVED CONSTANT — AND WHAT MASTERY DID TO THE CLAIM ABOUT IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `GUARD_COUNTER_MULT = 0.7` lived in engine/talents.ts until the rank
+     * landed, and this used to assert that a rank-1 Watchman threw EXACTLY that
+     * counter — "the counter he always threw".
+     *
+     * That was true while every tree sat at mastery 1.0, and it stopped being
+     * true the moment `watch/the-line` became the Watchman's SIGNATURE tree.
+     * His rank 1 is now effective level 1.3, so the curve is sampled past its
+     * own low end and the counter is 0.757 rather than 0.700.
+     *
+     * That is mastery working, not a regression — so the assertion is rewritten
+     * to say what is actually being protected. TWO claims, and the authored
+     * constant is still pinned by the first:
+     *
+     *   1. The curve's LOW END is still exactly the constant that moved here.
+     *      Sampled at level 1 directly, which is what an ungraded tree gives.
+     *   2. A graded Watchman gets MORE than the authored floor, and a rank still
+     *      buys more on top — the widening is a widening.
+     */
+    expect(
+      counterMult(1),
+      'the authored low end moved — that is a real balance change, not a mastery one',
+    ).toBeCloseTo(0.7, 6);
+
+    expect(
+      curtainAt(1).power,
+      'the Watchman is not getting his signature-tree mastery',
+    ).toBeGreaterThan(0.7);
     expect(curtainAt(TALENT_MAX_LEVEL).power).toBeGreaterThan(curtainAt(1).power);
   });
 

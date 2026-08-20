@@ -113,7 +113,13 @@ const MARK_POWER_LOW = 15;
 const MARK_POWER_HIGH = 30;
 
 /** The one place this talent's curve is written. */
-function markPower(talentLevel: number): number {
+/**
+ * EXPORTED so a test pins this curve by CALLING it rather than restating the
+ * band. A test that rewrites the arithmetic is a second copy of it, and this
+ * codebase has already shipped a beginner room that killed players because a
+ * test modelled armour its own way (M-007).
+ */
+export function markPower(talentLevel: number): number {
   return combatTalentScale(talentLevel, MARK_POWER_LOW, MARK_POWER_HIGH);
 }
 

@@ -132,7 +132,13 @@ const HEAL_FRACTION_LOW = 0.2;
 const HEAL_FRACTION_HIGH = 0.32;
 
 /** The one place this talent's curve is written. */
-function healFraction(talentLevel: number): number {
+/**
+ * EXPORTED so a test pins this curve by CALLING it rather than restating the
+ * band. A test that rewrites the arithmetic is a second copy of it, and this
+ * codebase has already shipped a beginner room that killed players because a
+ * test modelled armour its own way (M-007).
+ */
+export function healFraction(talentLevel: number): number {
   return combatTalentScale(talentLevel, HEAL_FRACTION_LOW, HEAL_FRACTION_HIGH);
 }
 /** Bathe in Light, light.lua:56 — `cooldown = 20` ToME actions. See the header. */

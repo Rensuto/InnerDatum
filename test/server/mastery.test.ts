@@ -11,6 +11,7 @@ import {
   ALCHEMIST,
   INSPECTOR,
   SIGNATURE,
+  SUPPORTING,
   WATCHMAN,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
@@ -46,10 +47,16 @@ describe('mastery reaches the effective level', () => {
 
     const raw = getTalentLevelRaw(sheet, talent.id);
     expect(raw, 'not learned, so this proves nothing').toBeGreaterThan(0);
-    expect(talentLevelOf(sheet, talent), 'ungraded trees must be unchanged').toBe(raw);
+    // The Watchman GRADES both his trees now, so his own talents are not the
+    // ungraded case. Groundwork is — it is deliberately 1.0 for everybody.
+    const generic = sheet.passives.find((id) => id.includes('long_service'));
+    expect(generic, 'the generic tree is not on this sheet').toBeDefined();
 
+    // A graded tree multiplies; an ungraded one does not. Both, side by side.
     const graded = { ...sheet, mastery: new Map([[talent.tree, SIGNATURE]]) };
+    const ungraded = { ...sheet, mastery: new Map<string, number>() };
     expect(talentLevelOf(graded, talent)).toBeCloseTo(raw * SIGNATURE, 5);
+    expect(talentLevelOf(ungraded, talent), 'an ungraded tree must be untouched').toBe(raw);
   });
 
   it('leaves the generic tree at 1.0 for everybody', () => {
@@ -69,6 +76,70 @@ describe('mastery reaches the effective level', () => {
       expect(known, 'the generic tree is not on this sheet at all').toBe(true);
       expect(sheet.mastery.get('generic/groundwork') ?? 1).toBe(1);
     }
+  });
+});
+
+describe('the grants themselves', () => {
+  it('gives every class exactly one signature and one supporting tree', () => {
+    /**
+     * A class with BOTH trees at 1.30 is differentiated from the other classes
+     * and says nothing about itself. The split says what it is FOR: the Watchman
+     * is a man holding a doorway who can also hit people; the Inspector is a shot
+     * who can also disappear; the Alchemist is a chemist who can also patch you
+     * up. That is texture inside a build as well as between builds.
+     */
+    for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
+      const grades = Object.values(definition.masteries ?? {});
+      expect(grades, `${definition.name} grades no trees`).toHaveLength(2);
+      expect(Math.max(...grades)).toBeCloseTo(SIGNATURE, 5);
+      expect(Math.min(...grades)).toBeCloseTo(SUPPORTING, 5);
+    }
+  });
+
+  it('never grades a tree the class has no talent in', () => {
+    for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
+      const owned = new Set([...definition.loadout, ...definition.passives].map((t) => t.tree));
+      for (const tree of Object.keys(definition.masteries ?? {})) {
+        expect(owned.has(tree), `${definition.name} grades ${tree}, which it never touches`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it('leaves the generic tree at 1.0 for everybody', () => {
+    /**
+     * Groundwork is what everyone is taught. A class BETTER at it would be a
+     * class that is better at being a person, and upstream leaves its own generic
+     * trees ungraded for the same reason.
+     */
+    for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
+      const sheet = sheetForClass(definition);
+      expect(sheet.mastery.get('generic/groundwork') ?? 1).toBe(1);
+    }
+  });
+
+  it('makes a signature talent outrank a supporting one at the same points', () => {
+    /**
+     * ═══ THE WHOLE POINT, IN ONE ASSERTION ═══
+     * Two talents, same class, same points spent, different trees — and they do
+     * NOT resolve at the same rank. That is the difference between a class that
+     * has two trees and a class that is ABOUT one of them.
+     */
+    const sheet = sheetForClass(WATCHMAN);
+    const pick = (tree: string) =>
+      [...WATCHMAN.loadout, ...WATCHMAN.passives].find((t) => t.tree === tree);
+    const line = pick('watch/the-line');
+    const discipline = pick('watch/discipline');
+    expect(line, "no talent in the Watchman's signature tree").toBeDefined();
+    expect(discipline, "no talent in the Watchman's supporting tree").toBeDefined();
+    if (line === undefined || discipline === undefined) return;
+
+    expect(getTalentLevelRaw(sheet, line.id)).toBe(getTalentLevelRaw(sheet, discipline.id));
+    expect(talentLevelOf(sheet, line)).toBeGreaterThan(talentLevelOf(sheet, discipline));
+    expect(talentLevelOf(sheet, discipline)).toBeGreaterThan(
+      getTalentLevelRaw(sheet, discipline.id),
+    );
   });
 });
 
