@@ -315,9 +315,29 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           'Try that once more and we will both be sorry.',
         ],
         topics: {
-          // WAS "Blackwood if you must" — see Merrow's line. Blackwood is now
-          // a hundred and thirty-one steps out and the far end of everything.
-          [TopicId.Where]: 'Threadneedle for goods. The chapel to blood a coat.',
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * THE FIRST ADVICE ANYBODY ASKS FOR, SO IT NAMES A SHOP THEY CAN USE.
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * WAS "Threadneedle for goods. The chapel to blood a coat." — which is
+           * true, and sent a beginner on a 34-step walk to a refusal.
+           * `STARTING_MONEY` is 15; the outfitter's level-1 floor is 24 over
+           * thirty shops and its median is 46, so a starting purse can NEVER buy
+           * there. Both numbers are authored, not rolled. `tools/first-session.mjs`
+           * ended `15 gold buys 0 of 4: (nothing)`.
+           *
+           * The apothecary sells at 14 — one gold under the purse, every time.
+           * Halloway Bell, the second person in this town, has always said so
+           * ("Ashwick first. A draught costs less than a coat."). The bug was
+           * only that the FIRST speaker is the one a new player asks, and hers
+           * pointed at the shelf they cannot reach.
+           *
+           * THREADNEEDLE IS STILL NAMED, as the thing to save for. Removing it
+           * would trade one wrong answer for a smaller one; the point is that a
+           * beginner leaves this conversation with somewhere to go TODAY.
+           */
+          [TopicId.Where]: 'Ashwick for a draught. Threadneedle costs more.',
           [TopicId.Party]: 'Travel together. Nobody earns less for sharing.',
           [TopicId.Roads]: 'The made ground is safe. That is the whole of it.',
           [TopicId.Rumour]: 'Folk come off the Bracken Waste having seen a thing.',
@@ -325,6 +345,10 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         later: {
           // THE REEVE KEEPS RECORDS. Hers is the administrative version.
           [TopicId.Rumour]: 'West of the Sedge is country I still file returns on.',
+          // AND BY `STANDING_LEVEL` THE PURSE HAS CAUGHT UP, so the advice goes
+          // back to the outfitter — which is where somebody with money should be
+          // sent. This is the line that used to be given to everybody.
+          [TopicId.Where]: 'Threadneedle for goods. The chapel to blood a coat.',
         },
       },
       /**

@@ -2,8 +2,22 @@ import { describe, expect, it } from 'vitest';
 
 import { makeOverworld, regionNamedIn } from '../../src/shared/level.ts';
 import { createFog, fogHas, revealDisc, revealDiscExcept } from '../../src/shared/fog.ts';
+import {
+  NB_FILL,
+  ShopShelf,
+  buyPrice,
+  restock,
+  stockLevelFor,
+} from '../../src/server/content/shops.ts';
+import { STARTING_MONEY } from '../../src/server/engine/actor.ts';
+import { createRng } from '../../src/shared/rng.ts';
 
-import { LINE_MAX, TOWNSFOLK, isTownsfolkId } from '../../src/server/content/townsfolk.ts';
+import {
+  LINE_MAX,
+  TOWNSFOLK,
+  isTownsfolkId,
+  townsfolkFor,
+} from '../../src/server/content/townsfolk.ts';
 import { Faction, isMonster } from '../../src/server/engine/actor.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -510,5 +524,86 @@ describe('marking a rumour does not give away a hidden site', () => {
     const naive = createFog(w, h);
     revealDisc(naive, w, h, wood?.x ?? 0, wood?.y ?? 0);
     expect(fogHas(naive, w, bx, by), 'the hazard is real').toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FIRST PERSON A BEGINNER MEETS MUST NOT SEND THEM SHOPPING BROKE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED, from `tools/first-session.mjs` and then from the shelves directly:
+ *
+ *     STARTING_MONEY                     15
+ *     outfitter, level-1 stock, 30 shops cheapest 24, median 46, 0% affordable
+ *     apothecary, same                   every item 14, 100% affordable
+ *
+ * Those numbers are authored, not rolled: a starting purse can NEVER buy from
+ * the outfitter, by construction. And Alderbrook is the starting town, its
+ * `where` is the first piece of advice anybody asks for, and it said
+ * "Threadneedle for goods" — a 34-step walk to a shelf whose floor is nine gold
+ * out of reach. The first session ended `15 gold buys 0 of 4: (nothing)`
+ * followed by `refused: that costs 24 gold`.
+ *
+ * ═══ THE GAME ALREADY CONTAINED THE RIGHT ADVICE ═══
+ * Halloway Bell, the SECOND person in the same town, says "Ashwick first. A
+ * draught costs less than a coat." That line is correct and always was. The bug
+ * is only that the first speaker's version is the one a new player is most
+ * likely to take, and it pointed at the shelf they cannot use.
+ *
+ * ═══ WHAT THIS ASSERTS, AND WHY IT IS NOT A STRING MATCH ═══
+ * Not "Ashcombe says Ashwick" — that would pin the prose and break on any
+ * rewrite. It asserts the PROPERTY: the settlement the starting town names to a
+ * beginner must have something a starting purse can buy. Prose can move; the
+ * economy has to keep agreeing with it.
+ */
+describe('the advice a beginner is given points somewhere they can afford', () => {
+  /** Which shelf each settlement's shop keeps, by the name a line would use. */
+  const SHELF_BY_NAME: readonly (readonly [string, ShopShelf])[] = [
+    ['Threadneedle', ShopShelf.Outfitter],
+    ['Ashwick', ShopShelf.Apothecary],
+  ];
+
+  /** The cheapest thing on a shelf at level 1, over enough shops to be fair. */
+  function cheapestAt(shelf: ShopShelf): number {
+    let cheapest = Number.POSITIVE_INFINITY;
+    for (let seed = 0; seed < 20; seed += 1) {
+      for (const id of restock(
+        createRng(`advice-${String(seed)}`),
+        [],
+        stockLevelFor(1),
+        NB_FILL,
+        shelf,
+      )) {
+        cheapest = Math.min(cheapest, buyPrice(id, 1));
+      }
+    }
+    return cheapest;
+  }
+
+  it('has a shelf a starting purse can and cannot afford, or there is nothing to test', () => {
+    // The premise, pinned: if a later pass makes everything affordable this test
+    // should be reconsidered rather than passing for a new reason.
+    expect(cheapestAt(ShopShelf.Apothecary)).toBeLessThanOrEqual(STARTING_MONEY);
+    expect(cheapestAt(ShopShelf.Outfitter)).toBeGreaterThan(STARTING_MONEY);
+  });
+
+  it('names a shop the starting purse can buy from, in the starting town', () => {
+    const folk = townsfolkFor('site:alderbrook');
+    expect(folk.length).toBeGreaterThan(0);
+
+    const first = folk[0];
+    expect(first, 'the starting town has a first speaker').toBeDefined();
+    const where = first?.topics[TopicId.Where] ?? '';
+
+    const named = SHELF_BY_NAME.filter(([name]) => where.includes(name));
+    expect(named.length, `nothing shoppable named in "${where}"`).toBeGreaterThan(0);
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // At least one place they are sent must sell something they can carry the
+    // money for. Being told about the good shop as well is fine; being told
+    // ONLY about it is a 34-step walk to a refusal.
+    const affordable = named.filter(([, shelf]) => cheapestAt(shelf) <= STARTING_MONEY);
+    expect(affordable.length, `only unaffordable shops named in "${where}"`).toBeGreaterThan(0);
   });
 });

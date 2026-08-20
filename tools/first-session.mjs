@@ -637,9 +637,25 @@ if (frames.filter((f) => f.t === 'shop').length === 0) {
    * knowledge the game just handed it. The distance order stays as the fallback
    * for a map where those names have moved.
    */
-  const shopNames = ['Threadneedle', 'Ashwick'];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ASHWICK FIRST, BECAUSE THAT IS WHAT THE REEVE NOW SAYS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The note above is the rule and this list is the part of it that has to keep
+   * up. Her `where` used to read "Threadneedle for goods" and this walked there;
+   * it now reads "Ashwick for a draught. Threadneedle costs more." — because
+   * `STARTING_MONEY` is 15, the outfitter's level-1 floor is 24, and the
+   * apothecary sells at 14.
+   *
+   * A tool that kept walking to Threadneedle after the advice moved would be
+   * measuring a player who ignored the advice, and reporting the opening as a
+   * refusal that the game no longer hands anybody. The ORDER is the whole fix:
+   * both shops are still visited if the first has nothing.
+   */
+  const shopNames = ['Ashwick', 'Threadneedle'];
   const shopFirst = [
-    ...byDistance.filter((c) => shopNames.some((n) => (c.site.name ?? '').includes(n))),
+    ...shopNames.flatMap((n) => byDistance.filter((c) => (c.site.name ?? '').includes(n))),
     ...byDistance.slice(1, 3),
   ];
   for (const next of shopFirst) {
