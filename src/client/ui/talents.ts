@@ -254,7 +254,47 @@ const CLOSE_PX = 13;
  * logical pixels, and this needs 480 + 12 of margin), and the height grows with
  * the text rather than the text being trimmed to the height.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DESCRIPTION COLUMN — WHAT THE SCREENSHOT ASKED FOR, AND WHY IT IS WIDTH.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's levelup dialog is two things side by side: the trees on the left, and
+ * everything about ONE talent down the right — its name, its current level and
+ * what the next one would be, its mode, cost, range, cooldown, and the sentence
+ * saying what it does with the next rank's numbers written in beside the
+ * current ones. The player sent that screen and asked for it.
+ *
+ * ═══ THIS IS NOT THE STRIP THAT WAS REMOVED ═══
+ * An earlier version reserved a strip at the FOOT of the panel and it was
+ * replaced by a hover card, on the stated grounds that "a reserved strip costs
+ * its height on every frame whether or not anything is being pointed at". That
+ * argument was about HEIGHT and it still holds — the grid keeps the whole band.
+ * A column costs WIDTH, which this panel has to spare on any window wide enough
+ * to be given one, and which the grid cannot use anyway: it packs into two
+ * fixed columns and a third will not fit.
+ *
+ * ═══ AND IT IS CONDITIONAL, SO THE FLOOR STILL WORKS ═══
+ * `DEFAULT_VIEWPORT` is 20 tiles — 640 logical pixels — and a 760-wide panel
+ * does not fit in it. Below the threshold the panel is exactly what it was and
+ * the hover card is still the answer, which is the honest degradation: a
+ * description squeezed into 90 pixels would be the cut-off-mid-sentence bug the
+ * width above this was widened to fix.
+ */
+/**
+ * 266 AND NOT 268, WHICH IS TWO PIXELS CHOSEN BY MEASUREMENT.
+ *
+ * The threshold is `PANEL_W + COL_GAP + DETAIL_W + PANEL_MARGIN * 2`, and at 268
+ * that lands on 774 — which puts 772x480, a size this client's own viewport
+ * table tests at, two pixels the wrong side of having a description column. 266
+ * moves the threshold to 772 exactly. Two pixels of prose against a whole common
+ * window is not a close call.
+ */
+const DETAIL_W = 266;
+
 const PANEL_W = 480;
+/** With the description column beside it. See `DETAIL_W`. */
+const PANEL_W_WIDE = PANEL_W + COL_GAP + DETAIL_W;
 const PANEL_MIN_W = 176;
 const PANEL_MAX_H = 300;
 /**
@@ -654,7 +694,12 @@ export function talentPanelRect(options: {
   if (band < PANEL_MIN_H + PANEL_MARGIN * 2) return null;
   if (width < PANEL_MIN_W + PANEL_MARGIN * 2) return null;
 
-  const w = Math.min(PANEL_W, width - PANEL_MARGIN * 2);
+  // THE WIDE SHAPE WHEN IT FITS WHOLE, never a squeezed one: `Math.min` against
+  // the wide width would hand back every intermediate size between the two, and
+  // the description column would be born narrow on exactly the windows it is
+  // least useful on. Two sizes, and the threshold is "does the whole thing fit".
+  const wide = width - PANEL_MARGIN * 2 >= PANEL_W_WIDE;
+  const w = wide ? PANEL_W_WIDE : Math.min(PANEL_W, width - PANEL_MARGIN * 2);
   const h = Math.min(PANEL_MAX_H, band - PANEL_MARGIN * 2);
   return { x: Math.floor((width - w) / 2), y: top + PANEL_MARGIN, w, h };
 }
@@ -791,6 +836,15 @@ export type TalentPanelGeometry = {
   readonly close: PanelRect;
   /** Rows in reading order, top to bottom. */
   readonly placed: readonly PlacedTalentRow[];
+  /**
+   * WHERE THE DESCRIPTION GOES, or null on a panel too narrow to have one.
+   *
+   * DERIVED FROM THE RECT ALONE, like `close` and for the same reason: the hit
+   * test and the painter both call this function and must agree to the pixel
+   * about what is where. A pane whose presence depended on the ROWS would move
+   * under the pointer the first time a category was added.
+   */
+  readonly detail: PanelRect | null;
 };
 
 /**
@@ -827,9 +881,31 @@ export function talentPanelGeometry(
 ): TalentPanelGeometry {
   const close = closeRect(rect);
   const x = rect.x + INSET;
-  const innerW = Math.max(0, rect.w - INSET * 2);
+  const fullW = Math.max(0, rect.w - INSET * 2);
   const top = rect.y + HEADER_H + INSET;
   const bottom = rect.y + rect.h - INSET;
+
+  /**
+   * ═══ THE DESCRIPTION COLUMN IS TAKEN OFF THE RIGHT FIRST ═══
+   * Before the grid is measured, so the grid sees only the width it actually
+   * has. Doing it the other way round — grid first, pane in what is left — is
+   * how a two-column grid ends up half under a description.
+   *
+   * ONLY WHEN BOTH STILL FIT WHOLE. The test is the grid's own requirement (two
+   * columns) plus the pane; a panel that can hold one but not both keeps the
+   * grid, because the trees are what the screen is for and the hover card still
+   * answers the description question.
+   */
+  const hasDetail = fullW >= COL_W * 2 + COL_GAP + COL_GAP + DETAIL_W;
+  const detail: PanelRect | null = hasDetail
+    ? {
+        x: x + fullW - DETAIL_W,
+        y: top,
+        w: DETAIL_W,
+        h: Math.max(0, bottom - top),
+      }
+    : null;
+  const innerW = hasDetail ? fullW - DETAIL_W - COL_GAP : fullW;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -919,7 +995,7 @@ export function talentPanelGeometry(
     });
   }
 
-  return { close, placed };
+  return { close, placed, detail };
 }
 
 export const TalentHitKind = {
@@ -1101,6 +1177,29 @@ function cellAt(
   return undefined;
 }
 
+/**
+ * WHICH TALENT IS UNDER THE POINTER, BY ID, or null.
+ *
+ * THE SAME TRAVERSAL A CLICK AND A CARD USE, for the reason this file repeats:
+ * the description column, the hover card and the press must all be about the
+ * same icon, and three walks of the same rects are three chances to disagree
+ * about which one that is.
+ *
+ * AN ID RATHER THAN AN INDEX, because an index alone cannot name a talent once
+ * there are categories — index 0 means something different in every one of them,
+ * which is exactly the bug `cellAt` was split out to prevent.
+ */
+export function talentIdAt(
+  rect: PanelRect,
+  rows: readonly TalentRow[],
+  px: number,
+  py: number,
+): string | null {
+  const hit = talentPanelHitAt(rect, rows, px, py);
+  if (hit === null || hit.kind === TalentHitKind.Close) return null;
+  return cellAt(rows, hit.index, px, py, rect)?.id ?? null;
+}
+
 export function talentTipAt(
   rect: PanelRect,
   rows: readonly TalentRow[],
@@ -1143,6 +1242,138 @@ export function talentTipAt(
     lines: wrap(cell.desc, width),
     nextLines: cell.descNext === null ? [] : wrap(`${ARROW} ${cell.descNext}`, width),
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *      ONE TALENT, IN FULL, DOWN THE RIGHT — ToME's LEVELUP RIGHT PANE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The screenshot is a labelled list under a gold name: current level and what
+ * the next one would be, then use mode, cost, range, cooldown, then the
+ * sentence. Every line is `Label: value` with the LABEL dim and the VALUE lit,
+ * because a column of green labels is a wall and the value is what is being read.
+ *
+ * ═══ THE NEXT RANK IS WRITTEN BESIDE THE CURRENT ONE, NOT UNDER IT ═══
+ * `2 [-> 3]` is upstream's exact grammar and it is better than a second
+ * paragraph: the question a player is answering is "what does this point BUY",
+ * and an answer that makes them hold two numbers in their head across four lines
+ * is answering a different one. `ARROW` is the same glyph the hover card uses.
+ *
+ * IT DRAWS NOTHING WHEN NOTHING IS FOCUSED except a line saying so — an empty
+ * column reads as a panel that failed to load, and this screen is most often
+ * opened by somebody who does not know what they are looking at yet.
+ */
+function drawDetail(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  box: PanelRect,
+  cell: TalentCell | null,
+  wrap: (text: string, maxPx: number) => readonly string[],
+): void {
+  if (box.w <= 0 || box.h <= 0) return;
+
+  // A HAIRLINE, NOT A BOX. The pane is part of the panel rather than a second
+  // panel inside it, and a full border would read as a nested window.
+  ctx.fillStyle = PALETTE.SLATE;
+  ctx.fillRect(box.x - Math.floor(COL_GAP / 2), box.y, 1, box.h);
+
+  const x = box.x + 6;
+  const w = box.w - 12;
+  let y = box.y + 4;
+  const bottom = box.y + box.h;
+
+  const line = (text: string, font: string, ink: string, gap = 12): void => {
+    if (y + gap > bottom) return;
+    ctx.font = font;
+    ctx.fillStyle = ink;
+    ctx.fillText(fitText(ctx, text, w), x, y + gap / 2);
+    y += gap;
+  };
+
+  if (cell === null) {
+    line('Point at a talent.', FONT_BODY, PALETTE.GREY);
+    return;
+  }
+
+  // THE ICON BESIDE THE NAME, so the pane and the grid are visibly about the
+  // same thing — the eye travels from the icon it clicked to the icon up here.
+  const iconBox = { x, y, w: ICON_PX, h: ICON_PX };
+  drawTalentIcon(ctx, sprites, cell.icon, cell.name, iconBox, PALETTE.SLATE);
+
+  const textX = x + ICON_PX + 6;
+  ctx.font = FONT_META;
+  ctx.fillStyle = PALETTE.GOLD;
+  ctx.fillText(fitText(ctx, cell.name, w - ICON_PX - 6), textX, y + 8);
+  ctx.font = FONT_BODY;
+  ctx.fillStyle = PALETTE.GREY_HI;
+  ctx.fillText(
+    fitText(ctx, cell.passive ? 'Passive — always on' : 'Activated', w - ICON_PX - 6),
+    textX,
+    y + 21,
+  );
+  y += ICON_PX + 6;
+
+  /** `Label: value`, with the label dim so the value is what the eye lands on. */
+  const field = (label: string, value: string, ink: string = PALETTE.PARCHMENT): void => {
+    if (y + 12 > bottom) return;
+    ctx.font = FONT_BODY;
+    ctx.fillStyle = PALETTE.GREY;
+    const head = `${label}: `;
+    ctx.fillText(head, x, y + 6);
+    const headW = ctx.measureText(head).width;
+    ctx.fillStyle = ink;
+    ctx.fillText(fitText(ctx, value, w - headW), x + headW, y + 6);
+    y += 12;
+  };
+
+  // ═══ THE LINE THE WHOLE PANE EXISTS FOR ═══
+  // What this talent is now, and what the point in your hand would make it.
+  // GOLD when there is a point to spend and the talent can take one, because
+  // that is the only state in which the second number is an OFFER rather than a
+  // fact about the future.
+  field(
+    'Talent level',
+    cell.level >= cell.maxLevel
+      ? `${String(cell.level)}/${String(cell.maxLevel)} — mastered`
+      : `${String(cell.level)} ${ARROW} ${String(cell.level + 1)}  (of ${String(cell.maxLevel)})`,
+    cell.canSpend ? PALETTE.GOLD : PALETTE.PARCHMENT,
+  );
+
+  if (!cell.passive) {
+    field('Cost', `${String(cell.cost.ap)} AP`);
+    if (cell.cost.resource > 0) field('Resource', `${String(cell.cost.resource)} resolve`);
+    field('Range', cell.range >= 2 ? `${String(cell.range)} tiles` : 'melee');
+    field('Cooldown', cell.cooldownTurns > 0 ? `${String(cell.cooldownTurns)} turns` : 'none');
+  }
+
+  y += 4;
+  ctx.font = FONT_BODY;
+  ctx.fillStyle = PALETTE.SILVER;
+  for (const text of wrap(cell.desc, w)) {
+    if (y + 12 > bottom) return;
+    ctx.fillText(text, x, y + 6);
+    y += 12;
+  }
+
+  if (cell.descNext !== null) {
+    y += 4;
+    // ═══ THE NEXT RANK IN GOLD, WHICH IS WHAT THE HOVER CARD ALREADY USES ═══
+    // The one thing on this pane that is not true yet, so it must not read as a
+    // fact — upstream keeps its `[-> n]` numbers in their own colour for exactly
+    // that reason. GOLD rather than a new colour because `drawHoverCard` paints
+    // `nextLines` gold and the two surfaces describe the same talent: a player
+    // who learns the colour on one must not have to learn it again on the other.
+    //
+    // NOT `VIOLET_HI`, which was the first choice and is RESERVED — it IS the
+    // missing-asset box, pinned by test/client/assets.test.ts.
+    ctx.fillStyle = PALETTE.GOLD;
+    for (const text of wrap(`${ARROW} ${cell.descNext}`, w)) {
+      if (y + 12 > bottom) return;
+      ctx.fillText(text, x, y + 6);
+      y += 12;
+    }
+  }
 }
 
 function drawTalentIcon(
@@ -1327,6 +1558,21 @@ export type TalentPanelDrawOptions = {
    * before, which is a degradation nobody can misread.
    */
   readonly level?: number | null;
+  /**
+   * THE TALENT THE DESCRIPTION COLUMN IS ABOUT, or null for the empty state.
+   *
+   * AN ID AND NOT A CELL, so this panel resolves it against the rows it is
+   * drawing THIS FRAME. A caller holding a cell would hold last frame's numbers
+   * — and the one number on that pane that must never be stale is the level,
+   * which changes on the press this screen exists to make.
+   *
+   * AN ID THAT IS NO LONGER IN THE ROWS DRAWS THE EMPTY STATE, not a blank one:
+   * a class change or a content edit can retire a talent between frames.
+   *
+   * OPTIONAL, so a caller that predates the column compiles unchanged and gets
+   * the pane's "point at a talent" line.
+   */
+  readonly focusId?: string | null;
 };
 
 /**
@@ -1360,6 +1606,28 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
 
   const geometry = talentPanelGeometry(rect, rows);
   for (const placed of geometry.placed) drawRow(ctx, sprites, placed, armedId, hovered);
+
+  /**
+   * ═══ THE DESCRIPTION COLUMN, RESOLVED AGAINST THIS FRAME'S ROWS ═══
+   * `focusId` is an id rather than a cell precisely so this lookup happens here:
+   * the level on that pane changes on the press this screen exists to make, and
+   * a cell held by the caller would be one frame behind on exactly that number.
+   */
+  if (geometry.detail !== null) {
+    const focus = options.focusId ?? null;
+    let cell: TalentCell | null = null;
+    if (focus !== null) {
+      for (const row of rows) {
+        if (row.kind !== TalentRowKind.Category) continue;
+        const found = row.talents.find((talent) => talent.id === focus);
+        if (found !== undefined) {
+          cell = found;
+          break;
+        }
+      }
+    }
+    drawDetail(ctx, sprites, geometry.detail, cell, talentWrapper());
+  }
 
   // ONE SENTENCE ABOUT THE PRESS, and only while something is armed. A permanent
   // legend would be furniture; this is the moment the warning is worth reading,

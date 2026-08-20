@@ -13,6 +13,7 @@ import {
   talentPanelGeometry,
   talentPanelHitAt,
   talentPanelRect,
+  talentIdAt,
   talentPanelRows,
   talentTipAt,
 } from '../../src/client/ui/talents.ts';
@@ -498,5 +499,116 @@ describe('the panel has room for the categories a class carries', () => {
       entry.row.kind === TalentRowKind.Note ? [entry.row.text] : [],
     );
     expect(notes.some((note) => /categories hidden/.test(note))).toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE DESCRIPTION COLUMN — ToME's LEVELUP DIALOG HAS ONE, AND SO DOES THIS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The player sent the upstream screen: trees down the left, everything about ONE
+ * talent down the right. This pins the three things that make it work rather
+ * than the pixels it works out to.
+ *
+ * ═══ IT IS NOT THE STRIP THAT WAS REMOVED, AND THAT DISTINCTION IS THE POINT ═══
+ * A reserved strip at the FOOT was replaced by a hover card because it cost its
+ * height on every frame whether or not anything was being pointed at. That
+ * argument was about HEIGHT and it still holds — the grid keeps the whole band,
+ * and this asserts it: the column takes width, never a single row of icons.
+ */
+describe('the description column', () => {
+  const WIDE = { width: 1280, height: 720, top: 60, bottom: 640 };
+  const NARROW = { width: 640, height: 384, top: 60, bottom: 300 };
+
+  it('appears on a wide window and not on the guaranteed floor', () => {
+    const wide = talentPanelRect(WIDE);
+    const narrow = talentPanelRect(NARROW);
+    expect(wide).not.toBeNull();
+    expect(narrow).not.toBeNull();
+    if (wide === null || narrow === null) return;
+
+    expect(talentPanelGeometry(wide, talentPanelRows(view())).detail).not.toBeNull();
+    // ═══ THE FLOOR STILL WORKS ═══
+    // `DEFAULT_VIEWPORT` is 20 tiles — 640 logical pixels — and a description
+    // squeezed into what is left there would be the cut-off-mid-sentence bug the
+    // panel was widened to fix. Below the threshold there is no column and the
+    // hover card is still the answer.
+    expect(talentPanelGeometry(narrow, talentPanelRows(view())).detail).toBeNull();
+  });
+
+  it('takes width from the panel and never a row from the grid', () => {
+    // ═══ THE ASSERTION THAT KEEPS THE OLD ARGUMENT HONEST ═══
+    // The strip that was removed cost HEIGHT. If this ever starts costing rows,
+    // it has become the thing that was deleted.
+    const wide = talentPanelRect(WIDE);
+    const narrow = talentPanelRect(NARROW);
+    if (wide === null || narrow === null) throw new Error('no panel');
+
+    const rows = talentPanelRows(view());
+    const withPane = talentPanelGeometry(wide, rows);
+    const without = talentPanelGeometry(narrow, rows);
+
+    const categories = (g: ReturnType<typeof talentPanelGeometry>): number =>
+      g.placed.filter((placed) => placed.row.kind === TalentRowKind.Category).length;
+
+    expect(categories(withPane)).toBeGreaterThanOrEqual(categories(without));
+    // And the pane is the full height of the content band, not a strip in it.
+    expect(withPane.detail?.h).toBeGreaterThan(100);
+  });
+
+  it('is derived from the rect alone, so the hit test and the paint agree', () => {
+    /**
+     * ═══ THE RULE THIS FILE'S HEADER SPENDS A PARAGRAPH ON ═══
+     * The painter and `talentPanelHitAt` both call `talentPanelGeometry` and must
+     * agree to the pixel about what is where. A pane whose PRESENCE depended on
+     * the rows would move under the pointer the first time a category was added —
+     * so the same rect must produce the same pane whatever it is holding.
+     */
+    const wide = talentPanelRect(WIDE);
+    if (wide === null) throw new Error('no panel');
+    const full = talentPanelGeometry(wide, talentPanelRows(view())).detail;
+    const empty = talentPanelGeometry(wide, []).detail;
+    expect(empty).toEqual(full);
+  });
+
+  it('names the talent under the pointer by id, not by index', () => {
+    /**
+     * AN INDEX CANNOT NAME A TALENT ONCE THERE ARE CATEGORIES — index 0 means
+     * something different in every one of them, which is the bug `cellAt` was
+     * split out to prevent. The column, the hover card and the press must all be
+     * about the same icon, so they share one traversal.
+     */
+    const wide = talentPanelRect(WIDE);
+    if (wide === null) throw new Error('no panel');
+    const rows = talentPanelRows(view());
+    const geometry = talentPanelGeometry(wide, rows);
+
+    const found: string[] = [];
+    for (const placed of geometry.placed) {
+      if (placed.row.kind !== TalentRowKind.Category) continue;
+      for (let i = 0; i < placed.cells.length; i += 1) {
+        const box = placed.cells[i];
+        const cell = placed.row.talents[i];
+        if (box === undefined || cell === undefined) continue;
+        const id = talentIdAt(wide, rows, box.x + 2, box.y + 2);
+        expect(id, `${cell.name} at ${String(box.x)},${String(box.y)}`).toBe(cell.id);
+        found.push(cell.id);
+      }
+    }
+    expect(found.length, 'no icons were placed to point at').toBeGreaterThan(4);
+    // TWO CATEGORIES, so index 0 exists twice and a by-index answer would have
+    // returned the same id for both. This is the counterfactual, in the fixture.
+    expect(new Set(found).size).toBe(found.length);
+  });
+
+  it('answers null for a point that is on the panel but not on an icon', () => {
+    // THE HALF THAT MUST NOT MOVE: the column keeps the last talent rather than
+    // emptying, and it can only do that if "over nothing" is distinguishable
+    // from "over something". See `talentFocusId` in main.ts.
+    const wide = talentPanelRect(WIDE);
+    if (wide === null) throw new Error('no panel');
+    const rows = talentPanelRows(view());
+    expect(talentIdAt(wide, rows, wide.x + 2, wide.y + wide.h - 2)).toBeNull();
   });
 });

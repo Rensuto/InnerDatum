@@ -270,6 +270,8 @@ import {
   pressSpend,
   talentPanelDragAt,
   talentPanelHitAt,
+  talentIdAt,
+  talentPanelGeometry,
   talentTipAt,
   talentPanelRect,
   talentPanelRows,
@@ -1351,6 +1353,22 @@ let talentsHoveredRow: number | null = null;
  * acknowledgement a spend ever gets) and whenever the server refuses anything,
  * so an arm can never outlive the screen that explained it.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH TALENT THE DESCRIPTION COLUMN IS ABOUT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * SET BY HOVER *AND* BY CLICK, and it does not clear when the pointer leaves.
+ * That is the behaviour of the screen this ports: you sweep across the trees
+ * reading, then stop moving to actually read the last one — and a pane that
+ * emptied the moment the pointer left the icon would be blank exactly when it is
+ * being read. It clears only when the panel closes.
+ *
+ * AN ID, so the panel resolves it against the rows it is drawing this frame. The
+ * one number on that pane that must never be stale is the level, and it changes
+ * on the press this screen exists to make.
+ */
+let talentFocusId: string | null = null;
 let talentsArmedId: string | null = null;
 
 /**
@@ -3057,6 +3075,8 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // `TALENTS · Lv 3`. Null before the first `progress` frame, which falls
       // back to the bare word rather than printing a level nobody has said yet.
       level: progress?.level ?? null,
+      // v19 — WHICH TALENT THE DESCRIPTION COLUMN IS ABOUT. See `talentFocusId`.
+      focusId: talentFocusId,
     });
 
     /**
@@ -3073,13 +3093,21 @@ const paintHud: HudPainter = (ctx, width, height) => {
      * every rect in this file lives in; the card clamps itself to the viewport
      * rather than flipping sides, so it never moves while the pointer is still.
      */
-    if (pointerPoint !== null) {
-      const card = talentTipAt(
-        layout.talents,
-        talentPanelRows(talentPanelView()),
-        pointerPoint.x,
-        pointerPoint.y,
-      );
+    /**
+     * ═══ ...AND ONLY ON A PANEL THAT HAS NO DESCRIPTION COLUMN ═══
+     * On a wide window the pane on the right is already saying all of this, in
+     * more room and without moving. A card floating over the icons repeating the
+     * column beside them is the same sentence twice, and the copy that follows
+     * the pointer is the one that covers the other icons.
+     *
+     * `talentPanelGeometry` OWNS THE ANSWER rather than a width test here: it is
+     * what decides whether the column exists, and a second copy of that
+     * threshold would disagree with it at exactly one window size.
+     */
+    const talentRows = talentPanelRows(talentPanelView());
+    const hasDetailPane = talentPanelGeometry(layout.talents, talentRows).detail !== null;
+    if (pointerPoint !== null && !hasDetailPane) {
+      const card = talentTipAt(layout.talents, talentRows, pointerPoint.x, pointerPoint.y);
       if (card !== null) {
         drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
       }
@@ -5100,6 +5128,10 @@ async function boot(): Promise<void> {
     if (!talentsVisible) {
       talentsCloseHovered = false;
       talentsHoveredRow = null;
+      // THE DESCRIPTION COLUMN FORGETS ON CLOSE, and only on close. It keeps the
+      // last talent while the panel is open precisely so it does not empty under
+      // a pointer that has stopped moving in order to READ it.
+      talentFocusId = null;
     }
     talentsArmedId = null;
     requestDraw();
@@ -7324,6 +7356,28 @@ async function boot(): Promise<void> {
         talentsHoveredRow = overTalentRow;
         requestDraw();
       }
+      /**
+       * ═══ AND THE DESCRIPTION COLUMN FOLLOWS THE POINTER ═══
+       * `talentTipAt` resolves the CELL under the pointer, which the hit test
+       * cannot: an index alone does not name a talent once there are categories,
+       * because index 0 means something different in every one of them. Reusing
+       * it here is also what keeps the pane and the card describing the same
+       * icon on the window sizes where both could exist.
+       *
+       * A POINTER OVER NOTHING LEAVES THE PANE ALONE. See `talentFocusId`.
+       */
+      if (layout.talents !== null) {
+        const focused = talentIdAt(
+          layout.talents,
+          talentPanelRows(talentPanelView()),
+          point.x,
+          point.y,
+        );
+        if (focused !== null && focused !== talentFocusId) {
+          talentFocusId = focused;
+          requestDraw();
+        }
+      }
       // ═══ THE INVENTORY PANEL'S FOUR HOVERS, IN THE BLOCK ABOVE'S SHAPE ═══
       // Its ×, its DROP control, the cell under the pointer, and the sticky focus
       // the comparison strip is about. Every one of them compares against the
@@ -8534,6 +8588,31 @@ async function boot(): Promise<void> {
         event.preventDefault();
         pressTalentPlus(hit.talentId);
         return;
+      }
+      /**
+       * ═══ A PRESS ALSO PINS THE DESCRIPTION COLUMN ═══
+       * Hover already moves it, and on a mouse that is enough. This is for the
+       * pointer that is not a mouse: a touch has no hover at all, so without
+       * this the pane would be permanently empty on a tablet — the one input
+       * where the hover card was never an answer either.
+       *
+       * AFTER the Spend branch, so pinning cannot swallow the press that buys —
+       * `pressSpend` owns the two-press rule and this must not become a third.
+       * The two branches above return, so a hit reaching here is a Row and the
+       * compiler knows it; testing the kind again would be a comparison it can
+       * already prove is always true.
+       */
+      if (hit !== null) {
+        const pressed = talentIdAt(
+          layout.talents,
+          talentPanelRows(talentPanelView()),
+          point.x,
+          point.y,
+        );
+        if (pressed !== null && pressed !== talentFocusId) {
+          talentFocusId = pressed;
+          requestDraw();
+        }
       }
     }
 
