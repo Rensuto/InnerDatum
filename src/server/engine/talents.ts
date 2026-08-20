@@ -729,6 +729,95 @@ export const MOVE_MP_COST = 1;
  */
 export type BudgetPenalty = { readonly ap: number; readonly mp: number };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE SUSTAINS THAT ARE UP ARE TAKING OFF THE POOL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME reduces the ceiling rather than draining the pool
+ * (`chants.lua:31` — `sustain_positive = 20`), and the difference matters: a
+ * drain is paid once and regenerates back, a reservation is paid for as long as
+ * the stance is up. The second is the mechanic; the first is a cost.
+ *
+ * SUMMED FROM THE SET EVERY TIME rather than kept as a running total. A cached
+ * number is a second source of truth about which stances are up, and the first
+ * thing to drift would be a pool that never comes back after a talent is
+ * retired from a class.
+ */
+export function sustainReserve(engine: TalentEngine, sheet: TalentSheet): number {
+  let reserved = 0;
+  for (const id of sheet.sustained) {
+    const talent = engine.registry.get(id);
+    reserved += talent?.sustain?.reserve ?? 0;
+  }
+  return reserved;
+}
+
+/** What this body can actually hold right now, after its stances. */
+export function effectiveResourceMax(engine: TalentEngine, sheet: TalentSheet): number {
+  return Math.max(0, sheet.resource.max - sustainReserve(engine, sheet));
+}
+
+export const SustainRefusal = {
+  /** Not a sustained talent, or not one this body owns. */
+  Unknown: 'unknown',
+  /** Turning it on would reserve more of the pool than the pool has. */
+  NoRoom: 'no_room',
+} as const;
+export type SustainRefusal = (typeof SustainRefusal)[keyof typeof SustainRefusal];
+
+export type SustainToggle =
+  | { readonly ok: true; readonly on: boolean }
+  | { readonly ok: false; readonly reason: SustainRefusal };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TURN A STANCE ON, OR OFF. ToME's `activate` / `deactivate` pair.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * OFF IS ALWAYS ALLOWED, and never refused for room or cost. A player must be
+ * able to put down what they picked up — upstream has no refusal on
+ * `deactivate` either, and a sustain that could get stuck on would be a
+ * permanent reservation a player could not undo.
+ *
+ * ON IS REFUSED WHEN THERE IS NO ROOM. The reservation comes off the CEILING, so
+ * the test is against what the pool could hold rather than what is in it: a
+ * character standing at zero Resolve may still raise a stance they have room
+ * for, and will simply regenerate into a smaller pool.
+ *
+ * THE CURRENT VALUE IS CLAMPED DOWN, never left above the new ceiling. A pool
+ * reading 40/20 is a number no other part of this game can be shown, and every
+ * regen tick would have to know it was a special case.
+ *
+ * IT DOES NOT RECOMPOSE. This function owns the sheet and nothing else — the
+ * caller refreshes the contribution, exactly as `raiseTalentPoint`'s caller does,
+ * because the fold lives behind a seam this module may not cross.
+ */
+export function toggleSustain(
+  engine: TalentEngine,
+  sheet: TalentSheet,
+  talentId: string,
+): SustainToggle {
+  const talent = engine.registry.get(talentId);
+  if (talent?.sustain === undefined) return { ok: false, reason: SustainRefusal.Unknown };
+  // A BODY MAY ONLY SUSTAIN WHAT IT OWNS. `points` holds every talent this sheet
+  // has, loadout and passives alike, which is the same list `raiseTalentPoint`
+  // spends against.
+  if (!sheet.points.has(talentId)) return { ok: false, reason: SustainRefusal.Unknown };
+
+  if (sheet.sustained.has(talentId)) {
+    sheet.sustained.delete(talentId);
+    return { ok: true, on: false };
+  }
+
+  const after = sheet.resource.max - (sustainReserve(engine, sheet) + talent.sustain.reserve);
+  if (after < 0) return { ok: false, reason: SustainRefusal.NoRoom };
+
+  sheet.sustained.add(talentId);
+  sheet.resource.value = Math.min(sheet.resource.value, after);
+  return { ok: true, on: true };
+}
+
 export function hasAffordableAction(
   engine: TalentEngine,
   actor: TalentActor,
@@ -1214,6 +1303,26 @@ export type Talent = {
    */
   readonly iconId: string;
   readonly cost: TalentCost;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT A SUSTAIN RESERVES WHILE IT IS ON — ToME's `sustain_<resource>`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `data/talents/celestial/chants.lua:31` is `sustain_positive = 20`: turning
+   * the chant on takes twenty off the POOL'S CEILING for as long as it is up,
+   * and turning it off gives them back. That reservation is the whole trade —
+   * a sustain is not free power, it is power bought with room to manoeuvre.
+   *
+   * PRESENT IS WHAT MAKES A TALENT SUSTAINED, in the same way an absent `body`
+   * is what makes one passive: `kind` and this field would otherwise be two
+   * statements of one fact, and the compiler only checks one of them.
+   *
+   * THE CONTRIBUTION COMES FROM `passive`, WHICH IS THE POINT. A sustain IS a
+   * passive you can switch off — same shape, same fold, same `PassiveContribution`
+   * that gear and talents already stack through. Giving sustains their own
+   * contribution type would be a second combine to keep in step with the first.
+   */
+  readonly sustain?: { readonly reserve: number };
   /** GAME TURNS. 0 is at-will and gated by AP alone. See the conversions above. */
   readonly cooldownTurns: number;
   readonly targeting: TalentTargeting;
@@ -1345,6 +1454,20 @@ export type TalentSheet = {
    */
   readonly passives: readonly string[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH SUSTAINS ARE CURRENTLY ON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * MUTABLE, unlike `loadout` and `passives` beside it, and that is the whole
+   * difference between a sustain and a passive: a passive is a fact about the
+   * body and this is a DECISION the player is making and can unmake.
+   *
+   * IDS AND NOT FLAGS ON THE RECORD, because the record is content — shared by
+   * every body that owns the talent — and two Watchmen must be able to disagree
+   * about whether their stance is up.
+   */
+  sustained: Set<string>;
+  /**
    * Namespaced talent id -> RAW points spent on it, 1..5.
    *
    * KEYED EXACTLY LIKE `actor.cooldowns` — `talent:<id>`, the registry key,
@@ -1421,6 +1544,10 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
     classId: init.classId,
     loadout: [...init.loadout],
     passives: [...passives],
+    // NOTHING IS UP AT BIRTH, and that is the honest state rather than a default
+    // worth arguing about: a sustain reserves part of the pool, and a character
+    // who has not chosen to spend that room has not spent it.
+    sustained: new Set<string>(),
     points,
     resource: createResourcePool(init.resource),
     ap: init.maxAp,

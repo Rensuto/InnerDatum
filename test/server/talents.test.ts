@@ -28,6 +28,7 @@ import {
   ResourceKind,
   TOME_ACTIONS_PER_TURN,
   TalentEffect,
+  TalentKind,
   TalentRefusal,
   TargetShape,
   ballTiles,
@@ -36,8 +37,12 @@ import {
   markMultiplier,
   resolveGuardCounter,
   secondsToTurns,
+  SustainRefusal,
+  effectiveResourceMax,
   spendResource,
+  sustainReserve,
   talentId,
+  toggleSustain,
   tomeCooldownToTurns,
   useTalent,
 } from '../../src/server/engine/talents.ts';
@@ -49,6 +54,7 @@ import {
   tickLevel,
 } from '../../src/shared/energy.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
+import { DamageType } from '../../src/server/engine/damage.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
@@ -1656,5 +1662,141 @@ describe('shapes and affinity', () => {
     expect(canUseTalent(f.engine, inspector, step, { x: 6, y: 5 }, f.world)).toBe(
       TalentRefusal.Blocked,
     );
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   SUSTAINS — THE THIRD MODE, DECLARED SINCE M3 AND UNIMPLEMENTED UNTIL NOW.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `TalentKind.Sustained` has carried the note *"Nothing implements this yet —
+ * the value is declared so the panel can be built once rather than twice"*. Of
+ * upstream's ~1200 talents, 199 are `mode = "sustained"` against 300 passive, so
+ * this is not a corner of that game: it is a third of how its talents behave.
+ *
+ * ═══ THE MECHANIC IS A RESERVATION, NOT A COST ═══
+ * `chants.lua:31` is `sustain_positive = 20`: turning the chant on takes twenty
+ * off the POOL'S CEILING for as long as it is up, and gives them back when it
+ * comes down. A cost is paid once and regenerates; a reservation is paid for as
+ * long as you want the benefit. The second is the mechanic.
+ *
+ * A SUSTAIN IS A PASSIVE YOU CAN SWITCH OFF — same `passive(rank)` function,
+ * same `PassiveContribution`, same fold. That is why these tests can assert on
+ * the reservation and the set without a second contribution type existing.
+ */
+describe('a stance you can put up and take down', () => {
+  const STANCE = talentId('test_stance');
+
+  function withStance(reserve: number): {
+    engine: ReturnType<typeof createContentTalentEngine>;
+    sheet: ReturnType<typeof sheetForClass>;
+  } {
+    // THE CONTENT ENGINE, so the fixture class's own talents are in the registry
+    // and `WATCHMAN.loadout[0]` below names something the engine knows.
+    const engine = createContentTalentEngine();
+    engine.registry.register({
+      id: STANCE,
+      name: 'Test Stance',
+      tree: 'watch/discipline',
+      classId: WATCHMAN.id,
+      kind: TalentKind.Sustained,
+      iconId: 'icon_active_iron_curtain',
+      cost: { ap: 0, mp: 0, resource: 0 },
+      sustain: { reserve },
+      cooldownTurns: 0,
+      targeting: {
+        shape: TargetShape.Single,
+        range: 1,
+        minRange: 0,
+        radius: 0,
+        requiresLos: false,
+        affinity: Affinity.Any,
+      },
+      damageType: DamageType.Physical,
+      passive: () => ({ mods: { armour: 3 } }),
+      describe: () => 'a stance',
+    });
+    const sheet = sheetForClass(WATCHMAN);
+    // OWNED, WHICH IS THE PRECONDITION FOR SUSTAINING IT. `points` is the list
+    // of everything this sheet has; `toggleSustain` refuses an id that is not
+    // in it for the same reason `raiseTalentPoint` does.
+    sheet.points.set(STANCE, 1);
+    return { engine, sheet };
+  }
+
+  it('reserves part of the pool while it is up, and gives it back', () => {
+    const { engine, sheet } = withStance(20);
+    const full = sheet.resource.max;
+    expect(effectiveResourceMax(engine, sheet)).toBe(full);
+
+    expect(toggleSustain(engine, sheet, STANCE)).toEqual({ ok: true, on: true });
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    expect(sustainReserve(engine, sheet)).toBe(20);
+    expect(effectiveResourceMax(engine, sheet)).toBe(full - 20);
+
+    expect(toggleSustain(engine, sheet, STANCE)).toEqual({ ok: true, on: false });
+    expect(effectiveResourceMax(engine, sheet)).toBe(full);
+  });
+
+  it('clamps a pool that was fuller than the new ceiling', () => {
+    // A POOL READING 40/20 IS A NUMBER NO OTHER PART OF THIS GAME CAN BE SHOWN,
+    // and every regen tick would have to know it was a special case.
+    const { engine, sheet } = withStance(20);
+    sheet.resource.value = sheet.resource.max;
+    toggleSustain(engine, sheet, STANCE);
+    expect(sheet.resource.value).toBeLessThanOrEqual(effectiveResourceMax(engine, sheet));
+  });
+
+  it('refuses a stance there is no room for, and changes nothing', () => {
+    // MORE THAN THE POOL CAN EVER HOLD. `sheetForClass` is called once here to
+    // read the ceiling; referring to `sheet` inside its own destructuring was a
+    // circular reference the runtime caught before any assertion ran.
+    const ceiling = sheetForClass(WATCHMAN).resource.max;
+    const { engine, sheet } = withStance(ceiling + 1);
+    const before = sheet.resource.value;
+    expect(toggleSustain(engine, sheet, STANCE)).toEqual({
+      ok: false,
+      reason: SustainRefusal.NoRoom,
+    });
+    // NOTHING MOVED. A refusal that had already reserved would be the worst of
+    // both: the pool smaller and the stance down.
+    expect(sheet.sustained.has(STANCE)).toBe(false);
+    expect(sheet.resource.value).toBe(before);
+  });
+
+  it('always lets a stance come down, whatever the pool says', () => {
+    /**
+     * ═══ THE HALF THAT MUST NOT MOVE ═══
+     * Upstream refuses nothing on `deactivate`, and a sustain that could get
+     * stuck up would be a permanent reservation a player cannot undo. Emptying
+     * the pool to zero and taking the stance down must still work.
+     */
+    const { engine, sheet } = withStance(20);
+    toggleSustain(engine, sheet, STANCE);
+    sheet.resource.value = 0;
+    expect(toggleSustain(engine, sheet, STANCE)).toEqual({ ok: true, on: false });
+    expect(sheet.sustained.size).toBe(0);
+  });
+
+  it('refuses a talent this body does not own', () => {
+    // The same rule `raiseTalentPoint` enforces: `points` is the list of what a
+    // sheet has, and sustaining something absent from it would be a body using a
+    // talent it never learned.
+    const { engine, sheet } = withStance(10);
+    sheet.points.delete(STANCE);
+    expect(toggleSustain(engine, sheet, STANCE)).toEqual({
+      ok: false,
+      reason: SustainRefusal.Unknown,
+    });
+  });
+
+  it('refuses a talent that is not sustained at all', () => {
+    // An active pressed through this path must not silently become a stance.
+    const { engine, sheet } = withStance(10);
+    const active = WATCHMAN.loadout[0];
+    expect(active, 'the fixture class has no loadout').toBeDefined();
+    if (active === undefined) return;
+    expect(toggleSustain(engine, sheet, active.id).ok).toBe(false);
   });
 });

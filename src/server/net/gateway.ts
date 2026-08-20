@@ -1029,6 +1029,15 @@ export type TurnEngine = {
    */
   raiseTalentPoint?(actorId: string, talentId: string): number | null;
   /**
+   * TURN A SUSTAINED TALENT ON OR OFF. Answers the NEW state, or null for a
+   * refusal — a talent this body does not own, one that is not sustained, or a
+   * stance there is no room in the pool to raise.
+   *
+   * OPTIONAL LIKE EVERY OTHER SEAM HERE: a build with no talent engine has no
+   * stances, and the verb answers a sentence rather than throwing.
+   */
+  toggleSustain?(actorId: string, talentId: string): boolean | null;
+  /**
    * THIS BODY'S RAW TALENT SPREAD, for the save snapshot.
    *
    * `Record`, not `Map`: it goes straight into `CharacterSnapshot` and on to
@@ -8392,6 +8401,44 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // See `handleMove`: a talent that is out of range still proves somebody is
     // driving this body, so the class-choice park comes off before the ruling.
     unparkOnCommand(session);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A SUSTAINED TALENT TOGGLES. IT DOES NOT RESOLVE, AND IT COSTS NO TURN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ToME's `activate`/`deactivate` pair, reached through the same key the
+     * player presses for everything else — upstream has no separate "toggle"
+     * verb either, and inventing one here would mean the hotbar had two kinds of
+     * button that look identical.
+     *
+     * ═══ IT DOES NOT PUMP, AND THAT IS THE PART TO GET RIGHT ═══
+     * Raising a stance reserves part of a pool and folds a contribution. It
+     * rolls no dice, moves no body and advances no clock — so it belongs with
+     * `spend_point` and `spend_stat` in the non-pumping group rather than with
+     * the actives. Pumping here would let a player advance the world by pressing
+     * a stance on and off, which is the exact shape `say` and `point` carry a
+     * rate limit against.
+     *
+     * THE FRAMES THAT FOLLOW ARE THE TWO THAT CHANGED: the loadout, because the
+     * button's `sustained` flag is what tells the player which way the key will
+     * go next, and the resource, because the ceiling just moved.
+     */
+    const asSustain = engine.toggleSustain?.(actorId, msg.talentId);
+    if (asSustain !== undefined) {
+      if (asSustain === null) {
+        sendError(
+          session.socket,
+          ErrorCode.NotYourTurn,
+          'that stance cannot go up — there is not enough room in the pool',
+        );
+        return;
+      }
+      sendLoadout(session);
+      // `sendHotbarIfChanged` carries the cooldowns AND the resource — see there.
+      sendHotbarIfChanged(session);
+      return;
+    }
 
     const result = engine.submitTalent(actorId, msg.talentId, msg.target);
     if (!result.ok) {

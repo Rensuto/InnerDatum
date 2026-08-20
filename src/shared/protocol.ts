@@ -943,6 +943,24 @@ export type LoadoutTalent = {
    */
   mastery?: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IS THIS STANCE UP? Only ever present on a SUSTAINED talent.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A sustain is the one talent whose state a player must READ before pressing:
+   * an active is ready or on cooldown and the pip says which, a passive is never
+   * pressed at all, and a stance is a toggle whose two meanings are opposite.
+   * Without this the same key would sometimes put a stance up and sometimes take
+   * it down, with nothing on screen to say which was about to happen.
+   *
+   * ABSENT ON EVERYTHING ELSE rather than `false` — `false` on an active would
+   * be a claim that it could be sustained and is not.
+   *
+   * OPTIONAL, so adding it forces no version bump and a client that has never
+   * heard of stances ignores it.
+   */
+  sustained?: boolean;
+  /**
    * THE TALENT'S RAW LEVEL. 1 through `maxLevel`, and NEVER 0 — a talent on the
    * hotbar is one this detective has already learned.
    *

@@ -50,6 +50,7 @@ import {
   resolveGuardCounter,
   MOVE_MP_COST,
   hasAffordableAction,
+  toggleSustain,
   useTalent,
 } from './engine/talents.ts';
 import { authRoutes, readAuthConfig } from './http/auth.ts';
@@ -801,7 +802,20 @@ export function buildServer() {
 
     const stats: Record<string, number> = {};
     const mods: Record<string, number> = {};
-    for (const id of sheet.passives) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PASSIVES, AND THE SUSTAINS THAT ARE UP — ONE FOLD FOR BOTH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A sustain IS a passive you can switch off: same `passive(rank)` function,
+     * same `PassiveContribution`, same combine. Summing them separately would be
+     * two folds producing one field, and the second would drift.
+     *
+     * `sheet.sustained` HOLDS ONLY WHAT IS ON, so a stance that is down
+     * contributes nothing without any conditional here — which is the whole
+     * reason the set holds ids rather than the record holding a flag.
+     */
+    for (const id of [...sheet.passives, ...sheet.sustained]) {
       const talent = talentEngine.registry.get(id);
       const contribute = talent?.passive;
       if (contribute === undefined) continue;
@@ -893,6 +907,31 @@ export function buildServer() {
       // back unchanged, which is cheaper than getting the guard wrong.
       refreshPassives(actorId);
       return next;
+    },
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TURN A STANCE ON OR OFF, AND REFOLD.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE SAME SHAPE AS `raiseTalentPoint` ABOVE: the engine owns the sheet, and
+     * this file is the only one that can see the registry, the world and the
+     * gateway at once — so the refresh belongs here rather than inside the
+     * toggle, which must stay a function of the sheet alone.
+     *
+     * `null` FOR EVERY REFUSAL, which is what the gateway's seam already reads
+     * for a talent that cannot be raised. The reasons are for the engine's own
+     * tests; a socket is told a sentence, not an enum.
+     */
+    toggleSustain: (actorId: string, talentId: string): boolean | null => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return null;
+      const result = toggleSustain(talentEngine, sheet, talentId);
+      if (!result.ok) return null;
+      // THE CONTRIBUTION IS THE POINT OF THE TOGGLE. Without this the stance is
+      // a flag in a set and nothing on the body changes.
+      refreshPassives(actorId);
+      return result.on;
     },
 
     talentPointsOf: (actorId: string): Readonly<Record<string, number>> | undefined => {

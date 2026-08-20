@@ -769,6 +769,11 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     ...(talent.treeName === undefined ? {} : { treeName: talent.treeName }),
     ...(talent.kind === undefined ? {} : { kind: talent.kind }),
     ...(talent.mastery === undefined ? {} : { mastery: talent.mastery }),
+    // WHETHER THE STANCE IS UP. Absent on everything that is not sustained —
+    // `false` on an active would claim it could be one. This function copies
+    // field by field and has silently dropped a new one twice; see
+    // `projectResource`, which now has a test that says so.
+    ...(talent.sustained === undefined ? {} : { sustained: talent.sustained }),
   };
 }
 

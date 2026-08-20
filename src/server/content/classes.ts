@@ -599,7 +599,21 @@ const BIRTH_TALENT_LEVEL = 1;
  *   against. None of the twelve does today; the parameter is the talent's
  *   contract, not this function's convenience.
  */
-export function toLoadoutView(talent: Talent, level: number, self: TalentActor): LoadoutTalent {
+export function toLoadoutView(
+  talent: Talent,
+  level: number,
+  self: TalentActor,
+  /**
+   * WHETHER THIS STANCE IS UP, for a sustained talent. Undefined everywhere
+   * else, which is what keeps the field off the wire for actives and passives —
+   * `false` on an active would claim it could be sustained.
+   *
+   * A PARAMETER RATHER THAN A LOOKUP, because the answer lives on the SHEET and
+   * this function is handed a talent and an actor. The class-picker preview has
+   * no sheet at all and must not be made to invent one.
+   */
+  sustained?: boolean,
+): LoadoutTalent {
   return {
     // Already `talent:<id>` — the registry key IS the wire id, so the cooldown
     // map `projectCooldowns` sends verbatim matches these buttons by string.
@@ -630,6 +644,9 @@ export function toLoadoutView(talent: Talent, level: number, self: TalentActor):
     // tree this build does not have, which reads as 1.0 — the same answer
     // `treeName` gives by falling back to the id.
     ...(treeById(talent.tree) === undefined ? {} : { mastery: treeById(talent.tree)?.mastery }),
+    // AND WHETHER IT IS UP. Only ever present when the caller had a sheet to
+    // ask; see the parameter.
+    ...(sustained === undefined ? {} : { sustained }),
     level,
     // ON THE WIRE RATHER THAN ASSUMED BY THE RENDERER — protocol.ts argues it:
     // a client that hard-coded 5 would keep drawing "3/5" and a live `+` the
@@ -887,7 +904,17 @@ export function createTalentBook(
         // built some other way must produce a wrong-but-legal button rather
         // than a frame the protocol calls impossible.
         const level = Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id));
-        out.push(toLoadoutView(talent, level, actor));
+        // THE STANCE'S STATE, read off the sheet that owns it. A sustained
+        // talent whose flag never travelled would give the player one key with
+        // two opposite meanings and nothing on screen to tell them apart.
+        out.push(
+          toLoadoutView(
+            talent,
+            level,
+            actor,
+            talent.sustain === undefined ? undefined : sheet.sustained.has(id),
+          ),
+        );
       }
       return out;
     },
