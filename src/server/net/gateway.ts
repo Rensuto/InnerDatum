@@ -7340,6 +7340,42 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // which states the same contract for the load path.
     if (from.carried !== undefined) to.carried = [...from.carried];
     if (from.equipped !== undefined) to.equipped = { ...from.equipped };
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ...AND THE TWO LAYERS THAT ARE NOT GEAR, WHICH THIS LIST HAD FORGOTTEN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * MEASURED over the real socket: a Watchman standing on the moor has
+     * Strength 25 — 24 authored plus one from a passive. Walk him into the
+     * Drowned Chapel and he has 24. **Every passive talent in the game stopped
+     * working the moment a player entered a dungeon**, which is the place they
+     * matter most.
+     *
+     * `recomposeCombat` rebuilds `combat` from `baseCombat` plus the layers
+     * hanging off the actor, and a crossing builds a NEW body in the new world
+     * and copies this hand-written list onto it. `passiveCombat` was not on the
+     * list, so the recompose below found nothing to fold and produced the class
+     * sheet exactly as authored.
+     *
+     * NOTHING PUT IT BACK EITHER. `refreshPassives` is called from two places —
+     * `attachClass` and `raiseTalentPoint` — so the contribution returned only
+     * when a player happened to spend a talent point, and never for a character
+     * who had spent them all.
+     *
+     * ═══ THE SHAPE, BECAUSE IT IS THE ONE THIS CODEBASE KEEPS HITTING ═══
+     * One rule — what follows a character through a door — written as a
+     * hand-written list, and the list is incomplete. It is the sixth time; see
+     * DECISIONS.md. The list is what it is because `to` is a different body in a
+     * different world, so the fix is to complete it AND to pin the invariant it
+     * exists to serve, which is that a crossing changes nothing about a
+     * character except where they are standing.
+     */
+    if (from.passiveCombat !== undefined) to.passiveCombat = from.passiveCombat;
+    // AND THE ATTRIBUTE POINTS, which would have inherited the same bug the day
+    // they shipped: a delta the recompose cannot see is a delta that is not
+    // there, and the symptom would be a character losing spent points at a door.
+    if (from.spentStats !== undefined) to.spentStats = from.spentStats;
+    to.unspentStatPoints = from.unspentStatPoints;
     recomposeCombat(to, opts.effects ?? null, resolveItem);
   };
 

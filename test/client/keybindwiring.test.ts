@@ -270,6 +270,12 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       'shop_buy',
       'shop_sell',
       'spend_point',
+      // AND THE ATTRIBUTE HALF OF THE SAME SCREEN. `spend_stat` is on this list
+      // for exactly the reason `spend_point` is: the levelup panel sends it, it
+      // names one of six stats rather than a tile or a target, and it advances
+      // no clock. A verb added to that panel without appearing here would be a
+      // verb nobody had thought about the barrier consequences of.
+      'spend_stat',
       'talent',
       // NOT THE KEYS SCREEN'S EITHER, and listed for the same reason `follow`
       // is: it is the townsfolk verb, sent when somebody picks `Talk to` off a

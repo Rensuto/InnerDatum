@@ -1369,6 +1369,20 @@ let talentsHoveredRow: number | null = null;
  * on the press this screen exists to make.
  */
 let talentFocusId: string | null = null;
+/**
+ * WHICH ATTRIBUTE IS ONE PRESS FROM BEING BOUGHT, or null.
+ *
+ * THE SAME TWO-PRESS RULE THE GRID USES, and for a sharper reason: `spend_stat`
+ * has no refund and there is no `unspend_stat`, so a single-click `+` is a
+ * permanent decision one twitch away. `pressSpend` owns the arm-then-confirm
+ * machine and is reused verbatim — it is keyed on a string id and does not care
+ * whether that id names a talent or a stat.
+ *
+ * CLEARED WHEN THE PANEL CLOSES, like `talentsArmedId`: an arming that outlived
+ * the screen would confirm on the next press of a `+` the player had not looked
+ * at yet.
+ */
+let talentsArmedStat: string | null = null;
 let talentsArmedId: string | null = null;
 
 /**
@@ -3104,6 +3118,12 @@ const paintHud: HudPainter = (ctx, width, height) => {
       level: progress?.level ?? null,
       // v19 — WHICH TALENT THE DESCRIPTION COLUMN IS ABOUT. See `talentFocusId`.
       focusId: talentFocusId,
+      // v19 — THE ATTRIBUTE COLUMN. Composed values off `progress`, so the six
+      // agree with the character sheet a key away rather than showing a class
+      // base nothing else in the client reports.
+      stats: progress?.stats ?? null,
+      unspentStats: progress?.unspentStats ?? 0,
+      armedStat: talentsArmedStat,
     });
 
     /**
@@ -5161,6 +5181,7 @@ async function boot(): Promise<void> {
       talentFocusId = null;
     }
     talentsArmedId = null;
+    talentsArmedStat = null;
     requestDraw();
   }
 
@@ -5187,6 +5208,38 @@ async function boot(): Promise<void> {
    * matters more here than almost anywhere, because a sanitised frame would
    * permanently spend a stranger's point.
    */
+  /**
+   * PRESS AN ATTRIBUTE'S `+`. Arm, then confirm.
+   *
+   * `pressSpend` VERBATIM, the same machine the grid uses — it is keyed on a
+   * string id and does not care whether that id names a talent or a stat, so the
+   * "there is no refund, press again" rule has ONE implementation. A second copy
+   * would be a second chance to get the confirm step wrong on the currency that
+   * has no way back.
+   *
+   * THE TWO ARMINGS ARE SEPARATE VARIABLES on purpose. One would mean arming a
+   * talent and then pressing an attribute confirms the attribute — a point spent
+   * on something the player never armed.
+   */
+  function pressStatPlus(stat: string): void {
+    const next = pressSpend(talentsArmedStat, stat);
+    talentsArmedStat = next.armed;
+    if (next.spend === null) {
+      requestDraw();
+      return;
+    }
+    if (
+      !socket.send({
+        v: PROTOCOL_VERSION,
+        t: 'spend_stat',
+        stat: next.spend as 'str' | 'dex' | 'con' | 'mag' | 'wil' | 'cun',
+      })
+    ) {
+      showNotice('not connected — that did not go out');
+    }
+    requestDraw();
+  }
+
   function pressTalentPlus(talentId: string): void {
     const next = pressSpend(talentsArmedId, talentId);
     talentsArmedId = next.armed;
@@ -7377,8 +7430,15 @@ async function boot(): Promise<void> {
         talentsCloseHovered = overTalentClose;
         requestDraw();
       }
+      // THE GRID'S HOVER, AND ONLY THE GRID'S. The × and the attribute column
+      // are on this panel too and neither carries a row index — an attribute is
+      // named, not numbered, because `spend_stat` names one of six.
       const overTalentRow =
-        talentHit !== null && talentHit.kind !== TalentHitKind.Close ? talentHit.index : null;
+        talentHit !== null &&
+        talentHit.kind !== TalentHitKind.Close &&
+        talentHit.kind !== TalentHitKind.Stat
+          ? talentHit.index
+          : null;
       if (overTalentRow !== talentsHoveredRow) {
         talentsHoveredRow = overTalentRow;
         requestDraw();
@@ -8614,6 +8674,14 @@ async function boot(): Promise<void> {
       if (hit !== null && hit.kind === TalentHitKind.Spend) {
         event.preventDefault();
         pressTalentPlus(hit.talentId);
+        return;
+      }
+      // AN ATTRIBUTE'S `+`, ABOVE THE ROW BRANCH BELOW for the reason the grid's
+      // Spend branch is above it: a press that buys must never also be read as a
+      // press that merely points at something.
+      if (hit !== null && hit.kind === TalentHitKind.Stat) {
+        event.preventDefault();
+        pressStatPlus(hit.stat);
         return;
       }
       /**

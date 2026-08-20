@@ -292,9 +292,56 @@ const CLOSE_PX = 13;
  */
 const DETAIL_W = 266;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ATTRIBUTE COLUMN — ToME'S LEVELUP DIALOG PUTS THE STATS DOWN THE LEFT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Six rows: the name, the value, and a `+` while there is a point in hand. The
+ * player sent that screen and asked for the attribute points on this page.
+ *
+ * ═══ TEXT AND NOT ICONS, AND THAT IS AN ART CONSTRAINT STATED OUT LOUD ═══
+ * Upstream draws a portrait strip of six stat icons. There are no stat icons in
+ * this manifest and inventing keys for them would paint the pink missing-asset
+ * square six times down the side of the screen — the same trap `drawTalentIcon`
+ * documents. Names are also better at this size: `STR 25` is unambiguous where a
+ * 12-pixel glyph of a fist is a guess.
+ *
+ * ═══ 78 PIXELS, MEASURED RATHER THAN GUESSED ═══
+ * The widest row is `CON 100 +` — nine characters of the 10px monospace at six
+ * pixels each is 54, plus the `+` hit box and the padding either side. It is
+ * deliberately the NARROWEST of the three columns because it is the one whose
+ * content cannot grow: there are exactly six stats and the values are bounded at
+ * 100 by `load.lua:182-189`.
+ */
+const STATS_W = 78;
+
 const PANEL_W = 480;
-/** With the description column beside it. See `DETAIL_W`. */
-const PANEL_W_WIDE = PANEL_W + COL_GAP + DETAIL_W;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THREE WIDTHS, AND THE ORDER THEY ARE EARNED IN IS A JUDGEMENT ABOUT NEED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The grid is the screen. The attribute column comes next, and the description
+ * column last — which INVERTS the order they landed in, and the reason is that
+ * one of them has an alternative and the other does not:
+ *
+ *   SPENDING A POINT IS A REQUIRED ACTION with no other route. There is no
+ *   command, no key and no other panel; if the column is not drawn, a levelled
+ *   character simply cannot spend what they were granted.
+ *
+ *   READING A DESCRIPTION HAS A WORKING ALTERNATIVE — the hover card, which is
+ *   what this panel used for its whole life before the column existed and what
+ *   it still falls back to below the threshold.
+ *
+ * So a 772-wide window trades the description it had yesterday for the ability
+ * to spend attribute points, and gets the card back in exchange. That is the
+ * right way round; the other way leaves a player looking at a `Stats: 3` they
+ * cannot act on.
+ */
+const PANEL_W_STATS = PANEL_W + COL_GAP + STATS_W;
+/** All three columns. See `DETAIL_W` and `STATS_W`. */
+const PANEL_W_WIDE = PANEL_W_STATS + COL_GAP + DETAIL_W;
 const PANEL_MIN_W = 176;
 const PANEL_MAX_H = 300;
 /**
@@ -698,8 +745,16 @@ export function talentPanelRect(options: {
   // the wide width would hand back every intermediate size between the two, and
   // the description column would be born narrow on exactly the windows it is
   // least useful on. Two sizes, and the threshold is "does the whole thing fit".
-  const wide = width - PANEL_MARGIN * 2 >= PANEL_W_WIDE;
-  const w = wide ? PANEL_W_WIDE : Math.min(PANEL_W, width - PANEL_MARGIN * 2);
+  // WHOLE SHAPES ONLY, never an intermediate one: `Math.min` against a wide
+  // width hands back every size between the tiers, and a column born narrow is a
+  // column that is useless on exactly the windows it is least useful on.
+  const room = width - PANEL_MARGIN * 2;
+  const w =
+    room >= PANEL_W_WIDE
+      ? PANEL_W_WIDE
+      : room >= PANEL_W_STATS
+        ? PANEL_W_STATS
+        : Math.min(PANEL_W, room);
   const h = Math.min(PANEL_MAX_H, band - PANEL_MARGIN * 2);
   return { x: Math.floor((width - w) / 2), y: top + PANEL_MARGIN, w, h };
 }
@@ -845,6 +900,15 @@ export type TalentPanelGeometry = {
    * under the pointer the first time a category was added.
    */
   readonly detail: PanelRect | null;
+  /**
+   * WHERE THE SIX ATTRIBUTES GO, or null on a panel too narrow for them.
+   *
+   * DERIVED FROM THE RECT ALONE, like `close` and `detail` and for the same
+   * reason this file states at length: the painter and `talentPanelHitAt` both
+   * call this function, and a `+` that lands a row above where it is drawn is a
+   * point spent on the wrong attribute — which nothing refunds.
+   */
+  readonly stats: PanelRect | null;
 };
 
 /**
@@ -858,6 +922,73 @@ export type TalentPanelGeometry = {
  * takes the last line and says how many went (ui/caselog.ts:467-478,
  * ui/charsheet.ts:615).
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SIX, IN ToME'S OWN ORDER — `load.lua:182-189`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Strength, Dexterity, Magic, Willpower, Cunning, Constitution. Authored order
+ * and never sorted, for the reason the class picker gives about its cards: a row
+ * that moves between two frames is a row somebody misclicks, and this one spends
+ * a point that nothing refunds.
+ *
+ * LUCK IS NOT HERE. Upstream defines it, hides it, starts it at 50 and grants no
+ * way to raise it — a seventh row would be a promise the rest of the game does
+ * not keep.
+ *
+ * THE SHORT CODE IS WHAT IS DRAWN. Three characters is what fits in 78 pixels
+ * beside a value and a `+`, they are upstream's own, and the character sheet a
+ * key away spells all six out in full.
+ */
+export const STAT_ROWS = [
+  { key: 'str', label: 'STR', name: 'Strength' },
+  { key: 'dex', label: 'DEX', name: 'Dexterity' },
+  { key: 'mag', label: 'MAG', name: 'Magic' },
+  { key: 'wil', label: 'WIL', name: 'Willpower' },
+  { key: 'cun', label: 'CUN', name: 'Cunning' },
+  { key: 'con', label: 'CON', name: 'Constitution' },
+] as const;
+
+export type StatKey = (typeof STAT_ROWS)[number]['key'];
+
+/** One attribute row is a label, a value and a `+`, on one line. */
+const STAT_ROW_H = 14;
+/** The `+` is a square at the right-hand end of the row. */
+const STAT_PLUS_PX = 11;
+
+/**
+ * Where each attribute row lands inside the column.
+ *
+ * ONE FUNCTION, TWO READERS — the painter and the hit test — which is this
+ * file's standing rule and matters more here than anywhere else in it: a `+`
+ * whose hit box is one row above where it is drawn spends a point on the wrong
+ * attribute, and there is no `unspend_stat`.
+ *
+ * A HEADING LINE FIRST. `Stats: 3` is what upstream's dialog leads with and it
+ * is the only place the count appears on this screen, so the rows start one line
+ * down.
+ */
+export function statRowRects(box: PanelRect): readonly PanelRect[] {
+  const out: PanelRect[] = [];
+  const top = box.y + STAT_ROW_H;
+  for (let i = 0; i < STAT_ROWS.length; i += 1) {
+    const y = top + i * STAT_ROW_H;
+    if (y + STAT_ROW_H > box.y + box.h) break;
+    out.push({ x: box.x, y, w: box.w, h: STAT_ROW_H });
+  }
+  return out;
+}
+
+/** The `+` inside a row, which is the only part of it that is pressable. */
+export function statPlusRect(row: PanelRect): PanelRect {
+  return {
+    x: row.x + row.w - STAT_PLUS_PX,
+    y: row.y + Math.floor((row.h - STAT_PLUS_PX) / 2),
+    w: STAT_PLUS_PX,
+    h: STAT_PLUS_PX,
+  };
+}
+
 export function talentPanelGeometry(
   rect: PanelRect,
   rows: readonly TalentRow[],
@@ -896,7 +1027,23 @@ export function talentPanelGeometry(
    * grid, because the trees are what the screen is for and the hover card still
    * answers the description question.
    */
-  const hasDetail = fullW >= COL_W * 2 + COL_GAP + COL_GAP + DETAIL_W;
+  /**
+   * ═══ THE ATTRIBUTE COLUMN COMES OFF THE LEFT, BEFORE ANYTHING ELSE ═══
+   * Where upstream puts it, and where the eye starts. Taken before the grid is
+   * measured so the grid only ever sees width it actually has — doing it the
+   * other way round is how a two-column grid ends up half underneath a stat row.
+   *
+   * IT IS EARNED BEFORE THE DESCRIPTION, which inverts the order the two landed
+   * in. See `PANEL_W_STATS`: spending a point has no other route in the game,
+   * and reading a description has the hover card.
+   */
+  const hasStats = fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W;
+  const stats: PanelRect | null = hasStats
+    ? { x, y: top, w: STATS_W, h: Math.max(0, bottom - top) }
+    : null;
+  const afterStats = hasStats ? STATS_W + COL_GAP : 0;
+
+  const hasDetail = fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W + COL_GAP + DETAIL_W;
   const detail: PanelRect | null = hasDetail
     ? {
         x: x + fullW - DETAIL_W,
@@ -905,7 +1052,7 @@ export function talentPanelGeometry(
         h: Math.max(0, bottom - top),
       }
     : null;
-  const innerW = hasDetail ? fullW - DETAIL_W - COL_GAP : fullW;
+  const innerW = (hasDetail ? fullW - DETAIL_W - COL_GAP : fullW) - afterStats;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -920,7 +1067,7 @@ export function talentPanelGeometry(
   const columns = innerW >= COL_W * 2 + COL_GAP ? 2 : 1;
   const gridW = columns * COL_W + (columns - 1) * COL_GAP;
   /** CENTRED. A left-aligned grid in a wider panel reads as a layout bug. */
-  const gridX = x + Math.max(0, Math.floor((innerW - gridW) / 2));
+  const gridX = x + afterStats + Math.max(0, Math.floor((innerW - gridW) / 2));
 
   const categories = rows.filter((row) => row.kind === TalentRowKind.Category);
   const others = rows.filter((row) => row.kind !== TalentRowKind.Category);
@@ -995,7 +1142,7 @@ export function talentPanelGeometry(
     });
   }
 
-  return { close, placed, detail };
+  return { close, placed, detail, stats };
 }
 
 export const TalentHitKind = {
@@ -1005,6 +1152,12 @@ export const TalentHitKind = {
   Spend: 'spend',
   /** Somewhere on a talent row, but not on its `+`. Cosmetic — it hovers. */
   Row: 'row',
+  /**
+   * An attribute's `+` in the left column. Carries the stat, not an index —
+   * `spend_stat` names one of the six and an index would be a second ordering
+   * to keep in step with `STAT_ROWS`.
+   */
+  Stat: 'stat',
   /**
    * The header strip, minus the × carved out of its right end: the DRAG HANDLE.
    *
@@ -1016,6 +1169,7 @@ export const TalentHitKind = {
 export type TalentHitKind = (typeof TalentHitKind)[keyof typeof TalentHitKind];
 
 export type TalentHit =
+  | { readonly kind: typeof TalentHitKind.Stat; readonly stat: StatKey }
   | { readonly kind: typeof TalentHitKind.Close }
   | {
       readonly kind: typeof TalentHitKind.Spend;
@@ -1105,6 +1259,29 @@ export function talentPanelHitAt(
 
   const geometry = talentPanelGeometry(rect, rows);
   if (inside(geometry.close)) return { kind: TalentHitKind.Close };
+
+  /**
+   * ═══ THE ATTRIBUTE COLUMN, BEFORE THE GRID ═══
+   * They do not overlap — the geometry takes the column off the left before the
+   * grid is measured — so the order is not load-bearing for correctness. It is
+   * still first because it is first on screen, and because a reader tracing a
+   * press down this function should meet the surfaces in the order the eye does.
+   *
+   * ONLY THE `+` ANSWERS. The rest of a row is a label and a number, and a hit
+   * on it would arm a spend the player never aimed at — the same reason the
+   * grid's `+` is the icon rather than a separate button, in reverse: here there
+   * IS room for a small target, so the small target is what is asked about.
+   */
+  const statBox = geometry.stats;
+  if (statBox !== null) {
+    const rowRects = statRowRects(statBox);
+    for (let i = 0; i < rowRects.length; i += 1) {
+      const row = rowRects[i];
+      const entry = STAT_ROWS[i];
+      if (row === undefined || entry === undefined) continue;
+      if (inside(statPlusRect(row))) return { kind: TalentHitKind.Stat, stat: entry.key };
+    }
+  }
 
   for (const placed of geometry.placed) {
     if (placed.row.kind !== TalentRowKind.Category) continue;
@@ -1196,7 +1373,12 @@ export function talentIdAt(
   py: number,
 ): string | null {
   const hit = talentPanelHitAt(rect, rows, px, py);
-  if (hit === null || hit.kind === TalentHitKind.Close) return null;
+  // AN ATTRIBUTE `+` IS NOT A TALENT. It is on the same panel and answers the
+  // same hit test, and it has no cell behind it — so it takes the same exit the
+  // × does rather than being asked for an index it does not carry.
+  if (hit === null || hit.kind === TalentHitKind.Close || hit.kind === TalentHitKind.Stat) {
+    return null;
+  }
   return cellAt(rows, hit.index, px, py, rect)?.id ?? null;
 }
 
@@ -1216,7 +1398,12 @@ export function talentTipAt(
    * `Spend` would put the card on a different code path for no reason.
    */
   const hit = talentPanelHitAt(rect, rows, px, py);
-  if (hit === null || hit.kind === TalentHitKind.Close) return null;
+  // NO CARD OVER AN ATTRIBUTE. There is no cell behind one, and the column
+  // already draws its own name and value — a card repeating them would be the
+  // same words twice with one copy following the pointer.
+  if (hit === null || hit.kind === TalentHitKind.Close || hit.kind === TalentHitKind.Stat) {
+    return null;
+  }
 
   const cell = cellAt(rows, hit.index, px, py, rect);
   if (cell === undefined) return null;
@@ -1264,6 +1451,79 @@ export function talentTipAt(
  * column reads as a panel that failed to load, and this screen is most often
  * opened by somebody who does not know what they are looking at yet.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE SIX DOWN THE LEFT — ToME'S LEVELUP DIALOG, WITH THE POINTS ON TOP.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Stats: 3` and then six rows of `STR 25 +`. Upstream leads its dialog with the
+ * count and so does this: it is the only place on the screen that says how many
+ * attribute points are in hand, and a column of numbers with no count above it
+ * does not tell a player there is anything to do here.
+ *
+ * ═══ THE `+` IS DRAWN ONLY WHEN IT WOULD DO SOMETHING ═══
+ * No points, no `+`. That is the opposite of the rule the grid follows — its
+ * icons stay pressable-looking because an icon IS the talent — and the reason
+ * for the difference is that a `+` is a control and nothing else. One that is
+ * always there teaches a player to press it and be refused, and the refusal
+ * costs a round trip to be told something the screen already knew.
+ *
+ * ═══ AND THE VALUE IS THE COMPOSED ONE ═══
+ * `ProgressMsg.stats` is read off `combat` after `recomposeCombat`, so it is
+ * class plus spent points plus gear plus passives — what the character sheet
+ * says, and what a player can check. A column showing the raw class base would
+ * disagree with the sheet one key away.
+ */
+function drawStats(
+  ctx: CanvasRenderingContext2D,
+  box: PanelRect,
+  values: Readonly<Record<string, number>> | null,
+  unspent: number,
+  armed: string | null,
+): void {
+  if (box.w <= 0 || box.h <= 0) return;
+
+  // A HAIRLINE DOWN THE INSIDE EDGE, matching the description column's. The
+  // panel is one window with three columns, not three panels.
+  ctx.fillStyle = PALETTE.SLATE;
+  ctx.fillRect(box.x + box.w + Math.floor(COL_GAP / 2), box.y, 1, box.h);
+
+  ctx.font = FONT_META;
+  // GOLD WHILE THERE IS SOMETHING TO SPEND, grey when there is not — the same
+  // signal the escape menu's `TALENTS (2)` uses for the other currency.
+  ctx.fillStyle = unspent > 0 ? PALETTE.GOLD : PALETTE.GREY;
+  ctx.fillText(`Stats: ${String(unspent)}`, box.x, box.y + STAT_ROW_H / 2);
+
+  if (values === null) return;
+
+  const rects = statRowRects(box);
+  ctx.font = FONT_BODY;
+  for (let i = 0; i < rects.length; i += 1) {
+    const row = rects[i];
+    const entry = STAT_ROWS[i];
+    if (row === undefined || entry === undefined) continue;
+    const value = values[entry.key] ?? 0;
+    const mid = row.y + row.h / 2;
+
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillText(entry.label, row.x, mid);
+    ctx.fillStyle = PALETTE.PARCHMENT;
+    ctx.fillText(String(Math.round(value)), row.x + 26, mid);
+
+    if (unspent <= 0) continue;
+    const plus = statPlusRect(row);
+    const isArmed = armed === entry.key;
+    // ARMED IS A FILL, NOT A COLOUR CHANGE ALONE — `ui/partypanel.ts` states the
+    // rule this file follows everywhere: never colour alone.
+    ctx.fillStyle = isArmed ? PALETTE.GOLD : PALETTE.SLATE;
+    ctx.fillRect(plus.x, plus.y, plus.w, plus.h);
+    ctx.fillStyle = isArmed ? PALETTE.INK : PALETTE.BONE;
+    ctx.textAlign = 'center';
+    ctx.fillText('+', plus.x + plus.w / 2, plus.y + plus.h / 2);
+    ctx.textAlign = 'left';
+  }
+}
+
 function drawDetail(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
@@ -1573,6 +1833,20 @@ export type TalentPanelDrawOptions = {
    * the pane's "point at a talent" line.
    */
   readonly focusId?: string | null;
+  /**
+   * THE SIX, COMPOSED, from `ProgressMsg.stats`. Null before the first frame or
+   * against a server that does not send them — the column then draws its heading
+   * and no rows, which is honest about a build with nothing to show.
+   */
+  readonly stats?: Readonly<Record<string, number>> | null;
+  /** Attribute points in hand. Zero draws no `+` anywhere. */
+  readonly unspentStats?: number;
+  /**
+   * WHICH ATTRIBUTE IS ONE PRESS FROM BEING BOUGHT, or null. The same two-press
+   * rule the grid uses and for a sharper reason: there is no `unspend_stat`, so
+   * a single-click `+` is a permanent decision one twitch away.
+   */
+  readonly armedStat?: string | null;
 };
 
 /**
@@ -1613,6 +1887,19 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
    * the level on that pane changes on the press this screen exists to make, and
    * a cell held by the caller would be one frame behind on exactly that number.
    */
+  // THE ATTRIBUTE COLUMN, BEFORE THE DESCRIPTION AND AFTER THE GRID. Painted
+  // late enough that nothing overdraws it and early enough that the clip is
+  // still the panel's.
+  if (geometry.stats !== null) {
+    drawStats(
+      ctx,
+      geometry.stats,
+      options.stats ?? null,
+      Math.max(0, Math.floor(options.unspentStats ?? 0)),
+      options.armedStat ?? null,
+    );
+  }
+
   if (geometry.detail !== null) {
     const focus = options.focusId ?? null;
     let cell: TalentCell | null = null;

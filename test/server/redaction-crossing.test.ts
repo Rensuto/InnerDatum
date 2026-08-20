@@ -1,3 +1,5 @@
+import { recomposeCombat } from '../../src/server/engine/effects.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
@@ -181,6 +183,85 @@ async function stepOffAndBack(
   socket.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'move', dir: 'e' }));
   await sleep(250);
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   A DOOR CHANGES WHERE YOU ARE STANDING AND NOTHING ELSE ABOUT YOU.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED over the real socket, and it was not true: a Watchman on the moor has
+ * Strength 25 — 24 authored plus one from a passive — and walking him through a
+ * door gave him 24. **Every passive talent in the game stopped working the
+ * moment a player entered a dungeon**, which is the place they matter most.
+ *
+ * A crossing builds a NEW body in the new world and copies a hand-written list
+ * of fields onto it, then recomposes. `passiveCombat` was not on the list, so
+ * the recompose found nothing to fold. Nothing put it back either —
+ * `refreshPassives` is called from `attachClass` and `raiseTalentPoint` only, so
+ * the contribution returned when a player happened to spend a talent point and
+ * never for one who had spent them all.
+ *
+ * ═══ THE ASSERTION IS THE WHOLE SHEET, NOT THE FIELD THAT BROKE ═══
+ * This is the sixth time this codebase has been bitten by one rule written as a
+ * hand-written list. Pinning `passiveCombat` would catch the bug that happened;
+ * comparing the COMPOSED sheet catches the next field somebody forgets, which is
+ * the one that has not happened yet.
+ */
+describe('what follows a character through a door', () => {
+  it('leaves every derived number exactly where it was', async () => {
+    const { actorId, socket } = await hello(server.port);
+
+    const before = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(before, 'no body on the near side').toBeDefined();
+    if (before === undefined) return;
+
+    /**
+     * THE PASSIVE LAYER IS PUT ON BY HAND, and that is the honest shape of the
+     * claim. `refreshPassives` lives in `src/server/main.ts` — the one file that
+     * can see the talent registry, the world and the gateway at once — and this
+     * harness builds its own gateway without it, so a body here has no passives
+     * to lose. The rule under test is not "this harness grants passives"; it is
+     * "whatever layers a body has, a door does not take them away".
+     *
+     * A body with no layer at all would pass this by having nothing to lose,
+     * which is the vacuous green that let the real bug live for six milestones.
+     */
+    before.passiveCombat = { stats: { str: 1 } };
+    recomposeCombat(before, null, resolveItem);
+    const sheetBefore = structuredClone(before.combat);
+    expect(sheetBefore?.stats?.str, 'the passive never reached the sheet').toBeDefined();
+
+    await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
+
+    const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(after, 'no body on the far side').toBeDefined();
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Before the fix: `stats.str` came back one lower, and with it accuracy,
+    // damage, armour, defence and both saves.
+    expect(after?.combat).toEqual(sheetBefore);
+  });
+
+  it('carries the attribute points a player has spent', async () => {
+    /**
+     * THE SAME LIST, AND THIS FIELD WOULD HAVE INHERITED THE SAME BUG the day it
+     * shipped — a delta the recompose cannot see is a delta that is not there,
+     * and the symptom would be a character losing spent points at a door.
+     */
+    const { actorId, socket } = await hello(server.port);
+    const body = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(body).toBeDefined();
+    if (body === undefined || body.kind !== 'player') return;
+
+    body.spentStats = { str: 4 };
+    body.unspentStatPoints = 2;
+
+    await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
+
+    const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(after?.spentStats, 'spent attribute points did not follow').toEqual({ str: 4 });
+    expect(after?.kind === 'player' ? after.unspentStatPoints : null).toBe(2);
+  });
+});
 
 describe('walking into the dark territory', () => {
   it('crosses onto a second overworld that names itself', async () => {

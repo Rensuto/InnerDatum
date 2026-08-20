@@ -13,6 +13,10 @@ import {
   talentPanelGeometry,
   talentPanelHitAt,
   talentPanelRect,
+  STAT_ROWS,
+  drawTalentPanel,
+  statPlusRect,
+  statRowRects,
   talentIdAt,
   talentPanelRows,
   talentTipAt,
@@ -20,6 +24,7 @@ import {
 import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { TalentPanelView, TalentRow } from '../../src/client/ui/talents.ts';
+import type { PanelRect } from '../../src/client/ui/panel.ts';
 import type { LoadoutTalent, ProgressMsg } from '../../src/shared/protocol.ts';
 
 /**
@@ -610,5 +615,155 @@ describe('the description column', () => {
     if (wide === null) throw new Error('no panel');
     const rows = talentPanelRows(view());
     expect(talentIdAt(wide, rows, wide.x + 2, wide.y + wide.h - 2)).toBeNull();
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE ATTRIBUTE COLUMN — ToME'S LEVELUP DIALOG, ON THE LEFT OF THIS SCREEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for directly: attributes exactly as Tales of Maj'Eyal, on the talent
+ * page, with the points. The server half is done — three a level
+ * (`Actor.lua:3748`), six stats, `spend_stat` with no refund — and this is the
+ * only surface a player can act on it through.
+ */
+type Op = { readonly kind: string; readonly args: readonly unknown[] };
+
+function recorder(ops: Op[]): CanvasRenderingContext2D {
+  return new Proxy(
+    {},
+    {
+      get: (_t, prop: string) => {
+        if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+        if (prop === 'canvas') return { width: 1280, height: 720 };
+        return (...args: unknown[]) => {
+          ops.push({ kind: prop, args });
+        };
+      },
+      set: () => true,
+    },
+  ) as unknown as CanvasRenderingContext2D;
+}
+
+const NO_ART = { sprite: () => undefined } as unknown as Parameters<
+  typeof drawTalentPanel
+>[0]['sprites'];
+
+const SIX = { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 };
+
+function paintPanel(over: Partial<Parameters<typeof drawTalentPanel>[0]> = {}): string[] {
+  const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+  if (rect === null) throw new Error('no panel');
+  const ops: Op[] = [];
+  drawTalentPanel({
+    ctx: recorder(ops),
+    sprites: NO_ART,
+    rect,
+    rows: talentPanelRows(view()),
+    hoveredClose: false,
+    hovered: null,
+    armedId: null,
+    stats: SIX,
+    unspentStats: 3,
+    ...over,
+  });
+  return ops.flatMap((op) => (op.kind === 'fillText' ? [String(op.args[0])] : []));
+}
+
+describe('the attribute column', () => {
+  it('is drawn even on the guaranteed floor, because spending has no other route', () => {
+    /**
+     * ═══ THE ORDER THE THREE COLUMNS ARE EARNED IN IS A JUDGEMENT ═══
+     * `DEFAULT_VIEWPORT` is 20 tiles — 640 logical pixels. Spending a point is a
+     * REQUIRED action with no command, no key and no other panel behind it; if
+     * the column is not drawn, a levelled character cannot spend what they were
+     * granted. Reading a description has the hover card. So the attributes are
+     * earned before the description, which inverts the order the two landed in.
+     */
+    const floor = talentPanelRect({ width: 640, height: 384, top: 60, bottom: 300 });
+    expect(floor).not.toBeNull();
+    if (floor === null) return;
+    const g = talentPanelGeometry(floor, talentPanelRows(view()));
+    expect(g.stats, 'no attribute column at the narrowest supported window').not.toBeNull();
+    // AND THE DESCRIPTION IS WHAT GIVES WAY THERE, not the grid.
+    expect(g.detail).toBeNull();
+  });
+
+  it('never lets the column and the grid overlap', () => {
+    // THE LAYOUT BUG THIS CATCHES: the column is taken off the left BEFORE the
+    // grid is measured. Reversed, a two-column grid ends up half underneath a
+    // row of stat labels, and every icon in it is a click target.
+    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    const g = talentPanelGeometry(rect, talentPanelRows(view()));
+    expect(g.stats).not.toBeNull();
+    if (g.stats === null) return;
+    const right = g.stats.x + g.stats.w;
+    for (const placed of g.placed) {
+      if (placed.row.kind !== TalentRowKind.Category) continue;
+      for (const cell of placed.cells) {
+        expect(cell.x, 'an icon is under the attribute column').toBeGreaterThanOrEqual(right);
+      }
+    }
+  });
+
+  it('answers the hit test by stat, not by index', () => {
+    /**
+     * `spend_stat` NAMES ONE OF SIX. An index would be a second ordering to keep
+     * in step with `STAT_ROWS`, and the failure mode is a point spent on the
+     * wrong attribute — which nothing refunds.
+     */
+    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(view());
+    const g = talentPanelGeometry(rect, rows);
+    if (g.stats === null) throw new Error('no column');
+
+    const boxes = statRowRects(g.stats);
+    expect(boxes.length, 'the column has room for fewer than six').toBe(STAT_ROWS.length);
+
+    for (let i = 0; i < boxes.length; i += 1) {
+      const plus = statPlusRect(boxes[i] as PanelRect);
+      const hit = talentPanelHitAt(rect, rows, plus.x + 1, plus.y + 1);
+      expect(hit?.kind, `row ${String(i)} is not a stat hit`).toBe(TalentHitKind.Stat);
+      if (hit?.kind === TalentHitKind.Stat) expect(hit.stat).toBe(STAT_ROWS[i]?.key);
+    }
+  });
+
+  it('does not answer for the label or the value, only the +', () => {
+    // A hit anywhere on the row would arm a spend the player never aimed at.
+    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(view());
+    const g = talentPanelGeometry(rect, rows);
+    if (g.stats === null) throw new Error('no column');
+    const first = statRowRects(g.stats)[0] as PanelRect;
+    const onLabel = talentPanelHitAt(rect, rows, first.x + 2, first.y + 2);
+    expect(onLabel?.kind).not.toBe(TalentHitKind.Stat);
+  });
+
+  it('paints the count and all six, and the + only while there is a point', () => {
+    const withPoints = paintPanel();
+    expect(withPoints).toContain('Stats: 3');
+    for (const entry of STAT_ROWS) expect(withPoints).toContain(entry.label);
+    expect(withPoints.filter((t) => t === '+')).toHaveLength(STAT_ROWS.length);
+
+    // ═══ NO POINTS, NO `+` ═══
+    // A control that is always there teaches a player to press it and be
+    // refused, and the refusal costs a round trip to be told what the screen
+    // already knew.
+    const spent = paintPanel({ unspentStats: 0 });
+    expect(spent).toContain('Stats: 0');
+    expect(spent.filter((t) => t === '+')).toHaveLength(0);
+  });
+
+  it('draws its heading but no rows when the server has said nothing', () => {
+    // THE HALF THAT MUST NOT MOVE. A client that has had no `progress` frame
+    // yet, or one outliving a server without attributes, must not invent zeroes
+    // — six rows of `STR 0` is a lie about a character.
+    const silent = paintPanel({ stats: null, unspentStats: 0 });
+    expect(silent).toContain('Stats: 0');
+    expect(silent).not.toContain('STR');
   });
 });
