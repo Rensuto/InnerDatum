@@ -257,6 +257,71 @@ export type HookHost = HookSelf & {
 };
 
 // ---------------------------------------------------------------------------
+// The board, as a passive is allowed to see it
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE OTHER HALF OF "A NUMBER GOING UP": A CONDITION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The hooks above answer "when something happens". This answers "while
+ * something is true", and between them they are the whole vocabulary the 24
+ * flat passives were missing.
+ *
+ * ═══ WHY THE SIGNATURE HAD TO CHANGE AND NOT JUST THE CONTENT ═══
+ * `passive` took a level and nothing else, so "+2 defence per adjacent enemy"
+ * was not unwritten, it was UNTYPEABLE. Upstream has the same shape and the
+ * same wart — ToME's `passives` refreshes only on learn, unlearn and mastery
+ * change (ActorTalents.lua:668-684), and six talents in the whole game work
+ * around it with `callbackOnStatChange` + `updateTalentPassives`.
+ *
+ * WE DO NOT INHERIT THE WART. The fold reruns once per game turn, so a
+ * condition is read fresh rather than frozen at the moment a point was spent.
+ * That is a deliberate divergence from upstream and it is cheaper here: under
+ * ten players, a handful of talents each, resolving synchronously.
+ *
+ * ═══ READ-ONLY, RNG-FREE, SYNCHRONOUS ═══
+ * A passive is recomputed on a clock; it is not an event. If it could roll a
+ * die the sheet would change without anything happening, and a replay would
+ * diverge. If it could WRITE, two passives would race and the answer would
+ * depend on registration order. Every method here is a question.
+ */
+export type PassiveView = {
+  /** Living hostiles within one tile, diagonals included. Tactical Expert. */
+  adjacentEnemies(): number;
+  /** Living friends within one tile. For "hold the line" shapes. */
+  adjacentAllies(): number;
+  /** 0..1. True Grit reads the inverse — what is MISSING is the resource. */
+  hpFraction(): number;
+  /** 0..1 of the class resource, after any sustain reservation. */
+  resourceFraction(): number;
+  /** Did this body change tiles since its last base turn? */
+  movedThisTurn(): boolean;
+  /** Is this stance up right now? Lets one talent read another. */
+  isSustained(talentId: string): boolean;
+  /** Chebyshev tiles to the nearest living hostile; Infinity when alone. */
+  nearestEnemyDistance(): number;
+};
+
+/**
+ * THE VIEW A BODY WITH NO WORLD GETS, and it is not a special case anybody has
+ * to handle. Every fixture that calls `passive(3)` with no second argument, and
+ * every talent that ignores it, behaves exactly as before: an empty board, full
+ * health, nothing sustained. A conditional talent evaluated here contributes its
+ * floor rather than throwing.
+ */
+export const EMPTY_PASSIVE_VIEW: PassiveView = {
+  adjacentEnemies: () => 0,
+  adjacentAllies: () => 0,
+  hpFraction: () => 1,
+  resourceFraction: () => 1,
+  movedThisTurn: () => false,
+  isSustained: () => false,
+  nearestEnemyDistance: () => Number.POSITIVE_INFINITY,
+};
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 

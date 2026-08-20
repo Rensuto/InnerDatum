@@ -119,7 +119,7 @@
 
 import type { PassiveContribution } from './equipment.ts';
 import { createTurnProcs } from './hooks.ts';
-import type { TalentHooks, TurnProcs } from './hooks.ts';
+import type { PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, rescaleDamage } from '../../shared/scale.ts';
@@ -1437,7 +1437,22 @@ export type Talent = {
    * IT RETURNS THE SAME SHAPE A WORN ITEM CONTRIBUTES, through the same combine,
    * so "does a passive stack with a pauldron" has one answer instead of two.
    */
-  readonly passive?: (level: number) => PassiveContribution;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SECOND PARAMETER, AND EVERY EXISTING TALENT STILL COMPILES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A function of fewer parameters is assignable to a type with more, so the
+   * twenty-four talents already written as `(level) => ({ mods: ... })` are
+   * untouched and keep meaning exactly what they meant. Nothing had to be
+   * migrated to land this.
+   *
+   * `view` IS THE BOARD AS OF NOW. It is recomputed once per game turn, so a
+   * talent may read a condition rather than a constant: defence per adjacent
+   * enemy, resistance from missing health, a bonus that only applies while a
+   * stance is up. Read-only, RNG-free and synchronous — see `PassiveView`.
+   */
+  readonly passive?: (level: number, view: PassiveView) => PassiveContribution;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    *   WHERE THIS TALENT ATTACHES TO THE RULES. See engine/hooks.ts.

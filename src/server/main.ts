@@ -45,11 +45,12 @@ import type { StatusApply, StatusCure } from './engine/effects.ts';
 import type { BudgetPenalty } from './engine/talents.ts';
 import { BLEEDING, SLOWED, STUNNED } from './content/effects.ts';
 import {
+  MOVE_MP_COST,
   RESOURCE_RULES,
+  effectiveResourceMax,
+  hasAffordableAction,
   markMultiplier,
   resolveGuardCounter,
-  MOVE_MP_COST,
-  hasAffordableAction,
   toggleSustain,
   useTalent,
 } from './engine/talents.ts';
@@ -57,7 +58,7 @@ import { authRoutes, readAuthConfig } from './http/auth.ts';
 import { createSessionStore } from './http/session.ts';
 import { wsGateway } from './net/gateway.ts';
 import { createCharacterBridge, createSaveStore } from './persist/saves.ts';
-import type { BoundHooks } from './engine/hooks.ts';
+import type { BoundHooks, PassiveView } from './engine/hooks.ts';
 import { createTurnEngine } from './turn-engine.ts';
 import { createRealms } from './world/realms.ts';
 import { createWorld } from './world/world.ts';
@@ -168,6 +169,25 @@ export function talentRuntimeFor(
    * same null an unafflicted ally would give it.
    */
   cure?: StatusCure,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * RUN AFTER EVERY BASE TURN. This is what makes a conditional passive real.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Talent.passive` can now read the board, and a board-reading passive that
+   * is only folded when a point is spent is a passive frozen at the moment
+   * somebody levelled up. It would be worse than a constant, because it would
+   * LOOK live.
+   *
+   * The fold lives in `refreshPassives`, which is inside the server closure —
+   * the one place that can see the talent registry, the world and the gateway
+   * at once. This adapter cannot reach it, so the capability is passed in,
+   * exactly as `status`, `penaltyFor` and `cure` above are.
+   *
+   * OPTIONAL: absent means passives fold only on the three occasions they
+   * always did, which is every fixture that builds a runtime by hand.
+   */
+  onActBase?: (actorId: string) => void,
 ): TalentRuntime {
   return {
     use: (actor: EngineActor, id: string, target: TileXY | undefined): TalentResolutionResult => {
@@ -226,6 +246,10 @@ export function talentRuntimeFor(
       // "immediately after the refill", which is exactly here, because the refill
       // would clobber anything subtracted earlier in the turn.
       talents.actBase(actorId, world, penaltyFor?.(actorId));
+      // AFTER the refill and after the latch is cleared, so a passive reading
+      // "did I move" or "how much resource is left" sees the turn it is in
+      // rather than the one that just ended.
+      onActBase?.(actorId);
     },
     noteMoved: (actorId: string): void => {
       const sheet = talents.sheetOf(actorId);
@@ -663,6 +687,25 @@ export function buildServer() {
         statusFor(forWorld),
         (actorId) => budgetPenalty(effects, actorId),
         cureFor(forWorld),
+        /**
+         * ONCE PER BASE TURN, THE PASSIVES ARE FOLDED AGAIN.
+         *
+         * This is what makes a board-reading passive real rather than a number
+         * frozen at the moment somebody spent a point. Upstream does NOT do this
+         * — ToME refreshes on learn, unlearn and mastery change only, and six of
+         * its talents work around that with callbacks — so this is a deliberate
+         * divergence, affordable here because the fold is a handful of talents
+         * over a handful of players, resolving synchronously.
+         *
+         * WRAPPED IN A CLOSURE, NOT PASSED BY NAME. `refreshPassives` is a `const`
+         * declared a hundred lines below this call, and `engineFor` runs during
+         * `buildServer` — so naming it directly is a temporal dead zone and the
+         * server refuses to boot with "Cannot access before initialization". The
+         * arrow defers the lookup to call time, by which point it exists.
+         */
+        (id: string) => {
+          refreshPassives(id);
+        },
       ),
       // THE OTHER HALF OF THE STATUS SEAM. `turn-engine.ts` builds
       // `PumpCtx.statusPass` from this, the world's rng and the talent book —
@@ -801,6 +844,67 @@ export function buildServer() {
     const sheet = talentEngine.sheetOf(actorId);
     if (actor === undefined || sheet === undefined) return;
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE BOARD, AS THIS BODY IS ALLOWED TO SEE IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Built HERE rather than in engine/hooks.ts because everything it needs is
+     * already resolved on the two lines above — the actor and the world that
+     * actually holds it. Putting it in the engine would mean handing the engine
+     * a realm lookup it has no other use for.
+     *
+     * ONE SNAPSHOT PER FOLD, and the closures read it lazily. A talent that
+     * never asks about adjacency costs nothing; a talent that asks twice pays
+     * once, because the fold runs once per turn and the board cannot move
+     * inside it — turn resolution is synchronous, which is exactly what makes
+     * a lazy read safe here.
+     */
+    const holder = realms.realmOf(actorId)?.world ?? world;
+    const neighbours = (): EngineActor[] =>
+      holder
+        .allActors()
+        .filter(
+          (other) =>
+            other.id !== actor.id &&
+            other.alive &&
+            Math.max(Math.abs(other.x - actor.x), Math.abs(other.y - actor.y)) <= 1,
+        );
+
+    const view: PassiveView = {
+      /**
+       * TWO SIDES ONLY. `ActorKind` is Player or Monster and there is no third,
+       * so "hostile to me" is "not my kind" — which is also true for a monster,
+       * and monsters carry passives too.
+       */
+      adjacentEnemies: () => neighbours().filter((o) => o.kind !== actor.kind).length,
+      adjacentAllies: () => neighbours().filter((o) => o.kind === actor.kind).length,
+      /**
+       * GUARDED AGAINST A ZERO CEILING. A body mid-construction can have
+       * `maxHp` of 0, and a passive reading NaN would poison the whole composed
+       * sheet rather than failing where anybody could see it.
+       */
+      hpFraction: () => (actor.maxHp > 0 ? Math.max(0, Math.min(1, actor.hp / actor.maxHp)) : 1),
+      resourceFraction: () => {
+        // AGAINST THE EFFECTIVE CEILING, not the printed one: a stance that
+        // reserved half the pool has made the pool smaller, and "am I full"
+        // has to mean full of what is left.
+        const ceiling = effectiveResourceMax(talentEngine, sheet);
+        return ceiling > 0 ? Math.max(0, Math.min(1, sheet.resource.value / ceiling)) : 1;
+      },
+      movedThisTurn: () => sheet.movedThisTurn,
+      isSustained: (id: string) => sheet.sustained.has(id),
+      nearestEnemyDistance: () => {
+        let best = Number.POSITIVE_INFINITY;
+        for (const other of holder.allActors()) {
+          if (other.id === actor.id || !other.alive || other.kind === actor.kind) continue;
+          const d = Math.max(Math.abs(other.x - actor.x), Math.abs(other.y - actor.y));
+          if (d < best) best = d;
+        }
+        return best;
+      },
+    };
+
     const stats: Record<string, number> = {};
     const mods: Record<string, number> = {};
     /**
@@ -846,7 +950,7 @@ export function buildServer() {
       }
       const contribute = talent?.passive;
       if (contribute === undefined) continue;
-      const block = contribute(sheet.points.get(id) ?? 1);
+      const block = contribute(sheet.points.get(id) ?? 1, view);
       for (const [key, value] of Object.entries(block.stats ?? {})) {
         if (typeof value === 'number') stats[key] = (stats[key] ?? 0) + value;
       }

@@ -52,6 +52,20 @@ export function defenceAt(level: number): number {
   return Math.round(combatTalentScale(level, DEF_LOW, DEF_HIGH, CURVE));
 }
 
+/**
+ * HOW MANY FOES STILL PAY. Upstream caps Tactical Expert as well; the number is
+ * ours because our rooms are smaller than upstream's.
+ */
+export const ADJACENT_CAP = 3;
+/** The per-foe band. Named for the same reason DEF_LOW/DEF_HIGH above are. */
+const PER_FOE_LOW = 2;
+const PER_FOE_HIGH = 6;
+
+/** Defence granted PER adjacent enemy, at a rank. */
+export function perFoeAt(level: number): number {
+  return Math.round(combatTalentScale(level, PER_FOE_LOW, PER_FOE_HIGH, CURVE));
+}
+
 export const coldReading: Talent = {
   id: 'talent:cold_reading',
   name: 'Cold Reading',
@@ -81,8 +95,37 @@ export const coldReading: Talent = {
   },
   damageType: DamageType.Physical,
 
-  passive: (level) => ({ mods: { def: defenceAt(level) } }),
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   DEFENCE FOR EACH ONE OF THEM. Ported from cunning/tactical.lua:30-60.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This was a flat number, and as a flat number it was STRICTLY DOMINATED by
+   * Light on the Feet — same stat, same curve, same point pool, larger figure.
+   * Two talents on the panel and no reason to ever take this one.
+   *
+   * Upstream's Tactical Expert is `nb_foes * getDefense`, capped: defence that
+   * exists only while you are surrounded. That is a different SHAPE rather than
+   * a different number, and shape is what makes a choice. Light on the Feet is
+   * better in a corridor; this is better in a doorway. Neither dominates, and a
+   * player has something to decide.
+   *
+   * ═══ CAPPED, BECAUSE UPSTREAM CAPS IT ═══
+   * Uncapped, this rewards standing in the middle of six husks — the exact
+   * position the rest of the game teaches you to avoid. Past three, more company
+   * should be a problem rather than a bonus.
+   *
+   * ═══ AND IT PAYS NOTHING WHEN YOU ARE ALONE, ON PURPOSE ═══
+   * A conditional that still pays out when its condition is false is a flat
+   * bonus wearing a costume. The fold runs every turn precisely so that "nothing"
+   * is an answer it can give.
+   */
+  passive: (level, view) => {
+    const foes = Math.min(ADJACENT_CAP, view.adjacentEnemies());
+    return foes === 0 ? {} : { mods: { def: perFoeAt(level) * foes } };
+  },
 
   describe: (_self, level) =>
-    `Always on. You are ${String(defenceAt(level))} harder to hit, before anything you wear.`,
+    `Always on. +${String(perFoeAt(level))} defence for each enemy beside you, up to ` +
+    `${String(ADJACENT_CAP)}. Nothing when you are alone.`,
 };

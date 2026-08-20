@@ -39,6 +39,22 @@ export function physResistAt(level: number): number {
   return Math.round(combatTalentScale(level, RESIST_LOW, RESIST_HIGH, CURVE));
 }
 
+/** The grit band. Paid only in proportion to missing health. */
+const GRIT_LOW = 10;
+const GRIT_HIGH = 35;
+
+/**
+ * THE FULL VALUE, PAID ONLY AT DEATH'S DOOR.
+ *
+ * Scaled by MISSING health, so this figure is what a body on its last hit point
+ * receives and a healthy one receives none of. The band is higher than the old
+ * flat one precisely because it is almost never paid in full — a talent worth
+ * its headline number at full health would be the flat talent again.
+ */
+export function gritAt(level: number): number {
+  return Math.round(combatTalentScale(level, GRIT_LOW, GRIT_HIGH, CURVE));
+}
+
 export const seenWorse: Talent = {
   id: 'talent:seen_worse',
   name: 'Seen Worse',
@@ -60,8 +76,33 @@ export const seenWorse: Talent = {
   },
   damageType: DamageType.Physical,
 
-  passive: (level) => ({ mods: { physResist: physResistAt(level) } }),
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   IT GETS TRUER THE WORSE IT GETS. techniques/battle-tactics.lua:101-158.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A flat physical resistance before this, and STRICTLY DOMINATED by
+   * Contingencies — same stat, same curve, larger figure. There was no argument
+   * for ever taking it.
+   *
+   * Upstream's True Grit recomputes resistance from MISSING health every turn,
+   * and that is the shape worth having: worth nothing at full health, worth
+   * everything at the moment you are about to die. It rewards being hurt without
+   * rewarding recklessness, because the only way to hold the bonus is to stay
+   * hurt — and staying hurt is how you die.
+   *
+   * ═══ THE FOLD RUNS EVERY TURN, AND THAT IS THE ONLY REASON THIS WORKS ═══
+   * Before the per-turn recompute this would have been frozen at whatever health
+   * the character happened to be on when the point was spent — and it would have
+   * LOOKED live, which is worse than being obviously flat. See `refreshPassives`.
+   */
+  passive: (level, view) => {
+    const missing = 1 - view.hpFraction();
+    const resist = Math.round(gritAt(level) * missing);
+    return resist <= 0 ? {} : { mods: { physResist: resist } };
+  },
 
   describe: (_self, level) =>
-    `Always on. ${String(physResistAt(level))} better at shrugging off what the body feels.`,
+    `Always on. Up to ${String(gritAt(level))} physical resistance, in proportion to how ` +
+    `much health you are missing. Nothing at full.`,
 };
