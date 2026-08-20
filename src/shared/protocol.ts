@@ -2016,6 +2016,38 @@ const HelloSchema = z.strictObject({
    * lifetimes disagreed.
    */
   sessionId: z.string().min(1).max(256).optional(),
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHICH OF MY CHARACTERS I AM PLAYING TONIGHT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * NOT AN IDENTITY CLAIM, AND NON-NEGOTIABLE 5 STILL HOLDS. This names a
+   * character, never a person: the server resolves the OWNER from `sessionId`
+   * and then asks whether that owner has a character by this id. A socket that
+   * names somebody else's character id gets the same answer as one that names a
+   * character that never existed — the roster, again — because the lookup is
+   * `data/characters/<ownerId>/<characterId>.json` and an owner it does not
+   * match simply is not a path that exists.
+   *
+   * ABSENT MEANS "SHOW ME THE LIST". A verified socket that names nothing gets a
+   * `roster` frame and NO BODY: it is standing in the select screen, and the
+   * world does not have a token in it for somebody who has not chosen yet. An
+   * ANONYMOUS socket that names nothing joins straight away exactly as it always
+   * has — there is no account, so there is no list, and the alternative is an
+   * empty menu in front of a player who cannot ever fill it.
+   */
+  characterId: z.string().min(1).max(64).optional(),
+  /**
+   * "Make me a new one." The server allocates the id — the client never invents
+   * one, because two clients inventing at once collide and the loser silently
+   * plays somebody else's character.
+   *
+   * IGNORED WHEN `characterId` IS PRESENT rather than being an error: the two
+   * together are a client bug, and refusing the connection over it would strand
+   * a player at a menu with no way forward. Naming a character wins, because it
+   * is the request that cannot lose data.
+   */
+  newCharacter: z.boolean().optional(),
 });
 
 const MoveSchema = z.strictObject({
@@ -3423,6 +3455,29 @@ export type WelcomeMsg = {
   selfId: string;
   /** Present this in the next `hello` to reattach after a drop. */
   resumeToken: string;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHICH OF YOUR CHARACTERS THIS BODY IS, AND WHY IT HAS TO BE SAID.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A client that asked for `newCharacter: true` does not know what it got. The
+   * server allocated the id, and without hearing it back the client has only one
+   * thing to send on the next `hello` — `newCharacter: true` again. A dropped
+   * socket, a laptop lid, a server restart: any reconnect after the resume grace
+   * expires would then CREATE A SECOND CHARACTER, and a flaky evening would fill
+   * the roster with strangers wearing the same name.
+   *
+   * So the answer travels back and the client pins it. `resumeToken` cannot do
+   * this job: it says "I am the socket that just dropped" and it dies with the
+   * body, while this says "I am playing Sergeant Vell" and outlives every socket.
+   * Folding the two into one field would mean a character being created every
+   * time a resume expired.
+   *
+   * ABSENT FOR AN ANONYMOUS PLAYER, who has no account and therefore no
+   * character file — the same absence that means "you were not offered a roster
+   * either", and the client treats it that way.
+   */
+  characterId?: string;
   level: LevelView;
   actors: ActorView[];
 };
@@ -4063,6 +4118,84 @@ export type ClassOptionView = {
  * stop drawing the picker when its own `choose_class` is acknowledged by the
  * class actually changing.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *          ONE CHARACTER OF THE SELECT SCREEN, AS THE PLAYER SEES IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A VIEW AND NOT A FILE. `CharacterHeader` in `persist/saves.ts` is what is on
+ * disk; this is what a row says. The two differ on purpose in one place — the
+ * class arrives RESOLVED to its display name, because a select screen showing
+ * `watchman` has leaked an id at the player, and the client has no registry to
+ * turn one into "The Watchman" without importing content it does not otherwise
+ * need.
+ *
+ * NO OWNER ID, EVER. The rows are the viewer's own characters by construction —
+ * the server looked them up under the account it verified — so an owner field
+ * would put a Discord snowflake on the wire to prove something the frame's
+ * existence already proves.
+ */
+export type CharacterRow = {
+  /** What `hello.characterId` must carry to play this one. */
+  id: string;
+  name: string;
+  /** RESOLVED for display. Absent when this build no longer has the class. */
+  className?: string;
+  level: number;
+  /** Cases closed, against `cases` on the frame. */
+  filed: number;
+  money: number;
+  /** ISO-8601, or absent for a character whose file could not be read. */
+  lastPlayed?: string;
+  /**
+   * FALSE MEANS "THERE, AND THIS BUILD WILL NOT PLAY IT".
+   *
+   * Drawn and refused rather than omitted. A roster that silently drops a
+   * damaged save tells a player their character was DELETED — and the first
+   * thing they will do about it is make a new one and let the autosave write
+   * over the directory they were trying to recover from.
+   */
+  playable: boolean;
+  /** Why not, in words the row can print. Absent when `playable`. */
+  refusal?: string;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   `roster` — WHO YOU COULD BE TONIGHT. THE FRAME THAT MEANS "NO BODY YET".
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * SENT INSTEAD OF THE WORLD, NOT ALONGSIDE IT. A socket that receives this has
+ * no actor: nothing was added to the overworld, no `welcome`, no `realm`, no
+ * `state`. That is the whole reason the select screen is safe — a player sitting
+ * in a menu is not a token standing in a field for a monster to walk up to, and
+ * "play one at a time" is enforced by there being exactly one body per socket
+ * and none at all before a choice.
+ *
+ * ONLY EVER TO A VERIFIED SOCKET. An anonymous player has no account to hold a
+ * roster, so they join straight away exactly as they always have; showing them
+ * an empty select screen would be a menu they can never fill.
+ */
+export type RosterMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'roster';
+  characters: readonly CharacterRow[];
+  /**
+   * The size of the whole case file, so a row can read "3 of 27" without the
+   * client hard-coding a number that changes when content does. Same value
+   * `progress.cases` carries, for the same reason.
+   */
+  cases: number;
+  /**
+   * Whether "new character" is offered. FALSE AT THE CAP, and the client draws
+   * the reason rather than a button that fails — a menu whose only affordance
+   * silently does nothing is worse than one that explains itself.
+   */
+  canCreate: boolean;
+  /** How many this account may own, so the screen can say why. */
+  max: number;
+};
+
 export type ClassOptionsMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'class_options';
@@ -4781,6 +4914,7 @@ export type ServerMsg =
   | ResourceMsg
   | InspectedMsg
   | ClassOptionsMsg
+  | RosterMsg
   | ProgressMsg
   | GroundMsg
   | ShopMsg
@@ -4952,6 +5086,10 @@ export type ViewerMsg =
   | PartyStateMsg
   | InspectedMsg
   | ClassOptionsMsg
+  // YOUR characters, and nobody else's. Membership here makes
+  // `broadcast(rosterMsg)` a compile error rather than a rule to remember — and
+  // the mistake it prevents is handing the room a list of somebody's saves.
+  | RosterMsg
   | ProgressMsg
   | InventoryMsg
   | KeybindsMsg

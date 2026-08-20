@@ -1475,6 +1475,39 @@ export type CharacterSnapshot = {
  *   and a save happens at a session boundary. saves.ts's own header says the
  *   same thing about the two energy clocks, for the same reason.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *      ONE ROW OF A SELECT SCREEN, AS THE PERSIST LAYER HANDS IT OVER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * DECLARED HERE, LIKE `CharacterSnapshot` AND `CharacterRestore`, AND FOR THE
+ * SAME REASON: the gateway declares the contract and `persist/saves.ts` meets
+ * it, so the runtime edge points one way only. Declaring it over there and
+ * importing it here would put a second definition of the same row in the tree —
+ * this codebase's most-repeated bug shape — or an import edge pointing back at a
+ * layer this one is supposed to be able to run without.
+ *
+ * `refusal` IS A PLAIN STRING, not the persist layer's `LoadOutcome`. The
+ * gateway cannot name that type without importing the module it is decoupled
+ * from, and what this field is FOR is being printed in a row — the client is
+ * going to render it either way.
+ */
+export type CharacterHeader = {
+  readonly id: string;
+  readonly name: string;
+  /** A SOFT reference: may name a class this build no longer has. */
+  readonly classId: string;
+  readonly level: number;
+  /** Cases closed. The number the character sheet calls `Cases`. */
+  readonly filed: number;
+  readonly money: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  /** False when the bytes are on disk and this build refuses to play them. */
+  readonly playable: boolean;
+  readonly refusal?: string;
+};
+
 export type CharacterRestore = {
   /** Null when the file had no usable figure; the class default then stands. */
   readonly hp: number | null;
@@ -1664,7 +1697,22 @@ export type PersistPort = {
    * log line — a character nobody can load is a bad evening, and a crash here is
    * everybody's evening.
    */
-  openCharacter?(ownerId: string, actorId: string): Promise<CharacterRestore | null>;
+  openCharacter?(
+    ownerId: string,
+    actorId: string,
+    characterId?: string,
+  ): Promise<CharacterRestore | null>;
+  /**
+   * EVERY CHARACTER THIS ACCOUNT OWNS, for the select screen.
+   *
+   * Optional like the rest of this port: a build with no persistence has no
+   * roster, and the gateway answers that by not offering one — an anonymous or
+   * unpersisted socket joins straight away, exactly as it always has.
+   *
+   * MUST NOT THROW and must not reject, for the reason every method here
+   * carries: this is awaited inside a `ws` handler.
+   */
+  listCharacters?(ownerId: string): Promise<readonly CharacterHeader[]>;
   /** The body is gone for good (the grace expired). Drop the binding. */
   closeCharacter?(actorId: string): void;
   /**
@@ -1690,6 +1738,21 @@ export type PersistPort = {
    * double in a test that has no notion of ownership at all.
    */
   isBound?(actorId: string): boolean;
+  /**
+   * WHICH FILE THIS BODY'S SAVES ARE GOING TO.
+   *
+   * BESIDE `isBound` AND NOT ON `CharacterRestore`, because a BRAND-NEW
+   * character restores NOTHING — `openCharacter` answers null for a file that
+   * does not exist yet — while still being bound. That is precisely the case
+   * that needs this: a client that asked for `newCharacter` has no id at all
+   * until the server says one, and the reconnect it does five minutes later
+   * would otherwise ask for another new character. See `WelcomeMsg.characterId`.
+   *
+   * `undefined` FOR AN UNBOUND BODY, which is an anonymous player or one whose
+   * file this build refused — both of them people whose evening is not being
+   * written down, and neither of them somebody to hand an id to.
+   */
+  boundCharacter?(actorId: string): string | undefined;
 };
 
 export type WsGatewayOptions = {
@@ -6246,11 +6309,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   const openCharacter = async (
     verified: VerifiedPlayer | null,
+    characterId?: string,
   ): Promise<CharacterRestore | null> => {
     const persist = opts.persist;
     if (verified === null || persist?.openCharacter === undefined) return null;
     try {
-      return await persist.openCharacter(verified.ownerId, verified.actorId);
+      return await persist.openCharacter(verified.ownerId, verified.actorId, characterId);
     } catch (err) {
       // The port promises not to reject. This is the belt to that braces: a
       // rejection here would escape into a `ws` event handler and kill the
@@ -6283,6 +6347,128 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * event handler, where a rejection after the first await is an unhandled
    * rejection and therefore a dead process, so the whole body is wrapped.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY CHARACTERS ONE ACCOUNT MAY OWN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A CAP EXISTS BECAUSE EVERY ROW IS A FILE ON A DISK SOMEBODY ELSE PAYS FOR,
+   * and "create" is one frame. Without one, a loop drives an unbounded number of
+   * directory entries onto the host, and the roster read — which is O(files) —
+   * gets slower for that player every time it runs.
+   *
+   * EIGHT, WHICH IS A JUDGEMENT AND NOT A MEASUREMENT. It is more than anybody
+   * has asked for (three classes, and the reason to hold several is trying
+   * builds), and small enough that the select screen is a screen rather than a
+   * scrolling list. It is deliberately not "one per class": a player who wants
+   * two Watchmen with different talent trees is exactly who this feature is for.
+   */
+  const MAX_CHARACTERS_PER_ACCOUNT = 8;
+
+  /**
+   * The roster for one account, or an empty one. NEVER THROWS AND NEVER
+   * REJECTS: this is awaited inside the `ws` message handler, where an escaping
+   * rejection kills the process and everybody else's evening with it. The port
+   * promises the same thing; this is the belt to that braces, exactly as
+   * `openCharacter`'s wrapper is.
+   */
+  /** Which character file a body writes to, or undefined for an unbound one. */
+  const boundCharacterOf = (actorId: string): string | undefined =>
+    opts.persist?.boundCharacter?.(actorId);
+
+  const listCharactersFor = async (ownerId: string): Promise<readonly CharacterHeader[]> => {
+    const persist = opts.persist;
+    if (persist?.listCharacters === undefined) return [];
+    try {
+      return await persist.listCharacters(ownerId);
+    } catch (err) {
+      app.log.error({ err }, 'listing characters threw');
+      return [];
+    }
+  };
+
+  /**
+   * The next free character id for this account.
+   *
+   * `chr_main` IS NOT IN THE SEQUENCE AND IS NOT SPECIAL EITHER. It is simply an
+   * id that does not match `chr_NNNN`, so it never collides with one and never
+   * needs migrating — every save in `data/characters/` right now is called that,
+   * and this is what lets all of them keep their name. New characters start at
+   * `chr_0002` because `chr_0001` reads like a first character somebody does not
+   * have.
+   *
+   * MAX+1 RATHER THAN COUNT+1, and the difference is a lost character: an
+   * account holding `chr_0002` and `chr_0004` has a count of two, and count+1
+   * hands out `chr_0003` — free today, but the moment anything is ever deleted
+   * or a file is refused, count+1 starts returning ids that are already taken.
+   * The rows include unplayable files precisely so this can see them.
+   */
+  const nextCharacterId = (rows: readonly CharacterHeader[]): string | undefined => {
+    /**
+     * ═══ AN EMPTY ACCOUNT ASKS FOR NOTHING, WHICH MEANS `chr_main` ═══
+     *
+     * `undefined` rather than the name, because the NAME BELONGS TO THE PERSIST
+     * LAYER and this file may not import it: `saves.ts` takes its types from
+     * here and neither module has a runtime edge pointing at the other. Writing
+     * the string down a second time would be the duplicated-constant shape that
+     * has cost this codebase six bugs already.
+     *
+     * The bridge already defaults an absent `characterId` to `SOLO_CHARACTER_ID`
+     * — that is what every caller meant before there was a select screen — so
+     * asking for nothing gets exactly the file every save in
+     * `data/characters/` is already called. The first character of an account
+     * has one name in every build, old and new.
+     */
+    if (rows.length === 0) return undefined;
+    let highest = 1;
+    for (const row of rows) {
+      const match = /^chr_(\d{4})$/.exec(row.id);
+      if (match === null) continue;
+      const n = Number(match[1]);
+      if (Number.isFinite(n) && n > highest) highest = n;
+    }
+    return `chr_${String(highest + 1).padStart(4, '0')}`;
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SELECT SCREEN, AS A FRAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE CLASS ARRIVES RESOLVED. A row reading `watchman` has leaked an id at a
+   * player, and the client has no class registry to turn one into "The Watchman"
+   * without importing content it does not otherwise need. A class this build no
+   * longer has resolves to nothing rather than to its id, and the row prints
+   * what it can — the same repair-never-reject posture the save loader takes
+   * about a dangling class, one layer up.
+   *
+   * `cases` RIDES ALONG so a row can read "3 of 27" without the client writing
+   * down a number that changes when content does. It is the same value
+   * `progress.cases` carries and it comes from the same function.
+   */
+  const sendRoster = (session: Session, rows: readonly CharacterHeader[]): void => {
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'roster',
+      characters: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        ...(classById(row.classId) === undefined
+          ? {}
+          : { className: classById(row.classId)?.name ?? row.classId }),
+        level: row.level,
+        filed: row.filed,
+        money: row.money,
+        ...(row.updatedAt === '' ? {} : { lastPlayed: row.updatedAt }),
+        playable: row.playable,
+        ...(row.refusal === undefined ? {} : { refusal: row.refusal }),
+      })),
+      cases: fileableCount(SITES),
+      canCreate: rows.length < MAX_CHARACTERS_PER_ACCOUNT,
+      max: MAX_CHARACTERS_PER_ACCOUNT,
+    });
+  };
+
   const handleHello = async (session: Session, msg: ClientHello): Promise<void> => {
     if (session.helloDone || session.helloPending) {
       sendError(session.socket, ErrorCode.BadMessage, 'hello has already been completed');
@@ -6297,7 +6483,124 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     session.sessionId = verified === null ? null : (msg.sessionId ?? null);
     session.ownerId = verified?.ownerId ?? null;
 
-    const restore = await openCharacter(verified);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     *   THE FORK: A LIST, OR A BODY. NEVER BOTH, AND NEVER NEITHER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A VERIFIED SOCKET THAT HAS NOT NAMED A CHARACTER GETS THE ROSTER AND NO
+     * BODY. Nothing is added to the overworld, no `welcome` is sent, and
+     * `helloDone` stays false — this connection has completed nothing yet, and a
+     * player sitting in a select screen must not be a token standing in a field
+     * for something to walk up to. "Play one at a time" is not a rule enforced
+     * somewhere else; it is the fact that a socket has one body or none.
+     *
+     * AN ANONYMOUS SOCKET JOINS STRAIGHT AWAY, EXACTLY AS IT ALWAYS HAS. There
+     * is no account, so there is no list, and showing an empty select screen to
+     * somebody who can never fill it would be a menu that only says no. This is
+     * also what keeps a build with no Discord app configured playable, which is
+     * how this game is developed.
+     *
+     * `helloPending` IS CLEARED ON THE WAY OUT so the next `hello` — the one
+     * that names a character — is not refused as a duplicate. That is the whole
+     * handshake: list, choose, hello again. A second round trip rather than a
+     * new verb, because entering the world is four hundred lines of frame
+     * ordering that already exist and are already right, and a second entry path
+     * would be a second place for them to drift.
+     */
+    const wantsRoster =
+      verified !== null &&
+      msg.characterId === undefined &&
+      msg.newCharacter !== true &&
+      opts.persist?.listCharacters !== undefined;
+    if (wantsRoster && verified !== null) {
+      const rows = await listCharactersFor(verified.ownerId);
+      if (!sessions.has(session.connId)) {
+        app.log.info({ conn: session.connId }, 'ws closed while the roster was being read');
+        return;
+      }
+      session.helloPending = false;
+      sendRoster(session, rows);
+      return;
+    }
+
+    /**
+     * ═══ A NEW CHARACTER NEEDS AN ID, AND THE SERVER PICKS IT ═══
+     * The client never invents one: two clients inventing at once collide, and
+     * the loser silently plays somebody else's character. The allocator reads
+     * the same directory the roster does, so it cannot hand out an id that is
+     * already taken by a file this build refuses to READ — a corrupt
+     * `chr_0003.json` still occupies `chr_0003`, and overwriting it is exactly
+     * the accident the roster's unplayable rows exist to prevent.
+     */
+    let wantedCharacter = msg.characterId;
+    if (wantedCharacter === undefined && msg.newCharacter === true && verified !== null) {
+      const rows = await listCharactersFor(verified.ownerId);
+      if (!sessions.has(session.connId)) {
+        app.log.info({ conn: session.connId }, 'ws closed while a character was being allocated');
+        return;
+      }
+      if (rows.length >= MAX_CHARACTERS_PER_ACCOUNT) {
+        // AT THE CAP, THE ANSWER IS THE LIST AGAIN — not an error frame with no
+        // screen behind it. The client already draws `canCreate: false` with a
+        // reason, so this lands the player back where they can act.
+        session.helloPending = false;
+        sendRoster(session, rows);
+        return;
+      }
+      wantedCharacter = nextCharacterId(rows);
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A NAMED CHARACTER MUST ALREADY EXIST. NAMING ONE NEVER CREATES IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `characterId` SELECTS AND `newCharacter` CREATES, and nothing does both.
+     * Without this the two collapse: an id with no file behind it is simply
+     * ABSENT, the bridge binds it happily, and the first autosave brings it into
+     * existence.
+     *
+     * WHAT THAT COSTS IS THE WORST THING THIS FEATURE COULD DO. A client holding
+     * a stale roster — a character deleted by hand, a `DATA_DIR` moved, a file
+     * this build refuses — clicks a level-20 character and is handed a BRAND-NEW
+     * LEVEL-1 ONE wearing the same id. It plays normally. It autosaves. By the
+     * time anybody notices, the empty character has been written over the
+     * directory the real one was in.
+     *
+     * That is exactly the accident the roster's unplayable rows exist to
+     * prevent, arriving through the other door. So an id that is not on the
+     * roster gets the roster back, and the only way to make a character is to
+     * ask for one.
+     *
+     * AN UNPLAYABLE ROW IS REFUSED HERE TOO, so a corrupt save cannot be opened
+     * by naming it directly — and the row explaining why is on the screen the
+     * player is being sent back to.
+     *
+     * A PORT WITH NO LISTING CANNOT ANSWER THIS and must not be read as having
+     * answered "no": a build with no roster keeps the behaviour it has always
+     * had, which is to open what it is asked for.
+     */
+    if (
+      verified !== null &&
+      msg.characterId !== undefined &&
+      opts.persist?.listCharacters !== undefined
+    ) {
+      const rows = await listCharactersFor(verified.ownerId);
+      if (!sessions.has(session.connId)) return;
+      const row = rows.find((entry) => entry.id === msg.characterId);
+      if (row === undefined || !row.playable) {
+        app.log.warn(
+          { conn: session.connId },
+          'a named character is not playable on this account — sending the roster back',
+        );
+        session.helloPending = false;
+        sendRoster(session, rows);
+        return;
+      }
+    }
+
+    const restore = await openCharacter(verified, wantedCharacter);
 
     // THE SOCKET MAY HAVE DIED DURING THE READ. Building a body for a connection
     // that is already gone would leave an actor nobody owns, with no close
@@ -6306,6 +6609,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       app.log.info({ conn: session.connId }, 'ws closed while hello was resolving');
       return;
     }
+
+    /**
+     * ═══ A BODY THE PERSIST LAYER REFUSED STILL JOINS, AND STILL SAYS SO ═══
+     * `openCharacter` answers null for a file this build will not overwrite, and
+     * `persist/saves.ts` states the reason: *"refusing the binding lets the
+     * player carry on playing NOW, with a throwaway body, while the files stay
+     * exactly where a human can look at them"*. That decision is unchanged here.
+     *
+     * With a real store the roster catches it one screen earlier — a file this
+     * build refuses is listed `playable: false`, and the check further up sends
+     * the player back to a row that says why, which is a better answer than a
+     * body nobody is writing down. This path stays for a `PersistPort` that has
+     * no listing at all.
+     */
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -6444,6 +6761,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       t: 'welcome',
       selfId: actor.id,
       resumeToken: mintResumeToken(actor.id),
+      // WHICH CHARACTER THIS IS, so a client that asked for a NEW one learns
+      // what it was given. Without this, its only way to reconnect is to ask for
+      // another new one — see `WelcomeMsg.characterId`. Read from the binding
+      // rather than from `wantedCharacter`, because the binding is what the
+      // saves are actually going to, and those are the two that must not drift.
+      // WHICH CHARACTER THIS IS, so a client that asked for a NEW one learns
+      // what it was given — without it, its only way to reconnect is to ask for
+      // another new one, and a flaky evening fills the roster with strangers.
+      // FROM THE BINDING, not from `wantedCharacter`: the binding is where the
+      // saves are actually going, and a brand-new character has a binding and no
+      // restore at all.
+      ...(boundCharacterOf(actor.id) === undefined
+        ? {}
+        : { characterId: boundCharacterOf(actor.id) }),
       level: view.level,
       actors: view.actors,
     });

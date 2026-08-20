@@ -191,7 +191,12 @@ import type { AtomicWarning, AtomicWriteOptions } from './atomic.ts';
 // erased by `verbatimModuleSyntax`, so there is no runtime edge from persist/
 // to net/ and no cycle; only the compiler ever sees it. See "THE BRIDGE" at the
 // bottom of this file.
-import type { CharacterRestore, CharacterSnapshot, PersistPort } from '../net/gateway.ts';
+import type {
+  CharacterHeader,
+  CharacterRestore,
+  CharacterSnapshot,
+  PersistPort,
+} from '../net/gateway.ts';
 
 // ---------------------------------------------------------------------------
 // Path safety — the part an attacker reads first
@@ -1973,42 +1978,15 @@ export type SaveStoreOptions = {
 };
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- *        ONE ROW OF A CHARACTER SELECT SCREEN, AND NOTHING MORE.
- * ═══════════════════════════════════════════════════════════════════════════
+ * A ROSTER ROW. DECLARED BY THE GATEWAY, MET HERE — the same direction
+ * `CharacterRestore` and `CharacterSnapshot` already travel, so there is one
+ * definition of a row and no runtime edge pointing back at `net/`.
  *
- * ENOUGH TO CHOOSE BY AND NOT ONE FIELD MORE. A roster row answers exactly one
- * question — *"which of these do I want to be tonight"* — and every field here
- * earns its place against that question: who they are, what they are, how far
- * along, how much of the file they have closed, and when you last played them.
- * Inventory, talents, position and effects are all on disk and none of them
- * belong on a list; loading a whole `CharacterFile` per row to show a name is
- * how a select screen becomes the slowest part of a game.
- *
- * ═══ A FILE THIS BUILD CANNOT READ STILL GETS A ROW ═══
- * `playable: false`, drawn and refused rather than omitted. A roster that
- * silently drops a corrupt or too-new save tells a player their character was
- * DELETED — which is a lie, the bytes are right there — and the first thing
- * they will do about it is make a new one and start overwriting. The store's
- * whole posture on damaged files is to leave them where a human can look at
- * them (see `loadCharacter`); a picker that hides them undoes that in one step.
+ * RE-EXPORTED because this is the module that produces them, and a caller
+ * holding a `SaveStore` should not have to know which file declared its return
+ * type.
  */
-export type CharacterHeader = {
-  readonly id: string;
-  readonly name: string;
-  /** A SOFT reference, exactly as on `CharacterFile`: may name a class this build lost. */
-  readonly classId: string;
-  readonly level: number;
-  /** How many cases are closed. The number the character sheet calls `Cases`. */
-  readonly filed: number;
-  readonly money: number;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  /** False when the bytes are on disk and this build refuses to play them. */
-  readonly playable: boolean;
-  /** Why not, for the row to say out loud. Absent when `playable`. */
-  readonly refusal?: LoadOutcome;
-};
+export type { CharacterHeader };
 
 export type SaveStore = {
   readonly root: string;
@@ -2877,6 +2855,21 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
   const openCharacter = async (
     ownerId: string,
     actorId: string,
+    /**
+     * WHICH ONE OF THEIRS. Absent means `SOLO_CHARACTER_ID`, which is what every
+     * caller meant before there was a select screen and what an ANONYMOUS-ish
+     * path still means today: a build with no roster wired up asks for "the
+     * character" and gets the one it has always got. That default is the whole
+     * of the migration — no file moves, no id is rewritten, and every save on
+     * disk right now is still `chr_main`.
+     *
+     * IT IS SANITISED BEFORE IT IS A PATH, like the owner, and for a sharper
+     * reason: this one arrives FROM THE CLIENT. `characterPath` refuses anything
+     * that is not `[A-Za-z0-9_-]{1,64}`, so `../` cannot be spelled — but the
+     * refusal happens here as well, because a null path silently loading nothing
+     * is a worse answer than a bind that never happens.
+     */
+    characterId?: string,
   ): Promise<(CharacterRestore & SavedLoadout & SavedPrefs) | null> => {
     const safeOwner = sanitiseId(ownerId);
     if (safeOwner === null) {
@@ -2891,7 +2884,16 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       return null;
     }
 
-    const result = await store.loadCharacter(safeOwner, SOLO_CHARACTER_ID);
+    const safeCharacter = characterId === undefined ? SOLO_CHARACTER_ID : sanitiseId(characterId);
+    if (safeCharacter === null) {
+      logger.error(
+        { actor: actorId, owner: maskId(safeOwner) },
+        'character open refused: character id is not a safe path component',
+      );
+      return null;
+    }
+
+    const result = await store.loadCharacter(safeOwner, safeCharacter);
 
     // ═══ TWO OUTCOMES DELIBERATELY DO NOT BIND ═══
     // `too_new` and `corrupt` both mean there is a file on disk this build must
@@ -2914,7 +2916,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
     const file = result.file;
     bindings.set(actorId, {
       ownerId: safeOwner,
-      characterId: SOLO_CHARACTER_ID,
+      characterId: safeCharacter,
       createdAt: file?.createdAt === undefined || file.createdAt === '' ? now() : file.createdAt,
       classId: file?.classId ?? UNASSIGNED_CLASS,
       // A file this build refused to bind never reaches here, and a file that is
@@ -3045,6 +3047,14 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
   };
 
   return {
+    /**
+     * THE ROSTER, STRAIGHT THROUGH. The bridge adds nothing here on purpose: it
+     * is the layer that knows which BODY owns which file, and a list of files
+     * has no body in it. Sanitising and reading are the store's job and it does
+     * both.
+     */
+    listCharacters: (ownerId: string): Promise<readonly CharacterHeader[]> =>
+      store.listCharacters(ownerId),
     savePlayers(snapshots: readonly CharacterSnapshot[]): void {
       for (const [snapshot, binding] of owned(snapshots)) {
         store.scheduleCharacter(fileFor(snapshot, binding));
@@ -3080,6 +3090,14 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
      * verified player whose `too_new` or `corrupt` file `openCharacter` refused
      * to bind (see the error branch there). Their whole evening reached nothing.
      */
+    /**
+     * WHICH FILE THIS BODY IS WRITING TO. Straight off the binding, which is
+     * made even for a character whose file does not exist yet — that is the
+     * whole point of asking here rather than reading a restore that is null.
+     */
+    boundCharacter(actorId: string): string | undefined {
+      return bindings.get(actorId)?.characterId;
+    },
     isBound(actorId: string): boolean {
       return bindings.has(actorId);
     },

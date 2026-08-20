@@ -362,6 +362,20 @@ export type MenuScreen = (typeof MenuScreen)[keyof typeof MenuScreen];
 export type MenuEffect =
   | { readonly kind: 'resume' }
   | { readonly kind: 'keys' }
+  /**
+   * PUT THIS CHARACTER DOWN AND GO BACK TO THE LIST.
+   *
+   * NOT A `ui` COMMAND, and the distinction is load-bearing: every `UiCommand`
+   * is a panel this client opens over a live world, and this one ENDS the world.
+   * Folding it in would put "leave the game" in the same bucket as "show the
+   * bag", and the first thing to go wrong would be a keybinding for it.
+   *
+   * DELIBERATELY UNBINDABLE FOR THE SAME REASON. There is no `labelFor` on its
+   * row, so it has no key and cannot get one — a stray press that dropped
+   * somebody out of a fight and back to a menu is not a mistake this client
+   * should make available.
+   */
+  | { readonly kind: 'leave-character' }
   | { readonly kind: 'ui'; readonly command: UiCommand }
   | { readonly kind: 'party'; readonly action: PartyAction };
 
@@ -481,6 +495,21 @@ export type EscapeMenuView = {
   readonly persisted: boolean;
   /** False for a party of one: LEAVE PARTY is drawn greyed rather than dropped. */
   readonly inParty: boolean;
+  /**
+   * Whether there is a character list to go back to — true for a signed-in
+   * player and false for an anonymous one, who has no account and therefore no
+   * roster.
+   *
+   * GREYED RATHER THAN DROPPED, like `inParty` above and for the same stated
+   * reason: the row count is fixed so a menu never moves the row somebody was
+   * already reaching for. For an anonymous player "switch character" would not
+   * switch anything — it would drop them into the same world as a different
+   * anonymous body, which is losing a character rather than changing one.
+   *
+   * OPTIONAL and defaulting to absent, so a caller that predates the select
+   * screen compiles unchanged and gets the greyed row.
+   */
+  readonly canSwitchCharacter?: boolean;
   /** Which page of the Keys screen. Clamped by the geometry; any integer is safe. */
   readonly page: number;
   readonly armed: ArmedCapture | null;
@@ -489,13 +518,20 @@ export type EscapeMenuView = {
   /**
    * TALENT POINTS IN HAND, for row 3's label: `TALENTS (2)`. `ProgressMsg.unspent`.
    *
-   * ═══ A LONGER LABEL ON THE SAME ROW, NEVER A SEVENTH ROW ═══
-   * `rootRows` is six rows, always six, in one order, and that constraint is
-   * stated in full there. The count goes INSIDE the label of the row that
-   * already opens the talent panel, so nothing moves and nothing is added: this
-   * is one of the two working affordances (the other is ui/charsheet.ts's `[G]`
-   * control) that routed to the spend screen without ever saying how many points
-   * were behind them.
+   * ═══ A LONGER LABEL ON THE SAME ROW, NEVER A ROW OF ITS OWN ═══
+   * `rootRows` is a FIXED count in one order, and that constraint is stated in
+   * full there. The count goes INSIDE the label of the row that already opens
+   * the talent panel, so nothing moves and nothing is added: this is one of the
+   * two working affordances (the other is ui/charsheet.ts's `[G]` control) that
+   * routed to the spend screen without ever saying how many points were behind
+   * them.
+   *
+   * (The list is SEVEN rows now, not six. `SWITCH CHARACTER` earned one because
+   * it is a VERB with nowhere else to live — there is no other surface in this
+   * client that ends a session — where a spend count is a fact about a row that
+   * already exists. It is drawn greyed rather than dropped for a player with no
+   * account, exactly as `LEAVE PARTY` is for a party of one, so the count is
+   * still fixed and no row ever moves.)
    *
    * OPTIONAL, defaulting to 0, so main.ts's existing `escapeMenuView()` compiles
    * unchanged and degrades to the label this row has always had.
@@ -538,10 +574,19 @@ function entryRow(
 }
 
 /**
- * THE ROOT SCREEN. SIX ROWS, ALWAYS SIX, IN THIS ORDER.
+ * THE ROOT SCREEN. SEVEN ROWS, ALWAYS SEVEN, IN THIS ORDER.
  *
  * The count is fixed on purpose (ui/contextmenu.ts:94-102): a menu whose shape
- * changes with state moves the row the player was already reaching for.
+ * changes with state moves the row the player was already reaching for. Both
+ * conditional rows — LEAVE PARTY for a party of one, SWITCH CHARACTER for a
+ * player with no account — are drawn GREYED WITH A REASON rather than dropped,
+ * which is how the count stays fixed while the menu still tells the truth.
+ *
+ * It was six until v19. `SWITCH CHARACTER` earned the seventh because it is a
+ * VERB with nowhere else to live: no other surface in this client ends a
+ * session. The unspent-points count was refused a row of its own under the same
+ * rule and went inside row 3's label instead, which is the distinction — a fact
+ * about an existing row goes on that row, a new verb gets a row.
  */
 function rootRows(view: EscapeMenuView): readonly MenuRow[] {
   const keymap = view.keymap;
@@ -594,6 +639,30 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       '',
       view.inParty,
       view.inParty ? null : 'you are a party of one',
+    ),
+    /**
+     * ═══ LAST, BECAUSE IT IS THE ONLY ROW THAT ENDS THE SESSION ═══
+     * The five above are things you do WHILE playing; this one stops playing.
+     * Bottom of the list is where every game in the genre puts that row, and the
+     * distance from RESUME is the point — this is the row a player must travel
+     * to deliberately.
+     *
+     * NO KEY, AND IT CANNOT BE GIVEN ONE. See `MenuEffect`'s note: a stray press
+     * that dropped somebody out of a fight and back to a menu is not a mistake
+     * worth making available.
+     *
+     * ONLY WHEN THERE IS A LIST TO GO BACK TO. An anonymous player has no
+     * account and therefore no roster — leaving would drop them into the same
+     * world as a different anonymous body, which is not "switching character",
+     * it is losing one.
+     */
+    entryRow(
+      6,
+      { kind: 'leave-character' },
+      'SWITCH CHARACTER',
+      '',
+      view.canSwitchCharacter === true,
+      view.canSwitchCharacter === true ? null : 'you are not signed in',
     ),
   ];
 }

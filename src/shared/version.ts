@@ -432,6 +432,38 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 18 -> 19 (WHO ARE YOU TONIGHT). `RosterMsg` is a new outbound frame,
+ * `hello` gains `characterId` and `newCharacter`, and an account may now own
+ * more than one character.
+ *
+ * THIS ONE IS NOT THE USUAL NEW-FRAME CASE, AND THE BUMP IS NOT OPTIONAL.
+ * The rule since 2 -> 3 is that a new outbound frame alone does not force a
+ * bump, because an old client cannot name the frame and ignores it. That rule
+ * assumes ignoring it is harmless. Here it is the opposite of harmless: a
+ * verified socket that names no character is now sent a `roster` AND NO BODY —
+ * no `welcome`, no `realm`, no `state`, nothing added to the world. A v18 client
+ * would drop the frame it cannot name and then sit on a black screen forever,
+ * with a healthy server, waiting for a world that is deliberately not coming.
+ *
+ * That is the exact failure the gate exists to convert into an honest "your
+ * client is out of date", and it is the first bump in this file where the OLD
+ * client's correct behaviour — ignore what you do not understand — is what
+ * breaks it.
+ *
+ * `SCHEMA_VERSION` STAYS 1, and this one was argued rather than assumed. No
+ * persisted field changed SHAPE: a character file is what it always was, and
+ * the only new thing is that a directory may hold more than one of them, which
+ * is what `data/characters/<ownerId>/` has been laid out for since the first
+ * save landed (`SOLO_CHARACTER_ID`). An older build meeting a directory with
+ * four files in it opens `chr_main` and ignores the rest — it loads the right
+ * character and simply cannot see the others, which is a lost FEATURE and not a
+ * lost save. Bumping would instead quarantine every one of those files in every
+ * older build, which is the lopsided trade the keybinds paragraph above refuses
+ * for the same reason.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 17 -> 18 (SOMEWHERE TO SPEND IT). `ShopMsg` is a new outbound frame and
  * `shop_buy` / `shop_sell` are two new inbound verbs.
  *
@@ -594,7 +626,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

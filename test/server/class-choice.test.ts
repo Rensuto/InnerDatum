@@ -171,8 +171,39 @@ async function connect(port: number): Promise<Client> {
     send(frame: Frame): void {
       socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...frame }));
     },
+    /**
+     * ═══ v19: THE HANDSHAKE IS TWO ROUND TRIPS FOR A SIGNED-IN PLAYER ═══
+     *
+     * A verified `hello` that names no character is answered with a `roster` AND
+     * NO BODY — that is the select screen, and every test in this file would sit
+     * on `waitFor('welcome')` until it timed out.
+     *
+     * SO THIS DOES WHAT THE REAL CLIENT DOES: ask, then choose. Take the first
+     * playable character if there is one, otherwise ask for a new one. That
+     * covers both shapes these tests need — a first-ever join and a reconnect to
+     * the character a previous client just made — with no per-test annotation
+     * and, more importantly, with no second definition of the handshake that
+     * could drift from the one `src/client/` performs.
+     *
+     * An account with no characters allocates the DEFAULT id, which is
+     * `SOLO_CHARACTER_ID` — so every file assertion in this suite still finds
+     * `chr_main` exactly where it always did.
+     */
     async hello(sessionId?: string) {
-      client.send({ t: 'hello', ...(sessionId === undefined ? {} : { sessionId }) });
+      if (sessionId === undefined) {
+        client.send({ t: 'hello' });
+        return await client.waitFor('welcome');
+      }
+      client.send({ t: 'hello', sessionId });
+      const roster = await client.waitFor('roster');
+      if (roster === undefined) return await client.waitFor('welcome');
+      const rows = (roster['characters'] ?? []) as { id: string; playable: boolean }[];
+      const mine = rows.find((row) => row.playable);
+      client.send(
+        mine === undefined
+          ? { t: 'hello', sessionId, newCharacter: true }
+          : { t: 'hello', sessionId, characterId: mine.id },
+      );
       return await client.waitFor('welcome');
     },
     async settle() {

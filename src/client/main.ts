@@ -198,6 +198,7 @@ import {
   classPickerRect,
   drawClassPicker,
 } from './ui/classpicker.ts';
+import { drawRoster, rosterHitAt, RosterHitKind, rosterRect } from './ui/roster.ts';
 import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts';
 // `isSlotDisabled` is deliberately NOT imported. Whether a slot looks dead is
 // the hotbar's business; whether a press is legal is the server's. Reading it
@@ -318,6 +319,7 @@ import type { Dir, TileXY } from '../shared/coords.ts';
 import type {
   ActorView,
   ClassOptionView,
+  RosterMsg,
   DownedView,
   EffectView,
   GroundItemView,
@@ -1557,6 +1559,42 @@ function resetMenuState(): void {
  */
 let classOptions: readonly ClassOptionView[] | null = null;
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SELECT SCREEN, AND WHAT IT MEANS THAT IT IS NOT NULL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * NON-NULL MEANS THIS CLIENT HAS NO BODY. The server sent a `roster` INSTEAD OF
+ * the world — no `welcome`, no `realm`, no `state`, and nothing added to the
+ * overworld — so there is no map behind this modal and no token to move. Every
+ * other modal in this client opens over a live world; this one opens over
+ * nothing, which is why it is also the only one that cannot be dismissed.
+ *
+ * CLEARED ONLY BY `welcome`. The handshake is: roster, choose, `hello` again,
+ * world. Tearing it down on the click would leave a player looking at an empty
+ * screen for as long as the round trip takes, and looking at a permanently empty
+ * one if the server answers with the roster again — which it does, deliberately,
+ * for a character it will not open.
+ */
+let roster: RosterMsg | null = null;
+/** Which row is picked, or null. Null on purpose: see `selectedClass`. */
+let selectedCharacter: number | null = null;
+/** Which row is under the pointer, or null. Cosmetic. */
+let rosterHovered: number | null = null;
+/**
+ * The character this client asked for, kept across the reconnect that enters the
+ * world. It is the only thing the select screen leaves behind.
+ */
+let chosenCharacterId: string | null = null;
+/**
+ * True for exactly one handshake: the one that creates a character.
+ *
+ * CLEARED THE MOMENT `welcome` NAMES AN ID, and that is the whole reason
+ * `WelcomeMsg.characterId` exists. A flag that stayed true would mean every
+ * reconnect after the resume grace expired created ANOTHER character, and a
+ * flaky evening would fill somebody's roster with strangers.
+ */
+let wantsNewCharacter = false;
+/**
  * Which card is picked, or null while nothing is. Null on purpose: this choice is
  * written to a file and never offered again, so a card pre-selected by the client
  * is one stray Enter away from choosing somebody's character for them.
@@ -2244,6 +2282,17 @@ function escapeMenuView(): EscapeMenuView {
     // word at zero. `?? 0` because `progress` is null for a real window on
     // connect and "(0)" would be a number stated confidently about nothing.
     unspent: progress?.unspent ?? 0,
+    /**
+     * v19 — WHETHER THERE IS A LIST TO GO BACK TO.
+     *
+     * `chosenCharacterId` IS THE HONEST TEST and it is deliberately not "am I
+     * signed in". It is non-null only because a `welcome` said which character
+     * this body is, and the server sends that field only for a body it has BOUND
+     * to a file. So this is true exactly when there is a roster behind this
+     * player and their evening is being written down — which is the question the
+     * row is really asking.
+     */
+    canSwitchCharacter: chosenCharacterId !== null,
   };
 }
 
@@ -2351,6 +2400,14 @@ type HudLayout = {
    * null for exactly one reason — there is no choice to make.
    */
   readonly picker: PanelRect | null;
+  /**
+   * The select screen, or null when this client has a body.
+   *
+   * NON-NULL IS THE STRONGEST STATEMENT IN THIS TYPE: it means there is no
+   * world behind the modal at all — no map, no token, nothing to move — because
+   * the server sent a roster INSTEAD of the world rather than alongside it.
+   */
+  readonly roster: PanelRect | null;
 };
 
 /**
@@ -2515,6 +2572,9 @@ function hudLayout(width: number, height: number): HudLayout {
     // meaningless, and the plate is a plate — one sentence, one key, and already
     // suppressed under the menu.
     picker: classOptions === null ? null : classPickerRect(width, height),
+    // THE SAME ARGUMENT AS `picker`, one step earlier in the evening: a scrimmed
+    // full-viewport modal, not band-derived, and nothing under it is pressable.
+    roster: roster === null ? null : rosterRect(width, height),
   };
 }
 
@@ -3508,6 +3568,25 @@ const paintHud: HudPainter = (ctx, width, height) => {
       options: classOptions,
       selected: selectedClass,
       hovered: pickerHovered,
+    });
+  }
+
+  // LAST, SO IT IS ON TOP OF EVERYTHING INCLUDING THE CLASS PICKER. The two are
+  // never up together today — a roster means no body and the picker needs one —
+  // but ordering that depends on a state machine staying true is ordering that
+  // breaks quietly. This one is a fact about the paint.
+  if (layout.roster !== null && roster !== null) {
+    drawRoster({
+      ctx,
+      sprites,
+      rect: layout.roster,
+      characters: roster.characters,
+      cases: roster.cases,
+      canCreate: roster.canCreate,
+      max: roster.max,
+      selected: selectedCharacter,
+      hovered: rosterHovered,
+      nowMs: Date.now(),
     });
   }
 };
@@ -4731,6 +4810,18 @@ async function boot(): Promise<void> {
     // browser tab and after a failed handshake — the server decides what an
     // unauthenticated socket may do, and it is the only thing that can.
     sessionId: discord.session,
+    /**
+     * READ FRESH ON EVERY `hello`, INCLUDING EVERY RECONNECT. That is why it is
+     * a callback: the answer is null at the select screen, "make me a new one"
+     * for exactly one handshake, and a concrete id from the moment `welcome`
+     * says which id that was. A value captured here at construction would still
+     * be asking for a new character an hour later.
+     */
+    characterChoice: () => {
+      if (chosenCharacterId !== null) return { characterId: chosenCharacterId };
+      if (wantsNewCharacter) return { newCharacter: true };
+      return null;
+    },
     onStatus: (status, detail) => {
       connection = status === SocketStatus.Open ? 'connected' : `${status}: ${detail}`;
       if (status === SocketStatus.Open) lastError = null;
@@ -5785,6 +5876,97 @@ async function boot(): Promise<void> {
    * never drawn. It also redraws only on a genuine change, like every other hover
    * and selection in this file.
    */
+  // --- the select screen ----------------------------------------------------
+  // Three verbs and no decisions. `ui/roster.ts` owns the geometry, the hit test
+  // and the paint; what is here is wiring, and the one rule it enforces is the
+  // one the file cannot: that entering the world is a HANDSHAKE, not a frame.
+
+  function selectCharacter(index: number): void {
+    if (roster === null) return;
+    if (index < 0 || index >= roster.characters.length) return;
+    if (selectedCharacter === index) return;
+    selectedCharacter = index;
+    requestDraw();
+  }
+
+  /**
+   * ENTER THE WORLD AS THE SELECTED CHARACTER.
+   *
+   * A NEW HANDSHAKE AND NOT A FRAME, and this is the design rather than a
+   * shortcut: there is no body on this socket, so there is nothing for a game
+   * verb to act with. `rehandshake` drops the connection and the reconnect loop
+   * says `hello` again — this time carrying the id, through `characterChoice`.
+   *
+   * AN UNPLAYABLE ROW IS REFUSED HERE AS WELL AS DRAWN GREY. The button is drawn
+   * dim for exactly this state and the honest behaviour is that pressing it does
+   * nothing; sending the id anyway would get the roster straight back, which
+   * looks to a player like the screen flickered and forgot them.
+   */
+  function playSelectedCharacter(): void {
+    if (roster === null || selectedCharacter === null) return;
+    const row = roster.characters[selectedCharacter];
+    if (row === undefined || !row.playable) return;
+    chosenCharacterId = row.id;
+    wantsNewCharacter = false;
+    socket.rehandshake();
+  }
+
+  /**
+   * MAKE A NEW ONE. The server allocates the id — see `hello.newCharacter` — and
+   * says which it was in `welcome`, which is what stops a dropped socket
+   * creating a second stranger five minutes later.
+   */
+  function createCharacter(): void {
+    if (roster === null || !roster.canCreate) return;
+    chosenCharacterId = null;
+    wantsNewCharacter = true;
+    socket.rehandshake();
+  }
+
+  /**
+   * PUT THIS CHARACTER DOWN AND GO BACK TO THE LIST.
+   *
+   * THE SAVE IS THE SERVER'S JOB AND IT ALREADY DOES IT: dropping the socket is
+   * a disconnect, and a disconnect is one of `SaveReason`'s critical events —
+   * written immediately, not on the debounce. There is deliberately no "save
+   * now" frame here, because a client that had to ask would be a client that
+   * could forget to.
+   *
+   * THE CHOICE IS CLEARED FIRST, so the `hello` that follows names nothing and
+   * the server answers with the roster. Leaving it set would walk straight back
+   * into the character the player just put down.
+   */
+  function leaveCharacter(): void {
+    chosenCharacterId = null;
+    wantsNewCharacter = false;
+    socket.rehandshake();
+  }
+
+  /**
+   * Move the selection with a direction key. CLAMPS RATHER THAN WRAPS, the same
+   * ToME dialog convention `movePickerSelection` ports and cites — a list that
+   * wraps from the last row to the first is a list somebody plays the wrong
+   * character from after one key too many.
+   *
+   * A NULL SELECTION STARTS AT THE TOP, which is the newest-played character:
+   * the server sorts by `updatedAt` descending, so the first press of an arrow
+   * lands on the one a returning player almost certainly wants.
+   */
+  function moveRosterSelection(dir: Dir): void {
+    if (roster === null) return;
+    const count = roster.characters.length;
+    if (count === 0) return;
+    const step =
+      dir === 'n' || dir === 'nw' || dir === 'ne'
+        ? -1
+        : dir === 's' || dir === 'sw' || dir === 'se'
+          ? 1
+          : 0;
+    if (step === 0) return;
+    const from = selectedCharacter ?? (step > 0 ? -1 : count);
+    selectCharacter(Math.max(0, Math.min(count - 1, from + step)));
+  }
+
   function selectCard(index: number): void {
     if (index < 0 || index >= pickerCards().length) return;
     if (selectedClass === index) return;
@@ -6234,6 +6416,14 @@ async function boot(): Promise<void> {
       case 'keys':
         showMenuScreen(MenuScreen.Keys);
         return;
+      case 'leave-character':
+        // ═══ THE MENU GOES AWAY FIRST, THEN THE VERB — the same port the `ui`
+        // case cites below, and the same reason applies more strongly: this one
+        // takes the world away, and a menu still painted over an empty screen
+        // while the handshake is in flight would look like a hang.
+        closeMenu();
+        leaveCharacter();
+        return;
       case 'ui':
         // ═══ THE MENU GOES AWAY FIRST, AND THEN THE VERB FIRES. PORTED ═══
         // `tome/class/Game.lua:2307-2308` is literally
@@ -6449,6 +6639,15 @@ async function boot(): Promise<void> {
   // caller does with them, exactly as targeting mode already does.
   bindGameKeys(window, {
     onMove: (dir) => {
+      // ═══ THE SELECT SCREEN IS ABOVE THE PICKER IN ALL SIX HANDLERS ═══
+      // Both are screens that cannot be dismissed, and this one is the earlier:
+      // there is no BODY on this socket, so every key below here is an intent
+      // about a token that does not exist. The `return` is unconditional for
+      // that reason and not because the roster wants the key.
+      if (roster !== null) {
+        moveRosterSelection(dir);
+        return;
+      }
       if (classOptions !== null) {
         movePickerSelection(dir);
         return;
@@ -6504,6 +6703,13 @@ async function boot(): Promise<void> {
       socket.send({ v: PROTOCOL_VERSION, t: 'move', dir });
     },
     onCommand: (command) => {
+      if (roster !== null) {
+        // ENTER PLAYS THE SELECTED CHARACTER, and Hold does nothing — the same
+        // split the class chooser makes, for the same reason: there is no verb
+        // that means "pass on choosing who I am".
+        if (command === TurnCommand.Commit) playSelectedCharacter();
+        return;
+      }
       if (classOptions !== null) {
         // ENTER/SPACE CONFIRMS, and Hold ('.') does nothing at all. ToME's
         // dialogs bind ACCEPT the same way (engine/ui/Dialog.lua:102 adds an
@@ -6592,6 +6798,13 @@ async function boot(): Promise<void> {
       }
     },
     onSlot: (slot) => {
+      if (roster !== null) {
+        // 1-8 PICK A ROW OUTRIGHT, the digits drawn on the cards. `slot` is
+        // zero-based, so a digit past the end of the list finds nothing and does
+        // nothing — which is the same answer the class chooser gives.
+        selectCharacter(slot);
+        return;
+      }
       if (classOptions !== null) {
         // 1/2/3 PICK A CARD OUTRIGHT. CONVENTIONAL, not ported — ToME's birther
         // has no digit shortcut — and it is advertised on the card itself as
@@ -7878,6 +8091,48 @@ async function boot(): Promise<void> {
     const { logicalW, logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
 
+    // ═══ -1. THE SELECT SCREEN TAKES EVERY CLICK BEFORE ANYTHING ELSE ═══
+    //
+    // FIRST OF ALL, ABOVE EVEN THE CLASS CHOOSER, because it is the one modal
+    // with NO WORLD BEHIND IT. Everything below this line — the token menu, the
+    // panels, the map — is reasoning about a body this client does not have.
+    // There is no tile to click, no token to walk, and no party pane row to open
+    // a verb menu on; every one of those handlers would be operating on the
+    // stale remains of a session that ended, or on nothing at all.
+    //
+    // A CLICK ON NO CONTROL IS STILL SWALLOWED, same rule as the chooser: null
+    // from the hit test means "on the modal, not on a control" and never falls
+    // through to a map that is not there.
+    if (layout.roster !== null && roster !== null) {
+      event.preventDefault();
+      const hit =
+        point === null
+          ? null
+          : rosterHitAt(
+              roster.characters.length,
+              layout.roster,
+              roster.canCreate,
+              point.x,
+              point.y,
+            );
+      if (hit === null) return;
+      switch (hit.kind) {
+        case RosterHitKind.Row:
+          // SELECT, NEVER PLAY. The same two-act rule the class chooser uses,
+          // and for a smaller version of the same reason: a single click that
+          // committed would make a mis-click a whole evening spent as the wrong
+          // character before anybody noticed.
+          selectCharacter(hit.index);
+          return;
+        case RosterHitKind.Play:
+          playSelectedCharacter();
+          return;
+        case RosterHitKind.Create:
+          createCharacter();
+          return;
+      }
+    }
+
     // ═══ 0. THE CLASS CHOOSER TAKES EVERY CLICK, BOTH BUTTONS, FIRST ═══
     //
     // ABOVE THE RIGHT-CLICK BRANCH AND THAT IS THE POINT. Below it, a right-click
@@ -8502,6 +8757,24 @@ async function boot(): Promise<void> {
 function applyServerMessage(msg: ServerMsg): void {
   switch (msg.t) {
     case 'welcome':
+      /**
+       * ═══ THE SELECT SCREEN IS OVER, AND THE ID IS PINNED ═══
+       *
+       * `welcome` IS THE ONLY THING THAT CLEARS THE ROSTER. Not the click that
+       * chose — the round trip takes as long as it takes, and a modal torn down
+       * on the click leaves an empty screen while it is in flight, and a
+       * PERMANENTLY empty one if the server answers with the roster again (which
+       * it does, deliberately, for a character it will not open).
+       *
+       * AND `wantsNewCharacter` IS CLEARED HERE BECAUSE THIS IS WHERE THE ID IS.
+       * The server allocated it; until this frame the client had nothing to ask
+       * for but "a new one" again. Every reconnect from here on names this id.
+       */
+      roster = null;
+      selectedCharacter = null;
+      rosterHovered = null;
+      if (msg.characterId !== undefined) chosenCharacterId = msg.characterId;
+      wantsNewCharacter = false;
       selfId = msg.selfId;
       level = msg.level;
       replaceActors(msg.actors);
@@ -8988,6 +9261,34 @@ function applyServerMessage(msg: ServerMsg): void {
       resource = msg.resource;
       break;
 
+    case 'roster':
+      /**
+       * ═══ v19 — "WHO ARE YOU TONIGHT", AND IT MEANS THIS CLIENT HAS NO BODY ═══
+       *
+       * SENT INSTEAD OF THE WORLD, NEVER ALONGSIDE IT. There is no `welcome`, no
+       * `realm`, no `state` and no token in any field — the server has not added
+       * one. That is what makes it safe to sit here reading, and it is why the
+       * modal cannot be dismissed: there is nothing behind it.
+       *
+       * ARRIVING TWICE IS NORMAL AND IS NOT AN ERROR. It is the server's answer
+       * for "that character cannot be opened" and for "you are at the cap", so
+       * this replaces wholesale and re-derives the selection rather than
+       * assuming the list is the same list.
+       *
+       * THE SELECTION IS RE-ANCHORED BY ID, not by index. A roster that came
+       * back one row shorter would otherwise leave the highlight on whichever
+       * character slid into that slot — and the next Enter would play them.
+       */
+      roster = msg;
+      selectedCharacter =
+        chosenCharacterId === null
+          ? null
+          : (() => {
+              const at = msg.characters.findIndex((row) => row.id === chosenCharacterId);
+              return at < 0 ? null : at;
+            })();
+      rosterHovered = null;
+      break;
     case 'class_options':
       // ═══ v8 — "PICK ONE", AND IT IS THE ONLY FRAME THAT PUTS UP A MODAL ═══
       //

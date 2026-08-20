@@ -34,7 +34,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 18 — there is somewhere to spend gold', () => {
+  it('pins PROTOCOL_VERSION at 19 — you choose who you are tonight', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -80,10 +80,24 @@ describe('shared constants', () => {
     // people are visibly buying things it cannot see, with its own gold moving
     // for reasons it cannot explain. That is a room behaving differently for
     // two people standing in it.
-    expect(PROTOCOL_VERSION).toBe(18);
+    //
+    // v19 IS THE FIRST BUMP WHERE THE OLD CLIENT'S CORRECT BEHAVIOUR IS WHAT
+    // BREAKS IT. `RosterMsg` is a new outbound frame, and by the rule above that
+    // alone would not force a bump — a v18 client cannot name `roster`, so it
+    // drops it. Dropping it is the right thing to do and it is fatal here: the
+    // frame is sent INSTEAD OF THE WORLD. No `welcome`, no `realm`, no `state`,
+    // and nothing added to the overworld, because the player is standing in a
+    // select screen. A v18 client would ignore the only frame it was sent and
+    // then sit on a black screen forever, against a healthy server, waiting for
+    // a world that is deliberately not coming.
+    //
+    // Every earlier bump argued about a client drawing a LIE. This one is about
+    // a client drawing NOTHING, which is the same failure the gate exists to
+    // convert into an honest "your client is out of date".
+    expect(PROTOCOL_VERSION).toBe(19);
   });
 
-  it('keeps the 17 -> 18 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 18 -> 19 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -102,7 +116,7 @@ describe('shared constants', () => {
       'utf8',
     );
 
-    const afterHeading = source.split('17 -> 18')[1] ?? '';
+    const afterHeading = source.split('18 -> 19')[1] ?? '';
     // The entry ends where the constant it explains begins.
     const entry = afterHeading.split('export const PROTOCOL_VERSION')[0] ?? '';
 

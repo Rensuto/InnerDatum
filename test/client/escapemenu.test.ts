@@ -190,13 +190,19 @@ describe('escapeMenuRect', () => {
 // ---------------------------------------------------------------------------
 
 describe('the root screen', () => {
-  it('has exactly six entries, in the ported order, and every one names an effect', () => {
+  it('has exactly seven entries, in the ported order, and every one names an effect', () => {
     // ToME's own list drops a row it cannot resolve (GameMenu.lua:125-133), which
     // is how a dead "highscores" entry ships upstream. Carrying the effect ON the
     // row makes that unrepresentable — so this asserts the shape as well as the
     // order.
     const rows = entryRows(escapeMenuRows(view()));
-    expect(rows).toHaveLength(6);
+    // SEVEN SINCE v19. `SWITCH CHARACTER` earned a row of its own because it is
+    // a VERB with nowhere else to live — no other surface in this client ends a
+    // session — where the unspent-points count, which was refused one, is a fact
+    // about a row that already existed. The count is still FIXED: the row is
+    // drawn greyed for a player with no account rather than dropped, exactly as
+    // LEAVE PARTY is for a party of one, so no row ever moves under a pointer.
+    expect(rows).toHaveLength(7);
     expect(rows.map((row) => row.label)).toEqual([
       'RESUME',
       'KEY BINDINGS',
@@ -204,6 +210,7 @@ describe('the root screen', () => {
       'TALENTS',
       'INVENTORY',
       'LEAVE PARTY',
+      'SWITCH CHARACTER',
     ]);
     expect(rows.map((row) => row.effect)).toEqual([
       { kind: 'resume' },
@@ -215,22 +222,49 @@ describe('the root screen', () => {
       { kind: 'ui', command: UiCommand.ShowTalents },
       { kind: 'ui', command: UiCommand.ShowInventory },
       { kind: 'party', action: PartyAction.Leave },
+      // NOT A `ui` COMMAND, and the distinction is load-bearing: every UiCommand
+      // opens a panel over a live world and this one ENDS the world. Folding it
+      // in would put "leave the game" in the same bucket as "show the bag", and
+      // the first thing to go wrong would be a keybinding for it.
+      { kind: 'leave-character' },
     ]);
-    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it('draws SWITCH CHARACTER greyed for a player with no account', () => {
+    // ═══ GREYED, NOT DROPPED — the same rule LEAVE PARTY follows ═══
+    // An anonymous player has no roster to go back to, so "switch character"
+    // would not switch anything: it would drop them into the same world as a
+    // different anonymous body, which is losing a character rather than
+    // changing one. Dropping the row instead would make the menu a different
+    // height for two players standing in the same room.
+    const rows = entryRows(escapeMenuRows(view()));
+    const row = rows.find((entry) => entry.label === 'SWITCH CHARACTER');
+    expect(row, 'the row vanished for an anonymous player').toBeDefined();
+    expect(row?.enabled).toBe(false);
+    expect(row?.reason).toBe('you are not signed in');
+
+    const signedIn = entryRows(escapeMenuRows({ ...view(), canSwitchCharacter: true }));
+    const live = signedIn.find((entry) => entry.label === 'SWITCH CHARACTER');
+    expect(live?.enabled).toBe(true);
+    expect(live?.reason).toBeNull();
   });
 
   it('puts the unspent count on row 3 without adding or moving a row', () => {
     // ═══ THE REGRESSION THAT MATTERS IS THE SHAPE, NOT THE STRING ═══
-    // `rootRows` is six rows, always six, in one order, and ui/contextmenu.ts
-    // :94-102 gives the reason: a menu whose shape changes with state moves the
-    // row the player was already reaching for. So the count goes INSIDE the
-    // label of the row that already opens the spend screen — never a seventh row
-    // and never a reorder — and this asserts the whole list on both sides of it.
+    // `rootRows` is a FIXED count in one order, and ui/contextmenu.ts:94-102
+    // gives the reason: a menu whose shape changes with state moves the row the
+    // player was already reaching for. So the count goes INSIDE the label of the
+    // row that already opens the spend screen — never a row of its own and never
+    // a reorder — and this asserts the whole list on both sides of it.
+    //
+    // (The list is seven rows since v19. A new VERB earned one; a fact about an
+    // existing row still does not, which is the distinction this test pins.)
     const shape = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.index);
     const labels = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.label);
 
     const waiting = escapeMenuRows(view({ unspent: 2 }));
-    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(labels(waiting)).toEqual([
       'RESUME',
       'KEY BINDINGS',
@@ -238,6 +272,7 @@ describe('the root screen', () => {
       'TALENTS (2)',
       'INVENTORY',
       'LEAVE PARTY',
+      'SWITCH CHARACTER',
     ]);
     // The effect on row 3 is untouched — it is still the launcher, and a longer
     // label must not turn it into a different act.
@@ -257,7 +292,7 @@ describe('the root screen', () => {
     // row you were reaching for, and a player who cannot see the row at all
     // learns nothing about why they cannot use it.
     const alone = entryRows(escapeMenuRows(view({ inParty: false })));
-    expect(alone).toHaveLength(6);
+    expect(alone).toHaveLength(7);
     const leave = alone[5];
     expect(leave?.label).toBe('LEAVE PARTY');
     expect(leave?.enabled).toBe(false);

@@ -105,6 +105,20 @@ export type SocketOptions = {
    * nothing, instead of inventing a placeholder that would then be on the wire.
    */
   readonly sessionId?: string | null;
+  /**
+   * WHICH CHARACTER TO ASK FOR, READ FRESH ON EVERY `hello`.
+   *
+   * A CALLBACK AND NOT A VALUE, because this is asked again on every reconnect
+   * and the answer changes: it is null while the player is at the select screen,
+   * `{ newCharacter: true }` for the one hello that creates somebody, and a
+   * concrete id from the moment `welcome` says which id that was. A value
+   * captured at construction would still be saying "make me a new character" an
+   * hour later, and a dropped socket would quietly create one.
+   *
+   * ABSENT MEANS "WHATEVER THE SERVER GIVES ME", which is what every build
+   * before the select screen did and what an anonymous player still does.
+   */
+  readonly characterChoice?: () => { characterId?: string; newCharacter?: boolean } | null;
 };
 
 export type GameSocket = {
@@ -113,6 +127,20 @@ export type GameSocket = {
   readonly status: () => SocketStatus;
   /** Deliberate shutdown. Cancels the reconnect loop. */
   readonly close: () => void;
+  /**
+   * "Say hello again, with whatever I would say now."
+   *
+   * THE SELECT SCREEN'S ONLY VERB. Choosing a character is not a game action —
+   * there is no body to act with — so it cannot be a frame on a live socket. It
+   * is a new handshake, and this drops the socket so the reconnect loop runs one
+   * with the answer `characterChoice` gives now.
+   *
+   * A SECOND ROUND TRIP RATHER THAN A NEW VERB, deliberately: entering the world
+   * is four hundred lines of frame ordering in `handleHello` that already exist
+   * and are already correct, and a second entry path would be a second place for
+   * them to drift.
+   */
+  readonly rehandshake: () => void;
 };
 
 /** First retry lands fast enough that a server restart is barely noticed. */
@@ -267,11 +295,17 @@ export function connectGameSocket(options: SocketOptions): GameSocket {
       // and JSON.stringify drops it anyway, but "absent" and "present and
       // empty" are two spellings of one thing — and the schema's `.min(1)`
       // exists precisely so an empty string is never mistaken for a handle.
+      const choice = options.characterChoice?.() ?? null;
       const hello: ClientHello = {
         v: PROTOCOL_VERSION,
         t: 'hello',
         ...(sessionId === null ? {} : { sessionId }),
         ...(resumeToken === null ? {} : { resumeToken }),
+        // SPREAD ONLY WHEN PRESENT, like the two handles above and for the same
+        // reason: `newCharacter: false` and "no opinion" are two spellings of
+        // one thing, and only one of them is what the schema means.
+        ...(choice?.characterId === undefined ? {} : { characterId: choice.characterId }),
+        ...(choice?.newCharacter === true ? { newCharacter: true } : {}),
       };
       sendRaw(ws, hello);
 
@@ -405,6 +439,23 @@ export function connectGameSocket(options: SocketOptions): GameSocket {
       return ws === null ? false : sendRaw(ws, msg);
     },
     status: () => status,
+    rehandshake: () => {
+      /**
+       * ═══ THE RESUME TOKEN IS DROPPED, AND THAT IS THE WHOLE POINT ═══
+       * It says "I am the socket that just dropped, give me my body back". This
+       * is a player DELIBERATELY changing which body they want, so presenting it
+       * would ask the server to resume the character they are leaving — and the
+       * server would be right to.
+       *
+       * `attempt` IS RESET so the new handshake goes out on the fast rung of the
+       * backoff. A player who just clicked PLAY should not wait fifteen seconds
+       * because the evening had a rough patch earlier.
+       */
+      resumeToken = null;
+      attempt = 0;
+      hangUp('choosing a character');
+      scheduleReconnect('choosing a character');
+    },
     close: () => {
       stopped = true;
       window.removeEventListener('pagehide', onPageHide);
