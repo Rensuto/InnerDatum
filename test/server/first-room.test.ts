@@ -4,8 +4,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { DELVES, dangerWord } from '../../src/server/content/delve.ts';
+import { applyArmour } from '../../src/server/engine/damage.ts';
 import { hitChance } from '../../src/shared/checkhit.ts';
 import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
+import type { DelveSpec } from '../../src/server/content/delve.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -54,42 +56,116 @@ import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
  * matchup longest and resolves it slowest. A room he can walk into is a room the
  * Inspector shoots to pieces.
  */
-const WATCHMAN_L1 = { hp: 72, accuracy: 9, defence: 5, damage: 13, armour: 8 };
-
-type Duel = {
-  readonly name: string;
-  readonly myTurns: number;
-  readonly theirTurns: number;
+const WATCHMAN_L1 = {
+  hp: 72,
+  accuracy: 9,
+  defence: 5,
+  damage: 13,
+  armour: 8,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TERM THE FIRST VERSION OF THIS FILE LEFT OUT, AND IT WAS THE ONE THAT
+   * MATTERED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The duel model treated armour as flat subtraction — `dam - armour` — so a
+   * husk swinging for 5 into armour 8 did 1. The real pipeline is
+   * `applyArmour(dam, armour, apr, hardiness)`, and the Watchman's
+   * `armourHardiness` is TEN: armour mitigates a tenth of a blow and no more, so
+   * the same swing does 4.5. The live Case Log said `5 damage` all along and the
+   * model said 1, which is how a room that kills people passed its own test.
+   *
+   * The real function is imported rather than approximated. That is the whole
+   * lesson: a model of a formula this game already owns is a second copy that
+   * can be wrong on its own.
+   */
+  hardiness: 10,
+  apr: 0,
 };
 
-function duel(raw: MonsterTemplate): Duel {
+type Foe = {
+  readonly name: string;
+  hp: number;
+  readonly def: number;
+  readonly armour: number;
+  readonly atk: number;
+  readonly dam: number;
+  readonly apr: number;
+  readonly res: number;
+};
+
+type RoomFight = { readonly turns: number; readonly hpLeft: number; readonly won: boolean };
+
+function foeOf(raw: MonsterTemplate): Foe {
   const m = raw as unknown as {
     displayName: string;
     maxHp: number;
     combat?: {
       mods?: { armour?: number; def?: number };
-      weapon?: { dam?: number; atk?: number };
+      weapon?: { dam?: number; atk?: number; apr?: number };
       profile?: { resists?: Record<string, number> };
     };
   };
-  const def = m.combat?.mods?.def ?? 0;
-  const armour = m.combat?.mods?.armour ?? 0;
-  const theirAtk = m.combat?.weapon?.atk ?? 0;
-  const theirDam = m.combat?.weapon?.dam ?? 0;
-  // A NEGATIVE RESIST IS A VULNERABILITY, and counting it is what keeps this
-  // honest: the Wraith takes 30% MORE physical, and it still wins.
-  const physResist = m.combat?.profile?.resists?.['physical'] ?? 0;
-
-  const myHit = hitChance(WATCHMAN_L1.accuracy, def) / 100;
-  const theirHit = hitChance(theirAtk, WATCHMAN_L1.defence) / 100;
-  const myPerHit = Math.max(1, (WATCHMAN_L1.damage - armour) * (1 - physResist / 100));
-  const theirPerHit = Math.max(1, theirDam - WATCHMAN_L1.armour);
-
   return {
     name: m.displayName,
-    myTurns: m.maxHp / (myPerHit * myHit),
-    theirTurns: WATCHMAN_L1.hp / (theirPerHit * theirHit),
+    hp: m.maxHp,
+    def: m.combat?.mods?.def ?? 0,
+    armour: m.combat?.mods?.armour ?? 0,
+    atk: m.combat?.weapon?.atk ?? 0,
+    dam: m.combat?.weapon?.dam ?? 0,
+    apr: m.combat?.weapon?.apr ?? 0,
+    // A NEGATIVE RESIST IS A VULNERABILITY, and counting it keeps this honest.
+    res: m.combat?.profile?.resists?.['physical'] ?? 0,
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WHOLE ROOM AT ONCE. A ROOM IS NOT A QUEUE OF DUELS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The first version of this file fought each resident one at a time and every
+ * one of them lost, so the room passed. Then a level-1 Watchman walked in over
+ * the real socket and was ERASED FOUR TIMES without clearing it — three runs,
+ * identical.
+ *
+ * The missing term is that EVERYTHING IN THE ROOM SWINGS EVERY TURN while the
+ * player can only answer one of them. That is the difference between a fight
+ * you win with sixty hit points spare and one you lose.
+ *
+ * IT IS STILL OPTIMISTIC, DELIBERATELY. Everybody is in melee from turn one,
+ * which ignores the turns a player spends walking across the room being shot at
+ * by a ranged kiter — so a room this model says is survivable is the FLOOR of
+ * how bad it can be, and a room it says is lethal is worse than it looks.
+ */
+function room(spec: DelveSpec, count: number): RoomFight {
+  const foes: Foe[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const template = spec.roster[i % spec.roster.length];
+    if (template === undefined) continue;
+    foes.push(foeOf(template));
+  }
+
+  let hp = WATCHMAN_L1.hp;
+  let turns = 0;
+  while (hp > 0 && foes.some((f) => f.hp > 0) && turns < 500) {
+    turns += 1;
+    const target = foes.find((f) => f.hp > 0);
+    if (target === undefined) break;
+    // ONE SWING, at one of them. `applyArmour` with hardiness 100 is the plain
+    // reduction a monster's own armour gives.
+    const mine =
+      applyArmour(WATCHMAN_L1.damage, target.armour, WATCHMAN_L1.apr, 100) * (1 - target.res / 100);
+    target.hp -= mine * (hitChance(WATCHMAN_L1.accuracy, target.def) / 100);
+
+    for (const f of foes) {
+      if (f.hp <= 0) continue;
+      hp -=
+        applyArmour(f.dam, WATCHMAN_L1.armour, f.apr, WATCHMAN_L1.hardiness) *
+        (hitChance(f.atk, WATCHMAN_L1.defence) / 100);
+    }
+  }
+  return { turns, hpLeft: hp, won: hp > 0 };
 }
 
 describe('the gentlest room in the game', () => {
@@ -108,43 +184,64 @@ describe('the gentlest room in the game', () => {
     expect(quiet.length, 'no room in the game is graded quiet any more').toBeGreaterThan(0);
   });
 
-  it('holds nothing a beginner cannot beat by walking into it', () => {
+  it('can be cleared by a beginner at the WORST roll of its band', () => {
+    /**
+     * ═══ THE TOP OF THE BAND, NOT THE BOTTOM ═══
+     * `populateDelve` rolls `monsters[0]..monsters[1]`, so the honest question
+     * is whether the unluckiest roll is survivable — a room that is winnable
+     * only when it spawns light is a room that kills a share of the players sent
+     * to it, and the first case sends every one of them.
+     */
     const losses: string[] = [];
     for (const [id, spec] of quiet) {
-      for (const monster of spec.roster) {
-        const fight = duel(monster);
-        if (fight.myTurns >= fight.theirTurns) {
-          losses.push(
-            `${String(id)} / ${fight.name}: ${fight.myTurns.toFixed(0)} turns to kill, ` +
-              `${fight.theirTurns.toFixed(0)} to die`,
-          );
-        }
+      const worst = room(spec, spec.monsters[1]);
+      if (!worst.won) {
+        losses.push(
+          `${String(id)} at ${String(spec.monsters[1])} foes: dead in ${String(worst.turns)} turns`,
+        );
       }
     }
     // ═══ THE ASSERTION THAT WAS FAILING ═══
-    // Before the roster changed: "site:drowned_chapel / Index Wraith: 21 turns
-    // to kill, 14 to die". Put `INDEX_WRAITH` back in `DROWNED` and it returns.
+    // At the old 3-5 band: "site:drowned_chapel at 5 foes: dead in 5 turns".
+    // Measured live at the same time: erased four times, never cleared, three
+    // runs identical.
     expect(losses).toEqual([]);
   });
 
-  it('leaves a beginner a real margin, not a coin flip', () => {
+  it('leaves a beginner a real margin at the worst roll, not a coin flip', () => {
     /**
-     * WINNING IS NOT ENOUGH. A fight won on the last hit point is a fight most
-     * players lose, because this model has no crits, no bad luck and no second
-     * monster — and a beginner room contains three at once.
+     * WINNING IS NOT ENOUGH. This model gives the player every benefit it can:
+     * no crits against them, no bad luck, and everybody in melee from turn one —
+     * which ignores the turns actually spent walking across a room while a
+     * ranged kiter shoots. So a fight it says is won on fumes is a fight lost in
+     * practice, which is exactly what the live probe found.
      *
-     * TWICE OVER is the bound, and it is loose on purpose: the Cairn and the
-     * Husk clear it by a factor of twenty. It exists to catch the next monster
-     * somebody drops in here, not to tune the two that are.
+     * A THIRD OF THE BAR is the bound. It is not a tuning knob for these two
+     * monsters — they clear it comfortably — it is there to catch the next thing
+     * somebody puts in the game's beginner room.
      */
     for (const [id, spec] of quiet) {
-      for (const monster of spec.roster) {
-        const fight = duel(monster);
-        expect(
-          fight.theirTurns / fight.myTurns,
-          `${String(id)} / ${fight.name} is a close-run thing`,
-        ).toBeGreaterThan(2);
-      }
+      const worst = room(spec, spec.monsters[1]);
+      expect(
+        worst.hpLeft / WATCHMAN_L1.hp,
+        `${String(id)} leaves a beginner ${worst.hpLeft.toFixed(0)} of ${String(WATCHMAN_L1.hp)} hp`,
+      ).toBeGreaterThan(1 / 3);
+    }
+  });
+
+  it('is gentler than the room the game points at next', () => {
+    /**
+     * THE GRADIENT, WHICH THE OLD BAND HAD FLATTENED. The gentlest room was 3-5
+     * and the next one out is 4-6 — nearly the same fight, so a player who
+     * survived the first had learned nothing about what "restless" meant.
+     */
+    for (const [, spec] of quiet) {
+      const next = [...DELVES.values()].find((other) => dangerWord(other) === 'restless');
+      expect(next, 'no restless room to compare against').toBeDefined();
+      if (next === undefined) continue;
+      expect(spec.monsters[1], 'the quiet room is as crowded as the restless one').toBeLessThan(
+        next.monsters[1],
+      );
     }
   });
 

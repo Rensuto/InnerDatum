@@ -259,7 +259,47 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     17 steps out, and the first marker most people will ever walk to. The
   //     roster is the gentlest in the game AND it is where you meet a cairn for
   //     the first time, on dry ground, where it cannot hurt you — see `DROWNED`.
-  ['site:drowned_chapel', { monsters: [3, 5], roster: DROWNED, litter: [1, 2] }],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TWO TO THREE, AND THE OLD THREE-TO-FIVE KILLED THE PLAYER IT WAS FOR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * MEASURED over the real socket, walking a level-1 Watchman into this room and
+   * fighting until something ended: he was ERASED FOUR TIMES and never cleared
+   * it. Three runs, identical. This is the room the first case names out loud to
+   * a character four minutes old.
+   *
+   * ═══ AND MY OWN TEST SAID IT WAS FINE, BECAUSE IT MODELLED DUELS ═══
+   * `first-room.test.ts` fought each resident one at a time and every one of
+   * them lost. A room is not a queue of duels — everything in it swings every
+   * turn — and the whole-room model tells a different story:
+   *
+   *     foes  turns  hp left
+   *       2      6      45     wins
+   *       3      9      18     wins, barely
+   *       4      6      -7     DIES
+   *       5      5     -15     DIES
+   *
+   * The band was 3-5, so two of its three rolls were a death sentence and the
+   * third was a coin flip. It is worse than that live, because the model puts
+   * everybody in melee on turn one while the Index Cairn actually shoots across
+   * the room while you walk to it.
+   *
+   * TWO, FLAT, AND NOT A BAND — which is the one place in this table a constant
+   * is right. Three foes leaves a beginner 18 hit points of 72 in the model, and
+   * the model is OPTIMISTIC: it puts everybody in melee on turn one and ignores
+   * the turns actually spent crossing the room while the Cairn shoots. Live, a
+   * three-foe roll killed the player four times over. A band whose top roll is a
+   * death sentence is a room that kills a share of everyone sent to it, and the
+   * first case sends every single new character here by name.
+   *
+   * Variance belongs in the rooms a player CHOOSES. This is the one the game
+   * chooses for them, and its job is to be survivable.
+   *
+   * It also restores a gradient the old band had flattened: the next room out is
+   * 4-6, so the game's gentlest room and its second were nearly the same fight.
+   */
+  ['site:drowned_chapel', { monsters: [2, 2], roster: DROWNED, litter: [1, 2] }],
   //     30 steps.
   ['site:underworks', { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3] }],
   // ─── worked places: more of them, and more to carry home ────────────────
@@ -397,8 +437,31 @@ export function dangerWord(spec: DelveSpec): string {
    * `grim` already carries `partyHint`'s "bring a party", and a scale a player
    * has learned should not grow a step the day the content does.
    */
-  const boss = spec.boss === undefined ? 0 : 8;
-  const weight = spec.monsters[1] + elite + ranged + boss;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BOSS DECIDES ON ITS OWN, AND NOW IT SAYS SO INSTEAD OF OUT-VOTING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This was a weight of 8, under the claim that *"8 puts any room holding a
+   * boss over the `grim` threshold whatever else is in it"*. The intent is
+   * right; the mechanism was a coincidence of the bands that existed when it was
+   * written. Narrowing the beginner room to two monsters made the emptiest spec
+   * in the game score `2 + ranged 2 + boss 8 = 12` — one short of `grim`, and a
+   * boss room quietly downgraded to `dangerous` with nothing to say it had.
+   *
+   * A number chosen to out-vote every other term is a number that stops
+   * out-voting them the day a term moves. The rule was never really arithmetic,
+   * so it is no longer written as arithmetic: what makes that room hard is not
+   * its population, and two hundred and twenty hit points of artillery is `grim`
+   * in an empty hall.
+   *
+   * STILL NOT A FIFTH WORD. `grim` already carries `partyHint`'s "bring a
+   * party", and a scale a player has learned should not grow a step the day the
+   * content does.
+   */
+  if (spec.boss !== undefined) return 'grim';
+
+  const weight = spec.monsters[1] + elite + ranged;
 
   if (weight <= 7) return 'quiet';
   if (weight <= 9) return 'restless';
