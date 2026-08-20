@@ -333,6 +333,107 @@ export function wrapClamped(
   return kept;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HOVER CARD — one primitive, every surface.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for directly: tooltips on the talent tree, the bag and the action bar.
+ * Three surfaces, and three private implementations would be three answers to
+ * "what does a tooltip look like" — which teaches a player that one of them is
+ * a different kind of thing. `drawButton` above carries the same argument for
+ * the same reason, and it is the reason this file exists at all.
+ *
+ * ═══ IT IS NOT `ui/tooltip.ts` ═══
+ * That one takes an `InspectView` and draws a creature's card: portrait, hit
+ * points, rank, the blocked reason. It is a MONSTER tooltip and its shape is
+ * about a body. This is a card of prose about a thing, which is what an item, a
+ * talent and a hotbar slot all need and none of them is a body.
+ *
+ * ═══ IT CLAMPS RATHER THAN FLIPS ═══
+ * A card that flipped sides near an edge would move under the pointer while the
+ * pointer stood still, which reads as flicker. Clamping keeps it still: it slides
+ * along the edge instead, and the pointer never loses the thing it is over.
+ */
+export type HoverCard = {
+  readonly title: string;
+  /** One line under the title — cost, slot, rank. Absent when there is none. */
+  readonly meta?: string;
+  /** The body. Already wrapped by the caller, which owns the width it wants. */
+  readonly lines: readonly string[];
+  /** A second block, drawn in gold — "what one more point buys". */
+  readonly nextLines?: readonly string[];
+};
+
+const CARD_PAD = 6;
+const CARD_LINE_H = 12;
+const CARD_GAP = 10;
+
+/** How wide a card wants to be, so a caller can wrap its prose to fit. */
+export function hoverCardWidth(ctx: CanvasRenderingContext2D, card: HoverCard): number {
+  ctx.font = FONT_BUTTON;
+  let widest = ctx.measureText(card.title).width;
+  ctx.font = '10px ui-monospace, Consolas, monospace';
+  for (const line of [card.meta ?? '', ...card.lines, ...(card.nextLines ?? [])]) {
+    widest = Math.max(widest, ctx.measureText(line).width);
+  }
+  return Math.ceil(widest) + CARD_PAD * 2;
+}
+
+export function drawHoverCard(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  card: HoverCard,
+  px: number,
+  py: number,
+  viewportW: number,
+  viewportH: number,
+): void {
+  const body = [...card.lines, ...(card.nextLines ?? [])];
+  const rows = 1 + (card.meta === undefined ? 0 : 1) + body.length;
+  const w = Math.min(hoverCardWidth(ctx, card), Math.max(80, viewportW - CARD_GAP * 2));
+  const h = CARD_PAD * 2 + rows * CARD_LINE_H;
+
+  // Above the pointer by preference — a card under the cursor covers the next
+  // thing the player is about to point at.
+  const x = Math.min(Math.max(CARD_GAP, px - Math.floor(w / 2)), viewportW - w - CARD_GAP);
+  // ABOVE THE POINTER BY PREFERENCE, below it when there is no room above, and
+  // clamped either way — a card that ran off the bottom would be a description
+  // the player can see the top two lines of.
+  const above = py - h - CARD_GAP;
+  const y = Math.min(
+    Math.max(CARD_GAP, above < CARD_GAP ? py + CARD_GAP : above),
+    Math.max(CARD_GAP, viewportH - h - CARD_GAP),
+  );
+
+  // THE INSET SKIN — this card sits ON another surface rather than being one.
+  drawPanel(ctx, sprites, PanelSkin.Inset, { x, y, w, h });
+
+  let cursor = y + CARD_PAD + 9;
+  ctx.textAlign = 'left';
+  ctx.font = FONT_BUTTON;
+  ctx.fillStyle = PALETTE.PARCHMENT;
+  ctx.fillText(fitText(ctx, card.title, w - CARD_PAD * 2), x + CARD_PAD, cursor);
+  cursor += CARD_LINE_H;
+
+  ctx.font = '10px ui-monospace, Consolas, monospace';
+  if (card.meta !== undefined) {
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillText(fitText(ctx, card.meta, w - CARD_PAD * 2), x + CARD_PAD, cursor);
+    cursor += CARD_LINE_H;
+  }
+  ctx.fillStyle = PALETTE.BONE;
+  for (const line of card.lines) {
+    ctx.fillText(line, x + CARD_PAD, cursor);
+    cursor += CARD_LINE_H;
+  }
+  ctx.fillStyle = PALETTE.GOLD;
+  for (const line of card.nextLines ?? []) {
+    ctx.fillText(line, x + CARD_PAD, cursor);
+    cursor += CARD_LINE_H;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Controls
 //

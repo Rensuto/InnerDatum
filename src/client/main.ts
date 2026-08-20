@@ -262,6 +262,7 @@ import {
   pressSpend,
   talentPanelDragAt,
   talentPanelHitAt,
+  talentTipAt,
   talentPanelRect,
   talentPanelRows,
 } from './ui/talents.ts';
@@ -278,6 +279,7 @@ import {
   respawnPromptSpeech,
 } from './ui/respawnprompt.ts';
 import { drawTooltip } from './ui/tooltip.ts';
+import { drawHoverCard } from './ui/panel.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
 import {
   CROSSING_INK,
@@ -2968,6 +2970,32 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // back to the bare word rather than printing a level nobody has said yet.
       level: progress?.level ?? null,
     });
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE HOVER CARD, ON TOP OF EVERYTHING THE PANEL DREW.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The tree is fifteen icons and no prose; this is where the prose went, and
+     * it was asked for in those words. Drawn AFTER the panel because it overlaps
+     * it by design — a card that respected the panel's bounds would be clipped
+     * by the thing it is explaining.
+     *
+     * `pointerPoint` is already in LOGICAL backbuffer pixels, which is the space
+     * every rect in this file lives in; the card clamps itself to the viewport
+     * rather than flipping sides, so it never moves while the pointer is still.
+     */
+    if (pointerPoint !== null) {
+      const card = talentTipAt(
+        layout.talents,
+        talentPanelRows(talentPanelView()),
+        pointerPoint.x,
+        pointerPoint.y,
+      );
+      if (card !== null) {
+        drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
+      }
+    }
   }
 
   // ═══ THE INVENTORY PANEL, AFTER THE OTHER TWO AND FOR THEIR REASONS ═══

@@ -135,6 +135,7 @@
  * see the long note at the top of render/canvas.ts.
  */
 
+import type { HoverCard } from './panel.ts';
 import { PALETTE } from '../render/canvas.ts';
 import {
   drawButton,
@@ -174,23 +175,51 @@ const INSET = PANEL_PAD + 3;
  * something wide enough to read the digits against. The label sits UNDER the
  * frame, which is where TalentTrees.lua:429-433 puts it.
  */
-const ICON_PX = 24;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE GRID'S MEASUREMENTS. 32, NOT 24, AND THE EXTRA EIGHT PIXELS ARE THE POINT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A category strip is a header, a row of five icons, and a rank under each. At
+ * 32 with a 4-pixel gap five icons are 176 wide, so TWO CATEGORIES FIT SIDE BY
+ * SIDE inside this panel with room to spare — which is what the player's
+ * screenshot shows and what turns a scrolling list into a screen you read at a
+ * glance.
+ *
+ * The old layout gave each talent a 43-pixel full-width row; five of them
+ * overflowed. A strip is 63 pixels and holds five. That is the whole arithmetic
+ * behind the redesign.
+ */
+const ICON_PX = 32;
+/** Between two icons in a strip. */
+const CELL_GAP = 4;
+/** The rank caption under an icon — "4/5". */
+const RANK_H = 11;
+/** The category heading above the icons. */
+const CAT_HEAD_H = 13;
+/** Air under a strip, before the next one. */
+const CAT_PAD = 7;
+/** One whole category block. */
+const CAT_H = CAT_HEAD_H + ICON_PX + RANK_H + CAT_PAD;
+/** Between the two columns of categories. */
+const COL_GAP = 14;
+/** How many icons a strip is sized for. ToME's categories hold five. */
+const CELLS_PER_CAT = 5;
+/** One column of categories. */
+const COL_W = CELLS_PER_CAT * ICON_PX + (CELLS_PER_CAT - 1) * CELL_GAP;
+
 const LEVEL_LABEL_H = 11;
 
 /** Air between the icon column and the prose column. */
-const ICON_GAP = 6;
 
 /** One talent row: the icon stack on the left, three lines of prose on the right. */
 const TALENT_ROW_H = ICON_PX + LEVEL_LABEL_H + 8;
 /** The points badge, and the note that replaces a dropped row. */
 const POINTS_ROW_H = 14;
 /** A tree's heading and the hairline under it. */
-const TREE_ROW_H = 15;
 const NOTE_ROW_H = 12;
 
 /** The `+` control. Square-ish, so it is a target rather than a glyph. */
-const PLUS_W = 20;
-const PLUS_H = 14;
 
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
@@ -227,7 +256,6 @@ const PANEL_MIN_H = HEADER_H + INSET * 2 + TALENT_ROW_H;
 /** Air between the panel and the edges of the band it is clamped into. */
 const PANEL_MARGIN = 6;
 
-const FONT_NAME = 'bold 10px ui-monospace, Consolas, monospace';
 const FONT_BODY = '10px ui-monospace, Consolas, monospace';
 const FONT_LEVEL = 'bold 10px ui-monospace, Consolas, monospace';
 const FONT_META = 'bold 10px ui-monospace, Consolas, monospace';
@@ -273,11 +301,8 @@ function panelTitle(level: number | null | undefined): string {
  */
 const ARROW = '→';
 /** The word half of the at-cap signal. See the header: never colour alone. */
-const MAX_WORD = 'MAX';
 /** The word half of the a-point-is-available signal. */
-const PLUS_LABEL = '+';
 /** The `+` once it is armed. A different GLYPH, not merely a different colour. */
-const PLUS_ARMED_LABEL = '+?';
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -296,29 +321,82 @@ export const TalentRowKind = {
    * `pointsText` for why the COUNT is unconditional and the PLATE is not.
    */
   Points: 'points',
-  /** Icon, name, `n/max`, the current->next diff, and the `+`. The workhorse. */
-  Talent: 'talent',
   /**
-   * A TREE'S HEADING — "Discipline", with the talents in it underneath.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE WHOLE CATEGORY — the header and the row of icons under it.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * ToME draws talents under their type's name and this game shipped one flat
-   * list per class; PLAN.md § 5 records that as *0 trees* against a v1.0 ceiling
-   * of eight. The heading is what turns four talents into two decisions.
+   * This is the unit ToME's talent screen is built from, and the player sent a
+   * screenshot of it: "Technique / Two-handed assault (x1.10)" over a horizontal
+   * strip of five icons, each with "4/5" beneath.
    *
-   * DRAWN FROM `LoadoutTalent.treeName`, which the server sends, because the
-   * client may not import the content table that owns the names.
+   * IT REPLACED ONE ROW PER TALENT, and the swap is what made the screen fit.
+   * The old layout gave every talent a full-width row carrying its icon, its
+   * name, its description AND its next-rank line — forty-three pixels each, so
+   * five talents overflowed the panel and the drop policy started hiding them.
+   * A category strip is sixty-three pixels and holds FIVE. The descriptions did
+   * not disappear; they moved to `Detail`, which is exactly the trade upstream
+   * makes and the reason its screen shows twenty-five talents at once.
    */
-  Tree: 'tree',
+  Category: 'category',
+  /**
+   * THE ONE TALENT THE PLAYER IS POINTING AT.
+   *
+   * NOT A STRIP AT THE FOOT OF THE PANEL — a HOVER CARD over it, which is what
+   * was asked for and is what ToME does. A reserved strip costs its height on
+   * every frame whether or not anything is being pointed at; a card costs
+   * nothing until the pointer stops, and the height it does not take becomes
+   * another row of categories. This row kind survives only as the CONTENT of
+   * that card, resolved by `talentTipAt` and drawn by the caller on top.
+   */
+  Detail: 'detail',
   /** A sentence about the panel itself — what was dropped, or that nothing came. */
   Note: 'note',
 } as const;
 export type TalentRowKind = (typeof TalentRowKind)[keyof typeof TalentRowKind];
 
+/**
+ * ONE ICON IN A CATEGORY STRIP — everything the grid needs about a talent.
+ *
+ * A projection of `LoadoutTalent` rather than the frame itself, because the grid
+ * asks four questions of a talent (what is it, what rank, can I buy it, is it
+ * pressable) and carrying the whole wire type would invite a painter to reach
+ * for a field the geometry never measured.
+ */
+export type TalentCell = {
+  readonly id: string;
+  readonly name: string;
+  readonly icon: string;
+  readonly level: number;
+  readonly maxLevel: number;
+  /** True when a point is in hand AND the talent is below its cap. */
+  readonly canSpend: boolean;
+  /** A passive is drawn without the pressable furniture. See `TalentKind`. */
+  readonly passive: boolean;
+  /** What it does now, and one point from now. Shown in the detail strip. */
+  readonly desc: string;
+  readonly descNext: string | null;
+  /** Cost and reach, for the detail strip's meta line. */
+  readonly cost: LoadoutTalent['cost'];
+  readonly cooldownTurns: number;
+  readonly range: number;
+};
+
 export type TalentRow =
   | {
-      /** A tree's heading. Its talents follow until the next one. */
-      readonly kind: typeof TalentRowKind.Tree;
+      /** A category: its heading, and every talent in it. */
+      readonly kind: typeof TalentRowKind.Category;
+      /** The tree id, so a hit can name which category was pressed. */
+      readonly tree: string;
+      /** "Discipline", or "Discipline  (x1.30)" when the mastery is not 1. */
       readonly text: string;
+      /** In the class table's order. `talentPanelRows` never re-sorts. */
+      readonly talents: readonly TalentCell[];
+    }
+  | {
+      /** The talent under the pointer, drawn in full at the foot of the panel. */
+      readonly kind: typeof TalentRowKind.Detail;
+      readonly cell: TalentCell | null;
     }
   | {
       readonly kind: typeof TalentRowKind.Points;
@@ -326,37 +404,6 @@ export type TalentRow =
       readonly unspent: number;
       /** The whole sentence, composed by `pointsText`. One copy, read by the painter. */
       readonly text: string;
-    }
-  | {
-      readonly kind: typeof TalentRowKind.Talent;
-      /** The NAMESPACED talent id, which is what `spend_point` names. */
-      readonly id: string;
-      readonly name: string;
-      /** An asset KEY off the wire, never derived from the name. */
-      readonly icon: string;
-      /** Index into the loadout — slot 1 is 0. Carried so a hit names a slot. */
-      readonly index: number;
-      /** RAW level: points actually spent. LevelupDialog.lua:952 uses the raw one. */
-      readonly level: number;
-      readonly maxLevel: number;
-      /** What it does NOW, rendered server-side. */
-      readonly desc: string;
-      /** What it does one point from now. NULL at the cap — there is no next. */
-      readonly descNext: string | null;
-      /** True when a point is in hand AND the talent is below its cap. */
-      readonly canSpend: boolean;
-      /**
-       * TRUE FOR A PASSIVE, and it changes the ROW'S SIZE rather than only its
-       * ink. A passive has no cost to print, no cooldown, and nothing to aim —
-       * so the icon block a talent row is built around is carrying a third of a
-       * row for a talent that needs none of it.
-       *
-       * MEASURED: the Watchman's fifth row pushed a talent off the panel at the
-       * 640x320 floor AND at the window the player screenshotted. Making the
-       * lightest rows light is what buys the space back, and it is also what
-       * ToME's own tree does — a passive reads as a property, not a button.
-       */
-      readonly passive: boolean;
     }
   | { readonly kind: typeof TalentRowKind.Note; readonly text: string };
 
@@ -377,6 +424,15 @@ export type TalentPanelView = {
    * `LoadoutMsg.passives`. The panel lists them; the hotbar never sees them.
    */
   readonly passives?: readonly LoadoutTalent[];
+  /**
+   * WHICH TALENT THE DETAIL STRIP IS ABOUT — hovered, or armed, or neither.
+   *
+   * Resolved by the caller because only the caller knows where the pointer is.
+   * The strip is reserved whether or not this is set: one that appeared on hover
+   * would move every category under the cursor, so the panel would flinch away
+   * from the mouse.
+   */
+  readonly focusId?: string | null;
   /** The `progress` frame, or null before the first one arrives. */
   readonly progress: ProgressMsg | null;
 };
@@ -458,7 +514,15 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     rows.push({ kind: TalentRowKind.Points, unspent, text: pointsText(progress) });
   }
 
-  if (view.loadout.length === 0) {
+  /**
+   * THE FOUR AND THE PASSIVES, IN ONE LIST — but only here, and only to read.
+   * `LoadoutMsg` keeps them apart so the hotbar cannot show a talent with
+   * nothing to press; the PANEL is the surface where they are all just talents
+   * the player owns and can raise, which is what ToME's tree view is.
+   */
+  const shown = [...view.loadout, ...(view.passives ?? [])];
+
+  if (shown.length === 0) {
     // NEVER A BLANK BOX. `loadout` is unicast in the `hello` block, so this is a
     // one-frame window on connect — but an empty panel in that window is
     // indistinguishable from a broken one, and the player's next move is to
@@ -467,91 +531,70 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     return rows;
   }
 
+  const cellOf = (talent: LoadoutTalent): TalentCell => ({
+    id: talent.id,
+    name: talent.name,
+    icon: talent.icon,
+    level: talent.level,
+    maxLevel: talent.maxLevel,
+    canSpend: unspent > 0 && talent.level < talent.maxLevel,
+    passive: talent.kind === 'passive',
+    desc: talent.desc,
+    descNext: talent.descNext,
+    cost: talent.cost,
+    cooldownTurns: talent.cooldownTurns,
+    range: talent.range,
+  });
+
   /**
-   * A HEADING WHENEVER THE TREE CHANGES, and never when it does not.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * GROUPED BY TREE, IN FIRST-APPEARANCE ORDER. NEVER SORTED.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * The loadout arrives in the class table's order, which groups a tree's
-   * talents together — so a change of tree is a boundary and re-sorting here
-   * would be a second opinion about an order the content already states. A
-   * loadout from a server too old to send `tree` produces NO headings and the
-   * flat list this panel always drew, which is the additive-field contract.
-   */
-  let openTree: string | undefined;
-  /**
-   * THE FOUR AND THE PASSIVES, IN ONE LIST — but only here, and only for
-   * reading. `LoadoutMsg` keeps them apart so the hotbar cannot show a talent
-   * with nothing to press; the PANEL is the surface where they are all just
-   * talents the player owns and can raise, which is what ToME's tree view is.
+   * The loadout arrives in the class table's order, which already groups a
+   * tree's talents together — so first appearance IS the authored order, and
+   * sorting here would be a second opinion about a sequence the content states.
    *
-   * APPENDED RATHER THAN SORTED, so the class table's order still decides the
-   * order — a re-sort here would be a second opinion about a sequence the
-   * content already states, and the tree headings below key off adjacency.
+   * A LOADOUT FROM A SERVER TOO OLD TO SEND `tree` produces ONE category with an
+   * empty heading, which draws as the flat strip this panel had before trees
+   * existed. That is the additive-field contract holding: an old server loses
+   * the grouping, never the talents.
    */
-  const shown = [...view.loadout, ...(view.passives ?? [])];
-  for (let i = 0; i < shown.length; i += 1) {
-    const talent = shown[i];
-    if (talent === undefined) continue;
-    const tree = talent.tree;
-    if (tree !== undefined && tree !== openTree) {
-      openTree = tree;
-      /**
-       * "The Line  (x1.30)" — ToME's own header format, and the multiplier is
-       * arithmetic rather than flavour: `ActorTalents.lua:834` makes a point
-       * spent in a x1.30 category worth thirty percent more everywhere
-       * `combatTalentScale` is used. A player choosing where to spend needs it.
-       *
-       * ONE POINT OH IS LEFT UNSAID. Every category shows a multiplier only in a
-       * game where they differ; printing "(x1.00)" on all six would be six
-       * pieces of furniture teaching a player to stop reading the number.
-       */
+  const order: string[] = [];
+  const byTree = new Map<string, { text: string; cells: TalentCell[] }>();
+  for (const talent of shown) {
+    const key = talent.tree ?? '';
+    let group = byTree.get(key);
+    if (group === undefined) {
       const mastery = talent.mastery ?? 1;
-      const heading = talent.treeName ?? tree;
-      rows.push({
-        kind: TalentRowKind.Tree,
+      const heading = talent.treeName ?? talent.tree ?? '';
+      group = {
+        // "Discipline  (x1.30)" — upstream's own header shape. ONE POINT OH IS
+        // LEFT UNSAID: printing "(x1.00)" on every category would be furniture
+        // teaching a player to stop reading the number that matters.
         text: mastery === 1 ? heading : `${heading}  (x${mastery.toFixed(2)})`,
-      });
+        cells: [],
+      };
+      byTree.set(key, group);
+      order.push(key);
     }
+    group.cells.push(cellOf(talent));
+  }
+
+  for (const key of order) {
+    const group = byTree.get(key);
+    if (group === undefined) continue;
     rows.push({
-      kind: TalentRowKind.Talent,
-      id: talent.id,
-      name: talent.name,
-      icon: talent.icon,
-      index: i,
-      level: talent.level,
-      maxLevel: talent.maxLevel,
-      desc: talent.desc,
-      descNext: talent.descNext,
-      // BOTH HALVES, and the server checks both again on arrival. This decides
-      // whether a BUTTON is drawn; the gateway decides whether a spend happens,
-      // and answers `bad_message` for a capped talent or an empty hand however
-      // this panel looked at the time.
-      canSpend: unspent > 0 && talent.level < talent.maxLevel,
-      passive: talent.kind === 'passive',
+      kind: TalentRowKind.Category,
+      tree: key,
+      text: group.text,
+      talents: group.cells,
     });
   }
+
   return rows;
 }
 
-// ---------------------------------------------------------------------------
-// The confirm press — the deviation, as a pure state machine
-// ---------------------------------------------------------------------------
-
-/**
- * What a press on a row's `+` means, given what was already armed.
- *
- * THE WHOLE OF THE DEVIATION DESCRIBED IN THE HEADER, in one pure function so
- * that the rule is testable without a DOM and so main.ts holds nothing but the
- * armed id. Three cases and no fourth:
- *
- *   nothing armed          -> ARM this row, send nothing
- *   this row armed         -> DISARM and SPEND
- *   a DIFFERENT row armed  -> re-arm on the new row, send nothing
- *
- * The third case is the one worth stating: a player who armed Ward Rush and then
- * pressed Fog Step has changed their mind, and treating the second press as a
- * confirmation of the FIRST row would spend an irreversible point on the talent
- * they just moved away from.
- */
 export type SpendPress = {
   /** The new armed id, or null when nothing is armed any more. */
   readonly armed: string | null;
@@ -662,10 +705,11 @@ export function talentWrapper(): (text: string, maxPx: number) => readonly strin
  * under it. A passive is a property rather than a button, so it is drawn as one
  * — which is the difference between five talents fitting and four fitting.
  */
-const PASSIVE_TOP = 10;
+
+/** Baseline of the first line in the detail strip. */
+const DETAIL_TOP = 12;
 
 /** Baseline of the first description line, from the top of a talent row. */
-const DESC_TOP = 21;
 /** Distance between two wrapped description lines. */
 const DESC_LINE_H = 12;
 
@@ -678,15 +722,18 @@ const DESC_LINE_H = 12;
  */
 function rowHeight(row: TalentRow, lines: number): number {
   switch (row.kind) {
-    case TalentRowKind.Tree:
-      return TREE_ROW_H;
     case TalentRowKind.Points:
       return POINTS_ROW_H;
-    case TalentRowKind.Talent:
-      // A PASSIVE HAS NO ICON BLOCK TO CLEAR, so its floor is the prose alone.
-      return row.passive
-        ? PASSIVE_TOP + lines * DESC_LINE_H
-        : Math.max(TALENT_ROW_H, DESC_TOP + (lines - 1) * DESC_LINE_H + 4);
+    case TalentRowKind.Category:
+      // FIXED, and that is the property that makes the grid legible: every
+      // category is the same height whether it holds two talents or five, so
+      // the columns line up and the eye can scan across them.
+      return CAT_H;
+    case TalentRowKind.Detail:
+      // GROWS WITH THE PROSE IT HOLDS, and it is the only row that does. This is
+      // where the descriptions went when they left the talent rows, so it is the
+      // one place in the panel that must never truncate.
+      return DETAIL_TOP + lines * DESC_LINE_H;
     case TalentRowKind.Note:
       return NOTE_ROW_H;
   }
@@ -706,6 +753,17 @@ export type PlacedTalentRow = {
    */
   readonly descLines: readonly string[];
   readonly nextLines: readonly string[];
+  /**
+   * ONE RECT PER ICON, index for index with the category's talents. Empty for
+   * every row that is not a `Category`.
+   *
+   * COMPUTED HERE AND NOWHERE ELSE. This file's header spends a paragraph on why
+   * the painter and `talentPanelHitAt` must agree to the pixel — ui/partypanel.ts
+   * records what a second copy costs, a control that lands a row above where it
+   * is drawn on somebody else's window size only. A grid multiplies that risk by
+   * five, so the rects travel rather than being re-derived.
+   */
+  readonly cells: readonly PanelRect[];
   /**
    * The `+` control, or null when there is nothing to buy.
    *
@@ -737,15 +795,22 @@ export function talentPanelGeometry(
   rect: PanelRect,
   rows: readonly TalentRow[],
   /**
-   * HOW THIS CLIENT BREAKS A SENTENCE, injected rather than imported.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NO WRAPPER ANY MORE, AND THAT IS THE REDESIGN SHOWING.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Wrapping needs to MEASURE, and measuring needs a canvas context this module
-   * has no business owning — the painter has one and hands its measuring over.
-   * It is required rather than optional on purpose: an optional wrapper would
-   * default to one line per description, which is the truncation this parameter
-   * exists to end, silently and only for whoever forgot.
+   * This function used to take one, because it decided how tall a row was and a
+   * row's height came from how many lines its description wrapped to. The rule
+   * behind that — WRAPPING LIVES WHERE THE HEIGHT IS DECIDED, never in the
+   * painter — has not changed; what changed is that the geometry no longer holds
+   * any prose. Every description moved into the hover card, so `talentTipAt`
+   * wraps and this measures icons, which have a fixed size.
+   *
+   * The parameter is kept in the SIGNATURE and ignored so the callers and their
+   * tests read the same before and after; it is documented as dead rather than
+   * quietly accepted.
    */
-  wrap: (text: string, maxPx: number) => readonly string[],
+  _wrap?: (text: string, maxPx: number) => readonly string[],
 ): TalentPanelGeometry {
   const close = closeRect(rect);
   const x = rect.x + INSET;
@@ -753,128 +818,96 @@ export function talentPanelGeometry(
   const top = rect.y + HEADER_H + INSET;
   const bottom = rect.y + rect.h - INSET;
 
-  // ═══ THE NOTE'S LINE IS RESERVED ONLY WHEN THERE IS GOING TO BE A NOTE ═══
-  // Measured in one pass first, rather than reserved row by row: a per-row
-  // lookahead would hold back twelve pixels on a panel where everything fits,
-  // and the fourth talent — the one the drop policy exists to protect — would be
-  // dropped to make room for a message saying it had been dropped.
-  /**
-   * THE PROSE, WRAPPED ONCE, before anything asks how tall a row is.
-   *
-   * The column stops short of the `+` for the name only; the description runs
-   * the full width under it, which is where the extra characters come from.
-   */
-  const textX = INSET + 2 + ICON_PX + ICON_GAP;
-  const proseW = Math.max(0, rect.w - textX - INSET - 2);
-  const linesOf = (row: TalentRow): { desc: readonly string[]; next: readonly string[] } => {
-    if (row.kind !== TalentRowKind.Talent) return { desc: [], next: [] };
-    return {
-      desc: wrap(row.desc, proseW),
-      next: row.descNext === null ? [] : wrap(`${ARROW} ${row.descNext}`, proseW),
-    };
-  };
-  let live: readonly TalentRow[] = rows;
-  let wrapped = live.map(linesOf);
-
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * A LINE OF PROSE IS GIVEN UP BEFORE A WHOLE TALENT IS.
+   * HOW MANY COLUMNS OF CATEGORIES FIT, WHICH IS ONE OR TWO AND NEVER THREE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Wrapping made rows taller and tree headings added two more, and at the
-   * 640x320 floor that was enough to push the fourth talent off the panel — the
-   * drop policy did exactly what it says and hid it, with a note. But a talent
-   * the player cannot see at all is worse than a sentence that ends in an
-   * ellipsis, and this is the second panel to learn it: `ui/inventory.ts` gives
-   * up the item description's second line before it gives up the comparison.
-   *
-   * So the budget tightens until everything fits, and only then does the tail
-   * get dropped. The mark is a CHARACTER SWAP rather than an append, so a
-   * clamped line is exactly as wide as the line that fitted — these faces are
-   * monospace by declaration, which is what makes that exact rather than close.
+   * Two is what the player's screenshot shows and what this panel is sized for.
+   * One is the honest answer on a window too narrow to hold two — the strips
+   * stack instead of being squeezed, because a five-icon strip cannot shrink:
+   * every icon is a click target and a 20-pixel icon is a miss waiting to happen.
    */
-  const measure = (): number =>
-    live.reduce(
-      (sum, row, i) =>
-        sum + rowHeight(row, (wrapped[i]?.desc.length ?? 0) + (wrapped[i]?.next.length ?? 0)),
-      0,
-    );
-  const clampTo = (lines: readonly string[], cap: number): readonly string[] => {
-    if (lines.length <= cap) return lines;
-    const kept = lines.slice(0, cap);
-    const last = kept[cap - 1] ?? '';
-    kept[cap - 1] = last.length > 1 ? `${last.slice(0, -1)}…` : '…';
-    return kept;
-  };
+  const columns = innerW >= COL_W * 2 + COL_GAP ? 2 : 1;
+  const gridW = columns * COL_W + (columns - 1) * COL_GAP;
+  /** CENTRED. A left-aligned grid in a wider panel reads as a layout bug. */
+  const gridX = x + Math.max(0, Math.floor((innerW - gridW) / 2));
 
-  let total = measure();
-
-  /**
-   * THE HEADINGS GO FIRST, BEFORE ANY PROSE AND LONG BEFORE ANY TALENT.
-   *
-   * A tree heading NAMES a grouping; it carries nothing a player cannot work out
-   * from the four talents under it. A talent row carries the talent. So on a band
-   * too short for both — measured: the 640x320 floor, where four talent rows
-   * cannot be made shorter than their icon blocks — the grouping is what is given
-   * up, and the panel degrades to exactly the flat list it drew before trees
-   * existed rather than to a list with one talent missing.
-   */
-  if (top + total > bottom && live.some((row) => row.kind === TalentRowKind.Tree)) {
-    live = live.filter((row) => row.kind !== TalentRowKind.Tree);
-    wrapped = live.map(linesOf);
-    total = measure();
-  }
-
-  for (let cap = 3; cap >= 1 && top + total > bottom; cap -= 1) {
-    wrapped = wrapped.map((entry) => ({
-      desc: clampTo(entry.desc, cap),
-      next: clampTo(entry.next, cap),
-    }));
-    total = measure();
-  }
-  const limit = top + total <= bottom ? bottom : bottom - NOTE_ROW_H;
-  const source = live;
+  const categories = rows.filter((row) => row.kind === TalentRowKind.Category);
+  const others = rows.filter((row) => row.kind !== TalentRowKind.Category);
 
   const placed: PlacedTalentRow[] = [];
   let cursor = top;
-  let dropped = 0;
 
-  for (let i = 0; i < source.length; i += 1) {
-    const row = source[i];
-    if (row === undefined) continue;
-    const lines = wrapped[i] ?? { desc: [], next: [] };
-    const h = rowHeight(row, lines.desc.length + lines.next.length);
-    if (cursor + h > limit) {
-      dropped = source.length - i;
-      break;
-    }
-
-    const rowRect: PanelRect = { x, y: cursor, w: innerW, h };
-    const plus =
-      row.kind === TalentRowKind.Talent && row.canSpend
-        ? { x: rowRect.x + rowRect.w - PLUS_W, y: rowRect.y + 1, w: PLUS_W, h: PLUS_H }
-        : null;
-    placed.push({ row, rect: rowRect, plus, descLines: lines.desc, nextLines: lines.next });
+  // ── the sentence rows, above the grid ────────────────────────────────────
+  for (const row of others) {
+    const h = rowHeight(row, 1);
+    if (cursor + h > bottom) break;
+    placed.push({
+      row,
+      rect: { x, y: cursor, w: innerW, h },
+      plus: null,
+      descLines: [],
+      nextLines: [],
+      cells: [],
+    });
     cursor += h;
   }
 
-  if (dropped > 0 && cursor + NOTE_ROW_H <= bottom) {
-    const what = dropped === 1 ? '1 talent hidden' : `${dropped} talents hidden`;
+  // ── the grid ─────────────────────────────────────────────────────────────
+  /**
+   * THE WHOLE BAND IS THE GRID'S NOW.
+   *
+   * An earlier version of this reserved a strip at the foot for the hovered
+   * talent's description. A hover CARD replaced it, on the ask, and the height
+   * that strip was costing on every frame — whether or not anything was being
+   * pointed at — is now another row of categories.
+   */
+  const gridBottom = bottom;
+  let dropped = 0;
+  for (let i = 0; i < categories.length; i += 1) {
+    const row = categories[i];
+    if (row === undefined || row.kind !== TalentRowKind.Category) continue;
+    const col = i % columns;
+    const line = Math.floor(i / columns);
+    const y = cursor + line * CAT_H;
+    if (y + CAT_H > gridBottom) {
+      dropped = categories.length - i;
+      break;
+    }
+    const bx = gridX + col * (COL_W + COL_GAP);
+    const cells: PanelRect[] = row.talents.map((_, n) => ({
+      x: bx + n * (ICON_PX + CELL_GAP),
+      y: y + CAT_HEAD_H,
+      w: ICON_PX,
+      h: ICON_PX,
+    }));
+    placed.push({
+      row,
+      rect: { x: bx, y, w: COL_W, h: CAT_H },
+      plus: null,
+      descLines: [],
+      nextLines: [],
+      cells,
+    });
+  }
+  const lines = Math.ceil(Math.min(categories.length, categories.length - dropped) / columns);
+  cursor += Math.max(0, lines) * CAT_H;
+
+  if (dropped > 0 && cursor + NOTE_ROW_H <= gridBottom) {
+    const what = dropped === 1 ? '1 category hidden' : `${dropped} categories hidden`;
     placed.push({
       row: { kind: TalentRowKind.Note, text: `${what} — panel too small` },
       rect: { x, y: cursor, w: innerW, h: NOTE_ROW_H },
       plus: null,
       descLines: [],
       nextLines: [],
+      cells: [],
     });
   }
 
   return { close, placed };
 }
-
-// ---------------------------------------------------------------------------
-// Hit testing
-// ---------------------------------------------------------------------------
 
 export const TalentHitKind = {
   /** The × on the header. The mouse's copy of the key that opened the panel. */
@@ -970,48 +1003,135 @@ export function talentPanelHitAt(
   rows: readonly TalentRow[],
   px: number,
   py: number,
+  /**
+   * WHICH TALENT IS ARMED, so a press on it reads as the CONFIRM half of
+   * `pressSpend` rather than as another arm. Optional, because a caller that is
+   * only asking "what is under the pointer" — the hover path — has no arming to
+   * report and must not be made to invent one.
+   */
+  armedId: string | null = null,
 ): TalentHit | null {
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
 
-  const geometry = talentPanelGeometry(rect, rows, talentWrapper());
+  const geometry = talentPanelGeometry(rect, rows);
   if (inside(geometry.close)) return { kind: TalentHitKind.Close };
 
   for (const placed of geometry.placed) {
-    if (placed.row.kind !== TalentRowKind.Talent) continue;
-    // THE `+` FIRST: it sits inside the row's own rect, so testing the row first
-    // would make the button unreachable while looking perfectly pressable.
-    if (placed.plus !== null && inside(placed.plus)) {
-      return { kind: TalentHitKind.Spend, index: placed.row.index, talentId: placed.row.id };
+    if (placed.row.kind !== TalentRowKind.Category) continue;
+    /**
+     * THE ICONS, AGAINST THE RECTS THE GEOMETRY COMPUTED — never re-derived from
+     * the row's position. This file's header argues at length that the painter
+     * and this function must agree to the pixel; a grid gives five chances per
+     * category to disagree instead of one, so the rects travel.
+     */
+    const talents = placed.row.talents;
+    for (let n = 0; n < placed.cells.length; n += 1) {
+      const box = placed.cells[n];
+      const cell = talents[n];
+      if (box === undefined || cell === undefined) continue;
+      if (!inside(box)) continue;
+      /**
+       * AN ICON IS THE `+`. There is no separate plus button in the grid, and
+       * that is the design rather than an omission: five plus-buttons inside a
+       * 176-pixel strip would each be a small target beside a large one, and the
+       * wrong one is always the easy press.
+       *
+       * `pressSpend` already owns the two-press rule — arm, then confirm, with
+       * "there is no refund" said in between — so a press on an ARMED icon is a
+       * spend and a press on any other is an arm. That is the same safety the
+       * old `+` had, on a bigger target.
+       */
+      return cell.id === armedId && cell.canSpend
+        ? { kind: TalentHitKind.Spend, index: n, talentId: cell.id }
+        : { kind: TalentHitKind.Row, index: n };
     }
-    if (inside(placed.rect)) return { kind: TalentHitKind.Row, index: placed.row.index };
   }
+
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Painting
-// ---------------------------------------------------------------------------
-
 /**
- * A talent's icon, blitted 1:1 and CENTRE-CROPPED into its box, with a traced
- * frame around it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE POINTER IS OVER, AS A CARD. The hover half of the tree.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * NEVER SCALED — nearest-neighbour downscaling of a 64x64 ability icon is
- * exactly the resampling render/canvas.ts's backbuffer exists to prevent, and a
- * smoothed one would be the only blurred thing on the screen.
+ * The talent screen shows fifteen icons and no prose; this is where the prose
+ * went. Asked for directly, and it is also what makes the grid affordable —
+ * every description printed inline was a row, and rows are what ran out.
  *
- * THE FALLBACK IS A LETTER, NOT THE MISSING-ASSET BOX. It USED to be the only
- * path — the loader filtered talent icons out behind a dead `icon_ability_`
- * prefix — and it is now the CLONE path: `client/public/assets/` is gitignored
- * wholesale, so a checkout with no art has to stay playable. Four identical
- * violet error squares would make the panel unreadable, for exactly the reason
- * ui/hotbar.ts gives for its own initials.
- *
- * THE FRAME IS DRAWN EITHER WAY. TalentTrees.lua:424 draws `self.talent_frame`
- * around every node regardless of the icon, and it is what makes a row read as a
- * BUTTON rather than as a line of text with a picture next to it.
+ * IT REUSES `talentPanelHitAt` RATHER THAN WALKING THE GRID AGAIN. The card must
+ * appear over exactly the icon a click would hit, and two traversals of the same
+ * rects are two chances to disagree about which one that is.
  */
+/**
+ * The cell under the pointer. Split out because `talentTipAt` needs the TALENT
+ * and `talentPanelHitAt` needs only its index — and an index alone cannot name a
+ * talent once categories exist, since index 0 means something different in every
+ * one of them.
+ */
+function cellAt(
+  rows: readonly TalentRow[],
+  index: number,
+  px: number,
+  py: number,
+  rect: PanelRect,
+): TalentCell | undefined {
+  const geometry = talentPanelGeometry(rect, rows);
+  for (const placed of geometry.placed) {
+    if (placed.row.kind !== TalentRowKind.Category) continue;
+    const box = placed.cells[index];
+    if (box === undefined) continue;
+    if (px < box.x || px >= box.x + box.w || py < box.y || py >= box.y + box.h) continue;
+    return placed.row.talents[index];
+  }
+  return undefined;
+}
+
+export function talentTipAt(
+  rect: PanelRect,
+  rows: readonly TalentRow[],
+  px: number,
+  py: number,
+): HoverCard | null {
+  /**
+   * THE SAME TRAVERSAL A CLICK USES, so the card appears over exactly the icon a
+   * press would hit. Two walks of the same rects are two chances to disagree
+   * about which one that is.
+   *
+   * `armedId` is deliberately not passed: whether a talent is armed changes what
+   * a PRESS means, never what the pointer is OVER, and a hover that reported
+   * `Spend` would put the card on a different code path for no reason.
+   */
+  const hit = talentPanelHitAt(rect, rows, px, py);
+  if (hit === null || hit.kind === TalentHitKind.Close) return null;
+
+  const cell = cellAt(rows, hit.index, px, py, rect);
+  if (cell === undefined) return null;
+
+  const wrap = talentWrapper();
+  // A CARD WIDE ENOUGH TO READ AND NARROW ENOUGH TO SIT BESIDE ITS ICON. 240 is
+  // about forty monospace characters, which is a sentence and a half.
+  const width = 240;
+  return {
+    title: `${cell.name}  ${cell.level}/${cell.maxLevel}`,
+    // WHAT IT COSTS TO PRESS, or that it is never pressed. Printing an AP cost
+    // on a passive would be a lie about how the talent works.
+    meta: cell.passive
+      ? 'always on'
+      : [
+          `${cell.cost.ap} AP`,
+          cell.cost.resource > 0 ? `${cell.cost.resource} resolve` : null,
+          cell.cooldownTurns > 0 ? `${cell.cooldownTurns}t cooldown` : null,
+          cell.range >= 2 ? `${cell.range} tiles` : 'melee',
+        ]
+          .filter((part) => part !== null)
+          .join('  ·  '),
+    lines: wrap(cell.desc, width),
+    nextLines: cell.descNext === null ? [] : wrap(`${ARROW} ${cell.descNext}`, width),
+  };
+}
+
 function drawTalentIcon(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
@@ -1078,178 +1198,96 @@ function drawRow(
   sprites: SpriteSource,
   placed: PlacedTalentRow,
   armedId: string | null,
-  hovered: number | null,
+  // THE HOVER HIGHLIGHT IS THE RING, drawn per icon from `armedId` and
+  // `canSpend` — an index cannot name an icon now that categories exist, since
+  // index 0 means something different in every one of them.
+  _hovered: number | null,
 ): void {
   const { row, rect } = placed;
 
   switch (row.kind) {
-    case TalentRowKind.Tree: {
+    case TalentRowKind.Category: {
       /**
-       * A TREE'S HEADING — the name, and a hairline running to the panel's edge.
+       * ═══════════════════════════════════════════════════════════════════
+       * ONE CATEGORY: THE HEADING, THEN A ROW OF ICONS, THEN THE RANKS.
+       * ═══════════════════════════════════════════════════════════════════
        *
-       * Drawn in the meta face rather than the talent face, and in `GREY_HI`
-       * rather than parchment, because a heading that competes with the talent
-       * names under it turns a grouping into a list of eight things. The rule is
-       * what does the grouping; the word only names it.
+       * The shape the player asked for, taken from ToME's own screen. The
+       * heading is GOLD and in the meta face so it names the group without
+       * competing with the icons — a header as loud as its contents turns a
+       * grouping back into a list.
        */
       ctx.font = FONT_META;
-      ctx.fillStyle = PALETTE.GOLD;
       ctx.textAlign = 'left';
-      ctx.fillText(fitText(ctx, row.text, rect.w), rect.x, rect.y + 6);
-      const under = rect.y + TREE_ROW_H - 4;
-      const wordW = Math.min(rect.w, ctx.measureText(row.text).width + 6);
-      ctx.fillStyle = PALETTE.SLATE;
-      ctx.fillRect(rect.x + wordW, under, Math.max(0, rect.w - wordW), 1);
+      ctx.fillStyle = PALETTE.GOLD;
+      ctx.fillText(fitText(ctx, row.text, rect.w), rect.x, rect.y + 9);
+
+      for (let n = 0; n < placed.cells.length; n += 1) {
+        const box = placed.cells[n];
+        const cell = row.talents[n];
+        if (box === undefined || cell === undefined) continue;
+
+        const armed = armedId === cell.id;
+        const atCap = cell.level >= cell.maxLevel;
+        const ink = armed ? PALETTE.GOLD : cell.canSpend ? PALETTE.PARCHMENT : PALETTE.SLATE;
+
+        /**
+         * THE RING CARRIES THE STATE, AND IT HAS TO SURVIVE GREYSCALE — the rule
+         * ui/panel.ts sets for every control in this client. Armed is a thick
+         * ring, buyable is a thin one, and a talent you cannot afford is drawn in
+         * slate rather than hidden: a control that vanishes when it is refused
+         * teaches a player it does not exist.
+         */
+        ctx.fillStyle = ink;
+        drawRowRing(ctx, box, armed ? 2 : 1);
+
+        drawTalentIcon(ctx, sprites, cell.icon, cell.name, box, ink);
+
+        // `n/max`, centred under the icon — TalentTrees.lua:429-433, with
+        // LevelupDialog.lua:537-549's three-way colour split on this palette.
+        ctx.font = FONT_LEVEL;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = atCap ? PALETTE.GOLD : cell.canSpend ? PALETTE.PARCHMENT : PALETTE.GREY_HI;
+        ctx.fillText(
+          `${cell.level}/${cell.maxLevel}`,
+          box.x + ICON_PX / 2,
+          box.y + ICON_PX + RANK_H - 2,
+        );
+        ctx.textAlign = 'left';
+      }
       return;
     }
+
     case TalentRowKind.Points: {
-      // ═══ THE COUNT IS ALWAYS DRAWN. THE PLATE IS THE EMPHASIS AND IS NOT ═══
-      // LevelupDialog.lua:757-784 keeps its four counters on screen at zero;
-      // :690-691 lights `glow = 0.6` only above zero. This is that split, in two
-      // lines: the gold plate is upstream's glow, and the sentence underneath it
-      // is upstream's counter. See `pointsText` for the full argument and for
-      // what it reverses.
+      /**
+       * THE COUNT IS ALWAYS DRAWN; THE PLATE IS THE EMPHASIS AND IS NOT.
+       * LevelupDialog.lua:757-784 keeps its counters on screen at zero and
+       * :690-691 lights a glow only above zero. See `pointsText` for the whole
+       * argument and for what it reverses.
+       */
       const armedToSpend = row.unspent > 0;
       ctx.font = FONT_META;
+      ctx.textAlign = 'left';
       if (armedToSpend) {
-        // A plate dark enough to read against whatever the panel skin is,
-        // because this is the one line that says the screen has something for
-        // you RIGHT NOW.
-        ctx.fillStyle = PALETTE.INK;
-        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        ctx.fillStyle = PALETTE.GOLD;
+        ctx.fillRect(rect.x, rect.y + 1, 3, Math.max(1, rect.h - 3));
       }
       ctx.fillStyle = armedToSpend ? PALETTE.GOLD : PALETTE.GREY_HI;
-      ctx.fillText(fitText(ctx, row.text, rect.w - 2), rect.x + 2, rect.y + rect.h / 2);
+      ctx.fillText(fitText(ctx, row.text, rect.w - 6), rect.x + 6, rect.y + rect.h / 2);
       return;
     }
+
+    case TalentRowKind.Detail:
+      // NEVER PLACED. It survives as the CONTENT of the hover card that replaced
+      // it — see `talentTipAt`. Drawing it here would put the same prose on
+      // screen twice, once under the pointer and once nailed to the panel.
+      return;
 
     case TalentRowKind.Note: {
       ctx.font = FONT_BODY;
+      ctx.textAlign = 'left';
       ctx.fillStyle = PALETTE.GREY_HI;
       ctx.fillText(fitText(ctx, row.text, rect.w), rect.x, rect.y + rect.h / 2);
-      return;
-    }
-
-    case TalentRowKind.Talent: {
-      const armed = armedId === row.id;
-      const atCap = row.level >= row.maxLevel;
-
-      /**
-       * ═══════════════════════════════════════════════════════════════════
-       * A PASSIVE DRAWS AS A PROPERTY, NOT AS A BUTTON.
-       * ═══════════════════════════════════════════════════════════════════
-       *
-       * No icon block, no `n/max` plate under it, no ring — the three things
-       * that make an active row look pressable. It keeps its `+`, because
-       * RAISING one is exactly as legal as raising anything else and that is the
-       * whole reason it is on this panel.
-       *
-       * The word ALWAYS in front of the rank is the only label that says which
-       * kind this is, and it is worth one: `TalentKind` is on the wire and a
-       * player cannot read a type.
-       */
-      if (row.passive) {
-        ctx.font = FONT_NAME;
-        ctx.fillStyle = armed ? PALETTE.GOLD : PALETTE.PARCHMENT;
-        ctx.textAlign = 'left';
-        const head = `${row.name}  ·  always  ${String(row.level)}/${String(row.maxLevel)}`;
-        const headW = Math.max(0, rect.w - PLUS_W - 6);
-        ctx.fillText(fitText(ctx, head, headW), rect.x, rect.y + PASSIVE_TOP);
-
-        ctx.font = FONT_BODY;
-        ctx.fillStyle = PALETTE.BONE;
-        let py = rect.y + PASSIVE_TOP + DESC_LINE_H;
-        for (const line of placed.descLines) {
-          ctx.fillText(line, rect.x, py);
-          py += DESC_LINE_H;
-        }
-        ctx.fillStyle = PALETTE.GOLD;
-        for (const line of placed.nextLines) {
-          ctx.fillText(line, rect.x, py);
-          py += DESC_LINE_H;
-        }
-
-        if (placed.plus !== null) {
-          drawButton(ctx, placed.plus, armed ? PLUS_ARMED_LABEL : PLUS_LABEL, {
-            ink: armed ? PALETTE.GOLD : PALETTE.PARCHMENT,
-          });
-        }
-        return;
-      }
-
-      // The ring first, so everything else lands on top of it.
-      ctx.fillStyle = armed ? PALETTE.GOLD : PALETTE.PARCHMENT;
-      drawRowRing(ctx, rect, armed ? 2 : hovered === row.index ? 1 : 0);
-
-      const box: PanelRect = { x: rect.x + 2, y: rect.y + 2, w: ICON_PX, h: ICON_PX };
-      drawTalentIcon(
-        ctx,
-        sprites,
-        row.icon,
-        row.name,
-        box,
-        armed ? PALETTE.GOLD : row.canSpend ? PALETTE.PARCHMENT : PALETTE.SLATE,
-      );
-
-      // ═══ `n/max`, CENTRED UNDER THE ICON — TalentTrees.lua:429-433 ═══
-      // The colour is LevelupDialog.lua:537-549's three-way split, mapped onto
-      // this palette; the GLYPH beside it in the button slot is what makes the
-      // state survive greyscale. See the header.
-      ctx.font = FONT_LEVEL;
-      ctx.textAlign = 'center';
-      ctx.fillStyle = atCap ? PALETTE.GOLD : row.canSpend ? PALETTE.PARCHMENT : PALETTE.GREY_HI;
-      ctx.fillText(
-        `${row.level}/${row.maxLevel}`,
-        box.x + ICON_PX / 2,
-        box.y + ICON_PX + LEVEL_LABEL_H / 2,
-      );
-      ctx.textAlign = 'left';
-
-      const textX = rect.x + 2 + ICON_PX + ICON_GAP;
-      // The prose column stops short of the button slot, so a long talent name
-      // can never be drawn underneath the `+` that buys it.
-      const textW = Math.max(0, rect.x + rect.w - textX - PLUS_W - 4);
-
-      // --- the name --------------------------------------------------------
-      ctx.font = FONT_NAME;
-      ctx.fillStyle = armed ? PALETTE.GOLD : PALETTE.PARCHMENT;
-      ctx.fillText(fitText(ctx, row.name, textW), textX, rect.y + 8);
-
-      // --- the current -> next diff, which is the point of the panel --------
-      // Two lines rather than ToME's inline `[-> ]` because our two values are
-      // whole sentences; the ARROW on the second line carries the relation.
-      // EVERY LINE THE GEOMETRY DECIDED ON, and not one it did not: the row was
-      // made tall enough for exactly these, so re-wrapping here — or trimming to
-      // a fixed two — is how a panel comes to reserve room it does not use, or
-      // draw past its own bottom edge.
-      ctx.font = FONT_BODY;
-      let lineY = rect.y + DESC_TOP;
-      ctx.fillStyle = PALETTE.BONE;
-      for (const line of placed.descLines) {
-        ctx.fillText(line, textX, lineY);
-        lineY += DESC_LINE_H;
-      }
-      ctx.fillStyle = PALETTE.GOLD;
-      for (const line of placed.nextLines) {
-        ctx.fillText(line, textX, lineY);
-        lineY += DESC_LINE_H;
-      }
-
-      // --- the button slot: `+`, MAX, or nothing ---------------------------
-      if (placed.plus !== null) {
-        drawButton(ctx, placed.plus, armed ? PLUS_ARMED_LABEL : PLUS_LABEL, {
-          ink: armed ? PALETTE.GOLD : PALETTE.PARCHMENT,
-        });
-      } else if (atCap) {
-        // THE WORD, WHERE THE BUTTON WOULD HAVE BEEN. A capped talent and a
-        // talent nobody can afford are two different facts and must not both be
-        // "the button is missing".
-        ctx.font = FONT_META;
-        ctx.textAlign = 'right';
-        ctx.fillStyle = PALETTE.GOLD;
-        ctx.fillText(MAX_WORD, rect.x + rect.w - 2, rect.y + 1 + PLUS_H / 2);
-        ctx.textAlign = 'left';
-      }
       return;
     }
   }
@@ -1307,7 +1345,7 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
 
   drawHeader(ctx, sprites, panelTitle(options.level), rect, FONT_META);
 
-  const geometry = talentPanelGeometry(rect, rows, talentWrapper());
+  const geometry = talentPanelGeometry(rect, rows);
   for (const placed of geometry.placed) drawRow(ctx, sprites, placed, armedId, hovered);
 
   // ONE SENTENCE ABOUT THE PRESS, and only while something is armed. A permanent
