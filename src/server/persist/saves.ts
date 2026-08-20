@@ -141,7 +141,7 @@
 
 import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
 
@@ -1788,6 +1788,48 @@ export function serialiseCharacter(file: CharacterFile): string {
     // reset every binding" about somebody who did not.
     keybinds,
     zoom: file.zoom,
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE FOUR THAT WERE NEVER WRITTEN DOWN AT ALL.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `filed`, `explored`, `exploredElsewhere` and `layoutRevision` were absent
+     * from this literal, and the paragraph forty lines up says exactly what that
+     * costs: *"a field missing from this literal is never written at ALL — the
+     * canonical object is rebuilt from scratch for byte-stability, so it
+     * silently drops anything it does not name."*
+     *
+     * SO THE CASE FILE DID NOT SURVIVE A LOGOUT, and neither did the fog.
+     * `casefile.ts` calls the file *"the strongest retention mechanic in the
+     * genre"* and says it is *"persisted across sessions"*; it was reset to
+     * `0 of 27` every time anybody came back, and the moor was black again.
+     *
+     * ═══ WHY EVERY TEST IN THE TREE PASSED THROUGH THIS ═══
+     * The chain is snapshot -> bridge -> `CharacterFile` -> HERE -> disk.
+     * `fog-persistence.test.ts` pins the FIRST hop ("nothing was ever offered to
+     * the persist layer") and `parseCharacterFile` reading the field back pins
+     * the LAST. Both are green with the middle hop deleting the data, because
+     * the only thing that could ever have caught it is a round trip through the
+     * bytes — and nothing did one. The same shape as the inert passives: engine
+     * covered, wiring not, in the one file no test imported.
+     *
+     * ═══ CONDITIONAL, JOINING `carried`/`equipped`/`keybinds` ═══
+     * `JSON.stringify` omits an undefined-valued key, so a character who has
+     * closed nothing and walked nowhere produces no keys and every save already
+     * on disk still round-trips byte-identically. Writing `[]` and `""` instead
+     * would rewrite every file in `data/characters/` on first load and step
+     * every `.bak` a generation for nothing.
+     *
+     * `layoutRevision` TRAVELS WITH `explored` AND IS USELESS WITHOUT IT. The
+     * loader drops the fog unless this matches `LAYOUT_REVISION`, so writing the
+     * bitset and not the stamp would persist a fog that is discarded on every
+     * load — the same bug with an extra step. `createCharacterFile` already
+     * pairs them; this keeps the pair together on the way out.
+     */
+    explored: file.explored,
+    layoutRevision: file.layoutRevision,
+    exploredElsewhere: file.exploredElsewhere,
+    filed: file.filed,
     resources: {
       hp: file.resources.hp,
       ap: file.resources.ap,
@@ -1930,6 +1972,44 @@ export type SaveStoreOptions = {
   readonly atomic?: Omit<AtomicWriteOptions, 'onWarn'>;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *        ONE ROW OF A CHARACTER SELECT SCREEN, AND NOTHING MORE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ENOUGH TO CHOOSE BY AND NOT ONE FIELD MORE. A roster row answers exactly one
+ * question — *"which of these do I want to be tonight"* — and every field here
+ * earns its place against that question: who they are, what they are, how far
+ * along, how much of the file they have closed, and when you last played them.
+ * Inventory, talents, position and effects are all on disk and none of them
+ * belong on a list; loading a whole `CharacterFile` per row to show a name is
+ * how a select screen becomes the slowest part of a game.
+ *
+ * ═══ A FILE THIS BUILD CANNOT READ STILL GETS A ROW ═══
+ * `playable: false`, drawn and refused rather than omitted. A roster that
+ * silently drops a corrupt or too-new save tells a player their character was
+ * DELETED — which is a lie, the bytes are right there — and the first thing
+ * they will do about it is make a new one and start overwriting. The store's
+ * whole posture on damaged files is to leave them where a human can look at
+ * them (see `loadCharacter`); a picker that hides them undoes that in one step.
+ */
+export type CharacterHeader = {
+  readonly id: string;
+  readonly name: string;
+  /** A SOFT reference, exactly as on `CharacterFile`: may name a class this build lost. */
+  readonly classId: string;
+  readonly level: number;
+  /** How many cases are closed. The number the character sheet calls `Cases`. */
+  readonly filed: number;
+  readonly money: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  /** False when the bytes are on disk and this build refuses to play them. */
+  readonly playable: boolean;
+  /** Why not, for the row to say out loud. Absent when `playable`. */
+  readonly refusal?: LoadOutcome;
+};
+
 export type SaveStore = {
   readonly root: string;
   /** Never throws. Falls back to `.bak`, then reports. */
@@ -1950,6 +2030,18 @@ export type SaveStore = {
   close(): Promise<void>;
   /** How many characters have an autosave waiting. For tests and the ops panel. */
   pendingCount(): number;
+  /**
+   * Every character this account owns, newest-played first. Never throws.
+   *
+   * NEWEST FIRST because that is the one they want: a player with four
+   * characters came back to continue one of them, and the alphabet knows
+   * nothing about which. `updatedAt` is written on every save, so the ordering
+   * is a fact rather than a guess.
+   *
+   * AN OWNER WITH NO DIRECTORY IS NOT AN ERROR. It is the overwhelmingly common
+   * case — every account, once — and it answers `[]`.
+   */
+  listCharacters(ownerId: string): Promise<readonly CharacterHeader[]>;
 };
 
 type PendingSave = {
@@ -2287,6 +2379,101 @@ export function createSaveStore(options: SaveStoreOptions): SaveStore {
     return { outcome: LoadOutcome.Corrupt, file: null, migrated: false, problems };
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ROSTER — READ THE DIRECTORY, NOT AN INDEX.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * NO INDEX FILE, DELIBERATELY. An index is a second source of truth about
+   * which characters exist, and the first time a write half-fails it disagrees
+   * with the directory — at which point a player either sees a character that
+   * is gone or does not see one that is there. The directory IS the index; it
+   * is written atomically per character and it cannot drift from itself.
+   *
+   * THE COST IS ONE `readdir` AND N SMALL READS, ONCE, at the moment somebody
+   * is looking at a menu. It is not on any hot path and it never will be — the
+   * screen this feeds is the one place in the game where nothing is moving.
+   *
+   * `loadCharacter` DOES THE READING, so migration, `.bak` fallback and every
+   * refusal rule are applied here exactly as they are on the way into the world.
+   * A roster that parsed the JSON itself would be a SECOND reader of the save
+   * format — this codebase's most-repeated bug shape, hit six times — and the
+   * day the two disagreed the menu would offer a character the world refuses.
+   */
+  const listCharacters = async (ownerId: string): Promise<readonly CharacterHeader[]> => {
+    const safeOwner = sanitiseId(ownerId);
+    if (safeOwner === null) return [];
+    const dir = join(resolve(root), CHARACTERS_DIR, safeOwner);
+
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch (err) {
+      // ENOENT IS THE COMMON CASE, not an error: every account has no directory
+      // until its first save. Anything else is worth a line, because a roster
+      // that silently reads as empty is indistinguishable from a wiped account.
+      if (errorCode(err) !== 'ENOENT') {
+        logger.error(
+          { owner: maskId(safeOwner), error: describeError(err) },
+          'could not list characters for this account',
+        );
+      }
+      return [];
+    }
+
+    const out: CharacterHeader[] = [];
+    for (const entry of names) {
+      // `.bak` IS NOT A CHARACTER. It is the previous copy of one that is
+      // already in this list, and a roster showing both would offer a player
+      // their own backup as a second character to play.
+      if (!entry.endsWith('.json') || entry.endsWith('.bak')) continue;
+      const id = sanitiseId(entry.slice(0, -'.json'.length));
+      if (id === null) continue;
+
+      const result = await loadCharacter(safeOwner, id);
+      const file = result.file;
+      if (file === null) {
+        // MISSING MEANS THE FILE VANISHED BETWEEN THE `readdir` AND THE READ,
+        // which is a race with nothing behind it — no row. Every other empty
+        // outcome is a file that IS there and this build will not play, and
+        // those get a row that says so.
+        if (result.outcome === LoadOutcome.Missing) continue;
+        out.push({
+          id,
+          // THE ID IS THE ONLY NAME AVAILABLE. The file that would have carried
+          // a real one is the file that could not be read.
+          name: id,
+          classId: UNASSIGNED_CLASS,
+          level: BIRTH_LEVEL,
+          filed: 0,
+          money: 0,
+          createdAt: '',
+          updatedAt: '',
+          playable: false,
+          refusal: result.outcome,
+        });
+        continue;
+      }
+      out.push({
+        id: file.id,
+        name: file.name,
+        classId: file.classId,
+        level: file.level ?? BIRTH_LEVEL,
+        filed: file.filed?.length ?? 0,
+        money: file.money ?? BIRTH_MONEY,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+        playable: true,
+      });
+    }
+
+    // NEWEST PLAYED FIRST, and an unreadable row has no stamp — it sorts last
+    // rather than first, because a row you cannot click does not belong at the
+    // top of a menu.
+    out.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+    return out;
+  };
+
   return {
     root,
     loadCharacter,
@@ -2295,6 +2482,7 @@ export function createSaveStore(options: SaveStoreOptions): SaveStore {
     flush,
     close,
     pendingCount: (): number => pending.size,
+    listCharacters,
   };
 }
 

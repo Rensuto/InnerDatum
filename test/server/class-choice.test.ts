@@ -31,7 +31,12 @@ import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
 import type { TalentEngine } from '../../src/server/engine/talents.ts';
 import type { CharacterRestore, IdentityPort, PersistPort } from '../../src/server/net/gateway.ts';
-import type { CharacterFile, LoadResult, SaveStore } from '../../src/server/persist/saves.ts';
+import type {
+  CharacterFile,
+  CharacterHeader,
+  LoadResult,
+  SaveStore,
+} from '../../src/server/persist/saves.ts';
 import type { World } from '../../src/server/world/world.ts';
 
 /**
@@ -235,6 +240,25 @@ function disk(): Disk {
 
   const store: SaveStore = {
     root: '<memory>',
+    // AN IN-MEMORY STORE STILL OWES THE WHOLE CONTRACT. This fixture predates
+    // the roster and has no directory to read, so it answers from the same map
+    // its loader uses — which keeps it honest if a test ever asks.
+    listCharacters: (ownerId: string): Promise<readonly CharacterHeader[]> =>
+      Promise.resolve(
+        [...files.entries()]
+          .filter(([key]) => key.startsWith(`${ownerId}/`))
+          .map(([, file]) => ({
+            id: file.id,
+            name: file.name,
+            classId: file.classId,
+            level: file.level ?? 1,
+            filed: file.filed?.length ?? 0,
+            money: file.money ?? 0,
+            createdAt: file.createdAt,
+            updatedAt: file.updatedAt,
+            playable: true,
+          })),
+      ),
     loadCharacter: (ownerId: string, characterId: string): Promise<LoadResult> => {
       const file = files.get(keyOf(ownerId, characterId));
       if (file === undefined) {
