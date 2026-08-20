@@ -4428,6 +4428,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const { world, engine } = realm;
 
     /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * EVERY NAME IN THE ROOM, TAKEN BEFORE THE ROOM CAN CHANGE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The only moment in a pump when everything the pump's events can name is
+     * still standing. A floor reset removes every hostile before those events
+     * are turned into prose, and the line it costs is the one that killed you.
+     * See `namesThisPump`.
+     *
+     * CLEARED FIRST, NOT ACCUMULATED. Two realms pump back to back on a
+     * crossing, and a map that carried the first room's dead into the second
+     * would answer for ids that are not in play — which is a wrong name rather
+     * than a missing one, and a wrong name is worse.
+     */
+    namesThisPump.clear();
+    for (const actor of world.allActors()) namesThisPump.set(actor.id, actor.name);
+
+    /**
      * THE ROAMERS WANDER HERE, before anything is broadcast, so a frame sent
      * below already describes where they are.
      *
@@ -8367,6 +8385,41 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const reapedNames = new Map<string, string>();
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE NAMES THIS PUMP STARTED WITH — because a floor reset takes bodies away
+   * BEFORE the events that mention them are turned into prose.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `reapedNames` above covers ONE removal path: a body buried by `result.reaped`
+   * while a shot of its is still in the air. It is correct and it is not enough.
+   * A floor reset removes every hostile in the room — that is its whole job, "a
+   * reset means the fight did not happen" — and it runs inside the SAME PUMP
+   * that resolved the blow which caused it. So for a solo player the sequence is
+   *
+   *     Index Wraith hits Player 1.  15 damage.  Player 1 2/72.
+   *     someone hits Player 1.        3 damage.  Player 1 0/72.
+   *     Player 1 is DOWN — 5 turns, and nobody is coming.
+   *
+   * and the anonymous line is THE ONE THAT KILLED THEM. Measured over the real
+   * socket; the id in the event was `realm:site:encounter:1:mon_index_husk` and
+   * `realmOf` scans LIVE worlds, so it found nothing and `homeOf` fell through
+   * to the fixture realm — the same fallback that once made every passive inert.
+   *
+   * ═══ A SNAPSHOT, NOT ANOTHER SPECIAL CASE ═══
+   * The alternative was to teach the floor reset to memoise what it removes, and
+   * that fixes exactly one more path — leaving realm teardown, `close`, and
+   * whatever removes a body next. This asks the question once, at the only
+   * moment when everything an event can possibly name is still in the world.
+   *
+   * BOUNDED BY THE PUMP. Filled at the top of `pumpRealm` and emptied at the
+   * bottom, so it holds one room's worth of names for the duration of one
+   * synchronous pass and never survives into the next. It does not replace
+   * `reapedNames`, which spans pumps and is the only thing that can answer for
+   * an orb whose shooter died three game turns ago.
+   */
+  const namesThisPump = new Map<string, string>();
+
+  /**
    * A body's display name. The world first, then the memo above.
    *
    * `'someone'` remains the last resort and it is still reachable — an id from
@@ -8378,7 +8431,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // name is a fact about an actor and not about a floor, and threading a world
     // through `recordFor`'s twelve call sites would put a parameter on every
     // sentence in the game to answer a question `homeOf` answers in one lookup.
-    homeOf(id).world.getActor(id)?.name ?? reapedNames.get(id) ?? 'someone';
+    homeOf(id).world.getActor(id)?.name ??
+    reapedNames.get(id) ??
+    namesThisPump.get(id) ??
+    'someone';
 
   /**
    * A talent's display name, from the CASTER'S OWN BOOK where there is one.
