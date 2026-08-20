@@ -812,9 +812,46 @@ export function toggleSustain(
     return { ok: true, on: false };
   }
 
-  const after = sheet.resource.max - (sustainReserve(engine, sheet) + talent.sustain.reserve);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SLOT DISPLACES, IT DOES NOT REFUSE. Actor.lua:5922-5931.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Raising a stance lowers whatever else holds its slot, rather than answering
+   * "no". Refusing would make changing stance a two-press chore in the middle of
+   * a fight — put the old one down, pick the new one up — for no gain, and
+   * upstream does not do it either.
+   */
+  const slot = talent.sustainSlot;
+  const displaced =
+    slot === undefined
+      ? []
+      : [...sheet.sustained].filter((id) => engine.registry.get(id)?.sustainSlot === slot);
+
+  /**
+   * ═══ THE DISPLACED STANCE GIVES ITS RESERVATION BACK BEFORE THE ROOM TEST ═══
+   * Counted, not yet removed. Two orderings are wrong here and both were written
+   * before this one:
+   *
+   *   TEST FIRST, then displace — refuses a swap between two stances of equal
+   *   weight in a pool that is exactly full, which is the commonest swap there
+   *   is and costs nothing.
+   *
+   *   DISPLACE FIRST, then test — if the test then fails, the old stance is
+   *   already down and the new one never went up, so a refused press leaves the
+   *   player with NEITHER. A refusal must change nothing at all.
+   *
+   * So the arithmetic happens against a hypothetical, and the sheet is not
+   * touched until the answer is yes.
+   */
+  let freed = 0;
+  for (const id of displaced) freed += engine.registry.get(id)?.sustain?.reserve ?? 0;
+
+  const after =
+    sheet.resource.max - (sustainReserve(engine, sheet) - freed + talent.sustain.reserve);
   if (after < 0) return { ok: false, reason: SustainRefusal.NoRoom };
 
+  for (const id of displaced) sheet.sustained.delete(id);
   sheet.sustained.add(talentId);
   sheet.resource.value = Math.min(sheet.resource.value, after);
   return { ok: true, on: true };
@@ -1346,6 +1383,27 @@ export type Talent = {
    * contribution type would be a second combine to keep in step with the first.
    */
   readonly sustain?: { readonly reserve: number };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHICH STANCE SLOT THIS OCCUPIES. Ported from Actor.lua:5922-5931.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Two sustains naming the same slot cannot both be up: raising one lowers the
+   * other. Upstream is nine lines and has exactly five slots in the whole game
+   * — `celestial_chant`, `alchemy_infusion`, `archery_stance`, `celestial_hymn`,
+   * `cursed_combat_style` — and FOUR OF THE FIVE are a class's identity.
+   *
+   * ═══ WHY THIS IS WORTH MORE THAN ANOTHER TALENT ═══
+   * A reservation makes a stance a COST. A slot makes it a CHOICE. Four flasks
+   * that each add a number are four numbers; four flasks that exclude one
+   * another are a mode the player re-picks every fight — and upstream leans on
+   * exactly that: `computeDamage` in explosives.lua:44-51 is a five-branch
+   * if-chain on which infusion is currently up.
+   *
+   * ABSENT MEANS NO SLOT, and a slotless sustain stacks with everything. That is
+   * the common case and stays the cheap one.
+   */
+  readonly sustainSlot?: string;
   /** GAME TURNS. 0 is at-will and gated by AP alone. See the conversions above. */
   readonly cooldownTurns: number;
   readonly targeting: TalentTargeting;
