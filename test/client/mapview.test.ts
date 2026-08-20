@@ -10,6 +10,9 @@ import {
   doorwayAt,
   doorwayLine,
   minimapRect,
+  minimapReserveH,
+  MINIMAP_MARGIN,
+  MINIMAP_MAX_H,
   partyMarks,
 } from '../../src/client/ui/mapview.ts';
 import type { SiteView } from '../../src/shared/protocol.ts';
@@ -174,5 +177,45 @@ describe('doorwayLine', () => {
     // A "quiet" beside every settlement would train a player to stop reading
     // the word — the same argument `nearestSites` makes.
     expect(doorwayLine(ALDERBROOK)).toBe('Alderbrook — step in');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DOCK RESERVES WHAT THE MINIMAP TAKES, NOT WHAT IT MIGHT TAKE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The reserve was `MINIMAP_MAX_H + MINIMAP_MARGIN * 2 + 4` — derived from the
+ * CAP rather than the box, which is a guess wearing a derivation's clothes.
+ * `minimapRect` floors its cell size, so the map draws 99x99 and the reserve
+ * claimed 150.
+ *
+ * Those 31 pixels mattered exactly once and badly: in combat the top HUD grows
+ * by the turn cards, and on a 384-tall logical viewport the band left for the
+ * dock fell to 62 against a `DOCK_MIN_H` of 84 — so the Case Log VANISHED the
+ * moment a fight started, taking the transcript of who hit whom with it. 8.8% of
+ * 9,440 sampled windows had a log while walking and none while fighting.
+ */
+describe('the minimap reserve', () => {
+  it('matches the box the minimap actually draws', () => {
+    const box = minimapRect(640);
+    expect(minimapReserveH(640)).toBe(box.y + box.h + MINIMAP_MARGIN + 4);
+  });
+
+  it('is smaller than the worst case it used to assume', () => {
+    // ═══ THE COUNTERFACTUAL ═══
+    // If these are ever equal again the log is back to losing 31 pixels it is
+    // owed, and the combat case comes back with it.
+    const capBased = MINIMAP_MAX_H + MINIMAP_MARGIN * 2 + 4;
+    expect(minimapReserveH(640)).toBeLessThan(capBased);
+  });
+
+  it('never reserves less than the minimap occupies, at any width', () => {
+    // The half that must not break: reserving too little would put the Case Log
+    // underneath the minimap, which is worse than a short log.
+    for (const width of [480, 640, 772, 1024, 1280, 1920]) {
+      const box = minimapRect(width);
+      expect(minimapReserveH(width), `${String(width)}`).toBeGreaterThanOrEqual(box.y + box.h);
+    }
   });
 });

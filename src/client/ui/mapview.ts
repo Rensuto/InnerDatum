@@ -593,6 +593,35 @@ export function minimapRect(viewW: number): MapRect {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MUCH VERTICAL SPACE THE MINIMAP ACTUALLY TAKES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The dock reserves this much before it places the Case Log beneath. It used to
+ * be `MINIMAP_MAX_H + MINIMAP_MARGIN * 2 + 4` — derived from the CAP rather than
+ * from the box, which is a guess wearing a derivation's clothes. `minimapRect`
+ * floors its cell size, so on the 170x100 overworld the map draws 99x99 and the
+ * reserve claimed 150: THIRTY-ONE PIXELS of nothing.
+ *
+ * That mattered exactly once, and badly. In combat the top HUD grows by the turn
+ * cards (14 -> 60), and on any 384-tall logical viewport the band left for the
+ * dock fell to 62 against a `DOCK_MIN_H` of 84 — so `logPanelRect` returned null
+ * and the Case Log VANISHED the instant a fight began, taking the transcript of
+ * who hit whom for how much with it. Swept across 9,440 window samples, 827 of
+ * them (8.8%) had a log during free movement and none during a fight. Giving
+ * back the thirty-one pixels the minimap never wanted covers the shortfall of
+ * twenty-two with room to spare.
+ *
+ * IT IS STILL A RESERVE AND STILL UNCONDITIONAL — it does not shrink when the
+ * world map is open, for the reason `logPanelRect` gives: a dock that re-laid
+ * itself on a keypress is worse than one a few pixels short.
+ */
+export function minimapReserveH(viewW: number): number {
+  const box = minimapRect(viewW);
+  return box.y + box.h + MINIMAP_MARGIN + 4;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE DOOR YOU ARE STANDING NEXT TO, IF ANY.
  * ═══════════════════════════════════════════════════════════════════════════
  *

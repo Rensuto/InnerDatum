@@ -294,8 +294,7 @@ import {
   CROSSING_INK,
   doorwayAt,
   doorwayLine,
-  MINIMAP_MARGIN,
-  MINIMAP_MAX_H,
+  minimapReserveH,
   MINIMAP_RADIUS,
   minimapRect,
   paintMap,
@@ -603,7 +602,9 @@ function panelBand(height: number, hudTop: number): { top: number; bottom: numbe
  * little air so the two do not touch. Derived from the minimap's own constants
  * rather than guessed, so moving one moves the other.
  */
-const MINIMAP_RESERVE_H = MINIMAP_MAX_H + MINIMAP_MARGIN * 2 + 4;
+// DERIVED FROM THE BOX, NOT THE CAP — see `minimapReserveH`. The old form used
+// MINIMAP_MAX_H and over-reserved by 31 pixels, which is what made the Case Log
+// disappear on a 384-tall viewport the moment the turn cards appeared.
 
 function logPanelRect(
   width: number,
@@ -632,7 +633,7 @@ function logPanelRect(
    * M, and a log that reflows on a keypress is worse than one that is a few
    * pixels short.
    */
-  const top = band.top + MINIMAP_RESERVE_H;
+  const top = band.top + minimapReserveH(width);
   const h = band.bottom - top;
   if (h < DOCK_MIN_H) return null;
   return { x: width - DOCK_W - DOCK_MARGIN, y: top, w: DOCK_W, h };
