@@ -160,7 +160,19 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
     expect(options).toContain('top: band.top');
     expect(options).toContain('bottom: band.bottom');
     // ...and the menu's case is still `escapeMenuRect` of exactly that.
-    expect(producer).toContain('return menuOpen ? escapeMenuRect(options) : null;');
+    //
+    // ═══ IT SPREADS `options` NOW, AND THE GUARD IS UNCHANGED IN SUBSTANCE ═══
+    // The keys screen is sized from the window while the root menu stays
+    // compact, so the resolver is told WHICH SCREEN is up — one resolver for
+    // both the painter and the hit test, which is what stops a grown panel from
+    // being drawn in one place and clicked in another. `screen` is an addition
+    // to the options object and not a replacement for its band: the two
+    // assertions above still read `top: band.top` and `bottom: band.bottom` off
+    // the same literal, so a pass that "tidied" this into
+    // `escapeMenuRect(width, height)` still fails exactly as before.
+    expect(producer).toMatch(
+      /return menuOpen \? escapeMenuRect\(\{ \.\.\.options, screen: menuScreen \}\) : null;/,
+    );
 
     // ...and the picker, one line below it, still is not derived that way — so
     // this test fails if somebody makes the two the same in EITHER direction.

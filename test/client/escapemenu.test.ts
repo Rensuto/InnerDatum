@@ -977,3 +977,157 @@ describe('drawing', () => {
     expect(texts.some((t) => t.includes('panel too small'))).toBe(true);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE KEYS SCREEN USES THE WINDOW; THE ROOT MENU STAYS COMPACT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * FOUND BY PAINTING IT AT FIVE SIZES. The panel was a fixed 360x252 and showed
+ * `1–12 of 29` on EVERY viewport, so a player on a 1280x720 monitor paged three
+ * times through their own keybinds with two thirds of the screen empty behind
+ * the panel. Nothing was ellipsised and nothing was wrong with the pager -- it
+ * was answering honestly about a panel that had decided not to grow.
+ *
+ * The root menu is six entries and a title, and it is deliberately NOT part of
+ * this: growing it would give a big monitor a wide box holding six words.
+ */
+describe('the escape menu is sized for the screen it is showing', () => {
+  const VIEWPORTS = [
+    [640, 320],
+    [640, 400],
+    [772, 480],
+    [1024, 600],
+    [1280, 720],
+  ] as const;
+
+  function rectAt(width: number, height: number, screen: MenuScreen) {
+    return escapeMenuRect({ width, height, top: 20, bottom: height - 40, screen });
+  }
+
+  /**
+   * A context that MEASURES, unlike the shared recorder in the block above —
+   * six pixels a character, which is what the 10px monospace actually measures.
+   * A stub answering zero would make every string fit and the ellipsis test
+   * below would pass on a panel one pixel wide.
+   */
+  function measuring(texts: string[]): CanvasRenderingContext2D {
+    return new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'fillText')
+            return (text: string) => {
+              texts.push(text);
+            };
+          if (prop === 'canvas') return undefined;
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+  }
+
+  function paintAt(width: number, height: number, screen: MenuScreen): string[] {
+    const rect = rectAt(width, height, screen);
+    if (rect === null) throw new Error(`no rect at ${String(width)}x${String(height)}`);
+    const texts: string[] = [];
+    drawEscapeMenu({
+      ctx: measuring(texts),
+      sprites: { sprite: () => undefined },
+      rect,
+      screen,
+      rows: escapeMenuRows(view({ screen })),
+      hoveredClose: false,
+      hovered: null,
+    });
+    return texts;
+  }
+
+  /** `1–12 of 29`, or undefined when everything fits and the pager is absent. */
+  function pagerAt(width: number, height: number): string | undefined {
+    return paintAt(width, height, MenuScreen.Keys).find((text) => /\d+ of \d+/.test(text));
+  }
+
+  it('shows more keybinds per page as the window grows', () => {
+    // The COUNTS are not pinned — they follow row heights and would make this a
+    // change-detector. What is pinned is the direction, which is the property
+    // that was wrong: it used to be flat at twelve.
+    const seen = VIEWPORTS.map(([w, h]) => rectAt(w, h, MenuScreen.Keys)?.h ?? 0);
+    for (let i = 1; i < seen.length; i += 1) {
+      expect(seen[i] ?? 0, `${String(i)}`).toBeGreaterThanOrEqual(seen[i - 1] ?? 0);
+    }
+    expect(seen[seen.length - 1] ?? 0).toBeGreaterThan(seen[0] ?? 0);
+  });
+
+  it('fits every action on one page on a large window', () => {
+    // 29 actions with no pager at all. This is the player-facing point of the
+    // whole change: on a normal monitor you read your keybinds, you do not
+    // page through them.
+    expect(pagerAt(1280, 720)).toBeUndefined();
+  });
+
+  it('NEVER pages MORE than the compact panel did, which the first attempt did', () => {
+    // ═══ THE REGRESSION THIS EXISTS FOR ═══
+    // Sizing the keys screen as a FRACTION of the band made the 640x320 floor
+    // worse, not better: 0.82 of a short band is less than the fixed 252, so
+    // `1–12 of 29` became `1–9 of 29`. A change meant to reduce paging added a
+    // page on the viewport with the least room to spare.
+    //
+    // The rule is therefore floor-RAISING: the keys screen may only ever be
+    // given more than the root would have had, never less.
+    for (const [w, h] of VIEWPORTS) {
+      const keys = rectAt(w, h, MenuScreen.Keys);
+      const root = rectAt(w, h, MenuScreen.Root);
+      expect(keys?.h ?? 0, `${String(w)}x${String(h)} height`).toBeGreaterThanOrEqual(root?.h ?? 0);
+      expect(keys?.w ?? 0, `${String(w)}x${String(h)} width`).toBeGreaterThanOrEqual(root?.w ?? 0);
+    }
+  });
+
+  it('leaves the root menu compact at every size', () => {
+    // Six entries and a title. A root menu that grew with the monitor would be
+    // a lot of air around a short list, which is not what using the space means.
+    const sizes = new Set(
+      VIEWPORTS.map(([w, h]) => `${String(rectAt(w, h, MenuScreen.Root)?.w ?? 0)}`),
+    );
+    expect(sizes.size).toBe(1);
+  });
+
+  it('ellipsises nothing on either screen at any viewport', () => {
+    const bad: string[] = [];
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys]) {
+      for (const [w, h] of VIEWPORTS) {
+        for (const text of paintAt(w, h, screen)) {
+          if (text.includes('…')) bad.push(`${String(screen)} ${String(w)}x${String(h)}: ${text}`);
+        }
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('never draws outside the window it is centred in', () => {
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys]) {
+      for (const [w, h] of VIEWPORTS) {
+        const rect = rectAt(w, h, screen);
+        expect(rect?.x ?? -1, `${String(screen)} ${String(w)} left`).toBeGreaterThanOrEqual(0);
+        expect(
+          (rect?.x ?? 0) + (rect?.w ?? 0),
+          `${String(screen)} ${String(w)} right`,
+        ).toBeLessThanOrEqual(w);
+      }
+    }
+  });
+
+  it('still answers null below the floor, whichever screen is asked for', () => {
+    // The growth rule must not have widened what the panel ACCEPTS — a keys
+    // screen that opened into a band the root refuses would draw over the
+    // hotbar.
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys]) {
+      expect(
+        escapeMenuRect({ width: 640, height: 400, top: 0, bottom: 10, screen }),
+        String(screen),
+      ).toBeNull();
+    }
+  });
+});

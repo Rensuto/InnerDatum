@@ -2405,7 +2405,10 @@ function unmovedPanelRect(
     case DraggablePanel.Inventory:
       return invVisible ? inventoryPanelRect(options) : null;
     case DraggablePanel.Menu:
-      return menuOpen ? escapeMenuRect(options) : null;
+      // THE SCREEN GOES THROUGH HERE, not through a second call on the input
+      // side: this resolver is what both the painter and the hit test read, so
+      // a keys screen that grew for one and not the other is unreachable.
+      return menuOpen ? escapeMenuRect({ ...options, screen: menuScreen }) : null;
   }
 }
 

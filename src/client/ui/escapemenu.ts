@@ -241,6 +241,33 @@ const CLOSE_PX = 13;
 
 /** Preferred and minimum size of the panel itself. */
 const PANEL_W = 360;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE KEYS SCREEN GETS THE WINDOW. THE ROOT MENU DOES NOT WANT IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `PANEL_W`/`PANEL_MAX_H` are right for the root menu, which is six entries and
+ * a title -- growing THAT with the monitor would give a 1280 screen a 560-wide
+ * box holding six words and a lot of air, which is worse than the compact panel
+ * and not what "use the space" means.
+ *
+ * The Keys screen is the opposite case and had the opposite problem. It is
+ * TWENTY-NINE actions in two columns and it paginates, and at a fixed 360x252 it
+ * showed `1–12 of 29` on EVERY viewport -- so a player on a 1280x720 monitor
+ * paged three times through their own keybinds with two thirds of the screen
+ * empty behind the panel. The pager was doing its job; it was being asked the
+ * question on a panel that had decided not to grow.
+ *
+ * ═══ WHY A SEPARATE SIZE AND NOT ONE THAT GROWS FOR BOTH ═══
+ * A panel is sized for its CONTENT. These are two contents that happen to share
+ * a frame, and `escapeMenuRows` already treats them as different screens
+ * everywhere else. The caps are what stop the keys screen becoming a wall: past
+ * them, extra window buys nothing because there are only 29 rows to show.
+ */
+const KEYS_FILL_W = 0.62;
+const KEYS_FILL_H = 0.92;
+const KEYS_MAX_W = 560;
+const KEYS_MAX_H = 640;
 const PANEL_MIN_W = KEY_ROW_MIN_W + INSET * 2;
 /** The same cap ui/talents.ts:188 uses. A taller panel is a modal in a costume. */
 const PANEL_MAX_H = 252;
@@ -931,6 +958,11 @@ export function escapeMenuRect(options: {
   readonly top: number;
   /** First pixel of the bottom bands (the hotbar and the prose lines). */
   readonly bottom: number;
+  /**
+   * Which screen is up. OPTIONAL and defaulting to the root's compact size, so
+   * every existing caller keeps the rect it had. See the note on `KEYS_FILL_W`.
+   */
+  readonly screen?: MenuScreen;
 }): PanelRect | null {
   const { width, height, top } = options;
   const bottom = Math.min(options.bottom, height);
@@ -938,8 +970,44 @@ export function escapeMenuRect(options: {
   if (band < PANEL_MIN_H + PANEL_MARGIN * 2) return null;
   if (width < PANEL_MIN_W + PANEL_MARGIN * 2) return null;
 
-  const w = Math.min(PANEL_W, width - PANEL_MARGIN * 2);
-  const h = Math.min(PANEL_MAX_H, band - PANEL_MARGIN * 2);
+  /**
+   * THE SCREEN DECIDES THE SIZE, AND ONE RESOLVER ANSWERS FOR BOTH THE PAINTER
+   * AND THE HIT TEST.
+   *
+   * `client/main.ts` has a single `rectFor(panel)` that the drawing pass and
+   * every click go through, so the two cannot disagree about which rect is on
+   * screen. Passing `screen` through it keeps that property; a second copy of
+   * this arithmetic on the input side is how a panel ends up drawn in one place
+   * and clickable in another.
+   *
+   * ABSENT MEANS ROOT, which is what every caller that does not care wants and
+   * what this function did before the parameter existed.
+   */
+  const roomy = options.screen === MenuScreen.Keys;
+
+  /**
+   * NEVER SMALLER THAN THE COMPACT PANEL, WHICH THE FIRST VERSION OF THIS GOT
+   * WRONG AND THE PROBE CAUGHT.
+   *
+   * A FRACTION of a short band is less than a fixed 252, so sizing the keys
+   * screen purely by fill made the 640x320 floor go from `1–12 of 29` to
+   * `1–9 of 29`. A change meant to reduce paging added a page on the one
+   * viewport with the least room to spare — the same shape as the rule in this
+   * client that a fix which makes a row taller can delete a row. So the fill is
+   * a FLOOR-RAISING rule, not a replacement: it can only ever hand this screen
+   * more than the root would have had.
+   */
+  const wantW = roomy
+    ? Math.max(PANEL_W, Math.min(KEYS_MAX_W, Math.floor(width * KEYS_FILL_W)))
+    : PANEL_W;
+  const wantH = roomy
+    ? Math.max(PANEL_MAX_H, Math.min(KEYS_MAX_H, Math.floor(band * KEYS_FILL_H)))
+    : PANEL_MAX_H;
+
+  // Clamped so a growing panel can never be wider than the space it is centred
+  // in, nor narrower than the floor the two guards above just accepted.
+  const w = Math.min(Math.max(PANEL_MIN_W, wantW), width - PANEL_MARGIN * 2);
+  const h = Math.min(Math.max(PANEL_MIN_H, wantH), band - PANEL_MARGIN * 2);
   return {
     x: Math.floor((width - w) / 2),
     y: top + Math.max(0, Math.floor((band - h) / 2)),
