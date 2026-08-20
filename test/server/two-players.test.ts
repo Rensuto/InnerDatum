@@ -1251,3 +1251,57 @@ describe('the room is built for the party, and the first one in is told', () => 
     expect(solo.lines().some((line) => /built for/i.test(line))).toBe(false);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ARRIVAL BEARINGS DO NOT READ OUT A SITE YOU ARE MEANT TO FIND.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Three sites are `hidden` — Cairnfoot, Barrow End, The Weir — and `markersFor`
+ * withholds each until the character's own fog holds its cell. `nearestSites`
+ * never checked: it printed name, compass bearing, distance and danger grade
+ * for whatever was closest, so the list spoke the secret aloud.
+ *
+ * MEASURED over the seventeen overworld sites: seven arrival points have a
+ * hidden site among their nearest three. The Watcher's Altar is one — Cairnfoot
+ * is 13 tiles from it — and Alderbrook, the STARTING town, is another.
+ *
+ * This drives the real thing: stand on the Watcher's Altar's door, step in,
+ * step back out, and read what the moor says on arrival.
+ */
+describe('what the moor tells you when you come back out', () => {
+  it('names no hidden site in the bearings', async () => {
+    const walker = await connect(server.port);
+    const walkerId = await walker.hello();
+    await sleep(200);
+
+    const altar = [...server.realms.overworld.sites].find(([, id]) => id === 'site:watchers_altar');
+    if (altar === undefined) throw new Error('the moor has no altar site');
+    const [ax, ay] = altar[0].split(',').map(Number);
+
+    const body = server.realms.overworld.world.getActor(walkerId);
+    if (body === undefined) throw new Error('no body');
+    body.x = (ax ?? 0) - 1;
+    body.y = ay ?? 0;
+
+    walker.send({ t: 'move', dir: 'e' });
+    await sleep(400);
+    expect(server.realms.realmOf(walkerId)?.siteId, 'never got in').toBe('site:watchers_altar');
+
+    // Arriving DISARMS the tile, so leaving is a step off and a step back on.
+    walker.send({ t: 'move', dir: 'w' });
+    await sleep(250);
+    walker.send({ t: 'move', dir: 'e' });
+    await sleep(450);
+    expect(server.realms.realmOf(walkerId)?.kind, 'never got back out').toBe(RealmKind.Overworld);
+
+    // ═══ THE ASSERTION ═══
+    // Cairnfoot is 13 tiles from here and this character has never been near it.
+    const said = walker.lines().join(' | ');
+    for (const secret of ['Cairnfoot', 'Barrow End', 'The Weir']) {
+      expect(said.includes(secret), `${secret} was read out: ${said}`).toBe(false);
+    }
+    // …and the list is not simply empty, or the assertion above is vacuous.
+    expect(said).toMatch(/tiles/);
+  });
+});

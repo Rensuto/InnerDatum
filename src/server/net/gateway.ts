@@ -5628,14 +5628,56 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * predates the flag takes that path, and no site was hidden before today — so
    * the fallback is not a hole, it is the behaviour the whole map used to have.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MAY THIS CHARACTER KNOW ABOUT THIS SITE? ONE RULE, THREE READERS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `SiteDef.hidden` places — Cairnfoot, Barrow End, The Weir — are withheld
+   * until the character's own fog holds the cell they stand on. That is what
+   * makes finding one an event, and a whole commit went into letting a rumour
+   * mark the country around one WITHOUT uncovering it.
+   *
+   * It was written out by hand in three places and two of them were wrong:
+   *
+   *   `markersFor`     read `fogFor(actorId)` with NO realm, which defaults to
+   *                    the OVERWORLD's bitset — then indexed it with the
+   *                    Redaction's cells. Both maps are 170x100, so the bits
+   *                    line up and the wrong answer is silent: on the far map a
+   *                    hidden site was handed over free if you had found its
+   *                    Alderbrook twin, or stayed invisible however far you
+   *                    walked.
+   *   `hiddenVisible`  the same defaulted read, so the "you found something"
+   *                    count was about the wrong map too.
+   *   `nearestSites`   did not check `hidden` AT ALL. Measured across the
+   *                    seventeen overworld sites, SEVEN arrival points list a
+   *                    hidden site in their nearest three — including
+   *                    Alderbrook, the starting town, which announces Barrow End
+   *                    by name, bearing, distance and danger grade.
+   *
+   * So it is one function now, it takes the realm it is asking about, and every
+   * reader goes through it.
+   */
+  const mayKnowSite = (actorId: string | undefined, realmId: string, cell: string): boolean => {
+    const full = opts.realms?.get(realmId);
+    if (full === undefined) return true;
+    const siteId = full.sites.get(cell);
+    if (siteId === undefined) return true;
+    if (SITES.get(siteId)?.hidden !== true) return true;
+    // An anonymous caller (no actor) is asking about the world in general and
+    // must not be told: there is no fog to consult, so the answer is "not yet".
+    if (actorId === undefined) return false;
+    const level = full.world.level;
+    const parts = cell.split(',');
+    return fogHas(fogFor(actorId, full), level.w, Number(parts[0]), Number(parts[1]));
+  };
+
   /** How many hidden markers this character can currently see in this realm. */
   const hiddenVisible = (realm: Realm, actorId: string): number => {
     let seen = 0;
     for (const [cell, siteId] of realm.sites) {
       if (SITES.get(siteId)?.hidden !== true) continue;
-      const parts = cell.split(',');
-      const level = realm.world.level;
-      if (fogHas(fogFor(actorId), level.w, Number(parts[0]), Number(parts[1]))) seen += 1;
+      if (mayKnowSite(actorId, realm.id, cell)) seen += 1;
     }
     return seen;
   };
@@ -5699,10 +5741,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       const def = SITES.get(siteId);
       if (def === undefined) return [];
       const parts = cell.split(',');
-      if (def.hidden === true && actorId !== undefined) {
-        const level = realm.world.level;
-        const seen = fogHas(fogFor(actorId), level.w, Number(parts[0]), Number(parts[1]));
-        if (!seen) return [];
+      // ONE RULE — see `mayKnowSite`. This used to read the OVERWORLD's fog
+      // whatever realm it was drawing, which on the Redaction is a different
+      // map with the same dimensions and therefore a silent wrong answer.
+      if (def.hidden === true && actorId !== undefined && !mayKnowSite(actorId, realm.id, cell)) {
+        return [];
       }
       // THE GRADE, when the place has one. `delveFor` answers undefined for a
       // town, and an absent field is how the map knows not to draw a
@@ -8477,6 +8520,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     fromX: number,
     fromY: number,
     take: number,
+    /**
+     * WHO IS BEING TOLD. Absent means nobody in particular, and `mayKnowSite`
+     * answers "not yet" for a hidden site in that case — this list is spoken
+     * aloud, so the safe default is silence.
+     *
+     * It took no actor id at all until now, which is why it could not consult
+     * fog and did not try: it printed name, bearing, distance and danger for
+     * whatever was nearest. Seven of the seventeen overworld arrival points
+     * have a hidden site in their nearest three, Alderbrook among them.
+     */
+    forActor?: string,
   ): { name: string; bearing: string; distance: number; danger: string | null }[] => {
     const full = opts.realms?.get(realm.id);
     if (full === undefined) return [];
@@ -8492,6 +8546,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (distance === 0) continue;
       const def = SITES.get(siteId);
       if (def === undefined) continue;
+      // A PLACE YOU ARE MEANT TO FIND IS NOT READ OUT TO YOU. Same rule the map
+      // obeys — see `mayKnowSite`.
+      if (!mayKnowSite(forActor, realm.id, cell)) continue;
       /**
        * AND HOW BAD IT IS IN THERE, for a delve.
        *
@@ -8626,7 +8683,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     if (full?.kind === RealmKind.Overworld) {
       const body = realm.world.getActor(actorId);
-      const near = body === undefined ? [] : nearestSites(realm, body.x, body.y, 3);
+      const near = body === undefined ? [] : nearestSites(realm, body.x, body.y, 3, actorId);
       if (near.length > 0) {
         logSeq += 1;
         send(session.socket, {
