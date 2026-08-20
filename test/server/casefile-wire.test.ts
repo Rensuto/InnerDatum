@@ -231,6 +231,37 @@ describe('closing a case', () => {
     // THE COUNT IS THE POINT — the first time this game tells a player how big
     // it is. One closed, and the denominator read off the registry.
     expect(filedLine).toBe(`Filed. 1 of ${String(fileableCount(SITES))}.`);
+
+    /**
+     * ═══ AND WHAT IS STILL OPEN, BECAUSE A LOOP HAS TO CLOSE SOMEWHERE ═══
+     *
+     * MEASURED before this line existed: the last three things a player heard
+     * after closing their first case were the receipt, "The Drowned Chapel is
+     * quiet now" and "3 things are still on the floor" — a receipt, a state and
+     * some litter, at the exact moment somebody has just proved they can do this
+     * and is deciding whether to do it again.
+     *
+     * THE BEARING IS FROM THE DOOR AND NOT FROM THE BODY, which is the claim
+     * worth pinning: they are standing INSIDE a delve, which contains no
+     * overworld sites at all, so a distance measured from the body would have
+     * nothing to measure to. `overworldCellOf` gives the cell they are about to
+     * walk back out onto.
+     */
+    const openLine = client.lines().find((l) => l.startsWith('Still open:'));
+    expect(
+      openLine,
+      `filed and then said nothing about where to go — log was: ${client.lines().slice(-4).join(' | ')}`,
+    ).toBeDefined();
+    // A NAME, A GRADE, A BEARING AND A DISTANCE — the same four the opening
+    // line carries, from the same picker, so the two ends of the loop cannot
+    // drift into two different sentences.
+    expect(openLine).toMatch(/^Still open: .+ — [a-z]+, [a-z-]+, \d+ tiles\.$/);
+    // AND NEVER THE ROOM JUST CLOSED. `firstCase` skips filed rooms; this is the
+    // assertion that keeps that predicate honest now that something calls it a
+    // second time.
+    const justClosed = SITES.get(siteId)?.name;
+    expect(justClosed, 'the site under test has no name').toBeDefined();
+    if (justClosed !== undefined) expect(openLine).not.toContain(justClosed);
   });
 
   it('marks it on the map, for that player', async () => {

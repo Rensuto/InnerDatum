@@ -4289,6 +4289,50 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           depth: 0,
         });
         /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND WHAT IS STILL OPEN, BECAUSE A LOOP HAS TO CLOSE SOMEWHERE.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * MEASURED: the last three things this game said to a player who had
+         * just closed their first case were *"Filed. 1 of 27."*, *"The Drowned
+         * Chapel is quiet now."* and *"3 things are still on the floor."* — a
+         * receipt, a state, and some litter. Nothing about where to go next, at
+         * the one moment a player has just proved they can do this and is
+         * deciding whether to do it again.
+         *
+         * The opening line names one room and gets somebody started; this is the
+         * same sentence at the other end of the loop, and between them the game
+         * always has an answer to *"what now"*.
+         *
+         * ═══ THE BEARING IS FROM THE DOOR, NOT FROM THE BODY ═══
+         * They are standing INSIDE a delve, which has no overworld sites in it,
+         * so "nearest to me" has no meaning here. `overworldCellOf` gives the
+         * cell they are about to walk back out onto, which is the origin every
+         * distance in that sentence is honestly measured from.
+         *
+         * ═══ THE SAME PICKER, SO IT CANNOT DRIFT FROM THE OPENING LINE ═══
+         * `firstCase` already skips filed rooms — its predicate is "the next
+         * UNFILED room", which was written that way before anything called it
+         * twice. It also still prefers the gentlest, which is the right rule at
+         * both ends: it can name something easy, and it can never name something
+         * a player is not ready for.
+         *
+         * NOTHING WHEN THE FILE IS FULL. `firstCase` answers undefined and this
+         * says nothing, which leaves the last case to the ending line below —
+         * the one moment this game is allowed to be loud.
+         */
+        const door = overworldCellOf(realm.id);
+        const overworld = opts.realms?.overworld;
+        if (door !== undefined && overworld !== undefined) {
+          const next = firstCase(overworld, door.x, door.y, body.id);
+          if (next !== undefined) {
+            sendMargin(session, realm, {
+              text: `Still open: ${next.name} — ${next.grade}, ${next.bearing}, ${String(next.distance)} tiles.`,
+              depth: 1,
+            });
+          }
+        }
+        /**
          * ═══════════════════════════════════════════════════════════════════════
          * AND IF THAT WAS THE LAST ONE, THE GAME HAS AN ENDING NOW.
          * ═══════════════════════════════════════════════════════════════════════
@@ -9037,6 +9081,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * not a rule.
    */
   const GRADE_ORDER = ['quiet', 'restless', 'dangerous', 'grim'];
+
+  /**
+   * WHERE A REALM'S DOOR IS ON THE OVERWORLD, or undefined for a realm that has
+   * no door — the moor itself, a fixture world, a build with no registry.
+   *
+   * IT EXISTS SO A BEARING GIVEN INSIDE A ROOM IS MEASURED FROM THE RIGHT PLACE.
+   * A delve has no overworld sites in it at all, so asking "what is nearest" from
+   * a player standing in one would answer nothing. The honest origin is the cell
+   * they are about to walk back out onto, which is exactly this.
+   */
+  const overworldCellOf = (realmId: string): { x: number; y: number } | undefined => {
+    const siteId = opts.realms?.get(realmId)?.siteId;
+    const over = opts.realms?.overworld;
+    if (siteId === undefined || over === undefined) return undefined;
+    for (const [cell, id] of over.sites) {
+      if (id !== siteId) continue;
+      const parts = cell.split(',');
+      const x = Number(parts[0]);
+      const y = Number(parts[1]);
+      if (Number.isNaN(x) || Number.isNaN(y)) return undefined;
+      return { x, y };
+    }
+    return undefined;
+  };
 
   const firstCase = (
     realm: PumpTarget,
