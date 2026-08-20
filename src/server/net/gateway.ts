@@ -245,6 +245,9 @@ import { roamerAt, tickRoamers } from '../world/roamers.ts';
 // them (`AuthoredMap.regions`), and the constant not being reachable from here
 // is the proof no other line is still assuming which map it is describing.
 import { groundAt, regionAt } from '../../shared/level.ts';
+import { canWalk, tileAt } from '../../shared/level.ts';
+import { findPath } from '../../shared/path.ts';
+import { isSafeGround } from '../../shared/protocol.ts';
 import { landmarkIdFor } from '../../shared/redaction.ts';
 import type { Ground } from '../../shared/level.ts';
 import {
@@ -4396,7 +4399,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           const next = firstCase(overworld, door.x, door.y, body.id);
           if (next !== undefined) {
             sendMargin(session, realm, {
-              text: `Still open: ${next.name} — ${next.grade}, ${next.bearing}, ${String(next.distance)} tiles.`,
+              text: `Still open: ${next.name} — ${next.grade}, ${next.bearing}, ${String(next.distance)} tiles.${roadClause(next.road)}`,
               depth: 1,
             });
           }
@@ -9490,17 +9493,105 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return undefined;
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   DOES THE ROAD ACTUALLY GO THERE?
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Three separate townsfolk make the same promise — *"Nothing waits on made
+   * ground. Keep to the road."* — and the server keeps it: `canHauntTile`
+   * requires `isHaunt`, `isSafeGround` requires `!isHaunt`, so the two are
+   * exact complements and no roamer can ever stand on the road. The promise is
+   * TRUE, and it is enforced by construction rather than by a check that could
+   * be forgotten.
+   *
+   * What nothing has ever said is WHERE IT HOLDS. Measured across the whole
+   * map, seven of seventeen sites can be reached without stepping off made
+   * ground — and the advice line quotes a bearing and a straight-line distance,
+   * which describes the route through the trees, not the safe one. A player
+   * told *"south-east, 16 tiles"* and *"keep to the road"* has two facts that
+   * point different ways and no way to tell that here they agree.
+   *
+   * They do agree here, and by almost nothing: the Drowned Chapel is 17 steps
+   * cross-country and 18 on the road. One step buys immunity from every
+   * wanderer on the map, and a player who does not know that spends it on the
+   * wrong route.
+   *
+   * ═══ ADJACENCY, NOT THE TILE ═══
+   * The door need not be made ground — a delve mouth in the moor is a moor
+   * tile — so the question is whether you can stand NEXT to it having never
+   * left the road. The last step off is the only exposed one, and one step is
+   * not an ambush.
+   *
+   * ═══ FAIL-CLOSED ═══
+   * This runs once at character creation and again as each case is filed, on
+   * the pump thread, against a 170x100 map. A search that runs out of nodes
+   * answers "no road", which UNDERSTATES the promise. The costly wrong answer
+   * is the one that sends somebody down a road that is not there.
+   */
+  /**
+   * SAID ONLY WHEN IT IS TRUE, AND NEVER NEGATED.
+   *
+   * There is no *"there is no road"* branch on purpose. The absence of the
+   * clause is not information a player has to decode — three townsfolk already
+   * say what made ground means, so a bearing with no road clause reads exactly
+   * as it did before this existed. A line that announced every missing road
+   * would turn ten of seventeen sites into a warning and make the seven that
+   * have one feel unremarkable, which is backwards: the road is the good news.
+   */
+  const roadClause = (road: boolean): string => (road ? ' The road runs there.' : '');
+
+  const ROAD_NEIGHBOURS: readonly (readonly [number, number])[] = [
+    [0, -1],
+    [0, 1],
+    [-1, 0],
+    [1, 0],
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ];
+
+  const roadReaches = (
+    level: Parameters<typeof tileAt>[0],
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): boolean => {
+    const onRoad = (x: number, y: number): boolean =>
+      canWalk(level, x, y) && isSafeGround(tileAt(level, x, y));
+    // YOU HAVE TO BE ON IT TO FOLLOW IT. Standing in the moor, the honest
+    // answer is no, whatever the far end looks like.
+    if (!onRoad(fromX, fromY)) return false;
+    for (const [dx, dy] of ROAD_NEIGHBOURS) {
+      const nx = toX + dx;
+      const ny = toY + dy;
+      if (!onRoad(nx, ny)) continue;
+      if (
+        findPath({ x: fromX, y: fromY }, { x: nx, y: ny }, onRoad, { maxNodes: 40000 }) !== null
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const firstCase = (
     realm: PumpTarget,
     fromX: number,
     fromY: number,
     actorId: string,
-  ): { name: string; bearing: string; distance: number; grade: string } | undefined => {
+  ):
+    | { name: string; bearing: string; distance: number; grade: string; road: boolean }
+    | undefined => {
     const full = opts.realms?.get(realm.id);
     if (full === undefined) return undefined;
     const mine = filedFor(actorId);
 
-    let best: { name: string; bearing: string; distance: number; grade: string } | undefined;
+    let best:
+      { name: string; bearing: string; distance: number; grade: string; road: boolean } | undefined;
+    let bestAt: { x: number; y: number } | undefined;
     let bestRank = Number.POSITIVE_INFINITY;
     for (const [cell, siteId] of full.sites) {
       // ALREADY CLOSED IS NOT A CASE. This runs once per character today, but
@@ -9525,8 +9616,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       const rank = GRADE_ORDER.indexOf(grade) * 1000 + Math.min(distance, 999);
       if (rank < bestRank) {
         bestRank = rank;
-        best = { name: def.name, bearing: bearingWord(sx - fromX, sy - fromY), distance, grade };
+        best = {
+          name: def.name,
+          bearing: bearingWord(sx - fromX, sy - fromY),
+          distance,
+          grade,
+          // FILLED IN ONCE, BELOW, FOR THE WINNER ONLY. `roadReaches` runs a
+          // path search; running one per candidate would put seventeen of them
+          // on the pump thread to answer a question about one.
+          road: false,
+        };
+        bestAt = { x: sx, y: sy };
       }
+    }
+    if (best !== undefined && bestAt !== undefined) {
+      best.road = roadReaches(full.world.level, fromX, fromY, bestAt.x, bestAt.y);
     }
     return best;
   };
@@ -10295,7 +10399,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         });
         if (start !== undefined) {
           sendMargin(session, realm, {
-            text: `Start with ${start.name} — ${start.grade}, ${start.bearing}, ${String(start.distance)} tiles. Clear it and it is filed.`,
+            text: `Start with ${start.name} — ${start.grade}, ${start.bearing}, ${String(start.distance)} tiles.${roadClause(start.road)} Clear it and it is filed.`,
             depth: 1,
           });
         }
