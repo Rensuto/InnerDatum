@@ -159,14 +159,35 @@ const TALK_TO = 'Talk to';
 /**
  * The questions, in menu order.
  *
- * The ids and labels are `content/townsfolk.ts`'s — imported rather than
- * retyped, so a topic added there appears here and cannot drift into two
- * spellings of the same question.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DERIVED FROM `TopicId`, WHICH THIS COMMENT USED TO CLAIM AND THE CODE DID NOT
+ * DO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It said "The ids and labels are content/townsfolk.ts's — imported rather than
+ * retyped, so a topic added there appears here and cannot drift". Only the
+ * LABELS were imported. The row list was two hand-typed entries against a
+ * `TopicId` of four, so `Roads` and `Rumour` — added later — never grew a
+ * button and could not be asked for by any client.
+ *
+ * ═══ WHAT THAT COST ═══
+ * 51 authored answers across ten townsfolk, of which 30 were unreachable. Both
+ * level-gated `later` rumours. And, because `handleTalk` is the only caller of
+ * `regionNamedIn`, the entire rumour-marks-your-map mechanic — which had
+ * therefore never once fired for a player.
+ *
+ * The server half stayed green throughout: its test writes
+ * `{t:'talk', topic:'rumour'}` straight onto the socket, which no client could
+ * produce. A probe that speaks the protocol cannot see a missing button, and
+ * neither can a server test.
+ *
+ * `Object.values` over the const object, so a fifth topic appears here the day
+ * it is authored and the claim above is finally true.
  */
-const TOPIC_ROWS = [
-  { topic: TopicId.Where, label: TOPIC_LABEL[TopicId.Where] },
-  { topic: TopicId.Party, label: TOPIC_LABEL[TopicId.Party] },
-] as const;
+const TOPIC_ROWS = Object.values(TopicId).map((topic) => ({
+  topic,
+  label: TOPIC_LABEL[topic],
+}));
 const TRAVEL_HERE = 'Travel here';
 const POINT_HERE = 'Point here';
 const PICK_UP = 'Pick up';
