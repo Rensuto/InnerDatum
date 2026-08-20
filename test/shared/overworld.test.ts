@@ -407,10 +407,14 @@ describe('every settlement can be reached on foot', () => {
     // are bounded by the reachable cell count, so this is the number that
     // decides whether "walk to the Glass Archive" answers 'no route to that
     // tile' — a lie about the map, and the one divergence a player notices.
-    // 8,380 walkable cells, every one of them reachable from the gate. v1 held
-    // 9,327; the redesigned moor is a smaller, more irregular landmass with real
-    // coastline, and the number moved with it rather than drifting.
-    expect(reach.size).toBe(8380);
+    // 8,346 walkable cells, every one of them reachable from the gate.
+    // v1 held 9,327; the redesigned moor is a smaller, more irregular landmass
+    // with real coastline. It then lost 34 more when the settlements were built
+    // properly: every roof on this map used to be a lone tile on open ground —
+    // eighteen of eighteen — and growing them into blocks turned that yard into
+    // buildings. Nothing became unreachable, which `test/shared/level.test.ts`
+    // and the flood fill in that pass both check.
+    expect(reach.size).toBe(8346);
     expect(reach.size).toBeLessThan(OVERWORLD.view.w * OVERWORLD.view.h + 1);
   });
 

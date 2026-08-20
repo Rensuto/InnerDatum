@@ -148,7 +148,10 @@ describe('every part of the moor is called something', () => {
       ).toBeGreaterThan(100);
     }
     // And between them they account for the whole walkable map.
-    expect([...walkable.values()].reduce((a, b) => a + b, 0)).toBe(8380);
+    // 8,380 -> 8,346 when the settlements were built properly: 34 yard tiles
+    // became buildings, because every roof on this map used to be a lone tile on
+    // open ground. See `test/shared/level.test.ts`.
+    expect([...walkable.values()].reduce((a, b) => a + b, 0)).toBe(8346);
   });
 
   it('names the ground rather than repeating the markers', () => {

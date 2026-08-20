@@ -221,9 +221,16 @@ describe('the door on the Alderbrook side', () => {
      * It read 9,327 until the redesign landed. That number was v1's and it moved
      * with the whole map rather than drifting — a smaller, more irregular
      * landmass with real coastline holds less ground.
+     *
+     * AND 8,380 -> 8,346 WHEN THE SETTLEMENTS WERE BUILT PROPERLY. Every roof on
+     * this map was a lone tile on open ground — eighteen of eighteen, which is a
+     * scatter rather than a town — and growing them into blocks turned 34 yard
+     * tiles into buildings. That is a deliberate change to the shape of the
+     * ground, which is exactly what this assertion exists to make somebody state
+     * out loud.
      */
     const base = makeOverworld();
-    expect(base.view.tiles.filter((c) => isWalkable(c)).length).toBe(8_380);
+    expect(base.view.tiles.filter((c) => isWalkable(c)).length).toBe(8_346);
   });
 
   it('is on the map, and is somewhere you had to go looking', () => {

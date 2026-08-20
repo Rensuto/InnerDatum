@@ -7,6 +7,7 @@ import {
   makeTestLevel,
   tileAt,
   blocksSightAt,
+  makeOverworld,
 } from '../../src/shared/level.ts';
 import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 
@@ -243,5 +244,93 @@ describe('TEST_LEVEL_SPAWNS', () => {
 
     expect(bad).toEqual([]);
     expect(seen.size).toBe(TEST_LEVEL_SPAWNS.length);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A BUILDING IS MORE THAN ONE TILE, OR IT IS NOT A BUILDING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MEASURED FIRST, and the measurement was the whole finding: every one of the
+ * eighteen settlement roofs on this map was ISOLATED — no orthogonal roof
+ * beside it, anywhere, in any of the three settlements. Rendered at 32px that
+ * is a lone ornate square sitting on open ground, and it reads as a rug rather
+ * than as a house. Eight of them in a lattice around the city gate is literally
+ * a checkerboard, which is the word the bug report used.
+ *
+ * ═══ WHY THIS IS THE RIGHT TEST AND "COUNT THE ROOFS" IS NOT ═══
+ * The map has plenty of roof tiles. What it did not have was any two of them
+ * TOUCHING, and no count of roofs, settlements or glyph variety would have said
+ * so. Adjacency is the property that separates a town from a scatter, so
+ * adjacency is what is asserted.
+ *
+ * A roof may still sit at the end of a terrace with exactly one neighbour —
+ * that is a row house and it is correct. What is refused is a roof with NONE.
+ */
+describe('a settlement reads as buildings, not as a scatter', () => {
+  const ROOFS: ReadonlySet<number> = new Set<number>([
+    TileCode.VILLAGE_ROOF,
+    TileCode.TOWN_ROOF,
+    TileCode.CITY_ROOF,
+  ]);
+
+  const map = makeOverworld();
+
+  function mapTile(x: number, y: number): number | undefined {
+    if (x < 0 || y < 0 || x >= map.view.w || y >= map.view.h) return undefined;
+    return map.view.tiles[y * map.view.w + x];
+  }
+
+  /** Every roof on the map, with how many roofs it touches orthogonally. */
+  function roofs(): { x: number; y: number; neighbours: number }[] {
+    const out: { x: number; y: number; neighbours: number }[] = [];
+    for (let y = 0; y < map.view.h; y += 1) {
+      for (let x = 0; x < map.view.w; x += 1) {
+        const tile = mapTile(x, y);
+        if (tile === undefined || !ROOFS.has(tile)) continue;
+        let neighbours = 0;
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ] as const) {
+          const near = mapTile(x + dx, y + dy);
+          if (near !== undefined && ROOFS.has(near)) neighbours += 1;
+        }
+        out.push({ x, y, neighbours });
+      }
+    }
+    return out;
+  }
+
+  it('has settlements at all', () => {
+    // The guard on the guard: a map with no roofs would pass every assertion
+    // below by vacuum.
+    expect(roofs().length).toBeGreaterThan(12);
+  });
+
+  it('leaves no roof standing on its own', () => {
+    const lone = roofs()
+      .filter((roof) => roof.neighbours === 0)
+      .map((roof) => `(${String(roof.x)},${String(roof.y)})`);
+    expect(lone).toEqual([]);
+  });
+
+  it('builds at least one block two tiles deep, not just longer rows', () => {
+    // A terrace one tile deep is a wall, not a town. At least one roof must have
+    // a roof BOTH beside it and above or below it, which is the cheapest
+    // statement of "this settlement has depth".
+    const deep = roofs().filter((roof) => {
+      const across =
+        ROOFS.has(mapTile(roof.x + 1, roof.y) ?? -1) ||
+        ROOFS.has(mapTile(roof.x - 1, roof.y) ?? -1);
+      const down =
+        ROOFS.has(mapTile(roof.x, roof.y + 1) ?? -1) ||
+        ROOFS.has(mapTile(roof.x, roof.y - 1) ?? -1);
+      return across && down;
+    });
+    expect(deep.length).toBeGreaterThan(0);
   });
 });
