@@ -71,7 +71,16 @@ const PREFIXES = [
   'favicon',
 ];
 
-const ID_RX = new RegExp(`['"\`]((?:${PREFIXES.join('|')})_[a-z0-9_]+)['"\`]`, 'gi');
+/**
+ * CASE-SENSITIVE, AND THAT IS A FIX RATHER THAN A DETAIL.
+ *
+ * With the `i` flag this matched `CHAR_W` — a layout constant in the talent
+ * panel — and reported it as a missing sprite. Asset ids are lowercase by
+ * convention throughout the manifest (`enemy_index_husk_s`, `favicon_32`), so
+ * dropping the flag removes a whole class of SHOUTING_CONSTANT false positives
+ * that would otherwise sit in the commission list forever, undrawable.
+ */
+const ID_RX = new RegExp(`['"\`]((?:${PREFIXES.join('|')})_[a-z0-9_]+)['"\`]`, 'g');
 /** An id being BUILT rather than written. Reported, never resolved. */
 const DYNAMIC_RX = new RegExp(`['"\`](?:${PREFIXES.join('|')})_[a-z0-9_]*\\$\\{`, 'g');
 
@@ -114,6 +123,93 @@ for (const dir of SOURCE_DIRS) {
     if (DYNAMIC_RX.test(text)) dynamic.push(where);
     DYNAMIC_RX.lastIndex = 0;
   }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   AN ID IS NOT A COMMISSION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `enemy_index_wraith_s` tells an artist the filename and nothing else. What
+ * they need is what the thing IS — its name, and the sentence the game already
+ * uses to describe it, which is the same sentence a player will read while
+ * looking at the sprite.
+ *
+ * All of it is already written down in the content files. This pulls it out
+ * beside each id, so the report is a brief rather than an inventory.
+ *
+ * ═══ SCRAPED, NOT IMPORTED, AND THAT IS DELIBERATE ═══
+ * Importing the content modules would drag the whole server graph into a tool
+ * that has to run in a bare clone with no build step and no assets. Reading the
+ * text keeps this a script. The cost is that a name assembled at runtime is
+ * invisible — which is the same limit the id scan already has, and the report
+ * already says so.
+ */
+function briefFor(id, files) {
+  for (const rel of files) {
+    let text;
+    try {
+      text = readFileSync(join(REPO, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    const at = text.indexOf(`'${id}'`);
+    if (at < 0) continue;
+
+    // The nearest `name:` / `displayName:` ABOVE or BELOW the id, whichever is
+    // closer — content files put the sprite before the name as often as after.
+    /**
+     * THE WHOLE FILE FOR A TALENT, A WINDOW FOR A TABLE.
+     *
+     * A talent module is ONE talent: its `iconId` is near the top and its
+     * `describe` is the last thing in the file, usually far more than a window
+     * apart — so a window found the name and never the prose. A content TABLE
+     * (monsters, items) holds dozens of entries, and reading the whole file
+     * there would attach entry one's description to entry forty's sprite.
+     *
+     * One talent per file is a project rule, not an accident, so the file path
+     * is a reliable way to tell the two apart.
+     */
+    const perFile = rel.includes('/talents/') || rel.includes('\\talents\\');
+    const window = perFile ? text : text.slice(Math.max(0, at - 900), at + 900);
+    const name =
+      /displayName:\s*'([^']+)'/.exec(window)?.[1] ?? /\bname:\s*'([^']+)'/.exec(window)?.[1];
+    /**
+     * A TALENT DESCRIBES ITSELF IN A TEMPLATE LITERAL, so its prose arrives with
+     * `${...}` holes in it. Blanking the holes beats skipping the string:
+     * "Always on. … harder to stun, slow or knock about" tells an artist what to
+     * draw, and the exact number never would have.
+     */
+    const raw =
+      /description:\s*'([^']+)'/.exec(window)?.[1] ??
+      /describe:[\s\S]{0,240}?`([\s\S]{12,240}?)`/.exec(window)?.[1];
+    const description = raw
+      ?.replace(/\$\{[^}]*\}/g, '…')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (name !== undefined || description !== undefined) {
+      return {
+        ...(name === undefined ? {} : { name }),
+        ...(description === undefined ? {} : { description: description.trim() }),
+      };
+    }
+  }
+  return {};
+}
+
+/** What KIND of art this is, so a brief can be batched by discipline. */
+function kindOf(id) {
+  if (id.startsWith('enemy_')) return 'enemy sprite';
+  if (id.startsWith('icon_passive_')) return 'talent icon (passive)';
+  if (id.startsWith('icon_active_')) return 'talent icon (active)';
+  if (id.startsWith('icon_')) return 'UI icon';
+  if (id.startsWith('tile_')) return 'terrain tile';
+  if (id.startsWith('npc_')) return 'townsfolk sprite';
+  if (id.startsWith('item_')) return 'item sprite';
+  if (id.startsWith('prop_')) return 'prop sprite';
+  if (id.startsWith('char_') || id.startsWith('player_')) return 'player sprite';
+  return 'asset';
 }
 
 // ── what is actually on disk ─────────────────────────────────────────────────
@@ -166,7 +262,17 @@ if (argv.includes('--json')) {
         generated: 'derived from source; do not hand-edit',
         referenced: referenced.size,
         onDisk: present.size,
-        missing,
+        /**
+         * THE COMMISSION LIST. One entry per sprite still to draw, carrying what
+         * it is and the words the game already uses for it — so the brief and the
+         * game cannot describe the same thing differently.
+         */
+        missing: missing.map((id) => ({
+          id,
+          kind: kindOf(id),
+          ...briefFor(id, [...(referenced.get(id) ?? [])]),
+          referencedBy: [...(referenced.get(id) ?? [])],
+        })),
         placeholder,
         unused,
         dynamicIdFiles: [...new Set(dynamic)],
@@ -196,8 +302,16 @@ if (argv.includes('--json')) {
     for (const [cat, ids] of byCategory(missing)) {
       console.log(`  ${cat}  (${String(ids.length)})`);
       for (const id of ids) {
-        const [first] = [...(referenced.get(id) ?? [])];
-        console.log(`      ${id.padEnd(38)} ${first ?? ''}`);
+        const files = [...(referenced.get(id) ?? [])];
+        const info = briefFor(id, files);
+        console.log(`      ${id}`);
+        console.log(
+          `          what   : ${kindOf(id)}${info.name === undefined ? '' : ` — ${info.name}`}`,
+        );
+        if (info.description !== undefined) {
+          console.log(`          reads  : ${info.description.slice(0, 96)}`);
+        }
+        console.log(`          from   : ${files[0] ?? ''}`);
       }
       console.log();
     }
