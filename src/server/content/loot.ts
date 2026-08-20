@@ -157,17 +157,22 @@ export const QUALITY_BANDS: readonly (readonly { quality: LootQuality; weight: n
  * character do"*: the gear chase was there the whole time and nobody could
  * reach it.
  *
- * ═══ /2 IS THE TRANSPOSITION, NOT A TUNING KNOB ═══
- * Five bands across a character's whole life is the upstream shape and the one
- * worth keeping. Upstream spans 1..50 in steps of ten; this game spans 1..10, so
- * the same five bands are steps of two. Band 5 lands at level 9, which is
- * correct — the cap IS the end, and the last band should be what the end feels
- * like rather than something no character can be alive long enough to see.
+ * ═══ THE DIVISOR IS UPSTREAM'S AGAIN (2026-08-20) ═══
+ * It was 2 for a while, and the argument for that was sound at the time: five
+ * bands across a character's whole life is the shape worth keeping, upstream
+ * spans 1..50 in steps of ten, and this game spanned 1..10 — so the same five
+ * bands were steps of two.
  *
- * THE CITATION STANDS AND THE DIVISOR DOES NOT, which is the honest way round:
- * `docs/tome-port.md` is explicit that a port adapts the constant and keeps the
- * shape, and a formula copied past the point where its assumptions hold is not
- * fidelity — it is the appearance of it.
+ * The cap is 50 now (`MAX_CHARACTER_LEVEL`), which puts the ported formula back
+ * inside the domain it was written for. `ceil(level / 10)` bands at 10, 20, 30,
+ * 40 and 50 exactly as GameState.lua:1324 intends, and the transposition that
+ * kept it honest at a cap of 10 becomes the thing making it wrong.
+ *
+ * THE LESSON SURVIVES THE CHANGE, and it is why this paragraph stays: a formula
+ * copied past the point where its assumptions hold is not fidelity, it is the
+ * appearance of it. That was true of the divisor then and it is true of the cap
+ * now — four separate ported formulas were sitting outside their own domain
+ * because of it. See `MAX_CHARACTER_LEVEL` for the other three.
  *
  * Returns a 1-BASED band number, as upstream does. Index `QUALITY_BANDS` with
  * `band - 1`.

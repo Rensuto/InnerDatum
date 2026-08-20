@@ -50,15 +50,28 @@ describe('expChart — load.lua:193-206', () => {
     expect(expChart(level)).toBe(needed);
   });
 
-  it('sums to 2700 over the whole career, which is the only cumulative number', () => {
-    const total = CHART.reduce((acc, [, needed]) => acc + needed, 0);
-    expect(total).toBe(2700);
-
-    // And the same sum computed through the function, so the table above cannot
-    // drift away from the implementation while still agreeing with itself.
-    let walked = 0;
-    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level++) walked += expChart(level);
-    expect(walked).toBe(2700);
+  it('rises monotonically to the cap, on the verbatim chart', () => {
+    /**
+     * THIS ASSERTED 2,700 — the whole-career total at a cap of 10, chosen as a
+     * DESIGN TARGET ("an evening, about 145 kills"). The cap is 50 now and that
+     * target is gone, so pinning its arithmetic would be pinning a decision
+     * nobody is making any more.
+     *
+     * What survives is the property the chart is FOR: every level costs more
+     * than the one before it, all the way up, with no plateau and no dip. That
+     * is true of upstream at 50 and was true of us at 10.
+     */
+    let previous = 0;
+    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
+      const cost = expChart(level);
+      expect(
+        cost,
+        `level ${String(level)} costs no more than level ${String(level - 1)}`,
+      ).toBeGreaterThan(previous);
+      previous = cost;
+    }
+    // And the last one is the biggest, which is the same claim seen from the end.
+    expect(expChart(MAX_CHARACTER_LEVEL)).toBe(previous);
   });
 
   it('is strictly increasing over 2..10 — a later level is never cheaper', () => {
@@ -171,7 +184,15 @@ describe('gainExp — ActorLevel.lua:95-107', () => {
     const wholeCareer = gainExp(1, 0, 1_000_000);
     expect(wholeCareer.level).toBe(MAX_CHARACTER_LEVEL);
     expect(wholeCareer.levelsGained).toBe(MAX_CHARACTER_LEVEL - 1);
-    expect(wholeCareer.xp).toBe(1_000_000 - 2700);
+    /**
+     * DERIVED, NOT REMEMBERED. This was `1_000_000 - 2700`, where 2,700 was the
+     * whole-career cost at a cap of 10. The cap is 50 now and the leftover is
+     * whatever the verbatim chart consumed — asking the chart is the only form
+     * of this assertion that survives the next cap change too.
+     */
+    let spent = 0;
+    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) spent += expChart(level);
+    expect(wholeCareer.xp).toBe(1_000_000 - spent);
   });
 });
 
@@ -189,8 +210,22 @@ describe('talent points — Actor.lua:3749-3752', () => {
     expect(pointsForLevel(4)).toBe(1);
   });
 
-  it('totals 11 at the cap: 9 from levels 2-10, plus 1 each at level 5 and level 10', () => {
-    expect(totalPointsAtLevel(MAX_CHARACTER_LEVEL)).toBe(11);
+  it('grants a point every level, and a second every fifth', () => {
+    /**
+     * THIS ASSERTED 11 — the total at a cap of 10. The shape is what was
+     * ported (Actor.lua:3749-3752), not the total, so the shape is what is
+     * pinned: one point a level, and a second on every fifth.
+     */
+    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
+      const expected = level % 5 === 0 ? 2 : 1;
+      expect(pointsForLevel(level), `level ${String(level)}`).toBe(expected);
+    }
+    // Level 1 grants nothing — it is where a character starts, not a level-up.
+    expect(pointsForLevel(1)).toBe(0);
+
+    // The total is then arithmetic rather than a remembered number.
+    const fifths = Math.floor(MAX_CHARACTER_LEVEL / 5);
+    expect(totalPointsAtLevel(MAX_CHARACTER_LEVEL)).toBe(MAX_CHARACTER_LEVEL - 1 + fifths);
   });
 
   /**
@@ -202,14 +237,28 @@ describe('talent points — Actor.lua:3749-3752', () => {
    * opening. Restoring ToME's birth grant of 2 (Actor.lua:171) puts it at 81%
    * and the panel becomes a checklist.
    */
-  it('leaves the talent budget short of the full tree — 11 of 16 steps', () => {
-    const LOADOUT_SIZE = 4;
-    const stepsPerTalent = TALENT_MAX_LEVEL - 1;
-    const purchasable = LOADOUT_SIZE * stepsPerTalent;
-
-    expect(purchasable).toBe(16);
-    expect(totalPointsAtLevel(MAX_CHARACTER_LEVEL)).toBeLessThan(purchasable);
-    expect(totalPointsAtLevel(MAX_CHARACTER_LEVEL) / purchasable).toBeLessThan(0.75);
+  it('gives a budget the current content cannot absorb, which is the point', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS TEST USED TO ASSERT THE OPPOSITE, AND BOTH WERE RIGHT IN TURN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * At a cap of 10 it asserted 11 points against 16 purchasable steps — a
+     * player left about five unbought and HAD to choose, which was the whole
+     * argument for a small cap.
+     *
+     * The cap is 50 now, for 1:1 with upstream, and the budget is far larger
+     * than the twelve talents currently shipped can absorb. That is not a bug
+     * to tune away — it is the gap the port exists to fill, and it is worth a
+     * failing-loud number rather than a comment: when the content lands, this
+     * assertion flips back on its own.
+     */
+    const budget = totalPointsAtLevel(MAX_CHARACTER_LEVEL);
+    const shippedSteps = 12 * (TALENT_MAX_LEVEL - 1);
+    expect(
+      budget,
+      'the budget no longer outruns the content — check whether the trees grew',
+    ).toBeGreaterThan(shippedSteps);
   });
 
   it('is monotone: a level never takes a point away', () => {
@@ -236,40 +285,25 @@ describe('talent points — Actor.lua:3749-3752', () => {
  * session that is not going to finish.
  */
 describe('PACING — kills from level 1 to the cap', () => {
-  it('reaches level 10 in an evening: between 130 and 160 normal kills', () => {
-    let level = 1;
-    let xp = 0;
-    let kills = 0;
-
-    // The real loop: award what a kill actually pays, then run the real
-    // gainExp. No shortcut arithmetic, because a shortcut would not notice a
-    // change to the subtract-not-accumulate rule.
-    while (level < MAX_CHARACTER_LEVEL && kills < 100_000) {
-      const gain = gainExp(level, xp, worthExp(level, ActorRank.Normal));
-      level = gain.level;
-      xp = gain.xp;
-      kills += 1;
-    }
-
-    expect(level).toBe(MAX_CHARACTER_LEVEL);
-    // 145 as measured; the band is deliberately wide enough to survive a
-    // rounding change and narrow enough to catch a re-tune.
-    expect(kills).toBeGreaterThanOrEqual(130);
-    expect(kills).toBeLessThanOrEqual(160);
-  });
-
   it('keeps ToME per-level pacing shape: each level costs more kills than the last', () => {
-    // Kills-to-next-level runs 8.4, 9.5, 11.5, 13.6, 15.9, 18.0, 20.2, 22.3,
-    // 24.4. The RATIOS are upstream's, because only a scalar changed; a rescaled
-    // curve would have flattened them.
+    /**
+     * The companion test — "reaches level 10 in an evening, 130-160 kills" —
+     * is GONE rather than renumbered. It pinned a session length, and a
+     * fifty-level game is deliberately not one evening. Keeping it with new
+     * bounds would be inventing a target nobody set.
+     *
+     * THIS one survives untouched in intent: whatever the cap, a level must
+     * cost more than the one before it, or the curve has a plateau a player
+     * will feel as the game stalling.
+     */
     let previous = 0;
-    for (let level = 1; level < MAX_CHARACTER_LEVEL; level++) {
-      const killsForLevel = expChart(level + 1) / worthExp(level, ActorRank.Normal);
-      expect(killsForLevel).toBeGreaterThan(previous);
-      previous = killsForLevel;
+    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
+      const kills = expChart(level) / worthExp(level, ActorRank.Normal);
+      expect(kills, `level ${String(level)} is cheaper than the one before`).toBeGreaterThan(
+        previous,
+      );
+      previous = kills;
     }
-    expect(previous).toBeGreaterThan(20);
-    expect(previous).toBeLessThan(30);
   });
 
   it('a Boss is worth about thirty-one normals, as upstream priced it', () => {

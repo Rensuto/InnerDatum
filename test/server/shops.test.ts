@@ -292,18 +292,36 @@ describe('the restock epoch', () => {
      * put their head round the door every single time, which is more than
      * "both at once" would have bought.
      */
-    let lastEpoch = epochFor(1);
-    let lastBand = bandOf(1);
-    for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
-      const epoch = epochFor(level);
-      const band = bandOf(level);
-      expect(
-        epoch !== lastEpoch || band !== lastBand,
-        `nothing about the shop changed on reaching level ${String(level)}`,
-      ).toBe(true);
-      lastEpoch = epoch;
-      lastBand = band;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS ASSERTED "EVERY SINGLE LEVEL", AND THAT WAS A CAP-10 PROPERTY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * At a cap of 10 the two levers were interleaved — restock on even levels,
+     * a better band on odd ones — so every level from 2 to the cap moved one of
+     * them and a player always had a reason to look in.
+     *
+     * The cap is 50 now and both levers run on tens, which is upstream's own
+     * spacing. Forty-something levels move neither, and forcing the old property
+     * back would mean inventing a cadence nobody designed — the shop would turn
+     * over fifty times a career and the shelf would stop meaning anything.
+     *
+     * So the claim narrows to the one worth keeping: BOTH LEVERS MOVE SEVERAL
+     * TIMES across a career, and neither sits still for the whole game. A shop
+     * nobody has a reason to walk back into is not a shop.
+     */
+    const epochs = new Set<number>();
+    const bands = new Set<number>();
+    for (let level = 1; level <= MAX_CHARACTER_LEVEL; level += 1) {
+      epochs.add(epochFor(level));
+      bands.add(bandOf(level));
     }
+
+    expect(epochs.size, 'the shelf never restocks across a whole career').toBeGreaterThan(3);
+    expect(bands.size, 'the shelf never improves across a whole career').toBeGreaterThan(3);
+
+    // ...and the last band is reachable, so the best stock is not theoretical.
+    expect(bandOf(MAX_CHARACTER_LEVEL)).toBe(Math.max(...bands));
   });
 
   it('makes batch 0 explicit rather than reproducing `or 8`', () => {

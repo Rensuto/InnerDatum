@@ -485,15 +485,25 @@ export function epochFor(partyMaxLevel: number): number {
    * of the four things this game is supposed to be about.
    *
    * ═══ THE SAME DIVISOR THE LOOT BANDS USE, DELIBERATELY ═══
-   * `LEVELS_PER_BAND` is 2 because five bands span this game's career the way
-   * five spanned ToME's. Sharing it means the shelf is RESTOCKED and BETTER at
-   * the same moments — `bandOf` already feeds `stockLevelFor` through the same
-   * band table — so "I levelled, the shop is worth a look" is one fact rather
-   * than two that drift.
+   * Sharing `LEVELS_PER_BAND` means the shelf is RESTOCKED and BETTER at the
+   * same moments — `bandOf` already feeds `stockLevelFor` through the same band
+   * table — so "I levelled, the shop is worth a look" stays one fact rather
+   * than two that drift apart.
    *
-   * Six epochs across 1..10, one every two levels. The first is at level 2
-   * rather than 5: upstream's 5-of-50 is a tenth of the way in, and a starting
-   * shelf that lasts until the halfway point is the mid-game problem again.
+   * ═══ AND THE DIVISOR IS TEN AGAIN (2026-08-20) ═══
+   * It was 2 while the cap was 10, for the reason the paragraph above this one
+   * records: upstream's cadence collapsed to three epochs, two of which a
+   * player lived through, and the whole mid-game was one unchanging shelf.
+   *
+   * The cap is 50 now, so ten is right again and gives five turnovers across a
+   * career — the "half a dozen times" the paragraph above was reaching for.
+   *
+   * ═══ WHAT THIS IS *NOT* A PORT OF, STATED PLAINLY ═══
+   * Upstream does not derive restocking from level at all. `storesRestock()`
+   * (GameState.lua:48-54) is called by EVENTS — boss kills and story beats —
+   * and simply increments a counter. This game has neither yet, so level is the
+   * stand-in clock: it is the only thing that reliably moves forward for a
+   * party. When events land, this is the function they replace.
    */
   return Math.floor(level / LEVELS_PER_BAND);
 }

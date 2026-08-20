@@ -28,49 +28,42 @@
  *                  (ActorTalents.lua:729-734 — know N-1 of its lower talents).
  *
  * ═══════════════════════════════════════════════════════════════════════════
- *   THE ARITHMETIC, AND WHY UPSTREAM'S CONSTANTS CANNOT BE COPIED
+ *   THE ARITHMETIC — UPSTREAM'S, VERBATIM, AND IT ONLY WORKS AT A CAP OF 50
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * ToME's ladder (techniques.lua:99) is, for tier N and rank r:
  *
- *     stat  >= 12 + 8(N-1) + 2(r-1)
- *     level >=  0 + 4(N-1) +  (r-1)
- *
- * Those constants are fitted to a FIFTY-LEVEL game whose stats run past 100.
- * Ported literally into a game with a level cap of 10 and a stat ceiling near
- * 51, they produce this:
- *
- *     tier 1   level  0 + 0    ->  reachable, rank 5 at level  4
- *     tier 2   level  0 + 4    ->  reachable, rank 5 at level  8
- *     tier 3   level  0 + 8    ->  rank 1 at level 8; rank 5 needs level 12
- *     tier 4   level  0 + 12   ->  NEVER. The cap is 10.
- *
- * A quarter of every tree would be dead content, and another quarter would be
- * half-buyable. That is not a port, it is a bug with a citation.
- *
- * So the SHAPE is ported and the CONSTANTS are re-derived. The shape is what
- * fifteen years of tuning is actually worth here: two independent gates, linear
- * in tier and linear in rank, plus a depth requirement — a talent you cannot yet
- * afford in stats may still be reachable by playing longer, and vice versa,
- * which is what stops the ladder feeling like one number in a coat.
- *
- * OUR LADDER, fitted so that ALL FOUR TIERS OPEN INSIDE TEN LEVELS:
- *
- *     stat  >= 12 + 4(N-1) + 2(r-1)      12 / 16 / 20 / 24, +2 a rank
- *     level >= ceil(1.5(N-1)) + floor((r-1)/2)
+ *     stat  >= 12 + 8(N-1) + 2(r-1)      12 / 20 / 28 / 36, +2 a rank
+ *     level >=  0 + 4(N-1) +  (r-1)       0 /  4 /  8 / 12, +1 a rank
  *
  * which lands as:
  *
- *     tier 1   level 0   rank 5 at level 2    stat 12 -> 20
- *     tier 2   level 2   rank 5 at level 4    stat 16 -> 24
- *     tier 3   level 3   rank 5 at level 5    stat 20 -> 28
- *     tier 4   level 5   rank 5 at level 7    stat 24 -> 32
+ *     tier 1   level  0   mastered at  4   stat 12 -> 20
+ *     tier 2   level  4   mastered at  8   stat 20 -> 28
+ *     tier 3   level  8   mastered at 12   stat 28 -> 36
+ *     tier 4   level 12   mastered at 16   stat 36 -> 44
  *
- * Every tier is reachable, the deepest talent still costs most of a character's
- * life to master, and the stat gate stays meaningful against a ceiling of ~51
- * rather than one of 100.
+ * ═══ THIS FILE ONCE RE-DERIVED THEM, AND THE CAP MOVED INSTEAD ═══
+ * For a while `MAX_CHARACTER_LEVEL` was 10, and against that ceiling these
+ * numbers are unusable: tier 3 sticks at rank 1, and TIER 4 GATES AT LEVEL 12
+ * — past the end of the game. A quarter of every tree would have been content
+ * nobody could buy. So this file carried a re-derived ladder
+ * (stat +4 a tier, level ceil(1.5(N-1)) + floor((r-1)/2)) and an argument for
+ * why adapting the constant was the honest port.
  *
- * ═══ WHY THIS IS IN `shared/` ═══
+ * That argument was correct and it has been overtaken. The project is now
+ * targeting 1:1 with upstream — 1,231 talents, 281 trees, 29 classes — and the
+ * cap moved to 50 to match, which puts these constants back inside the domain
+ * they were written for. The re-derivation is gone; the citation is now literal
+ * rather than shape-only.
+ *
+ * ═══ AND IT WAS ONE OF FOUR ═══
+ * The tier ladder was not alone in being pushed outside its own domain by a cap
+ * of 10 — the loot bands put every character in band 1 forever, the xp curve
+ * never reached its own `level < 30` branch, and prodigies at 30 and 42 were
+ * unreachable. Four ported formulas, four workarounds, one root cause. See
+ * `MAX_CHARACTER_LEVEL` in shared/progression.ts.
+ * * ═══ WHY THIS IS IN `shared/` ═══
  * The client greys a locked talent and prints why. If it computed that from its
  * own copy of the ladder, the panel and the spend path would be two answers to
  * one question, and they would disagree the first time either moved — the shape
@@ -83,22 +76,21 @@ export const MAX_TIER = 4;
 
 /** The stat a talent's tier is measured against, named by the talent itself. */
 export const TIER_STAT_BASE = 12;
-export const TIER_STAT_PER_TIER = 4;
+export const TIER_STAT_PER_TIER = 8;
 export const TIER_STAT_PER_RANK = 2;
 
 /**
- * `ceil(1.5(N-1))` — 0, 2, 3, 5. The half-step is deliberate: a flat 2 per tier
- * would put tier 4 at level 6 and leave the back half of the game with nothing
- * left to unlock, and a flat 3 would push it to 9 and leave one level to use it.
+ * `4(N-1)` — 0, 4, 8, 12. Upstream's, verbatim (techniques.lua:99).
  */
-export const TIER_LEVEL_PER_TIER = 1.5;
+export const TIER_LEVEL_PER_TIER = 4;
 
 /**
- * `floor((r-1)/2)` — a rank costs a character level only every OTHER rank.
- * Upstream charges one per rank, which at a cap of 50 is nothing and at a cap of
- * 10 would mean a single talent consuming half a character's career.
+ * ONE CHARACTER LEVEL PER RANK — upstream's `(r-1)`, expressed as a divisor of 1
+ * so the shape of the formula stays readable beside the tier term. At a cap of 50
+ * that is nothing; at a cap of 10 it meant one talent eating half a career, which
+ * is why this was 2 until the cap moved.
  */
-export const TIER_LEVEL_PER_TWO_RANKS = 2;
+export const TIER_LEVEL_PER_TWO_RANKS = 1;
 
 /** The lowest stat value that opens tier `tier` at raw rank `rank`. */
 export function statRequiredFor(tier: number, rank: number): number {

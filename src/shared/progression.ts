@@ -68,14 +68,44 @@ import { ActorRank } from './protocol.ts';
  * descriptor, not us contradicting the engine, and the ported curve below is
  * untouched by it.
  *
- * WHY 10. The audience is 3-6 friends playing ONE EVENING at a time, not a
- * fifty-hour campaign. Ten levels against the verbatim chart is 2,700 xp, which
- * the award side (see `worthExp`) turns into ~145 kills — a session with a
- * visible top rather than a treadmill nobody finishes. It also sets the talent
- * budget: 11 points against 16 purchasable upgrade steps, so a player leaves
- * about five steps unbought and the panel stays a choice.
+ * ═══ IT WAS 10, AND THE PROJECT DECIDED FOR 1:1 INSTEAD (2026-08-20) ═══
+ * The old argument was a good one: 3-6 friends playing ONE EVENING, ten levels
+ * against the verbatim chart being ~145 kills, a session with a visible top
+ * rather than a treadmill. It was the right cap for three classes and forty-two
+ * talents.
+ *
+ * It is the wrong cap for the target this project now has — ToME's 1,231
+ * talents across 281 trees and 29 classes. A cap of 10 gives eleven talent
+ * points, and eleven points cannot express a build drawn from that much
+ * content: the game would ship a library nobody has the currency to read.
+ *
+ * ═══ AND TEN WAS QUIETLY BREAKING FOUR PORTED FORMULAS ═══
+ * This is the part that settles it. Every one of these is upstream arithmetic
+ * that a cap of 10 pushed outside its own domain, and each needed a local
+ * workaround that this change deletes:
+ *
+ *   LOOT BANDS.   `bound(ceil(level/10), 1, 5)` (GameState.lua:1324) put EVERY
+ *                 character at EVERY level in band 1 — the whole ego and
+ *                 double-ego table was unreachable. content/loot.ts had to
+ *                 halve the divisor to five bands of two.
+ *   TALENT TIERS. Upstream's ladder gates tier 4 at character level 12, so a
+ *                 quarter of every tree was unbuyable. src/shared/tiers.ts had
+ *                 to re-derive the constants.
+ *   THE XP CURVE. The `level < 30` branch of the chart below never ran: `mult`
+ *                 only fell from 8.5 to 6.7 across the whole game, so the
+ *                 curve's own shape was never seen.
+ *   PRODIGIES.    Unlocked at 30 and 42 (Actor.lua:3761-3766). Unreachable.
+ *
+ * Four ported formulas, four workarounds, all of them saying the same thing:
+ * the constant was outside the range its source assumes. Raising the cap is
+ * what makes the port a port.
+ *
+ * WHAT IT COSTS, STATED PLAINLY: 50 levels against the verbatim chart is a far
+ * longer game than one evening, and the content to fill it does not exist yet.
+ * That is the accepted trade — the cap now describes the game being built
+ * rather than the game as it stands this week.
  */
-export const MAX_CHARACTER_LEVEL = 10;
+export const MAX_CHARACTER_LEVEL = 50;
 
 /**
  * The per-talent cap. One point buys one raw level, 1 through 5.

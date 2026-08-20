@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
+import { MAX_CHARACTER_LEVEL, TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import {
   MAX_TIER,
   MIN_TIER,
@@ -29,18 +29,30 @@ import {
  * numbers make a quarter of every tree unreachable at this game's level cap.
  */
 
-const CAP = 10;
+/**
+ * THE SHIPPED CAP, NOT A LITERAL. This file used to say 10 and every
+ * assertion below was quietly about that number; when the cap moved to 50 for
+ * 1:1 with upstream, five tests failed for a change that was entirely
+ * deliberate. Reading the constant is what makes the next cap change a
+ * one-line edit rather than an archaeology exercise.
+ */
+const CAP = MAX_CHARACTER_LEVEL;
 
 describe('the ladder fits the game it is in', () => {
-  it('opens every tier inside the level cap', () => {
+  it('opens every tier inside the level cap, on the constants upstream ships', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE ASSERTION THAT JUSTIFIES NOT PORTING UPSTREAM'S CONSTANTS.
+     * THIS TEST ONCE ARGUED THE OPPOSITE, AND BOTH TIMES IT WAS RIGHT.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * ToME gates tier N at character level `4(N-1)`, which at a cap of 50 is
-     * generous and at a cap of 10 puts tier 4 at level 12 — past the end of the
-     * game. A quarter of every tree would be content nobody could ever buy.
+     * At a cap of 10 it existed to justify NOT porting upstream's numbers:
+     * `4(N-1)` gates tier 4 at level 12, past the end of the game, so a
+     * quarter of every tree was unbuyable and this file carried a re-derived
+     * ladder.
+     *
+     * The cap is 50 now and the constants are upstream's, verbatim
+     * (techniques.lua:99). The same assertion now checks that the LITERAL port
+     * fits, which is the thing the cap was raised to make true.
      */
     for (let tier = MIN_TIER; tier <= MAX_TIER; tier += 1) {
       expect(
@@ -49,20 +61,24 @@ describe('the ladder fits the game it is in', () => {
       ).toBeLessThanOrEqual(CAP);
     }
 
-    // And upstream's, for contrast — the number this ladder exists to avoid.
-    const upstreamTierFourMastered = 4 * (MAX_TIER - 1) + (TALENT_MAX_LEVEL - 1);
-    expect(upstreamTierFourMastered).toBeGreaterThan(CAP);
+    // Tier 4 masters at 16 — comfortably inside 50, and impossible under 10.
+    expect(levelRequiredFor(MAX_TIER, TALENT_MAX_LEVEL)).toBeGreaterThan(10);
   });
 
-  it('still makes the deepest talent cost most of a career', () => {
+  it('separates the shallow end from the deep end by a real span of levels', () => {
     /**
-     * A ladder that fits is not enough — one that fits TOO easily is a ladder
-     * nobody climbs. Mastering the deepest talent in a tree should be a
-     * late-game act, not something done on the way past.
+     * THIS ASSERTED "most of a career", which was a fact about a cap of 10 and
+     * not about the ladder. At 50, tier 4 masters at level 16 — a third of the
+     * way in, which is upstream's own pacing and correct: ToME expects you to
+     * finish a tree and then go and find more trees.
+     *
+     * What is worth pinning is the SPAN. Tier 1 and tier 4 must not open at
+     * anything like the same time, or the ladder is decoration.
      */
-    const deepest = levelRequiredFor(MAX_TIER, TALENT_MAX_LEVEL);
-    expect(deepest).toBeGreaterThan(CAP / 2);
-    expect(deepest).toBeLessThanOrEqual(CAP);
+    const shallow = levelRequiredFor(MIN_TIER, 1);
+    const deep = levelRequiredFor(MAX_TIER, TALENT_MAX_LEVEL);
+    expect(deep - shallow, 'the ladder barely spans anything').toBeGreaterThan(10);
+    expect(deep).toBeLessThanOrEqual(CAP);
   });
 
   it('rises with tier and with rank, independently', () => {
@@ -86,6 +102,11 @@ describe('the ladder fits the game it is in', () => {
 });
 
 describe('the three gates', () => {
+  /**
+   * A CHARACTER WHO CLEARS EVERY GATE. `statValue` is deliberately past the
+   * stat ceiling and `characterLevel` is the cap, so these tests are about the
+   * gate logic rather than about whether a particular build qualifies.
+   */
   const open = {
     rank: 1,
     statValue: 99,
