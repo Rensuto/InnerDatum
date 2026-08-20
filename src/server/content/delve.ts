@@ -121,7 +121,7 @@ export type DelveSpec = {
    * thing the door was for.
    *
    * ABSENT ON EVERY SPEC BUT ONE, which is what keeps it meaning anything: a
-   * boss in each of seventeen rooms is a difficulty tier, not a set piece.
+   * boss in each of the rooms is a difficulty tier, not a set piece.
    */
   readonly boss?: MonsterTemplate;
 };
@@ -359,7 +359,11 @@ export function dangerWord(spec: DelveSpec): string {
    * creature in the game that shoots.
    *
    * ═══ AND THE FIX CHANGES NOTHING TODAY, WHICH IS WHY IT IS WORTH SAYING ═══
-   * Measured over all seventeen rooms: not one grade moves. Every roster that
+   * Measured over all seventeen rooms THAT EXISTED THEN: not one grade moves.
+   * (The file is 27 now. The claim is kept as the history it is rather than
+   * restated as a fact about today — it justified a change already made, and
+   * re-running it is a measurement somebody should take rather than inherit.)
+   * Every roster that
    * contains an elite already contains `INDEX_HUSK_ELITE`, and every roster
    * that shoots already contains `INDEX_WRAITH`, so the old lines happened to
    * be right by coincidence. This is not a behaviour change; it is the same

@@ -4405,16 +4405,41 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * AND IF THAT WAS THE LAST ONE, THE GAME HAS AN ENDING NOW.
          * ═══════════════════════════════════════════════════════════════════════
          *
-         * MEASURED, WHICH IS WHY THIS LINE EXISTS AT ALL: a solo run to
-         * `MAX_CHARACTER_LEVEL` is about 149 normal kills, and there are 17
-         * rooms holding five to sixteen residents each. The level cap and the
-         * last case therefore land at ROUGHLY THE SAME TIME — the two
-         * progression tracks were tuned independently and finish together.
+         * MEASURED, WHICH IS WHY THIS LINE EXISTS AT ALL: this is the moment a
+         * character is done, and the game used to mark it with nothing
+         * whatsoever — the last room printed `Filed. N of N.` in the same voice
+         * as the first, and then the player stood in a quiet room wondering if
+         * that was it.
          *
-         * So this is the moment a character is done, and until now the game
-         * marked it with nothing whatsoever: the seventeenth room printed
-         * `Filed. 17 of 17.` in the same voice as the first, and then the player
-         * stood in a quiet room wondering if that was it.
+         * ═══════════════════════════════════════════════════════════════════
+         * THE TWO TRACKS NO LONGER FINISH TOGETHER, AND THE OLD NOTE SAID THEY
+         * DID.
+         * ═══════════════════════════════════════════════════════════════════
+         * It read: *"a solo run to `MAX_CHARACTER_LEVEL` is about 149 normal
+         * kills, and there are 17 rooms holding five to sixteen residents each.
+         * The level cap and the last case therefore land at ROUGHLY THE SAME
+         * TIME — the two progression tracks were tuned independently and finish
+         * together."* True when it was written. The file has grown to 27 rooms
+         * since, and content growth moved only one of the two tracks.
+         *
+         * Re-measured by simulating the whole file in danger order, paying
+         * `worthExp(level, rank)` for the middle of each room's band:
+         *
+         *     room 1  quiet       level 1
+         *     room 19 dangerous   level 10   <- the cap
+         *     room 27 grim        level 10, 3,692 xp against 703 needed
+         *
+         * So the cap arrives with EIGHT ROOMS LEFT, and they are the hardest
+         * eight. Nothing here is broken by that — the last case is still the
+         * last case, and this line still fires for it — but the sentence that
+         * justified the line's placement is no longer the reason it is right.
+         * The reason it is right now is simpler: the file is the only track
+         * still counting once the level stops, which is exactly what
+         * `ui/charsheet.ts` says about its `Cases` row at the cap.
+         *
+         * WHETHER 8/27 OF THE CONTENT PAYING NO EXPERIENCE IS A PROBLEM IS A
+         * BALANCE QUESTION AND NOT THIS FUNCTION'S. It is written down here so
+         * the next person meets the measurement rather than the stale claim.
          *
          * ═══ A LINE, NOT A SCREEN ═══
          * No modal, no fanfare, no credits. This game's whole register is a case

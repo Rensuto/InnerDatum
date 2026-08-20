@@ -1294,12 +1294,33 @@ export type Talent = {
    * an id nothing authored, which is the same treatment a missing class gets.
    */
   readonly tree: string;
-  /** Active, sustained or passive. See `TalentKind` — everything is Active today. */
+  /**
+   * Active, sustained or passive. See `TalentKind`.
+   *
+   * (It said "everything is Active today" — no longer true twice over: thirty of
+   * the forty-two are passive, and `sustain` below makes the third mode real.)
+   */
   readonly kind: TalentKind;
   /**
-   * `manifest.icons` key. All twelve already exist as 64x64 art
-   * (docs/assets-needed.md, "Talent and ability icons": *zero needed, at any
-   * planned milestone*).
+   * `manifest.icons` key.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * COUNTED, BECAUSE THIS SAID SOMETHING THAT STOPPED BEING TRUE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * It read *"All twelve already exist as 64x64 art (docs/assets-needed.md,
+   * 'Talent and ability icons': zero needed, at any planned milestone)"*, and
+   * that was correct when there were twelve talents. There are forty-two.
+   *
+   * Twelve `icon_active_*` files are on disk. Every `icon_passive_*` key —
+   * thirty of them — names art that does not exist. The talents work; the panel
+   * and the hotbar fall back to a drawn letter, which `drawTalentIcon` does on
+   * purpose so a missing icon is a plain initial rather than the pink
+   * missing-asset square.
+   *
+   * SO A NEW TALENT MAY SHIP AHEAD OF ITS ICON, which is the practice thirty
+   * already follow. What must NOT happen is pointing an iconId at somebody
+   * else's art to avoid the letter: two talents wearing one picture is worse to
+   * look at than a letter and worse to reason about than a gap.
    */
   readonly iconId: string;
   readonly cost: TalentCost;
