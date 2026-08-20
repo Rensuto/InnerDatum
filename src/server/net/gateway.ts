@@ -4606,6 +4606,49 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (needsFullResync(result)) {
       if (isPartyWipe(result)) {
         app.log.warn({ gameTurn: result.turn.gameTurn }, 'party wipe — the floor resets');
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND THE MOOR HEARS IT, BECAUSE THE OTHER TWO ALREADY DO.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * Going into a delve crosses to the overworld ("Word from the moor: X
+         * went into Y") and clearing one crosses ("...cleared Y"). Dying did
+         * not — and it is the one of the three the rest of the party can still
+         * do something about.
+         *
+         * MEASURED: A and B in one party, B on the moor, A dives alone and
+         * dies. B receives eleven `party_state` rows for A and not one says
+         * `downed`, because a lone diver's survivor count hits zero the instant
+         * they fall, so the wipe and the floor reset land in the SAME pump and
+         * the downed record is deleted before the pane is projected. B's whole
+         * Case Log for the episode was two lines, neither about the death: a
+         * health bar dipping to 13 and springing back to 69, unexplained.
+         *
+         * THE RECORD LANE CANNOT CARRY IT. `broadcastRecord` reaches the
+         * audience of the realm the event happened in, which is the delve —
+         * everyone who needed to hear it is by definition somewhere else.
+         *
+         * NAMED, AND WITHOUT THE FLOOR'S NAME BEING A SECRET: the departure
+         * line has already said which door they went through, so this says what
+         * became of them rather than repeating where.
+         */
+        const home = opts.realms?.overworld;
+        if (home !== undefined && home.id !== realm.id) {
+          const fallen = world
+            .allActors()
+            .filter((a) => a.kind === ActorKind.Player)
+            .map((a) => nameOf(a.id));
+          if (fallen.length > 0) {
+            const who =
+              fallen.length === 1
+                ? fallen[0]
+                : `${String(fallen[0])} and ${String(fallen.length - 1)} other${fallen.length > 2 ? 's' : ''}`;
+            // The real realm knows its name; a `PumpTarget` does not.
+            const where = opts.realms?.get(realm.id)?.name ?? 'the dark';
+            broadcastRecordLine(home, `Word from the moor: ${String(who)} went down in ${where}.`);
+          }
+        }
       }
       say({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
       // ═══ AND THE SKY WITH IT — `state` CARRIES NO ORB ═══

@@ -1305,3 +1305,74 @@ describe('what the moor tells you when you come back out', () => {
     expect(said).toMatch(/tiles/);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A FRIEND WHO DIES ALONE IN A DELVE IS NEWS ON THE MOOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Measured: A and B are one party, B stays on the moor, A dives alone and dies.
+ * Across the whole episode B receives eleven `party_state` frames carrying a row
+ * for A, and NOT ONE of them says `downed` — because a lone diver's survivor
+ * count is zero the instant they fall, so the wipe and the floor reset run
+ * inside the same pump and the downed record is gone before the pane is
+ * projected. B's entire Case Log for the episode is two lines: that A went in,
+ * and that A arrived. A's own log meanwhile reads "is DOWN — 5 turns, and
+ * nobody is coming" and "is erased — nobody is left standing".
+ *
+ * So B watches a health bar dip to 13 and spring back to 69, and the game never
+ * says what happened.
+ *
+ * ═══ THE ASYMMETRY IS THE ARGUMENT ═══
+ * Two things already cross realms to the moor: "Word from the moor: X went into
+ * Y" and "Word from the moor: X cleared Y". Going in crosses. Coming out
+ * victorious crosses. Dying did not — which is the one of the three a party can
+ * still act on.
+ */
+describe('the moor hears when somebody does not come back', () => {
+  it('tells a party member standing outside that their friend went down', async () => {
+    const outside = await connect(server.port);
+    const outsideId = await outside.hello();
+    const diver = await connect(server.port);
+    const diverId = await diver.hello();
+    await sleep(200);
+    outside.send({ t: 'party', action: 'invite', targetId: diverId });
+    await sleep(150);
+    diver.send({ t: 'party', action: 'accept', targetId: outsideId });
+    await sleep(250);
+    expect(membersOf(server.parties, outsideId)).toHaveLength(2);
+
+    const door = [...server.realms.overworld.sites][0];
+    if (door === undefined) throw new Error('the overworld has no doors');
+    const [dx, dy] = door[0].split(',').map(Number);
+    const body = server.realms.overworld.world.getActor(diverId);
+    if (body === undefined) throw new Error('no body');
+    body.x = (dx ?? 0) - 1;
+    body.y = dy ?? 0;
+    diver.send({ t: 'move', dir: 'e' });
+    await sleep(400);
+
+    const inside = server.realms.realmOf(diverId);
+    expect(inside?.kind, 'the diver never got in').toBe(RealmKind.Inner);
+
+    /**
+     * LET THE ROOM DO IT. Writing `hp = 0` directly does not raise a wipe — the
+     * engine restores on its own pass and the body comes back at 0.5 — so the
+     * death has to arrive the way a death arrives: Blackwood is `grim`, the
+     * diver is alone in a room built for two, and standing still is fatal.
+     */
+    let died = false;
+    for (let turn = 0; turn < 120 && !died; turn += 1) {
+      diver.send({ t: 'hold' });
+      await sleep(45);
+      died = diver.lines().some((line) => /erased/i.test(line));
+    }
+    expect(died, 'the room never killed the diver').toBe(true);
+    await sleep(500);
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Nothing about the death reached the moor at all.
+    const heard = outside.lines().join(' | ');
+    expect(heard, 'the moor heard nothing about it').toMatch(/went down|did not come/i);
+  });
+});
