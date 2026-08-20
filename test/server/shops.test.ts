@@ -1,3 +1,4 @@
+import { LEVELS_PER_BAND } from '../../src/server/content/loot.ts';
 import { MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
 import { describe, expect, it } from 'vitest';
 
@@ -233,13 +234,24 @@ describe('the restock epoch', () => {
      * and the mid-game (5 through 9) was a single shelf that never changed.
      *
      * Same fault as `bandFor`, same question: does the input span the range it
-     * did upstream? The cadence is now `LEVELS_PER_BAND`, shared with the loot
-     * bands so the shelf is restocked and better at the same moments.
+     * did upstream? The cadence is `LEVELS_PER_BAND`, shared with the loot bands
+     * so the shelf is restocked and better at the same moments.
+     *
+     * ═══ AND THE CAP MOVED TO 50, SO THE DIVISOR IS TEN AGAIN ═══
+     * These assertions were written against a divisor of 2 and pinned it: epoch
+     * 1 at level 2, epoch 5 at level 10. With `ceil(level/10)` back inside its
+     * own domain the first restock is at level 10 and the last at 50, which is
+     * upstream's spacing.
+     *
+     * Pinned as RELATIONSHIPS rather than as five literals, because a literal is
+     * what let the stale divisor survive a commit that claimed to have changed
+     * it — see the note in test/server/loot-quality.test.ts.
      */
     expect(epochFor(1)).toBe(0);
-    expect(epochFor(2)).toBe(1);
-    expect(epochFor(3)).toBe(1);
-    expect(epochFor(10)).toBe(5);
+    expect(epochFor(LEVELS_PER_BAND - 1)).toBe(0);
+    expect(epochFor(LEVELS_PER_BAND)).toBe(1);
+    expect(epochFor(LEVELS_PER_BAND * 2)).toBe(2);
+    expect(epochFor(MAX_CHARACTER_LEVEL)).toBe(MAX_CHARACTER_LEVEL / LEVELS_PER_BAND);
 
     let previous = -1;
     for (let level = 1; level <= MAX_CHARACTER_LEVEL; level += 1) {

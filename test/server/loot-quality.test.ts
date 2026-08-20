@@ -49,16 +49,36 @@ describe('the depth bands', () => {
      * test asserting `bandFor(10) === 1` was faithfully pinning that.
      *
      * A formula copied past the point where its assumptions hold is not
-     * fidelity, it is the appearance of it. The SHAPE is what ports — five
-     * bands across a character's whole life — so the divisor becomes this
-     * game's own: 1..10 in steps of two.
+     * fidelity, it is the appearance of it. The divisor became 2 for a while:
+     * five bands across 1..10 in steps of two.
+     *
+     * ═══ AND THEN THE CAP MOVED TO 50 AND THIS TEST KEPT THE BUG ALIVE ═══
+     * `MAX_CHARACTER_LEVEL` is 50 now, so `ceil(level / 10)` is upstream's
+     * formula sitting inside upstream's domain again — but the constant stayed
+     * at 2, which put EVERY CHARACTER FROM LEVEL 10 TO 50 IN BAND 5. The
+     * opposite failure from the original, and exactly as wrong.
+     *
+     * It survived because THIS LINE PINNED IT. The commit that raised the cap
+     * rewrote the prose of five formulas and the code of three; the docblock
+     * six lines above said 10, the code said 2, and `expect(LEVELS_PER_BAND)
+     * .toBe(2)` kept the gate green over the difference.
+     *
+     * A test that pins a constant pins the BUG as readily as the rule. This one
+     * now asserts the SPREAD instead — that the bands are actually distributed
+     * across a career — which is the property the constant exists to produce and
+     * which no single value can satisfy by accident.
      */
-    expect(LEVELS_PER_BAND).toBe(2);
+    expect(LEVELS_PER_BAND).toBe(10);
+
+    // The whole point of five bands: a career visits all of them, in order.
+    const visited = [...Array(MAX_CHARACTER_LEVEL)].map((_, i) => bandFor(i + 1));
+    expect(new Set(visited).size, 'a career does not visit all five bands').toBe(5);
     expect(bandFor(1)).toBe(1);
-    expect(bandFor(2)).toBe(1);
-    expect(bandFor(3)).toBe(2);
-    expect(bandFor(9)).toBe(5);
-    expect(bandFor(10)).toBe(5);
+    expect(bandFor(MAX_CHARACTER_LEVEL)).toBe(5);
+    // ...and it never goes backwards on the way.
+    for (let i = 1; i < visited.length; i += 1) {
+      expect(visited[i] ?? 0).toBeGreaterThanOrEqual(visited[i - 1] ?? 0);
+    }
     // Clamped at both ends. A level-500 party is still band 5; a level-0 one is
     // band 1 rather than band 0, which would index nothing.
     expect(bandFor(500)).toBe(5);

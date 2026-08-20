@@ -177,7 +177,7 @@ export const QUALITY_BANDS: readonly (readonly { quality: LootQuality; weight: n
  * Returns a 1-BASED band number, as upstream does. Index `QUALITY_BANDS` with
  * `band - 1`.
  */
-export const LEVELS_PER_BAND = 2;
+export const LEVELS_PER_BAND = 10;
 
 export function bandFor(level: number): number {
   if (!Number.isFinite(level)) return 1;

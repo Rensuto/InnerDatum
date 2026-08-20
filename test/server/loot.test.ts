@@ -7,6 +7,7 @@ import {
   seedTestEncounter,
 } from '../../src/server/content/encounter.ts';
 import { ITEMS, SLOT_ORDER } from '../../src/server/content/items.ts';
+import { LEVELS_PER_BAND, bandFor } from '../../src/server/content/loot.ts';
 import { isMoneyId } from '../../src/server/content/money.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import {
@@ -874,11 +875,28 @@ describe('ambush drops are rolled at the party level', () => {
     return total === 0 ? 0 : ego / total;
   }
 
-  it('gives a level-5 party better drops than a level-1 one', () => {
-    // ═══ THE ASSERTION THAT WAS FAILING, AND FAILING BACKWARDS ═══
-    // Before the fix this was 0.58 against 0.41: the higher-level party was
-    // getting a WORSE rate, because the fight grew and the band did not.
-    expect(egoRate(5)).toBeGreaterThan(egoRate(1));
+  it('gives a higher-band party better drops than a first-band one', () => {
+    /**
+     * ═══ THE ASSERTION THAT WAS FAILING, AND FAILING BACKWARDS ═══
+     * Before the original fix this was 0.58 against 0.41: the higher-level party
+     * got a WORSE rate, because the fight grew and the band did not.
+     *
+     * ═══ AND THEN THE BANDS WIDENED, SO THE LEVELS HAD TO ═══
+     * It compared level 5 against level 1, which was two bands apart while a
+     * band was two levels wide. `LEVELS_PER_BAND` is upstream's 10 again, so
+     * those two levels are now correctly in the SAME band and the comparison
+     * asserted nothing about loot at all.
+     *
+     * Sampled from the constant rather than from new literals, so the next time
+     * the divisor moves this compares two real bands instead of quietly becoming
+     * a coin flip again.
+     */
+    const firstBand = 1;
+    const laterBand = LEVELS_PER_BAND * 2 + 1;
+    expect(bandFor(laterBand), 'the two samples are in one band').toBeGreaterThan(
+      bandFor(firstBand),
+    );
+    expect(egoRate(laterBand)).toBeGreaterThan(egoRate(firstBand));
   });
 
   it('still grows the fight itself with level, which is the ambush contract', () => {
