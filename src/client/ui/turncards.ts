@@ -678,6 +678,13 @@ function drawCard(
   rect: PanelRect,
   compact: boolean,
   secs: number | null,
+  /**
+   * THE VIEWER'S OWN ROUND, for the self card's second line. Undefined for every
+   * other card by construction — see `TurnView.budget`: another detective's
+   * remaining budget is not yours to read, and this is passed only for the card
+   * wearing your own face.
+   */
+  budget?: TurnView['budget'],
 ): void {
   const tone = toneFor(card);
   const dim = tone.wash > 0;
@@ -778,9 +785,47 @@ function drawCard(
   // The word and the border are the same colour on purpose: the frame is the
   // glance and the word is the confirmation, and they must not be able to say
   // two different things.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ON YOUR OWN CARD, "WAITING" IS THE LEAST USEFUL WORD ON THE STRIP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every other card needs the word: it is how you read the room. Yours does
+   * not — the caret above it, the gold border, the '>' on the name and the chip
+   * in the corner all say the same thing four times over, and none of them
+   * answers the question a player actually has, which is *"can I do anything
+   * else, or am I done?"*
+   *
+   * So the self card spends that line on the ROUND instead, while the round is
+   * still open. Same slot, same font, no extra pixels — and the top band's
+   * height is exactly what cost this client its Case Log in a fight once, so
+   * finding room rather than making it was the requirement.
+   *
+   * ONLY WHILE IT IS YOUR MOVE. `DONE` and `STANDBY` are states you need told,
+   * and a budget printed under a finished card would read as an invitation to
+   * spend it.
+   */
+  const mine =
+    card.isSelf &&
+    budget !== undefined &&
+    budget !== null &&
+    (card.state === TurnActorState.Waiting || card.state === TurnActorState.Bell)
+      ? budget
+      : null;
   ctx.font = FONT_META;
-  ctx.fillStyle = tone.border;
-  ctx.fillText(fitText(ctx, tone.word, tw), tx, iy + 24);
+  if (mine === null) {
+    // The word and the border are the same colour on purpose: the frame is the
+    // glance and the word is the confirmation, and they must not be able to say
+    // two different things.
+    ctx.fillStyle = tone.border;
+    ctx.fillText(fitText(ctx, tone.word, tw), tx, iy + 24);
+  } else {
+    // GOLD, not the border colour, because this is the one line on the strip
+    // that is about a decision rather than a state.
+    ctx.fillStyle = PALETTE.GOLD;
+    const words = `${String(Math.max(0, Math.floor(mine.ap)))}AP ${String(Math.max(0, Math.floor(mine.mp)))}MP`;
+    ctx.fillText(fitText(ctx, words, tw), tx, iy + 24);
+  }
 
   // DIGITS FOR A PERSON, A BAR ALONE FOR THE SIDE. The aggregate's numbers are a
   // SUM over every living hostile, and "142/300" printed on a card wearing one
@@ -863,7 +908,11 @@ export function drawTurnCards(options: TurnCardsOptions): void {
     // the header, and protocol.ts above `TurnActorKind`.
     if (drawn >= room) break;
     const rect: PanelRect = { x: cursor, y: cardY, w: metrics.w, h: CARD_H };
-    drawCard(ctx, sprites, card, rect, metrics.compact, secs);
+    // THE BUDGET GOES TO THE SELF CARD AND NOWHERE ELSE. Passing it for every
+    // card and filtering inside would put another player's round one `isSelf`
+    // typo away from being drawn on their card; the filter belongs here, where
+    // the decision is one line and cannot be reached by accident.
+    drawCard(ctx, sprites, card, rect, metrics.compact, secs, card.isSelf ? view.budget : null);
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * "STILL GOING" — a player who has ACTED and still owes a decision.

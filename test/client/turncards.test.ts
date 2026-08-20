@@ -10,6 +10,7 @@ import { TURN_BAR_H, bannerFor, isYourTurn, turnHudHeight } from '../../src/clie
 import {
   TURN_CARDS_H,
   bellSeconds,
+  drawTurnCards,
   owedCount,
   selfCard,
   turnCardsHeight,
@@ -605,5 +606,131 @@ describe('the banner answers whether you are done', () => {
     const line = bannerFor(view(frame, 12_000, BUDGET));
     expect(line.startsWith('YOUR MOVE — BELL 12s')).toBe(true);
     expect(line).toContain('3/6 AP');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *      WHAT THE SELF CARD ACTUALLY PAINTS — AND ONLY A PAINT TEST SEES IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This client has been bitten twice by trusting a non-paint instrument about a
+ * painted thing: two conversation topics with no button, and a Case Log that
+ * vanished in every fight. Both were invisible to every test in the tree because
+ * no test laid anything out. So the budget on the self card is asserted by
+ * recording the draw calls, which is the only instrument that can see it.
+ */
+type PaintOp = { readonly kind: string; readonly args: readonly unknown[] };
+
+/** The Proxy recorder the other ui/ tests here use. Six pixels a character. */
+function recorder(ops: PaintOp[]): CanvasRenderingContext2D {
+  return new Proxy(
+    {},
+    {
+      get: (_target, prop: string) => {
+        if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+        if (prop === 'canvas') return { width: 960, height: 540 };
+        return (...args: unknown[]) => {
+          ops.push({ kind: prop, args });
+        };
+      },
+      set: () => true,
+    },
+  ) as unknown as CanvasRenderingContext2D;
+}
+
+const NO_SPRITES = { sprite: () => undefined } as unknown as Parameters<
+  typeof drawTurnCards
+>[0]['sprites'];
+
+function paintedTexts(v: TurnView): readonly string[] {
+  const ops: PaintOp[] = [];
+  drawTurnCards({ ctx: recorder(ops), sprites: NO_SPRITES, view: v, width: 960, y: 0 });
+  return ops.flatMap((op) => (op.kind === 'fillText' ? [String(op.args[0])] : []));
+}
+
+describe('the card wearing your own face', () => {
+  const BUDGET = { ap: 3, maxAp: 6, mp: 2, maxMp: 3 };
+
+  it('spends its state line on the round while the round is open', () => {
+    /**
+     * ON YOUR OWN CARD, "WAITING" IS THE LEAST USEFUL WORD ON THE STRIP. The
+     * caret, the gold border, the '>' on the name and the corner chip all say
+     * it is you and that you owe a move; none of them says whether you can do
+     * anything else. That is the question, so that line answers it.
+     */
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
+
+    /**
+     * DIFFERENTIAL, BECAUSE OTHER CARDS ARE ALLOWED TO SAY `WAITING`. A flat
+     * "no WAITING anywhere" assertion was tried and is wrong — it passes only
+     * on a strip where nobody else owes a move, which is not the case this is
+     * about. What must be true is that EXACTLY ONE card traded the word for the
+     * round: the one wearing your face.
+     */
+    const withBudget = paintedTexts(view(frame, null, BUDGET));
+    const without = paintedTexts(view(frame, null, null));
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    expect(withBudget).toContain('3AP 2MP');
+    expect(without).not.toContain('3AP 2MP');
+    expect(withBudget.filter((t) => t === 'WAITING')).toHaveLength(
+      without.filter((t) => t === 'WAITING').length - 1,
+    );
+  });
+
+  it('says WAITING again when there is no budget to show', () => {
+    // THE HALF THAT MUST NOT MOVE. A client that has not had a `resource` frame
+    // yet, or one outliving a server that never sends MP, still gets the word —
+    // a blank line where the state used to be would be strictly worse than the
+    // word that was there before.
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
+
+    expect(paintedTexts(view(frame, null, null))).toContain('WAITING');
+  });
+
+  it('never prints a budget on somebody else’s card', () => {
+    /**
+     * ═══ THE ONE THAT WOULD BE A LEAK ═══
+     * `ResourceView` is viewer-private and the party pane has never claimed
+     * otherwise. The budget is passed to `drawCard` only for the self card, so
+     * this asserts the count: exactly one budget line on a strip of three.
+     */
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    const frame = frameFor(
+      world,
+      sam,
+      barrier({ engagement: 3, whoseTurn: ['actor_a', 'actor_b', 'actor_c'] }),
+    );
+
+    const budgetLines = paintedTexts(view(frame, null, BUDGET)).filter((t) =>
+      /\d+AP \d+MP/.test(t),
+    );
+    expect(budgetLines).toHaveLength(1);
+  });
+
+  it('gives the word back once the turn is over', () => {
+    // DONE and STANDBY are states you need told, and a budget printed under a
+    // finished card would read as an invitation to spend it.
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    const frame = frameFor(
+      world,
+      sam,
+      barrier({ engagement: 3, whoseTurn: ['actor_c'], committed: ['actor_b'] }),
+    );
+
+    const texts = paintedTexts(view(frame, null, BUDGET));
+    expect(texts).toContain('DONE');
+    expect(texts.filter((t) => /\d+AP \d+MP/.test(t))).toHaveLength(0);
   });
 });
