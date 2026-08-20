@@ -2212,8 +2212,33 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         wipes.push({ partyId: event.partyId, restored: event.restored });
       }
 
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * A RESET MOVED THEM, SO THE RESULT HAS TO SAY IT MOVED THEM.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * `PumpResult.displaced` means "who was moved without asking to be", and
+       * `net/` uses it for exactly one thing: a body it names, standing on a
+       * spawn tile, has its session's `exitArmed` cleared — "SOMEBODY ELSE PUT
+       * THEM ON THE DOORSTEP. THAT IS NOT A DECISION TO LEAVE."
+       *
+       * A floor reset is the purest case of that and never populated the field,
+       * which was filled only by `swapped`. So `placeAtSpawn` put every restored
+       * body on the delve's spawn cluster — the same tiles `leaveRealm` reads as
+       * the way out — with the exit still armed, and the tail of `handleMove`
+       * walked whoever's command resolved the wipe straight out of the delve.
+       *
+       * MEASURED: nine two-player runs, 9/9 identical — one player ends on the
+       * moor, the rest are left inside, and nobody pressed anything. The control
+       * that isolates it: replay the same wipe with `hold` as the closing
+       * command and 0/2 are ejected, because it is the tail of `handleMove` that
+       * runs `leaveRealm`.
+       */
+      const resetMoved = new Set<string>();
+
       for (const wipe of wipes) {
         resetFloor(world, wipe.restored, reseedFloor, log, reap, opts.effects);
+        for (const id of wipe.restored) resetMoved.add(id);
 
         // THE CHURN ALARM. See `lastWipeTurn` and `WIPE_CHURN_TURNS`: a party
         // that wipes again this close to its last wipe never got out of the
@@ -2279,7 +2304,14 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         // bodies ended up and look identical whoever caused them, and net/ keeps
         // one rule that turns on HOW a body arrived somewhere rather than where
         // it is. See `PumpResult.displaced` in engine/scheduler.ts.
-        displaced: result.displaced,
+        // ═══ PLUS ANYONE A FLOOR RESET PICKED UP AND PUT DOWN ═══
+        // `result.displaced` is the scheduler's own list and carries swaps only.
+        // A reset is displacement by the same definition, and net/ cannot tell
+        // the two apart from `moved` events — see the note on the wipe loop.
+        displaced:
+          resetMoved.size === 0
+            ? result.displaced
+            : [...new Set([...(result.displaced ?? []), ...resetMoved])],
         // ═══ STRAIGHT THROUGH, AND STILL IN THE WORLD — EXCEPT THE ONES A
         // FLOOR RESET ALREADY REPLACED ═══
         // The bodies are named, not buried. The caller reaps them AFTER it has

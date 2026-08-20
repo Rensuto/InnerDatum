@@ -617,3 +617,59 @@ describe('a floor reset that is not working says so', () => {
     expect(stuck.log.errors).toEqual([]);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A RESET MOVED THEM, SO IT HAS TO SAY IT MOVED THEM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `PumpResult.displaced` is defined as "who was moved without asking to be", and
+ * `net/` uses it for one thing: if a body it names is standing on a spawn tile,
+ * that session's `exitArmed` is cleared, under the note "SOMEBODY ELSE PUT THEM
+ * ON THE DOORSTEP. THAT IS NOT A DECISION TO LEAVE."
+ *
+ * A floor reset is exactly that and never populated the field — it was filled
+ * only by `swapped`. The consequence, measured live over nine two-player runs
+ * and reproduced 9/9: the party wipes, `placeAtSpawn` puts every restored body
+ * on the delve's spawn cluster — which is the same tile set `leaveRealm` reads
+ * as the way out — and the tail of `handleMove` then walks whoever's command
+ * resolved the wipe straight out of the delve. One player ends on the moor and
+ * the rest are left inside, with nobody having pressed anything.
+ *
+ * The control that proves the chain: replay the same wipe with `hold` as the
+ * closing command instead of `move` and 0 of 2 are ejected, because the tail of
+ * `handleMove` is what runs `leaveRealm`.
+ */
+describe('a floor reset reports the bodies it moved', () => {
+  it('names every restored body in `displaced`', () => {
+    const stuck = scene('reset-moves');
+    const before = { x: stuck.actor('p1').x, y: stuck.actor('p1').y };
+
+    stuck.knockDown('p1');
+    const result = stuck.engine.pump();
+
+    // The body really was moved — this scene is the one the tests above use to
+    // prove the reset relocates the party, so if this fails the fixture changed
+    // and the assertion below would pass for the wrong reason.
+    const after = { x: stuck.actor('p1').x, y: stuck.actor('p1').y };
+    expect(after, 'the reset did not move anybody').not.toEqual(before);
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // `displaced` came back empty, so net/'s doorstep guard never fired and the
+    // tail of `handleMove` walked the mover out of the delve.
+    expect(result.displaced ?? [], 'a moved body went unreported').toContain('p1');
+  });
+
+  it('does not report a body it did not move', () => {
+    // The other half: `displaced` must not become "everyone, always", or the
+    // guard stops meaning anything and a real decision to leave gets swallowed.
+    // The monsters were reset onto their authored tiles too and are not players
+    // — nothing in net/ has a session for them, and naming them would be noise.
+    const stuck = scene('reset-moves');
+    stuck.knockDown('p1');
+    const result = stuck.engine.pump();
+    for (const id of result.displaced ?? []) {
+      expect(id, `${id} is not a player`).toMatch(/^p\d+$/);
+    }
+  });
+});
