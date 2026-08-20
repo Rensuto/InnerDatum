@@ -1179,7 +1179,23 @@ export function talentRefused(reason: TalentRefusal): TalentOutcome {
 export type Talent = {
   readonly id: string;
   readonly name: string;
-  readonly classId: ClassId;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHOSE TALENT IT IS — AND `null` MEANS EVERYBODY'S, LIKE THE TREE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `TalentTree.classId` is nullable for the same reason and carries the whole
+   * argument: ToME's `technique/combat-training` belongs to every character
+   * rather than to a profession, and this game's Groundwork tree is that.
+   *
+   * ═══ WHAT THIS FIELD IS FOR, WHICH IS LESS THAN IT LOOKS ═══
+   * `forClass` is its only reader and has no callers; nothing in the engine, the
+   * gateway or the projector branches on it. It is a LABEL — which is why
+   * widening it is safe, and why the alternative was rejected: writing one of
+   * the three class ids onto a talent all three carry would be a lie stored in
+   * the one place a later reader would trust.
+   */
+  readonly classId: ClassId | null;
   /**
    * WHICH TREE THIS BELONGS TO — `content/talent-trees.ts`'s `TalentTree.id`.
    *

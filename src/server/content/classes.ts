@@ -98,6 +98,12 @@ import { cutWithChalk } from '../talents/cut_with_chalk.ts';
 import { longHours } from '../talents/long_hours.ts';
 import { bedsideManner } from '../talents/bedside_manner.ts';
 import { measuredDoses } from '../talents/measured_doses.ts';
+import { issuedKit } from '../talents/issued_kit.ts';
+import { lightOnTheFeet } from '../talents/light_on_the_feet.ts';
+import { rangeTime } from '../talents/range_time.ts';
+import { unflinching } from '../talents/unflinching.ts';
+import { longService } from '../talents/long_service.ts';
+import { wardedMind } from '../talents/warded_mind.ts';
 import { truncheonSweep } from '../talents/truncheon_sweep.ts';
 import { shinCrack } from '../talents/shin_crack.ts';
 import { weightOfOffice } from '../talents/weight_of_office.ts';
@@ -430,8 +436,53 @@ export function classForJoin(savedClassId: string | null, rotation: number): Cla
  * "two classes accidentally share a talent id" into a startup crash rather than
  * into one class silently getting the other's button.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TALENTS EVERY CLASS CARRIES. One tree, one copy, three sheets.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `generic/groundwork`, which is this game's `technique/combat-training`: the
+ * things that are true of a BODY rather than of a profession. Kept out of
+ * `ClassDef.passives` on purpose — that field means "this class's own", and
+ * folding six shared talents into all three copies of it would make the three
+ * definitions look like they disagreed about what a Watchman is.
+ *
+ * ═══ REGISTERED ONCE, WHICH IS THE WHOLE REASON THIS IS A SEPARATE LIST ═══
+ * `createTalentRegistry` THROWS on a duplicate id, deliberately — that is what
+ * turns "two classes accidentally share a talent id" into a startup crash rather
+ * than one class silently getting the other's button. Three classes listing the
+ * same six talents would trip exactly that guard, so the sharing is expressed
+ * here instead of by copying the talents three times with mangled ids.
+ */
+export const GENERIC_PASSIVES: readonly Talent[] = Object.freeze([
+  issuedKit,
+  lightOnTheFeet,
+  rangeTime,
+  unflinching,
+  longService,
+  wardedMind,
+]);
+
+/**
+ * EVERY TALENT THAT SHIPS, from every source. The one enumeration.
+ *
+ * `CLASSES.flatMap(...)` was that enumeration until a tree existed that no class
+ * OWNS, and six tests were quietly counting 36 talents in a game that had 42.
+ * They were not wrong about the classes; they were reading the wrong list. This
+ * is the list, and `registerAllTalents` below is built from the same two halves
+ * so the registry and the count cannot disagree.
+ */
+export function allTalents(): readonly Talent[] {
+  return [
+    ...CLASSES.flatMap((definition) => [...definition.loadout, ...definition.passives]),
+    ...GENERIC_PASSIVES,
+  ];
+}
+
 export function registerAllTalents(): TalentRegistry {
   const registry = createTalentRegistry();
+  // THE SHARED SIX FIRST, AND EXACTLY ONCE. See `GENERIC_PASSIVES`.
+  for (const talent of GENERIC_PASSIVES) registry.register(talent);
   for (const definition of CLASSES) {
     for (const talent of definition.loadout) registry.register(talent);
     // THE PASSIVES REGISTER TOO. They are looked up by id exactly as the four
@@ -473,7 +524,16 @@ export function sheetForClass(definition: ClassDef): TalentSheet {
   return createTalentSheet({
     classId: definition.id,
     loadout: definition.loadout.map((talent) => talent.id),
-    passives: definition.passives.map((talent) => talent.id),
+    /**
+     * THE CLASS'S OWN, THEN THE SIX EVERYBODY CARRIES. See `GENERIC_PASSIVES`.
+     *
+     * Joined HERE rather than in `ClassDef.passives` so the three class
+     * definitions keep meaning "what makes this class this class", and joined at
+     * the SHEET so every downstream reader — the panel, `spend_point`, the
+     * `passivesOf` projection and `refreshPassives` — gets them for free without
+     * a second list to keep in step.
+     */
+    passives: [...definition.passives, ...GENERIC_PASSIVES].map((talent) => talent.id),
     resource: definition.resource,
     maxAp: definition.maxAp,
     maxMp: definition.maxMp,

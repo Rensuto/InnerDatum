@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  GENERIC_PASSIVES,
   ALCHEMIST,
   INSPECTOR,
   WATCHMAN,
@@ -873,7 +874,11 @@ describe('the sheet is where a rank lives', () => {
     // and silently wrong. One is the only rank the curve reads cleanly.
     for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
       const sheet = sheetForClass(definition);
-      expect(sheet.points.size).toBe(definition.loadout.length + definition.passives.length);
+      // The class's own, plus the six every class carries — `sheetForClass`
+      // joins `GENERIC_PASSIVES` on, so the birth grant covers them too.
+      expect(sheet.points.size).toBe(
+        definition.loadout.length + definition.passives.length + GENERIC_PASSIVES.length,
+      );
       for (const talent of definition.passives) {
         expect({ talent: talent.id, level: getTalentLevelRaw(sheet, talent.id) }).toEqual({
           talent: talent.id,

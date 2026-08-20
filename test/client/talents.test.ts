@@ -405,3 +405,98 @@ describe('the panel itself', () => {
     expect(pressSpend('talent:ward_rush', 'talent:crude_blow').spend).toBeNull();
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PANEL HOLDS A THIRD CATEGORY, AND THIS IS WHY THAT WAS CHECKED FIRST.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A class carried two categories and was about to carry three. `talentPanelRect`
+ * is a FIXED 480x300 at every viewport from the 640x400 window up to 1280x720 —
+ * it does not grow with the screen — so "there will be room on a big monitor"
+ * was not available as an answer, and authoring eighteen talents before finding
+ * that out would have been eighteen talents behind a note saying
+ * `1 category hidden — panel too small`.
+ *
+ * MEASURED, not reasoned: a category block is `CAT_H` tall and they flow into
+ * two columns, and at the 640x320 FLOOR — the smallest window this client
+ * renders, where the panel is squeezed to 480x228 — four still fit. Three is
+ * therefore safe with a category of headroom.
+ *
+ * THE FOURTH IS ASSERTED ON PURPOSE. It is the difference between "the number we
+ * happen to have fits" and "there is room to grow", and it is the assertion that
+ * will fail first if `CAT_H`, `PANEL_MAX_H` or the column count moves.
+ */
+describe('the panel has room for the categories a class carries', () => {
+  /** `n` categories of six talents each — four actives and two passives. */
+  function nCategories(n: number): TalentPanelView {
+    const loadout: LoadoutTalent[] = [];
+    const passives: LoadoutTalent[] = [];
+    for (let t = 0; t < n; t += 1) {
+      const tree = { tree: `t/${String(t)}`, treeName: `Category ${String(t)}` };
+      for (let i = 0; i < 4; i += 1) {
+        loadout.push(
+          talent({ id: `talent:a${String(t)}${String(i)}`, name: `Act ${String(i)}`, ...tree }),
+        );
+      }
+      for (let i = 0; i < 2; i += 1) {
+        passives.push(
+          talent({
+            id: `talent:p${String(t)}${String(i)}`,
+            name: `Pass ${String(i)}`,
+            kind: 'passive',
+            descNext: null,
+            ...tree,
+          }),
+        );
+      }
+    }
+    return { loadout, passives, progress: progress(1) };
+  }
+
+  function categoriesPlacedAt(size: typeof FLOOR, count: number): number {
+    const rect = talentPanelRect(size);
+    if (rect === null) throw new Error('no panel at this size');
+    const rows = talentPanelRows(nCategories(count));
+    return talentPanelGeometry(rect, rows, wrapAt).placed.filter(
+      (placed) => placed.row.kind === TalentRowKind.Category,
+    ).length;
+  }
+
+  const VIEWPORTS = [
+    [640, 320],
+    [640, 400],
+    [772, 480],
+    [1024, 600],
+    [1280, 720],
+  ] as const;
+
+  it('draws all THREE at every viewport, including the floor', () => {
+    for (const [w, h] of VIEWPORTS) {
+      const size = { width: w, height: h, top: 40, bottom: h - 40 };
+      expect(categoriesPlacedAt(size, 3), `${String(w)}x${String(h)}`).toBe(3);
+    }
+  });
+
+  it('has room for a FOURTH, which is the headroom rather than the requirement', () => {
+    for (const [w, h] of VIEWPORTS) {
+      const size = { width: w, height: h, top: 40, bottom: h - 40 };
+      expect(categoriesPlacedAt(size, 4), `${String(w)}x${String(h)}`).toBe(4);
+    }
+  });
+
+  it('says so in WORDS when it genuinely cannot hold them all', () => {
+    // The concession is not being removed, only proved to be honest — this file
+    // header's rule is that a dropped tail says so. Nine categories is past what
+    // any class carries and is here to exercise the ladder itself.
+    const size = { width: 640, height: 320, top: 40, bottom: 280 };
+    const rect = talentPanelRect(size);
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(nCategories(9));
+    const placed = talentPanelGeometry(rect, rows, wrapAt).placed;
+    const notes = placed.flatMap((entry) =>
+      entry.row.kind === TalentRowKind.Note ? [entry.row.text] : [],
+    );
+    expect(notes.some((note) => /categories hidden/.test(note))).toBe(true);
+  });
+});

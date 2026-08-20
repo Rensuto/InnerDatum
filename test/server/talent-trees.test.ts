@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { CLASSES } from '../../src/server/content/classes.ts';
+import { CLASSES, allTalents } from '../../src/server/content/classes.ts';
 import { TALENT_TREES, treeById, treesFor } from '../../src/server/content/talent-trees.ts';
 import { TalentKind } from '../../src/server/engine/talents.ts';
 
@@ -61,7 +61,10 @@ describe('every talent belongs to a tree that exists', () => {
   it('leaves no tree empty', () => {
     // A header with nothing under it is worse than no header: it reads as
     // content that failed to load.
-    const talents = CLASSES.flatMap((definition) => definition.loadout);
+    // EVERY talent, not every loadout: `generic/groundwork` holds only passives
+    // (see the mixed-kind test below for why that is allowed), so reading the
+    // loadouts alone reported a full tree as empty.
+    const talents = allTalents();
     for (const tree of TALENT_TREES) {
       expect(
         talents.some((talent) => talent.tree === tree.id),
@@ -107,12 +110,12 @@ describe('the tree grid is full', () => {
   /** Every talent a class ships, actives and passives together, by tree. */
   function byTree(): Map<string, string[]> {
     const out = new Map<string, string[]>();
-    for (const definition of CLASSES) {
-      for (const talent of [...definition.loadout, ...definition.passives]) {
-        const list = out.get(talent.tree) ?? [];
-        list.push(talent.id);
-        out.set(talent.tree, list);
-      }
+    // `allTalents()`, NOT `CLASSES.flatMap` — `generic/groundwork` is owned by no
+    // class, so walking the class definitions reports it as an empty tree.
+    for (const talent of allTalents()) {
+      const list = out.get(talent.tree) ?? [];
+      list.push(talent.id);
+      out.set(talent.tree, list);
     }
     return out;
   }
@@ -137,14 +140,23 @@ describe('the tree grid is full', () => {
     }
   });
 
-  it('mixes actives and passives in every tree', () => {
-    // A tree of five passives is a stat block and a tree of five actives is a
-    // hotbar; ToME's categories are neither. This is the shape assertion, and
-    // it is what stops the next wave of content from being all of one kind.
-    for (const tree of TALENT_TREES) {
-      const held = [...CLASSES]
-        .flatMap((definition) => [...definition.loadout, ...definition.passives])
-        .filter((talent) => talent.tree === tree.id);
+  it('mixes actives and passives in every CLASS tree', () => {
+    // A tree of six passives is a stat block and a tree of six actives is a
+    // hotbar; ToME's class categories are neither. This is the shape assertion,
+    // and it is what stops the next wave of content from being all of one kind.
+    //
+    // ═══ A GENERIC TREE IS EXEMPT, AND THE EXEMPTION IS EVIDENCE-BACKED ═══
+    // `technique/combat-training` is the category every ToME character carries,
+    // and all SEVEN of its talents are `mode = "passive"` — zero actives, which
+    // is checkable in one grep of combat-training.lua. That is what a training
+    // category IS: the things that are true of a body rather than of a
+    // profession, and none of them is a button. Applying the class rule to it
+    // would force an active into it for the sake of the rule.
+    //
+    // It also could not have one today: an active needs a hotbar slot, and
+    // `HOTBAR_TALENT_SLOTS` is exactly full at six.
+    for (const tree of TALENT_TREES.filter((candidate) => candidate.classId !== null)) {
+      const held = allTalents().filter((talent) => talent.tree === tree.id);
       const passives = held.filter((talent) => talent.kind === TalentKind.Passive);
       expect(passives.length, `${tree.id} passives`).toBeGreaterThan(0);
       expect(passives.length, `${tree.id} all-passive`).toBeLessThan(held.length);

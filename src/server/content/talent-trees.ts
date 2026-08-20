@@ -66,7 +66,22 @@ export type TalentTree = {
   readonly mastery: number;
   /** What the panel's header says. Two words at most; it is a heading. */
   readonly name: string;
-  readonly classId: ClassId;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHOSE TREE IT IS — AND `null` MEANS EVERYBODY'S.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's third category is usually not a class category at all. Every
+   * character in that game carries `technique/combat-training` alongside their
+   * class trees, and it is where armour training, accuracy and thick skin live —
+   * the things that are true of a body rather than of a profession.
+   *
+   * Copying that is cheaper AND more faithful than authoring three bespoke third
+   * trees: it gives every class a third category for six talents instead of
+   * eighteen, and it puts the generic material where a ToME player already
+   * expects to find it. `treesFor` returns a shared tree to every class.
+   */
+  readonly classId: ClassId | null;
   /** One line under the header, for why these belong together. */
   readonly blurb: string;
 };
@@ -118,6 +133,18 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     classId: ClassId.Alchemist,
     blurb: 'Keeping the people around you upright.',
   },
+  {
+    /**
+     * THE ONE EVERY CLASS CARRIES. See `TalentTree.classId` for why it is shared
+     * rather than tripled, and `talent-trees.test.ts` for why it is allowed to
+     * be entirely passive when a class tree is not.
+     */
+    id: 'generic/groundwork',
+    mastery: 1,
+    name: 'Groundwork',
+    classId: null,
+    blurb: 'What everyone is taught, whatever they went on to become.',
+  },
 ]);
 
 const BY_ID = new Map(TALENT_TREES.map((tree) => [tree.id, tree]));
@@ -127,7 +154,16 @@ export function treeById(id: string): TalentTree | undefined {
   return BY_ID.get(id);
 }
 
-/** Every tree a class owns, in panel order. */
+/**
+ * Every tree a class owns, in panel order — ITS OWN, THEN THE SHARED ONES.
+ *
+ * The order is the panel's, and generic last is deliberate: a player opening
+ * this screen is looking for what makes their class their class, and ToME puts
+ * combat-training below the class categories for the same reason.
+ */
 export function treesFor(classId: ClassId): readonly TalentTree[] {
-  return TALENT_TREES.filter((tree) => tree.classId === classId);
+  return [
+    ...TALENT_TREES.filter((tree) => tree.classId === classId),
+    ...TALENT_TREES.filter((tree) => tree.classId === null),
+  ];
 }

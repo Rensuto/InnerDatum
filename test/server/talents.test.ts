@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  allTalents,
   ALCHEMIST,
   CLASSES,
   INSPECTOR,
@@ -319,13 +320,12 @@ describe('the loadout cap — PLAN.md § 5', () => {
 
   it('registers all eighteen, and the registry rejects a duplicate', () => {
     const engine = createContentTalentEngine();
-    // TWELVE ACTIVES AND THE PASSIVES. Counted from the content rather than as
-    // a literal, so authoring a talent updates the expectation with the code
-    // instead of failing a number somebody then bumps without reading.
-    const authored = CLASSES.reduce(
-      (sum, definition) => sum + definition.loadout.length + definition.passives.length,
-      0,
-    );
+    // THE ACTIVES, THE CLASS PASSIVES AND THE SHARED ONES. Counted from the
+    // content rather than as a literal, so authoring a talent updates the
+    // expectation with the code instead of failing a number somebody then bumps
+    // without reading — and counted through `allTalents()`, which is the single
+    // enumeration, because `CLASSES.reduce` cannot see a tree no class owns.
+    const authored = allTalents().length;
     expect(engine.registry.all()).toHaveLength(authored);
     expect(engine.registry.forClass(WATCHMAN.id)).toHaveLength(
       WATCHMAN.loadout.length + WATCHMAN.passives.length,
@@ -361,16 +361,38 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * assertion that still applies to it.
      */
     const everyTalent = f.engine.registry.all().filter((talent) => talent.onUse !== undefined);
+    // Three classes, six actives each. The shared tree adds none — every talent
+    // in `generic/groundwork` is passive, which is what a training category is.
     expect(everyTalent).toHaveLength(18);
+    // …and the registry as a whole is those 18 plus 18 class passives plus the 6
+    // shared, which is the count `allTalents()` is the single enumeration of.
+    expect(f.engine.registry.all()).toHaveLength(42);
 
     for (const talent of f.engine.registry.all()) {
-      // OWNED BY EXACTLY ONE CLASS, actives and passives alike — a talent two
-      // classes can reach, or none can, is the failure this half catches.
       const owners2 = CLASSES.filter(
         (definition) =>
           definition.loadout.some((owned) => owned.id === talent.id) ||
           definition.passives.some((owned) => owned.id === talent.id),
       );
+      if (talent.classId === null) {
+        /**
+         * A SHARED TALENT IS OWNED BY NO DEFINITION AND CARRIED BY EVERY SHEET,
+         * and both halves are asserted because either alone would pass for the
+         * wrong reason. `GENERIC_PASSIVES` is joined at `sheetForClass` rather
+         * than folded into `ClassDef.passives`, so a shared talent appearing in a
+         * definition means somebody copied it back in and the registry is one
+         * startup away from throwing on the duplicate.
+         */
+        expect(owners2, talent.id).toEqual([]);
+        for (const definition of CLASSES) {
+          expect(sheetForClass(definition).passives, `${definition.id} / ${talent.id}`).toContain(
+            talent.id,
+          );
+        }
+        continue;
+      }
+      // OWNED BY EXACTLY ONE CLASS, actives and passives alike — a talent two
+      // classes can reach, or none can, is the failure this half catches.
       expect(owners2.map((definition) => definition.id)).toEqual([talent.classId]);
     }
 
