@@ -675,6 +675,39 @@ export const ACTIONS = [
     fixed: [{ kind: 'key', value: '4' }],
     rebindable: false,
   },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHY THERE IS NO SLOT 5 HERE YET, AND WHAT WOULD HAVE TO LAND WITH IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ui/hotbar.ts` argued slots 5-8 were impossible: the browser reports
+   * Numpad5-Numpad9 as the strings '5'-'9', so binding them by KEY would put
+   * four collisions on move_north, move_east, move_northwest and move_northeast
+   * — the CARDINALS, far worse than the diagonal collisions slots 1-4 carry.
+   *
+   * That reasoning is exactly right about bindings by KEY, and it is why every
+   * numpad binding in this file is already `{ kind: 'code' }`. It says nothing
+   * about bindings by CODE: the top row reports `Digit5` and the numpad reports
+   * `Numpad5`, different strings, so a code-bound slot cannot be reached from
+   * the numpad at all. `Keymap.slotByCode` is the other half of that pair and
+   * now exists, so the KEYBOARD is no longer what caps the bar at four.
+   *
+   * ═══ THE REMAINING CAP IS CONTENT, AND IT IS LOAD-BEARING ═══
+   * `client/main.ts` appends the item slots ONLY when the loadout is exactly
+   * `HOTBAR_TALENT_SLOTS` long. Raising that constant to 8 against classes that
+   * author four talents would therefore not add four empty squares — it would
+   * delete the item slots outright. And with the constant left at 4, a
+   * `hotbar_5` would fire `pressItemSlot`, putting a key on a surface
+   * `HOTBAR_ITEM_SLOTS` deliberately keeps mouse-only.
+   *
+   * So slots 5-8 arrive with the talents that fill them, in one diff, or they
+   * arrive broken. The mechanism is here; the actions are not.
+   *
+   * SLOTS 1-4 STAY ON THEIR KEY BINDINGS when that day comes. Moving them to
+   * codes would fix their diagonal collision too, and would also change what a
+   * player on a non-QWERTY layout presses, on four keys that have worked since
+   * M3. Separate decision, separate risk.
+   */
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LOG
@@ -906,7 +939,15 @@ function stealsFrozenCancel(action: ActionDef, binding: Binding): boolean {
  */
 export function canDeliver(action: ActionDef, binding: Binding): boolean {
   if (binding.kind === 'key') return true;
-  return action.effect.kind === 'move' || action.effect.kind === 'command';
+  // THREE CODE-KEYED TABLES IN keys.ts NOW, not two. `slot` joined `move` and
+  // `command` when the hotbar needed keys 5-8: they are bound to `Digit5`-
+  // `Digit8` precisely so the numpad, which reports those as the strings
+  // '5'-'9', cannot reach them. See `Keymap.slotByCode`.
+  return (
+    action.effect.kind === 'move' ||
+    action.effect.kind === 'command' ||
+    action.effect.kind === 'slot'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -996,6 +1037,7 @@ export type KeymapActions = {
   readonly dirByCode: ReadonlyMap<string, ActionId>;
   readonly dirByKey: ReadonlyMap<string, ActionId>;
   readonly slotByKey: ReadonlyMap<string, ActionId>;
+  readonly slotByCode: ReadonlyMap<string, ActionId>;
   readonly cancelByKey: ReadonlyMap<string, ActionId>;
   readonly scrollByKey: ReadonlyMap<string, ActionId>;
   readonly uiByKey: ReadonlyMap<string, ActionId>;
@@ -1024,6 +1066,27 @@ export type Keymap = {
   readonly commandByCode: ReadonlyMap<string, TurnCommand>;
   readonly commandByKey: ReadonlyMap<string, TurnCommand>;
   readonly slotByKey: ReadonlyMap<string, number>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SLOTS BOUND BY PHYSICAL KEY, WHICH IS WHAT LETS THERE BE MORE THAN FOUR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ui/hotbar.ts` records why keys 5-8 could not exist: the browser reports
+   * Numpad5-Numpad9 as the STRINGS '5'-'9', so a `hotbar_5` bound by KEY would
+   * fire on Numpad8 — which is `move_north`. Four more collisions on the
+   * CARDINAL directions, where the existing four are only on the diagonals.
+   *
+   * That is true of bindings by KEY. It is not true of bindings by CODE: the top
+   * row reports `Digit5` and the numpad reports `Numpad5`, and they are different
+   * strings. Movement has always known this — every numpad binding in this file
+   * is `{ kind: 'code' }` for exactly that reason — and the slot case simply did
+   * not have the other half of the pair.
+   *
+   * WORSE THAN MISSING: `case 'slot'` claimed a code binding INTO `slotByKey`,
+   * so a `{ kind: 'code' }` slot would have been stored under 'Digit5' and
+   * matched against `event.key`, which is '5'. It could never fire, silently.
+   */
+  readonly slotByCode: ReadonlyMap<string, number>;
   readonly uiByKey: ReadonlyMap<string, UiCommand>;
   readonly scrollByKey: ReadonlyMap<string, number>;
   /** Escape, and nothing else unless somebody unfreezes it. */
@@ -1128,6 +1191,7 @@ export function compileKeymap(actions: readonly ActionDef[], remap: KeyRemap): K
   const commandByCode = new Map<string, TurnCommand>();
   const commandByKey = new Map<string, TurnCommand>();
   const slotByKey = new Map<string, number>();
+  const slotByCode = new Map<string, number>();
   const uiByKey = new Map<string, UiCommand>();
   const scrollByKey = new Map<string, number>();
   const cancelKeys = new Set<string>();
@@ -1137,6 +1201,7 @@ export function compileKeymap(actions: readonly ActionDef[], remap: KeyRemap): K
   const aCommandByCode = new Map<string, ActionId>();
   const aCommandByKey = new Map<string, ActionId>();
   const aSlotByKey = new Map<string, ActionId>();
+  const aSlotByCode = new Map<string, ActionId>();
   const aUiByKey = new Map<string, ActionId>();
   const aScrollByKey = new Map<string, ActionId>();
   const aCancelByKey = new Map<string, ActionId>();
@@ -1157,7 +1222,11 @@ export function compileKeymap(actions: readonly ActionDef[], remap: KeyRemap): K
           else claim(commandByKey, aCommandByKey, cell, action.effect.command, id);
           break;
         case 'slot':
-          claim(slotByKey, aSlotByKey, cell, action.effect.slot, id);
+          // BY CODE OR BY KEY, like `move` and `command` above — and unlike the
+          // version of this line that claimed every slot into the key map
+          // whatever it was bound by. See `slotByCode`.
+          if (byCode) claim(slotByCode, aSlotByCode, cell, action.effect.slot, id);
+          else claim(slotByKey, aSlotByKey, cell, action.effect.slot, id);
           break;
         case 'ui':
           claim(uiByKey, aUiByKey, cell, action.effect.command, id);
@@ -1182,6 +1251,7 @@ export function compileKeymap(actions: readonly ActionDef[], remap: KeyRemap): K
     commandByCode,
     commandByKey,
     slotByKey,
+    slotByCode,
     uiByKey,
     scrollByKey,
     cancelKeys,
@@ -1189,6 +1259,7 @@ export function compileKeymap(actions: readonly ActionDef[], remap: KeyRemap): K
       dirByCode: aDirByCode,
       dirByKey: aDirByKey,
       slotByKey: aSlotByKey,
+      slotByCode: aSlotByCode,
       cancelByKey: aCancelByKey,
       scrollByKey: aScrollByKey,
       uiByKey: aUiByKey,
@@ -1285,8 +1356,8 @@ export function pressesFor(binding: Binding): readonly Press[] {
  * WHICH ACTION ACTUALLY ANSWERS THIS PRESS.
  *
  * ═══ THE SAME EIGHT-STEP ORDER `bindGameKeys` WALKS, AND IT MUST STAY SO ═══
- * dir (code, then key) -> slot -> cancel -> scroll -> ui -> command (code, then
- * key). keys.ts marks that order load-bearing in two separate comments and
+ * dir (code, then key) -> slot (code, then key) -> cancel -> scroll -> ui ->
+ * command (code, then key). keys.ts marks that order load-bearing in two separate comments and
  * test/client/input/keys.test.ts pins it; this function is the second reader of
  * the same rule, and if the two ever disagree the Keys screen will confidently
  * name the wrong holder.
@@ -1296,7 +1367,10 @@ export function resolveAction(press: Press, keymap: Keymap): ActionId | undefine
   const a = keymap.actions;
   const dir = a.dirByCode.get(press.code) ?? a.dirByKey.get(lower);
   if (dir !== undefined) return dir;
-  const slot = a.slotByKey.get(lower);
+  // CODE THEN KEY, exactly as `bindGameKeys` reads it. A slot bound by code that
+  // this function looked up by key would make the Keys screen name no holder for
+  // a press the game answers, which is the disagreement the note above forbids.
+  const slot = a.slotByCode.get(press.code) ?? a.slotByKey.get(lower);
   if (slot !== undefined) return slot;
   const cancel = a.cancelByKey.get(lower);
   if (cancel !== undefined) return cancel;

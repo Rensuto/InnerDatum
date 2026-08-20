@@ -597,3 +597,66 @@ describe('labelFor never shows the stored form', () => {
     expect(keymap.uiByKey.get('v')).toBeUndefined();
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A SLOT BOUND BY CODE LANDS IN THE CODE MAP — WHICH IT DID NOT USED TO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `case 'slot'` claimed EVERY slot into `slotByKey`, whatever it was bound by.
+ * So a `{ kind: 'code' }` slot was stored under 'Digit5' and then matched
+ * against `event.key`, which is '5'. It could never fire, and it failed
+ * silently — no throw, no warning, just a key that did nothing.
+ *
+ * Nothing in `ACTIONS` binds a slot by code TODAY (see the note above
+ * `hotbar_1` for why slots 5-8 wait for the talents that fill them), so this
+ * feeds `compileKeymap` a synthetic table instead. That is the whole reason it
+ * takes one rather than reading the module-level constant.
+ *
+ * WHY IT MATTERS BEFORE ANYTHING USES IT: this is what makes a bar wider than
+ * four possible at all. The numpad reports Numpad5-Numpad9 as the STRINGS
+ * '5'-'9', so a slot bound by key collides with the cardinal directions; bound
+ * by code it cannot, because the numpad never emits `Digit5`.
+ */
+describe('a slot bound by code', () => {
+  const CODE_SLOT: ActionDef = {
+    id: 'hotbar_5',
+    name: 'Talent slot 5',
+    group: 'Hotbar',
+    order: 1,
+    effect: { kind: 'slot', slot: 4 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Digit5' }],
+    rebindable: false,
+  };
+
+  it('goes in slotByCode, not slotByKey', () => {
+    const keymap = compileKeymap([CODE_SLOT], {});
+    expect(keymap.slotByCode.get('Digit5')).toBe(4);
+    // THE HALF THAT WAS BROKEN. 'Digit5' under the key map is a dead entry:
+    // `event.key` for that press is '5', so the lookup could never hit it.
+    expect(keymap.slotByKey.get('digit5')).toBeUndefined();
+    expect(keymap.slotByKey.size).toBe(0);
+  });
+
+  it('cannot be reached from the numpad, which is the entire point', () => {
+    const keymap = compileKeymap([CODE_SLOT], {});
+    expect(keymap.slotByCode.get('Numpad5')).toBeUndefined();
+  });
+
+  it('is named by resolveAction, so the Keys screen agrees with the game', () => {
+    // keys.ts reads code-then-key; `resolveAction` is the second reader of that
+    // same order. A press the game answers and this function cannot name would
+    // put "unbound" on the Keys screen beside a key that works.
+    const keymap = compileKeymap([CODE_SLOT], {});
+    expect(resolveAction({ code: 'Digit5', key: '5' }, keymap)).toBe('hotbar_5');
+  });
+
+  it('still reaches a KEY-bound slot the old way', () => {
+    // The branch is a fork, not a replacement — `hotbar_1`-`hotbar_4` are bound
+    // by key and all four have worked since M3.
+    const keymap = compileKeymap(ACTIONS, {});
+    expect(keymap.slotByKey.get('1')).toBe(0);
+    expect(keymap.slotByCode.size).toBe(0);
+  });
+});

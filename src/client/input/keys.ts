@@ -481,6 +481,21 @@ export function bindGameKeys(
     // is rebindable now, and it was the ONE key-side lookup in this file that did
     // not lower. A capture field reporting 'H' would have bound a hotbar slot to
     // a key no press could ever match.
+    /**
+     * BY CODE FIRST, AND AFTER `directionFor` FOR THE SAME REASON IT IS FIRST.
+     *
+     * Movement claims Numpad1/3/7/9 by code before anything reads a digit. This
+     * then claims Digit5-Digit8 by code — the TOP ROW, which the numpad cannot
+     * produce — so slots 5-8 exist without taking a key off the cardinals. See
+     * `Keymap.slotByCode`.
+     */
+    const slotFromCode = keymap.slotByCode.get(event.code);
+    if (slotFromCode !== undefined) {
+      event.preventDefault();
+      handlers.onSlot(slotFromCode);
+      return;
+    }
+
     const slot = keymap.slotByKey.get(event.key.toLowerCase());
     if (slot !== undefined) {
       event.preventDefault();
