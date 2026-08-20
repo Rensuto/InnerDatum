@@ -985,12 +985,21 @@ let worldMapOpen = false;
  * Keyed by realm, because the overworld's exploration is not an arena's and a
  * fresh instance must not arrive pre-explored.
  *
- * ═══ CLIENT-SIDE AND SESSION-LOCAL, WHICH IS A REAL LIMIT ═══
- * It is not persisted, so a reload forgets the map. Persisting it means a new
- * field on the character file and therefore a SCHEMA_VERSION bump, and it
- * belongs in the same pass as deciding whether exploration is per-character or
- * per-player. Stated here rather than discovered later: today, fog is a
- * per-session veil, not a permanent record.
+ * ═══ THE SERVER'S COPY IS THE AUTHORITY, AND IT PERSISTS ═══
+ * This map is the SESSION's, and it is seeded from the save on every realm
+ * frame — see the `msg.explored` branch in the socket handler, which merges the
+ * server's bitset into whatever this session has already revealed rather than
+ * replacing it. The client keeps revealing locally at the same radius so
+ * neither side sends anything per step; `gateway.ts` writes the bitset onto the
+ * character file and `test/server/fog-persistence.test.ts` pins the round trip.
+ *
+ * THIS NOTE USED TO SAY THE OPPOSITE — "it is not persisted, so a reload
+ * forgets the map", with a paragraph about the schema bump that persisting it
+ * would need. That bump happened and the note did not, so it sat here claiming
+ * a missing feature that was working eighty lines further down. It is corrected
+ * rather than deleted because the correction is the useful part: in this
+ * codebase a comment describing an ABSENCE is the least trustworthy thing in
+ * it, since nothing fails when one goes stale.
  *
  * It is also NOT a visibility rule — the playfield still draws everything in
  * range, because the server decides what a client may know and this is a
