@@ -243,7 +243,14 @@ import { roamerAt, tickRoamers } from '../world/roamers.ts';
 import { groundAt, regionAt } from '../../shared/level.ts';
 import { landmarkIdFor } from '../../shared/redaction.ts';
 import type { Ground } from '../../shared/level.ts';
-import { createFog, fogFromBase64, fogHas, fogToBase64, revealDisc } from '../../shared/fog.ts';
+import {
+  createFog,
+  fogFromBase64,
+  fogHas,
+  fogToBase64,
+  revealDisc,
+  revealDiscExcept,
+} from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import { isDowned } from '../engine/downed.ts';
 import type { DownedState } from '../engine/downed.ts';
@@ -3175,6 +3182,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (realm.kind !== RealmKind.Overworld) return false;
     const level = realm.world.level;
     return revealDisc(fogFor(actorId, realm), level.w, level.h, x, y);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SHOW THE COUNTRY, NOT THE SECRETS IN IT. Not `revealFor`, on purpose.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A rumour marks the country it names. `SiteDef.hidden` places are filtered
+   * out of a player's map until their own fog holds the cell (`markersFor`), so
+   * a bulk reveal can hand one over — and this one did: Barrow End sits 8 tiles
+   * from the Blackwater Wood's anchor and Cairnfoot 10 from the Bracken Waste's,
+   * both inside the radius. Asking a townsperson for gossip uncovered two of the
+   * three places the game says you have to find.
+   *
+   * WALKING there still reveals them, which is the whole point of `revealFor`
+   * being a different function. What is refused is being TOLD them: the ground
+   * around a secret is not the secret, and a local saying the wood has barrows
+   * in it should leave you a wood to search rather than a marker to click.
+   */
+  const hiddenCells = (realm: Realm): ReadonlySet<string> => {
+    const out = new Set<string>();
+    for (const [cell, siteId] of realm.sites) {
+      if (SITES.get(siteId)?.hidden === true) out.add(cell);
+    }
+    return out;
+  };
+
+  const markCountry = (realm: Realm, actorId: string, x: number, y: number): boolean => {
+    if (realm.kind !== RealmKind.Overworld) return false;
+    const level = realm.world.level;
+    return revealDiscExcept(fogFor(actorId, realm), level.w, level.h, x, y, hiddenCells(realm));
   };
 
   /**
@@ -8749,7 +8787,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // realm set are the reason `exploredElsewhere` guards it too. No realms
         // means no overworld to mark, and the answer is still said.
         const moor = opts.realms?.overworld;
-        if (moor !== undefined && revealFor(moor, me.id, named.x, named.y)) {
+        if (moor !== undefined && markCountry(moor, me.id, named.x, named.y)) {
           queueSave('explored');
           text2 = `${text} (${named.name} is on your map now.)`;
         }

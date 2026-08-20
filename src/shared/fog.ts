@@ -85,6 +85,49 @@ export function revealDisc(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME DISC, WITH CELLS IT IS NOT ALLOWED TO UNCOVER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `SiteDef.hidden` places are filtered out of a player's map until that
+ * character's OWN fog holds the cell they stand on (`gateway.ts`), which is what
+ * makes finding one an event. So anything that reveals ground in bulk can hand
+ * over a hidden site by accident, and one did: marking the country a rumour
+ * names put Barrow End 8 tiles from the anchor and Cairnfoot 10 — both inside a
+ * radius of 12 — so asking a townsperson for gossip uncovered two of the three
+ * places the design says you have to FIND.
+ *
+ * The fix is not a smaller radius, which would just move the accident. It is
+ * that the ground around a secret is not the secret: you may be told the wood
+ * has barrows in it and see the whole wood, and still have to walk it.
+ *
+ * `except` is keyed `"x,y"` — a set rather than a list because the caller has
+ * one per map and the disc asks about several hundred cells.
+ */
+export function revealDiscExcept(
+  fog: Uint8Array,
+  w: number,
+  h: number,
+  cx: number,
+  cy: number,
+  except: ReadonlySet<string>,
+  radius = REVEAL_RADIUS,
+): boolean {
+  let changed = false;
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      if (dx * dx + dy * dy > radius * radius) continue;
+      const x = cx + dx;
+      const y = cy + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      if (except.has(`${String(x)},${String(y)}`)) continue;
+      if (fogSet(fog, w, x, y)) changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * BASE64 BY HAND, BECAUSE THIS FILE RUNS IN BOTH RUNTIMES
  * ═══════════════════════════════════════════════════════════════════════════
  * `Buffer` is Node-only and `btoa` is browser-only, and `src/shared/` compiles

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { regionNamedIn } from '../../src/shared/level.ts';
+import { makeOverworld, regionNamedIn } from '../../src/shared/level.ts';
+import { createFog, fogHas, revealDisc, revealDiscExcept } from '../../src/shared/fog.ts';
 
 import { LINE_MAX, TOWNSFOLK, isTownsfolkId } from '../../src/server/content/townsfolk.ts';
 import { Faction, isMonster } from '../../src/server/engine/actor.ts';
@@ -435,5 +436,79 @@ describe('every rumour names a place that exists', () => {
       (spec) => spec.topics.rumour !== undefined && regionNamedIn(spec.topics.rumour) !== undefined,
     );
     expect(pointed.length).toBeGreaterThanOrEqual(everyone.length - 2);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A RUMOUR POINTS AT A SECRET WITHOUT GIVING IT AWAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This is the pairing the content was already built for and nobody had joined
+ * up: three sites are `hidden` — Cairnfoot, Barrow End and The Weir — and the
+ * townsfolk gossip about barrows and a weir. Marking the country they name is
+ * the direction; the site is still the find.
+ *
+ * IT WENT WRONG THE FIRST TIME IN EXACTLY THE WAY THAT MATTERS. `markersFor`
+ * shows a hidden site once the character's own fog holds its cell, and Barrow
+ * End sits 8 tiles from the Blackwater Wood's anchor with Cairnfoot 10 from the
+ * Bracken Waste's — both inside the reveal radius of 12. So the first version of
+ * the marking handed over two of the three, and no test in the tree would have
+ * noticed: the feature worked, the map filled in, and the only thing lost was
+ * the reason those three places exist.
+ */
+describe('marking a rumour does not give away a hidden site', () => {
+  const HIDDEN = ['site:cairnfoot', 'site:barrow_end', 'site:the_weir'];
+
+  it('still has hidden sites to protect', () => {
+    // If a later pass unhides them this test should be reconsidered, not
+    // silently pass because there is nothing left to hide.
+    const map = makeOverworld();
+    const ids = new Set([...map.sites.values()]);
+    for (const id of HIDDEN) expect(ids.has(id), id).toBe(true);
+  });
+
+  it('leaves every hidden cell covered while revealing around it', () => {
+    const map = makeOverworld();
+    const { w, h } = map.view;
+    const hiddenCells = new Set(
+      [...map.sites.entries()].flatMap(([cell, id]) => (HIDDEN.includes(id) ? [cell] : [])),
+    );
+
+    for (const spec of [...TOWNSFOLK.values()].flat()) {
+      const rumour = spec.topics.rumour;
+      if (rumour === undefined) continue;
+      const named = regionNamedIn(rumour);
+      if (named === undefined) continue;
+
+      const fog = createFog(w, h);
+      revealDiscExcept(fog, w, h, named.x, named.y, hiddenCells);
+
+      for (const cell of hiddenCells) {
+        const parts = cell.split(',');
+        const x = Number(parts[0]);
+        const y = Number(parts[1]);
+        expect(fogHas(fog, w, x, y), `${spec.name} uncovered ${cell}`).toBe(false);
+      }
+    }
+  });
+
+  it('would have uncovered them without the exclusion, which is the regression', () => {
+    // The counterfactual, pinned: this is not a hypothetical hazard. A plain
+    // disc around the Blackwater Wood's anchor DOES reach Barrow End.
+    const map = makeOverworld();
+    const { w, h } = map.view;
+    const wood = regionNamedIn('Barrows out in the Blackwater Wood. Older than us.');
+    expect(wood).toBeDefined();
+
+    const barrow = [...map.sites.entries()].find(([, id]) => id === 'site:barrow_end')?.[0];
+    expect(barrow).toBeDefined();
+    const parts = (barrow ?? '0,0').split(',');
+    const bx = Number(parts[0]);
+    const by = Number(parts[1]);
+
+    const naive = createFog(w, h);
+    revealDisc(naive, w, h, wood?.x ?? 0, wood?.y ?? 0);
+    expect(fogHas(naive, w, bx, by), 'the hazard is real').toBe(true);
   });
 });

@@ -18,6 +18,7 @@ import {
   fogSet,
   fogToBase64,
   revealDisc,
+  revealDiscExcept,
 } from '../../src/shared/fog.ts';
 
 const W = 170;
@@ -106,5 +107,52 @@ describe('one character is not another', () => {
     revealDisc(mine, W, H, 20, 20);
     expect(fogCount(mine)).toBeGreaterThan(0);
     expect(fogCount(theirs)).toBe(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A BULK REVEAL MUST NOT HAND OVER A SECRET.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `SiteDef.hidden` places are filtered out of a player's map until their own
+ * fog holds the cell they stand on, so anything that reveals ground in bulk can
+ * uncover one by accident. Marking the country a rumour names did exactly that:
+ * Barrow End is 8 tiles from the Blackwater Wood's anchor and Cairnfoot 10 from
+ * the Bracken Waste's, both inside a radius of 12.
+ */
+describe('a disc that leaves some cells covered', () => {
+  it('reveals the ground around a cell it is told to skip', () => {
+    const fog = createFog(40, 40);
+    const secret = '20,20';
+    expect(revealDiscExcept(fog, 40, 40, 20, 20, new Set([secret]))).toBe(true);
+    // The neighbours are seen…
+    expect(fogHas(fog, 40, 19, 20)).toBe(true);
+    expect(fogHas(fog, 40, 21, 20)).toBe(true);
+    expect(fogHas(fog, 40, 20, 19)).toBe(true);
+    // …and the cell itself is not. A wood you can see, with a barrow you cannot.
+    expect(fogHas(fog, 40, 20, 20)).toBe(false);
+  });
+
+  it('is otherwise the same disc', () => {
+    const plain = createFog(40, 40);
+    const spared = createFog(40, 40);
+    revealDisc(plain, 40, 40, 20, 20);
+    revealDiscExcept(spared, 40, 40, 20, 20, new Set());
+    expect([...spared]).toEqual([...plain]);
+  });
+
+  it('answers false when it changed nothing, so a caller does not queue a save', () => {
+    const fog = createFog(40, 40);
+    // A disc whose ONLY cell is excluded reveals nothing at all.
+    expect(revealDiscExcept(fog, 40, 40, 20, 20, new Set(['20,20']), 0)).toBe(false);
+  });
+
+  it('still reveals when walking, which is a different function', () => {
+    // The distinction the feature rests on: being TOLD about a place is refused,
+    // being THERE is not. `revealDisc` has no exclusions and keeps none.
+    const fog = createFog(40, 40);
+    revealDisc(fog, 40, 40, 20, 20);
+    expect(fogHas(fog, 40, 20, 20)).toBe(true);
   });
 });
