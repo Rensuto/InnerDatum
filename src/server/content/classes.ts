@@ -85,8 +85,17 @@ import { seenWorse } from '../talents/seen_worse.ts';
 import { softPlaces } from '../talents/soft_places.ts';
 import { steadyHands } from '../talents/steady_hands.ts';
 import { theLongShift } from '../talents/the_long_shift.ts';
+import { calledShot } from '../talents/called_shot.ts';
+import { powderDiscipline } from '../talents/powder_discipline.ts';
+import { boltHole } from '../talents/bolt_hole.ts';
 import { coldReading } from '../talents/cold_reading.ts';
+import { stableCompound } from '../talents/stable_compound.ts';
+import { cutWithChalk } from '../talents/cut_with_chalk.ts';
+import { longHours } from '../talents/long_hours.ts';
+import { bedsideManner } from '../talents/bedside_manner.ts';
 import { measuredDoses } from '../talents/measured_doses.ts';
+import { weightOfOffice } from '../talents/weight_of_office.ts';
+import { paradeGround } from '../talents/parade_ground.ts';
 import { standingOrders } from '../talents/standing_orders.ts';
 import { treeById } from './talent-trees.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
@@ -236,7 +245,7 @@ export const WATCHMAN: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [crudeBlow, wardRush, ironCurtain, lockdown],
-  passives: [standingOrders, softPlaces, seenWorse, theLongShift],
+  passives: [standingOrders, softPlaces, seenWorse, theLongShift, weightOfOffice, paradeGround],
 };
 
 // ---------------------------------------------------------------------------
@@ -289,7 +298,7 @@ export const INSPECTOR: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [revolverShot, snipersMark, fogStep, sigil],
-  passives: [coldReading, steadyHands, contingencies],
+  passives: [coldReading, steadyHands, contingencies, calledShot, powderDiscipline, boltHole],
 };
 
 // ---------------------------------------------------------------------------
@@ -349,7 +358,7 @@ export const ALCHEMIST: ClassDef = {
     damageType: DamageType.Fire,
   },
   loadout: [ashwickFlare, alchemicVial, backdraft, mendWounds],
-  passives: [measuredDoses, scorchedCoat],
+  passives: [measuredDoses, scorchedCoat, stableCompound, cutWithChalk, longHours, bedsideManner],
 };
 
 // ---------------------------------------------------------------------------

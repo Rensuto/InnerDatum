@@ -79,3 +79,73 @@ describe('every talent belongs to a tree that exists', () => {
     }
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY CATEGORY HOLDS EXACTLY FIVE, BECAUSE THE GRID DRAWS EXACTLY FIVE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ui/talents.ts` lays a category out as `CELLS_PER_CAT` icons on one row, and
+ * it does that by SLICING: `row.talents[n]` for n < 5. A sixth talent in a tree
+ * would type-check, register, reach the wire, cost a point to buy — and never
+ * appear on screen. There is no error and nothing logs.
+ *
+ * ToME's own screen is the reason the number is five (LevelupDialog's category
+ * blocks, and the screenshot this grid was built from), so the fix for a sixth
+ * talent is a second row or a second tree, never a wider one.
+ *
+ * FIVE EXACTLY, NOT AT MOST FIVE. A tree with four draws a gap in a row of
+ * boxes, which reads as a talent that failed to load rather than as a tree with
+ * room in it — and three of the six trees looked like that until the second
+ * wave of passives filled them.
+ */
+describe('the tree grid is full', () => {
+  const CELLS_PER_CAT = 5;
+
+  /** Every talent a class ships, actives and passives together, by tree. */
+  function byTree(): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const definition of CLASSES) {
+      for (const talent of [...definition.loadout, ...definition.passives]) {
+        const list = out.get(talent.tree) ?? [];
+        list.push(talent.id);
+        out.set(talent.tree, list);
+      }
+    }
+    return out;
+  }
+
+  it('gives every tree exactly five talents', () => {
+    const counts = byTree();
+    const wrong: string[] = [];
+    for (const tree of TALENT_TREES) {
+      const held = counts.get(tree.id) ?? [];
+      if (held.length !== CELLS_PER_CAT) {
+        wrong.push(`${tree.id}: ${String(held.length)} (${held.join(', ')})`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it('leaves no tree empty, which the previous test would also catch', () => {
+    // Kept separate because it fails with a far more obvious message when a
+    // tree id is renamed on one side of the join only.
+    for (const tree of TALENT_TREES) {
+      expect(byTree().get(tree.id), tree.id).toBeDefined();
+    }
+  });
+
+  it('mixes actives and passives in every tree', () => {
+    // A tree of five passives is a stat block and a tree of five actives is a
+    // hotbar; ToME's categories are neither. This is the shape assertion, and
+    // it is what stops the next wave of content from being all of one kind.
+    for (const tree of TALENT_TREES) {
+      const held = [...CLASSES]
+        .flatMap((definition) => [...definition.loadout, ...definition.passives])
+        .filter((talent) => talent.tree === tree.id);
+      const passives = held.filter((talent) => talent.kind === TalentKind.Passive);
+      expect(passives.length, `${tree.id} passives`).toBeGreaterThan(0);
+      expect(passives.length, `${tree.id} all-passive`).toBeLessThan(held.length);
+    }
+  });
+});
