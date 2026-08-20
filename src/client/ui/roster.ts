@@ -79,13 +79,16 @@ export const RosterHitKind = {
   Row: 'row',
   Create: 'create',
   Play: 'play',
+  /** The per-row control. Two presses, and the first one only arms it. */
+  Delete: 'delete',
 } as const;
 export type RosterHitKind = (typeof RosterHitKind)[keyof typeof RosterHitKind];
 
 export type RosterHit =
   | { readonly kind: typeof RosterHitKind.Row; readonly index: number }
   | { readonly kind: typeof RosterHitKind.Create }
-  | { readonly kind: typeof RosterHitKind.Play };
+  | { readonly kind: typeof RosterHitKind.Play }
+  | { readonly kind: typeof RosterHitKind.Delete; readonly index: number };
 
 /**
  * WHERE THE MODAL GOES. Never null, for the same reason `classPickerRect` is
@@ -109,6 +112,8 @@ export function rosterRect(width: number, height: number): PanelRect {
 type Geometry = {
   readonly hint: PanelRect;
   readonly rows: readonly PanelRect[];
+  /** One per DRAWN row, same index. A row that did not fit has no control. */
+  readonly deletes: readonly PanelRect[];
   readonly create: PanelRect;
   readonly play: PanelRect;
 };
@@ -136,16 +141,34 @@ function geometryFor(count: number, rect: PanelRect): Geometry {
   const listTop = hint.y + HINT_H + LIST_PAD;
   const listBottom = buttonY - PANEL_PAD;
   const rows: PanelRect[] = [];
+  const deletes: PanelRect[] = [];
   for (let i = 0; i < count; i += 1) {
     const y = listTop + i * (CARD_H + CARD_GAP);
     // A CARD THAT WOULD CROSS THE BUTTONS IS NOT DRAWN AT ALL rather than drawn
     // clipped: half a character is a row somebody clicks by accident, and the
     // clip on the panel would hide the fact that it is half.
     if (y + CARD_H > listBottom) break;
-    rows.push({ x: innerX, y, w: innerW, h: CARD_H });
+    const row: PanelRect = { x: innerX, y, w: innerW, h: CARD_H };
+    rows.push(row);
+    /**
+     * IN THE SAME LOOP, so a row that was never laid out cannot have a delete
+     * control sitting where it would have been. Two loops is two chances for
+     * the lengths to disagree, and the failure mode is a click that deletes a
+     * character the player cannot see.
+     *
+     * IT SITS ON THE FIRST LINE, left of the shortcut digit. That band is the
+     * one the name shares, and the name is the only text that yields for it —
+     * lines two and three (y+27, y+39) are untouched.
+     */
+    deletes.push({
+      x: row.x + row.w - CARD_PAD_X - DIGIT_W - DEL_GAP - DEL_W,
+      y: row.y + 5,
+      w: DEL_W,
+      h: DEL_H,
+    });
   }
 
-  return { hint, rows, create, play };
+  return { hint, rows, deletes, create, play };
 }
 
 /**
@@ -184,6 +207,14 @@ export function rosterHitAt(
   if (canCreate && inside(geometry.create, x, y)) return { kind: RosterHitKind.Create };
   if (inside(geometry.play, x, y)) return { kind: RosterHitKind.Play };
   for (let i = 0; i < geometry.rows.length; i += 1) {
+    /**
+     * THE CONTROL IS TESTED BEFORE THE ROW IT SITS ON, which is the rule every
+     * other nested control in this client follows. The other order makes the
+     * row swallow the click and the button unreachable — and it fails silently,
+     * because selecting a row is a perfectly plausible thing to have happened.
+     */
+    const del = geometry.deletes[i];
+    if (del !== undefined && inside(del, x, y)) return { kind: RosterHitKind.Delete, index: i };
     const row = geometry.rows[i];
     if (row !== undefined && inside(row, x, y)) return { kind: RosterHitKind.Row, index: i };
   }
@@ -193,6 +224,23 @@ export function rosterHitAt(
 // ---------------------------------------------------------------------------
 // Paint
 // ---------------------------------------------------------------------------
+
+/**
+ * THE RESERVATION THE SHORTCUT DIGIT ALREADY HAD, given a name because the
+ * delete control now derives from it. It was a bare `16` inside `drawRow`,
+ * which is fine for one reader and not fine for two.
+ */
+const DIGIT_W = 16;
+/** The row inset. Was a local `padX`; the geometry needs it too now. */
+const CARD_PAD_X = 8;
+/**
+ * WIDE ENOUGH FOR THE ARMED LABEL, which is the one that matters: `drawButton`
+ * runs `fitText` against `rect.w - 6`, so a box sized for "DELETE" ellipsises
+ * "SURE?" — and an ellipsised confirmation is a confirmation nobody reads.
+ */
+const DEL_W = 40;
+const DEL_H = 14;
+const DEL_GAP = 4;
 
 const FONT_NAME = 'bold 12px ui-monospace, Consolas, monospace';
 const FONT_BODY = '10px ui-monospace, Consolas, monospace';
@@ -226,6 +274,8 @@ function drawRow(
   nowMs: number,
   selected: boolean,
   hovered: boolean,
+  del: PanelRect | undefined,
+  armed: boolean,
 ): void {
   const dim = !row.playable;
 
@@ -239,7 +289,7 @@ function drawRow(
   ctx.lineWidth = 1;
   ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
 
-  const padX = 8;
+  const padX = CARD_PAD_X;
   const textX = rect.x + padX;
   const rightX = rect.x + rect.w - padX;
 
@@ -253,7 +303,13 @@ function drawRow(
   ctx.textAlign = 'left';
   ctx.font = FONT_NAME;
   ctx.fillStyle = dim ? PALETTE.GREY : PALETTE.PARCHMENT;
-  ctx.fillText(fitText(ctx, row.name, rect.w - padX * 2 - 16), textX, rect.y + 13);
+  // THE NAME IS THE ONLY TEXT THAT YIELDS for the control — it shares the first
+  // line with it. The two lines below are full width and unchanged.
+  ctx.fillText(
+    fitText(ctx, row.name, rect.w - padX * 2 - DIGIT_W - DEL_GAP - DEL_W),
+    textX,
+    rect.y + 13,
+  );
 
   ctx.font = FONT_BODY;
   ctx.fillStyle = dim ? PALETTE.GREY : PALETTE.SILVER;
@@ -296,6 +352,39 @@ function drawRow(
     textX,
     rect.y + 39,
   );
+
+  drawDelete(ctx, del, armed);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   TWO PRESSES, AND THE FIRST ONE CHANGES THE WORD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * There is no modal-confirm primitive in this client and this is not the place
+ * to invent one — the only two-stage gesture that exists is the talent panel’s
+ * arm-then-spend, and it is the right shape here for the same reason: the
+ * second press is irreversible, and a dialog that steals the whole screen to
+ * ask about one row is heavier than the thing it is protecting.
+ *
+ * ═══ A DIFFERENT WORD, NOT JUST A DIFFERENT COLOUR ═══
+ * The armed state is legible without colour vision: `DEL` becomes `SURE?`.
+ * The talent panel makes the same argument about its `+`. Colour carries it
+ * too — GREY_HI to ORANGE — but colour alone would be the whole warning.
+ *
+ * DRAWN FOR AN UNPLAYABLE ROW AS WELL, deliberately. A file this build cannot
+ * read is the row most likely to be one somebody wants rid of, and refusing to
+ * let them tidy it would leave a permanent stuck entry against an eight-row cap.
+ */
+function drawDelete(
+  ctx: CanvasRenderingContext2D,
+  rect: PanelRect | undefined,
+  armed: boolean,
+): void {
+  if (rect === undefined || rect.w <= 0 || rect.h <= 0) return;
+  drawButton(ctx, rect, armed ? 'SURE?' : 'DEL', {
+    ink: armed ? PALETTE.ORANGE : PALETTE.GREY,
+  });
 }
 
 export type RosterDrawOptions = {
@@ -310,6 +399,14 @@ export type RosterDrawOptions = {
   readonly max: number;
   readonly selected: number | null;
   readonly hovered: number | null;
+  /**
+   * ═══ WHICH ROW IS ONE PRESS FROM BEING GONE, BY ID AND NOT BY INDEX ═══
+   * A roster can come back one row shorter at any moment — the server re-sends
+   * it for every refusal and after every delete. An armed INDEX would then be
+   * pointing at whichever character slid up into that slot, and the next press
+   * would delete the wrong one. There is no recovering from that.
+   */
+  readonly armedDeleteId: string | null;
   /** Injected so "14 days ago" is testable and this module stays pure. */
   readonly nowMs: number;
 };
@@ -446,8 +543,19 @@ function drawWordmark(ctx: CanvasRenderingContext2D, rect: PanelRect, cases: num
 }
 
 export function drawRoster(options: RosterDrawOptions): void {
-  const { ctx, sprites, rect, characters, cases, canCreate, max, selected, hovered, nowMs } =
-    options;
+  const {
+    ctx,
+    sprites,
+    rect,
+    characters,
+    cases,
+    canCreate,
+    max,
+    selected,
+    hovered,
+    armedDeleteId,
+    nowMs,
+  } = options;
   if (rect.w <= 0 || rect.h <= 0) return;
 
   ctx.save();
@@ -490,7 +598,19 @@ export function drawRoster(options: RosterDrawOptions): void {
     const row = characters[i];
     const where = geometry.rows[i];
     if (row === undefined || where === undefined) continue;
-    drawRow(ctx, row, where, i, cases, nowMs, selected === i, hovered === i);
+    drawRow(
+      ctx,
+      row,
+      where,
+      i,
+      cases,
+      nowMs,
+      selected === i,
+      hovered === i,
+      geometry.deletes[i],
+      // BY ID. The list can come back one row shorter between the two presses.
+      armedDeleteId !== null && armedDeleteId === row.id,
+    );
   }
 
   drawButton(ctx, geometry.create, 'NEW CHARACTER', {

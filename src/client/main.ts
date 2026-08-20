@@ -1613,6 +1613,21 @@ let selectedCharacter: number | null = null;
 /** Which row is under the pointer, or null. Cosmetic. */
 let rosterHovered: number | null = null;
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   WHICH CHARACTER IS ONE PRESS FROM BEING PUT AWAY. BY ID, NOT BY INDEX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The server re-sends the whole roster for every outcome — a delete that
+ * worked, a delete of something already gone, a delete refused because the
+ * character is being played — so the list can come back one row shorter
+ * between the two presses. An armed INDEX would then be pointing at whichever
+ * character slid up into that slot, and the second press would delete the
+ * wrong one with no way back. `selectedCharacter` is an index and gets
+ * re-anchored by id on every roster for exactly this reason; this skips the
+ * re-anchoring by never being an index in the first place.
+ */
+let rosterArmedDeleteId: string | null = null;
+/**
  * The character this client asked for, kept across the reconnect that enters the
  * world. It is the only thing the select screen leaves behind.
  */
@@ -3063,6 +3078,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       max: roster.max,
       selected: selectedCharacter,
       hovered: rosterHovered,
+      armedDeleteId: rosterArmedDeleteId,
       nowMs: Date.now(),
     });
     return;
@@ -8293,6 +8309,48 @@ async function boot(): Promise<void> {
           // character before anybody noticed.
           selectCharacter(hit.index);
           return;
+        case RosterHitKind.Delete: {
+          /**
+           * ═══════════════════════════════════════════════════════════════
+           * TWO PRESSES. THE FIRST ONE ONLY CHANGES A WORD.
+           * ═══════════════════════════════════════════════════════════════
+           *
+           * Arm-then-act, the same gesture the talent panel’s `+` uses, and
+           * for a sharper version of the same reason: the second press reaches
+           * a file. There is no undo in this product and the server holds the
+           * only copy — it does keep the bytes, renaming rather than deleting,
+           * but that is a maintainer’s recovery path and not something a
+           * player can reach on a Friday night.
+           *
+           * ARMING A DIFFERENT ROW MOVES THE ARM rather than firing anything,
+           * so a mis-click on the wrong row costs one more click and never a
+           * character.
+           */
+          const target = roster.characters[hit.index];
+          if (target === undefined) return;
+          if (rosterArmedDeleteId !== target.id) {
+            rosterArmedDeleteId = target.id;
+            requestDraw();
+            return;
+          }
+          /**
+           * NOTHING IS PATCHED LOCALLY. The server answers with the roster —
+           * for every outcome, including the refusals — and `case 'roster'`
+           * already replaces the list wholesale, re-anchors the selection by
+           * id, recomputes the cap and disarms this. A client that also
+           * removed the row would be a second opinion about what is on disk.
+           */
+          if (
+            !socket.send({ v: PROTOCOL_VERSION, t: 'delete_character', characterId: target.id })
+          ) {
+            // THE ARM STAYS UP when the frame did not go out. Disarming here would
+            // tell the player it happened; leaving it armed means the next press
+            // tries again, which is what they meant.
+            showNotice('not connected — that did not go out');
+            return;
+          }
+          return;
+        }
         case RosterHitKind.Play:
           playSelectedCharacter();
           return;
@@ -9091,6 +9149,8 @@ function applyServerMessage(msg: ServerMsg): void {
       roster = null;
       selectedCharacter = null;
       rosterHovered = null;
+      // AN ARM MUST NOT OUTLIVE THE SCREEN THAT EXPLAINED IT.
+      rosterArmedDeleteId = null;
       if (msg.characterId !== undefined) chosenCharacterId = msg.characterId;
       wantsNewCharacter = false;
       selfId = msg.selfId;
@@ -9547,6 +9607,13 @@ function applyServerMessage(msg: ServerMsg): void {
        * and no pointer route out either.
        */
       resetMenuState();
+      /**
+       * AND A NEW LIST DISARMS. Every roster is an answer to something that
+       * just happened, so a `SURE?` still showing from before it arrived is a
+       * button whose question has already been settled — and the row under it
+       * may not even be the same character.
+       */
+      rosterArmedDeleteId = null;
       selectedCharacter =
         chosenCharacterId === null
           ? null

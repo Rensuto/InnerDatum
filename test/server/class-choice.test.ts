@@ -31,10 +31,12 @@ import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
 import type { TalentEngine } from '../../src/server/engine/talents.ts';
 import type { CharacterRestore, IdentityPort, PersistPort } from '../../src/server/net/gateway.ts';
+import { RetireOutcome } from '../../src/server/persist/saves.ts';
 import type {
   CharacterFile,
   CharacterHeader,
   LoadResult,
+  RetireResult,
   SaveStore,
 } from '../../src/server/persist/saves.ts';
 import type { World } from '../../src/server/world/world.ts';
@@ -271,6 +273,20 @@ function disk(): Disk {
 
   const store: SaveStore = {
     root: '<memory>',
+    /**
+     * AN IN-MEMORY STORE STILL OWES THE WHOLE CONTRACT — the same argument the
+     * `listCharacters` note above makes. This fixture has a map, not a
+     * directory, so a retire is a delete FROM THE MAP: the real store renames
+     * the file aside because bytes on somebody`s only server are worth keeping,
+     * and a Map entry has no such claim on anybody.
+     */
+    retireCharacter: (ownerId: string, characterId: string): Promise<RetireResult> => {
+      const had = files.delete(keyOf(ownerId, characterId));
+      return Promise.resolve({
+        outcome: had ? RetireOutcome.Retired : RetireOutcome.Absent,
+        path: '<memory>',
+      });
+    },
     // AN IN-MEMORY STORE STILL OWES THE WHOLE CONTRACT. This fixture predates
     // the roster and has no directory to read, so it answers from the same map
     // its loader uses — which keeps it honest if a test ever asks.

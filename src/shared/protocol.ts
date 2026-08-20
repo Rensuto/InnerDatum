@@ -2401,6 +2401,50 @@ const ChooseClassSchema = z.strictObject({
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * `delete_character` — "PUT THIS ONE AWAY." The v19 verb.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The only destructive verb in this protocol, and the only one that reaches a
+ * file rather than a body. It exists because the select screen can hold eight
+ * characters and had no way to hold seven.
+ *
+ * ═══ IT NAMES A CHARACTER AND NOT AN OWNER, WHICH IS THE WHOLE SECURITY ═══
+ * There is no `ownerId` here — there is no `ownerId` ANYWHERE in this protocol
+ * (see the note at the head of this file), and `strictObject` is what turns a
+ * smuggled one into a rejection rather than a field somebody downstream might
+ * read. Whose character this is gets resolved server-side from the verified
+ * session, so the worst a hostile frame can name is one of its own files.
+ *
+ * ═══ AND IT DOES NOT MEAN "UNLINK" ═══
+ * The persist layer implements it as a rename to a timestamped name — the
+ * bytes stay on disk where a human can reach them. That is deliberately NOT
+ * expressed here: the wire says what the PLAYER meant ("I do not want this
+ * character in my list"), and how much care the server takes about the bytes
+ * behind that is the server’s business and may change without the client
+ * caring. See `SaveStore.retireCharacter`.
+ *
+ * ═══ NO VERSION BUMP, AND THIS FILE STATES THE RULE ═══
+ * `PROTOCOL_VERSION`’s own history says it: "Additions alone would not force a
+ * bump — an old client ignores a frame it does not know". This is inbound and
+ * purely additive; an older client simply never sends it, and there is no
+ * outbound shape change at all — the answer is the `roster` frame that already
+ * exists, which is how the client learns the list is one shorter.
+ */
+const DeleteCharacterSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('delete_character'),
+  /**
+   * THE SAME BOUND `hello.characterId` CARRIES, because it is the same id and a
+   * second opinion about how long a character id may be is a second thing to
+   * get wrong. The persist layer sanitises it again before it becomes a path
+   * segment — this bound is about the wire, not about the filesystem, and the
+   * filesystem does not trust anything that reaches it.
+   */
+  characterId: z.string().min(1).max(64),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * `spend_point` — "PUT MY NEXT POINT INTO THIS TALENT." The v9 verb.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -3071,6 +3115,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   ReviveSchema,
   RespawnSchema,
   ChooseClassSchema,
+  DeleteCharacterSchema,
   SpendPointSchema,
   SpendStatSchema,
   PickupSchema,

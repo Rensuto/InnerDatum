@@ -141,7 +141,7 @@
 
 import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, rename } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
 
@@ -194,6 +194,7 @@ import type { AtomicWarning, AtomicWriteOptions } from './atomic.ts';
 import type {
   CharacterHeader,
   CharacterRestore,
+  CharacterRetirement,
   CharacterSnapshot,
   PersistPort,
 } from '../net/gateway.ts';
@@ -2004,6 +2005,29 @@ export const SaveOutcome = {
 } as const;
 export type SaveOutcome = (typeof SaveOutcome)[keyof typeof SaveOutcome];
 
+export const RetireOutcome = {
+  /** The file was renamed aside. It is still on disk, under a new name. */
+  Retired: 'retired',
+  /** Unsafe ids, or the store is closed. Nothing touched the disk. */
+  Rejected: 'rejected',
+  /** There was no such file. Not an error — the caller asked for a state, and it holds. */
+  Absent: 'absent',
+  /** The rename threw for a reason that was not ENOENT. Nothing was lost. */
+  Failed: 'failed',
+  /**
+   * ═══ `satisfies` IS DOING REAL WORK HERE, NOT DECORATION ═══
+   * The four words are declared once, on `CharacterRetirement` in
+   * net/gateway.ts, because that is the file this module takes its port types
+   * from. This constant is the runtime half, and without the check below the
+   * two could drift silently — a fifth outcome added here would type-check,
+   * ship, and be rejected by the port at the one call site that matters.
+   */
+} as const satisfies Record<string, CharacterRetirement['outcome']>;
+export type RetireOutcome = (typeof RetireOutcome)[keyof typeof RetireOutcome];
+
+/** The persist layer’s name for the port’s `CharacterRetirement`. */
+export type RetireResult = CharacterRetirement;
+
 export type SaveResult = {
   readonly outcome: SaveOutcome;
   /** Redacted and root-relative — safe to paste into an issue. Null when refused. */
@@ -2099,6 +2123,30 @@ export type SaveStore = {
    * case — every account, once — and it answers `[]`.
    */
   listCharacters(ownerId: string): Promise<readonly CharacterHeader[]>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   PUT A CHARACTER FILE ASIDE. NOT AN UNLINK, AND THAT IS THE POINT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * BEFORE THIS EXISTED, NOTHING IN THIS PROJECT DELETED PLAYER DATA AT ALL.
+   * This module imported `readFile` and `readdir` and nothing else, and its own
+   * log lines twice tell a human to *"move the file aside by hand"*. That was
+   * not an oversight — it is a self-hosted server holding the only copy of
+   * somebody’s character, with no backup tier behind it and no undo anywhere
+   * in the product.
+   *
+   * So a delete is a RENAME to a timestamped name that does not end in `.json`,
+   * which is exactly what makes it invisible to `listCharacters` (it reads the
+   * directory and takes `.json`) while leaving every byte where a human can get
+   * at it. The player gets the delete they asked for; the bytes outlive the
+   * click. If somebody deletes the wrong character on a Friday night the answer
+   * is a rename back, not an apology.
+   *
+   * BOTH SIBLINGS MOVE, UNDER ONE STAMP, so the pair stays identifiable together
+   * and a second delete of a re-created character cannot land on the first
+   * tombstone.
+   */
+  retireCharacter(ownerId: string, characterId: string): Promise<RetireResult>;
 };
 
 type PendingSave = {
@@ -2531,6 +2579,107 @@ export function createSaveStore(options: SaveStoreOptions): SaveStore {
     return out;
   };
 
+  const retireCharacter = async (ownerId: string, characterId: string): Promise<RetireResult> => {
+    if (closed) return { outcome: RetireOutcome.Rejected, path: null };
+
+    /**
+     * THE SAME REFUSAL `saveCharacter` AND `loadCharacter` MAKE, and it is made
+     * by calling the same function rather than by re-deriving the rule. Every id
+     * that becomes a path segment goes through `sanitiseId` and then through
+     * `isInsideRoot`; test/server/saves-identity.test.ts attacks that pair with a
+     * 29-entry hostile table and a canary file one directory above the root.
+     * A delete is the one operation where getting that wrong destroys something
+     * OUTSIDE the store, so it closes the door by construction rather than by a
+     * new rule that could drift.
+     */
+    const path = characterPath(root, ownerId, characterId);
+    if (path === null) {
+      logger.error({ owner: maskId(ownerId) }, 'character retire refused: unsafe path');
+      return { outcome: RetireOutcome.Rejected, path: null };
+    }
+
+    /**
+     * ═══ CANCEL THE DEBOUNCE FIRST, AND SYNCHRONOUSLY ═══
+     * A pending autosave is a timer holding a snapshot by reference. Left armed,
+     * it fires up to `debounceMs` after the rename and writes the character
+     * straight back — a delete that undoes itself five seconds later, which is
+     * worse than one that fails outright, because by then the player has been
+     * told it worked and has moved on.
+     *
+     * Before the `await` below, deliberately: everything after an await is a
+     * different turn of the loop, and the timer could fire in between.
+     */
+    const waiting = pending.get(path);
+    if (waiting !== undefined) {
+      clearTimeout(waiting.timer);
+      pending.delete(path);
+    }
+
+    /**
+     * ═══ AND QUEUE BEHIND ANY WRITE ALREADY IN FLIGHT ═══
+     * `writeFileAtomic` is a temp-file-then-rename, so there is a window in which
+     * the destination does not exist. Renaming into that window is how a delete
+     * reports success and leaves the file standing. Same key as every other
+     * operation on this path, so the chain stays one queue rather than two.
+     */
+    return await runExclusive(path, async (): Promise<RetireResult> => {
+      const shown = redactPath(root, path);
+      const stamp = now().replace(/[:.]/g, '-');
+      const aside = `${path}.retired-${stamp}`;
+
+      let moved = false;
+      try {
+        await rename(path, aside);
+        moved = true;
+      } catch (err) {
+        // ABSENT IS NOT A FAILURE. The caller asked for a state — "this character
+        // is not in the list" — and that state already holds. A row double-clicked
+        // must not produce an error frame.
+        if (errorCode(err) !== 'ENOENT') {
+          logger.error({ file: shown, err: String(err) }, 'character retire failed');
+          return { outcome: RetireOutcome.Failed, path: shown, error: String(err) };
+        }
+      }
+
+      /**
+       * THE BACKUP GOES WITH IT, AND ITS ABSENCE IS ALWAYS FINE — a character
+       * saved exactly once has no `.bak` yet. Leaving one behind would be worse
+       * than untidy: `loadCharacter` FALLS BACK TO `.bak`, so a re-created
+       * character on the same id would come up wearing the deleted one.
+       */
+      const backup = backupPathFor(path);
+      try {
+        await rename(backup, `${backup}.retired-${stamp}`);
+      } catch (err) {
+        if (errorCode(err) !== 'ENOENT') {
+          logger.warn(
+            { file: redactPath(root, backup), err: String(err) },
+            'a retired backup stayed where it was',
+          );
+        }
+      }
+
+      /**
+       * ═══ AND THE PATH IS DELIBERATELY *NOT* QUARANTINED ═══
+       * The tempting belt-and-braces move is to add it to `quarantined` so no
+       * stray snapshot can recreate it. That would be a bug with a long fuse:
+       * `nextCharacterId` hands out highest-in-use plus one, and a retired file
+       * is no longer in use — so deleting the NEWEST character frees its id, the
+       * next new character is handed it, and every save that character ever makes
+       * is silently refused for the lifetime of the process.
+       *
+       * The recreation it defends against is closed at the other end instead: the
+       * bridge refuses to retire a character that is currently BOUND, so there is
+       * no body producing snapshots for this path at all.
+       */
+      logger.info(
+        { file: shown, moved },
+        moved ? 'character retired' : 'character retire found no file',
+      );
+      return { outcome: moved ? RetireOutcome.Retired : RetireOutcome.Absent, path: shown };
+    });
+  };
+
   return {
     root,
     loadCharacter,
@@ -2540,6 +2689,7 @@ export function createSaveStore(options: SaveStoreOptions): SaveStore {
     close,
     pendingCount: (): number => pending.size,
     listCharacters,
+    retireCharacter,
   };
 }
 
@@ -3147,6 +3297,44 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
      */
     listCharacters: (ownerId: string): Promise<readonly CharacterHeader[]> =>
       store.listCharacters(ownerId),
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     *   THE BRIDGE IS THE ONLY LAYER THAT KNOWS WHETHER SOMEBODY IS PLAYING
+     *   THIS CHARACTER RIGHT NOW, SO IT IS THE LAYER THAT REFUSES.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The store cannot answer this. It has files and a write queue; it has no
+     * idea that one of those files is currently attached to a living body that
+     * will autosave over the answer three seconds from now. `bindings` is that
+     * knowledge and it lives here.
+     *
+     * ═══ WHY REFUSING IS BETTER THAN TEARING THE BODY DOWN ═══
+     * A retire is reached from the select screen, where the socket asking has
+     * NO BODY at all — that is the invariant select-screen.test.ts pins. So a
+     * bound character means one of two things and neither is a delete: the same
+     * account is playing it on another connection, or a body is sitting out its
+     * reconnect grace and its owner is about to walk back into it. Deleting the
+     * file out from under either one leaves a live actor writing to a path that
+     * has been renamed away, which is how you get a tombstone that grows.
+     *
+     * IT ALSO CLOSES THE RACE THE STORE DELIBERATELY LEFT OPEN. `retireCharacter`
+     * refuses to quarantine the path, because quarantining it would poison an id
+     * that `nextCharacterId` can legitimately hand out again. This is the other
+     * end of that argument: with no binding there is no body, with no body there
+     * are no snapshots, and with no snapshots nothing can recreate the file.
+     */
+    async retireCharacter(ownerId: string, characterId: string): Promise<RetireResult> {
+      for (const binding of bindings.values()) {
+        if (binding.ownerId !== ownerId || binding.characterId !== characterId) continue;
+        logger.warn(
+          { owner: maskId(ownerId), character: characterId },
+          'character retire refused: somebody is playing it',
+        );
+        return { outcome: RetireOutcome.Rejected, path: null };
+      }
+      return await store.retireCharacter(ownerId, characterId);
+    },
     savePlayers(snapshots: readonly CharacterSnapshot[]): void {
       for (const [snapshot, binding] of owned(snapshots)) {
         store.scheduleCharacter(fileFor(snapshot, binding));

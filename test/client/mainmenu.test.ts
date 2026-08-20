@@ -105,6 +105,7 @@ function paint(w: number, h: number, characters: readonly CharacterRow[]): Recor
     max: 8,
     selected: 0,
     hovered: null,
+    armedDeleteId: null,
     nowMs: 0,
   });
   return into;

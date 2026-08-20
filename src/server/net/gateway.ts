@@ -1532,6 +1532,26 @@ export type CharacterHeader = {
   readonly refusal?: string;
 };
 
+/**
+ * WHAT HAPPENED TO A CHARACTER THAT WAS ASKED TO GO AWAY.
+ *
+ * DECLARED HERE AND NOT IN THE PERSIST LAYER for the same reason every other
+ * shape on `PersistPort` is: saves.ts imports its types FROM this file, so a
+ * union written at both ends is a union that can drift at one end. The persist
+ * layer’s own `RetireOutcome` constant is checked against this with `satisfies`,
+ * which turns that drift into a compile error rather than a runtime surprise.
+ *
+ * `absent` IS NOT A FAILURE and the gateway must not report it as one — the
+ * caller asked for a state ("this character is not in the list") and that state
+ * holds. A row clicked twice is the ordinary way to reach it.
+ */
+export type CharacterRetirement = {
+  readonly outcome: 'retired' | 'rejected' | 'absent' | 'failed';
+  /** Redacted and root-relative, for the log line. Null when refused. */
+  readonly path: string | null;
+  readonly error?: string;
+};
+
 export type CharacterRestore = {
   /** Null when the file had no usable figure; the class default then stands. */
   readonly hp: number | null;
@@ -1744,6 +1764,21 @@ export type PersistPort = {
    * carries: this is awaited inside a `ws` handler.
    */
   listCharacters?(ownerId: string): Promise<readonly CharacterHeader[]>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   DELETE A CHARACTER — WHICH THE PERSIST LAYER IMPLEMENTS AS A RENAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * OPTIONAL, LIKE EVERY OTHER METHOD ON THIS PORT, and the gateway treats an
+   * absent one as "this build cannot delete" rather than as a failure — the
+   * same posture `listCharacters` gets, where a port with no listing keeps the
+   * behaviour it has always had.
+   *
+   * THE OWNER IS NOT ON THE WIRE. It is re-derived from the verified session at
+   * the call site, because a character id in a frame plus an owner id in the
+   * same frame is a request to delete somebody else’s character.
+   */
+  retireCharacter?(ownerId: string, characterId: string): Promise<CharacterRetirement>;
   /** The body is gone for good (the grace expired). Drop the binding. */
   closeCharacter?(actorId: string): void;
   /**
@@ -6661,6 +6696,72 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       canCreate: rows.length < MAX_CHARACTERS_PER_ACCOUNT,
       max: MAX_CHARACTERS_PER_ACCOUNT,
     });
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   PUT A CHARACTER AWAY. THE ONLY DESTRUCTIVE VERB IN THIS PROTOCOL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ THE OWNER IS NEVER ON THE WIRE ═══
+   * It comes off the session, which got it from a server-side `GET /users/@me`.
+   * The frame names a CHARACTER and nothing else, and `strictObject` rejects one
+   * that tries to name an owner — so the worst a hostile client can ask for is
+   * the deletion of one of its own files. Every verb follows this rule; it is
+   * spelled out here because this is the one where getting it wrong is not
+   * recoverable by playing on.
+   *
+   * ═══ THE ANSWER IS THE ROSTER, ALWAYS, FOR EVERY OUTCOME ═══
+   * Not an ack, and not an error frame for the ordinary refusals. The client
+   * already replaces its list wholesale on a `roster`, re-anchors the selection
+   * by id and recomputes the cap — so a delete that worked, a delete of a file
+   * that was already gone, and a delete refused because somebody is playing that
+   * character all resolve to the same sentence: HERE IS THE LIST AS IT NOW
+   * STANDS. A screen that always shows the truth needs no second vocabulary for
+   * having been wrong.
+   *
+   * `absent` IS A SUCCESS, and it is reached by ordinary routes — a row clicked
+   * twice, or two tabs open on the same account. The caller asked for a state
+   * and that state holds.
+   */
+  const handleDeleteCharacter = async (session: Session, characterId: string): Promise<void> => {
+    const ownerId = session.ownerId;
+    if (ownerId === null) {
+      sendError(
+        session.socket,
+        ErrorCode.NotAuthenticated,
+        'only a verified player has characters to delete',
+      );
+      return;
+    }
+
+    /**
+     * CALLED THROUGH THE OPTIONAL CHAIN RATHER THAN LIFTED INTO A VARIABLE.
+     * Pulling a method off its object detaches `this` — which this bridge does
+     * not use, but the rule that catches it does not know that, and the idiom
+     * every other optional port method here follows is `persist?.method?.(...)`.
+     * `undefined` therefore means one thing only: this build has no store.
+     */
+    const done = await opts.persist?.retireCharacter?.(ownerId, characterId);
+    if (done === undefined) {
+      /**
+       * A BUILD WITH NO STORE CANNOT DELETE, and says so rather than pretending.
+       * Such a build never sends a roster either, so the client never draws the
+       * control and this frame should not exist — but every method on
+       * `PersistPort` is optional and a handler that assumed otherwise would
+       * throw inside a socket handler.
+       */
+      sendError(session.socket, ErrorCode.Internal, 'this build cannot delete characters');
+      return;
+    }
+
+    // THE SOCKET MAY HAVE DIED DURING THE RENAME — the same check every awaited
+    // branch in this file makes before touching a session again.
+    if (!sessions.has(session.connId)) return;
+
+    const rows = await listCharactersFor(ownerId);
+    if (!sessions.has(session.connId)) return;
+    sendRoster(session, rows);
   };
 
   const handleHello = async (session: Session, msg: ClientHello): Promise<void> => {
@@ -12188,8 +12289,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       }
     }
 
-    // Nothing but `hello` is honoured before the handshake completes.
-    if (msg.t !== 'hello' && !session.helloDone) {
+    /**
+     * Nothing but `hello` is honoured before the handshake completes — and one
+     * verb that is deliberately spoken FROM the select screen, which is a state
+     * that exists precisely because the handshake has NOT completed.
+     *
+     * ═══ WHY `delete_character` IS THE SECOND EXEMPTION ═══
+     * A verified socket that has not named a character is answered with the
+     * roster and nothing else: `handleHello` returns before `world.addPlayer`,
+     * no `welcome` is sent, and `helloDone` STAYS FALSE. That is the whole
+     * safety property of the screen — a player reading a menu is not a token
+     * standing in a field for something to walk up to. Deleting a character is
+     * a thing you do ON that screen, so requiring a completed handshake would
+     * mean taking a body in order to put one away.
+     *
+     * ═══ AND IT IS NOT A HOLE, BECAUSE IT LEANS ON THE OTHER GATE ═══
+     * `helloDone` is a statement about a HANDSHAKE. `session.ownerId` is a
+     * statement about an IDENTITY, and it is set from a server-side
+     * `GET /users/@me` before this fork is ever reached — never from a field on
+     * the wire, which has no owner field at all. The handler refuses any socket
+     * without one, so an anonymous connection can no more delete a character
+     * than it can name one.
+     */
+    if (msg.t !== 'hello' && msg.t !== 'delete_character' && !session.helloDone) {
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello first');
       return;
     }
@@ -12241,6 +12363,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // ALSO NON-PUMPING, and self-only: the frame names a class and nothing
       // else, and the body it dresses is the one this socket owns. It is refused
       // outright for anybody who already has a class — see `handleChooseClass`.
+      case 'delete_character':
+        // `void` for the same reason `hello` is: `handleFrame` is synchronous
+        // and stays that way (CLAUDE.md non-negotiable 2), and this handler is
+        // written never to reject.
+        void handleDeleteCharacter(session, msg.characterId);
+        return;
       case 'choose_class':
         handleChooseClass(session, msg);
         return;

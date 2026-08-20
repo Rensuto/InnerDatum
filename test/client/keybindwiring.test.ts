@@ -238,6 +238,18 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
     expect([...verbs].sort()).toEqual([
       'choose_class',
       'commit',
+      // THE SELECT SCREEN'S, and the only destructive verb the client has. Added
+      // deliberately and listed here so it stays a thing somebody had to decide:
+      // the screen could hold eight characters and had no way to hold seven,
+      // which stopped being academic the moment a swap bug made three copies of
+      // the same one.
+      //
+      // IT IS THE ONE ENTRY THE BARRIER CANNOT BE MADE TO WAIT FOR, and that is
+      // not an exception to this assertion's rule so much as the far end of it:
+      // it is spoken from a socket that HAS NO BODY, before the handshake has
+      // completed, so there is no turn for it to be part of. See the second
+      // exemption in the gateway's pre-handshake gate.
+      'delete_character',
       'drop',
       'equip',
       // NOT THE KEYS SCREEN'S. `follow` is the party pane's, added because a
