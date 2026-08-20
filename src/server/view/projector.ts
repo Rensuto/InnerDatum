@@ -835,6 +835,13 @@ export function projectResource(
       discrete: resource.discrete,
       ...(resource.ap === undefined ? {} : { ap: resource.ap }),
       ...(resource.maxAp === undefined ? {} : { maxAp: resource.maxAp }),
+      // AND MOVEMENT'S HALF, WHICH THIS FUNCTION'S OWN COMMENT PREDICTED I
+      // WOULD FORGET: *"a new field is two edits, and the second one is easy to
+      // forget. A live probe is what catches it."* It did — `mp` was added to
+      // `ResourceView` and to `toResourceView`, and the socket carried
+      // `ap: 6, maxAp: 6` and no MP at all. There is a test below this time.
+      ...(resource.mp === undefined ? {} : { mp: resource.mp }),
+      ...(resource.maxMp === undefined ? {} : { maxMp: resource.maxMp }),
     },
   };
 }

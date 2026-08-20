@@ -1978,7 +1978,34 @@ function bellRemainingMs(): number | null {
  * hostile card, which has no body to join to.
  */
 function turnView(): TurnView {
-  return { turn, bellMs: bellRemainingMs() };
+  return {
+    turn,
+    bellMs: bellRemainingMs(),
+    /**
+     * v19 — WHAT IS LEFT IN THE ROUND, so the banner can answer "am I done?".
+     *
+     * FROM `resource`, WHICH IS VIEWER-PRIVATE, and never from the public
+     * per-actor turn record — another detective's remaining budget is not yours
+     * to read, and `TurnView.budget` says so at its declaration.
+     *
+     * NULL UNTIL ALL FOUR NUMBERS ARE PRESENT. A server that predates the MP
+     * fields sends two of them, and half a budget on screen is worse than none:
+     * a player reading "3/6 AP" with no MP beside it cannot tell whether the
+     * round ended because the legs ran out.
+     */
+    budget:
+      resource?.ap === undefined ||
+      resource.maxAp === undefined ||
+      resource.mp === undefined ||
+      resource.maxMp === undefined
+        ? null
+        : {
+            ap: resource.ap,
+            maxAp: resource.maxAp,
+            mp: resource.mp,
+            maxMp: resource.maxMp,
+          },
+  };
 }
 
 /**

@@ -238,23 +238,66 @@ export function drawResource(options: ResourceOptions): void {
    * so that adding it forced no version bump, so a client can outlive a server
    * that never sends it. Drawing nothing is the honest answer.
    */
-  if (resource.ap !== undefined && resource.maxAp !== undefined && resource.maxAp > 0) {
-    cursor += PIP_GAP * 3;
-    const tickW = 3;
-    const tickH = Math.max(4, Math.floor(PIP_PX / 2));
-    const tickY = y + Math.floor((PIP_PX - tickH) / 2);
-    const spent = Math.max(0, Math.min(resource.maxAp, Math.floor(resource.ap)));
-    for (let i = 0; i < resource.maxAp; i += 1) {
-      if (cursor + tickW > x + width) break;
-      ctx.fillStyle = i < spent ? PALETTE.SILVER : 'rgba(255,255,255,0.18)';
-      ctx.fillRect(cursor, tickY, tickW, tickH);
-      cursor += tickW + 2;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * AND THE ROUND, WHICH IS NOT SMALL CHANGE ANY MORE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE PARAGRAPH ABOVE ARGUED FOR "SMALLER, DIMMER, AND SECOND" and it was
+   * right when it was written: one submitted action ended your turn, so AP was
+   * priced into the talents and spent nowhere the player could feel it.
+   *
+   * IT IS LOAD-BEARING NOW. The round stays open while anything is still
+   * affordable (`hasAffordableAction`), so these two numbers ARE the answer to
+   * *"can I do something else, or am I done?"* — the question a player asked in
+   * exactly those words. Half-height ticks in muted ink are the right weight for
+   * a detail and the wrong weight for the thing the turn ends on.
+   *
+   * SO: FULL-HEIGHT BLOCKS, LIT WHEN SPENDABLE, and both budgets. `drawPip`
+   * still cannot be used — it reaches for authored 12px art keyed by
+   * `ResourceKind` and there is no AP art in the manifest, so a key invented
+   * here would draw the pink missing-asset square on every frame. A rectangle
+   * needs no manifest entry.
+   *
+   * ═══ FILLED MEANS LEFT, NOT SPENT ═══
+   * The old loop lit `i < spent` where `spent` held `resource.ap` — the amount
+   * REMAINING — so the name said one thing and the arithmetic another. It drew
+   * correctly by accident. It reads as a fuel gauge now, which is what it is:
+   * blocks go out as the round is used up, and an empty row means the turn is
+   * about to end whether or not you press anything.
+   *
+   * ABSENT MEANS AN OLDER SERVER, not a budget of zero — the fields are optional
+   * so adding them forced no version bump, and a client can outlive a server
+   * that never sends them. Drawing nothing is the honest answer.
+   */
+  const budgetRow = (
+    label: string,
+    left: number | undefined,
+    max: number | undefined,
+    lit: string,
+  ): void => {
+    if (left === undefined || max === undefined || max <= 0) return;
+    cursor += PIP_GAP * 2;
+    ctx.fillStyle = PALETTE.GREY_HI;
+    if (cursor < x + width) ctx.fillText(label, cursor, y + PIP_PX / 2);
+    cursor += 15;
+    const blockW = 4;
+    const blockH = PIP_PX - 2;
+    const blockY = y + 1;
+    const remaining = Math.max(0, Math.min(max, Math.floor(left)));
+    for (let i = 0; i < max; i += 1) {
+      if (cursor + blockW > x + width) break;
+      ctx.fillStyle = i < remaining ? lit : 'rgba(255,255,255,0.14)';
+      ctx.fillRect(cursor, blockY, blockW, blockH);
+      cursor += blockW + 2;
     }
-    cursor += PIP_GAP;
-    ctx.fillStyle = PALETTE.SILVER;
-    if (cursor < x + width) ctx.fillText('AP', cursor, y + PIP_PX / 2);
-    cursor += 16;
-  }
+  };
+
+  // AP FIRST AND MP SECOND, in the order the talents are priced and the order
+  // the banner says them, so a player checking one against the other never has
+  // to re-read which row is which.
+  budgetRow('AP', resource.ap, resource.maxAp, PALETTE.GOLD);
+  budgetRow('MP', resource.mp, resource.maxMp, PALETTE.SILVER);
 
   cursor += PIP_GAP * 2;
   ctx.fillStyle = PALETTE.BONE;

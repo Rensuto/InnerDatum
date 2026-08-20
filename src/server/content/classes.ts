@@ -723,6 +723,11 @@ export function toResourceView(sheet: TalentSheet): ResourceView {
     // not draw the number its own hotbar was printing a cost for.
     ap: sheet.ap,
     maxAp: sheet.maxAp,
+    // AND MOVEMENT'S HALF OF IT. A step costs 1 MP (`MOVE_MP_COST`), so a round
+    // can end because the legs ran out rather than the arms — and a HUD showing
+    // only AP would leave a player with 4 AP wondering why the turn closed.
+    mp: sheet.mp,
+    maxMp: sheet.maxMp,
   };
 }
 

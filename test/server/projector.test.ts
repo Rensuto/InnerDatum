@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { projectLoadout } from '../../src/server/view/projector.ts';
+import { projectLoadout, projectResource } from '../../src/server/view/projector.ts';
+import { ResourceKind } from '../../src/shared/protocol.ts';
 import type { LoadoutTalent } from '../../src/shared/protocol.ts';
 
 import { DOWNED_TURNS, createDownedState, goDown } from '../../src/server/engine/downed.ts';
@@ -1280,5 +1281,98 @@ describe('the loadout projection loses no field', () => {
     // frame it always produced rather than one carrying a new empty field.
     const frame = projectLoadout({ id: 'a' } as never, []);
     expect(Object.keys(frame)).not.toContain('passives');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE SEAM THAT HAS NOW DROPPED A FIELD TWICE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `projectResource` rebuilds its payload FIELD BY FIELD, deliberately — its own
+ * comment argues the explicit copy is what makes it "the ONE place that decides
+ * what a viewer is told about their own budgets", and that a spread "would
+ * forward whatever a future `ResourceView` happens to gain, which is how a
+ * server-only field ends up on a wire nobody audited". That reasoning is right
+ * and the copy should stay.
+ *
+ * It also states the cost in advance: *"a new field is two edits, and the second
+ * one is easy to forget. A live probe is what catches it."*
+ *
+ * IT HAS NOW BEEN FORGOTTEN TWICE. `ap` was added to `ResourceView` and to
+ * `toResourceView` and reached no socket at all. Then `mp` was added the same
+ * way, and a live probe printed `{"ap":6,"maxAp":6}` with no MP in it — for a
+ * HUD whose whole job is to say whether the round can continue.
+ *
+ * So this is the audit the comment asks for, done by a test instead of by hand:
+ * every optional budget field a `ResourceView` carries must come out the other
+ * side. It does not forbid the explicit copy — it just refuses to let one be
+ * silently dropped a third time.
+ */
+describe('the viewer gets every budget the server knows about', () => {
+  const VIEWER = { id: 'actor_a' } as unknown as Parameters<typeof projectResource>[0];
+
+  it('forwards ap, maxAp, mp and maxMp', () => {
+    const frame = projectResource(VIEWER, {
+      kind: ResourceKind.Resolve,
+      current: 40,
+      max: 100,
+      discrete: false,
+      ap: 4,
+      maxAp: 6,
+      mp: 2,
+      maxMp: 3,
+    });
+    expect(frame).not.toBeNull();
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Before the second edit: mp and maxMp were simply absent from the frame.
+    expect(frame?.resource.ap).toBe(4);
+    expect(frame?.resource.maxAp).toBe(6);
+    expect(frame?.resource.mp).toBe(2);
+    expect(frame?.resource.maxMp).toBe(3);
+  });
+
+  it('drops every budget key when the server has nothing to say', () => {
+    /**
+     * THE HALF THAT MUST NOT MOVE. The fields are optional so that adding them
+     * forced no protocol bump, which means a client can outlive a server that
+     * never sends them — and `ResourceView.ap` says absent must mean "an older
+     * server", never "a budget of zero". Emitting `ap: 0` would tell a player
+     * their round is spent when nobody has said anything about it.
+     */
+    const frame = projectResource(VIEWER, {
+      kind: ResourceKind.Resolve,
+      current: 40,
+      max: 100,
+      discrete: false,
+    });
+    const keys = Object.keys(frame?.resource ?? {});
+    expect(keys).not.toContain('ap');
+    expect(keys).not.toContain('maxAp');
+    expect(keys).not.toContain('mp');
+    expect(keys).not.toContain('maxMp');
+  });
+
+  it('carries the whole of ResourceView, so a third field cannot be dropped', () => {
+    /**
+     * THE GUARD THAT GENERALISES. The two tests above name four fields; this one
+     * names none. It builds a view with every optional budget key set to a
+     * distinguishable value and asserts each one survives — so the next field
+     * added to `ResourceView` fails here rather than on somebody's screen.
+     */
+    const view = {
+      kind: ResourceKind.Resolve,
+      current: 40,
+      max: 100,
+      discrete: false,
+      ap: 4,
+      maxAp: 6,
+      mp: 2,
+      maxMp: 3,
+    };
+    const out = projectResource(VIEWER, view)?.resource ?? {};
+    for (const [key, value] of Object.entries(view)) {
+      expect(out[key as keyof typeof out], `projectResource dropped ${key}`).toBe(value);
+    }
   });
 });

@@ -121,8 +121,12 @@ function frameFor(
   return projectTurn(viewer, world, state, bellMs, downed);
 }
 
-function view(turn: TurnMsg | null, bellMs: number | null = null): TurnView {
-  return { turn, bellMs };
+function view(
+  turn: TurnMsg | null,
+  bellMs: number | null = null,
+  budget: TurnView['budget'] = null,
+): TurnView {
+  return { turn, bellMs, budget };
 }
 
 /** Card state by actor id, which is how every assertion below is phrased. */
@@ -183,7 +187,10 @@ describe('a card wears the barrier state its owner is actually in', () => {
     // Committed with somebody still deciding is a different sentence from
     // committed with nobody left, and both are true statements about the party
     // rather than about you.
-    expect(bannerFor(view(frame))).toBe('IN COMBAT — committed — waiting on 1');
+    // "TURN OVER" AND NOT "committed" — the engine's word is not the player's, and
+    // a player who has finished has to KNOW they have finished or they go on
+    // pressing keys at a game that is waiting for somebody else.
+    expect(bannerFor(view(frame))).toBe('TURN OVER — waiting on 1');
     expect(isYourTurn(view(frame))).toBe(false);
   });
 
@@ -217,7 +224,7 @@ describe('a card wears the barrier state its owner is actually in', () => {
     const frame = frameFor(world, dalt, barrier({ engagement: 3, whoseTurn: [] }));
     expect(states(frame)[MONSTERS_TURN_ID]).toBe(TurnActorState.Acting);
     expect(owedCount(frame)).toBe(0);
-    expect(bannerFor(view(frame))).toBe('IN COMBAT — committed — resolving');
+    expect(bannerFor(view(frame))).toBe('TURN OVER — resolving');
   });
 });
 
@@ -276,12 +283,12 @@ describe('the Bell decorates the straggler and nobody else', () => {
     const state = barrier({ engagement: 3, whoseTurn: ['actor_b'], bellDurationMs: 20_000 });
 
     expect(bannerFor(view(frameFor(world, sam, state, 12_000), 12_000))).toBe(
-      'IN COMBAT — YOUR TURN — BELL 12s — space: commit · . : hold',
+      'YOUR MOVE — BELL 12s — SPACE ends your turn',
     );
     // Dalt is watching the same Bell run down on somebody else and is told about
     // the person, not about the clock.
     expect(bannerFor(view(frameFor(world, dalt, state, 12_000), 12_000))).toBe(
-      'IN COMBAT — committed — waiting on 1',
+      'TURN OVER — waiting on 1',
     );
   });
 
@@ -313,7 +320,9 @@ describe('the Bell decorates the straggler and nobody else', () => {
     );
     const line = bannerFor(view(frame));
 
-    expect(line).toBe('IN COMBAT — YOUR TURN — space: commit · . : hold — 2 still deciding');
+    // THE READER IS NOT ONE OF THE "OTHERS". `owedCount` counts them too, and
+    // the old copy said "2 still deciding" to somebody who was one of the two.
+    expect(line).toBe('YOUR MOVE — SPACE ends your turn — 1 other deciding');
     expect(isYourTurn(view(frame))).toBe(true);
     expect(line.toLowerCase()).not.toContain('wait your turn');
     expect(line.toLowerCase()).not.toContain('next up');
@@ -504,5 +513,97 @@ describe('a body on the floor is flagged whatever else is true of it', () => {
 
     expect(card?.downed).toBe(false);
     expect(card?.state).toBe(TurnActorState.StandingBy);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *    "IS IT MY TURN, AND AM I SUPPOSED TO PASS?" — THE BANNER HAS TO ANSWER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * REPORTED BY A PLAYER, in those words: *"I can move once and use an ability,
+ * but the turn doesn't end until I pass."*
+ *
+ * THE ENGINE WAS ALREADY RIGHT. `hasAffordableAction` closes the round the
+ * moment nothing is off cooldown and affordable on BOTH budgets, so a player who
+ * genuinely has nothing left is passed automatically and the world moves. What
+ * they hit is the case where something IS still affordable: a talent costs its
+ * AP out of six, a step costs 1 MP out of three, so after a move and an ability
+ * there is usually a whole action left in the round. The engine correctly asks
+ * again. The player, seeing the same sentence they saw before they acted, reads
+ * that as the game ignoring them.
+ *
+ * So this is a COPY fix and a WIRE fix, not an engine one: the numbers the
+ * engine decides on were never on screen. `ResourceView` carried `ap` and not
+ * `mp`, and the banner carried neither.
+ */
+describe('the banner answers whether you are done', () => {
+  const BUDGET = { ap: 3, maxAp: 6, mp: 2, maxMp: 3 };
+
+  it('says what is left in the round while it is your move', () => {
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
+
+    // ═══ THE ASSERTION THAT WAS FAILING ═══
+    // Before: "IN COMBAT — YOUR TURN — space: commit · . : hold" — whose turn,
+    // then a list of keys, and nothing about whether there was anything left.
+    expect(bannerFor(view(frame, null, BUDGET))).toBe(
+      'YOUR MOVE — 3/6 AP · 2/3 MP left — SPACE ends your turn',
+    );
+  });
+
+  it('shows BOTH budgets, because a round can end on either', () => {
+    /**
+     * A step costs 1 MP of 3 and a talent costs its AP of 6, so a Watchman
+     * holding four AP and no MP is full of swings and out of moves. A HUD
+     * showing only AP would leave him wondering why he could not walk — which
+     * is the same confusion this whole change is about, one budget over.
+     */
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
+
+    const line = bannerFor(view(frame, null, { ap: 4, maxAp: 6, mp: 0, maxMp: 3 }));
+    expect(line).toContain('4/6 AP');
+    expect(line).toContain('0/3 MP');
+  });
+
+  it('says nothing about a budget it has not been given', () => {
+    // ═══ THE HALF THAT MUST NOT MOVE ═══
+    // A client can outlive a server that never sends the MP fields, and there is
+    // no budget at all before the first `resource` frame lands. Half a budget on
+    // screen is worse than none: "3/6 AP" with no MP beside it cannot tell a
+    // player whether the round ended because the legs ran out.
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
+
+    const line = bannerFor(view(frame, null, null));
+    expect(line).toBe('YOUR MOVE — SPACE ends your turn');
+    expect(line).not.toContain('AP');
+  });
+
+  it('leads with the clock when the Bell is counting, and still says the budget', () => {
+    // The one state where the clock outranks the arithmetic: a player being
+    // counted down needs the seconds first.
+    const { world, cast } = room();
+    const sam = cast[1];
+    if (sam === undefined) throw new Error('no cast');
+    // `bellDurationMs` IS WHAT ARMS IT, and `frameFor`'s fourth argument is the
+    // milliseconds left at the instant the server sent the frame — the same
+    // shape the existing straggler test uses.
+    const frame = frameFor(
+      world,
+      sam,
+      barrier({ engagement: 3, whoseTurn: ['actor_b'], bellDurationMs: 20_000 }),
+      12_000,
+    );
+    const line = bannerFor(view(frame, 12_000, BUDGET));
+    expect(line.startsWith('YOUR MOVE — BELL 12s')).toBe(true);
+    expect(line).toContain('3/6 AP');
   });
 });

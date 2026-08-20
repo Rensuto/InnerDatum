@@ -250,6 +250,27 @@ export type TurnView = {
   readonly turn: TurnMsg | null;
   /** Milliseconds left on the Bell, ticked locally. Null when none is running. */
   readonly bellMs: number | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE VIEWER HAS LEFT TO SPEND THIS ROUND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * FROM `ResourceMsg` AND NOT FROM `TurnActor`, and that is not a convenience —
+   * it is the only place it may come from. A turn card describes a player TO THE
+   * ROOM, and `ResourceView` is viewer-private for a stated reason: another
+   * detective's remaining budget is not yours to read. Putting AP on the public
+   * per-actor record would leak every player's round to every other player.
+   *
+   * OPTIONAL, because a client can outlive a server that never sends it and
+   * because there is no budget at all before the first `resource` frame lands.
+   * Absent means the banner says what it always said.
+   */
+  readonly budget?: {
+    readonly ap: number;
+    readonly maxAp: number;
+    readonly mp: number;
+    readonly maxMp: number;
+  } | null;
 };
 
 export type TurnCardsOptions = {

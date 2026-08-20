@@ -1083,6 +1083,25 @@ export type ResourceView = {
   ap?: number;
   maxAp?: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE OTHER HALF OF THE ROUND, AND WALKING IS PAID OUT OF IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `MOVE_MP_COST` is 1: a step costs one MP out of three, which is what keeps
+   * a Watchman from trading his whole round for six steps. So MP is not a
+   * secondary curiosity beside AP — it is HALF the answer to the only question
+   * this HUD exists to answer, which is *"can I do anything else, or am I
+   * done?"*. The engine already answers it honestly across all three budgets
+   * (`hasAffordableAction`); until now the wire carried two of them.
+   *
+   * OPTIONAL AND VIEWER-PRIVATE, exactly like `ap` above and for both of the
+   * same reasons: an old client ignores a field it cannot name, so no version
+   * bump and nobody is forced to reload mid-session — and another detective's
+   * remaining budget is not yours to read.
+   */
+  mp?: number;
+  maxMp?: number;
+  /**
    * Draw PIPS, not a bar.
    *
    * ═══ THE FLAG DID NOT CHANGE. ITS JUSTIFICATION DID. ═══
