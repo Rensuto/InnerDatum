@@ -77,7 +77,9 @@ import {
 import {
   MAX_CHARACTER_LEVEL,
   expChart,
+  canRaiseStat,
   pointsForLevel,
+  totalStatPointsAtLevel,
   totalPointsAtLevel,
 } from '../../shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
@@ -125,6 +127,7 @@ import { fileableCount, isFileable, knownFiled } from '../world/casefile.ts';
 import { specFor, dangerWord, partyHint } from '../content/delve.ts';
 import { monsterById } from '../content/monsters.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
+import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import { STANDING_LEVEL, specForActorId } from '../content/townsfolk.ts';
 import { healActor } from '../engine/talents.ts';
 import type { TalentEffect } from '../engine/talents.ts';
@@ -168,7 +171,7 @@ import { Faction, StandingOrder, incMoney, isMonster } from '../engine/actor.ts'
  * player wearing a coat that changes no number — Trap 1, arriving through the
  * one door the type system cannot close.
  */
-import { combatArmor } from '../engine/derived.ts';
+import { combatArmor, stat as statValue } from '../engine/derived.ts';
 import { recomposeCombat } from '../engine/effects.ts';
 /**
  * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
@@ -276,6 +279,7 @@ import type {
   ClientSetKeybinds,
   ClientSetZoom,
   ClientSpendPoint,
+  ClientSpendStat,
   ClientTalent,
   ClientUnequip,
   LoadoutTalent,
@@ -1380,6 +1384,13 @@ export type CharacterSnapshot = {
    */
   readonly talentPoints?: Readonly<Record<string, number>>;
   /**
+   * THE ATTRIBUTE POINTS SPENT, RAW — `{ str: 3 }` is three points into
+   * Strength. The same discipline `talentPoints` states above: the RAW spends
+   * and never the composed value, so unspent stays derivable and a retune of any
+   * class base still reaches every character.
+   */
+  readonly spentStats?: Readonly<Record<string, number>>;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE BAG AND THE PAPER DOLL. IDS ONLY, AND ABSENT IS NOT EMPTY.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1565,6 +1576,13 @@ export type CharacterRestore = {
   readonly unspentPoints?: number;
   /** Namespaced talent id -> RAW points. The only non-derived one of the four. */
   readonly talentPoints?: Readonly<Record<string, number>>;
+  /**
+   * THE ATTRIBUTE POINTS SPENT, RAW — `{ str: 3 }` is three points into
+   * Strength. The same discipline `talentPoints` states above: the RAW spends
+   * and never the composed value, so unspent stays derivable and a retune of any
+   * class base still reaches every character.
+   */
+  readonly spentStats?: Readonly<Record<string, number>>;
   /**
    * Gold, as the file holds it. NOT reconciled against anything, because there
    * is nothing to reconcile it against — see `CharacterSnapshot.money`. Absent
@@ -3371,6 +3389,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ...(classChoiceOwed.has(actor.id)
           ? {}
           : progressionPoints(engine.talentPointsOf?.(actor.id))),
+        /**
+         * ═══ AND THE ATTRIBUTE POINTS, WHICH ARE *NOT* UNDER THAT RULE ═══
+         * `talentPoints` is omitted while a class choice is outstanding because
+         * a provisional body wears the ROTATION's four talents, and filing their
+         * ranks would write a spread against a class nobody picked.
+         *
+         * Attributes have no such problem: `spentStats` is a delta a PLAYER
+         * chose, `handleSpendStat` refuses to add to it while the picker is
+         * owed, and `attachClass` replaces the sheet underneath without touching
+         * it. So it is always the truth about this character, and omitting it
+         * would silently discard points on the one save most likely to happen
+         * early — the first one.
+         */
+        ...(actor.spentStats === undefined ? {} : { spentStats: actor.spentStats }),
         // ═══ AND THE BAG AND THE DOLL, UNDER THE SAME PROVISIONAL-CLASS RULE ═══
         // Read straight off the body, for the reason engine/actor.ts gives at
         // both fields: this pass cannot reach an equipment engine any more than
@@ -3951,15 +3983,31 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * A FIELD ON THE FRAME MUST BE A FIELD IN THE KEY, and one function is the
    * only version of that rule a reader cannot half-apply.
    */
+  /**
+   * THE SIX, IN ToME'S OWN ORDER (`load.lua:182-189`): Strength, Dexterity,
+   * Magic, Willpower, Cunning, Constitution. One list, read by the frame and by
+   * the dedupe key, so the two cannot disagree about what a stat change is.
+   */
+  const STAT_ORDER = ['str', 'dex', 'mag', 'wil', 'cun', 'con'] as const;
+
   const progressKeyFor = (viewer: {
     id: string;
     level: number;
     xp: number;
     unspentPoints: number;
+    unspentStatPoints?: number;
+    combat?: Combatant;
   }): string =>
+    // EVERY FIELD ON THE FRAME BELONGS IN THE KEY — the rule this key's own note
+    // states, and the reason the attribute pair is here. Spending a point moves
+    // no level, no xp and no talent point, so a key without them would hold
+    // steady while the six numbers under it changed, and the sheet would go on
+    // showing the old Strength until the player happened to gain experience.
     `${String(viewer.level)}|${String(viewer.xp)}|${String(viewer.unspentPoints)}|${String(
       knownFiled(filed.get(viewer.id) ?? [], SITES).length,
-    )}`;
+    )}|${String(viewer.unspentStatPoints ?? 0)}|${STAT_ORDER.map((which) =>
+      String(statValue(viewer.combat ?? {}, which)),
+    ).join(',')}`;
 
   const sendProgress = (session: Session): boolean => {
     const { world } = realmFor(session);
@@ -3991,6 +4039,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       unspent: viewer.unspentPoints,
       filed: closedCases,
       cases: fileableCount(SITES),
+      // THE OTHER HALF OF A LEVELUP. Read off the COMPOSED sheet, so the six are
+      // what the player can see rather than what their class authored.
+      unspentStats: viewer.unspentStatPoints,
+      stats: {
+        str: statValue(viewer.combat ?? {}, 'str'),
+        dex: statValue(viewer.combat ?? {}, 'dex'),
+        con: statValue(viewer.combat ?? {}, 'con'),
+        mag: statValue(viewer.combat ?? {}, 'mag'),
+        wil: statValue(viewer.combat ?? {}, 'wil'),
+        cun: statValue(viewer.combat ?? {}, 'cun'),
+      },
     });
     /**
      * `closedCases` IS IN THE KEY, AND LEAVING IT OUT WOULD HAVE BEEN A SILENT
@@ -5495,6 +5554,41 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         { actorId: actor.id, talentIds: dropped },
         'character file names talents this body no longer has — their points are refunded',
       );
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ATTRIBUTES COME BACK FIRST, AND THEIR LEDGER NEEDS NO ENGINE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Talent points live behind the talent engine, which is why everything
+     * below has to ask a seam whether a sheet even exists. Attributes do not:
+     * `spentStats` is a plain delta on the body, so the ledger is arithmetic and
+     * runs for every build, including one with no talent engine wired in.
+     *
+     * DERIVED, NEVER RESTORED. `totalStatPointsAtLevel(level)` minus what was
+     * spent — the file's own note says why, and it is the same reason the talent
+     * ledger below overrides the cached number: retuning the grant then corrects
+     * every existing character instead of stranding them.
+     *
+     * AND THE SHEET IS REFOLDED, or the points would be a record of something
+     * that never reached a single derived number.
+     */
+    const grown = restore.spentStats;
+    if (grown !== undefined) {
+      const kept: Record<string, number> = {};
+      let statSpent = 0;
+      for (const [key, raw] of Object.entries(grown)) {
+        const points = Math.max(0, Math.floor(raw));
+        if (points <= 0) continue;
+        kept[key] = points;
+        statSpent += points;
+      }
+      actor.spentStats = kept;
+      actor.unspentStatPoints = Math.max(0, totalStatPointsAtLevel(actor.level) - statSpent);
+      recomposeCombat(actor, opts.effects ?? null, resolveItem);
+    } else {
+      actor.unspentStatPoints = Math.max(0, totalStatPointsAtLevel(actor.level));
     }
 
     const spread = engine.talentPointsOf?.(actor.id);
@@ -10174,6 +10268,102 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * misbehaving or a stale button, and the six guards below are the definition
    * of "this was a real press".
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `spend_stat` — ONE ATTRIBUTE POINT, INTO ONE OF THE SIX.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE SAME FOUR GATES `handleSpendPoint` OPENS WITH, and for the same reasons
+   * stated at length there: a socket with no body, a body that is not in the
+   * world, a body on the floor, and a body that is not a player. The fifth —
+   * an outstanding class choice — matters here too and for a sharper reason:
+   * `attachClass` replaces the sheet wholesale, so a point spent before the
+   * picker is answered buys a stat on a body that is about to be re-clothed.
+   *
+   * `spentStats` IS THE LEDGER AND `unspentStatPoints` IS THE REMAINDER. Both
+   * move together or neither does — the raise is applied first and the point
+   * deducted second, so a refusal costs the player nothing, which is the order
+   * `handleSpendPoint` argues for about talents.
+   *
+   * IT RECOMPOSES IMMEDIATELY. A stat that did not reach `combat` is a point
+   * that bought nothing until the next time something happened to fold the
+   * sheet, and the player would be looking at an unchanged number.
+   */
+  const handleSpendStat = (session: Session, msg: ClientSpendStat): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before spending a point');
+      return;
+    }
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+    if (!body.alive) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'spend refused: you are on the floor — get back on your feet first',
+      );
+      return;
+    }
+    if (body.kind !== ActorKind.Player) {
+      sendError(session.socket, ErrorCode.Internal, 'that body cannot hold attribute points');
+      return;
+    }
+    if (classChoiceOwed.has(actorId)) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'spend refused: choose a class before spending points',
+      );
+      return;
+    }
+    if (body.unspentStatPoints <= 0) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'spend refused: no attribute points in hand',
+      );
+      return;
+    }
+
+    /**
+     * THE CEILING, ASKED OF THE COMPOSED VALUE. `canRaiseStat` answers about
+     * what the player can SEE — class sheet plus points plus gear plus passives
+     * — rather than about the delta, because a cap on the delta would let a
+     * character in good armour pass a limit a naked one could not.
+     */
+    const current = statValue(body.combat ?? {}, msg.stat);
+    if (!canRaiseStat(current)) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        `spend refused: ${msg.stat} is already at its maximum`,
+      );
+      return;
+    }
+
+    const which: keyof PrimaryStats = msg.stat;
+    const grown = { ...(body.spentStats ?? {}) };
+    grown[which] = (grown[which] ?? 0) + 1;
+    body.spentStats = grown;
+    body.unspentStatPoints -= 1;
+
+    // THE SHEET IS REFOLDED NOW, so every derived number the player is about to
+    // read is the one they just bought.
+    recomposeCombat(body, opts.effects ?? null, resolveItem);
+
+    // AND THE BARRIER IS TOLD SOMEBODY IS THERE — the same courtesy
+    // `handleSpendPoint` extends: reading a stat screen is not being absent.
+    realmFor(session).engine.notePresence?.(actorId);
+
+    sendProgress(session);
+    sendInventoryIfChanged(session);
+  };
+
   const handleSpendPoint = (session: Session, msg: ClientSpendPoint): void => {
     const { world, engine } = realmFor(session);
     // A NARROWING, NOT A GATE — the dispatch switch sits below the `helloDone`
@@ -11729,6 +11919,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // full for the next person who goes looking for one.
       case 'spend_point':
         handleSpendPoint(session, msg);
+        return;
+      // THE FIFTH MEMBER OF THE SAME GROUP, and non-pumping for every reason
+      // `spend_point` is: it reads no RNG, advances no clock, and the screen it
+      // belongs to is not a modal. See `handleSpendStat`.
+      case 'spend_stat':
+        handleSpendStat(session, msg);
         return;
       // ALSO NON-PUMPING, and the FOURTH member of this group rather than an
       // exception to it — the group's own rule, stated once more because this is

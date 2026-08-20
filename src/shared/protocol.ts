@@ -2432,6 +2432,32 @@ const SpendPointSchema = z.strictObject({
 });
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `spend_stat` — "PUT MY NEXT ATTRIBUTE POINT INTO THIS ONE." The v19 verb.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONE POINT, ONE STAT, NO AMOUNT. The frame cannot say "put three into
+ * Strength", for the reason `spend_point` gives about talents: an amount is a
+ * number a client can get wrong, and a repeated verb is a repeated confirmation.
+ * The server decides whether a point exists to spend.
+ *
+ * A CLOSED SET, not a free string — the six ToME defines at `load.lua:182-189`.
+ * LUCK IS NOT IN IT and its absence is the design: upstream calls Luck hidden,
+ * starts it at 50 and grants no way to raise it, so a seventh row here would be
+ * a promise the rest of the system does not keep.
+ *
+ * NOTHING IS REFUNDABLE, exactly as talents are not, and there is no
+ * `unspend_stat`. ToME lets you take a point back only before you confirm the
+ * levelup dialog; this game has no screen to confirm, so a point is spent the
+ * moment it is sent — which is why the client asks twice before sending one.
+ */
+const SpendStatSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('spend_stat'),
+  stat: z.enum(['str', 'dex', 'con', 'mag', 'wil', 'cun']),
+});
+
+/**
  * Longest item id a client may name. `item_inspectors_deerstalker` is 27
  * characters and is the longest of the 22 authored; 64 matches
  * `ACTOR_ID_MAX_CHARS`, `CLASS_ID_MAX_CHARS` and `TALENT_ID_MAX_CHARS` so there
@@ -3028,6 +3054,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   RespawnSchema,
   ChooseClassSchema,
   SpendPointSchema,
+  SpendStatSchema,
   PickupSchema,
   EquipSchema,
   UseSchema,
@@ -3057,6 +3084,7 @@ export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
 export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
 export type ClientSpendPoint = z.infer<typeof SpendPointSchema>;
+export type ClientSpendStat = z.infer<typeof SpendStatSchema>;
 export type ClientPickup = z.infer<typeof PickupSchema>;
 export type ClientEquip = z.infer<typeof EquipSchema>;
 export type ClientUse = z.infer<typeof UseSchema>;
@@ -4320,6 +4348,37 @@ export type ProgressMsg = {
   filed?: number;
   /** How many there are to close. Read off the registry — never a literal. */
   cases?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE OTHER HALF OF A LEVELUP — ATTRIBUTE POINTS IN HAND, AND WHERE THEY WENT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME grants three a level (`Actor.lua:3748`) and its levelup screen shows
+   * both numbers at once: what you have to spend, and what each attribute is at.
+   * Neither is derivable client-side — a value is the class sheet plus spent
+   * points plus gear plus passives, folded by `recomposeCombat` — so both travel.
+   *
+   * VIEWER-PRIVATE, like `unspent` above and for the same reason: a point in
+   * hand is INTENT, and this protocol has withheld intent since v9.
+   *
+   * OPTIONAL, so adding them forces no version bump and a client can outlive a
+   * server that never sends them. Absent means "this build has nothing to
+   * spend", which draws no column rather than a column of zeroes.
+   */
+  unspentStats?: number;
+  /**
+   * THE SIX, AS COMPOSED. Short codes because they are ToME's own
+   * (`load.lua:182-189`) and a player who knows that game reads them without a
+   * legend; the screen spells them out beside these.
+   */
+  stats?: {
+    str: number;
+    dex: number;
+    con: number;
+    mag: number;
+    wil: number;
+    cun: number;
+  };
 };
 
 // ---------------------------------------------------------------------------

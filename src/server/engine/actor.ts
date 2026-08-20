@@ -652,6 +652,21 @@ export type PlayerActor = ActorCommon & {
    */
   unspentPoints: number;
   /**
+   * ATTRIBUTE POINTS IN HAND. ToME's `unused_stats` (`Actor.lua:3748`), three a
+   * level and freely assignable.
+   *
+   * SEPARATE FROM `unspentPoints` AND NOT A SECOND USE OF IT, because the two
+   * are not interchangeable in either direction: upstream grants them on
+   * different schedules (three stats every level, one talent point plus a bonus
+   * every fifth) and spends them on different screens. One counter would make a
+   * player who banked talent points silently able to buy Strength with them.
+   *
+   * WHERE IT GOES is `spentStats` — this is what remains, and `spentStats` is
+   * what was used. The save persists only the latter, so this is recomputed on
+   * load as `totalStatPointsAtLevel(level)` minus the sum of the raw spends.
+   */
+  unspentStatPoints: number;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * GOLD. A WHOLE NUMBER, NEVER NEGATIVE, AND NOT A DERIVED VALUE.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1105,6 +1120,10 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     level: 1,
     xp: 0,
     unspentPoints: 0,
+    // BORN WITH NONE, exactly like the talent points above: a level-1 character
+    // has been granted nothing yet (`statPointsForLevel` answers 0 at 1), and
+    // the class sheet is where their starting attributes already live.
+    unspentStatPoints: 0,
     money: STARTING_MONEY,
     pendingLevels: 0,
     cooldowns: new Map<string, number>(),

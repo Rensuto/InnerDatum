@@ -417,6 +417,23 @@ export type CharacterFile = {
    * `createTalentSheet`, which seeds every loadout id it is not given.
    */
   readonly talentPoints?: Readonly<Record<string, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ATTRIBUTE POINTS THIS CHARACTER HAS SPENT, RAW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `{ str: 3, con: 1 }` is four points spent. A DELTA over the class sheet,
+   * never the composed value — `docs/data-schemas.md` § 1's rule that a save
+   * never persists a derived value, and the reason is the same one
+   * `talentPoints` gives: storing the total would freeze a character against the
+   * class they were rolled with, so a retune of any class base would stop
+   * reaching them and the unspent count could never be recomputed.
+   *
+   * UNSPENT IS DERIVED ON LOAD, as `totalStatPointsAtLevel(level)` minus the sum
+   * of these. Retuning the grant therefore corrects every existing character
+   * instead of stranding them.
+   */
+  readonly spentStats?: Readonly<Record<string, number>>;
 
   // ═════════════════════════════════════════════════════════════════════════
   // ITEMS. TWO OPTIONAL FIELDS, AND AN ITEM IS NOTHING BUT ITS ID.
@@ -793,6 +810,23 @@ export type CharacterInit = {
   /** RAW points per talent. Omit ids at their birth rank; absent means 1. */
   readonly talentPoints?: Readonly<Record<string, number>>;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ATTRIBUTE POINTS THIS CHARACTER HAS SPENT, RAW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `{ str: 3, con: 1 }` is four points spent. A DELTA over the class sheet,
+   * never the composed value — `docs/data-schemas.md` § 1's rule that a save
+   * never persists a derived value, and the reason is the same one
+   * `talentPoints` gives: storing the total would freeze a character against the
+   * class they were rolled with, so a retune of any class base would stop
+   * reaching them and the unspent count could never be recomputed.
+   *
+   * UNSPENT IS DERIVED ON LOAD, as `totalStatPointsAtLevel(level)` minus the sum
+   * of these. Retuning the grant therefore corrects every existing character
+   * instead of stranding them.
+   */
+  readonly spentStats?: Readonly<Record<string, number>>;
+  /**
    * ITEMS, PASSED STRAIGHT THROUGH — including the absence.
    *
    * Unlike the four progression fields, these are NOT defaulted on the way in.
@@ -854,6 +888,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
   const stamp = init.createdAt ?? new Date().toISOString();
   const level = init.level ?? BIRTH_LEVEL;
   const talentPoints = init.talentPoints ?? {};
+  const spentStats = init.spentStats;
   return {
     schemaVersion: CURRENT_VERSIONS[SchemaKind.Character],
     kind: SchemaKind.Character,
@@ -874,6 +909,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     // character whose caller passed a level and nothing else.
     unspentPoints: init.unspentPoints ?? unspentFromLedger(level, talentPoints),
     talentPoints,
+    spentStats,
     // NO `??` ON THESE THREE, AND THAT IS THE POINT. An undefined here is
     // written as an undefined, `JSON.stringify` omits the key, and a file that
     // says nothing about items stays a file that says nothing about items.
@@ -1052,6 +1088,36 @@ function parseXp(value: unknown, problems: string[]): number {
  * The key is kept VERBATIM — a soft reference, like `talentCooldowns` and
  * `classId`. See the field's docblock for who does the refund.
  */
+/**
+ * The attribute points a save says were spent.
+ *
+ * REPAIR, NEVER REJECT, like every field around it: a non-object is dropped and
+ * an entry that is not a non-negative integer is skipped, so one hand-edited key
+ * costs a player one attribute rather than every point they have spent.
+ *
+ * ONLY THE SIX. A key ToME does not define — `lck`, or anything invented — is
+ * dropped rather than carried, because `spend_stat` cannot produce one and the
+ * fold would otherwise hand a body a stat no screen can show or explain.
+ *
+ * SILENT, WITH NO `problems` ENTRY, and that is deliberate: `parseTalentPoints`
+ * reports because a dropped talent rank is a visible loss of power a player will
+ * ask about, and this is a file that has never had the key at all for every
+ * character written before today.
+ */
+function parseSpentStats(value: unknown): Record<string, number> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) return undefined;
+  const allowed = ['str', 'dex', 'con', 'mag', 'wil', 'cun'];
+  const out: Record<string, number> = {};
+  for (const key of allowed) {
+    const raw = value[key];
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
+    const points = Math.max(0, Math.floor(raw));
+    if (points > 0) out[key] = points;
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
 function parseTalentPoints(value: unknown, problems: string[]): Record<string, number> {
   const out: Record<string, number> = {};
   if (value === undefined || value === null) return out;
@@ -1599,6 +1665,12 @@ export function parseCharacterFile(doc: unknown): ParseResult {
   // rank of 40 reaches `totalPointsAtLevel` before the clamp does.
   const level = parseLevel(doc.level, problems);
   const talentPoints = parseTalentPoints(doc.talentPoints, problems);
+  // THE SAME REPAIR-NEVER-REJECT RULE the rest of this function follows: a
+  // non-object is dropped, and an entry that is not a non-negative integer is
+  // skipped, so one hand-edited key does not cost a player every point they have
+  // spent. `parseTalentPoints` is not reused because its floor is the BIRTH rank
+  // of a talent, and an attribute's floor is simply zero.
+  const spentStats = parseSpentStats(doc.spentStats);
   const unspentPoints = parseUnspentPoints(doc.unspentPoints, level, talentPoints, problems);
 
   // ═══ AND ORDER MATTERS BETWEEN THESE TWO, FOR A DIFFERENT REASON ═══
@@ -1627,6 +1699,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       xp: parseXp(doc.xp, problems),
       unspentPoints,
       talentPoints,
+      spentStats,
       // NAMED WITH THEIR UNDEFINED INTACT. These three are the only fields here
       // that may legitimately be `undefined`, and writing them anyway is what
       // keeps the key SET identical between `createCharacterFile` and this
@@ -1831,6 +1904,12 @@ export function serialiseCharacter(file: CharacterFile): string {
      * load — the same bug with an extra step. `createCharacterFile` already
      * pairs them; this keeps the pair together on the way out.
      */
+    // WRITTEN CONDITIONALLY, joining the group below. A character who has spent
+    // nothing produces no key, so every save already on disk still round-trips
+    // byte-identically — and THIS FUNCTION HAS NOW SILENTLY DROPPED TWO FIELDS
+    // (`filed` and `explored`), so the round-trip test covering it is not
+    // optional for a third.
+    spentStats: file.spentStats,
     explored: file.explored,
     layoutRevision: file.layoutRevision,
     exploredElsewhere: file.exploredElsewhere,
@@ -2667,6 +2746,8 @@ type Binding = {
   readonly xp: number;
   readonly unspentPoints: number;
   readonly talentPoints: Readonly<Record<string, number>>;
+  /** What the file said had been spent on attributes when it was opened. */
+  readonly spentStats?: Readonly<Record<string, number>>;
   /**
    * ═══ THE PURSE JOINS THE REQUIRED FOUR, NOT THE OPTIONAL THREE ═══
    * It is world-given state that the engine changes under the player, like a
@@ -2786,6 +2867,10 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: snapshot.xp ?? binding.xp,
       unspentPoints: snapshot.unspentPoints ?? binding.unspentPoints,
       talentPoints: snapshot.talentPoints ?? binding.talentPoints,
+      // THE ATTRIBUTES, ON THE SAME SNAPSHOT-WINS RULE. The binding carries
+      // forward what the file held when it was opened, so a body that has spent
+      // nothing this session does not overwrite what a previous one spent.
+      spentStats: snapshot.spentStats ?? binding.spentStats,
       // THE SAME RULE ONE MORE TIME. A producer that cannot say what somebody
       // is carrying must not write the birth purse over an evening's takings.
       money: snapshot.money ?? binding.money,
@@ -2927,6 +3012,10 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: file?.xp ?? BIRTH_XP,
       unspentPoints: file?.unspentPoints ?? 0,
       talentPoints: file?.talentPoints ?? {},
+      // NO `??` AND NO DEFAULT, exactly like `carried` above: an absent record is
+      // carried forward AS an absence, so a character who has never spent a
+      // point produces no key rather than an assertion that they spent none.
+      spentStats: file?.spentStats,
       money: file?.money ?? BIRTH_MONEY,
       // NO `??` AND NO DEFAULT: an absent inventory is carried forward AS an
       // absence, so `fileFor` leaves the key off the file rather than asserting
@@ -2985,6 +3074,9 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       xp: file.xp,
       unspentPoints: file.unspentPoints,
       talentPoints: file.talentPoints,
+      // THE RAW SPENDS. The gateway derives `unspentStatPoints` from them and the
+      // character's level — see `restoreProgression`.
+      spentStats: file.spentStats,
       money: file.money,
       // ═══ AND THE LOADOUT COMING BACK — THE OTHER HALF, AGAIN ═══
       // `fileFor` above now writes the live bag to disk. A load that did not

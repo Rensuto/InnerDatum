@@ -65,7 +65,7 @@ afterEach(async () => {
  * discards the fog from, and the test would be measuring its own shortcut.
  */
 function character(id: string, name: string, over: Partial<CharacterFile> = {}): CharacterFile {
-  const { filed, explored, exploredElsewhere, ...rest } = over;
+  const { filed, explored, exploredElsewhere, spentStats, ...rest } = over;
   return {
     ...createCharacterFile({
       id,
@@ -75,6 +75,7 @@ function character(id: string, name: string, over: Partial<CharacterFile> = {}):
       filed,
       explored,
       exploredElsewhere,
+      spentStats,
       resources: { hp: 60, ap: 4, mp: 0, special: { kind: 'resolve', value: 0 } },
       talentCooldowns: {},
       effects: [],
@@ -214,6 +215,49 @@ describe('what a character still knows after a logout', () => {
     ]);
     expect(back.file?.explored, 'the fog did not survive the write').toBe('AAAA');
     expect(back.file?.exploredElsewhere).toEqual({ 'realm:site:redaction': 'BBBB' });
+  });
+
+  it('remembers the attribute points it spent', async () => {
+    /**
+     * ═══ THE THIRD FIELD THROUGH A SEAM THAT HAS DROPPED TWO ═══
+     * `serialiseCharacter` rebuilds a canonical object from scratch and silently
+     * omits anything it does not name — that is how `filed` and `explored` were
+     * both lost. `spentStats` is the next field through it, so it gets the same
+     * round trip through the real store and the real loader on the way in.
+     *
+     * RAW SPENDS, NEVER THE COMPOSED VALUE. `docs/data-schemas.md` § 1 forbids
+     * persisting a derived one, and the unspent count is recomputed from these
+     * and the level — so retuning the grant corrects every existing character
+     * rather than stranding them.
+     */
+    await store.saveCharacter(
+      character('chr_main', 'Sergeant Vell', { level: 4, spentStats: { str: 5, con: 2 } }),
+      SaveReason.Manual,
+    );
+
+    const back = await store.loadCharacter(OWNER, 'chr_main');
+    expect(back.file?.spentStats, 'the attribute points did not survive the write').toEqual({
+      str: 5,
+      con: 2,
+    });
+  });
+
+  it('writes no attribute key for a character that has spent none', async () => {
+    /**
+     * ═══ THE HALF THAT MUST NOT MOVE ═══
+     * Absent means "has spent nothing"; `{}` would be a claim. Every save
+     * already on disk must still round-trip byte for byte, which is the
+     * property `serialiseCharacter`'s byte-stability contract rests on.
+     *
+     * ASSERTED ON THE BYTES AND NOT ON THE OBJECT. `createCharacterFile` sets
+     * the key to `undefined`, so the in-memory record HAS it — and
+     * `JSON.stringify` drops an undefined-valued key, which is exactly the
+     * mechanism every conditional field in that serialiser relies on. Testing
+     * the object would fail while the file on disk was perfectly correct.
+     */
+    await store.saveCharacter(character('chr_main', 'Sergeant Vell'), SaveReason.Manual);
+    const bytes = await readFile(join(root, 'characters', OWNER, 'chr_main.json'), 'utf8');
+    expect(Object.keys(JSON.parse(bytes) as Record<string, unknown>)).not.toContain('spentStats');
   });
 
   it('and the roster counts those cases, because it reads the same bytes', async () => {
