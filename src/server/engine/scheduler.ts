@@ -63,7 +63,13 @@ import { canWalk } from '../../shared/level.ts';
 // § 5: engine/** may not reach net/, persist/, ops/ or http/). progression.ts is
 // pure arithmetic over three numbers — no state, no dice, no clock — so it is
 // safe here for exactly the reasons scale.ts and energy.ts are.
-import { gainExp, pointsForLevel, statPointsForLevel, worthExp } from '../../shared/progression.ts';
+import {
+  gainExp,
+  genericPointsForLevel,
+  pointsForLevel,
+  statPointsForLevel,
+  worthExp,
+} from '../../shared/progression.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { decideNpcAction } from '../ai/npc.ts';
 import { hasLineOfSight } from '../world/world.ts';
@@ -3185,6 +3191,9 @@ function applyPendingLevels(actor: EngineActor, run: Run): void {
     // ONE GRANT PER LEVEL CROSSED, never one per award: a boss that carries a
     // character from 4 to 6 owes the level-5 pair AND the level-6 single.
     actor.unspentPoints += pointsForLevel(level);
+    // AND THE GENERIC POINT, which is the same grant seen from the other side:
+    // two a level, always, and a fifth level moves one of them across.
+    actor.unspentGenerics += genericPointsForLevel(level);
     // AND THE THREE ATTRIBUTE POINTS, on the same per-level-crossed rule and in
     // the same loop. `Actor.lua:3748` grants both in one place too — a level is
     // one event that owes two currencies, and granting them from two different

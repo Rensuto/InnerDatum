@@ -52,6 +52,7 @@ function progressFrame(over: Partial<ProgressMsg> = {}): ProgressMsg {
     xp: 30,
     xpToNext: 120,
     unspent: 0,
+    unspentGenerics: 0,
     ...over,
   };
 }

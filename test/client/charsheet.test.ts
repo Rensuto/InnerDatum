@@ -122,6 +122,10 @@ function progressFrame(over: Partial<ProgressMsg> = {}): ProgressMsg {
     xp: 61,
     xpToNext: 174,
     unspent: 0,
+    // The second purse. Zero by default for the same reason the first is: an
+    // unspent point is the exceptional state, and the sheet has a conditional row
+    // for each that a common fixture must not quietly switch on.
+    unspentGenerics: 0,
     ...over,
   };
 }

@@ -4390,6 +4390,20 @@ export type ProgressMsg = {
   unspent: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * THE SECOND PURSE. `unused_generics` — Actor.lua:3750, :3752.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Spendable only on a `generic/` tree, where `unspent` above is spendable only
+   * on a class one. Both travel, because a panel showing one number could not
+   * explain why a `+` the player can plainly see is refused.
+   *
+   * A SEPARATE FIELD RATHER THAN A SUM, for the reason `unspent` gives about
+   * itself: a client doing the arithmetic would need the whole spend history —
+   * and two purses cannot be recovered from one total at all.
+   */
+  unspentGenerics: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * HOW MUCH OF THE GAME THIS CHARACTER HAS FINISHED.
    * ═══════════════════════════════════════════════════════════════════════════
    *

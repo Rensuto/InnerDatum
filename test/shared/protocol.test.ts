@@ -878,6 +878,7 @@ describe('progress is told to one player, never to the room', () => {
     // own copy of MAX_CHARACTER_LEVEL to decide whether the bar is full.
     xpToNext: 174,
     unspent: 2,
+    unspentGenerics: 0,
   };
 
   it('is a ViewerMsg and is NOT assignable to BroadcastMsg', () => {
@@ -913,7 +914,10 @@ describe('progress is told to one player, never to the room', () => {
     // is the same one computed wrongly, and a client holding it would level a
     // player every kill once they were past the sum of the chart.
     expect(Object.keys(progress).sort()).toEqual(
-      ['level', 't', 'unspent', 'v', 'xp', 'xpToNext'].sort(),
+      // `unspentGenerics` joins the required set: two purses cannot be
+      // recovered from one total, so the panel needs both or it cannot explain a
+      // refused `+`. See ProgressMsg.
+      ['level', 't', 'unspent', 'unspentGenerics', 'v', 'xp', 'xpToNext'].sort(),
     );
   });
 });

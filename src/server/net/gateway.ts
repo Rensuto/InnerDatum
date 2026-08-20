@@ -77,6 +77,7 @@ import {
 import {
   MAX_CHARACTER_LEVEL,
   expChart,
+  isGenericTree,
   canRaiseStat,
   pointsForLevel,
   statPointsForLevel,
@@ -4043,6 +4044,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     level: number;
     xp: number;
     unspentPoints: number;
+    unspentGenerics: number;
     unspentStatPoints?: number;
     combat?: Combatant;
   }): string =>
@@ -4051,7 +4053,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // no level, no xp and no talent point, so a key without them would hold
     // steady while the six numbers under it changed, and the sheet would go on
     // showing the old Strength until the player happened to gain experience.
-    `${String(viewer.level)}|${String(viewer.xp)}|${String(viewer.unspentPoints)}|${String(
+    `${String(viewer.level)}|${String(viewer.xp)}|${String(viewer.unspentPoints)}|${String(viewer.unspentGenerics)}|${String(
       knownFiled(filed.get(viewer.id) ?? [], SITES).length,
     )}|${String(viewer.unspentStatPoints ?? 0)}|${STAT_ORDER.map((which) =>
       String(statValue(viewer.combat ?? {}, which)),
@@ -4085,6 +4087,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       xp: viewer.xp,
       xpToNext: atCap ? 0 : expChart(viewer.level + 1),
       unspent: viewer.unspentPoints,
+      unspentGenerics: viewer.unspentGenerics,
       filed: closedCases,
       cases: fileableCount(SITES),
       // THE OTHER HALF OF A LEVELUP. Read off the COMPOSED sheet, so the six are
@@ -10894,8 +10897,38 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       );
       return;
     }
-    if (body.unspentPoints <= 0) {
-      sendError(session.socket, ErrorCode.BadMessage, 'no talent points in hand');
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     *   WHICH PURSE. Two currencies, and a tree may only be bought with one.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * Upstream keys this off `newTalentType`'s `generic` flag; ours is the tree
+     * id's namespace, which is the same information already written down.
+     * `generic/groundwork` comes out of the generic purse, everything else out
+     * of the class one.
+     *
+     * ═══ AND THIS IS WHAT MAKES A BORING TREE ACCEPTABLE ═══
+     * A flat +1 armour is a fine thing to own and a terrible thing to weigh
+     * against a signature ability. Upstream never asks anyone to: the dull tree
+     * has its own scarcer currency, so the choice is "which dull thing" rather
+     * than "dull thing or interesting one". This game copied the tree and not
+     * the economics, and 57% of its talents being a number going up is what that
+     * cost.
+     *
+     * THE MESSAGE NAMES THE PURSE, because "no talent points in hand" in front
+     * of a player who can plainly see points in hand is the kind of refusal that
+     * reads as a bug.
+     */
+    const fromGenerics = isGenericTree(talent.tree ?? '');
+    const purse = fromGenerics ? body.unspentGenerics : body.unspentPoints;
+    if (purse <= 0) {
+      sendError(
+        session.socket,
+        ErrorCode.BadMessage,
+        fromGenerics
+          ? 'no generic points in hand — those come one a level, except every fifth'
+          : 'no class points in hand',
+      );
       return;
     }
 
@@ -10911,7 +10944,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.Internal, 'talent points are not wired into this build');
       return;
     }
-    body.unspentPoints -= 1;
+    // OUT OF THE PURSE IT WAS CHECKED AGAINST. Deducting from the other one is
+    // the bug this pairing exists to make impossible to write.
+    if (fromGenerics) body.unspentGenerics -= 1;
+    else body.unspentPoints -= 1;
 
     // ═══ AND THE BARRIER IS TOLD SOMEBODY IS THERE ═══
     // See this handler's docblock. Clears Standing By without restarting the

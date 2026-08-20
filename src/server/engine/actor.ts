@@ -671,6 +671,27 @@ export type PlayerActor = ActorCommon & {
    */
   unspentPoints: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   THE SECOND TALENT CURRENCY. `unused_generics` — Actor.lua:3750, :3752.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Spendable ONLY on a `generic/` tree, where `unspentPoints` above is
+   * spendable only on a class one. Two pools, one grant: every level hands out
+   * exactly two points and the only question is which side they land on — a
+   * fifth level pays for its extra class point by taking the generic away.
+   *
+   * ═══ WHY TWO POOLS AND NOT ONE BIGGER ONE ═══
+   * Because it is what lets a generic tree be BORING ON PURPOSE. Upstream's
+   * `technique/combat-training` is seven talents, five of them flat numbers,
+   * and that is acceptable there precisely because it is bought with a
+   * separate, scarcer currency that cannot buy anything exciting instead.
+   *
+   * This project copied that tree and not its economics, which is how it ended
+   * up with a flat modifier competing against a signature ability for the same
+   * point. Splitting the pools is the other half of that fix.
+   */
+  unspentGenerics: number;
+  /**
    * ATTRIBUTE POINTS IN HAND. ToME's `unused_stats` (`Actor.lua:3748`), three a
    * level and freely assignable.
    *
@@ -1139,6 +1160,7 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     level: 1,
     xp: 0,
     unspentPoints: 0,
+    unspentGenerics: 0,
     // BORN WITH NONE, exactly like the talent points above: a level-1 character
     // has been granted nothing yet (`statPointsForLevel` answers 0 at 1), and
     // the class sheet is where their starting attributes already live.

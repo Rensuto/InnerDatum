@@ -503,6 +503,70 @@ export function totalPointsAtLevel(level: number): number {
   return total;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE SECOND POOL. `unused_generics` — Actor.lua:3750, :3752.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream hands out TWO talent currencies on every level-up, and this game
+ * shipped only one:
+ *
+ *     self.unused_talents = self.unused_talents + 1
+ *     self.unused_generics = self.unused_generics + 1
+ *     if self.level % 5 == 0 then self.unused_talents  = self.unused_talents  + 1 end
+ *     if self.level % 5 == 0 then self.unused_generics = self.unused_generics - 1 end
+ *
+ * `pointsForLevel` above is the FIRST of those, and has been correct all along
+ * — one a level, two on every fifth. This is the second, and it is the mirror:
+ * one a level, and NONE on every fifth, because the fifth-level bonus is paid
+ * for by taking the generic away.
+ *
+ * ═══ THAT SWAP IS THE WHOLE DESIGN, NOT A ROUNDING ═══
+ * The total per level never changes — it is always two. What changes is WHICH
+ * pool they land in, so every fifth level is a moment where a character gets
+ * deeper in their profession instead of broader as a person. It costs nothing
+ * and it is what makes level 5, 10, 15 feel like milestones.
+ *
+ * ═══ AND IT IS WHY UPSTREAM CAN AFFORD A BORING GENERIC TREE ═══
+ * `technique/combat-training` is seven talents, five of them flat numbers —
+ * deliberately the least interesting tree in the game. It is acceptable there
+ * because it is bought with a SEPARATE, DELIBERATELY SCARCER currency that
+ * cannot be spent on anything exciting.
+ *
+ * This project copied that tree and not the economics, which is exactly how it
+ * ended up with 57% of its talents being a number going up while competing for
+ * the same points as everything else. Splitting the pools is the other half of
+ * that fix.
+ */
+export function genericPointsForLevel(level: number): number {
+  if (level <= 1) return 0;
+  // Actor.lua:3750 — the flat point, then :3752 takes it back on every fifth.
+  return level % 5 === 0 ? 0 : 1;
+}
+
+/** Every generic point a character of this level has been handed. */
+export function totalGenericPointsAtLevel(level: number): number {
+  let total = 0;
+  for (let l = 2; l <= level; l++) {
+    total = total + genericPointsForLevel(l);
+  }
+  return total;
+}
+
+/**
+ * WHICH POOL A TREE IS BOUGHT FROM, and the only place that decision is made.
+ *
+ * Upstream keys this off `newTalentType`'s `generic = true` flag. Ours is the
+ * tree id's namespace, which is the same information already written down:
+ * `generic/groundwork` versus `watch/the-line`. One prefix, no second table to
+ * keep in step with the first.
+ */
+export const GENERIC_TREE_PREFIX = 'generic/';
+
+export function isGenericTree(tree: string): boolean {
+  return tree.startsWith(GENERIC_TREE_PREFIX);
+}
+
 // ---------------------------------------------------------------------------
 // THE ATTRIBUTES — the other half of a levelup, and ToME's numbers exactly
 // ---------------------------------------------------------------------------
