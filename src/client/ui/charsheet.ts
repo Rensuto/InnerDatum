@@ -192,8 +192,33 @@ const COL_GAP = 10;
  */
 const TWO_COL_MIN_W = 22 * 2 * CHAR_W + COL_GAP;
 
-/** Preferred and minimum size of the panel itself. */
-const SHEET_W = 328;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PANEL IS A RANGE, NOT A NUMBER — it was 328 on every screen ever made.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A fixed width is not "consistent", it is ignoring the window: the same sheet
+ * on a 1280 viewport as on a 640 one, with the same 151-pixel columns, and no
+ * way for a bigger screen to help a line that does not fit. It did not fit --
+ * `AP 5 · melee/personal · ready` needs 29 monospace characters and a column of
+ * 151 pixels holds 21 after the icon, so every talent row on this sheet lost
+ * its cooldown word at EVERY size, including the largest.
+ *
+ * ═══ WHY A FRACTION AND NOT JUST THE WHOLE WINDOW ═══
+ * ToME's character sheet is full-screen and this one deliberately is not: it
+ * opens over a live map that other players are still moving on, and covering all
+ * of it turns a glance at your armour into leaving the room. `SHEET_FILL` is the
+ * share of the window it may take -- enough at the 640 floor to hold the widest
+ * talent line in two columns (460 wide gives 32 characters against the 29 it
+ * needs), and capped so a 1920 monitor gets a readable panel rather than a
+ * wall of whitespace with a stat in each corner.
+ *
+ * THE FLOOR IS STILL THE FLOOR. `SHEET_MIN_W` is what `charSheetRect` refuses
+ * below, and it is unchanged -- this widens the panel where there is room and
+ * changes nothing about when it declines to open.
+ */
+const SHEET_FILL = 0.72;
+const SHEET_MAX_W = 560;
 const SHEET_MIN_W = 168;
 const SHEET_MAX_H = 268;
 /**
@@ -711,7 +736,15 @@ export function charSheetRect(options: {
   if (band < SHEET_MIN_H + SHEET_MARGIN * 2) return null;
   if (width < SHEET_MIN_W + SHEET_MARGIN * 2) return null;
 
-  const w = Math.min(SHEET_W, width - SHEET_MARGIN * 2);
+  /**
+   * GROW WITH THE WINDOW, THEN CLAMP TWICE. The second clamp is not redundant
+   * with the first: `SHEET_FILL` of a narrow window can land under `SHEET_MIN_W`
+   * (which is why the max is taken), and the margin subtraction can land under
+   * it too on a window barely past the guard above -- so the min is taken last
+   * and the panel can never be drawn wider than the space it is centred in.
+   */
+  const wanted = Math.min(SHEET_MAX_W, Math.floor(width * SHEET_FILL));
+  const w = Math.min(Math.max(SHEET_MIN_W, wanted), width - SHEET_MARGIN * 2);
   const h = Math.min(SHEET_MAX_H, band - SHEET_MARGIN * 2);
   return {
     x: Math.floor((width - w) / 2),
@@ -1106,13 +1139,60 @@ function drawRow(ctx: CanvasRenderingContext2D, sprites: SpriteSource, placed: P
 
       ctx.font = FONT_META;
       ctx.fillStyle = row.ready ? PALETTE.BONE : PALETTE.ORANGE;
-      // ToME's tooltip order, minus the mode it has and we do not:
-      // cost (Actor.lua:6231-6259), range (:6266-6267), cooldown (:6270).
-      const meta = `${row.cost} · ${row.range} · ${row.cooldown}`;
-      ctx.fillText(fitText(ctx, meta, textW), textX, rect.y + 17);
+      ctx.fillText(talentMeta(ctx, row, textW), textX, rect.y + 17);
       return;
     }
   }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TALENT META LINE, CONCEDING IN ORDER — THE COOLDOWN IS NEVER THE PART
+ * THAT GOES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Full form is ToME's own tooltip order, minus the mode it has and we do not:
+ * cost (Actor.lua:6231-6259), range (:6266-6267), cooldown (:6270).
+ *
+ * ═══ WHAT WAS WRONG WITH ELLIPSISING IT ═══
+ * `fitText` cuts the TAIL, and the tail is the cooldown. So the one field a
+ * player is reading this row for -- can I press this, this turn -- was the first
+ * thing thrown away, to keep a range they can also see as a ring on the map when
+ * they aim. `AP 5 · melee/personal · ready` became `AP 5 · melee/persona…`,
+ * which is the cost they did not ask about and half a word.
+ *
+ * ═══ THE ORDER, AND WHY IT IS THIS ORDER ═══
+ *   1. cost · range · cooldown -- everything, and what almost every case gets.
+ *   2. cost · cooldown         -- range goes first: it is the longest field
+ *                                 ("melee/personal" is 14 characters on its own)
+ *                                 and the only one drawn a second time elsewhere.
+ *   3. cooldown                -- alone, because a row that cannot say anything
+ *                                 else must still say whether it is ready.
+ *   4. the ellipsis            -- unreachable in practice, and kept so a
+ *                                 pathological width degrades instead of
+ *                                 overflowing into the next column.
+ *
+ * A DROPPED FIELD IS NOT SIGNALLED, unlike a dropped SECTION. `ui/caselog.ts`'s
+ * rule is that a surface which stopped showing everything says so in words --
+ * and it applies to a surface which has silently stopped, not to one that shows
+ * a SHORTER TRUE thing. "AP 5 · ready" is complete on its own terms; a "…" after
+ * it would claim there was more and give no way to get at it. The talent panel
+ * has the full description, and the hover card carries it.
+ */
+function talentMeta(
+  ctx: CanvasRenderingContext2D,
+  row: Extract<SheetRow, { kind: typeof SheetRowKind.Talent }>,
+  maxW: number,
+): string {
+  const rungs = [
+    `${row.cost} · ${row.range} · ${row.cooldown}`,
+    `${row.cost} · ${row.cooldown}`,
+    row.cooldown,
+  ];
+  for (const rung of rungs) {
+    if (ctx.measureText(rung).width <= maxW) return rung;
+  }
+  return fitText(ctx, row.cooldown, maxW);
 }
 
 export type CharSheetDrawOptions = {

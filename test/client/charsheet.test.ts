@@ -841,3 +841,149 @@ describe('drawing', () => {
     expect(clips[0]).toEqual(rect);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NOTHING ON THIS SHEET IS ELLIPSISED, AT ANY VIEWPORT THE PANEL OPENS IN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * FOUND BY PAINTING IT RATHER THAN BY READING IT. The stat columns were the
+ * suspect -- two columns of a 328-wide panel is 151 pixels each -- and they turn
+ * out to be fine at every size. What clipped was the TALENT row, on every
+ * viewport including 1280x720:
+ *
+ *     AP 5 · melee/personal · ready   ->   AP 5 · melee/persona…
+ *
+ * So the sheet was losing the cooldown word on every screen anyone plays on,
+ * and the cooldown word is the one thing on that row a player is reading it
+ * FOR: it is the difference between a talent they can press this turn and one
+ * they cannot. `ready` is a word and not only a colour for exactly that reason
+ * (see the painter), and then the word was cut off.
+ *
+ * TWO CAUSES, AND BOTH ARE FIXED:
+ *   1. the panel was a FIXED 328 wide and never used the room a bigger window
+ *      gave it, so growing the viewport could not help;
+ *   2. the meta line ellipsised its TAIL, which throws away the cooldown to
+ *      keep the range -- exactly backwards.
+ *
+ * `measureText` answers six pixels a character, which is what the 10px
+ * monospace actually measures, so a `…` in this output means the real client
+ * would draw one.
+ */
+describe('the sheet shows what it says it shows', () => {
+  function painted(width: number, height: number, over: Partial<CharSheetView> = {}): string[] {
+    const texts: string[] = [];
+    const stub = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'fillText')
+            return (text: string) => {
+              texts.push(text);
+            };
+          if (prop === 'canvas') return undefined;
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+
+    const rect = charSheetRect({ width, height, top: 20, bottom: height - 40 });
+    if (rect === null) throw new Error(`no rect at ${String(width)}x${String(height)}`);
+    drawCharSheet({
+      ctx: stub,
+      sprites: { sprite: () => undefined },
+      rect,
+      rows: charSheetRows(sheet(over)),
+      hoveredClose: false,
+    });
+    return texts;
+  }
+
+  /**
+   * THE FLOOR AND THE CEILING AND THREE SIZES BETWEEN. The floor is the one that
+   * matters -- 640x320 is the smallest window this client draws into -- but the
+   * bug this describes was WORST at the ceiling, because a fixed-width panel
+   * gets no better when the screen does. Testing only the floor would have
+   * missed it for as long as it has been missed.
+   */
+  const VIEWPORTS = [
+    [640, 320],
+    [640, 400],
+    [772, 480],
+    [1024, 600],
+    [1280, 720],
+  ] as const;
+
+  it('ellipsises nothing at any viewport', () => {
+    const bad: string[] = [];
+    for (const [w, h] of VIEWPORTS) {
+      for (const text of painted(w, h)) {
+        if (text.includes('…')) bad.push(`${String(w)}x${String(h)}: ${text}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps the cooldown word on every talent row, which is what the row is read for', () => {
+    for (const [w, h] of VIEWPORTS) {
+      const texts = painted(w, h);
+      // A meta line is the only thing on this sheet with the middot separator
+      // -- except the `[G·2]` button, which no case here arms and which is
+      // excluded by shape rather than by hoping. NOT `startsWith('AP ')`: a
+      // talent costing nothing reads `free`, and matching on the cost would
+      // have silently skipped it.
+      const metas = texts.filter((text) => text.includes(' · ') && !text.startsWith('['));
+      expect(metas.length, `${String(w)}x${String(h)} meta count`).toBe(LOADOUT.length);
+      for (const meta of metas) {
+        expect(meta, `${String(w)}x${String(h)}`).toMatch(/(ready|turns?)$/);
+      }
+    }
+  });
+
+  it('keeps every talent NAME whole as well', () => {
+    // The name is the other half of the identification; a clipped one makes two
+    // talents with a shared prefix indistinguishable.
+    for (const [w, h] of VIEWPORTS) {
+      const texts = painted(w, h);
+      for (const talentDef of LOADOUT) {
+        expect(texts, `${String(w)}x${String(h)}`).toContain(talentDef.name);
+      }
+    }
+  });
+
+  it('still shows every stat label and value in full', () => {
+    // The columns were never the bug, and this is what keeps a fix aimed at the
+    // talent rows from paying for itself by squeezing them.
+    const texts = painted(640, 320);
+    for (const row of SELF_ROWS) {
+      expect(texts, row.label).toContain(row.label);
+      expect(texts, row.value).toContain(row.value);
+    }
+  });
+
+  it('uses the room a larger window gives it', () => {
+    // A panel that is the same size on a 1280 screen as on a 640 one is not
+    // "consistent", it is ignoring the window. This is the property that makes
+    // the ellipsis fix hold as content grows rather than being tuned to today's
+    // longest string.
+    const small = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
+    const large = charSheetRect({ width: 1280, height: 720, top: 20, bottom: 680 });
+    expect(small).not.toBeNull();
+    expect(large).not.toBeNull();
+    expect(large?.w ?? 0).toBeGreaterThan(small?.w ?? 0);
+  });
+
+  it('never grows wider than the window it is centred in', () => {
+    for (const [w, h] of VIEWPORTS) {
+      const rect = charSheetRect({ width: w, height: h, top: 20, bottom: h - 40 });
+      expect(rect?.w ?? 0, `${String(w)}x${String(h)}`).toBeLessThanOrEqual(w);
+      expect(rect?.x ?? 0, `${String(w)}x${String(h)} left`).toBeGreaterThanOrEqual(0);
+      expect(
+        (rect?.x ?? 0) + (rect?.w ?? 0),
+        `${String(w)}x${String(h)} right`,
+      ).toBeLessThanOrEqual(w);
+    }
+  });
+});
