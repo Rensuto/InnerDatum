@@ -23,6 +23,7 @@ import { ITEMS } from '../../src/server/content/items.ts';
 import { isMoneyId, moneyIdFor } from '../../src/server/content/money.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { createRng } from '../../src/shared/rng.ts';
+import { STARTING_MONEY } from '../../src/server/engine/actor.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -380,5 +381,101 @@ describe('the first purchase in a career', () => {
       cheapestSeen = Math.min(cheapestSeen, ...stock.map((id) => buyPrice(id, stockLevelFor(1))));
     }
     expect(cheapestSeen).toBeGreaterThan(15);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BEGINNER RUNG. Load-bearing since the Reeve started pointing at it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Alderbrook's first speaker now says "Ashwick for a draught. Threadneedle
+ * costs more.", because `STARTING_MONEY` is 15 and the outfitter's level-1
+ * floor is 24. That advice is only true while the apothecary keeps something a
+ * starting purse can buy — so what was a pleasant coincidence in the economy is
+ * now a promise the opening depends on, and this is the test that keeps it one.
+ *
+ * MEASURED BEFORE IT WAS WRITTEN, across 30 shops: every apothecary item prices
+ * at 14, one gold under the purse. Nothing here asserts 14 — a price that moved
+ * to 12 or 15 is fine and a price that moved to 16 is a broken opening, so the
+ * assertion is the RELATION rather than the number.
+ *
+ * ═══ AND ACROSS THE SHELF'S WHOLE LIFE, NOT JUST ITS FIRST BATCH ═══
+ * `shopstate.ts` restocks to `NB_FILL * (epoch + 1)`, so the shelf grows 4 -> 8
+ * -> 12 as a career runs. A beginner can meet this shop at any epoch — somebody
+ * else's party may have been shopping here for hours — so the rung has to hold
+ * at every one of them, not only on a fresh world.
+ */
+describe('the apothecary keeps the rung a beginner arrives on', () => {
+  /** The shelf at a given epoch, grown the way `shopstate.ts` grows it. */
+  function shelfAt(epoch: number, level: number, seed: string): readonly string[] {
+    let stock: readonly string[] = [];
+    for (let e = 0; e <= epoch; e += 1) {
+      stock = restock(
+        createRng(`${seed}:${String(e)}`),
+        stock,
+        stockLevelFor(level),
+        NB_FILL * (e + 1),
+        ShopShelf.Apothecary,
+      );
+    }
+    return stock;
+  }
+
+  it('always stocks something a starting purse can buy', () => {
+    const broke: string[] = [];
+    for (let epoch = 0; epoch < 4; epoch += 1) {
+      for (let seed = 0; seed < 12; seed += 1) {
+        const shelf = shelfAt(epoch, 1, `rung-${String(seed)}`);
+        const cheapest = Math.min(...shelf.map((id) => buyPrice(id, 1)));
+        if (!(cheapest <= STARTING_MONEY)) {
+          broke.push(`epoch ${String(epoch)} seed ${String(seed)}: cheapest ${String(cheapest)}`);
+        }
+      }
+    }
+    expect(broke).toEqual([]);
+  });
+
+  it('never hands a beginner an empty shelf', () => {
+    // A shop with nothing on it is the same wall as a shop that is too dear,
+    // and the advice sends them 48 steps either way.
+    for (let epoch = 0; epoch < 4; epoch += 1) {
+      expect(shelfAt(epoch, 1, 'empty-check').length, `epoch ${String(epoch)}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('refills after a party clears it out', () => {
+    // `keep` is what survived the last visit. Emptied completely, the next
+    // epoch must put something back — a shop that is finished after one party
+    // has been through is not a shop, which is `restock`'s own argument.
+    const emptied = restock(
+      createRng('refill'),
+      [],
+      stockLevelFor(1),
+      NB_FILL,
+      ShopShelf.Apothecary,
+    );
+    expect(emptied.length).toBeGreaterThan(0);
+    const after = restock(
+      createRng('refill:2'),
+      [],
+      stockLevelFor(1),
+      NB_FILL,
+      ShopShelf.Apothecary,
+    );
+    expect(after.length).toBeGreaterThan(0);
+  });
+
+  it('is still the CHEAPER of the two shelves, which is what the advice claims', () => {
+    // The Reeve says Threadneedle "costs more". If the outfitter ever undercut
+    // the apothecary the line would be false, and a player would be sent past
+    // the better deal.
+    const apothecary = Math.min(...shelfAt(0, 1, 'compare').map((id) => buyPrice(id, 1)));
+    const outfitter = Math.min(
+      ...restock(createRng('compare:out'), [], stockLevelFor(1), NB_FILL, ShopShelf.Outfitter).map(
+        (id) => buyPrice(id, 1),
+      ),
+    );
+    expect(apothecary).toBeLessThan(outfitter);
   });
 });
