@@ -8641,6 +8641,113 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return out.slice(0, take);
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *        THE FIRST CASE — THE ONE ROOM THE GAME ASKS FOR BY NAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * MEASURED, AND IT IS THE WHOLE REASON THIS EXISTS: a brand-new character is
+   * told NINE LINES in their first four minutes of play, and not one of them is
+   * a thing to do. Three bearings, a class blurb, a town description. The word
+   * "case" is never spoken to a player who has not already closed one, because
+   * the only line that says it is the receipt — `Filed. 1 of 27.` — which
+   * arrives after the fight it is meant to motivate.
+   *
+   * So the strongest retention mechanic in this game is invisible for exactly
+   * as long as a new player needs it most. `casefile.ts` states the ambition:
+   * *"a gap in the file is a thing a player can decide to go and close"*. A gap
+   * in a file nobody has mentioned is not a gap. It is a blank screen.
+   *
+   * ═══ ONE ROOM, NOT A QUEST LOG ═══
+   * The answer is NOT objective text per site and not a state machine — the file
+   * is already the quest log and the map already draws it. What was missing is
+   * the sentence that starts it. The game names ONE room, once, and after that
+   * the map does the work it was built to do.
+   *
+   * ═══ THE GENTLEST ROOM, BECAUSE THE ONE IT NAMES IS THE ONE THEY WILL GO TO ═══
+   * Sorted by grade first and distance second, so a `quiet` room forty tiles out
+   * beats a `grim` one at eight. A player follows the only instruction the game
+   * has ever given them; sending a level-1 character into Blackwood because it
+   * happened to be nearer would be worse than saying nothing. Distance breaks
+   * ties, so among equals it is still the short walk.
+   *
+   * TODAY THE TWO SORTS AGREE, WHICH IS WHY THIS SAYS SO. There is exactly ONE
+   * `quiet` room in the game and it is also the nearest fileable one, so a
+   * distance-only sort would pick the same room. This ordering earns its keep
+   * the day a second quiet room is authored or the spawn moves — and the cost of
+   * being wrong then is a level-1 character walking into `grim` on the game's
+   * own instruction.
+   *
+   * ═══ AND IT OBEYS EVERY RULE THE BEARINGS OBEY, INCLUDING THE ONES THAT ═══
+   * ═══ CANNOT FIRE TODAY, WHICH IS STATED RATHER THAN IMPLIED           ═══
+   *
+   * Measured from the spawn at 101,62 — the whole overworld, by distance:
+   *
+   *      2   Alderbrook            (town)
+   *     16   The Drowned Chapel    quiet       <- what this names
+   *     18   The Underworks        restless
+   *     23   Barrow End            dangerous, HIDDEN
+   *     36   The Watcher's Altar   restless
+   *
+   * `isFileable` IS NOT WHAT STOPS IT NAMING ALDERBROOK. The nearest thing to a
+   * new character is a town two tiles away, and a town has no delve spec — so
+   * the `specFor` check below already excludes it and this predicate is belt to
+   * that brace. It stays because the two are different questions with one answer
+   * *today*: `isFileable` asks whether a place can be filed, `specFor` asks
+   * whether there is a roster to grade. `casefile.ts` makes exactly that point
+   * about its own definition, and a picker that leans on the accident would name
+   * a town the day somebody gives a settlement a spec for its own reasons.
+   *
+   * `mayKnowSite` CANNOT FIRE HERE EITHER, and that is measurement, not luck:
+   * the nearest hidden site is Barrow End at 23 tiles, behind the named room at
+   * 16, and it is `dangerous` so the grade rule buries it further. It is here
+   * because this is the THIRD reader of that rule — the other two were both
+   * wrong until three commits ago — and a rule with a reader that opts out is
+   * not a rule.
+   */
+  const GRADE_ORDER = ['quiet', 'restless', 'dangerous', 'grim'];
+
+  const firstCase = (
+    realm: PumpTarget,
+    fromX: number,
+    fromY: number,
+    actorId: string,
+  ): { name: string; bearing: string; distance: number; grade: string } | undefined => {
+    const full = opts.realms?.get(realm.id);
+    if (full === undefined) return undefined;
+    const mine = filedFor(actorId);
+
+    let best: { name: string; bearing: string; distance: number; grade: string } | undefined;
+    let bestRank = Number.POSITIVE_INFINITY;
+    for (const [cell, siteId] of full.sites) {
+      // ALREADY CLOSED IS NOT A CASE. This runs once per character today, but
+      // "the next unfiled room" is the rule the line claims to follow and a
+      // reader who cannot see the call site is owed the honest predicate.
+      if (mine.has(siteId)) continue;
+      const def = SITES.get(siteId);
+      if (def === undefined || !isFileable(def)) continue;
+      if (!mayKnowSite(actorId, realm.id, cell)) continue;
+      const spec = specFor(siteId);
+      if (spec === undefined) continue;
+      const grade = dangerWord(spec);
+      const parts = cell.split(',');
+      const sx = Number(parts[0]);
+      const sy = Number(parts[1]);
+      if (Number.isNaN(sx) || Number.isNaN(sy)) continue;
+      const distance = Math.max(Math.abs(sx - fromX), Math.abs(sy - fromY));
+      // GRADE DOMINATES DISTANCE. A four-digit multiplier rather than a
+      // comparator chain: the map is 170x100, so no distance can ever reach the
+      // next grade's band and the ordering cannot be broken by a bigger world
+      // without this line failing loudly on the next map that is 1000 wide.
+      const rank = GRADE_ORDER.indexOf(grade) * 1000 + Math.min(distance, 999);
+      if (rank < bestRank) {
+        bestRank = rank;
+        best = { name: def.name, bearing: bearingWord(sx - fromX, sy - fromY), distance, grade };
+      }
+    }
+    return best;
+  };
+
   const announceArrival = (session: Session, realm: PumpTarget, name: string): void => {
     const actorId = session.actorId;
     if (actorId === null) return;
@@ -9285,6 +9392,54 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       undefined,
       audienceFor(realm.id),
     );
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE FILE OPENS, WHICH IS THE FIRST TIME THIS GAME SAYS WHAT IT IS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * HERE, at the moment the character exists and before they have taken a
+     * step. Not on arrival — `announceArrival` fires on the moor before a class
+     * is chosen and again on every threshold afterwards, and a line that says
+     * "your file is open" on the twentieth crossing is noise. Taking up a class
+     * happens exactly once, and it is the only moment in this game that is
+     * unambiguously the START of something.
+     *
+     * ═══ MARGIN, AND UNICAST ═══
+     * The Record lane is what happened in the room; this is advice, addressed to
+     * one player, about a file only they have. `Filed. 3 of 27.` — the other
+     * half of this same sentence — is a unicast margin line for the same
+     * reasons, and the two now bracket the whole arc: this one opens the file
+     * and that one counts it down.
+     *
+     * ═══ THE NUMBER IS SAID OUT LOUD, BECAUSE IT IS THE SIZE OF THE GAME ═══
+     * "27 rooms" is a promise a player can hold: it is finite, it is countable,
+     * and the character sheet's `Cases` row — otherwise a number with no story
+     * attached — becomes a progress bar the moment somebody has heard this once.
+     *
+     * ═══ AND IF THERE IS NOTHING TO NAME, THE COUNT STILL GOES OUT ═══
+     * A gateway with no registry, a fog that hides everything nearby, a build
+     * whose rooms are all filed already: the room half is dropped and the file
+     * half is not. "Your file is open, 27 rooms" is true in every one of those
+     * cases; naming a room is not.
+     */
+    {
+      const total = fileableCount(SITES);
+      const closed = knownFiled(filedFor(actorId), SITES).length;
+      if (total > 0 && closed === 0) {
+        const start = body === undefined ? undefined : firstCase(realm, body.x, body.y, actorId);
+        sendMargin(session, realm, {
+          text: `Your file is open. ${String(total)} rooms in it, none of them closed.`,
+          depth: 0,
+        });
+        if (start !== undefined) {
+          sendMargin(session, realm, {
+            text: `Start with ${start.name} — ${start.grade}, ${start.bearing}, ${String(start.distance)} tiles. Clear it and it is filed.`,
+            depth: 1,
+          });
+        }
+      }
+    }
 
     // THE HOTBAR IS DIFFERENT NOW, and both frames have to be resent. The
     // loadout is normally sent exactly once per connection because M3 loadouts
