@@ -15,6 +15,7 @@ import { DamageType } from '../../src/server/engine/damage.ts';
 import { stepProjectile } from '../../src/server/engine/projectile.ts';
 import { talentId } from '../../src/server/engine/talents.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
+import { sustainAnswer, toggleSustain } from '../../src/server/engine/talents.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -618,12 +619,36 @@ async function bootLive(seed: string): Promise<Harness> {
     world,
     engine: {
       ...engine,
-      // The two lines main.ts writes. The gateway may not import
-      // engine/talents.ts — it states its engine contract structurally — so the
-      // capability is injected by whoever can see both sides.
+      // The lines main.ts writes. The gateway may not import engine/talents.ts —
+      // it states its engine contract structurally — so the capability is
+      // injected by whoever can see both sides.
       attachClass: (actorId: string, classId: string): void => {
         const definition = classById(classId);
         if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
+      },
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE STANCE SEAM, WHICH THIS HARNESS USED TO LEAVE OUT.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `handleTalent` asks this about EVERY talent frame before it reaches
+       * `submitTalent`, because a stance and a cast arrive on the same key.
+       * `engine.toggleSustain?.(...)` — optional — so a harness that omits it
+       * answers `undefined` for free and every cast sails through.
+       *
+       * Production is not so lucky. main.ts collapsed every refusal to `null`,
+       * which the gateway reads as "it is a stance and it cannot go up", so
+       * NO ACTIVE TALENT IN THE GAME COULD BE CAST — for fifty commits, live,
+       * while the Crude Blow test below passed on every run.
+       *
+       * A seam only production has is a seam nothing tests. This harness now
+       * carries it, and shares `sustainAnswer` with the server so the mapping
+       * under test is the mapping that ships.
+       */
+      toggleSustain: (actorId: string, talentId: string): boolean | null | undefined => {
+        const sheet = talents.sheetOf(actorId);
+        if (sheet === undefined) return undefined;
+        return sustainAnswer(toggleSustain(talents, sheet, talentId));
       },
     },
     disconnectGraceMs: 30_000,

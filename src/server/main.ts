@@ -59,8 +59,8 @@ import {
   effectiveResourceMax,
   hasAffordableAction,
   markMultiplier,
-  SustainRefusal,
   resolveGuardCounter,
+  sustainAnswer,
   talentLevelOf,
   toggleSustain,
   useTalent,
@@ -1498,14 +1498,16 @@ export function buildServer() {
     toggleSustain: (actorId: string, talentId: string): boolean | null | undefined => {
       const sheet = talentEngine.sheetOf(actorId);
       if (sheet === undefined) return undefined;
+      // ONE IMPLEMENTATION OF THE THREE ANSWERS, shared with the tests. See
+      // `sustainAnswer` — writing this mapping inline is what broke every
+      // active talent in the game.
       const result = toggleSustain(talentEngine, sheet, talentId);
-      // NOT OURS. Say so with `undefined` so the cast path gets its turn.
-      if (!result.ok && result.reason === SustainRefusal.NotASustain) return undefined;
-      if (!result.ok) return null;
+      const answer = sustainAnswer(result);
+      if (answer === undefined || answer === null) return answer;
       // THE CONTRIBUTION IS THE POINT OF THE TOGGLE. Without this the stance is
       // a flag in a set and nothing on the body changes.
       refreshPassives(actorId);
-      return result.on;
+      return answer;
     },
 
     talentPointsOf: (actorId: string): Readonly<Record<string, number>> | undefined => {

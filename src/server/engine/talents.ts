@@ -872,6 +872,32 @@ export type SustainToggle =
  * caller refreshes the contribution, exactly as `raiseTalentPoint`'s caller does,
  * because the fold lives behind a seam this module may not cross.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A `SustainToggle` AS THE THREE ANSWERS A SOCKET SEAM NEEDS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   true / false   the stance went up or came down
+ *   null           it IS a stance and it cannot go up — tell the player
+ *   undefined      NOT A STANCE. Carry on to the cast path.
+ *
+ * ═══ ONE IMPLEMENTATION, BECAUSE THE BUG WAS IN THIS MAPPING ═══
+ * The gateway asks about EVERY talent frame before it reaches `submitTalent`,
+ * since a stance and a cast arrive on the same key. main.ts wrote this mapping
+ * inline, collapsed every refusal to `null`, and every ACTIVE talent in the
+ * game was answered by the stance seam — for fifty commits, live, with the full
+ * gate green the whole time.
+ *
+ * It is exported so a test can drive the same function the server does. The one
+ * socket test that pressed a talent passed throughout, because its harness left
+ * `toggleSustain` unwired and the optional call answered `undefined` for free.
+ * A seam that only production has is a seam nothing tests.
+ */
+export function sustainAnswer(result: SustainToggle): boolean | null | undefined {
+  if (result.ok) return result.on;
+  return result.reason === SustainRefusal.NotASustain ? undefined : null;
+}
+
 export function toggleSustain(
   engine: TalentEngine,
   sheet: TalentSheet,
