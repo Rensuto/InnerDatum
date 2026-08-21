@@ -1231,7 +1231,12 @@ export function hotbarTipAt(
           slot.cooldown > 0 ? `cooling — ${String(slot.cooldown)}t` : null,
           `${String(talent.cost.ap)} AP`,
           talent.cost.resource > 0 ? `${String(talent.cost.resource)} resolve` : null,
-          slot.affordable ? null : 'not affordable',
+          // TWO DIFFERENT FACTS, and "not affordable" is the wrong sentence for
+          // the second: a player short on Resolve waits a turn, and a player who
+          // has not learned the talent spends a point. Telling them the first
+          // when it is the second sends them to wait for something that will
+          // never arrive.
+          slot.talent.level < 1 ? 'not learned yet' : slot.affordable ? null : 'not affordable',
           talent.range >= 2 ? `${String(talent.range)} tiles` : 'melee',
         ]
           .filter((part) => part !== null)

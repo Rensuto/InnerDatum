@@ -4,6 +4,7 @@
 //             (getTalentLevel, with mastery).
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
+import { trained } from '../helpers/trained.ts';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -40,7 +41,7 @@ describe('mastery reaches the effective level', () => {
      * before the rebalance, so that the day eight talents change value there is
      * exactly one commit to revert. See SIGNATURE/SUPPORTING in content/classes.ts.
      */
-    const sheet = sheetForClass(WATCHMAN);
+    const sheet = trained(sheetForClass(WATCHMAN));
     const talent = WATCHMAN.loadout[0];
     expect(talent, 'the Watchman has no talents').toBeDefined();
     if (talent === undefined) return;
@@ -66,7 +67,7 @@ describe('mastery reaches the effective level', () => {
      * generic trees ungraded for the same reason.
      */
     for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
-      const sheet = sheetForClass(definition);
+      const sheet = trained(sheetForClass(definition));
       const generic = [...definition.loadout, ...definition.passives].find(
         (t) => t.tree === 'generic/groundwork',
       );
@@ -114,7 +115,7 @@ describe('the grants themselves', () => {
      * trees ungraded for the same reason.
      */
     for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
-      const sheet = sheetForClass(definition);
+      const sheet = trained(sheetForClass(definition));
       expect(sheet.mastery.get('generic/groundwork') ?? 1).toBe(1);
     }
   });
@@ -126,7 +127,7 @@ describe('the grants themselves', () => {
      * NOT resolve at the same rank. That is the difference between a class that
      * has two trees and a class that is ABOUT one of them.
      */
-    const sheet = sheetForClass(WATCHMAN);
+    const sheet = trained(sheetForClass(WATCHMAN));
     const pick = (tree: string) =>
       [...WATCHMAN.loadout, ...WATCHMAN.passives].find((t) => t.tree === tree);
     const line = pick('watch/the-line');
@@ -213,11 +214,32 @@ describe('one answer to what rank a talent behaves at', () => {
         if (line.includes('export function getTalentLevelRaw')) continue;
         if (line.includes('return getTalentLevelRaw(sheet, id) * mastery')) continue;
         if (line.includes('getTalentLevelRaw(sheet, talent.id) * (sheet.mastery')) continue;
-        // AND THE COUNTER, WHICH MUST STAY RAW. `toLoadoutView` draws "3/5" from
-        // this and gates the `+` on it — routing it through mastery shows a
-        // Watchman "5.2/5" and turns his last point unspendable. Upstream keeps
-        // the same split: LevelupDialog prints `traw`.
-        if (line.includes('BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id)')) continue;
+        /**
+         * AND THE COUNTER, WHICH MUST STAY RAW. `toLoadoutView` draws "3/5"
+         * from this and gates the `+` on it — routing it through mastery shows
+         * a Watchman "5.2/5" and turns his last point unspendable. Upstream
+         * keeps the same split: LevelupDialog prints `traw`.
+         *
+         * ═══ A MARKER, NOT AN EXPRESSION. THE EXPRESSION WAS THE BUG. ═══
+         * This allowance used to name the exact text
+         * `BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id)` — the counter as
+         * it happened to be spelled, floor and all. When birth grants landed
+         * and the floor came off (a class is born knowing four of eighteen, so
+         * rank 0 is now an ordinary state), the allowance silently stopped
+         * matching and this test failed on two lines that were entirely
+         * correct. An allow-list keyed on incidental syntax fails on a
+         * REFORMAT, which is the worst kind of guard: it cries wolf on
+         * innocent changes and teaches its readers to widen it without
+         * thinking.
+         *
+         * Keyed on a DECLARATION instead. A raw read that is genuinely the
+         * counter says so on its own line, and any new raw read that does not
+         * is caught — which is the rule this test was always trying to state.
+         */
+        const marker = /\/\/ RAW: *(.+)/.exec(line);
+        // A BARE MARKER IS NOT A JUSTIFICATION. The reason has to be written
+        // down, because the whole point is to force the thought once.
+        if (marker !== null && (marker[1] ?? '').trim().length > 8) continue;
         offenders.push(`${rel}:${String(i + 1)}`);
       }
     }

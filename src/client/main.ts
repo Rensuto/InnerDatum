@@ -2734,6 +2734,24 @@ function talentById(id: string | null): LoadoutTalent | null {
  * on the bar.
  */
 function affordable(talent: LoadoutTalent): boolean {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TALENT NOBODY HAS LEARNED IS NOT AFFORDABLE AT ANY PRICE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A class used to be born knowing every talent it owned, so rank 0 was
+   * unreachable and the bar could assume every button on it was a real one. A
+   * class is now born with four of its eighteen — so most of what the panel
+   * lists is owned, drawn, and not yet learned.
+   *
+   * ROUTED THROUGH `affordable` RATHER THAN A NEW SLOT FIELD, deliberately:
+   * `isSlotDisabled` already greys on this, the tooltip already prints a
+   * reason line for it, and the server's `canUseTalent` already answers
+   * `not_learned` — so one predicate keeps the bar, the tip and the rule
+   * saying the same thing. A parallel `known` flag would be a second place
+   * for that agreement to break.
+   */
+  if (talent.level < 1) return false;
   if (resource === null) return true;
   if (resource.ap !== undefined && talent.cost.ap > resource.ap) return false;
   if (talent.cost.resource <= 0) return true;

@@ -961,8 +961,23 @@ export type LoadoutTalent = {
    */
   sustained?: boolean;
   /**
-   * THE TALENT'S RAW LEVEL. 1 through `maxLevel`, and NEVER 0 — a talent on the
-   * hotbar is one this detective has already learned.
+   * THE TALENT'S RAW LEVEL. 0 through `maxLevel`.
+   *
+   * ═══ 0 MEANS OWNED AND NOT YET LEARNED, AND IT USED TO BE IMPOSSIBLE ═══
+   * This field was documented as "NEVER 0 — a talent on the hotbar is one this
+   * detective has already learned", and that was TRUE: `createTalentSheet`
+   * seeded every talent a class owned at rank 1, so a class was born knowing
+   * all eighteen and the only decision a point expressed was how deep to go.
+   *
+   * A class is now born with four (`ClassDef.birthTalents`, ToME's own
+   * `talents = { [T_SHIELD_PUMMEL]=1, ... }` at warrior.lua:149). The rest are
+   * in its trees, drawn in its panel, and at 0 until a point is spent — which
+   * is where that game's build variety comes from, and where ours now does.
+   *
+   * A RENDERER MUST HANDLE IT. `0/5` is the honest counter, the `+` on such a
+   * row LEARNS rather than deepens, and the hotbar greys it: `affordable` in
+   * src/client/main.ts refuses rank 0 outright, because no amount of Resolve
+   * buys a talent nobody has learned.
    *
    * ═══ RAW, NOT EFFECTIVE, AND THE DISTINCTION IS ToME'S ═══
    * Upstream separates `getTalentLevelRaw` (points actually spent) from

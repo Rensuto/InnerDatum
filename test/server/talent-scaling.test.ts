@@ -1,3 +1,4 @@
+import { trained } from '../helpers/trained.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -242,7 +243,7 @@ function fixture(): Fixture {
         cooldowns: new Map<string, number>(),
       };
       actors.push(actor);
-      engine.attach(id, sheetForClass(definition));
+      engine.attach(id, trained(sheetForClass(definition)));
       return actor;
     },
     addMonster: (id, x, y, hp = 4000) => {
@@ -932,7 +933,7 @@ describe('the sheet is where a rank lives', () => {
     // "off": `combatTalentScale` maps 0 to 0.1, so it would be a tenth of itself
     // and silently wrong. One is the only rank the curve reads cleanly.
     for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
-      const sheet = sheetForClass(definition);
+      const sheet = trained(sheetForClass(definition));
       // The class's own, plus the six every class carries — `sheetForClass`
       // joins `GENERIC_PASSIVES` on, so the birth grant covers them too.
       expect(sheet.points.size).toBe(
@@ -957,7 +958,7 @@ describe('the sheet is where a rank lives', () => {
     // `combatTalentScale` maps tl <= 0 to 0.1 (scale.ts:191). A talent seeded at
     // 0 would therefore not fail loudly — it would quietly deal a fraction of
     // its damage, which is the worst possible failure mode for a seeding bug.
-    const sheet = sheetForClass(WATCHMAN);
+    const sheet = trained(sheetForClass(WATCHMAN));
     expect(getTalentLevelRaw(sheet, talentId('crude_blow'))).toBe(1);
     // …and a talent this sheet has no points in answers 0, not 1, so a caller
     // that got 0 knows it asked about something the actor does not have.
@@ -969,7 +970,7 @@ describe('the sheet is where a rank lives', () => {
     // ways to make a sheet is two places to forget the seeding rule, and the one
     // that forgets it hands a loaded character talents at level 0.
     const restored = new Map<string, number>([[talentId('crude_blow'), 4]]);
-    const sheet = sheetForClass(WATCHMAN);
+    const sheet = trained(sheetForClass(WATCHMAN));
     expect(getTalentLevelRaw(sheet, talentId('crude_blow'))).toBe(1);
 
     const engine = createContentTalentEngine();

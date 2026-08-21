@@ -942,6 +942,13 @@ export function buildServer() {
      * reason the set holds ids rather than the record holding a flag.
      */
     for (const id of [...sheet.passives, ...sheet.sustained]) {
+      /**
+       * A PASSIVE NOBODY HAS LEARNED CONTRIBUTES NOTHING — not a tenth of
+       * itself, which is what `combatTalentScale(0)` would hand this fold.
+       * `sheet.passives` lists what the class OWNS, and since a class is no
+       * longer born knowing all of it, owning and knowing have come apart.
+       */
+      if ((sheet.points.get(id) ?? 0) < 1) continue;
       const talent = talentEngine.registry.get(id);
       // NARROWED ONCE, HERE. A talent the registry does not hold contributes
       // nothing and hooks nothing — and narrowing at the top means neither of the
@@ -1122,8 +1129,25 @@ export function buildServer() {
       if (talent === undefined) return null;
 
       const body = realms.realmOf(actorId)?.world.getActor(actorId) ?? world.getActor(actorId);
-      const known = [...sheet.points.keys()].filter((id) => {
-        if (id === talentId) return false;
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * KNOWN MEANS RANK >= 1, AND THIS IS WHAT FINALLY MAKES DEPTH A GATE.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * The point map holds every talent the class owns — that is how the
+       * panel knows what there is to buy — so counting its KEYS answered
+       * "how many are in this tree", which is a constant, five, for every
+       * tree in the game. The depth requirement was therefore satisfied by
+       * everybody at all times, and `treeDepthRequiredFor` might as well have
+       * returned 0.
+       *
+       * With a class born knowing four talents rather than eighteen, the
+       * count is a real one and `ActorTalents.lua:729-734` says what it
+       * always meant: you cannot reach for the deepest thing in a discipline
+       * without having studied the rest of it.
+       */
+      const known = [...sheet.points.entries()].filter(([id, rank]) => {
+        if (id === talentId || rank < 1) return false;
         return talentEngine.registry.get(id)?.tree === talent.tree;
       }).length;
 

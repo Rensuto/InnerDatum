@@ -1,3 +1,4 @@
+import { trained } from '../helpers/trained.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -168,7 +169,7 @@ function scene(seed: string, options: { readonly wired?: boolean } = {}): Scene 
   });
 
   const talents = createContentTalentEngine();
-  const sheet = talents.attach('p1', sheetForClass(WATCHMAN));
+  const sheet = talents.attach('p1', trained(sheetForClass(WATCHMAN)));
 
   const engine = createTurnEngine({
     world,
@@ -224,7 +225,7 @@ function inspectorScene(seed: string): {
   });
 
   const talents = createContentTalentEngine();
-  const sheet = talents.attach('p1', sheetForClass(INSPECTOR));
+  const sheet = talents.attach('p1', trained(sheetForClass(INSPECTOR)));
   const engine = createTurnEngine({
     world,
     now: () => 0,
@@ -488,7 +489,7 @@ describe('a talent that repositions a body puts a `move` on the wire', () => {
     });
 
     const talents = createContentTalentEngine();
-    talents.attach('p1', sheetForClass(INSPECTOR));
+    talents.attach('p1', trained(sheetForClass(INSPECTOR)));
     const engine = createTurnEngine({
       world,
       now: () => 0,
@@ -544,7 +545,7 @@ describe('a talent that repositions a body puts a `move` on the wire', () => {
     });
 
     const talents = createContentTalentEngine();
-    talents.attach('p1', sheetForClass(WATCHMAN));
+    talents.attach('p1', trained(sheetForClass(WATCHMAN)));
     const engine = createTurnEngine({
       world,
       now: () => 0,
@@ -636,7 +637,7 @@ describe('the party’s only heal is not narrated as an attack', () => {
     });
 
     const talents = createContentTalentEngine();
-    talents.attach('p1', sheetForClass(ALCHEMIST));
+    talents.attach('p1', trained(sheetForClass(ALCHEMIST)));
     const engine = createTurnEngine({
       world,
       now: () => 0,

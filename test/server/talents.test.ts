@@ -1,3 +1,4 @@
+import { trained } from '../helpers/trained.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -222,7 +223,7 @@ function fixture(
         cooldowns: new Map<string, number>(),
       };
       actors.push(actor);
-      engine.attach(id, sheetForClass(definition));
+      engine.attach(id, trained(sheetForClass(definition)));
       return actor;
     },
     addMonster: (id, x, y, hp = 40) => {
@@ -394,9 +395,10 @@ describe('the loadout cap — PLAN.md § 5', () => {
          */
         expect(owners2, talent.id).toEqual([]);
         for (const definition of CLASSES) {
-          expect(sheetForClass(definition).passives, `${definition.id} / ${talent.id}`).toContain(
-            talent.id,
-          );
+          expect(
+            trained(sheetForClass(definition)).passives,
+            `${definition.id} / ${talent.id}`,
+          ).toContain(talent.id);
         }
         continue;
       }
@@ -1083,9 +1085,9 @@ describe('REAGENTS ARE A COUNTED STOCK THAT REFILLS IN WHOLE UNITS — game-desi
   });
 
   it('is the only resource the wire draws as pips, and the only one on a counter', () => {
-    expect(toResourceView(sheetForClass(ALCHEMIST)).discrete).toBe(true);
-    expect(toResourceView(sheetForClass(WATCHMAN)).discrete).toBe(false);
-    expect(toResourceView(sheetForClass(INSPECTOR)).discrete).toBe(false);
+    expect(toResourceView(trained(sheetForClass(ALCHEMIST))).discrete).toBe(true);
+    expect(toResourceView(trained(sheetForClass(WATCHMAN))).discrete).toBe(false);
+    expect(toResourceView(trained(sheetForClass(INSPECTOR))).discrete).toBe(false);
 
     // ═══════════════════════════════════════════════════════════════════════
     // THE ACTUAL RATES, WITH THE DERIVATION BESIDE EACH.
@@ -1747,7 +1749,7 @@ describe('a stance you can put up and take down', () => {
       passive: () => ({ mods: { armour: 3 } }),
       describe: () => 'a stance',
     });
-    const sheet = sheetForClass(WATCHMAN);
+    const sheet = trained(sheetForClass(WATCHMAN));
     // OWNED, WHICH IS THE PRECONDITION FOR SUSTAINING IT. `points` is the list
     // of everything this sheet has; `toggleSustain` refuses an id that is not
     // in it for the same reason `raiseTalentPoint` does.
@@ -1782,7 +1784,7 @@ describe('a stance you can put up and take down', () => {
     // MORE THAN THE POOL CAN EVER HOLD. `sheetForClass` is called once here to
     // read the ceiling; referring to `sheet` inside its own destructuring was a
     // circular reference the runtime caught before any assertion ran.
-    const ceiling = sheetForClass(WATCHMAN).resource.max;
+    const ceiling = trained(sheetForClass(WATCHMAN)).resource.max;
     const { engine, sheet } = withStance(ceiling + 1);
     const before = sheet.resource.value;
     expect(toggleSustain(engine, sheet, STANCE)).toEqual({

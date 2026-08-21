@@ -1437,6 +1437,9 @@ export function talentTipAt(
   // about forty monospace characters, which is a sentence and a half.
   const width = 240;
   return {
+    // "0/5" IS THE HONEST COUNTER and it is left as it is — the card is a
+    // glance, and a word where a number belongs makes the column ragged. The
+    // pane behind it spells out what 0 means.
     title: `${cell.name}  ${cell.level}/${cell.maxLevel}`,
     // WHAT IT COSTS TO PRESS, or that it is never pressed. Printing an AP cost
     // on a passive would be a lie about how the talent works.
@@ -1624,9 +1627,18 @@ function drawDetail(
   // fact about the future.
   field(
     'Talent level',
-    cell.level >= cell.maxLevel
-      ? `${String(cell.level)}/${String(cell.maxLevel)} — mastered`
-      : `${String(cell.level)} ${ARROW} ${String(cell.level + 1)}  (of ${String(cell.maxLevel)})`,
+    /**
+     * THREE STATES, NOT TWO. A talent at rank 0 is OWNED AND UNLEARNED — the
+     * class has it in a tree and this character has never put a point in it —
+     * and "0 → 1 (of 5)" describes that as though it were ordinary progress.
+     * It is the one row on this pane where the `+` does something categorically
+     * different: it LEARNS the talent rather than deepening it.
+     */
+    cell.level < 1
+      ? `not learned — one point learns it`
+      : cell.level >= cell.maxLevel
+        ? `${String(cell.level)}/${String(cell.maxLevel)} — mastered`
+        : `${String(cell.level)} ${ARROW} ${String(cell.level + 1)}  (of ${String(cell.maxLevel)})`,
     cell.canSpend ? PALETTE.GOLD : PALETTE.PARCHMENT,
   );
 

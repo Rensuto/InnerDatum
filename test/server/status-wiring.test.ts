@@ -1,3 +1,4 @@
+import { trained } from '../helpers/trained.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -102,7 +103,7 @@ describe('the status seam — a subsystem that existed and was reachable from no
     });
 
     const talents = createContentTalentEngine();
-    const sheet = talents.attach('p1', sheetForClass(WATCHMAN));
+    const sheet = talents.attach('p1', trained(sheetForClass(WATCHMAN)));
     sheet.resource.value = sheet.resource.max;
 
     // ═══ THE PRODUCTION ADAPTER, WITH THE PRODUCTION DOOR ═══
@@ -396,7 +397,7 @@ describe('SLOWED, which was a badge and nothing else', () => {
     // index a maybe, and the class this asserts about is a 3-MP body.
     const cls = WATCHMAN;
     const body = world.addPlayer('p1', 'Ren', { maxHp: cls.maxHp });
-    const sheet = engine.attach('p1', sheetForClass(cls));
+    const sheet = engine.attach('p1', trained(sheetForClass(cls)));
     const effects = createMvpEffectState();
 
     const stepsInARound = (penalty?: { ap: number; mp: number }): number => {

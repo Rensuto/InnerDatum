@@ -1,3 +1,4 @@
+import { trained } from '../helpers/trained.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -293,7 +294,7 @@ async function boot(seed: string): Promise<Harness> {
     ...base,
     attachClass: (actorId: string, classId: string): void => {
       const definition = classById(classId);
-      if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
+      if (definition !== undefined) talents.attach(actorId, trained(sheetForClass(definition)));
     },
     raiseTalentPoint: (actorId: string, talentId: string): number | null => {
       const sheet = talents.sheetOf(actorId);

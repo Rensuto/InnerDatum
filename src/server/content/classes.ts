@@ -206,8 +206,29 @@ export type ClassDef = {
   readonly maxMp: number;
   /** Stats, gear-equivalent mods and the class weapon. Fed to derived.ts. */
   readonly combat: CombatSheet;
-  /** EXACTLY FOUR, in hotbar order: reliable, signature, defensive, ally. */
+  /** The class's actives, in hotbar order: reliable, signature, defensive, ally. */
   readonly loadout: readonly Talent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHAT THIS CLASS IS BORN KNOWING. Everything else it owns must be learned.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's `talents` block on a class descriptor — a Bulwark is born with five
+   * (warrior.lua:149-155) out of the dozens its eight open trees contain, and
+   * buys the rest a point at a time. That is where the game's build variety
+   * comes from: WHICH talents you own is the first choice and how deep is the
+   * second, and a class that starts owning all of them has only the second.
+   *
+   * FOUR HERE, NOT FIVE: this game's classes carry eighteen talents against
+   * upstream's forty-odd, so five would be a quarter of the tree handed over at
+   * character creation. The shape is upstream's; the count is scaled to a
+   * smaller tree and will grow with it.
+   *
+   * THE RELIABLE ATTACK IS ALWAYS IN IT. A class born unable to hit anything is
+   * not a build decision, it is a broken character — and the first fight starts
+   * before the first talent point exists.
+   */
+  readonly birthTalents: readonly Talent[];
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE PASSIVES. A SEPARATE LIST, AND THE SEPARATION IS THE FEATURE.
@@ -331,6 +352,8 @@ export const WATCHMAN: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [crudeBlow, wardRush, truncheonSweep, ironCurtain, lockdown, shinCrack],
+  /** The swing, the shin, the habit of standing where somebody would have been hit — and the kit. See `ClassDef.birthTalents`. */
+  birthTalents: [crudeBlow, shinCrack, standingOrders, issuedKit],
   passives: [standingOrders, softPlaces, seenWorse, theLongShift, weightOfOffice, paradeGround],
   // A man holding a doorway who can also hit people, in that order.
   masteries: { 'watch/the-line': SIGNATURE, 'watch/discipline': SUPPORTING },
@@ -388,6 +411,8 @@ export const INSPECTOR: ClassDef = {
     damageType: DamageType.Physical,
   },
   loadout: [revolverShot, snipersMark, scattershot, fogStep, sigil, pistolWhip],
+  /** The round, the close answer to something on top of you, a steady hand — and the kit. See `ClassDef.birthTalents`. */
+  birthTalents: [revolverShot, pistolWhip, steadyHands, issuedKit],
   passives: [coldReading, steadyHands, contingencies, calledShot, powderDiscipline, boltHole],
   // A shot who can also disappear.
   masteries: { 'index/marksmanship': SIGNATURE, 'index/fieldcraft': SUPPORTING },
@@ -452,6 +477,8 @@ export const ALCHEMIST: ClassDef = {
     damageType: DamageType.Fire,
   },
   loadout: [ashwickFlare, alchemicVial, concussionFlask, backdraft, mendWounds, fieldDressing],
+  /** The flare, the bandage, a bag that does not go off on its own — and the kit. See `ClassDef.birthTalents`. */
+  birthTalents: [ashwickFlare, fieldDressing, stableCompound, issuedKit],
   passives: [measuredDoses, scorchedCoat, stableCompound, cutWithChalk, longHours, bedsideManner],
   // A chemist who can also patch you up.
   masteries: { 'ashwick/reagents': SIGNATURE, 'ashwick/ministration': SUPPORTING },
@@ -618,6 +645,11 @@ export function sheetForClass(definition: ClassDef): TalentSheet {
      * a second list to keep in step.
      */
     passives: [...definition.passives, ...GENERIC_PASSIVES].map((talent) => talent.id),
+    /**
+     * AND THE FOUR IT IS BORN WITH. Everything else on the two lines above is
+     * seeded at rank 0 — in the tree, in the panel, and not yet learned.
+     */
+    birth: definition.birthTalents.map((talent) => talent.id),
     resource: definition.resource,
     maxAp: definition.maxAp,
     maxMp: definition.maxMp,
@@ -825,8 +857,12 @@ function gateFor(
 ): TierCheck {
   // OTHER talents of the same tree — never this one. Counting itself would let
   // a talent satisfy its own depth requirement.
-  const known = [...sheet.points.keys()].filter(
-    (other) => other !== talent.id && engine.registry.get(other)?.tree === talent.tree,
+  // RANK >= 1, exactly as the spend path counts it. A panel that counted
+  // owned-but-unlearned talents would grey nothing and the server would refuse
+  // anyway — the disagreement this function exists to prevent.
+  const known = [...sheet.points.entries()].filter(
+    ([other, rank]) =>
+      other !== talent.id && rank >= 1 && engine.registry.get(other)?.tree === talent.tree,
   ).length;
   return checkTier({
     tier: talent.tier,
@@ -1081,8 +1117,17 @@ export function createTalentBook(
         // built some other way must produce a wrong-but-legal button rather
         // than a frame the protocol calls impossible.
         // RAW for the counter, EFFECTIVE for the numbers. See `toLoadoutView`.
-        const level = Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id));
-        const effective = Math.max(BIRTH_TALENT_LEVEL, talentLevelOf(sheet, talent));
+        /**
+         * ═══ NO LONGER FLOORED AT 1, AND THE FLOOR WAS LOAD-BEARING ═══
+         * It existed because `createTalentSheet` seeded every loadout id at
+         * `BIRTH_TALENT_LEVEL`, so 0 was unreachable and the floor only
+         * guarded against a sheet built some other way. A class is now born
+         * knowing four of its eighteen, so 0 is the ordinary state of most of
+         * this list — and flooring it would draw a "1/5" on a talent nobody
+         * has learned, with a description of what it does.
+         */
+        const level = getTalentLevelRaw(sheet, id); // RAW: the counter, not the maths — draws "n/max".
+        const effective = talentLevelOf(sheet, talent);
         // THE STANCE'S STATE, read off the sheet that owns it. A sustained
         // talent whose flag never travelled would give the player one key with
         // two opposite meanings and nothing on screen to tell them apart.
@@ -1113,14 +1158,14 @@ export function createTalentBook(
       for (const id of sheet.passives) {
         const talent = engine.registry.get(id);
         if (talent === undefined) continue;
-        const raw = Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id));
+        const raw = getTalentLevelRaw(sheet, id); // RAW: the counter, not the maths — draws "n/max".
         out.push(
           toLoadoutView(
             talent,
             raw,
             actor,
             undefined,
-            Math.max(BIRTH_TALENT_LEVEL, talentLevelOf(sheet, talent)),
+            talentLevelOf(sheet, talent),
             gateFor(engine, sheet, talent, actor, raw + 1),
           ),
         );

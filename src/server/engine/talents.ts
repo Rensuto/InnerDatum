@@ -1678,6 +1678,17 @@ export type TalentSheet = {
 };
 
 export type TalentSheetInit = {
+  /**
+   * WHICH OF `loadout` AND `passives` THIS BODY IS BORN KNOWING.
+   *
+   * ToME's `talents = { [T_SHIELD_PUMMEL]=1, ... }` on a class descriptor
+   * (warrior.lua:149). Everything else the class owns starts at rank 0 —
+   * present in the tree, visible in the panel, and not yet learned.
+   *
+   * ABSENT MEANS EVERYTHING, which is what a sheet built by hand in a fixture
+   * means and what this function did before the field existed.
+   */
+  readonly birth?: readonly string[];
   /** The passives this class owns. Absent is none, which is every old fixture. */
   readonly passives?: readonly string[];
   readonly classId: ClassId;
@@ -1715,13 +1726,35 @@ export type TalentSheetInit = {
  */
 export function createTalentSheet(init: TalentSheetInit): TalentSheet {
   const points = new Map<string, number>();
-  for (const id of init.loadout) points.set(id, init.points?.get(id) ?? 1);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   RANK 0 IS "NOT LEARNED YET", AND IT IS NOW A STATE A SHEET CAN BE IN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every talent a class owned used to be born at rank 1, all eighteen of them,
+   * so the only decision a talent point ever expressed was how DEEP to go. ToME
+   * grants five (warrior.lua:149-155 — Shield Pummel, Shield Wall, Weapon
+   * Combat, Armour Training at 2, Weapons Mastery) and sells the rest, which is
+   * where that game's build variety actually comes from: WHICH talents you own
+   * is the choice, and depth is the second one.
+   *
+   * `init.birth` NAMES THE GRANTED ONES. Absent means the old behaviour —
+   * everything at 1 — which is every fixture in the tree and the single reason
+   * this lands without rewriting forty test files.
+   *
+   * AN EXPLICIT `init.points` STILL WINS over both, because that is a restored
+   * character and a save is the authority on what its owner learned.
+   */
+  const born = init.birth === undefined ? null : new Set(init.birth);
+  const at = (id: string): number =>
+    init.points?.get(id) ?? (born === null || born.has(id) ? 1 : 0);
+  for (const id of init.loadout) points.set(id, at(id));
   // A PASSIVE IS BORN LEARNED, exactly as the four are. Rank 0 would not merely
   // be "off": `combatTalentScale` maps 0 to 0.1, so a passive at rank 0 is a
   // tenth of itself rather than nothing — see `BIRTH_RANK`'s note. Learned at
   // one is the honest state and the only one the scale reads cleanly.
   const passives = init.passives ?? [];
-  for (const id of passives) points.set(id, init.points?.get(id) ?? 1);
+  for (const id of passives) points.set(id, at(id));
 
   return {
     classId: init.classId,
@@ -2203,6 +2236,19 @@ export function canUseTalent(
   if (sheet === undefined || !sheet.loadout.includes(talent.id)) {
     return TalentRefusal.NotLearned;
   }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IN THE TREE IS NOT THE SAME AS LEARNED, AND RANK 0 IS NOT MERELY "WEAKER".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combatTalentScale` maps a talent level of 0 to 0.1 (src/shared/scale.ts),
+   * so a talent pressed at rank 0 does not refuse — it quietly resolves for a
+   * tenth of its damage, spends the AP, and starts its cooldown. That was
+   * unreachable while every talent was born at 1; it is reachable the moment a
+   * class stops being born knowing everything, and it would look exactly like
+   * a balance problem rather than a missing check.
+   */
+  if (getTalentLevelRaw(sheet, talent.id) < 1) return TalentRefusal.NotLearned; // RAW: has a point been spent here at all — a mastery multiplier cannot turn "never learned" into "learned".
   if (cooldownOf(actor, talent.id) > 0) return TalentRefusal.OnCooldown;
 
   const cost = talent.cost;
