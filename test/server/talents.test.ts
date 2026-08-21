@@ -1,4 +1,5 @@
 import { trained } from '../helpers/trained.ts';
+import { TALENTS_PER_CLASS_MAX, TALENTS_PER_CLASS_MIN } from '../../src/shared/progression.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -22,6 +23,7 @@ import {
 } from '../../src/server/engine/actor.ts';
 import {
   Affinity,
+  effectiveTalentRange,
   FOCUS_PER_TURN,
   REAGENT_REGEN_EVERY_TURNS,
   RESOLVE_PER_TURN,
@@ -55,6 +57,7 @@ import {
   spendForAction,
   tickLevel,
 } from '../../src/shared/energy.ts';
+import { MELEE_REACH } from '../../src/server/engine/combat.ts';
 import { markPower, sigil } from '../../src/server/talents/sigil.ts';
 import { healFraction, mendWounds } from '../../src/server/talents/mend_wounds.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
@@ -316,15 +319,38 @@ describe('cooldown conversion — TURNS, from two sources that are not', () => {
 });
 
 describe('the loadout cap — PLAN.md § 5', () => {
-  it('ships exactly three classes, six talents each, eighteen in all', () => {
+  it('gives every class a bar it can fill and a bar it cannot overflow', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS ASSERTED "SIX EACH, EIGHTEEN IN ALL", AND SIX WAS THE WHOLE PROBLEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The hotbar had six FIXED slots, slot n was `loadout[n]`, and
+     * `_loadoutArityCheck` therefore demanded exactly six actives — which is
+     * what stopped any class growing a third discipline with a button in it.
+     * The rebindable two-page bar removed the reason and this is what is left
+     * of the rule: a class must be able to FILL a page, and must not hold more
+     * than the bar can ADDRESS.
+     *
+     * Both bounds are real failures rather than tidiness. Under the floor, the
+     * bar draws a gap that reads as a button which failed to load. Over the
+     * ceiling, a class owns a talent that can be seen in the panel and never
+     * put on a key — and nothing throws, the bar just quietly stops.
+     */
     expect(CLASSES).toHaveLength(3);
-    for (const definition of CLASSES) expect(definition.loadout).toHaveLength(6);
-    expect(CLASSES.flatMap((c) => c.loadout)).toHaveLength(18);
+    for (const definition of CLASSES) {
+      expect(definition.loadout.length, definition.id).toBeGreaterThanOrEqual(
+        TALENTS_PER_CLASS_MIN,
+      );
+      expect(definition.loadout.length, definition.id).toBeLessThanOrEqual(TALENTS_PER_CLASS_MAX);
+    }
   });
 
   it('gives every talent a distinct, R6-namespaced id', () => {
     const ids = CLASSES.flatMap((c) => c.loadout).map((t) => t.id);
-    expect(new Set(ids).size).toBe(18);
+    // DISTINCT is the property; the COUNT is whatever the content is. A literal
+    // here says nothing a reader can check and fails on every addition.
+    expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(id.startsWith('talent:')).toBe(true);
   });
 
@@ -371,9 +397,11 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * assertion that still applies to it.
      */
     const everyTalent = f.engine.registry.all().filter((talent) => talent.onUse !== undefined);
-    // Three classes, six actives each. The shared tree adds none — every talent
-    // in `generic/groundwork` is passive, which is what a training category is.
-    expect(everyTalent).toHaveLength(18);
+    // EVERY ACTIVE THE CLASSES OWN, counted from them rather than spelled. The
+    // shared trees add none — every talent in `generic/groundwork` and
+    // `generic/nightshift` is passive, which is what a training category is,
+    // and THAT is the property this line is really about.
+    expect(everyTalent).toHaveLength(CLASSES.flatMap((c) => c.loadout).length);
     /**
      * …AND THE REGISTRY AS A WHOLE IS EVERY AUTHORED TALENT — COUNTED, NOT
      * SPELLED. This line read `toHaveLength(42)` and 42 was correct for as
@@ -498,7 +526,33 @@ describe('MELEE REACH — the Watchman can swing on a DIAGONAL', () => {
     const husk = f.addMonster('husk', 6, 6);
     expect(Math.hypot(husk.x - watchman.x, husk.y - watchman.y)).toBeCloseTo(Math.SQRT2, 5);
 
-    for (const talent of WATCHMAN.loadout) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONES THIS IS ABOUT: AIMED AT A FOE, AND AT MELEE REACH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This walked the WHOLE loadout, which was the same list while every
+     * Watchman talent was a blow aimed at something hostile. The class has a
+     * third discipline now: On My Whistle is aimed at a FRIEND and correctly
+     * answers `not_ally` for a husk, and Clear the Street is centred on the
+     * caster rather than aimed at all. Neither is a counter-example to the √2
+     * diagonal problem — they are simply not the kind of talent it is about,
+     * and asserting on them would make this test fail for a reason it does not
+     * hold an opinion on.
+     *
+     * FILTERED ON THE FIELDS THAT DEFINE THE CATEGORY rather than on a list of
+     * names: a fourth melee talent must be covered the day it is authored,
+     * which a hand-kept list would not do.
+     */
+    const melee = WATCHMAN.loadout.filter(
+      (talent) =>
+        talent.targeting.affinity === Affinity.Hostile &&
+        talent.targeting.shape !== TargetShape.Self &&
+        effectiveTalentRange(talent.targeting, 1) <= MELEE_REACH,
+    );
+    expect(melee.length, 'no melee talent left to check').toBeGreaterThan(0);
+
+    for (const talent of melee) {
       refill(f.engine, 'dalt');
       const refusal = canUseTalent(
         f.engine,

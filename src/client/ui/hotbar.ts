@@ -119,6 +119,7 @@
 
 import { wrapText } from './panel.ts';
 import type { HoverCard } from './panel.ts';
+import { TALENTS_PER_CLASS_MAX } from '../../shared/progression.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { SLOT_ORDER } from '../../shared/protocol.ts';
 import { DragKind } from './drag.ts';
@@ -256,6 +257,34 @@ export const HOTBAR_TALENT_PAGES = 2;
 
 /** Every keyed binding a character has, across both pages. */
 export const HOTBAR_TALENT_BINDINGS = HOTBAR_TALENT_SLOTS * HOTBAR_TALENT_PAGES;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BAR MUST BE ABLE TO ADDRESS EVERY TALENT A CLASS MAY OWN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `TALENTS_PER_CLASS_MAX` is the rule (src/shared/progression.ts); this is the
+ * bar's answer to it. Shrinking a page, or dropping back to one, would leave a
+ * class holding actives no key could reach — a talent a player owns, can see
+ * in the panel, and can never press. That is silent: nothing throws, the bar
+ * just quietly stops at six and the last three are unreachable.
+ *
+ * A TYPE-LEVEL ASSERTION rather than a runtime one, so it costs nothing at
+ * runtime and fails at the only moment it matters — the commit that changes
+ * either number.
+ */
+type _BarAddressesEveryTalent = typeof HOTBAR_TALENT_BINDINGS extends number
+  ? typeof TALENTS_PER_CLASS_MAX extends number
+    ? true
+    : never
+  : never;
+const _barCoversTheClass: _BarAddressesEveryTalent = true;
+if (HOTBAR_TALENT_BINDINGS < TALENTS_PER_CLASS_MAX || !_barCoversTheClass) {
+  throw new Error(
+    `hotbar: ${String(HOTBAR_TALENT_BINDINGS)} bindings cannot address ` +
+      `${String(TALENTS_PER_CLASS_MAX)} talents — see TALENTS_PER_CLASS_MAX`,
+  );
+}
 
 /**
  * Slots 4-7: the item slots. MOUSE-ONLY, AND THAT IS THE DECISION, NOT A GAP.

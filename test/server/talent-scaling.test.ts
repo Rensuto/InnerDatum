@@ -540,6 +540,91 @@ const CASES: readonly ScalingCase[] = [
     },
   },
   {
+    /**
+     * THE SHOVE. Its rank moves how far a body is pushed, and the number under
+     * test is the DISTANCE ACTUALLY TRAVELLED rather than the constant — the
+     * husk starts with a clear run behind it, so `knockback` walks the whole
+     * way and what is measured is what a player would see.
+     *
+     * NO DAMAGE ANYWHERE IN THIS CASE, which is the talent. Every other entry
+     * on this table watches a number go up on something being hit; this one
+     * watches where the thing ended up.
+     */
+    bare: 'move_along',
+    moves: 'tiles shoved',
+    authored: '1 tiles',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5);
+      const husk = f.addMonster('husk', 6, 5);
+      f.setLevel('caster', 'move_along', level);
+      f.refill('caster');
+      const before = husk.x;
+      const result = useTalent(f.engine, watchman, talentId('move_along'), { x: 6, y: 5 }, f.ctx);
+      return { observed: husk.x - before, result, fixture: f };
+    },
+  },
+  {
+    /**
+     * THE WHISTLE. Its rank moves how many action points a friend is handed,
+     * and the friend is drained first so the grant has somewhere to go —
+     * `Math.min(maxAp, ...)` means a full ally would measure zero at every rank
+     * and the case would pass by being uniformly useless.
+     */
+    bare: 'on_my_whistle',
+    moves: 'action points given',
+    authored: '3 tiles 1 action points',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5);
+      const friend = f.add(INSPECTOR, 'friend', 6, 5);
+      f.setLevel('caster', 'on_my_whistle', level);
+      f.refill('caster');
+      f.refill('friend');
+      const sheet = f.engine.sheetOf(friend.id);
+      if (sheet === undefined) throw new Error('the friend has no sheet');
+      sheet.ap = 0;
+      const result = useTalent(
+        f.engine,
+        watchman,
+        talentId('on_my_whistle'),
+        { x: 6, y: 5 },
+        f.ctx,
+      );
+      return { observed: sheet.ap, result, fixture: f };
+    },
+  },
+  {
+    /**
+     * THE CAPSTONE. Centred on the caster, so the target IS the caster's own
+     * tile — what the client sends for a talent it never opens an aim for.
+     *
+     * ONE HUSK, NOT A RING. The number under test is how far each body is
+     * shoved; three of them would grow when the distance did and also when it
+     * did not, because three times a flat number rises too. `truncheon_sweep`
+     * above makes the same argument in the same words.
+     */
+    bare: 'clear_the_street',
+    moves: 'tiles everything is shoved',
+    authored: '2 tiles',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5);
+      const husk = f.addMonster('husk', 6, 5);
+      f.setLevel('caster', 'clear_the_street', level);
+      f.refill('caster');
+      const before = husk.x;
+      const result = useTalent(
+        f.engine,
+        watchman,
+        talentId('clear_the_street'),
+        { x: 5, y: 5 },
+        f.ctx,
+      );
+      return { observed: husk.x - before, result, fixture: f };
+    },
+  },
+  {
     // The escape. Its rank moves RANGE, and "range reached" is measured through
     // the real predicate rather than off the constant — the farthest tile
     // `canUseTalent` will actually accept.
@@ -593,7 +678,12 @@ describe('every talent level moves a number — the honesty gate', () => {
       .all()
       .filter((talent) => talent.onUse !== undefined)
       .map((talent) => talent.id);
-    expect(registered).toHaveLength(18);
+    // COUNTED, NOT SPELLED. This read `18` — three classes of six — and the
+    // line below it already asserts the two SETS are equal, which is the whole
+    // property: every active in the registry is on this table and nothing on
+    // this table has been deleted. The literal only ever restated it, and it
+    // failed at 21 the day a class grew a third discipline.
+    expect(registered).toHaveLength(CASES.length);
     expect([...CASES.map((entry) => talentId(entry.bare))].sort()).toEqual([...registered].sort());
   });
 

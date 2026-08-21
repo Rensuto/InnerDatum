@@ -157,6 +157,38 @@ export const TALENT_MAX_LEVEL = 5;
 export const BIRTH_TALENT_GRANTS = 4;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   HOW MANY ACTIVE TALENTS A CLASS MAY OWN. A RANGE, AND IT WAS ONCE SIX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `_loadoutArityCheck` (server/content/classes.ts) required EXACTLY six, and
+ * that was not arbitrary: the hotbar had six fixed slots, slot n was
+ * `loadout[n]`, and a seventh active would have been a talent nothing could
+ * press. It is also what stopped any class growing a third discipline with a
+ * button in it, which was most of what stood between this game and the one it
+ * is a port of.
+ *
+ * ═══ IN shared/ BECAUSE BOTH ENDS ANSWER TO IT, AND NEITHER OWNS IT ═══
+ * The obvious place was ui/hotbar.ts beside the geometry, and the server would
+ * then import from the client — which inverts the one-way arrow CLAUDE.md
+ * states and eslint enforces. The honest reading is the other way round: how
+ * many talents a class may HOLD is a rule about the game, and how many boxes
+ * fit on a screen is the client's answer to it. So the rule lives here and the
+ * bar checks itself against it.
+ *
+ * THE FLOOR IS A FULL PAGE. A class with five actives draws a gap on the bar,
+ * which reads as a button that failed to load rather than as a class with room
+ * in it — the same argument talent-trees.test.ts makes for why a tree is
+ * exactly six and not at most six.
+ *
+ * THE CEILING IS WHAT THE BAR CAN ADDRESS: two pages of six. A thirteenth
+ * active would be one a player could own, could see in the panel, and could
+ * never put on a key.
+ */
+export const TALENTS_PER_CLASS_MIN = 6;
+export const TALENTS_PER_CLASS_MAX = 12;
+
+/**
  * `ActorLevel.exp_chart(level)` — load.lua:193-206, VERBATIM.
  *
  *     ActorLevel.exp_chart = function(level)

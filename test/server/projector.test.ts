@@ -758,7 +758,11 @@ describe('projectClassOptions', () => {
     // `loadoutViewFor`.
     for (const option of projectClassOptions().options) {
       const definition = CLASSES.find((c) => c.id === option.id);
-      expect(option.talents).toHaveLength(6);
+      // AS MANY AS THE CLASS OWNS, which is the property — the card advertises
+      // the class's actives, whatever there are of them. This read `6` and the
+      // Watchman's third tree failed it at 9 with nothing wrong; the next line
+      // already asserts the exact list, so the count was only ever restating it.
+      expect(option.talents).toHaveLength(definition?.loadout.length ?? 0);
       expect(option.talents.map((t) => t.id)).toEqual(definition?.loadout.map((t) => t.id));
       expect(option.talents.map((t) => t.name)).toEqual(definition?.loadout.map((t) => t.name));
       expect(option.talents.map((t) => t.icon)).toEqual(definition?.loadout.map((t) => t.iconId));

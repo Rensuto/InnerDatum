@@ -106,6 +106,39 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     blurb: 'Standing where somebody else would have been hit.',
   },
   {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE WATCHMAN'S THIRD, AND THE FIRST TREE IN THE GAME GATED ON WILLPOWER.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `watch/discipline` is hitting the thing in front of you and
+     * `watch/the-line` is being hit instead of somebody else. Both are good and
+     * both answer the same question — what to do about the body already in
+     * reach — and between them the class had nine talents, every one of which
+     * was a blow. Nothing a Watchman owned was about the OTHER PEOPLE in the
+     * room, which is a strange gap in the class whose whole job is a doorway.
+     *
+     * ═══ AND IT GIVES THE CLASS A THIRD ATTRIBUTE ═══
+     * Discipline is Strength, the Line is Constitution, and this is Will.
+     * Authority is a thing you have rather than a thing you can lift, and
+     * upstream agrees — its warcries check Willpower. Three stats across three
+     * trees is what makes 157 attribute points a set of decisions rather than a
+     * formality, and it is the first real fork in what a Watchman can BE.
+     *
+     * ═══ IT COULD NOT HAVE EXISTED A WEEK AGO ═══
+     * A class tree must mix actives and passives (talent-trees.test.ts), an
+     * active needs a hotbar slot, and the bar held exactly six FIXED ones — so
+     * `_loadoutArityCheck` required exactly six actives and no class could grow
+     * a third discipline with a button in it. The rebindable, two-page bar is
+     * what unblocked this, and it was built for this.
+     */
+    id: 'watch/authority',
+    mastery: 1,
+    name: 'Authority',
+    classId: ClassId.Watchman,
+    blurb: 'Being the reason other people do what they do.',
+  },
+  {
     id: 'index/marksmanship',
     mastery: 1,
     name: 'Marksmanship',

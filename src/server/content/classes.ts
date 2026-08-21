@@ -85,6 +85,12 @@ import { longNights } from '../talents/long_nights.ts';
 import { oneAtATime } from '../talents/one_at_a_time.ts';
 import { secondWind } from '../talents/second_wind.ts';
 import { walkItOff } from '../talents/walk_it_off.ts';
+import { carryingVoice } from '../talents/carrying_voice.ts';
+import { clearTheStreet } from '../talents/clear_the_street.ts';
+import { knownFace } from '../talents/known_face.ts';
+import { moveAlong } from '../talents/move_along.ts';
+import { onMyWhistle } from '../talents/on_my_whistle.ts';
+import { riotLine } from '../talents/riot_line.ts';
 import { contingencies } from '../talents/contingencies.ts';
 import { scorchedCoat } from '../talents/scorched_coat.ts';
 import { seenWorse } from '../talents/seen_worse.ts';
@@ -144,7 +150,11 @@ import { sigil } from '../talents/sigil.ts';
 import { snipersMark } from '../talents/sniper_mark.ts';
 import { wardRush } from '../talents/ward_rush.ts';
 import { ActorKind, ErrorCode } from '../../shared/protocol.ts';
-import { TALENT_MAX_LEVEL } from '../../shared/progression.ts';
+import {
+  TALENTS_PER_CLASS_MAX,
+  TALENTS_PER_CLASS_MIN,
+  TALENT_MAX_LEVEL,
+} from '../../shared/progression.ts';
 import { checkTier, tierRefusalText } from '../../shared/tiers.ts';
 import type { TierCheck } from '../../shared/tiers.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -357,10 +367,33 @@ export const WATCHMAN: ClassDef = {
     minRange: 0,
     damageType: DamageType.Physical,
   },
-  loadout: [crudeBlow, wardRush, truncheonSweep, ironCurtain, lockdown, shinCrack],
+  loadout: [
+    crudeBlow,
+    wardRush,
+    truncheonSweep,
+    ironCurtain,
+    lockdown,
+    shinCrack,
+    // ─── AUTHORITY, the third tree. Page two of the bar is where these live
+    //     by default; see `reseatTalentBindings` in src/client/main.ts. ───
+    moveAlong,
+    onMyWhistle,
+    clearTheStreet,
+  ],
   /** The swing, the shin, the habit of standing where somebody would have been hit — and the kit. See `ClassDef.birthTalents`. */
   birthTalents: [crudeBlow, shinCrack, standingOrders, issuedKit],
-  passives: [standingOrders, softPlaces, seenWorse, theLongShift, weightOfOffice, paradeGround],
+  passives: [
+    // ─── AUTHORITY. See `watch/authority`. ───
+    knownFace,
+    carryingVoice,
+    riotLine,
+    standingOrders,
+    softPlaces,
+    seenWorse,
+    theLongShift,
+    weightOfOffice,
+    paradeGround,
+  ],
   // A man holding a doorway who can also hit people, in that order.
   masteries: { 'watch/the-line': SIGNATURE, 'watch/discipline': SUPPORTING },
 };
@@ -1261,22 +1294,41 @@ export function createTalentBook(
  * 640-wide floor, which still leaves room to go further when there is something
  * worth putting there.
  */
-const TALENTS_PER_CLASS = 6;
-type SixTalents = readonly [Talent, Talent, Talent, Talent, Talent, Talent];
-const _loadoutArityCheck: readonly SixTalents[] = CLASSES.map((definition) => {
-  const [a, b, c, d, e, f] = definition.loadout;
-  if (
-    a === undefined ||
-    b === undefined ||
-    c === undefined ||
-    d === undefined ||
-    e === undefined ||
-    f === undefined
-  ) {
-    throw new Error(`classes: ${definition.id} needs ${TALENTS_PER_CLASS} talents`);
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   A RANGE NOW, AND IT WAS "EXACTLY SIX" UNTIL THE BAR COULD HOLD MORE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The old rule was `loadout.length !== 6`, and it was not arbitrary: the bar
+ * had six FIXED slots, slot n was `loadout[n]`, and a seventh active would have
+ * been a talent nothing could press. It is also what stopped any class growing
+ * a third discipline — `talent-trees.test.ts` said so out loud, and this
+ * comment is the other half of that sentence finally being answered.
+ *
+ * TWO BOUNDS, AND EACH ONE IS A REAL FAILURE:
+ *
+ *   THE FLOOR IS A FULL PAGE. A class with five actives draws a gap on the bar,
+ *   which reads as a button that failed to load rather than as a class with
+ *   room in it — the same argument `talent-trees.test.ts` makes for why a tree
+ *   is exactly six and not at most six.
+ *
+ *   THE CEILING IS WHAT THE BAR CAN ADDRESS. Two pages of six is twelve
+ *   bindings; a thirteenth active would be one a player could own, could see in
+ *   the panel, and could never put on a key. `HOTBAR_TALENT_BINDINGS` is the
+ *   number and it is imported rather than written down again, because the day
+ *   the bar grows a third page this must move with it and not a moment later.
+ */
+const _loadoutArityCheck: readonly (readonly Talent[])[] = CLASSES.map((definition) => {
+  const held = definition.loadout.length;
+  if (held < TALENTS_PER_CLASS_MIN) {
+    throw new Error(
+      `classes: ${definition.id} has ${held} actives — a bar page is ${TALENTS_PER_CLASS_MIN}`,
+    );
   }
-  if (definition.loadout.length !== TALENTS_PER_CLASS) {
-    throw new Error(`classes: ${definition.id} has ${definition.loadout.length} talents`);
+  if (held > TALENTS_PER_CLASS_MAX) {
+    throw new Error(
+      `classes: ${definition.id} has ${held} actives — the bar can address ${TALENTS_PER_CLASS_MAX}`,
+    );
   }
-  return [a, b, c, d, e, f];
+  return definition.loadout;
 });

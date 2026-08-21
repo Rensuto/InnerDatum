@@ -152,7 +152,16 @@ describe('every tree is a path', () => {
     }
     expect(byClass.size, 'not every class has gated trees').toBeGreaterThan(0);
     for (const [classId, stats] of byClass) {
-      expect(stats.size, `${classId} leans on one stat only`).toBe(2);
+      /**
+       * ═══ AT LEAST TWO, AND THIS READ `toBe(2)` ═══
+       * The property worth pinning is that no class leans on ONE attribute —
+       * that is what makes an attribute point a formality. Exactly two was the
+       * number the game happened to have when this was written, and the
+       * Watchman's third tree (`watch/authority`, Willpower) failed it at three
+       * with nothing wrong. A guard that fails on content being added in the
+       * direction it wanted teaches its readers to widen it without thinking.
+       */
+      expect(stats.size, `${classId} leans on one stat only`).toBeGreaterThanOrEqual(2);
     }
   });
 });
