@@ -84,6 +84,33 @@ export type TalentTree = {
   readonly classId: ClassId | null;
   /** One line under the header, for why these belong together. */
   readonly blurb: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   NOBODY STARTS WITH THIS ONE. It costs a CATEGORY POINT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's `talents_types` is a table of open-or-locked per class, and the
+   * locked rows are the whole of what category points are for — a Bulwark opens
+   * with eight of thirteen and buys into the rest one at a time
+   * (warrior.lua:134-148). Three points arrive in a career, at levels 10, 20 and
+   * 36, so which discipline is a decision a build is made of.
+   *
+   * ═══ THE LOCKED ONES ARE GENERIC, AND THAT IS ARITHMETIC RATHER THAN TASTE ═══
+   * Upstream's category points buy another CLASS's discipline. Measured here, it
+   * does not fit: classes carry nine or ten actives, every class tree needs
+   * three or four hotbar slots, and the bar addresses twelve — so the Watchman
+   * fits exactly one cross-class unlock and the Inspector, at ten, fits none.
+   * Three points with nowhere to spend two of them is a currency that reads as
+   * broken.
+   *
+   * A locked GENERIC tree of six passives needs zero bar slots, so the ceiling
+   * never binds and all three points are always spendable. Upstream locks
+   * generic categories too — `cunning/dirty` is closed to a Bulwark — so this is
+   * the same mechanic wearing its other shape.
+   *
+   * ABSENT MEANS OPEN, which is every tree that shipped before this field.
+   */
+  readonly locked?: boolean;
 };
 
 /**
@@ -266,6 +293,24 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     name: 'Nightshift',
     classId: null,
     blurb: 'What too many of them does to a body, and what a body does back.',
+  },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE FIRST LOCKED TREE IN THE GAME. See `TalentTree.locked`.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Nobody starts with it and no class owns it. It costs one of the three
+     * category points a character is handed in a whole career, and what it
+     * sells is the two live combat channels that sixty-six talents had never
+     * granted between them: armour penetration and the width of a damage roll.
+     */
+    id: 'generic/leverage',
+    mastery: 1,
+    name: 'Leverage',
+    classId: null,
+    blurb: 'Where a thing comes apart, and what it costs to find out.',
+    locked: true,
   },
 ]);
 

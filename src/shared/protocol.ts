@@ -3091,6 +3091,31 @@ const SetZoomSchema = z.strictObject({
  * are bounded; membership is the client's to answer, exactly as it is for a
  * keybind action id.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `unlock_tree` — "I AM SPENDING A CATEGORY POINT ON THIS DISCIPLINE."
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A THIRD SPEND VERB, beside `spend_point` and `spend_stat`, and it is separate
+ * from both for the reason those two are separate from each other: the three
+ * currencies do not convert. Folding this into `spend_point` would mean one
+ * frame that sometimes costs a talent point and sometimes costs a category
+ * point depending on what it names, and the day those disagreed a player would
+ * lose the scarcest currency in the game to a rounding.
+ *
+ * NAMES A TREE, NOT A TALENT. What a category point buys is a whole discipline;
+ * the talents inside it are then bought one at a time with ordinary points,
+ * exactly as if the class had always owned them.
+ *
+ * NOTHING IS REFUNDABLE, like the other two spends. Three arrive in a career.
+ */
+const UnlockTreeSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('unlock_tree'),
+  /** `generic/leverage`. Bounded like every other id on the wire. */
+  treeId: z.string().min(1).max(TALENT_ID_MAX_CHARS),
+});
+
 const SetHotbarSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('set_hotbar'),
@@ -3227,6 +3252,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   PartySchema,
   InspectSchema,
   SetHotbarSchema,
+  UnlockTreeSchema,
   SetKeybindsSchema,
   SetZoomSchema,
   PingSchema,
@@ -3258,6 +3284,7 @@ export type ClientFollow = z.infer<typeof FollowSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientSetHotbar = z.infer<typeof SetHotbarSchema>;
+export type ClientUnlockTree = z.infer<typeof UnlockTreeSchema>;
 export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;
 export type ClientSetZoom = z.infer<typeof SetZoomSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;

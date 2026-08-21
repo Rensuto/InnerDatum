@@ -1,3 +1,4 @@
+import { treeById } from '../../src/server/content/talent-trees.ts';
 import { trained } from '../helpers/trained.ts';
 import { TALENTS_PER_CLASS_MAX, TALENTS_PER_CLASS_MIN } from '../../src/shared/progression.ts';
 import { describe, expect, it } from 'vitest';
@@ -444,11 +445,36 @@ describe('the loadout cap — PLAN.md § 5', () => {
          * startup away from throwing on the duplicate.
          */
         expect(owners2, talent.id).toEqual([]);
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * SHARED IS NOT THE SAME AS CARRIED, AND THIS TEST ONCE ASSUMED IT WAS.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * It asserted that every `classId === null` talent is on every class's
+         * sheet, which was true while the only shared trees were the two
+         * everybody starts with. `generic/leverage` is shared AND LOCKED: no
+         * class owns it and nobody carries it until they have spent one of the
+         * three category points a career hands out.
+         *
+         * BOTH HALVES ARE ASSERTED, because either alone passes for the wrong
+         * reason. Absent from a fresh sheet is what "locked" MEANS — a lock that
+         * let the talents through would be a category point that bought
+         * something the character already had. Present once the tree is bought
+         * is the other half, and without it the lock would be indistinguishable
+         * from the content simply not being wired up.
+         */
+        const tree = treeById(talent.tree);
+        const locked = tree?.locked === true;
         for (const definition of CLASSES) {
-          expect(
-            trained(sheetForClass(definition)).passives,
-            `${definition.id} / ${talent.id}`,
-          ).toContain(talent.id);
+          const fresh = trained(sheetForClass(definition)).passives;
+          const bought = trained(sheetForClass(definition, [talent.tree])).passives;
+          if (locked) {
+            expect(fresh, `${definition.id} carries locked ${talent.id}`).not.toContain(talent.id);
+            expect(bought, `${definition.id} bought ${talent.tree}`).toContain(talent.id);
+          } else {
+            expect(fresh, `${definition.id} / ${talent.id}`).toContain(talent.id);
+          }
         }
         continue;
       }

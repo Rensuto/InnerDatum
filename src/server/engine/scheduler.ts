@@ -65,6 +65,7 @@ import { canWalk } from '../../shared/level.ts';
 // safe here for exactly the reasons scale.ts and energy.ts are.
 import {
   gainExp,
+  categoryPointsForLevel,
   genericPointsForLevel,
   pointsForLevel,
   statPointsForLevel,
@@ -3194,6 +3195,12 @@ function applyPendingLevels(actor: EngineActor, run: Run): void {
     // AND THE GENERIC POINT, which is the same grant seen from the other side:
     // two a level, always, and a fifth level moves one of them across.
     actor.unspentGenerics += genericPointsForLevel(level);
+    // AND, AT TEN, TWENTY AND THIRTY-SIX, A WHOLE DISCIPLINE. Actor.lua:3757-3760.
+    // In the same loop and on the same per-level-crossed rule as the other
+    // three: a boss that carries a character from 9 to 11 owes the level-10
+    // category point, and granting it from a different site is how one of them
+    // silently stops arriving.
+    actor.unspentCategories += categoryPointsForLevel(level);
     // AND THE THREE ATTRIBUTE POINTS, on the same per-level-crossed rule and in
     // the same loop. `Actor.lua:3748` grants both in one place too — a level is
     // one event that owes two currencies, and granting them from two different

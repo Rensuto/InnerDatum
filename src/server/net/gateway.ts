@@ -282,6 +282,7 @@ import type {
   ClientRevive,
   ClientSay,
   ClientSetHotbar,
+  ClientUnlockTree,
   ClientSetKeybinds,
   ClientSetZoom,
   ClientSpendPoint,
@@ -1045,6 +1046,25 @@ export type TurnEngine = {
   toggleSustain?(actorId: string, talentId: string): boolean | null;
   /**
    * ═════════════════════════════════════════════════════════════════════════
+   * BUY A LOCKED DISCIPLINE. Appends its talents to the sheet, at rank 0.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * INJECTED FOR THE REASON EVERY SEAM HERE IS: the sheet lives in
+   * `engine/talents.ts` and the tree table in `content/`, and net/** may import
+   * neither. This file knows WHICH tree a socket asked for; it must not learn
+   * what a talent sheet is.
+   *
+   * IT IS NOT THE AUTHORISATION. `handleUnlockTree` has already checked that the
+   * body has a category point and that the tree is locked and not already owned.
+   * This is the WRITE.
+   *
+   * @returns true when the sheet grew, false when there was nothing to add —
+   *   an id no tree answers to, or one already on the sheet. False must cost
+   *   the caller nothing: the point is deducted only after this has answered.
+   */
+  unlockTree?(actorId: string, treeId: string): boolean;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
    * RE-DERIVE EVERYTHING THIS BODY'S NUMBERS ARE MADE OF.
    * ═════════════════════════════════════════════════════════════════════════
    *
@@ -1508,6 +1528,15 @@ export type CharacterSnapshot = {
    * one. See `CharacterFile.hotbar`.
    */
   readonly hotbar?: readonly (string | null)[];
+  /**
+   * WHICH LOCKED DISCIPLINES THIS CHARACTER BOUGHT — tree ids.
+   *
+   * Declared structurally here exactly as `hotbar` above is, so the gateway and
+   * the persist layer agree on the shape without either importing the other.
+   * See `CharacterFile.unlockedTrees` for why it is the authority and the sheet
+   * is not.
+   */
+  readonly unlockedTrees?: readonly string[];
   /** base64 bitset of the overworld this character had explored. */
   readonly explored?: string;
   /** The same for every OTHER overworld, keyed by realm id. See `applyRestore`. */
@@ -1729,6 +1758,15 @@ export type CharacterRestore = {
    * one. See `CharacterFile.hotbar`.
    */
   readonly hotbar?: readonly (string | null)[];
+  /**
+   * WHICH LOCKED DISCIPLINES THIS CHARACTER BOUGHT — tree ids.
+   *
+   * Declared structurally here exactly as `hotbar` above is, so the gateway and
+   * the persist layer agree on the shape without either importing the other.
+   * See `CharacterFile.unlockedTrees` for why it is the authority and the sheet
+   * is not.
+   */
+  readonly unlockedTrees?: readonly string[];
   /**
    * base64 bitset of the overworld this character had explored, straight off
    * the disk. Decoded against the CURRENT region's size, so a save written
@@ -3220,6 +3258,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // played, and an alias would let a drag halfway through the write change
     // what got written.
     ...(actor.hotbar === undefined ? {} : { hotbar: [...actor.hotbar] }),
+    // COPIED, NOT ALIASED, for the reason the two lines above it are: the save
+    // layer holds this across a debounce while the body goes on being played.
+    ...(actor.unlockedTrees === undefined ? {} : { unlockedTrees: [...actor.unlockedTrees] }),
     // WHAT THEY HAVE WALKED. Absent when this process has never revealed
     // anything for them, which `saveCharacter` reads as "cannot say" and leaves
     // the disk alone — the same carry-forward rule the keymap gets, and the
@@ -5622,6 +5663,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * its own arrangement and stop. The keys line is written as a guard clause
      * because it was the last thing in the function; it is not any more.
      */
+    /**
+     * THE BOUGHT DISCIPLINES, AND THEY GO ON FIRST.
+     *
+     * `applyTalentPoints` below writes a saved spread onto the sheet, and it
+     * refuses an id the sheet does not have — so a discipline restored AFTER
+     * the ranks would come back empty, with every point spent in it reported as
+     * dropped and refunded. The list has to be on the body before the sheet is
+     * built from it, which is what `restoreProgression`'s caller order gives.
+     */
+    if (restore.unlockedTrees !== undefined && restore.unlockedTrees.length > 0) {
+      actor.unlockedTrees = [...restore.unlockedTrees];
+      app.log.info(
+        { actorId: actor.id, trees: actor.unlockedTrees.length },
+        'restored a character’s bought disciplines',
+      );
+    }
     if (restore.hotbar !== undefined) {
       actor.hotbar = [...restore.hotbar];
       app.log.info(
@@ -12373,6 +12430,85 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * session sees, the seconds between the last drag and a closed tab are not
    * worth an fsync storm on four people who did nothing.
    */
+  /**
+   * `unlock_tree` — "I AM SPENDING A CATEGORY POINT ON THIS DISCIPLINE."
+   *
+   * `handleSpendPoint`'s shape, against a different currency. Three category
+   * points arrive in a career, at levels 10, 20 and 36, and nothing refunds one
+   * — so every refusal below has to happen BEFORE the deduction, and the write
+   * has to answer whether it landed rather than being assumed to.
+   */
+  const handleUnlockTree = (session: Session, msg: ClientUnlockTree): void => {
+    const { world, engine } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before spending a point');
+      return;
+    }
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+    // THE SAME NARROWING `handleSpendPoint` USES, on the same string literal:
+    // only a player holds the three point pools, and a monster with a sheet is
+    // a fixture rather than something that spends.
+    if (body.kind !== 'player') {
+      sendError(session.socket, ErrorCode.Internal, 'that body cannot hold category points');
+      return;
+    }
+    /**
+     * NOT WHILE A CLASS CHOICE IS OUTSTANDING, for `handleSpendPoint`'s reason
+     * exactly: `attachClass` ends in an unconditional `sheets.set` of a fresh
+     * sheet and credits nothing back, so a discipline bought while the picker is
+     * still owed is bought twice over.
+     */
+    if (classChoiceOwed.has(actorId)) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'unlock refused: choose a class before spending points',
+      );
+      return;
+    }
+    if (body.unspentCategories <= 0) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'unlock refused: no category points — they arrive at levels 10, 20 and 36',
+      );
+      return;
+    }
+
+    /**
+     * THE WRITE ANSWERS WHETHER IT LANDED, AND THE POINT IS DEDUCTED AFTER.
+     *
+     * `unlockTree` refuses an id no tree answers to, a tree that is not locked,
+     * and one already bought — three mistakes with one answer. Deducting first
+     * and writing second would charge the scarcest currency in the game for a
+     * typo, and there is no refund path to undo it with.
+     */
+    const opened = engine.unlockTree?.(actorId, msg.treeId) ?? false;
+    if (!opened) {
+      sendError(
+        session.socket,
+        ErrorCode.BadMessage,
+        'unlock refused: no such locked discipline, or you already have it',
+      );
+      return;
+    }
+
+    body.unspentCategories -= 1;
+    saveNow('unlock_tree');
+
+    // THE THREE FRAMES THAT CHANGED: the loadout, because the panel has six new
+    // rows in it; progress, because a point left the pool; and the bar, because
+    // `sendLoadout` alone does not carry cooldowns.
+    sendLoadout(session);
+    sendProgress(session);
+    sendHotbarIfChanged(session);
+  };
+
   const handleSetHotbar = (session: Session, msg: ClientSetHotbar): void => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -12608,6 +12744,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'set_hotbar':
         handleSetHotbar(session, msg);
+        return;
+      case 'unlock_tree':
+        handleUnlockTree(session, msg);
         return;
       case 'revive':
         handleRevive(session, msg);

@@ -629,6 +629,42 @@ export function totalPointsAtLevel(level: number): number {
  * the same points as everything else. Splitting the pools is the other half of
  * that fix.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE LEVELS THAT HAND OVER A CATEGORY POINT. Actor.lua:3757-3760, verbatim.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     -- At levels 10, 20 and 36 and then every 30 levels, we gain a new
+ *     -- talent type
+ *     if self.level == 10 or self.level == 20 or self.level == 36 or
+ *        (self.level > 50 and (self.level - 6) % 30 == 0) then
+ *
+ * THE FOURTH CLAUSE IS DELIBERATELY NOT PORTED. It fires past level 50, which
+ * is this game's cap — a branch that can never be taken is a line nobody can
+ * test. The three that matter are here; the day a cap moves past 50, this
+ * comment is the note that a fourth exists.
+ *
+ * ═══ THREE POINTS IN A CAREER, AND THE SCARCITY IS THE MECHANIC ═══
+ * A category point buys a WHOLE DISCIPLINE — six talents nobody starts with.
+ * Three across fifty levels is what makes which one a build decision rather
+ * than a shopping list, and it is why upstream spends them so rarely.
+ */
+export const CATEGORY_POINT_LEVELS: readonly number[] = Object.freeze([10, 20, 36]);
+
+/** Category points granted BY reaching exactly this level. 0 or 1. */
+export function categoryPointsForLevel(level: number): number {
+  return CATEGORY_POINT_LEVELS.includes(level) ? 1 : 0;
+}
+
+/** Every category point a character of this level has ever been granted. */
+export function totalCategoryPointsAtLevel(level: number): number {
+  let total = 0;
+  for (const at of CATEGORY_POINT_LEVELS) {
+    if (level >= at) total += 1;
+  }
+  return total;
+}
+
 export function genericPointsForLevel(level: number): number {
   if (level <= 1) return 0;
   // Actor.lua:3750 — the flat point, then :3752 takes it back on every fifth.

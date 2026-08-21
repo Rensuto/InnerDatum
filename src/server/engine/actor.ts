@@ -526,6 +526,19 @@ type ActorCommon = {
    * one; see `CharacterFile.hotbar`.
    */
   hotbar?: readonly (string | null)[];
+  /**
+   * WHICH LOCKED TREES THIS CHARACTER HAS BOUGHT. Tree ids, and absent is none.
+   *
+   * ON THE BODY, exactly like `keybinds` and `hotbar`, and for the first of
+   * their two reasons: `snapshotPlayers` runs over bodies rather than sessions,
+   * so this is where the save layer can see it.
+   *
+   * THE SHEET IS DERIVED FROM IT AND NEVER THE OTHER WAY ROUND. Unlocking
+   * appends the tree's talents to `TalentSheet.passives` at rank 0, and a
+   * reconnect rebuilds that sheet from scratch — so if this list were not the
+   * authority, a returning player would lose the discipline they paid for.
+   */
+  unlockedTrees?: readonly string[];
 
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.
@@ -706,6 +719,21 @@ export type PlayerActor = ActorCommon & {
    * point. Splitting the pools is the other half of that fix.
    */
   unspentGenerics: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   CATEGORY POINTS IN HAND — `unused_talents_types` (Actor.lua:173).
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A THIRD CURRENCY, and it buys something the other two cannot: a whole
+   * discipline nobody starts with. Three arrive in a career, at levels 10, 20
+   * and 36 — see `CATEGORY_POINT_LEVELS`.
+   *
+   * SEPARATE FROM `unspentPoints` FOR THE REASON `unspentGenerics` IS: a
+   * currency that could be spent on either thing is one currency wearing two
+   * names, and the split is what stops three category points being cashed in
+   * for three talent ranks.
+   */
+  unspentCategories: number;
   /**
    * ATTRIBUTE POINTS IN HAND. ToME's `unused_stats` (`Actor.lua:3748`), three a
    * level and freely assignable.
@@ -1176,6 +1204,7 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     xp: 0,
     unspentPoints: 0,
     unspentGenerics: 0,
+    unspentCategories: 0,
     // BORN WITH NONE, exactly like the talent points above: a level-1 character
     // has been granted nothing yet (`statPointsForLevel` answers 0 at 1), and
     // the class sheet is where their starting attributes already live.

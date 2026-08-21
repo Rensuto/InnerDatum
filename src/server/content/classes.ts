@@ -99,6 +99,7 @@ import { lineOfEnquiry } from '../talents/line_of_enquiry.ts';
 import { workingFast } from '../talents/working_fast.ts';
 import { causticLoad, concussiveLoad, frostLoad } from '../talents/loads.ts';
 import { fullBandolier, practisedHands, steadyPour } from '../talents/load_passives.ts';
+import { LEVERAGE } from '../talents/leverage.ts';
 import { contingencies } from '../talents/contingencies.ts';
 import { scorchedCoat } from '../talents/scorched_coat.ts';
 import { seenWorse } from '../talents/seen_worse.ts';
@@ -666,6 +667,16 @@ export function classForJoin(savedClassId: string | null, rotation: number): Cla
  * same six talents would trip exactly that guard, so the sharing is expressed
  * here instead of by copying the talents three times with mangled ids.
  */
+/**
+ * EVERY TALENT THAT LIVES IN A LOCKED TREE — the catalogue, not a grant.
+ *
+ * DELIBERATELY NOT PART OF `GENERIC_PASSIVES`. That list is what every
+ * character carries; this is what they may buy. Merging them would hand every
+ * locked tree to everybody on the day it was authored, which is the one thing
+ * the lock exists to prevent.
+ */
+export const ALL_LOCKED_TALENTS: readonly Talent[] = Object.freeze([...LEVERAGE]);
+
 export const GENERIC_PASSIVES: readonly Talent[] = Object.freeze([
   // ─── NIGHTSHIFT, the conditional half. See `generic/nightshift`. ───
   secondWind,
@@ -695,6 +706,12 @@ export function allTalents(): readonly Talent[] {
   return [
     ...CLASSES.flatMap((definition) => [...definition.loadout, ...definition.passives]),
     ...GENERIC_PASSIVES,
+    // AND THE LOCKED ONES, WHICH NO CLASS OWNS AND NOBODY STARTS WITH. The
+    // same correction this docblock already records, one tree later: a talent
+    // that ships is a talent that ships, whether or not a character can reach
+    // it today. Leaving them out made `generic/leverage` read as an EMPTY tree
+    // to every test that walks this list.
+    ...ALL_LOCKED_TALENTS,
   ];
 }
 
@@ -702,6 +719,10 @@ export function registerAllTalents(): TalentRegistry {
   const registry = createTalentRegistry();
   // THE SHARED SIX FIRST, AND EXACTLY ONCE. See `GENERIC_PASSIVES`.
   for (const talent of GENERIC_PASSIVES) registry.register(talent);
+  // AND THE LOCKED ONES. The registry holds every talent that EXISTS; whether a
+  // given body may reach one is the SHEET's question, and `sheetForClass`
+  // answers it from `PlayerActor.unlockedTrees`.
+  for (const talent of ALL_LOCKED_TALENTS) registry.register(talent);
   for (const definition of CLASSES) {
     for (const talent of definition.loadout) registry.register(talent);
     // THE PASSIVES REGISTER TOO. They are looked up by id exactly as the four
@@ -739,7 +760,38 @@ export function createContentTalentEngine(): TalentEngine {
  * well would be a second way to make a sheet, and the second way is the one
  * that forgets a rule.
  */
-export function sheetForClass(definition: ClassDef): TalentSheet {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY TALENT IN A LOCKED TREE THIS CHARACTER HAS BOUGHT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A locked tree is not in `GENERIC_PASSIVES` — that is what "locked" means, and
+ * it is why a character who has never spent a category point cannot see one in
+ * their panel or spend a talent point in it. Unlocking appends its talents here,
+ * at rank 0 like every other unlearned talent.
+ *
+ * DERIVED FROM THE BODY'S LIST ON EVERY SHEET BUILD, never accumulated: the
+ * sheet is rebuilt from scratch on reconnect and on class change, so
+ * `PlayerActor.unlockedTrees` has to be the authority or a returning player
+ * loses the discipline they paid three levels for.
+ *
+ * AN UNKNOWN ID CONTRIBUTES NOTHING. A tree this build deleted, or a save from a
+ * branch that had one we do not, must not stop somebody playing — the same
+ * repair-never-reject doctrine the persistence layer applies to everything else.
+ */
+function unlockedTalents(unlocked: readonly string[]): readonly Talent[] {
+  const open = new Set(unlocked);
+  return ALL_LOCKED_TALENTS.filter((talent) => open.has(talent.tree));
+}
+
+export function sheetForClass(
+  definition: ClassDef,
+  /**
+   * WHICH LOCKED TREES THIS BODY HAS BOUGHT. Defaulted to none, so every
+   * fixture and every existing caller builds exactly the sheet it built before.
+   */
+  unlocked: readonly string[] = [],
+): TalentSheet {
   return createTalentSheet({
     classId: definition.id,
     loadout: definition.loadout.map((talent) => talent.id),
@@ -752,7 +804,9 @@ export function sheetForClass(definition: ClassDef): TalentSheet {
      * `passivesOf` projection and `refreshPassives` — gets them for free without
      * a second list to keep in step.
      */
-    passives: [...definition.passives, ...GENERIC_PASSIVES].map((talent) => talent.id),
+    passives: [...definition.passives, ...GENERIC_PASSIVES, ...unlockedTalents(unlocked)].map(
+      (talent) => talent.id,
+    ),
     /**
      * AND THE FOUR IT IS BORN WITH. Everything else on the two lines above is
      * seeded at rank 0 — in the tree, in the panel, and not yet learned.

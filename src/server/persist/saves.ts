@@ -595,6 +595,25 @@ export type CharacterFile = {
    */
   readonly hotbar?: readonly (string | null)[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHICH LOCKED DISCIPLINES THIS CHARACTER BOUGHT. Tree ids.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A category point is the scarcest thing in the game — three in fifty levels,
+   * and nothing refunds one. This field is the only record that one was spent:
+   * the SHEET is rebuilt from scratch on every reconnect and every class change,
+   * so a discipline recorded only there would vanish the first time somebody
+   * closed the tab, taking three levels of progress with it.
+   *
+   * IDS ARE NOT VALIDATED, exactly as `hotbar`'s are not. This layer has no tree
+   * table and must not grow one; a tree this build no longer has comes back
+   * verbatim and `sheetForClass` contributes nothing for it, which is the
+   * honest behaviour — the day it returns, so does the discipline.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly unlockedTrees?: readonly string[];
+  /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
@@ -806,6 +825,13 @@ const BIRTH_MONEY = 15;
  * diagnose from either side. These bound a hostile file and nothing else.
  */
 const HOTBAR_MAX_SLOTS = 32;
+/**
+ * The most disciplines a file may claim. Three category points in a career, so
+ * this is loose by an order of magnitude on purpose: it bounds a hostile file
+ * and nothing else, and a cap that tracked the grant exactly would silently
+ * truncate the day a fourth point was added.
+ */
+const UNLOCKED_MAX = 16;
 const HOTBAR_ID_MAX_CHARS = 64;
 
 const BIRTH_TALENT_POINTS = 1;
@@ -943,6 +969,25 @@ export type CharacterInit = {
    */
   readonly hotbar?: readonly (string | null)[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHICH LOCKED DISCIPLINES THIS CHARACTER BOUGHT. Tree ids.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A category point is the scarcest thing in the game — three in fifty levels,
+   * and nothing refunds one. This field is the only record that one was spent:
+   * the SHEET is rebuilt from scratch on every reconnect and every class change,
+   * so a discipline recorded only there would vanish the first time somebody
+   * closed the tab, taking three levels of progress with it.
+   *
+   * IDS ARE NOT VALIDATED, exactly as `hotbar`'s are not. This layer has no tree
+   * table and must not grow one; a tree this build no longer has comes back
+   * verbatim and `sheetForClass` contributes nothing for it, which is the
+   * honest behaviour — the day it returns, so does the discipline.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly unlockedTrees?: readonly string[];
+  /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
@@ -1013,6 +1058,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     equipped: init.equipped,
     keybinds: init.keybinds,
     hotbar: init.hotbar,
+    unlockedTrees: init.unlockedTrees,
     zoom: init.zoom,
     explored: init.explored,
     // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
@@ -1595,6 +1641,44 @@ function parseZoom(value: unknown, problems: string[]): number | undefined {
  * BOUNDED BY LENGTH AND BY STRING SIZE, and by nothing else. Membership is the
  * client's question: this layer has no talent registry and must not grow one.
  */
+/**
+ * The disciplines this character bought, repaired rather than rejected.
+ *
+ * BOUNDED BY COUNT AND BY STRING SIZE and by nothing else — membership is the
+ * content layer's question. A junk entry is DROPPED rather than repaired to
+ * something, because unlike a hotbar slot there is no neutral value: a tree id
+ * is either a discipline or it is nothing.
+ */
+function parseUnlockedTrees(value: unknown, problems: string[]): readonly string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    problems.push('unlockedTrees: not an array — dropped, no bought disciplines restored');
+    return undefined;
+  }
+  const out: string[] = [];
+  let dropped = 0;
+  for (const entry of value) {
+    if (out.length >= UNLOCKED_MAX) {
+      dropped += 1;
+      continue;
+    }
+    const id = asString(entry);
+    if (id === null || id === '' || id.length > HOTBAR_ID_MAX_CHARS) {
+      dropped += 1;
+      continue;
+    }
+    // A DUPLICATE IS A FILE PROBLEM, not a second discipline. Silently unique
+    // rather than reported: it costs the player nothing and the log line would
+    // be noise on a load that is otherwise fine.
+    if (!out.includes(id)) out.push(id);
+  }
+  // SUMMARISED, NEVER PER ENTRY — `parseKeybinds` sets out why at length.
+  if (dropped > 0) {
+    problems.push(`unlockedTrees: ${String(dropped)} unusable entries dropped`);
+  }
+  return out;
+}
+
 function parseHotbar(value: unknown, problems: string[]): readonly (string | null)[] | undefined {
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value)) {
@@ -1851,6 +1935,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       equipped,
       keybinds: parseKeybinds(doc.keybinds, problems),
       hotbar: parseHotbar(doc.hotbar, problems),
+      unlockedTrees: parseUnlockedTrees(doc.unlockedTrees, problems),
       zoom: parseZoom(doc.zoom, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
@@ -2983,6 +3068,25 @@ export type SavedPrefs = {
    * for why it is per character and why the ids are not validated here.
    */
   readonly hotbar?: readonly (string | null)[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHICH LOCKED DISCIPLINES THIS CHARACTER BOUGHT. Tree ids.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A category point is the scarcest thing in the game — three in fifty levels,
+   * and nothing refunds one. This field is the only record that one was spent:
+   * the SHEET is rebuilt from scratch on every reconnect and every class change,
+   * so a discipline recorded only there would vanish the first time somebody
+   * closed the tab, taking three levels of progress with it.
+   *
+   * IDS ARE NOT VALIDATED, exactly as `hotbar`'s are not. This layer has no tree
+   * table and must not grow one; a tree this build no longer has comes back
+   * verbatim and `sheetForClass` contributes nothing for it, which is the
+   * honest behaviour — the day it returns, so does the discipline.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly unlockedTrees?: readonly string[];
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *

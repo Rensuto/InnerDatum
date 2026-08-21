@@ -25,6 +25,7 @@ import { startOps } from './ops/routes.ts';
 
 import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
 import { checkTier } from '../shared/tiers.ts';
+import { treeById } from './content/talent-trees.ts';
 import { PLAYER_RANK, maxLifeFor } from '../shared/leveling.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
 import {
@@ -1186,6 +1187,63 @@ export function buildServer() {
      * A ONE-LINE FORWARD ON PURPOSE. The instant this grows a second statement
      * there are two answers to "how big is this body" and they will disagree.
      */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * BUY A LOCKED DISCIPLINE — the write half. See `TurnEngine.unlockTree`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE BODY'S LIST IS THE AUTHORITY AND THE SHEET IS DERIVED FROM IT. The
+     * sheet is rebuilt from scratch on reconnect and on class change, so a
+     * discipline recorded only on the sheet would be lost the first time
+     * somebody closed the tab — three levels of progress, silently.
+     *
+     * SO BOTH ARE WRITTEN, IN THAT ORDER: the list first, because
+     * `sheetForClass` reads it, and then a fresh sheet built from it. Appending
+     * to the live sheet instead would work today and diverge the first time
+     * `sheetForClass` learned to do anything else with the list.
+     *
+     * THE POINTS SURVIVE THE REBUILD. `applyTalentPoints` is what puts a saved
+     * spread back, and a rebuild here without it would reset every rank the
+     * character had bought — so the ranks are read off the OLD sheet and written
+     * onto the new one before it is attached.
+     */
+    unlockTree: (actorId: string, treeId: string): boolean => {
+      const body = realms.realmOf(actorId)?.world.getActor(actorId) ?? world.getActor(actorId);
+      if (body === undefined || !isPlayer(body) || body.classId === undefined) return false;
+      const definition = classById(body.classId);
+      if (definition === undefined) return false;
+
+      const tree = treeById(treeId);
+      // NOT A TREE, NOT LOCKED, OR ALREADY BOUGHT — three different mistakes
+      // with one answer, because the caller's job in every case is to refuse
+      // without charging. The SENTENCE is the gateway's; this is the write.
+      if (tree === undefined || tree.locked !== true) return false;
+      const already = body.unlockedTrees ?? [];
+      if (already.includes(treeId)) return false;
+
+      const previous = talentEngine.sheetOf(actorId);
+      const opened = [...already, treeId];
+      const sheet = sheetForClass(definition, opened);
+      if (previous !== undefined) {
+        // EVERY RANK THE CHARACTER HAD, CARRIED ACROSS. See the docblock.
+        for (const [id, rank] of previous.points) {
+          if (sheet.points.has(id)) sheet.points.set(id, rank);
+        }
+        // AND THE STANCES THEY WERE HOLDING, for the same reason: a discipline
+        // bought mid-fight must not put a player's methods down.
+        for (const id of previous.sustained) {
+          if (sheet.points.has(id)) sheet.sustained.add(id);
+        }
+        sheet.resource.value = previous.resource.value;
+        sheet.ap = previous.ap;
+        sheet.mp = previous.mp;
+      }
+      body.unlockedTrees = opened;
+      talentEngine.attach(actorId, sheet);
+      refreshPassives(actorId);
+      return true;
+    },
+
     refreshBody: (actorId: string): void => {
       refreshPassives(actorId);
     },
