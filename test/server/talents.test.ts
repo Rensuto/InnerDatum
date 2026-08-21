@@ -401,7 +401,19 @@ describe('the loadout cap — PLAN.md § 5', () => {
     // shared trees add none — every talent in `generic/groundwork` and
     // `generic/nightshift` is passive, which is what a training category is,
     // and THAT is the property this line is really about.
-    expect(everyTalent).toHaveLength(CLASSES.flatMap((c) => c.loadout).length);
+    /**
+     * EVERY LOADOUT ENTRY THAT RESOLVES. Not every loadout entry: the Inspector's
+     * two stances sit on the bar and have no `onUse` at all, because a sustain
+     * is toggled rather than resolved — the gateway tries `toggleSustain` first
+     * and only falls through to `submitTalent` when it answers `undefined`.
+     *
+     * The property is unchanged and is the one that matters: every ACTIVE a
+     * class owns is reachable through `canUseTalent`, and nothing is registered
+     * that belongs to no loadout.
+     */
+    expect(everyTalent).toHaveLength(
+      CLASSES.flatMap((c) => c.loadout).filter((talent) => talent.onUse !== undefined).length,
+    );
     /**
      * …AND THE REGISTRY AS A WHOLE IS EVERY AUTHORED TALENT — COUNTED, NOT
      * SPELLED. This line read `toHaveLength(42)` and 42 was correct for as

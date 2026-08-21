@@ -353,6 +353,7 @@ const CASES: readonly ScalingCase[] = [
   singleTargetCase('backdraft', ALCHEMIST, 'damage dealt', '130%', 2),
   singleTargetCase('shin_crack', WATCHMAN, 'damage dealt', '80%', 1),
   singleTargetCase('pistol_whip', INSPECTOR, 'damage dealt', '50%', 1),
+  singleTargetCase('line_of_enquiry', INSPECTOR, 'damage dealt', '40%', 4),
 
   {
     /**
@@ -537,6 +538,44 @@ const CASES: readonly ScalingCase[] = [
       );
       const mark = f.engine.effectOn('husk', TalentEffect.Marked);
       return { observed: mark?.power ?? 0, result, fixture: f };
+    },
+  },
+  {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE EXECUTE. Its rank moves a multiplier that is ALSO a function of the
+     * target, which is why it cannot be a `singleTargetCase`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE HUSK IS HURT FIRST, TO A FIXED FRACTION. Measuring against a full
+     * one would exercise the floor alone — the deliberately poor multiplier
+     * that makes opening with this a bad idea — and the case would pass while
+     * saying nothing about the half of the talent that is interesting.
+     *
+     * A FIXED FRACTION AND NOT A FIXED HP, because `multFor` reads
+     * `hp / maxHp`: pinning the numerator would make this case's answer depend
+     * on the husk's life curve, and it would start drifting the next time
+     * anything about monster scaling moved.
+     */
+    bare: 'closed_file',
+    moves: 'damage dealt to a target at a fifth of its health',
+    authored: '40%',
+    cast: (level) => {
+      const f = fixture();
+      const inspector = f.add(INSPECTOR, 'caster', 5, 5);
+      const husk = f.addMonster('husk', 9, 5);
+      husk.hp = Math.max(1, Math.round(husk.maxHp * 0.2));
+      f.setLevel('caster', 'closed_file', level);
+      f.refill('caster');
+      const before2 = husk.hp;
+      const result = useTalent(
+        f.engine,
+        inspector,
+        talentId('closed_file'),
+        { x: husk.x, y: husk.y, actorId: husk.id },
+        f.ctx,
+      );
+      return { observed: before2 - husk.hp, result, fixture: f };
     },
   },
   {

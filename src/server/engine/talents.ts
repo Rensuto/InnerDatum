@@ -803,10 +803,26 @@ export function toggleSustain(
 ): SustainToggle {
   const talent = engine.registry.get(talentId);
   if (talent?.sustain === undefined) return { ok: false, reason: SustainRefusal.Unknown };
-  // A BODY MAY ONLY SUSTAIN WHAT IT OWNS. `points` holds every talent this sheet
-  // has, loadout and passives alike, which is the same list `raiseTalentPoint`
-  // spends against.
-  if (!sheet.points.has(talentId)) return { ok: false, reason: SustainRefusal.Unknown };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BODY MAY ONLY SUSTAIN WHAT IT HAS LEARNED — AND THIS READ `points.has`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * That was right for exactly as long as PRESENCE in the map meant learned:
+   * `createTalentSheet` seeded every loadout and passive id at rank 1, so a key
+   * in `points` was a talent the character had.
+   *
+   * `ClassDef.birthTalents` made presence mean OWNED. A class is born knowing
+   * four of its talents and the rest sit at rank 0 — in the tree, in the panel,
+   * unlearned — so `has` is true for all of them and a player could raise a
+   * stance they had never bought a point of. It would have worked, folded its
+   * contribution, and reserved its Focus.
+   *
+   * IT IS THE SAME CORRECTION `canUseTalent` TOOK, one seam over, and it was
+   * found by authoring the first sustain in the game rather than by a test —
+   * which is the argument for writing content against a system nobody has used.
+   */
+  if (getTalentLevelRaw(sheet, talentId) < 1) return { ok: false, reason: SustainRefusal.Unknown }; // RAW: has a point been spent here at all — a mastery multiplier cannot turn "never learned" into "learned".
 
   if (sheet.sustained.has(talentId)) {
     sheet.sustained.delete(talentId);

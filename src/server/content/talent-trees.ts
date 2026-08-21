@@ -153,6 +153,38 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     blurb: 'Being somewhere else by the time it looks.',
   },
   {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE INSPECTOR'S THIRD, AND THE FIRST TREE IN THE GAME WITH A STANCE IN IT.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `index/marksmanship` is damage at range and `index/fieldcraft` is getting
+     * away. Both are good and both assume the gap already exists — nothing this
+     * class owned was about KEEPING one, or about how it was working a room
+     * rather than what it was shooting at.
+     *
+     * ═══ IT EXISTS BECAUSE OF A MEASURED PROBLEM ═══
+     * `tools/first-fight.mjs`, twenty-four openings per class: the Watchman
+     * wins 24/24 in ten turns, the Alchemist 24/24 in six, and THE INSPECTOR
+     * WINS 22/24 IN TWENTY-THREE — the two losses being stalls, kiting
+     * something it cannot kill fast enough in a room too small to kite in.
+     * Line of Enquiry fixes the front of that fight and Closed File the back.
+     *
+     * ═══ AND IT IS WHERE THE STANCE SYSTEM FINALLY GETS USED ═══
+     * `Talent.sustain`, `sustainSlot`, `toggleSustain`, `sheet.sustained`,
+     * `PassiveView.isSustained`, the gateway's toggle branch and the wire's
+     * `sustained` flag were all built, all correct, and reachable by NOTHING —
+     * `TalentKind.Sustained` said *"Nothing implements this yet"* in as many
+     * words. Careful Method and Working Fast share one slot, so an Inspector is
+     * always working a scene one way or the other and never both.
+     */
+    id: 'index/method',
+    mastery: 1,
+    name: 'Method',
+    classId: ClassId.Inspector,
+    blurb: 'How you are working this one, and what that is worth.',
+  },
+  {
     id: 'ashwick/reagents',
     mastery: 1,
     name: 'Reagents',

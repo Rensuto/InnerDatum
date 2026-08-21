@@ -91,6 +91,12 @@ import { knownFace } from '../talents/known_face.ts';
 import { moveAlong } from '../talents/move_along.ts';
 import { onMyWhistle } from '../talents/on_my_whistle.ts';
 import { riotLine } from '../talents/riot_line.ts';
+import { carefulMethod } from '../talents/careful_method.ts';
+import { closedFile } from '../talents/closed_file.ts';
+import { coldCase } from '../talents/cold_case.ts';
+import { corroboration } from '../talents/corroboration.ts';
+import { lineOfEnquiry } from '../talents/line_of_enquiry.ts';
+import { workingFast } from '../talents/working_fast.ts';
 import { contingencies } from '../talents/contingencies.ts';
 import { scorchedCoat } from '../talents/scorched_coat.ts';
 import { seenWorse } from '../talents/seen_worse.ts';
@@ -449,10 +455,40 @@ export const INSPECTOR: ClassDef = {
     minRange: INSPECTOR_MIN_RANGE,
     damageType: DamageType.Physical,
   },
-  loadout: [revolverShot, snipersMark, scattershot, fogStep, sigil, pistolWhip],
+  loadout: [
+    revolverShot,
+    snipersMark,
+    scattershot,
+    fogStep,
+    sigil,
+    pistolWhip,
+    /**
+     * ─── METHOD, the third tree. See `index/method`. ───
+     *
+     * THE TWO STANCES ARE IN THE LOADOUT AND NOT IN `passives`, which is not
+     * obvious and is correct: a sustain is TOGGLED, and the gateway toggles it
+     * through the ordinary `talent` intent — the same key, because upstream has
+     * no separate toggle verb either and two kinds of identical-looking button
+     * is worse than one. So a stance needs a slot on the bar.
+     */
+    carefulMethod,
+    workingFast,
+    lineOfEnquiry,
+    closedFile,
+  ],
   /** The round, the close answer to something on top of you, a steady hand — and the kit. See `ClassDef.birthTalents`. */
   birthTalents: [revolverShot, pistolWhip, steadyHands, issuedKit],
-  passives: [coldReading, steadyHands, contingencies, calledShot, powderDiscipline, boltHole],
+  passives: [
+    // ─── METHOD. See `index/method`. ───
+    corroboration,
+    coldCase,
+    coldReading,
+    steadyHands,
+    contingencies,
+    calledShot,
+    powderDiscipline,
+    boltHole,
+  ],
   // A shot who can also disappear.
   masteries: { 'index/marksmanship': SIGNATURE, 'index/fieldcraft': SUPPORTING },
 };

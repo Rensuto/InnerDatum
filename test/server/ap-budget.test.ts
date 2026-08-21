@@ -90,11 +90,31 @@ describe('the 6-AP round admits a decision, for every class', () => {
     // ward_rush.ts calls itself "the cheapest engage in the game" and derives its
     // cooldown from the two-action round. A reprice that made something cheaper
     // would make that sentence false in a file that reasons from it.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AMONG THINGS THAT *RESOLVE*. A STANCE COSTS NOTHING AND IS NOT AN ENGAGE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This walked the whole loadout, which was the same list while every entry
+     * on it was an active that resolved. The Inspector's Method tree put two
+     * SUSTAINS on the bar — Careful Method and Working Fast — and a stance
+     * deliberately costs 0 AP: charging for one would mean putting it up costs a
+     * turn's action, and a player would simply never change stance mid-fight,
+     * which is the one moment the choice is interesting. A stance pays in
+     * `sustain.reserve`, off the pool's ceiling.
+     *
+     * So a 0 here is not a reprice that undercut Ward Rush; it is a different
+     * kind of thing being compared to it. Filtered on `onUse`, which is the
+     * field the engine itself dispatches on — the same rule
+     * `talent-scaling.test.ts` uses to decide what counts as an active.
+     */
     const engine = createContentTalentEngine();
     const all = CLASSES.flatMap((c) =>
       sheetForClass(c).loadout.flatMap((id) => {
         const t = engine.registry.get(id);
-        return t === undefined ? [] : [{ name: t.name, ap: t.cost.ap ?? 0 }];
+        return t === undefined || t.onUse === undefined
+          ? []
+          : [{ name: t.name, ap: t.cost.ap ?? 0 }];
       }),
     );
     const cheapest = Math.min(...all.map((t) => t.ap));
