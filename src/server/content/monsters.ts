@@ -1378,6 +1378,18 @@ const CLAW_BLEED_TURNS = 3;
 const CLAW_APPLY_POWER = 12;
 
 export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
+  /**
+   * WHAT MAKES AN ELITE AN ELITE. Until this, the Overwritten Husk was the
+   * common husk with better numbers — and a monster whose only difference is a
+   * bigger number is a normal monster wearing a ring.
+   *
+   * Breaching Blow persists after the creature dies, which is the shape an
+   * elite wants: the party has to decide whether to kill it FIRST, rather than
+   * whether to kill it harder.
+   *
+   * `MeleeChaser` at `attackRange: 1` against a 1.5-reach talent — it arrives.
+   */
+  talents: ['talent:breaching_blow'],
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['str', 'con'],
   id: 'index_husk_elite',
@@ -2171,6 +2183,19 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
  * defence whatsoever, which is exactly right — corner it and it dies.
  */
 export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
+  /**
+   * THE ONE CREATURE IN THE GAME THAT SPENDS ITS TURN DOING NO DAMAGE.
+   *
+   * Efface is a pure debuff and the Inquisitor is an elite `RangedKiter` with
+   * `attackRange: 9` — reach 7 sits comfortably inside that, so this is a
+   * talent it is actually in position to use, and kiting is already the
+   * counterplay its profile implements.
+   *
+   * It is the most dangerous thing in the bestiary precisely because nothing
+   * about it looks urgent: no damage numbers, no health bar moving, and four
+   * turns later every roll the party makes is worse.
+   */
+  talents: ['talent:efface'],
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['wil', 'mag'],
   id: 'index_inquisitor',

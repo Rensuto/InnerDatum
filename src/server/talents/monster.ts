@@ -36,26 +36,6 @@
  * with no referent.
  */
 
-import { combatTalentScale } from '../../shared/scale.ts';
-import { EffectId } from '../content/effects.ts';
-import { SetEffectOutcome } from '../engine/effects.ts';
-import type { SetEffectResult } from '../engine/effects.ts';
-import { combatPhysicalpower } from '../engine/derived.ts';
-import { DamageType } from '../engine/damage.ts';
-import {
-  Affinity,
-  TalentKind,
-  TalentRefusal,
-  TargetShape,
-  percent,
-  talentAttack,
-  talentDone,
-  talentId,
-  talentRefused,
-  targetActor,
-} from '../engine/talents.ts';
-import type { Talent } from '../engine/talents.ts';
-
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT MARKS A TALENT AS THE BESTIARY'S. The tree prefix, and it is a REAL
@@ -80,102 +60,44 @@ export function isMonsterTalent(talent: { readonly tree: string }): boolean {
   return talent.tree.startsWith(MONSTER_TREE_PREFIX);
 }
 
-/** FROZEN. Two of a creature's six, so it still has a round left to move in. */
-const CLUTCH_AP = 2;
-const CLUTCH_COOLDOWN = 5;
-
-/** How hard it bites, at a rank. Monsters are all rank 1 — see `ensureMonsterSheet`. */
-const DAMAGE_LOW = 0.5;
-const DAMAGE_HIGH = 1.1;
-const CURVE = 0.75;
-
-/** Weapon-damage multiplier at a rank. */
-export function clutchMult(level: number): number {
-  return combatTalentScale(level, DAMAGE_LOW, DAMAGE_HIGH, CURVE);
-}
-
-const SLOW_TURNS = 3;
-
-/** The three-branch log line. `move_along.ts` carries the whole argument. */
-function slowLine(name: string, landed: SetEffectResult | undefined): string[] {
-  if (landed === undefined) return [];
-  if (landed.outcome === SetEffectOutcome.Immune || landed.dur <= 0) {
-    return [`${name} pulls free.`];
-  }
-  return [`${name} is held (${String(landed.dur)} turns).`];
-}
+import { breachingBlow } from './breaching_blow.ts';
+import { efface } from './efface.ts';
+import { graspingHold } from './grasping_hold.ts';
+import type { Talent } from '../engine/talents.ts';
 
 /**
- * GRASPING HOLD — the Index Glut's, and the first talent a monster can use.
+ * THE SCALING CURVE EVERY CREATURE TALENT USES.
  *
- * "It does not want to hurt you. It wants you to stay."
- *
- * ═══ IT SLOWS RATHER THAN DAMAGING, WHICH IS THE POINT OF GIVING IT ONE ═══
- * A creature that hit harder would be a husk with different art. What a talent
- * should do is change the SHAPE of the fight — and a slow is the thing this
- * game had no monster answer to: every position talent a player has bought
- * (One at a Time, Braced, Riot Line, Cold Case, the whole of Legwork) assumes
- * they can choose where to stand.
- *
- * ═══ AND IT IS THE MIRROR OF THE PLAYER'S OWN LINE OF ENQUIRY ═══
- * That one is a poor shot that slows, priced so pressing it is a choice to
- * spend a turn on position. This is the same trade from the other side of the
- * board, which is what makes it legible: a player who has used one recognises
- * what just happened to them.
- *
- * ═══ MELEE REACH, AND THAT IS WHO GETS IT ═══
- * A ranged hold would make the kiting classes unplayable, so this reaches 1.5
- * and the creature has to arrive first. It was authored onto the Index Wraith,
- * which is a `RangedKiter` that never closes — offered to the AI every turn and
- * refused on range every turn, with nothing anywhere reporting a problem.
- *
- * The Glut is the creature it was actually describing: slow, armoured, and
- * carrying a docblock that already admitted *"a wall you can simply walk away
- * from is not a wall."* This is what stops you walking away.
+ * `combatTalentScale`'s fourth argument, shared from here so the three talent
+ * files cannot drift into three different curves. A creature's abilities should
+ * all sharpen at the same rate; nothing in the fiction distinguishes them.
  */
-export const graspingHold: Talent = {
-  id: talentId('grasping_hold'),
-  name: 'Grasping Hold',
-  // NO CLASS. `classId: null` is what a shared talent uses and is honest here
-  // for a different reason: this belongs to a creature, and no player can ever
-  // learn it — it is in no class's loadout and in no tree's contents.
-  classId: null,
-  tree: 'monster/index',
-  kind: TalentKind.Active,
-  iconId: 'icon_monster_grasping_hold',
-  cost: { ap: CLUTCH_AP },
-  cooldownTurns: CLUTCH_COOLDOWN,
-  targeting: {
-    shape: TargetShape.Single,
-    range: 1.5,
-    minRange: 0,
-    radius: 0,
-    requiresLos: true,
-    affinity: Affinity.Hostile,
-  },
-  damageType: DamageType.Physical,
+export const MONSTER_CURVE = 0.75;
 
-  onUse: (ctx, self, target) => {
-    const victim = targetActor(ctx.world, target);
-    if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
-
-    const hit = talentAttack(ctx, self, victim, { mult: clutchMult(ctx.talentLevel) });
-    // A corpse cannot be held. The swing above still took its RNG draws, so the
-    // stream does not depend on whether it died first — the guarantee
-    // `lockdown.ts` and `damage.ts` both make for the same replay reason.
-    if (!victim.alive) return talentDone([hit]);
-
-    const landed = ctx.status?.(victim, EffectId.Slowed, SLOW_TURNS, {
-      applyPower: combatPhysicalpower(self.combat ?? {}),
-      srcId: self.id,
-    });
-    return talentDone([hit], slowLine(victim.name, landed));
-  },
-
-  describe: (_self, level) =>
-    `Takes hold for ${percent(clutchMult(level))} weapon damage and slows for ` +
-    `${String(SLOW_TURNS)} turns (physical save).`,
-};
-
-/** Every talent the bestiary owns. The registry is built from this. */
-export const MONSTER_TALENTS: readonly Talent[] = Object.freeze([graspingHold]);
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY TALENT THE BESTIARY OWNS. The registry is built from this.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ ONE TALENT PER FILE, WHICH IS A PROJECT RULE AND NOT A PREFERENCE ═══
+ * These three lived in this one file for an afternoon and it broke something
+ * immediately. `tools/art-needs.mjs` reads a talent module WHOLE, because a
+ * talent module is one talent and its `iconId` and its `describe` sit further
+ * apart than any window would span:
+ *
+ *     const perFile = rel.includes('/talents/') …
+ *     const window  = perFile ? text : text.slice(…)
+ *
+ * Three talents in one file meant it took the FIRST name it found, and briefed
+ * every icon in the file to the artist as "Grasping Hold". The art for this
+ * project is drawn by hand from those briefs, so that is a wrongly drawn icon
+ * rather than a cosmetic slip in a tool.
+ *
+ * The tool was right and the file was wrong. Splitting fixed the briefs with no
+ * change to the tool at all.
+ */
+export const MONSTER_TALENTS: readonly Talent[] = Object.freeze([
+  graspingHold,
+  breachingBlow,
+  efface,
+]);

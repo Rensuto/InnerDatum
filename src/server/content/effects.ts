@@ -76,6 +76,21 @@ export const EffectId = {
   Stunned: 'effect:stunned',
   Bleeding: 'effect:bleeding',
   Slowed: 'effect:slowed',
+  /**
+   * ═══ THESE TWO ARE THE CONTENT HALF OF SOMETHING ALREADY BUILT ═══
+   * `StatusFlags.scoured` and `StatusFlags.breached` have been in
+   * engine/derived.ts since the defensive maths was ported — `finish()` divides
+   * accuracy, defence, all three powers and all three saves by 1.2 for a scoured
+   * body, and `combatArmorHardiness` halves the bound for a breached one, each
+   * with its upstream line number. Both were tested. Both were unreachable,
+   * because no effect in the game set either flag.
+   *
+   * That is the ninth time this codebase has found a finished system with no
+   * content pointed at it. The expensive half was already paid for; these are
+   * the cheap half.
+   */
+  Effaced: 'effect:effaced',
+  Breached: 'effect:breached',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -495,12 +510,117 @@ export const SLOWED: EffectDef = Object.freeze({
   parameters: { power: SLOW_POWER },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EFFACED — everything you do, done slightly worse.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 data/timed_effects/physical.lua:28-46,
+ * `ITEM_ANTIMAGIC_SCOURED` — the effect that sets the `scoured` attribute
+ * upstream, and the only thing in the whole module that does:
+ *
+ *     activate = function(self, eff)
+ *         self:effectTemporaryValue(eff, "scoured", 1)
+ *     end,
+ *
+ * The engine half was already here. `finish()` in engine/derived.ts is the two
+ * lines every getter routes through, and its second line is
+ * `if (c.flags?.scoured === true) d = d / 1.2` — accuracy, defence, physical,
+ * spell and mind power, and all three saves, each citing Combat.lua:1359, 1371,
+ * 1380, 1388, 1396. Nothing set the flag, so none of it ever ran in play.
+ *
+ * ═══ ONE NUMBER, APPLIED EVERYWHERE, WHICH IS WHY IT READS AS DREAD ═══
+ * A 17% cut to a single stat is invisible. The same cut to EVERY roll you make
+ * and every roll you resist is a fight that has quietly stopped going your way,
+ * and a player who checks the badge finds out why. That breadth is exactly what
+ * makes it the right thing for a ranged elite to open with rather than close on.
+ *
+ * ═══ THE SUBTYPE IS UPSTREAM'S, NOT OURS ═══
+ * `acid` is a poor fit for an archive, and it stays because subtypes are what
+ * immunities match on. Inventing a stylish one nothing checks would make this
+ * effect unresistable by any future immunity that mirrors ToME's — which is the
+ * same silent-inertness this effect exists to fix.
+ */
+export const EFFACED: EffectDef = Object.freeze({
+  id: EffectId.Effaced,
+  displayName: 'Effaced',
+  description: 'Rubbed out at the edges. Every roll you make and every roll you resist is worse.',
+  // physical.lua:31 — `type = "physical"`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // physical.lua declares no `on_merge` → upstream replaces.
+  stackMode: StackMode.Refresh,
+  // physical.lua:32 — `subtype = { acid=true }`.
+  subtypes: ['acid'],
+  decrease: 1,
+  icon: 'icon_status_effaced',
+  modifiers: {
+    // The flag engine/derived.ts has been reading since the port. `finish()`
+    // divides by 1.2; there is no power parameter to scale, upstream or here.
+    scoured: true,
+  },
+} satisfies EffectDef);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BREACHED — your armour stops doing half of its job.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 data/timed_effects/magical.lua:3210-3235, `EFF_BREACH`:
+ * *"The target's defenses have been breached, reducing armor hardiness, stun,
+ * pin, blindness, and confusion immunity by 50%."*
+ *
+ * ═══ THE HARDINESS HALF ONLY, AND THAT IS THE WHOLE EFFECT HERE ═══
+ * Upstream also halves four immunities. This engine has no immunity attribute
+ * to halve — `SetEffectOutcome.Immune` is a boolean answer from the save roll,
+ * not a percentage anything could scale. Porting the other four would mean
+ * inventing a system to weaken, so they are stated as absent rather than
+ * silently dropped. The hardiness line is the one that already exists:
+ * `combatArmorHardiness` (engine/derived.ts) reads `c.flags?.breached` and
+ * multiplies by 0.5 AFTER the 0-100 bound, verbatim from Combat.lua:1334.
+ *
+ * ═══ AFTER THE BOUND MATTERS MORE THAN IT LOOKS ═══
+ * Hardiness is what fraction of a blow armour is allowed to touch, and it is
+ * clamped to 0-100 before this halving. Applying it after lets a breached body
+ * sit below the band's floor entirely, which is upstream's behaviour and the
+ * reason heavy armour does not merely get worse — it gets bypassed.
+ *
+ * MAGICAL CHANNEL, upstream's `type = "magical"`, so it is resisted by the save
+ * that has the least to do with how much armour you are wearing. Being
+ * overwritten is not something you shrug off by being sturdy.
+ */
+export const BREACHED: EffectDef = Object.freeze({
+  id: EffectId.Breached,
+  displayName: 'Breached',
+  description: 'Something got through. Armour turns away half of what it should.',
+  // magical.lua:3214 — `type = "magical"`.
+  type: SaveChannel.Magical,
+  status: EffectStatus.Detrimental,
+  // magical.lua:3219-3222 — `on_merge` sets `old_eff.dur = new_eff.dur`.
+  stackMode: StackMode.Refresh,
+  // magical.lua:3215 — `subtype = { temporal=true }`.
+  subtypes: ['temporal'],
+  decrease: 1,
+  icon: 'icon_status_breached',
+  modifiers: {
+    // Combat.lua:1334, via `combatArmorHardiness` — a 0.5 multiplier applied
+    // after the bound. The flag has been read by that getter all along.
+    breached: true,
+  },
+} satisfies EffectDef);
+
 // ---------------------------------------------------------------------------
 // The roster
 // ---------------------------------------------------------------------------
 
 /** Every MVP status, in a fixed order — for iteration that must be reproducible. */
-export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([STUNNED, BLEEDING, SLOWED]);
+export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
+  STUNNED,
+  BLEEDING,
+  SLOWED,
+  EFFACED,
+  BREACHED,
+]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */
 export const EFFECT_IDS: readonly string[] = Object.freeze(MVP_EFFECTS.map((def) => def.id));

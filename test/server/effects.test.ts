@@ -1106,22 +1106,65 @@ describe('dispel and housekeeping', () => {
 // 10. The content roster
 // ---------------------------------------------------------------------------
 
-describe('the three MVP statuses (game-design.md § 12)', () => {
-  it('ships exactly three, with the badges that are on disk', () => {
-    expect(EFFECT_IDS).toEqual([EffectId.Stunned, EffectId.Bleeding, EffectId.Slowed]);
+describe('the status roster (game-design.md § 12)', () => {
+  /**
+   * ═══ THE ROSTER IS PINNED IN ORDER, AND THE ORDER IS LOAD-BEARING ═══
+   * `MVP_EFFECTS` is iterated wherever iteration must be reproducible, and the
+   * ids double as the client's badge atlas keys. Appending is free; reordering
+   * or renaming is not, which is what this pins.
+   *
+   * It was three for the whole of the MVP and read "ships exactly three". The
+   * two additions are EFFACED and BREACHED — the content half of `scoured` and
+   * `breached`, two flags engine/derived.ts had been reading since the
+   * defensive maths was ported, with no effect anywhere setting either.
+   */
+  it('ships the roster in order, with the badges the client expects', () => {
+    expect(EFFECT_IDS).toEqual([
+      EffectId.Stunned,
+      EffectId.Bleeding,
+      EffectId.Slowed,
+      EffectId.Effaced,
+      EffectId.Breached,
+    ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
       'icon_status_bleeding',
       'icon_status_slowed',
+      'icon_status_effaced',
+      'icon_status_breached',
     ]);
   });
 
-  it('all three use the PHYSICAL save and all three are detrimental', () => {
+  /**
+   * ═══ ALL DETRIMENTAL, ALL TICKING DOWN AT ONE PER TURN ═══
+   * `decrease: 0` is a PERMANENT effect — legal for a sustain, a bug for a
+   * status — so this is the assertion that catches a status that never expires.
+   *
+   * THE SAVE CHANNEL IS NO LONGER UNIFORM, and that is a port fidelity matter
+   * rather than a loosening. Every status was physical while the roster was the
+   * three MVP ones; BREACHED is `type = "magical"` upstream (magical.lua:3214),
+   * and being overwritten is not something you shrug off by being sturdy. Each
+   * effect's channel is asserted against its own source below.
+   */
+  it('is entirely detrimental and entirely temporary', () => {
     for (const def of MVP_EFFECTS) {
-      expect(def.type).toBe(SaveChannel.Physical);
       expect(def.status).toBe(EffectStatus.Detrimental);
       expect(def.decrease).toBe(1);
     }
+  });
+
+  it('gives each status the save channel its source names', () => {
+    const channels = Object.fromEntries(MVP_EFFECTS.map((def) => [def.id, def.type]));
+    expect(channels).toEqual({
+      // The three MVP statuses — physical.lua throughout.
+      [EffectId.Stunned]: SaveChannel.Physical,
+      [EffectId.Bleeding]: SaveChannel.Physical,
+      [EffectId.Slowed]: SaveChannel.Physical,
+      // physical.lua:31 — `ITEM_ANTIMAGIC_SCOURED` is a physical/acid effect.
+      [EffectId.Effaced]: SaveChannel.Physical,
+      // magical.lua:3214 — `EFF_BREACH` is magical/temporal.
+      [EffectId.Breached]: SaveChannel.Magical,
+    });
   });
 
   it('validates clean', () => {

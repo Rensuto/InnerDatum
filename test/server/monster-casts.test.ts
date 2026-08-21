@@ -38,11 +38,12 @@ import { IntentKind } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
-import { INDEX_GLUT, monsterInit } from '../../src/server/content/monsters.ts';
+import { MONSTER_TEMPLATES, monsterInit } from '../../src/server/content/monsters.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
-import { graspingHold } from '../../src/server/talents/monster.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
 import type { SweepStep } from '../../src/server/engine/scheduler.ts';
+import type { World } from '../../src/server/world/world.ts';
 
 /** Long enough that a 40%-per-turn draw on a 5-turn cooldown is a certainty. */
 const TURNS = 40;
@@ -50,6 +51,9 @@ const MS_PER_PUMP = 100;
 
 /** Enough hit points that we are measuring a fight rather than a corpse. */
 const PLAYER_HP = 100_000;
+
+/** A mid-depth spawn, so level-scaled numbers resolve to something real. */
+const LEVEL = 5;
 
 /**
  * RUN THE FIGHT AND KEEP EVERY STEP THE MONSTERS TOOK.
@@ -66,7 +70,7 @@ const PLAYER_HP = 100_000;
  * Holding is also the honest test: the creature gets its chance to act while
  * the player does nothing to stop it.
  */
-function everyStep(world: ReturnType<typeof createWorld>, turns: number): SweepStep[] {
+function everyStep(world: World, turns: number): SweepStep[] {
   const barrier = createBarrier();
   const talents = talentRuntimeFor(createContentTalentEngine(), world);
   const steps: SweepStep[] = [];
@@ -81,71 +85,82 @@ function everyStep(world: ReturnType<typeof createWorld>, turns: number): SweepS
 }
 
 /**
- * A DETECTIVE AND A GLUT, TWO TILES APART.
+ * A DETECTIVE AND ONE CREATURE, TWO TILES APART, ON OPEN GROUND.
  *
- * The Glut rather than the wraith, and that is the second half of this file's
- * story. Grasping Hold was authored onto the Index Wraith, which is a
- * `RangedKiter` with `attackRange: 6` against a talent that reaches 1.5 — it
- * kites for a living and never closes, so the AI was offered the option every
- * turn and refused it on range every turn. The Glut is a `MeleeChaser` that
- * arrives, which is the only kind of creature this talent was ever about.
+ * Two tiles rather than adjacent because a kiter needs room to back off to its
+ * preferred range, and a melee chaser closes two tiles in one turn. Both kinds
+ * reach the distance their profile wants within the first few turns.
  */
-function standoff(seed: string): ReturnType<typeof createWorld> {
+function standoff(seed: string, template: MonsterTemplate): World {
   const world = createWorld(seed);
   const player = world.addPlayer('p1', 'Detective');
   player.maxHp = PLAYER_HP;
   player.hp = PLAYER_HP;
-  world.addMonster('w1', monsterInit(INDEX_GLUT, { x: player.x + 2, y: player.y }, 5));
+  world.addMonster('m1', monsterInit(template, { x: player.x + 2, y: player.y }, LEVEL));
   return world;
 }
 
-describe('a creature casts its talent in a real fight', () => {
-  /**
-   * THE BODY CARRIES WHAT THE TEMPLATE NAMED.
-   *
-   * This is the assertion that was false while everything else was true, and it
-   * is one line because the bug was one missing line. `createMonsterActor`
-   * constructs field by field — the right call, since a spread would put
-   * anything `content/` invented onto a live actor — so a field it does not
-   * name is dropped in silence with nothing to typecheck against.
-   */
-  it('puts the template talents on the actor', () => {
-    const world = standoff('carry');
-    const glut = world.getActor('w1');
-    expect(glut?.kind).toBe('monster');
-    expect(glut !== undefined && 'talents' in glut ? glut.talents : undefined).toEqual([
-      graspingHold.id,
-    ]);
+/** Every creature the bestiary has actually armed. */
+const ARMED = MONSTER_TEMPLATES.filter((template) => template.talents !== undefined);
+
+describe('every armed creature casts, in a real fight', () => {
+  it('has creatures to test', () => {
+    expect(ARMED.length).toBeGreaterThan(0);
   });
 
   /**
-   * AND IT ACTUALLY PRESSES IT. The whole point.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ASSERTION THIS WHOLE FILE IS FOR, RUN ONCE PER ARMED CREATURE.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Nothing here is stubbed: the real content engine, the real AI, the real
-   * scheduler, the real sheet attach. If any single link in that chain is cold,
-   * this fails — which is exactly what it is for.
+   * Nothing is stubbed: the real content engine, the real AI, the real
+   * scheduler, the real lazy sheet attach. If any link is cold, this fails.
+   *
+   * ═══ AND IT CATCHES THE MISTAKE THAT IS NOT A BUG ═══
+   * Grasping Hold was authored onto the Index Wraith — a `RangedKiter` with
+   * `attackRange: 6`, against a talent reaching 1.5. Every part worked. The AI
+   * was offered the option every turn and `canUseTalent` refused it on range
+   * every turn, and nothing anywhere reported a problem, because a creature
+   * that CANNOT use its talent is indistinguishable from one that chose not to.
+   *
+   * Iterating `MONSTER_TEMPLATES` rather than naming creatures is what makes
+   * that permanent: arm a creature with something it can never be in position
+   * to use, and this test says so on the next run.
    */
-  it('emits a talent step, from the creature, for the talent it knows', () => {
-    const steps = everyStep(standoff('cast'), TURNS);
-    const casts = steps.filter((step) => step.t === 'talent');
-    expect(casts.length).toBeGreaterThan(0);
-    for (const cast of casts) {
-      expect(cast.id).toBe('w1');
-      expect(cast.talentId).toBe(graspingHold.id);
-    }
-  });
+  it.each(ARMED.map((template) => [template.displayName, template] as const))(
+    '%s',
+    (_name, template) => {
+      const steps = everyStep(standoff(`cast-${template.id}`, template), TURNS);
+      const casts = steps.filter((step) => step.t === 'talent');
+      expect(
+        casts.length,
+        `${template.displayName} never cast anything in ${String(TURNS)} turns. Its talents are ` +
+          `${(template.talents ?? []).join(', ')} — check the talent's range against this ` +
+          `creature's profile and attackRange before checking anything else.`,
+      ).toBeGreaterThan(0);
+      for (const cast of casts) {
+        expect(cast.id).toBe('m1');
+        expect(template.talents).toContain(cast.talentId);
+      }
+    },
+  );
 
   /**
-   * THE STAMP IS FOLLOWED BY ITS DAMAGE, rather than swallowing it.
+   * A CAST THAT DEALS DAMAGE IS FOLLOWED BY ITS DAMAGE.
    *
    * `sweepStepFor` returned a bare `hold` for a monster's talent until this
    * work — a cast rendered as "it stood there". One stamp then one `attack` per
-   * victim is the shape the player lane has always used, and both now map to
-   * the identical `{ k: 'talent' }` wire event, so the client draws a creature's
-   * cast with no new code and no protocol bump.
+   * victim is the shape the player lane has always used, and both map to the
+   * identical `{ k: 'talent' }` wire event.
+   *
+   * THE GLUT SPECIFICALLY, because Efface deals no damage on purpose and would
+   * be a legitimate counter-example. A talent that hits is the case under test.
    */
-  it('follows the stamp with an ordinary attack step', () => {
-    const steps = everyStep(standoff('damage'), TURNS);
+  it('follows a damaging stamp with an ordinary attack step', () => {
+    const glut = ARMED.find((template) => template.id === 'index_glut');
+    expect(glut).toBeDefined();
+    if (glut === undefined) return;
+    const steps = everyStep(standoff('damage', glut), TURNS);
     const at = steps.findIndex((step) => step.t === 'talent');
     expect(at).toBeGreaterThanOrEqual(0);
     expect(steps[at + 1]?.t).toBe('attack');
@@ -154,25 +169,18 @@ describe('a creature casts its talent in a real fight', () => {
   /**
    * A CREATURE THAT KNOWS NOTHING IS UNTOUCHED BY ANY OF THIS.
    *
-   * The husks are the overwhelming majority of the bestiary and they were never
-   * meant to change. `ensureMonsterSheet` returns early on an absent list, so a
-   * husk never builds a sheet at all — and if this ever fails, the cost is not
-   * a husk that casts, it is a husk that pays for a sheet every turn forever.
+   * The plain husks are most of the bestiary and were never meant to change.
+   * `ensureMonsterSheet` returns early on an absent list, so a husk never builds
+   * a sheet at all — and if this ever fails, the cost is not a husk that casts,
+   * it is a husk paying for a sheet every turn forever.
    */
   it('leaves a creature with no talents alone', () => {
-    const world = createWorld('husk');
-    const player = world.addPlayer('p1', 'Detective');
-    player.maxHp = PLAYER_HP;
-    player.hp = PLAYER_HP;
-    world.addMonster('h1', {
-      name: 'Index Husk',
-      sprite: 'sprite_husk',
-      x: player.x + 2,
-      y: player.y,
-      profile: 'melee_chaser',
-    });
-    const husk = world.getActor('h1');
-    expect(husk !== undefined && 'talents' in husk ? husk.talents : undefined).toBeUndefined();
+    const bare = MONSTER_TEMPLATES.find((template) => template.talents === undefined);
+    expect(bare).toBeDefined();
+    if (bare === undefined) return;
+    const world = standoff('bare', bare);
+    const actor = world.getActor('m1');
+    expect(actor !== undefined && 'talents' in actor ? actor.talents : undefined).toBeUndefined();
     expect(everyStep(world, TURNS).filter((step) => step.t === 'talent')).toHaveLength(0);
   });
 });
