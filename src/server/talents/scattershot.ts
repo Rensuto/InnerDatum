@@ -64,6 +64,10 @@ export const scattershot: Talent = {
   name: 'Scattershot',
   classId: ClassId.Inspector,
   tree: 'index/marksmanship',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
+  /** marksmanship is about DEX. See `Talent.statGate`. */
+  statGate: 'dex',
   kind: TalentKind.Active,
   iconId: 'icon_active_scattershot',
   cost: { ap: AP_COST },

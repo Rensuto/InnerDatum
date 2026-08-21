@@ -134,6 +134,10 @@ export const ashwickFlare: Talent = {
   name: 'Ashwick Flare',
   classId: ClassId.Alchemist,
   tree: 'ashwick/reagents',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** reagents is about MAG. See `Talent.statGate`. */
+  statGate: 'mag',
   kind: TalentKind.Active,
   iconId: 'icon_active_fire_bolt',
   cost: { ap: AP_COST, resource: REAGENT_COST },

@@ -134,6 +134,10 @@ export const sigil: Talent = {
   name: 'Sigil',
   classId: ClassId.Inspector,
   tree: 'index/fieldcraft',
+  /** Tier 4 of its tree. See `src/shared/tiers.ts`. */
+  tier: 4,
+  /** fieldcraft is about CUN. See `Talent.statGate`. */
+  statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_sigil',
   cost: { ap: AP_COST, resource: FOCUS_COST },

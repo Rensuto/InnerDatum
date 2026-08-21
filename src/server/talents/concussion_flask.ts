@@ -124,6 +124,10 @@ export const concussionFlask: Talent = {
   name: 'Concussion Flask',
   classId: ClassId.Alchemist,
   tree: 'ashwick/reagents',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
+  /** reagents is about MAG. See `Talent.statGate`. */
+  statGate: 'mag',
   kind: TalentKind.Active,
   iconId: 'icon_active_concussion_flask',
   cost: { ap: AP_COST, resource: REAGENT_COST },

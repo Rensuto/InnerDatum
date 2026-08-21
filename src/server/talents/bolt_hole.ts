@@ -44,6 +44,10 @@ export const boltHole: Talent = {
   name: 'Bolt-Hole',
   classId: ClassId.Inspector,
   tree: 'index/fieldcraft',
+  /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
+  tier: 3,
+  /** fieldcraft is about CUN. See `Talent.statGate`. */
+  statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_bolt_hole',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

@@ -251,6 +251,10 @@ export const ironCurtain: Talent = {
   name: 'Iron Curtain',
   classId: ClassId.Watchman,
   tree: 'watch/the-line',
+  /** Tier 4 of its tree. See `src/shared/tiers.ts`. */
+  tier: 4,
+  /** the-line is about CON. See `Talent.statGate`. */
+  statGate: 'con',
   kind: TalentKind.Active,
   iconId: 'icon_active_iron_curtain',
   cost: { ap: AP_COST, resource: RESOLVE_COST },

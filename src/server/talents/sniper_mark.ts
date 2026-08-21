@@ -128,6 +128,10 @@ export const snipersMark: Talent = {
   name: "Sniper's Mark",
   classId: ClassId.Inspector,
   tree: 'index/marksmanship',
+  /** Tier 4 of its tree. See `src/shared/tiers.ts`. */
+  tier: 4,
+  /** marksmanship is about DEX. See `Talent.statGate`. */
+  statGate: 'dex',
   kind: TalentKind.Active,
   iconId: 'icon_active_sniper_mark',
   cost: { ap: AP_COST, resource: FOCUS_COST },

@@ -47,6 +47,10 @@ export const powderDiscipline: Talent = {
   name: 'Powder Discipline',
   classId: ClassId.Inspector,
   tree: 'index/marksmanship',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
+  /** marksmanship is about DEX. See `Talent.statGate`. */
+  statGate: 'dex',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_powder_discipline',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

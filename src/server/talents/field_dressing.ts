@@ -116,6 +116,10 @@ export const fieldDressing: Talent = {
   name: 'Field Dressing',
   classId: ClassId.Alchemist,
   tree: 'ashwick/ministration',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** ministration is about WIL. See `Talent.statGate`. */
+  statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_field_dressing',
   cost: { ap: AP_COST, resource: REAGENT_COST },

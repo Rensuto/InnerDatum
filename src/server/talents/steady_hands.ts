@@ -51,6 +51,10 @@ export const steadyHands: Talent = {
   name: 'Steady Hands',
   classId: ClassId.Inspector,
   tree: 'index/marksmanship',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** marksmanship is about DEX. See `Talent.statGate`. */
+  statGate: 'dex',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_steady_hands',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

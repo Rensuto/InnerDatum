@@ -149,6 +149,10 @@ export const mendWounds: Talent = {
   name: 'Mend Wounds',
   classId: ClassId.Alchemist,
   tree: 'ashwick/ministration',
+  /** Tier 4 of its tree. See `src/shared/tiers.ts`. */
+  tier: 4,
+  /** ministration is about WIL. See `Talent.statGate`. */
+  statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_mend_wounds',
   cost: { ap: AP_COST, resource: REAGENT_COST },

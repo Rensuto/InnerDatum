@@ -91,6 +91,10 @@ export const revolverShot: Talent = {
   name: 'Revolver Shot',
   classId: ClassId.Inspector,
   tree: 'index/marksmanship',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** marksmanship is about DEX. See `Talent.statGate`. */
+  statGate: 'dex',
   kind: TalentKind.Active,
   iconId: 'icon_active_revolver_shot',
   cost: { ap: AP_COST },

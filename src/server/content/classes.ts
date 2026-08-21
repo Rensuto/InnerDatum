@@ -139,6 +139,8 @@ import { snipersMark } from '../talents/sniper_mark.ts';
 import { wardRush } from '../talents/ward_rush.ts';
 import { ActorKind, ErrorCode } from '../../shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../shared/progression.ts';
+import { checkTier, tierRefusalText } from '../../shared/tiers.ts';
+import type { TierCheck } from '../../shared/tiers.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { LoadoutTalent, ResourceView } from '../../shared/protocol.ts';
 import type { CombatSheet } from '../engine/combat.ts';
@@ -723,6 +725,18 @@ export function toLoadoutView(
    * preview most of all — behaves exactly as it did.
    */
   effective: number = level,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   MAY THE NEXT POINT GO HERE — the same `checkTier` the spend path runs.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * HANDED IN RATHER THAN COMPUTED, for the reason every other parameter here
+   * is: the answer needs the SHEET (how many of this tree are known) and this
+   * function is given a talent and a body. The class picker has no sheet at
+   * all and must not be made to invent one — it passes nothing, and a preview
+   * correctly shows no lock, because nobody is spending points on that screen.
+   */
+  gate?: TierCheck,
 ): LoadoutTalent {
   return {
     // Already `talent:<id>` — the registry key IS the wire id, so the cooldown
@@ -770,7 +784,60 @@ export function toLoadoutView(
     // renders the current description alone).
     descNext: level < TALENT_MAX_LEVEL ? talent.describe(self, level + 1) : null,
     desc: talent.describe(self, level),
+    /**
+     * ABSENT WHEN NOBODY ASKED, AND ABSENT WHEN THE ANSWER IS YES. The first
+     * keeps the class picker's preview exactly as it was; the second keeps the
+     * common case off the wire. A present `locked: true` is the only shape
+     * that means anything, which is the shape that cannot be misread.
+     */
+    ...(gate === undefined || gate.ok
+      ? {}
+      : {
+          locked: true,
+          ...(tierRefusalText(gate) === null ? {} : { lockedReason: tierRefusalText(gate) ?? '' }),
+        }),
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PANEL'S COPY OF THE SPEND PATH'S QUESTION — and it must stay a copy of
+ * the QUESTION, never of the ANSWER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `raiseTalentPoint` (src/server/main.ts) builds the identical `TierContext`
+ * and refuses on the identical verdict. Two call sites of one pure function is
+ * the shape this codebase already uses for exactly this — a greyed button and
+ * a server refusal that disagree is the bug that makes a player think the game
+ * ate their point, and it is why `checkTier` lives in src/shared/ at all.
+ *
+ * THE STAT COMES OFF THE COMPOSED SHEET, not the class base, for the reason
+ * the spend path spells out: a gate has to see the points a player actually
+ * spent plus what their gear is worth, or the panel greys a talent the
+ * character sheet says they qualify for.
+ */
+function gateFor(
+  engine: TalentEngine,
+  sheet: TalentSheet,
+  talent: Talent,
+  actor: Actor,
+  rank: number,
+): TierCheck {
+  // OTHER talents of the same tree — never this one. Counting itself would let
+  // a talent satisfy its own depth requirement.
+  const known = [...sheet.points.keys()].filter(
+    (other) => other !== talent.id && engine.registry.get(other)?.tree === talent.tree,
+  ).length;
+  return checkTier({
+    tier: talent.tier,
+    rank,
+    stat: talent.statGate,
+    statValue: talent.statGate === undefined ? 0 : (actor.combat?.stats?.[talent.statGate] ?? 0),
+    // A LEVEL IS A PLAYER FACT — a monster holding a sheet is a fixture, and
+    // `1` is what the spend path assumes for one too.
+    characterLevel: 'level' in actor && typeof actor.level === 'number' ? actor.level : 1,
+    treeKnown: known,
+  });
 }
 
 /**
@@ -1026,6 +1093,7 @@ export function createTalentBook(
             actor,
             talent.sustain === undefined ? undefined : sheet.sustained.has(id),
             effective,
+            gateFor(engine, sheet, talent, actor, level + 1),
           ),
         );
       }
@@ -1045,13 +1113,15 @@ export function createTalentBook(
       for (const id of sheet.passives) {
         const talent = engine.registry.get(id);
         if (talent === undefined) continue;
+        const raw = Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id));
         out.push(
           toLoadoutView(
             talent,
-            Math.max(BIRTH_TALENT_LEVEL, getTalentLevelRaw(sheet, id)),
+            raw,
             actor,
             undefined,
             Math.max(BIRTH_TALENT_LEVEL, talentLevelOf(sheet, talent)),
+            gateFor(engine, sheet, talent, actor, raw + 1),
           ),
         );
       }

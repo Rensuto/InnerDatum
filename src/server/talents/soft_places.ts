@@ -45,6 +45,10 @@ export const softPlaces: Talent = {
   name: 'Soft Places',
   classId: ClassId.Watchman,
   tree: 'watch/discipline',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** discipline is about STR. See `Talent.statGate`. */
+  statGate: 'str',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_soft_places',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

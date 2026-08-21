@@ -105,6 +105,10 @@ export const backdraft: Talent = {
   name: 'Backdraft',
   classId: ClassId.Alchemist,
   tree: 'ashwick/ministration',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
+  /** ministration is about WIL. See `Talent.statGate`. */
+  statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_backdraft',
   cost: { ap: AP_COST, resource: REAGENT_COST },

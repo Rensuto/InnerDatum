@@ -206,6 +206,10 @@ export const lockdown: Talent = {
   name: 'Lockdown',
   classId: ClassId.Watchman,
   tree: 'watch/the-line',
+  /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
+  tier: 3,
+  /** the-line is about CON. See `Talent.statGate`. */
+  statGate: 'con',
   kind: TalentKind.Active,
   iconId: 'icon_active_lockdown',
   cost: { ap: AP_COST, resource: RESOLVE_COST },

@@ -45,6 +45,10 @@ export const calledShot: Talent = {
   name: 'Called Shot',
   classId: ClassId.Inspector,
   tree: 'index/marksmanship',
+  /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
+  tier: 3,
+  /** marksmanship is about DEX. See `Talent.statGate`. */
+  statGate: 'dex',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_called_shot',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

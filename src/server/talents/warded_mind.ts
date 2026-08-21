@@ -45,6 +45,8 @@ export const wardedMind: Talent = {
   name: 'Warded Mind',
   classId: null,
   tree: 'generic/groundwork',
+  /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
+  tier: 3,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_warded_mind',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

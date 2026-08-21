@@ -55,6 +55,10 @@ export const standingOrders: Talent = {
   name: 'Standing Orders',
   classId: ClassId.Watchman,
   tree: 'watch/the-line',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** the-line is about CON. See `Talent.statGate`. */
+  statGate: 'con',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_standing_orders',
   // A PASSIVE COSTS NOTHING TO HAVE. The zeroes are not a placeholder for a cost

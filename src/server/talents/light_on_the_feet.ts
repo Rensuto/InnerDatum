@@ -47,6 +47,8 @@ export const lightOnTheFeet: Talent = {
   name: 'Light on the Feet',
   classId: null,
   tree: 'generic/groundwork',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_light_on_the_feet',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

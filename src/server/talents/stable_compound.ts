@@ -43,6 +43,10 @@ export const stableCompound: Talent = {
   name: 'Stable Compound',
   classId: ClassId.Alchemist,
   tree: 'ashwick/reagents',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** reagents is about MAG. See `Talent.statGate`. */
+  statGate: 'mag',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_stable_compound',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

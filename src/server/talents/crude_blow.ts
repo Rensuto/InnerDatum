@@ -94,6 +94,10 @@ export const crudeBlow: Talent = {
   name: 'Crude Blow',
   classId: ClassId.Watchman,
   tree: 'watch/discipline',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** discipline is about STR. See `Talent.statGate`. */
+  statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_basic_attack',
   cost: { ap: AP_COST },

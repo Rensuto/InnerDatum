@@ -47,6 +47,8 @@ export const longService: Talent = {
   name: 'Long Service',
   classId: null,
   tree: 'generic/groundwork',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_long_service',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

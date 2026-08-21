@@ -71,6 +71,10 @@ export const coldReading: Talent = {
   name: 'Cold Reading',
   classId: ClassId.Inspector,
   tree: 'index/fieldcraft',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** fieldcraft is about CUN. See `Talent.statGate`. */
+  statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_cold_reading',
   // A PASSIVE COSTS NOTHING TO HAVE. There is no moment at which it is paid for,

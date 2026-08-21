@@ -469,8 +469,27 @@ export type TalentCell = {
   readonly icon: string;
   readonly level: number;
   readonly maxLevel: number;
-  /** True when a point is in hand AND the talent is below its cap. */
+  /**
+   * True when a point is in hand, the talent is below its cap, AND the tier
+   * ladder will let the next rank through.
+   *
+   * THE THIRD CLAUSE IS NEW AND IT IS THE ONE THAT BITES. Every talent in the
+   * game now declares a tier and a stat gate; before that, `checkTier` said
+   * yes to everything and `level < maxLevel` really was the whole rule.
+   */
   readonly canSpend: boolean;
+  /**
+   * WHY THE NEXT POINT CANNOT GO HERE, in the server's own words — or null.
+   *
+   * ═══ A GREY BUTTON WITHOUT THIS IS WORSE THAN A LIVE ONE ═══
+   * "Learn 2 more of this discipline first." is a decision a player can act on
+   * this second. An icon that is simply dimmer than its neighbours, with a
+   * point in hand and nothing said, reads as the panel being broken — and the
+   * player's next move is to press it again, and then to stop trusting the
+   * screen. `tierRefusalText` renders it once, server-side, so this sentence
+   * and the one a refused `spend_point` would carry are the same string.
+   */
+  readonly lockedReason: string | null;
   /** A passive is drawn without the pressable furniture. See `TalentKind`. */
   readonly passive: boolean;
   /** What it does now, and one point from now. Shown in the detail strip. */
@@ -637,7 +656,12 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     icon: talent.icon,
     level: talent.level,
     maxLevel: talent.maxLevel,
-    canSpend: unspent > 0 && talent.level < talent.maxLevel,
+    // `=== true` RATHER THAN TRUTHINESS: the field is optional on the wire, and
+    // an older server that has never heard of tiers sends nothing at all. That
+    // must read as "not locked" — the behaviour this panel has always had —
+    // rather than as a lock nobody can explain.
+    canSpend: unspent > 0 && talent.level < talent.maxLevel && talent.locked !== true,
+    lockedReason: talent.locked === true ? (talent.lockedReason ?? 'Not yet.') : null,
     passive: talent.kind === 'passive',
     desc: talent.desc,
     descNext: talent.descNext,
@@ -1426,7 +1450,13 @@ export function talentTipAt(
         ]
           .filter((part) => part !== null)
           .join('  ·  '),
-    lines: wrap(cell.desc, width),
+    // THE REFUSAL RIDES WITH THE DESCRIPTION rather than in `nextLines`, which
+    // this card paints gold — a lock rendered in the "what one point buys"
+    // colour would be the one sentence on the card that means its opposite.
+    lines: [
+      ...wrap(cell.desc, width),
+      ...(cell.lockedReason === null ? [] : wrap(cell.lockedReason, width)),
+    ],
     nextLines: cell.descNext === null ? [] : wrap(`${ARROW} ${cell.descNext}`, width),
   };
 }
@@ -1614,6 +1644,31 @@ function drawDetail(
     if (y + 12 > bottom) return;
     ctx.fillText(text, x, y + 6);
     y += 12;
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHY THE POINT CANNOT GO HERE — ABOVE the next-rank line, deliberately.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The gold line below says what one point WOULD buy. Printing that first and
+   * the refusal underneath reads as an offer withdrawn; printing the refusal
+   * first reads as a condition on an offer that still stands, which is what
+   * this actually is — every one of these three sentences names something the
+   * player can go and do.
+   *
+   * ORANGE, not the missing-asset violet and not the gold: it is the only place
+   * on this pane that is a REFUSAL, and it must not be mistaken at a glance for
+   * the thing one point buys.
+   */
+  if (cell.lockedReason !== null) {
+    y += 4;
+    ctx.fillStyle = PALETTE.ORANGE;
+    for (const text of wrap(cell.lockedReason, w)) {
+      if (y + 12 > bottom) return;
+      ctx.fillText(text, x, y + 6);
+      y += 12;
+    }
   }
 
   if (cell.descNext !== null) {

@@ -67,6 +67,10 @@ export const truncheonSweep: Talent = {
   name: 'Truncheon Sweep',
   classId: ClassId.Watchman,
   tree: 'watch/discipline',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
+  /** discipline is about STR. See `Talent.statGate`. */
+  statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_truncheon_sweep',
   cost: { ap: AP_COST },

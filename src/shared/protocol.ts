@@ -1031,6 +1031,39 @@ export type LoadoutTalent = {
    * row where the diff should be. `null` is a fact the renderer must handle.
    */
   descNext: string | null;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHETHER THE NEXT POINT MAY BE SPENT HERE AT ALL, AND WHY NOT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `level < maxLevel` used to be the whole of what the panel knew, and it was
+   * the whole of what there WAS to know: no talent in the game declared a tier
+   * or a stat gate, so `checkTier` said yes to every purchase.
+   *
+   * All 42 declare one now. Without this field the panel would draw a live
+   * `+` on a talent the server is about to refuse — a button that does nothing,
+   * with no sentence, on the one screen whose whole job is telling a player
+   * what a point buys. That is worse than no gate at all: a refusal a player
+   * cannot see is indistinguishable from the game being broken.
+   *
+   * ═══ COMPUTED SERVER-SIDE, LIKE EVERY OTHER NUMBER ON THIS TYPE ═══
+   * `checkTier` is in src/shared/ precisely so the client COULD run it — its
+   * own docblock says so. It is still rendered here, because doing it in the
+   * browser would need the character's stats, level and per-tree known-count
+   * shipped alongside, which is three more things to keep in step for a string
+   * the server already has in hand. One answer, one place.
+   *
+   * OPTIONAL, so this forces no version bump: a client that has never heard of
+   * tiers reads `undefined`, draws the `+` it always drew, and gets the
+   * server's refusal — which is exactly the behaviour it has today.
+   */
+  locked?: boolean;
+  /**
+   * THE SENTENCE — `tierRefusalText`, so the panel and the refusal agree word
+   * for word. Absent when nothing is blocking the next point, which is the
+   * common case and keeps the frame small.
+   */
+  lockedReason?: string;
 };
 
 /**

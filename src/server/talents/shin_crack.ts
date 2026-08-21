@@ -66,6 +66,10 @@ export const shinCrack: Talent = {
   name: 'Shin Crack',
   classId: ClassId.Watchman,
   tree: 'watch/the-line',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** the-line is about CON. See `Talent.statGate`. */
+  statGate: 'con',
   kind: TalentKind.Active,
   iconId: 'icon_active_shin_crack',
   cost: { ap: AP_COST },

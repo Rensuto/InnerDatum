@@ -143,6 +143,10 @@ export const wardRush: Talent = {
   name: 'Ward Rush',
   classId: ClassId.Watchman,
   tree: 'watch/discipline',
+  /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
+  tier: 3,
+  /** discipline is about STR. See `Talent.statGate`. */
+  statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_shield_bash',
   cost: { ap: AP_COST },

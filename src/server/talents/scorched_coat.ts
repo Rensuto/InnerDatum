@@ -43,6 +43,10 @@ export const scorchedCoat: Talent = {
   name: 'Scorched Coat',
   classId: ClassId.Alchemist,
   tree: 'ashwick/ministration',
+  /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
+  tier: 3,
+  /** ministration is about WIL. See `Talent.statGate`. */
+  statGate: 'wil',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_scorched_coat',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

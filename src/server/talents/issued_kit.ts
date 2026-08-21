@@ -56,6 +56,8 @@ export const issuedKit: Talent = {
   name: 'Issued Kit',
   classId: null,
   tree: 'generic/groundwork',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_issued_kit',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

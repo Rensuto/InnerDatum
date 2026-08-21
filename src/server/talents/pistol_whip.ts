@@ -62,6 +62,10 @@ export const pistolWhip: Talent = {
   name: 'Pistol Whip',
   classId: ClassId.Inspector,
   tree: 'index/fieldcraft',
+  /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
+  tier: 1,
+  /** fieldcraft is about CUN. See `Talent.statGate`. */
+  statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_pistol_whip',
   cost: { ap: AP_COST },

@@ -117,6 +117,10 @@ export const fogStep: Talent = {
   name: 'Fog Step',
   classId: ClassId.Inspector,
   tree: 'index/fieldcraft',
+  /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
+  tier: 2,
+  /** fieldcraft is about CUN. See `Talent.statGate`. */
+  statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_fog_step',
   cost: { ap: AP_COST, mp: MP_COST },

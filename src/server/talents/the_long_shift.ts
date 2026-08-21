@@ -49,6 +49,10 @@ export const theLongShift: Talent = {
   name: 'The Long Shift',
   classId: ClassId.Watchman,
   tree: 'watch/the-line',
+  /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
+  tier: 3,
+  /** the-line is about CON. See `Talent.statGate`. */
+  statGate: 'con',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_the_long_shift',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.

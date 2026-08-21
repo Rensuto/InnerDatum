@@ -108,6 +108,10 @@ export const alchemicVial: Talent = {
   name: 'Alchemic Vial',
   classId: ClassId.Alchemist,
   tree: 'ashwick/reagents',
+  /** Tier 4 of its tree. See `src/shared/tiers.ts`. */
+  tier: 4,
+  /** reagents is about MAG. See `Talent.statGate`. */
+  statGate: 'mag',
   kind: TalentKind.Active,
   iconId: 'icon_active_alchemic_vial',
   cost: { ap: AP_COST, resource: REAGENT_COST },

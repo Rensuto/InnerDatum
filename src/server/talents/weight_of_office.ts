@@ -45,6 +45,10 @@ export const weightOfOffice: Talent = {
   name: 'Weight of Office',
   classId: ClassId.Watchman,
   tree: 'watch/discipline',
+  /** Tier 4 of its tree. See `src/shared/tiers.ts`. */
+  tier: 4,
+  /** discipline is about STR. See `Talent.statGate`. */
+  statGate: 'str',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_weight_of_office',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.
