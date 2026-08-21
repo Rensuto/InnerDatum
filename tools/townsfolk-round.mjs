@@ -36,6 +36,13 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 
 import { isWalkable } from '../src/shared/protocol.ts';
+import { helloAndChoose } from './handshake.mjs';
+// THE SERVER'S OWN NUMBER, NEVER A LITERAL. These tools hardcoded `v: 18`
+// and could not connect at all from the day PROTOCOL_VERSION became 19 — the
+// handshake was refused with `version_mismatch` and the fixed sleep after it
+// turned that into "Cannot read properties of undefined". Eight gameplay
+// verification tools were dead and silent about it.
+import { PROTOCOL_VERSION } from '../src/shared/version.ts';
 
 const PORT = process.argv[2] ?? '32021';
 const CWD = fileURLToPath(new URL('..', import.meta.url));
@@ -74,16 +81,15 @@ ws.on('message', (r) => {
   }
 });
 await new Promise((r) => ws.on('open', r));
-const send = (o) => ws.send(JSON.stringify({ v: 18, ...o }));
+const send = (o) => ws.send(JSON.stringify({ v: PROTOCOL_VERSION, ...o }));
 const latest = (t) => frames.filter((f) => f.t === t).at(-1);
 const logLines = () =>
   frames.filter((f) => f.t === 'log').flatMap((f) => (f.lines ?? []).map((l) => String(l.text)));
 
-send({ t: 'hello' });
-await sleep(900);
-const selfId = frames.find((f) => f.t === 'welcome')?.selfId;
-const opts = frames.find((f) => f.t === 'class_options')?.options ?? [];
-send({ t: 'choose_class', classId: opts[0].id });
+// WAIT FOR THE FRAMES, NOT FOR THE CLOCK. See tools/handshake.mjs — a fixed
+// 900ms here is a bet on how fast a cold server boots, and it loses on any
+// machine that is also running a build.
+const { selfId } = await helloAndChoose(send, frames);
 await sleep(900);
 
 // ── walking, the way the working drivers do it ─────────────────────────────

@@ -177,7 +177,32 @@ const loadout = last('loadout')?.talents ?? [];
 console.log(
   `  hotbar: ${loadout.map((t) => t.name).join(' | ') || '(EMPTY — the talent seam is unwired)'}`,
 );
-const lockdown = loadout.find((t) => /lockdown/i.test(t.name));
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A TALENT THIS BODY HAS ACTUALLY LEARNED — which used to be assumed.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This tool pressed Lockdown by name and that was right until `birthTalents`
+ * landed: a class is now born knowing FOUR of its eighteen, and Lockdown is not
+ * one of the Watchman's. Every press came back `bad_message` — nine of them,
+ * reported as "every tile around 17,13 was refused", which reads like a
+ * targeting fault and is not one.
+ *
+ * The point of this tool is the STATUS PIPELINE: does an effect applied on the
+ * server reach this socket as a badge. Lockdown is the only stun, so it is
+ * still first choice — but Shin Crack slows, is learned at level 1, and proves
+ * the same pipeline. Preferring the stun and settling for any learned active
+ * keeps the tool honest about what it managed to test.
+ */
+const learned = loadout.filter((t) => (t.level ?? 0) >= 1 && t.cost !== undefined);
+const lockdown =
+  learned.find((t) => /lockdown/i.test(t.name)) ??
+  learned.find((t) => /shin crack/i.test(t.name)) ??
+  learned[0];
+console.log(
+  `  pressing: ${lockdown?.name ?? '(nothing learned)'}` +
+    `${lockdown !== undefined && !/lockdown/i.test(lockdown.name) ? ' — Lockdown is not learned at this level, so this is the stand-in' : ''}`,
+);
 
 // ---------------------------------------------------------------------------
 // 2. Walk into a fight
@@ -406,7 +431,7 @@ let stunSeen = false;
 if (adjacent === null) {
   console.log('  nothing adjacent and alive to stun.');
 } else if (lockdown === undefined) {
-  console.log('  the hotbar has no Lockdown, so there is nothing to press.');
+  console.log('  nothing on the hotbar is learned yet, so there is nothing to press.');
 } else if (resolveNow() < resolveCost) {
   console.log(
     `  never earned enough Resolve — the fight ended first ` +

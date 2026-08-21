@@ -32,6 +32,12 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 
 import { isWalkable } from '../src/shared/protocol.ts';
+// THE SERVER'S OWN NUMBER, NEVER A LITERAL. These tools hardcoded `v: 18`
+// and could not connect at all from the day PROTOCOL_VERSION became 19 — the
+// handshake was refused with `version_mismatch` and the fixed sleep after it
+// turned that into "Cannot read properties of undefined". Eight gameplay
+// verification tools were dead and silent about it.
+import { PROTOCOL_VERSION } from '../src/shared/version.ts';
 
 const PORT = process.argv[2] ?? '31971';
 const CWD = fileURLToPath(new URL('..', import.meta.url));
@@ -72,7 +78,7 @@ async function join(label) {
     }
   });
   await new Promise((r) => ws.on('open', r));
-  const send = (o) => ws.send(JSON.stringify({ v: 18, ...o }));
+  const send = (o) => ws.send(JSON.stringify({ v: PROTOCOL_VERSION, ...o }));
 
   const log = [];
   let read = 0;
