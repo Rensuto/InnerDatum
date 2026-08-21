@@ -217,6 +217,78 @@ async function createCharacter(
 
 const ownerDir = (h: Harness, owner: string): string => join(h.root, 'characters', owner);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WAIT UNTIL THE STORE HOLDS `n` CHARACTERS. Never a fixed sleep.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE FLAKE THIS REPLACES ═══
+ * Every one of these tests used to close a socket, `await sleep(140)`, and read
+ * the store — betting that 140ms was long enough for the server to notice the
+ * disconnect and flush the character to disk. In isolation that bet always won.
+ * Under `npm run check`, where tsc and eslint are running beside the suite, it
+ * lost often enough to fail a gate run, reporting "two characters were not
+ * created" — which reads exactly like a broken create path and is not one.
+ *
+ * ═══ POLLING IS NOT A LONGER SLEEP ═══
+ * A fixed sleep encodes a guess about the machine. This encodes the CONDITION,
+ * so it returns the moment the write lands and is correct on a fast machine and
+ * a loaded one alike. The suite also gets faster, since the common case no
+ * longer pays 140ms it did not need.
+ *
+ * ═══ AND IT RETURNS ON TIMEOUT RATHER THAN THROWING ═══
+ * A helper that threw would report its own deadline as the failure. Returning
+ * whatever the store has lets the caller's assertion — which knows what it
+ * wanted and why — print the real problem.
+ */
+async function waitForCharacters(
+  h: Harness,
+  owner: string,
+  n: number,
+  timeoutMs = 5000,
+): Promise<Awaited<ReturnType<Harness['store']['listCharacters']>>> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = await h.store.listCharacters(owner);
+    if (rows.length >= n || Date.now() > deadline) return rows;
+    await sleep(10);
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THEN WAIT FOR THE WRITING TO STOP. Appearing is not the same as settled.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A disconnect produces MORE THAN ONE WRITE — the character lands, and then the
+ * teardown writes it again a few milliseconds later. `waitForCharacters` above
+ * returns at the first of those, which is right for a test that only wants the
+ * row to exist and wrong for one that reads the file's BYTES: `renames the file
+ * aside` snapshots the file, deletes, and compares the retired copy against the
+ * snapshot, so a second write landing in between changes `updatedAt` and the
+ * comparison fails on a 14ms difference.
+ *
+ * The old `sleep(140)` hid this by being longer than the whole sequence. That
+ * is worth stating plainly, because it is the general case: a fixed sleep does
+ * not just make a test slow and occasionally flaky, it silently supplies a
+ * condition nobody ever wrote down. Replacing it with the wrong condition turns
+ * an intermittent failure into a reliable one — which is how this got found.
+ *
+ * TWO IDENTICAL READS IN A ROW is the settle test. `updatedAt` moves on every
+ * write, so two matching samples 10ms apart mean nothing is still writing.
+ */
+async function waitForSettled(h: Harness, owner: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last = '';
+  for (;;) {
+    const rows = await h.store.listCharacters(owner);
+    const stamp = rows.map((r) => `${r.id}:${String(r.updatedAt ?? '')}`).join('|');
+    if ((stamp === last && stamp !== '') || Date.now() > deadline) return;
+    last = stamp;
+    await sleep(10);
+  }
+}
+
 describe('deleting a character', () => {
   it('takes the row off the roster and answers with the list itself', async () => {
     harness = await start();
@@ -224,9 +296,7 @@ describe('deleting a character', () => {
     first.client.close();
     const second = await createCharacter(harness.port, 1);
     second.client.close();
-    await sleep(140);
-
-    const before = await harness.store.listCharacters(REN);
+    const before = await waitForCharacters(harness, REN, 2);
     expect(before, 'two characters were not created').toHaveLength(2);
     const doomed = before[1];
     expect(doomed).toBeDefined();
@@ -257,12 +327,13 @@ describe('deleting a character', () => {
     harness = await start();
     const made = await createCharacter(harness.port, 0);
     made.client.close();
-    await sleep(140);
-
-    const [row] = await harness.store.listCharacters(REN);
+    const [row] = await waitForCharacters(harness, REN, 1);
     expect(row).toBeDefined();
     if (row === undefined) return;
 
+    // THE BYTES ARE THE SUBJECT HERE, so wait for the writing to stop and not
+    // merely for the row to appear. See waitForSettled.
+    await waitForSettled(harness, REN);
     const before = await readdir(ownerDir(harness, REN));
     const live = before.find((f) => f === `${row.id}.json`);
     expect(live, 'the character file is not where the store says it is').toBeDefined();
@@ -300,8 +371,7 @@ describe('deleting a character', () => {
     harness = await start();
     // LEFT CONNECTED, so this character has a body in the world and a binding.
     const playing = await createCharacter(harness.port, 0);
-    await sleep(140);
-    const [row] = await harness.store.listCharacters(REN);
+    const [row] = await waitForCharacters(harness, REN, 1);
     expect(row).toBeDefined();
     if (row === undefined) return;
 
@@ -340,8 +410,7 @@ describe('deleting a character', () => {
     harness = await start();
     const rens = await createCharacter(harness.port, 0);
     rens.client.close();
-    await sleep(140);
-    const [row] = await harness.store.listCharacters(REN);
+    const [row] = await waitForCharacters(harness, REN, 1);
     expect(row).toBeDefined();
     if (row === undefined) return;
 
@@ -395,8 +464,7 @@ describe('deleting a character', () => {
     harness = await start();
     const made = await createCharacter(harness.port, 0);
     made.client.close();
-    await sleep(140);
-    const [row] = await harness.store.listCharacters(REN);
+    const [row] = await waitForCharacters(harness, REN, 1);
     expect(row).toBeDefined();
     if (row === undefined) return;
 
@@ -412,8 +480,7 @@ describe('deleting a character', () => {
     harness = await start();
     const made = await createCharacter(harness.port, 0);
     made.client.close();
-    await sleep(140);
-    const [row] = await harness.store.listCharacters(REN);
+    const [row] = await waitForCharacters(harness, REN, 1);
     expect(row).toBeDefined();
     if (row === undefined) return;
 
