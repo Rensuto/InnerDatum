@@ -43,6 +43,7 @@
  * hide. Twelve talents do not need two curves.
  */
 
+import { applyLoad } from './loads.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
@@ -166,7 +167,7 @@ export const ashwickFlare: Talent = {
       DamageType.Fire,
       damageMult(ctx.talentLevel),
     );
-    return talentDone([hit]);
+    return talentDone([hit], [...applyLoad(ctx, self, victim)]);
   },
 
   describe: (_self, level) =>

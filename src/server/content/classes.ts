@@ -97,6 +97,8 @@ import { coldCase } from '../talents/cold_case.ts';
 import { corroboration } from '../talents/corroboration.ts';
 import { lineOfEnquiry } from '../talents/line_of_enquiry.ts';
 import { workingFast } from '../talents/working_fast.ts';
+import { causticLoad, concussiveLoad, frostLoad } from '../talents/loads.ts';
+import { fullBandolier, practisedHands, steadyPour } from '../talents/load_passives.ts';
 import { contingencies } from '../talents/contingencies.ts';
 import { scorchedCoat } from '../talents/scorched_coat.ts';
 import { seenWorse } from '../talents/seen_worse.ts';
@@ -551,10 +553,34 @@ export const ALCHEMIST: ClassDef = {
     minRange: 0,
     damageType: DamageType.Fire,
   },
-  loadout: [ashwickFlare, alchemicVial, concussionFlask, backdraft, mendWounds, fieldDressing],
+  loadout: [
+    ashwickFlare,
+    alchemicVial,
+    concussionFlask,
+    backdraft,
+    mendWounds,
+    fieldDressing,
+    // ─── LOADS, the third tree. Stances go on the bar for the reason
+    //     `index/method`'s do: a sustain is toggled through the ordinary
+    //     talent key, so it needs a slot. See `ashwick/loads`. ───
+    causticLoad,
+    frostLoad,
+    concussiveLoad,
+  ],
   /** The flare, the bandage, a bag that does not go off on its own — and the kit. See `ClassDef.birthTalents`. */
   birthTalents: [ashwickFlare, fieldDressing, stableCompound, issuedKit],
-  passives: [measuredDoses, scorchedCoat, stableCompound, cutWithChalk, longHours, bedsideManner],
+  passives: [
+    // ─── LOADS. See `ashwick/loads`. ───
+    steadyPour,
+    fullBandolier,
+    practisedHands,
+    measuredDoses,
+    scorchedCoat,
+    stableCompound,
+    cutWithChalk,
+    longHours,
+    bedsideManner,
+  ],
   // A chemist who can also patch you up.
   masteries: { 'ashwick/reagents': SIGNATURE, 'ashwick/ministration': SUPPORTING },
 };

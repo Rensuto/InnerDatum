@@ -42,6 +42,7 @@
  * source of an unreproducible bug.
  */
 
+import { applyLoad } from './loads.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
@@ -139,11 +140,24 @@ export const alchemicVial: Talent = {
     const base = talentBaseDamage(self);
     const mult = damageMult(ctx.talentLevel);
     const hits: TalentHit[] = [];
+    /**
+     * AND THE LOAD RIDES ON EVERY BODY IT CAUGHT, which is what makes this the
+     * Alchemist's best use of one. Three husks in a cross, all three bleeding
+     * or all three slowed, off a decision made before the fight — see
+     * `ashwick/loads`.
+     *
+     * INSIDE THE SAME LOOP, so the rider is applied to a victim on the turn its
+     * damage landed rather than to a list gathered and walked twice. A second
+     * pass would also have to re-check `alive`, and the two checks would
+     * eventually disagree.
+     */
+    const riders: string[] = [];
     for (const victim of victims) {
       hits.push(talentProject(ctx, self, victim, base, DamageType.Fire, mult));
+      riders.push(...applyLoad(ctx, self, victim));
     }
 
-    return talentDone(hits, [`Cross, radius ${RADIUS}. ${hits.length} caught.`]);
+    return talentDone(hits, [`Cross, radius ${RADIUS}. ${hits.length} caught.`, ...riders]);
   },
 
   describe: (_self, level) =>

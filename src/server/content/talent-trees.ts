@@ -200,6 +200,35 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
   },
   {
     /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ALCHEMIST'S THIRD, AND THE ONLY TREE THAT ADDS NO NEW BUTTON.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `ashwick/reagents` is what comes out of the bag and `ashwick/ministration`
+     * is keeping the people around you upright. Between them the class had six
+     * things to press and no reason to press any of them differently on
+     * different nights.
+     *
+     * ═══ IT MAKES THE EXISTING THROWS DEEPER RATHER THAN ADDING MORE ═══
+     * Three stances on one slot, and none is a button that does damage: what
+     * they change is what Ashwick Flare, Alchemic Vial and Concussion Flask
+     * LEAVE BEHIND. The same three buttons are a bleed, a slow or a stun
+     * depending on how the bag was packed. That is upstream's own shape —
+     * explosives.lua:44-51 is a five-branch if-chain on which infusion is up,
+     * and `Talent.sustainSlot` has cited it since the field existed.
+     *
+     * ═══ CUNNING, WHICH IS THE THIRD STAT THIS CLASS DID NOT HAVE ═══
+     * Reagents is Magic and Ministration is Will. Knowing which vial to reach
+     * for is neither of those.
+     */
+    id: 'ashwick/loads',
+    mastery: 1,
+    name: 'Loads',
+    classId: ClassId.Alchemist,
+    blurb: 'What is in the vial before you throw it.',
+  },
+  {
+    /**
      * THE ONE EVERY CLASS CARRIES. See `TalentTree.classId` for why it is shared
      * rather than tripled, and `talent-trees.test.ts` for why it is allowed to
      * be entirely passive when a class tree is not.

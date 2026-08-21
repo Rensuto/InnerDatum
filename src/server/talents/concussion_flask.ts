@@ -32,6 +32,7 @@
  * than the opener for every fight.
  */
 
+import { applyLoad } from './loads.ts';
 import { combatTalentLimit, combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import { EffectId } from '../content/effects.ts';
@@ -172,11 +173,23 @@ export const concussionFlask: Talent = {
     // NO HITS, AND THE LINE IS THEREFORE THE WHOLE OUTPUT. A talent that
     // returned an empty `talentDone([])` with nothing to say would look to the
     // player exactly like a talent that failed.
+    /**
+     * AND THE LOAD, WHICH IS WORTH SAYING SOMETHING ABOUT ON THIS TALENT.
+     *
+     * The flask already stuns, so a Concussive Load adds nothing here — it is
+     * the two OTHER loads that change this button, turning a pure control throw
+     * into control plus a bleed or a slow. That is deliberate rather than an
+     * oversight: a load should be worth more on some of the class's throws than
+     * on others, or choosing one is not a decision about how you are fighting.
+     */
     return talentDone(
       [],
-      landed === undefined
-        ? [`The flask bursts beside ${victim.name}.`]
-        : [`${victim.name} is stunned for ${String(turns)} turns.`],
+      [
+        ...(landed === undefined
+          ? [`The flask bursts beside ${victim.name}.`]
+          : [`${victim.name} is stunned for ${String(turns)} turns.`]),
+        ...applyLoad(ctx, self, victim),
+      ],
     );
   },
 
