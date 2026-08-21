@@ -62,7 +62,7 @@ import { computeRarities, pickEntity } from './rarity.ts';
 import { MAX_EGO_POWER, formatItemId, parseItemId } from './resolve.ts';
 import { ITEMS, itemById } from './items.ts';
 import { isMoneyId } from './money.ts';
-import { LEVELS_PER_BAND, bandFor } from './loot.ts';
+import { LEVELS_PER_BAND, bandFor, materialFor } from './loot.ts';
 import type { ItemEgoRef } from './resolve.ts';
 import type { Item, ItemTier } from './items.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -366,6 +366,39 @@ function rollStockItem(rng: Rng, level: number, shelf: ShopShelf): string | unde
    * "Oiled Draught of the Ledger" is also not a thing anybody wants to read: an
    * ego modifies what WEARING something does, and drinking is not wearing.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE MATERIAL GRADE, AND THE SHELF HAD NONE — SO IT WAS FALLING BEHIND.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `formatItemId(base.item.id, refs)` at the foot of this function wrote no
+   * grade, so every shop in the game sold grade-1 goods forever while the FLOOR
+   * started dropping graded ones the moment `materialFor` landed. A level-40
+   * character walked past a shelf of the worst version of everything on their
+   * way out of a room that had just dropped better.
+   *
+   * That is worse than a shop being expensive. `buyPercent` already prices a
+   * shelf at 123-135% of value precisely so buying is a convenience rather than
+   * a strategy — and a shelf that also sold strictly inferior goods would make
+   * the whole system furniture.
+   *
+   * ═══ THE SAME DRAW THE FLOOR TAKES, FROM THE SAME FUNCTION ═══
+   * `materialFor` is the one place that knows how a grade follows a band. A
+   * second curve here would be a second answer to "how good is gear at this
+   * level", and the two would drift the first time either moved.
+   *
+   * ═══ BEFORE THE DRAUGHT BRANCH, AND UNCONDITIONALLY ═══
+   * A draught returns two lines down and takes no ego draws. Taking the grade
+   * draw only on the equipment path would make every later roll from this seed
+   * depend on what the shelf happened to pick, which is the replay-from-seed
+   * rule `rng.ts` states and `rollLoot` keeps for the same reason.
+   */
+  const material = materialFor(rng, level);
+
+  // A DRAUGHT IS SOLD PLAIN AND UNGRADED. A grade scales a `wielder` table and
+  // a consumable has none — `atMaterial` would multiply nothing and the id
+  // would carry a token that changed no number, which is the invisible-field
+  // failure this codebase keeps finding.
   if (base.item.use !== undefined) return formatItemId(base.item.id, []);
 
   const wanted = rng.int('shop.egos', 0, 99) < SHOP_EGO_CHANCE ? 2 : 1;
@@ -392,7 +425,7 @@ function rollStockItem(rng: Rng, level: number, shelf: ShopShelf): string | unde
   // SHOP_EGO_CHANCE — so this piece of stock simply does not exist, and the
   // fill loop tries again.
   if (refs.length === 0) return undefined;
-  return formatItemId(base.item.id, refs);
+  return formatItemId(base.item.id, refs, material);
 }
 
 /**

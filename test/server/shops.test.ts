@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { LEVELS_PER_BAND } from '../../src/server/content/loot.ts';
 import { MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
 import { describe, expect, it } from 'vitest';
@@ -14,6 +15,7 @@ import {
   buyPrice,
   epochFor,
   priceOf,
+  SHELF_CAP,
   restock,
   sellPrice,
   ShopShelf,
@@ -22,7 +24,7 @@ import {
 } from '../../src/server/content/shops.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
 import { isMoneyId, moneyIdFor } from '../../src/server/content/money.ts';
-import { resolveItem } from '../../src/server/content/resolve.ts';
+import { parseItemId, resolveItem } from '../../src/server/content/resolve.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { STARTING_MONEY } from '../../src/server/engine/actor.ts';
 
@@ -507,5 +509,80 @@ describe('the apothecary keeps the rung a beginner arrives on', () => {
       ),
     );
     expect(apothecary).toBeLessThan(outfitter);
+  });
+});
+
+describe('the shelf keeps pace with the floor', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SHOP THAT SELLS THE WORST VERSION OF EVERYTHING IS FURNITURE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `buildShopItem` wrote `formatItemId(base, refs)` with no grade, so every
+   * shop in the game sold grade-1 goods forever while the FLOOR started
+   * dropping graded ones. A level-40 character walked past a shelf of the worst
+   * version of everything on their way out of a room that had just dropped
+   * better — which is worse than a shop being expensive. `buyPercent` already
+   * prices a shelf at 123-135% of value so buying is a convenience rather than
+   * a strategy, and inferior goods on top of that would end the system.
+   */
+  const gradesOf = (level: number): number[] =>
+    restock(createRng(`grade-parity:${String(level)}`), [], level, SHELF_CAP)
+      .filter((id) => !isMoneyId(id))
+      .map((id) => parseItemId(id)?.material ?? 1);
+
+  const mean = (xs: readonly number[]): number =>
+    xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  it('stocks better goods deep in than early on', () => {
+    const early = gradesOf(2);
+    const late = gradesOf(MAX_CHARACTER_LEVEL);
+    expect(early.length, 'the shelf came back empty').toBeGreaterThan(0);
+    expect(mean(late)).toBeGreaterThan(mean(early) + 1);
+  });
+
+  it('draws its grade from the same curve the floor does', () => {
+    /**
+     * `materialFor` is the one place that knows how a grade follows a band. A
+     * second curve in the shop would be a second answer to "how good is gear at
+     * this level", and the two would drift the first time either moved — with
+     * the symptom being a shelf that is quietly better or worse than the room
+     * next to it, which nobody would think to look for.
+     */
+    const source = readFileSync(
+      new URL('../../src/server/content/shops.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('materialFor(rng, level)');
+  });
+
+  it('never puts a grade on a draught', () => {
+    /**
+     * A grade scales a `wielder` table and a consumable has none, so the token
+     * would change no number a player could see — the invisible-field failure
+     * this codebase keeps finding.
+     *
+     * ═══ THE APOTHECARY SHELF EXPLICITLY, AND THE FIRST VERSION DID NOT ═══
+     * `restock` takes a shelf and `shelfPool` splits the catalogue on `use`:
+     * the general shelf carries everything that is NOT a consumable. Sampling
+     * the default shelf therefore found zero draughts in 480 rolls and the
+     * test asserted nothing at all — which vitest caught, and which read at
+     * first glance like the bug this file already records fixing (a draught
+     * nobody could buy).
+     */
+    for (const level of [1, 20, MAX_CHARACTER_LEVEL]) {
+      const stock = restock(
+        createRng(`draught:${String(level)}`),
+        [],
+        level,
+        SHELF_CAP,
+        ShopShelf.Apothecary,
+      );
+      expect(stock.length, 'the apothecary stocked nothing').toBeGreaterThan(0);
+      for (const id of stock) {
+        if (isMoneyId(id)) continue;
+        expect(parseItemId(id)?.material, `${id} is a graded consumable`).toBe(1);
+      }
+    }
   });
 });
