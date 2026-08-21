@@ -91,6 +91,12 @@ export const EffectId = {
    */
   Effaced: 'effect:effaced',
   Breached: 'effect:breached',
+  /**
+   * THE THIRD FLAG engine/derived.ts HAS BEEN READING WITH NOTHING TO READ.
+   * `finish()` halves accuracy, defence, all three powers and all three saves
+   * for a dazed body — the same eight rolls `scoured` divides, twice as hard.
+   */
+  Dazed: 'effect:dazed',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -609,6 +615,68 @@ export const BREACHED: EffectDef = Object.freeze({
   },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DAZED — everything halved, until somebody hits you.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 data/timed_effects/physical.lua:558-575, `EFF_DAZED`:
+ *
+ *     activate = function(self, eff)
+ *         self:effectTemporaryValue(eff, "dazed", 1)
+ *         self:effectTemporaryValue(eff, "never_move", 1)
+ *     end,
+ *
+ * *"The target is dazed, rendering it unable to move, halving all damage done,
+ * defense, saves, accuracy, spell, mind and physical power. Any damage will
+ * remove the daze."*
+ *
+ * ═══ THE HALVING IS THE PART THAT WAS ALREADY BUILT ═══
+ * `finish()` in engine/derived.ts opens with
+ * `if (c.flags?.dazed === true) d = d / 2`, and every getter that matters runs
+ * through it. It has been there since the defensive maths was ported and no
+ * effect in the game set the flag, so it had never once run.
+ *
+ * ═══ AND "ANY DAMAGE REMOVES IT" IS NOT OPTIONAL FLAVOUR ═══
+ * It is the reason upstream can hand out a debuff this strong. Three turns of
+ * halved everything sounds oppressive and almost never happens, because in a
+ * real fight nobody gets three untouched turns. Porting the numbers without
+ * this rule would produce a citation that is true line by line and false as a
+ * whole — so `breaksOnDamage` was built for this effect, and rides on
+ * `noteStruck`, which already fires on exactly upstream's condition.
+ *
+ * ═══ `never_move` IS ABSENT, AND STATED RATHER THAN DROPPED ═══
+ * This engine has no movement-prohibition attribute. The nearest thing is
+ * `mpPenalty`, and spending it here would be a lie of a different shape: a
+ * player at 0 MP is a player who cannot step, but a MONSTER moves on the
+ * actor's budget and would be untouched, so the same effect would mean two
+ * different things depending on who wore it. A dazed body is slower to act and
+ * worse at everything; it is not rooted. Rooting arrives when there is an
+ * attribute for it.
+ */
+export const DAZED: EffectDef = Object.freeze({
+  id: EffectId.Dazed,
+  displayName: 'Dazed',
+  description: 'Reeling. Every roll you make and every roll you resist is halved.',
+  // physical.lua:562 — `type = "physical"`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // physical.lua declares no `on_merge` for DAZED → upstream replaces.
+  stackMode: StackMode.Refresh,
+  // physical.lua:563 — `subtype = { stun=true }`. Kept verbatim: subtypes are
+  // what immunities match on, and a daze IS a stun as far as upstream's
+  // `canBe("stun")` check is concerned — which is the check that gates it.
+  subtypes: ['stun'],
+  decrease: 1,
+  icon: 'icon_status_dazed',
+  // physical.lua:561 — "Any damage will remove the daze."
+  breaksOnDamage: true,
+  modifiers: {
+    // The flag `finish()` has been reading since the port. Halves the eight.
+    dazed: true,
+  },
+} satisfies EffectDef);
+
 // ---------------------------------------------------------------------------
 // The roster
 // ---------------------------------------------------------------------------
@@ -620,6 +688,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   SLOWED,
   EFFACED,
   BREACHED,
+  DAZED,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

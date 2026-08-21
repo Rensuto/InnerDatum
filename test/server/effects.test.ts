@@ -1125,6 +1125,7 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.Slowed,
       EffectId.Effaced,
       EffectId.Breached,
+      EffectId.Dazed,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1132,6 +1133,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_slowed',
       'icon_status_effaced',
       'icon_status_breached',
+      'icon_status_dazed',
     ]);
   });
 
@@ -1164,6 +1166,8 @@ describe('the status roster (game-design.md § 12)', () => {
       [EffectId.Effaced]: SaveChannel.Physical,
       // magical.lua:3214 — `EFF_BREACH` is magical/temporal.
       [EffectId.Breached]: SaveChannel.Magical,
+      // physical.lua:562 — `EFF_DAZED` is physical, subtype stun.
+      [EffectId.Dazed]: SaveChannel.Physical,
     });
   });
 

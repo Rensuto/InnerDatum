@@ -74,6 +74,7 @@ import { createRealms } from './world/realms.ts';
 import { createWorld } from './world/world.ts';
 import { isPlayer } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
+import { breakDamageSensitive } from './engine/effects.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
 import type { GuardCounter, TalentEngine, TalentSheet } from './engine/talents.ts';
 import type { MonsterCast } from './ai/npc.ts';
@@ -200,6 +201,17 @@ export function talentRuntimeFor(
    * always did, which is every fixture that builds a runtime by hand.
    */
   onActBase?: (actorId: string) => void,
+  /**
+   * SOMETHING HIT THIS BODY — SHED WHATEVER CANNOT SURVIVE THAT.
+   *
+   * Passed in for the same reason `status`, `penaltyFor` and `cure` above are:
+   * it needs the effect catalogue, which this adapter cannot reach.
+   *
+   * OPTIONAL, and absent is every fixture that builds a runtime by hand — which
+   * is most of the suite. Absent means no effect ever breaks on damage, which is
+   * exactly the game those fixtures were written against.
+   */
+  breakOnDamage?: (actorId: string) => void,
 ): TalentRuntime {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -372,6 +384,15 @@ export function talentRuntimeFor(
     },
     noteStruck: (actorId: string): void => {
       talents.noteStruck(actorId);
+      /**
+       * ═══ AND THE OTHER THING A BLOW DOES: IT WAKES YOU UP ═══
+       * `EFF_DAZED` upstream is *"any damage will remove the daze"*, which is
+       * how ToME can hand out a debuff that halves eight rolls without the game
+       * becoming a stunlock. This hook already fires on exactly the right
+       * event — a blow that hit and dealt more than zero — so the condition
+       * never had to be defined twice.
+       */
+      breakOnDamage?.(actorId);
     },
     /**
      * MAY THIS ROUND STAY OPEN? See `TalentResolution.roundOpen`.
@@ -811,6 +832,12 @@ export function buildServer() {
          */
         (id: string) => {
           refreshPassives(id);
+        },
+        // See `breakOnDamage` on the signature. `effects` is in scope here and
+        // in no layer below, which is the whole reason these are seams.
+        (id: string) => {
+          const body = forWorld.getActor(id);
+          if (body !== undefined) breakDamageSensitive(effects, body, forWorld.rng);
         },
       ),
       // THE OTHER HALF OF THE STATUS SEAM. `turn-engine.ts` builds

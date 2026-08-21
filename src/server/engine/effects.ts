@@ -328,6 +328,25 @@ export type EffectDef = {
   /** The 24×24 badge on disk. An asset key, never a path — the client owns the manifest. */
   readonly icon: string;
   /** Attributes granted while live. Recomputed, never incrementally patched. */
+  /**
+   * ═══ ANY DAMAGE TAKES THIS OFF. ToME's commonest balancing lever. ═══
+   *
+   * `EFF_DAZED` (physical.lua:558-575) states it in its own long_desc — *"Any
+   * damage will remove the daze"* — and it is the reason upstream can hand out
+   * a debuff that HALVES eight rolls without the game becoming a stunlock: the
+   * effect is worth three turns only if nobody touches you, and in a real fight
+   * nobody gets three untouched turns.
+   *
+   * A daze ported WITHOUT this would be strictly stronger than upstream's while
+   * citing upstream's numbers, which is the worst of both — the citation would
+   * be true line by line and false as a whole.
+   *
+   * Swept by `breakDamageSensitive`, driven from `TalentResolution.noteStruck`,
+   * which already fires on exactly the right event: a blow that hit and dealt
+   * more than zero.
+   */
+  readonly breaksOnDamage?: boolean;
+
   readonly modifiers?: EffectModifiers;
   /** Parameter defaults — ActorTemporaryEffects.lua:113-115. */
   readonly parameters?: EffectParams;
@@ -1067,6 +1086,45 @@ function extendMerge(live: EffectInstance, incoming: EffectInstance): EffectInst
  * effect id — `activate` runs after insertion and the three MVP effects do not
  * apply statuses. If one ever does, this is the line it will trip over.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SOMETHING HIT THIS BODY — TAKE OFF EVERYTHING THAT CANNOT SURVIVE THAT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Returns the display names of what came off, so a caller can say so; empty is
+ * the overwhelmingly common case and costs one map lookup.
+ *
+ * ═══ THE CALLER DECIDES WHAT COUNTS AS DAMAGE, AND ONE ALREADY DOES ═══
+ * `TalentResolution.noteStruck` fires on a blow that HIT and dealt more than
+ * zero — a miss does not count and neither does a 0-damage blow (see
+ * `noteBlows`). That is precisely upstream's condition, and it means this
+ * function never has to define damage itself.
+ *
+ * COLLECTED BEFORE REMOVING, because `removeEffect` mutates the same table
+ * `effectsOn` reads from, and iterating a live view while deleting from it is
+ * how one of two simultaneous dazes survives.
+ */
+export function breakDamageSensitive(
+  state: EffectState,
+  actor: EffectActor,
+  rng: Rng,
+  ctx: EffectCtx = NO_CTX,
+): readonly string[] {
+  const doomed: string[] = [];
+  for (const eff of effectsOn(state, actor.id)) {
+    if (state.defs.get(eff.effectId)?.breaksOnDamage === true) doomed.push(eff.effectId);
+  }
+  if (doomed.length === 0) return [];
+
+  const shed: string[] = [];
+  for (const id of doomed) {
+    const name = state.defs.get(id)?.displayName;
+    removeEffect(state, actor, id, rng, ctx);
+    if (name !== undefined) shed.push(name);
+  }
+  return shed;
+}
+
 export function removeEffect(
   state: EffectState,
   actor: EffectActor,

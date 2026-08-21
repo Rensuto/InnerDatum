@@ -1590,6 +1590,18 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
  * nothing since the day it was made.
  */
 export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
+  /**
+   * THE BASE WOLF HAS EXACTLY ONE TALENT AND THIS CREATURE IS THE BASE WOLF.
+   *
+   * canine.lua:55-57 gives the stat block this template is ported from a single
+   * resolver: T_RUSH. It was missing, and its absence is what made the design
+   * note above aspirational — globalSpeed alone cannot produce "it is on you
+   * before you get a second decision", because a fast creature crossing open
+   * ground is a fast creature you shoot four times instead of five.
+   *
+   * MeleeChaser at attackRange 1, and Rush is the thing that gets it there.
+   */
+  talents: ['talent:rush'],
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['mag', 'wil'],
   id: 'index_eidolon',

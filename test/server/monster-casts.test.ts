@@ -46,8 +46,35 @@ import type { SweepStep } from '../../src/server/engine/scheduler.ts';
 import type { World } from '../../src/server/world/world.ts';
 
 /** Long enough that a 40%-per-turn draw on a 5-turn cooldown is a certainty. */
-const TURNS = 40;
+/** Long enough that a 40%-per-turn draw on a long cooldown is a certainty. */
+const TURNS = 60;
 const MS_PER_PUMP = 100;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR APART A FIGHT STARTS — every creature's own `aggroRange`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THIS WAS 2, AND 2 IS NOT A FIGHT, IT IS THE MIDDLE OF ONE ═══
+ * Two tiles is fine for a talent with melee reach and useless for a creature
+ * whose talent is CLOSING that distance. The Index Eidolon's Rush carries
+ * `minRange: 2` — deliberately, since a charge usable from touching distance is
+ * a free extra swing wearing a charge's citation — so a melee chaser dropped
+ * two tiles away steps into contact on its first turn and is never again in a
+ * position to use the one talent it owns. It failed this test, correctly.
+ *
+ * ═══ AND THE FIX IS NOT TO LOOSEN THE TEST ═══
+ * That is worth writing down, because the tempting repair was to drop
+ * `minRange` and let Rush fire at melee — which would have made the assertion
+ * pass by making the talent wrong.
+ *
+ * Eight is where a fight with these creatures ACTUALLY BEGINS: every template
+ * in the bestiary carries `aggroRange: 8`, so this is the range at which the
+ * AI first notices you, not a generous number chosen to accommodate a talent.
+ * A kiter backs off to its preferred range from here, a chaser closes, and a
+ * charger gets the approach its whole design is about. Starting anywhere nearer
+ * tests one profile properly and the other two mid-fight.
+ */
+const APART = 8;
 
 /** Enough hit points that we are measuring a fight rather than a corpse. */
 const PLAYER_HP = 100_000;
@@ -85,18 +112,17 @@ function everyStep(world: World, turns: number): SweepStep[] {
 }
 
 /**
- * A DETECTIVE AND ONE CREATURE, TWO TILES APART, ON OPEN GROUND.
+ * A DETECTIVE AND ONE CREATURE, ON OPEN GROUND, AT `APART` TILES.
  *
- * Two tiles rather than adjacent because a kiter needs room to back off to its
- * preferred range, and a melee chaser closes two tiles in one turn. Both kinds
- * reach the distance their profile wants within the first few turns.
+ * See `APART` for why that distance and not a closer one — it is the range a
+ * fight with any of these creatures actually starts at.
  */
 function standoff(seed: string, template: MonsterTemplate): World {
   const world = createWorld(seed);
   const player = world.addPlayer('p1', 'Detective');
   player.maxHp = PLAYER_HP;
   player.hp = PLAYER_HP;
-  world.addMonster('m1', monsterInit(template, { x: player.x + 2, y: player.y }, LEVEL));
+  world.addMonster('m1', monsterInit(template, { x: player.x + APART, y: player.y }, LEVEL));
   return world;
 }
 
