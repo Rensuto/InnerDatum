@@ -63,6 +63,7 @@ import { createEnergyActor } from '../../shared/energy.ts';
 import { spendForAction } from '../../shared/energy.ts';
 import { ActorKind, ActorRank } from '../../shared/protocol.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
+import { DIR_ORDER, DIR_VECTORS } from '../../shared/coords.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 // TYPE-ONLY, AND THAT IS LOAD-BEARING. `engine/combat.ts` imports
 // `world/world.ts`, which imports this file. A value import would close that
@@ -1274,6 +1275,44 @@ export function incMoney(actor: PlayerActor, delta: number): number {
   if (!Number.isFinite(delta)) return actor.money;
   actor.money = Math.max(0, actor.money + Math.floor(delta));
   return actor.money;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY OF THIS BODY'S OWN KIND ARE STANDING NEXT TO IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ ONE DEFINITION OF "ALONE", BECAUSE TWO WOULD DISAGREE ═══
+ * The Disgraced Inspector both TARGETS the isolated (`mostIsolated` in
+ * ai/npc.ts) and HITS them harder (`uncorroborated`). Those are two different
+ * layers asking the same question, and the moment they answer it differently
+ * the creature walks past a lone Alchemist to reach someone it considers more
+ * alone, then does reduced damage to them. Nothing would report that; it would
+ * simply feel wrong.
+ *
+ * Three rules make up the definition, and each one is a decision:
+ *   - THE EIGHT NEIGHBOURS, via `DIR_ORDER` — diagonals count as standing
+ *     together, because they do on a grid a player is looking at.
+ *   - LIVING BODIES ONLY. `actorAt` skips corpses, so a friend who just went
+ *     down is not support. That is correct, and grim, and exactly what this
+ *     creature should think.
+ *   - THE SAME `kind`. A monster adjacent to you is not company.
+ *
+ * TAKES THE LOOKUP RATHER THAN A CONTEXT, so the AI can pass `ctx.actorAt` and
+ * a talent can pass `world.actorAt` without either layer learning about the
+ * other's context type.
+ */
+export function countAdjacentKin(
+  actor: { readonly x: number; readonly y: number; readonly kind: string },
+  at: (x: number, y: number) => { readonly kind: string } | undefined,
+): number {
+  let count = 0;
+  for (const dir of DIR_ORDER) {
+    const vector = DIR_VECTORS[dir];
+    const neighbour = at(actor.x + vector.dx, actor.y + vector.dy);
+    if (neighbour !== undefined && neighbour.kind === actor.kind) count += 1;
+  }
+  return count;
 }
 
 /** A monster body. Speed is free here, in both directions — that is the point. */

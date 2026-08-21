@@ -2044,6 +2044,18 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
  * So is this.
  */
 export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
+  /**
+   * IT ALREADY HUNTED THE ISOLATED. NOW YOU CAN FEEL IT.
+   *
+   * huntsIsolated is invisible from the receiving end — a player who gets
+   * picked on cannot tell targeting from bad luck. Uncorroborated triples its
+   * damage against somebody with nobody beside them, which says the same thing
+   * in one blow and makes the counterplay the one this elite pair was built
+   * around: stand next to each other.
+   *
+   * MeleeChaser at attackRange 1 against a 1.5-reach talent — it arrives.
+   */
+  talents: ['talent:uncorroborated'],
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['dex', 'cun'],
   id: 'index_inspector',

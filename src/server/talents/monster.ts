@@ -62,6 +62,7 @@ export function isMonsterTalent(talent: { readonly tree: string }): boolean {
 
 import { breachingBlow } from './breaching_blow.ts';
 import { efface } from './efface.ts';
+import { uncorroborated } from './uncorroborated.ts';
 import { graspingHold } from './grasping_hold.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -100,4 +101,5 @@ export const MONSTER_TALENTS: readonly Talent[] = Object.freeze([
   graspingHold,
   breachingBlow,
   efface,
+  uncorroborated,
 ]);

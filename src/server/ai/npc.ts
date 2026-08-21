@@ -87,7 +87,7 @@
 
 import { DIR_ORDER, DIR_VECTORS } from '../../shared/coords.ts';
 import { findPath } from '../../shared/path.ts';
-import { AiProfile, HOLD_INTENT, IntentKind } from '../engine/actor.ts';
+import { AiProfile, HOLD_INTENT, IntentKind, countAdjacentKin } from '../engine/actor.ts';
 import { combatDistance, rangeRefusal } from '../engine/combat.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { PassableFn } from '../../shared/path.ts';
@@ -321,17 +321,17 @@ function mostIsolated(candidates: readonly EngineActor[], ctx: AiCtx): EngineAct
   return best;
 }
 
-/** How many of this actor's own living kin are standing next to it. */
+/**
+ * How many of this actor's own living kin are standing next to it.
+ *
+ * DELEGATED TO `countAdjacentKin` (engine/actor.ts) rather than written here,
+ * because the Disgraced Inspector's talent asks the same question from the
+ * talent layer. Two copies would eventually disagree, and the symptom would be
+ * a creature that walks past one lone target to reach another it thinks is more
+ * alone and then hits it for less.
+ */
 function supportOf(actor: EngineActor, ctx: AiCtx): number {
-  let count = 0;
-  for (const dir of DIR_ORDER) {
-    const vector = DIR_VECTORS[dir];
-    const neighbour = ctx.actorAt(actor.x + vector.dx, actor.y + vector.dy);
-    // `actorAt` is living-bodies-only, so a corpse next to you is not support —
-    // which is correct, and grim, and exactly what the elite should think.
-    if (neighbour !== undefined && neighbour.kind === actor.kind) count += 1;
-  }
-  return count;
+  return countAdjacentKin(actor, ctx.actorAt);
 }
 
 // ---------------------------------------------------------------------------
