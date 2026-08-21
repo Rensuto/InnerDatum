@@ -435,6 +435,8 @@ function resourceLabel(kind: ResourceKind): string {
       return 'Focus';
     case ResourceKind.Reagents:
       return 'Reagents';
+    case ResourceKind.Ink:
+      return 'Ink';
   }
 }
 

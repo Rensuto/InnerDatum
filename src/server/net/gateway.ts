@@ -1044,7 +1044,12 @@ export type TurnEngine = {
    * OPTIONAL LIKE EVERY OTHER SEAM HERE: a build with no talent engine has no
    * stances, and the verb answers a sentence rather than throwing.
    */
-  toggleSustain?(actorId: string, talentId: string): boolean | null;
+  /**
+   * THREE ANSWERS. `undefined` means NOT A STANCE and the caller must carry on
+   * to `submitTalent` — see the implementation in main.ts for the outage that
+   * taught this seam to say so.
+   */
+  toggleSustain?(actorId: string, talentId: string): boolean | null | undefined;
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * BUY A LOCKED DISCIPLINE. Appends its talents to the sheet, at rank 0.

@@ -12,7 +12,7 @@
  * carry an explicit `.ts` extension.
  */
 
-import { recomposeCombat } from './engine/effects.ts';
+import { SetEffectOutcome, recomposeCombat } from './engine/effects.ts';
 import { resolveItem } from './content/resolve.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,7 +48,7 @@ import {
 } from './engine/effects.ts';
 import type { StatusApply, StatusCure } from './engine/effects.ts';
 import type { BudgetPenalty } from './engine/talents.ts';
-import { BLEEDING, SLOWED, STUNNED } from './content/effects.ts';
+import { BLEEDING, SLOWED, STUNNED, effectById } from './content/effects.ts';
 import {
   MOVE_MP_COST,
   ResourceKind,
@@ -59,6 +59,7 @@ import {
   effectiveResourceMax,
   hasAffordableAction,
   markMultiplier,
+  SustainRefusal,
   resolveGuardCounter,
   talentLevelOf,
   toggleSustain,
@@ -798,7 +799,46 @@ export function buildServer() {
    * here, inside `engineFor`'s neighbourhood, is what keeps a stun rolled in a
    * delve drawing from that delve's stream.
    */
-  const statusFor = (forWorld: World): StatusApply => statusApplier(effects, forWorld.rng);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * APPLY A STATUS — AND TELL THE PERSON WHO CAUSED IT THAT IT LANDED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `statusApplier` is the engine's half and knows nothing about resources.
+   * `talentEngine` owns the bars and cannot see an effect land. This wrapper is
+   * the only place both are in scope, which is the same reason `status`,
+   * `cure` and `breakOnDamage` are all assembled here.
+   *
+   * ═══ ON LANDING, NOT ON APPLYING ═══
+   * A save the target MADE pays nothing. Paying on the attempt would make Ink a
+   * flat tax on pressing buttons and would reward a Redactor for spraying marks
+   * at things that shrug them off, which is the opposite of the class.
+   *
+   * ═══ AND ONCE, NOT EVERY TURN THE EFFECT RUNS ═══
+   * Per-tick income would make DURATION the only stat worth having and would
+   * pay a long slow twice over. One mark, one payment.
+   *
+   * DETRIMENTAL ONLY, and the caster must not be the victim: a Redactor who
+   * bandages an ally is not writing anything down, and one who is bleeding does
+   * not get paid for it.
+   */
+  const statusFor = (forWorld: World): StatusApply => {
+    const apply = statusApplier(effects, forWorld.rng);
+    return (target, effectId, duration, params = {}) => {
+      const landed = apply(target, effectId, duration, params);
+      const srcId = params.srcId;
+      if (
+        srcId !== undefined &&
+        srcId !== target.id &&
+        landed.outcome === SetEffectOutcome.Applied &&
+        landed.dur > 0 &&
+        effectById(effectId)?.status === EffectStatus.Detrimental
+      ) {
+        talentEngine.noteAfflicted(srcId);
+      }
+      return landed;
+    };
+  };
   /** The same per-realm rng, for the same reason. See `statusFor` above. */
   const cureFor = (forWorld: World): StatusCure => statusCurer(effects, forWorld.rng);
 
@@ -1443,14 +1483,24 @@ export function buildServer() {
      * gateway at once — so the refresh belongs here rather than inside the
      * toggle, which must stay a function of the sheet alone.
      *
-     * `null` FOR EVERY REFUSAL, which is what the gateway's seam already reads
-     * for a talent that cannot be raised. The reasons are for the engine's own
-     * tests; a socket is told a sentence, not an enum.
+     * ═══ THREE ANSWERS, AND THE THIRD ONE IS THE WHOLE POINT ═══
+     *
+     *   true / false  the stance went up or came down
+     *   null          it IS a stance and it cannot go up — tell the player
+     *   undefined     NOT A STANCE. The gateway must carry on to `submitTalent`.
+     *
+     * This used to return `null` for every refusal, and `toggleSustain` used one
+     * reason for both "not a stance" and "not learned" — so every ACTIVE talent
+     * in the game was answered by the stance seam with *"that stance cannot go
+     * up"*, which the client renders as *"not your turn yet"*. Nothing could be
+     * cast from the hotbar. See `SustainRefusal.NotASustain`.
      */
-    toggleSustain: (actorId: string, talentId: string): boolean | null => {
+    toggleSustain: (actorId: string, talentId: string): boolean | null | undefined => {
       const sheet = talentEngine.sheetOf(actorId);
-      if (sheet === undefined) return null;
+      if (sheet === undefined) return undefined;
       const result = toggleSustain(talentEngine, sheet, talentId);
+      // NOT OURS. Say so with `undefined` so the cast path gets its turn.
+      if (!result.ok && result.reason === SustainRefusal.NotASustain) return undefined;
       if (!result.ok) return null;
       // THE CONTRIBUTION IS THE POINT OF THE TOGGLE. Without this the stance is
       // a flag in a set and nothing on the body changes.

@@ -1101,6 +1101,19 @@ export const ResourceKind = {
   Focus: 'focus',
   /** The Alchemist. A COUNTABLE stock of 0-8. See `discrete`. */
   Reagents: 'reagents',
+  /**
+   * The Redactor. 0-100, and it fills by putting marks on things rather than
+   * by standing anywhere in particular — see `ResourceKind.Ink` in
+   * engine/talents.ts for why the fourth class needed a fourth economy.
+   *
+   * ═══ NO PROTOCOL BUMP, AND THE REASON IS THAT NOBODY CAN SEND IT YET ═══
+   * A new member of a union the client switches on would normally be a breaking
+   * change: an old client meets a kind it has no bar for. This one cannot reach
+   * an old client, because the only actor that could carry it is a class that is
+   * not in the selectable roster. The bump belongs with the commit that makes
+   * the Redactor pickable, not with the commit that names its resource.
+   */
+  Ink: 'ink',
 } as const;
 export type ResourceKind = (typeof ResourceKind)[keyof typeof ResourceKind];
 

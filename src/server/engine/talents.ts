@@ -232,6 +232,24 @@ export const ResourceKind = {
   Focus: 'focus',
   /** Alchemist. COUNTABLE. Refills on kills, at stairs, and one whole vial per `regenEvery`. */
   Reagents: 'reagents',
+  /**
+   * ═══ REDACTOR. BUILDS WHEN A MARK YOU PUT ON SOMETHING LANDS. ═══
+   *
+   * The fourth economy, and it had to be a fourth rather than a reused one: a
+   * resource IS a class's identity here, and each of the three states a
+   * different sentence about where you should be standing.
+   *
+   *   Resolve  — be where the blows are          (reactive, and in front)
+   *   Focus    — hold still and watch one thing  (patient, and at range)
+   *   Reagents — you brought eight; count them   (attrition, and finite)
+   *   Ink      — put marks on things             (nothing is free until
+   *                                               something is already wrong)
+   *
+   * A Redactor who opens a fight has almost nothing to spend, and one three
+   * turns into a fight the party has been marking is rich. That is the whole
+   * shape of the class, and it is a shape none of the other three can make.
+   */
+  Ink: 'ink',
 } as const;
 export type ResourceKind = (typeof ResourceKind)[keyof typeof ResourceKind];
 
@@ -482,6 +500,25 @@ export const FOCUS_PER_TURN = 0.2 * TOME_ACTIONS_PER_TURN;
  */
 export const REAGENT_REGEN_EVERY_TURNS = 12;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A MARK IS WORTH, AND THE FLOOR UNDER A REDACTOR HAVING A BAD FIGHT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `INK_PER_MARK` is the income. It pays on a detrimental effect LANDING from
+ * something you did — not on applying, which would pay for a save the target
+ * made, and not per turn the effect runs, which would pay a long slow twice
+ * over and make duration the only stat worth having.
+ *
+ * `INK_PER_TURN` is a floor and not an income: well under the cheapest talent
+ * in the class, so a Redactor who has marked nothing recovers slowly rather
+ * than sitting at zero. The Watchman shipped a milestone that way, with
+ * Lockdown and Iron Curtain permanently unaffordable, and it is not a mistake
+ * worth making twice.
+ */
+const INK_PER_MARK = 12;
+const INK_PER_TURN = 0.6;
+
 /** Per-kind limits and regeneration. One table, so no pool can drift. */
 export const RESOURCE_RULES: Readonly<
   Record<
@@ -601,6 +638,19 @@ export const RESOURCE_RULES: Readonly<
    */
   [ResourceKind.Resolve]: { max: 100, start: 100, regenPerTurn: RESOLVE_PER_TURN, discrete: false },
   [ResourceKind.Focus]: { max: 100, start: 100, regenPerTurn: FOCUS_PER_TURN, discrete: false },
+  /**
+   * ═══ IT STARTS FULL, AND THE TRICKLE IS A FLOOR RATHER THAN AN INCOME ═══
+   *
+   * `INK_PER_TURN` is deliberately below what any Redactor talent costs, so it
+   * can never be the way the bar fills — it exists because the Watchman spent a
+   * milestone at 0 Resolve with half his buttons greyed out, and a class whose
+   * only income is conditional needs a floor under it or a bad fight becomes an
+   * unplayable one.
+   *
+   * FULL AT THE START for the same reason the Alchemist walks in with eight
+   * vials: the first fight should be about spending, not about waiting.
+   */
+  [ResourceKind.Ink]: { max: 100, start: 100, regenPerTurn: INK_PER_TURN, discrete: false },
   // 0-8, COUNTABLE. Starts full: you walked in carrying eight vials, and the
   // first fight should be about spending them rather than about waiting.
   [ResourceKind.Reagents]: {
@@ -762,7 +812,33 @@ export function effectiveResourceMax(engine: TalentEngine, sheet: TalentSheet): 
 }
 
 export const SustainRefusal = {
-  /** Not a sustained talent, or not one this body owns. */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS TALENT IS NOT A STANCE. NOT A REFUSAL — A WRONG NUMBER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ IT USED TO SHARE `Unknown` WITH "YOU HAVE NOT LEARNED IT", AND THAT
+   * ═══ CONFLATION BROKE EVERY ACTIVE TALENT IN THE GAME
+   *
+   * The two mean opposite things to a caller. "You have not learned this stance"
+   * is a rule saying no and the player should be told. "This is not a stance"
+   * means the question was addressed to the wrong system and the caller should
+   * carry on to the one that owns it.
+   *
+   * The gateway asks `toggleSustain` about EVERY talent frame before it reaches
+   * `submitTalent`, because a stance and a cast arrive on the same key. Its
+   * contract is `undefined` for "not mine, carry on" and `null` for "mine, and
+   * no". With one reason covering both, the adapter mapped every non-stance to
+   * `null` — so pressing Crude Blow was answered by the STANCE seam with
+   * *"that stance cannot go up"*, rendered to the player as *"not your turn yet
+   * — the clock has not asked you"*, and no active talent could be used at all.
+   *
+   * Nothing failed. Every unit test passed, the gate was green, and the game
+   * was unplayable from the hotbar. The seam was correct; the vocabulary it
+   * answered in could not express the difference.
+   */
+  NotASustain: 'not_a_sustain',
+  /** A stance this body has not learned. A rule saying no. */
   Unknown: 'unknown',
   /** Turning it on would reserve more of the pool than the pool has. */
   NoRoom: 'no_room',
@@ -802,7 +878,9 @@ export function toggleSustain(
   talentId: string,
 ): SustainToggle {
   const talent = engine.registry.get(talentId);
-  if (talent?.sustain === undefined) return { ok: false, reason: SustainRefusal.Unknown };
+  // NOT A REFUSAL — a wrong number. See `SustainRefusal.NotASustain` for the
+  // afternoon that conflating this with "not learned" cost.
+  if (talent?.sustain === undefined) return { ok: false, reason: SustainRefusal.NotASustain };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * A BODY MAY ONLY SUSTAIN WHAT IT HAS LEARNED — AND THIS READ `points.has`.
@@ -1990,6 +2068,14 @@ export type TalentEngine = {
    * Called for a LANDED blow with damage on it, never for a miss and never for
    * a refusal — see `noteBlows` in engine/scheduler.ts.
    */
+  /**
+   * A DETRIMENTAL EFFECT YOU CAUSED HAS LANDED ON SOMEBODY. `srcId` is YOU.
+   *
+   * Reported rather than inferred, for the reason `noteKill` is: the layer that
+   * can see an effect land is not the layer that owns a resource bar. See the
+   * implementation for why the id is the caster and not the victim.
+   */
+  noteAfflicted(srcId: string): void;
   noteStruck(victimId: string): void;
   /** The party took the stairs. The other half: every Alchemist tops up. */
   noteStairs(): void;
@@ -2088,6 +2174,28 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       }
     },
 
+    /**
+     * ═══ SOMETHING YOU MARKED IS NOW CARRYING IT. ═══
+     *
+     * The exact twin of `noteKill` and `noteStruck` above, and deliberately so:
+     * a resource that keys off an event wants the event reported by whoever
+     * recognises it, not inferred by whoever spends the money.
+     *
+     * `srcId` IS THE CASTER, not the victim — the one asymmetry against
+     * `noteStruck` directly below, where the id is the body that got hit. Both
+     * are "who is this about", and for income the answer is the person earning.
+     *
+     * INK ONLY. A Watchman does not get paid for a bleed, and a resource that
+     * three classes could earn four ways would stop meaning anything.
+     */
+    noteAfflicted: (srcId: string): void => {
+      const sheet = sheets.get(srcId);
+      if (sheet === undefined) return;
+      if (sheet.resource.kind === ResourceKind.Ink) {
+        gainResource(sheet.resource, INK_PER_MARK);
+      }
+    },
+
     noteStruck: (victimId: string): void => {
       const sheet = sheets.get(victimId);
       if (sheet === undefined) return;
@@ -2156,6 +2264,22 @@ function regenResource(
         if (chebyshev(actor, other) <= 1) allies += 1;
       }
       if (allies > 0) gainResource(pool, allies * RESOLVE_PER_ADJACENT_ALLY);
+      return;
+    }
+    case ResourceKind.Ink: {
+      // ═══════════════════════════════════════════════════════════════════════
+      // NOTHING HERE, AND THE EMPTY CASE IS THE DESIGN.
+      // ═══════════════════════════════════════════════════════════════════════
+      // The other three all read the BOARD once a turn: where you are standing,
+      // whether you moved, who is beside you. Ink reads an EVENT instead — a
+      // mark landing — and it is paid by `noteAfflicted` at the moment that
+      // happens.
+      //
+      // A positional clause here would be a second income on the same bar and
+      // would blur the one sentence this class makes. The flat trickle above
+      // the switch is the floor and is deliberately below the cheapest talent
+      // in the class; it exists so a Redactor who has marked nothing is slow
+      // rather than stranded.
       return;
     }
     case ResourceKind.Focus: {

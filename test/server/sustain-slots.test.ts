@@ -10,6 +10,8 @@ import {
   TargetShape,
   Affinity,
   sustainReserve,
+  talentDone,
+  talentId,
   toggleSustain,
 } from '../../src/server/engine/talents.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
@@ -178,5 +180,82 @@ describe('stance slots', () => {
     const off = toggleSustain(engine, sheet, cold.id);
     expect(off).toEqual({ ok: true, on: false });
     expect(sustainReserve(engine, sheet)).toBe(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   "NOT A STANCE" IS NOT A REFUSAL, AND CONFLATING THEM BROKE THE GAME.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The gateway asks `toggleSustain` about EVERY talent frame before it reaches
+ * `submitTalent`, because a stance and a cast arrive on the same key. Its
+ * contract is `undefined` for "not mine, carry on" and `null` for "mine, and
+ * no".
+ *
+ * `SustainRefusal.Unknown` used to cover BOTH "this is not a stance" and "you
+ * have not learned this stance", so the adapter in main.ts mapped every
+ * non-stance to `null`. Pressing Crude Blow was answered by the STANCE seam
+ * with *"that stance cannot go up — there is not enough room in the pool"*,
+ * which the client renders as *"not your turn yet — the clock has not asked
+ * you"*. NO ACTIVE TALENT IN THE GAME COULD BE USED.
+ *
+ * Nothing failed anywhere. Every test passed, the gate was green, the deploy
+ * was healthy, and the hotbar was inert — reported from a live session with a
+ * screenshot.
+ */
+describe('a cast is not a stance', () => {
+  it('says NotASustain for a talent that is not one, not Unknown', () => {
+    const active: Talent = {
+      id: talentId('plain_active'),
+      name: 'Plain Active',
+      classId: null,
+      tree: 'watch/discipline',
+      kind: TalentKind.Active,
+      iconId: 'icon_active_plain',
+      cost: { ap: 1 },
+      cooldownTurns: 0,
+      targeting: {
+        shape: TargetShape.Single,
+        range: 1.5,
+        minRange: 0,
+        radius: 0,
+        requiresLos: true,
+        affinity: Affinity.Hostile,
+      },
+      damageType: DamageType.Physical,
+      onUse: () => talentDone([]),
+      describe: () => 'a plain active',
+    };
+    const { engine, sheet } = bench([active], 50);
+
+    const answer = toggleSustain(engine, sheet, active.id);
+    expect(answer.ok).toBe(false);
+    if (answer.ok) return;
+    /**
+     * THE ASSERTION THE OUTAGE TURNS ON. `Unknown` here and the adapter answers
+     * the gateway `null`, which means "it is a stance and it cannot go up" —
+     * and the cast never happens.
+     */
+    expect(answer.reason).toBe(SustainRefusal.NotASustain);
+  });
+
+  it('still says Unknown for a stance nobody has learned', () => {
+    const unlearned = stance('talent:unlearned', 10);
+    const { engine, sheet } = bench([unlearned], 50);
+    // Owned but never bought: rank 0, which is what `birthTalents` made possible.
+    sheet.points.set(unlearned.id, 0);
+
+    const answer = toggleSustain(engine, sheet, unlearned.id);
+    expect(answer.ok).toBe(false);
+    if (answer.ok) return;
+    // A RULE SAYING NO, and the player should be told — so NOT `NotASustain`.
+    expect(answer.reason).toBe(SustainRefusal.Unknown);
+  });
+
+  it('still toggles a stance the body has learned', () => {
+    const learned = stance('talent:learned', 10);
+    const { engine, sheet } = bench([learned], 50);
+    expect(toggleSustain(engine, sheet, learned.id)).toEqual({ ok: true, on: true });
   });
 });

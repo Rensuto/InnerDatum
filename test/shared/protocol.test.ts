@@ -170,8 +170,20 @@ describe('the wire vocabulary tracks the server, not the other way round', () =>
     );
   });
 
-  it('names the three MVP class resources', () => {
-    expect(Object.values(ResourceKind).sort()).toEqual(['focus', 'reagents', 'resolve'].sort());
+  it('names every class resource the server can produce', () => {
+    /**
+     * A LITERAL LIST ON BOTH SIDES, ON PURPOSE. Deriving this from the server's
+     * own ResourceKind would make the test pass by construction and catch
+     * nothing -- the fault it exists for is the two unions DRIFTING, and you
+     * cannot detect drift by reading one of them twice.
+     *
+     * 'ink' is the Redactor's and joined the server first. A wire union that
+     * could not express it would leave the class with no resource bar at all,
+     * which is the failure this assertion is shaped to catch.
+     */
+    expect(Object.values(ResourceKind).sort()).toEqual(
+      ['focus', 'ink', 'reagents', 'resolve'].sort(),
+    );
   });
 });
 

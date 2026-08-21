@@ -102,6 +102,10 @@ function pipArt(kind: ResourceKind): { readonly full: string; readonly empty: st
       return { full: 'ui_pip_focus', empty: null };
     case ResourceKind.Reagents:
       return { full: 'ui_pip_reagent_full', empty: 'ui_pip_reagent_empty' };
+    // CONTINUOUS, like Resolve and Focus -- there is no countable unit of ink,
+    // so there is no empty-pip art to draw and the hollow fallback is right.
+    case ResourceKind.Ink:
+      return { full: 'ui_pip_ink', empty: null };
   }
 }
 
@@ -114,6 +118,8 @@ export function resourceLabel(kind: ResourceKind): string {
       return 'Focus';
     case ResourceKind.Reagents:
       return 'Reagents';
+    case ResourceKind.Ink:
+      return 'Ink';
   }
 }
 
