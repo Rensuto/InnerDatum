@@ -145,6 +145,34 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     classId: null,
     blurb: 'What everyone is taught, whatever they went on to become.',
   },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE SECOND SHARED CATEGORY, AND THE FIRST THAT IS NOT SIX FLAT NUMBERS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `generic/groundwork` grants armour, defence, accuracy, two saves and a
+     * Constitution — six unconditional increments, which is right for a tree
+     * called what everyone is TAUGHT and wrong as the only shared tree there is.
+     * Every talent in this one is worth a different amount depending on what is
+     * happening: how hurt you are, whether you moved, how many things are in
+     * reach, how much of your class resource is gone. That is what makes buying
+     * one a decision rather than a purchase.
+     *
+     * ═══ AND IT EXISTS BECAUSE THE POINTS HAD NOWHERE TO GO ═══
+     * A character reaches the cap with 42 generic points against six talents
+     * five ranks deep — 29 buyable ranks once the birth grant is taken off. A
+     * THIRD of every generic point in a career was unspendable, which is not a
+     * balance problem but a missing-content one: upstream runs about 0.4 points
+     * per available rank and this game ran 1.45. Twelve talents halves that; the
+     * trees after this one close it.
+     */
+    id: 'generic/nightshift',
+    mastery: 1,
+    name: 'Nightshift',
+    classId: null,
+    blurb: 'What too many of them does to a body, and what a body does back.',
+  },
 ]);
 
 const BY_ID = new Map(TALENT_TREES.map((tree) => [tree.id, tree]));

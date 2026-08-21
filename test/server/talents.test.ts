@@ -374,9 +374,19 @@ describe('the loadout cap — PLAN.md § 5', () => {
     // Three classes, six actives each. The shared tree adds none — every talent
     // in `generic/groundwork` is passive, which is what a training category is.
     expect(everyTalent).toHaveLength(18);
-    // …and the registry as a whole is those 18 plus 18 class passives plus the 6
-    // shared, which is the count `allTalents()` is the single enumeration of.
-    expect(f.engine.registry.all()).toHaveLength(42);
+    /**
+     * …AND THE REGISTRY AS A WHOLE IS EVERY AUTHORED TALENT — COUNTED, NOT
+     * SPELLED. This line read `toHaveLength(42)` and 42 was correct for as
+     * long as there were exactly two shared trees' worth of talents; adding
+     * `generic/nightshift` failed it at 48 with nothing wrong.
+     *
+     * `allTalents()` is the single enumeration, and the assertion twelve lines
+     * up already uses it for the same question. A literal here says nothing a
+     * reader can check and everything a future author has to bump, which is how
+     * a guard becomes a chore. The PROPERTY worth pinning is that the registry
+     * holds all of them and nothing else.
+     */
+    expect(f.engine.registry.all()).toHaveLength(allTalents().length);
 
     for (const talent of f.engine.registry.all()) {
       const owners2 = CLASSES.filter(

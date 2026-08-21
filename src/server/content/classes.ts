@@ -79,6 +79,12 @@
  * is the only layer allowed to see both.
  */
 
+import { braced } from '../talents/braced.ts';
+import { deadOnYourFeet } from '../talents/dead_on_your_feet.ts';
+import { longNights } from '../talents/long_nights.ts';
+import { oneAtATime } from '../talents/one_at_a_time.ts';
+import { secondWind } from '../talents/second_wind.ts';
+import { walkItOff } from '../talents/walk_it_off.ts';
 import { contingencies } from '../talents/contingencies.ts';
 import { scorchedCoat } from '../talents/scorched_coat.ts';
 import { seenWorse } from '../talents/seen_worse.ts';
@@ -566,6 +572,13 @@ export function classForJoin(savedClassId: string | null, rotation: number): Cla
  * here instead of by copying the talents three times with mangled ids.
  */
 export const GENERIC_PASSIVES: readonly Talent[] = Object.freeze([
+  // ─── NIGHTSHIFT, the conditional half. See `generic/nightshift`. ───
+  secondWind,
+  braced,
+  deadOnYourFeet,
+  oneAtATime,
+  longNights,
+  walkItOff,
   issuedKit,
   lightOnTheFeet,
   rangeTime,
