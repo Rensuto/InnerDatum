@@ -48,7 +48,7 @@ import {
 } from './engine/effects.ts';
 import type { StatusApply, StatusCure } from './engine/effects.ts';
 import type { BudgetPenalty } from './engine/talents.ts';
-import { BLEEDING, SLOWED, STUNNED, effectById } from './content/effects.ts';
+import { MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
   MOVE_MP_COST,
   ResourceKind,
@@ -650,8 +650,24 @@ export function buildServer() {
    * answers to "is Sam still bleeding", and the second one is drawn on the same
    * screen as the first.
    */
+  /**
+   * ═══ THE ROSTER, NEVER A LIST WRITTEN OUT HERE ═══
+   *
+   * This read `[STUNNED, BLEEDING, SLOWED]`, which was every effect in the game
+   * on the day it was written and stopped being so the moment a fourth was
+   * added. `setEffect` on an id this state does not know answers
+   * `SetEffectOutcome.Unknown` and does nothing — no throw, no log, no badge —
+   * so Effaced, Breached and Dazed were registered in `MVP_EFFECTS`, exercised
+   * by their own passing tests, applied by four talents, and INERT in the
+   * running game.
+   *
+   * The literal was the bug. `MVP_EFFECTS` is the one list that already has to
+   * be right — `EFFECT_IDS`, `effectById` and `createMvpEffectState` are all
+   * built from it — and iterating it here means a seventh effect is registered
+   * by existing, with nothing for anyone to remember.
+   */
   const effects = createEffectState();
-  for (const def of [STUNNED, BLEEDING, SLOWED]) registerEffect(effects, def);
+  for (const def of MVP_EFFECTS) registerEffect(effects, def);
 
   /**
    * CHARACTER FILES, and the one thing that knows whose body is whose.

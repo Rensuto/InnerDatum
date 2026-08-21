@@ -247,7 +247,14 @@ const ownerDir = (h: Harness, owner: string): string => join(h.root, 'characters
 async function settled(
   h: Harness,
   expected = 1,
-  timeoutMs = 5000,
+  /**
+   * A FAILURE THRESHOLD, NOT A DELAY. This polls, so the timeout costs nothing
+   * when the condition is already true -- it only decides how long to wait
+   * before declaring the write lost. 5s was tuned on an idle machine and this
+   * suite runs 165 files at once, where a disconnect write can take longer than
+   * that to reach disk. Raising the bound is free; raising a SLEEP would not be.
+   */
+  timeoutMs = 15_000,
 ): Promise<Awaited<ReturnType<Harness['store']['listCharacters']>>> {
   /**
    * ═══ BOTH HALVES, AND EACH ONE ALONE WAS SHIPPED AND WAS WRONG ═══

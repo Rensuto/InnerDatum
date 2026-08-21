@@ -130,6 +130,40 @@ const printLog = () => {
   for (const l of lines) console.log(`  ${l}`);
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WAIT FOR AN `effects` FRAME THAT CARRIES SOMETHING. Never sample once.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `printEffects` reads whatever the LATEST frame happens to be at the instant
+ * it is called, and a status applied by the press this tool exists to make
+ * takes a beat to come back down the socket. Sampling immediately reported
+ * "an effects frame arrived, carrying no badges" on a run whose own log said
+ * *"Index Cairn is slowed for 3 turns"* — the badge was on its way, and the
+ * tool had already decided it was not.
+ *
+ * That answer is worse than no answer. This is the tool that exists to prove
+ * the status pipeline reaches a client, and it was reporting a false negative
+ * on a working pipeline.
+ *
+ * RETURNS WHETHER ANYTHING TURNED UP, so the caller can still say so honestly
+ * when nothing does.
+ */
+const waitForBadges = async (timeoutMs = 4000) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = last('effects')?.actors ?? [];
+    if (rows.some((a) => (a.effects ?? []).length > 0)) return true;
+    if (Date.now() > deadline) return false;
+    // AND LET TIME PASS WHILE WAITING. The effects snapshot goes out on a PUMP,
+    // and a probe that presses once and then only listens never causes another
+    // one -- so it waits for a frame that nothing is going to send. A player
+    // does not have this problem because a fight keeps moving around them.
+    send({ t: 'hold' });
+    await sleep(150);
+  }
+};
+
 /** Every `effects` frame is a full snapshot; this prints the badges on it. */
 const printEffects = (label) => {
   const msg = last('effects');
@@ -500,6 +534,14 @@ if (adjacent === null) {
 
   beat('PRESSED LOCKDOWN');
   printLog();
+  // THE BADGE COMES BACK A BEAT AFTER THE CAST. See `waitForBadges`.
+  const effectsBefore = frames.filter((f) => f.t === 'effects').length;
+  const got = await waitForBadges();
+  const effectsAfter = frames.filter((f) => f.t === 'effects').length;
+  console.log(
+    `  effects frames: ${String(effectsBefore)} before the press, ${String(effectsAfter)} after; ` +
+      `badges seen: ${got ? 'yes' : 'no'}`,
+  );
   stunSeen = printEffects('badges');
 
   // THE BADGE MUST ALSO EXPIRE. A door with no clock is a permanent stun, and

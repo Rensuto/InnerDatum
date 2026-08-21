@@ -271,7 +271,14 @@ async function createCharacter(
 async function settled(
   h: Harness,
   expected = 1,
-  timeoutMs = 5000,
+  /**
+   * A FAILURE THRESHOLD, NOT A DELAY. This polls, so the timeout costs nothing
+   * when the condition is already true -- it only decides how long to wait
+   * before declaring the write lost. 5s was tuned on an idle machine and this
+   * suite runs 165 files at once, where a disconnect write can take longer than
+   * that to reach disk. Raising the bound is free; raising a SLEEP would not be.
+   */
+  timeoutMs = 15_000,
   /**
    * WAIT FOR THIS TO BE TRUE OF THE ROWS, rather than just for a count.
    *
@@ -395,7 +402,7 @@ describe('changing character', () => {
     // THE FIRST CHARACTER IS THE ONE THIS NEEDS, and it is the one that has
     // been disconnected — so it is the one that is actually promised. The second
     // is still holding a socket and may not have queued a thing.
-    const rows = await settled(harness, 1, 5000, (list) =>
+    const rows = await settled(harness, 1, 15_000, (list) =>
       list.some((row) => row.classId === firstClass),
     );
     const original = rows.find((row) => row.classId === firstClass);

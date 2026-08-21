@@ -16,6 +16,9 @@ import { stepProjectile } from '../../src/server/engine/projectile.ts';
 import { talentId } from '../../src/server/engine/talents.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { sustainAnswer, toggleSustain } from '../../src/server/engine/talents.ts';
+import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
+import { effectsOn, statusApplier } from '../../src/server/engine/effects.ts';
+import type { EffectState } from '../../src/server/engine/effects.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -76,6 +79,7 @@ const LANE_Y = 17;
 
 /** The Watchman's at-will swing, and the Alchemist's heal he must not be able to press. */
 const CRUDE_BLOW = talentId('crude_blow');
+const SHIN_CRACK = talentId('shin_crack');
 const MEND_WOUNDS = talentId('mend_wounds');
 
 // ---------------------------------------------------------------------------
@@ -241,6 +245,11 @@ type Pending = { events: TurnEvent[] };
 type Harness = {
   readonly port: number;
   readonly world: World;
+  /**
+   * THE STATUS TABLE THE GATEWAY PROJECTS FROM. Optional because only the live
+   * harness builds one -- the stub gateway has no engine to apply anything.
+   */
+  readonly effects?: EffectState;
   readonly pending: Pending;
   close(): Promise<void>;
 };
@@ -608,11 +617,27 @@ async function bootLive(seed: string): Promise<Harness> {
   world.level.tiles.fill(TileCode.FLOOR);
 
   const talents = createContentTalentEngine();
+  // THE ROSTER, exactly as main.ts registers it — see the note there for the
+  // literal that left three effects unregistered in the running game.
+  const effects = createMvpEffectState();
   const engine = createTurnEngine({
     world,
     now: () => 0,
     talents: createTalentBook(talents, world),
-    talentRuntime: talentRuntimeFor(talents, world),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WITH THE STATUS SEAM, which this harness also used to leave out.
+     *
+     * Talents apply statuses through `ctx.status?.(...)` -- OPTIONAL, so a
+     * runtime built without it lets every status talent run to completion and
+     * apply nothing. Shin Crack swings, deals damage, logs, and the slow simply
+     * does not exist.
+     *
+     * Third gap of the same shape in this one harness, after `toggleSustain`
+     * and `effects`. Every one of them is a capability main.ts wires and the
+     * tests did not, and every one hides a whole class of bug.
+     */
+    talentRuntime: talentRuntimeFor(talents, world, statusApplier(effects, world.rng)),
   });
 
   await app.register(wsGateway, {
@@ -651,6 +676,20 @@ async function bootLive(seed: string): Promise<Harness> {
         return sustainAnswer(toggleSustain(talents, sheet, talentId));
       },
     },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE STATUS TABLE, WHICH THIS HARNESS ALSO USED TO LEAVE OUT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `broadcastEffectsIfChanged` returns on its first line when `effects` is
+     * absent, so a harness without it can never see a badge — and a talent that
+     * applies a status looks identical to one that does not.
+     *
+     * The same shape as the missing `toggleSustain`: production wires it, the
+     * harness did not, and the gap is exactly where a bug lives unseen.
+     */
+    effects,
+    talentEffects: talents,
     disconnectGraceMs: 30_000,
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -661,6 +700,10 @@ async function bootLive(seed: string): Promise<Harness> {
   return {
     port: address.port,
     world,
+    // THE STATUS TABLE THE GATEWAY PROJECTS FROM, so a test can check what the
+    // server believes before asking what the socket was told. The two failing
+    // separately is the whole point -- see the badge test at the foot of this file.
+    effects,
     pending: { events: [] },
     close: async (): Promise<void> => {
       await app.close();
@@ -746,5 +789,69 @@ describe('the hotbar, on a server with the talent book wired in', () => {
 
     expect(error?.['code']).toBe('bad_message');
     expect(client.all('used')).toEqual([]);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   A STATUS THAT LANDS MUST REACH THE SCREEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tools/status-live.mjs` pressed a slowing talent against a live server, the
+ * server's own Case Log said *"Index Cairn is slowed for 3 turns"*, and the
+ * socket received THREE `effects` frames before the press and three after. The
+ * status was applied and the client was never told.
+ *
+ * A badge nobody can see is a debuff nobody can play around, which is the whole
+ * value of the six statuses this game now has.
+ */
+describe('a landed status reaches the socket as a badge', () => {
+  it('sends an effects frame carrying the badge the cast just applied', async () => {
+    server = await bootLive('gateway-badge');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+
+    const ren = server.world.getActor(String(welcome?.['selfId']));
+    if (ren === undefined) throw new Error('the welcome named no body');
+    ren.x = 10;
+    ren.y = 10;
+    const husk = server.world.addMonster('m_husk', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 11,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 400,
+      // A BODY THAT CANNOT SAVE. The slow is rolled against a physical save like
+      // every status in this game, and a husk with ordinary stats shrugs it off
+      // often enough to make this test a coin flip about the wrong thing. What
+      // is under test is whether a LANDED status reaches the socket.
+      combat: { stats: { str: 1, dex: 1, con: 1, wil: 1, cun: 1, mag: 1 } },
+    });
+    client.clear();
+
+    /**
+     * SHIN CRACK, because it slows and a Watchman is born knowing it. Crude
+     * Blow would prove the cast path and nothing about the status pipeline.
+     */
+    client.send({ t: 'talent', talentId: SHIN_CRACK, target: { x: 11, y: 10 } });
+    await client.waitFor('used');
+
+    // THE SERVER'S OWN TABLE FIRST, so a failure below cannot be blamed on the
+    // talent having quietly done nothing.
+    expect(
+      effectsOn(server.effects ?? createMvpEffectState(), husk.id).map((e) => e.effectId),
+      'the slow never landed on the server at all',
+    ).toContain(EffectId.Slowed);
+
+    const frame = await client.waitFor('effects');
+    expect(frame, 'no effects frame followed the cast').toBeDefined();
+    const rows = (frame?.['actors'] ?? []) as { id: string; effects: { id: string }[] }[];
+    const onHusk = rows.find((row) => row.id === husk.id);
+    expect(
+      onHusk,
+      'the effects frame named every body except the one that was slowed',
+    ).toBeDefined();
+    expect(onHusk?.effects.map((e) => e.id)).toContain(EffectId.Slowed);
   });
 });
