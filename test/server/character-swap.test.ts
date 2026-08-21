@@ -272,6 +272,20 @@ async function settled(
   h: Harness,
   expected = 1,
   timeoutMs = 5000,
+  /**
+   * WAIT FOR THIS TO BE TRUE OF THE ROWS, rather than just for a count.
+   *
+   * A COUNT IS THE WRONG CONDITION WHEN A CHARACTER IS STILL CONNECTED. A body
+   * with a live socket has not necessarily QUEUED its creation save yet, and
+   * neither polling nor `flush` can make it: polling waits for a write that is
+   * not pending, and flush drains a queue that does not contain it. That row
+   * arrives when the socket closes, which is later in the test than the
+   * assertion that wanted it.
+   *
+   * So a test that needs one SPECIFIC character says which, and stops waiting
+   * for a row nothing has promised yet.
+   */
+  until?: (rows: Awaited<ReturnType<Harness['store']['listCharacters']>>) => boolean,
 ): Promise<Awaited<ReturnType<Harness['store']['listCharacters']>>> {
   /**
    * ═══ BOTH HALVES, AND EACH ONE ALONE WAS SHIPPED AND WAS WRONG ═══
@@ -294,7 +308,8 @@ async function settled(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const rows = await h.store.listCharacters(REN);
-    if (rows.length >= expected || Date.now() > deadline) break;
+    const enough = until === undefined ? rows.length >= expected : until(rows);
+    if (enough || Date.now() > deadline) break;
     await sleep(10);
   }
   await h.store.flush();
@@ -318,7 +333,16 @@ describe('changing character', () => {
     const second = await createCharacter(harness.port, 1);
     expect(second.classId, 'the two picks were the same class').not.toBe(first.classId);
 
-    // Let the debounced autosave land for the second body.
+    /**
+     * BOTH SOCKETS CLOSED BEFORE READING, because this assertion needs BOTH rows
+     * and only a disconnected body has promised one. A character still holding a
+     * socket has not necessarily queued its creation save, and neither polling
+     * nor flush can make it: polling waits for a write that is not pending, and
+     * flush drains a queue that does not contain it.
+     *
+     * The test does not touch this client again -- it ends four lines below.
+     */
+    second.client.close();
     const rows = await settled(harness, 2);
     expect(rows, 'two characters were created and the store does not have two').toHaveLength(2);
 
@@ -368,7 +392,12 @@ describe('changing character', () => {
     expect(second.classId).not.toBe(first.classId);
     const firstClass = first.classId;
     const secondClass = second.classId;
-    const rows = await settled(harness, 2);
+    // THE FIRST CHARACTER IS THE ONE THIS NEEDS, and it is the one that has
+    // been disconnected — so it is the one that is actually promised. The second
+    // is still holding a socket and may not have queued a thing.
+    const rows = await settled(harness, 1, 5000, (list) =>
+      list.some((row) => row.classId === firstClass),
+    );
     const original = rows.find((row) => row.classId === firstClass);
     expect(original, 'the first character is not in the store at all').toBeDefined();
     if (original === undefined) return;
