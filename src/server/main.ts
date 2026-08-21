@@ -51,6 +51,10 @@ import type { BudgetPenalty } from './engine/talents.ts';
 import { BLEEDING, SLOWED, STUNNED } from './content/effects.ts';
 import {
   MOVE_MP_COST,
+  ResourceKind,
+  TargetShape,
+  canUseTalent,
+  createTalentSheet,
   RESOURCE_RULES,
   effectiveResourceMax,
   hasAffordableAction,
@@ -71,7 +75,8 @@ import { createWorld } from './world/world.ts';
 import { isPlayer } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
-import type { GuardCounter, TalentEngine } from './engine/talents.ts';
+import type { GuardCounter, TalentEngine, TalentSheet } from './engine/talents.ts';
+import type { MonsterCast } from './ai/npc.ts';
 import type { ReapingTurnEngine, TalentRuntime } from './turn-engine.ts';
 import type { World } from './world/world.ts';
 import type { TileXY } from '../shared/coords.ts';
@@ -196,7 +201,101 @@ export function talentRuntimeFor(
    */
   onActBase?: (actorId: string) => void,
 ): TalentRuntime {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * GIVE A CREATURE ITS SHEET, THE FIRST TIME ANYTHING ASKS WHAT IT CAN DO.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * There is no other moment to do this in. `engine.attach` is called from the
+   * class path, which is players only, and a delve builds its monsters when the
+   * REALM OPENS — before anybody has walked in and before this engine has heard
+   * of them. Threading an attach through every spawn site would mean handing
+   * `content/` the talent engine, which is the import arrow eslint refuses.
+   *
+   * ON DEMAND IS THEREFORE THE DESIGN RATHER THAN A SHORTCUT, and it is cheap:
+   * a creature with no `talents` list never gets here at all, and one that does
+   * pays a `Map` lookup per turn after the first.
+   *
+   * ═══ THE SHEET IS BUILT FROM THE BODY, AND EVERY TALENT IS BORN LEARNED ═══
+   * A monster does not level, does not spend points and has no class. Its list
+   * IS its loadout, at rank 1, which is what `createTalentSheet` does with no
+   * `birth` argument — the same default every fixture in the tree relies on.
+   *
+   * NO RESOURCE POOL WORTH THE NAME. A creature is given the Watchman's budget
+   * because `TalentSheetInit` requires one and a monster talent must not cost a
+   * resource: there is nothing in the game that refills a monster's pool, so a
+   * talent priced in one would fire once per creature per lifetime and then
+   * look broken. Monster talents are priced in COOLDOWN, which the sheet ticks
+   * for everybody.
+   */
+  /**
+   * WHAT A CREATURE'S SHEET IS GIVEN TO SPEND.
+   *
+   * ═══ THE SAME SIX AP A PLAYER HAS, ON PURPOSE ═══
+   * A monster talent has to cost something a player can reason about, and "two
+   * of its six" is a sentence that means the same thing on both sides of a
+   * fight. Giving creatures their own budget would make every monster talent's
+   * AP cost a number with no referent.
+   *
+   * MOVEMENT IS ZERO AND THAT IS NOT AN OVERSIGHT. The AI moves through
+   * `IntentKind.Move`, which spends the ACTOR's budget and never the sheet's —
+   * a creature's sheet exists to gate talents. An `maxMp` here would be a pool
+   * nothing draws from.
+   */
+  const MONSTER_AP = 6;
+  const MONSTER_MP = 0;
+
+  const ensureMonsterSheet = (actor: EngineActor): TalentSheet | undefined => {
+    const known = 'talents' in actor ? actor.talents : undefined;
+    if (known === undefined || known.length === 0) return undefined;
+    const existing = talents.sheetOf(actor.id);
+    if (existing !== undefined) return existing;
+    return talents.attach(
+      actor.id,
+      createTalentSheet({
+        loadout: [...known],
+        resource: ResourceKind.Resolve,
+        maxAp: MONSTER_AP,
+        maxMp: MONSTER_MP,
+      }),
+    );
+  };
+
   return {
+    /**
+     * WHAT THIS CREATURE COULD CAST AT THAT BODY THIS TURN.
+     *
+     * ═══ EVERY OPTION HAS ALREADY PASSED `canUseTalent` ═══
+     * Known, off cooldown, affordable, in range, in line of sight, against a
+     * legal affinity. So the AI decides WHETHER rather than whether it can, and
+     * a refusal can never reach the scheduler and cost the creature its turn —
+     * which would read to a player as a monster that occasionally just stands
+     * there.
+     *
+     * IN TEMPLATE ORDER, because that order is the creature's own preference.
+     * The AI takes the first; an author reorders the list to change what a
+     * creature reaches for, rather than tuning against a scoring function.
+     */
+    castable: (self: EngineActor, target: EngineActor): readonly MonsterCast[] => {
+      const sheet = ensureMonsterSheet(self);
+      if (sheet === undefined) return [];
+      const out: MonsterCast[] = [];
+      for (const id of sheet.loadout) {
+        const talent = talents.registry.get(id);
+        if (talent === undefined) continue;
+        const at = { x: target.x, y: target.y };
+        // THE TARGET TILE IS THE VICTIM'S, EXCEPT FOR A SELF SHAPE, which aims
+        // at the caster's own — the same rule `use` above applies when a client
+        // sends no tile.
+        const aim = talent.targeting.shape === TargetShape.Self ? { x: self.x, y: self.y } : at;
+        if (canUseTalent(talents, self, talent, { ...aim, actorId: target.id }, world) !== null) {
+          continue;
+        }
+        out.push({ talentId: id, target: aim });
+      }
+      return out;
+    },
+
     use: (actor: EngineActor, id: string, target: TileXY | undefined): TalentResolutionResult => {
       const talent = talents.registry.get(id);
       if (talent === undefined) return { ok: false, reason: 'unknown_talent' };

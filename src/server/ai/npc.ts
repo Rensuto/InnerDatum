@@ -101,6 +101,13 @@ import type { EngineActor, Intent, MonsterActor } from '../engine/actor.ts';
  * nothing from world/ and every profile below can be tested against a hand-drawn
  * five-tile map with two object literals in it.
  */
+/** One talent a creature could use on a target this turn, and where to aim it. */
+export type MonsterCast = {
+  readonly talentId: string;
+  /** The tile it is aimed at. Self-shaped talents name the caster's own. */
+  readonly target: TileXY;
+};
+
 export type AiCtx = {
   /**
    * TERRAIN ONLY. Must answer false off-grid — `canWalk` already does, and A*
@@ -120,6 +127,30 @@ export type AiCtx = {
   readonly visibleEnemies: (self: MonsterActor) => readonly EngineActor[];
   /** The world's seeded generator. Every draw takes a label. */
   readonly rng: Rng;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHAT THIS CREATURE COULD CAST AT THAT BODY, RIGHT NOW. Empty for most.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ A QUESTION, NOT A HANDLE ═══
+   * The obvious shape is to hand the AI the talent engine and let it work this
+   * out. It is the wrong one for the reason every other field here is a
+   * closure: this module knows about tiles, bodies and intents, and nothing
+   * else. Giving it a `TalentEngine` would put the registry, the sheet and the
+   * cooldown table into the AI's import graph to answer one question the caller
+   * can already answer completely.
+   *
+   * ═══ IT ANSWERS ONLY WHAT WOULD ACTUALLY LAND ═══
+   * Every option that comes back has passed `canUseTalent` against this target
+   * on this turn — known, off cooldown, affordable, in range, in line of sight.
+   * So the AI's job is WHETHER to cast rather than whether it can, and a
+   * refusal can never reach the scheduler and cost the creature its turn.
+   *
+   * OPTIONAL, so every fixture that builds an `AiCtx` by hand keeps compiling
+   * and reads as a creature that knows nothing — which is what nearly every
+   * monster in the game is.
+   */
+  readonly castable?: (self: MonsterActor, target: EngineActor) => readonly MonsterCast[];
 };
 
 /**
@@ -141,6 +172,17 @@ const SHOULDER_FAILURE_PENALTY = 5;
  * out of combat it is not, and that fixed point is what lets the pump go idle
  * at ~0% CPU instead of spinning forever on monsters bracing at each other.
  */
+/**
+ * How often a creature that CAN cast actually does, as a percentage.
+ *
+ * Forty is high enough that a caster reads as a caster within a couple of
+ * exchanges and low enough that it still walks, flanks and swings like the rest
+ * of the bestiary. Upstream's equivalent is a weighted tactical pick rather
+ * than a flat chance; a flat one is the honest version of that until there is
+ * more than one talent on a creature to choose between.
+ */
+export const CAST_CHANCE = 40;
+
 export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
   const target = acquireTarget(self, ctx);
   if (target === undefined) {
@@ -151,6 +193,42 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
     self.ai.blockedTurns = 0;
     self.ai.shoulderTurns = 0;
     return HOLD_INTENT;
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TALENT FIRST, ON A CADENCE — AND ABOVE THE PROFILE, NOT INSIDE IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Both profiles want this and neither owns it: a husk that can throw
+   * something and an eidolon that can are the same decision wearing different
+   * movement. Putting it in `chase` and `kite` separately would be two copies
+   * of the cadence, and the second one would drift.
+   *
+   * ═══ THE CADENCE IS WHAT STOPS THIS BEING A DIFFERENT GAME ═══
+   * A creature that used a talent EVERY turn it could would be a creature that
+   * never does anything else — upstream's own AI is a weighted pick over
+   * talents and movement (`ai/tactical.lua`), not "cast if able", and a monster
+   * that opens with its best thing on turn one and repeats it is both harder
+   * and more boring than one that mixes.
+   *
+   * ONE DRAW, LABELLED, and taken ONLY when there is something to cast — this
+   * is the one place a conditional draw is correct rather than dangerous,
+   * because the alternative is a draw on every monster on every turn of every
+   * fight in the game, which would move the stream for every world that has no
+   * casters in it at all. The condition is a property of the CREATURE rather
+   * than of the roll, so a given world's stream stays stable.
+   */
+  const options = ctx.castable?.(self, target) ?? [];
+  if (options.length > 0 && ctx.rng.int('ai.cast', 0, 99) < CAST_CHANCE) {
+    // FIRST, NOT BEST. The template's order is the creature's own preference,
+    // and `castable` preserves it — so an author orders the list and the
+    // creature obeys it, rather than the AI inventing a scoring function that
+    // every future talent has to be tuned against.
+    const pick = options[0];
+    if (pick !== undefined) {
+      return { kind: IntentKind.Talent, talentId: pick.talentId, target: pick.target };
+    }
   }
 
   switch (self.ai.profile) {

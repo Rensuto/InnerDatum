@@ -1,3 +1,4 @@
+import { isMonsterTalent } from '../../src/server/talents/monster.ts';
 import { trained } from '../helpers/trained.ts';
 import { describe, expect, it } from 'vitest';
 
@@ -715,7 +716,7 @@ describe('every talent level moves a number — the honesty gate', () => {
      */
     const registered = engine.registry
       .all()
-      .filter((talent) => talent.onUse !== undefined)
+      .filter((talent) => talent.onUse !== undefined && !isMonsterTalent(talent))
       .map((talent) => talent.id);
     // COUNTED, NOT SPELLED. This read `18` — three classes of six — and the
     // line below it already asserts the two SETS are equal, which is the whole

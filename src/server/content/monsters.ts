@@ -319,6 +319,27 @@ export type MonsterTemplate = {
    */
   readonly lifeRating?: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHAT IT KNOWS. Talent ids, and absent means it can only swing.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's monsters carry `resolvers.talents{...}` and use them constantly;
+   * ours could not use one at any price until this field existed. See
+   * `MonsterActor.talents` for why the missing piece was a PATH rather than
+   * content — the resolution half has always been generic over actors.
+   *
+   * ═══ A MONSTER'S TALENTS ARE ITS OWN, NOT A CLASS'S ═══
+   * Nothing stops a template naming a player talent and it would mostly work.
+   * But a husk casting the Watchman's Ward Rush is a husk wearing somebody's
+   * profession, and every number in a player talent was tuned against a
+   * resource pool that a creature does not have. The roster gets its own.
+   *
+   * ABSENT IS THE COMMON CASE and costs nothing: `monsterInit` writes no field,
+   * no sheet is attached, and the creature behaves exactly as it did before any
+   * of this existed.
+   */
+  readonly talents?: readonly string[];
+  /**
    * WHICH STATS THIS BODY PUTS ITS LEVELLING POINTS INTO. Upstream's
    * `auto_stats`, dealt round-robin by `spreadStatPoints`.
    *
@@ -846,6 +867,22 @@ const ORB_APPLY_POWER = 10;
  * of it is the correct behaviour for the one situation it least wants to be in.
  */
 export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
+  /**
+   * NO TALENTS, AND IT HELD GRASPING HOLD FOR EXACTLY ONE AFTERNOON.
+   *
+   * It was the obvious creature to give the first one to and it was the wrong
+   * one, for a reason a moment's arithmetic would have shown: this is a
+   * `RangedKiter` with `attackRange: 6` and the talent reaches 1.5. It kites by
+   * design — closing is the one thing its profile will not do — so the option
+   * was offered to the AI on every turn of every fight and `canUseTalent`
+   * refused it on range every single time.
+   *
+   * Nothing failed. The sheet attached, the seam worked, the AI asked. A talent
+   * a creature can never be in position to use is indistinguishable, from every
+   * test and every log line, from a creature that simply chose not to.
+   *
+   * It lives on the Glut now, whose own docblock names the problem it fixes.
+   */
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['mag', 'dex'],
   id: 'index_wraith',
@@ -1811,6 +1848,24 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
  * drawn a marker that opened onto somebody else's fight until now.
  */
 export const INDEX_GLUT: MonsterTemplate = Object.freeze({
+  /**
+   * ═══ THE FIRST CREATURE IN THE GAME THAT CAN DO SOMETHING ═══
+   *
+   * And it goes here rather than on the wraith because of the sentence this
+   * template's own notes already carry: *"a wall you can simply walk away from
+   * is not a wall."* That was written as a known weakness of the design — the
+   * Glut absorbs everything the party throws and cannot corner anybody, so the
+   * counterplay to the whole fight is to walk five tiles and keep shooting.
+   *
+   * Grasping Hold is the answer to that exact complaint. A slow absorber that
+   * can pin you for three turns is finally the wall it was built to be, and it
+   * costs nothing anywhere else: the creature is still slow, still misses
+   * constantly, and still dies to anyone who deals with it before it arrives.
+   *
+   * MELEE CHASER, `attackRange: 1`, against a talent that reaches 1.5 — it gets
+   * to use this, which is not a sentence that was true of the wraith.
+   */
+  talents: ['talent:grasping_hold'],
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['con', 'str'],
   id: 'index_glut',
@@ -2568,9 +2623,17 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
             statPointsGainedTo(grown, rank),
           ),
         };
+  // WHAT IT KNOWS, CARRIED ONTO THE BODY. Copied rather than aliased: the
+  // template is frozen and shared by every creature built from it, so a body
+  // that ever learned something would teach the whole species.
+  const talents = template.talents === undefined ? undefined : [...template.talents];
+
   return {
     name: template.displayName,
     sprite: template.sprite,
+    // ABSENT RATHER THAN EMPTY for a creature that knows nothing, so a template
+    // authored before this field produces the byte-identical body it always did.
+    ...(talents === undefined ? {} : { talents }),
     x: at.x,
     y: at.y,
     rank: template.rank,

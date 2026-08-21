@@ -1,3 +1,4 @@
+import { isMonsterTalent } from '../../src/server/talents/monster.ts';
 import { treeById } from '../../src/server/content/talent-trees.ts';
 import { trained } from '../helpers/trained.ts';
 import { TALENTS_PER_CLASS_MAX, TALENTS_PER_CLASS_MIN } from '../../src/shared/progression.ts';
@@ -362,8 +363,19 @@ describe('the loadout cap — PLAN.md § 5', () => {
     // expectation with the code instead of failing a number somebody then bumps
     // without reading — and counted through `allTalents()`, which is the single
     // enumeration, because `CLASSES.reduce` cannot see a tree no class owns.
+    /**
+     * ═══ THE BESTIARY'S OWN ARE NOT ON THIS TABLE, AND MUST NOT BE ═══
+     * `registry.all()` meant "every talent a player can reach" until monsters
+     * got talents of their own. A creature's talent has no tier because
+     * nobody ranks it up, no entry in `TALENT_TREES` because no panel draws
+     * it, and no place on any loadout because no player can learn it — every
+     * one of those is correct, and every one breaks an assertion written when
+     * the two populations were the same population.
+     */
     const authored = allTalents().length;
-    expect(engine.registry.all()).toHaveLength(authored);
+    expect(engine.registry.all().filter((talent) => !isMonsterTalent(talent))).toHaveLength(
+      authored,
+    );
     expect(engine.registry.forClass(WATCHMAN.id)).toHaveLength(
       WATCHMAN.loadout.length + WATCHMAN.passives.length,
     );
@@ -397,7 +409,9 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * pressed. It gets its own ownership check below, which is the half of this
      * assertion that still applies to it.
      */
-    const everyTalent = f.engine.registry.all().filter((talent) => talent.onUse !== undefined);
+    const everyTalent = f.engine.registry
+      .all()
+      .filter((talent) => talent.onUse !== undefined && !isMonsterTalent(talent));
     // EVERY ACTIVE THE CLASSES OWN, counted from them rather than spelled. The
     // shared trees add none — every talent in `generic/groundwork` and
     // `generic/nightshift` is passive, which is what a training category is,
@@ -427,9 +441,18 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * a guard becomes a chore. The PROPERTY worth pinning is that the registry
      * holds all of them and nothing else.
      */
-    expect(f.engine.registry.all()).toHaveLength(allTalents().length);
+    // …AND THE BESTIARY'S OWN ARE IN THE REGISTRY TOO, so they come off before
+    // this count. `allTalents()` is the enumeration of what a PLAYER can
+    // reach; `registry.all()` is everything that EXISTS, and monsters got
+    // talents of their own. Two questions, and this one is the first.
+    expect(f.engine.registry.all().filter((talent) => !isMonsterTalent(talent))).toHaveLength(
+      allTalents().length,
+    );
 
     for (const talent of f.engine.registry.all()) {
+      // A CREATURE'S TALENT IS OWNED BY NO CLASS AND CARRIED BY NO SHEET, which
+      // is what "the bestiary's own" means — see `isMonsterTalent`.
+      if (isMonsterTalent(talent)) continue;
       const owners2 = CLASSES.filter(
         (definition) =>
           definition.loadout.some((owned) => owned.id === talent.id) ||

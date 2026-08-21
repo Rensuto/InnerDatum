@@ -794,6 +794,32 @@ export type PlayerActor = ActorCommon & {
 /** Everything the world drives. Full ToME speed model, both directions. */
 export type MonsterActor = ActorCommon & {
   readonly kind: typeof ActorKind.Monster;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHAT THIS CREATURE CAN DO BESIDES WALK AT YOU. Talent ids, or absent.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Monsters could not use talents at all. Not "had none authored" — COULD NOT:
+   * `canUseTalent` needs a sheet, `engine.attach` had two call sites and both
+   * were the player path, and `decideNpcAction` never constructed a
+   * `IntentKind.Talent` in the first place. Nine creatures across two AI
+   * profiles, able only to move and bump-attack, in a game shipping 84 talents.
+   *
+   * The consuming half was already finished and generic — `scheduler.ts`
+   * resolves a talent intent for ANY actor with no player-specific branch in it
+   * — so what was missing was a path, not a feature.
+   *
+   * ═══ ON THE BODY, NOT LOOKED UP FROM THE TEMPLATE ═══
+   * There is no template reference on a `MonsterActor`, and the id cannot stand
+   * in for one: an encounter names its bodies `mon_<template>` but a delve names
+   * them `delve_0`, `delve_1`, so half the monsters in the game could not be
+   * traced back to what they are. `monsterInit` copies the list onto the body
+   * instead, which works for every spawn path and needs no parsing.
+   *
+   * IDS RATHER THAN TALENTS, so this stays a plain array of strings that a save
+   * file and a structural type can both hold — the same reason `carried` is ids.
+   */
+  talents?: readonly string[];
   /** Energy GAIN multiplier. 1.4 means it acts 14 times per 10 game turns. */
   globalSpeed: number;
   /** Action COST multiplier (Actor.lua:5863). 0.5 is a half-turn action. */
@@ -1097,6 +1123,19 @@ export type PlayerInit = {
 };
 
 export type MonsterInit = {
+  /**
+   * WHAT IT KNOWS. Talent ids, absent for a creature that can only swing.
+   *
+   * ═══ DECLARED HERE *AND* CONSTRUCTED BELOW, AND BOTH ARE LOAD-BEARING ═══
+   * `createMonsterActor` builds its body FIELD BY FIELD — the house style, and
+   * the right one: a spread would put anything the content layer happened to
+   * invent onto a live actor. The cost is that a field the template carries and
+   * this constructor does not is dropped in SILENCE, with nothing to typecheck
+   * against, which is exactly what happened on the first attempt at this one.
+   * The template carried it, `monsterInit` returned it, tsc was happy, and
+   * `wraith.talents` came back undefined in a fight.
+   */
+  readonly talents?: readonly string[];
   readonly name: string;
   readonly sprite: string;
   readonly x: number;
@@ -1245,6 +1284,9 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
   return {
     ...createEnergyActor(id, { globalSpeed: init.globalSpeed ?? 1 }),
     kind: ActorKind.Monster,
+    // ABSENT RATHER THAN EMPTY, so every creature authored before talents
+    // existed produces the byte-identical body it always did.
+    ...(init.talents === undefined ? {} : { talents: [...init.talents] }),
     name: init.name,
     sprite: init.sprite,
     rank: init.rank ?? ActorRank.Normal,

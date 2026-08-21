@@ -100,6 +100,7 @@ import { workingFast } from '../talents/working_fast.ts';
 import { causticLoad, concussiveLoad, frostLoad } from '../talents/loads.ts';
 import { fullBandolier, practisedHands, steadyPour } from '../talents/load_passives.ts';
 import { LEGWORK } from '../talents/legwork.ts';
+import { MONSTER_TALENTS } from '../talents/monster.ts';
 import { NERVE } from '../talents/nerve.ts';
 import { LEVERAGE } from '../talents/leverage.ts';
 import { contingencies } from '../talents/contingencies.ts';
@@ -729,6 +730,10 @@ export function registerAllTalents(): TalentRegistry {
   // given body may reach one is the SHEET's question, and `sheetForClass`
   // answers it from `PlayerActor.unlockedTrees`.
   for (const talent of ALL_LOCKED_TALENTS) registry.register(talent);
+  // AND THE BESTIARY'S OWN. No class owns them and no player can learn one —
+  // they are in no loadout and in no tree — but the registry holds every talent
+  // that EXISTS, and `talents.use` resolves a monster's through it.
+  for (const talent of MONSTER_TALENTS) registry.register(talent);
   for (const definition of CLASSES) {
     for (const talent of definition.loadout) registry.register(talent);
     // THE PASSIVES REGISTER TOO. They are looked up by id exactly as the four

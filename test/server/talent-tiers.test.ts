@@ -4,6 +4,7 @@
 // and game/engines/default/engine/interface/ActorTalents.lua:729-734.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
+import { isMonsterTalent } from '../../src/server/talents/monster.ts';
 import { describe, expect, it } from 'vitest';
 
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
@@ -36,7 +37,17 @@ import { MAX_CHARACTER_LEVEL, TALENT_MAX_LEVEL } from '../../src/shared/progress
  * that matters: a talent added and forgotten here is a talent no assertion in
  * this file ever sees.
  */
-const ALL_TALENTS = createContentTalentEngine().registry.all();
+const ALL_TALENTS = createContentTalentEngine()
+  .registry.all()
+  /**
+   * ═══ PLAYER TALENTS ONLY, AND THE FILTER IS THE POINT ═══
+   * `registry.all()` meant "every talent a player can reach" until the bestiary
+   * got talents of its own. A creature's talent has no tier because nobody
+   * ranks it up, no entry in `TALENT_TREES` because no panel draws it, and no
+   * place on any loadout because no player can learn it. Every assertion in
+   * this file is about the LADDER, which is a player-facing structure.
+   */
+  .filter((talent) => !isMonsterTalent(talent));
 
 const CLASS_TREES = TALENT_TREES.filter((tree) => tree.classId !== null);
 

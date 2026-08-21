@@ -73,6 +73,7 @@ import {
 } from '../../shared/progression.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { decideNpcAction } from '../ai/npc.ts';
+import type { MonsterCast } from '../ai/npc.ts';
 import { hasLineOfSight } from '../world/world.ts';
 import {
   HOLD_INTENT,
@@ -273,6 +274,47 @@ export type SweepStep =
     }
   | { readonly t: 'hold'; readonly id: string }
   | { readonly t: 'blocked'; readonly id: string; readonly reason: Refusal }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CREATURE CAST SOMETHING. The exact twin of `GameEvent.talent_used`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This arm used to be a `hold` — `sweepStepFor` mapped a monster's talent to
+   * "it stood there", under a comment reading UNREACHABLE TODAY, because when it
+   * was written no monster could produce a Talent intent. That stopped being
+   * true the day the bestiary got talents of its own, and the note said as much:
+   * *the day a monster casts, this grows a `SweepStep` of its own.*
+   *
+   * ═══ FIELD FOR FIELD WITH THE PLAYER LANE, WHICH IS THE WHOLE DESIGN ═══
+   * Both map to the SAME `{ k: 'talent' }` wire event, so the client needs not
+   * one line to draw a monster's cast and no protocol version moves. A wraith
+   * taking hold and a Watchman shoving are the same kind of thing happening, and
+   * the moment the two lanes describe them differently they start disagreeing
+   * about which one the renderer should trust.
+   *
+   * ═══ AND ITS DAMAGE FOLLOWS AS ORDINARY `attack` STEPS ═══
+   * One stamp, then one step per victim, in resolution order — the rule
+   * `GameEvent.talent_used` states at length, for the same reason: an AoE is not
+   * a special case of damage, it is a stamp followed by the same damage events
+   * as everything else. Folding a victim list in here would be a second
+   * implementation of "a body took damage", and two of those always end up
+   * disagreeing about whether something died.
+   */
+  | {
+      readonly t: 'talent';
+      /** THE CASTER. */
+      readonly id: string;
+      readonly talentId: string;
+      /** Where it landed. The caster's own tile for a `self` shape, never a sentinel. */
+      readonly at: TileXY;
+      readonly shape: TalentShape;
+      /** Arms for `cross`, radius for `ball`, 0 otherwise. */
+      readonly radius: number;
+      /** Set when the talent named an ACTOR rather than a bare tile. */
+      readonly targetId?: string;
+      /** The talent's own sentences. See `TalentLanding.notes`. */
+      readonly notes?: readonly string[];
+    }
   /**
    * A TRAVELLING SHOT LEFT THE MUZZLE. `id` is the shooter, `to` the tile it is
    * aimed at (the target's tile at this instant — the orb does not re-aim).
@@ -644,6 +686,26 @@ export type TalentResolution = {
    * costs exactly zero (docs/architecture.md § 2).
    */
   use(actor: EngineActor, talentId: string, target: TileXY | undefined): TalentResolutionResult;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHAT THIS CREATURE COULD CAST AT THAT BODY THIS TURN. Empty for most.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * INJECTED FOR `use`'s REASON, ONE STEP EARLIER: answering it needs the
+   * REGISTRY and a SHEET, and the layer that can see the registry, the world
+   * and the world's monsters at once is `main.ts`. The AI asks; this forwards.
+   *
+   * IT MAY ATTACH A SHEET AS A SIDE EFFECT, and that is deliberate rather than
+   * hidden. A monster gets one the first time anything asks what it can do,
+   * because there is no other moment: `engine.attach` is called from the
+   * player's class path and a delve populates its monsters before the engine
+   * has ever heard of the realm. Attaching on demand is what makes this work
+   * for every spawn path without threading the engine through content.
+   *
+   * OPTIONAL, so every fixture that builds a `TalentResolution` by hand keeps
+   * compiling and reads as a bestiary that knows nothing.
+   */
+  castable?(self: MonsterActor, target: EngineActor): readonly MonsterCast[];
   /**
    * ONCE PER GAME TURN PER ACTOR, on the BASE clock — the AP/MP refill and the
    * class resource's regeneration.
@@ -1261,7 +1323,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
    * stays in the world.
    */
   const actors = world.actorsInTurnOrder();
-  const aiCtx = makeAiCtx(world, actors);
+  const aiCtx = makeAiCtx(world, actors, ctx.talents);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1783,7 +1845,9 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
   if (!outcome.ok) {
     sink.sweep(gameTurn, { t: 'blocked', id: actor.id, reason: outcome.reason });
   } else {
-    sink.sweep(gameTurn, sweepStepFor(actor, outcome.effect));
+    // ONE ACTION, POSSIBLY SEVERAL STEPS — a cast is a stamp plus its damage.
+    // Repeated calls append to the SAME open batch; only `sink.push` closes one.
+    for (const step of sweepStepFor(actor, outcome.effect)) sink.sweep(gameTurn, step);
     // INTO THE SAME BATCH. A stun landing and a detective hitting the floor are
     // part of the monster turn the client is pacing, and pushing them as
     // ordinary events would close the batch mid-sweep — see `createEventSink`.
@@ -2629,35 +2693,66 @@ function attackedEvent(attackerId: string, blow: Blow): GameEvent {
   return { t: 'attacked', id: attackerId, ...blow };
 }
 
-function sweepStepFor(actor: MonsterActor, effect: Effect): SweepStep {
+/**
+ * ONE MONSTER ACTION, AS THE STEPS THAT DESCRIBE IT.
+ *
+ * ═══ MANY RATHER THAN ONE, BECAUSE A CAST IS A STAMP PLUS ITS DAMAGE ═══
+ * Every other action here is exactly one step and returns a single-element
+ * array. A talent is the exception the player lane already lives with: one
+ * `talent_used` and then one `attacked` per victim. Appending them all to the
+ * same open batch keeps the sweep whole — only `sink.push` closes a batch, and
+ * `sink.sweep` called five times running is five steps inside one sweep.
+ */
+function sweepStepFor(actor: MonsterActor, effect: Effect): readonly SweepStep[] {
   switch (effect.kind) {
     case 'move':
-      return { t: 'move', id: actor.id, from: effect.from, to: effect.to };
+      return [{ t: 'move', id: actor.id, from: effect.from, to: effect.to }];
     case 'attack':
-      return { t: 'attack', id: actor.id, ...effect };
+      return [{ t: 'attack', id: actor.id, ...effect }];
     case 'talent':
-      // UNREACHABLE TODAY, AND NOT A LIE — the same shape as `revive` below.
-      // `decideNpcAction` (ai/npc.ts) emits Move, Attack and Hold and nothing
-      // else, so no monster can produce a Talent intent; the wraith's orb is an
-      // ATTACK with a `projSpeed`, not a talent. The arm exists because both
-      // lanes share the `Effect` union. The day a monster casts, this grows a
-      // `SweepStep` of its own — one step per victim would split the stamp from
-      // its damage, which is the one thing `GameEvent.talent_used` forbids.
-      return { t: 'hold', id: actor.id };
+      /**
+       * THE STAMP, THEN EVERY BODY IT HIT — the player lane's shape exactly.
+       *
+       * This arm read `hold` for as long as no monster could cast, under a
+       * comment that named the day it would need writing. A creature's cast is
+       * now indistinguishable from a detective's at the wire, which is what lets
+       * one `applyTurnEvent` on the client draw both.
+       */
+      return [
+        {
+          t: 'talent',
+          id: actor.id,
+          talentId: effect.landing.talentId,
+          at: effect.landing.at,
+          shape: effect.landing.shape,
+          radius: effect.landing.radius,
+          ...(effect.landing.targetId === undefined ? {} : { targetId: effect.landing.targetId }),
+          // OMITTED WHEN EMPTY, matching the player lane: an absent key is the
+          // shape `TalentEvent.notes` documents.
+          ...(effect.landing.notes === undefined || effect.landing.notes.length === 0
+            ? {}
+            : { notes: effect.landing.notes }),
+        },
+        ...effect.blows.map((blow): SweepStep => ({ t: 'attack', id: actor.id, ...blow })),
+      ];
     case 'hold':
-      return { t: 'hold', id: actor.id };
+      return [{ t: 'hold', id: actor.id }];
     case 'swapped':
-      // UNREACHABLE, AND NOT A LIE — the same shape as `talent` above. The swap
-      // requires BOTH bodies to be players (see the note on the rule), so a
-      // monster cannot produce this effect. The arm exists because both lanes
-      // share the `Effect` union, and a monster that could swap would walk
-      // through the line a party is holding.
-      return { t: 'hold', id: actor.id };
+      // UNREACHABLE, AND NOT A LIE. The swap requires BOTH bodies to be players
+      // (see the note on the rule), so a monster cannot produce this effect. The
+      // arm exists because both lanes share the `Effect` union, and a monster
+      // that could swap would walk through the line a party is holding.
+      //
+      // THE `talent` ARM ABOVE NO LONGER KEEPS THIS ONE COMPANY: it was
+      // unreachable on precisely the same grounds until the bestiary got
+      // talents. An arm justified by "no monster can produce this" is a claim
+      // with an expiry date, and this file has now watched one expire.
+      return [{ t: 'hold', id: actor.id }];
     case 'fired':
       // The shot left the muzzle. Nothing has been hit — the impact arrives as
       // its own `attack` step, up to three turns later, from `actProjectile`.
       // This step is dropped at the wire on purpose; see `SweepStep.fired`.
-      return { t: 'fired', id: actor.id, to: effect.to };
+      return [{ t: 'fired', id: actor.id, to: effect.to }];
     case 'revive':
       // UNREACHABLE TODAY, AND NOT A LIE. `decideNpcAction` (ai/npc.ts) emits
       // Move, Attack and Hold and nothing else, so no monster can ever produce a
@@ -2665,7 +2760,7 @@ function sweepStepFor(actor: MonsterActor, effect: Effect): SweepStep {
       // both lanes, and reading it as a hold is the honest answer: the monster
       // spent its turn and the client draws nothing. The day something in the
       // world can pick its own kind up, this grows its own `SweepStep`.
-      return { t: 'hold', id: actor.id };
+      return [{ t: 'hold', id: actor.id }];
   }
 }
 
@@ -3621,7 +3716,16 @@ function anyContact(world: World, actors: readonly EngineActor[]): boolean {
 // The AI's view of the world
 // ---------------------------------------------------------------------------
 
-function makeAiCtx(world: World, actors: readonly EngineActor[]): AiCtx {
+function makeAiCtx(
+  world: World,
+  actors: readonly EngineActor[],
+  /**
+   * THE TALENT SEAM, FORWARDED. Absent for every build with no talent book, and
+   * an absent `castable` reads as "this creature knows nothing" — which is what
+   * nearly every monster in the game is.
+   */
+  talents?: TalentResolution,
+): AiCtx {
   return {
     // TERRAIN ONLY — see the note in ai/npc.ts. Handing A* an actor-aware
     // predicate is how you get monsters that never land a blow.
@@ -3629,6 +3733,12 @@ function makeAiCtx(world: World, actors: readonly EngineActor[]): AiCtx {
     actorAt: (x, y) => world.actorAt(x, y),
     visibleEnemies: (self) => visibleEnemies(self, world, actors),
     rng: world.rng,
+    // FORWARDED WITHOUT A DEFAULT. `castable` is optional on both sides, so a
+    // resolution that cannot answer and a build with no resolution at all
+    // produce the identical empty list rather than two different silences.
+    ...(talents?.castable === undefined
+      ? {}
+      : { castable: (self, target) => talents.castable?.(self, target) ?? [] }),
   };
 }
 

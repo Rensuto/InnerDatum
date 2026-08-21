@@ -1025,6 +1025,29 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
           ),
         );
         break;
+      /**
+       * A CREATURE'S CAST — THE SAME WIRE EVENT A DETECTIVE'S PRODUCES.
+       *
+       * Field for field with the `talent_used` arm above, and that is the design
+       * rather than a coincidence: the client has exactly one `k: 'talent'`
+       * renderer, and a monster casting is not a different kind of happening
+       * from a player casting. No protocol version moves for this.
+       *
+       * Its damage follows as ordinary `attack` steps, handled above.
+       */
+      case 'talent':
+        out.push({
+          k: 'talent',
+          id: step.id,
+          talentId: step.talentId,
+          x: step.at.x,
+          y: step.at.y,
+          shape: step.shape,
+          radius: step.radius,
+          ...(step.targetId === undefined ? {} : { targetId: step.targetId }),
+          ...(step.notes === undefined || step.notes.length === 0 ? {} : { notes: step.notes }),
+        });
+        break;
       // A status that landed DURING the monster turn. It rides inside the batch
       // rather than beside it because an ordinary event would close the batch and
       // split one sweep into three — see `SweepStep` in engine/scheduler.ts.

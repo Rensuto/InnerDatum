@@ -1601,7 +1601,8 @@ export function createTalentRegistry(): TalentRegistry {
  * at import time, and a fifth talent would be a content change, not a level-up.
  */
 export type TalentSheet = {
-  readonly classId: ClassId;
+  /** Absent for a monster, which has no class. See `TalentSheetInit.classId`. */
+  readonly classId?: ClassId;
   readonly loadout: readonly string[];
   /**
    * THE PASSIVES THIS BODY OWNS. Separate from `loadout` for the reason
@@ -1719,7 +1720,20 @@ export type TalentSheetInit = {
   readonly birth?: readonly string[];
   /** The passives this class owns. Absent is none, which is every old fixture. */
   readonly passives?: readonly string[];
-  readonly classId: ClassId;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHOSE SHEET THIS IS — AND ABSENT MEANS NOBODY'S, WHICH IS A MONSTER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It was required, and it could be while only players had sheets. Monsters
+   * carry one now (see `MonsterActor.talents`) and a creature has no class:
+   * writing one of the three onto a husk would be a lie stored in the sheet.
+   *
+   * SAFE TO WIDEN FOR THE REASON THIS FIELD'S OWN NOTE ALREADY GIVES about a
+   * related case: `forClass` is its only reader and has no callers, and nothing
+   * in the engine, the gateway or the projector branches on it. It is a LABEL.
+   */
+  readonly classId?: ClassId;
   /** Tree id -> multiplier. Absent is 1.0 everywhere, which is every fixture. */
   readonly mastery?: ReadonlyMap<string, number>;
   readonly loadout: readonly string[];
