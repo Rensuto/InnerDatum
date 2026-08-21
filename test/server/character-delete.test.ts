@@ -246,7 +246,33 @@ const ownerDir = (h: Harness, owner: string): string => join(h.root, 'characters
  */
 async function settled(
   h: Harness,
+  expected = 1,
+  timeoutMs = 5000,
 ): Promise<Awaited<ReturnType<Harness['store']['listCharacters']>>> {
+  /**
+   * ═══ BOTH HALVES, AND EACH ONE ALONE WAS SHIPPED AND WAS WRONG ═══
+   *
+   * WAIT FIRST, because a disconnect's save is queued by the gateway's CLOSE
+   * HANDLER, and that handler has not necessarily run when a test reaches this
+   * line. `flush` on its own drains an empty queue, returns honestly, and the
+   * write lands afterwards — which failed as "two characters were not created",
+   * a message that reads like a broken create path and is not one.
+   *
+   * FLUSH SECOND, because arriving is not the same as finishing: the row can be
+   * listed while another write for the same character is still pending, and a
+   * test that then reads the file's BYTES compares against a copy that is about
+   * to change.
+   *
+   * The polling loop waits for the write to be QUEUED AND VISIBLE; the flush
+   * waits for everything queued to be DONE. Neither answers the other's
+   * question, which is why both are here.
+   */
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = await h.store.listCharacters(REN);
+    if (rows.length >= expected || Date.now() > deadline) break;
+    await sleep(10);
+  }
   await h.store.flush();
   return h.store.listCharacters(REN);
 }
@@ -258,7 +284,7 @@ describe('deleting a character', () => {
     first.client.close();
     const second = await createCharacter(harness.port, 1);
     second.client.close();
-    const before = await settled(harness);
+    const before = await settled(harness, 2);
     expect(before, 'two characters were not created').toHaveLength(2);
     const doomed = before[1];
     expect(doomed).toBeDefined();
