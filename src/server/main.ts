@@ -25,6 +25,7 @@ import { startOps } from './ops/routes.ts';
 
 import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
 import { checkTier } from '../shared/tiers.ts';
+import { PLAYER_RANK, maxLifeFor } from '../shared/leveling.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
 import {
   classById,
@@ -996,6 +997,50 @@ export function buildServer() {
      */
     actor.turnProcs = sheet.turnProcs;
     recomposeCombat(actor, effects, resolveItem);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     *   AND HOW MUCH OF THIS BODY THERE IS. Derived, never stored and mutated.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `maxHp` was an authored class constant written once at creation, so a
+     * level-50 Watchman had the seventy-two hit points he started with. It is
+     * now `classBase + Σ level gains + 4 × Constitution spent` — see
+     * `maxLifeFor` in src/shared/leveling.ts for the curve and for why it is
+     * computed rather than accumulated.
+     *
+     * ═══ HERE, BECAUSE THIS FUNCTION ALREADY RUNS ON EVERY INPUT ═══
+     * The three inputs are the class, the level and the Constitution spent, and
+     * `refreshPassives` is called on exactly the occasions any of them can move:
+     * class chosen, talent point spent, ATTRIBUTE point spent (through the
+     * `refreshBody` seam, which exists for that one reason), character restored,
+     * and once per base turn — which is what catches a level gained mid-pump.
+     * A second trigger somewhere else would be a second answer to "how big is
+     * this body", and the first time they disagreed a player would gain or lose
+     * hit points on reconnect.
+     *
+     * ═══ CURRENT HP IS CLAMPED, NOT SCALED ═══
+     * A body whose ceiling drops must not keep hit points above it — a pool
+     * reading 90/72 is a number no other part of this game can be shown. It is
+     * NOT raised to match a rising ceiling: a level-up widens the pool and
+     * leaves the blood in it where it was, so 40/72 becomes 40/89 rather than a
+     * free heal. That is upstream verbatim — Actor.lua:3823 adds to `max_life`
+     * and does not touch `life` — and it is what stops levelling mid-fight from
+     * being a panic button worth farming a kill for.
+     */
+    if (isPlayer(actor) && actor.classId !== undefined) {
+      const definition = classById(actor.classId);
+      if (definition !== undefined) {
+        actor.maxHp = maxLifeFor(
+          definition.maxHp,
+          definition.lifeRating,
+          actor.level,
+          PLAYER_RANK,
+          actor.spentStats?.con ?? 0,
+        );
+        actor.hp = Math.min(actor.hp, actor.maxHp);
+      }
+    }
   };
 
   const wrapForGateway = (base: ReapingTurnEngine): ReapingTurnEngine => ({
@@ -1123,6 +1168,18 @@ export function buildServer() {
      * for a talent that cannot be raised. The reasons are for the engine's own
      * tests; a socket is told a sentence, not an enum.
      */
+    /**
+     * THE PUBLIC NAME FOR `refreshPassives`, and the only reason it is a seam:
+     * spending Constitution changes a hit-point ceiling that net/** cannot
+     * compute for itself. See `TurnEngine.refreshBody` for the whole argument.
+     *
+     * A ONE-LINE FORWARD ON PURPOSE. The instant this grows a second statement
+     * there are two answers to "how big is this body" and they will disagree.
+     */
+    refreshBody: (actorId: string): void => {
+      refreshPassives(actorId);
+    },
+
     toggleSustain: (actorId: string, talentId: string): boolean | null => {
       const sheet = talentEngine.sheetOf(actorId);
       if (sheet === undefined) return null;

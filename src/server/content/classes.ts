@@ -171,7 +171,32 @@ export type ClassDef = {
   readonly sprite: string;
   /** Shown while Downed (game-design.md § 9). Also present on disk. */
   readonly downedSprite: string;
+  /**
+   * HIT POINTS AT LEVEL 1, and only at level 1.
+   *
+   * This used to be the whole story — an authored constant written into the
+   * body once and never touched, so a level-50 Watchman had the seventy-two
+   * hit points he started with. It is now the BASE of a curve; see
+   * `lifeRating` below and `maxLifeFor` in src/shared/leveling.ts.
+   */
   readonly maxHp: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW MUCH TOUGHER THIS CLASS GETS PER LEVEL. `life_rating`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Actor.lua:187 defaults it to 10 and each class adjusts it: upstream ships
+   * Bulwark 16, Berserker 13, Archer 10, Rogue 10, Alchemist 9, Archmage 6.
+   * Every level multiplies this by a rank coefficient that itself grows with
+   * level, so the SPREAD between classes widens across a career rather than
+   * staying a flat offset — which is what makes a front-liner feel different
+   * from a caster at 50 rather than merely ahead.
+   *
+   * OURS ARE UPSTREAM'S, matched by role rather than invented, because the
+   * three classes map cleanly: the Watchman holds a doorway (Bulwark), the
+   * Inspector shoots (Archer), the Alchemist mixes (Alchemist).
+   */
+  readonly lifeRating: number;
   /** Per GAME TURN, on the base clock. Deliberately small: this is not a heal. */
   readonly hpRegen: number;
   readonly resource: ResourceKind;
@@ -268,6 +293,8 @@ export const WATCHMAN: ClassDef = {
   sprite: 'chr_player_watchman_s',
   downedSprite: 'chr_player_watchman_downed_s',
   maxHp: 72,
+  // Bulwark 16 — he is the one standing in the doorway.
+  lifeRating: 16,
   hpRegen: 0.5,
   resource: ResourceKind.Resolve,
   maxAp: BASE_MAX_AP,
@@ -335,6 +362,8 @@ export const INSPECTOR: ClassDef = {
   sprite: 'chr_player_inspector_s',
   downedSprite: 'chr_player_inspector_downed_s',
   maxHp: 60,
+  // Archer 10 — upstream's ranged baseline.
+  lifeRating: 10,
   hpRegen: 0.5,
   resource: ResourceKind.Focus,
   maxAp: BASE_MAX_AP,
@@ -399,6 +428,8 @@ export const ALCHEMIST: ClassDef = {
   sprite: 'chr_player_alchemist_s',
   downedSprite: 'chr_player_alchemist_downed_s',
   maxHp: 54,
+  // Alchemist 9 — upstream's own value for the same profession.
+  lifeRating: 9,
   hpRegen: 0.5,
   resource: ResourceKind.Reagents,
   maxAp: BASE_MAX_AP,

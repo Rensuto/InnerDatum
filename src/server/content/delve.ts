@@ -72,6 +72,8 @@ import { rollDrop } from './encounter.ts';
 import { rollLoot } from './loot.ts';
 import type { MonsterTemplate } from './monsters.ts';
 import { LONE_BEGINNER } from '../world/strength.ts';
+import { ZoneLevelScheme, zoneBaseLevel } from '../../shared/zone.ts';
+import type { ZoneLevelRange } from '../../shared/zone.ts';
 import type { PartyStrength } from '../world/strength.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -87,6 +89,17 @@ import type { World } from '../world/world.ts';
  * before anything is in reach.
  */
 const DOOR_CLEARANCE = 8;
+
+/**
+ * How far over its room a set piece stands.
+ *
+ * SMALL ON PURPOSE, because RANK is already doing the heavy lifting: a rank-4
+ * body gains life half again as fast per level as the rank-2 husks around it,
+ * so two levels is a wide gap here rather than a token one. Upstream puts a
+ * boss a little over its zone for the same reason — a set piece that is exactly
+ * as tough as the population is not a set piece.
+ */
+export const BOSS_LEVELS_ABOVE_ROOM = 2;
 
 /** What lives in one delve, and how much of it. */
 export type DelveSpec = {
@@ -124,6 +137,50 @@ export type DelveSpec = {
    * boss in each of the rooms is a difficulty tier, not a set piece.
    */
   readonly boss?: MonsterTemplate;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT LEVEL THE THINGS IN HERE ARE. ToME's `zone.base_level`, one number.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every monster in this game was level 1 — not by decision but because nothing
+   * ever passed a level to `monsterInit`, whose parameter defaulted. A husk at
+   * the far end of the road had the twenty-five hit points of the husk in the
+   * tutorial room, while the player walking in had four hundred.
+   *
+   * ═══ A FIXED NUMBER PER PLACE, NOT A FUNCTION OF THE PARTY ═══
+   * This is the roguelike contract and it is upstream's, exactly: a zone is as
+   * dangerous as it is, and deciding whether you are ready for it is the game.
+   * Scaling the room to whoever walks in is the other genre — it makes every
+   * fight the same fight, makes levelling up feel like nothing, and deletes the
+   * one reward this map already offers, which is that the walk you could not
+   * survive last week is a walk you can survive now.
+   *
+   * The party is still read, three lines below, for how MANY bodies (a party of
+   * three meets more of them) and for what they are CARRYING. Numbers and loot
+   * follow the people; the threat of the place does not.
+   *
+   * ═══ AND NOT A BAND, WHICH THE REST OF THIS TABLE IS ═══
+   * `monsters` and `litter` are bands because a room's POPULATION should vary.
+   * A level is not population — a band here would mean a labelled draw inside
+   * the placement loop, and this file's own note six lines into
+   * `populateDelve` states what that costs: every later draw from the seed
+   * moves, so the same seed would produce a different FLOOR rather than the
+   * same floor with tougher things in it.
+   *
+   * THE LADDER IS THE WALK. The step counts in the comments below were already
+   * the gradient this table was authored against; this reads them off, at
+   * roughly a level per nine steps, so nothing about the map's difficulty order
+   * changes — it is the same order, finally expressed in a number the combat
+   * code can see.
+   */
+  readonly levelRange: ZoneLevelRange;
+  /**
+   * WHO DECIDES — `Zone.lua:118`. Absent is upstream's own default, `fixed`,
+   * which is every delve in the game: a place you walked to is as dangerous as
+   * it is. The overworld ambush is the one that is `player`, and it is not in
+   * this table at all. See `zoneBaseLevel` for the whole argument.
+   */
+  readonly levelScheme?: ZoneLevelScheme;
 };
 
 /** The common roster. Husks with a wraith or two behind them. */
@@ -299,23 +356,35 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
    * It also restores a gradient the old band had flattened: the next room out is
    * 4-6, so the game's gentlest room and its second were nearly the same fight.
    */
-  ['site:drowned_chapel', { monsters: [2, 2], roster: DROWNED, litter: [1, 2] }],
+  [
+    'site:drowned_chapel',
+    { monsters: [2, 2], roster: DROWNED, litter: [1, 2], levelRange: [1, 1] },
+  ],
   //     30 steps.
-  ['site:underworks', { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3] }],
+  [
+    'site:underworks',
+    { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3], levelRange: [3, 3] },
+  ],
   // ─── worked places: more of them, and more to carry home ────────────────
   //     70 steps.
-  ['site:watchers_altar', { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4] }],
+  [
+    'site:watchers_altar',
+    { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [7, 7] },
+  ],
   //     87 steps.
-  ['site:hollow_mine', { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4] }],
+  [
+    'site:hollow_mine',
+    { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [9, 9] },
+  ],
   // ─── quiet and wrong: fewer bodies, harder ones ─────────────────────────
   //     88 steps. The roster changes here, which is the real threshold on the
   //     map: from this marker outward, things bite.
-  ['site:outer_index', { monsters: [3, 4], roster: DEEP, litter: [3, 4] }],
+  ['site:outer_index', { monsters: [3, 4], roster: DEEP, litter: [3, 4], levelRange: [10, 10] }],
   //     92 steps.
-  ['site:glass_archive', { monsters: [3, 5], roster: DEEP, litter: [2, 3] }],
+  ['site:glass_archive', { monsters: [3, 5], roster: DEEP, litter: [2, 3], levelRange: [11, 11] }],
   // ─── the far end ────────────────────────────────────────────────────────
   //     108 steps.
-  ['site:gearford_ward', { monsters: [6, 8], roster: DEEP, litter: [3, 5] }],
+  ['site:gearford_ward', { monsters: [6, 8], roster: DEEP, litter: [3, 5], levelRange: [13, 13] }],
   // ─── and the three nobody is told about ─────────────────────────────────
   //     All three sit in the MIDDLE band by distance (47-62 steps), which is
   //     deliberate: a secret that is also the hardest room in the game is a
@@ -340,18 +409,21 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     teaches you on. This is a change of BESTIARY, not of difficulty — the
   //     room now belongs to its own name and stops being The Underworks with a
   //     different floor colour.
-  ['site:cairnfoot', { monsters: [4, 6], roster: DROWNED, litter: [3, 4] }],
+  ['site:cairnfoot', { monsters: [4, 6], roster: DROWNED, litter: [3, 4], levelRange: [6, 6] }],
   //     47 steps, in the clearing inside the southern wood — so it draws on the
   //     wood's own roster, which is the same rule Blackwood follows.
-  ['site:barrow_end', { monsters: [5, 7], roster: THICKET, litter: [3, 5] }],
+  ['site:barrow_end', { monsters: [5, 7], roster: THICKET, litter: [3, 5], levelRange: [5, 5] }],
   //     62 steps, on the beach behind the wood.
-  ['site:the_weir', { monsters: [4, 6], roster: DROWNED, litter: [3, 4] }],
+  ['site:the_weir', { monsters: [4, 6], roster: DROWNED, litter: [3, 4], levelRange: [6, 6] }],
   //     131 steps, the furthest walk on the moor, and now the worst room on it.
   //     THE TREES START HERE, which `places.ts` has said since before there was
   //     anything in them. Now there is: `THICKET` is a third eidolons, and eight
   //     to ten bodies of which a third move faster than you do is what the far
   //     end of the road should feel like.
-  ['site:blackwood_outskirts', { monsters: [8, 10], roster: THICKET, litter: [4, 6] }],
+  [
+    'site:blackwood_outskirts',
+    { monsters: [8, 10], roster: THICKET, litter: [4, 6], levelRange: [15, 15] },
+  ],
 ]);
 
 /**
@@ -619,6 +691,13 @@ const REDACTED_TOWN: DelveSpec = {
   monsters: [5, 7],
   roster: DEEP,
   litter: [3, 5],
+  /**
+   * AND IT IS LATE-GAME, because what is standing in the street is `DEEP` and
+   * because the far map is not somewhere anybody arrives early. Level 14 puts it
+   * between Gearford Ward and Blackwood Outskirts — the top of the ladder, which
+   * is what a town nobody walked out of should be.
+   */
+  levelRange: [14, 14],
 };
 
 /**
@@ -647,6 +726,19 @@ export function redactedSpec(originalId: string): DelveSpec | undefined {
     monsters: [spec.monsters[0] + 2, spec.monsters[1] + 2],
     roster: spec.roster,
     litter: [spec.litter[0] + 1, spec.litter[1] + 1],
+    /**
+     * AND EVERYTHING OVER THERE IS FOUR LEVELS WORSE THAN ITS TWIN.
+     *
+     * The same shape as the two lines above it — the twin is its original plus a
+     * constant, so the map's difficulty ORDER is inherited whole and only its
+     * floor moves. Four rather than two: the twins already carry +2 bodies and
+     * +1 litter, and a place reached through the Redaction should be a decision,
+     * not a detour. It makes the gentlest door over there (a redacted Drowned
+     * Chapel, level 5) roughly the moor's midpoint, which is the honest reading
+     * of what walking through that door means.
+     */
+    levelRange: [spec.levelRange[0] + 4, spec.levelRange[1] + 4],
+    ...(spec.levelScheme === undefined ? {} : { levelScheme: spec.levelScheme }),
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * AND ONE OF THE SIX HAS SOMETHING IN IT. EXACTLY ONE, IN THE WHOLE GAME.
@@ -699,6 +791,18 @@ export function specFor(siteId: string): DelveSpec | undefined {
   return redactedSpec(siteId.replace(`${REDACTION_SITE_ID}:`, 'site:'));
 }
 
+/**
+ * WHAT LEVEL THE THINGS IN THIS ROOM ARE — `Zone:updateBaseLevel`, applied.
+ *
+ * EXPORTED BECAUSE THE UI HAS TO SAY IT. A room whose danger is fixed and
+ * unannounced is a room that kills people who had no way to know; `dangerWord`
+ * below has been answering that question from the monster COUNT, which was the
+ * only signal there was. This is the real one.
+ */
+export function delveLevel(spec: DelveSpec, party: PartyStrength = LONE_BEGINNER): number {
+  return zoneBaseLevel(spec.levelRange, spec.levelScheme ?? ZoneLevelScheme.Fixed, party.level);
+}
+
 export function populateDelve(
   world: World,
   map: AuthoredMap,
@@ -741,9 +845,12 @@ export function populateDelve(
     // Qualified by realm — `delve_0` was the same string in every party's copy
     // of every delve, and the status, Downed and talent tables are process-wide
     // and keyed by it. See `World.id`.
+    // AND AT THE LEVEL OF THE PLACE, which is what `monsterInit`'s third
+    // parameter has been waiting for. Every caller in the game passed nothing,
+    // so every body in it was level 1 — see `DelveSpec.level`.
     const actor = world.addMonster(
       qualified(world, `delve_${String(i)}`),
-      monsterInit(template, at),
+      monsterInit(template, at, delveLevel(spec, party)),
     );
     /**
      * THE SAME DROP ROLL THE OVERWORLD USES — AND NOW THE SAME EGO ROLL TOO.
@@ -810,7 +917,18 @@ export function populateDelve(
       // with the realm, so two parties in two copies of this delve do not share
       // a monster id — and therefore do not share the process-wide status,
       // Downed and talent tables that key off one. See `World.id`.
-      const boss = world.addMonster(qualified(world, 'delve_boss'), monsterInit(spec.boss, far));
+      /**
+       * TWO LEVELS ABOVE THE ROOM IT IS IN. Upstream puts a boss a little over
+       * its zone for the same reason: a set piece that is exactly as tough as
+       * the population is not a set piece, and its RANK is already doing the
+       * heavy lifting — a rank-4 body gains life half again as fast per level as
+       * the rank-2 husks around it, so two levels is a wide gap here and not a
+       * token one.
+       */
+      const boss = world.addMonster(
+        qualified(world, 'delve_boss'),
+        monsterInit(spec.boss, far, delveLevel(spec, party) + BOSS_LEVELS_ABOVE_ROOM),
+      );
       /**
        * AND IT IS HOLDING SOMETHING, GUARANTEED.
        *

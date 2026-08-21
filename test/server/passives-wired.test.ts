@@ -124,6 +124,33 @@ describe('the passives a class ships with reach the character', () => {
         `armour ${String(armour)} against a class base of ${String(base)}`,
       ).toBeGreaterThan(base);
 
+      /**
+       * ═══ AND THE HIT-POINT CEILING, WHICH IS NOW DERIVED ═══
+       * `maxHp` used to be an authored constant copied onto the body once. It is
+       * now recomputed inside the same `refreshPassives` fold this test exists
+       * to guard — `classBase + Σ level gains + 4 × Constitution spent` — so the
+       * fold now has TWO ways to be wrong, and the second one is silent: a
+       * fresh character whose ceiling came back inflated or crushed would look
+       * completely normal on the sheet.
+       *
+       * A LEVEL-1 CHARACTER WITH NOTHING SPENT MUST READ EXACTLY THE CLASS BASE.
+       * That is the safety property of the whole change — everyone already
+       * playing keeps the body they had — and it is worth an equality rather
+       * than a bound, because both of the ways this can break move the number.
+       */
+      const body = (frames.filter((f) => f['t'] === 'state').at(-1)?.['actors'] ??
+        welcome?.['actors'] ??
+        []) as { id: string; hp?: number; maxHp?: number }[];
+      const self = body.find((a) => a.id === selfId);
+      expect(self, 'the player is not in any projection').toBeDefined();
+      expect(
+        self?.maxHp,
+        `a fresh Watchman reads ${String(self?.maxHp)} against a class base of ${String(WATCHMAN.maxHp)}`,
+      ).toBe(WATCHMAN.maxHp);
+      // AND IS AT FULL, because the clamp must not have bitten a body it had no
+      // business touching.
+      expect(self?.hp).toBe(WATCHMAN.maxHp);
+
       socket.close();
     } finally {
       server.kill();

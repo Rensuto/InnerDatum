@@ -1043,6 +1043,31 @@ export type TurnEngine = {
    */
   toggleSustain?(actorId: string, talentId: string): boolean | null;
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * RE-DERIVE EVERYTHING THIS BODY'S NUMBERS ARE MADE OF.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Passives folded, gear recomposed, and `maxHp` recomputed from the class,
+   * the level and the Constitution spent. Every one of those is a function of
+   * inputs this file can change and cannot itself read: net/** may not import
+   * `engine/talents.ts` or the class table, so the fold lives in main.ts and
+   * arrives here as a seam — the same shape and the same reason as
+   * `attachClass` and `raiseTalentPoint` above.
+   *
+   * ═══ WHY IT EXISTS AT ALL: SPENDING CONSTITUTION ═══
+   * `handleSpendStat` used to call `recomposeCombat` directly, which is the
+   * gear-and-effects half only. That was complete while attributes bought
+   * nothing but derived combat numbers. CON now buys four hit points a point
+   * (Actor.lua:3884-3885), and a hit-point ceiling that only moves on the base
+   * clock means a player buys toughness and watches an unchanged number until
+   * something takes a turn — or forever, standing in a hub where nothing does.
+   *
+   * OPTIONAL LIKE EVERY SEAM HERE. A build with no talent book still spends
+   * stats; it just has no passives to fold, and the caller falls back to
+   * `recomposeCombat`, which is exactly what it did before this existed.
+   */
+  refreshBody?(actorId: string): void;
+  /**
    * THIS BODY'S RAW TALENT SPREAD, for the save snapshot.
    *
    * `Record`, not `Map`: it goes straight into `CharacterSnapshot` and on to
@@ -10794,9 +10819,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     body.spentStats = grown;
     body.unspentStatPoints -= 1;
 
-    // THE SHEET IS REFOLDED NOW, so every derived number the player is about to
-    // read is the one they just bought.
-    recomposeCombat(body, opts.effects ?? null, resolveItem);
+    /**
+     * THE SHEET IS REFOLDED NOW, so every derived number the player is about to
+     * read is the one they just bought — INCLUDING THE HIT-POINT CEILING, which
+     * is why this goes through the seam rather than calling `recomposeCombat`
+     * on its own. CON is worth four hit points a point and `refreshBody` is the
+     * only thing that knows it; without the seam a player buys toughness and
+     * reads the old number until the next base turn.
+     *
+     * THE FALLBACK IS THE OLD LINE VERBATIM, for a build with no talent book:
+     * gear and effects still recompose, there is simply no class curve to apply.
+     */
+    const realm = realmFor(session);
+    if (realm.engine.refreshBody !== undefined) {
+      realm.engine.refreshBody(actorId);
+    } else {
+      recomposeCombat(body, opts.effects ?? null, resolveItem);
+    }
 
     // AND THE BARRIER IS TOLD SOMEBODY IS THERE — the same courtesy
     // `handleSpendPoint` extends: reading a stat screen is not being absent.

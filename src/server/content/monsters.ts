@@ -228,6 +228,12 @@
 
 import { AiProfile } from '../engine/actor.ts';
 import { DamageType } from '../engine/damage.ts';
+import {
+  RANK_VALUE,
+  lifeGainedTo,
+  spreadStatPoints,
+  statPointsGainedTo,
+} from '../../shared/leveling.ts';
 import { ActorRank } from '../../shared/protocol.ts';
 import { ITEMS, itemById } from './items.ts';
 import { resolveLevelup, resolveMBonus, resolveRngAvg } from './resolvers.ts';
@@ -296,7 +302,36 @@ export type MonsterTemplate = {
   readonly rank: ActorRank;
 
   // --- vitals ---------------------------------------------------------------
+  /** Hit points at level 1. The BASE of a curve — see `lifeRating`. */
   readonly maxHp: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW THIS BODY GROWS. `life_rating` — Actor.lua:187.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream never authors a monster's power; it authors a monster's SHAPE and
+   * lets a level do the arithmetic. Every hit point in this file used to be a
+   * frozen literal — husk 25, elite 95, boss 220 — which is why a level-40
+   * character would have had nothing left that could threaten them.
+   *
+   * ABSENT MEANS 10, the engine default, so a template that says nothing still
+   * grows at the ordinary rate rather than not at all.
+   */
+  readonly lifeRating?: number;
+  /**
+   * WHICH STATS THIS BODY PUTS ITS LEVELLING POINTS INTO. Upstream's
+   * `auto_stats`, dealt round-robin by `spreadStatPoints`.
+   *
+   * Scaling hit points WITHOUT this does not make a fight harder, it makes it
+   * LONGER — a six-hundred-hit-point husk swinging a level-1 weapon cannot
+   * threaten anybody, it just takes four minutes to kill. That is a worse
+   * outcome than leaving both flat, because the tedium is invisible in a test
+   * and obvious in a session.
+   *
+   * EMPTY OR ABSENT IS A BODY THAT DOES NOT GROW, which is a legitimate thing to
+   * author for a prop or a training dummy.
+   */
+  readonly autoStats?: readonly string[];
   /** Per GAME TURN, on the base clock. 0 for everything in this roster. */
   readonly hpRegen: number;
 
@@ -524,6 +559,8 @@ export type MonsterTemplate = {
  * you are hit.
  */
 export const INDEX_HUSK: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['con', 'str'],
   id: 'index_husk',
   displayName: 'Index Husk',
   description:
@@ -809,6 +846,8 @@ const ORB_APPLY_POWER = 10;
  * of it is the correct behaviour for the one situation it least wants to be in.
  */
 export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['mag', 'dex'],
   id: 'index_wraith',
   displayName: 'Index Wraith',
   description:
@@ -1302,6 +1341,8 @@ const CLAW_BLEED_TURNS = 3;
 const CLAW_APPLY_POWER = 12;
 
 export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['str', 'con'],
   id: 'index_husk_elite',
   displayName: 'Overwritten Husk',
   description:
@@ -1500,6 +1541,8 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
  * nothing since the day it was made.
  */
 export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['mag', 'wil'],
   id: 'index_eidolon',
   displayName: 'Index Eidolon',
   description:
@@ -1608,6 +1651,8 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
  * No new art: `enemy_index_cairn_s` was cut and has drawn nothing until now.
  */
 export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['dex', 'cun'],
   id: 'index_cairn',
   displayName: 'Index Cairn',
   description:
@@ -1766,6 +1811,8 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
  * drawn a marker that opened onto somebody else's fight until now.
  */
 export const INDEX_GLUT: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['con', 'str'],
   id: 'index_glut',
   displayName: 'Index Glut',
   description:
@@ -1930,6 +1977,8 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
  * So is this.
  */
 export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['dex', 'cun'],
   id: 'index_inspector',
   displayName: 'A Disgraced Inspector',
   description:
@@ -2067,6 +2116,8 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
  * defence whatsoever, which is exactly right — corner it and it dies.
  */
 export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['wil', 'mag'],
   id: 'index_inquisitor',
   displayName: 'A High Inquisitor',
   description:
@@ -2275,6 +2326,8 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
  * the site markers make, and it is stated here rather than left to be noticed.
  */
 export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
+  // Grows into what it already leads with. See `autoStats`.
+  autoStats: ['cun', 'dex'],
   id: 'index_watcher',
   displayName: 'The Watcher',
   description:
@@ -2470,7 +2523,51 @@ export function monsterById(id: string): MonsterTemplate | undefined {
  * at resolution time (resolvers.lua:441-446) rather than storing the table on the
  * creature for later.
  */
-export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   A BODY AT A LEVEL. Upstream authors the shape; the level does the rest.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `level` DEFAULTS TO 1, so every existing caller — and every fixture — keeps
+ * the exact body it had before this existed. A level-1 monster is its authored
+ * template unchanged, to the number.
+ *
+ * Upstream reaches the same place by a longer road: a zone picks a base level,
+ * `actor_adjust_level` nudges it, and `forceLevelup` then runs `Actor:levelup()`
+ * once per level, accumulating hit points and stats as it goes. We compute the
+ * accumulation directly, because our version has no random element to preserve
+ * order for — `spreadStatPoints` is deterministic and the life curve has no
+ * dice in it for a fixed rating.
+ */
+export function monsterInit(template: MonsterTemplate, at: TileXY, level: number = 1): MonsterInit {
+  const rank = RANK_VALUE[template.rank];
+  const grown = Math.max(1, Math.floor(level));
+  /**
+   * THE BASE PLUS EVERY LEVEL SINCE. Floored once at the end, never per level:
+   * upstream carries `max_life` as a float and rounding each step would drift by
+   * up to half a point a level — about twenty-five hit points across a career,
+   * all of it invisible.
+   */
+  const maxHp = Math.max(
+    1,
+    Math.floor(template.maxHp + lifeGainedTo(template.lifeRating ?? 10, grown, rank)),
+  );
+  /**
+   * AND THE STATS IT GREW INTO. A template with no `autoStats` keeps the sheet
+   * it was authored with, which is what makes this safe to land before every
+   * template has been given a list.
+   */
+  const combat =
+    template.autoStats === undefined || template.autoStats.length === 0
+      ? template.combat
+      : {
+          ...template.combat,
+          stats: spreadStatPoints(
+            template.combat.stats ?? {},
+            template.autoStats,
+            statPointsGainedTo(grown, rank),
+          ),
+        };
   return {
     name: template.displayName,
     sprite: template.sprite,
@@ -2478,7 +2575,7 @@ export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit 
     y: at.y,
     rank: template.rank,
     profile: template.profile,
-    maxHp: template.maxHp,
+    maxHp,
     hpRegen: template.hpRegen,
     globalSpeed: template.globalSpeed,
     speedFactor: template.speedFactor,
@@ -2501,7 +2598,7 @@ export function monsterInit(template: MonsterTemplate, at: TileXY): MonsterInit 
     projSpeed: template.projSpeed,
     talentIn: template.talentIn,
     onHit: template.onHit,
-    combat: template.combat,
+    combat,
   };
 }
 

@@ -530,8 +530,40 @@ describe('the three authored drop tables', () => {
         monsterInit(template, { x: 5, y: 5 }),
       );
       expect(body.equipped).toBeUndefined();
-      // The sheet the body carries is the template's, by identity — no fold ran.
-      expect(body.combat).toBe(template.combat);
+      /**
+       * ═══ BY VALUE, NOT BY IDENTITY, AND THE REASON IS THE POINT ═══
+       * This asserted `toBe` — reference identity — as a way of saying "no fold
+       * ran". It stopped holding when `monsterInit` learned to scale a body to a
+       * level: a template that declares `autoStats` gets a NEW sheet with its
+       * grown stats, because the templates are `Object.freeze`d and mutating one
+       * would change every husk in the game at once.
+       *
+       * The claim being protected was never about the reference. It is that
+       * nothing EQUIPPED the body — no `wielder` fold ran on top of an authored
+       * sheet that already has that creature's gear baked into its numbers. At
+       * level 1 the scaled sheet is the authored one to the number, so equality
+       * says exactly that and survives the scaling.
+       */
+      expect(body.combat).toEqual(template.combat);
+    }
+  });
+
+  it('scales a body to its level without touching the frozen template', () => {
+    /**
+     * The other half of the same rule. `monsterInit` grows a monster's hit
+     * points and the stats it leads with — but the TEMPLATE is shared by every
+     * instance and is frozen, so growth must produce a new sheet rather than
+     * edit the original. A mutation here would make the first level-25 husk
+     * spawned permanently raise the floor for every husk afterwards.
+     */
+    for (const template of MONSTER_TEMPLATES) {
+      const before = JSON.stringify(template.combat);
+      const grown = monsterInit(template, { x: 5, y: 5 }, 25);
+
+      expect(JSON.stringify(template.combat), `${template.id} was mutated by levelling`).toBe(
+        before,
+      );
+      expect(grown.maxHp, `${template.id} did not grow`).toBeGreaterThan(template.maxHp);
     }
   });
 });

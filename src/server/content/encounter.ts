@@ -32,6 +32,9 @@
  * combat should feel like tension arriving rather than a fight already lost.
  */
 
+import { ZoneLevelScheme, zoneBaseLevel } from '../../shared/zone.ts';
+import type { ZoneLevelRange } from '../../shared/zone.ts';
+import { MAX_CHARACTER_LEVEL } from '../../shared/progression.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { canWalk } from '../../shared/level.ts';
@@ -486,6 +489,30 @@ export function ambushRoster(
   return roster;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN AMBUSH ARRIVES AT YOUR LEVEL. UPSTREAM MARKS ITS OWN THE SAME WAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ZoneLevelScheme.Player` with a range that spans the whole career, which is
+ * `dreadfell-ambush/zone.lua` almost verbatim — `level_range = {20, 50},
+ * level_scheme = "player"`. Ours starts at 1 rather than 20 because ours is the
+ * road outside the first town and theirs is a set piece halfway through a
+ * campaign; the SCHEME is the part that ports, and it is the part that matters.
+ *
+ * ═══ THE ONE PLACE IN THIS GAME THAT SCALES, AND WHY IT IS THE RIGHT ONE ═══
+ * A delve is somewhere you WALKED TO, and its whole reward is that the walk you
+ * could not survive last week is one you can survive now — so a delve is
+ * `fixed` and always will be. An ambush is the opposite transaction: it came to
+ * you, on a road you were crossing for some other reason, and you did not get
+ * to look at it first. A fixed ambush is scenery by level 12 and a death
+ * sentence before level 3, and neither of those is a fight.
+ *
+ * The roster already reads the party (`ambushRoster`) for WHAT shows up. This
+ * is the other half — how grown it is when it does.
+ */
+const AMBUSH_LEVEL_RANGE: ZoneLevelRange = [1, MAX_CHARACTER_LEVEL];
+
 export function seedAmbush(
   world: World,
   near: TileXY,
@@ -540,7 +567,17 @@ export function seedAmbush(
     if (template === undefined || at === undefined) continue;
     // Qualified by realm, exactly as the test encounter above. See `World.id`.
     const id = qualified(world, `mon_${template.id}`);
-    const actor = world.addMonster(id, monsterInit(template, at));
+    // AT THE PARTY'S LEVEL — see `AMBUSH_LEVEL_RANGE`. Computed once outside
+    // this loop would be tidier and would be wrong the moment a second scheme
+    // exists; it is four arithmetic operations and the clarity is worth more.
+    const actor = world.addMonster(
+      id,
+      monsterInit(
+        template,
+        at,
+        zoneBaseLevel(AMBUSH_LEVEL_RANGE, ZoneLevelScheme.Player, party.level),
+      ),
+    );
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * THE FIRST FIGHT ALWAYS PAYS. Everything after it rolls.

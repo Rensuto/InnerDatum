@@ -1,3 +1,5 @@
+import { BOSS_LEVELS_ABOVE_ROOM, delveLevel, specFor } from '../../src/server/content/delve.ts';
+import { INDEX_WATCHER, monsterInit } from '../../src/server/content/monsters.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
@@ -226,7 +228,28 @@ describe('fighting the Watcher', () => {
     await walkToTheAltar(server.realms, client);
     expect(server.realms.realmOf(client.actorId)?.siteId).toBe('site:redaction:watchers_altar');
     const { boss } = theWatcher(server.realms, client.actorId);
-    expect(boss.maxHp).toBe(220);
+
+    /**
+     * ═══ THE PROPERTY, NOT THE LITERAL. THIS LINE READ `toBe(220)`. ═══
+     * 220 is `INDEX_WATCHER.maxHp`, the authored base, and it was correct for
+     * exactly as long as nothing in this game had a level: every body ever
+     * spawned was level 1, because no caller passed `monsterInit` a third
+     * argument. The room is level 11 now (the moor's altar at 7, plus 4 for
+     * being through the Redaction) and its boss is two above that.
+     *
+     * PINNING THE NEW NUMBER WOULD REPEAT THE MISTAKE — it would fail on the
+     * next tuning pass and say nothing about whether the boss is scaled. So
+     * this asserts what the test is actually for: it is grown, and it is grown
+     * BY THE ROOM rather than by some fixed multiplier.
+     */
+    const spec = specFor('site:redaction:watchers_altar');
+    expect(spec, 'the redacted altar has no delve spec').toBeDefined();
+    const roomLevel = spec === undefined ? 1 : delveLevel(spec);
+    expect(roomLevel, 'the redacted altar is still a level-1 room').toBeGreaterThan(1);
+    expect(boss.maxHp, 'the boss did not grow with its room').toBeGreaterThan(INDEX_WATCHER.maxHp);
+    expect(boss.maxHp).toBe(
+      monsterInit(INDEX_WATCHER, { x: 1, y: 1 }, roomLevel + BOSS_LEVELS_ABOVE_ROOM).maxHp,
+    );
   });
 
   it('stuns the player, and the stun wears off', async () => {
