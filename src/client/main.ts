@@ -1353,6 +1353,17 @@ const talentBindings: (string | null)[] = Array.from(
 let talentPage = 0;
 
 /**
+ * Will this bar still be here tomorrow? False for an anonymous socket and for a
+ * build with no save layer — `HotbarMsg.persisted`.
+ *
+ * OPTIMISTIC UNTIL TOLD OTHERWISE, so a client that has not heard from the
+ * server yet does not accuse it of anything. It is read once, when the player
+ * first rearranges something, because a warning at join is noise to somebody
+ * who was never going to touch the bar.
+ */
+let hotbarPersists = true;
+
+/**
  * ═══════════════════════════════════════════════════════════════════════════
  * PUT THE BAR IN ORDER AFTER A `loadout` FRAME. Called on every one of them.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -5253,6 +5264,39 @@ async function boot(): Promise<void> {
    * unconditional `requestDraw` here would turn holding Shift into a 60fps
    * loop. The same rule every hover in this file follows.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SEND THE ARRANGEMENT. Called by every path that changes one, and no other.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A bar a player arranged and lost on refresh is a feature that reads as
+   * broken, and `localStorage` is not the answer: this game runs inside a
+   * Discord Activity iframe, where storage is partitioned or blocked outright.
+   * That is the stated ground for keybinds being server-side and it applies
+   * here unchanged.
+   *
+   * ═══ THE WHOLE ARRAY, EVERY TIME ═══
+   * Not a delta. The frame's contract is that the server holds what the player
+   * arranged, absolutely — a per-slot message would need an ordering guarantee
+   * between two writes that a socket does not give, and the array is twelve
+   * short strings.
+   *
+   * ═══ FIRE AND FORGET, AND THE ECHO IS NOT APPLIED OPTIMISTICALLY ═══
+   * The bar is already showing the change — the local store was written before
+   * this was called — so the echo that comes back is a confirmation rather than
+   * a correction. `case 'hotbar'` deliberately does NOT re-apply an echo that
+   * matches, because doing so on every drag would be a round trip in the middle
+   * of a gesture.
+   */
+  function sendHotbar(): void {
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_hotbar', slots: [...talentBindings] })) {
+      // SAID OUT LOUD, the rule every send in this file keeps. An arrangement
+      // that vanished into a closed socket looks exactly like one that was
+      // saved, and the player finds out on their next session.
+      showNotice('not connected — that change to your bar was not saved');
+    }
+  }
+
   function setTalentPage(page: number): void {
     if (talentPage === page) return;
     talentPage = page;
@@ -5417,7 +5461,12 @@ async function boot(): Promise<void> {
     // the panel displaces whatever was there, which is what the player just
     // asked for.
     if (from >= 0 && from !== cell) talentBindings[from] = displaced;
-    showNotice(`slot ${String(index + 1)}: ${talent.name}`);
+    sendHotbar();
+    showNotice(
+      hotbarPersists
+        ? `slot ${String(index + 1)}: ${talent.name}`
+        : `slot ${String(index + 1)}: ${talent.name} — this bar will not be remembered`,
+    );
     requestDraw();
   }
 
@@ -5476,6 +5525,7 @@ async function boot(): Promise<void> {
     const cell = cellOfSlot(index);
     if (talentBindings[cell] === null || talentBindings[cell] === undefined) return;
     talentBindings[cell] = null;
+    sendHotbar();
     showNotice(`slot ${String(index + 1)} cleared`);
     requestDraw();
   }
@@ -10294,6 +10344,55 @@ function applyServerMessage(msg: ServerMsg): void {
       }
       break;
 
+    case 'hotbar': {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE BAR THE SERVER IS HOLDING FOR THIS CHARACTER. UNICAST AND ABSOLUTE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A `ViewerMsg`, so it arrives only for this socket, and it is an ECHO
+       * rather than an acknowledgement — the same shape as `keybinds` below it,
+       * for the same reason: what the screen renders must be what the SERVER
+       * holds, or the two drift and only one of them survives a refresh.
+       *
+       * ═══ AN EMPTY LIST IS "NEVER ARRANGED", NOT "EMPTY BAR" ═══
+       * The distinction is the whole reason the wire carries an array rather
+       * than a sparse map. Never-arranged is answered by leaving the store
+       * alone, so `reseatTalentBindings` seeds from the loadout exactly as it
+       * does for a brand-new character. An array of NULLS is a player who
+       * cleared every slot on purpose, and it is applied verbatim — a client
+       * that refilled it would overwrite a decision.
+       *
+       * ═══ THE LENGTH IS THE CLIENT'S, NOT THE FILE'S ═══
+       * A saved bar from a build with one page, or with three, must not resize
+       * the store — every index in it is a key a player presses. Copied
+       * position by position into a store of the CURRENT size: a shorter file
+       * leaves the tail seeded from the loadout, a longer one has its extra
+       * slots dropped, and neither can produce a bar with the wrong number of
+       * buttons.
+       */
+      if (msg.slots.length > 0) {
+        for (let i = 0; i < talentBindings.length; i += 1) {
+          talentBindings[i] = msg.slots[i] ?? null;
+        }
+        // AND RESEATED AGAINST THE LOADOUT, which drops ids this character can
+        // no longer press and fills anything the saved bar left empty. Without
+        // it a file older than the class's current talents would come back with
+        // dead slots that look like the bar failed to load.
+        reseatTalentBindings();
+      }
+      /**
+       * NOT PERSISTED IS SAID OUT LOUD, ONCE. `persisted` is false for an
+       * anonymous socket and for a build with no save layer, and a bar that
+       * quietly forgets itself every session is the failure this whole frame
+       * exists to prevent — the player would conclude the feature is broken
+       * rather than that they are not signed in.
+       */
+      if (!msg.persisted) hotbarPersists = false;
+      // THE REDRAW IS THE CALLER'S — `onMessage` calls it after every frame, so
+      // one here would be the second of two and the first to go stale.
+      return;
+    }
     case 'keybinds':
       // ═══════════════════════════════════════════════════════════════════════
       // v11 — THE KEYS THE SERVER IS HOLDING FOR THIS PLAYER. UNICAST, ABSOLUTE,

@@ -2747,3 +2747,74 @@ describe('the character bridge carries keybindings in both directions', () => {
     await store.close();
   });
 });
+
+describe('the hotbar arrangement survives a round trip', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BAR A PLAYER ARRANGED AND LOST ON REFRESH IS A FEATURE THAT READS BROKEN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `localStorage` is not the answer here: this game runs inside a Discord
+   * Activity iframe, where storage is partitioned or blocked outright. That is
+   * the stated ground for keybinds being server-side and it applies unchanged.
+   */
+  it('keeps the slots, in order, including the empty ones', () => {
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      hotbar: ['talent:crude_blow', null, 'talent:ward_rush'],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // POSITION IS THE MEANING — this is a dense array, not a sparse map, so a
+    // null in the middle is a slot somebody cleared and must not close up.
+    expect(parsed.file.hotbar).toEqual(['talent:crude_blow', null, 'talent:ward_rush']);
+  });
+
+  it('tells "never arranged" from "cleared every slot"', () => {
+    /**
+     * The distinction the whole shape exists for. Absent means seed me from the
+     * loadout; an array of nulls means a player emptied the bar on purpose, and
+     * a layer that conflated them would refill it.
+     */
+    const absent = parseCharacterFile({ ...V1_BEFORE_PROGRESSION });
+    expect(absent.ok && absent.file.hotbar).toBeUndefined();
+
+    const cleared = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, hotbar: [null, null] });
+    expect(cleared.ok && cleared.file.hotbar).toEqual([null, null]);
+  });
+
+  it('repairs junk to an empty slot rather than refusing the file', () => {
+    // The doctrine this whole file keeps: a hand-edited file is a reason to
+    // lose an arrangement, never a reason somebody cannot play tonight.
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      hotbar: [42, '', 'talent:crude_blow'],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.hotbar).toEqual([null, null, 'talent:crude_blow']);
+  });
+
+  it('drops a bar that is not an array, and says so', () => {
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, hotbar: { '0': 'x' } });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.hotbar).toBeUndefined();
+    expect(parsed.problems.some((problem) => problem.startsWith('hotbar:'))).toBe(true);
+  });
+
+  it('keeps an id this build no longer has, verbatim', () => {
+    /**
+     * ═══ THE CLIENT OWNS THE DROP, AND THAT IS DELIBERATE ═══
+     * This layer has no talent registry and must not grow one — `classId` is a
+     * soft reference here precisely so a save outlives a content edit. A
+     * renamed-then-restored talent therefore comes back to the slot it was on,
+     * and `hotbarView` draws an unresolvable binding as empty in the meantime.
+     */
+    const parsed = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      hotbar: ['talent:deleted_last_year'],
+    });
+    expect(parsed.ok && parsed.file.hotbar).toEqual(['talent:deleted_last_year']);
+  });
+});

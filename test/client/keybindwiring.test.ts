@@ -269,6 +269,17 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       'respawn',
       'revive',
       'say',
+      // THE BAR'S ARRANGEMENT, and it belongs in this list for the reason the
+      // list exists: it is a verb somebody had to decide to add. Same ground as
+      // 'set_keybinds' beside it — a Discord Activity iframe partitions or
+      // blocks localStorage, so a setting the player chose has nowhere to live
+      // but the server, and a bar that forgot itself every session would read
+      // as broken rather than as unsaved.
+      //
+      // IT DOES NOT GIVE THE BARRIER ANYTHING TO WAIT FOR. Dragging a talent
+      // onto a key is not a turn and takes none: the frame is stored and
+      // echoed, and nothing in the scheduler ever hears about it.
+      'set_hotbar',
       'set_keybinds',
       // AND THE ZOOM'S, added deliberately and listed here so it stays a thing
       // somebody had to decide. A player asked for tiles the size of Tales of

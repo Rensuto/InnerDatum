@@ -3048,10 +3048,60 @@ export const KEYBIND_KEYSTRING_MAX_CHARS = 32;
  * bitten by. Sending pixels instead would let a client pick a fractional
  * magnification, which is the one thing this renderer will not do.
  */
+/**
+ * The most slots a bar may claim. Two pages of six is twelve; this is loose on
+ * purpose — see `SetHotbarSchema.slots`. It bounds a hostile frame and nothing
+ * else, which is the only job a wire cap has.
+ */
+const HOTBAR_SLOTS_MAX = 32;
+
 const SetZoomSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('set_zoom'),
   zoom: z.number().int().min(ZOOM_MIN).max(ZOOM_MAX),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `set_hotbar` — "THIS IS HOW I HAVE ARRANGED MY BAR."
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The exact shape of `set_keybinds` below and for the same reason: a bar a
+ * player arranged and lost on refresh is a feature that reads as broken, and
+ * `localStorage` is not an option — this game runs inside a Discord Activity
+ * iframe, where storage is partitioned or blocked outright. That is the stated
+ * ground for keybinds being server-side and it applies here unchanged.
+ *
+ * ═══ PER CHARACTER, NOT PER PLAYER, AND THAT IS THE ONE DIFFERENCE ═══
+ * Keys are a fact about the human and their keyboard; a bar is a fact about
+ * WHICH TALENTS a body owns, and a Watchman's arrangement is meaningless on an
+ * Alchemist. Both live on `CharacterFile` — keybinds because that is where the
+ * save layer is, this because it could not live anywhere else.
+ *
+ * ═══ A DENSE ARRAY, NOT A SPARSE RECORD ═══
+ * `set_keybinds` is sparse because a shipped change to a DEFAULT should reach
+ * every player who never touched that action. A bar has no defaults to inherit:
+ * it is seeded from the loadout on arrival, so position IS the meaning and a
+ * missing index would be indistinguishable from an empty slot. `null` is a
+ * real, deliberate value — "I cleared this one" — and the server must keep it.
+ *
+ * NO VALIDATION OF THE IDS. The server does not know which talents a class
+ * owns without reaching into the content tables, and it does not need to: the
+ * client already draws an unresolvable binding as empty. Length and string size
+ * are bounded; membership is the client's to answer, exactly as it is for a
+ * keybind action id.
+ */
+const SetHotbarSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('set_hotbar'),
+  /**
+   * TALENT ID PER SLOT, BOTH PAGES END TO END, `null` for an empty one.
+   *
+   * The cap is generous rather than exact: the client's page count is a client
+   * fact, and a server that hard-coded twelve would refuse a bar the day the
+   * client grew a third page — a refusal nobody could diagnose from either side.
+   */
+  slots: z.array(z.string().min(1).max(TALENT_ID_MAX_CHARS).nullable()).max(HOTBAR_SLOTS_MAX),
 });
 
 const SetKeybindsSchema = z.strictObject({
@@ -3176,6 +3226,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   FollowSchema,
   PartySchema,
   InspectSchema,
+  SetHotbarSchema,
   SetKeybindsSchema,
   SetZoomSchema,
   PingSchema,
@@ -3206,6 +3257,7 @@ export type ClientShopSell = z.infer<typeof ShopSellSchema>;
 export type ClientFollow = z.infer<typeof FollowSchema>;
 export type ClientParty = z.infer<typeof PartySchema>;
 export type ClientInspect = z.infer<typeof InspectSchema>;
+export type ClientSetHotbar = z.infer<typeof SetHotbarSchema>;
 export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;
 export type ClientSetZoom = z.infer<typeof SetZoomSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
@@ -4765,6 +4817,36 @@ export type InventoryMsg = {
  * enforcement `BroadcastMsg = Exclude<ServerMsg, ViewerMsg>` exists to provide.
  * A separate frame costs one `send` and keeps the type system doing the work.
  */
+/**
+ * `hotbar` — the bar this character has, as the disk holds it.
+ *
+ * SENT ON JOIN AND AS AN ECHO after every accepted `set_hotbar`, exactly as
+ * `keybinds` is. A `ViewerMsg`: one player's arrangement is nobody else's
+ * business, and membership of that union is what makes `broadcast(hotbarMsg)`
+ * a build failure rather than a leak somebody notices in a screenshot.
+ */
+export type HotbarMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'hotbar';
+  /**
+   * TALENT ID PER SLOT, both pages end to end, `null` for empty. Complete and
+   * absolute — exactly as the client sent it and exactly as the disk holds it.
+   *
+   * AN EMPTY ARRAY MEANS "NEVER ARRANGED", which is not the same as an array of
+   * nulls. The first says seed me from the loadout; the second says this player
+   * deliberately cleared every slot, and a client that conflated them would
+   * refill a bar somebody had emptied on purpose.
+   */
+  slots: readonly (string | null)[];
+  /**
+   * Will this arrangement still be here tomorrow? True for a verified player on
+   * a server with persistence wired in; false for an anonymous socket and for a
+   * build with no save layer — the same field `KeybindsMsg` carries, for the
+   * same reason: it is what stops a working feature reading as broken.
+   */
+  persisted: boolean;
+};
+
 export type KeybindsMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'keybinds';
@@ -5122,6 +5204,7 @@ export type ServerMsg =
   | GroundMsg
   | ShopMsg
   | InventoryMsg
+  | HotbarMsg
   | KeybindsMsg
   | SettingsMsg
   | PongMsg
@@ -5295,6 +5378,7 @@ export type ViewerMsg =
   | RosterMsg
   | ProgressMsg
   | InventoryMsg
+  | HotbarMsg
   | KeybindsMsg
   | SettingsMsg
   // A realm change is true for exactly one person — the map in it is the map

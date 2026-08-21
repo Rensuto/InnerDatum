@@ -565,6 +565,36 @@ export type CharacterFile = {
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW THIS CHARACTER HAS ARRANGED THEIR HOTBAR. Talent id per slot.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Both pages end to end, `null` for a slot the player cleared. The client
+   * decides how many slots a page is; this layer stores a list.
+   *
+   * ═══ PER CHARACTER, WHERE `keybinds` IS ARGUABLY PER PLAYER ═══
+   * Keys are a fact about the human and their keyboard, and they live here
+   * because this is where the save layer is. A bar is a fact about which
+   * TALENTS a body owns — a Watchman's arrangement is meaningless on an
+   * Alchemist — so this could not live anywhere else.
+   *
+   * ═══ IDS ARE NOT VALIDATED, AND THAT IS THE TRADE `keybinds` ALSO MAKES ═══
+   * This layer has no talent registry and must not grow one: `classId` is a
+   * soft reference here precisely so a save outlives a content edit. A talent
+   * id this build no longer has comes back verbatim, and THE CLIENT OWNS THE
+   * DROP — `hotbarView` already draws an unresolvable binding as empty. A
+   * renamed-then-restored talent therefore returns to the slot it was on.
+   *
+   * ═══ AN EMPTY ARRAY IS NOT THE SAME AS ABSENT ═══
+   * Absent means "never arranged" and the client seeds from the loadout. An
+   * array of nulls means somebody cleared every slot on purpose, and a layer
+   * that conflated the two would refill a bar a player had deliberately emptied.
+   *
+   * NO SCHEMA BUMP, on exactly the ground `keybinds` sets out above and
+   * docs/data-schemas.md:48-49 states: an OPTIONAL field needs none.
+   */
+  readonly hotbar?: readonly (string | null)[];
+  /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
@@ -767,6 +797,17 @@ const BIRTH_MONEY = 15;
  * 1 here would have re-granted every unlearned talent on the next load, to
  * everybody, silently.
  */
+/**
+ * The most hotbar slots a file may claim, and the longest id in one.
+ *
+ * LOOSE ON PURPOSE, exactly as the wire cap is: the number of slots per page is
+ * a CLIENT fact, and a save layer that hard-coded twelve would quietly truncate
+ * every bar the day the client grew a third page — a data loss nobody could
+ * diagnose from either side. These bound a hostile file and nothing else.
+ */
+const HOTBAR_MAX_SLOTS = 32;
+const HOTBAR_ID_MAX_CHARS = 64;
+
 const BIRTH_TALENT_POINTS = 1;
 
 /** The lowest rank a save file may state. See `BIRTH_TALENT_POINTS` above. */
@@ -896,6 +937,12 @@ export type CharacterInit = {
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /**
+   * HOW THIS CHARACTER HAS ARRANGED THEIR HOTBAR — talent id per slot, both
+   * pages end to end, `null` for a slot they cleared. See `CharacterFile.hotbar`
+   * for why it is per character and why the ids are not validated here.
+   */
+  readonly hotbar?: readonly (string | null)[];
+  /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
@@ -965,6 +1012,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     carried: init.carried,
     equipped: init.equipped,
     keybinds: init.keybinds,
+    hotbar: init.hotbar,
     zoom: init.zoom,
     explored: init.explored,
     // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
@@ -1534,6 +1582,49 @@ function parseZoom(value: unknown, problems: string[]): number | undefined {
   return value;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HOTBAR ARRANGEMENT, REPAIRED RATHER THAN REJECTED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Far smaller than `parseKeybinds` below because the shape is far smaller: a
+ * flat list of strings-or-null. The doctrine is identical and is the one this
+ * whole file keeps — a hand-edited or truncated file is a reason to lose an
+ * arrangement, never a reason somebody cannot play tonight.
+ *
+ * BOUNDED BY LENGTH AND BY STRING SIZE, and by nothing else. Membership is the
+ * client's question: this layer has no talent registry and must not grow one.
+ */
+function parseHotbar(value: unknown, problems: string[]): readonly (string | null)[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    problems.push('hotbar: not an array — dropped, the bar goes back to its default order');
+    return undefined;
+  }
+  const out: (string | null)[] = [];
+  let dropped = 0;
+  for (const entry of value) {
+    if (out.length >= HOTBAR_MAX_SLOTS) {
+      dropped += 1;
+      continue;
+    }
+    // NULL IS A REAL VALUE — a slot somebody cleared. Only a value that is
+    // neither a usable string nor null becomes one by repair.
+    if (entry === null) {
+      out.push(null);
+      continue;
+    }
+    const id = asString(entry);
+    out.push(id === null || id === '' || id.length > HOTBAR_ID_MAX_CHARS ? null : id);
+  }
+  // SUMMARISED, NEVER PER ENTRY. `parseKeybinds` sets out why at length: a
+  // hostile file must not get to choose how many log lines a load prints.
+  if (dropped > 0) {
+    problems.push(`hotbar: more than ${HOTBAR_MAX_SLOTS} slots — ${dropped} dropped from the end`);
+  }
+  return out;
+}
+
 function parseKeybinds(
   value: unknown,
   problems: string[],
@@ -1759,6 +1850,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       carried,
       equipped,
       keybinds: parseKeybinds(doc.keybinds, problems),
+      hotbar: parseHotbar(doc.hotbar, problems),
       zoom: parseZoom(doc.zoom, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
@@ -2885,6 +2977,12 @@ export type SavedLoadout = {
  */
 export type SavedPrefs = {
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * HOW THIS CHARACTER HAS ARRANGED THEIR HOTBAR — talent id per slot, both
+   * pages end to end, `null` for a slot they cleared. See `CharacterFile.hotbar`
+   * for why it is per character and why the ids are not validated here.
+   */
+  readonly hotbar?: readonly (string | null)[];
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *

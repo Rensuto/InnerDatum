@@ -511,6 +511,21 @@ type ActorCommon = {
    * which is the same discipline `carried` follows and for the same reason.
    */
   keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * HOW THIS CHARACTER HAS ARRANGED THEIR HOTBAR — talent id per slot, both
+   * pages end to end, `null` for a slot they cleared.
+   *
+   * ON THE BODY FOR `keybinds`' REASONS, both of them: `snapshotPlayers` runs
+   * over bodies rather than sessions, and two tabs are one player — the second
+   * claims the same actor and the older socket is closed — so one body means
+   * one arrangement means no last-writer-wins between windows. Cached per
+   * session it would be one file with two writers.
+   *
+   * ABSENT MEANS NEVER ARRANGED, which the client reads as "seed me from the
+   * loadout". An array of nulls is a different statement and must survive as
+   * one; see `CharacterFile.hotbar`.
+   */
+  hotbar?: readonly (string | null)[];
 
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.

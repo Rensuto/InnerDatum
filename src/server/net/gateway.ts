@@ -281,6 +281,7 @@ import type {
   ClientTalk,
   ClientRevive,
   ClientSay,
+  ClientSetHotbar,
   ClientSetKeybinds,
   ClientSetZoom,
   ClientSpendPoint,
@@ -1496,6 +1497,17 @@ export type CharacterSnapshot = {
    * See `snapshotPlayers`. A keymap is not a claim about a class.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * HOW THIS CHARACTER HAD ARRANGED THEIR HOTBAR — talent id per slot, both
+   * pages end to end, `null` for a slot they cleared.
+   *
+   * DECLARED STRUCTURALLY HERE, exactly as `keybinds` above is, so the gateway
+   * and the persist layer agree on the shape without either importing the
+   * other. Absent means never arranged, which the client reads as "seed me from
+   * the loadout"; an array of nulls is a different statement and survives as
+   * one. See `CharacterFile.hotbar`.
+   */
+  readonly hotbar?: readonly (string | null)[];
   /** base64 bitset of the overworld this character had explored. */
   readonly explored?: string;
   /** The same for every OTHER overworld, keyed by realm id. See `applyRestore`. */
@@ -1706,6 +1718,17 @@ export type CharacterRestore = {
    * `CharacterSnapshot.keybinds` for why that is a compile-time guarantee.
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * HOW THIS CHARACTER HAD ARRANGED THEIR HOTBAR — talent id per slot, both
+   * pages end to end, `null` for a slot they cleared.
+   *
+   * DECLARED STRUCTURALLY HERE, exactly as `keybinds` above is, so the gateway
+   * and the persist layer agree on the shape without either importing the
+   * other. Absent means never arranged, which the client reads as "seed me from
+   * the loadout"; an array of nulls is a different statement and survives as
+   * one. See `CharacterFile.hotbar`.
+   */
+  readonly hotbar?: readonly (string | null)[];
   /**
    * base64 bitset of the overworld this character had explored, straight off
    * the disk. Decoded against the CURRENT region's size, so a save written
@@ -3192,6 +3215,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     filed?: readonly string[];
   } => ({
     ...(actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) }),
+    // COPIED, NOT ALIASED, for `keybindsRecord`'s first reason: the save layer
+    // holds this by reference across a debounce while the body goes on being
+    // played, and an alias would let a drag halfway through the write change
+    // what got written.
+    ...(actor.hotbar === undefined ? {} : { hotbar: [...actor.hotbar] }),
     // WHAT THEY HAVE WALKED. Absent when this process has never revealed
     // anything for them, which `saveCharacter` reads as "cannot say" and leaves
     // the disk alone — the same carry-forward rule the keymap gets, and the
@@ -5586,6 +5614,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (restore.filed !== undefined && restore.filed.length > 0) {
       filed.set(actor.id, new Set(knownFiled(restore.filed, SITES)));
     }
+    /**
+     * THE BAR, BEFORE THE KEYS' EARLY RETURN BELOW.
+     *
+     * That `return` is why this goes first and not after: a character with a
+     * saved bar and no rebound keys would otherwise have the restore walk past
+     * its own arrangement and stop. The keys line is written as a guard clause
+     * because it was the last thing in the function; it is not any more.
+     */
+    if (restore.hotbar !== undefined) {
+      actor.hotbar = [...restore.hotbar];
+      app.log.info(
+        { actorId: actor.id, slots: actor.hotbar.length },
+        'restored a character’s hotbar',
+      );
+    }
     if (restore.keybinds === undefined) return;
     actor.keybinds = keybindsRecord(restore.keybinds);
     app.log.info(
@@ -6374,6 +6417,33 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * it: `?? opts.persist !== undefined`. A recording double in a test has no
    * notion of ownership and the wider answer is right for it.
    */
+  /**
+   * `hotbar` — the bar this character has, as the server holds it.
+   *
+   * `sendKeybinds`' twin below, down to the `persisted` calculation, which
+   * answers the same question about the same socket and must not drift from it.
+   *
+   * `[]` FOR A BODY THAT HAS NEVER ARRANGED ONE, and the empty array is the
+   * honest wire value rather than a shrug: it means "no arrangement stored", and
+   * the client answers it by seeding from the loadout. An array of NULLS would
+   * be a different statement — somebody cleared every slot — which is why the
+   * two are not collapsed here or anywhere downstream.
+   */
+  const sendHotbar = (session: Session): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    const body = actorId === null ? undefined : world.getActor(actorId);
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'hotbar',
+      slots: body?.hotbar ?? [],
+      persisted:
+        session.ownerId !== null &&
+        opts.persist !== undefined &&
+        (actorId === null ? false : (opts.persist.isBound?.(actorId) ?? true)),
+    });
+  };
+
   const sendKeybinds = (session: Session): void => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -7253,6 +7323,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // exactly what a client that drew its defaults and waited would never learn.
     // The `persisted` flag rides along, and for an anonymous socket it is the
     // only place the truth ("this session is not signed in") appears at all.
+    // AND THE BAR, on the same breath as the keys: both are settings the player
+    // chose, both are read off the body, and a client that got one and not the
+    // other would render half a remembered session.
+    sendHotbar(session);
     sendKeybinds(session);
     // AND HOW BIG THEY LIKE THEIR TILES, beside it and for its reasons.
     sendSettings(session);
@@ -12287,6 +12361,51 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * session sees, the seconds between the wheel and a closed tab are not worth
    * an fsync storm.
    */
+  /**
+   * `set_hotbar` — "THIS IS HOW I HAVE ARRANGED MY BAR." STORE IT, ECHO IT.
+   *
+   * `handleSetZoom`'s shape below rather than `handleSetKeybinds`', and the
+   * choice is the same one that handler documents: `queueSave` where keybinds
+   * use `saveNow`. A bar is arranged by DRAGGING, which a player does several
+   * times in a few seconds — and `saveNow` writes every bound player's
+   * character file, each a full atomic write with an fsync. The idempotence
+   * check below absorbs the repeats, and for the handful of real changes a
+   * session sees, the seconds between the last drag and a closed tab are not
+   * worth an fsync storm on four people who did nothing.
+   */
+  const handleSetHotbar = (session: Session, msg: ClientSetHotbar): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before arranging the bar');
+      return;
+    }
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+
+    // COPIED ON THE WAY IN, so what is stored is what a snapshot would have
+    // written anyway and nothing downstream holds the frame's own array.
+    const next = [...msg.slots];
+
+    /**
+     * THE ECHO STILL GOES OUT ON A NO-OP. The frame's contract is that the bar
+     * renders what the SERVER holds, and a client that resent an unchanged
+     * arrangement is still owed that answer — `handleSetKeybinds` makes the
+     * same call for the same reason.
+     */
+    if (JSON.stringify(body.hotbar ?? null) === JSON.stringify(next)) {
+      sendHotbar(session);
+      return;
+    }
+
+    body.hotbar = next;
+    queueSave('hotbar');
+    sendHotbar(session);
+  };
+
   const handleSetZoom = (session: Session, msg: ClientSetZoom): void => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -12486,6 +12605,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'set_keybinds':
         handleSetKeybinds(session, msg);
+        return;
+      case 'set_hotbar':
+        handleSetHotbar(session, msg);
         return;
       case 'revive':
         handleRevive(session, msg);
