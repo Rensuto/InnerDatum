@@ -99,6 +99,7 @@ import { lineOfEnquiry } from '../talents/line_of_enquiry.ts';
 import { workingFast } from '../talents/working_fast.ts';
 import { causticLoad, concussiveLoad, frostLoad } from '../talents/loads.ts';
 import { fullBandolier, practisedHands, steadyPour } from '../talents/load_passives.ts';
+import { LEGWORK } from '../talents/legwork.ts';
 import { LEVERAGE } from '../talents/leverage.ts';
 import { contingencies } from '../talents/contingencies.ts';
 import { scorchedCoat } from '../talents/scorched_coat.ts';
@@ -675,7 +676,7 @@ export function classForJoin(savedClassId: string | null, rotation: number): Cla
  * locked tree to everybody on the day it was authored, which is the one thing
  * the lock exists to prevent.
  */
-export const ALL_LOCKED_TALENTS: readonly Talent[] = Object.freeze([...LEVERAGE]);
+export const ALL_LOCKED_TALENTS: readonly Talent[] = Object.freeze([...LEVERAGE, ...LEGWORK]);
 
 export const GENERIC_PASSIVES: readonly Talent[] = Object.freeze([
   // ─── NIGHTSHIFT, the conditional half. See `generic/nightshift`. ───

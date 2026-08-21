@@ -1647,7 +1647,19 @@ export type TalentSheet = {
   ap: number;
   readonly maxAp: number;
   mp: number;
-  readonly maxMp: number;
+  /**
+   * THE MOVEMENT CEILING, AND IT IS NO LONGER `readonly`.
+   *
+   * It was, for as long as it came off the class table and stayed there — a
+   * level-50 character covered exactly the ground a level-1 one did. The
+   * `generic/legwork` discipline is the first thing that moves it, folded in by
+   * `refreshPassives` beside the hit-point ceiling it already derives.
+   *
+   * WRITTEN BY THAT FOLD AND BY NOTHING ELSE. It is derived from the class base
+   * plus `moveMp` contributions on every occasion those can change, so a second
+   * writer would be a second answer to how far a body gets in a turn.
+   */
+  maxMp: number;
   /**
    * Did this actor change tiles since its last base turn? Focus regen reads it
    * ("Focus builds ... by not moving"). Set by whoever moves an actor; cleared

@@ -1047,6 +1047,36 @@ export function buildServer() {
           actor.spentStats?.con ?? 0,
         );
         actor.hp = Math.min(actor.hp, actor.maxHp);
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         *   AND HOW FAR IT GETS IN A TURN. The other pool nothing could move.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `maxMp` came off the class table and stayed there for a whole career:
+         * a level-50 character covered exactly the ground a level-1 one did.
+         * Statuses could take movement away (`mpPenalty`) and nothing in the
+         * game could ever give it back.
+         *
+         * DERIVED HERE FOR `maxHp`'s REASONS, ALL OF THEM. This function runs on
+         * every occasion the inputs can move — class chosen, point spent,
+         * discipline bought, character restored, once per base turn — and a
+         * second site would be a second answer to "how far does this body go".
+         *
+         * ═══ THE CEILING MOVES; THE POOL IS LEFT WHERE IT IS ═══
+         * `sheet.mp` is refilled against `maxMp` once per turn (engine/talents.ts)
+         * and that refill is the only thing that should hand a player movement.
+         * Raising the current pool here would give a step back mid-turn to
+         * anybody who spent a point, which is a free move the turn system never
+         * agreed to. Clamped downward only, for the reason the hit points above
+         * are: a pool reading 4/3 is a number nothing else in this game can
+         * draw.
+         */
+        const sheet = talentEngine.sheetOf(actorId);
+        if (sheet !== undefined) {
+          sheet.maxMp = Math.max(1, definition.maxMp + (actor.passiveCombat?.mods?.moveMp ?? 0));
+          sheet.mp = Math.min(sheet.mp, sheet.maxMp);
+        }
       }
     }
   };

@@ -312,6 +312,22 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     blurb: 'Where a thing comes apart, and what it costs to find out.',
     locked: true,
   },
+  {
+    /**
+     * THE SECOND LOCKED DISCIPLINE. See `TalentTree.locked`.
+     *
+     * Where Leverage is about hitting something that is resisting you, this is
+     * about not being where it swings. It is also the first thing in the game
+     * that moves a character further than the class they picked — `maxMp` came
+     * off the class table and stayed there for a whole career.
+     */
+    id: 'generic/legwork',
+    mastery: 1,
+    name: 'Legwork',
+    classId: null,
+    blurb: 'Getting there, and getting out.',
+    locked: true,
+  },
 ]);
 
 const BY_ID = new Map(TALENT_TREES.map((tree) => [tree.id, tree]));

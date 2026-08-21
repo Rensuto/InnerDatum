@@ -824,6 +824,26 @@ export function itemsForSlot(slot: Slot): readonly Item[] {
  * catalogue, and two copies that must agree are better named once.
  */
 export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `moveMp` IS DELIBERATELY NOT ON THIS LIST, AND IT WAS FOR ONE COMMIT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This list and the `Omit` it braces exist for fields NOTHING IN THE GAME
+   * READS — `combatSpeed`, `combatSpellpower` and `combatMindpower` have zero
+   * call sites, so an item granting one would type-check, persist, draw a
+   * tooltip and change no number a player can see.
+   *
+   * `moveMp` is the opposite: `refreshPassives` folds it into the movement
+   * ceiling and it works. Excluding it here would have been using a guard about
+   * DEAD fields to express a decision about CONTENT — and it would have blocked
+   * talents too, since `passiveCombat` is typed `Partial<AdditiveMods>`, which
+   * is how the mistake announced itself.
+   *
+   * SO AN ITEM MAY GRANT IT AND NONE DOES. Boots that move you an extra tile
+   * are a good idea and a loot-balance change; authoring one is a content
+   * decision for a commit that is about the loot table, not this one.
+   */
   'physSpeed',
   'spellPower',
   'mindPower',

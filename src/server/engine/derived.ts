@@ -167,6 +167,32 @@ export type CombatMods = {
   readonly spellResist?: number;
   /** `combat_mentalresist` — the flat part of the MENTAL save. */
   readonly mentalResist?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW FAR THIS BODY GETS IN A TURN — extra MOVEMENT POINTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Movement was the one budget in this game nothing could change. `maxMp` came
+   * off the class table and stayed there for a career: a level-50 character
+   * covered exactly the ground a level-1 one did, and no talent, no item and no
+   * decision moved it. Statuses could take it away (`mpPenalty`) and nothing
+   * could ever give it back.
+   *
+   * ═══ READ IN `refreshPassives`, NOT IN A GETTER ═══
+   * Every other field here feeds a `combatX` function that composes on demand.
+   * MP is a POOL — it is refilled once per turn against a ceiling — so this is
+   * folded into `TalentSheet.maxMp` by the same pass that already derives
+   * `maxHp`, and the refill reads the ceiling it always read.
+   *
+   * ═══ AN ITEM MAY NOT GRANT IT, THIS COMMIT ═══
+   * `AdditiveMods` omits it (content/items.ts), and this docblock's neighbour
+   * fourteen lines up demands that decision be made HERE rather than left. Boots
+   * that let you cover an extra tile are the obvious next step and a good one;
+   * they are also a loot-balance change, and shipping the channel and the loot
+   * table in one commit would make it impossible to tell which of them was
+   * wrong. Talents first.
+   */
+  readonly moveMp?: number;
 };
 
 /**
