@@ -4384,6 +4384,11 @@ function applyTurnEvent(event: TurnEvent): void {
       const actor = actors.get(event.id);
       if (actor === undefined) break;
       actors.set(event.id, { ...actor, alive: false, hp: 0 });
+      // AND THE CARD ABOUT IT. A corpse whose card still reads 12/60 is the
+      // same lie the damage arm above fixes — and the server answers `view: null`
+      // for a dead body, so the card correctly VANISHES rather than restating a
+      // number nobody may see. See `noteInspectedBodyChanged`.
+      noteInspectedBodyChanged(event.id);
       break;
     }
     case 'talent':
@@ -4428,6 +4433,9 @@ function applyTurnEvent(event: TurnEvent): void {
       const actor = actors.get(event.id);
       if (actor === undefined) break;
       actors.set(event.id, { ...actor, hp: 0 });
+      // AND THE CARD ABOUT IT — a downed detective whose card still shows the
+      // hit points they had while standing. See `noteInspectedBodyChanged`.
+      noteInspectedBodyChanged(event.id);
       // TRAVEL INTERRUPT (6): YOU WENT DOWN. Every move you send from here is
       // refused anyway, so a walk left running would spend the five-turn rescue
       // window firing frames at a server that answers `not_your_turn` — and it
@@ -4444,6 +4452,10 @@ function applyTurnEvent(event: TurnEvent): void {
       const actor = actors.get(event.id);
       if (actor === undefined) break;
       actors.set(event.id, { ...actor, hp: event.hp, maxHp: event.maxHp, alive: true });
+      // AND THE CARD ABOUT IT — the one arm here that moves hp UPWARDS, so a
+      // stale card understates a body somebody just put back on their feet.
+      // See `noteInspectedBodyChanged`.
+      noteInspectedBodyChanged(event.id);
       break;
     }
     case 'erased':
@@ -9945,6 +9957,29 @@ function applyServerMessage(msg: ServerMsg): void {
         // nothing else re-asks about a body the pointer is not resting on. One
         // frame per game turn while the panel is open; see `refreshSelfSheet`.
         refreshSelfSheet();
+        /**
+         * ═══ AND A PLAIN HOVER, WHICH THIS EDGE USED TO LEAVE BEHIND ═══
+         *
+         * The pin and the sheet are re-asked above; a card the pointer is simply
+         * RESTING on was not. Nothing else asks either: `requestInspect` is
+         * armed by `noteHoveredActor`, which returns early when the id has not
+         * changed — and a pointer that has not moved has not changed anything.
+         * So the cache was cleared out from under the card and `tooltipView`
+         * returned null, blanking a card the player was looking at until they
+         * twitched the mouse.
+         *
+         * EXCLUDING THE PIN, because `tooltipView` consults `pinnedInspectView`
+         * FIRST — a pinned card shadows the hover entirely, so a second question
+         * about the same body buys nothing. Excluding self for the same reason
+         * against `refreshSelfSheet` directly above.
+         */
+        if (
+          hoveredActorId !== null &&
+          hoveredActorId !== pinnedInspectId &&
+          hoveredActorId !== selfId
+        ) {
+          refreshHoveredInspect();
+        }
       }
       turn = msg;
       bellEndsAt = msg.bellMs === null ? null : Date.now() + msg.bellMs;

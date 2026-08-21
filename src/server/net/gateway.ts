@@ -3970,8 +3970,48 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * disconnect and every Bell arming is visible to the whole party, not only to
    * the person it happened to.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE TURN CARDS PRINT, AS A KEY TERM. Without it they go stale mid-turn.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `turnKey` is six terms about the BARRIER — whose turn, who has committed,
+   * who is standing by — and the turn strip also paints a health bar and
+   * `12/60` digits for every player from the same frame (ui/turncards.ts:605,
+   * :838, off `turn.actors`). The client never patches that frame; `turn = msg`
+   * is its only write, and every hp correction goes to a different map.
+   *
+   * So hit points moved and the frame was suppressed as unchanged. A player took
+   * a hit in the middle of their own round and their card kept the old bar until
+   * something else moved the barrier — which is to say, until they passed.
+   * Reported in exactly those words.
+   *
+   * ═══ A DIGEST OF THE WORLD, NOT AN EVENT HOOK ═══
+   * Invalidating on `damage` would miss the hit points that move with no wire
+   * event at all: 0.5-per-turn regen (engine/actor.ts) and bleed ticks that call
+   * `applyDamage` directly. Reading the bodies is the only thing that catches
+   * every mover, and it is read at the same instant the rest of the key is.
+   *
+   * `Math.ceil` because that is what turncards.ts prints — a fractional regen
+   * intermediate nobody can see must not cost a frame.
+   *
+   * ═══ ONE EXTRA FRAME PER PUMP, AT WORST ═══
+   * `broadcastTurnIfChanged` runs once per pump against the settled world, so a
+   * sweep in which eight husks hit four detectives produces ONE additional
+   * broadcast rather than eight. Regen lands on the game-turn edge, where
+   * `gameTurn` has already moved the key, so it adds nothing there.
+   */
+  const playerHpKey = (realm: PumpTarget): string => {
+    const parts: string[] = [];
+    for (const actor of realm.world.allActors()) {
+      if (actor.kind !== ActorKind.Player) continue;
+      parts.push(`${actor.id}:${String(Math.ceil(actor.hp))}/${String(actor.maxHp)}`);
+    }
+    return parts.join(',');
+  };
+
   const broadcastTurnIfChanged = (realm: PumpTarget, state: TurnState): void => {
-    const key = turnKey(state, bells.has(realm.id));
+    const key = `${turnKey(state, bells.has(realm.id))}|${playerHpKey(realm)}`;
     if (key === lastTurnKeys.get(realm.id)) return;
     lastTurnKeys.set(realm.id, key);
 
