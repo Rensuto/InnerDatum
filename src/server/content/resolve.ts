@@ -65,6 +65,125 @@ import type { Item, ItemTier } from './items.ts';
 
 /** Base from egos. */
 export const EGO_SEPARATOR = '~';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   WHAT SEPARATES A BASE FROM ITS MATERIAL GRADE. ToME's `material_level`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An item in this game has been one fixed thing forever. A Watchman's Coat
+ * found at level 3 and one found at level 45 are byte-identical — every number
+ * on them comes off a frozen catalogue entry — so forty levels of loot has been
+ * the same twenty-three objects with a different chance of a prefix on top.
+ *
+ * Upstream's answer is the one thing that lets a small catalogue carry a long
+ * game: the same base drops in five MATERIAL GRADES, each worth more than the
+ * last. One authored coat becomes five coats, and the deep bands stop being the
+ * shallow bands with better egos.
+ *
+ * ═══ A SEPARATE TOKEN, AND ABSENT MEANS GRADE 1 ═══
+ * `item_coat#3`, `item_coat#3~ab2`. Every id ever written to a save file so far
+ * has no `#` in it and parses as grade 1 — which is exactly what those items
+ * were — so this needs no migration and no schema bump.
+ *
+ * NOT FOLDED INTO THE BASE ID, which was the first design and is wrong: the
+ * base is looked up in the catalogue by exact string, so `item_coat3` would be
+ * an item that does not exist and `itemById` would have to learn to strip
+ * digits — which would mis-parse any base whose name legitimately ends in one.
+ */
+export const MATERIAL_SEPARATOR = '#';
+
+/**
+ * The grades. One is what every authored item already is; five is upstream's
+ * ceiling — `material_level` runs 1..5 across its whole object table.
+ */
+export const MIN_MATERIAL = 1;
+export const MAX_MATERIAL = 5;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A GRADE IS WORTH. Grade 5 is twice grade 1, and nothing in between is
+ * rounded away.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `1 + 0.25(m-1)` — 1.00, 1.25, 1.50, 1.75, 2.00. A clean sentence a player can
+ * hold: the best version of a coat is twice the coat.
+ *
+ * ═══ TWO AND NOT MORE, WHICH IS THE WHOLE BALANCE DECISION ═══
+ * Upstream's grades span a much wider range, and upstream has 665 objects and
+ * fifty levels of zones to spread them over. Twenty-three bases means a grade-5
+ * find is one of twenty-three things rather than one of hundreds — so a wider
+ * curve would make the last band's drops strictly obsolete the moment a grade-5
+ * appeared, and there is nothing else to find.
+ *
+ * ═══ ROUNDED AT THE END, NOT PER FIELD ═══
+ * A coat granting `{ armour: 3, def: 1 }` at grade 3 is `{ 5, 2 }` — 4.5 and
+ * 1.5, each rounded once. Rounding a running total instead would make the same
+ * item worth different amounts depending on the order the fields were declared
+ * in, which is the kind of bug that shows up as "my armour went down when I
+ * picked up a better coat".
+ *
+ * A FLOOR OF 1 ON ANYTHING THAT WAS NON-ZERO. A grade cannot take a number
+ * away, and `Math.round(0.4)` is 0 — an item whose one small bonus vanished at
+ * a higher grade would read as broken, and it is one `Math.max`.
+ */
+const MATERIAL_STEP = 0.25;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A GRADE IS CALLED. Grade 1 is called nothing at all.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An item whose numbers are twice another item's and whose NAME is identical is
+ * a cruelty: the bag shows two "Watchman's Coat" rows, one of them is worth
+ * dropping, and the only way to find out which is to read both tooltips. This
+ * is the difference on the row.
+ *
+ * ═══ A PREFIX, IN FRONT OF THE EGO PREFIX, WHICH IS UPSTREAM'S ORDER ═══
+ * "Reinforced Watchman's Coat" becomes "Fitted Reinforced Watchman's Coat" —
+ * the grade is a fact about the object itself and the ego is a fact about what
+ * was done to it, so the grade sits outermost. `applyEgo` (Zone.lua:527-531)
+ * builds its name by the same concatenation and this joins the front of it.
+ *
+ * ═══ GRADE 1 IS UNNAMED, AND THAT IS NOT AN OVERSIGHT ═══
+ * It is the ordinary version of the thing. Naming it "Plain Watchman's Coat"
+ * would put a word on every item in the early game to distinguish it from
+ * items the player has not seen yet, and would rename every object in every
+ * existing save. The absence IS the grade, exactly as it is in the id.
+ *
+ * THE WORDS ARE MATERIALS AND TREATMENTS, not numbers or stars. "Fitted" tells
+ * a player something about the coat; "Tier 3" tells them about the loot table.
+ */
+const MATERIAL_WORDS: readonly string[] = Object.freeze([
+  '',
+  'Fitted ',
+  'Tailored ',
+  'Reinforced Weave ',
+  'Bespoke ',
+]);
+
+/** The word for a grade, or an empty string for the ordinary one. */
+export function materialWord(material: number): string {
+  const m = Math.max(MIN_MATERIAL, Math.min(MAX_MATERIAL, Math.floor(material)));
+  return MATERIAL_WORDS[m - 1] ?? '';
+}
+
+/** The multiplier for a grade. 1.00 at grade 1, 2.00 at grade 5. */
+export function materialMultiplier(material: number): number {
+  const m = Math.max(MIN_MATERIAL, Math.min(MAX_MATERIAL, Math.floor(material)));
+  return 1 + MATERIAL_STEP * (m - 1);
+}
+
+/** One authored number at a grade. Never smaller than it was, never zero from non-zero. */
+export function atMaterial(value: number, material: number): number {
+  if (value === 0) return 0;
+  const scaled = Math.round(value * materialMultiplier(material));
+  // SIGN-PRESERVING. A negative authored number — a heavy coat's defence
+  // penalty — gets WORSE at a higher grade, which is the honest reading of "a
+  // bigger version of the same thing" and stops a grade quietly erasing a
+  // drawback the item was balanced around.
+  return value > 0 ? Math.max(1, scaled) : Math.min(-1, scaled);
+}
 /** Ego from ego. */
 export const EGO_DELIMITER = '.';
 
@@ -111,6 +230,11 @@ export type ItemEgoRef = {
 export type ParsedItemId = {
   /** The part before the `~`. Always a plain catalogue id, never resolved here. */
   readonly base: string;
+  /**
+   * 1..`MAX_MATERIAL`. ONE FOR AN ID THAT DOES NOT SAY, which is every id
+   * written before grades existed and every plain authored base.
+   */
+  readonly material: number;
   /** In id order, which is canonical order. Empty for a plain id. */
   readonly egos: readonly ItemEgoRef[];
 };
@@ -124,17 +248,58 @@ export type ParsedItemId = {
  * check that the base exists or that the codes name real egos — those are
  * catalogue questions and they belong to `resolveItem`.
  */
+/**
+ * Take a material grade off the front half of an id, or `undefined` if the
+ * grade is not one.
+ *
+ * ═══ ABSENT IS GRADE 1, AND THAT IS WHAT MAKES THIS NEED NO MIGRATION ═══
+ * Every id ever written to a save file before this existed has no `#` in it,
+ * and grade 1 is exactly what those items were. The same additive-field
+ * contract every optional field in this codebase leans on, applied to a string
+ * grammar rather than to an object.
+ *
+ * STRICT ABOUT THE REST: a `#` with nothing after it, a non-integer, a leading
+ * zero, or a grade outside 1..`MAX_MATERIAL` makes the whole id unknown. This
+ * runs on strings out of save files and off the wire, and the one thing worse
+ * than rejecting a malformed id is resolving a half-parsed one to an item that
+ * is quietly stronger than it should be.
+ */
+function splitMaterial(head: string): { base: string; material: number } | undefined {
+  const at = head.indexOf(MATERIAL_SEPARATOR);
+  if (at < 0) return { base: head, material: MIN_MATERIAL };
+  if (at === 0 || at === head.length - 1) return undefined;
+  if (head.indexOf(MATERIAL_SEPARATOR, at + 1) >= 0) return undefined;
+
+  const digits = head.slice(at + 1);
+  if (!/^[1-9][0-9]*$/.test(digits)) return undefined;
+  const material = Number(digits);
+  if (material < MIN_MATERIAL || material > MAX_MATERIAL) return undefined;
+  return { base: head.slice(0, at), material };
+}
+
 export function parseItemId(id: string): ParsedItemId | undefined {
   if (id.length === 0 || id.length > ITEM_ID_MAX_CHARS) return undefined;
 
+  /**
+   * THE EGO SECTION COMES OFF FIRST, THEN THE GRADE, and the order matters: a
+   * `#` inside an ego token is not a grade, and looking for one there would
+   * mis-parse the day an ego code grammar grows a punctuation mark.
+   */
   const cut = id.indexOf(EGO_SEPARATOR);
-  if (cut < 0) return { base: id, egos: [] };
+  if (cut < 0) {
+    const plain = splitMaterial(id);
+    return plain === undefined
+      ? undefined
+      : { base: plain.base, material: plain.material, egos: [] };
+  }
   // A `~` at either end, or a second one: not an id, and never a base id with a
   // stray character on it. Refuse rather than guess.
   if (cut === 0 || cut === id.length - 1) return undefined;
   if (id.indexOf(EGO_SEPARATOR, cut + 1) >= 0) return undefined;
 
-  const base = id.slice(0, cut);
+  const graded = splitMaterial(id.slice(0, cut));
+  if (graded === undefined) return undefined;
+  const { base, material } = graded;
   const tokens = id.slice(cut + 1).split(EGO_DELIMITER);
   if (tokens.length > MAX_EGOS) return undefined;
 
@@ -155,7 +320,7 @@ export function parseItemId(id: string): ParsedItemId | undefined {
     egos.push({ code, power });
   }
 
-  return { base, egos };
+  return { base, material, egos };
 }
 
 /**
@@ -166,10 +331,25 @@ export function parseItemId(id: string): ParsedItemId | undefined {
  * and get the string that goes on the wire, into the save file and into the
  * bag's identity check.
  */
-export function formatItemId(base: string, egos: readonly ItemEgoRef[]): string {
-  if (egos.length === 0) return base;
+export function formatItemId(
+  base: string,
+  egos: readonly ItemEgoRef[],
+  /**
+   * THE MATERIAL GRADE. Defaulted to 1, and grade 1 WRITES NOTHING — so every
+   * existing caller produces the byte-identical string it produced before, and
+   * the commonest item in the game keeps the shortest id it can have.
+   *
+   * That is not only tidiness: ids are compared as strings for the bag's
+   * de-duplication, so `item_coat` and `item_coat#1` must never both exist.
+   * One spelling per item, and the default is what enforces it.
+   */
+  material: number = MIN_MATERIAL,
+): string {
+  const graded =
+    material <= MIN_MATERIAL ? base : `${base}${MATERIAL_SEPARATOR}${String(material)}`;
+  if (egos.length === 0) return graded;
   const tokens = egos.map((ego) => `${ego.code}${POWER_DIGITS.charAt(ego.power)}`);
-  return `${base}${EGO_SEPARATOR}${tokens.join(EGO_DELIMITER)}`;
+  return `${graded}${EGO_SEPARATOR}${tokens.join(EGO_DELIMITER)}`;
 }
 
 /**
@@ -204,7 +384,26 @@ export function resolveItem(id: string): Item | undefined {
 
   const base = itemById(parsed.base);
   if (base === undefined) return undefined;
-  if (parsed.egos.length === 0) return base;
+
+  const material = parsed.material;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE EARLY RETURN IS NOW CONDITIONAL ON THE GRADE TOO, AND IT HAD TO BE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It read `if (parsed.egos.length === 0) return base;` — hand back the frozen
+   * catalogue entry, untouched, which was exactly right while an id could say
+   * nothing else about an item. A plain GRADED id (`item_coat#3`) would have
+   * taken that same path and come back as a grade-1 coat: the id would parse,
+   * the item would resolve, every number would be wrong, and nothing anywhere
+   * would report an error.
+   *
+   * A grade-1 item with no egos still takes it, which is every item that has
+   * ever existed in a save file — so the common path is unchanged and still
+   * returns the shared frozen object rather than building a copy per lookup.
+   */
+  if (parsed.egos.length === 0 && material === MIN_MATERIAL) return base;
 
   // ─── LOOK EVERY EGO UP FIRST ───
   // An unknown code makes the whole item unknown rather than resolving to a bare
@@ -241,9 +440,27 @@ export function resolveItem(id: string): Item | undefined {
     if (ego.slots !== undefined && !ego.slots.includes(base.slot)) return undefined;
   }
 
-  // ─── THE MERGE. NUMBERS ADD, AND THAT IS THE WHOLE RULE ───
-  const stats: Record<string, number> = { ...base.wielder.stats };
-  const mods: Record<string, number> = { ...base.wielder.mods };
+  /**
+   * ─── THE MERGE. NUMBERS ADD, AND THAT IS THE WHOLE RULE ───
+   *
+   * ═══ THE BASE IS SCALED BY ITS GRADE; THE EGOS ARE NOT ═══
+   * A grade is a fact about the OBJECT — a better coat is a better coat — and
+   * an ego is a fact about what happened to it, which does not get better
+   * because the coat underneath did. Upstream agrees in effect: ego magnitudes
+   * come off the ego's own table and the material level scales the base.
+   *
+   * It also keeps the arithmetic legible. Scaling both would mean a grade-5
+   * item with two egos multiplying four authored numbers by the same figure,
+   * and no player could work out where any of it came from.
+   */
+  const stats: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.stats ?? {})) {
+    stats[key] = atMaterial(value, material);
+  }
+  const mods: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.mods ?? {})) {
+    mods[key] = atMaterial(value, material);
+  }
   for (const [index, ego] of egos.entries()) {
     const ref = parsed.egos[index];
     if (ref === undefined) continue;
@@ -267,6 +484,10 @@ export function resolveItem(id: string): Item | undefined {
   for (const ego of egos) {
     name = ego.tag === EgoSlotTag.Prefix ? `${ego.name}${name}` : `${name}${ego.name}`;
   }
+  // THE GRADE GOES ON LAST, WHICH PUTS IT FIRST. See `MATERIAL_WORDS`: the
+  // grade is a fact about the object and an ego is a fact about what was done
+  // to it, so the grade is the outermost word.
+  name = `${materialWord(material)}${name}`;
 
   const weight = Math.min(TIER_BY_WEIGHT.length, tierWeight(base.tier) + egos.length);
 

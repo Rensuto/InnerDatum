@@ -1,3 +1,4 @@
+import { parseItemId } from '../../src/server/content/resolve.ts';
 import { describe, expect, it, vi } from 'vitest';
 
 import { seedTestEncounter } from '../../src/server/content/encounter.ts';
@@ -555,8 +556,17 @@ describe('a floor reset clears the floor of items too', () => {
      * claim about the part before the `~`. Asserting on the whole id would make
      * this test fail every time an ego lands, which is not the wraith's table
      * changing.
+     * ═══ THROUGH THE REAL PARSER, WHERE THIS USED TO SPLIT ON `~` ═══
+     * That found the base fine while an id had one kind of decoration on it.
+     * Material grades put a second one on the OTHER side of the tilde
+     * (`item_coat#3~rf2`), so the hand-split started answering 'item_coat#3',
+     * which is not in the drop table and never will be.
+     *
+     * `parseItemId` is the one place that knows the grammar, and it will keep
+     * knowing it when a third decoration lands.
      */
-    const baseOf = (id: string | undefined): string | undefined => id?.split('~')[0];
+    const baseOf = (id: string | undefined): string | undefined =>
+      id === undefined ? undefined : parseItemId(id)?.base;
 
     const before = stuck.world.getActor('mon_index_wraith');
     expect(before?.carried).toHaveLength(1);

@@ -208,8 +208,23 @@ describe('delve litter is rolled for the party that is there', () => {
     // Identical output at every level is the signature of the hard-coded 1: the
     // band and the rarities both read that argument, so a party five levels in
     // was picking up the level-1 table off the floor of a room they had to find.
+    /**
+     * ═══ LEVELS 1 AND 25, NOT 1 AND 5, AND THE OLD PAIR WAS A COINCIDENCE ═══
+     * `LEVELS_PER_BAND` is ten, so levels 1 and 5 are the SAME BAND — the
+     * quality table, the money table and now the material grade all read the
+     * band and answer identically for both. The only thing that differed was
+     * the ego rarity curve, which reads the raw level, and it differed by one
+     * pick out of six on this particular seed.
+     *
+     * That is a real difference and far too thin a thread to hang the
+     * assertion on: adding a single labelled draw anywhere upstream shifts the
+     * stream and the two can coincide, which is exactly what happened when the
+     * material grade landed. Twenty-five is two bands up, so this now fails
+     * only if level genuinely stops reaching the loot — which is the bug it
+     * was written for.
+     */
     const low = litterOf({ level: 1, size: 1 }, BARROW as DelveSpec);
-    const high = litterOf({ level: 5, size: 1 }, BARROW as DelveSpec);
+    const high = litterOf({ level: 25, size: 1 }, BARROW as DelveSpec);
     expect(high).not.toEqual(low);
   });
 });

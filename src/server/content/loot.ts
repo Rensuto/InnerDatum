@@ -54,7 +54,7 @@
 
 import { EGO_TAG_ORDER, egosForTag } from './egos.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
-import { MAX_EGO_POWER, formatItemId } from './resolve.ts';
+import { MAX_EGO_POWER, MAX_MATERIAL, MIN_MATERIAL, formatItemId } from './resolve.ts';
 import { itemById } from './items.ts';
 import { moneyIdFor, rollMoney } from './money.ts';
 import type { ItemEgoRef } from './resolve.ts';
@@ -179,6 +179,39 @@ export const QUALITY_BANDS: readonly (readonly { quality: LootQuality; weight: n
  */
 export const LEVELS_PER_BAND = 10;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT GRADE THIS FIND IS. The band, and one step of luck either side of it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The band already answers "how deep is this character", 1 through 5 across
+ * fifty levels — so it IS the grade, and drawing one from thin air would be a
+ * second progression curve to keep in step with the first.
+ *
+ * ═══ THE SPREAD IS WHAT MAKES A DROP WORTH READING ═══
+ * Grade == band exactly would mean every item found at a given level is
+ * identical in power, and the only variance left in a drop would be its ego.
+ * One step either way gives a band-3 character grade 2, 3 or 4: a find that is
+ * a little better than the last one is the smallest unit of loot that is worth
+ * picking up, and this is where it comes from.
+ *
+ * ═══ CLAMPED, NOT WRAPPED ═══
+ * A band-1 character rolls 1 or 2 and never 0; a band-5 one rolls 4 or 5 and
+ * never 6. The clamp is what makes the early game's floor a real floor — a
+ * level-2 player cannot find a grade-0 anything — and it slightly favours the
+ * middle grade at both ends, which is the correct shape: the extremes should be
+ * rarer than the middle.
+ *
+ * ONE DRAW, LABELLED, and taken unconditionally so the stream does not depend
+ * on what the quality roll decided — `rng.ts` states the consequence of a
+ * conditional draw and `populateDelve` carries the same warning.
+ */
+export function materialFor(rng: Rng, level: number): number {
+  const band = bandFor(level);
+  const drift = rng.int('loot.material', -1, 1);
+  return Math.min(MAX_MATERIAL, Math.max(MIN_MATERIAL, band + drift));
+}
+
 export function bandFor(level: number): number {
   if (!Number.isFinite(level)) return 1;
   return Math.min(QUALITY_BANDS.length, Math.max(1, Math.ceil(level / LEVELS_PER_BAND)));
@@ -257,6 +290,16 @@ export function rollLoot(rng: Rng, baseId: string, level: number): string {
   if (base === undefined) return baseId;
 
   const band = bandFor(level);
+  /**
+   * THE GRADE IS DRAWN BEFORE THE QUALITY AND UNCONDITIONALLY.
+   *
+   * Before, so that a money result — which returns early two lines down — has
+   * still taken the same draw as an item result. A draw that happened only on
+   * some branches would make every later roll from that seed depend on which
+   * branch was taken, and `rng.ts` is explicit that this breaks
+   * replay-from-seed. The value is simply discarded on the money path.
+   */
+  const material = materialFor(rng, level);
   const quality = rollQuality(rng, band);
 
   // MONEY REPLACES THE ITEM ENTIRELY. The weights did not move when this
@@ -266,7 +309,10 @@ export function rollLoot(rng: Rng, baseId: string, level: number): string {
   if (quality === LootQuality.Money) return moneyIdFor(rollMoney(rng, band));
 
   const wanted = egoCountFor(quality);
-  if (wanted === 0) return baseId;
+  // A PLAIN ITEM IS STILL A GRADED ITEM. `formatItemId` writes nothing extra
+  // for grade 1, so the commonest early find is the same bare string it always
+  // was — and a plain grade-4 coat is a real drop rather than an impossible one.
+  if (wanted === 0) return formatItemId(baseId, [], material);
 
   const refs: ItemEgoRef[] = [];
   for (let i = 0; i < wanted && i < EGO_TAG_ORDER.length; i += 1) {
@@ -298,6 +344,5 @@ export function rollLoot(rng: Rng, baseId: string, level: number): string {
     refs.push({ code: ego.code, power });
   }
 
-  if (refs.length === 0) return baseId;
-  return formatItemId(baseId, refs);
+  return formatItemId(baseId, refs, material);
 }

@@ -38,16 +38,21 @@ const PLAIN = 'item_watchmans_coat';
 
 describe('the item id grammar', () => {
   it('leaves a plain id exactly as it found it', () => {
-    expect(parseItemId(PLAIN)).toEqual({ base: PLAIN, egos: [] });
+    // MATERIAL 1 IS WHAT A PLAIN ID MEANS. The field is new; the VALUE for every
+    // id that existed before it is the one those items already had, which is the
+    // whole reason this needed no save migration.
+    expect(parseItemId(PLAIN)).toEqual({ base: PLAIN, material: 1, egos: [] });
   });
 
   it('splits a base from its egos, in id order', () => {
     expect(parseItemId(`${PLAIN}~ba2`)).toEqual({
       base: PLAIN,
+      material: 1,
       egos: [{ code: 'ba', power: 2 }],
     });
     expect(parseItemId(`${PLAIN}~ba2${EGO_DELIMITER}wd1`)).toEqual({
       base: PLAIN,
+      material: 1,
       egos: [
         { code: 'ba', power: 2 },
         { code: 'wd', power: 1 },
@@ -58,7 +63,7 @@ describe('the item id grammar', () => {
   it('round-trips through format and back for every power a roll can produce', () => {
     for (let power = 0; power <= MAX_EGO_POWER; power += 1) {
       const id = formatItemId(PLAIN, [{ code: 'ba', power }]);
-      expect(parseItemId(id)).toEqual({ base: PLAIN, egos: [{ code: 'ba', power }] });
+      expect(parseItemId(id)).toEqual({ base: PLAIN, material: 1, egos: [{ code: 'ba', power }] });
     }
   });
 
