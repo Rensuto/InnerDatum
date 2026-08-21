@@ -86,7 +86,26 @@ export function slowTurnsAt(level: number): number {
 
 /** One line per body, and a partial save is its own outcome. See `move_along.ts`. */
 function line(name: string, shoved: number, landed: SetEffectResult | undefined): string {
-  const resisted = landed === undefined || landed.outcome === SetEffectOutcome.Immune;
+  /**
+   * ═══ `Immune` IS NOT THE ONLY WAY TO SHRUG SOMETHING OFF ═══
+   *
+   * This read `outcome === SetEffectOutcome.Immune` alone, which is the RARE
+   * refusal — a body with an outright immunity. The common one is `Negated`:
+   * the save roll came up saved (Actor.lua:7034-7037), which is what happens
+   * every time an ordinary target makes an ordinary save. Those were reported as
+   * slowed.
+   *
+   * `dur <= 0` rather than naming `Negated` too, because a PARTIAL save can
+   * grind a duration down to nothing and "slowed for 0 turns" is the same
+   * non-event wearing a third outcome code.
+   *
+   * Found by test/server/status-report-honesty.test.ts, which casts every talent
+   * twice — once landing, once saved — and demands the two read differently. A
+   * grep for `SetEffectOutcome` said this file was fine; it mentions the symbol
+   * and used it wrong.
+   */
+  const resisted =
+    landed === undefined || landed.outcome === SetEffectOutcome.Immune || landed.dur <= 0;
   if (shoved <= 0 && resisted) return `${name} does not move.`;
   if (shoved <= 0) return `${name} is slowed but holds its ground.`;
   const ground = `${name} gives ${String(shoved)} ground`;

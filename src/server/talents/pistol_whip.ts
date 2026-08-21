@@ -27,6 +27,8 @@
  * which is the honest price of a melee talent on a ranged class.
  */
 
+import { SetEffectOutcome } from '../engine/effects.ts';
+import type { SetEffectResult } from '../engine/effects.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
@@ -55,6 +57,40 @@ const STUN_TURNS = 2;
 
 function damageMult(talentLevel: number): number {
   return combatTalentScale(talentLevel, MULT_LOW, MULT_HIGH);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT ACTUALLY HAPPENED, NOT WHAT WAS ASKED FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This line used to read `landed === undefined ? [] : [...]` — a test of
+ * whether the STATUS SEAM EXISTS, printed as though it were the result. Every
+ * cast announced the authored duration, including the ones the target saved
+ * against outright.
+ *
+ * Caught by `tools/status-live.mjs`: the Case Log said *"Index Cairn is slowed
+ * for 3 turns"* and the socket never carried a badge, because the effect came
+ * back `outcome=negated, dur=0`. The badge was correctly absent. The sentence
+ * was the lie.
+ *
+ * ═══ AND IT MADE SAVES INVISIBLE, WHICH IS THE REAL COST ═══
+ * Every status in this game is rolled against a typed save with partial-save
+ * duration scaling — an entire subsystem — and a player who is told "slowed for
+ * 3 turns" every single time cannot learn that anything ever resists, cannot
+ * see a big save doing its job, and cannot tell a talent that is working from
+ * one that is not.
+ *
+ * `dur <= 0` rather than a test for `Negated` alone: a partial save can grind
+ * a duration down to nothing, and "slowed for 0 turns" is the same non-event
+ * wearing a different outcome code.
+ */
+function reelLine(name: string, landed: SetEffectResult | undefined): string[] {
+  if (landed === undefined) return [];
+  if (landed.outcome === SetEffectOutcome.Immune || landed.dur <= 0) {
+    return [`${name} takes it and stays up.`];
+  }
+  return [`${name} reels for ${String(landed.dur)} turns.`];
 }
 
 export const pistolWhip: Talent = {
@@ -92,10 +128,7 @@ export const pistolWhip: Talent = {
       srcId: self.id,
     });
 
-    return talentDone(
-      [hit],
-      landed === undefined ? [] : [`${victim.name} reels for ${String(STUN_TURNS)} turns.`],
-    );
+    return talentDone([hit], reelLine(victim.name, landed));
   },
 
   describe: (_self, level) =>

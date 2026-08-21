@@ -32,6 +32,8 @@
  * than the opener for every fight.
  */
 
+import { SetEffectOutcome } from '../engine/effects.ts';
+import type { SetEffectResult } from '../engine/effects.ts';
 import { applyLoad } from './loads.ts';
 import { combatTalentLimit, combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
@@ -120,6 +122,42 @@ export function stunTurnsAt(level: number): number {
   return Math.round(combatTalentScale(level, STUN_LOW, STUN_HIGH));
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT ACTUALLY HAPPENED, NOT WHAT WAS ASKED FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This line used to read `landed === undefined ? [] : [...]` — a test of
+ * whether the STATUS SEAM EXISTS, printed as though it were the result. Every
+ * cast announced the authored duration, including the ones the target saved
+ * against outright.
+ *
+ * Caught by `tools/status-live.mjs`: the Case Log said *"Index Cairn is slowed
+ * for 3 turns"* and the socket never carried a badge, because the effect came
+ * back `outcome=negated, dur=0`. The badge was correctly absent. The sentence
+ * was the lie.
+ *
+ * ═══ AND IT MADE SAVES INVISIBLE, WHICH IS THE REAL COST ═══
+ * Every status in this game is rolled against a typed save with partial-save
+ * duration scaling — an entire subsystem — and a player who is told "slowed for
+ * 3 turns" every single time cannot learn that anything ever resists, cannot
+ * see a big save doing its job, and cannot tell a talent that is working from
+ * one that is not.
+ *
+ * `dur <= 0` rather than a test for `Negated` alone: a partial save can grind
+ * a duration down to nothing, and "slowed for 0 turns" is the same non-event
+ * wearing a different outcome code.
+ */
+function burstLine(name: string, landed: SetEffectResult | undefined): string[] {
+  // THE FLASK DEALS NO DAMAGE, so this sentence is the whole of what the player
+  // sees. It must always say something, and it must be true.
+  if (landed === undefined) return [`The flask bursts beside ${name}.`];
+  if (landed.outcome === SetEffectOutcome.Immune || landed.dur <= 0) {
+    return [`The flask bursts beside ${name}, who keeps their feet.`];
+  }
+  return [`${name} is stunned for ${String(landed.dur)} turns.`];
+}
+
 export const concussionFlask: Talent = {
   id: talentId('concussion_flask'),
   name: 'Concussion Flask',
@@ -182,15 +220,7 @@ export const concussionFlask: Talent = {
      * oversight: a load should be worth more on some of the class's throws than
      * on others, or choosing one is not a decision about how you are fighting.
      */
-    return talentDone(
-      [],
-      [
-        ...(landed === undefined
-          ? [`The flask bursts beside ${victim.name}.`]
-          : [`${victim.name} is stunned for ${String(turns)} turns.`]),
-        ...applyLoad(ctx, self, victim),
-      ],
-    );
+    return talentDone([], [...burstLine(victim.name, landed), ...applyLoad(ctx, self, victim)]);
   },
 
   describe: (_self, level) =>
