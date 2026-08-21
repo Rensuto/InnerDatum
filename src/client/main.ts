@@ -2082,6 +2082,42 @@ let refreshPinnedInspect: () => void = () => {
 };
 
 /**
+ * RE-ASK ABOUT WHATEVER THE POINTER IS RESTING ON. Replaced in boot(), which
+ * owns the socket; a no-op until then and a no-op when nothing is hovered.
+ *
+ * ═══ THE HOVER CARD CANNOT RE-ASK FOR ITSELF, BECAUSE NOTHING MOVED ═══
+ * `requestInspect` fires from pointer events. A player who puts the pointer on a
+ * husk and then spends their turn shooting it produces no further pointer
+ * events at all, so the card goes on showing the answer from before the shot —
+ * which is the bug this exists for. The pin has had its own refresher for the
+ * same reason since the day a pinned card was found stating `42/42` through
+ * four bumps and a death.
+ *
+ * SENT UNCONDITIONALLY, exactly as `refreshPinnedInspect` is: the caller has
+ * already decided the cached answer is void, so consulting the cache here would
+ * re-serve the thing it just invalidated.
+ */
+let refreshHoveredInspect: () => void = () => {
+  // No socket yet.
+};
+
+/**
+ * BODIES WITH A REFRESH ALREADY IN THE POST.
+ *
+ * ═══ ONE QUESTION PER BODY, NOT ONE PER BLOW ═══
+ * A sweep can hit the same body several times — three husks around a detective
+ * is three `damage` frames for one actor in one batch — and each of them
+ * invalidates the same card. Without this, each also sends its own `inspect`,
+ * spending the token bucket on three questions with one answer.
+ *
+ * NOT `inspectInFlight`, which belongs to the pointer: a refresh claiming that
+ * slot would make the next hover believe its own question was already sent. This
+ * is a separate ledger for a separate reason, cleared by the same `inspected`
+ * frame.
+ */
+const inspectRefreshPending = new Set<string>();
+
+/**
  * RE-ASK ABOUT YOURSELF, FOR THE OPEN CHARACTER SHEET. Replaced in boot(), which
  * owns the socket; a no-op until then and a no-op while the sheet is shut.
  *
@@ -3965,10 +4001,52 @@ const paintHud: HudPainter = (ctx, width, height) => {
  */
 function forgetInspections(): void {
   inspectCache.clear();
+  inspectRefreshPending.clear();
   inspectInFlight = null;
   hoveredActorId = null;
   pinnedInspectId = null;
   pinnedInspectView = null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS BODY'S NUMBERS JUST CHANGED. THE CARD ABOUT IT IS NOW WRONG.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE CACHE WAS STAMPED WITH THE GAME TURN, AND THE PREMISE WAS FALSE ═══
+ * `requestInspect` reuses an answer while `known.gameTurn === turn.gameTurn`,
+ * under a comment reading *"hit points and hit chances are answers about one
+ * game turn"*. Hit points are not. They change several times WITHIN a turn —
+ * every shot the player fires is a body whose hp moved while the turn number
+ * did not.
+ *
+ * Reported from a live session with a screenshot: the Case Log read *"Ren uses
+ * Sniper's Mark. Ren hits Index Glut. 36 damage. Index Glut 14/60"* and the
+ * inspect card beside it said `50/60` — the answer from before the shot, held
+ * for the rest of the turn and stated in bold.
+ *
+ * ═══ INVALIDATED AND RE-ASKED, NEVER JUST DROPPED ═══
+ * Deleting the entry alone would make the card VANISH the instant you hit
+ * something and reappear on the next pointer move, which is worse than a stale
+ * number: `tooltipView` returns null for a miss. So each of the three readers
+ * that can be looking at this body is told to ask again — the same three the
+ * game-turn edge already refreshes, for the same reason.
+ *
+ * ═══ AND IT COSTS ONE FRAME PER BODY YOU ARE ACTUALLY LOOKING AT ═══
+ * Not one per blow: the guards are `=== id`, so a sweep in which eight husks
+ * hit each other sends nothing at all unless the pointer is resting on one of
+ * them. That is the property that keeps this off the token bucket.
+ */
+function noteInspectedBodyChanged(id: string): void {
+  inspectCache.delete(id);
+  // NOBODY IS LOOKING AT THIS BODY. Dropping the stale answer is the whole job;
+  // asking for a fresh one nobody will read is a frame spent on nothing.
+  const watched = pinnedInspectId === id || hoveredActorId === id || selfId === id;
+  if (!watched || inspectRefreshPending.has(id)) return;
+  inspectRefreshPending.add(id);
+  if (pinnedInspectId === id) refreshPinnedInspect();
+  if (hoveredActorId === id) refreshHoveredInspect();
+  if (selfId === id) refreshSelfSheet();
 }
 
 function tooltipView(): InspectView | null {
@@ -4261,6 +4339,11 @@ function applyTurnEvent(event: TurnEvent): void {
       // kills itself back into agreement on the next hit instead of drifting
       // forever. `amount` is for the floating number in M4, not for arithmetic.
       actors.set(event.id, { ...actor, hp: event.hp, maxHp: event.maxHp });
+      // AND THE CARD ABOUT IT, WHICH READS A SEPARATE SERVER ANSWER. The map's
+      // health bar is already correct at this line — it draws from `actors` —
+      // and the inspect card is not, which is exactly the disagreement a player
+      // reported seeing on one screen. See `noteInspectedBodyChanged`.
+      noteInspectedBodyChanged(event.id);
       // TRAVEL INTERRUPT (5): SOMETHING HIT YOU. Walking on while your health
       // bar drops is the single worst thing an auto-walk can do — it is how a
       // player dies to a fight they never saw start — and it is worth stopping
@@ -4988,6 +5071,16 @@ async function boot(): Promise<void> {
   // header for what a pin that is never re-asked goes on displaying.
   refreshPinnedInspect = () => {
     const id = pinnedInspectId;
+    if (id === null) return;
+    socket.send({ v: PROTOCOL_VERSION, t: 'inspect', targetId: id });
+  };
+
+  // THE HOVER CARD'S OWN REFRESH, fired when the body under the pointer takes a
+  // hit. Deliberately NOT routed through `requestInspect`: that one returns
+  // early on a cache hit for this turn, which is the precise rule being
+  // overridden here. See `noteInspectedBodyChanged`.
+  refreshHoveredInspect = () => {
+    const id = hoveredActorId;
     if (id === null) return;
     socket.send({ v: PROTOCOL_VERSION, t: 'inspect', targetId: id });
   };
@@ -10411,6 +10504,8 @@ function applyServerMessage(msg: ServerMsg): void {
       // the security property (protocol.ts's `InspectedMsg` calls the alternative
       // an id oracle), so there is one behaviour for it: draw nothing.
       if (inspectInFlight === msg.targetId) inspectInFlight = null;
+      // AND THE REFRESH LEDGER, so the next blow on this body may ask again.
+      inspectRefreshPending.delete(msg.targetId);
       inspectCache.set(msg.targetId, { view: msg.view, gameTurn: turn?.gameTurn ?? -1 });
       if (pinnedInspectId === msg.targetId) {
         pinnedInspectView = msg.view;
