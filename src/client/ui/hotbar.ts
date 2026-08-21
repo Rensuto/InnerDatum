@@ -565,6 +565,25 @@ export function hotbarDropTargetAt(
 ): HotbarDrop {
   const index = hotbarSlotAt(px, py, count, width, height);
   if (index < 0) return { kind: HotbarDropKind.Miss };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BOTH HALVES OF THE BAR TAKE A DROP NOW, AND THE KINDS SAY WHICH IS WHICH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `HotbarDropKind.Talent` used to mean "this is a class talent, it cannot be
+   * bound, tell the player in words" — the caller's whole job with it was to
+   * print a refusal. A talent slot was `loadout[n]` for the session and that
+   * was that.
+   *
+   * It now means "a TALENT may be bound here", which is the same discriminant
+   * doing the opposite thing. The rename would be honest and is deliberately
+   * not made: `Talent` names the slot's KIND, not the old refusal, and every
+   * call site is being read in this commit anyway.
+   *
+   * WHAT DOES NOT CHANGE: an item still cannot go on a talent slot and a talent
+   * still cannot go on an item slot. The caller checks the DRAG against the
+   * kind, so the wrong pairing is still a sentence rather than a silent no-op.
+   */
   return isItemSlotIndex(index)
     ? { kind: HotbarDropKind.Bind, index }
     : { kind: HotbarDropKind.Talent, index };
@@ -671,9 +690,27 @@ function isItemDrag(drag: DragSubject | null | undefined): boolean {
     case DragKind.Carried:
     case DragKind.Worn:
       return true;
+    // A TALENT IS NOT AN ITEM DRAG. It lights up the other half of the bar —
+    // see `isTalentDrag` below — and the two are kept apart rather than merged
+    // into one `isBindableDrag` precisely so a talent cannot light an item
+    // slot it is about to be refused from.
+    case DragKind.Talent:
     case DragKind.Panel:
       return false;
   }
+}
+
+/**
+ * Is the pointer carrying a TALENT, which the six keyed slots now take?
+ *
+ * The exact twin of `isItemDrag` above and deliberately a separate function.
+ * One predicate answering "could this go on the bar somewhere" would light every
+ * slot for every drag, and the player would learn that a talent can go on an
+ * item slot — which it cannot, and finding that out by being refused is the
+ * thing highlighting exists to prevent.
+ */
+function isTalentDrag(drag: DragSubject | null | undefined): boolean {
+  return drag !== undefined && drag !== null && drag.kind === DragKind.Talent;
 }
 
 /**
@@ -1146,7 +1183,25 @@ export function drawHotbar(options: HotbarOptions): void {
   if (count === 0) return;
 
   const shown = hotbarVisibleCount(count, width);
-  const dragging = isItemDrag(view.drag);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * "IS THIS DRAG ONE THAT COULD LAND ON *THIS* SLOT" — PER SLOT, NOT PER BAR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This was one flag for the whole bar: `isItemDrag(view.drag)`, which every
+   * slot then read. Correct while only items could be bound, because the only
+   * slots that could take a drop were the item ones and the talent slots were
+   * never empty — `frameIdFor` reads the flag ONLY in its `Empty` arm, so a
+   * bar-wide flag and a per-slot one gave the same picture.
+   *
+   * A talent slot can be empty now, and a talent drag can land on one. A single
+   * flag would light an empty TALENT slot while the player carries an ITEM,
+   * promising a drop that `hotbarDropTargetAt` will refuse in words — which is
+   * precisely the lie highlighting exists to prevent.
+   */
+  const itemDrag = isItemDrag(view.drag);
+  const talentDrag = isTalentDrag(view.drag);
+  const landsOn = (index: number): boolean => (isItemSlotIndex(index) ? itemDrag : talentDrag);
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;
@@ -1172,7 +1227,7 @@ export function drawHotbar(options: HotbarOptions): void {
       slotRect(i, shown, width, height),
       view.hovered === i,
       view.armed === i,
-      dragging,
+      landsOn(i),
     );
   }
 

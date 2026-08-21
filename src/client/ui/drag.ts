@@ -339,6 +339,14 @@ export const DragKind = {
   Carried: 'carried',
   /** An item already worn. The subject is the `Slot` it came off. */
   Worn: 'worn',
+  /**
+   * A TALENT, dragged off the talent panel onto a bar slot. The subject is its
+   * `talentId` — never the `LoadoutTalent`, for the same reason `Carried`
+   * carries an id rather than the item: a drag outlives the frame it started
+   * in, and a captured object is a snapshot that goes stale the moment a rank
+   * changes or a cooldown starts. The id is the only field that cannot rot.
+   */
+  Talent: 'talent',
 } as const;
 export type DragKind = (typeof DragKind)[keyof typeof DragKind];
 
@@ -358,4 +366,5 @@ export type DragKind = (typeof DragKind)[keyof typeof DragKind];
 export type DragSubject =
   | { readonly kind: typeof DragKind.Panel; readonly panel: DraggablePanel }
   | { readonly kind: typeof DragKind.Carried; readonly itemId: string }
-  | { readonly kind: typeof DragKind.Worn; readonly slot: Slot };
+  | { readonly kind: typeof DragKind.Worn; readonly slot: Slot }
+  | { readonly kind: typeof DragKind.Talent; readonly talentId: string };

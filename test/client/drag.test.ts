@@ -504,8 +504,18 @@ describe('the offset store', () => {
     expect(b[DraggablePanel.Menu]).toEqual({ dx: 0, dy: 0 });
   });
 
-  it('DragKind is the three things a drag can carry', () => {
-    expect(Object.values(DragKind).sort()).toEqual(['carried', 'panel', 'worn']);
+  it('DragKind is the four things a drag can carry', () => {
+    /**
+     * A CLOSED SET, ASSERTED WHOLE. Every drop target in the client switches on
+     * this and the compiler checks exhaustiveness — so a fifth member breaks
+     * the build in the places that matter, and this test is what says the set
+     * was widened ON PURPOSE rather than by a merge.
+     *
+     * `talent` is the fourth. It arrived with the rebindable bar: the six keyed
+     * slots hold a binding rather than `loadout[n]`, so a talent has to be able
+     * to travel from the panel to a slot.
+     */
+    expect(Object.values(DragKind).sort()).toEqual(['carried', 'panel', 'talent', 'worn']);
   });
 });
 

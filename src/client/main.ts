@@ -1304,6 +1304,79 @@ type ItemBinding = {
   readonly name: string;
   readonly icon: string;
 };
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   WHAT IS ON EACH OF THE SIX KEYED SLOTS — TALENT IDS, OR null FOR EMPTY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The bar's contract used to be "slot n IS `loadout[n]`, for the session".
+ * That was exactly right while a class held six actives and the bar held six
+ * slots: there was nothing to choose between, so a binding would have been a
+ * setting with one legal value.
+ *
+ * It is the thing standing in the way now. A class may hold exactly six actives
+ * because `_loadoutArityCheck` says so, and it says so because the bar is six —
+ * so no class can gain a third discipline with a button in it, which is most of
+ * what is left between this game and the one it is a port of.
+ *
+ * IDS, NOT TALENTS, for the reason `DragKind.Talent` carries an id: a
+ * `LoadoutTalent` is a snapshot with a rank and a cooldown in it, and the
+ * `loadout` frame is re-sent every time either changes. A captured object would
+ * draw last week's rank on the bar forever.
+ *
+ * SEEDED FROM THE LOADOUT, so nothing about day one is different: the first six
+ * a class owns land on keys 1-6 in the order they were authored, which is
+ * precisely where they were before this existed. See `reseatTalentBindings`.
+ */
+const talentBindings: (string | null)[] = Array.from({ length: HOTBAR_TALENT_SLOTS }, () => null);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PUT THE BAR IN ORDER AFTER A `loadout` FRAME. Called on every one of them.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `loadout` is re-sent whenever a rank changes, a talent is learned, a class
+ * is chosen or a character is restored — so this runs constantly and must be
+ * IDEMPOTENT and must not disturb a bar the player has arranged.
+ *
+ * Three rules, in order, and each one exists because the alternative is a bug
+ * somebody would report as "the game moved my buttons":
+ *
+ *   1. A BINDING THAT STILL RESOLVES IS LEFT ALONE. This is the whole reason
+ *      the function is not just a re-seed. A rank going up re-sends the frame;
+ *      re-seeding there would throw away every arrangement on every spend.
+ *
+ *   2. A BINDING THAT NO LONGER RESOLVES IS CLEARED. A class swap or a
+ *      deleted talent leaves an id nothing can press; `hotbarView` already
+ *      draws that as empty, and clearing it here means the slot is genuinely
+ *      free for the fill below rather than looking free and staying occupied.
+ *
+ *   3. EMPTY SLOTS ARE FILLED FROM THE LOADOUT, in authored order, skipping
+ *      anything already bound elsewhere. On a fresh character that is exactly
+ *      the old behaviour — the first six a class owns, on keys 1-6, in the
+ *      order they were written. Nothing about day one changed, which is the
+ *      property that lets this land without a word to anybody playing.
+ */
+function reseatTalentBindings(): void {
+  const known = new Set(loadout.map((talent) => talent.id));
+  for (let i = 0; i < talentBindings.length; i += 1) {
+    const bound = talentBindings[i];
+    if (bound !== null && bound !== undefined && !known.has(bound)) talentBindings[i] = null;
+  }
+  // WHAT IS ALREADY ON THE BAR, so the fill never puts the same talent on two
+  // keys. A player CAN do that deliberately by dragging; the fill must not do
+  // it by accident, because a duplicate that appeared on its own reads as the
+  // bar being broken.
+  const seated = new Set(talentBindings.filter((id): id is string => id !== null));
+  for (const talent of loadout) {
+    if (seated.has(talent.id)) continue;
+    const free = talentBindings.indexOf(null);
+    if (free < 0) break;
+    talentBindings[free] = talent.id;
+    seated.add(talent.id);
+  }
+}
+
 const hotbarBindings: (ItemBinding | null)[] = Array.from(
   { length: HOTBAR_ITEM_SLOTS },
   () => null,
@@ -2781,18 +2854,39 @@ function affordable(talent: LoadoutTalent): boolean {
  * the BAR one frame later with nothing wired between them.
  */
 function hotbarView(): HotbarView {
-  const talents: HotbarSlot[] = loadout.map((talent) => ({
-    // v12: SPELLED OUT AT THE CONSTRUCTION SITE. `HotbarTalentSlot.kind` was
-    // optional purely so this literal kept compiling while ui/hotbar.ts grew two
-    // more members; now that the discriminant is written here it can stop being
-    // a shim, and the `case undefined:` arms in that file are what will say so.
-    kind: HotbarSlotKind.Talent,
-    talent,
-    // Absent from `cooldowns` means READY — the server deletes the entry at
-    // zero, mirroring ToME's `talents_cd[tid] = nil`.
-    cooldown: cooldowns[talent.id] ?? 0,
-    affordable: affordable(talent),
-  }));
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAR IS BUILT FROM THE BINDINGS AND RESOLVED AGAINST THE LOADOUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This was `loadout.map(...)` — slot n was `loadout[n]`, full stop. Two
+   * things it could not do, and both of them are the point of the change: a
+   * player could not choose WHICH six, and a class could not own a seventh.
+   *
+   * A BINDING THAT NO LONGER RESOLVES DRAWS EMPTY, NOT STALE. An id can stop
+   * being in `loadout` — a class swap, a character load, a talent this build
+   * deleted — and the empty slot is the honest picture. Drawing the remembered
+   * name of something the player cannot press is the same failure as an item
+   * slot showing EQUIP for an item that is gone, which `itemSlotAction` already
+   * refuses to do.
+   */
+  const talents: HotbarSlot[] = talentBindings.map((id) => {
+    const talent = id === null ? undefined : loadout.find((entry) => entry.id === id);
+    if (talent === undefined) return { kind: HotbarSlotKind.Empty };
+    return {
+      // v12: SPELLED OUT AT THE CONSTRUCTION SITE. `HotbarTalentSlot.kind` was
+      // optional purely so this literal kept compiling while ui/hotbar.ts grew
+      // two more members; now that the discriminant is written here it can stop
+      // being a shim, and the `case undefined:` arms in that file are what will
+      // say so.
+      kind: HotbarSlotKind.Talent,
+      talent,
+      // Absent from `cooldowns` means READY — the server deletes the entry at
+      // zero, mirroring ToME's `talents_cd[tid] = nil`.
+      cooldown: cooldowns[talent.id] ?? 0,
+      affordable: affordable(talent),
+    };
+  });
 
   const carried = inventory?.carried ?? [];
   const equipped = inventory?.equipped ?? {};
@@ -2957,6 +3051,12 @@ function draggedItem(): ItemBinding | null {
   if (live === null || !live.moved) return null;
   const subject = live.subject;
   switch (subject.kind) {
+    // A TALENT'S GHOST IS DRAWN FROM THE LOADOUT, NOT FROM HERE. This function
+    // resolves an ITEM out of the inventory frame; a talent has no entry there
+    // and never will. `draggedTalent` below is its twin and reads `loadout`,
+    // which is the frame a talent's name and icon actually live in.
+    case DragKind.Talent:
+      return null;
     case DragKind.Panel:
       // A panel drag needs no ghost: the PANEL is the ghost. `panelOffsets`
       // moves it under the pointer directly, which is the whole gesture.
@@ -2984,7 +3084,32 @@ function draggedItem(): ItemBinding | null {
 function drawDragGhost(ctx: CanvasRenderingContext2D, spriteSource: SpriteSource): void {
   const live = drag;
   if (live === null || !live.moved || live.at === null) return;
-  const item = draggedItem();
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TALENT'S GHOST IS DRAWN THE SAME WAY, FROM A DIFFERENT FRAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `draggedItem` resolves out of the INVENTORY frame and a talent has no entry
+   * there. Rather than a second renderer, the talent is turned into the same
+   * `{ name, icon }` shape the plate below already draws — the gesture must look
+   * identical on both halves of the bar, and two renderers would drift the first
+   * time either was touched.
+   *
+   * NOT THE `itemId`: the ghost carries the talent's id in that field and
+   * nothing reads it, because the ghost is a picture. `DragSubject` is what the
+   * DROP consults, and it carries `talentId` for exactly this reason.
+   */
+  const subject = live.subject;
+  const dragged =
+    subject.kind === DragKind.Talent
+      ? (() => {
+          const talent = loadout.find((entry) => entry.id === subject.talentId);
+          return talent === undefined
+            ? null
+            : { itemId: talent.id, name: talent.name, icon: talent.icon };
+        })()
+      : draggedItem();
+  const item = dragged;
   if (item === null) return;
 
   const x = live.at.x - Math.floor(GHOST_PX / 2);
@@ -5179,6 +5304,34 @@ async function boot(): Promise<void> {
    * A SUBJECT THAT NO LONGER RESOLVES IS REFUSED IN WORDS. The gesture takes a
    * human moment and a `state` resync can land inside it.
    */
+  /**
+   * Put a talent on one of the six keyed slots.
+   *
+   * ═══ IT SWAPS RATHER THAN OVERWRITING ═══
+   * If the talent is already on another slot, the two slots trade. Overwriting
+   * would silently REMOVE it from wherever it was, so dragging Crude Blow from
+   * key 1 to key 3 would leave key 1 empty and the player would have to go and
+   * find it again — and every player who has ever arranged a bar in another
+   * game expects the trade. It is four lines and it is the difference between a
+   * feature and a chore.
+   */
+  function bindTalentSlot(index: number, talentId: string): void {
+    const talent = loadout.find((entry) => entry.id === talentId);
+    if (talent === undefined) {
+      showNotice('you do not have that talent any more');
+      return;
+    }
+    const from = talentBindings.indexOf(talentId);
+    const displaced = talentBindings[index] ?? null;
+    talentBindings[index] = talentId;
+    // THE TRADE. Only when it came from another slot on this bar — a talent
+    // dragged in from the panel displaces whatever was there, which is what the
+    // player just asked for.
+    if (from >= 0 && from !== index) talentBindings[from] = displaced;
+    showNotice(`slot ${String(index + 1)}: ${talent.name}`);
+    requestDraw();
+  }
+
   function bindItemSlot(index: number, subject: DragSubject): void {
     const item =
       subject.kind === DragKind.Carried
@@ -5214,6 +5367,25 @@ async function boot(): Promise<void> {
     const binding = hotbarBindings[at] ?? null;
     if (binding === null) return;
     hotbarBindings[at] = null;
+    showNotice(`slot ${String(index + 1)} cleared`);
+    requestDraw();
+  }
+
+  /**
+   * Take a talent off one of the six keyed slots. Right-click, like an item.
+   *
+   * THE SAME GESTURE ON BOTH HALVES OF THE BAR, deliberately. A player who has
+   * learned that right-click clears slot 8 will try it on slot 2, and a bar
+   * where the same press means "clear" on four buttons and nothing on six is a
+   * bar with two rules in it.
+   *
+   * AN EMPTY SLOT IS NOT AN ERROR and says nothing — the early return. A notice
+   * reading "slot 2 cleared" over a slot that was already empty is noise that
+   * makes the real one harder to trust.
+   */
+  function unbindTalentSlot(index: number): void {
+    if (talentBindings[index] === null || talentBindings[index] === undefined) return;
+    talentBindings[index] = null;
     showNotice(`slot ${String(index + 1)} cleared`);
     requestDraw();
   }
@@ -7963,9 +8135,23 @@ async function boot(): Promise<void> {
         bindItemSlot(drop.index, subject);
         return;
       case HotbarDropKind.Talent:
-        showNotice(
-          `slot ${String(drop.index + 1)} is a class talent — items go on slots ${String(HOTBAR_TALENT_SLOTS + 1)}-${String(HOTBAR_SLOTS)}`,
-        );
+        /**
+         * A TALENT LANDS; AN ITEM IS STILL REFUSED IN WORDS.
+         *
+         * The refusal used to be unconditional — "slot n is a class talent" —
+         * because a talent slot was `loadout[n]` and nothing could be put on
+         * it. Half of that is now wrong and half is still exactly right, and
+         * the sentence has to tell them apart: an item on a talent slot is a
+         * mistake worth naming, and the naming is what stops a player
+         * concluding the bar is broken.
+         */
+        if (subject.kind === DragKind.Talent) {
+          bindTalentSlot(drop.index, subject.talentId);
+        } else {
+          showNotice(
+            `slot ${String(drop.index + 1)} takes a talent — items go on slots ${String(HOTBAR_TALENT_SLOTS + 1)}-${String(HOTBAR_SLOTS)}`,
+          );
+        }
         return;
       case HotbarDropKind.Miss:
         break;
@@ -8470,9 +8656,20 @@ async function boot(): Promise<void> {
       // `isItemSlotIndex` GUARDS IT, so a right-click on a TALENT slot is
       // untouched and falls through to `clearNotice()` exactly as it always has.
       // The class loadout is not bindable and there is nothing there to clear.
+      /**
+       * ═══ AND IT CLEARS A TALENT SLOT NOW, WHICH THE NOTE ABOVE DENIES ═══
+       * That note ends "the class loadout is not bindable and there is nothing
+       * there to clear", and it was true: slot n WAS `loadout[n]` for the
+       * session. The six keyed slots hold a binding now (`talentBindings`), so
+       * there is something to clear and the same gesture clears it.
+       */
       const rightSlot = slotUnder(event);
       if (isItemSlotIndex(rightSlot)) {
         unbindItemSlot(rightSlot);
+        return;
+      }
+      if (rightSlot >= 0) {
+        unbindTalentSlot(rightSlot);
         return;
       }
 
@@ -8808,6 +9005,43 @@ async function boot(): Promise<void> {
           point.x,
           point.y,
         );
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND THE PRESS BECOMES A DRAG — THE ONLY WAY A TALENT REACHES THE BAR.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The bar's six keyed slots take a binding now (`talentBindings`), and
+         * this panel is where the talents are. Without a drag out of here the
+         * feature exists and is unreachable, which is the "control that does
+         * nothing" trap one indirection deep.
+         *
+         * ═══ THE PIN IS THE CLICK, WHICH IS WHY IT IS PASSED AS ONE ═══
+         * `beginDrag`'s fourth argument runs only if the pointer never MOVED —
+         * so a press that stays put still pins the description column exactly as
+         * it did before this existed, and a press that travels binds. One
+         * gesture, two meanings, decided by whether the player dragged; the same
+         * rule the inventory has used since items became draggable.
+         *
+         * ═══ ONLY A TALENT THIS CHARACTER CAN PRESS ═══
+         * A passive has no button and an unlearned talent cannot be used, so
+         * neither may be bound: a bar slot that refuses every press is worse
+         * than an empty one. `loadout` holds exactly the actives — passives
+         * travel in their own array — and a rank-0 entry is filtered by the
+         * `level` check, which is the same rule `affordable` applies to grey
+         * the slot out.
+         */
+        const bindable =
+          pressed === null ? undefined : loadout.find((entry) => entry.id === pressed);
+        if (bindable !== undefined && bindable.level >= 1) {
+          event.preventDefault();
+          beginDrag({ kind: DragKind.Talent, talentId: bindable.id }, point.x, point.y, () => {
+            if (bindable.id !== talentFocusId) {
+              talentFocusId = bindable.id;
+              requestDraw();
+            }
+          });
+          return;
+        }
         if (pressed !== null && pressed !== talentFocusId) {
           talentFocusId = pressed;
           requestDraw();
@@ -9424,6 +9658,20 @@ function applyServerMessage(msg: ServerMsg): void {
       // `talents[0]` and muscle memory for which key is Ward Rush outranks any
       // ordering this renderer could impose.
       loadout = msg.talents;
+      /**
+       * AND THE BAR IS PUT IN ORDER AGAINST IT.
+       *
+       * IMMEDIATELY AFTER THE ASSIGNMENT, before anything else in this arm
+       * reads `loadout`: `reseatTalentBindings` resolves ids against it, so a
+       * call above the assignment would arrange the bar around the PREVIOUS
+       * class. That is the whole failure mode of a class swap, and it would
+       * look like the bar keeping one talent from the character you stopped
+       * being.
+       *
+       * It leaves an arranged bar alone and fills only what is empty or dead —
+       * see the function, which is where the three rules are written down.
+       */
+      reseatTalentBindings();
       // ABSENT MEANS NONE — an older server sends no such field, and a class
       // without passives sends no empty array either.
       passives = msg.passives ?? [];

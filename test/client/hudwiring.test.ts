@@ -387,14 +387,30 @@ describe('slotUnder asks the view how many slots there are', () => {
     expect(fn).not.toContain('loadout.length');
   });
 
-  it('refuses to bind a talent slot and says so in words', () => {
-    // A drop target that silently snapped back would be worse than no drop
-    // target: the player would have learned that the left half of the bar is
-    // broken. `hotbarDropTargetAt` answers `Talent` rather than `Miss` for slots
-    // 1-4 precisely so this branch has to exist.
+  it('binds a talent to a keyed slot, and refuses an item there in words', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS TEST USED TO ASSERT THE REFUSAL WAS UNCONDITIONAL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read "refuses to bind a talent slot and says so in words", and it was
+     * right: slot n WAS `loadout[n]` for the session, so nothing could be put
+     * on the left half of the bar and the only correct behaviour was a sentence
+     * explaining why.
+     *
+     * The six keyed slots hold a binding now, so HALF of that is wrong and half
+     * is still exactly right — a talent lands, an item does not — and the
+     * branch has to tell them apart. Both halves are asserted here, because the
+     * failure mode of getting it half-done is silent: a drop that snapped back
+     * with no sentence would teach the player the bar is broken, which is the
+     * thing the original test existed to prevent and still is.
+     */
     const fn = between('function resolveDrop(', '\n  }');
     expect(fn).toContain('case HotbarDropKind.Talent:');
-    expect(fn).toContain('is a class talent');
+    // The talent half — it BINDS.
+    expect(fn).toContain('bindTalentSlot(drop.index, subject.talentId);');
+    // The item half — it REFUSES, in words a player can act on.
+    expect(fn).toContain('takes a talent');
     expect(fn).toContain('bindItemSlot(drop.index, subject);');
   });
 });
