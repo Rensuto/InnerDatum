@@ -139,6 +139,7 @@
  *   their bag, and their bag is in this file.
  */
 
+import { BIRTH_TALENT_GRANTS } from '../../shared/progression.ts';
 import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { readFile, readdir, rename } from 'node:fs/promises';
@@ -751,12 +752,25 @@ const BIRTH_XP = 0;
 const BIRTH_MONEY = 15;
 
 /**
- * A birth rank of 1, and 1 rather than 0 is load-bearing: `combatTalentScale`
- * maps a talent level of 0 to 0.1 (src/shared/scale.ts:191), so a talent stored
- * at 0 would not refuse to fire — it would fire, quietly, for a tenth of its
- * damage, for the rest of that character's life.
+ * THE RANK A GRANTED TALENT IS BORN AT. One, for the four a class is given.
+ *
+ * ═══ AND 0 IS NOW A LEGAL STORED RANK, WHICH IT WAS NOT ═══
+ * This docblock used to argue that 0 must be repaired UP to 1, because
+ * `combatTalentScale` maps 0 to 0.1 (src/shared/scale.ts:191) — so a talent
+ * stored at 0 would not refuse to fire, it would fire quietly for a tenth of
+ * its damage for the rest of that character's life. That reasoning was sound
+ * and it has been answered at the source: `canUseTalent` refuses rank 0
+ * outright (`TalentRefusal.NotLearned`) and the passive fold skips it.
+ *
+ * So 0 means what it says — OWNED AND NOT LEARNED, which is the ordinary state
+ * of most of a sheet since `ClassDef.birthTalents` landed. Repairing it up to
+ * 1 here would have re-granted every unlearned talent on the next load, to
+ * everybody, silently.
  */
 const BIRTH_TALENT_POINTS = 1;
+
+/** The lowest rank a save file may state. See `BIRTH_TALENT_POINTS` above. */
+const UNLEARNED = 0;
 
 /**
  * How many points this spread REPRESENTS AS PURCHASES: `Σ (raw − 1)`.
@@ -775,9 +789,40 @@ const BIRTH_TALENT_POINTS = 1;
  * `Math.max(0, …)` per entry so a repaired-to-1 entry can never subtract.
  */
 function spentTalentPoints(talentPoints: Readonly<Record<string, number>>): number {
-  let spent = 0;
-  for (const raw of Object.values(talentPoints)) spent += Math.max(0, raw - BIRTH_TALENT_POINTS);
-  return spent;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A FLAT SUM MINUS THE BIRTH GRANT — AND IT USED TO SUBTRACT ONE PER TALENT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Σ max(0, raw - 1)` was exactly right while EVERY talent a class owned was
+   * born at rank 1: every entry had one free rank in it, so every entry owed
+   * one back. `ClassDef.birthTalents` made that false — only four are free
+   * now, and the old sum went on forgiving a rank on all eighteen.
+   *
+   * The consequence was a POINT DUPLICATION, not a rounding error: a character
+   * who learned a talent (0 → 1, one point paid) had that rank counted as free,
+   * so the ledger handed the point back on the next load. Learn, reconnect,
+   * learn again, forever.
+   *
+   * `BIRTH_TALENT_GRANTS` RATHER THAN A COUNT OF THE LIST, because this file
+   * may not see the class table — see the constant's own docblock, and
+   * test/server/birth-talents.test.ts for what pins the two together.
+   */
+  let raised = 0;
+  let known = 0;
+  for (const raw of Object.values(talentPoints)) {
+    raised += Math.max(0, raw);
+    if (raw >= 1) known += 1;
+  }
+  /**
+   * FORGIVENESS IS CAPPED AT WHAT WAS ACTUALLY LEARNED, and that is what makes
+   * this exact rather than merely usual. A spread listing only two talents --
+   * a hand-written fixture, or a file older than half the tree -- is owed two
+   * free ranks, not four, and subtracting a flat four would hand its owner two
+   * points it never paid for. `min` is the whole of the difference and it costs
+   * one counter.
+   */
+  return Math.max(0, raised - Math.min(BIRTH_TALENT_GRANTS, known));
 }
 
 /**
@@ -1132,14 +1177,17 @@ function parseTalentPoints(value: unknown, problems: string[]): Record<string, n
       problems.push(
         `talentPoints.${talentId}: not a finite number — repaired to ${BIRTH_TALENT_POINTS}`,
       );
+      // REPAIRED TO THE BIRTH RANK, NOT TO 0: a corrupt entry is a talent whose
+      // rank we cannot read, and the kindest reading of an unreadable number is
+      // that the character had at least learned the thing.
       out[talentId] = BIRTH_TALENT_POINTS;
       continue;
     }
-    const repaired = Math.min(TALENT_MAX_LEVEL, Math.max(BIRTH_TALENT_POINTS, Math.floor(points)));
+    const repaired = Math.min(TALENT_MAX_LEVEL, Math.max(UNLEARNED, Math.floor(points)));
     if (repaired !== points) {
       problems.push(
         `talentPoints.${talentId}: ${points} is not a raw level in ` +
-          `${BIRTH_TALENT_POINTS}..${TALENT_MAX_LEVEL} — repaired to ${repaired}`,
+          `${UNLEARNED}..${TALENT_MAX_LEVEL} — repaired to ${repaired}`,
       );
     }
     out[talentId] = repaired;

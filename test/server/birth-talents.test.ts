@@ -13,6 +13,7 @@ import {
   createContentTalentEngine,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
+import { BIRTH_TALENT_GRANTS } from '../../src/shared/progression.ts';
 import { MIN_TIER } from '../../src/shared/tiers.ts';
 
 const CLASSES = [WATCHMAN, INSPECTOR, ALCHEMIST];
@@ -114,6 +115,42 @@ describe('what a character is born knowing', () => {
           .filter((tree): tree is string => tree !== undefined && !tree.startsWith('generic/')),
       );
       expect(trees.size, `${definition.name} is born inside one discipline`).toBe(2);
+    }
+  });
+});
+
+describe('the persistence ledger and the grant agree', () => {
+  it('every class grants exactly BIRTH_TALENT_GRANTS talents', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PIN THAT STOPS A POINT-DUPLICATION BUG.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `spentTalentPoints` (server/persist/saves.ts) subtracts a flat
+     * `BIRTH_TALENT_GRANTS` from the sum of a saved spread to work out what was
+     * actually PAID for. It cannot count the list itself — that file may not
+     * import the class table, because `classId` is a soft reference there so a
+     * save outlives a content edit.
+     *
+     * So a class granting FIVE would have one rank forgiven that it never paid
+     * for, and the ledger would hand its owner a free point back on every
+     * single load. Learn, reconnect, learn again, forever.
+     *
+     * This is the only thing holding the two numbers together, and it is
+     * cheaper than the dependency that would make it automatic.
+     */
+    for (const definition of CLASSES) {
+      expect(definition.birthTalents.length, definition.name).toBe(BIRTH_TALENT_GRANTS);
+    }
+  });
+
+  it('leaves a fresh character with nothing spent', () => {
+    // The arithmetic end-to-end: four granted ranks against a grant of four is
+    // zero points spent, which is what a level-1 character has done.
+    for (const definition of CLASSES) {
+      const sheet = sheetForClass(definition);
+      const raised = [...sheet.points.values()].reduce((sum, rank) => sum + Math.max(0, rank), 0);
+      expect(raised - BIRTH_TALENT_GRANTS, definition.name).toBe(0);
     }
   });
 });

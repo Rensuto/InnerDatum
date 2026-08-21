@@ -133,6 +133,30 @@ export const MAX_CHARACTER_LEVEL = 50;
 export const TALENT_MAX_LEVEL = 5;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   HOW MANY TALENTS A CLASS IS BORN KNOWING. The free ranks in the ledger.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's `talents = { [T_SHIELD_PUMMEL]=1, ... }` on a class descriptor
+ * (warrior.lua:149-155 grants five). `ClassDef.birthTalents` is the authored
+ * list; this is its LENGTH, and it lives here because two layers need the
+ * number and only one of them may see the list.
+ *
+ * ═══ WHY THE PERSISTENCE LAYER CANNOT JUST COUNT THEM ═══
+ * `spentTalentPoints` (server/persist/saves.ts) has to subtract the free ranks
+ * from a spread to know what was actually PAID for, and that file may not
+ * import the talent registry or the class table — `classId` is a soft
+ * reference there on purpose, so that a save outlives a content edit. A number
+ * in shared/ is what both sides can hold without either one reaching into the
+ * other.
+ *
+ * PINNED AGAINST THE LISTS by test/server/birth-talents.test.ts: every class
+ * grants exactly this many, and a class that granted five would silently hand
+ * its owner a free point on every reconnect.
+ */
+export const BIRTH_TALENT_GRANTS = 4;
+
+/**
  * `ActorLevel.exp_chart(level)` — load.lua:193-206, VERBATIM.
  *
  *     ActorLevel.exp_chart = function(level)

@@ -1169,11 +1169,31 @@ describe('character files: level, xp, unspent points and raw talent points', () 
     if (!parsed.ok) return;
 
     expect(parsed.file.talentPoints).toEqual({
-      // Below the birth rank is not a talent level at all — a rank-0 talent
-      // fires for a tenth of its damage rather than refusing (scale.ts:191).
-      'talent:crude_blow': 1,
+      /**
+       * ═══ A NEGATIVE CLAMPS TO 0, AND THIS LINE READ 1 ═══
+       * The old comment here was: "Below the birth rank is not a talent level
+       * at all — a rank-0 talent fires for a tenth of its damage rather than
+       * refusing (scale.ts:191)." That was TRUE, and it was the right repair,
+       * for as long as every talent a class owned was born at rank 1 and 0 was
+       * therefore always corruption.
+       *
+       * `ClassDef.birthTalents` made 0 the ordinary state of most of a sheet,
+       * and the danger the old comment named is answered at the source:
+       * `canUseTalent` refuses rank 0 outright (`TalentRefusal.NotLearned`)
+       * and the passive fold skips it, so nothing fires for a tenth of
+       * anything. Rounding up here would have re-granted every unlearned
+       * talent on the next load, to everybody, silently.
+       */
+      'talent:crude_blow': 0,
       'talent:ward_rush': 2,
       'talent:iron_curtain': TALENT_MAX_LEVEL,
+      /**
+       * NOT-A-NUMBER STILL REPAIRS TO 1, and the asymmetry with the -3 above is
+       * deliberate. A negative is a rank somebody can READ as a claim about
+       * this character; NaN is a rank nobody can read at all, and the kindest
+       * reading of an unreadable number is that the character had at least
+       * learned the thing rather than that they had never touched it.
+       */
       'talent:lockdown': 1,
     });
     expect(parsed.problems).toHaveLength(4);

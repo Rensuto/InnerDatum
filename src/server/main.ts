@@ -1179,6 +1179,18 @@ export function buildServer() {
     },
 
     /**
+     * THE PUBLIC NAME FOR `refreshPassives`, and the only reason it is a seam:
+     * spending Constitution changes a hit-point ceiling that net/** cannot
+     * compute for itself. See `TurnEngine.refreshBody` for the whole argument.
+     *
+     * A ONE-LINE FORWARD ON PURPOSE. The instant this grows a second statement
+     * there are two answers to "how big is this body" and they will disagree.
+     */
+    refreshBody: (actorId: string): void => {
+      refreshPassives(actorId);
+    },
+
+    /**
      * ═══════════════════════════════════════════════════════════════════════
      * TURN A STANCE ON OR OFF, AND REFOLD.
      * ═══════════════════════════════════════════════════════════════════════
@@ -1192,18 +1204,6 @@ export function buildServer() {
      * for a talent that cannot be raised. The reasons are for the engine's own
      * tests; a socket is told a sentence, not an enum.
      */
-    /**
-     * THE PUBLIC NAME FOR `refreshPassives`, and the only reason it is a seam:
-     * spending Constitution changes a hit-point ceiling that net/** cannot
-     * compute for itself. See `TurnEngine.refreshBody` for the whole argument.
-     *
-     * A ONE-LINE FORWARD ON PURPOSE. The instant this grows a second statement
-     * there are two answers to "how big is this body" and they will disagree.
-     */
-    refreshBody: (actorId: string): void => {
-      refreshPassives(actorId);
-    },
-
     toggleSustain: (actorId: string, talentId: string): boolean | null => {
       const sheet = talentEngine.sheetOf(actorId);
       if (sheet === undefined) return null;
@@ -1252,10 +1252,23 @@ export function buildServer() {
           dropped.push(talentId);
           continue;
         }
-        // CLAMPED RATHER THAN REFUSED. A hand-edited `"crude_blow": 9999` is a
-        // file problem, not a reason somebody cannot play tonight — the same
-        // repair-never-reject doctrine `parseCharacterFile` applies upstream.
-        sheet.points.set(talentId, Math.max(1, Math.min(TALENT_MAX_LEVEL, Math.floor(raw))));
+        /**
+         * CLAMPED RATHER THAN REFUSED. A hand-edited `"crude_blow": 9999` is a
+         * file problem, not a reason somebody cannot play tonight — the same
+         * repair-never-reject doctrine `parseCharacterFile` applies upstream.
+         *
+         * ═══ THE FLOOR IS 0, AND IT WAS 1 FOR ONE COMMIT TOO LONG ═══
+         * 1 was correct while a class was born knowing all eighteen of its
+         * talents: rank 0 could not occur, so a 0 in a save file could only be
+         * corruption and rounding it up was the repair. Birth grants made 0 the
+         * ordinary state of most of a sheet — and this line, unchanged, would
+         * have re-granted every unlearned talent at rank 1 on the next
+         * reconnect. Silently, to everyone, undoing the entire change for
+         * anybody who had ever saved and come back.
+         *
+         * A constant whose domain moved under it, which is [M-010] exactly.
+         */
+        sheet.points.set(talentId, Math.max(0, Math.min(TALENT_MAX_LEVEL, Math.floor(raw))));
       }
       return dropped;
     },
