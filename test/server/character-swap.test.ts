@@ -243,36 +243,36 @@ async function createCharacter(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WAIT UNTIL THE STORE HOLDS `n` CHARACTERS. Never a fixed sleep.
+ * DRAIN THE WRITE QUEUE, THEN READ. Never a sleep, and never a poll either.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The same fix character-delete.test.ts took, for the same failure. These tests
- * closed a socket, `await sleep(120)`, and read the store — betting that 120ms
- * was long enough for the server to notice the disconnect and flush. In
- * isolation that bet always won; under `npm run check`, with tsc and eslint
- * running beside the suite, it lost and reported "two characters were created
- * and the store does not have two", which reads exactly like a broken create
+ * ═══ TWO WRONG ANSWERS CAME BEFORE THIS ONE ═══
+ * First a fixed `sleep(120)` — a bet that the server would notice a disconnect
+ * and flush within 120ms. It won alone and lost under `npm run check`, where
+ * tsc and eslint run beside the suite, reporting "two characters were created
+ * and the store does not have two": a message that reads like a broken create
  * path and is not one.
  *
- * Polling the condition is not a longer sleep: it returns the moment the write
- * lands, so it is right on a fast machine and a loaded one, and the common case
- * stops paying for time it never needed.
+ * Then POLLING `listCharacters` until the row appeared, which is better and
+ * still wrong. It waits for a symptom of the write rather than the write, so it
+ * returns at the FIRST of several — and a disconnect produces more than one.
+ * The test that snapshots a character's bytes then compares them to the retired
+ * copy failed on 14ms of `updatedAt` because a second write landed in the gap.
  *
- * RETURNS ON TIMEOUT RATHER THAN THROWING, so the caller's own assertion — which
- * knows what it wanted and why — reports the problem instead of a deadline.
+ * `store.flush()` is the actual answer and was there the whole time: it
+ * alternates draining the debounce timers and awaiting the writes in flight,
+ * so when it returns there is nothing left to land. No deadline, no sampling
+ * window, and nothing that gets slower on a loaded machine.
+ *
+ * The general lesson, which cost two rounds to learn: when a test is racing a
+ * queue, drain the queue. Waiting for evidence that the queue moved is a
+ * different and weaker claim.
  */
-async function waitForCharacters(
+async function settled(
   h: Harness,
-  owner: string,
-  n: number,
-  timeoutMs = 5000,
 ): Promise<Awaited<ReturnType<Harness['store']['listCharacters']>>> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const rows = await h.store.listCharacters(owner);
-    if (rows.length >= n || Date.now() > deadline) return rows;
-    await sleep(10);
-  }
+  await h.store.flush();
+  return h.store.listCharacters(REN);
 }
 
 describe('changing character', () => {
@@ -293,7 +293,7 @@ describe('changing character', () => {
     expect(second.classId, 'the two picks were the same class').not.toBe(first.classId);
 
     // Let the debounced autosave land for the second body.
-    const rows = await waitForCharacters(harness, REN, 2);
+    const rows = await settled(harness);
     expect(rows, 'two characters were created and the store does not have two').toHaveLength(2);
 
     // ═══ THE ASSERTION THAT WAS FAILING ═══
@@ -342,7 +342,7 @@ describe('changing character', () => {
     expect(second.classId).not.toBe(first.classId);
     const firstClass = first.classId;
     const secondClass = second.classId;
-    const rows = await waitForCharacters(harness, REN, 2);
+    const rows = await settled(harness);
     const original = rows.find((row) => row.classId === firstClass);
     expect(original, 'the first character is not in the store at all').toBeDefined();
     if (original === undefined) return;
