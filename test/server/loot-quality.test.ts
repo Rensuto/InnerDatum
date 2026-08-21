@@ -1,3 +1,4 @@
+import { EgoSlotTag, egosForTag } from '../../src/server/content/egos.ts';
 import { MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
 import { describe, expect, it } from 'vitest';
 
@@ -308,13 +309,34 @@ describe('rollLoot', () => {
   it('puts the prefix before the suffix, always', () => {
     // Canonical order is what makes an item have exactly one id — see
     // resolveItem's refusal of the other spellings.
+    const prefixCodes = egosForTag(EgoSlotTag.Prefix).map((ego) => ego.code);
+    const suffixCodes = egosForTag(EgoSlotTag.Suffix).map((ego) => ego.code);
     const rng = createRng('ego-order');
     for (let i = 0; i < 400; i += 1) {
       const id = rollLoot(rng, BASE, 1);
       if (!id.includes('.')) continue;
       const [first, second] = id.slice(id.indexOf('~') + 1).split('.');
-      expect(['rf', 'ol', 'wt', 'wd']).toContain(first?.slice(0, 2));
-      expect(['lg', 'lw', 'qh', 'cr']).toContain(second?.slice(0, 2));
+      /**
+       * ═══ DERIVED FROM THE ROSTER BY TAG, WHERE THIS LISTED FOUR CODES ═══
+       * The lists were the whole roster when they were written. They went
+       * stale the moment the ego table grew a deep pool — and stale in the
+       * confusing direction: the failure said a PREFIX was not in the prefix
+       * list, which reads as an ordering bug rather than as an out-of-date
+       * literal.
+       *
+       * It also stops being a real test of anything the moment it drifts,
+       * because the property is 'the first token is a prefix' and only the
+       * roster knows which those are.
+       *
+       * A DEEP EGO AT LEVEL 1 IS NOT A BUG. `computeRarities` ports upstream's
+       * out-of-depth curve verbatim (Zone.lua:218-221): being under-depth
+       * divides the weight by three times the gap rather than excluding, so a
+       * lucky early find of something deep is a feature ToME has and we now
+       * have too. This assertion is about ORDER and must not accidentally
+       * become an assertion about depth.
+       */
+      expect(prefixCodes).toContain(first?.slice(0, 2));
+      expect(suffixCodes).toContain(second?.slice(0, 2));
     }
   });
 

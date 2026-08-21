@@ -179,7 +179,7 @@ const PREFIXES: readonly Ego[] = [
     // The commonest thing in the set and the plainest. Every roster needs one
     // ego that is not interesting, or "it has a name" stops meaning anything.
     rarity: 3,
-    levelRange: [1, 50],
+    levelRange: [1, 22],
     grants: { mods: { armour: { floor: 1, step: 1 }, armourHardiness: { floor: 2, step: 1 } } },
     cost: 15,
   },
@@ -188,7 +188,7 @@ const PREFIXES: readonly Ego[] = [
     name: 'Oiled ',
     tag: EgoSlotTag.Prefix,
     rarity: 4,
-    levelRange: [1, 50],
+    levelRange: [1, 24],
     // Supple rather than thick: harder to land a clean hit on, and quicker to
     // find an opening with. NOT `damRange` — see `EGO_FORBIDDEN_MOD_KEYS`.
     grants: { mods: { def: { floor: 2, step: 1 }, genericCrit: { floor: 1, step: 1 } } },
@@ -199,7 +199,7 @@ const PREFIXES: readonly Ego[] = [
     name: 'Weighted ',
     tag: EgoSlotTag.Prefix,
     rarity: 6,
-    levelRange: [1, 50],
+    levelRange: [1, 26],
     // Offhand and trinket only: this is a thing you hit with, and there is no
     // weapon slot (items.ts:52-60 — the four weapon icons do not exist on disk).
     slots: [Slot.Offhand, Slot.Trinket],
@@ -214,7 +214,7 @@ const PREFIXES: readonly Ego[] = [
     // field, and §5 of the port plan on why `greater_ego` was cut in favour of
     // exactly this.
     rarity: 12,
-    levelRange: [4, 50],
+    levelRange: [4, 26],
     grants: {
       mods: {
         spellResist: { floor: 2, step: 2 },
@@ -222,6 +222,90 @@ const PREFIXES: readonly Ego[] = [
       },
     },
     cost: 35,
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE DEEP PREFIXES. Nothing below sees a character before level eight.
+  //
+  // ═══ THE POOL HAD NO CURVE AT ALL, AND THAT WAS THE GAP ═══
+  // Every ego above runs to level 50 from level 1 or 4, so a level-45 character
+  // drew from the SAME FOUR PREFIXES as a level-5 one. Material grades fixed the
+  // base half of a find and left this half exactly where it was: the deep game's
+  // loot was the shallow game's loot in a better coat.
+  //
+  // `levelRange` is the gate the field was added for — its own docblock says so,
+  // and says this is what `greater_ego` was cut in favour of. These are the
+  // egos that make the bottom of the range worth walking to.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    code: 'ch',
+    name: 'Chalked ',
+    tag: EgoSlotTag.Prefix,
+    /**
+     * ARMOUR PENETRATION, WHICH ONE TALENT SELLS AND NO ITEM DID.
+     *
+     * `weak_points` in `generic/leverage` is the only source in the game, and it
+     * costs a category point — three in a career — to reach at all. Something
+     * too well armoured to hurt is the one problem a party could not shop its
+     * way out of, and this is the answer that turns up on the floor.
+     */
+    rarity: 10,
+    levelRange: [8, 50],
+    grants: { mods: { apr: { floor: 2, step: 1 } } },
+    cost: 40,
+  },
+  {
+    code: 'sl',
+    name: 'Sealed ',
+    tag: EgoSlotTag.Prefix,
+    // The Redaction's channel. Warded above is the shallow version of this and
+    // stays cheaper; this is what a character carries into the far map.
+    rarity: 14,
+    levelRange: [12, 50],
+    grants: {
+      mods: { spellResist: { floor: 4, step: 2 }, mentalResist: { floor: 3, step: 2 } },
+    },
+    cost: 55,
+  },
+  {
+    code: 'cw',
+    name: 'Counterweighted ',
+    tag: EgoSlotTag.Prefix,
+    // CRIT DAMAGE, which nothing else on an item grants. It is worth most to a
+    // character who has already bought crit CHANCE from a talent, which is the
+    // right shape for a late find: it rewards a build rather than replacing one.
+    rarity: 16,
+    levelRange: [16, 50],
+    grants: { mods: { criticalPower: { floor: 6, step: 4 }, physCrit: { floor: 1, step: 1 } } },
+    cost: 65,
+  },
+  {
+    code: 'fd',
+    name: 'Filed ',
+    tag: EgoSlotTag.Prefix,
+    // Penetration AND accuracy — the pair that answers a heavily armoured thing
+    // you also keep missing, which is what an elite in plate actually is.
+    rarity: 20,
+    levelRange: [20, 50],
+    grants: { mods: { apr: { floor: 3, step: 2 }, atk: { floor: 3, step: 2 } } },
+    cost: 80,
+  },
+  {
+    code: 'ct',
+    name: 'Case-Hardened ',
+    tag: EgoSlotTag.Prefix,
+    // The late-game defensive prefix. Reinforced is the shallow one; this is
+    // twice it and arrives twenty-eight levels later.
+    rarity: 24,
+    levelRange: [28, 50],
+    grants: {
+      mods: {
+        armour: { floor: 3, step: 2 },
+        armourHardiness: { floor: 4, step: 2 },
+        physResist: { floor: 3, step: 2 },
+      },
+    },
+    cost: 110,
   },
 ];
 
@@ -235,7 +319,7 @@ const SUFFIXES: readonly Ego[] = [
     name: ' of the Ledger',
     tag: EgoSlotTag.Suffix,
     rarity: 4,
-    levelRange: [1, 50],
+    levelRange: [1, 24],
     // Cunning feeds `combatCrit` at 0.3/point OUTSIDE the rescale, which is why
     // items.ts:573-575 picked it for the Cipher: no floor can eat it.
     grants: { stats: { cun: { floor: 3, step: 1 } } },
@@ -246,7 +330,7 @@ const SUFFIXES: readonly Ego[] = [
     name: ' of the Long Watch',
     tag: EgoSlotTag.Suffix,
     rarity: 5,
-    levelRange: [1, 50],
+    levelRange: [1, 26],
     grants: { stats: { con: { floor: 3, step: 1 } }, mods: { physResist: { floor: 1, step: 1 } } },
     cost: 18,
   },
@@ -255,7 +339,7 @@ const SUFFIXES: readonly Ego[] = [
     name: ' of Quiet Hands',
     tag: EgoSlotTag.Suffix,
     rarity: 7,
-    levelRange: [2, 50],
+    levelRange: [2, 24],
     grants: { stats: { dex: { floor: 3, step: 1 } }, mods: { physCrit: { floor: 1, step: 1 } } },
     cost: 22,
   },
@@ -264,12 +348,114 @@ const SUFFIXES: readonly Ego[] = [
     name: ' of the Coroner',
     tag: EgoSlotTag.Suffix,
     rarity: 14,
-    levelRange: [5, 50],
+    levelRange: [5, 28],
     grants: {
       stats: { mag: { floor: 3, step: 1 }, wil: { floor: 3, step: 1 } },
       mods: { genericPower: { floor: 2, step: 2 } },
     },
     cost: 40,
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE DEEP SUFFIXES — where the thing has been, when where it has been is bad.
+  //
+  // The same argument as the deep prefixes above: the pool had no curve, so the
+  // far map's finds were the first room's finds. Every one of these still grants
+  // a primary, so every `floor` is at or above `MIN_STAT_FLOOR`.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    code: 'ln',
+    name: ' of the Long Night',
+    tag: EgoSlotTag.Suffix,
+    // Constitution and Will together — the two stats a character wants when the
+    // fight is not going to end soon, and the pair the Watchman's third
+    // discipline and the Alchemist's second both scale on.
+    rarity: 11,
+    levelRange: [10, 50],
+    grants: {
+      stats: { con: { floor: 3, step: 2 }, wil: { floor: 3, step: 1 } },
+    },
+    cost: 45,
+  },
+  {
+    code: 'cl',
+    name: ' of the Cold Room',
+    tag: EgoSlotTag.Suffix,
+    // Where a coroner works, and what it does to whoever works there. Magic and
+    // the mental channel — the Alchemist's line, and the one an Inspector who
+    // has bought Method most wants filled.
+    rarity: 15,
+    levelRange: [14, 50],
+    grants: {
+      stats: { mag: { floor: 4, step: 2 } },
+      mods: { mentalResist: { floor: 3, step: 2 } },
+    },
+    cost: 60,
+  },
+  {
+    code: 'bs',
+    name: ' of the Back Stair',
+    tag: EgoSlotTag.Suffix,
+    // Dexterity and defence: the find for somebody who does not intend to be
+    // where the blow lands. Pairs with `generic/legwork`, which is bought with
+    // a category point and has no gear support of its own.
+    rarity: 18,
+    levelRange: [18, 50],
+    grants: {
+      stats: { dex: { floor: 4, step: 2 } },
+      mods: { def: { floor: 3, step: 2 } },
+    },
+    cost: 70,
+  },
+  {
+    code: 'so',
+    name: ' of Standing Orders',
+    tag: EgoSlotTag.Suffix,
+    // Strength and armour. The front-line suffix, and the only one that grants
+    // armour — everything else in that channel is a prefix, so this is what lets
+    // a character stack both halves of an id toward the same idea.
+    rarity: 19,
+    levelRange: [22, 50],
+    grants: {
+      stats: { str: { floor: 4, step: 2 } },
+      mods: { armour: { floor: 2, step: 2 } },
+    },
+    cost: 75,
+  },
+  {
+    code: 'lt',
+    name: ' of the Last Watch',
+    tag: EgoSlotTag.Suffix,
+    // Power in every channel — what makes a character's own statuses LAND, which
+    // is the thing that quietly stops working as monsters' saves climb.
+    rarity: 22,
+    levelRange: [26, 50],
+    grants: {
+      stats: { wil: { floor: 4, step: 2 } },
+      mods: { genericPower: { floor: 4, step: 3 } },
+    },
+    cost: 95,
+  },
+  {
+    code: 'rd',
+    name: ' of the Redaction',
+    tag: EgoSlotTag.Suffix,
+    /**
+     * THE DEEPEST THING ON THE TABLE, and the only ego named for the setting's
+     * own hazard.
+     *
+     * Level thirty is past the Redaction's own doorstep, so this is a find from
+     * the far map rather than a reward for reaching it — you already went. It
+     * grants the two channels that map answers in, and it is the strongest
+     * single grant of either anywhere in the game.
+     */
+    rarity: 30,
+    levelRange: [30, 50],
+    grants: {
+      stats: { cun: { floor: 4, step: 2 } },
+      mods: { spellResist: { floor: 6, step: 3 } },
+    },
+    cost: 140,
   },
 ];
 

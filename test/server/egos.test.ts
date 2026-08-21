@@ -1,3 +1,6 @@
+import { rollLoot } from '../../src/server/content/loot.ts';
+import { parseItemId } from '../../src/server/content/resolve.ts';
+import { createRng } from '../../src/shared/rng.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -48,7 +51,43 @@ describe('the ego roster', () => {
   });
 
   it('pins every code that exists — these are save-file keys, not names', () => {
-    expect(EGOS.map((ego) => ego.code)).toEqual(['rf', 'ol', 'wt', 'wd', 'lg', 'lw', 'qh', 'cr']);
+    /**
+     * ═══ THE LIST IS THE HISTORY, AND THAT IS WHY IT IS EXACT ═══
+     * A code is a save-file key. Removing one does not rename an item — it
+     * makes every id carrying it unresolvable, and `resolveItem` answers
+     * 'unknown' for the whole item rather than dropping the ego, so a player
+     * loses the object. Adding to this list is routine; changing or removing a
+     * line in it is a migration.
+     *
+     * The first eight are the original roster. The eleven after them are the
+     * deep pool — see the note in egos.ts on why the table needed a level
+     * curve at all.
+     */
+    expect(EGOS.map((ego) => ego.code)).toEqual([
+      // The shallow roster, unchanged since it shipped.
+      'rf',
+      'ol',
+      'wt',
+      'wd',
+      // Deep prefixes.
+      'ch',
+      'sl',
+      'cw',
+      'fd',
+      'ct',
+      // The shallow suffixes.
+      'lg',
+      'lw',
+      'qh',
+      'cr',
+      // Deep suffixes.
+      'ln',
+      'cl',
+      'bs',
+      'so',
+      'lt',
+      'rd',
+    ]);
   });
 
   it('has both tags populated, because an item has two slots to fill', () => {
@@ -226,5 +265,83 @@ describe('validateEgos', () => {
   it('refuses an inverted or zero-based level range', () => {
     expect(() => validateEgos([{ ...SOUND, levelRange: [10, 2] }])).toThrow(/levelRange/);
     expect(() => validateEgos([{ ...SOUND, levelRange: [0, 10] }])).toThrow(/levelRange/);
+  });
+});
+
+describe('the roster turns over as a character descends', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE POOL HAD NO CURVE, AND MATERIAL GRADES MADE THAT VISIBLE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every ego ran `[1, 50]` or `[n, 50]`, so a level-45 character drew from the
+   * same four prefixes as a level-5 one. Grades fixed the BASE half of a find
+   * and left this half exactly where it was — the deep game's loot was the
+   * shallow game's loot in a better coat.
+   */
+  const sample = (level: number, rolls = 400): Map<string, number> => {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < rolls; i += 1) {
+      const id = rollLoot(createRng(`turnover:${String(i)}`), 'item_watchmans_coat', level);
+      for (const ref of parseItemId(id)?.egos ?? []) {
+        seen.set(ref.code, (seen.get(ref.code) ?? 0) + 1);
+      }
+    }
+    return seen;
+  };
+
+  it('offers more to choose from the deeper it gets', () => {
+    const at = (level: number): number =>
+      EGOS.filter((ego) => level >= ego.levelRange[0] && level <= ego.levelRange[1]).length;
+    /**
+     * ═══ IT TURNS OVER, IT DOES NOT ONLY GROW — AND I ASSERTED THE WRONG ONE ═══
+     * This first read `at(25) <= at(45)` and failed at 12 against 11. That is
+     * not a bug: the shallow roster now has ceilings between 22 and 28, so the
+     * hard-in-range COUNT peaks in the middle of a career and comes down as the
+     * early egos fade out. A pool that only ever grew would mean nothing ever
+     * stopped dropping, which is the thing the ceilings exist to fix.
+     *
+     * The property that matters is that the deep game is not offered LESS than
+     * the shallow one, and that the set is different — which the two tests
+     * below measure on the rolls themselves rather than on the table.
+     */
+    expect(at(1)).toBeLessThan(at(25));
+    expect(at(45)).toBeGreaterThan(at(1));
+  });
+
+  it('does not let one shallow ego own the late game', () => {
+    /**
+     * ═══ THE MEASUREMENT THAT DROVE THE CEILINGS ═══
+     * Rarity is the dominant weight, so a common ego stays common forever
+     * unless something fades it. Before the shallow roster got a `levelRange`
+     * ceiling, `rf` and `ol` — rarity 3 and 4 — took more than half of every
+     * ego slot at level 40, with the entire deep pool present and drowned out.
+     */
+    const deep = sample(40);
+    const total = [...deep.values()].reduce((a, b) => a + b, 0);
+    expect(total, 'nothing rolled at all').toBeGreaterThan(0);
+    const commonest = Math.max(...deep.values());
+    expect(commonest / total, 'one ego owns the late game').toBeLessThan(0.35);
+  });
+
+  it('actually hands over — the top of the table is different at depth', () => {
+    const shallow = sample(1);
+    const deep = sample(40);
+    const topOf = (m: Map<string, number>): string =>
+      [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+    expect(topOf(shallow)).not.toBe(topOf(deep));
+  });
+
+  it('still lets a shallow ego through at depth, because this is a fade', () => {
+    /**
+     * `computeRarities` divides by the gap past the ceiling (Zone.lua:219) —
+     * three times gentler than the under-depth divisor, on purpose. A level-40
+     * character should still find the occasional Reinforced coat; it is simply
+     * no longer the commonest thing on the floor. A hard wall here would also
+     * leave a mid-game band with almost nothing in it at low rarity.
+     */
+    const deep = sample(40, 1200);
+    const shallowStillThere = ['rf', 'ol', 'lg', 'lw'].some((code) => (deep.get(code) ?? 0) > 0);
+    expect(shallowStillThere).toBe(true);
   });
 });
