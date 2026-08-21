@@ -396,6 +396,9 @@ function flagEffect(id: string, modifiers: EffectDef['modifiers']): EffectDef {
   return {
     id,
     displayName: id,
+    // A fixture badge. See EffectDef.badge -- required so it cannot be forgotten
+    // on a real effect, which is the whole reason it is not optional.
+    badge: 'Fx',
     description: 'test fixture',
     type: 'physical',
     status: 'detrimental',

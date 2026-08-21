@@ -327,6 +327,26 @@ export type EffectDef = {
   readonly decrease: number;
   /** The 24×24 badge on disk. An asset key, never a path — the client owns the manifest. */
   readonly icon: string;
+  /**
+   * ═══ THE LETTERS DRAWN WHEN THE BADGE ART IS NOT THERE ═══
+   *
+   * `partypanel.ts` falls back to a boxed initial, under a docblock promising
+   * that *"a missing badge PNG must not collapse three distinguishable statuses
+   * into three identical error squares"*. That promise held while the roster
+   * was three. It is now six, and the initials are S, B, S, E, B, D — Stunned
+   * against Slowed, Bleeding against Breached.
+   *
+   * THE SERVER OWNS THIS BECAUSE ONLY THE SERVER SEES THE WHOLE ROSTER. A client
+   * deriving a distinct letter would have to know every other effect in the game
+   * to know whether its own collides, and it only ever receives the ones on the
+   * bodies in front of it.
+   *
+   * Authored rather than derived, and pinned distinct by a test — a rule that
+   * generated them ("first letter, then two if it clashes") would silently
+   * renumber existing badges the day a seventh effect is added, and a player
+   * learns these squares by shape.
+   */
+  readonly badge: string;
   /** Attributes granted while live. Recomputed, never incrementally patched. */
   /**
    * ═══ ANY DAMAGE TAKES THIS OFF. ToME's commonest balancing lever. ═══

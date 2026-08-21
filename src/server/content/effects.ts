@@ -231,6 +231,7 @@ export const SLOW_PLAYER_AP_PENALTY = 0;
  */
 export const STUNNED: EffectDef = Object.freeze({
   id: EffectId.Stunned,
+  badge: 'St',
   displayName: 'Stunned',
   description:
     'Reeling. Deals 40% damage, and talent cooldowns do not tick while it lasts. ' +
@@ -345,6 +346,7 @@ export const STUNNED: EffectDef = Object.freeze({
  */
 export const BLEEDING: EffectDef = Object.freeze({
   id: EffectId.Bleeding,
+  badge: 'Bl',
   displayName: 'Bleeding',
   description: 'An open wound. Deals physical damage each turn, unreduced by armour.',
   // physical.lua:127. The save is PHYSICAL because the EFFECT is physical —
@@ -493,6 +495,7 @@ export const BLEEDING: EffectDef = Object.freeze({
  */
 export const SLOWED: EffectDef = Object.freeze({
   id: EffectId.Slowed,
+  badge: 'Sl',
   displayName: 'Slowed',
   description: 'Dragging. Monsters act less often; detectives lose a point of movement.',
   type: SaveChannel.Physical,
@@ -549,6 +552,7 @@ export const SLOWED: EffectDef = Object.freeze({
  */
 export const EFFACED: EffectDef = Object.freeze({
   id: EffectId.Effaced,
+  badge: 'Ef',
   displayName: 'Effaced',
   description: 'Rubbed out at the edges. Every roll you make and every roll you resist is worse.',
   // physical.lua:31 — `type = "physical"`.
@@ -597,6 +601,7 @@ export const EFFACED: EffectDef = Object.freeze({
  */
 export const BREACHED: EffectDef = Object.freeze({
   id: EffectId.Breached,
+  badge: 'Br',
   displayName: 'Breached',
   description: 'Something got through. Armour turns away half of what it should.',
   // magical.lua:3214 — `type = "magical"`.
@@ -656,6 +661,7 @@ export const BREACHED: EffectDef = Object.freeze({
  */
 export const DAZED: EffectDef = Object.freeze({
   id: EffectId.Dazed,
+  badge: 'Dz',
   displayName: 'Dazed',
   description: 'Reeling. Every roll you make and every roll you resist is halved.',
   // physical.lua:562 — `type = "physical"`.
@@ -723,8 +729,17 @@ export function createMvpEffectState(): EffectState {
  *     0.1 floor in `recomputeAttributes` would silently absorb it instead of
  *     letting anyone notice the number was wrong.
  */
+/** Two characters fit the 24px box; three collide with its border. */
+const BADGE_MAX = 2;
+
 export function validateEffect(def: EffectDef): readonly string[] {
   const problems: string[] = [];
+
+  // ONE OR TWO CHARACTERS. The badge box is 24px and centres its text; three
+  // would overflow the border this file's fallback draws around it.
+  if (def.badge.length < 1 || def.badge.length > BADGE_MAX) {
+    problems.push(`badge must be 1-2 characters, got "${def.badge}"`);
+  }
 
   if (!def.id.startsWith(EFFECT_ID_PREFIX)) {
     problems.push(`${def.id}: id must start with '${EFFECT_ID_PREFIX}'`);

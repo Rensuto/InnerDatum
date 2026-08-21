@@ -639,10 +639,16 @@ function drawVoice(
 /**
  * A 24x24 badge with its remaining turns in the corner.
  *
- * The fallback is the status's initial in a box rather than the renderer's loud
- * violet marker: a missing badge PNG must not collapse three distinguishable
- * statuses into three identical error squares, which would break this file's
- * central promise at exactly the moment the art pipeline regressed.
+ * The fallback is a short BADGE GLYPH in a box rather than the renderer's loud
+ * violet marker: a missing badge PNG must not collapse distinguishable statuses
+ * into identical error squares, which would break this file's central promise
+ * at exactly the moment the art pipeline regressed.
+ *
+ * ═══ THE GLYPH COMES FROM THE SERVER, AND IT USED TO BE `name[0]` ═══
+ * That worked on a roster of three and stopped the moment there were six:
+ * Stunned against Slowed, Bleeding against Breached. Only the server sees every
+ * effect in the game, so only the server can promise the letters are distinct —
+ * `EffectDef.badge`, pinned by a test.
  */
 function drawBadge(
   ctx: CanvasRenderingContext2D,
@@ -665,7 +671,12 @@ function drawBadge(
     ctx.font = FONT_META;
     ctx.textAlign = 'center';
     ctx.fillStyle = PALETTE.PARCHMENT;
-    ctx.fillText(effect.name.charAt(0).toUpperCase(), x + BADGE_PX / 2, y + BADGE_PX / 2 - 2);
+    // THE SERVER'S LETTERS, because it is the only side that sees every effect
+    // in the game and can therefore promise these are distinct. The initial is
+    // kept as the fallback's fallback: a server too old to send one still draws
+    // something, which is what this whole branch is for.
+    const glyph = effect.badge ?? effect.name.charAt(0).toUpperCase();
+    ctx.fillText(glyph, x + BADGE_PX / 2, y + BADGE_PX / 2 - 2);
     ctx.textAlign = 'left';
   }
 

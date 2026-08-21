@@ -1131,6 +1131,9 @@ export function projectEffects(
         id: eff.effectId,
         name: def.displayName,
         icon: def.icon,
+        // The fallback glyph. See `EffectView.badge` — the client cannot work
+        // out a distinct letter from the handful of effects it can see.
+        badge: def.badge,
         // `dur` reaches 0 for one pass before the effect is removed
         // (ActorTemporaryEffects.lua:80-81 — an expired effect survives one
         // extra tick). Clamped rather than hidden: the badge is still on the

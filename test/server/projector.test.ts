@@ -124,6 +124,12 @@ describe('projectEffects', () => {
         // AN ASSET KEY, NEVER A PATH. The client owns the manifest, so recutting
         // the badge art must not be able to invalidate a frame.
         icon: 'icon_status_stunned',
+        // THE FALLBACK GLYPH, drawn when that PNG is not on disk. It rides on the
+        // frame because only the SERVER sees every effect in the game and can
+        // promise the letters are distinct -- the client receives only the ones
+        // on the bodies in front of it, and 'Stunned' and 'Slowed' share an
+        // initial. See EffectView.badge.
+        badge: 'St',
         turns: 3,
         harmful: true,
       },
@@ -135,7 +141,7 @@ describe('projectEffects', () => {
     // Spelled out as a key check because the failure mode is additive: somebody
     // spreads the instance one day and the whole effect table is on the wire.
     expect(Object.keys(row?.effects[0] ?? {}).sort()).toEqual(
-      ['harmful', 'icon', 'id', 'name', 'turns'].sort(),
+      ['badge', 'harmful', 'icon', 'id', 'name', 'turns'].sort(),
     );
   });
 

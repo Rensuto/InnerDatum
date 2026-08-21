@@ -457,6 +457,7 @@ describe('setEffect — Actor.lua:6993-7043', () => {
     const boon: EffectDef = {
       id: 'effect:test_boon',
       displayName: 'Boon',
+      badge: 'Bo',
       description: 'test',
       type: SaveChannel.Physical,
       status: EffectStatus.Beneficial,
@@ -1173,6 +1174,23 @@ describe('the status roster (game-design.md § 12)', () => {
 
   it('validates clean', () => {
     for (const def of MVP_EFFECTS) expect(validateEffect(def)).toEqual([]);
+  });
+
+  /**
+   * ═══ SIX STATUSES, SIX DISTINGUISHABLE BADGES ═══
+   *
+   * partypanel.ts boxes a short glyph when the badge PNG is missing, under a
+   * docblock promising that a missing PNG must not collapse distinguishable
+   * statuses into identical squares. It used to draw the first letter of the
+   * name, which held on a roster of three and stops dead on this one: Stunned
+   * against Slowed, Bleeding against Breached.
+   *
+   * This is the assertion that keeps the promise. It fails the moment a seventh
+   * effect picks a glyph somebody already has.
+   */
+  it('gives every status a badge glyph nothing else shares', () => {
+    const glyphs = MVP_EFFECTS.map((def) => def.badge);
+    expect(new Set(glyphs).size, `badge glyphs collide: ${glyphs.join(', ')}`).toBe(glyphs.length);
   });
 
   it('validateEffect catches the mistakes that are silent at runtime', () => {

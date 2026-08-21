@@ -1307,6 +1307,20 @@ export type EffectView = {
   /** An asset key, never a path. 24x24 in the manifest. */
   icon: string;
   /**
+   * ONE OR TWO LETTERS, DRAWN WHEN `icon` IS NOT ON DISK.
+   *
+   * The party panel boxes this when the badge PNG is missing, and its own
+   * docblock promises that a missing PNG must not collapse distinguishable
+   * statuses into identical squares. The first letter of `name` cannot keep
+   * that promise on a roster containing Stunned and Slowed, or Bleeding and
+   * Breached — and only the SERVER sees the whole roster, so only the server
+   * can guarantee these are distinct.
+   *
+   * OPTIONAL, so an older client falls back to the initial exactly as it does
+   * today and PROTOCOL_VERSION does not move for a fallback glyph.
+   */
+  badge?: string;
+  /**
    * GAME TURNS remaining, never ticks — the same unit as `CooldownsMsg`, and for
    * the same reason: mixing the two is a factor-of-ten bug that reads as
    * "statuses feel instant".

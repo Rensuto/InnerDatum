@@ -241,6 +241,40 @@ async function createCharacter(
   return { client, classId: chosen };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WAIT UNTIL THE STORE HOLDS `n` CHARACTERS. Never a fixed sleep.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The same fix character-delete.test.ts took, for the same failure. These tests
+ * closed a socket, `await sleep(120)`, and read the store — betting that 120ms
+ * was long enough for the server to notice the disconnect and flush. In
+ * isolation that bet always won; under `npm run check`, with tsc and eslint
+ * running beside the suite, it lost and reported "two characters were created
+ * and the store does not have two", which reads exactly like a broken create
+ * path and is not one.
+ *
+ * Polling the condition is not a longer sleep: it returns the moment the write
+ * lands, so it is right on a fast machine and a loaded one, and the common case
+ * stops paying for time it never needed.
+ *
+ * RETURNS ON TIMEOUT RATHER THAN THROWING, so the caller's own assertion — which
+ * knows what it wanted and why — reports the problem instead of a deadline.
+ */
+async function waitForCharacters(
+  h: Harness,
+  owner: string,
+  n: number,
+  timeoutMs = 5000,
+): Promise<Awaited<ReturnType<Harness['store']['listCharacters']>>> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = await h.store.listCharacters(owner);
+    if (rows.length >= n || Date.now() > deadline) return rows;
+    await sleep(10);
+  }
+}
+
 describe('changing character', () => {
   it('makes a NEW character rather than a copy of the one being played', async () => {
     harness = await start();
@@ -259,9 +293,7 @@ describe('changing character', () => {
     expect(second.classId, 'the two picks were the same class').not.toBe(first.classId);
 
     // Let the debounced autosave land for the second body.
-    await sleep(120);
-
-    const rows = await harness.store.listCharacters(REN);
+    const rows = await waitForCharacters(harness, REN, 2);
     expect(rows, 'two characters were created and the store does not have two').toHaveLength(2);
 
     // ═══ THE ASSERTION THAT WAS FAILING ═══
@@ -310,9 +342,7 @@ describe('changing character', () => {
     expect(second.classId).not.toBe(first.classId);
     const firstClass = first.classId;
     const secondClass = second.classId;
-    await sleep(120);
-
-    const rows = await harness.store.listCharacters(REN);
+    const rows = await waitForCharacters(harness, REN, 2);
     const original = rows.find((row) => row.classId === firstClass);
     expect(original, 'the first character is not in the store at all').toBeDefined();
     if (original === undefined) return;
