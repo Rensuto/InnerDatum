@@ -37,6 +37,7 @@ import { describe, expect, it } from 'vitest';
 import { IntentKind } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
+import { dirToward } from '../../src/server/engine/talents.ts';
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
 import { MONSTER_TEMPLATES, monsterInit } from '../../src/server/content/monsters.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
@@ -85,24 +86,49 @@ const LEVEL = 5;
 /**
  * RUN THE FIGHT AND KEEP EVERY STEP THE MONSTERS TOOK.
  *
- * ═══ THE DETECTIVE HOLDS EVERY TURN, AND SHE HAS TO ═══
- * The barrier will not release a turn until every living player has committed
- * something. The first version of this helper just called `pump` forty times
- * and asserted on the result — it produced one `engagement`, one
- * `turn_ended` and no monster steps whatsoever, because the turn never
- * advanced past the first. Forty pumps of a fight that had not started, and the
- * only symptom was an empty array that read exactly like a monster declining to
- * cast.
+ * ═══ THE DETECTIVE HAS TO COMMIT SOMETHING EVERY TURN ═══
+ * The barrier will not release a turn until every living player has. The first
+ * version of this helper just called `pump` forty times and asserted on the
+ * result — it produced one `engagement`, one `turn_ended` and no monster steps
+ * at all, because the turn never advanced past the first. Forty pumps of a
+ * fight that had not started, and the only symptom was an empty array that read
+ * exactly like a monster declining to cast.
  *
- * Holding is also the honest test: the creature gets its chance to act while
- * the player does nothing to stop it.
+ * ═══ AND SHE WALKS TOWARD IT, RATHER THAN HOLDING ═══
+ * The version after that held every turn, which is a fight only the melee half
+ * of the bestiary is in. A `RangedKiter` holds its band against a stationary
+ * player forever, so no talent that answers being CLOSED ON can ever become
+ * legal — and The Watcher's whole design is artillery you have to walk down.
+ * It failed this test with "never cast anything in 60 turns", which was true
+ * and was about the arena.
+ *
+ * Advancing is also the stated counterplay for that creature: it moves at 0.7
+ * against a player at 1.0, so closing works and is meant to. A test where
+ * nobody closes is a test of half the bestiary.
  */
 function everyStep(world: World, turns: number): SweepStep[] {
   const barrier = createBarrier();
   const talents = talentRuntimeFor(createContentTalentEngine(), world);
   const steps: SweepStep[] = [];
   for (let i = 0; i < turns; i += 1) {
-    submitIntent(world, barrier, 'p1', { kind: IntentKind.Hold });
+    /**
+     * TOWARD THE CREATURE, OR HOLD WHEN ALREADY ON TOP OF IT.
+     *
+     * `dirToward` answers null once the two are on the same tile, which cannot
+     * happen, and the melee case wants a hold anyway: a player who keeps
+     * walking into a body it is already touching submits a move that resolves
+     * as a bump-attack, which is a different test.
+     */
+    const player = world.getActor('p1');
+    const foe = world.getActor('m1');
+    const dir =
+      player === undefined || foe === undefined || !foe.alive ? null : dirToward(player, foe);
+    submitIntent(
+      world,
+      barrier,
+      'p1',
+      dir === null ? { kind: IntentKind.Hold } : { kind: IntentKind.Move, dir },
+    );
     const result = pump(world, { nowMs: i * MS_PER_PUMP, barrier, talents });
     for (const event of result.events) {
       if (event.t === 'sweep') steps.push(...event.steps);

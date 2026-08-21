@@ -2430,6 +2430,19 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
  * the site markers make, and it is stated here rather than left to be noticed.
  */
 export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
+  /**
+   * AN ANSWER TO BEING CORNERED, WHICH THIS TEMPLATE ALREADY ADMITTED IT LACKED.
+   *
+   * The fight description below reads off kite three branches and ends the
+   * third with the creature holding rather than firing: cornered, it does
+   * NOTHING AT ALL. That was written as a description and it is really the
+   * exploit — the counter to the encounter was to walk it into a wall.
+   *
+   * Clear the Altar is legal only while a hostile is within two tiles, which is
+   * strictly inside its own minRange of 3, so it can never be spent at the
+   * band the creature wants to hold.
+   */
+  talents: ['talent:clear_the_altar'],
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['cun', 'dex'],
   id: 'index_watcher',
