@@ -315,6 +315,15 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // grow the set of things the barrier can be made to wait for.
       'talk',
       'unequip',
+      // BUYING A LOCKED DISCIPLINE, and it is its own verb rather than a branch
+      // of spend_point because the three currencies do not convert — a frame
+      // that sometimes cost the scarcest one would eventually cost it by
+      // mistake, and nothing refunds a category point.
+      //
+      // IT GIVES THE BARRIER NOTHING TO WAIT FOR. Unlocking is not a turn and
+      // takes none: the sheet grows, three frames go back, and the scheduler
+      // never hears about it.
+      'unlock_tree',
       // ADDED WITH THE DRAUGHTS. It is a frame the barrier can be made to wait
       // for — drinking costs the turn, exactly as equipping does — which is the
       // property this whole list exists to make somebody decide about on purpose.

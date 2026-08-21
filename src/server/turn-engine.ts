@@ -25,7 +25,7 @@
 import { inBounds, step } from '../shared/coords.ts';
 import { ErasedReason, ErrorCode, PartyAction, TalentShape } from '../shared/protocol.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
-import type { LoadoutTalent, ResourceView, TurnEvent } from '../shared/protocol.ts';
+import type { LoadoutTalent, ResourceView, TurnEvent, UnlockableTree } from '../shared/protocol.ts';
 import { seedTestEncounter } from './content/encounter.ts';
 import { SLOT_ORDER } from './content/items.ts';
 import { isMoneyId } from './content/money.ts';
@@ -107,6 +107,12 @@ export type TalentBook = {
    * without being edited to return an empty array it does not have.
    */
   passivesOf?(actor: Actor): readonly LoadoutTalent[];
+  /**
+   * The locked disciplines this actor could buy. Optional for the same reason
+   * `passivesOf` is: a fixture that predates them satisfies this port without
+   * being edited to return an empty array it does not have.
+   */
+  unlockableOf?(actor: Actor): readonly UnlockableTree[];
   /** This actor's class resource, or undefined for an actor that has none. */
   resourceOf(actor: Actor): ResourceView | undefined;
   /**
@@ -1471,6 +1477,11 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     passivesOf(actorId: string): readonly LoadoutTalent[] {
       const actor = world.getActor(actorId);
       return actor === undefined ? [] : (talents.passivesOf?.(actor) ?? []);
+    },
+
+    unlockableOf(actorId: string): readonly UnlockableTree[] {
+      const actor = world.getActor(actorId);
+      return actor === undefined ? [] : (talents.unlockableOf?.(actor) ?? []);
     },
 
     resourceOf(actorId: string): ResourceView | undefined {

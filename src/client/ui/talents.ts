@@ -148,7 +148,7 @@ import {
   PANEL_PAD,
   PanelSkin,
 } from './panel.ts';
-import type { LoadoutTalent, ProgressMsg } from '../../shared/protocol.ts';
+import type { LoadoutTalent, ProgressMsg, UnlockableTree } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 
@@ -490,6 +490,15 @@ export type TalentCell = {
    * and the one a refused `spend_point` would carry are the same string.
    */
   readonly lockedReason: string | null;
+  /**
+   * THE TREE THIS CELL WOULD UNLOCK, or null for one the character already owns.
+   *
+   * PRESENT IS WHAT MAKES A PRESS AN UNLOCK. A cell in a locked tree does not
+   * spend a talent point on itself — it spends a CATEGORY point on the whole
+   * discipline — and `pressSpend`'s caller reads this to decide which frame to
+   * send. Storing the tree id rather than a boolean is what lets it send one.
+   */
+  readonly unlocks: string | null;
   /** A passive is drawn without the pressable furniture. See `TalentKind`. */
   readonly passive: boolean;
   /** What it does now, and one point from now. Shown in the detail strip. */
@@ -543,6 +552,28 @@ export type TalentPanelView = {
    * `LoadoutMsg.passives`. The panel lists them; the hotbar never sees them.
    */
   readonly passives?: readonly LoadoutTalent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DISCIPLINES THIS CHARACTER COULD BUY AND HAS NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Drawn AFTER everything they own, as ordinary categories with an ordinary
+   * strip of icons — because a category point is the scarcest currency in the
+   * game and asking a player to spend one on a name they have never seen the
+   * inside of is the same failure as a talent with no description.
+   *
+   * The talents in here are at rank 0 and are not a preview in the
+   * placeholder sense: rank 0 is exactly what the character would hold on the
+   * day they bought the tree.
+   */
+  readonly unlockable?: readonly UnlockableTree[];
+  /**
+   * Category points in hand. Three arrive in a career, at levels 10, 20 and 36.
+   *
+   * ABSENT FROM AN OLDER SERVER, which reads as none — so the panel offers no
+   * unlock rather than offering one that would be refused.
+   */
+  readonly categories?: number;
   /**
    * WHICH TALENT THE DETAIL STRIP IS ABOUT — hovered, or armed, or neither.
    *
@@ -668,6 +699,9 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     cost: talent.cost,
     cooldownTurns: talent.cooldownTurns,
     range: talent.range,
+    // OWNED, so nothing here unlocks anything. The locked half builds its own
+    // cells below.
+    unlocks: null,
   });
 
   /**
@@ -713,6 +747,55 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       tree: key,
       text: group.text,
       talents: group.cells,
+    });
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE DISCIPLINES THERE ARE LEFT TO BUY, UNDERNEATH EVERYTHING OWNED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * LAST, ALWAYS. What a player owns is what they came to this panel for; a
+   * locked tree sitting above their own would be an advertisement in front of
+   * the thing it interrupts.
+   *
+   * THE HEADING CARRIES THE PRICE, and it changes with the purse. "1 category
+   * point" when they can afford it, "levels 10, 20 and 36" when they cannot —
+   * because "locked" alone tells a player nothing they can act on, and the
+   * second sentence is the whole answer to "so how do I get it".
+   */
+  const purse = view.categories ?? 0;
+  for (const tree of view.unlockable ?? []) {
+    rows.push({
+      kind: TalentRowKind.Category,
+      tree: tree.id,
+      text:
+        purse > 0
+          ? `${tree.name}  — locked, 1 category point`
+          : `${tree.name}  — locked, points arrive at levels 10, 20 and 36`,
+      talents: tree.talents.map((talent) => ({
+        id: talent.id,
+        name: talent.name,
+        icon: talent.icon,
+        level: talent.level,
+        maxLevel: talent.maxLevel,
+        // AFFORDABLE MEANS THE TREE, NOT THE TALENT. Pressing any icon in a
+        // locked discipline buys the DISCIPLINE — see `TalentCell.unlocks` —
+        // so the `+` is live exactly when a category point is in hand, whatever
+        // the talent's own rank or tier would say.
+        canSpend: purse > 0,
+        lockedReason:
+          purse > 0
+            ? `Unlock ${tree.name} — 1 category point. ${tree.blurb}`
+            : `${tree.name} is locked. Category points arrive at levels 10, 20 and 36.`,
+        passive: talent.kind === 'passive',
+        desc: talent.desc,
+        descNext: talent.descNext,
+        cost: talent.cost,
+        cooldownTurns: talent.cooldownTurns,
+        range: talent.range,
+        unlocks: tree.id,
+      })),
     });
   }
 

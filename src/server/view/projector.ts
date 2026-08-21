@@ -111,6 +111,7 @@ import type {
   ResourceView,
   TurnActor,
   TurnMsg,
+  UnlockableTree,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
 import type { Item, Slot } from '../content/items.ts';
@@ -700,10 +701,25 @@ export function projectLoadout(
   viewer: Actor,
   talents: readonly LoadoutTalent[],
   passives: readonly LoadoutTalent[] = [],
+  /**
+   * THE DISCIPLINES THIS CHARACTER COULD BUY. Defaulted to none, so every
+   * fixture and every caller that has not been taught about them produces the
+   * frame it always produced.
+   *
+   * ALREADY IN WIRE SHAPE. This function's job is projection, and a locked tree
+   * has no engine object to project FROM — its talents are content, resolved by
+   * the caller that can see the registry. Handing it a half-resolved thing to
+   * finish would put a content lookup in the view layer.
+   */
+  unlockable: readonly UnlockableTree[] = [],
 ): LoadoutMsg {
   return {
     v: PROTOCOL_VERSION,
     t: 'loadout',
+    // ABSENT WHEN THERE ARE NONE LEFT TO BUY, for `passives`' reason below: a
+    // character who has spent all three points produces the frame they produced
+    // before this field existed.
+    ...(unlockable.length === 0 ? {} : { unlockable }),
     // ABSENT WHEN THERE ARE NONE, never an empty array: `LoadoutMsg.passives` is
     // optional, and a class with no passives must produce the frame it always
     // produced rather than one with a new empty field in it.

@@ -132,6 +132,7 @@
  *   starting cannot leave a panel overlapping the cards on one surface only.
  */
 
+import type { TalentCell } from './ui/talents.ts';
 import { DIR_ORDER, chebyshev, sameTile, step } from '../shared/coords.ts';
 import { parseCommand } from './input/commands.ts';
 import { bindGameKeys, gameKeymap, setKeymap, TurnCommand, UiCommand } from './input/keys.ts';
@@ -276,6 +277,7 @@ import {
   talentTipAt,
   talentPanelRect,
   talentPanelRows,
+  TalentRowKind,
 } from './ui/talents.ts';
 // v12 — THE LEVEL BADGE AND THE XP TRACK. Its own file rather than a section of
 // ui/resource.ts on that file's own argument: resource.ts is a sustained case
@@ -336,6 +338,7 @@ import type {
   PartyMember,
   PartyStateMsg,
   ProgressMsg,
+  UnlockableTree,
   ProjectileView,
   ResourceView,
   ServerMsg,
@@ -1135,6 +1138,16 @@ let loadout: readonly LoadoutTalent[] = [];
  * The TALENT PANEL reads both; nothing else does.
  */
 let passives: readonly LoadoutTalent[] = [];
+
+/**
+ * THE DISCIPLINES THERE ARE LEFT TO BUY, from the last `loadout` frame.
+ *
+ * WHOLESALE REPLACEMENT LIKE ITS TWO NEIGHBOURS, and the list SHRINKS as points
+ * are spent — the server re-sends the frame after every unlock, so a client that
+ * merged rather than replaced would go on offering a discipline the character
+ * already owns.
+ */
+let unlockable: readonly UnlockableTree[] = [];
 let cooldowns: Readonly<Record<string, number>> = {};
 let resource: ResourceView | null = null;
 
@@ -2800,8 +2813,25 @@ function talentPanelView(): {
   loadout: readonly LoadoutTalent[];
   passives: readonly LoadoutTalent[];
   progress: ProgressMsg | null;
+  unlockable: readonly UnlockableTree[];
+  categories: number;
 } {
-  return { loadout, passives, progress };
+  return {
+    loadout,
+    passives,
+    progress,
+    unlockable,
+    /**
+     * READ OFF `progress` RATHER THAN HELD SEPARATELY, because that frame is the
+     * one the server re-sends whenever a purse moves — a second copy here would
+     * be a number that went stale the moment a point was spent, on the one
+     * screen whose job is telling a player what they can afford.
+     *
+     * ABSENT MEANS NONE: an older server never sends the field, and offering an
+     * unlock that would be refused is worse than not offering one at all.
+     */
+    categories: progress?.unspentCategories ?? 0,
+  };
 }
 
 function talentById(id: string | null): LoadoutTalent | null {
@@ -5621,10 +5651,56 @@ async function boot(): Promise<void> {
       requestDraw();
       return;
     }
-    if (!socket.send({ v: PROTOCOL_VERSION, t: 'spend_point', talentId: next.spend })) {
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A PRESS INSIDE A LOCKED DISCIPLINE BUYS THE DISCIPLINE, NOT THE TALENT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The panel draws a locked tree as an ordinary strip of icons so a player
+     * can read what they would be buying, and the icons are pressable for the
+     * same reason. What a press MEANS is different: a category point on the
+     * whole tree rather than a talent point on the one icon.
+     *
+     * THE TWO-PRESS ARM IS SHARED AND THAT IS DELIBERATE. `pressSpend` owns
+     * "press once to arm, again to commit" and there is no refund for either
+     * currency — so the scarcer one gets the same confirmation the commoner one
+     * does, through the same code, rather than a second rule to keep in step.
+     *
+     * THE CELL CARRIES THE TREE ID, so this cannot get the wrong one: it is
+     * read off the row that was pressed rather than inferred from the talent,
+     * which would need the client to hold a copy of the tree table.
+     */
+    const cell = talentCellById(next.spend);
+    const tree = cell?.unlocks ?? null;
+    // SENT FROM THE BRANCH RATHER THAN THROUGH A SHARED VARIABLE: the two
+    // frames are different members of a closed union, and widening them into
+    // one object loses the literal `v` the protocol pins.
+    const sent =
+      tree === null
+        ? socket.send({ v: PROTOCOL_VERSION, t: 'spend_point', talentId: next.spend })
+        : socket.send({ v: PROTOCOL_VERSION, t: 'unlock_tree', treeId: tree });
+    if (!sent) {
       showNotice('not connected — that did not go out');
     }
     requestDraw();
+  }
+
+  /**
+   * The panel cell for a talent id, or null.
+   *
+   * WALKS THE ROWS THE PANEL IS ACTUALLY DRAWING rather than the frames behind
+   * them, because `TalentCell.unlocks` is a fact the ROW BUILDER decides — a
+   * talent id alone cannot say whether it arrived in an owned tree or a locked
+   * one, and asking the wire again would be a second answer to that.
+   */
+  function talentCellById(talentId: string): TalentCell | null {
+    for (const row of talentPanelRows(talentPanelView())) {
+      if (row.kind !== TalentRowKind.Category) continue;
+      const found = row.talents.find((cell) => cell.id === talentId);
+      if (found !== undefined) return found;
+    }
+    return null;
   }
 
   // --- the inventory panel --------------------------------------------------
@@ -9856,6 +9932,9 @@ function applyServerMessage(msg: ServerMsg): void {
       // ABSENT MEANS NONE — an older server sends no such field, and a class
       // without passives sends no empty array either.
       passives = msg.passives ?? [];
+      // ABSENT MEANS NONE LEFT TO BUY — a character who has spent all three
+      // points, and every build where nothing is locked.
+      unlockable = msg.unlockable ?? [];
       // ═══ AND THIS FRAME IS THE CLASS CHOOSER'S ONLY ACKNOWLEDGEMENT ═══
       //
       // There deliberately is no "you are a Watchman now" frame. On a successful

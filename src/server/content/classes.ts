@@ -130,7 +130,7 @@ import { shinCrack } from '../talents/shin_crack.ts';
 import { weightOfOffice } from '../talents/weight_of_office.ts';
 import { paradeGround } from '../talents/parade_ground.ts';
 import { standingOrders } from '../talents/standing_orders.ts';
-import { treeById } from './talent-trees.ts';
+import { TALENT_TREES, treeById } from './talent-trees.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
@@ -167,7 +167,7 @@ import {
 import { checkTier, tierRefusalText } from '../../shared/tiers.ts';
 import type { TierCheck } from '../../shared/tiers.ts';
 import type { TileXY } from '../../shared/coords.ts';
-import type { LoadoutTalent, ResourceView } from '../../shared/protocol.ts';
+import type { LoadoutTalent, ResourceView, UnlockableTree } from '../../shared/protocol.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type {
   Talent,
@@ -1256,6 +1256,11 @@ export function createTalentBook(
 ): {
   loadoutOf(actor: Actor): readonly LoadoutTalent[];
   passivesOf(actor: Actor): readonly LoadoutTalent[];
+  /**
+   * The locked disciplines this body could buy and has not. Empty for a
+   * character who has bought them all, and for one with no class yet.
+   */
+  unlockableOf(actor: Actor): readonly UnlockableTree[];
   resourceOf(actor: Actor): ResourceView | undefined;
   check(actor: Actor, talentId: string, target: TileXY | undefined): RefusalCode | null;
 } {
@@ -1331,6 +1336,51 @@ export function createTalentBook(
             gateFor(engine, sheet, talent, actor, raw + 1),
           ),
         );
+      }
+      return out;
+    },
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE DISCIPLINES THIS BODY COULD BUY, DRAWN SO A PLAYER CAN READ THEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A category point is the scarcest currency in the game and a player is
+     * being asked to spend one on a NAME unless this exists. So each locked
+     * tree comes back with its talents rendered exactly as an owned one's are —
+     * the same `toLoadoutView`, the same `describe`, the same numbers.
+     *
+     * AT RANK 0, WHICH IS NOT A PLACEHOLDER: it is precisely what the character
+     * would hold on the day they bought it. The discipline is what a category
+     * point buys; the ranks inside it still cost ordinary points.
+     *
+     * NO TIER GATE IS COMPUTED. `toLoadoutView`'s `gate` parameter is left
+     * undefined here on purpose — a locked talent's `+` does not spend a talent
+     * point, it spends a CATEGORY point on the whole tree, and greying it with
+     * "learn 2 more of this discipline first" would be answering a question the
+     * player is not asking yet.
+     */
+    unlockableOf: (actor: Actor): readonly UnlockableTree[] => {
+      if (!('classId' in actor) || typeof actor.classId !== 'string') return [];
+      const definition = classById(actor.classId);
+      if (definition === undefined) return [];
+      const already = new Set('unlockedTrees' in actor ? (actor.unlockedTrees ?? []) : []);
+      const preview = previewActorFor(definition);
+      const out: UnlockableTree[] = [];
+      for (const tree of TALENT_TREES) {
+        if (tree.locked !== true || already.has(tree.id)) continue;
+        const held = ALL_LOCKED_TALENTS.filter((talent) => talent.tree === tree.id);
+        if (held.length === 0) continue;
+        out.push({
+          id: tree.id,
+          name: tree.name,
+          blurb: tree.blurb,
+          // THE PREVIEW BODY, NOT THE REAL ONE. `describe` takes the caster, and
+          // a talent nobody owns has no bearing on this character's numbers yet
+          // — the picker's own stand-in is exactly the right shape and already
+          // exists for the same reason.
+          talents: held.map((talent) => toLoadoutView(talent, 0, preview)),
+        });
       }
       return out;
     },

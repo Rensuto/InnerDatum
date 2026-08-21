@@ -283,6 +283,7 @@ import type {
   ClientSay,
   ClientSetHotbar,
   ClientUnlockTree,
+  UnlockableTree,
   ClientSetKeybinds,
   ClientSetZoom,
   ClientSpendPoint,
@@ -1063,6 +1064,14 @@ export type TurnEngine = {
    *   the caller nothing: the point is deducted only after this has answered.
    */
   unlockTree?(actorId: string, treeId: string): boolean;
+  /**
+   * THE LOCKED DISCIPLINES THIS BODY COULD BUY, rendered for the panel.
+   *
+   * OPTIONAL LIKE EVERY SEAM HERE. A build with no talent book has none, and an
+   * absent method reads as "nothing to buy" — which is the honest answer and
+   * the frame a client got before this existed.
+   */
+  unlockableOf?(actorId: string): readonly UnlockableTree[];
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * RE-DERIVE EVERYTHING THIS BODY'S NUMBERS ARE MADE OF.
@@ -4007,7 +4016,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // An actor with no talents gets no hotbar rather than an empty one. A row of
     // four blank buttons is a bug report; the absence of a row is not.
     if (talents.length === 0) return;
-    send(session.socket, projectLoadout(viewer, talents, engine.passivesOf?.(actorId) ?? []));
+    send(
+      session.socket,
+      projectLoadout(
+        viewer,
+        talents,
+        engine.passivesOf?.(actorId) ?? [],
+        // AND WHAT THERE IS LEFT TO BUY. Re-read on every loadout frame rather
+        // than cached, because the list SHRINKS as points are spent — a cached
+        // one would go on offering a discipline the character already owns.
+        engine.unlockableOf?.(actorId) ?? [],
+      ),
+    );
   };
 
   /**
@@ -4139,6 +4159,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     xp: number;
     unspentPoints: number;
     unspentGenerics: number;
+    unspentCategories: number;
     unspentStatPoints?: number;
     combat?: Combatant;
   }): string =>
@@ -4147,7 +4168,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // no level, no xp and no talent point, so a key without them would hold
     // steady while the six numbers under it changed, and the sheet would go on
     // showing the old Strength until the player happened to gain experience.
-    `${String(viewer.level)}|${String(viewer.xp)}|${String(viewer.unspentPoints)}|${String(viewer.unspentGenerics)}|${String(
+    `${String(viewer.level)}|${String(viewer.xp)}|${String(viewer.unspentPoints)}|${String(viewer.unspentGenerics)}|${String(viewer.unspentCategories)}|${String(
       knownFiled(filed.get(viewer.id) ?? [], SITES).length,
     )}|${String(viewer.unspentStatPoints ?? 0)}|${STAT_ORDER.map((which) =>
       String(statValue(viewer.combat ?? {}, which)),
@@ -4182,6 +4203,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       xpToNext: atCap ? 0 : expChart(viewer.level + 1),
       unspent: viewer.unspentPoints,
       unspentGenerics: viewer.unspentGenerics,
+      unspentCategories: viewer.unspentCategories,
       filed: closedCases,
       cases: fileableCount(SITES),
       // THE OTHER HALF OF A LEVELUP. Read off the COMPOSED sheet, so the six are

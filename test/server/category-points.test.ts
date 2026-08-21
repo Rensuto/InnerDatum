@@ -11,9 +11,12 @@ import {
   ALCHEMIST,
   INSPECTOR,
   WATCHMAN,
+  createContentTalentEngine,
+  createTalentBook,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { TALENT_TREES, treeById } from '../../src/server/content/talent-trees.ts';
+import { createWorld } from '../../src/server/world/world.ts';
 import {
   CATEGORY_POINT_LEVELS,
   MAX_CHARACTER_LEVEL,
@@ -176,5 +179,63 @@ describe('the locked tree is a real tree', () => {
       expect(tree?.locked, `${talent.tree} is not marked locked`).toBe(true);
       expect((tree?.name ?? '').length, `${talent.tree} has no name`).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('a locked discipline is browsable before it is bought', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CATEGORY POINT IS SPENDABLE WITHOUT THIS AND NOT BROWSABLE WITHOUT IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `unlock_tree` names a tree id and the server knows them all, so the verb
+   * works with nothing on screen. Asking a player to spend the scarcest currency
+   * in the game on a NAME they have never seen the inside of is the same failure
+   * as a talent with no description.
+   */
+  const engine = createContentTalentEngine();
+  const talents = createTalentBook(engine, createWorld('browsable'));
+  const body = { id: 'p1', classId: WATCHMAN.id, unlockedTrees: [] };
+
+  it('offers the locked disciplines to somebody who owns none', () => {
+    const offered = talents.unlockableOf(body as never);
+    expect(offered.length, 'nothing is offered').toBeGreaterThan(0);
+    for (const tree of offered) {
+      expect(treeById(tree.id)?.locked, `${tree.id} is offered and not locked`).toBe(true);
+    }
+  });
+
+  it('comes with its talents rendered, not just a name and a price', () => {
+    for (const tree of talents.unlockableOf(body as never)) {
+      expect(tree.talents.length, `${tree.id} came with no talents`).toBeGreaterThan(0);
+      for (const talent of tree.talents) {
+        // THE SAME RENDERING AN OWNED TALENT GETS — same `describe`, same
+        // numbers. A preview that said less than the real thing would be a
+        // player buying on faith.
+        expect(talent.desc.length, `${talent.id} has no description`).toBeGreaterThan(0);
+        expect(talent.name.length, `${talent.id} has no name`).toBeGreaterThan(0);
+        // AT RANK 0, which is not a placeholder: it is exactly what they would
+        // hold on the day they bought it.
+        expect(talent.level, talent.id).toBe(0);
+      }
+    }
+  });
+
+  it('stops offering one that has been bought', () => {
+    /**
+     * THE FAILURE THIS CATCHES IS SILENT AND EXPENSIVE. A list that did not
+     * shrink would go on showing a discipline the character owns, and the
+     * second category point would be spent on it — refused by the server, but
+     * only after the player had decided.
+     */
+    const bought = { id: 'p1', classId: WATCHMAN.id, unlockedTrees: ['generic/leverage'] };
+    const offered = talents.unlockableOf(bought as never);
+    expect(offered.map((tree) => tree.id)).not.toContain('generic/leverage');
+  });
+
+  it('offers nothing to a body with no class', () => {
+    // The class picker is still owed. A discipline offered before a class is
+    // chosen is one bought against a sheet that is about to be replaced.
+    expect(talents.unlockableOf({ id: 'p1' } as never)).toEqual([]);
   });
 });

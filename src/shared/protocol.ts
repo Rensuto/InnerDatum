@@ -4180,6 +4180,24 @@ export type UsedMsg = {
  * Ward Rush is worth more than any ordering a renderer could impose, and a
  * client that sorted by cooldown would move the buttons around mid-fight.
  */
+/**
+ * A discipline nobody starts with, drawn so a player can read it before paying.
+ *
+ * IT CARRIES ITS OWN NAME AND BLURB rather than an id the client resolves,
+ * because src/client/** may not import the content tables — the same rule that
+ * makes `LoadoutTalent` carry `treeName` beside `tree`.
+ */
+export type UnlockableTree = {
+  /** `generic/leverage`. What `unlock_tree` names. */
+  id: string;
+  /** The panel's heading. */
+  name: string;
+  /** The line under it, for why these belong together. */
+  blurb: string;
+  /** Its six, at rank 0 — what you would have on the day you bought it. */
+  talents: readonly LoadoutTalent[];
+};
+
 export type LoadoutMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'loadout';
@@ -4207,6 +4225,31 @@ export type LoadoutMsg = {
    * it cannot name and draws the four buttons it always drew.
    */
   passives?: readonly LoadoutTalent[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DISCIPLINES THIS CHARACTER COULD BUY AND HAS NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A category point is spendable without this — `unlock_tree` names a tree id
+   * and the server knows them all. It is not BROWSABLE without it, which is the
+   * same failure as a talent with no description: the player is asked to spend
+   * the scarcest currency in the game on a name they have never seen the inside
+   * of.
+   *
+   * SO THE TALENTS COME WITH IT, each rendered exactly as an owned one is —
+   * same `describe`, same numbers, same `locked` sentence — and the panel draws
+   * a real tree behind glass rather than a heading and a price.
+   *
+   * ═══ EVERY TALENT IN HERE IS AT RANK 0, AND THAT IS NOT A PLACEHOLDER ═══
+   * It is what the character would have on the day they bought it: the
+   * discipline, not the ranks. `describe(self, 0)` is the honest preview, and
+   * it is the same call the panel already makes for an owned-but-unlearned
+   * talent.
+   *
+   * ABSENT MEANS NONE LEFT TO BUY, which is every character who has spent all
+   * three points and every build where nothing is locked.
+   */
+  unlockable?: readonly UnlockableTree[];
 };
 
 /**
@@ -4529,6 +4572,22 @@ export type ProgressMsg = {
    * and two purses cannot be recovered from one total at all.
    */
   unspentGenerics: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * CATEGORY POINTS IN HAND — the third purse, and the scarcest.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Three in a fifty-level career, at 10, 20 and 36 (Actor.lua:3757-3760), and
+   * each one buys a WHOLE DISCIPLINE. A SEPARATE FIELD for the reason
+   * `unspentGenerics` gives about itself one line up: three purses cannot be
+   * recovered from one total, and a client doing the arithmetic would need the
+   * whole spend history.
+   *
+   * OPTIONAL, so an older client reads `undefined` and simply never offers the
+   * unlock — which is the behaviour it has today and is honest rather than
+   * broken.
+   */
+  unspentCategories?: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * HOW MUCH OF THE GAME THIS CHARACTER HAS FINISHED.
