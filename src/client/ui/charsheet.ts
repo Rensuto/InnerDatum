@@ -207,22 +207,67 @@ const TWO_COL_MIN_W = 22 * 2 * CHAR_W + COL_GAP;
  * its cooldown word at EVERY size, including the largest.
  *
  * ═══ WHY A FRACTION AND NOT JUST THE WHOLE WINDOW ═══
- * ToME's character sheet is full-screen and this one deliberately is not: it
- * opens over a live map that other players are still moving on, and covering all
- * of it turns a glance at your armour into leaving the room. `SHEET_FILL` is the
- * share of the window it may take -- enough at the 640 floor to hold the widest
- * talent line in two columns (460 wide gives 32 characters against the 29 it
- * needs), and capped so a 1920 monitor gets a readable panel rather than a
- * wall of whitespace with a stat in each corner.
+ * This panel opens over a live map that other players are still moving on, and
+ * covering all of it turns a glance at your armour into leaving the room. That
+ * argument survives, and so does the shape it produced: a share of the window
+ * rather than the whole of it.
+ *
+ * WHAT CHANGED IS THE SHARE. This file used to cap the sheet at 560 pixels come
+ * what may, on the reasoning that ToME's own sheet is full-screen and ours
+ * should not be. The premise was wrong — CharacterSheet.lua:50 bounds itself to
+ * `game.w*0.95`, never the whole screen — and the ceiling was doing real harm: a
+ * 1538-pixel window gave the sheet a fifth of its width, so the panel ran out of
+ * room and dropped whole sections while the screen sat empty around it.
+ *
+ * It now takes upstream's rule outright: a preferred 200 columns, clamped to
+ * between half and 95% of the window. See `SHEET_PREF_COLS`. The map is still
+ * visible at the edges, which is all the original concern actually needed.
  *
  * THE FLOOR IS STILL THE FLOOR. `SHEET_MIN_W` is what `charSheetRect` refuses
  * below, and it is unchanged -- this widens the panel where there is room and
  * changes nothing about when it declines to open.
  */
-const SHEET_FILL = 0.72;
-const SHEET_MAX_W = 560;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW BIG THE SHEET WANTS TO BE — ported from ToME, which is why it is a
+ * PROPORTION of the window and not a pixel count.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 game/modules/tome/dialogs/CharacterSheet.lua:50:
+ *
+ *     Dialog.init(self, "Character Sheet: "..self.actor.name,
+ *       util.bound(self.font_w*200, game.w*0.5, game.w*0.95),
+ *       util.bound(self.font_h*36,  game.h*.35, game.h*.85))
+ *
+ * A PREFERRED SIZE IN CHARACTERS, CLAMPED TO A SHARE OF THE SCREEN. Two hundred
+ * columns and thirty-six rows is what the sheet wants; the clamp stops it
+ * swallowing a small window or rattling around in a huge one.
+ *
+ * ═══ IT USED TO BE `SHEET_MAX_W = 560`, AND THAT IS THE BUG ═══
+ * A hard pixel ceiling meant the sheet was the same size on a 1538-pixel window
+ * as on a 700-pixel one — a fifth of the available width — so on any real
+ * monitor it ran out of room and started dropping whole sections with a row
+ * reading "hidden — panel too small". The screen had the space; the panel was
+ * forbidden from using it. Reported as "the characteristics page improperly
+ * shows info due to lack of space".
+ *
+ * At 200 columns this is 1200 logical pixels wide against the old 560, and 432
+ * tall against 268 — about three and a half times the area, on the same screen.
+ */
+const SHEET_PREF_COLS = 200;
+const SHEET_PREF_ROWS = 36;
+/** CharacterSheet.lua:50 — `game.w*0.5` and `game.w*0.95`. */
+const SHEET_MIN_FILL = 0.5;
+const SHEET_MAX_FILL = 0.95;
+/** CharacterSheet.lua:50 — `game.h*.35` and `game.h*.85`, against the free band. */
+const SHEET_MIN_FILL_H = 0.35;
+const SHEET_MAX_FILL_H = 0.85;
 const SHEET_MIN_W = 168;
-const SHEET_MAX_H = 268;
+/**
+ * THE FLOOR THE PROPORTIONAL HEIGHT IS STILL CLAMPED BY, on a window so short
+ * that 35% of the free band is less than a usable sheet. See `SHEET_PREF_ROWS`.
+ */
+const SHEET_ABS_MIN_H = 120;
 /**
  * A sheet shorter than a header plus the identity block is not worth drawing.
  *
@@ -744,6 +789,14 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
  * taken: ui/partypanel.ts holds the left and the Case Log holds the right, and a
  * third dock would leave no map at all between them.
  */
+/**
+ * `util.bound` — t-engine4 game/engines/default/engine/utils.lua. Ported by name
+ * so that `grep -r util.bound reference/t-engine4` still finds the original.
+ */
+function bound(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 export function charSheetRect(options: {
   /** Logical backbuffer width, in world pixels — not device pixels. */
   readonly width: number;
@@ -762,14 +815,42 @@ export function charSheetRect(options: {
 
   /**
    * GROW WITH THE WINDOW, THEN CLAMP TWICE. The second clamp is not redundant
-   * with the first: `SHEET_FILL` of a narrow window can land under `SHEET_MIN_W`
-   * (which is why the max is taken), and the margin subtraction can land under
-   * it too on a window barely past the guard above -- so the min is taken last
-   * and the panel can never be drawn wider than the space it is centred in.
+   * with the first: the lower bound of a narrow window can land under
+   * `SHEET_MIN_W` (which is why the max is taken), and the margin subtraction
+   * can land under it too on a window barely past the guard above -- so the min
+   * is taken last and the panel can never be drawn wider than the space it is
+   * centred in.
    */
-  const wanted = Math.min(SHEET_MAX_W, Math.floor(width * SHEET_FILL));
+  /**
+   * `util.bound(preferred, min, max)` — CharacterSheet.lua:50, and the same
+   * three-step shape it uses: a preferred size in CHARACTERS, clamped to a share
+   * of the window, then clamped again to what is actually free.
+   *
+   * The final `Math.min` against the margins is ours and is not redundant: the
+   * upstream dialog is centred on the whole screen, while this one is centred in
+   * the band between the HUD docks and must never be drawn wider than it.
+   */
+  const wanted = bound(
+    SHEET_PREF_COLS * CHAR_W,
+    Math.floor(width * SHEET_MIN_FILL),
+    Math.floor(width * SHEET_MAX_FILL),
+  );
   const w = Math.min(Math.max(SHEET_MIN_W, wanted), width - SHEET_MARGIN * 2);
-  const h = Math.min(SHEET_MAX_H, band - SHEET_MARGIN * 2);
+  /**
+   * AGAINST THE WHOLE WINDOW, NOT THE BAND — which is what upstream measures.
+   *
+   * CharacterSheet.lua:50 bounds against `game.h`, the entire screen. Applying
+   * those fractions to the FREE BAND instead double-counts the HUD docks: the
+   * band is already the screen minus them, so 0.85 of it came out SHORTER than
+   * the old fixed 268 and the sheet dropped more rows than before, not fewer.
+   * The band is where the panel must FIT, which is the clamp on the line below.
+   */
+  const wantedH = bound(
+    SHEET_PREF_ROWS * ROW_H,
+    Math.floor(height * SHEET_MIN_FILL_H),
+    Math.floor(height * SHEET_MAX_FILL_H),
+  );
+  const h = Math.min(Math.max(SHEET_ABS_MIN_H, wantedH), band - SHEET_MARGIN * 2);
   return {
     x: Math.floor((width - w) / 2),
     y: top + Math.max(0, Math.floor((band - h) / 2)),

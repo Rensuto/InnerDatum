@@ -343,7 +343,31 @@ const PANEL_W_STATS = PANEL_W + COL_GAP + STATS_W;
 /** All three columns. See `DETAIL_W` and `STATS_W`. */
 const PANEL_W_WIDE = PANEL_W_STATS + COL_GAP + DETAIL_W;
 const PANEL_MIN_W = 176;
-const PANEL_MAX_H = 300;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW TALL THE TALENT WINDOW MAY GET — ToME's share, not a pixel ceiling.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 game/modules/tome/dialogs/LevelupDialog.lua:89:
+ *
+ *     Dialog.init(self, "Levelup: "..actor.name,
+ *       game.w * 0.9, game.h * 0.9, game.w * 0.05, game.h * 0.05)
+ *
+ * ═══ IT WAS A FLAT 300 PIXELS, AND THAT HID TALENT TREES ═══
+ * The grid drops whole CATEGORIES when it runs out of vertical room and prints
+ * "N categories hidden — panel too small" (see the note row below). On a
+ * 769-pixel window the panel took 300 of them — under two fifths — so a
+ * character with a full complement of trees could not see them all, on a screen
+ * with room for every one twice over. Reported as "the talent (G) is too small
+ * to accomodate and the page says so".
+ *
+ * THE FLOOR STAYS. `PANEL_MIN_H` still guards the tiny end, and the band clamp
+ * below still means the panel can never be drawn taller than the space between
+ * the HUD docks.
+ */
+const PANEL_MAX_FILL_H = 0.9;
+/** The shortest useful window, below which the panel refuses rather than lies. */
+const PANEL_ABS_MIN_H = 160;
 /**
  * A panel that cannot hold its header plus ONE talent row is not worth drawing.
  *
@@ -862,7 +886,14 @@ export function talentPanelRect(options: {
       : room >= PANEL_W_STATS
         ? PANEL_W_STATS
         : Math.min(PANEL_W, room);
-  const h = Math.min(PANEL_MAX_H, band - PANEL_MARGIN * 2);
+  /**
+   * AGAINST THE WHOLE WINDOW, THEN FITTED TO THE BAND — LevelupDialog.lua:89
+   * measures `game.h`, the entire screen, and the band is already that screen
+   * minus the HUD docks. Taking the share of the BAND instead would count them
+   * twice and hand back a shorter panel than the flat 300 it replaced.
+   */
+  const wantedH = Math.max(PANEL_ABS_MIN_H, Math.floor(height * PANEL_MAX_FILL_H));
+  const h = Math.min(wantedH, band - PANEL_MARGIN * 2);
   return { x: Math.floor((width - w) / 2), y: top + PANEL_MARGIN, w, h };
 }
 

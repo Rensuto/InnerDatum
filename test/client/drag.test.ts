@@ -214,8 +214,19 @@ describe('settleOffset — what a release banks', () => {
    * The numbers below are the REAL character sheet at the smallest backbuffer
    * this client renders, taken from `charSheetRect` rather than typed out: 1248
    * logical pixels wide (1280 minus the letterbox at integer scale), a band of
-   * top 17 / bottom 343, a 328x268 panel resting at y=46. That is 29 pixels of
+   * top 17 / bottom 343, an 1185x314 panel resting at y=23. That is 12 pixels of
    * vertical travel against a 480-pixel canvas.
+   *
+   * ═══ THOSE NUMBERS MOVED WHEN THE SHEET TOOK ToME'S SIZING ═══
+   * It was a 328x268 panel at y=46 with 29 pixels of travel, back when
+   * `charSheetRect` capped itself at 560 pixels wide however big the window was.
+   * The panel now asks for a preferred 200 columns clamped to a share of the
+   * window (CharacterSheet.lua:50), which on this backbuffer is 1185 wide.
+   *
+   * THE SHRINKING TRAVEL IS THE POINT OF THE TEST, not a problem with it: a
+   * bigger panel has LESS room to move inside the same band, so the gap between
+   * a pointer stroke and the legal travel is wider than ever, and banking the
+   * raw offset would buy even more dead drags than it used to.
    */
   const WIDTH = 1248;
   const BAND = { top: 17, bottom: 343 };
@@ -227,15 +238,15 @@ describe('settleOffset — what a release banks', () => {
 
   it('answers the offset the clamp honoured, not the one the pointer reached', () => {
     const rect = sheet();
-    expect(rect.y).toBe(46);
-    expect(rect.h).toBe(268);
+    expect(rect.y).toBe(23);
+    expect(rect.h).toBe(314);
     // The pointer is hauled to the bottom of the window: a raw dy of 423 against
-    // a panel that can move 29.
+    // a panel that can move 12.
     const raw = nextOffset(offset(0, 0), 600, 50, 600, 473);
     expect(raw.dy).toBe(423);
     const settled = settleOffset(rect, raw, BAND, WIDTH);
     expect(settled.dy).toBe(BAND.bottom - rect.h - rect.y);
-    expect(settled.dy).toBe(29);
+    expect(settled.dy).toBe(6);
     // ...and the drawn position is identical either way, which is the property
     // that makes settling invisible to the player.
     expect(moveIntoBand(rect, settled, BAND, WIDTH)).toEqual(moveIntoBand(rect, raw, BAND, WIDTH));
@@ -247,7 +258,7 @@ describe('settleOffset — what a release banks', () => {
     // window. The panel lands pinned at the band's floor.
     const first = settleOffset(rect, nextOffset(offset(0, 0), 600, 50, 600, 473), BAND, WIDTH);
     const pinned = moveIntoBand(rect, first, BAND, WIDTH);
-    expect(pinned.y).toBe(75);
+    expect(pinned.y).toBe(29);
 
     // Gesture 2: grab it again where it now IS — that is the whole point, the
     // pointer re-bases on the drawn position — and drag 100 pixels up.
