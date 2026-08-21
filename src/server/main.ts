@@ -39,7 +39,9 @@ import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
 import {
   budgetPenalty,
+  EffectStatus,
   createEffectState,
+  effectsOn,
   registerEffect,
   statusApplier,
   statusCurer,
@@ -908,6 +910,33 @@ export function buildServer() {
         }
         return best;
       },
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * HOW MUCH IS WRONG WITH THIS BODY — the status table, read at last.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * Twelve talents apply a stun, a slow or a bleed and not one has ever
+       * ASKED whether it is standing in one, so being afflicted could only be
+       * a cost. `generic/nerve` is the discipline that reads it.
+       *
+       * DETRIMENTAL ONLY, off the effect's own `status` field — a body carrying
+       * something helpful is not having a hard time, and paying for a buff
+       * would be paying for its own party.
+       *
+       * COUNTED FRESH EACH FOLD rather than cached: the fold already runs once
+       * per base turn and on every input that can change a number, and a
+       * remembered count would be a second answer to what the table plainly
+       * holds. It is a walk over one actor's own effects, which is a handful.
+       */
+      afflicted: () =>
+        effectsOn(effects, actor.id).filter(
+          // THROUGH THE REGISTRY, because an instance carries an id and not its
+          // definition — `status` is a fact about the EFFECT rather than about
+          // this particular application of it. An id the table does not know is
+          // not counted: an unregistered effect is a content bug, and guessing
+          // that it is detrimental would pay a talent for it.
+          (instance) => effects.defs.get(instance.effectId)?.status === EffectStatus.Detrimental,
+        ).length,
     };
 
     const stats: Record<string, number> = {};

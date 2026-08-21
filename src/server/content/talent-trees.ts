@@ -328,6 +328,22 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     blurb: 'Getting there, and getting out.',
     locked: true,
   },
+  {
+    /**
+     * THE THIRD AND LAST LOCKED DISCIPLINE, and the one that fills the third
+     * category point. See `TalentTree.locked`.
+     *
+     * It reads the status table, which twelve talents have been WRITING to
+     * since the effect system landed and not one has ever read. Being afflicted
+     * could only be a cost; this is the discipline where it is also a state.
+     */
+    id: 'generic/nerve',
+    mastery: 1,
+    name: 'Nerve',
+    classId: null,
+    blurb: 'Working through it, and what that is worth.',
+    locked: true,
+  },
 ]);
 
 const BY_ID = new Map(TALENT_TREES.map((tree) => [tree.id, tree]));

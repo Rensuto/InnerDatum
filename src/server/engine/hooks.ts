@@ -302,6 +302,28 @@ export type PassiveView = {
   isSustained(talentId: string): boolean;
   /** Chebyshev tiles to the nearest living hostile; Infinity when alone. */
   nearestEnemyDistance(): number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   HOW MANY DETRIMENTAL EFFECTS ARE ON THIS BODY RIGHT NOW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The status table has been a thing that HAPPENS TO a character and never a
+   * thing any of them could read. Twelve talents apply a stun, a slow or a
+   * bleed; not one talent in the game has ever asked whether it is standing in
+   * one — so being afflicted could only ever be a cost, and a whole shape of
+   * upstream talent (`self:hasEffect(...)` appears throughout ToME's own trees)
+   * had no way to exist here.
+   *
+   * A COUNT, NOT A PREDICATE, and that is the more useful question by a wide
+   * margin: "am I stunned" is one talent's business, while "how much is wrong
+   * with me" is a scale a talent can pay against. It also keeps this method
+   * from needing to name effects, which would put the content table in the
+   * engine's view.
+   *
+   * DETRIMENTAL ONLY. A body carrying something helpful is not having a hard
+   * time, and a talent that paid for a buff would pay for its own party.
+   */
+  afflicted(): number;
 };
 
 /**
@@ -319,6 +341,9 @@ export const EMPTY_PASSIVE_VIEW: PassiveView = {
   movedThisTurn: () => false,
   isSustained: () => false,
   nearestEnemyDistance: () => Number.POSITIVE_INFINITY,
+  // NOTHING WRONG WITH THIS BODY, which is the honest reading of a fixture with
+  // no status table — the same shape every other answer here takes.
+  afflicted: () => 0,
 };
 
 // ---------------------------------------------------------------------------
