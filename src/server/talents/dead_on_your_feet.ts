@@ -97,8 +97,19 @@ export const deadOnYourFeet: Talent = {
 
   hooks: {
     onTakeDamage: (ctx, incoming) => {
-      // NOT A KILLING BLOW: nothing to do, and the latch is NOT spent. Spending
-      // it on a scratch would let a husk disarm this by hitting first.
+      /**
+       * NOT A KILLING BLOW: nothing to do, and the latch is NOT spent. Spending
+       * it on a scratch would let a husk disarm this by hitting for 1 first.
+       *
+       * ═══ THE LIVE FIGURE, NOT `incoming.lethal` ═══
+       * `IncomingDamage.lethal` is the engine's snapshot from BEFORE any
+       * handler ran. Reading it would fire this on a blow that Unflinching or
+       * Braced has already shaved below fatal — spending the once-a-turn latch
+       * to save a body that was no longer in danger, which is the same bug as
+       * spending it on a scratch and harder to see. `dam` is the figure as it
+       * stands after every previous handler, which is the one that decides
+       * whether this blow kills.
+       */
       if (incoming.dam < ctx.self.hp) return;
       // ALREADY TOO FAR GONE. See `thresholdAt` -- this saves a body that was
       // standing, not one that was already on the floor.

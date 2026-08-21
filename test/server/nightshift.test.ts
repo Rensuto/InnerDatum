@@ -14,7 +14,7 @@ import { oneAtATime } from '../../src/server/talents/one_at_a_time.ts';
 import { secondWind } from '../../src/server/talents/second_wind.ts';
 import { regenAt, walkItOff } from '../../src/server/talents/walk_it_off.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
-import type { HookCtx, PassiveView } from '../../src/server/engine/hooks.ts';
+import type { HookCtx, IncomingDamage, PassiveView } from '../../src/server/engine/hooks.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -121,7 +121,22 @@ describe('Long Nights — the only talent that reads the class resource', () => 
 });
 
 describe('Dead on Your Feet — a floor, not a heal', () => {
-  const blow = (dam: number) => ({ dam, type: DamageType.Physical });
+  /**
+   * A WHOLE `IncomingDamage`, not the two fields this talent happens to read.
+   * The type carries `sourceId` and `lethal` as well, and a partial literal
+   * would compile under vitest (which strips types) and fail the typecheck —
+   * which is exactly how this file first reached a commit.
+   */
+  const blow = (dam: number): IncomingDamage => ({
+    dam,
+    type: DamageType.Physical,
+    sourceId: 'husk_1',
+    // THE ENGINE'S PRE-HANDLER SNAPSHOT, and the talent deliberately does not
+    // read it — see the note on `onTakeDamage` for why the LIVE figure is the
+    // right one. Set honestly anyway so the fixture is not lying to a future
+    // handler that does read it.
+    lethal: dam >= 40,
+  });
 
   it('leaves a killing blow one short', () => {
     const ctx = ctxOf(40, 200, 3);
