@@ -265,8 +265,21 @@ export type UiCommand = (typeof UiCommand)[keyof typeof UiCommand];
 export type KeyHandlers = {
   readonly onMove: MoveIntent;
   readonly onCommand: (command: TurnCommand) => void;
-  /** A hotbar key. `slot` is ZERO-BASED — key 1 is slot 0, matching `loadout`. */
-  readonly onSlot: (slot: number) => void;
+  /**
+   * A hotbar key. `slot` is ZERO-BASED — key 1 is slot 0.
+   *
+   * `shifted` IS REPORTED, NOT RESOLVED. Shift picks the bar's second page, and
+   * which page that is and what is on it are facts about the HOTBAR — this
+   * module's job is to say what was pressed. It is the same split `scroll_back`
+   * already documents in input/keymap.ts: *"Shift picks the other lane, and that
+   * is a fact about a panel rather than about a key, so it is not an action
+   * here."*
+   *
+   * It is also why this is a parameter rather than six more `hotbar_n` actions:
+   * those digits are `fixed` and unrebindable, so six more rows in the keybind
+   * screen would be six controls a player cannot change, explaining a modifier.
+   */
+  readonly onSlot: (slot: number, shifted: boolean) => void;
   /** Escape. Always local: it never becomes a frame. */
   readonly onCancel: () => void;
   /** M4. One of the four verbs above; the caller decides what each means. */
@@ -492,14 +505,14 @@ export function bindGameKeys(
     const slotFromCode = keymap.slotByCode.get(event.code);
     if (slotFromCode !== undefined) {
       event.preventDefault();
-      handlers.onSlot(slotFromCode);
+      handlers.onSlot(slotFromCode, event.shiftKey);
       return;
     }
 
     const slot = keymap.slotByKey.get(event.key.toLowerCase());
     if (slot !== undefined) {
       event.preventDefault();
-      handlers.onSlot(slot);
+      handlers.onSlot(slot, event.shiftKey);
       return;
     }
 

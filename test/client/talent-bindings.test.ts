@@ -5,7 +5,11 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { HOTBAR_TALENT_SLOTS } from '../../src/client/ui/hotbar.ts';
+import {
+  HOTBAR_TALENT_BINDINGS,
+  HOTBAR_TALENT_PAGES,
+  HOTBAR_TALENT_SLOTS,
+} from '../../src/client/ui/hotbar.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -60,7 +64,12 @@ function body(open: string): string {
 describe('the bar is built from bindings, not from the loadout', () => {
   it('resolves each slot through the binding store', () => {
     const view = body('function hotbarView(): HotbarView {');
-    expect(view).toContain('talentBindings.map(');
+    // A SLICE OF THE STORE, not the whole of it: the bar draws ONE page and the
+    // store holds both. `page` is that slice, and it is what `armed` is
+    // resolved against too — see the assertion two blocks down, which is the
+    // one that catches the ring being drawn on the wrong box.
+    expect(view).toContain('talentBindings.slice(');
+    expect(view).toContain('page.map(');
     /**
      * `loadout.map(...)` INSIDE THIS FUNCTION is the old contract — slot n IS
      * loadout[n] — and it is the one thing that must not come back, because it
@@ -135,7 +144,13 @@ describe('binding a talent', () => {
      */
     const fn = body('function bindTalentSlot(index: number, talentId: string): void {');
     expect(fn).toContain('displaced');
-    expect(fn).toContain('from !== index');
+    /**
+     * AGAINST THE CELL, NOT THE VISIBLE INDEX. With two pages the box under the
+     * pointer is slot n of the page being drawn, and the store is both pages end
+     * to end — comparing a visible index to a store position would make page 2's
+     * slot 0 look like page 1's, and the swap would fire against the wrong cell.
+     */
+    expect(fn).toContain('from !== cell');
   });
 
   it('refuses a talent that is not in the loadout, in words', () => {
@@ -167,9 +182,80 @@ describe('clearing', () => {
 
 describe('the store', () => {
   it('is exactly as long as the keyed half of the bar', () => {
-    // One number, taken from the module that owns it — a second copy would
-    // drift the day the bar grows a page.
-    expect(MAIN).toContain('{ length: HOTBAR_TALENT_SLOTS }');
-    expect(HOTBAR_TALENT_SLOTS).toBeGreaterThan(0);
+    /**
+     * ═══ "THE DAY THE BAR GROWS A PAGE" WAS THE NEXT COMMIT ═══
+     * This asserted `{ length: HOTBAR_TALENT_SLOTS }` under a comment predicting
+     * exactly the change that broke it, which is a good sign about the comment
+     * and a bad one about the assertion: a guard that names the CURRENT size
+     * fails on a resize and says nothing about correctness.
+     *
+     * The property is that the store is as long as the bar can address —
+     * pages times slots — and that both numbers come from the module that owns
+     * them rather than being written down twice.
+     */
+    expect(MAIN).toContain('{ length: HOTBAR_TALENT_BINDINGS }');
+    expect(HOTBAR_TALENT_BINDINGS).toBe(HOTBAR_TALENT_SLOTS * HOTBAR_TALENT_PAGES);
+    expect(HOTBAR_TALENT_PAGES).toBeGreaterThan(1);
+  });
+});
+
+describe('the second page', () => {
+  it('is a held mode, never a toggle', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE FAILURE A PAGED BAR RELIABLY HAS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A toggled page is a state a player can be in without noticing: you press
+     * 1 for your reliable attack four minutes later and get something else,
+     * and nothing on screen ever told you. Held-Shift cannot do that — the
+     * moment you stop asking for page 2 you are back on page 1, so the bar you
+     * are looking at is always the bar your keys will press.
+     *
+     * The keyup and the blur are the two halves of "cannot get stuck":
+     * alt-tabbing with Shift held is the ordinary way a modifier is never
+     * released, and a bar frozen on page 2 is one where the player's reliable
+     * attack has vanished with no way back.
+     */
+    expect(MAIN).toContain("window.addEventListener('keyup'");
+    expect(MAIN).toContain("window.addEventListener('blur'");
+    expect(MAIN).toContain('setTalentPage(0);');
+  });
+
+  it('redraws only on a change, so holding Shift is not a 60fps loop', () => {
+    // `keydown` repeats while a modifier is held. This client is a dirty-flag
+    // renderer and an unconditional requestDraw here would turn holding Shift
+    // into a render loop — the same rule every hover in main.ts follows.
+    const fn = body('function setTalentPage(page: number): void {');
+    expect(fn).toContain('if (talentPage === page) return;');
+  });
+
+  it('resolves every slot index through one function', () => {
+    /**
+     * The pointer and the keyboard both name a box on the VISIBLE bar, and the
+     * store is both pages end to end. Offsetting at each call site instead of
+     * once is how a paged bar ends up with the mouse editing page 1 while the
+     * keyboard presses page 2.
+     */
+    expect(MAIN).toContain('function cellOfSlot(index: number): number {');
+    expect(body('function bindTalentSlot(index: number, talentId: string): void {')).toContain(
+      'cellOfSlot(index)',
+    );
+    expect(body('function unbindTalentSlot(index: number): void {')).toContain('cellOfSlot(index)');
+  });
+
+  it('lights the armed ring against the page being drawn', () => {
+    /**
+     * ═══ THIS WAS WRONG FOR ONE COMMIT, AND IT DID NOT FAIL ANYTHING ═══
+     * `armed` read `loadout.findIndex`, which was right for exactly as long as
+     * slot n was loadout[n]. Once the bar took a binding the two were different
+     * lists, and the ring was drawn on whichever box sat at the talent's
+     * position in the LOADOUT — a different button the moment anybody
+     * rearranged anything. A lit button that is not the one you pressed does
+     * not fail; it quietly points at the wrong thing while an aim is open.
+     */
+    const view = body('function hotbarView(): HotbarView {');
+    expect(view).toContain('page.indexOf(armedId)');
+    expect(view.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('loadout.findIndex(');
   });
 });

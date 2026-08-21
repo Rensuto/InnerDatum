@@ -215,6 +215,7 @@ import {
   drawHotbar,
   HOTBAR_ITEM_SLOTS,
   HOTBAR_SLOTS,
+  HOTBAR_TALENT_BINDINGS,
   HOTBAR_TALENT_SLOTS,
   HOTBAR_TOTAL_H,
   HotbarDropKind,
@@ -1328,7 +1329,28 @@ type ItemBinding = {
  * a class owns land on keys 1-6 in the order they were authored, which is
  * precisely where they were before this existed. See `reseatTalentBindings`.
  */
-const talentBindings: (string | null)[] = Array.from({ length: HOTBAR_TALENT_SLOTS }, () => null);
+const talentBindings: (string | null)[] = Array.from(
+  { length: HOTBAR_TALENT_BINDINGS },
+  () => null,
+);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   WHICH PAGE THE BAR IS SHOWING. 0 ordinarily; 1 while Shift is down.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A MODE, NOT A TOGGLE, and that is the whole of why it is safe. A toggled
+ * second page is a state a player can be in without noticing — the classic
+ * failure is pressing 1 for your reliable attack and getting something else
+ * because you left the bar on page 2 four minutes ago. Held-Shift cannot do
+ * that: the moment you stop asking for page 2 you are back on page 1, and the
+ * bar you are looking at is always the bar your keys will press.
+ *
+ * IT IS ALSO WHY THE BAR REDRAWS ON THE MODIFIER ALONE. Pressing Shift with no
+ * digit shows you page 2 — that is how you find out what is on it, and a page
+ * you can only see by committing to a press is a page nobody uses.
+ */
+let talentPage = 0;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -2870,7 +2892,14 @@ function hotbarView(): HotbarView {
    * slot showing EQUIP for an item that is gone, which `itemSlotAction` already
    * refuses to do.
    */
-  const talents: HotbarSlot[] = talentBindings.map((id) => {
+  // THE ACTIVE PAGE'S SIX, and `slotUnder` measures the same six because it
+  // reads `hotbarView().slots.length` — one number, both readers, which is the
+  // rule hudwiring.test.ts pins after the item slots broke exactly this.
+  const page = talentBindings.slice(
+    talentPage * HOTBAR_TALENT_SLOTS,
+    talentPage * HOTBAR_TALENT_SLOTS + HOTBAR_TALENT_SLOTS,
+  );
+  const talents: HotbarSlot[] = page.map((id) => {
     const talent = id === null ? undefined : loadout.find((entry) => entry.id === id);
     if (talent === undefined) return { kind: HotbarSlotKind.Empty };
     return {
@@ -2906,7 +2935,28 @@ function hotbarView(): HotbarView {
   return {
     slots: talents.length === HOTBAR_TALENT_SLOTS ? [...talents, ...items] : talents,
     hovered: hoveredSlot,
-    armed: armedId === null ? -1 : loadout.findIndex((talent) => talent.id === armedId),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * WHICH BOX IS LIT, AND THIS READ `loadout.findIndex` UNTIL JUST NOW.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * That was right for exactly as long as slot n was `loadout[n]`: the two
+     * arrays were the same list, so an index into one was an index into the
+     * other. The bar takes a binding now, so they are different lists — and the
+     * armed ring would have been drawn on whichever box happened to sit at the
+     * talent's position in the LOADOUT, which is a different button as soon as
+     * anybody rearranges anything.
+     *
+     * A LIT BUTTON THAT IS NOT THE ONE YOU PRESSED is the worst kind of wrong:
+     * it does not fail, it just quietly points at the wrong thing while an aim
+     * is open. Resolved off `page` — the six being drawn — so the ring is on
+     * the box the player is looking at, or nowhere at all when the armed talent
+     * lives on the page they are not.
+     */
+    armed: armedId === null ? -1 : page.indexOf(armedId),
+    // WHICH PAGE THESE SIX ARE, so the label strip can say so. A bar that
+    // silently swapped its buttons would be indistinguishable from a bug.
+    page: talentPage,
     // So an empty item slot takes the hover frame and reads BIND while something
     // droppable is being carried over the bar. Cosmetic only —
     // `hotbarDropTargetAt` decides what a release actually means.
@@ -5189,6 +5239,26 @@ async function boot(): Promise<void> {
    * `no_resource` and prints a sentence. Refusing locally would swallow the
    * input on arithmetic that could be one frame out of date.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SHOW PAGE 2 WHILE SHIFT IS DOWN, BEFORE ANY DIGIT IS PRESSED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Without this the second page is a page you can only see by committing to a
+   * press, which is a page nobody uses: the player has to remember what is on
+   * it, and the whole reason to have one is that six is not enough to remember.
+   *
+   * IT REDRAWS ONLY ON A CHANGE. `keydown` repeats while a modifier is held —
+   * dozens of events a second — and this client is a dirty-flag renderer, so an
+   * unconditional `requestDraw` here would turn holding Shift into a 60fps
+   * loop. The same rule every hover in this file follows.
+   */
+  function setTalentPage(page: number): void {
+    if (talentPage === page) return;
+    talentPage = page;
+    requestDraw();
+  }
+
   function activateSlot(index: number): void {
     // ═══════════════════════════════════════════════════════════════════════
     // v12 — SLOTS 4-7 ARE ITEMS, AND THE VERB IS EQUIP/UNEQUIP, NOT USE.
@@ -5315,19 +5385,38 @@ async function boot(): Promise<void> {
    * game expects the trade. It is four lines and it is the difference between a
    * feature and a chore.
    */
+  /**
+   * A SLOT ON THE BAR YOU CAN SEE -> ITS CELL IN THE TWELVE-LONG STORE.
+   *
+   * Every caller below takes an index from the POINTER or from a KEY, and both
+   * of those name a box on the visible bar. The store is both pages end to end,
+   * so every one of them has to be offset by the page — and doing it in one
+   * named function rather than at five call sites is the difference between a
+   * page feature and a bug where the mouse edits page 1 while the keyboard
+   * presses page 2.
+   */
+  function cellOfSlot(index: number): number {
+    return talentPage * HOTBAR_TALENT_SLOTS + index;
+  }
+
   function bindTalentSlot(index: number, talentId: string): void {
     const talent = loadout.find((entry) => entry.id === talentId);
     if (talent === undefined) {
       showNotice('you do not have that talent any more');
       return;
     }
+    const cell = cellOfSlot(index);
+    // `indexOf` SEARCHES BOTH PAGES, deliberately. A talent already on page 2
+    // that is dragged onto page 1 must MOVE rather than appear twice — a bar
+    // where the same button exists in two places is a bar the player has to
+    // check before pressing.
     const from = talentBindings.indexOf(talentId);
-    const displaced = talentBindings[index] ?? null;
-    talentBindings[index] = talentId;
-    // THE TRADE. Only when it came from another slot on this bar — a talent
-    // dragged in from the panel displaces whatever was there, which is what the
-    // player just asked for.
-    if (from >= 0 && from !== index) talentBindings[from] = displaced;
+    const displaced = talentBindings[cell] ?? null;
+    talentBindings[cell] = talentId;
+    // THE TRADE. Only when it came from another slot — a talent dragged in from
+    // the panel displaces whatever was there, which is what the player just
+    // asked for.
+    if (from >= 0 && from !== cell) talentBindings[from] = displaced;
     showNotice(`slot ${String(index + 1)}: ${talent.name}`);
     requestDraw();
   }
@@ -5384,8 +5473,9 @@ async function boot(): Promise<void> {
    * makes the real one harder to trust.
    */
   function unbindTalentSlot(index: number): void {
-    if (talentBindings[index] === null || talentBindings[index] === undefined) return;
-    talentBindings[index] = null;
+    const cell = cellOfSlot(index);
+    if (talentBindings[cell] === null || talentBindings[cell] === undefined) return;
+    talentBindings[cell] = null;
     showNotice(`slot ${String(index + 1)} cleared`);
     requestDraw();
   }
@@ -7143,7 +7233,23 @@ async function boot(): Promise<void> {
           return;
       }
     },
-    onSlot: (slot) => {
+    onSlot: (slot, shifted) => {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * SHIFT PICKS THE PAGE, AND IT IS SET HERE RATHER THAN READ IN THE VIEW.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `talentPage` is a MODE the whole bar reads — the drawing, the hit test,
+       * the bind and the unbind all resolve through `cellOfSlot`. Setting it
+       * from the press means the key and the picture cannot disagree about
+       * which page is live, which is the one bug a paged bar reliably has.
+       *
+       * THE ROSTER AND THE CLASS CHOOSER BELOW ARE NOT PAGED, and Shift means
+       * nothing to either — they read `slot` alone, exactly as they did. A
+       * modal that suddenly picked a different card because a modifier was down
+       * would be a modal nobody could use with two hands.
+       */
+      setTalentPage(shifted ? 1 : 0);
       if (roster !== null) {
         // 1-8 PICK A ROW OUTRIGHT, the digits drawn on the cards. `slot` is
         // zero-based, so a digit past the end of the list finds nothing and does
@@ -7474,7 +7580,32 @@ async function boot(): Promise<void> {
     // NOTHING ELSE. Not `preventDefault`, not a sweep settle, not a notice: this
     // listener runs beside `bindGameKeys` on the same event, and anything it did
     // to the key would be a second opinion about a key the keymap owns.
+    //
+    // ═══ EXCEPT THE BAR'S PAGE, WHICH IS NOT AN OPINION ABOUT THE KEY ═══
+    // `setTalentPage` reads a MODIFIER, never a key: it does not consume the
+    // event, does not preventDefault, and does not care which key arrived. The
+    // keymap owns what `Shift+2` DOES; this owns what the player can SEE while
+    // Shift is down, which is the difference between a second page and a second
+    // page nobody can find.
+    setTalentPage(event.shiftKey ? 1 : 0);
     cancelTravel();
+  });
+
+  /**
+   * AND THE PAGE FALLS BACK THE MOMENT SHIFT IS RELEASED.
+   *
+   * ON `window`, AND ALSO ON `blur`. A keyup that arrives while the tab is
+   * unfocused never arrives at all — alt-tabbing with Shift held is the
+   * ordinary way to get a modifier stuck — and a bar frozen on page 2 with no
+   * way back is a bar where the player's reliable attack has vanished. Three
+   * exits for a state that must not stick, which is the same rule the drag
+   * gesture keeps two hundred lines up.
+   */
+  window.addEventListener('keyup', (event: KeyboardEvent) => {
+    setTalentPage(event.shiftKey ? 1 : 0);
+  });
+  window.addEventListener('blur', () => {
+    setTalentPage(0);
   });
 
   // --- the mouse -----------------------------------------------------------

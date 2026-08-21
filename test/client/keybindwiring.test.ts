@@ -77,7 +77,9 @@ const CODE = SOURCE.split('\n')
 const HANDLER_MARKERS = [
   'onMove: (dir) => {',
   'onCommand: (command) => {',
-  'onSlot: (slot) => {',
+  // `shifted` is the bar's second page — Shift picks the lane, exactly as it
+  // does for the log scroll. See .
+  'onSlot: (slot, shifted) => {',
   'onCancel: () => {',
   'onUi: (command) => {',
   'onScroll: (steps, alternate) => {',
@@ -519,7 +521,7 @@ describe('the six keyboard gates', () => {
     //
     // The order is `runMenuEffect`'s `'ui'` case: close, THEN act, ported from
     // tome/class/Game.lua:2307-2308.
-    const body = handlerBody('onSlot: (slot) => {');
+    const body = handlerBody('onSlot: (slot, shifted) => {');
     expect(body).toContain('if (menuOpen) closeMenu();');
     expect(body).toContain('activateSlot(slot);');
     // NOT A REFUSAL: no early return anywhere between the picker gate and the
@@ -529,7 +531,7 @@ describe('the six keyboard gates', () => {
     // The reason is written where the refusal would have gone, so the next pass
     // reads it before adding one.
     const commented = SOURCE.slice(
-      SOURCE.indexOf('onSlot: (slot) => {'),
+      SOURCE.indexOf('onSlot: (slot, shifted) => {'),
       SOURCE.indexOf('onCancel: () => {'),
     );
     expect(commented).toContain('THE DIGITS ARE NEVER REFUSED HERE');

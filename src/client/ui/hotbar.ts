@@ -230,6 +230,34 @@ export const HOTBAR_TOTAL_H = HOTBAR_H + HOTBAR_LABEL_H;
 export const HOTBAR_TALENT_SLOTS = 6;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   HOW MANY PAGES OF THOSE SIX. TWO, AND SHIFT PICKS THE OTHER ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Twelve talents on six keys. The bar cannot grow SIDEWAYS — the note on
+ * `HOTBAR_ITEM_SLOTS` below is the whole argument, and it has not changed:
+ * keys 5-9 are Numpad movement on every layout this game has been played on,
+ * and a slot advertising a digit that walks you north is worse than no slot.
+ *
+ * ═══ SHIFT, AND IT IS ALREADY THE HOUSE RULE ═══
+ * `scroll_back`'s note in input/keymap.ts says it exactly: *"Shift picks the
+ * other lane, and that is a fact about a panel rather than about a key, so it
+ * is not an action here."* Twelve `hotbar_n` actions in the keybind list would
+ * be twelve rows nobody can rebind (the digits are `fixed`) explaining a
+ * modifier — so the page is decided where the press is READ, not in the map.
+ *
+ * ═══ TWO AND NOT FOUR ═══
+ * Upstream's bar pages further and ours will when there is anything to put on
+ * page three. Twelve is already double what a class can hold, so a third page
+ * would be a control with nothing behind it — and every page after the first
+ * costs a modifier a player has to remember.
+ */
+export const HOTBAR_TALENT_PAGES = 2;
+
+/** Every keyed binding a character has, across both pages. */
+export const HOTBAR_TALENT_BINDINGS = HOTBAR_TALENT_SLOTS * HOTBAR_TALENT_PAGES;
+
+/**
  * Slots 4-7: the item slots. MOUSE-ONLY, AND THAT IS THE DECISION, NOT A GAP.
  *
  * ═══ WHY THERE IS NO KEY 5, 6, 7 OR 8, AND WHY NO DIGIT IS DRAWN ═══
@@ -381,6 +409,17 @@ export type HotbarView = {
   readonly hovered: number;
   /** Index currently in targeting mode, or -1. */
   readonly armed: number;
+  /**
+   * WHICH PAGE OF THE KEYED SLOTS THIS IS — 0 ordinarily, 1 while Shift is down.
+   *
+   * OPTIONAL, so every fixture that builds a view by hand keeps compiling and
+   * reads as page 1, which is what they all mean. It changes nothing about the
+   * SLOTS — main.ts has already sliced the page it is handing over — and is
+   * carried purely so the label strip can say which page a player is looking
+   * at. A bar that silently swapped its six buttons would be indistinguishable
+   * from a bug.
+   */
+  readonly page?: number;
   /**
    * The drag in flight, if any — so an empty slot can light up while something
    * droppable is being carried over the bar.
@@ -1155,13 +1194,42 @@ function stripFor(view: HotbarView, shown: number, count: number): StripLine | n
   }
 
   const focused = view.armed >= 0 ? view.armed : view.hovered;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PAGE 2 ANNOUNCES ITSELF, AND IT OUTRANKS THE NAME UNDER THE POINTER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The strip's ordinary job is naming whatever the pointer is on. This is more
+   * urgent than that for exactly as long as it is true: the six buttons a
+   * player has spent the whole game learning have just been replaced, and the
+   * one thing they need to know is that it was on purpose. It is also
+   * self-limiting — the sentence is only ever on screen while Shift is held.
+   *
+   * BELOW THE WIDTH REFUSAL ABOVE, which outranks everything: a bar that could
+   * not fit is a bar whose page label would be explaining boxes that are not
+   * there.
+   */
+  if ((view.page ?? 0) > 0) {
+    const slot = focused >= 0 && focused < shown ? view.slots[focused] : undefined;
+    const name =
+      slot !== undefined && slot.kind === HotbarSlotKind.Talent ? ` — ${slot.talent.name}` : '';
+    return { text: `page 2 (hold Shift)${name}`, colour: PALETTE.VIOLET_HI };
+  }
   if (focused < 0 || focused >= shown) return null;
   const slot = view.slots[focused];
   if (slot === undefined) return null;
 
   switch (slot.kind) {
     case HotbarSlotKind.Empty:
-      return { text: 'empty slot — drag an item here to bind it', colour: PALETTE.GREY_HI };
+      // WHICH HALF OF THE BAR DECIDES THE NOUN. "drag an item here" over a
+      // keyed slot is a sentence that sends the player to the wrong panel, and
+      // both halves can be empty now.
+      return {
+        text: isItemSlotIndex(focused)
+          ? 'empty slot — drag an item here to bind it'
+          : 'empty slot — drag a talent here from the talent panel',
+        colour: PALETTE.GREY_HI,
+      };
     case HotbarSlotKind.Item:
       return itemStrip(slot.name, slot.action);
     case HotbarSlotKind.Talent:
