@@ -40,17 +40,20 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { EffectId } from '../content/effects.ts';
-import { SetEffectOutcome } from '../engine/effects.ts';
+import { EffectStatus, SetEffectOutcome } from '../engine/effects.ts';
 import { combatPhysicalpower } from '../engine/derived.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
   TalentKind,
   TargetShape,
+  TalentRefusal,
   actorsInShape,
   ballTiles,
   talentDone,
   talentId,
+  talentRefused,
+  targetActor,
   tomeCooldownToTurns,
 } from '../engine/talents.ts';
 import { EMPTY_PASSIVE_VIEW } from '../engine/hooks.ts';
@@ -347,6 +350,27 @@ export function powerAt(level: number, hpFraction: number): number {
  * it first. Together they are a whole way of playing that the game has not
  * previously rewarded at all, and they are in two different trees on purpose,
  * so committing to it costs a category point and a handful of generic ones.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND IT CARRIES `damRange` NOW, WHICH FULL SWING USED TO
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `spreadAt` was Full Swing's whole passive, and Full Swing became Twist the
+ * Knife when this tree was brought to its cited upstream's shape. `damRange` is
+ * still LIVE — every class table sets it, and the combat maths reads it — but no
+ * TALENT granted it any more, and a channel that was added for one talent and
+ * then orphaned by that talent's conversion is exactly the dead-content trap
+ * this codebase keeps finding.
+ *
+ * IT LANDS HERE BECAUSE FULL SWING'S OWN NOTE PUT IT HERE. That note read: "A
+ * wider spread is worth most to a character who also has critical chance and
+ * critical damage to multiply the top of it." That character is the one holding
+ * THIS talent. The two halves were always one idea about the top end of a blow,
+ * split across two slots because there were six slots to fill; one of them is a
+ * button now, so the idea goes back together.
+ *
+ * FLAT, NOT SCALED ON HEALTH, unlike the critical damage beside it. A damage
+ * ROLL is not a payout, it is the shape of one, and a spread that widened as you
+ * bled would make a hurt character's damage read as noise on top of noise.
  */
 export const committed: Talent = {
   ...SHARED,
@@ -357,11 +381,13 @@ export const committed: Talent = {
   iconId: 'icon_passive_committed',
   passive: (level, view = EMPTY_PASSIVE_VIEW) => {
     const power = powerAt(level, view.hpFraction());
-    return power <= 0 ? {} : { mods: { criticalPower: power } };
+    const spread = { damRange: spreadAt(level) };
+    return power <= 0 ? { mods: spread } : { mods: { criticalPower: power, ...spread } };
   },
   describe: (_self, level) =>
-    `Always on. Up to ${String(Math.round(fullPowerAt(level)))}% critical damage, in proportion ` +
-    `to the health you are missing — nothing at full, all of it at death's door.`,
+    `Always on. Your damage rolls ${String(Math.round(spreadAt(level) * AS_PERCENT))}% wider, and ` +
+    `up to ${String(Math.round(fullPowerAt(level)))}% critical damage in proportion to the health ` +
+    `you are missing — nothing at full, all of it at death's door.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -376,26 +402,66 @@ export function spreadAt(level: number): number {
   return combatTalentScale(level, RANGE_LOW, RANGE_HIGH, CURVE);
 }
 
+/**
+ * Turns added to each affliction, at a rank.
+ *
+ * Upstream is `getDuration = combatTalentScale(t, 2, 4, "log")` (dirty.lua:165),
+ * widened to 2..6 for the reason every band in this pass has been: 2..4 floors
+ * to 2,2,3,3,4 and two pairs of ranks read identically.
+ */
+const TWIST_LOW = 2;
+const TWIST_HIGH = 6;
+
+export function twistTurnsAt(level: number): number {
+  return Math.floor(combatTalentScale(level, TWIST_LOW, TWIST_HIGH, CURVE));
+}
+
+/**
+ * How many afflictions one twist reaches.
+ *
+ * Upstream's `getDebuffs = combatTalentScale(t, 1, 3, "log")` (dirty.lua:166) —
+ * one at rank one, three at five. Ours floors the same band to 1,1,2,2,3, and
+ * that is LEFT ALONE deliberately: `twistTurnsAt` above is the number the
+ * description leads with and the one `class-wiring.test.ts` measures, so this
+ * one is free to be the coarse, readable "one, then two, then three".
+ */
 /** Percent, for the sentence the panel prints. */
 const AS_PERCENT = 100;
+
+const REACH_LOW = 1;
+const REACH_HIGH = 3;
+
+export function twistReachAt(level: number): number {
+  return Math.max(1, Math.floor(combatTalentScale(level, REACH_LOW, REACH_HIGH, CURVE)));
+}
+
+/** How far a twist reaches. Upstream is `range = 1`, melee (dirty.lua:162). */
+const TWIST_RANGE = 1;
+/** Four of six. Upstream's is a weapon-speed attack; ours is most of a turn. */
+const TWIST_AP = 4;
+/** Ported from dirty.lua:157 — `cooldown = 15`, and `fixed_cooldown = true`. */
+const TWIST_COOLDOWN_ACTIONS = 15;
+const TWIST_COOLDOWN = tomeCooldownToTurns(TWIST_COOLDOWN_ACTIONS);
 
 /**
  * FULL SWING — the deepest thing in the tree.
  *
  * "Half measures leave you exactly where you were."
  *
- * ═══ `damRange` IS THE SECOND LIVE CHANNEL NOTHING HAD EVER GRANTED ═══
- * It is the width of the damage roll — upstream's `damrange`, defaulting to 1.1
- * (Combat.lua:1432). Widening it does not raise the average blow much; it raises
- * the CEILING of one, which is a different thing to want and the only channel in
- * the game that offers it.
+ * ═══ IT WAS THE `damRange` PASSIVE, AND THAT GRANT MOVED TO `committed` ═══
+ * The width of the damage roll — upstream's `damrange`, defaulting to 1.1
+ * (Combat.lua:1432) — used to be this talent's whole body. The old note argued
+ * that "a wider spread is worth most to a character who also has critical chance
+ * and critical damage to multiply the top of it", which is a description of the
+ * talent two slots up, so that is where `spreadAt` now lives. See `committed`.
  *
- * ═══ IT IS THE DEEPEST BECAUSE IT IS THE MOST CONDITIONAL WITHOUT A CONDITION ═══
- * A wider spread is worth most to a character who also has critical chance and
- * critical damage to multiply the top of it — which is to say, to somebody who
- * has already bought the rest of this tree. Nothing here is written down as a
- * prerequisite; the arithmetic simply makes the last talent worth more to the
- * player who arrived last, which is what a tier-3 slot should do.
+ * ═══ AND WHAT REPLACED IT IS THE THIRD STATUS SEAM ═══
+ * `TalentCtx` had `status` to apply and `cure` to remove, and nothing at all to
+ * READ what a body was already suffering. Twist the Knife needs exactly that —
+ * it lengthens what is there rather than adding anything — and so does every
+ * upstream talent that pays you for a condition a TEAMMATE inflicted, which is
+ * most of what makes a party's talents combine rather than merely stack.
+ * `extend` is that seam, and this is its first caller.
  */
 export const fullSwing: Talent = {
   ...SHARED,
@@ -403,11 +469,55 @@ export const fullSwing: Talent = {
   name: 'Full Swing',
   /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
   tier: 3,
-  iconId: 'icon_passive_full_swing',
-  passive: (level) => ({ mods: { damRange: spreadAt(level) } }),
+  kind: TalentKind.Active,
+  iconId: 'icon_active_full_swing',
+  cost: { ap: TWIST_AP },
+  cooldownTurns: TWIST_COOLDOWN,
+  targeting: {
+    shape: TargetShape.Single,
+    range: TWIST_RANGE,
+    minRange: 0,
+    radius: 0,
+    requiresLos: true,
+    affinity: Affinity.Hostile,
+  },
+
+  onUse: (ctx, self, target) => {
+    const victim = targetActor(ctx.world, target);
+    if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
+
+    /**
+     * NOTHING WRONG WITH THEM IS A REFUSAL, NOT A SPENT TURN.
+     *
+     * `field_dressing.ts` draws the identical line from the other side — a
+     * dressing put on somebody with nothing wrong with them refunds — and the
+     * reason is the same: this talent's whole text is about what is ALREADY
+     * there, so aiming it at an untouched body is a mis-aim rather than a read
+     * that did not come off. The grit in `overreach` above is the opposite case
+     * and says so.
+     */
+    const lengthened = ctx.extend?.(
+      victim,
+      EffectStatus.Detrimental,
+      twistTurnsAt(ctx.talentLevel),
+      twistReachAt(ctx.talentLevel),
+    );
+    if (lengthened === undefined || lengthened.length === 0) {
+      return talentRefused(TalentRefusal.NoTarget);
+    }
+
+    return talentDone(
+      [],
+      lengthened.map((name) => `${victim.name} is not done with ${name.toLowerCase()}.`),
+    );
+  },
+
   describe: (_self, level) =>
-    `Always on. Your damage rolls ${String(Math.round(spreadAt(level) * AS_PERCENT))}% wider — ` +
-    `the same average blow with a far higher best one, which is what critical damage multiplies.`,
+    `Find what is already wrong with a body in reach and make it last: up to ` +
+    `${String(twistReachAt(level))} of the afflictions on them run ` +
+    `${String(twistTurnsAt(level))} turns longer. No save — theirs was made when it landed. ` +
+    `Refuses a target with nothing wrong. ${String(TWIST_AP)} AP, ` +
+    `${String(TWIST_COOLDOWN)}-turn cooldown.`,
 };
 
 /** The six, in panel order. */

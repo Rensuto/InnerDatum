@@ -1833,6 +1833,69 @@ export function statusCurer(state: EffectState, rng: Rng, ctx: EffectCtx = NO_CT
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAKE WHAT IS ALREADY WRONG LAST LONGER. Ported from Twist the Knife —
+ * cunning/dirty.lua:175-190.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream walks `target.tmp`, adds `dur` to every detrimental effect it finds
+ * and stops after `max_nb` of them:
+ *
+ *     for eff_id, p in pairs(target.tmp) do
+ *       local e = target.tempeffect_def[eff_id]
+ *       if e.status == "detrimental" and e.type ~= "other" and e.decrease ~= 0 then
+ *         p.dur = p.dur + dur
+ *
+ * ═══ IT IS A THIRD STATUS SEAM AND IT HAS TO BE ═══
+ * `TalentCtx` had exactly two — `status` applies and `cure` removes — and
+ * NOTHING COULD READ what a body was currently suffering. A whole shape of ToME
+ * talent depends on that read: the ones that pay you for a condition somebody
+ * else inflicted, which is most of what makes a party's talents combine rather
+ * than merely stack. It is the seam that was missing, not one talent.
+ *
+ * ═══ `dur` IS MUTATED AND `totalDur` GOES WITH IT ═══
+ * `EffectInstance.dur` is declared mutable precisely because `timedEffects`
+ * decrements it. `totalDur` is "what it started at, for the UI's bar" — leaving
+ * it behind would draw a bar that reads six turns of six with eleven left on it.
+ * Upstream does not carry a bar so it has no equivalent line; ours does.
+ *
+ * NO SAVE. Upstream's extension is not rolled against anything — the save was
+ * already made, and lost, when the effect landed. Making a body save twice for
+ * one affliction is a rule nobody could read off the screen.
+ *
+ * Returns the display names of what it lengthened, in table order, so the caller
+ * can say which — `removeEffect`'s contract, one door along.
+ */
+export type StatusExtend = (
+  target: EffectActor,
+  status: EffectStatus,
+  turns: number,
+  max: number,
+) => readonly string[];
+
+export function statusExtender(state: EffectState): StatusExtend {
+  return (target, status, turns, max) => {
+    if (turns <= 0 || max <= 0) return EMPTY_NAMES;
+    const held = effectsOn(state, target.id);
+    const touched: string[] = [];
+    for (const instance of held) {
+      if (touched.length >= max) break;
+      const def = effectDef(state, instance.effectId);
+      if (def === undefined || def.status !== status) continue;
+      // ALREADY EXPIRING IS STILL EXTENDABLE. `dur: 1` means "ticks once more"
+      // (see the note at the head of this file), so a 1 is a live effect and
+      // lengthening it is the whole point of the talent.
+      instance.dur += turns;
+      instance.totalDur += turns;
+      touched.push(def.displayName);
+    }
+    return touched;
+  };
+}
+
+const EMPTY_NAMES: readonly string[] = Object.freeze([]);
+
+/**
  * Put `count` of an actor's ready talents on a 1-turn cooldown.
  *
  * physical.lua:495-504 — STUNNED's talent lockout, and the reason its comment

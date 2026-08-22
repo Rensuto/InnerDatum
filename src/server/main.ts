@@ -45,8 +45,9 @@ import {
   registerEffect,
   statusApplier,
   statusCurer,
+  statusExtender,
 } from './engine/effects.ts';
-import type { StatusApply, StatusCure } from './engine/effects.ts';
+import type { StatusApply, StatusCure, StatusExtend } from './engine/effects.ts';
 import type { BudgetPenalty } from './engine/talents.ts';
 import { MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
@@ -213,6 +214,20 @@ export function talentRuntimeFor(
    * exactly the game those fixtures were written against.
    */
   breakOnDamage?: (actorId: string) => void,
+  /**
+   * THE THIRD STATUS DOOR — `statusExtender`, beside `status` and `cure`.
+   *
+   * LAST IN THE LIST rather than beside its twins, because every parameter here
+   * is positional and every one of the fixtures that builds a runtime by hand
+   * passes them that way; inserting after `cure` would have shifted five
+   * arguments at every call site and made a compile error out of a change that
+   * has nothing to do with them.
+   *
+   * Optional for the same reason all of these are: absent is a fixture with no
+   * status table, and a talent that wants to lengthen an affliction gets the
+   * same empty list it would get from a body that had none.
+   */
+  extend?: StatusExtend,
 ): TalentRuntime {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -330,6 +345,7 @@ export function talentRuntimeFor(
           rng: world.rng,
           ...(status === undefined ? {} : { status }),
           ...(cure === undefined ? {} : { cure }),
+          ...(extend === undefined ? {} : { extend }),
         },
       );
       if (!result.ok) return { ok: false, reason: result.reason };
@@ -863,6 +879,14 @@ export function buildServer() {
   };
   /** The same per-realm rng, for the same reason. See `statusFor` above. */
   const cureFor = (forWorld: World): StatusCure => statusCurer(effects, forWorld.rng);
+  /**
+   * NO RNG, UNLIKE ITS TWO NEIGHBOURS. `statusFor` and `cureFor` both take the
+   * per-realm stream because applying rolls a save and removing runs the
+   * effect's own `onRemove`. Lengthening rolls nothing — upstream does not make
+   * a body save twice for one affliction, the save was made and lost when it
+   * landed — so there is no draw to keep deterministic and no realm to key on.
+   */
+  const extendFor = (): StatusExtend => statusExtender(effects);
 
   const engineFor = (forWorld: World): ReapingTurnEngine =>
     createTurnEngine({
@@ -901,6 +925,7 @@ export function buildServer() {
           const body = forWorld.getActor(id);
           if (body !== undefined) breakDamageSensitive(effects, body, forWorld.rng);
         },
+        extendFor(),
       ),
       // THE OTHER HALF OF THE STATUS SEAM. `turn-engine.ts` builds
       // `PumpCtx.statusPass` from this, the world's rng and the talent book —

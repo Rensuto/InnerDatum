@@ -133,7 +133,7 @@ import { combatDamage } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
-import type { StatusApply, StatusCure } from './effects.ts';
+import type { StatusApply, StatusCure, StatusExtend } from './effects.ts';
 import type { World } from '../world/world.ts';
 import type { CombatSheet } from './combat.ts';
 
@@ -1334,6 +1334,22 @@ export type TalentCallCtx = {
    * an ally who was fine.
    */
   readonly cure?: StatusCure;
+  /**
+   * THE THIRD DOOR: make what is already wrong last longer.
+   *
+   * `status` applies and `cure` removes, and between them NOTHING COULD READ
+   * what a body is currently suffering. That is a whole shape of upstream talent
+   * missing rather than one talent — Twist the Knife (cunning/dirty.lua:175-190)
+   * walks `target.tmp` and lengthens what it finds, and every talent that pays
+   * you for a condition SOMEBODY ELSE inflicted needs the same read. It is most
+   * of what makes a party's talents combine rather than merely stack.
+   *
+   * Answers the display names of what it lengthened, so the caller can say which
+   * — `cure`'s contract, one door along. An empty list is a body with nothing of
+   * that status on it, which is a refusal at the talent rather than a quiet
+   * success, exactly as `cure`'s null is.
+   */
+  readonly extend?: StatusExtend;
 };
 
 /**

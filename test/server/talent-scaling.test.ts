@@ -28,7 +28,7 @@ import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { scriptedRng } from '../helpers/scripted-rng.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
-import { statusApplier, statusCurer } from '../../src/server/engine/effects.ts';
+import { statusApplier, statusCurer, statusExtender } from '../../src/server/engine/effects.ts';
 
 /** One `ctx.status` call, as the talent authored it. See `fixture`. */
 type StatusRequest = {
@@ -134,6 +134,13 @@ type Fixture = {
   readonly statusCalls: readonly StatusRequest[];
   /** Display names of everything a cure actually took off, in order. */
   readonly cureCalls: readonly string[];
+  /** What each `extend` ASKED FOR, and what it reached. See `statusCalls`. */
+  readonly extendCalls: readonly {
+    targetId: string;
+    turns: number;
+    max: number;
+    names: readonly string[];
+  }[];
   /**
    * `unlocked` names the LOCKED trees this body has bought with a category
    * point. Defaulted to none, so every existing call builds the sheet it built
@@ -219,6 +226,14 @@ function fixture(): Fixture {
    * table underneath is what decides whether one did.
    */
   const curer = statusCurer(effects, createRng('talent-scaling.test:cure'));
+  /**
+   * NO RNG. Lengthening rolls nothing — the save was made, and lost, when the
+   * affliction landed, and making a body save twice for one is a rule nobody
+   * could read off the screen. See `statusExtender`.
+   */
+  const extender = statusExtender(effects);
+  const extendCalls: { targetId: string; turns: number; max: number; names: readonly string[] }[] =
+    [];
   const cureCalls: string[] = [];
 
   const ctx: TalentCtx = {
@@ -235,6 +250,11 @@ function fixture(): Fixture {
       if (removed !== null) cureCalls.push(removed);
       return removed;
     },
+    extend: (target, status, turns, max) => {
+      const names = extender(target, status, turns, max);
+      extendCalls.push({ targetId: target.id, turns, max, names });
+      return names;
+    },
   };
 
   return {
@@ -243,6 +263,7 @@ function fixture(): Fixture {
     ctx,
     statusCalls,
     cureCalls,
+    extendCalls,
     add: (definition, id, x, y, unlocked = []) => {
       const actor: TalentActor = {
         id,
@@ -883,6 +904,30 @@ const CASES: readonly ScalingCase[] = [
       f.refill('caster');
       const result = useTalent(f.engine, watchman, talentId('overreach'), { x: 5, y: 5 }, f.ctx);
       return { observed: f.statusCalls[0]?.duration ?? 0, result, fixture: f };
+    },
+  },
+  {
+    /**
+     * Twist the Knife (dirty.lua:151), and the first talent in the game to READ
+     * what a body is already suffering — `TalentCtx.extend`, the third status
+     * seam. It refuses a target with nothing wrong, so the case has to afflict
+     * the husk first; that is the talent's contract, not a fixture quirk.
+     */
+    bare: 'full_swing',
+    moves: 'turns added to each affliction',
+    authored: '2 turns',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5, ['generic/leverage']);
+      const husk = f.addMonster('husk', 6, 5);
+      // SOMETHING TO LENGTHEN. Applied straight through the seam rather than by
+      // another talent, so this case measures one thing.
+      f.ctx.status?.(husk, EffectId.Slowed, 3, {});
+      f.setLevel('caster', 'full_swing', level);
+      f.refill('caster');
+      const result = useTalent(f.engine, watchman, talentId('full_swing'), { x: 6, y: 5 }, f.ctx);
+      // WHAT IT ASKED FOR. See `statusCalls` — same rule, same reason.
+      return { observed: f.extendCalls[0]?.turns ?? 0, result, fixture: f };
     },
   },
 ];
