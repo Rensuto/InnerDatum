@@ -87,8 +87,8 @@
 
 import { FLAT_RESIST_INTERVAL, bound, rescaleCombatStats } from '../../shared/scale.ts';
 import type { Rng } from '../../shared/rng.ts';
-import { fireTakeDamage } from './hooks.ts';
-import type { BoundHooks, TurnProcs } from './hooks.ts';
+import { fireDealDamage, fireKill, fireTakeDamage } from './hooks.ts';
+import type { BoundHooks, HookHost, TurnProcs } from './hooks.ts';
 
 // ---------------------------------------------------------------------------
 // The damage-type registry
@@ -552,10 +552,105 @@ export type DamageTarget = {
   readonly y?: number;
 };
 
-/** Anything that can be blamed for a hit. Identity only; the maths is in the spec. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TELL THE ATTACKER WHAT THEY JUST DID. Notification only.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `fireDealDamage` and `fireKill` had no callers at all, so `leverage.ts`'s heal
+ * ("the first blow you land each turn returns N hit points to you") and
+ * `nerve.ts`'s kill payoff never ran. Both talents were written, reviewed,
+ * tested against their own hook bodies, and reachable by nothing.
+ *
+ * ═══ THE SOURCE ITSELF IS THE HOST, NEVER A COPY ═══
+ * `hasBody` narrows the argument in place, so the object handed to the
+ * dispatchers is the attacker's actual body and a hook that writes `ctx.self.hp`
+ * writes to the actor. Assembling a literal from these fields would compile,
+ * run, fire, and heal a temporary — see the note at the turn-start fire site in
+ * engine/talents.ts, which is where that mistake was made and caught.
+ *
+ * ═══ DEAL BEFORE KILL, BECAUSE A KILL IS ALSO A HIT ═══
+ * A blow that finishes a body is both, and the order is the one the sentences
+ * imply: "when you land a blow" resolves before "when you kill something". A
+ * talent doing both sees them in that order rather than in whichever order this
+ * function happened to be written.
+ *
+ * ═══ IT TAKES NO RNG DRAW ═══
+ * The long note at the death branch below states the rule: adding a draw inside
+ * `applyDamage` shifts every subsequent draw for the rest of the session. A
+ * `TalentHooks` implementation is handed no `Rng` and cannot reach one, so this
+ * call cannot move a replay.
+ */
+function notifySource(
+  source: DamageSource,
+  targetId: string,
+  dam: number,
+  type: DamageType,
+  crit: boolean,
+  killed: boolean,
+): void {
+  if (!hasBody(source)) return;
+  fireDealDamage(source, { targetId, dam, type, crit, killed });
+  if (killed) fireKill(source, targetId);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ANYTHING THAT CAN BE BLAMED FOR A HIT. The maths is still in the spec.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was `{ id }` and its comment said "identity only". That was true of the
+ * maths and it is what made `fireDealDamage` and `fireKill` unreachable: both
+ * dispatchers need the ATTACKER's body, and `applyDamage` was handed a name tag.
+ * Two hooks shipped with a context type, a dispatch loop, and no way to be
+ * called — `leverage.ts`'s heal and `nerve.ts`'s kill payoff never ran.
+ *
+ * ═══ EVERY FIELD OPTIONAL, WHICH IS NOT LAZINESS ═══
+ * The same shape `DamageTarget` above uses, for the same reason its own note
+ * gives: a caller with nothing but an id — a trap, a bleed with a dead author,
+ * a fixture — keeps compiling untouched and simply grows no hooks. `hasBody`
+ * below is the one place that decides whether there is enough here to fire.
+ *
+ * `hp` IS MUTABLE because a hook writes to it: `leverage.ts` heals the attacker
+ * on the blow it landed. That write must reach the real body, which is why this
+ * type describes the actor rather than a copy of it — see the fire site.
+ */
 export type DamageSource = {
   readonly id: string;
+  readonly name?: string;
+  hp?: number;
+  readonly maxHp?: number;
+  readonly alive?: boolean;
+  readonly x?: number;
+  readonly y?: number;
+  readonly talentHooks?: readonly BoundHooks[];
+  readonly turnProcs?: TurnProcs;
 };
+
+/**
+ * IS THERE ENOUGH OF A BODY HERE TO RUN A HOOK ON?
+ *
+ * A TYPE PREDICATE RATHER THAN A CAST, and it narrows the ARGUMENT rather than
+ * returning a new object. That is the whole point: `ctxFor` sets `self: host`,
+ * so a hook that mutates writes into whatever object it was handed. Returning a
+ * literal assembled from these fields would take the write and discard it — the
+ * bug `talents.ts`'s turn-start fire site records having made once already.
+ *
+ * The checks are exactly `HookSelf`'s required members. A body missing any of
+ * them is a source that was never an actor, and it fires nothing.
+ */
+function hasBody(source: DamageSource): source is DamageSource & HookHost {
+  return (
+    source.talentHooks !== undefined &&
+    source.talentHooks.length > 0 &&
+    source.name !== undefined &&
+    source.hp !== undefined &&
+    source.maxHp !== undefined &&
+    source.alive !== undefined &&
+    source.x !== undefined &&
+    source.y !== undefined
+  );
+}
 
 export type DamageOutcome = {
   /** HP actually removed — never more than the target had. What the log prints. */
@@ -717,8 +812,10 @@ export function applyDamage(
      * inside `applyDamage`, and say in the commit what it costs.
      */
     target.alive = false;
+    notifySource(source, target.id ?? '', dealt, type, resolved.crit, true);
     return { ...empty, dealt, killed: true };
   }
 
+  notifySource(source, target.id ?? '', dealt, type, resolved.crit, false);
   return { ...empty, dealt };
 }

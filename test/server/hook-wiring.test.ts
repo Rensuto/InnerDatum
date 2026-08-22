@@ -9,6 +9,11 @@ import { regenAt, walkItOff } from '../../src/server/talents/walk_it_off.ts';
 import { talentLevelOf } from '../../src/server/engine/talents.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { trained } from '../helpers/trained.ts';
+import { bloodPrice, returnedAt } from '../../src/server/talents/leverage.ts';
+import { reliefAt, stillStanding } from '../../src/server/talents/nerve.ts';
+import { applyDamage, DamageType } from '../../src/server/engine/damage.ts';
+import { createTurnProcs } from '../../src/server/engine/hooks.ts';
+import { createRng } from '../../src/shared/rng.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -117,5 +122,100 @@ describe('the turn-start hooks are actually fired', () => {
     body.hp = body.maxHp - 20;
     engine.actBase('p1', world);
     expect(body.hp).toBe(body.maxHp - 20);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE OTHER TWO DISPATCHERS, WHICH HAD NO CALLERS EITHER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `fireDealDamage` and `fireKill` were unreachable for a structural reason
+ * rather than an oversight: `DamageSource` was `{ id }` and its comment said
+ * "identity only", so `applyDamage` was handed a name tag and could not reach
+ * the attacker's hooks however much it wanted to.
+ *
+ * `leverage.ts`'s Blood Price ("the first blow you land each turn returns N hit
+ * points to you") and `nerve.ts`'s Still Standing ("recover N hit points every
+ * time you kill something") therefore never ran.
+ *
+ * THESE GO THROUGH `applyDamage`. Calling `bloodPrice.hooks.onDealDamage(ctx)`
+ * by hand is what the existing tests for these talents do, and it is why nobody
+ * noticed — see this file's header.
+ */
+describe('the attacker’s own hooks are fired by the damage pipeline', () => {
+  /** An attacker carrying one hooked talent, and something to hit. */
+  function pair(talent: typeof bloodPrice, level = 1) {
+    const world = createWorld('deal-hooks');
+    const attacker = world.addPlayer('p1', 'Ren', { maxHp: WATCHMAN.maxHp });
+    const victim = world.addPlayer('p2', 'Mal', { maxHp: WATCHMAN.maxHp });
+    attacker.talentHooks = [{ talentId: talent.id, level, hooks: talent.hooks ?? {} }];
+    attacker.turnProcs = createTurnProcs();
+    return { world, attacker, victim };
+  }
+
+  it('returns hit points to the attacker on the blow it landed', () => {
+    const { attacker, victim } = pair(bloodPrice);
+    attacker.hp = attacker.maxHp - 20;
+    const before = attacker.hp;
+
+    applyDamage(victim, 5, DamageType.Physical, attacker, createRng('deal'));
+
+    expect(attacker.hp, 'the deal-damage hook did not fire').toBe(before + returnedAt(1));
+  });
+
+  /**
+   * ONCE A TURN, WHICH IS THE TALENT'S OWN LATCH AND NOT THIS FILE'S RULE.
+   * `leverage.ts` guards on `procs.once` so an area effect cannot pay per body;
+   * the latch lives on the attacker and the fire site borrows it rather than
+   * making a fresh one, which is the difference between a guard and a decoration.
+   */
+  it('pays only once a turn however many blows land', () => {
+    const { attacker, victim } = pair(bloodPrice);
+    attacker.hp = attacker.maxHp - 20;
+    const before = attacker.hp;
+
+    const rng = createRng('deal-twice');
+    applyDamage(victim, 5, DamageType.Physical, attacker, rng);
+    applyDamage(victim, 5, DamageType.Physical, attacker, rng);
+
+    expect(attacker.hp, 'a second blow paid again').toBe(before + returnedAt(1));
+  });
+
+  it('pays the kill hook when the blow finishes the body', () => {
+    const { attacker, victim } = pair(stillStanding);
+    attacker.hp = attacker.maxHp - 20;
+    const before = attacker.hp;
+    victim.hp = 1;
+
+    const out = applyDamage(victim, 50, DamageType.Physical, attacker, createRng('kill'));
+
+    expect(out.killed, 'the fixture did not actually kill anything').toBe(true);
+    expect(attacker.hp, 'the kill hook did not fire').toBe(before + reliefAt(1));
+  });
+
+  /** A blow that does NOT kill pays nothing — the hook is a kill payoff. */
+  it('pays the kill hook nothing for a blow that leaves the body up', () => {
+    const { attacker, victim } = pair(stillStanding);
+    attacker.hp = attacker.maxHp - 20;
+    const before = attacker.hp;
+
+    applyDamage(victim, 1, DamageType.Physical, attacker, createRng('graze'));
+
+    expect(attacker.hp).toBe(before);
+  });
+
+  /**
+   * AND A SOURCE THAT IS ONLY A NAME TAG FIRES NOTHING. A trap, a bleed whose
+   * author is gone, a fixture passing `{ id }` — `hasBody` refuses all of them
+   * rather than throwing, which is what keeps every existing caller compiling
+   * and behaving exactly as it did.
+   */
+  it('does nothing when the source is an id and no body', () => {
+    const { victim } = pair(bloodPrice);
+    const before = victim.hp;
+    const out = applyDamage(victim, 5, DamageType.Physical, { id: 'trap' }, createRng('trap'));
+    expect(out.dealt).toBeGreaterThan(0);
+    expect(victim.hp).toBeLessThan(before);
   });
 });
