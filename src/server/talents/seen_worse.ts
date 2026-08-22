@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// NUMBERS: t-engine4 game/modules/tome/data/talents/techniques/weaponshield.lua:297
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/weaponshield.lua:297
 //          Shield Expertise -- `getPhysical = combatTalentScale(t, 5, 20, 0.75)`.
+// NUMBERS: the CURVE is upstream's; the BAND is not. Upstream pays 5..20 flat,
+//          this pays 10..35 scaled by MISSING HEALTH -- see `gritAt`, which
+//          states why a proportional talent needs the higher headline.
+//          The 5..20 version shipped first and its `physResistAt` outlived it by
+//          several commits, exported and called by nothing. Deleted rather than
+//          kept "for reference": the citation above is the reference.
 // CUT:     its paired second save at :298 is NOT ported.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
@@ -29,15 +35,8 @@ import { DamageType } from '../engine/damage.ts';
 import { Affinity, ClassId, TalentKind, TargetShape } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** ToME's physical-save band, verbatim -- weaponshield.lua:297. */
-const RESIST_LOW = 5;
-const RESIST_HIGH = 20;
+/** ToME's curve exponent, verbatim -- weaponshield.lua:297. The band is not; see the header. */
 const CURVE = 0.75;
-
-/** Physical resistance at a rank. */
-export function physResistAt(level: number): number {
-  return Math.round(combatTalentScale(level, RESIST_LOW, RESIST_HIGH, CURVE));
-}
 
 /** The grit band. Paid only in proportion to missing health. */
 const GRIT_LOW = 10;
