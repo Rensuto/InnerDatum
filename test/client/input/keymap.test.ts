@@ -191,13 +191,14 @@ describe('the action registry', () => {
     expect(ACTIONS.map((action) => action.order)).toEqual(ACTIONS.map((_, index) => index + 1));
   });
 
-  it('names 31 actions, and stays under the cap the wire was sized for', () => {
+  it('names 34 actions, and stays under the cap the wire was sized for', () => {
     // src/shared/protocol.ts justifies the wire cap with an enumeration, and if
     // the table outgrows it a complete keymap starts getting refused as
     // `bad_message` with nobody able to guess why. THE SECOND ASSERTION IS THE
     // ONE THAT MATTERS; the first is here so growing the table stays a
-    // deliberate act with a diff. 29 -> 31 when the bar gained slots 5 and 6.
-    expect(ACTIONS).toHaveLength(31);
+    // deliberate act with a diff. 29 -> 31 when the bar gained slots 5 and 6;
+    // 31 -> 34 when it gained 7, 8 and 9 and became one row of nine keys.
+    expect(ACTIONS).toHaveLength(34);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 
@@ -374,13 +375,13 @@ describe('reset', () => {
 describe('a locked action refuses every write', () => {
   const LOCKED = ACTIONS.filter((action) => !action.rebindable).map((action) => action.id);
 
-  it('is exactly cancel and the six hotbar digits', () => {
+  it('is exactly cancel and the nine hotbar digits', () => {
     // Escape because it is the command line's only exit and the escape menu's
     // opener, so freezing it keeps RESET ALL one press away whatever else the
     // player has done. The digits because src/client/ui/hotbar.ts:391 PAINTS
     // `${i + 1}` on each slot, and a rebound digit makes four on-screen buttons
     // lie with no art budget to redraw them.
-    // Slots 5 and 6 are locked for the same reason 1-4 are: `ui/hotbar.ts`
+    // Slots 5 to 9 are locked for the same reason 1-4 are: `ui/hotbar.ts`
     // PAINTS the slot number on every square, so a rebound digit makes an
     // on-screen button lie.
     expect(LOCKED).toEqual([
@@ -391,6 +392,9 @@ describe('a locked action refuses every write', () => {
       'hotbar_4',
       'hotbar_5',
       'hotbar_6',
+      'hotbar_7',
+      'hotbar_8',
+      'hotbar_9',
     ]);
   });
 

@@ -725,6 +725,62 @@ export const ACTIONS = [
     rebindable: false,
   },
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SLOTS 7, 8 AND 9 — THE REST OF THE DIGIT ROW, ON THE PRECEDENT ABOVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Nothing new is being argued here. Slots 5 and 6 established that a
+   * code-bound digit cannot be reached from the numpad — `Digit7` and `Numpad7`
+   * are different strings — and these are the same binding on the next three
+   * caps. `move_northwest` keeps Numpad7, `move_north` keeps Numpad8 and
+   * `move_northeast` keeps Numpad9, untouched and unreachable from here.
+   *
+   * ═══ THE BAR WAS SIX BUTTONS WIDE ON A SCREEN THAT FITS THIRTEEN ═══
+   * Ten slots occupied 476 of the 640 logical pixels the backbuffer floors at,
+   * so a third of the bar was bare canvas while three of the digit row's caps
+   * did nothing. Nine talent slots plus the four item slots is 620 — the widest
+   * whole-slot row that still fits the FLOOR, so this costs no viewport its
+   * buttons.
+   *
+   * ═══ EMPTY SLOTS ARE THE POINT, NOT A COST ═══
+   * A class authors six actives today, so slots 7-9 start bare. That is what a
+   * bar with room to grow looks like, and it is upstream's picture too — ToME
+   * paints the whole row and leaves the unused squares empty rather than
+   * shrinking the bar to what you happen to own. The alternative is a bar that
+   * changes width as you level, which moves every button under your fingers.
+   */
+  {
+    id: 'hotbar_7',
+    name: 'Talent slot 7',
+    group: 'Hotbar',
+    order: 29,
+    effect: { kind: 'slot', slot: 6 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Digit7' }],
+    rebindable: false,
+  },
+  {
+    id: 'hotbar_8',
+    name: 'Talent slot 8',
+    group: 'Hotbar',
+    order: 30,
+    effect: { kind: 'slot', slot: 7 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Digit8' }],
+    rebindable: false,
+  },
+  {
+    id: 'hotbar_9',
+    name: 'Talent slot 9',
+    group: 'Hotbar',
+    order: 31,
+    effect: { kind: 'slot', slot: 8 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Digit9' }],
+    rebindable: false,
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════
   // LOG
   // ═══════════════════════════════════════════════════════════════════════════
@@ -732,7 +788,7 @@ export const ACTIONS = [
     id: 'toggle_log',
     name: 'Case Log',
     group: 'Log',
-    order: 29,
+    order: 32,
     effect: { kind: 'ui', command: 'toggle_log' },
     // THE KEY IS CHOSEN, NOT PORTED, AND THIS SAYS SO RATHER THAN DRESSING A
     // GUESS AS A CITATION. ToME has a SHOW_MESSAGE_LOG action and its Classic HUD
@@ -760,7 +816,7 @@ export const ACTIONS = [
     id: 'scroll_back',
     name: 'Scroll the log back',
     group: 'Log',
-    order: 30,
+    order: 33,
     // +1 is BACK IN TIME, matching what Page Up does in every document ever
     // written. Shift picks the other lane, and that is a fact about a panel
     // rather than about a key, so it is not an action here.
@@ -773,7 +829,7 @@ export const ACTIONS = [
     id: 'scroll_forward',
     name: 'Scroll the log forward',
     group: 'Log',
-    order: 31,
+    order: 34,
     effect: { kind: 'scroll', steps: -1 },
     defaults: [{ kind: 'key', value: 'pagedown' }],
     fixed: [],

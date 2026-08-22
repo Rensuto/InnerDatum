@@ -265,9 +265,38 @@ const PANEL_W = 360;
  * them, extra window buys nothing because there are only 29 rows to show.
  */
 const KEYS_FILL_W = 0.62;
-const KEYS_FILL_H = 0.92;
+/**
+ * ═══ 0.92 -> 0.96 AND 640 -> 704, BECAUSE THE TABLE GREW AND MISSED BY TWO ═══
+ * The bar gained talent slots 7, 8 and 9, so `ACTIONS` went 31 -> 34 and, since
+ * every hotbar digit is LOCKED, three of the new rows are `LOCKED_ROW_H` rather
+ * than `ROW_H`. The table's content height:
+ *
+ *   34 rows x 12  +  10 locked x 10 extra  +  5 group headings x 18  =  598
+ *   chrome = HEADER_H 24 + INSET 8 x2 + STATUS_H 12 + FOOTER_H 14    =   66
+ *                                                            panel  =  664
+ *
+ * At 1280x720 the old pair offered `min(0.92 x 720, 640)` = 640, and before the
+ * cap even applied the FILL was 662 — TWO PIXELS under. The keys screen started
+ * showing `1–30 of 34`, breaking the one property this sizing exists for: on a
+ * normal monitor you read your keybinds, you do not page through them.
+ *
+ * 0.96 x 720 = 691, so the content band is 625 against the 598 it needs — a bit
+ * over two rows of headroom, and the max is raised past it so the fill is what
+ * decides at 720p rather than the cap.
+ *
+ * ═══ THE HEADROOM IS THIN AND THE REASON IS `LOCKED_ROW_H` ═══
+ * Its own note reads "five rows in twenty-six are locked, so the whole cost of
+ * doing it properly is fifty pixels." It is TEN rows in thirty-four now, which
+ * is a hundred — and nine of those ten carry the SAME sentence, because every
+ * hotbar digit is locked for the identical reason. That sentence belongs to the
+ * Hotbar GROUP, not to nine rows of it, and `MenuRowKind.Note` already exists to
+ * say it once. Doing that returns ninety pixels and this pair could go back
+ * down; it is a layout change rather than a sizing one, so it is not smuggled in
+ * here.
+ */
+const KEYS_FILL_H = 0.96;
 const KEYS_MAX_W = 560;
-const KEYS_MAX_H = 640;
+const KEYS_MAX_H = 704;
 const PANEL_MIN_W = KEY_ROW_MIN_W + INSET * 2;
 /** The same cap ui/talents.ts:188 uses. A taller panel is a modal in a costume. */
 const PANEL_MAX_H = 252;
@@ -548,17 +577,30 @@ export type EscapeMenuView = {
  * rather than on the record because it is a SENTENCE FOR A SCREEN, and
  * keymap.ts is read by the dispatcher, which has no screen.
  */
-function lockReason(action: ActionDef): string {
-  // ui/hotbar.ts:953-957 paints `${index + 1}` as the label of each of the FOUR
-  // KEYED slots (the bar is eight wide now; the four item slots carry no digit
-  // precisely because no key sends them), so a rebound digit makes four
-  // on-screen buttons lie — and the manifest has no keycap glyphs to redraw
-  // them with.
-  if (action.group === 'Hotbar') return 'the digit is painted on the slot';
+function lockReason(action: ActionDef): string | null {
+  // SAID ONCE UNDER THE HEADING instead, by `sharedLockReason` — see the note
+  // in `keysRows`. Null here is what keeps the row at `ROW_H`.
+  if (sharedLockReason(action.group) !== null) return null;
   // keys.ts calls Escape "the one key in the game that means put that back"; it
   // is also this menu's opener, so freezing it is what makes RESET ALL reachable
   // no matter what the player has done to the rest of the keyboard.
   return 'Escape must always reach this menu';
+}
+
+/**
+ * A reason that belongs to a whole GROUP, drawn once under its heading.
+ *
+ * ONE GROUP HAS ONE, and the shape is deliberately a lookup rather than a
+ * boolean: the next group that locks all of its members for a single reason
+ * gets a line here and needs no other change.
+ *
+ * ui/hotbar.ts paints `${index + 1}` as the label of every TALENT slot — the
+ * four item slots carry no digit precisely because no key sends them — so a
+ * rebound digit makes an on-screen button lie, and the manifest has no keycap
+ * glyphs to redraw one with.
+ */
+function sharedLockReason(group: KeyGroup): string | null {
+  return group === 'Hotbar' ? 'these digits are painted on the slots' : null;
 }
 
 /** One root entry, with its live key. */
@@ -755,6 +797,25 @@ function keysRows(view: EscapeMenuView): readonly MenuRow[] {
     const members = ACTIONS.filter((action) => action.group === group);
     if (members.length === 0) continue;
     rows.push({ kind: MenuRowKind.Section, label: group });
+    /**
+     * ═══ THE HOTBAR'S LOCK REASON IS THE GROUP'S, NOT NINE ROWS' ═══
+     * Every action in this group is locked for the identical reason, so the
+     * sentence went on all nine rows and cost each of them the ten extra pixels
+     * of `LOCKED_ROW_H`. Ninety pixels to say one thing nine times.
+     *
+     * It was affordable at four rows and it stopped being affordable at nine:
+     * the table outgrew the band at 1280x720 and the keys screen began paging —
+     * `1-30 of 34` — which breaks the property the whole fill-sizing exists for.
+     * Raising the caps could not fix it; even a fill of 1.0 was sixteen pixels
+     * short, because the band is the space between the HUD and the hotbar and
+     * not the window.
+     *
+     * So it is said ONCE, here, where a reader meets the group. `MenuRowKind.Note`
+     * already existed for exactly this — a sentence about the screen rather than
+     * about a row.
+     */
+    const shared = sharedLockReason(group);
+    if (shared !== null) rows.push({ kind: MenuRowKind.Note, text: shared });
     for (const action of [...members].sort((a, b) => a.order - b.order)) {
       rows.push(actionRow(action, view));
     }
@@ -1108,7 +1169,10 @@ function rowHeight(row: MenuRow): number {
     case MenuRowKind.Section:
       return SECTION_H;
     case MenuRowKind.Action:
-      return row.locked ? LOCKED_ROW_H : ROW_H;
+      // THE SECOND LINE IS WHAT COSTS THE PIXELS, so the question is whether
+      // this row carries a reason — not whether it is locked. A row locked for
+      // a reason its GROUP already states has nothing to put on line two.
+      return row.reason !== null ? LOCKED_ROW_H : ROW_H;
     case MenuRowKind.Status:
       return STATUS_H;
     case MenuRowKind.Footer:

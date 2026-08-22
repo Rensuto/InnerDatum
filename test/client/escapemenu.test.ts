@@ -464,8 +464,9 @@ describe('the keys screen', () => {
     expect(north?.fixed).toBe('Up / Num8');
   });
 
-  it('marks the seven locked actions with a word AND a reason', () => {
-    const locked = actionRows(keysRows()).filter((row) => row.locked);
+  it('marks every locked action, and a reason is reachable for each', () => {
+    const rows = keysRows();
+    const locked = actionRows(rows).filter((row) => row.locked);
     expect(locked.map((row) => row.actionId)).toEqual([
       'cancel',
       'hotbar_1',
@@ -474,10 +475,31 @@ describe('the keys screen', () => {
       'hotbar_4',
       'hotbar_5',
       'hotbar_6',
+      'hotbar_7',
+      'hotbar_8',
+      'hotbar_9',
     ]);
-    for (const row of locked) {
-      expect(row.reason, row.actionId).not.toBeNull();
-      expect((row.reason ?? '').length).toBeGreaterThan(10);
+    /**
+     * ═══ THE REASON MOVED, IT DID NOT GO ═══
+     * This asserted a per-row `reason` on all seven locked rows. Nine of the ten
+     * are hotbar digits locked for the IDENTICAL reason, and repeating it cost
+     * each row the extra ten pixels of `LOCKED_ROW_H` — ninety pixels to say one
+     * thing nine times, which is what pushed the table off one page at 1280x720.
+     *
+     * The property that matters is that a reader can find out WHY, not that the
+     * sentence is stamped on every line. So: `cancel` keeps its own, and the
+     * Hotbar group states its own once as a Note.
+     */
+    const cancel = locked.find((row) => row.actionId === 'cancel');
+    expect(cancel?.reason ?? '').toContain('Escape');
+
+    const notes = rows.filter((row) => row.kind === MenuRowKind.Note);
+    expect(notes.length).toBe(1);
+    expect((notes[0]?.kind === MenuRowKind.Note ? notes[0].text : '').length).toBeGreaterThan(10);
+
+    // AND NO HOTBAR ROW REPEATS IT, which is the whole saving.
+    for (const row of locked.filter((r) => r.actionId.startsWith('hotbar_'))) {
+      expect(row.reason, row.actionId).toBeNull();
     }
     // A LOCKED ROW SHOWS ITS FIXED KEYS, NOT '--'. Both have empty `defaults` —
     // that is what makes them unreachable by a remap — so reading the overlay
@@ -955,9 +977,18 @@ describe('drawing', () => {
     expect(texts).toContain('RESET ALL');
     expect(texts).toContain('BACK');
     // WORDS AND A COUNT, never a bar (ui/caselog.ts:464-478).
-    // 29 -> 31 when the bar gained slots 5 and 6. The COUNT is the assertion; the
-    // pager reads it off `ACTIONS`, so it follows the table by construction.
-    expect(texts.some((t) => /\d+–\d+ of 31/.test(t))).toBe(true);
+    //
+    // DERIVED FROM `ACTIONS`, which this comment already claimed: it said "the
+    // pager reads it off `ACTIONS`, so it follows the table by construction"
+    // directly above a typed `31`. It did not follow anything — it had to be
+    // retyped at 29 -> 31 and again at 31 -> 34, and in between it was a
+    // change-detector on a number nobody chose.
+    // Shape and count checked separately, so neither needs a built pattern:
+    // a regex assembled from a template literal has an escaping layer that
+    // silently turns `\\d` into a literal `d`.
+    const pager = texts.find((t) => t.includes(' of '));
+    expect(pager).toMatch(/^\d+–\d+ of \d+$/);
+    expect(pager).toContain(` of ${String(ACTIONS.length)}`);
     // The permanent floor is on the row, so a rebind cannot look like a break.
     expect(texts.some((t) => t.includes('Up / Num8'))).toBe(true);
   });

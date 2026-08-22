@@ -223,12 +223,35 @@ export const HOTBAR_TOTAL_H = HOTBAR_H + HOTBAR_LABEL_H;
 /**
  * Slots 0-3: the class talents, on keys 1-4.
  *
- * The count is not this file's to choose — it is `LoadoutMsg.talents.length`,
- * four per class by PLAN.md's MVP cap. It is named here because the ITEM slots
- * begin where the talents end, and because the key digit is only ever drawn on
- * these.
+ * ═══ IT IS THE WIDTH THAT CHOOSES THIS, NOT THE CLASS ═══
+ * This note used to read *"the count is not this file's to choose — it is
+ * `LoadoutMsg.talents.length`, four per class by PLAN.md's MVP cap."* That was
+ * true of a bar that drew `loadout[n]` and it is not true of one drawn from
+ * BINDINGS: a slot is a box a player may put anything in, so what decides how
+ * many there are is how many FIT.
+ *
+ * ═══ NINE, BECAUSE THIRTEEN IS WHAT THE FLOOR HOLDS ═══
+ * `hotbarRowWidth(n)` is `44n + 4(n-1)`, and the backbuffer floors at 640
+ * logical pixels (render/canvas.ts, `DEFAULT_VIEWPORT.tilesW` 20 x `TILE_PX`
+ * 32). Solving `48n - 4 <= 640` gives thirteen slots. Four of those are the
+ * item half, so the talents get NINE and the whole row is 620 — twenty pixels
+ * of slack at the SMALLEST viewport this client can produce, which means no
+ * window size loses a drop target.
+ *
+ *   six talents + four items = 476px   a third of the floor left bare
+ *   nine talents + four items = 620px  the row the floor actually holds
+ *
+ * Ten would be 668 and would fit a 768-wide device while dropping the item
+ * slots at 640 — a bar whose contents depend on the window, which is the one
+ * outcome `hotbarVisibleCount` exists to make loud rather than to cause.
+ *
+ * ═══ AND NINE IS EXACTLY THE DIGIT ROW ═══
+ * Slots 7-9 are bound in input/keymap.ts by CODE (`Digit7`..`Digit9`), the
+ * precedent slots 5 and 6 set, so none of them can be reached from the numpad
+ * and `move_north`'s Numpad8 is untouched. Every talent slot on the bar has a
+ * key printed on it; the item slots remain mouse-only by the argument below.
  */
-export const HOTBAR_TALENT_SLOTS = 6;
+export const HOTBAR_TALENT_SLOTS = 9;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

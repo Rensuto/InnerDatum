@@ -2,7 +2,19 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_VIEWPORT } from '../../src/client/render/canvas.ts';
+import { TILE_PX } from '../../src/shared/version.ts';
 import { PANEL_CORNER } from '../../src/client/ui/panel.ts';
+
+/**
+ * THE NARROWEST BACKBUFFER THIS CLIENT CAN PRODUCE, DERIVED RATHER THAN TYPED.
+ *
+ * This was the literal 640 at four call sites. 640 is not a constant anybody
+ * chose — it is `DEFAULT_VIEWPORT.tilesW * TILE_PX`, and if either moves, a
+ * typed 640 keeps passing while asserting something about a floor that no
+ * longer exists. Both are exported; there is no reason to hold a copy.
+ */
+const FLOOR_W = DEFAULT_VIEWPORT.tilesW * TILE_PX;
 
 import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import {
@@ -239,18 +251,27 @@ describe('geometry', () => {
     expect(SLOT_PX).toBe(44);
   });
 
-  it('fits all ten slots on the narrowest backbuffer this client can render', () => {
-    // 10*44 + 9*4 = 476 against the 640 floor render/canvas.ts:344 pins with
-    // DEFAULT_VIEWPORT.tilesW 20. 164 pixels of slack — down from 260 when the
-    // bar was eight, and the reason `TALENTS_PER_CLASS` stopped at six rather
-    // than eight: twelve slots is 572 and the slack goes to 68.
-    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(476);
-    expect(hotbarVisibleCount(HOTBAR_SLOTS, 640)).toBe(HOTBAR_SLOTS);
+  it('fits every slot on the narrowest backbuffer this client can render', () => {
+    // 13*44 + 12*4 = 620 against the 640 floor render/canvas.ts pins with
+    // DEFAULT_VIEWPORT.tilesW 20. Twenty pixels of slack — down from 164 when
+    // the bar was ten, and the reason the talent half stopped at NINE rather
+    // than ten: fourteen slots is 668 and the floor stops holding them.
+    //
+    // THE SECOND ASSERTION IS THE INVARIANT and the first is its arithmetic.
+    // A bar that does not fit the floor does not merely look cramped — the
+    // fallback drops the four item slots, which are drop targets, and a drop
+    // target that is absent on small windows is the failure `hotbarVisibleCount`
+    // was written to make loud.
+    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(620);
+    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBeLessThanOrEqual(FLOOR_W);
+    expect(hotbarVisibleCount(HOTBAR_SLOTS, FLOOR_W)).toBe(HOTBAR_SLOTS);
+    // And one more slot would NOT fit, which is what pins the count at nine.
+    expect(hotbarRowWidth(HOTBAR_SLOTS + 1)).toBeGreaterThan(FLOOR_W);
 
-    const first = slotRect(0, HOTBAR_SLOTS, 640, 480);
-    const last = slotRect(HOTBAR_SLOTS - 1, HOTBAR_SLOTS, 640, 480);
+    const first = slotRect(0, HOTBAR_SLOTS, FLOOR_W, 480);
+    const last = slotRect(HOTBAR_SLOTS - 1, HOTBAR_SLOTS, FLOOR_W, 480);
     expect(first.x).toBeGreaterThanOrEqual(0);
-    expect(last.x + last.w).toBeLessThanOrEqual(640);
+    expect(last.x + last.w).toBeLessThanOrEqual(FLOOR_W);
   });
 
   it('round-trips every slot centre through the hit test at every viewport', () => {
@@ -608,7 +629,7 @@ describe('drawing', () => {
     expect(gone.strokes).toBeGreaterThan(0);
   });
 
-  it('draws the talent icons the manifest actually holds, and a digit only on keys 1-6', () => {
+  it('draws the talent icons the manifest actually holds, and a digit only on talent keys', () => {
     // ═══ THE INVISIBLE-PREREQUISITE CHECK ═══
     // `icon_active_*` is what every talent in src/server/talents/ declares and
     // what main.ts's loader prefix list now carries. The bar drew "AF AV B MW"
@@ -618,10 +639,17 @@ describe('drawing', () => {
     const { asked, texts } = paint(view());
     expect(asked).toContain('icon_active_fog_step');
 
-    // Exactly four digits, and they are 1..4. No digit on an item slot — those
-    // keys are Numpad5-9 and they walk you north (input/keymap.ts:1129-1133).
+    // One digit per TALENT slot, in order, and none on an item slot. The item
+    // half stays mouse-only: a digit there would have to be 0 or a punctuation
+    // cap, and `HOTBAR_ITEM_SLOTS`' own note argues that case.
+    //
+    // DERIVED FROM THE CONSTANT. This read `['1', '2', '3', '4']` under a
+    // comment saying "exactly four digits" while asserting six — the list and
+    // its explanation had already drifted apart once.
     const digits = texts.filter((t) => /^[0-9]$/.test(t));
-    expect(digits).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(digits).toEqual(
+      Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, i) => String(i + 1)),
+    );
   });
 
   it('never names a sprite id outside the manifest families that already exist', () => {
@@ -746,18 +774,21 @@ describe('a row that does not fit', () => {
     return { calls, texts };
   }
 
-  it('drops to the six TALENT slots — the half with keys — and says so in the strip', () => {
+  it('drops to the TALENT slots — the half with keys — and says so in the strip', () => {
     // STATED AS ARITHMETIC ON THE REAL CONSTANTS, which is what let this test
-    // survive the bar going from eight slots to ten without a number moving:
-    // ten slots are 476 wide and the six talents are 284, so the band that
-    // shows only the talents runs 284..475.
+    // survive the bar going eight -> ten -> thirteen slots without a number
+    // moving: thirteen slots are 620 wide and the nine talents are 428, so the
+    // band that shows only the talents runs 428..619.
     expect(hotbarVisibleCount(HOTBAR_SLOTS, hotbarRowWidth(HOTBAR_SLOTS) - 1)).toBe(
       HOTBAR_TALENT_SLOTS,
     );
 
     const { texts } = paintAt(hotbarRowWidth(HOTBAR_SLOTS) - 1);
-    // The six talent digits are still drawn; the item captions are gone.
-    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(['1', '2', '3', '4', '5', '6']);
+    // Every talent digit is still drawn; the item captions are gone. DERIVED,
+    // so raising the talent half does not need this list retyped.
+    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(
+      Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, i) => String(i + 1)),
+    );
     expect(texts).not.toContain('ITEM');
     // AND THE SENTENCE. The old painter had a bare `continue` here: four drop
     // targets simply were not painted and nothing anywhere said why.
