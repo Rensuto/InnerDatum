@@ -3104,18 +3104,30 @@ function affordable(talent: LoadoutTalent): boolean {
 }
 
 /**
- * THE BAR: FOUR CLASS TALENTS ON KEYS 1-4, THEN FOUR MOUSE-ONLY ITEM SLOTS.
+ * THE BAR: THE TALENT SLOTS ON THEIR DIGITS, THEN THE MOUSE-ONLY ITEM SLOTS.
  *
  * ═══ THE ARRAY IS POSITIONAL AND `isItemSlotIndex` DEPENDS ON IT ═══
- * ui/hotbar.ts hard-codes that index 4 is the first item slot, so the item slots
- * are appended ONLY when the loadout is exactly `HOTBAR_TALENT_SLOTS` long. A
- * short loadout (which `_loadoutArityCheck` in src/server/content/classes.ts
- * makes impossible today, and which would still be a real state on a build that
- * broke it) draws the talents alone rather than sliding four item slots down into
- * indices the drop test would call talents. An EMPTY loadout draws nothing at
- * all, exactly as before the item slots existed: the bar has not arrived yet, and
- * four drop targets floating over a bar with no buttons on it would advertise a
- * feature before the frame that gives it meaning.
+ * ui/hotbar.ts decides where the talents stop, and the item slots must begin
+ * exactly there or the drop test calls an item slot a talent.
+ *
+ * ═══ THAT USED TO BE A RUNTIME GUARD AND IT IS A STRUCTURAL FACT NOW ═══
+ * This note read: "the item slots are appended ONLY when the loadout is exactly
+ * `HOTBAR_TALENT_SLOTS` long. A short loadout ... draws the talents alone rather
+ * than sliding four item slots down into indices the drop test would call
+ * talents."
+ *
+ * That was true of a bar built by mapping over `loadout`, whose length is the
+ * CLASS's business. The bar is built from the BINDING STORE now — `Array.from({
+ * length: HOTBAR_TALENT_SLOTS })` — so the talent half is that many entries or
+ * the expression does not compile. The ternary that used to guard it compared a
+ * constant against itself and could not take its own false branch; a dead
+ * conditional that reads as a live constraint is worse than no conditional,
+ * because the next person to change the bar budgets for it.
+ *
+ * AN EMPTY LOADOUT still draws empty talent slots rather than nothing, which is
+ * the one behaviour that did change: the boxes arrive before the frame that
+ * fills them. That is the same picture a player sees for an unbound slot on a
+ * bar they have arranged, so it advertises nothing that is not already there.
  *
  * ═══ AND EVERY ITEM SLOT'S CAPTION IS RECOMPUTED, NEVER REMEMBERED ═══
  * A binding stores an `itemId`, a name and an icon and nothing else;
@@ -3179,7 +3191,9 @@ function hotbarView(): HotbarView {
 
   const armedId = targeting?.talent()?.id ?? null;
   return {
-    slots: talents.length === HOTBAR_TALENT_SLOTS ? [...talents, ...items] : talents,
+    // ALWAYS BOTH HALVES. See the note above: `talents` is built to exactly
+    // `HOTBAR_TALENT_SLOTS`, so the guard this replaced could not be false.
+    slots: [...talents, ...items],
     hovered: hoveredSlot,
     /**
      * ═══════════════════════════════════════════════════════════════════════════

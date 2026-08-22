@@ -691,13 +691,21 @@ export const ACTIONS = [
    * `Numpad5`, different strings, so a code-bound slot cannot be reached from the
    * numpad at all. `Keymap.slotByCode` is the other half of that pair.
    *
-   * ═══ THEY ARRIVE WITH THE TALENTS THAT FILL THEM, WHICH IS THE WHOLE NOTE ═══
-   * `client/main.ts` appends the item slots ONLY when the loadout is exactly
-   * `HOTBAR_TALENT_SLOTS` long, so raising that constant against classes that
-   * author four talents would not add empty squares — it would delete the item
-   * slots outright. `TALENTS_PER_CLASS` went 4 -> 6 in the same diff as
-   * `HOTBAR_TALENT_SLOTS`, and six actives per class landed with them. Two
-   * buttons with no key is a worse bar than four with one each.
+   * ═══ THEY NO LONGER HAVE TO ARRIVE WITH THE TALENTS THAT FILL THEM ═══
+   * This note read: "`client/main.ts` appends the item slots ONLY when the
+   * loadout is exactly `HOTBAR_TALENT_SLOTS` long, so raising that constant
+   * against classes that author four talents would not add empty squares — it
+   * would delete the item slots outright."
+   *
+   * That was a real hazard while the bar was built by mapping over `loadout`,
+   * whose length is the CLASS's business. It is built from the BINDING STORE
+   * now, to exactly `HOTBAR_TALENT_SLOTS` entries, so raising this constant adds
+   * EMPTY squares and takes nothing away — which is what let slots 7, 8 and 9
+   * ship against classes that author six actives.
+   *
+   * The half of the old argument that still stands is the one about keys: two
+   * buttons with no key is a worse bar than four with one each, which is why
+   * every slot added here arrives with a digit bound to it.
    *
    * SLOTS 1-4 STAY ON THEIR KEY BINDINGS. Moving them to codes would fix their
    * diagonal collision too, and would also change what a player on a non-QWERTY
