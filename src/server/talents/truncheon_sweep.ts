@@ -49,6 +49,21 @@ import {
 import type { Talent, TalentHit } from '../engine/talents.ts';
 import { percent } from '../engine/talents.ts';
 
+/**
+ * ═══ UPSTREAM CHARGES Resolve FOR THIS AND WE CHARGE NOTHING ═══
+ * `2hweapon.lua:22-58, Death Dance` carries ``stamina = 30``. The header above cites that
+ * talent for its cooldown and its damage; the resource line was not carried.
+ *
+ * ONE OF FIVE, all of them Watchman or Watchman/Inspector talents — see
+ * `tools/talent-costs.mjs`, which found them by reading every citation, and
+ * `shin_crack.ts`, which carries the long version of the argument. The five are
+ * why `tools/class-live.mjs` reports that neither class can spend its resource
+ * at level 1.
+ *
+ * NOT CHANGED HERE. The conversion is a real question — the pools are not the
+ * same size — and it is a balance decision on a live game. Recorded at the line
+ * so it is made deliberately rather than rediscovered.
+ */
 const AP_COST = 4;
 const COOLDOWN = 4;
 /** One tile out, which is every neighbour including the diagonals. */

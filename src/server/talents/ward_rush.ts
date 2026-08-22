@@ -66,6 +66,21 @@ import type { Talent } from '../engine/talents.ts';
  * spend path a rebate, and `canUseTalent` would stop being a pure predicate
  * over static data.
  */
+/**
+ * ═══ UPSTREAM CHARGES Resolve FOR THIS AND WE CHARGE NOTHING ═══
+ * `weaponshield.lua:23-45, Shield Pummel` carries ``stamina = 8``. The header above cites that
+ * talent for its cooldown and its damage; the resource line was not carried.
+ *
+ * ONE OF FIVE, all of them Watchman or Watchman/Inspector talents — see
+ * `tools/talent-costs.mjs`, which found them by reading every citation, and
+ * `shin_crack.ts`, which carries the long version of the argument. The five are
+ * why `tools/class-live.mjs` reports that neither class can spend its resource
+ * at level 1.
+ *
+ * NOT CHANGED HERE. The conversion is a real question — the pools are not the
+ * same size — and it is a balance decision on a live game. Recorded at the line
+ * so it is made deliberately rather than rediscovered.
+ */
 const AP_COST = 2;
 /**
  * MELEE REACH — 1.5, NOT 1, AND THE ARITHMETIC IS THE WHOLE JUSTIFICATION.

@@ -47,6 +47,21 @@ import {
 } from '../engine/talents.ts';
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
+/**
+ * ═══ UPSTREAM CHARGES Focus FOR THIS AND WE CHARGE NOTHING ═══
+ * `archery.lua:318-345, Fragmentation Shot` carries ``stamina = 12``. The header above cites that
+ * talent for its cooldown and its damage; the resource line was not carried.
+ *
+ * ONE OF FIVE, all of them Inspector or Watchman/Inspector talents — see
+ * `tools/talent-costs.mjs`, which found them by reading every citation, and
+ * `shin_crack.ts`, which carries the long version of the argument. The five are
+ * why `tools/class-live.mjs` reports that neither class can spend its resource
+ * at level 1.
+ *
+ * NOT CHANGED HERE. The conversion is a real question — the pools are not the
+ * same size — and it is a balance decision on a live game. Recorded at the line
+ * so it is made deliberately rather than rediscovered.
+ */
 const AP_COST = 4;
 const COOLDOWN = 4;
 const RANGE = 5;
