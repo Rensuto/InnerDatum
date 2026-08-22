@@ -44,7 +44,7 @@ import { dirname, resolve } from 'node:path';
 import { WebSocket } from 'ws';
 
 import { PROTOCOL_VERSION } from '../src/shared/version.ts';
-import { EffectId } from '../src/server/content/effects.ts';
+import { EFFECT_IDS } from '../src/server/content/effects.ts';
 import { canWalk } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 
@@ -124,10 +124,65 @@ const drainLog = () => {
 };
 
 const beat = (title) => console.log(`\n──── ${title}`);
+/**
+ * RETURNS WHAT IT PRINTED, so a caller can READ the verdict instead of inferring
+ * it from the absence of a badge. See `effectVerdict`.
+ */
 const printLog = () => {
   const lines = drainLog();
   if (lines.length === 0) console.log('  (the log said nothing)');
   for (const l of lines) console.log(`  ${l}`);
+  return lines;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE SERVER DECIDED ABOUT THE STUN — READ OFF ITS OWN WORDS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ "NO BADGE" WAS THREE DIFFERENT ANSWERS WEARING ONE WORD ═══
+ * This tool pressed Lockdown once and reported `a stun reached this client: no`
+ * whenever a badge failed to turn up. Three unrelated things produce that:
+ *
+ *   1. THE SAVE HELD. The status system ran, rolled, and refused the effect.
+ *      Nothing is broken — the pipeline carried a "no". This is the COMMON
+ *      case, and it was being reported as a failure of the pipeline.
+ *   2. THE STUN LANDED AND NO BADGE ARRIVED. The actual seam failure this file
+ *      exists to catch.
+ *   3. NOTHING RESOLVED AT ALL — the press never reached the talent.
+ *
+ * A run that cannot separate 1 from 2 cannot answer the question in this file's
+ * title, and it spent a run saying "no" about a working pipeline. That is the
+ * same false negative `waitForBadges` was written to stop, one layer up.
+ *
+ * ═══ IT MUST MATCH WHICHEVER TALENT WAS ACTUALLY PRESSED ═══
+ * Lockdown is the only stun and it is NOT LEARNED AT LEVEL 1, so this tool
+ * usually presses Shin Crack instead and says so — see the `stand-in` line. The
+ * first version of this classifier looked only for Lockdown's stun phrasing and
+ * therefore returned `NOTHING` on every run, reporting *"the press never reached
+ * the talent"* about a slow that had landed perfectly well.
+ *
+ * That is the same mistake in miniature that this whole file exists to catch: an
+ * instrument confidently measuring something it was not pointed at. Both talents
+ * are matched now, because either one proves the pipeline.
+ *
+ *   lockdown.ts   `is stunned (N turns)` · `saves — stunned N, not M` · `shrugs it off`
+ *   shin_crack.ts `is slowed for N turns` · `shakes it off`
+ *
+ * The partial save is why this cannot be a two-way test: it is a save AND a
+ * landing, and it is precisely the case where a missing badge is a real bug.
+ *
+ * PROSE RATHER THAN A CODE, and that is a real weakness stated rather than
+ * hidden: the wire carries the sentence, not the outcome enum. Editing those
+ * strings blinds this classifier — which is the cost of the rule this whole file
+ * is built on, that nothing here may reach into the server to check its work.
+ */
+const effectVerdict = (lines) => {
+  const text = lines.join(' | ');
+  if (/is stunned \(|is slowed for/.test(text)) return 'LANDED';
+  if (/saves . stunned/.test(text)) return 'LANDED_PARTIAL';
+  if (/shrugs it off|shakes it off/.test(text)) return 'SAVED';
+  return 'NOTHING';
 };
 
 /**
@@ -462,6 +517,8 @@ if (adjacent !== null && lockdown !== undefined) {
 }
 
 let stunSeen = false;
+/** What the server said about the effect it threw. See `effectVerdict`. */
+let verdict = 'NOTHING';
 if (adjacent === null) {
   console.log('  nothing adjacent and alive to stun.');
 } else if (lockdown === undefined) {
@@ -511,29 +568,69 @@ if (adjacent === null) {
         .map(([id, e]) => `${id}@${String(e.x)},${String(e.y)} ${e.alive ? 'alive' : 'DEAD'}`)
         .join(' ') || '(nothing else on the board)'),
   );
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WAIT FOR THE TALENT TO BE *USED*, NOT MERELY FOR NO ERROR TO ARRIVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This loop used to accept a tile the moment 220ms passed with no new `error`
+   * frame, and then print "Lockdown accepted". That is absence of evidence, and
+   * it was wrong in the quietest possible way: a run reported `accepted, aimed
+   * at 18,14`, no `used` frame for Lockdown ever arrived, no log line said
+   * *"Player 1 uses Lockdown"*, and the summary blamed the badge pipeline.
+   *
+   * The log printed under `PRESSED LOCKDOWN` was DRAINED HISTORY — Shin Crack
+   * resolving late from the previous phase — which is what made the false
+   * acceptance look like a real cast that lost its badge. A tool built to catch
+   * a system connected to nothing was itself asserting from nothing.
+   *
+   * `used` is the server saying it happened, by talent id. That is the only
+   * frame that means the press reached the talent, so it is the one waited for.
+   */
+  let usedBefore = 0;
+  const usedIt = () =>
+    frames.filter((f) => f.t === 'used' && f.ev?.talentId === lockdown.id).length > usedBefore;
+
   let accepted = null;
   for (const [dx, dy] of RING) {
     const at = { x: (caster?.x ?? 0) + dx, y: (caster?.y ?? 0) + dy };
-    const before = frames.filter((f) => f.t === 'error').length;
+    const errorsBefore = frames.filter((f) => f.t === 'error').length;
     // `TalentSchema` is a zod STRICT object and the tile goes in `target`, not
     // as loose `x`/`y` — a bare pair is refused as `bad_message` before it
     // reaches any game logic, which is what the first run of this tool did.
     send({ t: 'talent', talentId: lockdown.id, target: at });
-    await sleep(220);
-    if (frames.filter((f) => f.t === 'error').length === before) {
+
+    /**
+     * POLLED TO A DEADLINE RATHER THAN SLEPT PAST. A talent is an INTENT: it is
+     * accepted now and resolves when the clock asks, so the `used` frame comes
+     * back a beat later and a fixed 220ms sleep can end before either answer
+     * arrives. Whichever lands first — the use or the refusal — ends the wait.
+     */
+    const deadline = Date.now() + 1800;
+    while (Date.now() < deadline) {
+      if (usedIt()) break;
+      if (frames.filter((f) => f.t === 'error').length > errorsBefore) break;
+      await sleep(60);
+    }
+    if (usedIt()) {
       accepted = at;
       break;
     }
   }
   console.log(
     accepted === null
-      ? `  every tile around ${String(caster?.x)},${String(caster?.y)} was refused`
-      : `  Lockdown accepted, aimed at ${String(accepted.x)},${String(accepted.y)}`,
+      ? `  every tile around ${String(caster?.x)},${String(caster?.y)} was refused, ` +
+          `or was accepted and never resolved — no 'used' frame named it`
+      : `  ${lockdown?.name ?? 'the talent'} USED, aimed at ` +
+          `${String(accepted.x)},${String(accepted.y)} ` +
+          `(the server sent a 'used' frame naming it — not merely no error)`,
   );
   await sleep(500);
 
-  beat('PRESSED LOCKDOWN');
-  printLog();
+  beat(`PRESSED ${(lockdown?.name ?? 'THE TALENT').toUpperCase()}`);
+  // THE SERVER'S OWN WORDS ABOUT THE EFFECT, kept rather than only printed. See
+  // `effectVerdict` — "no badge" was three different answers wearing one word.
+  verdict = effectVerdict(printLog());
   // THE BADGE COMES BACK A BEAT AFTER THE CAST. See `waitForBadges`.
   const effectsBefore = frames.filter((f) => f.t === 'effects').length;
   const got = await waitForBadges();
@@ -543,6 +640,168 @@ if (adjacent === null) {
       `badges seen: ${got ? 'yes' : 'no'}`,
   );
   stunSeen = printEffects('badges');
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND PRESS AGAIN WHILE THE TARGET KEEPS SAVING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A SAVE IS AN HONEST ANSWER AND IT IS NOT THE ANSWER THIS FILE WANTS. The
+   * verdict classifier stopped runs being read as a broken pipeline when a husk
+   * made its roll — but "nothing is broken" is not the same claim as "a badge
+   * reached this client", and only the second one closes the seam this tool was
+   * written for. A tool that proves the pipeline only on lucky runs proves it on
+   * no run in particular.
+   *
+   * So: press again. Saves are independent rolls, so a handful of attempts turns
+   * a coin-flip into a near-certainty, and the loop stops the moment anything
+   * lands. It stops for the honest reasons too — the target dying, the caster
+   * dying, or the talent simply never being usable again — and SAYS WHICH,
+   * because "we ran out of attempts" and "the fight ended" are different facts
+   * about a run and only one of them is worth re-running.
+   */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY MORE TIMES TO TRY TO MAKE SOMETHING LAND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Five, and it is deliberately not more. Saves are independent rolls, so five
+   * extra presses turn a coin-flip into a near-certainty WHEN THE PRESS CAN BE
+   * MADE AT ALL. When it cannot — a melee stand-in against a ranged creature
+   * standing across water — no number helps, and the refusal printed each time
+   * says which of the two situations this run is in.
+   */
+  const MORE_ATTEMPTS = 5;
+  /**
+   * Turns to let pass before each retry. One more than `shin_crack.ts`'s
+   * `cooldownTurns: 3`, so the press is never the turn the cooldown expires on —
+   * a probe that lands exactly on the boundary reports a flake as a fault.
+   */
+  const COOLDOWN_PASSES = 4;
+  /** Steps to spend walking back into melee before a retry. See the loop. */
+  const CLOSE_STEPS = 6;
+  for (
+    let attempt = 1;
+    attempt <= MORE_ATTEMPTS && verdict === 'SAVED' && !stunSeen;
+    attempt += 1
+  ) {
+    if (board.get(selfId)?.alive === false) {
+      console.log(
+        `  stopped retrying: the caster is down after ${String(attempt - 1)} more press(es)`,
+      );
+      break;
+    }
+    const victim = [...board.entries()].find(([id, e]) => id !== selfId && e.alive);
+    if (victim === undefined) {
+      console.log(`  stopped retrying: nothing hostile left alive to mark`);
+      break;
+    }
+    /**
+     * WALK BACK INTO REACH FIRST. Shin Crack is a MELEE talent and the Index
+     * Cairn is a `RangedKiter` — it spends its turns backing away, so four turns
+     * of holding is four turns of it getting further off. The first version of
+     * this retry pressed from wherever the caster happened to be standing and
+     * reported "still not usable" five times, which was true and was a statement
+     * about DISTANCE rather than about cooldown, resource or reach.
+     */
+    for (let step = 0; step < CLOSE_STEPS; step += 1) {
+      const me = board.get(selfId);
+      const realmNow = lastRealm();
+      if (me === undefined || realmNow === undefined) break;
+      if (Math.abs(victim[1].x - me.x) <= 1 && Math.abs(victim[1].y - me.y) <= 1) break;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * `move` CARRIES A COMPASS `dir`, NOT A `{dx, dy}` PAIR.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The first version of this loop sent `{ t: 'move', dx, dy }` and the
+       * server refused all six steps with
+       *
+       *   bad_message: dir: Invalid option: expected one of "n"|"ne"|"e"|...;
+       *                Unrecognized keys: "dx", "dy"
+       *
+       * so the caster never took a step, stayed six tiles from a creature that
+       * spends its turns backing away, and every retry came back
+       * `out_of_range`. The retry loop then reported "still not usable
+       * (resource, reach, or the fight moved)" — true, unhelpful, and pointing
+       * at three things that were all innocent.
+       *
+       * `firstStep` is the same pathing helper the walk-into-a-fight phase uses
+       * at :319. Reusing it rather than writing a second direction calculation
+       * is what keeps this from drifting away from the shape the wire accepts.
+       */
+      const dir = firstStep(
+        (x, y) => canWalk(realmNow.level, x, y),
+        { x: me.x, y: me.y },
+        { x: victim[1].x, y: victim[1].y },
+      );
+      if (dir === undefined) break;
+      send({ t: 'move', dir });
+      await sleep(TURN_WAIT_MS * 4);
+    }
+    /**
+     * PASS TURNS FIRST, BECAUSE THE TALENT IS ON COOLDOWN.
+     *
+     * `shin_crack.ts` has `cooldownTurns: 3`. The first version of this retry
+     * slept 45ms between presses and reported *"not usable again (cooldown,
+     * resource, or out of reach)"* five times in a row — technically true, and
+     * useless: it had not let a single turn pass, so the cooldown it was
+     * blaming had no opportunity to tick.
+     *
+     * A cooldown ticks on GAME TURNS, not on wall clock, and the only way this
+     * client advances one is to take an action. `hold` is the cheapest.
+     */
+    for (let pass = 0; pass < COOLDOWN_PASSES; pass += 1) {
+      send({ t: 'hold' });
+      await sleep(TURN_WAIT_MS * 4);
+    }
+    /**
+     * AND PRESS AROUND THE RING, for the reason the first press does: the board
+     * here is rebuilt from deltas and is always one frame behind the creature.
+     * Aiming at the remembered tile misses by one square about half the time.
+     */
+    usedBefore = frames.filter((f) => f.t === 'used' && f.ev?.talentId === lockdown.id).length;
+    const from = board.get(selfId);
+    for (const [rx, ry] of RING) {
+      send({
+        t: 'talent',
+        talentId: lockdown.id,
+        target: { x: (from?.x ?? 0) + rx, y: (from?.y ?? 0) + ry },
+      });
+      await sleep(200);
+      if (usedIt()) break;
+    }
+
+    const deadline = Date.now() + 2500;
+    while (Date.now() < deadline && !usedIt()) await sleep(60);
+    if (!usedIt()) {
+      /**
+       * SAY WHAT THE SERVER SAID, NOT WHAT IT MIGHT HAVE MEANT.
+       *
+       * This line used to read "(resource, reach, or the fight moved)" — three
+       * guesses, none of them checked, printed five times in a row. The actual
+       * answer was on the wire the whole time: `out_of_range`, because the walk
+       * toward the target was itself being refused `illegal_move: refused at
+       * resolution: terrain`. The Index Cairn is a `RangedKiter` that stands
+       * across a channel, and the stand-in talent is MELEE — so this pairing
+       * cannot be made to land however many times it is pressed.
+       *
+       * That is a real limit on what this probe can prove with a level-1
+       * Watchman, and it belongs on the screen rather than behind a guess.
+       */
+      const lastError = frames.filter((f) => f.t === 'error').at(-1);
+      console.log(
+        `  retry ${String(attempt)}: no 'used' frame — last refusal was ` +
+          `${lastError?.code ?? '(none)'}: ${lastError?.message ?? ''}`,
+      );
+      continue;
+    }
+    beat(`PRESSED AGAIN (${String(attempt)} of ${String(MORE_ATTEMPTS)})`);
+    verdict = effectVerdict(printLog());
+    await waitForBadges();
+    stunSeen = printEffects('badges');
+    console.log(`  verdict on this press: ${verdict}`);
+  }
 
   // THE BADGE MUST ALSO EXPIRE. A door with no clock is a permanent stun, and
   // the two halves of the seam fail independently and silently.
@@ -650,9 +909,38 @@ if (apSeen.length === 0) {
 const effectFrames = kinds.get('effects') ?? 0;
 console.log(`\n  'effects' frames: ${String(effectFrames)}`);
 console.log(`  a stun reached this client: ${stunSeen ? 'YES' : 'no'}`);
-console.log(
-  `  the three registered ids: ${[EffectId.Stunned, EffectId.Bleeding, EffectId.Slowed].join(', ')}`,
-);
+
+/**
+ * AND WHAT THAT ANSWER MEANS, which is the part a reader cannot supply.
+ *
+ * Only one of these four is a defect in this game. Printing the verdict beside
+ * the badge means a run can no longer be mistaken for a broken pipeline because
+ * a husk happened to make its save.
+ */
+const READING = {
+  LANDED: 'the stun LANDED — a badge is owed, and the line above says whether one came',
+  LANDED_PARTIAL:
+    'a PARTIAL save — the stun landed shortened, so a badge is still owed. ' +
+    'This is the case where a missing badge is a real bug.',
+  SAVED: 'the target SAVED — the status system ran and refused it. Nothing is broken.',
+  NOTHING: 'nothing resolved — the press never reached the talent, which IS a fault',
+};
+console.log(`  the server's verdict: ${verdict} — ${READING[verdict]}`);
+if (verdict !== 'SAVED' && verdict !== 'NOTHING' && !stunSeen) {
+  console.log('  ^^ A STUN LANDED AND NO BADGE ARRIVED. This is the seam this tool exists for.');
+}
+
+/**
+ * EVERY REGISTERED ID, READ FROM THE LIST THE SERVER REGISTERS FROM.
+ *
+ * This line said "the three registered ids" and named Stunned, Bleeding and
+ * Slowed as literals. There have been SIX since Effaced, Breached and Dazed
+ * were added to `MVP_EFFECTS` — and a hardcoded three in the tool whose whole
+ * job is catching a hardcoded list that drifted is the same bug it exists to
+ * find. `main.ts` iterates `MVP_EFFECTS`; `EFFECT_IDS` is derived from it, so
+ * this cannot fall behind again.
+ */
+console.log(`  the ${String(EFFECT_IDS.length)} registered ids: ${EFFECT_IDS.join(', ')}`);
 
 if (effectFrames === 0) {
   console.log(
