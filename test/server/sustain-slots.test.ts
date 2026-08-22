@@ -12,6 +12,7 @@ import {
   sustainReserve,
   talentDone,
   talentId,
+  sustainReserveOf,
   toggleSustain,
 } from '../../src/server/engine/talents.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
@@ -84,6 +85,104 @@ function bench(talents: readonly Talent[], max: number) {
   } as unknown as TalentSheet;
   return { engine, sheet };
 }
+
+describe('a stance priced as a SHARE of the pool', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A FLAT RESERVE CANNOT BE WRITTEN FOR A TREE ANY CLASS MAY BUY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The generic trees cost a category point and land on four classes with four
+   * resources, and the pools are NOT comparable: Resolve, Focus and Ink cap at
+   * 100 and Reagents caps at EIGHT.
+   *
+   * So `careful_method`'s twenty is a fifth of an Inspector's Focus and more
+   * than an Alchemist owns outright — `raiseSustain` would answer `NoRoom`
+   * forever, and the failure is silent in the worst way: a talent bought with a
+   * category point that one class in four can see, put on a key, and never
+   * switch on.
+   */
+  function fractional(id: string, fraction: number, slot?: string): Talent {
+    return {
+      ...base,
+      id,
+      name: id,
+      sustain: { reserveFraction: fraction },
+      ...(slot === undefined ? {} : { sustainSlot: slot }),
+    };
+  }
+
+  it('is raisable on the SMALL pool, which a flat reserve would not be', () => {
+    const generic = fractional('talent:generic', 0.1);
+    // Eight is `ResourceKind.Reagents` — the Alchemist's whole bag.
+    const { engine, sheet } = bench([generic], 8);
+    expect(sustainReserveOf(generic, 8)).toBe(1);
+    expect(toggleSustain(engine, sheet, generic.id).ok).toBe(true);
+
+    // …and the flat price a class stance uses is impossible on the same pool,
+    // which is the whole reason the fraction exists.
+    const flat = stance('talent:flat', 20);
+    const bad = bench([flat], 8);
+    expect(toggleSustain(bad.engine, bad.sheet, flat.id).ok).toBe(false);
+  });
+
+  it('reproduces both hand-tuned numbers from one fraction', () => {
+    /**
+     * A tenth is not a number anybody picked. `loads.ts` reserves ONE Reagent
+     * and argues it in writing — "an eighth of the bag ... two would mean a
+     * quarter of the class's ammunition". Upstream's Trained Reactions reserves
+     * `sustain_stamina = 10` (mobility.lua:289) against a pool of about a
+     * hundred. One expression gives both, which is why it is a tenth.
+     */
+    const generic = fractional('talent:tenth', 0.1);
+    expect(sustainReserveOf(generic, 8)).toBe(1);
+    expect(sustainReserveOf(generic, 100)).toBe(10);
+  });
+
+  it('is REFUSED when its share does not fit, which is what prices it at all', () => {
+    /**
+     * ═══ THE ASSERTION THAT MAKES THE OTHER TWO MEAN ANYTHING ═══
+     * "It can be raised" passes just as well for a stance that costs NOTHING. I
+     * wrote this suite without this case first, then reintroduced the bug — the
+     * room test reading `sustain.reserve` directly, which is `undefined` for a
+     * fractional stance and falls to zero — and every test still passed. A free
+     * stance is raisable on any pool.
+     *
+     * Two whole-pool stances: the first fits exactly, the second cannot.
+     */
+    const first = fractional('talent:whole_a', 1);
+    const second = fractional('talent:whole_b', 1);
+    const { engine, sheet } = bench([first, second], 8);
+    expect(sustainReserveOf(first, 8)).toBe(8);
+    expect(toggleSustain(engine, sheet, first.id).ok).toBe(true);
+    expect(toggleSustain(engine, sheet, second.id).ok).toBe(false);
+  });
+
+  it('gives its share back when it is DISPLACED, not just when lowered', () => {
+    /**
+     * THE LEAK THIS CATCHES. `raiseSustain` computed the freed reservation by
+     * reading `sustain.reserve` directly, which is `undefined` for a fractional
+     * stance — so displacing one would have freed NOTHING, and the swap would be
+     * refused for lack of room the outgoing stance was about to release.
+     *
+     * IT NEEDS A SLOT TO REACH THAT PATH. Displacement is what runs the `freed`
+     * loop, and a slotless stance displaces nobody — which is why the first
+     * version of this test, written without a slot, passed with the bug in
+     * place. Both readers go through `sustainReserveOf` now.
+     */
+    for (const max of [8, 100]) {
+      const cold = fractional('talent:cold_share', 1, 'share');
+      const heat = fractional('talent:heat_share', 1, 'share');
+      const { engine, sheet } = bench([cold, heat], max);
+      expect(toggleSustain(engine, sheet, cold.id).ok, `cold @${String(max)}`).toBe(true);
+      // Each takes the WHOLE pool, so this swap is only possible if the outgoing
+      // stance's share is counted as freed before the room test runs.
+      expect(toggleSustain(engine, sheet, heat.id).ok, `swap @${String(max)}`).toBe(true);
+      expect([...sheet.sustained]).toEqual([heat.id]);
+      expect(sustainReserve(engine, sheet), `after swap @${String(max)}`).toBe(max);
+    }
+  });
+});
 
 describe('stance slots', () => {
   it('lets two slotless stances stack, which is the common case', () => {

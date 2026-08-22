@@ -468,8 +468,21 @@ export const downhill: Talent = {
 };
 
 // ---------------------------------------------------------------------------
-// SECOND EXIT — the capstone, and it pays for having looked
+// SECOND EXIT — the capstone, and mobility's sustained slot
+// Shaped after techniques/mobility.lua:285 (Trained Reactions), the one
+// `mode = "sustained"` in the tree this discipline ports.
 // ---------------------------------------------------------------------------
+
+/**
+ * A TENTH OF WHATEVER POOL THE BUYER HAPPENS TO HOLD.
+ *
+ * Upstream's Trained Reactions is `sustain_stamina = 10` (mobility.lua:289)
+ * against a pool of about a hundred. `Talent.sustain.reserveFraction` carries
+ * the whole argument for why a generic stance cannot use a flat number and why
+ * a tenth is the fraction: it reproduces upstream's ten AND `loads.ts`'s
+ * hand-tuned one-Reagent, from the same expression.
+ */
+const SHARE_OF_POOL = 0.1;
 
 const SAVE_LOW = 5;
 const SAVE_HIGH = 18;
@@ -511,14 +524,49 @@ export const secondExit: Talent = {
   name: 'Second Exit',
   /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
   tier: 3,
-  iconId: 'icon_passive_second_exit',
+  kind: TalentKind.Sustained,
+  iconId: 'icon_sustain_second_exit',
+  /**
+   * FREE TO PRESS, `careful_method.ts`'s rule: a stance pays in its reservation
+   * and pays nothing else. Charging AP as well would mean putting one up costs a
+   * turn's action, so nobody would ever change stance mid-fight — the one moment
+   * the choice is interesting.
+   */
+  cost: { ap: 0 },
+  cooldownTurns: 0,
+  /**
+   * A SHARE OF THE POOL, NOT A FLAT NUMBER, and this is the first talent that
+   * needs one. See `Talent.sustain.reserveFraction`: four classes may buy this
+   * tree, three of them hold a hundred and the Alchemist holds EIGHT, so any
+   * flat reserve is either free for three classes or impossible for one.
+   */
+  sustain: { reserveFraction: SHARE_OF_POOL },
+  /**
+   * NO `sustainSlot`. A slot exists so a class's own stances displace each other
+   * (`raiseSustain`: "a slot displaces, it does not refuse"), and this belongs to
+   * no class. Giving it one of theirs would mean a category point silently
+   * lowered the Inspector's Method; giving it a private one would be a group of
+   * one. Absent means it displaces nothing and is displaced by nothing, which is
+   * what a bought discipline should do to a class's own kit: nothing at all.
+   */
+
+  /**
+   * THE BODY IS UNCHANGED, WHICH IS THE POINT OF THE CONVERSION.
+   *
+   * A sustain IS a passive you can switch off — `careful_method.ts` says so and
+   * the fold reads `sheet.sustained`, so this is worth nothing while the stance
+   * is down without a single conditional here. The talent it was is exactly the
+   * talent it is; what changed is that it is now a decision, and that it appears
+   * on the bar as something to press.
+   */
   passive: (level, view = EMPTY_PASSIVE_VIEW) =>
     view.adjacentEnemies() > 0
       ? {}
       : { mods: { physResist: saveAt(level), def: openDefenceAt(level) } },
   describe: (_self, level) =>
-    `Always on, while nothing hostile is next to you. ${String(saveAt(level))} physical save and ` +
-    `${String(openDefenceAt(level))} defence — what the rest of this discipline was for.`,
+    `A stance. While it is up and nothing hostile is next to you: ${String(saveAt(level))} ` +
+    `physical save and ${String(openDefenceAt(level))} defence — what the rest of this ` +
+    `discipline was for. Holds a tenth of your pool in reserve.`,
 };
 
 /** The six, in panel order. */

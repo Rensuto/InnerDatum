@@ -811,9 +811,26 @@ export function sustainReserve(engine: TalentEngine, sheet: TalentSheet): number
   let reserved = 0;
   for (const id of sheet.sustained) {
     const talent = engine.registry.get(id);
-    reserved += talent?.sustain?.reserve ?? 0;
+    reserved += sustainReserveOf(talent, sheet.resource.max);
   }
   return reserved;
+}
+
+/**
+ * What ONE stance holds back, against a pool of `poolMax`.
+ *
+ * `poolMax` IS THE BASE CEILING, never `effectiveResourceMax`. That one is this
+ * function's own answer subtracted from the base, so reading it here would be a
+ * reservation that depends on the reservations — including its own.
+ */
+export function sustainReserveOf(talent: Talent | undefined, poolMax: number): number {
+  const sustain = talent?.sustain;
+  if (sustain === undefined) return 0;
+  if (sustain.reserve !== undefined) return sustain.reserve;
+  if (sustain.reserveFraction === undefined) return 0;
+  // CEIL, so a share of a small pool is never rounded away to nothing: a tenth
+  // of eight is 0.8, and a stance that reserved zero would be free power.
+  return Math.ceil(poolMax * sustain.reserveFraction);
 }
 
 /** What this body can actually hold right now, after its stances. */
@@ -976,10 +993,17 @@ export function toggleSustain(
    * touched until the answer is yes.
    */
   let freed = 0;
-  for (const id of displaced) freed += engine.registry.get(id)?.sustain?.reserve ?? 0;
+  // THROUGH `sustainReserveOf`, LIKE EVERY OTHER READER. Reading `sustain.reserve`
+  // directly was correct while a flat number was the only kind there was; a
+  // stance priced as a SHARE of the pool would have freed nothing on displacement
+  // and quietly leaked its reservation until the character logged out.
+  for (const id of displaced) {
+    freed += sustainReserveOf(engine.registry.get(id), sheet.resource.max);
+  }
 
   const after =
-    sheet.resource.max - (sustainReserve(engine, sheet) - freed + talent.sustain.reserve);
+    sheet.resource.max -
+    (sustainReserve(engine, sheet) - freed + sustainReserveOf(talent, sheet.resource.max));
   if (after < 0) return { ok: false, reason: SustainRefusal.NoRoom };
 
   for (const id of displaced) sheet.sustained.delete(id);
@@ -1543,7 +1567,43 @@ export type Talent = {
    * that gear and talents already stack through. Giving sustains their own
    * contribution type would be a second combine to keep in step with the first.
    */
-  readonly sustain?: { readonly reserve: number };
+  readonly sustain?: {
+    /**
+     * A FLAT reservation, for a stance that belongs to ONE class and can be
+     * priced against that class's pool. Every stance in the game is one of these.
+     */
+    readonly reserve?: number;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A SHARE OF THE POOL, for a stance ANY class may buy.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The generic trees are bought with a category point and land on four
+     * different classes with four different resources — and the pools are NOT
+     * comparable: Resolve, Focus and Ink cap at 100 and Reagents caps at EIGHT.
+     *
+     * A flat reserve therefore cannot be written for a generic tree. Twenty is
+     * `careful_method`'s price on a hundred-pool and is more than an Alchemist
+     * owns, so `raiseSustain` would answer `NoRoom` forever: a talent bought
+     * with a category point that one class in four could never switch on, with
+     * nothing anywhere saying why.
+     *
+     * ═══ AND A TENTH IS NOT A NUMBER I PICKED ═══
+     * `loads.ts` already reserves against the small pool and argues its value in
+     * writing — "ONE, AND ONE IS A LOT HERE. An eighth of the bag ... Two would
+     * mean a quarter of the class's ammunition for a rider, which is not a trade
+     * anybody takes." Upstream's Trained Reactions reserves `sustain_stamina =
+     * 10` (mobility.lua:289) against a pool of about a hundred.
+     *
+     *     ceil(0.1 * 8)   = 1    loads.ts's hand-tuned Reagent, exactly
+     *     ceil(0.1 * 100) = 10   upstream's stamina, exactly
+     *
+     * One fraction reproduces both numbers, which is why it is a tenth.
+     *
+     * `reserve` WINS WHERE BOTH ARE PRESENT, so no existing stance moves.
+     */
+    readonly reserveFraction?: number;
+  };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    *   WHICH STANCE SLOT THIS OCCUPIES. Ported from Actor.lua:5922-5931.
