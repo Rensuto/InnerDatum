@@ -85,11 +85,21 @@ import { helloAndChoose } from './handshake.mjs';
  * sheet still walks, still swings, still looks entirely fine, and cannot pay for
  * a single talent — which is the shape of failure this whole file exists for.
  *
- * WHAT IS NOT PINNED HERE: the earn clause. Each class earns differently —
- * Resolve when struck, Focus for holding ground, Reagents on a kill, Ink per
- * mark — and each needs its own scenario to trigger. Only the Redactor's is
- * driven below, because a mark is the one a probe can force reliably in a few
- * turns. The other three are named so the gap is visible rather than implied.
+ * WHAT IS PINNED, AND WHAT IS NOT. Each class earns differently — Resolve when
+ * struck, Focus for holding ground, Reagents on a kill, Ink per mark — and each
+ * needs its own scenario. Two are driven below and two are not, and the reason
+ * is not effort:
+ *
+ *   REDACTOR   a mark can be forced in a few turns. Driven.
+ *   ALCHEMIST  a kill can be forced with the flare it starts with, and the
+ *              signal needs no draining — see the note at that branch. Driven.
+ *   WATCHMAN   nothing a level-1 Watchman owns costs Resolve, so the pool sits
+ *              at its cap and being struck credits into a full bar. There is
+ *              nothing to observe.
+ *   INSPECTOR  the same, for Focus.
+ *
+ * The last two are a finding rather than a gap in this file, and it is printed
+ * on every run — see the `NOTHING LEARNED SPENDS` line.
  */
 const CLASSES = {
   watchman: { pool: 'resolve', earns: 'when struck (RESOLVE_ON_STRUCK, +6) — NOT driven here' },
@@ -97,7 +107,7 @@ const CLASSES = {
     pool: 'focus',
     earns: 'holding ground (FOCUS_ON_HELD_GROUND, +12) — NOT driven here',
   },
-  alchemist: { pool: 'reagents', earns: 'on a kill — NOT driven here' },
+  alchemist: { pool: 'reagents', earns: 'on a kill (REAGENTS_PER_KILL, +1) — driven below' },
   redactor: { pool: 'ink', earns: 'per mark landed (INK_PER_MARK, +12) — driven below' },
 };
 
@@ -267,8 +277,8 @@ if (opening.kind !== SPEC.pool) {
 console.log(`  earns: ${SPEC.earns}`);
 
 /**
- * ONLY THE REDACTOR'S EARN CLAUSE IS DRIVEN, and the others say so rather than
- * being quietly skipped.
+ * THE EARN CLAUSES THAT CAN BE DRIVEN ARE, and the ones that cannot say why
+ * rather than being quietly skipped.
  *
  * A mark is the one income a probe can force in a handful of turns: aim, press,
  * read. The others need a scenario — the Watchman has to BE HIT, the Inspector
@@ -283,7 +293,9 @@ console.log(`  earns: ${SPEC.earns}`);
  * Redactor is taken all the way through to income.
  */
 const strikeOut = talents.find((t) => /strike out/i.test(t.name));
-if (WANT !== 'redactor' || strikeOut === undefined) {
+const flare = talents.find((t) => /ashwick flare/i.test(t.name));
+const DRIVER = WANT === 'redactor' ? strikeOut : WANT === 'alchemist' ? flare : undefined;
+if (DRIVER === undefined) {
   // THE OBSERVED KIND, NOT THE EXPECTED ONE. `SPEC.pool` is what this run was
   // looking for; printing it here would report the question as the answer. The
   // assertion above is what proves they match — this line just says what came
@@ -368,7 +380,7 @@ drainLog();
 
 beat('STRIKE OUT');
 const before = inkOf();
-const usedIt = () => frames.some((f) => f.t === 'used' && f.ev?.talentId === strikeOut.id);
+const usedIt = () => frames.some((f) => f.t === 'used' && f.ev?.talentId === DRIVER.id);
 
 /**
  * CLOSE TO RANGE FIRST. Strike Out reaches 6 and the breach can drop you further
@@ -377,7 +389,12 @@ const usedIt = () => frames.some((f) => f.t === 'used' && f.ev?.talentId === str
  * it "NOTHING RESOLVED — this IS a fault". A probe that cannot walk into its own
  * range is measuring its own legs.
  */
-const STRIKE_RANGE = 6;
+/**
+ * THE DRIVER'S OWN REACH, off the wire. Strike Out is 6 and Ashwick Flare is 5;
+ * hard-coding either would send the other one step short or one step too far,
+ * and `out_of_range` is indistinguishable from a broken talent from out here.
+ */
+const STRIKE_RANGE = DRIVER.range ?? 6;
 /**
  * THE SERVER'S METRIC, WHICH IS EUCLIDEAN. `engine/combat.ts#combatDistance` is
  * `sqrt(dx*dx + dy*dy)`; this probe used Chebyshev, walked to 12,12 against a
@@ -496,7 +513,7 @@ console.log(
 const errorsBefore = frames.filter((f) => f.t === 'error').length;
 for (let attempt = 0; attempt < 8 && !usedIt(); attempt += 1) {
   const at = victimNow();
-  send({ t: 'talent', talentId: strikeOut.id, target: { x: at.x, y: at.y } });
+  send({ t: 'talent', talentId: DRIVER.id, target: { x: at.x, y: at.y } });
   const deadline = Date.now() + 800;
   while (Date.now() < deadline && !usedIt()) await sleep(60);
   if (usedIt()) break;
@@ -570,12 +587,101 @@ console.log(
  * take 100 down to 52. The shape of the sequence is the answer, and neither
  * reading can be mistaken for the other.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ALCHEMIST: THE KILLING CAST IS FREE, AND THAT IS THE WHOLE SIGNAL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `REAGENTS_PER_KILL` is 1 and Ashwick Flare costs 1, and `useTalent` credits
+ * BEFORE it charges. So on the blow that finishes a body:
+ *
+ *     5 -> kill, +1 -> 6 -> cost 1 -> 5      net 0
+ *
+ * and on every other cast the stock simply falls by one. The killing cast being
+ * FREE is therefore the observable fact, and it needs no draining first — which
+ * is what makes this class drivable where the Watchman's is not.
+ *
+ * A stock that fell by one on EVERY cast including the kill would mean
+ * `noteKill` never fired.
+ */
+if (WANT === 'alchemist') {
+  beat('FLARE IT DOWN — IS THE KILLING CAST FREE?');
+  const costs = [];
+  let killed = false;
+  for (let cast = 0; cast < 14 && !killed; cast += 1) {
+    const before = inkOf();
+    const usedBefore = frames.filter((f) => f.t === 'used').length;
+    let fired = false;
+    for (let attempt = 0; attempt < 5 && !fired; attempt += 1) {
+      const at = victimNow();
+      send({ t: 'talent', talentId: DRIVER.id, target: { x: at.x, y: at.y } });
+      const until = Date.now() + 800;
+      while (Date.now() < until && frames.filter((f) => f.t === 'used').length === usedBefore) {
+        await sleep(60);
+      }
+      fired = frames.filter((f) => f.t === 'used').length > usedBefore;
+      if (!fired) {
+        send({ t: 'hold' });
+        await sleep(TURN_WAIT_MS * 3);
+      }
+    }
+    if (!fired) break;
+    await sleep(350);
+    const lines2 = drainLog();
+    for (const line of lines2) console.log(`  ${line}`);
+    const after = inkOf();
+    const spent = before !== null && after !== null ? before.value - after.value : null;
+    /**
+     * "UNFILED" IS THIS GAME'S WORD FOR DEAD — scheduler.ts:434 narrates
+     * "Ren is unfiled." The first version of this guessed at an English
+     * vocabulary the game does not use ("dies", "falls", "is destroyed") and
+     * reported "NOTHING DIED in 14 flares" about a run whose own log said
+     * "Index Cairn is unfiled" two lines above the verdict.
+     *
+     * Read the words the server actually prints; do not invent a synonym for
+     * them.
+     */
+    const wasKill = lines2.some((l) => /is unfiled/i.test(l));
+    costs.push({ spent, wasKill });
+    console.log(
+      `  cast ${String(cast + 1)}: reagents ${String(before?.value)} -> ${String(after?.value)}${wasKill ? '  (THE KILL)' : ''}`,
+    );
+    if (wasKill) killed = true;
+    // Out of stock, and no kill to refill it. Nothing more to learn this run.
+    if (after !== null && after.value <= 0) break;
+  }
+
+  beat('VERDICT');
+  const killCast = costs.find((c) => c.wasKill);
+  const ordinary = costs.filter((c) => !c.wasKill && c.spent !== null);
+  if (killCast === undefined) {
+    console.log(
+      '  NOTHING DIED in 14 flares — the kill clause was never reached.\n' +
+        '  Inconclusive rather than a fault; run again.',
+    );
+  } else if (killCast.spent === 0) {
+    console.log(
+      '  THE KILLING CAST WAS FREE. `noteKill` -> `gainResource` paid the reagent\n' +
+        '  back before the cost came off, which is the clause working.',
+    );
+  } else {
+    console.log(
+      `  THE KILLING CAST COST ${String(killCast.spent)}, the same as the ${String(ordinary.length)} before it.\n` +
+        '  `noteKill` did not pay. This IS a fault.',
+    );
+    process.exit(1);
+  }
+  ws.close();
+  server.kill();
+  process.exit(0);
+}
+
 beat('SIX PRESSES — DOES THE WELL HOVER OR DRAIN?');
 for (let press = 0; press < 6; press += 1) {
   const usedBefore = frames.filter((f) => f.t === 'used').length;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const at = victimNow();
-    send({ t: 'talent', talentId: strikeOut.id, target: { x: at.x, y: at.y } });
+    send({ t: 'talent', talentId: DRIVER.id, target: { x: at.x, y: at.y } });
     const until = Date.now() + 700;
     while (Date.now() < until && frames.filter((f) => f.t === 'used').length === usedBefore) {
       await sleep(60);
