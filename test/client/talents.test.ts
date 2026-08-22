@@ -18,6 +18,7 @@ import {
   statPlusRect,
   statRowRects,
   talentIdAt,
+  TALENT_SCROLL_STEP,
   talentPanelRows,
   talentTipAt,
 } from '../../src/client/ui/talents.ts';
@@ -26,39 +27,15 @@ import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { TalentPanelView, TalentRow } from '../../src/client/ui/talents.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
 import type { LoadoutTalent, ProgressMsg } from '../../src/shared/protocol.ts';
-
 /**
- * A WRAPPER WITH ARITHMETIC A TEST CAN PREDICT — six pixels a character, which
- * is what `10px ui-monospace` measures to in the browser this ships in.
+ * THE INJECTED WRAPPER IS GONE, ALONG WITH THE PARAMETER IT FED.
  *
- * Injected rather than measured, which is the reason `talentPanelGeometry` takes
- * the wrapper as a parameter at all: these assertions are about where things
- * land, and they must not depend on how a headless environment renders a font it
- * does not have installed.
+ * `talentPanelGeometry` used to accept a text wrapper so these assertions would
+ * not depend on how a headless environment measures a font it does not have
+ * installed. Nothing ever passed one but this file: the panel wraps with its own
+ * measurement everywhere it actually runs, and the parameter existed only to be
+ * mocked. The scroll offset took its place in the signature.
  */
-const CHAR_PX = 6;
-function wrapAt(text: string, maxPx: number): readonly string[] {
-  const per = Math.max(1, Math.floor(maxPx / CHAR_PX));
-  if (text === '') return [''];
-  const out: string[] = [];
-  let line = '';
-  for (const word of text.split(' ')) {
-    const candidate = line === '' ? word : `${line} ${word}`;
-    if (candidate.length <= per) {
-      line = candidate;
-      continue;
-    }
-    if (line !== '') out.push(line);
-    let rest = word;
-    while (rest.length > per) {
-      out.push(rest.slice(0, per));
-      rest = rest.slice(per);
-    }
-    line = rest;
-  }
-  if (line !== '' || out.length === 0) out.push(line);
-  return out;
-}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -125,9 +102,17 @@ function rectAt(size: typeof FLOOR) {
   return rect;
 }
 
-function placedAt(size: typeof FLOOR, rows?: readonly TalentRow[]) {
+/**
+ * THE UNSCROLLED CASE, which is what almost every test here is about.
+ *
+ * Named rather than a bare 0 so a reader can tell "this test does not care about
+ * scrolling" from "this test asserts the top of the list".
+ */
+const NO_SCROLL = 0;
+
+function placedAt(size: typeof FLOOR, rows?: readonly TalentRow[], scroll = NO_SCROLL) {
   const rect = rectAt(size);
-  return talentPanelGeometry(rect, rows ?? talentPanelRows(view()), wrapAt).placed;
+  return talentPanelGeometry(rect, rows ?? talentPanelRows(view()), scroll).placed;
 }
 
 const categories = (rows: readonly TalentRow[]) =>
@@ -254,12 +239,12 @@ describe('a press lands on the icon it was drawn on', () => {
   it('hits the talent under the pointer', () => {
     const rows = talentPanelRows(view());
     const rect = rectAt(REAL);
-    for (const p of talentPanelGeometry(rect, rows, wrapAt).placed) {
+    for (const p of talentPanelGeometry(rect, rows, NO_SCROLL).placed) {
       if (p.row.kind !== TalentRowKind.Category) continue;
       for (let n = 0; n < p.cells.length; n += 1) {
         const box = p.cells[n];
         if (box === undefined) continue;
-        const hit = talentPanelHitAt(rect, rows, box.x + 2, box.y + 2);
+        const hit = talentPanelHitAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
         expect(hit?.kind).toBe(TalentHitKind.Row);
       }
     }
@@ -273,7 +258,7 @@ describe('a press lands on the icon it was drawn on', () => {
      */
     const rows = talentPanelRows(view());
     const rect = rectAt(REAL);
-    const first = talentPanelGeometry(rect, rows, wrapAt).placed.find(
+    const first = talentPanelGeometry(rect, rows, NO_SCROLL).placed.find(
       (p) => p.row.kind === TalentRowKind.Category,
     );
     const box = first?.cells[0];
@@ -283,7 +268,7 @@ describe('a press lands on the icon it was drawn on', () => {
     expect(armedId).toBeDefined();
     if (box === undefined || armedId === undefined) return;
 
-    expect(talentPanelHitAt(rect, rows, box.x + 2, box.y + 2, armedId)?.kind).toBe(
+    expect(talentPanelHitAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL, armedId)?.kind).toBe(
       TalentHitKind.Spend,
     );
   });
@@ -291,7 +276,7 @@ describe('a press lands on the icon it was drawn on', () => {
   it('refuses to spend with no point in hand', () => {
     const rows = talentPanelRows(view({ progress: progress(0) }));
     const rect = rectAt(REAL);
-    const first = talentPanelGeometry(rect, rows, wrapAt).placed.find(
+    const first = talentPanelGeometry(rect, rows, NO_SCROLL).placed.find(
       (p) => p.row.kind === TalentRowKind.Category,
     );
     const box = first?.cells[0];
@@ -299,7 +284,7 @@ describe('a press lands on the icon it was drawn on', () => {
       first?.row.kind === TalentRowKind.Category ? first.row.talents[0]?.id : undefined;
     if (box === undefined || armedId === undefined) return;
     // `canSpend` is false, so even the armed icon is only ever an arm.
-    expect(talentPanelHitAt(rect, rows, box.x + 2, box.y + 2, armedId)?.kind).toBe(
+    expect(talentPanelHitAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL, armedId)?.kind).toBe(
       TalentHitKind.Row,
     );
   });
@@ -307,19 +292,21 @@ describe('a press lands on the icon it was drawn on', () => {
   it('hits nothing in the gap between two icons', () => {
     const rows = talentPanelRows(view());
     const rect = rectAt(REAL);
-    const first = talentPanelGeometry(rect, rows, wrapAt).placed.find(
+    const first = talentPanelGeometry(rect, rows, NO_SCROLL).placed.find(
       (p) => p.row.kind === TalentRowKind.Category,
     );
     const a = first?.cells[0];
     if (a === undefined) return;
-    expect(talentPanelHitAt(rect, rows, a.x + a.w + 1, a.y + 2)).toBeNull();
+    expect(talentPanelHitAt(rect, rows, a.x + a.w + 1, a.y + 2, NO_SCROLL)).toBeNull();
   });
 
   it('still closes on the close control', () => {
     const rows = talentPanelRows(view());
     const rect = rectAt(REAL);
-    const close = talentPanelGeometry(rect, rows, wrapAt).close;
-    expect(talentPanelHitAt(rect, rows, close.x + 1, close.y + 1)?.kind).toBe(TalentHitKind.Close);
+    const close = talentPanelGeometry(rect, rows, NO_SCROLL).close;
+    expect(talentPanelHitAt(rect, rows, close.x + 1, close.y + 1, NO_SCROLL)?.kind).toBe(
+      TalentHitKind.Close,
+    );
   });
 });
 
@@ -336,7 +323,7 @@ describe('hovering an icon explains it', () => {
   const rows = talentPanelRows(view());
   const rect = rectAt(REAL);
   const firstBox = () => {
-    const cat = talentPanelGeometry(rect, rows, wrapAt).placed.find(
+    const cat = talentPanelGeometry(rect, rows, NO_SCROLL).placed.find(
       (p) => p.row.kind === TalentRowKind.Category,
     );
     return cat?.cells[0];
@@ -345,7 +332,7 @@ describe('hovering an icon explains it', () => {
   it('returns a card naming the talent and its rank', () => {
     const box = firstBox();
     if (box === undefined) return;
-    const card = talentTipAt(rect, rows, box.x + 2, box.y + 2);
+    const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
     expect(card?.title).toContain('Crude Blow');
     expect(card?.title).toContain(`1/${String(TALENT_MAX_LEVEL)}`);
   });
@@ -355,7 +342,7 @@ describe('hovering an icon explains it', () => {
     // description is nowhere at all.
     const box = firstBox();
     if (box === undefined) return;
-    const card = talentTipAt(rect, rows, box.x + 2, box.y + 2);
+    const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
     expect(card?.lines.join(' ')).toContain('110% weapon damage');
     expect((card?.nextLines ?? []).join(' ')).toContain('130% weapon damage');
     for (const line of [...(card?.lines ?? []), ...(card?.nextLines ?? [])]) {
@@ -364,19 +351,19 @@ describe('hovering an icon explains it', () => {
   });
 
   it('says a passive is always on rather than printing a cost at it', () => {
-    const cat = talentPanelGeometry(rect, rows, wrapAt).placed.find(
+    const cat = talentPanelGeometry(rect, rows, NO_SCROLL).placed.find(
       (p) => p.row.kind === TalentRowKind.Category && p.row.tree === 'watch/the-line',
     );
     const idx =
       cat?.row.kind === TalentRowKind.Category ? cat.row.talents.findIndex((t) => t.passive) : -1;
     const box = idx >= 0 ? cat?.cells[idx] : undefined;
     if (box === undefined) return;
-    const card = talentTipAt(rect, rows, box.x + 2, box.y + 2);
+    const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
     expect(card?.meta).toBe('always on');
   });
 
   it('is null when the pointer is not on an icon', () => {
-    expect(talentTipAt(rect, rows, rect.x + 1, rect.y + 1)).toBeNull();
+    expect(talentTipAt(rect, rows, rect.x + 1, rect.y + 1, NO_SCROLL)).toBeNull();
   });
 });
 
@@ -464,7 +451,7 @@ describe('the panel has room for the categories a class carries', () => {
     const rect = talentPanelRect(size);
     if (rect === null) throw new Error('no panel at this size');
     const rows = talentPanelRows(nCategories(count));
-    return talentPanelGeometry(rect, rows, wrapAt).placed.filter(
+    return talentPanelGeometry(rect, rows, NO_SCROLL).placed.filter(
       (placed) => placed.row.kind === TalentRowKind.Category,
     ).length;
   }
@@ -491,19 +478,242 @@ describe('the panel has room for the categories a class carries', () => {
     }
   });
 
-  it('says so in WORDS when it genuinely cannot hold them all', () => {
-    // The concession is not being removed, only proved to be honest — this file
-    // header's rule is that a dropped tail says so. Nine categories is past what
-    // any class carries and is here to exercise the ladder itself.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NOTHING IS HIDDEN ANY MORE, BECAUSE THE GRID SCROLLS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This case used to assert the opposite — that a tail too long for the panel
+   * was dropped and SAID SO. The concession was honest and the honesty was the
+   * best part of it, but it was still a player who could not see two of their
+   * own disciplines. Widening the panel bought some back and could never buy
+   * them all: the tree count grows with content and the band between the HUD
+   * docks does not.
+   *
+   * Upstream scrolls (TalentTrees.lua:72 slider, :388 `glScissor`), so there is
+   * no tail to concede.
+   */
+  it('places every category however many there are', () => {
     const size = { width: 640, height: 320, top: 40, bottom: 280 };
     const rect = talentPanelRect(size);
     if (rect === null) throw new Error('no panel');
     const rows = talentPanelRows(nCategories(9));
-    const placed = talentPanelGeometry(rect, rows, wrapAt).placed;
-    const notes = placed.flatMap((entry) =>
+    const geometry = talentPanelGeometry(rect, rows, NO_SCROLL);
+    const notes = geometry.placed.flatMap((entry) =>
       entry.row.kind === TalentRowKind.Note ? [entry.row.text] : [],
     );
-    expect(notes.some((note) => /categories hidden/.test(note))).toBe(true);
+    expect(
+      notes.some((note) => /categories hidden/.test(note)),
+      'the panel is still conceding a tail instead of scrolling',
+    ).toBe(false);
+    expect(
+      geometry.grid.maxScroll,
+      'nine categories fit a 640x320 panel unscrolled',
+    ).toBeGreaterThan(0);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SAFETY PROPERTY: A STRIP YOU CANNOT SEE IS A STRIP YOU CANNOT CLICK.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A talent icon SPENDS A POINT and there is no refund gesture. A row scrolled
+   * out of the window must therefore not merely be invisible — it must not be
+   * PLACED, because the hit test walks the placed list. The sentence rows sit
+   * immediately ABOVE the grid window, so a strip scrolled off the top lands
+   * squarely on them and a press there would spend a point on a discipline that
+   * is nowhere on the screen.
+   *
+   * This is the assertion the whole design of the scroll is arranged around: the
+   * offset is folded into the geometry rather than applied with a `ctx.translate`
+   * at the paint, so the pointer and the picture read one arithmetic.
+   */
+  it('does not place a row scrolled out of the window', () => {
+    const size = { width: 640, height: 320, top: 40, bottom: 280 };
+    const rect = talentPanelRect(size);
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(nCategories(9));
+
+    const top = talentPanelGeometry(rect, rows, NO_SCROLL);
+    const scrolled = talentPanelGeometry(rect, rows, top.grid.maxScroll);
+
+    const names = (g: typeof top): string[] =>
+      g.placed.flatMap((entry) =>
+        entry.row.kind === TalentRowKind.Category ? [entry.row.tree] : [],
+      );
+
+    expect(names(scrolled), 'scrolling changed nothing').not.toEqual(names(top));
+    for (const entry of scrolled.placed) {
+      if (entry.row.kind !== TalentRowKind.Category) continue;
+      const viewport = scrolled.grid.viewport;
+      expect(
+        entry.rect.y + entry.rect.h > viewport.y && entry.rect.y < viewport.y + viewport.h,
+        `a strip outside the window was placed at y=${String(entry.rect.y)}`,
+      ).toBe(true);
+    }
+  });
+
+  /**
+   * CLAMPED AT BOTH ENDS, and the far end is `content - viewport` rather than
+   * `content`. TalentTrees.lua:350 uses the latter and lets a pane scroll a
+   * whole viewport past its own end, leaving the reader staring at blank space;
+   * TextzoneList.lua:148 has it right and is the one ported.
+   */
+  it('clamps the offset instead of trusting the caller', () => {
+    const size = { width: 640, height: 320, top: 40, bottom: 280 };
+    const rect = talentPanelRect(size);
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(nCategories(9));
+
+    expect(talentPanelGeometry(rect, rows, -5000).grid.scroll, 'scrolled above the top').toBe(0);
+    const far = talentPanelGeometry(rect, rows, 999_999).grid;
+    expect(far.scroll, 'scrolled past the end').toBe(far.maxScroll);
+    expect(far.maxScroll, 'the end is past the content').toBeLessThanOrEqual(far.viewport.h * 9);
+  });
+
+  /** A list that already fits cannot scroll at all. */
+  it('has nowhere to go when everything fits', () => {
+    const rect = talentPanelRect({ width: 1280, height: 640, top: 40, bottom: 560 });
+    if (rect === null) throw new Error('no panel');
+    const geometry = talentPanelGeometry(rect, talentPanelRows(nCategories(2)), 40);
+    expect(geometry.grid.maxScroll).toBe(0);
+    expect(geometry.grid.scroll, 'a panel with nothing to scroll still moved').toBe(0);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE HALF-SCROLLED STRIP, WHICH IS THE HOLE THE FIRST RULE LEAVES OPEN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * "Do not place a row entirely outside the window" is not enough. A strip
+   * scrolled HALFWAY off the top must still be placed — its visible half has to
+   * be drawn — and it carries all of its cells with it, including icons whose
+   * boxes are now above the window entirely. The painter clips those away. The
+   * hit test, left alone, would still match them.
+   *
+   * So this walks every cell of a scrolled panel, asks the hit test about the
+   * middle of each one, and requires that the only cells answering are cells
+   * inside the window. A press on blank panel above the grid must find nothing —
+   * anything else is an irreversible spend on an invisible icon.
+   */
+  it('refuses a press on an icon the clip has eaten', () => {
+    const size = { width: 640, height: 320, top: 40, bottom: 280 };
+    const rect = talentPanelRect(size);
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(nCategories(9));
+
+    const top = talentPanelGeometry(rect, rows, NO_SCROLL);
+    /** Half a strip, so at least one row straddles the top of the window. */
+    const half = Math.floor(TALENT_SCROLL_STEP / 2);
+    expect(half, 'the fixture cannot straddle anything').toBeGreaterThan(0);
+    expect(top.grid.maxScroll, 'nothing to scroll').toBeGreaterThanOrEqual(half);
+
+    const geometry = talentPanelGeometry(rect, rows, half);
+    const viewport = geometry.grid.viewport;
+
+    let straddled = 0;
+    let answered = 0;
+    for (const entry of geometry.placed) {
+      if (entry.row.kind !== TalentRowKind.Category) continue;
+      const above = entry.rect.y < viewport.y;
+      if (above) straddled += 1;
+      for (const box of entry.cells) {
+        const cx = box.x + box.w / 2;
+        const cy = box.y + box.h / 2;
+        const hit = talentPanelHitAt(rect, rows, cx, cy, half);
+        const whole =
+          box.x >= viewport.x &&
+          box.y >= viewport.y &&
+          box.x + box.w <= viewport.x + viewport.w &&
+          box.y + box.h <= viewport.y + viewport.h;
+        if (whole) {
+          if (hit !== null) answered += 1;
+          continue;
+        }
+        expect(
+          hit,
+          `an icon clipped at y=${String(box.y)} answered a press; the window starts at ${String(viewport.y)}`,
+        ).toBeNull();
+        expect(
+          talentIdAt(rect, rows, cx, cy, half),
+          'a clipped icon still names itself to the hover card',
+        ).toBeNull();
+      }
+    }
+
+    expect(straddled, 'no strip straddled the window, so this proved nothing').toBeGreaterThan(0);
+    expect(
+      answered,
+      'the guard silenced the whole grid, not just the clipped part',
+    ).toBeGreaterThan(0);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAR IS THE ONLY THING THAT SAYS THE GRID CONTINUES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The panel used to print "N categories hidden" — ugly, but it told a player
+   * there was more. Deleting that row without drawing a bar would have traded a
+   * visible shortfall for an invisible one, which is the worse of the two.
+   *
+   * So: a bar exactly when there is somewhere to scroll, none when there is not,
+   * and a thumb that reaches the bottom of its track at the bottom of the list.
+   */
+  it('draws a bar only when there is more, and runs it to the end', () => {
+    const rect = talentPanelRect({ width: 640, height: 320, top: 40, bottom: 280 });
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(nCategories(9));
+
+    const top = talentPanelGeometry(rect, rows, NO_SCROLL).grid;
+    expect(top.bar, 'a scrollable grid drew no bar').not.toBeNull();
+    expect(top.thumb, 'a bar with no thumb').not.toBeNull();
+    if (top.bar === null || top.thumb === null) throw new Error('unreachable');
+    expect(top.thumb.y, 'the thumb does not start at the top').toBe(top.bar.y);
+    expect(top.thumb.h, 'the thumb fills a track it should not').toBeLessThan(top.bar.h);
+
+    const end = talentPanelGeometry(rect, rows, top.maxScroll).grid;
+    if (end.bar === null || end.thumb === null) throw new Error('the bar vanished mid-scroll');
+    expect(
+      end.thumb.y + end.thumb.h,
+      'the thumb stops short of the end while the list is at its end',
+    ).toBe(end.bar.y + end.bar.h);
+
+    const fits = talentPanelGeometry(
+      talentPanelRect({ width: 1280, height: 640, top: 40, bottom: 560 }) ?? rect,
+      talentPanelRows(nCategories(2)),
+      NO_SCROLL,
+    ).grid;
+    expect(fits.bar, 'a grid with nothing to scroll drew a bar anyway').toBeNull();
+  });
+
+  /**
+   * AND THE BAR NEVER SITS ON AN ICON. It lives in a gutter reserved before the
+   * columns were counted; if that arithmetic ever slips, the overlap lands on
+   * the right-hand column of a surface where every icon spends a point.
+   */
+  it('keeps the bar clear of every strip', () => {
+    const rect = talentPanelRect({ width: 640, height: 320, top: 40, bottom: 280 });
+    if (rect === null) throw new Error('no panel');
+    const rows = talentPanelRows(nCategories(9));
+    const geometry = talentPanelGeometry(rect, rows, NO_SCROLL);
+    const bar = geometry.grid.bar;
+    if (bar === null) throw new Error('no bar to check');
+
+    expect(bar.x, 'the bar starts inside the grid instead of beside it').toBeGreaterThanOrEqual(
+      geometry.grid.viewport.x + geometry.grid.viewport.w,
+    );
+    expect(bar.x + bar.w, 'the bar runs off the panel').toBeLessThanOrEqual(rect.x + rect.w);
+
+    for (const entry of geometry.placed) {
+      if (entry.row.kind !== TalentRowKind.Category) continue;
+      for (const box of entry.cells) {
+        expect(
+          box.x + box.w <= bar.x || box.x >= bar.x + bar.w,
+          `an icon at x=${String(box.x)} runs under the bar at ${String(bar.x)}`,
+        ).toBe(true);
+      }
+    }
   });
 });
 
@@ -533,13 +743,13 @@ describe('the description column', () => {
     expect(narrow).not.toBeNull();
     if (wide === null || narrow === null) return;
 
-    expect(talentPanelGeometry(wide, talentPanelRows(view())).detail).not.toBeNull();
+    expect(talentPanelGeometry(wide, talentPanelRows(view()), NO_SCROLL).detail).not.toBeNull();
     // ═══ THE FLOOR STILL WORKS ═══
     // `DEFAULT_VIEWPORT` is 20 tiles — 640 logical pixels — and a description
     // squeezed into what is left there would be the cut-off-mid-sentence bug the
     // panel was widened to fix. Below the threshold there is no column and the
     // hover card is still the answer.
-    expect(talentPanelGeometry(narrow, talentPanelRows(view())).detail).toBeNull();
+    expect(talentPanelGeometry(narrow, talentPanelRows(view()), NO_SCROLL).detail).toBeNull();
   });
 
   it('takes width from the panel and never a row from the grid', () => {
@@ -551,8 +761,8 @@ describe('the description column', () => {
     if (wide === null || narrow === null) throw new Error('no panel');
 
     const rows = talentPanelRows(view());
-    const withPane = talentPanelGeometry(wide, rows);
-    const without = talentPanelGeometry(narrow, rows);
+    const withPane = talentPanelGeometry(wide, rows, NO_SCROLL);
+    const without = talentPanelGeometry(narrow, rows, NO_SCROLL);
 
     const categories = (g: ReturnType<typeof talentPanelGeometry>): number =>
       g.placed.filter((placed) => placed.row.kind === TalentRowKind.Category).length;
@@ -572,8 +782,8 @@ describe('the description column', () => {
      */
     const wide = talentPanelRect(WIDE);
     if (wide === null) throw new Error('no panel');
-    const full = talentPanelGeometry(wide, talentPanelRows(view())).detail;
-    const empty = talentPanelGeometry(wide, []).detail;
+    const full = talentPanelGeometry(wide, talentPanelRows(view()), NO_SCROLL).detail;
+    const empty = talentPanelGeometry(wide, [], NO_SCROLL).detail;
     expect(empty).toEqual(full);
   });
 
@@ -587,7 +797,7 @@ describe('the description column', () => {
     const wide = talentPanelRect(WIDE);
     if (wide === null) throw new Error('no panel');
     const rows = talentPanelRows(view());
-    const geometry = talentPanelGeometry(wide, rows);
+    const geometry = talentPanelGeometry(wide, rows, NO_SCROLL);
 
     const found: string[] = [];
     for (const placed of geometry.placed) {
@@ -596,7 +806,7 @@ describe('the description column', () => {
         const box = placed.cells[i];
         const cell = placed.row.talents[i];
         if (box === undefined || cell === undefined) continue;
-        const id = talentIdAt(wide, rows, box.x + 2, box.y + 2);
+        const id = talentIdAt(wide, rows, box.x + 2, box.y + 2, NO_SCROLL);
         expect(id, `${cell.name} at ${String(box.x)},${String(box.y)}`).toBe(cell.id);
         found.push(cell.id);
       }
@@ -614,7 +824,7 @@ describe('the description column', () => {
     const wide = talentPanelRect(WIDE);
     if (wide === null) throw new Error('no panel');
     const rows = talentPanelRows(view());
-    expect(talentIdAt(wide, rows, wide.x + 2, wide.y + wide.h - 2)).toBeNull();
+    expect(talentIdAt(wide, rows, wide.x + 2, wide.y + wide.h - 2, NO_SCROLL)).toBeNull();
   });
 });
 
@@ -659,6 +869,9 @@ function paintPanel(over: Partial<Parameters<typeof drawTalentPanel>[0]> = {}): 
   drawTalentPanel({
     ctx: recorder(ops),
     sprites: NO_ART,
+    // UNSCROLLED UNLESS A CASE SAYS OTHERWISE. `over` is spread after this, so a
+    // test about the scrolled panel still sets its own.
+    scroll: NO_SCROLL,
     rect,
     rows: talentPanelRows(view()),
     hoveredClose: false,
@@ -684,7 +897,7 @@ describe('the attribute column', () => {
     const floor = talentPanelRect({ width: 640, height: 384, top: 60, bottom: 300 });
     expect(floor).not.toBeNull();
     if (floor === null) return;
-    const g = talentPanelGeometry(floor, talentPanelRows(view()));
+    const g = talentPanelGeometry(floor, talentPanelRows(view()), NO_SCROLL);
     expect(g.stats, 'no attribute column at the narrowest supported window').not.toBeNull();
     // AND THE DESCRIPTION IS WHAT GIVES WAY THERE, not the grid.
     expect(g.detail).toBeNull();
@@ -696,7 +909,7 @@ describe('the attribute column', () => {
     // row of stat labels, and every icon in it is a click target.
     const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
     if (rect === null) throw new Error('no panel');
-    const g = talentPanelGeometry(rect, talentPanelRows(view()));
+    const g = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
     expect(g.stats).not.toBeNull();
     if (g.stats === null) return;
     const right = g.stats.x + g.stats.w;
@@ -717,7 +930,7 @@ describe('the attribute column', () => {
     const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
     if (rect === null) throw new Error('no panel');
     const rows = talentPanelRows(view());
-    const g = talentPanelGeometry(rect, rows);
+    const g = talentPanelGeometry(rect, rows, NO_SCROLL);
     if (g.stats === null) throw new Error('no column');
 
     const boxes = statRowRects(g.stats);
@@ -725,7 +938,7 @@ describe('the attribute column', () => {
 
     for (let i = 0; i < boxes.length; i += 1) {
       const plus = statPlusRect(boxes[i] as PanelRect);
-      const hit = talentPanelHitAt(rect, rows, plus.x + 1, plus.y + 1);
+      const hit = talentPanelHitAt(rect, rows, plus.x + 1, plus.y + 1, NO_SCROLL);
       expect(hit?.kind, `row ${String(i)} is not a stat hit`).toBe(TalentHitKind.Stat);
       if (hit?.kind === TalentHitKind.Stat) expect(hit.stat).toBe(STAT_ROWS[i]?.key);
     }
@@ -736,10 +949,10 @@ describe('the attribute column', () => {
     const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
     if (rect === null) throw new Error('no panel');
     const rows = talentPanelRows(view());
-    const g = talentPanelGeometry(rect, rows);
+    const g = talentPanelGeometry(rect, rows, NO_SCROLL);
     if (g.stats === null) throw new Error('no column');
     const first = statRowRects(g.stats)[0] as PanelRect;
-    const onLabel = talentPanelHitAt(rect, rows, first.x + 2, first.y + 2);
+    const onLabel = talentPanelHitAt(rect, rows, first.x + 2, first.y + 2, NO_SCROLL);
     expect(onLabel?.kind).not.toBe(TalentHitKind.Stat);
   });
 
@@ -836,13 +1049,13 @@ describe('the talent panel uses the room it has', () => {
   });
 
   /**
-   * WHATEVER IS DROPPED IS COUNTED OUT LOUD. While trees can still be hidden,
-   * the row that says so is the only thing between a player and a discipline
-   * they do not know exists.
+   * NOTHING IS HIDDEN NOW, so there is nothing to announce. The row that said
+   * so was the only thing between a player and a discipline they did not know
+   * existed — and it is gone because the discipline is not.
    */
-  it('still says so when it hides something', () => {
+  it('announces nothing, because it hides nothing', () => {
     const placed = placedAt(REAL, manyCategories(12));
     const note = placed.find((row) => row.row.kind === TalentRowKind.Note);
-    expect(note, 'trees are being hidden silently').toBeDefined();
+    expect(note, 'the panel is still conceding a tail').toBeUndefined();
   });
 });

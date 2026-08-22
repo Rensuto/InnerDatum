@@ -278,6 +278,7 @@ import {
   talentPanelRect,
   talentPanelRows,
   TalentRowKind,
+  TALENT_SCROLL_STEP,
 } from './ui/talents.ts';
 // v12 — THE LEVEL BADGE AND THE XP TRACK. Its own file rather than a section of
 // ui/resource.ts on that file's own argument: resource.ts is a sustained case
@@ -1459,6 +1460,25 @@ let sheetTalentsHovered = false;
  * of getting it wrong: five people waiting on somebody who is reading a menu.
  */
 let talentsVisible = false;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR THE TALENT PANEL'S CATEGORY GRID IS SCROLLED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The client's FIRST scrolling surface with a position of its own — the Case Log
+ * scrolls by entry index, which needs no pixels. Three files refused a scrollbar
+ * in writing on the grounds that "a scroll position is state, state needs a
+ * scrollbar, a scrollbar needs a hit test". All three were right, and the panel
+ * dropping whole talent trees is what changed the trade.
+ *
+ * HELD HERE RATHER THAN INSIDE THE PANEL because ui/talents.ts is pure geometry
+ * and paint — it has no frame-to-frame memory and should not grow any. The
+ * offset is passed in, CLAMPED THERE, and every reader takes the clamped value
+ * back out, so this may hold any number a wheel produces without knowing how
+ * tall the content is.
+ */
+let talentScroll = 0;
 /** True while the pointer is over the talent panel's close control. Cosmetic. */
 let talentsCloseHovered = false;
 /** Loadout index under the pointer on the talent panel, or null. Cosmetic. */
@@ -3462,6 +3482,8 @@ const paintHud: HudPainter = (ctx, width, height) => {
     drawTalentPanel({
       ctx,
       sprites,
+      // THE SAME OFFSET THE HIT TEST WILL USE. See `talentPanelGeometry`.
+      scroll: talentScroll,
       rect: layout.talents,
       rows: talentPanelRows(talentPanelView()),
       hoveredClose: talentsCloseHovered,
@@ -3507,9 +3529,16 @@ const paintHud: HudPainter = (ctx, width, height) => {
      * threshold would disagree with it at exactly one window size.
      */
     const talentRows = talentPanelRows(talentPanelView());
-    const hasDetailPane = talentPanelGeometry(layout.talents, talentRows).detail !== null;
+    const hasDetailPane =
+      talentPanelGeometry(layout.talents, talentRows, talentScroll).detail !== null;
     if (pointerPoint !== null && !hasDetailPane) {
-      const card = talentTipAt(layout.talents, talentRows, pointerPoint.x, pointerPoint.y);
+      const card = talentTipAt(
+        layout.talents,
+        talentRows,
+        pointerPoint.x,
+        pointerPoint.y,
+        talentScroll,
+      );
       if (card !== null) {
         drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
       }
@@ -5768,6 +5797,10 @@ async function boot(): Promise<void> {
    */
   function toggleTalentPanel(open?: boolean): void {
     talentsVisible = open ?? !talentsVisible;
+    // BACK TO THE TOP EVERY TIME IT OPENS. A panel that reopens where it was
+    // left shows a player a middle of a list they did not scroll to, and the
+    // first tree is the one they came for.
+    talentScroll = 0;
     if (!talentsVisible) {
       talentsCloseHovered = false;
       talentsHoveredRow = null;
@@ -8114,7 +8147,13 @@ async function boot(): Promise<void> {
       const talentHit =
         layout.talents === null
           ? null
-          : talentPanelHitAt(layout.talents, talentPanelRows(talentPanelView()), point.x, point.y);
+          : talentPanelHitAt(
+              layout.talents,
+              talentPanelRows(talentPanelView()),
+              point.x,
+              point.y,
+              talentScroll,
+            );
       const overTalentClose = talentHit?.kind === TalentHitKind.Close;
       if (overTalentClose !== talentsCloseHovered) {
         talentsCloseHovered = overTalentClose;
@@ -8149,6 +8188,7 @@ async function boot(): Promise<void> {
           talentPanelRows(talentPanelView()),
           point.x,
           point.y,
+          talentScroll,
         );
         if (focused !== null && focused !== talentFocusId) {
           talentFocusId = focused;
@@ -8327,7 +8367,45 @@ async function boot(): Promise<void> {
       // canvas out of view.
       if (inRect(wheelLayout.menu, point.x, point.y)) return;
       if (inRect(wheelLayout.sheet, point.x, point.y)) return;
-      if (inRect(wheelLayout.talents, point.x, point.y)) return;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE TALENT GRID SCROLLS UNDER THE WHEEL. It used to only SWALLOW it.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This was an occlusion guard: the wheel over the panel did nothing at
+       * all, deliberately, because the panel had no scroll position. It has one
+       * now, so the guard becomes a consumer — the same shape the Case Log's
+       * lane scroll uses two blocks below.
+       *
+       * THE CLAMP IS THE GEOMETRY'S, AND THE CLAMPED VALUE IS WHAT IS STORED.
+       *
+       * `talentPanelGeometry` clamps whatever it is handed, so the PICTURE would
+       * be correct even if this handler kept a running total off either end. The
+       * PLAYER would not: thirty notches past the bottom of a short list stores
+       * thirty notches of nothing, and the next thirty upward do nothing at all
+       * while the grid sits still. A scroll that has visibly stopped must be one
+       * notch from moving the other way.
+       *
+       * So the geometry is asked, and its answer — already clamped, already the
+       * number every other reader will see — is what is kept. This handler still
+       * does not need to know how many categories there are or how tall the panel
+       * is, and cannot disagree with the panel about either.
+       *
+       * `preventDefault` is already called above for every wheel event on the
+       * canvas, which is what stops the Discord activity iframe scrolling the
+       * whole page and dragging the canvas out of view.
+       */
+      const talentsRect = wheelLayout.talents;
+      if (talentsRect !== null && inRect(talentsRect, point.x, point.y)) {
+        const step = event.deltaY > 0 ? TALENT_SCROLL_STEP : -TALENT_SCROLL_STEP;
+        talentScroll = talentPanelGeometry(
+          talentsRect,
+          talentPanelRows(talentPanelView()),
+          talentScroll + step,
+        ).grid.scroll;
+        requestDraw();
+        return;
+      }
       // AND THE INVENTORY PANEL, WHICH IS AN OCCLUSION GUARD AND NOT A SCROLL
       // GATE — the same distinction the paragraph above draws for the talent
       // panel. This panel consumes nothing: it has no scroll position, no
@@ -9422,6 +9500,7 @@ async function boot(): Promise<void> {
         talentPanelRows(talentPanelView()),
         point.x,
         point.y,
+        talentScroll,
       );
       if (hit !== null && hit.kind === TalentHitKind.Close) {
         event.preventDefault();
@@ -9460,6 +9539,7 @@ async function boot(): Promise<void> {
           talentPanelRows(talentPanelView()),
           point.x,
           point.y,
+          talentScroll,
         );
         /**
          * ═══════════════════════════════════════════════════════════════════

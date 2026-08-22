@@ -201,6 +201,34 @@ const CAT_HEAD_H = 13;
 const CAT_PAD = 7;
 /** One whole category block. */
 const CAT_H = CAT_HEAD_H + ICON_PX + RANK_H + CAT_PAD;
+
+/**
+ * ONE STRIP PER WHEEL NOTCH.
+ *
+ * ═══ PIXELS, AND THE UNIT IS THE POINT ═══
+ * The only other scrolling surface in this client is the Case Log, and it scrolls
+ * by ENTRY INDEX — its `SCROLL_STEP` is a count of log lines. Reaching for that
+ * constant here would compile and would move the grid by four pixels a notch,
+ * because the two numbers share a name and mean different things.
+ *
+ * A strip is the natural unit for this grid: one notch, one row of disciplines,
+ * so a player always lands on a whole row rather than halfway through icons they
+ * are about to click.
+ */
+export const TALENT_SCROLL_STEP = CAT_H;
+
+/**
+ * THE SCROLLBAR, DRAWN RATHER THAN BLITTED.
+ *
+ * There is no scrollbar sprite in the manifest and there will not be one — the
+ * art is the player's to replace and a bar is not art, it is furniture. Four
+ * pixels of `SLATE` with a `GREY_HI` thumb reads at 32px tiles without asking
+ * anyone to draw anything.
+ */
+const BAR_W = 4;
+const BAR_GAP = 3;
+/** A thumb shorter than this stops looking like a control. */
+const BAR_MIN_THUMB = 8;
 /** Between the two columns of categories. */
 const COL_GAP = 14;
 /**
@@ -1048,8 +1076,51 @@ export type PlacedTalentRow = {
   readonly plus: PanelRect | null;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THE CATEGORY GRID SITS, AND HOW FAR DOWN IT HAS BEEN SCROLLED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE OFFSET IS APPLIED IN THE GEOMETRY, NOT AT THE PAINT ═══
+ * The obvious way to scroll a canvas panel is `ctx.translate` in the painter.
+ * It is also the dangerous way HERE: the hit test would then have to subtract
+ * the same offset, in a second place, and the two would eventually disagree by
+ * exactly `offset` pixels. A talent icon SPENDS A POINT and there is no refund
+ * gesture, so a click landing one row off is an irreversible spend on somebody
+ * else's live character.
+ *
+ * `talentPanelHitAt` already calls `talentPanelGeometry`. So the offset is
+ * folded into the placed rects — every rect this returns is in POINTER SPACE,
+ * already scrolled — and the painter and the pointer cannot drift apart because
+ * there is only ever one arithmetic. The painter's only extra job is to CLIP.
+ *
+ * `viewport` is the window the grid shows through. The hit test refuses a grid
+ * row outside it, so a strip scrolled half off the top cannot be clicked on the
+ * half that is not there.
+ */
+export type TalentGridView = {
+  readonly viewport: PanelRect;
+  /**
+   * THE TRACK, and `null` when there is nothing to scroll.
+   *
+   * Null rather than a zero-height rect so the painter cannot draw a bar for a
+   * list that fits — the presence of a bar is the signal that there is more,
+   * and a bar that is always there says nothing. ToME hides its slider the same
+   * way, on focus (TalentTrees.lua:451-455).
+   */
+  readonly bar: PanelRect | null;
+  /** Where the thumb sits inside `bar`. Null exactly when `bar` is. */
+  readonly thumb: PanelRect | null;
+  /** The offset actually applied, after clamping. Never negative. */
+  readonly scroll: number;
+  /** How far it can go. Zero when everything already fits. */
+  readonly maxScroll: number;
+};
+
 export type TalentPanelGeometry = {
   readonly close: PanelRect;
+  /** See `TalentGridView`. */
+  readonly grid: TalentGridView;
   /** Rows in reading order, top to bottom. */
   readonly placed: readonly PlacedTalentRow[];
   /**
@@ -1169,7 +1240,22 @@ export function talentPanelGeometry(
    * tests read the same before and after; it is documented as dead rather than
    * quietly accepted.
    */
-  _wrap?: (text: string, maxPx: number) => readonly string[],
+  /**
+   * HOW FAR THE CATEGORY GRID IS SCROLLED, in pixels from the top.
+   *
+   * ═══ NO DEFAULT, ON PURPOSE ═══
+   * Four places call this function — the painter, the hit test twice, and one
+   * probe in main.ts — and every one of them must use the SAME offset or the
+   * pointer and the picture describe different panels. A default would let a
+   * call site forget silently; a required argument makes forgetting a compile
+   * error, which is the only guarantee worth having when the failure mode is an
+   * irreversible talent point.
+   *
+   * Clamped here rather than by the caller, so the caller may hold any number
+   * it likes — a wheel handler adding deltas does not have to know how tall the
+   * content is.
+   */
+  scroll: number,
 ): TalentPanelGeometry {
   const close = closeRect(rect);
   const x = rect.x + INSET;
@@ -1241,10 +1327,29 @@ export function talentPanelGeometry(
    * the drop stops. The strips never shrink; there are simply more of them per
    * line, which is the one axis this grid had spare.
    */
-  const columns = Math.max(1, Math.floor((innerW + COL_GAP) / (COL_W + COL_GAP)));
+  /**
+   * ═══ THE SCROLLBAR GUTTER IS TAKEN OFF THE TOP, ALWAYS ═══
+   * Reserved whether or not this list can actually scroll, which costs seven
+   * pixels on a panel that never needs them. Both alternatives are worse:
+   *
+   *   - Letting the bar OVERLAY the grid puts a decoration on top of the right
+   *     edge of an icon, and icons here spend points with no refund.
+   *   - Reserving it only WHEN the list overflows makes the column count depend
+   *     on whether it overflows, which depends on the column count. Even if that
+   *     knot were untied, the grid would reflow the instant a talent tree was
+   *     unlocked — icons sliding to new columns under a pointer that is already
+   *     moving toward one.
+   *
+   * A constant gutter means the grid a player learned the shape of stays that
+   * shape.
+   */
+  const gridSpace = Math.max(0, innerW - (BAR_W + BAR_GAP));
+  const columns = Math.max(1, Math.floor((gridSpace + COL_GAP) / (COL_W + COL_GAP)));
   const gridW = columns * COL_W + (columns - 1) * COL_GAP;
   /** CENTRED. A left-aligned grid in a wider panel reads as a layout bug. */
-  const gridX = x + afterStats + Math.max(0, Math.floor((innerW - gridW) / 2));
+  const gridX = x + afterStats + Math.max(0, Math.floor((gridSpace - gridW) / 2));
+  /** THE GUTTER ITSELF, at the right edge of the space the grid was fitted to. */
+  const barX = x + afterStats + gridSpace + BAR_GAP;
 
   const categories = rows.filter((row) => row.kind === TalentRowKind.Category);
   const others = rows.filter((row) => row.kind !== TalentRowKind.Category);
@@ -1277,17 +1382,86 @@ export function talentPanelGeometry(
    * pointed at — is now another row of categories.
    */
   const gridBottom = bottom;
-  let dropped = 0;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE GRID SCROLLS NOW, SO NOTHING IS DROPPED FOR WANT OF ROOM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This loop used to stop at the first strip that would not fit and report the
+   * rest as "N categories hidden — panel too small". Widening the panel bought
+   * some of them back and could never buy them all: the tree count grows with
+   * content and the band between the HUD docks does not.
+   *
+   * Upstream scrolls instead — TalentTrees.lua:72 gives the list a slider and
+   * :388 clips it with `glScissor` — and a scrolled list has no ceiling at all.
+   *
+   * ═══ THE CLAMP IS `content - viewport`, WHICH IS NOT WHAT ToME USES ═══
+   * TalentTrees.lua:350 sets `self.scrollbar.max = self.max_h`, which lets a
+   * pane scroll a whole viewport past its own end and leaves the reader staring
+   * at blank space wondering what they missed. TextzoneList.lua:148 has it
+   * right — `self.scrollbar.max = self.max_h - self.h` — and that is the one
+   * ported here. Where upstream disagrees with itself, the version that cannot
+   * strand the reader wins.
+   */
+  const gridLines = Math.ceil(categories.length / columns);
+  const contentH = gridLines * CAT_H;
+  const viewportH = Math.max(0, gridBottom - cursor);
+  const maxScroll = Math.max(0, contentH - viewportH);
+  const applied = Math.max(0, Math.min(Math.floor(scroll), maxScroll));
+  const gridViewport: PanelRect = { x: gridX, y: cursor, w: gridW, h: viewportH };
+
+  /**
+   * THE THUMB IS PROPORTIONAL, and its travel is `track - thumb` rather than
+   * `track`, for the same reason `maxScroll` is `content - viewport`: a thumb
+   * that runs to the bottom of its track only when it has already left it tells
+   * the player they have more to read when they are at the end.
+   */
+  const bar: PanelRect | null =
+    maxScroll > 0 && viewportH > 0 ? { x: barX, y: cursor, w: BAR_W, h: viewportH } : null;
+  const thumb: PanelRect | null =
+    bar === null
+      ? null
+      : (() => {
+          const h = Math.max(
+            BAR_MIN_THUMB,
+            Math.floor(bar.h * Math.min(1, viewportH / Math.max(1, contentH))),
+          );
+          const travel = Math.max(0, bar.h - h);
+          return {
+            x: bar.x,
+            y: bar.y + Math.round(travel * (applied / maxScroll)),
+            w: bar.w,
+            h,
+          };
+        })();
+
   for (let i = 0; i < categories.length; i += 1) {
     const row = categories[i];
     if (row === undefined || row.kind !== TalentRowKind.Category) continue;
     const col = i % columns;
     const line = Math.floor(i / columns);
-    const y = cursor + line * CAT_H;
-    if (y + CAT_H > gridBottom) {
-      dropped = categories.length - i;
-      break;
-    }
+    /**
+     * ALREADY IN POINTER SPACE. Every rect this loop produces is where the
+     * strip actually IS on screen, scroll included — see `TalentGridView` for
+     * why the offset is applied here and not with a `ctx.translate` in the
+     * painter.
+     */
+    const y = cursor + line * CAT_H - applied;
+    /**
+     * A STRIP ENTIRELY ABOVE OR BELOW THE WINDOW IS NOT PLACED AT ALL.
+     *
+     * Not merely invisible: UNPLACED. A rect the painter clips away is still in
+     * the list the HIT TEST walks, and the hazard is not hypothetical — the
+     * sentence rows are laid out immediately above `cursor`, so a strip scrolled
+     * off the top of the window carries a negative-ish `y` that lands squarely
+     * on top of them. A player clicking the points sentence would spend a point
+     * on a discipline that is not on the screen, and there is no refund gesture.
+     *
+     * Clipping in the painter would hide the strip and leave that click armed.
+     * The cheapest way to disarm it is for the row not to exist.
+     */
+    if (y + CAT_H <= cursor || y >= gridBottom) continue;
     const bx = gridX + col * (COL_W + COL_GAP);
     const cells: PanelRect[] = row.talents.map((_, n) => ({
       x: bx + n * (ICON_PX + CELL_GAP),
@@ -1304,22 +1478,36 @@ export function talentPanelGeometry(
       cells,
     });
   }
-  const lines = Math.ceil(Math.min(categories.length, categories.length - dropped) / columns);
-  cursor += Math.max(0, lines) * CAT_H;
+  /**
+   * AND `cursor` IS NOT ADVANCED, BECAUSE THE GRID IS THE LAST THING PLACED.
+   *
+   * The sentence rows are laid out ABOVE the grid and the grid runs to
+   * `gridBottom`, so there is nothing below it to push down. The old advance
+   * was already dead weight; a scrolled grid makes it actively misleading,
+   * since "how far down the content reached" and "how far down the panel is
+   * used" stopped being the same number the moment the list could exceed its
+   * window.
+   */
 
-  if (dropped > 0 && cursor + NOTE_ROW_H <= gridBottom) {
-    const what = dropped === 1 ? '1 category hidden' : `${dropped} categories hidden`;
-    placed.push({
-      row: { kind: TalentRowKind.Note, text: `${what} — panel too small` },
-      rect: { x, y: cursor, w: innerW, h: NOTE_ROW_H },
-      plus: null,
-      descLines: [],
-      nextLines: [],
-      cells: [],
-    });
-  }
+  /**
+   * ═══ THERE IS NO "N CATEGORIES HIDDEN" ROW ANY MORE, AND THAT IS THE FIX ═══
+   *
+   * The grid used to stop at the first strip that would not fit and say so, on
+   * ui/caselog.ts's rule that a surface which has quietly stopped showing
+   * everything must never make the reader infer it. The rule was right and the
+   * row was honest; a player still could not see two of their own disciplines.
+   *
+   * A scrolled grid has no tail to concede, so the honest thing to print is
+   * nothing. The rule is not being abandoned — it is being satisfied.
+   */
 
-  return { close, placed, detail, stats };
+  return {
+    close,
+    grid: { viewport: gridViewport, bar, thumb, scroll: applied, maxScroll },
+    placed,
+    detail,
+    stats,
+  };
 }
 
 export const TalentHitKind = {
@@ -1418,11 +1606,50 @@ export function talentPanelDragAt(rect: PanelRect, px: number, py: number): Tale
  * sheet. It reads the SAME geometry the painter drew with, which is the whole
  * reason `talentPanelGeometry` takes no context.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THIS ICON ACTUALLY ON SCREEN? — asked of every grid cell before it answers
+ * a pointer.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `talentPanelGeometry` refuses to place a strip that is ENTIRELY outside the
+ * scroll window, which closes the large hole. This closes the small one: a strip
+ * scrolled HALFWAY off the top is still placed — it must be, the visible half
+ * has to be drawn — and it brings all five of its cells with it, including ones
+ * whose boxes now sit above the window entirely.
+ *
+ * The painter clips those away, so they are not on the screen. Without this test
+ * the hit walk would still match them, and a press on what looks like empty
+ * panel above the grid would SPEND A POINT on an icon the player cannot see.
+ * That is the exact failure the whole scroll design is arranged against, one
+ * scale down.
+ *
+ * ═══ FULL CONTAINMENT, NOT OVERLAP ═══
+ * A half-clipped icon is refused rather than accepted on its visible part. Its
+ * drawn shape and its hit box would otherwise disagree — the player aims at what
+ * they can see, the box extends past the clip — and "close enough" is not a
+ * standard worth holding when the miss costs a talent point with no refund.
+ */
+function cellOnScreen(box: PanelRect, viewport: PanelRect): boolean {
+  return (
+    box.x >= viewport.x &&
+    box.y >= viewport.y &&
+    box.x + box.w <= viewport.x + viewport.w &&
+    box.y + box.h <= viewport.y + viewport.h
+  );
+}
+
 export function talentPanelHitAt(
   rect: PanelRect,
   rows: readonly TalentRow[],
   px: number,
   py: number,
+  /**
+   * THE SAME OFFSET THE PAINTER USED. Required for the reason
+   * `talentPanelGeometry` states: a hit test working from a different scroll
+   * than the picture is a click that spends a talent point on the wrong talent.
+   */
+  scroll: number,
   /**
    * WHICH TALENT IS ARMED, so a press on it reads as the CONFIRM half of
    * `pressSpend` rather than as another arm. Optional, because a caller that is
@@ -1434,7 +1661,7 @@ export function talentPanelHitAt(
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
 
-  const geometry = talentPanelGeometry(rect, rows);
+  const geometry = talentPanelGeometry(rect, rows, scroll);
   if (inside(geometry.close)) return { kind: TalentHitKind.Close };
 
   /**
@@ -1474,6 +1701,8 @@ export function talentPanelHitAt(
       const cell = talents[n];
       if (box === undefined || cell === undefined) continue;
       if (!inside(box)) continue;
+      // CLIPPED AWAY IS NOT CLICKABLE. See `cellOnScreen`.
+      if (!cellOnScreen(box, geometry.grid.viewport)) continue;
       /**
        * AN ICON IS THE `+`. There is no separate plus button in the grid, and
        * that is the design rather than an omission: five plus-buttons inside a
@@ -1519,13 +1748,18 @@ function cellAt(
   px: number,
   py: number,
   rect: PanelRect,
+  /** The same offset the painter used — see `talentPanelGeometry`. */
+  scroll: number,
 ): TalentCell | undefined {
-  const geometry = talentPanelGeometry(rect, rows);
+  const geometry = talentPanelGeometry(rect, rows, scroll);
   for (const placed of geometry.placed) {
     if (placed.row.kind !== TalentRowKind.Category) continue;
     const box = placed.cells[index];
     if (box === undefined) continue;
     if (px < box.x || px >= box.x + box.w || py < box.y || py >= box.y + box.h) continue;
+    // THE SAME REFUSAL THE PRESS MAKES, so the hover card cannot describe an
+    // icon the press would decline to spend on. See `cellOnScreen`.
+    if (!cellOnScreen(box, geometry.grid.viewport)) continue;
     return placed.row.talents[index];
   }
   return undefined;
@@ -1548,15 +1782,17 @@ export function talentIdAt(
   rows: readonly TalentRow[],
   px: number,
   py: number,
+  /** The same offset the painter used — see `talentPanelGeometry`. */
+  scroll: number,
 ): string | null {
-  const hit = talentPanelHitAt(rect, rows, px, py);
+  const hit = talentPanelHitAt(rect, rows, px, py, scroll);
   // AN ATTRIBUTE `+` IS NOT A TALENT. It is on the same panel and answers the
   // same hit test, and it has no cell behind it — so it takes the same exit the
   // × does rather than being asked for an index it does not carry.
   if (hit === null || hit.kind === TalentHitKind.Close || hit.kind === TalentHitKind.Stat) {
     return null;
   }
-  return cellAt(rows, hit.index, px, py, rect)?.id ?? null;
+  return cellAt(rows, hit.index, px, py, rect, scroll)?.id ?? null;
 }
 
 export function talentTipAt(
@@ -1564,6 +1800,8 @@ export function talentTipAt(
   rows: readonly TalentRow[],
   px: number,
   py: number,
+  /** The same offset the painter used — see `talentPanelGeometry`. */
+  scroll: number,
 ): HoverCard | null {
   /**
    * THE SAME TRAVERSAL A CLICK USES, so the card appears over exactly the icon a
@@ -1574,7 +1812,7 @@ export function talentTipAt(
    * a PRESS means, never what the pointer is OVER, and a hover that reported
    * `Spend` would put the card on a different code path for no reason.
    */
-  const hit = talentPanelHitAt(rect, rows, px, py);
+  const hit = talentPanelHitAt(rect, rows, px, py, scroll);
   // NO CARD OVER AN ATTRIBUTE. There is no cell behind one, and the column
   // already draws its own name and value — a card repeating them would be the
   // same words twice with one copy following the pointer.
@@ -1582,7 +1820,7 @@ export function talentTipAt(
     return null;
   }
 
-  const cell = cellAt(rows, hit.index, px, py, rect);
+  const cell = cellAt(rows, hit.index, px, py, rect, scroll);
   if (cell === undefined) return null;
 
   const wrap = talentWrapper();
@@ -2018,6 +2256,8 @@ function drawRow(
 }
 
 export type TalentPanelDrawOptions = {
+  /** How far the category grid is scrolled. See `talentPanelGeometry`. */
+  readonly scroll: number;
   readonly ctx: CanvasRenderingContext2D;
   readonly sprites: SpriteSource;
   readonly rect: PanelRect;
@@ -2083,6 +2323,7 @@ export type TalentPanelDrawOptions = {
  * decision made visible. Everything behind it is still live and still pressable.
  */
 export function drawTalentPanel(options: TalentPanelDrawOptions): void {
+  const { scroll } = options;
   const { ctx, sprites, rect, rows, hoveredClose, hovered, armedId } = options;
   if (rect.w <= 0 || rect.h <= 0) return;
 
@@ -2098,8 +2339,69 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
 
   drawHeader(ctx, sprites, panelTitle(options.level), rect, FONT_META);
 
-  const geometry = talentPanelGeometry(rect, rows);
-  for (const placed of geometry.placed) drawRow(ctx, sprites, placed, armedId, hovered);
+  const geometry = talentPanelGeometry(rect, rows, scroll);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE GRID IS CLIPPED. Everything else on this panel is not.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A strip half scrolled past the top of the window must be drawn half — and
+   * only the grid rows can be in that state, so only they go inside the clip.
+   * The points sentence, the stats column and the description pane are outside
+   * it and always whole.
+   *
+   * ToME does the same thing with the same intent: TalentTrees.lua:388 wraps its
+   * list in `core.display.glScissor(true, screen_x, screen_y, self.w, self.h)`.
+   *
+   * ═══ SAVE AND RESTORE ARE A PAIR AND NOTHING RETURNS BETWEEN THEM ═══
+   * An unbalanced clip is not a talent-panel bug, it is a bug in every panel
+   * drawn AFTER this one in the same frame — the whole HUD inherits a clip
+   * rectangle nobody asked for and disappears. So the two calls sit at the same
+   * nesting level with a plain `for` between them and no early exit anywhere
+   * inside, which is why this loop was not wrapped in a helper that could grow
+   * one later.
+   */
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(
+    geometry.grid.viewport.x,
+    geometry.grid.viewport.y,
+    geometry.grid.viewport.w,
+    geometry.grid.viewport.h,
+  );
+  ctx.clip();
+  for (const placed of geometry.placed) {
+    if (placed.row.kind === TalentRowKind.Category) drawRow(ctx, sprites, placed, armedId, hovered);
+  }
+  ctx.restore();
+
+  /**
+   * ═══ THE BAR, OUTSIDE THE CLIP ═══
+   * It is furniture rather than content: it sits in a gutter the grid was never
+   * fitted into, it does not scroll with the strips, and clipping it to the
+   * window it describes would be circular. `grid.bar` is null unless there is
+   * something to scroll, so a list that fits draws nothing at all.
+   *
+   * ═══ IT REPORTS; IT DOES NOT YET DRAG ═══
+   * ToME's is draggable (TalentTrees.lua:72). This one is not, and the wheel is
+   * the whole gesture. That is a deliberate stop rather than an unfinished
+   * thought: a draggable bar is another hit-testable surface three pixels from a
+   * column of icons that spend points irreversibly, and it earns its place only
+   * once the wheel proves insufficient. The indicator is the part that was
+   * actually missing — without it a player has no way to know the grid continues.
+   */
+  const { bar, thumb } = geometry.grid;
+  if (bar !== null && thumb !== null) {
+    ctx.fillStyle = PALETTE.SLATE;
+    ctx.fillRect(bar.x, bar.y, bar.w, bar.h);
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillRect(thumb.x, thumb.y, thumb.w, thumb.h);
+  }
+
+  // AND EVERYTHING THAT IS NOT A STRIP, OUTSIDE THE CLIP.
+  for (const placed of geometry.placed) {
+    if (placed.row.kind !== TalentRowKind.Category) drawRow(ctx, sprites, placed, armedId, hovered);
+  }
 
   /**
    * ═══ THE DESCRIPTION COLUMN, RESOLVED AGAINST THIS FRAME'S ROWS ═══
