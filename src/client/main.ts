@@ -172,6 +172,9 @@ import { applyProjectilesFrame, clearProjectiles, orbsAimedAt } from './state/pr
 import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
 import {
   charSheetHitAt,
+  charSheetTabAt,
+  SheetTab,
+  nextSheetTab,
   charSheetRect,
   charSheetRows,
   charSheetTipAt,
@@ -1439,6 +1442,17 @@ const hotbarBindings: (ItemBinding | null)[] = Array.from(
  * NOT in the Escape chain — see `onCancel`.
  */
 let sheetVisible = false;
+/**
+ * WHICH PAGE OF THE CHARACTER SHEET IS OPEN. `CharacterSheet.lua:44` opens on
+ * General and this does the same.
+ *
+ * NOT RESET WHEN THE SHEET CLOSES, deliberately. A player checking their saves
+ * mid-delve closes the panel to act and opens it again a turn later; sending
+ * them back to General every time would make the Defence tab useless for the
+ * one job it has. Upstream keeps its tab across opens the same way
+ * (`start_tab` at :40-44 is remembered by the caller, not cleared).
+ */
+let sheetTab: SheetTab = SheetTab.General;
 /** True while the pointer is over the sheet's close control, so it reads pressable. */
 let sheetCloseHovered = false;
 /** True while the pointer is over the sheet's `[G]` control. Cosmetic. */
@@ -3437,9 +3451,11 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // `charSheetRows(charSheetView())` would be a second join of four frames AND
   // a second opinion about which sections the short-panel ladder conceded — so
   // the card could describe a talent that is not on screen.
-  const sheetRows = layout.sheet === null ? null : charSheetRows(charSheetView());
+  const sheetRows = layout.sheet === null ? null : charSheetRows(charSheetView(), sheetTab);
   if (layout.sheet !== null && sheetRows !== null) {
     drawCharSheet({
+      // THE SAME PAGE `charSheetRows` WAS BUILT FOR. See `SheetTab`.
+      tab: sheetTab,
       ctx,
       sprites,
       rect: layout.sheet,
@@ -7496,6 +7512,20 @@ async function boot(): Promise<void> {
       // server says it did.
       socket.send({ v: PROTOCOL_VERSION, t: 'move', dir });
     },
+    /**
+     * TAB TURNS THE CHARACTER SHEET'S PAGE — `CharacterSheet.lua:110`.
+     *
+     * ONLY WHILE THE SHEET IS OPEN, and it says so by returning false when it
+     * is not: Tab then goes on meaning nothing, which is what it meant before.
+     * Shift+Tab steps back, because a four-tab strip cycled one way makes
+     * reaching the tab you just left a three-press job.
+     */
+    onTab: (shift) => {
+      if (!sheetVisible) return false;
+      sheetTab = nextSheetTab(sheetTab, shift);
+      requestDraw();
+      return true;
+    },
     onCommand: (command) => {
       if (roster !== null) {
         // ENTER PLAYS THE SELECTED CHARACTER, and Hold does nothing — the same
@@ -9603,6 +9633,22 @@ async function boot(): Promise<void> {
       !inRect(layout.inventory, point.x, point.y) &&
       !inRect(layout.menu, point.x, point.y)
     ) {
+      /**
+       * ═══ THE TABS, TESTED FIRST BECAUSE THEY ARE THE TOPMOST STRIP ═══
+       * `charSheetTabAt` and `charSheetHitAt` answer about different parts of
+       * the panel and cannot both claim a pixel — the strip sits below the
+       * header bar and above the rows, and `headerHandle` stops at the header's
+       * own bottom edge. Order is stated anyway rather than left to that
+       * happening to be true: if the strip ever grew up into the header, a drag
+       * would start instead of a page turning, and silently.
+       */
+      const tabHit = charSheetTabAt(layout.sheet, point.x, point.y);
+      if (tabHit !== null) {
+        event.preventDefault();
+        sheetTab = tabHit;
+        requestDraw();
+        return;
+      }
       const hit = charSheetHitAt(layout.sheet, point.x, point.y);
       if (hit === 'close') {
         event.preventDefault();

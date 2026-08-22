@@ -721,6 +721,47 @@ export type ActorView = {
  * the client owns presentation and a narrow viewport can drop rows rather than
  * truncating sentences mid-word.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH OF ToME'S SHEET TABS A ROW BELONGS UNDER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `CharacterSheet.lua:54-57` builds `[G]eneral`, `[A]ttack`, `[D]efense` and
+ * `[T]alents` as separate tabs, and `view/inspect.ts` has ALWAYS composed the
+ * self-sheet in exactly those groups — its three block comments cite
+ * `CharacterSheet.lua:815-820`, `:935-1120` and `:1304-1321` by line. The
+ * grouping was computed on the server and then thrown away, because
+ * `InspectRow` was flat and had nowhere to put it.
+ *
+ * ═══ THE CLIENT MUST NOT RE-DERIVE THIS FROM LABELS ═══
+ * charsheet.ts says so in those words — *"That IS ToME's Attack-then-Defense
+ * order; it is composed in src/server/view/inspect.ts and this file must not
+ * second-guess it"* — and `InspectView` already warns that finding a row by
+ * scanning for its label *"would break the moment a row was reordered,
+ * relabelled or dropped, and it would break by silently"* doing the wrong
+ * thing. Splitting a tabbed sheet on `label === 'Armour'` would be that bug
+ * with a UI on top.
+ *
+ * ═══ OPTIONAL, SO NO PROTOCOL BUMP ═══
+ * Additive and absent on every row that has no opinion — the hostile card's
+ * rows are a tooltip rather than a sheet and are not tabbed. A client that has
+ * never heard of tabs renders exactly what it rendered before.
+ */
+export const InspectGroup = {
+  /** The six primaries. CharacterSheet.lua:815-820. */
+  General: 'general',
+  /** Accuracy, damage, APR, crit. CharacterSheet.lua:935-1120. */
+  Attack: 'attack',
+  /** Armour, defence, the three saves. CharacterSheet.lua:1304-1321. */
+  Defence: 'defence',
+} as const;
+export type InspectGroup = (typeof InspectGroup)[keyof typeof InspectGroup];
+
+/**
+ * One line of a tooltip. A label and a value rather than a formatted string, so
+ * the client owns presentation and a narrow viewport can drop rows rather than
+ * truncating sentences mid-word.
+ */
 export type InspectRow = {
   readonly label: string;
   readonly value: string;
@@ -729,6 +770,11 @@ export type InspectRow = {
    * commit — the hit chance, and a threat that can kill you this turn.
    */
   readonly emphasis?: boolean;
+  /**
+   * WHICH SHEET TAB THIS BELONGS UNDER, on the self-sheet only. See
+   * `InspectGroup`. Absent on a hostile tooltip, which is not tabbed.
+   */
+  readonly group?: InspectGroup;
 };
 
 export type InspectView = {

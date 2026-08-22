@@ -11,11 +11,14 @@ import {
   SHEET_MIN_H,
   SheetRowKind,
   SheetSection,
+  SheetTab,
+  SHEET_TABS,
+  nextSheetTab,
 } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { ACTIONS, compileKeymap, DEFAULT_KEYMAP, labelFor } from '../../src/client/input/keymap.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
-import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
+import { InspectGroup, ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { CharSheetView, SheetRow } from '../../src/client/ui/charsheet.ts';
 import type {
@@ -72,23 +75,48 @@ import type {
  * strings: the damage band carries an EN DASH (U+2013) and the crit a percent
  * sign, and no self row carries `emphasis`, so nothing here may depend on it.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FIFTEEN ROWS, GROUPED THE WAY `view/inspect.ts` GROUPS THEM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `group` is not decoration on this fixture — it is what the sheet SPLITS ON.
+ * Without it every row falls to the Attack tab (`charSheetRows`' documented
+ * fallback for an untagged row) and the Defence tab is empty, which is exactly
+ * what this fixture produced before the field was added here.
+ *
+ * The three blocks and their boundaries are the server's, verbatim:
+ * `CharacterSheet.lua:815-820` (the six primaries), `:935-1120` (attack) and
+ * `:1304-1321` (armour, defence, the three saves).
+ */
 const SELF_ROWS = [
-  { label: 'Strength', value: '14' },
-  { label: 'Dexterity', value: '11' },
-  { label: 'Constitution', value: '13' },
-  { label: 'Magic', value: '10' },
-  { label: 'Willpower', value: '12' },
-  { label: 'Cunning', value: '10' },
-  { label: 'Accuracy', value: '19' },
-  { label: 'Damage', value: '12–13' },
-  { label: 'APR', value: '2' },
-  { label: 'Crit. chance', value: '3%' },
-  { label: 'Armour', value: '4' },
-  { label: 'Defence', value: '8' },
-  { label: 'Physical save', value: '9' },
-  { label: 'Spell save', value: '5' },
-  { label: 'Mental save', value: '6' },
+  { label: 'Strength', value: '14', group: InspectGroup.General },
+  { label: 'Dexterity', value: '11', group: InspectGroup.General },
+  { label: 'Constitution', value: '13', group: InspectGroup.General },
+  { label: 'Magic', value: '10', group: InspectGroup.General },
+  { label: 'Willpower', value: '12', group: InspectGroup.General },
+  { label: 'Cunning', value: '10', group: InspectGroup.General },
+  { label: 'Accuracy', value: '19', group: InspectGroup.Attack },
+  { label: 'Damage', value: '12–13', group: InspectGroup.Attack },
+  { label: 'APR', value: '2', group: InspectGroup.Attack },
+  { label: 'Crit. chance', value: '3%', group: InspectGroup.Attack },
+  { label: 'Armour', value: '4', group: InspectGroup.Defence },
+  { label: 'Defence', value: '8', group: InspectGroup.Defence },
+  { label: 'Physical save', value: '9', group: InspectGroup.Defence },
+  { label: 'Spell save', value: '5', group: InspectGroup.Defence },
+  { label: 'Mental save', value: '6', group: InspectGroup.Defence },
 ] as const;
+
+/**
+ * WHICH GROUP EACH STAT TAB ASKS FOR. Spelled here rather than imported, because
+ * the mapping inside charsheet.ts is the thing under test — a test that imported
+ * it would agree with the sheet by construction and prove nothing.
+ */
+const TAB_GROUP: Partial<Record<SheetTab, InspectGroup>> = {
+  [SheetTab.General]: InspectGroup.General,
+  [SheetTab.Attack]: InspectGroup.Attack,
+  [SheetTab.Defence]: InspectGroup.Defence,
+};
 
 function selfView(over: Partial<InspectView> = {}): InspectView {
   return {
@@ -99,7 +127,7 @@ function selfView(over: Partial<InspectView> = {}): InspectView {
     hp: 41.000000000000014,
     maxHp: 58,
     effects: [],
-    rows: SELF_ROWS.map((row) => ({ label: row.label, value: row.value })),
+    rows: SELF_ROWS.map((row) => ({ label: row.label, value: row.value, group: row.group })),
     ...over,
   };
 }
@@ -207,19 +235,56 @@ function fieldLabels(rows: readonly SheetRow[]): readonly string[] {
 // ---------------------------------------------------------------------------
 
 describe('charSheetRows follows ToME’s sheet, reduced', () => {
-  it('emits General, then Combat, then Talents, and nothing else', () => {
-    // ToME's spine: General (CharacterSheet.lua:605-625), Attack (:935-941) and
-    // Defense (:1303-1321) — which collapse into one COMBAT section here
-    // because the server sends them as one ordered list — then Talents.
-    expect(sections(charSheetRows(sheet()))).toEqual([
-      SheetSection.General,
-      SheetSection.Combat,
-      SheetSection.Talents,
-    ]);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE SECTION PER TAB — which is what the sheet growing tabs actually means.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This asserted `[GENERAL, COMBAT, TALENTS]` off one call, and its comment
+   * explained that ToME's Attack (`CharacterSheet.lua:935-941`) and Defense
+   * (`:1303-1321`) tabs *"collapse into one COMBAT section here because the
+   * server sends them as one ordered list"*. The server sends `InspectRow.group`
+   * now and nothing collapses.
+   *
+   * BUILT FROM `SHEET_TABS`, NOT SPELLED OUT. The header of charsheet.ts calls
+   * the section order the contract and says a test that spelled the sections
+   * itself *"would keep passing while the sheet drew them in the wrong order"*.
+   * The same trap has a second door once there are tabs: a test naming four
+   * sections in one line would keep passing if a tab showed the WRONG one, as
+   * long as all four appeared somewhere. Asking each tab separately is what
+   * closes it.
+   */
+  it('gives every tab exactly one section, and no tab another tab’s', () => {
+    const seen = SHEET_TABS.map((tab) => sections(charSheetRows(sheet(), tab)));
+    for (const [i, only] of seen.entries()) {
+      expect(
+        only,
+        `tab ${String(SHEET_TABS[i])} emitted ${String(only.length)} sections`,
+      ).toHaveLength(1);
+    }
+    // AND ALL FOUR ARE DISTINCT, so two tabs cannot quietly show one page.
+    const flat = seen.flat();
+    expect(new Set(flat).size, 'two tabs share a section').toBe(SHEET_TABS.length);
+  });
+
+  /** The four ToME tabs, in ToME's order — CharacterSheet.lua:54-57. */
+  it('opens on General and cycles the way upstream does', () => {
+    expect(SHEET_TABS[0]).toBe(SheetTab.General);
+    let tab: SheetTab = SheetTab.General;
+    const walked: SheetTab[] = [tab];
+    for (let i = 1; i < SHEET_TABS.length; i += 1) {
+      tab = nextSheetTab(tab);
+      walked.push(tab);
+    }
+    expect(walked).toEqual([...SHEET_TABS]);
+    // AND IT WRAPS, in both directions. Stepping back from the first tab must
+    // reach the last rather than indexing off the front of the list.
+    expect(nextSheetTab(tab)).toBe(SheetTab.General);
+    expect(nextSheetTab(SheetTab.General, true)).toBe(SHEET_TABS[SHEET_TABS.length - 1]);
   });
 
   it('opens with identity, then Life, then the pool — never the numbers first', () => {
-    const rows = charSheetRows(sheet());
+    const rows = charSheetRows(sheet(), SheetTab.General);
     // ToME prints Sex/Race/Class (CharacterSheet.lua:604-606), then Level and
     // Exp (:614-615), then "Life" (:625), then the `resources_def` loop. Ours has
     // no sex and no race, so: name, class, level, experience, life, pool.
@@ -236,38 +301,61 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
   it('draws the class from the top-level field and never from a row labelled Class', () => {
     // protocol.ts makes `className` a field precisely so the header cannot go
     // hunting through `rows`. Absent means "no class line", never "unknown".
-    const rows = charSheetRows(sheet({ view: selfView({ className: undefined }) }));
+    const rows = charSheetRows(
+      sheet({ view: selfView({ className: undefined }) }),
+      SheetTab.General,
+    );
     expect(fieldLabels(rows)).not.toContain('Class');
     expect(fieldLabels(rows).slice(0, 2)).toEqual(['Name', 'Level']);
   });
 
-  it('keeps the server’s fifteen rows in the server’s order, unsorted', () => {
-    const rows = charSheetRows(sheet());
-    const labels = fieldLabels(rows);
-    const combat = labels.slice(labels.indexOf('Strength'));
-    expect(combat).toEqual(SELF_ROWS.map((row) => row.label));
+  /**
+   * THE SERVER'S ORDER SURVIVES THE SPLIT — checked per tab, and the union of
+   * the tabs is still the server's fifteen with nothing lost between pages.
+   *
+   * This read the fifteen off one call, because there was one page. Splitting
+   * them created a second way to be wrong that a single-list check cannot see:
+   * a row could keep its position WITHIN its group and land on the wrong tab.
+   * So both halves are asserted — order inside each page, and no row missing
+   * from all of them.
+   */
+  it('keeps the server’s rows in the server’s order on every tab', () => {
+    const stats = [SheetTab.General, SheetTab.Attack, SheetTab.Defence];
+    const gathered: string[] = [];
+    for (const tab of stats) {
+      const labels = fieldLabels(charSheetRows(sheet(), tab));
+      const wanted = SELF_ROWS.filter((row) => row.group === TAB_GROUP[tab]).map((r) => r.label);
+      const mine = labels.filter((label) => (wanted as readonly string[]).includes(label));
+      expect(mine, `${String(tab)} reordered the server's rows`).toEqual(wanted);
+      gathered.push(...mine);
+    }
+    // NOTHING FELL BETWEEN THE PAGES. A row tagged with a group no tab asks for
+    // would vanish from the sheet entirely, and no per-tab check would notice.
+    expect(gathered).toEqual(SELF_ROWS.map((row) => row.label));
     // Belt and braces: an alphabetising client would put APR first.
-    expect(combat[0]).toBe('Strength');
+    expect(gathered[0]).toBe('Strength');
   });
 
   it('rounds hp UP, the same way every other surface in the client does', () => {
     // ui/tooltip.ts:143-155: the damage pipeline produces fractional hp, and one
     // body reading 41 in the party pane and 42 here would make a player
     // reasonably conclude one of them is lying.
-    const rows = charSheetRows(sheet());
+    const rows = charSheetRows(sheet(), SheetTab.General);
     const life = rows.find((row) => row.kind === SheetRowKind.Field && row.label === 'Life');
     expect(life).toEqual({ kind: SheetRowKind.Field, label: 'Life', value: '42/58' });
   });
 
   it('omits the pool entirely rather than drawing an empty row for it', () => {
-    const rows = charSheetRows(sheet({ resource: null }));
+    const rows = charSheetRows(sheet({ resource: null }), SheetTab.General);
+    // THE GENERAL PAGE ONLY — identity, then the six primaries. Attack and
+    // Defence are their own tabs and their rows are asserted there.
     expect(fieldLabels(rows)).toEqual([
       'Name',
       'Class',
       'Level',
       'Experience',
       'Life',
-      ...SELF_ROWS.map((r) => r.label),
+      ...SELF_ROWS.filter((r) => r.group === InspectGroup.General).map((r) => r.label),
     ]);
   });
 
@@ -276,6 +364,7 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
       sheet({
         resource: pool({ kind: ResourceKind.Reagents, current: 3, max: 8, discrete: true }),
       }),
+      SheetTab.General,
     );
     expect(rows).toContainEqual({ kind: SheetRowKind.Field, label: 'Reagents', value: '3/8' });
   });
@@ -294,7 +383,10 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
     // 24.6 is four blows taken (4 x 6) plus one turn of trickle. Rounded it read
     // `25/100` — one more than the strip beside it, and a promise that Iron
     // Curtain (25) was payable when the server would refuse it.
-    const rows = charSheetRows(sheet({ resource: pool({ current: 24.6, max: 100 }) }));
+    const rows = charSheetRows(
+      sheet({ resource: pool({ current: 24.6, max: 100 }) }),
+      SheetTab.General,
+    );
     expect(rows).toContainEqual({
       kind: SheetRowKind.Field,
       label: 'Resolve',
@@ -303,13 +395,17 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
     expect(Math.floor(24.6)).toBe(24);
     // Just under a whole pip floors down too, rather than presenting a pool the
     // player does not have.
-    expect(charSheetRows(sheet({ resource: pool({ current: 0.9 }) }))).toContainEqual({
+    expect(
+      charSheetRows(sheet({ resource: pool({ current: 0.9 }) }), SheetTab.General),
+    ).toContainEqual({
       kind: SheetRowKind.Field,
       label: 'Resolve',
       value: '0/100',
     });
     // ...and it never goes negative, which is the `Math.max(0, …)` beside it.
-    expect(charSheetRows(sheet({ resource: pool({ current: -3.2 }) }))).toContainEqual({
+    expect(
+      charSheetRows(sheet({ resource: pool({ current: -3.2 }) }), SheetTab.General),
+    ).toContainEqual({
       kind: SheetRowKind.Field,
       label: 'Resolve',
       value: '0/100',
@@ -332,15 +428,17 @@ describe('the progression rows', () => {
     // CharacterSheet.lua:606 draws the Class line, :614-615 Level then Exp, :625
     // Life. That order is the port and it is what this assertion pins: identity,
     // then how far along that identity is, then what keeps it alive.
-    const labels = fieldLabels(charSheetRows(sheet()));
+    const labels = fieldLabels(charSheetRows(sheet(), SheetTab.General));
     expect(labels.indexOf('Level')).toBeGreaterThan(labels.indexOf('Class'));
     expect(labels.indexOf('Experience')).toBe(labels.indexOf('Level') + 1);
     expect(labels.indexOf('Life')).toBe(labels.indexOf('Experience') + 1);
   });
 
   it('prints the two xp numbers rather than ToME’s percentage', () => {
-    expect(labelled(charSheetRows(sheet()), 'Experience')[0]?.value).toBe('61/174');
-    expect(labelled(charSheetRows(sheet()), 'Level')[0]?.value).toBe('4');
+    expect(labelled(charSheetRows(sheet(), SheetTab.General), 'Experience')[0]?.value).toBe(
+      '61/174',
+    );
+    expect(labelled(charSheetRows(sheet(), SheetTab.General), 'Level')[0]?.value).toBe('4');
   });
 
   it('says “top level” instead of dividing by the cap’s zero denominator', () => {
@@ -350,6 +448,7 @@ describe('the progression rows', () => {
     // arrives. It is a fact to handle, never a number to divide by.
     const rows = charSheetRows(
       sheet({ progress: progressFrame({ level: 10, xp: 900, xpToNext: 0 }) }),
+      SheetTab.General,
     );
     expect(labelled(rows, 'Experience')[0]?.value).toBe('900 — top level');
   });
@@ -357,7 +456,7 @@ describe('the progression rows', () => {
   it('draws no level line at all before the first progress frame', () => {
     // Null is a one-frame window on connect, not a level-0 character. A row
     // reading "Level: 0" in that window is a wrong number stated confidently.
-    const labels = fieldLabels(charSheetRows(sheet({ progress: null })));
+    const labels = fieldLabels(charSheetRows(sheet({ progress: null }), SheetTab.General));
     expect(labels).not.toContain('Level');
     expect(labels).not.toContain('Experience');
     expect(labels).not.toContain('Talent points');
@@ -379,9 +478,12 @@ describe('the progression rows', () => {
     // its four counters visible at zero and regenerates them after every spend
     // (LevelupDialog.lua:757-784, :1001-1008). Flipping this one too would also
     // move SHEET_MIN_H, which gates whether this panel opens at all.
-    expect(fieldLabels(charSheetRows(sheet()))).not.toContain('Talent points');
+    expect(fieldLabels(charSheetRows(sheet(), SheetTab.General))).not.toContain('Talent points');
 
-    const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 3 }) }));
+    const rows = charSheetRows(
+      sheet({ progress: progressFrame({ unspent: 3 }) }),
+      SheetTab.General,
+    );
     const points = labelled(rows, 'Talent points')[0];
     expect(points).toBeDefined();
     expect(points?.value).toContain('3 points');
@@ -398,12 +500,18 @@ describe('the progression rows', () => {
     // The assertion above would pass forever against a hard-coded 'G'. This is
     // the one that cannot: the same row, the same view, a different keymap.
     const rebound = compileKeymap(ACTIONS, { show_talents: ['key:z'] });
-    const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 2 }), keymap: rebound }));
+    const rows = charSheetRows(
+      sheet({ progress: progressFrame({ unspent: 2 }), keymap: rebound }),
+      SheetTab.General,
+    );
     expect(labelled(rows, 'Talent points')[0]?.value).toContain('press Z');
   });
 
   it('says “1 point”, not “1 points”', () => {
-    const rows = charSheetRows(sheet({ progress: progressFrame({ unspent: 1 }) }));
+    const rows = charSheetRows(
+      sheet({ progress: progressFrame({ unspent: 1 }) }),
+      SheetTab.General,
+    );
     expect(labelled(rows, 'Talent points')[0]?.value).toContain('1 point —');
   });
 
@@ -413,13 +521,17 @@ describe('the progression rows', () => {
     // panel is the spend screen, so the sheet's call to action goes away and the
     // panel's count does not.
     for (const unspent of [0, 1, 5]) {
-      const labels = fieldLabels(charSheetRows(sheet({ progress: progressFrame({ unspent }) })));
+      const labels = fieldLabels(
+        charSheetRows(sheet({ progress: progressFrame({ unspent }) }), SheetTab.General),
+      );
       expect(labels.includes('Talent points'), `unspent=${unspent}`).toBe(unspent > 0);
     }
   });
 
   it('puts the points row under Experience and still above Life', () => {
-    const labels = fieldLabels(charSheetRows(sheet({ progress: progressFrame({ unspent: 2 }) })));
+    const labels = fieldLabels(
+      charSheetRows(sheet({ progress: progressFrame({ unspent: 2 }) }), SheetTab.General),
+    );
     expect(labels.indexOf('Talent points')).toBe(labels.indexOf('Experience') + 1);
     expect(labels.indexOf('Life')).toBe(labels.indexOf('Talent points') + 1);
   });
@@ -431,7 +543,7 @@ describe('the progression rows', () => {
 
 describe('charSheetRows while the round trip is out', () => {
   it('says “gathering…” and never returns an empty list', () => {
-    const rows = charSheetRows(sheet({ view: null }));
+    const rows = charSheetRows(sheet({ view: null }), SheetTab.General);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows).toContainEqual({ kind: SheetRowKind.Note, text: 'gathering…' });
   });
@@ -440,20 +552,30 @@ describe('charSheetRows while the round trip is out', () => {
     // The loadout and the resource are unicast on connect and are NOT part of
     // the `inspect` round trip, so hiding them while the answer is in flight
     // would blank three quarters of a sheet that is already fully known.
-    const rows = charSheetRows(sheet({ view: null }));
-    expect(sections(rows)).toEqual([SheetSection.General, SheetSection.Talents]);
-    expect(fieldLabels(rows)).toEqual(['Resolve']);
-    expect(rows.flatMap((row) => (row.kind === SheetRowKind.Talent ? [row] : []))).toHaveLength(4);
+    // ASKED PER PAGE, because they no longer share one. The point is unchanged
+    // and is now sharper: neither page waits on the `inspect` round trip.
+    const general = charSheetRows(sheet({ view: null }), SheetTab.General);
+    expect(sections(general)).toEqual([SheetSection.General]);
+    expect(fieldLabels(general)).toEqual(['Resolve']);
+
+    const talents = charSheetRows(sheet({ view: null }), SheetTab.Talents);
+    expect(sections(talents)).toEqual([SheetSection.Talents]);
+    expect(talents.flatMap((row) => (row.kind === SheetRowKind.Talent ? [row] : []))).toHaveLength(
+      4,
+    );
   });
 
   it('still says something when literally nothing has arrived', () => {
-    const rows = charSheetRows({
-      view: null,
-      resource: null,
-      loadout: [],
-      cooldowns: {},
-      progress: null,
-    });
+    const rows = charSheetRows(
+      {
+        view: null,
+        resource: null,
+        loadout: [],
+        cooldowns: {},
+        progress: null,
+      },
+      SheetTab.General,
+    );
     expect(rows).toEqual([
       { kind: SheetRowKind.Section, label: SheetSection.General },
       { kind: SheetRowKind.Note, text: 'gathering…' },
@@ -467,7 +589,9 @@ describe('charSheetRows while the round trip is out', () => {
 
 describe('the talent rows', () => {
   function talentRows(view: CharSheetView) {
-    return charSheetRows(view).flatMap((row) => (row.kind === SheetRowKind.Talent ? [row] : []));
+    return charSheetRows(view, SheetTab.Talents).flatMap((row) =>
+      row.kind === SheetRowKind.Talent ? [row] : [],
+    );
   }
 
   it('stays in hotbar order, so the sheet teaches the keys under your fingers', () => {
@@ -569,14 +693,18 @@ describe('charSheetRect', () => {
 
     // ═══ AND THE CONSTANT ITSELF IS PINNED, BECAUSE THE LEVELUP WORK CAME
     //     CLOSE TO MOVING IT ═══
-    // HEADER_H 24 + INSET 8 twice + SECTION_H 18 + ROW_H 12 × five identity
-    // rows. The talent-points row is deliberately NOT one of the five: it is
-    // conditional on this surface (see the two tests below), and sizing the
-    // minimum for a row that is usually absent would refuse to draw a perfectly
-    // good sheet on a short viewport. Making that row unconditional — which the
-    // TALENT PANEL now does — would move this number, and this number gates
-    // whether the panel opens at all.
-    expect(SHEET_MIN_H).toBe(HEADER_H + 8 * 2 + 18 + 12 * 5);
+    // HEADER_H 24 + the tab strip (13 + a 4px half-inset) + INSET 8 twice +
+    // SECTION_H 18 + ROW_H 12 × five identity rows. The talent-points row is
+    // deliberately NOT one of the five: it is conditional on this surface (see
+    // the two tests below), and sizing the minimum for a row that is usually
+    // absent would refuse to draw a perfectly good sheet on a short viewport.
+    // Making that row unconditional — which the TALENT PANEL now does — would
+    // move this number, and this number gates whether the panel opens at all.
+    //
+    // THE STRIP MOVED IT, which is the case that comment was anticipating: the
+    // tabs sit between the header and the rows, so a minimum that ignored them
+    // would promise five identity rows and draw four.
+    expect(SHEET_MIN_H).toBe(HEADER_H + 13 + 4 + 8 * 2 + 18 + 12 * 5);
 
     // One pixel shorter and it must refuse, so the constant is a real edge
     // rather than a number nothing reads.
@@ -732,12 +860,13 @@ describe('drawing', () => {
     if (rect === null) throw new Error('unreachable');
 
     drawCharSheet({
+      tab: SheetTab.General,
       ctx: stub,
       // No art at all, which is the honest state of the ability icons today:
       // every missing-art fallback path in the sheet runs here.
       sprites: { sprite: () => undefined },
       rect,
-      rows: charSheetRows(sheet()),
+      rows: charSheetRows(sheet(), SheetTab.General),
       hoveredClose: false,
     });
 
@@ -783,10 +912,11 @@ describe('drawing', () => {
       const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
       if (rect === null) throw new Error('unreachable');
       drawCharSheet({
+        tab: SheetTab.General,
         ctx: stub,
         sprites: { sprite: () => undefined },
         rect,
-        rows: charSheetRows(sheet({ keymap })),
+        rows: charSheetRows(sheet({ keymap }), SheetTab.General),
         hoveredClose: false,
         keymap,
         unspent,
@@ -836,10 +966,11 @@ describe('drawing', () => {
 
     const rect = { x: 4, y: 4, w: 176, h: 96 };
     drawCharSheet({
+      tab: SheetTab.General,
       ctx: stub,
       sprites: { sprite: () => undefined },
       rect,
-      rows: charSheetRows(sheet()),
+      rows: charSheetRows(sheet(), SheetTab.General),
       hoveredClose: true,
     });
 
@@ -876,7 +1007,17 @@ describe('drawing', () => {
  * would draw one.
  */
 describe('the sheet shows what it says it shows', () => {
-  function painted(width: number, height: number, over: Partial<CharSheetView> = {}): string[] {
+  /**
+   * PAINTS ONE TAB. Defaults to General because most of these cases are about
+   * the identity block, and takes the tab explicitly because a sheet with pages
+   * cannot be asked "what does it draw" without saying which page.
+   */
+  function painted(
+    width: number,
+    height: number,
+    over: Partial<CharSheetView> = {},
+    tab: SheetTab = SheetTab.General,
+  ): string[] {
     const texts: string[] = [];
     const stub = new Proxy(
       {},
@@ -897,10 +1038,11 @@ describe('the sheet shows what it says it shows', () => {
     const rect = charSheetRect({ width, height, top: 20, bottom: height - 40 });
     if (rect === null) throw new Error(`no rect at ${String(width)}x${String(height)}`);
     drawCharSheet({
+      tab,
       ctx: stub,
       sprites: { sprite: () => undefined },
       rect,
-      rows: charSheetRows(sheet(over)),
+      rows: charSheetRows(sheet(over), tab),
       hoveredClose: false,
     });
     return texts;
@@ -933,7 +1075,7 @@ describe('the sheet shows what it says it shows', () => {
 
   it('keeps the cooldown word on every talent row, which is what the row is read for', () => {
     for (const [w, h] of VIEWPORTS) {
-      const texts = painted(w, h);
+      const texts = painted(w, h, {}, SheetTab.Talents);
       // A meta line is the only thing on this sheet with the middot separator
       // -- except the `[G·2]` button, which no case here arms and which is
       // excluded by shape rather than by hoping. NOT `startsWith('AP ')`: a
@@ -951,7 +1093,7 @@ describe('the sheet shows what it says it shows', () => {
     // The name is the other half of the identification; a clipped one makes two
     // talents with a shared prefix indistinguishable.
     for (const [w, h] of VIEWPORTS) {
-      const texts = painted(w, h);
+      const texts = painted(w, h, {}, SheetTab.Talents);
       for (const talentDef of LOADOUT) {
         expect(texts, `${String(w)}x${String(h)}`).toContain(talentDef.name);
       }
@@ -961,7 +1103,11 @@ describe('the sheet shows what it says it shows', () => {
   it('still shows every stat label and value in full', () => {
     // The columns were never the bug, and this is what keeps a fix aimed at the
     // talent rows from paying for itself by squeezing them.
-    const texts = painted(640, 320);
+    // EVERY STAT TAB, because the fifteen rows live on three pages now. A test
+    // that painted only General would pass while Attack and Defence drew nothing.
+    const texts = [SheetTab.General, SheetTab.Attack, SheetTab.Defence].flatMap((tab) =>
+      painted(640, 320, {}, tab),
+    );
     for (const row of SELF_ROWS) {
       expect(texts, row.label).toContain(row.label);
       expect(texts, row.value).toContain(row.value);
@@ -1026,9 +1172,14 @@ describe('the sheet shows what it says it shows', () => {
     });
 
     it('still shows a row from every section at that size', () => {
-      const texts = painted(REAL_W, REAL_H);
-      for (const heading of ['GENERAL', 'COMBAT', 'TALENTS']) {
-        expect(texts, `${heading} is missing`).toContain(heading);
+      // ONE PAGE AT A TIME, and every page must draw its own heading. COMBAT is
+      // gone — it was ToME's Attack and Defense tabs collapsed, and they are
+      // tabs again.
+      for (const tab of SHEET_TABS) {
+        const texts = painted(REAL_W, REAL_H, {}, tab);
+        expect(texts, `${String(tab)} drew no heading`).toContain(
+          tab === SheetTab.Defence ? 'DEFENCE' : String(tab).toUpperCase(),
+        );
       }
     });
 
@@ -1039,7 +1190,7 @@ describe('the sheet shows what it says it shows', () => {
      * prevent, and which an earlier version of this change caused.
      */
     it('keeps every talent meta line whole at that size', () => {
-      const texts = painted(REAL_W, REAL_H);
+      const texts = painted(REAL_W, REAL_H, {}, SheetTab.Talents);
       const metas = texts.filter((text) => text.includes(' · ') && !text.startsWith('['));
       expect(metas.length, 'a talent row lost its meta line').toBe(LOADOUT.length);
       for (const meta of metas) expect(meta).toMatch(/(ready|turns?)$/);
@@ -1076,12 +1227,12 @@ describe('the character sheet card', () => {
   }
 
   it('describes the talent under the pointer', () => {
-    const { card } = talentPoint(charSheetRows(sheet()));
+    const { card } = talentPoint(charSheetRows(sheet(), SheetTab.Talents));
     expect(card.lines.join(' ')).toContain('A talent.');
   });
 
   it('names it with its rank, which the row has no room for', () => {
-    const { card } = talentPoint(charSheetRows(sheet()));
+    const { card } = talentPoint(charSheetRows(sheet(), SheetTab.Talents));
     expect(card.title).toMatch(/\d+\/\d+$/);
   });
 
@@ -1089,26 +1240,26 @@ describe('the character sheet card', () => {
     // `talentMeta` drops the range on a narrow column. A card is sized to its
     // own content and never has to, so this is the one place all three fields
     // are always present.
-    const { card } = talentPoint(charSheetRows(sheet()));
+    const { card } = talentPoint(charSheetRows(sheet(), SheetTab.Talents));
     expect(card.meta?.split(' · ').length).toBe(3);
   });
 
   it('shows the NEXT rank too, which is the decision being made', () => {
     // The sheet's `[G]` opens the levelup screen, so somebody reading this panel
     // with a point in hand is deciding where to put it.
-    const { card } = talentPoint(charSheetRows(sheet()));
+    const { card } = talentPoint(charSheetRows(sheet(), SheetTab.Talents));
     expect((card.nextLines ?? []).join(' ')).toContain('slightly better');
   });
 
   it('says nothing about the next rank at max, rather than repeating itself', () => {
     // A card showing the same sentence twice reads as a rendering fault.
     const maxed = LOADOUT.map((t) => ({ ...t, level: TALENT_MAX_LEVEL }));
-    const { card } = talentPoint(charSheetRows(sheet({ loadout: maxed })));
+    const { card } = talentPoint(charSheetRows(sheet({ loadout: maxed }), SheetTab.Talents));
     expect(card.nextLines ?? []).toEqual([]);
   });
 
   it('answers null off the rows', () => {
-    expect(charSheetTipAt(RECT, charSheetRows(sheet()), -20, -20)).toBeNull();
+    expect(charSheetTipAt(RECT, charSheetRows(sheet(), SheetTab.Talents), -20, -20)).toBeNull();
   });
 
   it('never describes a row the panel conceded', () => {
@@ -1119,7 +1270,7 @@ describe('the character sheet card', () => {
     // describe and every point answers null — instead of a card appearing over
     // the note that says the section is hidden.
     const tiny = { x: 0, y: 0, w: 460, h: 90 };
-    const rows = charSheetRows(sheet());
+    const rows = charSheetRows(sheet(), SheetTab.Talents);
     let answered = 0;
     let described = 0;
     for (let y = tiny.y; y < tiny.y + tiny.h; y += 1) {

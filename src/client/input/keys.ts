@@ -266,6 +266,26 @@ export type KeyHandlers = {
   readonly onMove: MoveIntent;
   readonly onCommand: (command: TurnCommand) => void;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AN UNBOUND TAB, OFFERED TO WHOEVER WANTS IT. Optional.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `CharacterSheet.lua:110` — *"TAB key to switch between tabs"* — and this is
+   * how that reaches a panel without any panel learning about the keymap.
+   *
+   * ═══ IT RUNS AT THE ONE PLACE TAB IS ALREADY HANDLED, WHICH IS THE POINT ═══
+   * `stealsFocusFromTheMap`'s branch is LAST, after all eight lookups, so a
+   * player who has bound Tab to a talent gets the talent and this is never
+   * called. Putting the hook anywhere else would mean a second opinion about a
+   * key the keymap owns — which is exactly what main.ts's own `keydown`
+   * listener refuses to have, in those words.
+   *
+   * RETURNS WHETHER IT CONSUMED THE PRESS. False means nothing was open that
+   * wanted it, and Tab goes on meaning what every unbound key means: nothing,
+   * except that the focus does not run away to the chat box.
+   */
+  readonly onTab?: (shift: boolean) => boolean;
+  /**
    * A hotbar key. `slot` is ZERO-BASED — key 1 is slot 0.
    *
    * `shifted` IS REPORTED, NOT RESOLVED. Shift picks the bar's second page, and
@@ -549,7 +569,13 @@ export function bindGameKeys(
       // LAST, after every lookup, so this can only ever see an UNBOUND Tab.
       // No handler call and no `stopPropagation`: the press still means nothing
       // and still reaches main.ts's travel cancel. See `stealsFocusFromTheMap`.
-      if (stealsFocusFromTheMap(event)) event.preventDefault();
+      if (stealsFocusFromTheMap(event)) {
+        event.preventDefault();
+        // AND OFFERED TO A PANEL, IF ONE WANTS IT. See `KeyHandlers.onTab`. The
+        // `preventDefault` above is unconditional either way: the focus must not
+        // reach the chat box whether or not anything consumed the press.
+        handlers.onTab?.(event.shiftKey);
+      }
       return;
     }
     event.preventDefault();

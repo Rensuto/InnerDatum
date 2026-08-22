@@ -131,7 +131,7 @@
  */
 
 import type { HoverCard } from './panel.ts';
-import { ResourceKind, TalentShape } from '../../shared/protocol.ts';
+import { InspectGroup, ResourceKind, TalentShape } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { gameKeymap } from '../input/keys.ts';
 import { labelFor } from '../input/keymap.ts';
@@ -318,7 +318,20 @@ const SHEET_ABS_MIN_H = 120;
  * and never draw at all. Exported so the test can pin the bottom of the range
  * instead of spelling the arithmetic a second time.
  */
-export const SHEET_MIN_H = HEADER_H + INSET * 2 + SECTION_H + ROW_H * 5;
+/** How tall the tab strip is, and its gaps. Below the header, above the rows. */
+const TAB_H = 13;
+const TAB_GAP = 2;
+
+/**
+ * THE TAB STRIP IS PART OF THE MINIMUM NOW.
+ *
+ * This was `HEADER_H + INSET * 2 + SECTION_H + ROW_H * 5` — header, a section
+ * heading and five rows. The strip sits between the header and the rows and eats
+ * `TAB_H` plus its half-inset of air, so leaving it out of the minimum would
+ * promise five rows and deliver four on the shortest panel this client draws.
+ */
+export const SHEET_MIN_H =
+  HEADER_H + TAB_H + Math.floor(INSET / 2) + INSET * 2 + SECTION_H + ROW_H * 5;
 /** Air between the panel and the edges of the band it is clamped into. */
 const SHEET_MARGIN = 6;
 
@@ -430,11 +443,86 @@ export type SheetRowKind = (typeof SheetRowKind)[keyof typeof SheetRowKind];
  */
 export const SheetSection = {
   General: 'GENERAL',
-  /** ToME's Attack and Defense tabs, collapsed. See the header for why. */
-  Combat: 'COMBAT',
+  /**
+   * ═══ THESE WERE ONE SECTION CALLED `COMBAT` UNTIL THE SHEET GREW TABS ═══
+   * The comment on that line read *"ToME's Attack and Defense tabs, collapsed.
+   * See the header for why"* — the why being that a single scrolling page had
+   * nowhere to put two headings. `view/inspect.ts` never collapsed them: it has
+   * always composed the rows in three blocks citing `CharacterSheet.lua:815-820`,
+   * `:935-1120` and `:1304-1321`, and now says so on the wire through
+   * `InspectRow.group`.
+   */
+  Attack: 'ATTACK',
+  Defence: 'DEFENCE',
   Talents: 'TALENTS',
 } as const;
 export type SheetSection = (typeof SheetSection)[keyof typeof SheetSection];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TABS ACROSS THE TOP — `CharacterSheet.lua:54-57`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream builds five: `[G]eneral`, `[A]ttack`, `[D]efense`, `[T]alents` and
+ * `[E]quipment`, cycled with TAB and jumped to with the bracketed letter.
+ *
+ * ═══ FOUR, NOT FIVE, AND THE FIFTH IS NAMED RATHER THAN FAKED ═══
+ * There is no Equipment tab here. `CharSheetView` carries no worn items — the
+ * inventory panel owns them and has its own doll — so the tab would either
+ * duplicate a panel that already exists or open showing nothing. A tab that
+ * says "look somewhere else" is worse than a tab that is not there, and a
+ * reader counting four against upstream's five deserves to find this paragraph
+ * rather than to wonder.
+ *
+ * ═══ THE BRACKETED LETTERS ARE LABELS HERE, NOT KEYS ═══
+ * Upstream binds `g`/`a`/`d`/`t` to jump straight to a tab. This client does
+ * not, and the brackets are drawn anyway because they are upstream's labels and
+ * this panel is a port of upstream's panel.
+ *
+ * The reason is a real collision rather than laziness: `[G]` IS ALREADY BOUND —
+ * it opens the talent panel, which is upstream's own `[L]evelup` button
+ * (`CharacterSheet.lua:99`) wearing this game's key. Binding `g` to the General
+ * tab while the sheet is open would mean one key doing two things depending on
+ * which panel happens to be up, and `t` and `a` are no safer: every letter here
+ * is a key the player may already have bound to a talent through
+ * `input/keymap.ts`, which lets them bind anything.
+ *
+ * TAB CYCLES, which is upstream's other route (`CharacterSheet.lua:110`) and is
+ * the one key `input/keys.ts` already handles as unbound-by-default — and it
+ * still yields to a player who HAS bound it. Clicking a tab does the rest.
+ */
+export const SheetTab = {
+  General: 'general',
+  Attack: 'attack',
+  Defence: 'defence',
+  Talents: 'talents',
+} as const;
+export type SheetTab = (typeof SheetTab)[keyof typeof SheetTab];
+
+/** The tabs in the order they are drawn, which is upstream's order. */
+export const SHEET_TABS: readonly SheetTab[] = Object.freeze([
+  SheetTab.General,
+  SheetTab.Attack,
+  SheetTab.Defence,
+  SheetTab.Talents,
+]);
+
+/** What each tab is called on screen, and the section heading it carries. */
+const TAB_SECTION: Readonly<Record<SheetTab, SheetSection>> = {
+  [SheetTab.General]: SheetSection.General,
+  [SheetTab.Attack]: SheetSection.Attack,
+  [SheetTab.Defence]: SheetSection.Defence,
+  [SheetTab.Talents]: SheetSection.Talents,
+};
+
+/** The next tab along, wrapping. TAB cycles — `CharacterSheet.lua:110`. */
+export function nextSheetTab(tab: SheetTab, back = false): SheetTab {
+  const at = SHEET_TABS.indexOf(tab);
+  const n = SHEET_TABS.length;
+  // `+ n` before the modulo: JavaScript's `%` keeps the sign of the dividend, so
+  // stepping back from the first tab would otherwise index -1.
+  return SHEET_TABS[(at + (back ? -1 : 1) + n) % n] ?? SheetTab.General;
+}
 
 export type SheetRow =
   | { readonly kind: typeof SheetRowKind.Section; readonly label: SheetSection }
@@ -605,7 +693,19 @@ function experienceText(progress: ProgressMsg): string {
  * either the server's own order, verbatim, or a join of three frames the server
  * deliberately does not do for us.
  */
-export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
+export function charSheetRows(
+  view: CharSheetView,
+  /**
+   * WHICH TAB IS OPEN. See `SheetTab`.
+   *
+   * REQUIRED, with no default, for the reason `talentPanelGeometry` gives about
+   * its scroll offset: the painter, the hit test and `charSheetTipAt` must all
+   * be looking at the same page, and a default lets one call site forget in
+   * silence. Here the failure is milder than a mis-spent talent point — a hover
+   * card describing a row from another tab — but the cure costs nothing.
+   */
+  tab: SheetTab,
+): readonly SheetRow[] {
   const rows: SheetRow[] = [{ kind: SheetRowKind.Section, label: SheetSection.General }];
 
   const self = view.view;
@@ -775,10 +875,58 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
   // order; it is composed in src/server/view/inspect.ts and this file must not
   // second-guess it. No row carries `emphasis` on the self branch, so nothing
   // here may depend on it.
+  /**
+   * ═══ SPLIT ON `row.group`, WHICH THE SERVER SENDS — NEVER ON THE LABEL ═══
+   * The paragraph above says this file must not second-guess the server's
+   * order, and splitting a tabbed sheet on `label === 'Armour'` would be exactly
+   * that, with a UI on top: `InspectView` warns that finding a row by scanning
+   * for its label breaks silently the moment one is relabelled. `InspectRow.group`
+   * carries the three blocks `view/inspect.ts` has always composed.
+   *
+   * A ROW WITH NO GROUP FALLS UNDER ATTACK rather than vanishing. Only the
+   * self-sheet is tabbed and only the self-sheet sets `group`, so an ungrouped
+   * row here means a server older than the field or a block someone added and
+   * forgot to tag. Dropping it would hide a stat with no note saying so, which
+   * is the failure this whole panel is arranged against.
+   */
   if (self !== null && self.rows.length > 0) {
-    rows.push({ kind: SheetRowKind.Section, label: SheetSection.Combat });
-    for (const row of self.rows) {
-      rows.push({ kind: SheetRowKind.Field, label: row.label, value: row.value });
+    /**
+     * WHICH GROUP THIS TAB WANTS, and `null` for a tab that wants none.
+     *
+     * THE TALENTS TAB IS NOT A STAT PAGE, and an earlier version of this map
+     * forgot to say so: it fell through to `Attack` for anything that was not
+     * General or Defence, so opening Talents printed Accuracy, Damage, APR and
+     * Crit. chance under a heading reading TALENTS. Every row was real and
+     * every one was on the wrong page — the quietest possible way for a tabbed
+     * sheet to be wrong, because nothing is missing and nothing looks broken.
+     */
+    const wanted: InspectGroup | null =
+      tab === SheetTab.General
+        ? InspectGroup.General
+        : tab === SheetTab.Attack
+          ? InspectGroup.Attack
+          : tab === SheetTab.Defence
+            ? InspectGroup.Defence
+            : null;
+    const mine =
+      wanted === null
+        ? []
+        : self.rows.filter((row) => (row.group ?? InspectGroup.Attack) === wanted);
+    if (mine.length > 0) {
+      /**
+       * THE GENERAL TAB ALREADY HAS ITS HEADING — the identity block opened one
+       * at the top of this function. The six primaries belong UNDER it, beside
+       * the name and the level, exactly as `CharacterSheet.lua:815-820` prints
+       * them on the same page as `:604-606`. A second GENERAL heading here would
+       * split one page into two sections that say the same word, and
+       * `sliceForTab` would then take only the first of them.
+       */
+      if (tab !== SheetTab.General) {
+        rows.push({ kind: SheetRowKind.Section, label: TAB_SECTION[tab] });
+      }
+      for (const row of mine) {
+        rows.push({ kind: SheetRowKind.Field, label: row.label, value: row.value });
+      }
     }
   }
 
@@ -804,7 +952,58 @@ export function charSheetRows(view: CharSheetView): readonly SheetRow[] {
     }
   }
 
-  return rows;
+  return sliceForTab(rows, tab);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ROWS UNDER ONE TAB — a slice of the whole sheet, not a rebuild of it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHY BUILD EVERYTHING AND THEN TAKE A QUARTER OF IT ═══
+ * The alternative is four builders, or one builder threaded with `if (tab ===`
+ * at every push. Both put the SECTION ORDER — which the header of this file
+ * calls the contract — in more than one place, and the whole reason the order is
+ * a contract is that `charsheet.test.ts` reads it off `SheetSection` rather than
+ * spelling it, so a sheet that drew its sections in the wrong order would still
+ * pass. Four copies of the order is four chances for that to stop being true.
+ *
+ * A `Section` row already partitions this list: everything from one heading up
+ * to the next belongs to it. That partition IS the tab, so selecting one is a
+ * slice rather than a second layout.
+ *
+ * The cost is building rows that are then dropped, once per frame, for a panel
+ * that is only built when it is open. That is cheaper than a second copy of the
+ * contract.
+ *
+ * ═══ A TAB WITH NOTHING IN IT STILL SAYS SOMETHING ═══
+ * While the `inspect` round trip is out there are no stat rows at all, and the
+ * General section holds a single `gathering…` note. On the Attack tab that slice
+ * is empty, and an empty panel *"is indistinguishable from a broken one"* — this
+ * file's own words, a few lines up, about that exact frame. So any leading note
+ * survives the slice whichever tab is open.
+ */
+function sliceForTab(rows: readonly SheetRow[], tab: SheetTab): readonly SheetRow[] {
+  const wanted = TAB_SECTION[tab];
+  const out: SheetRow[] = [];
+  let taking = false;
+  for (const row of rows) {
+    if (row.kind === SheetRowKind.Section) {
+      taking = row.label === wanted;
+      if (taking) out.push(row);
+      continue;
+    }
+    if (taking) out.push(row);
+  }
+  // THE WAITING NOTE, WHICHEVER TAB IS OPEN. See the docblock.
+  if (out.length <= 1) {
+    const note = rows.find((row) => row.kind === SheetRowKind.Note);
+    if (note !== undefined && !out.includes(note)) {
+      if (out.length === 0) out.push({ kind: SheetRowKind.Section, label: wanted });
+      out.push(note);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -894,6 +1093,67 @@ export function charSheetRect(options: {
     w,
     h,
   };
+}
+
+/** What each tab is labelled, with ToME's bracketed letter. CharacterSheet.lua:54-57. */
+const TAB_LABEL: Readonly<Record<SheetTab, string>> = {
+  [SheetTab.General]: '[G]eneral',
+  [SheetTab.Attack]: '[A]ttack',
+  [SheetTab.Defence]: '[D]efence',
+  [SheetTab.Talents]: '[T]alents',
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THE TABS SIT — the ONE copy of that arithmetic.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Read by `drawCharSheet` AND by `charSheetTabAt`, for the reason this file's
+ * header gives about `closeRect`: two copies of the same arithmetic is how a
+ * button lands a row above where it is drawn, and the bug only appears on
+ * somebody else's window size.
+ *
+ * ═══ EQUAL WIDTHS, AND THE REMAINDER GOES TO THE LAST TAB ═══
+ * Four tabs rarely divide an inner width evenly. Rounding each one down leaves a
+ * gap of up to three pixels at the right-hand end that belongs to no tab and
+ * swallows clicks; giving the remainder to the last tab means the strip is
+ * exactly as wide as the panel and every pixel of it answers.
+ */
+function sheetTabRects(rect: PanelRect): readonly { tab: SheetTab; box: PanelRect }[] {
+  const x = rect.x + INSET;
+  const innerW = Math.max(0, rect.w - INSET * 2);
+  const y = rect.y + HEADER_H + Math.floor(INSET / 2);
+  const n = SHEET_TABS.length;
+  const each = Math.floor((innerW - TAB_GAP * (n - 1)) / n);
+  if (each <= 0) return [];
+  return SHEET_TABS.map((tab, i) => ({
+    tab,
+    box: {
+      x: x + i * (each + TAB_GAP),
+      y,
+      // THE LAST ONE TAKES WHAT IS LEFT. See the docblock.
+      w: i === n - 1 ? Math.max(0, x + innerW - (x + i * (each + TAB_GAP))) : each,
+      h: TAB_H,
+    },
+  }));
+}
+
+/**
+ * WHICH TAB IS UNDER THE POINTER, or null.
+ *
+ * ═══ SEPARATE FROM `charSheetHitAt`, WHICH IS NOT TIDINESS ═══
+ * That function answers `'close' | 'talents' | 'header'`, where `'talents'` is
+ * the `[G]` BUTTON that opens the talent PANEL (CharacterSheet.lua:99). This
+ * panel now also has a TALENTS TAB. Folding the two into one string union would
+ * put two different actions behind one value — open another panel, or turn this
+ * page — and the collision would be silent, because both are legitimately
+ * called "talents". Two functions, two answers, no overlap.
+ */
+export function charSheetTabAt(rect: PanelRect, px: number, py: number): SheetTab | null {
+  for (const { tab, box } of sheetTabRects(rect)) {
+    if (px >= box.x && px < box.x + box.w && py >= box.y && py < box.y + box.h) return tab;
+  }
+  return null;
 }
 
 /**
@@ -1027,7 +1287,11 @@ function rowHeight(row: SheetRow): number {
  * a whole section rather than trimming its tail is deliberate — a stat list cut
  * off after nine rows looks complete and is not.
  */
-const DROP_ORDER: readonly SheetSection[] = [SheetSection.Combat, SheetSection.Talents];
+const DROP_ORDER: readonly SheetSection[] = [
+  SheetSection.Attack,
+  SheetSection.Defence,
+  SheetSection.Talents,
+];
 
 /** One row, placed. */
 type PlacedRow = {
@@ -1117,7 +1381,13 @@ function sheetGeometry(rect: PanelRect, rows: readonly SheetRow[]): SheetGeometr
   const close = closeRect(rect);
   const x = rect.x + INSET;
   const innerW = Math.max(0, rect.w - INSET * 2);
-  const top = rect.y + HEADER_H + INSET;
+  /**
+   * THE ROWS START BELOW THE TAB STRIP. `sheetTabRects` puts the strip at
+   * `HEADER_H + INSET/2` and it is `TAB_H` tall, so this is that bottom edge
+   * plus the same half-inset of air underneath — derived from the strip's own
+   * constants rather than restated, so moving the strip moves the rows with it.
+   */
+  const top = rect.y + HEADER_H + Math.floor(INSET / 2) + TAB_H + Math.floor(INSET / 2);
   const bottom = rect.y + rect.h - INSET;
 
   /**
@@ -1352,6 +1622,14 @@ export type CharSheetDrawOptions = {
   readonly rect: PanelRect;
   /** From `charSheetRows`. Passed in so the caller can hold one copy per frame. */
   readonly rows: readonly SheetRow[];
+  /**
+   * WHICH TAB IS OPEN — the same one `charSheetRows` was handed.
+   *
+   * REQUIRED, so a caller that adds a tab and forgets this panel gets a compile
+   * error rather than a strip that always highlights `[G]eneral` while showing
+   * somebody else's rows.
+   */
+  readonly tab: SheetTab;
   /** Highlights the close control, so it reads as pressable. */
   readonly hoveredClose: boolean;
   /** Highlights the `[G]` control. Optional so existing callers still compile. */
@@ -1411,6 +1689,32 @@ export function drawCharSheet(options: CharSheetDrawOptions): void {
   ctx.clip();
 
   drawHeader(ctx, sprites, SHEET_TITLE, rect, FONT_SECTION);
+
+  /**
+   * ═══ THE TAB STRIP — CharacterSheet.lua:54-57 ═══
+   * Drawn from `sheetTabRects`, which `charSheetTabAt` also reads, so the strip
+   * a player clicks and the strip they see cannot disagree.
+   *
+   * THE ACTIVE TAB IS A FILLED PLATE AND THE OTHERS ARE OUTLINES, because the
+   * one thing this strip must never be ambiguous about is which page is open —
+   * a sheet that looks identical on two tabs is a sheet the reader stops
+   * trusting. Colour alone would not do it: `PALETTE.GOLD` on `SLATE` reads as
+   * emphasis to somebody who cannot see the hue difference, so the active tab
+   * also carries the only underline.
+   */
+  ctx.font = FONT_META;
+  for (const { tab, box } of sheetTabRects(rect)) {
+    const active = tab === options.tab;
+    ctx.fillStyle = active ? PALETTE.SLATE : PALETTE.INK;
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+    if (active) {
+      ctx.fillStyle = PALETTE.GOLD;
+      ctx.fillRect(box.x, box.y + box.h - 1, box.w, 1);
+    }
+    ctx.fillStyle = active ? PALETTE.PARCHMENT : PALETTE.GREY;
+    const label = fitText(ctx, TAB_LABEL[tab], Math.max(0, box.w - 4));
+    ctx.fillText(label, box.x + 2, box.y + Math.floor(box.h / 2));
+  }
 
   const geometry = sheetGeometry(rect, rows);
 

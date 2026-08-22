@@ -38,7 +38,7 @@
 
 import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
-import { ActorKind } from '../../shared/protocol.ts';
+import { ActorKind, InspectGroup } from '../../shared/protocol.ts';
 import { classById } from '../content/classes.ts';
 import { MELEE_REACH, combatDistance } from '../engine/combat.ts';
 import type { InspectRow, InspectView } from '../../shared/protocol.ts';
@@ -203,18 +203,33 @@ function whole(n: number): string {
  * is written down here rather than discovered.
  */
 function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EACH BLOCK NAMES ITS TAB NOW. The grouping was always here; it was thrown
+   * away at the wire.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * These three blocks have carried their `CharacterSheet.lua` citations since
+   * they were written — :815-820, :935-1120, :1304-1321 — which are exactly
+   * ToME's `[G]eneral`, `[A]ttack` and `[D]efense` tabs (`CharacterSheet.lua:54-56`).
+   * The structure was correct and invisible: `InspectRow` was flat, so a client
+   * wanting to tab the sheet had to guess from labels, and charsheet.ts says in
+   * writing that it must not.
+   *
+   * `group` is what the comments already said, made readable by a machine.
+   */
   // ═══ 1. THE SIX PRIMARIES — CharacterSheet.lua:815-820 ═══
   for (const [label, key] of SHEET_STATS) {
-    rows.push({ label, value: whole(stat(c, key)) });
+    rows.push({ label, value: whole(stat(c, key)), group: InspectGroup.General });
   }
 
   // ═══ 2. ATTACK — CharacterSheet.lua:935-1120 ═══
   // "Accuracy" (:935), "Damage" (:941), "APR" (:1111), "Crit. chance" (:1113),
   // in that order. ToME's own labels, in ToME's own sequence.
-  rows.push({ label: 'Accuracy', value: whole(combatAttack(c)) });
-  rows.push({ label: 'Damage', value: damageBand(c) });
-  rows.push({ label: 'APR', value: whole(combatAPR(c)) });
-  rows.push({ label: 'Crit. chance', value: pct(combatCrit(c)) });
+  rows.push({ label: 'Accuracy', value: whole(combatAttack(c)), group: InspectGroup.Attack });
+  rows.push({ label: 'Damage', value: damageBand(c), group: InspectGroup.Attack });
+  rows.push({ label: 'APR', value: whole(combatAPR(c)), group: InspectGroup.Attack });
+  rows.push({ label: 'Crit. chance', value: pct(combatCrit(c)), group: InspectGroup.Attack });
 
   // ═══ 3. DEFENSE — CharacterSheet.lua:1304-1321 ═══
   // "Armor" (:1304), "Defense" (:1306), then the three saves under a "Saves:"
@@ -223,11 +238,12 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
   // carries the word "save" in its own label — a bare "Physical" in a list that
   // also contains "Damage" and "APR" reads as a damage type, which is the one
   // thing it is not.
-  rows.push({ label: 'Armour', value: whole(combatArmor(c)) });
-  rows.push({ label: 'Defence', value: whole(combatDefense(c)) });
-  rows.push({ label: 'Physical save', value: whole(combatPhysicalResist(c)) });
-  rows.push({ label: 'Spell save', value: whole(combatSpellResist(c)) });
-  rows.push({ label: 'Mental save', value: whole(combatMentalResist(c)) });
+  rows.push({ label: 'Armour', value: whole(combatArmor(c)), group: InspectGroup.Defence });
+  rows.push({ label: 'Defence', value: whole(combatDefense(c)), group: InspectGroup.Defence });
+  const save = InspectGroup.Defence;
+  rows.push({ label: 'Physical save', value: whole(combatPhysicalResist(c)), group: save });
+  rows.push({ label: 'Spell save', value: whole(combatSpellResist(c)), group: save });
+  rows.push({ label: 'Mental save', value: whole(combatMentalResist(c)), group: save });
 }
 
 /**
