@@ -75,6 +75,7 @@ import {
  * (`expChart`), and the ledger `unspentPoints` is reconciled against.
  */
 import {
+  INVENTORY_CAP,
   MAX_CHARACTER_LEVEL,
   expChart,
   isGenericTree,
@@ -2321,26 +2322,10 @@ const NO_GROUND_KEY = '[]';
  */
 const EMPTY_INVENTORY_KEY = '[[],{}]';
 
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * HOW MANY THINGS A DETECTIVE MAY CARRY. TWELVE.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * A DEVIATION, AND IT IS LABELLED AS ONE. ToME's backpack is `INVEN = 1000`
- * (data/birth/descriptors.lua:56) — a limit nobody meets in a four-hour session,
- * which engine/actor.ts's own note on `carried` calls "a rule that only exists
- * to be got wrong". Upstream can afford that because it has a vendor, a home
- * chest and a hundred-hour campaign to fill a bag over. We have one floor, three
- * monsters on it, at most three drops per delve and no shop.
- *
- * TWELVE IS CHOSEN, NOT PORTED. It is the smallest number that cannot bind in
- * ordinary play — seven worn slots plus five in reserve is more than a full kit —
- * so a player who hits it has been hoarding rather than playing, and the refusal
- * they get is a nudge to leave something for a friend. The point of a cap that
- * cannot bind is not the cap: it is that `pickup` has a bounded answer at all,
- * so `carried` cannot grow without limit under a client in a loop.
- */
-const INVENTORY_CAP = 12;
+// `INVENTORY_CAP` IS IN src/shared/progression.ts NOW, with its whole argument.
+// It lived here, server-side, so `ui/inventory.ts` could not read it and kept a
+// copy spelled `COLS * 3` — grid geometry that happened to equal twelve, and
+// that the panel drew to the player as their capacity.
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

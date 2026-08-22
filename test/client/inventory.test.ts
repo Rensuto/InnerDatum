@@ -27,6 +27,7 @@ import {
 } from '../../src/client/ui/inventory.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
 import { ItemTier, SLOT_ORDER } from '../../src/shared/protocol.ts';
+import { INVENTORY_CAP } from '../../src/shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { SpriteSource } from '../../src/client/render/assets.ts';
 import type {
@@ -470,6 +471,42 @@ describe('inventoryPanelRows', () => {
     for (const box of boxes) {
       expect(overlaps(placed.portrait, box), 'portrait overlaps a cell').toBe(false);
     }
+  });
+
+  it('shows every item the RULES let a body carry, not a number of its own', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PANEL WAS HOLDING A COPY OF A SERVER RULE, SPELLED AS FURNITURE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `CARRIED_MAX` was `COLS * 3` — four grid columns times three grid rows —
+     * under a comment reading "IT IS THE SERVER'S CAP, RESTATED, NOT A SECOND
+     * OPINION". It equalled twelve by coincidence of LAYOUT, and the panel draws
+     * it to the player as `CARRIED 5/12`.
+     *
+     * So re-flowing the grid for any purely visual reason would have changed
+     * what the game told a player their capacity was, silently — the rule
+     * untouched, nothing failing. The cap could not be imported because it lived
+     * in `net/gateway.ts`, which client code may not reach; it is in
+     * `shared/progression.ts` now and both sides read it.
+     *
+     * THIS IS THE ASSERTION THAT KEEPS THEM TOGETHER. Not "the panel shows 12"
+     * — that is the copy again, one layer out — but that the panel shows exactly
+     * what the RULE allows, whatever the rule becomes.
+     */
+    expect(INVENTORY_PANEL_CARRIED_MAX).toBe(INVENTORY_CAP);
+
+    // AND THE GRID IS BIG ENOUGH FOR IT. If the rows ever stop covering the cap,
+    // `carriedCells` truncates and the panel prints "N more carried" for a state
+    // the rules call ordinary — which is the "unreachable in ordinary play"
+    // claim the test below is built on.
+    const full = Array.from({ length: INVENTORY_CAP }, (_v, i) =>
+      bagged(`cap_${String(i)}`, `Thing ${String(i)}`, ItemTier.Common, 'ring'),
+    );
+    const shown = cellRows(
+      inventoryPanelRows(view({ inventory: frame({ carried: full }), tab: InventoryTab.Carried })),
+    ).reduce((n, row) => n + row.cells.length, 0);
+    expect(shown, 'the grid cannot show a legal full bag').toBe(INVENTORY_CAP);
   });
 
   it('still lays twelve carried into three flat rows of four', () => {

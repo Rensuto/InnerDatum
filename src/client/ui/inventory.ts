@@ -203,6 +203,7 @@
 import { wrapText } from './panel.ts';
 import type { HoverCard } from './panel.ts';
 import { ItemTier, SLOT_ORDER } from '../../shared/protocol.ts';
+import { INVENTORY_CAP } from '../../shared/progression.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { DragKind, DraggablePanel } from './drag.ts';
 import {
@@ -381,15 +382,36 @@ const PORTRAIT_COLS = 2;
 const PORTRAIT_ROWS = 2;
 
 /**
- * How many carried items the grid can show: three rows of four.
+ * How many carried items the grid shows. THE SERVER'S CAP ITSELF, IMPORTED.
  *
- * IT IS THE SERVER'S CAP, RESTATED, NOT A SECOND OPINION. gateway.ts's
- * `INVENTORY_CAP` is 12 and refuses the thirteenth pickup, so this number is what
- * makes "no scrolling" honest rather than a limitation. If the two ever disagree
- * the panel says so in words rather than silently hiding a row — see
- * `carriedCells`.
+ * ═══ IT USED TO BE `COLS * 3`, AND THAT IS THE BUG ═══
+ * The note here read "IT IS THE SERVER'S CAP, RESTATED, NOT A SECOND OPINION"
+ * over an expression made of GRID GEOMETRY — four columns times three rows,
+ * twelve by coincidence of layout rather than by agreement with the rule. The
+ * cap lived in `net/gateway.ts`, server-side, where this file cannot import it,
+ * so the restatement was the only option available.
+ *
+ * The panel draws this number to the player as `CARRIED 5/12`. So re-flowing the
+ * grid for any purely visual reason — a wider window, a bigger cell, a fourth
+ * row — would have changed what the game TOLD A PLAYER THEIR CAPACITY WAS,
+ * silently, without touching the rule and without failing anything.
+ *
+ * `INVENTORY_CAP` is in `shared/progression.ts` now and both sides read it. The
+ * grid's job is to be big enough to SHOW it, which `CARRIED_ROWS` below asserts
+ * rather than defines.
  */
-const CARRIED_MAX = COLS * 3;
+const CARRIED_MAX = INVENTORY_CAP;
+
+/**
+ * How many rows of cells the carried grid reserves.
+ *
+ * DERIVED FROM THE CAP AND THE COLUMNS, in that order: the grid must be able to
+ * show every item the server will let a body hold, or `carriedCells` starts
+ * truncating and the panel prints "N more carried" for a state the rules say is
+ * ordinary. It was the literal `3` inside `PANEL_MAX_H`, which was correct only
+ * while `COLS * 3` and the cap were the same twelve by accident.
+ */
+const CARRIED_ROWS = Math.ceil(CARRIED_MAX / COLS);
 
 /** One text line. 10px glyphs with 2px of leading, matching the Case Log. */
 const ROW_H = 12;
@@ -498,7 +520,7 @@ const PANEL_MIN_H = HEADER_H + INSET * 2 + TAB_ROW_H + CELL_ROW_H;
  * because a panel that resized on a tab switch would have moved out from under
  * the click that switched it.
  */
-const PANEL_MAX_H = HEADER_H + INSET * 2 + TAB_ROW_H + CELL_ROW_H * 3 + DETAIL_H;
+const PANEL_MAX_H = HEADER_H + INSET * 2 + TAB_ROW_H + CELL_ROW_H * CARRIED_ROWS + DETAIL_H;
 
 /** Air between the panel and the edges of the band it is clamped into. */
 const PANEL_MARGIN = 6;

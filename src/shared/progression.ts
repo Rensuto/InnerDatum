@@ -189,6 +189,40 @@ export const TALENTS_PER_CLASS_MIN = 6;
 export const TALENTS_PER_CLASS_MAX = 12;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY THINGS A BODY MAY CARRY. THE ONE NUMBER, READ BY BOTH SIDES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Moved here from `net/gateway.ts`, where it was server-only and the panel
+ * therefore could not read it. Its argument is unchanged and is worth keeping:
+ *
+ *   Upstream's cap is a weight budget (data/birth/descriptors.lua:56) — a limit
+ *   nobody meets in a four-hour session, which engine/actor.ts calls "a rule
+ *   that only exists to be got wrong". Upstream can afford that: it has a
+ *   vendor, a home chest and a hundred-hour campaign to fill a bag over. We have
+ *   one floor, three monsters on it, at most three drops per delve and no shop.
+ *
+ *   TWELVE IS CHOSEN, NOT PORTED. It is the smallest number that cannot bind in
+ *   ordinary play — seven worn slots plus five in reserve is more than a full
+ *   kit — so a player who hits it has been hoarding rather than playing, and the
+ *   refusal is a nudge to leave something for a friend. The point of a cap that
+ *   cannot bind is not the cap: it is that `pickup` has a bounded answer at all,
+ *   so `carried` cannot grow without limit under a client in a loop.
+ *
+ * ═══ AND THE PANEL WAS HOLDING A COPY SPELLED AS FURNITURE ═══
+ * `ui/inventory.ts` had `const CARRIED_MAX = COLS * 3` under a note reading "IT
+ * IS THE SERVER'S CAP, RESTATED, NOT A SECOND OPINION" — four grid columns
+ * times three grid rows, which is twelve by coincidence of LAYOUT. The panel
+ * draws that number to the player as `CARRIED 5/12`, so re-flowing the grid for
+ * any visual reason would have changed what the game told a player their
+ * capacity was, without touching the rule or failing anything.
+ *
+ * Both sides import this now. The grid's job is to be big enough to SHOW it,
+ * which is a separate assertion in the panel.
+ */
+export const INVENTORY_CAP = 12;
+
+/**
  * `ActorLevel.exp_chart(level)` — load.lua:193-206, VERBATIM.
  *
  *     ActorLevel.exp_chart = function(level)
