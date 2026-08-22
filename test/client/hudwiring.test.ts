@@ -151,7 +151,10 @@ describe('a live drag short-circuits the canvas mousemove handler', () => {
     const guard = at('if (drag !== null) return;', handler);
     // ...and it is genuinely FIRST: every one of the expensive calls is below it.
     expect(guard).toBeLessThan(at('const slot = slotUnder(event);', handler));
-    expect(guard).toBeLessThan(at('inventoryPanelRows(', handler));
+    // `inventoryRowsFor` IS that call: main.ts routes all six readers through
+    // one helper now, so the rows are chunked to the width the panel actually
+    // got. The expense is identical — it still rebuilds the doll and the bag.
+    expect(guard).toBeLessThan(at('inventoryRowsFor(', handler));
     expect(guard).toBeLessThan(at('noteHoveredActor', handler));
   });
 
@@ -510,7 +513,7 @@ describe('an item drag springs the inventory tab it is heading for', () => {
     // exists to keep out of a gesture. The rect test comes first.
     const fn = between('function springInventoryTab(point: TileXY): void {', '\n  }');
     expect(at('if (!inRect(layout.inventory, point.x, point.y)', fn)).toBeLessThan(
-      at('inventoryPanelRows(', fn),
+      at('inventoryRowsFor(', fn),
     );
     // It only ever switches, never sends: a tab is client-local.
     expect(fn).toContain('invTab = hit.tab;');

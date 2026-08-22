@@ -256,6 +256,7 @@ import {
   inventoryPanelDragAt,
   inventoryPanelHitAt,
   inventoryPanelRect,
+  inventoryColumnsFor,
   inventoryPanelRows,
   hasSomethingToBuy,
   hasSomethingToWear,
@@ -374,7 +375,12 @@ import type { CaseLog } from './ui/caselog.ts';
 import type { CombatBanner } from './ui/combatbanner.ts';
 import type { ContextMenu, MenuItem } from './ui/contextmenu.ts';
 import type { HotbarSlot, HotbarView } from './ui/hotbar.ts';
-import type { InventoryFocus, InventoryHit, InventoryPanelView } from './ui/inventory.ts';
+import type {
+  InventoryFocus,
+  InventoryHit,
+  InventoryPanelView,
+  InventoryRow,
+} from './ui/inventory.ts';
 import { PanelSkin, drawPanel } from './ui/panel.ts';
 import type { PanelRect } from './ui/panel.ts';
 import type { PartyPaneLayout, PartyPaneView } from './ui/partypanel.ts';
@@ -2373,6 +2379,27 @@ function lootAt(tile: TileXY): TileLoot {
  * the panel is correct the instant it appears and asks the server for nothing —
  * the same property `talentPanelView()` has and for the same reason.
  */
+/**
+ * THE BAG'S ROWS, CHUNKED TO THE WIDTH THE PANEL ACTUALLY GOT.
+ *
+ * The panel is no longer one fixed width — `inventoryPanelRect` takes upstream's
+ * four fifths of the window (ShowInventory.lua:34) and snaps to whole columns —
+ * so the row builder has to be told how many cells go on a line. It defaults to
+ * the four-column floor, which would draw a four-wide grid inside a six-wide
+ * panel: not wrong, just the waste this was changed to remove.
+ *
+ * ONE HELPER FOR ALL SIX READERS. The painter, the hit test, the drag test and
+ * the tooltip all resolve the same rows from the same rect; the alternative is
+ * six call sites each deriving a column count, which is how a click lands on the
+ * cell beside the one under the pointer.
+ */
+function inventoryRowsFor(rect: PanelRect | null): readonly InventoryRow[] {
+  return inventoryPanelRows(
+    inventoryPanelView(),
+    rect === null ? undefined : inventoryColumnsFor(rect.w),
+  );
+}
+
 function inventoryPanelView(): InventoryPanelView {
   return {
     inventory,
@@ -3684,7 +3711,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       ctx,
       sprites,
       rect: layout.inventory,
-      rows: inventoryPanelRows(inventoryPanelView()),
+      rows: inventoryRowsFor(layout.inventory),
       hoveredClose: invCloseHovered,
       // TWO RINGS, TWO MEANINGS. `focus` is sticky and survives the pointer
       // leaving a cell (it is what the strip and DROP are about); `hovered` is
@@ -3762,7 +3789,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
         ? null
         : inventoryTipAt(
             layout.inventory,
-            inventoryPanelRows(inventoryPanelView()),
+            inventoryRowsFor(layout.inventory),
             pointerPoint.x,
             pointerPoint.y,
           )) ??
@@ -8327,7 +8354,7 @@ async function boot(): Promise<void> {
           ? null
           : inventoryPanelHitAt(
               layout.inventory,
-              inventoryPanelRows(inventoryPanelView()),
+              inventoryRowsFor(layout.inventory),
               point.x,
               point.y,
             );
@@ -8734,7 +8761,7 @@ async function boot(): Promise<void> {
     if (!inRect(layout.inventory, point.x, point.y) || layout.inventory === null) return;
     const hit = inventoryPanelHitAt(
       layout.inventory,
-      inventoryPanelRows(inventoryPanelView()),
+      inventoryRowsFor(layout.inventory),
       point.x,
       point.y,
     );
@@ -8811,7 +8838,7 @@ async function boot(): Promise<void> {
     if (layout.inventory === null) return;
     const hit = inventoryPanelHitAt(
       layout.inventory,
-      inventoryPanelRows(inventoryPanelView()),
+      inventoryRowsFor(layout.inventory),
       point.x,
       point.y,
     );
@@ -9554,7 +9581,7 @@ async function boot(): Promise<void> {
       // ONE `inventoryPanelRows` FOR BOTH READERS. The rows walk the whole doll
       // and the whole bag, and building them twice per press would do that work
       // twice for one pointer event.
-      const rows = inventoryPanelRows(inventoryPanelView());
+      const rows = inventoryRowsFor(layout.inventory);
       const grab = inventoryPanelDragAt(layout.inventory, rows, point.x, point.y);
       if (grab !== null) {
         event.preventDefault();

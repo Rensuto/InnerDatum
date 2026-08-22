@@ -255,6 +255,28 @@ const CELL_GAP = 5;
 const COLS = 4;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT FRACTION OF THE WINDOW THE BAG TAKES. UPSTREAM'S NUMBER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from ShowInventory.lua:34 — `Dialog.init(self, title or "Inventory",
+ * math.max(800, game.w * 0.8), math.max(600, game.h * 0.8))`. Four fifths of the
+ * screen, with a floor.
+ *
+ * OURS CANNOT TAKE THE 800 FLOOR and must not try: this client's logical
+ * backbuffer floors at 640 (`DEFAULT_VIEWPORT.tilesW` 20 x `TILE_PX` 32), so an
+ * 800-pixel minimum would be wider than the whole screen on the viewport the
+ * game is guaranteed to render. `COLS` is our floor instead — the four columns
+ * this panel has always had — and the fraction is what it grows by.
+ *
+ * ═══ IT WAS A FIXED 320 ON EVERY MONITOR ═══
+ * `const w = PANEL_W`, four columns, whatever the window. A player on a 1920
+ * screen got the same box as one at the 640 floor: their bag laid out three rows
+ * deep in a fifth of the width, with the rest of the panel's own screen empty.
+ */
+const FILL_W = 0.8;
+
+/**
  * The authored size of both cell plates, `ui_inventory_cell_empty` and
  * `ui_inventory_cell_hover`. 40x40, centred in the 64-pixel well.
  *
@@ -493,7 +515,37 @@ const DROP_H = ROW_H;
  * the honest outcome, and is why `inventoryPanelRect` returns null rather than
  * drawing three columns of clipped frames.
  */
-const PANEL_W = INSET * 2 + COLS * CELL_PX + (COLS - 1) * CELL_GAP + 1;
+/** The width a grid of `cols` cells needs, insets and the hairline included. */
+export function inventoryPanelWidthForColumns(cols: number): number {
+  return INSET * 2 + cols * CELL_PX + (cols - 1) * CELL_GAP + 1;
+}
+
+/**
+ * How many whole cells fit in a panel of this width — never fewer than `COLS`.
+ *
+ * EXPORTED because `inventoryPanelRows` has to chunk the bag into rows of the
+ * same number, and the row builder is handed a view rather than a rect. One
+ * function, both readers, so the grid cannot be laid out in a shape the geometry
+ * then places differently.
+ */
+export function inventoryColumnsFor(panelW: number): number {
+  const inner = panelW - INSET * 2 - 1;
+  const fits = Math.floor((inner + CELL_GAP) / (CELL_PX + CELL_GAP));
+  /**
+   * ═══ AND NEVER MORE COLUMNS THAN THERE ARE THINGS TO PUT IN THEM ═══
+   * Four fifths of a 1920 window holds NINETEEN cells, and the most this panel
+   * can ever show is `INVENTORY_CAP` — the bag and the shop shelf are both
+   * sliced to it. Nineteen columns would be a twelve-item bag laid out in one
+   * row with seven empty frames after it and a 1475-pixel panel around them,
+   * which is the same whitespace complaint wearing the opposite sign.
+   *
+   * Capped at the cap: one row can hold everything, and every column drawn is a
+   * column something can land in.
+   */
+  return Math.min(Math.max(COLS, fits), CARRIED_MAX);
+}
+
+const PANEL_W = inventoryPanelWidthForColumns(COLS);
 const PANEL_MIN_W = PANEL_W;
 
 /**
@@ -1031,11 +1083,12 @@ function dropSlotFor(inventory: InventoryMsg, drag: DragSubject | null | undefin
   return item === undefined ? null : (item.slot ?? null);
 }
 
-/** Break a flat list of cells into rows of at most `COLS`. */
-function intoRows(cells: readonly InventoryCell[]): readonly InventoryRow[] {
+/** Break a flat list of cells into rows of at most `cols`. */
+function intoRows(cells: readonly InventoryCell[], cols: number): readonly InventoryRow[] {
   const rows: InventoryRow[] = [];
-  for (let i = 0; i < cells.length; i += COLS) {
-    rows.push({ kind: InventoryRowKind.Cells, cells: cells.slice(i, i + COLS) });
+  const width = Math.max(1, cols);
+  for (let i = 0; i < cells.length; i += width) {
+    rows.push({ kind: InventoryRowKind.Cells, cells: cells.slice(i, i + width) });
   }
   return rows;
 }
@@ -1260,7 +1313,18 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
  * and touches neither the wire's order nor the server's fold. The two arrays stay
  * index-parallel, which is what the hit test and the painter both depend on.
  */
-export function inventoryPanelRows(view: InventoryPanelView): readonly InventoryRow[] {
+export function inventoryPanelRows(
+  view: InventoryPanelView,
+  /**
+   * How many cells per row, from `inventoryColumnsFor(rect.w)`.
+   *
+   * OPTIONAL, DEFAULTING TO THE FLOOR, because the row builder is handed a VIEW
+   * and not a rect — a caller that has no panel on screen (a hit test replaying
+   * last frame's rows, a fixture) still gets the shape the panel has always had.
+   * The four callers in main.ts that do have a rect pass its column count.
+   */
+  cols: number = COLS,
+): readonly InventoryRow[] {
   const inventory = view.inventory;
   const rows: InventoryRow[] = [
     {
@@ -1292,7 +1356,7 @@ export function inventoryPanelRows(view: InventoryPanelView): readonly Inventory
 
   if (view.tab === InventoryTab.Shop && view.shop != null) {
     const cells = shopCells(view.shop, view.inventory?.money ?? 0);
-    rows.push(...intoRows(cells));
+    rows.push(...intoRows(cells, cols));
     if (cells.length === 0) {
       // A SHOP CAN BE EMPTY and it is worth saying so plainly: the shelves top
       // up when somebody levels, so "come back" is the actual answer.
@@ -1317,7 +1381,7 @@ export function inventoryPanelRows(view: InventoryPanelView): readonly Inventory
     });
   } else {
     const cells = carriedCells(inventory);
-    rows.push(...intoRows(cells));
+    rows.push(...intoRows(cells, cols));
     if (cells.length === 0) {
       rows.push({ kind: InventoryRowKind.Note, text: 'you are carrying nothing' });
     } else if (inventory.carried.length > cells.length) {
@@ -1375,7 +1439,14 @@ export function inventoryPanelRect(options: {
   if (band < PANEL_MIN_H + PANEL_MARGIN * 2) return null;
   if (width < PANEL_MIN_W + PANEL_MARGIN * 2) return null;
 
-  const w = PANEL_W;
+  /**
+   * SNAPPED TO WHOLE COLUMNS, never to a fraction of one. A cell is the size of
+   * a PNG and cannot shrink, so a panel sized to four-and-a-half columns would
+   * simply carry half a column of dead inset — which is the waste this is here
+   * to remove, moved rather than removed.
+   */
+  const want = Math.min(Math.floor(width * FILL_W), width - PANEL_MARGIN * 2);
+  const w = inventoryPanelWidthForColumns(inventoryColumnsFor(want));
   const h = Math.min(PANEL_MAX_H, band - PANEL_MARGIN * 2);
   return { x: Math.floor((width - w) / 2), y: bottom - PANEL_MARGIN - h, w, h };
 }

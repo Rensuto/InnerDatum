@@ -8,6 +8,8 @@ import {
   INVENTORY_DRAG_PANEL,
   INVENTORY_PANEL_CARRIED_MAX,
   INVENTORY_PANEL_COLS,
+  inventoryColumnsFor,
+  inventoryPanelWidthForColumns,
   INVENTORY_PANEL_MARGIN,
   INVENTORY_PANEL_MIN_H,
   INVENTORY_PANEL_MIN_W,
@@ -715,15 +717,65 @@ describe('inventoryPanelRect', () => {
     expect(inventoryPanelRect({ width: 640, height: 480, top: 0, bottom: tight - 1 })).toBeNull();
   });
 
-  it('is exactly one width, because a column is the size of a PNG', () => {
-    // Every other panel in this client clamps its width down to fit a narrow
-    // viewport. This one cannot: `ui_item_frame_*` is 72x72 and the icon inside it
-    // is 64x64 at 1:1, so there is no three-column arrangement to degrade to.
+  it('is always a whole number of columns, and never fewer than four', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE OLD ASSERTION WAS `rect.w === MIN_W` AT EVERY SIZE, AND ITS REASON
+     * ONLY EVER ARGUED THE FLOOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read: "Every other panel in this client clamps its width down to fit a
+     * narrow viewport. This one cannot: `ui_item_frame_*` is 72x72 and the icon
+     * inside it is 64x64 at 1:1, so there is no three-column arrangement to
+     * degrade to."
+     *
+     * Every word of that is about SHRINKING, and it is still true and still
+     * enforced — `inventoryColumnsFor` never returns fewer than four. It says
+     * nothing whatever about growing, and the panel was pinned to 320 pixels on
+     * a 1920 monitor because the test asserted equality rather than the floor.
+     *
+     * Upstream's bag is `math.max(800, game.w * 0.8)` (ShowInventory.lua:34).
+     *
+     * The two properties that matter, and they are both about the CELL being
+     * indivisible: at least the four columns that have always fitted, and never
+     * a fraction of a column of dead inset.
+     */
     for (const size of SIZES) {
       const rect = inventoryPanelRect(size);
       if (rect === null) continue;
-      expect(rect.w).toBe(INVENTORY_PANEL_MIN_W);
+      expect(rect.w, `${String(size.width)} narrower than the floor`).toBeGreaterThanOrEqual(
+        INVENTORY_PANEL_MIN_W,
+      );
+      // WHOLE COLUMNS, asked as a round trip: the width the panel chose is
+      // exactly the width the column count it implies would ask for. A panel
+      // sized to four-and-a-half columns fails this and nothing else would see
+      // it — half a column of dead inset draws the same as none.
+      const cols = inventoryColumnsFor(rect.w);
+      expect(rect.w, `${String(size.width)} -> ${String(cols)} columns`).toBe(
+        inventoryPanelWidthForColumns(cols),
+      );
     }
+  });
+
+  it('grows with the window instead of sitting at 320 on a 1920 monitor', () => {
+    // The measured complaint: a fixed panel on every screen. Four columns at the
+    // 640 floor, more as there is room, and the bag stops being three rows deep
+    // in a fifth of the width.
+    const atFloor = inventoryPanelRect({ width: 640, height: 480, top: 17, bottom: 337 });
+    const atWide = inventoryPanelRect({ width: 1920, height: 1080, top: 24, bottom: 900 });
+    // Even the guaranteed floor has room for more than the four it was pinned
+    // to: 0.8 of 640 is 512, which holds six whole columns.
+    expect(inventoryColumnsFor(atFloor?.w ?? 0)).toBeGreaterThan(INVENTORY_PANEL_COLS);
+    expect(atWide?.w ?? 0).toBeGreaterThan(atFloor?.w ?? 0);
+    expect(inventoryColumnsFor(atWide?.w ?? 0)).toBeGreaterThan(
+      inventoryColumnsFor(atFloor?.w ?? 0),
+    );
+    // AND IT STILL FITS THE FLOOR ITSELF, margins included — the one viewport
+    // this client is guaranteed to be able to render.
+    expect((atFloor?.w ?? 0) + 12).toBeLessThanOrEqual(640);
+    // AND IT STILL FITS ITS OWN WINDOW, which is what `Math.min` against the
+    // margins is for — a panel wider than the screen is the bug this replaces.
+    expect(atWide?.w ?? 0).toBeLessThanOrEqual(1920);
   });
 });
 
