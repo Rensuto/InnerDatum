@@ -39,8 +39,20 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
+import { EffectId } from '../content/effects.ts';
+import { SetEffectOutcome } from '../engine/effects.ts';
+import { combatPhysicalpower } from '../engine/derived.ts';
 import { DamageType } from '../engine/damage.ts';
-import { Affinity, TalentKind, TargetShape, talentId } from '../engine/talents.ts';
+import {
+  Affinity,
+  TalentKind,
+  TargetShape,
+  actorsInShape,
+  ballTiles,
+  talentDone,
+  talentId,
+  tomeCooldownToTurns,
+} from '../engine/talents.ts';
 import { EMPTY_PASSIVE_VIEW } from '../engine/hooks.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -198,15 +210,38 @@ export const bloodPrice: Talent = {
 // OVERREACH — the payoff for the position One at a Time avoids
 // ---------------------------------------------------------------------------
 
-/** Below this many bodies in reach it pays nothing. Two is "outnumbered". */
-const CROWD = 2;
-const DAM_LOW = 4;
-const DAM_HIGH = 15;
+/**
+ * How far the grit goes.
+ *
+ * Upstream's is a CONE of radius `combatTalentScale(t, 1, 2.5)` (dirty.lua:124).
+ * Ours is a ball centred on the caster, for `clear_the_street.ts`'s reason —
+ * "this happens around you, which is what makes it the answer to being
+ * surrounded" — and because `radius` is one number on the wire, so the client's
+ * shape preview and the tiles actually hit cannot disagree.
+ */
+const GRIT_RADIUS = 2;
 
-/** Damage rating while outnumbered, at a rank. */
+/**
+ * Turns effaced, at a rank.
+ *
+ * Upstream is `getDuration = combatTalentScale(t, 3, 5)` (dirty.lua:130) and
+ * 3..5 floors to 3,3,4,4,5 in our scale — the fourth time today this band has
+ * produced two ranks that read identically. 2..6 gives 2,3,4,5,6, and starting
+ * a rank lower is the right end to widen from for an effect that lands on
+ * EVERYTHING around you rather than on one body.
+ */
+const EFFACE_LOW = 2;
+const EFFACE_HIGH = 6;
+
 export function damageAt(level: number): number {
-  return Math.round(combatTalentScale(level, DAM_LOW, DAM_HIGH, CURVE));
+  return Math.floor(combatTalentScale(level, EFFACE_LOW, EFFACE_HIGH, CURVE));
 }
+
+/** Ported from dirty.lua:122 — Blinding Powder's `cooldown = 12`. */
+const POWDER_COOLDOWN_ACTIONS = 12;
+const OVERREACH_COOLDOWN = tomeCooldownToTurns(POWDER_COOLDOWN_ACTIONS);
+/** Three of six. An area debuff is most of a turn, not all of it. */
+const OVERREACH_AP = 3;
 
 /**
  * OVERREACH.
@@ -230,12 +265,57 @@ export const overreach: Talent = {
   name: 'Overreach',
   /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
   tier: 2,
-  iconId: 'icon_passive_overreach',
-  passive: (level, view = EMPTY_PASSIVE_VIEW) =>
-    view.adjacentEnemies() < CROWD ? {} : { mods: { dam: damageAt(level) } },
+  kind: TalentKind.Active,
+  iconId: 'icon_active_overreach',
+  cost: { ap: OVERREACH_AP },
+  cooldownTurns: OVERREACH_COOLDOWN,
+  targeting: {
+    // CENTRED ON THE CASTER, `clear_the_street.ts`'s shape and its reason: this
+    // happens around you, which is what makes it an answer to being surrounded.
+    shape: TargetShape.Self,
+    range: 0,
+    minRange: 0,
+    radius: GRIT_RADIUS,
+    requiresLos: false,
+    affinity: Affinity.Hostile,
+  },
+
+  onUse: (ctx, self) => {
+    const tiles = ballTiles(self, GRIT_RADIUS);
+    const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
+    const turns = damageAt(ctx.talentLevel);
+    const power = combatPhysicalpower(self.combat ?? {});
+    const lines: string[] = [];
+
+    for (const victim of victims) {
+      const landed = ctx.status?.(victim, EffectId.Effaced, turns, {
+        applyPower: power,
+        srcId: self.id,
+      });
+      /** `strike_out.ts`'s rule: a resisted mark and an unattempted one differ. */
+      if (landed === undefined) continue;
+      lines.push(
+        landed.outcome === SetEffectOutcome.Applied
+          ? `${victim.name} is grinding at their eyes.`
+          : `${victim.name} blinks it away.`,
+      );
+    }
+
+    /**
+     * A HANDFUL OF GRIT THROWN AT AN EMPTY ROOM STILL COSTS ITS AP AND STILL
+     * GOES ON COOLDOWN — `clear_the_street.ts` states the rule and the reason:
+     * the player made a read and it was wrong, which is a legible outcome. The
+     * refund rule is for intents that went ILLEGAL, not for ones that missed.
+     */
+    if (lines.length === 0) lines.push('The grit goes nowhere in particular.');
+    return talentDone([], lines);
+  },
+
   describe: (_self, level) =>
-    `Always on, while ${String(CROWD)} or more enemies are next to you. ` +
-    `${String(damageAt(level))} damage. The answer to the doorway plan having failed.`,
+    `Grit, thrown at everything within ${String(GRIT_RADIUS)} tiles of you: effaced for ` +
+    `${String(damageAt(level))} turns (physical save), so every roll they make and resist is ` +
+    `worse. The answer to the doorway plan having failed. ${String(OVERREACH_AP)} AP, ` +
+    `${String(OVERREACH_COOLDOWN)}-turn cooldown.`,
 };
 
 // ---------------------------------------------------------------------------

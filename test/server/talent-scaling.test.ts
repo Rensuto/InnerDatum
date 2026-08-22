@@ -864,6 +864,27 @@ const CASES: readonly ScalingCase[] = [
       return { observed: watchman.x - before, result, fixture: f };
     },
   },
+  {
+    /**
+     * `cunning/dirty`'s Blinding Powder, in a discipline that cites that tree as
+     * its shape and held six passives. WHAT IT ASKED FOR, not what survived the
+     * save — `statusCalls` records the authored duration, so a seed whose first
+     * roll happens to be a save cannot make this read as a talent that stopped
+     * scaling.
+     */
+    bare: 'overreach',
+    moves: 'turns effaced',
+    authored: '2 turns',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5, ['generic/leverage']);
+      f.addMonster('husk', 6, 5);
+      f.setLevel('caster', 'overreach', level);
+      f.refill('caster');
+      const result = useTalent(f.engine, watchman, talentId('overreach'), { x: 5, y: 5 }, f.ctx);
+      return { observed: f.statusCalls[0]?.duration ?? 0, result, fixture: f };
+    },
+  },
 ];
 
 describe('every talent level moves a number — the honesty gate', () => {
