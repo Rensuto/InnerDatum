@@ -123,6 +123,32 @@ describe('a loadout frame puts the bar in order without disturbing it', () => {
     expect(fn).toContain('= null');
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT NEVER SEATS SOMETHING THE CHARACTER HAS NOT LEARNED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `loadout` is the WHOLE class list, learned and unlearned alike, which is
+   * correct — the talent panel reads the same array and needs the rank-0 rows to
+   * sell them. The fill did not care: it walked that list in authored order and
+   * handed out every free key.
+   *
+   * Measured over a socket before the fix: a level-1 Redactor holds eleven
+   * talents and knows TWO, so six keys came back bound and four pointed at
+   * abilities the character cannot use. Pressing one is refused `NotLearned` —
+   * so a new player's bar taught them that half their keys are broken.
+   *
+   * ASSERTED ON THE RANK TEST rather than on behaviour, because main.ts cannot
+   * be imported (it touches `document` at module scope) and this file's whole
+   * device is reading the source. The guard is one line and its absence is the
+   * bug, so its presence is the thing worth pinning.
+   */
+  it('never seats a talent the character has not learned', () => {
+    const fn = body('function reseatTalentBindings(): void {');
+    expect(fn).toContain('level');
+    expect(fn).toMatch(/<\s*1|>=\s*1|level\s*\?\?\s*0/);
+  });
+
   it('never fills a talent that is already seated somewhere', () => {
     /**
      * A player may put the same talent on two keys by dragging — that is their

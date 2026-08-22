@@ -1270,7 +1270,21 @@ describe('projectPartyState keeps a member who is somewhere else', () => {
  */
 describe('the loadout projection loses no field', () => {
   it('carries every key it was given, optional ones included', () => {
-    const full: LoadoutTalent = {
+    /**
+     * ═══ `Required<...>`, AND THAT IS THE WHOLE GUARD ═══
+     * This fixture was a plain `LoadoutTalent`, so every OPTIONAL field was
+     * optional here too — and `locked` and `lockedReason` were added to the wire
+     * type, set by the server, dropped by the projector, and never added to this
+     * object. The key-set comparison below then compared a short list against a
+     * short list and passed for months while the tier gate never reached a
+     * client.
+     *
+     * `Required` makes omitting a field a COMPILE error, which is the only kind
+     * of reminder that survives someone who has never read this file. The
+     * docblock above says a list of field names would be "a third copy to keep
+     * in step"; this object WAS that copy. Now the compiler keeps it.
+     */
+    const full: Required<LoadoutTalent> = {
       id: 'talent:standing_orders',
       name: 'Standing Orders',
       icon: 'icon_passive_standing_orders',
@@ -1288,6 +1302,9 @@ describe('the loadout projection loses no field', () => {
       treeName: 'The Line',
       kind: 'passive',
       mastery: 1.3,
+      sustained: false,
+      locked: true,
+      lockedReason: 'Learn 2 more of this discipline first.',
     };
 
     const projected = projectLoadout({ id: 'a' } as never, [full]).talents[0];
@@ -1301,6 +1318,12 @@ describe('the loadout projection loses no field', () => {
     expect(projected.treeName).toBe(full.treeName);
     expect(projected.kind).toBe(full.kind);
     expect(projected.mastery).toBe(full.mastery);
+    // THE TIER GATE, which is the pair that was actually missing. A panel that
+    // never receives these draws a live `+` on a tier-4 capstone for a level-1
+    // character and lets the server do the refusing.
+    expect(projected.locked).toBe(full.locked);
+    expect(projected.lockedReason).toBe(full.lockedReason);
+    expect(projected.sustained).toBe(full.sustained);
   });
 
   it('emits no passives array for a class that has none', () => {

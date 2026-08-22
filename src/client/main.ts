@@ -1421,6 +1421,32 @@ function reseatTalentBindings(): void {
   const seated = new Set(talentBindings.filter((id): id is string => id !== null));
   for (const talent of loadout) {
     if (seated.has(talent.id)) continue;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONLY WHAT HAS ACTUALLY BEEN LEARNED GETS A KEY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `loadout` is the whole class list, learned and unlearned alike, and that
+     * is correct — the talent panel reads the same array and needs the rank-0
+     * rows to sell them. What was wrong is that this fill did not care: it
+     * walked the list in authored order and handed out every free key.
+     *
+     * Measured over a socket: a level-1 Redactor holds ELEVEN talents and knows
+     * TWO of them, so six keys came back bound and four of those pointed at
+     * abilities the character cannot use. Pressing one spends nothing and does
+     * nothing — the server refuses it as `NotLearned` — so the bar taught a new
+     * player that half their keys are broken.
+     *
+     * A RANK OF 1 IS THE WHOLE TEST. `level` is the RAW rank the server sends
+     * for the counter (protocol.ts: "`0/5` is the honest counter"), so rank 0 is
+     * precisely "owned as a possibility, not yet learned".
+     *
+     * The unbinding above is deliberately NOT symmetric: a talent already on a
+     * key stays there. Someone who placed a button and then respecced keeps
+     * their arrangement, and `affordable` greys it — the fill is what must not
+     * invent a binding, not the player.
+     */
+    if ((talent.level ?? 0) < 1) continue;
     const free = talentBindings.indexOf(null);
     if (free < 0) break;
     talentBindings[free] = talent.id;

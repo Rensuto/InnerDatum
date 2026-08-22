@@ -804,6 +804,35 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     // field by field and has silently dropped a new one twice; see
     // `projectResource`, which now has a test that says so.
     ...(talent.sustained === undefined ? {} : { sustained: talent.sustained }),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TIER GATE — DROPPED HERE UNTIL NOW, AND IT COST THE WHOLE FEATURE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `gateFor` (content/classes.ts) computes a `TierCheck` for every talent on
+     * every loadout frame, `toLoadoutView` turns a failing one into
+     * `locked: true` plus the sentence, and this function threw both away.
+     *
+     * MEASURED FROM A SOCKET, which is the only way this was ever going to be
+     * found: a level-1 Redactor with zero unspent points received
+     *
+     *     Final Draft   lvl=0  locked=undefined
+     *     Recension     lvl=0  locked=undefined
+     *
+     * for TIER-4 capstones. The panel reads `talent.locked !== true`, so it drew
+     * a live `+` on every gated talent in the game and the server refused the
+     * press — the progression was enforced and completely invisible, which is
+     * the worst of both: a player is invited to skip to the end of a discipline
+     * and told no only after they try.
+     *
+     * The three optional fields above were dropped the same way and the note on
+     * them says a key-set test now guards it. It did not guard THESE, because
+     * that test's fixture is hand-built and nobody added them to it — the "third
+     * copy to keep in step" it says it is avoiding, wearing an object literal.
+     * The fixture is `Required<LoadoutTalent>` now, so the compiler keeps it.
+     */
+    ...(talent.locked === undefined ? {} : { locked: talent.locked }),
+    ...(talent.lockedReason === undefined ? {} : { lockedReason: talent.lockedReason }),
   };
 }
 
