@@ -28,11 +28,29 @@
  *
  * Every one of those is green in the suite. None of them had crossed a socket.
  *
+ * ═══ IT MUST PRESS MORE THAN ONCE, AND THAT COST A WRONG ANSWER TO LEARN ═══
+ * The first version of this file compared the Ink either side of ONE cast and
+ * announced that `creditForLanding` -> `noteAfflicted` -> `gainResource` was
+ * broken. It is not. `useTalent` runs the talent BODY and only then pays —
+ * "past this line nothing can fail, so now we pay", which is what keeps a
+ * refused talent free — so a mark credits its income BEFORE the cost:
+ *
+ *     100 -> mark lands, +12 -> CAPPED at 100 -> cost 8 -> 92
+ *
+ * At a full well the cap eats the income, and the single measurement that kind
+ * of probe can take is exactly the one that cannot see what it is looking for.
+ * At a dry well the same order gives 10 -> 22 -> 14: the net +4 `strike_out.ts`
+ * documents, working as designed.
+ *
+ * So it presses SIX times and reads the shape. With income the well HOVERS near
+ * the cap; without it, six casts take 100 to 52. Neither reading can be mistaken
+ * for the other, and no second talent is needed to force the well down.
+ *
  * ═══ WHAT IT PRINTS ═══
- * The Ink before and after, the log line the server chose, and a verdict that
- * distinguishes "the mark was resisted" from "nothing resolved" from "it landed
- * and paid nothing" — because only the last two are faults, and a probe that
- * reports a save as a failure is the bug `status-live.mjs` had.
+ * Every distinct Ink figure the socket was sent, the log line the server chose,
+ * and a verdict drawn from the SEQUENCE — distinguishing "the mark was resisted"
+ * and "nothing resolved" from a genuine drain. A probe that reports a save, or a
+ * cap, as a failure is the bug `status-live.mjs` had.
  */
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -435,80 +453,109 @@ console.log(
  * different bug in a different layer, and reporting one as the other would send
  * somebody to read the wrong file.
  */
-beat('AGAIN, TO SEE WHICH WAY THE WELL MOVES');
-const secondFrom = inkOf();
-for (let attempt = 0; attempt < 8; attempt += 1) {
-  const before2 = frames.filter((f) => f.t === 'used').length;
-  const at = victimNow();
-  send({ t: 'talent', talentId: strikeOut.id, target: { x: at.x, y: at.y } });
-  const until = Date.now() + 900;
-  while (Date.now() < until && frames.filter((f) => f.t === 'used').length === before2) {
-    await sleep(60);
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PRESS IT SIX TIMES, BECAUSE ONE PRESS AT A FULL WELL PROVES NOTHING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `useTalent` runs the talent BODY and only then pays — "past this line nothing
+ * can fail, so now we pay", which is what keeps a refused talent free. So a mark
+ * credits its income BEFORE the cost comes off:
+ *
+ *     100 -> mark lands, +12 -> capped at 100 -> cost 8 -> 92
+ *
+ * At a full well the income is clipped away and a single before/after reads as
+ * "landed and paid nothing". It is not: at a dry well the same order gives
+ * 10 -> 22 -> 14, the net +4 `strike_out.ts` documents.
+ *
+ * SIX PRESSES SEPARATE THEM WITHOUT NEEDING A SECOND TALENT. With income, each
+ * press is +12 then -8 and the well HOVERS near the cap. Without it, six presses
+ * take 100 down to 52. The shape of the sequence is the answer, and neither
+ * reading can be mistaken for the other.
+ */
+beat('SIX PRESSES — DOES THE WELL HOVER OR DRAIN?');
+for (let press = 0; press < 6; press += 1) {
+  const usedBefore = frames.filter((f) => f.t === 'used').length;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const at = victimNow();
+    send({ t: 'talent', talentId: strikeOut.id, target: { x: at.x, y: at.y } });
+    const until = Date.now() + 700;
+    while (Date.now() < until && frames.filter((f) => f.t === 'used').length === usedBefore) {
+      await sleep(60);
+    }
+    if (frames.filter((f) => f.t === 'used').length > usedBefore) break;
+    send({ t: 'hold' });
+    await sleep(TURN_WAIT_MS * 3);
   }
-  if (frames.filter((f) => f.t === 'used').length > before2) break;
-  send({ t: 'hold' });
-  await sleep(TURN_WAIT_MS * 3);
+  await sleep(250);
 }
 await sleep(700);
-for (const line of drainLog()) console.log(`  ${line}`);
-const secondTo = inkOf();
-console.log(`  Ink: ${String(secondFrom?.value)} -> ${String(secondTo?.value)}`);
-/**
- * EVERY DISTINCT FIGURE THE SOCKET WAS SENT, IN ORDER — because one reading
- * cannot separate the two ways this can be wrong.
- *
- * `sendHotbarIfChanged` is MEMOISED on a key that quantises the pool with
- * `Math.floor`, so a value that returns to what it already was sends no frame at
- * all. That means "the client still reads 92" is consistent with BOTH
- *
- *   the income never happened (the server is at 84 and said so, and this read a
- *   stale frame), and
- *   the income happened and capped (the server is at 100 and the memo suppressed
- *   the resend because the previous frame already said 100).
- *
- * The sequence tells them apart in a way a before/after pair cannot, and it is
- * printed rather than judged: this probe has no business naming a culprit it
- * cannot see.
- */
+drainLog();
+
 const readings = frames
   .filter((f) => f.t === 'resource')
   .map((f) => f.resource)
   .filter((r) => r !== undefined);
 const distinct = [];
 for (const r of readings) {
-  const at = `${String(r.current)}/${String(r.max)}`;
+  const at = Number(r.current.toFixed(1));
   if (distinct.at(-1) !== at) distinct.push(at);
 }
 console.log(`  every Ink figure this socket was sent: ${distinct.join(' -> ')}`);
-console.log(`  (${String(readings.length)} resource frames in all)`);
+const lowest = Math.min(...distinct);
+const cost = 8;
+const presses = frames.filter((f) => f.t === 'used').length;
+console.log(`  ${String(presses)} casts landed; lowest Ink seen was ${String(lowest)}`);
+const drained = 100 - presses * cost;
+console.log(
+  lowest > drained + cost
+    ? `  IT HOVERS. ${String(presses)} casts with no income would have reached ` +
+        `${String(drained)}; the well never went below ${String(lowest)}, so a landed ` +
+        `mark is paying.`
+    : `  IT DRAINS. ${String(presses)} casts took it to ${String(lowest)}, which is the ` +
+        `full cost with nothing coming back. The credit path is broken.`,
+);
 
 const text = lines.join(' | ');
 const landed = /is struck out/.test(text);
 const resisted = /holds the line/.test(text);
-const paid = before !== null && after !== null && after.value > before.value;
 
+/**
+ * THE VERDICT COMES FROM THE SEQUENCE, NOT FROM ONE BEFORE/AFTER PAIR.
+ *
+ * An earlier version compared the Ink either side of a single press and
+ * announced "THE MARK LANDED AND PAID NOTHING — `creditForLanding` ->
+ * `noteAfflicted` -> `gainResource` is broken." It is not broken. The well
+ * starts FULL, the income is credited before the cost comes off, and the cap
+ * clips it — so the one measurement that class of probe can make is the one
+ * measurement that cannot see the thing it is looking for.
+ *
+ * The six-press shape can. Reported from that, and from nothing else.
+ */
 beat('VERDICT');
 if (!usedIt()) {
   console.log('  NOTHING RESOLVED — no `used` frame named Strike Out. This IS a fault.');
   process.exit(1);
-} else if (landed && paid) {
-  console.log('  THE MARK LANDED AND THE WELL FILLED. The class works end to end.');
-} else if (landed && !paid) {
+} else if (!landed && resisted) {
   console.log(
-    '  THE MARK LANDED AND THE BAR DID NOT CLIMB. Either the income never\n' +
-      '  arrives, or it arrives and the client is never told — the sequence\n' +
-      '  above is the evidence, and this probe does not guess between them.\n' +
-      '  Read it with `sendHotbarIfChanged` in net/gateway.ts, which suppresses\n' +
-      '  a resend when the floored figure is unchanged.',
+    '  THE TARGET SAVED every time. The status system ran and refused the mark,\n' +
+      '  which is honest and not a fault — run again for a landing.',
   );
-  process.exit(1);
-} else if (resisted) {
+} else if (!landed) {
+  console.log(`  UNRECOGNISED. The log said: ${text || '(nothing)'}`);
+} else if (lowest > drained + cost) {
   console.log(
-    '  THE TARGET SAVED. The status system ran and refused the mark, which is an ' +
-      'honest outcome and not a fault — run again for a landing.',
+    '  THE CLASS WORKS END TO END. It is offered, choosable, carries its bar,\n' +
+      '  lands its mark, and a landed mark pays — the well held at ' +
+      `${String(lowest)} across ${String(presses)} casts that would otherwise have\n` +
+      `  drained it to ${String(drained)}.`,
   );
 } else {
-  console.log(`  UNRECOGNISED. The log said: ${text || '(nothing)'}`);
+  console.log(
+    '  THE WELL DRAINED THE FULL COST. `creditForLanding` -> `noteAfflicted` ->\n' +
+      '  `gainResource` is not paying. This IS a fault.',
+  );
+  process.exit(1);
 }
 
 ws.close();
