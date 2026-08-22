@@ -202,6 +202,26 @@ await sleep(500);
 const loadout = last('loadout');
 const talents = loadout?.talents ?? [];
 console.log(`  loadout: ${talents.map((t) => t.name).join(' | ') || '(none)'}`);
+/**
+ * WHAT IS ACTUALLY LEARNED, AND WHAT ANY OF IT COSTS THE POOL.
+ *
+ * The bar carries every talent the class owns; `level` says which ones this body
+ * has actually got. That distinction decides whether the pool above is
+ * SPENDABLE, and it is not a detail: a class whose learned talents all cost AP
+ * alone has a full resource bar that does nothing at all, which looks identical
+ * to a working one and cannot be probed for income — you cannot watch a capped
+ * pool rise.
+ */
+const learned = talents.filter((t) => (t.level ?? 0) >= 1);
+const spenders = learned.filter((t) => (t.cost?.resource ?? 0) > 0);
+console.log(
+  `  learned: ${learned.map((t) => `${t.name}(${String(t.cost?.resource ?? 0)})`).join(' | ') || '(none)'}`,
+);
+console.log(
+  spenders.length === 0
+    ? `  NOTHING LEARNED SPENDS ${SPEC.pool.toUpperCase()} — the pool cannot be drained at this level.`
+    : `  spends ${SPEC.pool}: ${spenders.map((t) => t.name).join(', ')}`,
+);
 if (talents.length === 0) {
   console.log('  THE BAR IS EMPTY. `birthTalents` never reached the loadout.');
   process.exit(1);
