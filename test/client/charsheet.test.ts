@@ -17,6 +17,7 @@ import {
 } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { ACTIONS, compileKeymap, DEFAULT_KEYMAP, labelFor } from '../../src/client/input/keymap.ts';
+import { TALENTS_PER_CLASS_MAX } from '../../src/shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import {
   InspectGroup,
@@ -1322,6 +1323,47 @@ describe('the sheet shows what it says it shows', () => {
      * the cooldown word, which is the regression `COL_MIN_W` is derived to
      * prevent, and which an earlier version of this change caused.
      */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * A FULL BAR STILL FITS THE FLOOR — and the failure here is total, not partial.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * `TALENTS_PER_CLASS_MAX` is the most actives a class may own, and the Talents
+     * tab has to draw all of them on the smallest window this client renders
+     * (`DEFAULT_VIEWPORT` is `tilesH: 10`, so 640x320).
+     *
+     * ═══ WHY THIS IS WORTH A TEST RATHER THAN A GLANCE ═══
+     * `DROP_ORDER` sheds a WHOLE SECTION, so the failure mode is not "the last two
+     * talents are missing" — it is `shown=0` and one line of grey text. A player
+     * at the floor would open the Talents tab and find no talents at all.
+     *
+     * Measured: 14 fit and 18 do not. The cap is 12, so there are two talents of
+     * headroom and no more. A class gaining a fourth discipline, or the cap being
+     * raised, walks into that edge — this is the line that says so first.
+     */
+    it('draws a full-cap loadout at the floor, on the Talents tab', () => {
+      // ONE REAL TALENT AS THE BASE. An indexed read is a maybe under
+      // `noUncheckedIndexedAccess`, and spreading a maybe makes every field
+      // optional — which is not a `LoadoutTalent` and not what the sheet is
+      // handed in production.
+      const base = LOADOUT[0];
+      if (base === undefined) throw new Error('the fixture has no talents');
+      const full = Array.from({ length: TALENTS_PER_CLASS_MAX }, (_, i) => ({
+        ...base,
+        id: `talent:full${String(i)}`,
+        name: `Talent ${String(i)}`,
+      }));
+      const texts = painted(640, 320, { loadout: full }, SheetTab.Talents);
+
+      expect(
+        texts.filter((t) => t.includes('panel too small')),
+        'the Talents tab drops the whole section at the floor with a full bar',
+      ).toEqual([]);
+      for (const talent of full) {
+        expect(texts, `${talent.name} is missing`).toContain(talent.name);
+      }
+    });
+
     it('keeps every talent meta line whole at that size', () => {
       const texts = painted(REAL_W, REAL_H, {}, SheetTab.Talents);
       const metas = texts.filter((text) => text.includes(' · ') && !text.startsWith('['));
