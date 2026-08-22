@@ -64,12 +64,11 @@ function body(open: string): string {
 describe('the bar is built from bindings, not from the loadout', () => {
   it('resolves each slot through the binding store', () => {
     const view = body('function hotbarView(): HotbarView {');
-    // A SLICE OF THE STORE, not the whole of it: the bar draws ONE page and the
-    // store holds both. `page` is that slice, and it is what `armed` is
-    // resolved against too — see the assertion two blocks down, which is the
-    // one that catches the ring being drawn on the wrong box.
-    expect(view).toContain('talentBindings.slice(');
-    expect(view).toContain('page.map(');
+    // ONE PAGE OF THE STORE, not the whole of it: the bar draws six and the
+    // store holds twelve. `talentInSlot` applies that offset, and it is what
+    // `armed` is resolved against too — see the assertion two blocks down,
+    // which is the one that catches the ring being drawn on the wrong box.
+    expect(view).toContain('talentInSlot(');
     /**
      * `loadout.map(...)` INSIDE THIS FUNCTION is the old contract — slot n IS
      * loadout[n] — and it is the one thing that must not come back, because it
@@ -82,6 +81,23 @@ describe('the bar is built from bindings, not from the loadout', () => {
      */
     const code = view.replace(/\/\*[\s\S]*?\*\//g, '');
     expect(code).not.toContain('loadout.map(');
+  });
+
+  it('presses what it painted, through the same resolver', () => {
+    /**
+     * THE HOLE THE TEST ABOVE COULD NOT SEE. It guarded `hotbarView` against
+     * `loadout.map(` and passed for months while `activateSlot` — the function
+     * a KEY actually reaches — read `loadout[index]`: authored order, no page
+     * offset, no binding. Page 2 pressed page 1's talents, dragging moved only
+     * the picture, and once the fill stopped seating unlearned talents a
+     * level-1 Redactor had four keys that painted one thing and fired another.
+     *
+     * A guard on the paint is not a guard on the press. This is the press.
+     */
+    const press = body('function activateSlot(index: number): void {');
+    expect(press).toContain('talentInSlot(index)');
+    const code = press.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toContain('loadout[index]');
   });
 
   it('draws an unresolvable binding as empty rather than stale', () => {
@@ -281,7 +297,20 @@ describe('the second page', () => {
      * not fail; it quietly points at the wrong thing while an aim is open.
      */
     const view = body('function hotbarView(): HotbarView {');
-    expect(view).toContain('page.indexOf(armedId)');
-    expect(view.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('loadout.findIndex(');
+    const code = view.replace(/\/\*[\s\S]*?\*\//g, '');
+    /**
+     * THE PROPERTY, NOT THE EXPRESSION. This pinned the literal
+     * `page.indexOf(armedId)` and so failed the moment the paint and the press
+     * were unified onto `talentInSlot` — a green-to-red on a change that made
+     * the guarded property STRONGER, which is the tell that a test was holding
+     * a copy of the implementation rather than its rule.
+     *
+     * The rule is: the ring is resolved against the six being DRAWN. `talents`
+     * is that list, built one line above out of the same resolver the press
+     * uses, so the ring and the button under it cannot disagree.
+     */
+    expect(code).toMatch(/armed:[\s\S]{0,200}talents\.findIndex\(/);
+    expect(code).not.toContain('loadout.findIndex(');
+    expect(code).not.toContain('loadout.indexOf(');
   });
 });

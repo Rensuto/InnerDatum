@@ -2975,6 +2975,59 @@ function talentById(id: string | null): LoadoutTalent | null {
 }
 
 /**
+ * A SLOT ON THE BAR YOU CAN SEE -> ITS CELL IN THE TWELVE-LONG STORE.
+ *
+ * Every caller takes an index from the POINTER or from a KEY, and both of those
+ * name a box on the visible bar. The store is both pages end to end, so every
+ * one of them has to be offset by the page — and doing it in one named function
+ * rather than at five call sites is the difference between a page feature and a
+ * bug where the mouse edits page 1 while the keyboard presses page 2.
+ *
+ * THIS USED TO LIVE INSIDE THE INPUT CLOSURE, where only `bindTalentSlot` and
+ * `clearTalentSlot` could reach it — so the bind and the unbind were paged and
+ * the PAINT and the PRESS were not. It is module-level now because the reader
+ * that matters most, `talentInSlot`, is.
+ */
+function cellOfSlot(index: number): number {
+  return talentPage * HOTBAR_TALENT_SLOTS + index;
+}
+
+/**
+ * THE SLOT YOU CAN SEE -> THE TALENT THAT SLOT MEANS. One resolver, so the box
+ * that is PAINTED and the talent that is PRESSED cannot name two different
+ * things.
+ *
+ * ═══ THEY NAMED TWO DIFFERENT THINGS, AND IT WAS MEASURED ═══
+ * `hotbarView` resolved a slot through the binding store. `activateSlot` read
+ * `loadout[index]` — the class's authored order, unpaged and unbound. Those
+ * agree only when the store happens to hold the first six talents in authored
+ * order with no gaps, which is exactly what the old fill produced, so the bug
+ * sat behind an accident:
+ *
+ *   - PAGE 2 WAS NEVER REACHABLE. Every key on it pressed page 1's talent,
+ *     because `loadout[index]` has no idea a page exists.
+ *   - DRAGGING A TALENT SOMEWHERE ELSE MOVED THE PICTURE ONLY. The store said
+ *     one thing, the key still fired authored-order.
+ *   - AND WHEN THE FILL STOPPED SEATING UNLEARNED TALENTS, the accident went
+ *     with it. A level-1 Redactor, over a socket:
+ *         key 2   painted  Open Ledger L1     pressed  Redaction L0
+ *         key 3   painted  (empty)            pressed  Expunge L0
+ *     Four of six keys fired a talent the character had not learned and the
+ *     server refused each one — the precise failure the fill was changed to
+ *     end.
+ *
+ * LOADOUT ONLY, NOT `talentById`. That one also searches `passives`, because it
+ * resolves what the PANEL armed and the panel lists passives. A bar slot is a
+ * button; a passive on it would paint a box that cannot be pressed. This is the
+ * draw's own long-standing lookup, unchanged — the press is what moved.
+ */
+function talentInSlot(index: number): LoadoutTalent | undefined {
+  const id = talentBindings[cellOfSlot(index)] ?? null;
+  if (id === null) return undefined;
+  return loadout.find((entry) => entry.id === id);
+}
+
+/**
  * Can this client see a reason the talent is unpayable?
  *
  * ADVISORY, and used only to grey a button. The server re-checks every budget on
@@ -3065,12 +3118,8 @@ function hotbarView(): HotbarView {
   // THE ACTIVE PAGE'S SIX, and `slotUnder` measures the same six because it
   // reads `hotbarView().slots.length` — one number, both readers, which is the
   // rule hudwiring.test.ts pins after the item slots broke exactly this.
-  const page = talentBindings.slice(
-    talentPage * HOTBAR_TALENT_SLOTS,
-    talentPage * HOTBAR_TALENT_SLOTS + HOTBAR_TALENT_SLOTS,
-  );
-  const talents: HotbarSlot[] = page.map((id) => {
-    const talent = id === null ? undefined : loadout.find((entry) => entry.id === id);
+  const talents: HotbarSlot[] = Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, index) => {
+    const talent = talentInSlot(index);
     if (talent === undefined) return { kind: HotbarSlotKind.Empty };
     return {
       // v12: SPELLED OUT AT THE CONSTRUCTION SITE. `HotbarTalentSlot.kind` was
@@ -3119,11 +3168,20 @@ function hotbarView(): HotbarView {
      *
      * A LIT BUTTON THAT IS NOT THE ONE YOU PRESSED is the worst kind of wrong:
      * it does not fail, it just quietly points at the wrong thing while an aim
-     * is open. Resolved off `page` — the six being drawn — so the ring is on
-     * the box the player is looking at, or nowhere at all when the armed talent
-     * lives on the page they are not.
+     * is open. Resolved off `talents` — the six actually being drawn, one line
+     * above — so the ring is on the box the player is looking at, or nowhere at
+     * all when the armed talent lives on the page they are not.
+     *
+     * This read a `page` local until the paint and the press were unified. The
+     * six drawn slots ARE that list, resolved once, so the ring can no longer
+     * disagree with the button under it even in principle.
      */
-    armed: armedId === null ? -1 : page.indexOf(armedId),
+    armed:
+      armedId === null
+        ? -1
+        : talents.findIndex(
+            (slot) => slot.kind === HotbarSlotKind.Talent && slot.talent.id === armedId,
+          ),
     // WHICH PAGE THESE SIX ARE, so the label strip can say so. A bar that
     // silently swapped its buttons would be indistinguishable from a bug.
     page: talentPage,
@@ -5628,7 +5686,9 @@ async function boot(): Promise<void> {
       return;
     }
 
-    const talent = loadout[index];
+    // THE SAME RESOLVER THE PAINT USES. Not `loadout[index]` — see
+    // `talentInSlot`, which carries the measurement of what that cost.
+    const talent = talentInSlot(index);
     if (talent === undefined) {
       showNotice(
         loadout.length === 0
@@ -5733,20 +5793,9 @@ async function boot(): Promise<void> {
    * game expects the trade. It is four lines and it is the difference between a
    * feature and a chore.
    */
-  /**
-   * A SLOT ON THE BAR YOU CAN SEE -> ITS CELL IN THE TWELVE-LONG STORE.
-   *
-   * Every caller below takes an index from the POINTER or from a KEY, and both
-   * of those name a box on the visible bar. The store is both pages end to end,
-   * so every one of them has to be offset by the page — and doing it in one
-   * named function rather than at five call sites is the difference between a
-   * page feature and a bug where the mouse edits page 1 while the keyboard
-   * presses page 2.
-   */
-  function cellOfSlot(index: number): number {
-    return talentPage * HOTBAR_TALENT_SLOTS + index;
-  }
-
+  // `cellOfSlot` IS MODULE-LEVEL NOW (beside `talentInSlot`). It lived here, in
+  // reach of the bind and the unbind only, which is how the paint and the press
+  // came to be the two readers that were NOT paged.
   function bindTalentSlot(index: number, talentId: string): void {
     const talent = loadout.find((entry) => entry.id === talentId);
     if (talent === undefined) {
