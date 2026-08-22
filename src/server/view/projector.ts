@@ -60,7 +60,7 @@ import { Faction } from '../engine/actor.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { SLOT_ORDER } from '../content/items.ts';
-import { isMoneyId } from '../content/money.ts';
+import { isMoneyId, moneyAmountOf, moneyName } from '../content/money.ts';
 import { buyPrice, sellPrice } from '../content/shops.ts';
 import { resolveItem } from '../content/resolve.ts';
 import {
@@ -1318,6 +1318,12 @@ export function projectGroundItems(world: World): GroundMsg {
         cell: [dropped.x, dropped.y],
         itemId: dropped.itemId,
         tier: 'common',
+        // "47 gold" rather than a bare coin id. `moneyName` is the one place
+        // that phrasing lives, and the Case Log already uses it — a pile named
+        // two ways is two piles as far as a reader is concerned.
+        ...(moneyAmountOf(dropped.itemId) === undefined
+          ? {}
+          : { name: moneyName(moneyAmountOf(dropped.itemId) ?? 0) }),
       });
       continue;
     }
@@ -1332,6 +1338,10 @@ export function projectGroundItems(world: World): GroundMsg {
       cell: [dropped.x, dropped.y],
       itemId: dropped.itemId,
       tier: item.tier,
+      // THE CATALOGUE'S OWN NAME, egos and material already folded in by
+      // `resolveItem`. The same string the shop shelf and the bag show, from the
+      // same call — see `GroundItemView.name`.
+      name: item.name,
     });
     // NOT COPIED, and the omission is the same field-by-field discipline
     // `toActorView` and `projectProjectiles` keep: the catalogue row also holds

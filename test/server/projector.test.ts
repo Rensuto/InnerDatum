@@ -930,7 +930,24 @@ describe('projectGroundItems', () => {
     world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_cap');
 
     const [row] = projectGroundItems(world).items;
-    expect(Object.keys(row ?? {}).sort()).toEqual(['cell', 'id', 'itemId', 'tier'].sort());
+    /**
+     * ═══ `name` IS ON THIS LIST AND `wielder` NEVER WILL BE ═══
+     *
+     * The distinction this guard is really drawing is not "few fields" but
+     * "nothing the client could COMPUTE WITH". A display string is the former:
+     * it is what the shop shelf and the bag already show for the same item, from
+     * the same `resolveItem(...).name`, and knowing a coat is called a coat
+     * tells a player nothing about what wearing it would do.
+     *
+     * The `wielder` table is the latter, and is the field this test was written
+     * for: it is the arithmetic `CarriedItemView.compare` exists to have already
+     * done on the server against the recipient's own doll.
+     *
+     * The name was added so the floor can be READ without walking onto it —
+     * a pickup costs a turn, so "walk over and find out" is a real price for a
+     * question the frame can answer for free.
+     */
+    expect(Object.keys(row ?? {}).sort()).toEqual(['cell', 'id', 'itemId', 'name', 'tier'].sort());
   });
 });
 

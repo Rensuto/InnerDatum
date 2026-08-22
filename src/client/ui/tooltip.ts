@@ -212,6 +212,145 @@ export function tooltipRect(
  * server's single answer to "no such actor", "you cannot see it" and "that
  * monster is dead" — never reaches this function.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE OTHER CARD: WHAT IS LYING ON A TILE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ A SIBLING RATHER THAN A VARIANT OF `InspectView` ═══
+ * The actor card's first row is `kind: hp/maxHp` and it is followed by effect
+ * badges and a blocked reason. A coat has none of those, and giving one a
+ * synthesised `hp: 0` would put "0/0" under its name on a card whose whole job
+ * is to be read at a glance. The two cards show genuinely different things, so
+ * they are two functions over the same panel helpers rather than one function
+ * with a discriminant and four branches inside every loop.
+ *
+ * ═══ WHY THE FLOOR NEEDED A CARD AT ALL ═══
+ * The floor marker carries a TIER COLOUR and nothing else, so a pile was a
+ * coloured dot. The only way to learn what a dot was is to walk onto it — and a
+ * pickup COSTS A TURN, so "walk over and find out" charges a player a turn to
+ * ask a question the `ground` frame can answer for free.
+ *
+ * It also completes the argument `GroundMsg` already makes for being broadcast:
+ * *"One floor, one frame, everybody looking at the same thing"*, so the party
+ * can say "you take it, I've got a coat". They could not say that about a dot.
+ */
+export type LootTipItem = {
+  readonly name: string;
+  readonly tier: string;
+};
+
+export type LootTipOptions = {
+  readonly ctx: CanvasRenderingContext2D;
+  readonly sprites: SpriteSource;
+  readonly items: readonly LootTipItem[];
+  /** True when the viewer is standing on this tile — it changes the hint only. */
+  readonly underfoot: boolean;
+  /** The pointer, in LOGICAL backbuffer pixels. */
+  readonly px: number;
+  readonly py: number;
+  readonly viewportW: number;
+  readonly viewportH: number;
+};
+
+/**
+ * HOW MANY NAMES A CARD WILL LIST BEFORE IT COUNTS THE REST.
+ *
+ * A tile can legally hold any number of things. Four names plus "+3 more" is a
+ * card a player reads; eleven names is a wall that covers the fight underneath
+ * it, which is the failure the actor card's own MAX_W guard exists to avoid.
+ */
+const LOOT_MAX_ROWS = 4;
+
+/** The hint under the names. The whole point of the card for a new player. */
+function lootHint(underfoot: boolean): string {
+  return underfoot ? 'click to pick up' : 'walk here to take it';
+}
+
+/**
+ * The card's box, from the strings alone. No context, no measurement — the same
+ * rule `tooltipRect` states and for the same reason.
+ */
+export function lootTipRect(
+  items: readonly LootTipItem[],
+  underfoot: boolean,
+  px: number,
+  py: number,
+  viewportW: number,
+  viewportH: number,
+): PanelRect {
+  const shown = Math.min(items.length, LOOT_MAX_ROWS);
+  const overflow = items.length - shown;
+  const names = items.slice(0, shown).map((item) => item.name);
+  if (overflow > 0) names.push(`+${String(overflow)} more`);
+  const hint = lootHint(underfoot);
+
+  const widest = Math.max(HEADER_CHARS, hint.length, ...names.map((name) => name.length));
+  const w = Math.min(MAX_W, Math.max(MIN_W, widest * CHAR_W + INSET * 2));
+  // One row per name, one for the hint, plus the header.
+  const h = HEADER_H + INSET * 2 + (names.length + 1) * ROW_H;
+
+  // FLIPPED TO THE OTHER SIDE OF THE POINTER WHEN IT WOULD OVERFLOW, which is
+  // `tooltipRect`s rule character for character (:198-199). Two cards that place
+  // themselves differently at a screen edge read as two different features.
+  const x = px + w <= viewportW ? px : Math.max(0, px - w);
+  const y = py + h <= viewportH ? py : Math.max(0, py - h);
+  return { x, y, w, h };
+}
+
+/** The word the header uses. Kept short so the box does not open on it. */
+const HEADER_CHARS = 12;
+
+export function drawLootTip(opts: LootTipOptions): void {
+  const { ctx, sprites, items, underfoot, px, py, viewportW, viewportH } = opts;
+  if (items.length === 0) return;
+  const rect = lootTipRect(items, underfoot, px, py, viewportW, viewportH);
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  drawPanel(ctx, sprites, PanelSkin.Inset, rect);
+  const headerBottom = drawHeader(ctx, sprites, 'On the floor', rect, FONT_BOLD);
+
+  const inner = panelInner({
+    x: rect.x,
+    y: headerBottom,
+    w: rect.w,
+    h: rect.y + rect.h - headerBottom,
+  });
+  if (inner.w <= 0 || inner.h <= 0) {
+    ctx.restore();
+    return;
+  }
+
+  const shown = Math.min(items.length, LOOT_MAX_ROWS);
+  const overflow = items.length - shown;
+  let y = inner.y + ROW_H / 2;
+
+  ctx.font = FONT_BODY;
+  for (const item of items.slice(0, shown)) {
+    ctx.fillStyle = PALETTE.PARCHMENT;
+    ctx.fillText(fitText(ctx, item.name, inner.w), inner.x, y);
+    y += ROW_H;
+  }
+  if (overflow > 0) {
+    // COUNTED, NEVER SILENTLY DROPPED — ui/caselog.ts's rule that a surface which
+    // has stopped showing everything must not make the reader infer it.
+    ctx.fillStyle = PALETTE.BONE;
+    ctx.fillText(fitText(ctx, `+${String(overflow)} more`, inner.w), inner.x, y);
+    y += ROW_H;
+  }
+
+  // THE HINT, IN THE COLOUR THAT MEANS "YOU CAN DO THIS". Gold while the thing
+  // is at your feet and the click will work; plain while it is a walk away.
+  ctx.fillStyle = underfoot ? PALETTE.GOLD : PALETTE.BONE;
+  ctx.fillText(fitText(ctx, lootHint(underfoot), inner.w), inner.x, y);
+
+  ctx.restore();
+}
+
 export function drawTooltip(opts: TooltipDrawOptions): void {
   const { ctx, sprites, view, px, py, viewportW, viewportH } = opts;
   const rect = tooltipRect(view, px, py, viewportW, viewportH);

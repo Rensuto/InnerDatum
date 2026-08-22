@@ -291,7 +291,7 @@ import {
   respawnPromptRect,
   respawnPromptSpeech,
 } from './ui/respawnprompt.ts';
-import { drawTooltip } from './ui/tooltip.ts';
+import { drawLootTip, drawTooltip } from './ui/tooltip.ts';
 import { drawHoverCard } from './ui/panel.ts';
 import { hotbarTipAt } from './ui/hotbar.ts';
 import { inventoryTipAt } from './ui/inventory.ts';
@@ -1832,6 +1832,28 @@ let projectiles: readonly ProjectileView[] = [];
  * a packet lands needs nothing to move it.
  */
 let ground: readonly GroundItemView[] = [];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TILE THE POINTER IS RESTING ON, WHEN THERE IS LOOT AND NO BODY ON IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ A SECOND CHANNEL, NOT A WIDENING OF `hoveredActorId` ═══
+ * That one holds an ACTOR ID and drives an `inspect` round trip against a
+ * server-side cache. A pile has no actor id and needs no round trip: the
+ * `ground` frame is already a complete snapshot and already names everything on
+ * it, so the card can be drawn from state the client is holding.
+ *
+ * Folding a tile into an id-shaped variable would mean every reader of
+ * `hoveredActorId` — the inspect request, the pin, the character sheet refresh,
+ * the context menu — learning to ignore a value that is not an id.
+ *
+ * ═══ AND THE BODY WINS WHEN BOTH ARE THERE ═══
+ * A husk standing on a coat is a husk. `noteHovered` sets exactly one of these,
+ * so the two cards can never be drawn at once and neither has to know about the
+ * other.
+ */
+let hoveredLootTile: TileXY | null = null;
 
 /**
  * THE VIEWER'S OWN BAG AND DOLL (v10), from the `inventory` frame.
@@ -3763,6 +3785,49 @@ const paintHud: HudPainter = (ctx, width, height) => {
     });
   }
 
+  /**
+   * ═══ AND THE FLOOR'S CARD, UNDER THE IDENTICAL THREE SUPPRESSIONS ═══
+   *
+   * `pointerPoint`, `drag` and the token menu, exactly as above and for exactly
+   * the reasons the block above spends a paragraph on: a card painted over a
+   * dragged item, or over the menu that swallowed the pointer, is the
+   * stale-tooltip bug in its most visible form.
+   *
+   * MUTUALLY EXCLUSIVE WITH THE ACTOR CARD BY CONSTRUCTION, not by an `else`:
+   * `noteHoveredLoot` refuses to set a tile while a body is on it, so both
+   * conditions can never be true at once and neither branch has to know that.
+   */
+  const lootTile = hoveredLootTile;
+  if (
+    lootTile !== null &&
+    pointerPoint !== null &&
+    drag === null &&
+    tokenMenu?.visible() !== true
+  ) {
+    const here = ground.filter(
+      (item) => item.cell[0] === lootTile.x && item.cell[1] === lootTile.y,
+    );
+    if (here.length > 0) {
+      drawLootTip({
+        ctx,
+        sprites,
+        items: here.map((item) => ({
+          // A FALLBACK, NOT A GUESS. `name` is optional on the wire so an older
+          // server can still be talked to, and "something here" is the honest
+          // answer when it did not send one — never a prettified `itemId`,
+          // which would read as a name and be wrong.
+          name: item.name ?? 'something here',
+          tier: item.tier,
+        })),
+        underfoot: lootAt(lootTile) === TileLoot.Underfoot,
+        px: pointerPoint.x,
+        py: pointerPoint.y,
+        viewportW: width,
+        viewportH: height,
+      });
+    }
+  }
+
   // THE COMBAT BANNER IS DRAWN LAST, over the dock and everything else.
   //
   // For the two and a half seconds it is up it is the most important thing on
@@ -5144,6 +5209,24 @@ async function boot(): Promise<void> {
    * mousemove would quietly convert this client's dirty-flag renderer into a
    * 60 fps one, which the header at the top of this file forbids at length.
    */
+  /**
+   * WHAT IS UNDER THE POINTER — a body, or a pile, or nothing.
+   *
+   * The loot half is decided HERE rather than at the paint, so the same
+   * genuine-change rule that stops an unconditional `requestDraw` per mousemove
+   * covers both cards. See `hoveredLootTile`.
+   */
+  function noteHoveredLoot(tile: TileXY | null, hasActor: boolean): void {
+    // A BODY WINS. A husk standing on a coat is a husk.
+    const next = tile === null || hasActor || lootAt(tile) === TileLoot.None ? null : tile;
+    const same =
+      (next === null && hoveredLootTile === null) ||
+      (next !== null && hoveredLootTile !== null && sameTile(next, hoveredLootTile));
+    if (same) return;
+    hoveredLootTile = next;
+    requestDraw();
+  }
+
   function noteHoveredActor(tile: TileXY | null): void {
     const all = [...actors.values()];
     // The LIVING body first, then anything at all: a corpse is still a thing
@@ -5154,6 +5237,10 @@ async function boot(): Promise<void> {
         ? undefined
         : (liveActorAt(all, tile) ?? all.find((actor) => actor.x === tile.x && actor.y === tile.y));
     const id = under?.id ?? null;
+    // BEFORE THE EARLY RETURN BELOW. A pointer sliding from one bare tile to a
+    // loot tile leaves `id` null on both, so a loot check placed after that
+    // return would never run for the commonest case there is.
+    noteHoveredLoot(tile, under !== undefined);
     if (id === hoveredActorId) return;
 
     hoveredActorId = id;
@@ -9574,11 +9661,42 @@ async function boot(): Promise<void> {
     if (tile === null) return;
 
     const me = selfTile();
-    // Decision (f): A CLICK ON YOUR OWN TOKEN DOES NOTHING AT ALL, not even a
-    // sentence. mouseintent.ts supplies one for callers that want it; this one
-    // does not, because the player is looking at the tile they are standing on
-    // and does not need to be told so.
-    if (me !== null && sameTile(me, tile)) return;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A CLICK ON YOUR OWN TOKEN TAKES WHAT IS UNDER YOU, AND OTHERWISE STILL
+     * DOES NOTHING AT ALL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Decision (f) used to be the whole of this branch: a click on your own tile
+     * does nothing, not even a sentence, because the player is looking at the
+     * tile they are standing on and does not need to be told so. That reasoning
+     * is intact and is why the bare case below is still silent.
+     *
+     * What it did not account for is that the tile you are standing on can have
+     * something ON it, and that taking it was reachable only from a key or the
+     * right-click menu. The floor marker is a coloured dot, so the discoverable
+     * path was: notice a dot, walk onto it, and then either know the keybind or
+     * think to right-click. Reported as picking things up being inaccessible.
+     *
+     * ═══ IT COSTS A TURN, SO IT MUST NOT FIRE BY ACCIDENT ═══
+     * Four things make that safe, and none of them is new:
+     *   - THE MAP IS NOT DRAGGABLE. `DragSubject` is Panel, Carried, Worn or
+     *     Talent (ui/drag.ts) and every one of them begins on a panel, which the
+     *     `overPanel` guard at the top of this handler has already returned on.
+     *     A mousedown on the map is unambiguously a click.
+     *   - IT IS GATED ON LOOT BEING UNDERFOOT. A player standing on bare floor
+     *     gets decision (f) exactly as before — the commonest click by far.
+     *   - IT IS ANNOUNCED BEFORE IT HAPPENS. The hover card over that tile reads
+     *     "click to pick up" in gold whenever this branch would fire, so the
+     *     affordance is stated rather than discovered by losing a turn.
+     *   - `sendPickup` IS THE SAME CALL the menu row makes, so the connection
+     *     check and the server's own "take index 0 of the tile I am standing on"
+     *     rule apply identically. There is no new frame and no new argument.
+     */
+    if (me !== null && sameTile(me, tile)) {
+      if (lootAt(tile) === TileLoot.Underfoot) sendPickup();
+      return;
+    }
 
     const intent = mouseIntentAt({ self: me, tile, actors: [...actors.values()], level });
     switch (intent.kind) {

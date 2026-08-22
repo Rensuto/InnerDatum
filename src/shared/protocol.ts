@@ -2079,6 +2079,30 @@ export type GroundItemView = {
   readonly itemId: string;
   /** Colours the floor marker. The client must not infer it — see `ItemTier`. */
   readonly tier: ItemTier;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IT IS CALLED, so the floor can be read without walking onto it.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Already through the display-name filter with egos and material folded in —
+   * the same string `ShopItemView.name` and the inventory carry, produced by
+   * the same `resolveItem(...).name`, so one item never has two names depending
+   * on which frame it arrived on.
+   *
+   * ═══ IT DOES NOT WEAKEN THE ARGUMENT FOR THE FRAME, IT COMPLETES IT ═══
+   * This frame is broadcast on purpose, and the reason given above is social:
+   * *"One floor, one frame, everybody looking at the same thing"*, so the party
+   * can say "you take it, I've got a coat". They could not say that. The marker
+   * carried a tier colour and nothing else, so the floor was a set of coloured
+   * dots and the only way to learn what a dot was is to walk onto it and spend
+   * a turn.
+   *
+   * ═══ OPTIONAL, AND PROTOCOL_VERSION DOES NOT MOVE ═══
+   * An older client ignores a field it does not read, and this one is additive
+   * to a frame it already receives. The repo's rule: optional additions do not
+   * force a bump.
+   */
+  readonly name?: string;
 };
 
 // ---------------------------------------------------------------------------
