@@ -1277,6 +1277,33 @@ describe('the sheet shows what it says it shows', () => {
       expect(hidden, `still dropping at the real viewport: ${hidden.join(', ')}`).toEqual([]);
     });
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND AT THE FLOOR, ON EVERY TAB — which is the size that catches things.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `REAL_W x REAL_H` is what a 1538x769 device lands on. It is not the
+     * smallest: `DEFAULT_VIEWPORT` is `{ tilesW: 20, tilesH: 10 }` and
+     * `minLogicalH = tilesH * TILE_PX`, so 640x320 is the floor.
+     *
+     * The distinction is not academic. `ui/inventory.ts` worked its paper-doll
+     * budget against a 480-pixel floor, concluded that shedding slots was
+     * "unreachable at any viewport this client renders", and sheds three of them
+     * at 320 — a claim that survived because nothing ever measured there.
+     *
+     * EVERY TAB, because the sheet has five now and a page that fits on one is
+     * no evidence about the others. Talents is the long one and Equipment lists
+     * seven slots whether or not anything is in them.
+     */
+    it('hides nothing at the smallest window this client draws, on any tab', () => {
+      for (const tab of SHEET_TABS) {
+        const hidden = painted(640, 320, {}, tab).filter((text) =>
+          text.includes('panel too small'),
+        );
+        expect(hidden, `${String(tab)} drops at the 640x320 floor`).toEqual([]);
+      }
+    });
+
     it('still shows a row from every section at that size', () => {
       // ONE PAGE AT A TIME, and every page must draw its own heading. COMBAT is
       // gone — it was ToME's Attack and Defense tabs collapsed, and they are
