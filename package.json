@@ -19,6 +19,7 @@
     "check:attribution": "node tools/check-attribution.mjs",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:secrets && npm run check:assets && npm run check:attribution",
     "smoke": "node tools/smoke.mjs",
+    "verify": "node tools/verify.mjs",
     "e2e": "node tools/e2e-m1.mjs",
     "dev": "node --watch --env-file=.env src/server/main.ts",
     "start": "node --env-file=.env src/server/main.ts",
