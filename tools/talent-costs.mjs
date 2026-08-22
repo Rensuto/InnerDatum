@@ -40,6 +40,20 @@
  * checked by hand — the `stamina` line is inside the range and the talent name
  * at the head of it matches what our file says it ported.
  *
+ * ═══ THE COOLDOWN COLUMN SAYS SOMETHING DIFFERENT FROM THE COST ONE ═══
+ * Six actives differ from their cited cooldown once converted, and they differ
+ * in BOTH DIRECTIONS — shin_crack is 3 where the citation implies 5, pistol_whip
+ * is 5 where it implies 3, truncheon_sweep and scattershot are 4 against 5,
+ * concussion_flask 6 against 5. Numbers moved both ways are tuning; a column of
+ * zeroes against a column of costs is an omission. That difference is the whole
+ * reason the cost finding is worth acting on and this one probably is not.
+ *
+ * `ashwick_flare` is the one that documents itself — "the Reagent IS the
+ * cooldown: ToME's Flame has `cooldown = 3` and no ammunition, this has
+ * ammunition and no cooldown" — and `redaction.ts` now does the same for being
+ * twice its source. The other five carry their number with no note about where
+ * it came from, which is the only thing here worth tidying.
+ *
  * ═══ NOT IN `npm run check` ═══
  * A number differing from upstream is usually a deliberate conversion, not a
  * bug: our pools are not upstream's size and the whole `BOTH CHARGE` column is
@@ -66,6 +80,14 @@ const POOLS = [
   'feedback',
   'insanity',
 ];
+
+/** ceil(actions / 2), bounded — `tomeCooldownToTurns` in engine/talents.ts. */
+const TOME_ACTIONS_PER_TURN = 2;
+const MAX_COOLDOWN_TURNS = 30;
+const convert = (n) =>
+  !Number.isFinite(n) || n <= 0
+    ? 0
+    : Math.min(MAX_COOLDOWN_TURNS, Math.max(0, Math.ceil(n / TOME_ACTIONS_PER_TURN)));
 
 const rows = [];
 for (const name of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
@@ -113,7 +135,54 @@ for (const name of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
       break;
     }
   }
-  rows.push({ name, ours, upstream, pool, note: '' });
+
+  /**
+   * ═══ AND THE COOLDOWN, COMPARED CONVERTED RATHER THAN RAW ═══
+   * `tomeCooldownToTurns` is `ceil(n / TOME_ACTIONS_PER_TURN)` bounded to
+   * `MAX_COOLDOWN_TURNS` — upstream counts ACTIONS and this game counts TURNS,
+   * and there are two actions in a turn. Comparing the raw numbers would report
+   * every talent in the game as wrong by a factor of two, which is the fastest
+   * way to make a sweep worth ignoring.
+   */
+  const cdUp = /^\s*cooldown\s*=\s*([0-9]+)/m.exec(window);
+  const cdOursRef = /cooldownTurns:\s*([A-Za-z_0-9]+)/.exec(src);
+  let cdOurs = null;
+  if (cdOursRef !== null) {
+    const token = cdOursRef[1];
+    if (/^\d+$/.test(token)) cdOurs = Number(token);
+    else {
+      const decl = new RegExp(String.raw`const ${token}\s*=\s*(\d+)`).exec(src);
+      cdOurs = decl === null ? null : Number(decl[1]);
+    }
+  }
+  /**
+   * ACTIVES ONLY, and the filter carries most of this comparison's worth.
+   *
+   * A passive has no cooldown to have, and a sustain's is its own affair — but
+   * the ±6 window happily reports the cooldown of whatever ACTIVE talent sits
+   * beside the passive's `on_learn` block upstream. Unfiltered this printed 17
+   * rows of which ten were passives and sustains: `soft_places`, `walk_it_off`,
+   * `seen_worse`, `careful_method` and the rest, every one correctly costing
+   * nothing and every one reported as wrong.
+   *
+   * The same shape of false positive as `weight_of_office`'s `equilibrium = 5`
+   * in the cost column, and worth filtering rather than footnoting: a sweep that
+   * is more than half noise does not get read twice.
+   */
+  const kindHere = /kind:\s*TalentKind\.([A-Za-z]+)/.exec(src);
+  const isActive = kindHere !== null && kindHere[1] === 'Active';
+  const cdWant = cdUp === null || !isActive ? null : convert(Number(cdUp[1]));
+
+  rows.push({
+    name,
+    ours,
+    upstream,
+    pool,
+    note: '',
+    cdOurs,
+    cdUpRaw: cdUp === null ? null : Number(cdUp[1]),
+    cdWant,
+  });
 }
 
 const dropped = rows.filter((r) => r.upstream !== null && r.upstream > 0 && r.ours === 0);
@@ -136,6 +205,15 @@ for (const r of kept) {
 
 console.log(`\n═══ NO COST FOUND IN THE CITED WINDOW (${free.length}) ═══`);
 for (const r of free) console.log(`  ${r.name.padEnd(28)} ours ${String(r.ours)}`);
+
+const cdOff = rows.filter((r) => r.cdWant !== null && r.cdOurs !== null && r.cdWant !== r.cdOurs);
+console.log(`\n═══ COOLDOWN DIFFERS FROM THE CITED TALENT, CONVERTED (${cdOff.length}) ═══`);
+for (const r of cdOff) {
+  console.log(
+    `  ${r.name.padEnd(28)} upstream ${String(r.cdUpRaw).padStart(2)} actions -> ` +
+      `${String(r.cdWant)} turns   ours ${String(r.cdOurs)}`,
+  );
+}
 
 const odd = rows.filter((r) => r.note !== '');
 console.log(`\n═══ NOT COMPARABLE (${odd.length}) ═══`);

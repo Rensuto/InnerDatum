@@ -55,7 +55,17 @@ import type { Talent } from '../engine/talents.ts';
 const RANGE = 6;
 const AP_COST = 5;
 const INK_COST = 22;
-/** Long. The armour must close again between fights over the same body. */
+/**
+ * Long. The armour must close again between fights over the same body.
+ *
+ * TWICE THE CITED TALENT'S, AND THAT IS DELIBERATE. `temporal-combat.lua:296-335`
+ * is `cooldown = 8` in ACTIONS, which `tomeCooldownToTurns` converts to 4 turns.
+ * This charges 8 turns because upstream's is a melee strike the caster has to
+ * walk into and this reaches six tiles — see the header on what that reach costs.
+ * Written down because `tools/talent-costs.mjs` reads the citation and would
+ * otherwise report it as a silent divergence, which is exactly what that tool is
+ * for and exactly what this is not.
+ */
 const COOLDOWN = 8;
 
 const DAMAGE_LOW = 0.35;
