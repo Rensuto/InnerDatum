@@ -18,7 +18,13 @@ import {
 import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { ACTIONS, compileKeymap, DEFAULT_KEYMAP, labelFor } from '../../src/client/input/keymap.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
-import { InspectGroup, ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
+import {
+  InspectGroup,
+  ItemTier,
+  ResourceKind,
+  SLOT_ORDER,
+  TalentShape,
+} from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { CharSheetView, SheetRow } from '../../src/client/ui/charsheet.ts';
 import type {
@@ -587,6 +593,77 @@ describe('charSheetRows while the round trip is out', () => {
 // The talent block — composed client-side from three frames
 // ---------------------------------------------------------------------------
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE EQUIPMENT PAGE — CharacterSheet.lua:61.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The tab this sheet shipped WITHOUT, on the argument that `CharSheetView`
+ * carried no worn items. It carried none because nobody had passed any;
+ * `InventoryMsg.equipped` was already on the wire and already in the client.
+ */
+describe('the equipment rows', () => {
+  const coat = {
+    itemId: 'item_watchmans_coat',
+    name: "Watchman's Coat",
+    icon: 'item_watchmans_coat',
+    tier: ItemTier.Common,
+    desc: 'Heavy wool, official issue.',
+  } as const;
+
+  it('lists every slot in the wire’s order, worn or not', () => {
+    const rows = charSheetRows(sheet({ equipped: { body: coat } }), SheetTab.Equipment);
+    expect(fieldLabels(rows)).toEqual([
+      'Head',
+      'Body',
+      'Legs',
+      'Feet',
+      'Offhand',
+      'Ring',
+      'Trinket',
+    ]);
+    // AND THE ORDER IS `SLOT_ORDER`'s, not this file's opinion of it.
+    expect(fieldLabels(rows).map((l) => l.toLowerCase())).toEqual([...SLOT_ORDER]);
+  });
+
+  /**
+   * AN EMPTY SLOT KEEPS ITS ROW, and the reason is not tidiness. This sheet
+   * DROPS a field whose value is empty — that is how the absent resource pool
+   * disappears — so an empty string here would delete the row and take the
+   * slot's NAME with it, which is the half worth printing. An empty Ring row is
+   * the answer to "why is my armour 4".
+   */
+  it('keeps a row for a slot with nothing in it', () => {
+    const rows = charSheetRows(sheet({ equipped: { body: coat } }), SheetTab.Equipment);
+    const valueOf = (label: string): string | undefined =>
+      rows.flatMap((row) =>
+        row.kind === SheetRowKind.Field && row.label === label ? [row.value] : [],
+      )[0];
+    expect(valueOf('Body')).toBe("Watchman's Coat");
+    expect(valueOf('Ring'), 'an empty slot lost its row').toBe('—');
+  });
+
+  /**
+   * AND "THE FRAME HAS NOT ARRIVED" IS NOT "WEARING NOTHING".
+   *
+   * `inventory` is unicast on connect, so this panel can be built before it
+   * lands. Seven em dashes would be a confident, wrong answer — the same class
+   * of lie the `gathering…` note exists to prevent on the General page.
+   */
+  it('says it is still waiting rather than drawing seven empty slots', () => {
+    const rows = charSheetRows(sheet({ equipped: undefined }), SheetTab.Equipment);
+    expect(fieldLabels(rows), 'it answered before the frame arrived').toEqual([]);
+    expect(rows.some((row) => row.kind === SheetRowKind.Note)).toBe(true);
+  });
+
+  /** Wearing nothing IS a state, and it looks different from not knowing. */
+  it('draws all seven as empty once the frame says so', () => {
+    const rows = charSheetRows(sheet({ equipped: {} }), SheetTab.Equipment);
+    expect(fieldLabels(rows)).toHaveLength(SLOT_ORDER.length);
+    expect(rows.some((row) => row.kind === SheetRowKind.Note)).toBe(false);
+  });
+});
+
 describe('the talent rows', () => {
   function talentRows(view: CharSheetView) {
     return charSheetRows(view, SheetTab.Talents).flatMap((row) =>
@@ -1071,6 +1148,24 @@ describe('the sheet shows what it says it shows', () => {
       }
     }
     expect(bad).toEqual([]);
+  });
+
+  /**
+   * AND THE STRIP SURVIVES A NARROW PANEL WITHOUT LYING ABOUT WHICH TAB IS
+   * WHICH. Five tabs at `SHEET_MIN_W` leave about five characters each, and an
+   * ellipsised `[D]e…` beside `[E]q…` is two tabs a player cannot tell apart.
+   * The bracketed letter is what identifies a tab, so it is what survives.
+   */
+  it('falls back to the bracketed letter rather than an ellipsis', () => {
+    const wide = painted(1280, 720, {}, SheetTab.General);
+    expect(wide, 'a wide panel should print the whole word').toContain('[G]eneral');
+
+    const narrow = painted(640, 320, {}, SheetTab.General);
+    const tabs = narrow.filter((text) => text.startsWith('['));
+    expect(tabs.length, 'the strip drew nothing').toBeGreaterThan(0);
+    for (const text of tabs) {
+      expect(text, `an ellipsised tab label: ${text}`).not.toContain('…');
+    }
   });
 
   it('keeps the cooldown word on every talent row, which is what the row is read for', () => {

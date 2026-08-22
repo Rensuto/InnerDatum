@@ -131,7 +131,8 @@
  */
 
 import type { HoverCard } from './panel.ts';
-import { InspectGroup, ResourceKind, TalentShape } from '../../shared/protocol.ts';
+import { InspectGroup, ResourceKind, SLOT_ORDER, TalentShape } from '../../shared/protocol.ts';
+import type { ItemView, Slot } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { gameKeymap } from '../input/keys.ts';
 import { labelFor } from '../input/keymap.ts';
@@ -455,6 +456,7 @@ export const SheetSection = {
   Attack: 'ATTACK',
   Defence: 'DEFENCE',
   Talents: 'TALENTS',
+  Equipment: 'EQUIPMENT',
 } as const;
 export type SheetSection = (typeof SheetSection)[keyof typeof SheetSection];
 
@@ -466,13 +468,20 @@ export type SheetSection = (typeof SheetSection)[keyof typeof SheetSection];
  * Upstream builds five: `[G]eneral`, `[A]ttack`, `[D]efense`, `[T]alents` and
  * `[E]quipment`, cycled with TAB and jumped to with the bracketed letter.
  *
- * ═══ FOUR, NOT FIVE, AND THE FIFTH IS NAMED RATHER THAN FAKED ═══
- * There is no Equipment tab here. `CharSheetView` carries no worn items — the
- * inventory panel owns them and has its own doll — so the tab would either
- * duplicate a panel that already exists or open showing nothing. A tab that
- * says "look somewhere else" is worse than a tab that is not there, and a
- * reader counting four against upstream's five deserves to find this paragraph
- * rather than to wonder.
+ * ═══ ALL FIVE, AND THE FIFTH ARRIVED ONE COMMIT LATE ═══
+ * This shipped with four and said so in writing: *"`CharSheetView` carries no
+ * worn items — the inventory panel owns them and has its own doll — so the tab
+ * would either duplicate a panel that already exists or open showing nothing."*
+ * The first half was true and the conclusion did not follow. `InventoryMsg`
+ * already carries `equipped`, the client already holds it, and handing it to
+ * this view is four lines rather than a protocol change.
+ *
+ * ═══ IT IS NOT THE INVENTORY PANEL AGAIN, AND THE DIFFERENCE IS THE POINT ═══
+ * `ui/inventory.ts` is a DOLL — icons in slots, drag, compare, a bag beside it.
+ * This is the same seven slots as a LIST OF WORDS, which answers a different
+ * question: not "what shall I put on" but "what am I wearing", read at a glance
+ * beside the numbers those items produced two tabs to the left. ToME ships both
+ * for the same reason and puts the list on the sheet (CharacterSheet.lua:61).
  *
  * ═══ THE BRACKETED LETTERS ARE LABELS HERE, NOT KEYS ═══
  * Upstream binds `g`/`a`/`d`/`t` to jump straight to a tab. This client does
@@ -496,6 +505,7 @@ export const SheetTab = {
   Attack: 'attack',
   Defence: 'defence',
   Talents: 'talents',
+  Equipment: 'equipment',
 } as const;
 export type SheetTab = (typeof SheetTab)[keyof typeof SheetTab];
 
@@ -505,6 +515,7 @@ export const SHEET_TABS: readonly SheetTab[] = Object.freeze([
   SheetTab.Attack,
   SheetTab.Defence,
   SheetTab.Talents,
+  SheetTab.Equipment,
 ]);
 
 /** What each tab is called on screen, and the section heading it carries. */
@@ -513,6 +524,7 @@ const TAB_SECTION: Readonly<Record<SheetTab, SheetSection>> = {
   [SheetTab.Attack]: SheetSection.Attack,
   [SheetTab.Defence]: SheetSection.Defence,
   [SheetTab.Talents]: SheetSection.Talents,
+  [SheetTab.Equipment]: SheetSection.Equipment,
 };
 
 /** The next tab along, wrapping. TAB cycles — `CharacterSheet.lua:110`. */
@@ -577,6 +589,18 @@ export type CharSheetView = {
   readonly loadout: readonly LoadoutTalent[];
   /** The `cooldowns` frame: talent id -> turns left. Absent means READY. */
   readonly cooldowns: Readonly<Record<string, number>>;
+  /**
+   * WHAT IS WORN, slot by slot — `InventoryMsg.equipped`, straight through.
+   *
+   * A slot with nothing in it is ABSENT rather than present-and-null, which is
+   * the frame's own contract and the reason the Equipment tab spells its empty
+   * rows itself rather than trusting a falsy check to mean the same thing twice.
+   *
+   * OPTIONAL, because the `inventory` frame is unicast on connect and this panel
+   * can be built before it lands. Absent reads as "not arrived", which the tab
+   * says out loud instead of drawing seven empty slots that look like poverty.
+   */
+  readonly equipped?: Readonly<Partial<Record<Slot, ItemView>>>;
   /**
    * The `progress` frame (v9): level, xp into it, the next threshold, and the
    * points in hand. NULL BEFORE THE FIRST ONE ARRIVES, which is a real window —
@@ -952,8 +976,48 @@ export function charSheetRows(
     }
   }
 
+  /**
+   * ═══ THE EQUIPMENT PAGE — CharacterSheet.lua:61 ═══
+   * Every slot, in `SLOT_ORDER`, whether or not anything is in it. An empty slot
+   * is information — it is the answer to "why is my armour 4" — and a list that
+   * showed only what was worn would make a naked character's page look like a
+   * page that had failed to load.
+   */
+  if (tab === SheetTab.Equipment) {
+    rows.push({ kind: SheetRowKind.Section, label: SheetSection.Equipment });
+    const worn = view.equipped;
+    if (worn === undefined) {
+      // THE FRAME HAS NOT ARRIVED. Distinct from "wearing nothing", which is a
+      // real and different state, and the two must not share a rendering.
+      rows.push({ kind: SheetRowKind.Note, text: 'gathering…' });
+    } else {
+      for (const slot of SLOT_ORDER) {
+        rows.push({
+          kind: SheetRowKind.Field,
+          label: SLOT_LABEL[slot],
+          // AN EM DASH, NOT A BLANK. `charSheetRows` drops a field with an empty
+          // value elsewhere on this sheet (the absent resource pool), so an
+          // empty string here would delete the row and take the slot's NAME with
+          // it — and the name is the half that was worth printing.
+          value: worn[slot]?.name ?? '—',
+        });
+      }
+    }
+  }
+
   return sliceForTab(rows, tab);
 }
+
+/** Slot names as a person says them. `SLOT_ORDER` owns the order. */
+const SLOT_LABEL: Readonly<Record<Slot, string>> = {
+  head: 'Head',
+  body: 'Body',
+  legs: 'Legs',
+  feet: 'Feet',
+  offhand: 'Offhand',
+  ring: 'Ring',
+  trinket: 'Trinket',
+};
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1101,6 +1165,7 @@ const TAB_LABEL: Readonly<Record<SheetTab, string>> = {
   [SheetTab.Attack]: '[A]ttack',
   [SheetTab.Defence]: '[D]efence',
   [SheetTab.Talents]: '[T]alents',
+  [SheetTab.Equipment]: '[E]quip',
 };
 
 /**
@@ -1712,8 +1777,24 @@ export function drawCharSheet(options: CharSheetDrawOptions): void {
       ctx.fillRect(box.x, box.y + box.h - 1, box.w, 1);
     }
     ctx.fillStyle = active ? PALETTE.PARCHMENT : PALETTE.GREY;
-    const label = fitText(ctx, TAB_LABEL[tab], Math.max(0, box.w - 4));
-    ctx.fillText(label, box.x + 2, box.y + Math.floor(box.h / 2));
+    /**
+     * ═══ THE FULL WORD, OR THE BRACKETED LETTER — NEVER AN ELLIPSIS ═══
+     * Five tabs across a panel that can be as narrow as `SHEET_MIN_W` leaves
+     * about five characters each, and `fitText` would turn `[G]eneral` into
+     * `[G]e…`. That is the worst of the three options: it costs a character to
+     * the ellipsis, it is not a word, and `[D]e…` and `[E]q…` stop being
+     * distinguishable at a glance from `[D]efence` and `[E]quip`.
+     *
+     * The bracket is the part that identifies the tab — it is why upstream puts
+     * the letter there at all — so when the word will not fit, the word goes and
+     * the letter stays. `[G]` at four characters fits any panel this client will
+     * draw, and the active tab's plate and underline say which page is open
+     * regardless.
+     */
+    const full = TAB_LABEL[tab];
+    const room = Math.max(0, box.w - 4);
+    const label = ctx.measureText(full).width <= room ? full : full.slice(0, 3);
+    ctx.fillText(fitText(ctx, label, room), box.x + 2, box.y + Math.floor(box.h / 2));
   }
 
   const geometry = sheetGeometry(rect, rows);

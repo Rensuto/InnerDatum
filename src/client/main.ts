@@ -346,6 +346,7 @@ import type {
   ProjectileView,
   ResourceView,
   ServerMsg,
+  ItemView,
   RegionView,
   SiteView,
   Slot,
@@ -2880,6 +2881,7 @@ function charSheetView(): {
   loadout: readonly LoadoutTalent[];
   cooldowns: Readonly<Record<string, number>>;
   progress: ProgressMsg | null;
+  equipped: Readonly<Partial<Record<Slot, ItemView>>> | undefined;
 } {
   return {
     view: selfId === null ? null : (inspectCache.get(selfId)?.view ?? null),
@@ -2889,6 +2891,15 @@ function charSheetView(): {
     // v9. The fifth frame: level, xp and the points in hand. It needs no join and
     // no cache — it is unicast, absolute and replaced wholesale on arrival.
     progress,
+    /**
+     * THE PAPER DOLL, for the sheet's Equipment tab.
+     *
+     * `undefined` UNTIL THE FRAME LANDS, and deliberately not `{}`: an empty map
+     * means "wearing nothing", which is a real state a level-1 character can be
+     * in, and the tab draws the two differently. `inventory` starts null, so the
+     * distinction is free here and would have to be invented anywhere else.
+     */
+    equipped: inventory?.equipped,
   };
 }
 
