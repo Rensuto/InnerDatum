@@ -930,6 +930,46 @@ const CASES: readonly ScalingCase[] = [
       return { observed: f.extendCalls[0]?.turns ?? 0, result, fixture: f };
     },
   },
+  {
+    /**
+     * `technique/conditioning`'s one `action =` (Adrenaline Surge,
+     * conditioning.lua:148), in a discipline that held six passives.
+     *
+     * THE CASTER HAS TO BE AFFLICTED, because the talent refuses a body with
+     * nothing wrong with it — `field_dressing.ts`'s rule turned on yourself.
+     * Five conditions go on so that even rank 5, which clears three, leaves the
+     * cure loop bounded by the RANK rather than by what was available.
+     */
+    bare: 'shake_it_off',
+    moves: 'health returned with the shake',
+    authored: '3%',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5, ['generic/nerve']);
+      for (const id of [
+        EffectId.Slowed,
+        EffectId.Bleeding,
+        EffectId.Stunned,
+        EffectId.Effaced,
+        EffectId.Breached,
+      ]) {
+        f.ctx.status?.(watchman, id, 6, {});
+      }
+      f.setLevel('caster', 'shake_it_off', level);
+      f.refill('caster');
+      /**
+       * THE HEAL, NOT THE CURE COUNT. `saveAt` is coarse by design — the
+       * talent's own note bounds it so it cannot make a character immune — so
+       * the number that has to move every rank is the rider, exactly as it is
+       * for `field_dressing`. Hurt first, or a full-health body caps the heal
+       * at zero and every rank reports the same.
+       */
+      watchman.hp = Math.floor(watchman.maxHp / 2);
+      const before = watchman.hp;
+      const result = useTalent(f.engine, watchman, talentId('shake_it_off'), { x: 5, y: 5 }, f.ctx);
+      return { observed: watchman.hp - before, result, fixture: f };
+    },
+  },
 ];
 
 describe('every talent level moves a number — the honesty gate', () => {

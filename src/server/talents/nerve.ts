@@ -45,7 +45,19 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
-import { Affinity, TalentKind, TargetShape, talentId } from '../engine/talents.ts';
+import { EffectStatus } from '../engine/effects.ts';
+import {
+  Affinity,
+  TalentKind,
+  TalentRefusal,
+  TargetShape,
+  healActor,
+  percent,
+  talentDone,
+  talentId,
+  talentRefused,
+  tomeCooldownToTurns,
+} from '../engine/talents.ts';
 import { EMPTY_PASSIVE_VIEW } from '../engine/hooks.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -133,31 +145,90 @@ export const workThroughIt: Talent = {
 };
 
 // ---------------------------------------------------------------------------
-// SHAKE IT OFF — the second one is harder to land than the first
+// SHAKE IT OFF — the tree's button, and conditioning's active slot
+// Shaped after techniques/conditioning.lua:148 (Adrenaline Surge), which is the
+// one `action =` in a tree that is otherwise two passives and a sustain.
 // ---------------------------------------------------------------------------
 
-const SAVE_LOW = 5;
-const SAVE_HIGH = 16;
+const SHAKE_LOW = 1;
+const SHAKE_HIGH = 3;
 
-/** Every save, per affliction, at a rank. */
+/**
+ * How many afflictions one shake takes off.
+ *
+ * `field_dressing.ts` runs the same 1..3 band for the same reason, and floors it
+ * the same way — 1,1,2,2,3. THAT IS NOT A DRIFT TO FIX: a cure count is a coarse
+ * number and the talent's other scaling figure carries the per-rank movement the
+ * honesty gate reads. Here that figure is the cooldown... which our engine holds
+ * flat. So `saveAt` below survives the conversion and is what scales.
+ */
 export function saveAt(level: number): number {
-  return Math.round(combatTalentScale(level, SAVE_LOW, SAVE_HIGH, CURVE));
+  return Math.max(1, Math.floor(combatTalentScale(level, SHAKE_LOW, SHAKE_HIGH, CURVE)));
 }
+
+/**
+ * The breath you get back with it.
+ *
+ * ═══ THE CLEANSE COUNT COULD NOT CARRY THE SCALING ON ITS OWN ═══
+ * `saveAt` floors 1..3 to 1,1,2,2,3, so ranks 1 and 2 read identically and so do
+ * 3 and 4 — `class-wiring.test.ts` refuses that. Widening the band was the wrong
+ * fix: this talent's own note bounds the count deliberately, because "a talent
+ * that made a character immune would remove the moment this exists to make
+ * survivable", and clearing five afflictions is that talent.
+ *
+ * So a second number carries the rank, and `field_dressing.ts` already has the
+ * shape — a cure with a heal rider, where the cure count is coarse and the
+ * fraction is smooth. Under a dressing's 4-12% at every rank, because this one
+ * needs no reagent, no ally and no aim.
+ */
+const BREATH_LOW = 0.03;
+const BREATH_HIGH = 0.09;
+
+export function breathAt(level: number): number {
+  return combatTalentScale(level, BREATH_LOW, BREATH_HIGH);
+}
+
+/** Two of six: shrugging is quick, and it is the turn you had a bad one. */
+const SHAKE_AP = 2;
+/** Ported from conditioning.lua:152 — Adrenaline Surge's `cooldown = 24`. */
+const SURGE_COOLDOWN_ACTIONS = 24;
+const SHAKE_COOLDOWN = tomeCooldownToTurns(SURGE_COOLDOWN_ACTIONS);
 
 /**
  * SHAKE IT OFF.
  *
  * "The second one always lands worse than the first. Nobody knows why."
  *
- * ═══ A COMPOUNDING RESISTANCE, WHICH IS THE ONE ANSWER TO A LOCK CHAIN ═══
- * The worst thing that happens to a character in this game is not a big hit —
- * it is a stun, then another stun, then a third, with the player watching. Once
- * the first has landed there is nothing they can do about the second.
+ * ═══ A LOCK CHAIN IS THE WORST THING THAT HAPPENS TO A CHARACTER HERE ═══
+ * Not a big hit — a stun, then another stun, then a third, with the player
+ * watching. This talent has always been the answer to that. It used to be a
+ * PASSIVE that made each successive affliction harder to LAND:
  *
- * This is the something: each affliction makes the NEXT one harder to land, so
- * a chain gets progressively less likely rather than more. It does not stop the
- * first, and it should not — a talent that made a character immune would remove
- * the moment this exists to make survivable.
+ *   "Always on. N to all three saves for each thing currently wrong with you,
+ *    up to three — so a second affliction is harder to land than the first."
+ *
+ * ═══ AND A SAVE BONUS IS NOT AN ANSWER YOU CAN GIVE WHILE IT IS HAPPENING ═══
+ * That is the trouble with it: the player being chain-stunned is watching, and a
+ * passive that improves the odds of the NEXT roll is something happening TO them
+ * rather than something they did. The old note said so itself, without meaning
+ * to — "once the first has landed there is nothing they can do about the second."
+ * There is now. It is this.
+ *
+ * `technique/conditioning` is the upstream shape for a discipline about working
+ * through affliction: Vitality and Unflinching Resolve are `mode = "passive"`,
+ * Daunting Presence is `mode = "sustained"`, and Adrenaline Surge is the one
+ * `action =` (conditioning.lua:21, 51, 95, 148). This tree had six passives and
+ * no button at all, which is exactly the slot Adrenaline Surge occupies: the
+ * thing you press when the turn has gone badly.
+ *
+ * ═══ IT TAKES THE AFFLICTION OFF RATHER THAN RESISTING THE NEXT ONE ═══
+ * `ctx.cure` is the seam `field_dressing.ts` uses on an ALLY; this is the same
+ * door turned on yourself, which is a shape the game did not have. The old
+ * talent's own argument still holds and still bounds this one — it must not make
+ * a character immune, "a talent that made a character immune would remove the
+ * moment this exists to make survivable" — so it is one to three afflictions on
+ * a TWELVE-TURN cooldown, which is a way out of one bad chain per fight and not
+ * a way to ignore afflictions.
  */
 export const shakeItOff: Talent = {
   ...SHARED,
@@ -165,16 +236,53 @@ export const shakeItOff: Talent = {
   name: 'Shake It Off',
   /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
   tier: 1,
-  iconId: 'icon_passive_shake_it_off',
-  passive: (level, view = EMPTY_PASSIVE_VIEW) => {
-    const n = counted(view);
-    if (n === 0) return {};
-    const each = saveAt(level) * n;
-    return { mods: { physResist: each, mentalResist: each, spellResist: each } };
+  kind: TalentKind.Active,
+  iconId: 'icon_active_shake_it_off',
+  cost: { ap: SHAKE_AP },
+  cooldownTurns: SHAKE_COOLDOWN,
+  targeting: {
+    // YOURSELF, which is the whole difference from Field Dressing.
+    shape: TargetShape.Self,
+    range: 0,
+    minRange: 0,
+    radius: 0,
+    requiresLos: false,
+    affinity: Affinity.Ally,
   },
+
+  onUse: (ctx, self) => {
+    /**
+     * `field_dressing.ts`'s loop and its rule, word for word: nothing left on
+     * the SECOND pass is not a failure — a rank-5 shake on a body carrying one
+     * condition clears the one and stops. Only clearing NOTHING AT ALL refuses,
+     * and it must refuse, or this becomes a button a player presses at full
+     * health to burn a cooldown they wanted later.
+     */
+    const cleared: string[] = [];
+    for (let i = 0; i < saveAt(ctx.talentLevel); i += 1) {
+      const cured = ctx.cure?.(self, EffectStatus.Detrimental);
+      if (cured === undefined || cured === null) break;
+      cleared.push(cured);
+    }
+    if (cleared.length === 0) return talentRefused(TalentRefusal.NoTarget);
+
+    /**
+     * THE RIDER, AFTER the cure and only when the cure landed —
+     * `field_dressing.ts`'s order and its reason. A shake aimed at a body with
+     * nothing wrong is the refusal above, so this is not a heal that can be
+     * pressed on a good turn.
+     */
+    const healed = healActor(self, Math.round(self.maxHp * breathAt(ctx.talentLevel)));
+    const lines = [`You shake off ${cleared.join(', ').toLowerCase()}.`];
+    if (healed > 0) lines.push(`You get ${String(healed)} back with it.`);
+    return talentDone([], lines);
+  },
+
   describe: (_self, level) =>
-    `Always on. ${String(saveAt(level))} to all three saves for each thing currently wrong with ` +
-    `you, up to ${String(MAX_COUNTED)} — so a second affliction is harder to land than the first.`,
+    `Shake off up to ${String(saveAt(level))} of the things currently wrong with you and get ` +
+    `${percent(breathAt(level))} of your health back with them. Refuses when nothing is wrong. ` +
+    `${String(SHAKE_AP)} AP, ${String(SHAKE_COOLDOWN)}-turn cooldown — one way out of one bad ` +
+    `chain, not a way to ignore afflictions.`,
 };
 
 // ---------------------------------------------------------------------------

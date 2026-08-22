@@ -12,6 +12,7 @@ import {
   badNight,
   grit,
   nothingNew,
+  saveAt,
   shakeItOff,
   stillStanding,
   workThroughIt,
@@ -75,30 +76,60 @@ describe('the count is bounded at both ends', () => {
   });
 });
 
-describe('the compounding save is the answer to a lock chain', () => {
-  it('makes the second affliction harder to land than the first', () => {
+describe('the answer to a lock chain is a BUTTON now', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE WORST THING THAT HAPPENS TO A CHARACTER IN THIS GAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Not a big hit — a stun, then another stun, then a third, with the player
+   * WATCHING. This talent has always been the answer to that, and it used to
+   * answer with a passive: a save bonus that made each successive affliction
+   * harder to land.
+   *
+   * The old note gave away why that was the wrong shape without meaning to —
+   * "once the first has landed there is nothing they can do about the second."
+   * Improving the odds of the next roll is still something happening TO the
+   * player. `technique/conditioning` spends its one `action =` on exactly this
+   * slot (Adrenaline Surge, conditioning.lua:148), and this tree had six
+   * passives and nothing to press.
+   */
+  it('is an active that takes afflictions OFF, not a save against the next one', () => {
+    expect(shakeItOff.passive).toBeUndefined();
+    expect(shakeItOff.onUse).toBeTypeOf('function');
+    expect(shakeItOff.kind).toBe('active');
+    // AP ONLY: four classes may buy this tree and they spend four resources.
+    expect(shakeItOff.cost.resource ?? 0).toBe(0);
+  });
+
+  it('cannot make a character immune, which is the bound the old note set', () => {
     /**
-     * ═══ THE WORST THING THAT HAPPENS TO A CHARACTER IN THIS GAME ═══
-     * Not a big hit — a stun, then another stun, then a third, with the player
-     * watching. Once the first has landed there is nothing they can do about
-     * the second. This is the something.
+     * "A talent that made a character immune would remove the moment this
+     * exists to make survivable" — the passive's own argument, and it binds the
+     * active just as hard. Two things enforce it: it clears a BOUNDED number,
+     * and it does so on Adrenaline Surge's twenty-four-action cooldown, which is
+     * twelve turns here. One way out of one bad chain per fight.
      */
-    const first = shakeItOff.passive?.(3, hurt(1))?.mods?.physResist ?? 0;
-    const second = shakeItOff.passive?.(3, hurt(2))?.mods?.physResist ?? 0;
-    expect(first).toBeGreaterThan(0);
-    expect(second).toBeGreaterThan(first);
+    expect(saveAt(TALENT_MAX_LEVEL)).toBeLessThanOrEqual(3);
+    expect(shakeItOff.cooldownTurns).toBeGreaterThanOrEqual(10);
   });
 
-  it('does not stop the first one, and should not', () => {
-    // A talent that made a character immune would remove the moment this
-    // exists to make survivable.
-    expect(shakeItOff.passive?.(TALENT_MAX_LEVEL, hurt(0))?.mods?.physResist ?? 0).toBe(0);
-  });
-
-  it('covers all three channels, because a chain does not pick one', () => {
-    const block = shakeItOff.passive?.(3, hurt(2));
-    expect(block?.mods?.physResist).toBe(block?.mods?.mentalResist);
-    expect(block?.mods?.physResist).toBe(block?.mods?.spellResist);
+  it('refuses a body with nothing wrong with it', () => {
+    /**
+     * `field_dressing.ts` draws the same line on an ALLY and for the same
+     * reason: without it this is a button a player presses at full health to
+     * burn a cooldown they wanted later. Asked through the seam directly — a
+     * `ctx` whose `cure` always answers null is a body with nothing on it.
+     */
+    const ctx = {
+      talentLevel: 3,
+      cure: () => null,
+    } as unknown as Parameters<NonNullable<typeof shakeItOff.onUse>>[0];
+    const self = { id: 'a', name: 'A' } as unknown as Parameters<
+      NonNullable<typeof shakeItOff.onUse>
+    >[1];
+    const out = shakeItOff.onUse?.(ctx, self, { x: 0, y: 0 });
+    expect(out?.ok).toBe(false);
   });
 });
 
