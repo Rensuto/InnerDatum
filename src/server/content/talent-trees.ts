@@ -419,6 +419,33 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     blurb: 'Working through it, and what that is worth.',
     locked: true,
   },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * COMPOSURE — the fourth locked discipline: being outnumbered, and staying.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `PassiveView` offers four questions and three of them were answered.
+     * `hpFraction` has five talents; `adjacentAllies` is the Watchman's and
+     * `watch/authority` is built on it. `adjacentEnemies` is asked by four
+     * talents and every one asks it in order to LEAVE — `generic/legwork`'s
+     * disengage and the Inspector's kiting.
+     *
+     * Nothing was about being surrounded and STAYING, which in a party of three
+     * to six is where somebody ends up every fight.
+     *
+     * SIX PASSIVES AND NO BUTTON, like the other three locked trees. A category
+     * point buys a discipline; one that also handed out an active would be
+     * competing for bar space with the class it landed on.
+     */
+    id: 'generic/composure',
+    mastery: 1,
+    name: 'Composure',
+    classId: null,
+    blurb: 'Being outnumbered, and what a body does about it.',
+    // BOUGHT WITH A CATEGORY POINT, like the other three. See `TalentTree.locked`.
+    locked: true,
+  },
 ]);
 
 const BY_ID = new Map(TALENT_TREES.map((tree) => [tree.id, tree]));

@@ -101,6 +101,7 @@ import { causticLoad, concussiveLoad, frostLoad } from '../talents/loads.ts';
 import { fullBandolier, practisedHands, steadyPour } from '../talents/load_passives.ts';
 import { LEGWORK } from '../talents/legwork.ts';
 import { MONSTER_TALENTS } from '../talents/monster.ts';
+import { COMPOSURE } from '../talents/composure.ts';
 import { NERVE } from '../talents/nerve.ts';
 import { LEVERAGE } from '../talents/leverage.ts';
 import { contingencies } from '../talents/contingencies.ts';
@@ -809,6 +810,7 @@ export const ALL_LOCKED_TALENTS: readonly Talent[] = Object.freeze([
   ...LEVERAGE,
   ...LEGWORK,
   ...NERVE,
+  ...COMPOSURE,
 ]);
 
 export const GENERIC_PASSIVES: readonly Talent[] = Object.freeze([

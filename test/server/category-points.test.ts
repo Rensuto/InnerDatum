@@ -76,7 +76,31 @@ describe('what a point buys', () => {
      * Three points and zero locked trees is that failure wearing a new hat.
      */
     expect(locked.length, 'nothing in the game is locked').toBeGreaterThan(0);
-    expect(locked.length, 'more locked trees than points to buy them').toBeLessThanOrEqual(3);
+
+    /**
+     * ═══ AND MORE OF THEM THAN POINTS, WHICH IS THE OPPOSITE OF WHAT THIS
+     *     LINE USED TO ASSERT ═══
+     * It read `toBeLessThanOrEqual(3)` — locked trees may not outnumber the
+     * points — with the message "more locked trees than points to buy them".
+     * That is a bare assertion with no argument beside it, and it contradicts
+     * the one that IS argued, four lines from where the points are defined:
+     *
+     *   "A category point buys a WHOLE DISCIPLINE — six talents nobody starts
+     *    with. Three across fifty levels is what makes which one a build
+     *    decision rather than a shopping list, and it is why upstream spends
+     *    them so rarely."
+     *
+     * With three points and three trees there is no decision: a character buys
+     * all three and the scarcity that docblock calls the mechanic does not
+     * exist. The fourth tree is the first one that makes the sentence true.
+     *
+     * So the floor is what matters — something to spend it on — and the
+     * CEILING is now the thing worth asserting in the other direction.
+     */
+    expect(
+      locked.length,
+      'a category point is not a choice while every locked tree can be bought',
+    ).toBeGreaterThan(totalCategoryPointsAtLevel(MAX_CHARACTER_LEVEL));
   });
 
   it('locks only trees no class owns', () => {
