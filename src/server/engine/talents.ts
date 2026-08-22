@@ -119,8 +119,8 @@
 
 import type { PrimaryStats } from './derived.ts';
 import type { PassiveContribution } from './equipment.ts';
-import { createTurnProcs } from './hooks.ts';
-import type { PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
+import { createTurnProcs, fireTurnStart } from './hooks.ts';
+import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, rescaleDamage } from '../../shared/scale.ts';
@@ -1140,6 +1140,20 @@ export type TalentActor = {
   hp: number;
   maxHp: number;
   alive: boolean;
+  /**
+   * THE TALENT HOOKS BOUND TO THIS BODY, and the latch they share.
+   *
+   * BORROWED FROM THE ACTOR, never rebuilt: main.ts already hangs both on the
+   * body every time the sheet is recomposed, with a note saying two latches
+   * would be two answers to "has this already fired this turn". These two lines
+   * are how `actBase` reaches them without importing the world.
+   *
+   * OPTIONAL, because a body with no hooks must stay byte-identical to how it
+   * was before hooks existed — the same rule main.ts states when it sets
+   * `talentHooks` to `undefined` rather than to an empty array.
+   */
+  readonly talentHooks?: readonly BoundHooks[];
+  readonly turnProcs?: TurnProcs;
   readonly attackRange?: number;
   readonly combat?: CombatSheet;
   /** Talent id -> GAME TURNS left. Owned and ticked by engine/actor.ts. */
@@ -2197,6 +2211,64 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
        * anybody added a phase between them.
        */
       sheet.turnProcs.clear();
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE TURN-START HOOKS FIRE — WHICH THEY HAD NEVER DONE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `fireTurnStart` was written, exported, given a context type and a
+       * dispatch loop, and called by NOTHING — not this file, not the
+       * scheduler, not a test, not a tool. `walk_it_off.ts` sits in
+       * `GENERIC_PASSIVES`, the list every character in the game carries, and it
+       * promises *"you recover N hit points at the start of each turn"*. Nobody
+       * has ever recovered one.
+       *
+       * This is the same failure the paragraph above records about
+       * `budgetPenalty` — *"ZERO production callers, so a Slowed detective moved
+       * exactly as far and acted exactly as often as an unslowed one. The badge
+       * was the whole effect."* Same shape, same file, one system along.
+       *
+       * ═══ HERE, BECAUSE THIS BLOCK IS ALREADY THE ANSWER TO "WHEN DOES A TURN
+       *     BEGIN" ═══
+       * The comment on the line above says a second clearing point would be a
+       * second answer to that question. A turn-start hook fired anywhere else
+       * would be a third.
+       *
+       * ═══ AFTER THE LATCH IS CLEARED, WHICH IS THE ONLY DEFENSIBLE ORDER ═══
+       * A hook calling `procs.once` must latch for the turn it is opening.
+       * Firing before the clear would latch and then be immediately unlatched,
+       * so a once-a-turn hook would fire again on every later event in the same
+       * turn — a bug that looks like the talent working too WELL rather than not
+       * at all, which is the harder one to notice.
+       *
+       * ═══ IT TAKES NO RNG DRAW, WHICH IS WHAT MAKES IT SAFE HERE ═══
+       * shared/rng.ts:31-39: adding a draw shifts every subsequent draw in the
+       * session. A `TalentHooks` implementation is handed no `Rng` and cannot
+       * reach one — its context carries the body, the level and the latch — so
+       * every replay is unmoved by this call.
+       */
+      /**
+       * ═══ THE ACTOR ITSELF IS THE HOST. A COPY IS NOT, AND THE FIRST DRAFT OF
+       *     THIS LINE PASSED ONE ═══
+       * `ctxFor` sets `self: host`, so a hook that MUTATES — and `walk_it_off.ts`
+       * mutates, `ctx.self.hp = min(maxHp, hp + n)` — writes into whatever
+       * object was handed in. An object literal built from the actor's fields
+       * takes the write and is then discarded, so the talent heals a temporary
+       * and the body is untouched. It compiles, it runs, it fires, and it does
+       * nothing: the same shape of nothing this whole call was added to fix.
+       *
+       * `damage.ts` DOES pass a literal to `fireTakeDamage`, and is right to:
+       * that dispatcher returns a figure and its callers use the return value,
+       * so nothing depends on the host surviving. The two are not interchangeable
+       * and the difference is which way the data flows.
+       *
+       * `TalentActor` carries every `HookSelf` field, so passing the body is
+       * also less code than copying it.
+       */
+      if (actor.talentHooks !== undefined && actor.talentHooks.length > 0) {
+        fireTurnStart(actor);
+      }
     },
 
     noteKill: (killerId: string): void => {
