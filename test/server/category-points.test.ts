@@ -6,10 +6,12 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { HOTBAR_TALENT_BINDINGS } from '../../src/client/ui/hotbar.ts';
 import {
   ALL_LOCKED_TALENTS,
   ALCHEMIST,
   INSPECTOR,
+  REDACTOR,
   WATCHMAN,
   createContentTalentEngine,
   createTalentBook,
@@ -25,6 +27,32 @@ import {
 } from '../../src/shared/progression.ts';
 
 const CLASSES = [WATCHMAN, INSPECTOR, ALCHEMIST];
+
+/**
+ * EVERY class, including the REDACTOR — which the list above omits.
+ *
+ * That omission is harmless for the tests that use `CLASSES` to sample
+ * behaviour and is NOT harmless for a capacity bound: the Redactor carries
+ * eleven actives, more than any of the three above, so a bar-fits check that
+ * skipped it would be checking every class except the one that binds.
+ */
+const ALL_CLASSES = [WATCHMAN, INSPECTOR, ALCHEMIST, REDACTOR];
+
+/**
+ * EVERYTHING A SHEET CARRIES, whichever list it landed in.
+ *
+ * A bought tree used to go into `passives` whole, because every locked talent
+ * WAS a passive. `sheetForClass` splits it by kind now — an active has to reach
+ * `loadout` or `canUseTalent` refuses it as `NotLearned` — so a test that reads
+ * only `passives` is asking which BOX a talent is in when what it means is
+ * whether the character has it.
+ */
+function carried(sheet: {
+  readonly loadout: readonly string[];
+  readonly passives: readonly string[];
+}): readonly string[] {
+  return [...sheet.loadout, ...sheet.passives];
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -115,25 +143,47 @@ describe('what a point buys', () => {
     }
   });
 
-  it('costs no hotbar slots, which is why it fits', () => {
+  it('still fits on the bar once every point is spent', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE ARITHMETIC THAT CHOSE THIS DESIGN OVER UPSTREAM'S.
+     * THE ARITHMETIC THAT CHOSE THIS DESIGN, RE-RUN AFTER THE BAR GREW.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * ToME's category points buy another CLASS's discipline. Measured here it
-     * does not fit: classes carry nine or ten actives, every class tree needs
-     * three or four bar slots, and the bar addresses twelve — so the Watchman
-     * fits exactly one cross-class unlock and the Inspector, at ten, fits none.
-     * Three points with nowhere to spend two of them is a currency that reads
-     * as broken.
-     *
-     * An all-passive tree needs no slots, so the ceiling never binds. If a
+     * This used to assert that NO locked talent may be an active, and it said
+     * why in its own words: "classes carry nine or ten actives, every class
+     * tree needs three or four bar slots, AND THE BAR ADDRESSES TWELVE ... If a
      * locked tree ever gains an active, this fails and the arithmetic above is
-     * why it should.
+     * why it should."
+     *
+     * The bar does not address twelve any more. `HOTBAR_TALENT_SLOTS` went 6 ->
+     * 9 when the row was widened to the eighteen pixels the 640 floor had
+     * spare, so `HOTBAR_TALENT_BINDINGS` is EIGHTEEN. The premise moved, so the
+     * conclusion is re-derived rather than inherited.
+     *
+     * AND THE PROXY IS REPLACED BY THE CONSTRAINT. "No locked tree may hold an
+     * active" was never the rule — it was a cheap way to guarantee the rule,
+     * which is that a character who spends every category point can still reach
+     * everything they bought. That is what is asserted now, so a locked tree may
+     * hold a button exactly as long as the bar can still address it.
      */
-    for (const talent of ALL_LOCKED_TALENTS) {
-      expect(talent.kind, `${talent.id} needs a bar slot`).toBe('passive');
+    const activesIn = (treeId: string): number =>
+      ALL_LOCKED_TALENTS.filter((talent) => talent.tree === treeId && talent.kind !== 'passive')
+        .length;
+    const treeIds = [...new Set(ALL_LOCKED_TALENTS.map((talent) => talent.tree))];
+    // The WORST a player could do to themselves: the points all spent on the
+    // most button-heavy disciplines that exist.
+    const worst = treeIds
+      .map(activesIn)
+      .sort((a, b) => b - a)
+      .slice(0, CATEGORY_POINT_LEVELS.length)
+      .reduce((a, b) => a + b, 0);
+
+    for (const definition of ALL_CLASSES) {
+      const total = definition.loadout.length + worst;
+      expect(
+        total,
+        `${definition.id}: ${String(definition.loadout.length)} class actives + ${String(worst)} bought`,
+      ).toBeLessThanOrEqual(HOTBAR_TALENT_BINDINGS);
     }
   });
 
@@ -155,7 +205,7 @@ describe('what a point buys', () => {
         const inTree = ALL_LOCKED_TALENTS.filter((talent) => talent.tree === tree.id);
         expect(inTree.length, `${tree.id} is empty`).toBeGreaterThan(0);
         for (const talent of inTree) {
-          expect(bought.passives, `${definition.id} bought ${tree.id}`).toContain(talent.id);
+          expect(carried(bought), `${definition.id} bought ${tree.id}`).toContain(talent.id);
           // AT RANK 0 — bought the DISCIPLINE, not the talents. Each one still
           // costs an ordinary point, exactly as if the class had always owned
           // the tree. A category point that also granted six ranks would be
@@ -180,7 +230,7 @@ describe('what a point buys', () => {
      */
     for (const tree of locked) {
       const bought = sheetForClass(WATCHMAN, [tree.id]);
-      const held = ALL_LOCKED_TALENTS.filter((talent) => bought.passives.includes(talent.id));
+      const held = ALL_LOCKED_TALENTS.filter((talent) => carried(bought).includes(talent.id));
       const wanted = ALL_LOCKED_TALENTS.filter((talent) => talent.tree === tree.id);
       expect(held.map((t) => t.id).sort(), tree.id).toEqual(wanted.map((t) => t.id).sort());
     }

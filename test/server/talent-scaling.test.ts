@@ -134,7 +134,19 @@ type Fixture = {
   readonly statusCalls: readonly StatusRequest[];
   /** Display names of everything a cure actually took off, in order. */
   readonly cureCalls: readonly string[];
-  add(definition: ClassDef, id: string, x: number, y: number): TalentActor;
+  /**
+   * `unlocked` names the LOCKED trees this body has bought with a category
+   * point. Defaulted to none, so every existing call builds the sheet it built
+   * before — and needed at all because a locked tree may now hold an ACTIVE,
+   * which has to reach `loadout` before `canUseTalent` will let it be pressed.
+   */
+  add(
+    definition: ClassDef,
+    id: string,
+    x: number,
+    y: number,
+    unlocked?: readonly string[],
+  ): TalentActor;
   addMonster(id: string, x: number, y: number, hp?: number): TalentActor;
   /** Buy this talent up to `level` — the spend path's effect, without the path. */
   setLevel(actorId: string, bare: string, level: number): void;
@@ -231,7 +243,7 @@ function fixture(): Fixture {
     ctx,
     statusCalls,
     cureCalls,
-    add: (definition, id, x, y) => {
+    add: (definition, id, x, y, unlocked = []) => {
       const actor: TalentActor = {
         id,
         name: id,
@@ -245,7 +257,7 @@ function fixture(): Fixture {
         cooldowns: new Map<string, number>(),
       };
       actors.push(actor);
-      engine.attach(id, trained(sheetForClass(definition)));
+      engine.attach(id, trained(sheetForClass(definition, unlocked)));
       return actor;
     },
     addMonster: (id, x, y, hp = 4000) => {
@@ -797,6 +809,33 @@ const CASES: readonly ScalingCase[] = [
       // predicate agreed to and the mover then declined.
       expect({ x: inspector.x, y: inspector.y }).toEqual({ x: 5 + reach, y: 5 });
       return { observed: reach, result, fixture: f };
+    },
+  },
+  {
+    /**
+     * THE FIRST ACTIVE A LOCKED TREE HAS EVER HELD, so it is also the first
+     * entry here whose caster had to BUY its discipline — `add`'s fifth
+     * argument. Before the split in `sheetForClass` this could not have been
+     * pressed at all: an unlocked talent went into `passives` whole, and
+     * `canUseTalent` refuses anything outside `loadout` as `NotLearned`.
+     *
+     * Measured as tiles ACTUALLY retreated, not the authored band, which is
+     * what catches `excise.ts`'s old bug — a destination reflected through the
+     * caster is one tile away from an adjacent body, so every rank walks one
+     * step and the talent silently stops scaling.
+     */
+    bare: 'kick_off',
+    moves: 'tiles of retreat',
+    authored: '3 tiles',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 10, 5, ['generic/legwork']);
+      f.addMonster('husk', 11, 5);
+      f.setLevel('caster', 'kick_off', level);
+      f.refill('caster');
+      const before = watchman.x;
+      const result = useTalent(f.engine, watchman, talentId('kick_off'), { x: 11, y: 5 }, f.ctx);
+      return { observed: before - watchman.x, result, fixture: f };
     },
   },
 ];

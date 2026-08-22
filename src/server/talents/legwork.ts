@@ -40,7 +40,18 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
-import { Affinity, TalentKind, TargetShape, talentId } from '../engine/talents.ts';
+import {
+  Affinity,
+  TalentKind,
+  TalentRefusal,
+  TargetShape,
+  stepToward,
+  talentDone,
+  talentId,
+  talentRefused,
+  targetActor,
+  tomeCooldownToTurns,
+} from '../engine/talents.ts';
 import { EMPTY_PASSIVE_VIEW } from '../engine/hooks.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -158,30 +169,79 @@ export const movingTarget: Talent = {
 };
 
 // ---------------------------------------------------------------------------
-// KICK OFF — movement for the moment you most need it
+// KICK OFF — the tree's button, and upstream's Disengage
+// Ported from techniques/mobility.lua:40-56 (Disengage)
 // ---------------------------------------------------------------------------
 
-/** Extra movement while something is in reach, at a rank. */
+/**
+ * Tiles of retreat, at a rank.
+ *
+ * UPSTREAM'S OWN NUMBERS. `getDist = combatTalentLimit(t, 10, 3, 7)`
+ * (mobility.lua:61) is three tiles at rank one and seven at rank five,
+ * approaching ten; 3..7 here floors to exactly 3,4,5,6,7.
+ *
+ * ═══ 3..5 WAS TRIED FIRST AND THE HONESTY GATE REFUSED IT ═══
+ * I narrowed the band on the theory that seven tiles is a third of a
+ * twenty-wide viewport. It floors to 3,3,4,4,5 — so ranks 1 and 2 bought
+ * nothing a player could read, and so did 3 and 4. `class-wiring.test.ts`
+ * catches exactly that ("descNext must not equal desc") and caught it, the same
+ * way it caught `errata.ts` at 2..4. The step count is this talent's ONLY
+ * scaling number, so it has to move every rank on its own — and the band that
+ * does is the one upstream already authored.
+ */
+const RETREAT_LOW = 3;
+const RETREAT_HIGH = 7;
+
 export function disengageAt(level: number): number {
-  return movementAt(level);
+  return Math.floor(combatTalentScale(level, RETREAT_LOW, RETREAT_HIGH, CURVE));
 }
+
+/** How far off you may name the body you are pushing away from. */
+const KICK_RANGE = 4;
+/** Two of six: it is a step, not the round. */
+const KICK_AP = 2;
+/**
+ * Ported from mobility.lua:46 — Disengage's `cooldown = 10`.
+ *
+ * NAMED rather than passed inline, because the number is UPSTREAM'S and the
+ * conversion is ours: `tomeCooldownToTurns` divides by `TOME_ACTIONS_PER_TURN`,
+ * so the ten ToME counts in half-turn actions is five turns here.
+ */
+const DISENGAGE_COOLDOWN_ACTIONS = 10;
+const KICK_COOLDOWN = tomeCooldownToTurns(DISENGAGE_COOLDOWN_ACTIONS);
 
 /**
  * KICK OFF.
  *
  * "You do not push past them. You push off them."
  *
- * ═══ IT PAYS EXACTLY WHEN MOVEMENT IS WORTH THE MOST ═══
- * Extra ground while nothing is near you is convenience. Extra ground while
- * something is standing on you is an escape, and it is the difference between
- * a fight you chose to leave and one you had to finish. That is the whole
- * design of this talent, and it is why the condition is adjacency rather than
- * anything about your own body.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT WAS A PASSIVE, AND THE TREE IT LIVES IN SAYS WHY THAT WAS WRONG
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This read: "always on, while anything hostile is next to you — +1 movement."
+ * A permanently-on trickle of movement points, for the exact situation upstream
+ * spends a BUTTON on.
  *
- * IT STACKS WITH LONG STRIDE, deliberately. Two points of movement in a crowd
- * is a lot — and it costs two talents in a locked tree, which is exactly the
- * kind of thing three category points and a career of ordinary ones should be
- * able to buy if a player wants it badly enough.
+ * `technique/mobility` is the tree this file's own header cites as its shape,
+ * and it is four talents: Disengage, Evasion and Tumble are all `action =`, and
+ * Trained Reactions is `mode = "sustained"` (mobility.lua:41, 205, 239, 285).
+ * THREE ACTIVATED, ONE SUSTAINED, NOT ONE PASSIVE. Ours was six passives — a
+ * tree named "Getting there, and getting out" in which nothing could be pressed
+ * to get out.
+ *
+ * ═══ AND A PASSIVE COULD NOT EXPRESS WHAT DISENGAGE DOES ANYWAY ═══
+ * Upstream's Disengage names a body and throws you away from it NOW. A trickle
+ * of `moveMp` is a different thing wearing the same words: it helps on the turn
+ * after you already decided to walk, it cannot cross the gap in one action, and
+ * it is worth nothing at all if the thing on you also took your movement. The
+ * escape a player wants is the one they can spend on the turn they are grabbed.
+ *
+ * ═══ THE MARK OF A GENERIC TREE: NO RESOURCE COST ═══
+ * `SHARED.cost` is AP only and stays that way. Four classes may buy this and
+ * they spend four different resources; a talent that charged Ink would be free
+ * for a Watchman and expensive for a Redactor for no reason a player could read.
+ * Upstream charges stamina here because `technique/*` belongs to stamina users;
+ * a tree that ANY class may buy has no such class to borrow from.
  */
 export const kickOff: Talent = {
   ...SHARED,
@@ -189,12 +249,60 @@ export const kickOff: Talent = {
   name: 'Kick Off',
   /** Tier 2 of its tree. See `src/shared/tiers.ts`. */
   tier: 2,
-  iconId: 'icon_passive_kick_off',
-  passive: (level, view = EMPTY_PASSIVE_VIEW) =>
-    view.adjacentEnemies() >= 1 ? { mods: { moveMp: disengageAt(level) } } : {},
+  kind: TalentKind.Active,
+  iconId: 'icon_active_kick_off',
+  cost: { ap: KICK_AP },
+  cooldownTurns: KICK_COOLDOWN,
+  targeting: {
+    shape: TargetShape.Single,
+    range: KICK_RANGE,
+    minRange: 0,
+    radius: 0,
+    requiresLos: true,
+    affinity: Affinity.Hostile,
+  },
+
+  onUse: (ctx, self, target) => {
+    const victim = targetActor(ctx.world, target);
+    if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
+
+    /**
+     * AWAY FROM THE BODY, ALONG THE LINE BETWEEN YOU — and `excise.ts` carries
+     * the measurement of what the naive version costs. Reflecting yourself
+     * through the victim (`self + (self - victim)`) names a point exactly as far
+     * behind you as they are in front, which for an ADJACENT body is ONE TILE;
+     * `stepToward` stops on arrival, so every rank retreated one step however
+     * many it had bought, and `talent-scaling.test.ts` caught it as a talent
+     * that does not scale. The direction is the sign; the DISTANCE is the rank.
+     */
+    const steps = disengageAt(ctx.talentLevel);
+    const away = {
+      x: self.x + Math.sign(self.x - victim.x) * steps,
+      y: self.y + Math.sign(self.y - victim.y) * steps,
+    };
+    const moved = stepToward(ctx.world, self, away, steps);
+
+    /**
+     * NOTHING MOVED IS A REFUSAL, NOT A SPENT TURN — `errata.ts`'s rule, and it
+     * matters more here: this is the escape, so a player cornered against a wall
+     * must not be charged the AP and the cooldown for having tried. A PARTIAL
+     * retreat is a real outcome and keeps its cost.
+     */
+    if (moved === 0) return talentRefused(TalentRefusal.NoTarget);
+    return talentDone(
+      [],
+      [
+        moved === 1
+          ? `You push off ${victim.name}.`
+          : `You push off ${victim.name} and go ${String(moved)}.`,
+      ],
+    );
+  },
+
   describe: (_self, level) =>
-    `Always on, while anything hostile is next to you. ${String(disengageAt(level))} more ` +
-    `movement — the difference between a fight you chose to leave and one you had to finish.`,
+    `Push off a body within ${String(KICK_RANGE)} tiles and go up to ${String(disengageAt(level))} ` +
+    `tiles the other way. It walks, so a wall still stops it — and a retreat that got nowhere ` +
+    `costs nothing. ${String(KICK_AP)} AP, ${String(KICK_COOLDOWN)}-turn cooldown.`,
 };
 
 // ---------------------------------------------------------------------------

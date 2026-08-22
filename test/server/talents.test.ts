@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allTalents,
   ALCHEMIST,
+  ALL_LOCKED_TALENTS,
   CLASSES,
   INSPECTOR,
   WATCHMAN,
@@ -438,8 +439,25 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * class owns is reachable through `canUseTalent`, and nothing is registered
      * that belongs to no loadout.
      */
+    /**
+     * PLUS THE ACTIVES IN THE LOCKED TREES, which no class loadout holds.
+     *
+     * The comment above this used to end "the shared trees add none — every
+     * talent in `generic/groundwork` and `generic/nightshift` is passive, which
+     * is what a training category is." That is still true of those two. It was
+     * never true of the BOUGHT trees by nature, only by the fact that nothing
+     * had put a button in one yet, and `generic/legwork` — a discipline named
+     * "getting there, and getting out" — now holds Kick Off.
+     *
+     * A locked active is reachable the same way a class active is, through
+     * `sheet.loadout`; it just takes a category point to get there first.
+     * Counted from `ALL_LOCKED_TALENTS` rather than added as a literal, so the
+     * next one needs no edit here.
+     */
+    const lockedActives = ALL_LOCKED_TALENTS.filter((talent) => talent.onUse !== undefined).length;
     expect(everyTalent).toHaveLength(
-      CLASSES.flatMap((c) => c.loadout).filter((talent) => talent.onUse !== undefined).length,
+      CLASSES.flatMap((c) => c.loadout).filter((talent) => talent.onUse !== undefined).length +
+        lockedActives,
     );
     /**
      * …AND THE REGISTRY AS A WHOLE IS EVERY AUTHORED TALENT — COUNTED, NOT
@@ -502,8 +520,14 @@ describe('the loadout cap — PLAN.md § 5', () => {
         const tree = treeById(talent.tree);
         const locked = tree?.locked === true;
         for (const definition of CLASSES) {
-          const fresh = trained(sheetForClass(definition)).passives;
-          const bought = trained(sheetForClass(definition, [talent.tree])).passives;
+          // BOTH LISTS. `sheetForClass` splits a bought tree by kind — an
+          // active has to reach `loadout` or `canUseTalent` refuses it — so
+          // reading `passives` alone would ask which BOX a talent landed in
+          // when the question is whether the character carries it at all.
+          const freshSheet = trained(sheetForClass(definition));
+          const boughtSheet = trained(sheetForClass(definition, [talent.tree]));
+          const fresh = [...freshSheet.loadout, ...freshSheet.passives];
+          const bought = [...boughtSheet.loadout, ...boughtSheet.passives];
           if (locked) {
             expect(fresh, `${definition.id} carries locked ${talent.id}`).not.toContain(talent.id);
             expect(bought, `${definition.id} bought ${talent.tree}`).toContain(talent.id);
@@ -525,6 +549,29 @@ describe('the loadout cap — PLAN.md § 5', () => {
       const holders = CLASSES.filter((definition) =>
         definition.loadout.some((owned) => owned.id === talent.id),
       );
+      /**
+       * ═══ A SHARED ACTIVE IS OWNED BY NOBODY AND PRESSABLE BY EVERYBODY ═══
+       * "Exactly one class can press it" is the rule for a CLASS talent and the
+       * opposite of the rule for a shared one. `kick_off` lives in
+       * `generic/legwork`, which any class may buy with a category point, so no
+       * `ClassDef.loadout` holds it and `classId` is null — and asserting
+       * `[null]` against an empty list is what this line did before the
+       * distinction existed.
+       *
+       * The property for a shared active is that EVERY class reaches it once
+       * the discipline is bought, which is the stronger claim and the one that
+       * would catch the tree being wired to a single class by accident.
+       */
+      if (talent.classId === null) {
+        expect(holders, talent.id).toEqual([]);
+        for (const definition of CLASSES) {
+          const boughtSheet = trained(sheetForClass(definition, [talent.tree]));
+          expect(boughtSheet.loadout, `${definition.id} bought ${talent.tree}`).toContain(
+            talent.id,
+          );
+        }
+        continue;
+      }
       // EXACTLY ONE class can press it, and it is the one the talent claims.
       expect(holders.map((definition) => definition.id)).toEqual([talent.classId]);
 

@@ -9,6 +9,7 @@ import { DEAD_MOD_KEYS } from '../../src/server/content/items.ts';
 import { EMPTY_PASSIVE_VIEW } from '../../src/server/engine/hooks.ts';
 import {
   LEGWORK,
+  disengageAt,
   downhill,
   kickOff,
   lightFeet,
@@ -86,11 +87,36 @@ describe('the movement talents', () => {
     expect(longStride.passive?.(1, viewOf({}))?.mods?.moveMp ?? 0).toBeGreaterThan(0);
   });
 
-  it('Kick Off pays only while something is on you', () => {
-    expect(kickOff.passive?.(3, viewOf({ adjacentEnemies: () => 0 }))?.mods?.moveMp ?? 0).toBe(0);
-    expect(
-      kickOff.passive?.(3, viewOf({ adjacentEnemies: () => 1 }))?.mods?.moveMp ?? 0,
-    ).toBeGreaterThan(0);
+  it('Kick Off is a BUTTON, which is what upstream spends on this', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS ASSERTED A PASSIVE, AND THE TREE'S OWN CITATION SAYS WHY IT WAS WRONG
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read: "Kick Off pays only while something is on you" — a permanent
+     * trickle of `moveMp` whenever anything was adjacent. That is a passive
+     * standing in for the thing upstream spends a button on.
+     *
+     * `technique/mobility`, the tree legwork.ts cites as its shape, is four
+     * talents: Disengage, Evasion and Tumble all carry `action =`, and Trained
+     * Reactions is `mode = "sustained"` (mobility.lua:41, 205, 239, 285).
+     * THREE ACTIVATED, ONE SUSTAINED, ZERO PASSIVE — against our six passives.
+     *
+     * A trickle could not do what Disengage does anyway: it helps on the turn
+     * AFTER you decided to walk, it cannot cross the gap in one action, and it
+     * is worth nothing at all if the thing on you also took your movement.
+     */
+    expect(kickOff.passive).toBeUndefined();
+    expect(kickOff.onUse).toBeTypeOf('function');
+    expect(kickOff.kind).toBe('active');
+    // AP ONLY, NO RESOURCE. Four classes may buy this tree and they spend four
+    // different resources; charging one would be free for a Watchman and
+    // expensive for a Redactor for no reason a player could read.
+    expect(kickOff.cost.resource ?? 0).toBe(0);
+    expect(kickOff.cost.ap ?? 0).toBeGreaterThan(0);
+    // And it scales every rank, which 3..5 did not — see `disengageAt`.
+    const steps = [1, 2, 3, 4, 5].map((rank) => disengageAt(rank));
+    expect(new Set(steps).size, steps.join(',')).toBe(steps.length);
   });
 
   it('Downhill pays only below a quarter, and not one point above it', () => {

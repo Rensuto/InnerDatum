@@ -158,6 +158,7 @@ import {
   ClassId,
   RESOURCE_RULES,
   ResourceKind,
+  TalentKind,
   TalentRefusal,
   canUseTalent,
   createTalentEngine,
@@ -932,9 +933,30 @@ export function sheetForClass(
    */
   unlocked: readonly string[] = [],
 ): TalentSheet {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BOUGHT TREE IS SPLIT BY KIND, AND EVERY LOCKED TREE USED TO BE PASSIVE
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `unlockedTalents` fed the PASSIVES list whole, which was harmless for
+   * exactly as long as every locked tree was six passives — and it silently made
+   * that true forever. `canUseTalent` refuses anything outside `loadout` with
+   * `NotLearned` (engine/talents.ts), so an ACTIVE authored in a locked tree
+   * would have been a talent a player bought with a category point, could see in
+   * the panel, could put on a key, and could never press. Nothing would have
+   * thrown; the button would just have answered "not learned" forever.
+   *
+   * That is the whole reason the generic tier reads as a wall of passives.
+   * Splitting by kind here is what lets a locked tree hold a button at all, and
+   * it is one place rather than a rule every future tree has to remember.
+   */
+  const bought = unlockedTalents(unlocked);
   return createTalentSheet({
     classId: definition.id,
-    loadout: definition.loadout.map((talent) => talent.id),
+    loadout: [
+      ...definition.loadout,
+      ...bought.filter((talent) => talent.kind !== TalentKind.Passive),
+    ].map((talent) => talent.id),
     /**
      * THE CLASS'S OWN, THEN THE SIX EVERYBODY CARRIES. See `GENERIC_PASSIVES`.
      *
@@ -944,9 +966,11 @@ export function sheetForClass(
      * `passivesOf` projection and `refreshPassives` — gets them for free without
      * a second list to keep in step.
      */
-    passives: [...definition.passives, ...GENERIC_PASSIVES, ...unlockedTalents(unlocked)].map(
-      (talent) => talent.id,
-    ),
+    passives: [
+      ...definition.passives,
+      ...GENERIC_PASSIVES,
+      ...bought.filter((talent) => talent.kind === TalentKind.Passive),
+    ].map((talent) => talent.id),
     /**
      * AND THE FOUR IT IS BORN WITH. Everything else on the two lines above is
      * seeded at rank 0 — in the tree, in the panel, and not yet learned.
