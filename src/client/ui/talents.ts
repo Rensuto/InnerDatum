@@ -148,6 +148,7 @@ import {
   PANEL_PAD,
   PanelSkin,
 } from './panel.ts';
+import { CATEGORY_POINT_LEVELS } from '../../shared/progression.ts';
 import type { LoadoutTalent, ProgressMsg, UnlockableTree } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
@@ -620,7 +621,8 @@ export type TalentPanelView = {
    */
   readonly unlockable?: readonly UnlockableTree[];
   /**
-   * Category points in hand. Three arrive in a career, at levels 10, 20 and 36.
+   * Category points in hand. They arrive at the levels `CATEGORY_POINT_LEVELS`
+   * names — three of them in a career, which is what makes buying one a choice.
    *
    * ABSENT FROM AN OLDER SERVER, which reads as none — so the panel offers no
    * unlock rather than offering one that would be refused.
@@ -812,10 +814,36 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
    * the thing it interrupts.
    *
    * THE HEADING CARRIES THE PRICE, and it changes with the purse. "1 category
-   * point" when they can afford it, "levels 10, 20 and 36" when they cannot —
+   * point" when they can afford it, and the levels `CATEGORY_POINT_LEVELS`
+   * names when they cannot —
    * because "locked" alone tells a player nothing they can act on, and the
    * second sentence is the whole answer to "so how do I get it".
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHEN THE POINTS ARRIVE, READ OFF THE LIST THAT DECIDES IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This sentence was the literal "levels 10, 20 and 36", written out FOUR TIMES
+   * in this file — twice in a row a player reads and twice in a hover card. The
+   * levels live in `CATEGORY_POINT_LEVELS` (shared/progression.ts), which is
+   * where `categoryPointsForLevel` reads them, so moving one would have left four
+   * player-facing strings quietly lying about when their next discipline unlocks.
+   *
+   * The same shape of drift this codebase has now been caught by three times:
+   * `status-live.mjs` naming "the three registered ids" when there were six, a
+   * test asserting three classes when a fourth shipped, and the inventory doll
+   * budgeting against a 480-pixel floor that is 320.
+   */
+  const pointLevels = (): string => {
+    const levels = [...CATEGORY_POINT_LEVELS];
+    const last = levels.pop();
+    if (last === undefined) return 'never';
+    // "10, 20 and 36" — an Oxford-less list, because it is prose in a panel
+    // rather than a spec, and a one-element list must not read "and 10".
+    return levels.length === 0 ? String(last) : `${levels.join(', ')} and ${String(last)}`;
+  };
+
   const purse = view.categories ?? 0;
   for (const tree of view.unlockable ?? []) {
     rows.push({
@@ -824,7 +852,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       text:
         purse > 0
           ? `${tree.name}  — locked, 1 category point`
-          : `${tree.name}  — locked, points arrive at levels 10, 20 and 36`,
+          : `${tree.name}  — locked, points arrive at levels ${pointLevels()}`,
       talents: tree.talents.map((talent) => ({
         id: talent.id,
         name: talent.name,
@@ -839,7 +867,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         lockedReason:
           purse > 0
             ? `Unlock ${tree.name} — 1 category point. ${tree.blurb}`
-            : `${tree.name} is locked. Category points arrive at levels 10, 20 and 36.`,
+            : `${tree.name} is locked. Category points arrive at levels ${pointLevels()}.`,
         passive: talent.kind === 'passive',
         desc: talent.desc,
         descNext: talent.descNext,

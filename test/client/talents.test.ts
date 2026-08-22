@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { CATEGORY_POINT_LEVELS } from '../../src/shared/progression.ts';
+
 import {
   TALENT_PANEL_MARGIN,
   TALENT_PANEL_MIN_H,
@@ -1013,6 +1015,51 @@ describe('the attribute column', () => {
  * So there is no case below asserting that nothing is hidden — because
  * something still is.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE UNLOCK SENTENCE IS READ OFF THE CONSTANT, NOT SPELLED OUT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * "Category points arrive at levels 10, 20 and 36" was written out four times
+ * in `ui/talents.ts` while the levels themselves live in
+ * `CATEGORY_POINT_LEVELS`. Moving one would have left four player-facing
+ * strings lying about when the next discipline unlocks.
+ *
+ * This asserts the SENTENCE CONTAINS THE CONSTANT'S NUMBERS rather than a
+ * literal of its own — a test that spelled "10, 20 and 36" here would drift in
+ * exactly the same way and take the guard with it.
+ */
+describe('the locked-tree row says when points arrive', () => {
+  it('names every level the constant names', () => {
+    const rect = talentPanelRect({ width: 640, height: 320, top: 40, bottom: 280 });
+    if (rect === null) throw new Error('no panel');
+    // NO CATEGORY POINT IN HAND, which is the branch that names the levels —
+    // with one in the purse the row reads "1 category point" instead.
+    const rows = talentPanelRows(
+      view({
+        categories: 0,
+        unlockable: [
+          {
+            id: 'generic/composure',
+            name: 'Composure',
+            blurb: 'Being outnumbered, and what a body does about it.',
+            talents: [],
+          },
+        ],
+      }),
+    );
+    const text = rows
+      .flatMap((row) => (row.kind === TalentRowKind.Category ? [row.text] : []))
+      .join(' | ');
+    expect(text, 'no locked row was built').toMatch(/locked/);
+    for (const level of CATEGORY_POINT_LEVELS) {
+      expect(text, `level ${String(level)} is missing from the unlock sentence`).toContain(
+        String(level),
+      );
+    }
+  });
+});
+
 describe('the talent panel uses the room it has', () => {
   /** More categories than any class holds, so the grid is genuinely pressed. */
   function manyCategories(n: number): readonly TalentRow[] {
