@@ -179,9 +179,12 @@ const printLog = () => {
  */
 const effectVerdict = (lines) => {
   const text = lines.join(' | ');
-  if (/is stunned \(|is slowed for/.test(text)) return 'LANDED';
+  //   strike_out.ts  `is struck out`            ·  `holds the line`
+  //   lockdown.ts    `is stunned (N turns)`     ·  `saves — stunned N` ·  `shrugs it off`
+  //   shin_crack.ts  `is slowed for N turns`    ·  `shakes it off`
+  if (/is stunned \(|is slowed for|is struck out/.test(text)) return 'LANDED';
   if (/saves . stunned/.test(text)) return 'LANDED_PARTIAL';
-  if (/shrugs it off|shakes it off/.test(text)) return 'SAVED';
+  if (/shrugs it off|shakes it off|holds the line/.test(text)) return 'SAVED';
   return 'NOTHING';
 };
 
@@ -250,16 +253,45 @@ await sleep(900);
 
 const selfId = last('welcome')?.selfId;
 const options = last('class_options')?.options ?? [];
-const watchman = options.find((o) => /watchman/i.test(o.name)) ?? options[0];
-if (selfId === undefined || watchman === undefined) {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE REDACTOR, BECAUSE THIS FILE IS ABOUT STATUSES AND THE REDACTOR APPLIES
+ * THEM AT RANGE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This chose the Watchman, and the Watchman cannot prove the thing this tool
+ * exists to prove. His only level-1 status is Shin Crack's slow, it is MELEE, and
+ * a physical save refuses it often enough that landing one takes several
+ * presses — which means standing next to a breach full of monsters for several
+ * turns. The last run before this change ended
+ *
+ *     retry 1: no 'used' frame — last refusal was out_of_range
+ *     stopped retrying: the caster is down after 1 more press(es)
+ *
+ * He died. Not a fault in the game and not a fault in the probe; the wrong body
+ * was sent to ask the question.
+ *
+ * `strike_out` reaches six tiles and applies EFFACED, so a Redactor can press it
+ * from outside the fight and keep pressing. The class exists now, `class-live.mjs`
+ * proves it lands marks over this same socket, and picking it here costs nothing
+ * — the status pipeline does not care which class fed it.
+ *
+ * BY NAME, NOT BY ROTATION SLOT. `options[0]` is whatever the gateway offers
+ * first, which is exactly the assumption that broke when a fourth class shipped.
+ */
+const caster =
+  options.find((o) => /redactor/i.test(o.name)) ??
+  options.find((o) => /watchman/i.test(o.name)) ??
+  options[0];
+if (selfId === undefined || caster === undefined) {
   console.log('never got a welcome or a class list — the gateway is not talking.');
   process.exit(1);
 }
 
-send({ t: 'choose_class', classId: watchman.id });
+send({ t: 'choose_class', classId: caster.id });
 await sleep(700);
 
-beat(`JOINED as ${watchman.name}`);
+beat(`JOINED as ${caster.name}`);
 printLog();
 
 const loadout = last('loadout')?.talents ?? [];
@@ -284,14 +316,18 @@ console.log(
  * keeps the tool honest about what it managed to test.
  */
 const learned = loadout.filter((t) => (t.level ?? 0) >= 1 && t.cost !== undefined);
+/**
+ * STRIKE OUT FIRST, now that the caster is a Redactor. It is learned at level 1,
+ * reaches six tiles, and applies EFFACED — everything Lockdown was wanted for
+ * without needing to survive melee to do it. Lockdown and Shin Crack stay in the
+ * list so this file still works if the class choice above falls back.
+ */
 const lockdown =
+  learned.find((t) => /strike out/i.test(t.name)) ??
   learned.find((t) => /lockdown/i.test(t.name)) ??
   learned.find((t) => /shin crack/i.test(t.name)) ??
   learned[0];
-console.log(
-  `  pressing: ${lockdown?.name ?? '(nothing learned)'}` +
-    `${lockdown !== undefined && !/lockdown/i.test(lockdown.name) ? ' — Lockdown is not learned at this level, so this is the stand-in' : ''}`,
-);
+console.log(`  pressing: ${lockdown?.name ?? '(nothing learned)'}`);
 
 // ---------------------------------------------------------------------------
 // 2. Walk into a fight
@@ -691,7 +727,17 @@ if (adjacent === null) {
       );
       break;
     }
-    const victim = [...board.entries()].find(([id, e]) => id !== selfId && e.alive);
+    /**
+     * THE NEAREST LIVE FOE, RE-CHOSEN EVERY ATTEMPT — `foesNow` already sorts
+     * them by distance and this loop was not asking it.
+     *
+     * It took the FIRST live entry off the board instead, which is insertion
+     * order and has nothing to do with reach. A breach holds several bodies;
+     * this walked six steps toward whichever one happened to be first, pressed a
+     * MELEE talent, and collected `out_of_range` five times in a row while
+     * something else stood next to the caster hitting it.
+     */
+    const [victim] = foesNow();
     if (victim === undefined) {
       console.log(`  stopped retrying: nothing hostile left alive to mark`);
       break;
@@ -708,7 +754,7 @@ if (adjacent === null) {
       const me = board.get(selfId);
       const realmNow = lastRealm();
       if (me === undefined || realmNow === undefined) break;
-      if (Math.abs(victim[1].x - me.x) <= 1 && Math.abs(victim[1].y - me.y) <= 1) break;
+      if (Math.abs(victim.x - me.x) <= 1 && Math.abs(victim.y - me.y) <= 1) break;
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * `move` CARRIES A COMPASS `dir`, NOT A `{dx, dy}` PAIR.
@@ -733,7 +779,7 @@ if (adjacent === null) {
       const dir = firstStep(
         (x, y) => canWalk(realmNow.level, x, y),
         { x: me.x, y: me.y },
-        { x: victim[1].x, y: victim[1].y },
+        { x: victim.x, y: victim.y },
       );
       if (dir === undefined) break;
       send({ t: 'move', dir });
@@ -908,7 +954,10 @@ if (apSeen.length === 0) {
 
 const effectFrames = kinds.get('effects') ?? 0;
 console.log(`\n  'effects' frames: ${String(effectFrames)}`);
-console.log(`  a stun reached this client: ${stunSeen ? 'YES' : 'no'}`);
+// AN EFFECT, NOT A STUN. The caster is a Redactor and the effect is EFFACED;
+// the field is still named `stunSeen` because Lockdown was the original
+// subject, and renaming it would touch eight call sites to say the same thing.
+console.log(`  an effect reached this client as a badge: ${stunSeen ? 'YES' : 'no'}`);
 
 /**
  * AND WHAT THAT ANSWER MEANS, which is the part a reader cannot supply.
@@ -918,16 +967,16 @@ console.log(`  a stun reached this client: ${stunSeen ? 'YES' : 'no'}`);
  * a husk happened to make its save.
  */
 const READING = {
-  LANDED: 'the stun LANDED — a badge is owed, and the line above says whether one came',
+  LANDED: 'the effect LANDED — a badge is owed, and the line above says whether one came',
   LANDED_PARTIAL:
-    'a PARTIAL save — the stun landed shortened, so a badge is still owed. ' +
+    'a PARTIAL save — the effect landed shortened, so a badge is still owed. ' +
     'This is the case where a missing badge is a real bug.',
   SAVED: 'the target SAVED — the status system ran and refused it. Nothing is broken.',
   NOTHING: 'nothing resolved — the press never reached the talent, which IS a fault',
 };
 console.log(`  the server's verdict: ${verdict} — ${READING[verdict]}`);
 if (verdict !== 'SAVED' && verdict !== 'NOTHING' && !stunSeen) {
-  console.log('  ^^ A STUN LANDED AND NO BADGE ARRIVED. This is the seam this tool exists for.');
+  console.log('  ^^ AN EFFECT LANDED AND NO BADGE ARRIVED. This is the seam this tool exists for.');
 }
 
 /**
