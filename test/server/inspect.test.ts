@@ -576,7 +576,9 @@ describe('`attackBlockedReason` asks exactly the question `canAttack` answers', 
  * (CharacterSheet.lua:815-820), then Attack (:935-1120), then Defense
  * (:1304-1321). The SEQUENCE is asserted rather than the membership, because
  * the sequence is the thing the directive asked to be ported: a sheet with the
- * right fifteen rows in a different order is a different screen.
+ * right rows in a different order is a different screen. The COUNT is not
+ * spelled anywhere — it was "fifteen" until the sheet grew tabs and had room
+ * for four numbers it had always computed.
  *
  * Nothing here is level, xp, gold, equipment, inventory, fatigue, speeds,
  * vision, inscriptions or times-died. ToME prints all of those and every one
@@ -595,8 +597,17 @@ const SELF_SHEET_LABELS = [
   'Damage',
   'APR',
   'Crit. chance',
+  // The three powers — CharacterSheet.lua:1161, :1167-1168, :1179-1181. Upstream
+  // prints all three for every character; so does this. `indelible.ts` raises
+  // Mindpower and, until these rows, no screen in the game could show it.
+  'Phys. power',
+  'Spellpower',
+  'Mindpower',
   'Armour',
   'Defence',
+  // CharacterSheet.lua:1302. The number `BREACHED` halves — `Armour` alone tells
+  // a player how much a blow could be stopped by and not how often it is tried.
+  'Armour hardiness',
   'Physical save',
   'Spell save',
   'Mental save',
@@ -614,6 +625,15 @@ const SHEET_ONLY_LABELS = [
   'Damage',
   'APR',
   'Crit. chance',
+  // THE FOUR THAT ARRIVED WITH THE TABS. Listed here as well as in the sheet
+  // order, because this is the list that stops them LEAKING: they are pushed
+  // only by `pushSelfSheet` today, and a card that grew "Mindpower: 31" for a
+  // husk would be telling a player something the server has decided they do not
+  // get to know. Absent from this list, that leak would fail nothing.
+  'Phys. power',
+  'Spellpower',
+  'Mindpower',
+  'Armour hardiness',
   'Spell save',
   'Mental save',
 ];

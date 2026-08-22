@@ -91,6 +91,11 @@ import type {
  * fallback for an untagged row) and the Defence tab is empty, which is exactly
  * what this fixture produced before the field was added here.
  *
+ * KEPT IN STEP WITH `view/inspect.ts` BY HAND, which is the weakness of any
+ * fixture: these nineteen are what that file pushes today, and a row added there
+ * and not here means the client's tabs are tested against a sheet nobody is
+ * sent. The server's own `inspect.test.ts` pins the real list.
+ *
  * The three blocks and their boundaries are the server's, verbatim:
  * `CharacterSheet.lua:815-820` (the six primaries), `:935-1120` (attack) and
  * `:1304-1321` (armour, defence, the three saves).
@@ -106,8 +111,14 @@ const SELF_ROWS = [
   { label: 'Damage', value: '12–13', group: InspectGroup.Attack },
   { label: 'APR', value: '2', group: InspectGroup.Attack },
   { label: 'Crit. chance', value: '3%', group: InspectGroup.Attack },
+  // The three powers — CharacterSheet.lua:1161, :1167-1168, :1179-1181.
+  { label: 'Phys. power', value: '21', group: InspectGroup.Attack },
+  { label: 'Spellpower', value: '10', group: InspectGroup.Attack },
+  { label: 'Mindpower', value: '13', group: InspectGroup.Attack },
   { label: 'Armour', value: '4', group: InspectGroup.Defence },
   { label: 'Defence', value: '8', group: InspectGroup.Defence },
+  // CharacterSheet.lua:1302 — the number `BREACHED` halves.
+  { label: 'Armour hardiness', value: '30%', group: InspectGroup.Defence },
   { label: 'Physical save', value: '9', group: InspectGroup.Defence },
   { label: 'Spell save', value: '5', group: InspectGroup.Defence },
   { label: 'Mental save', value: '6', group: InspectGroup.Defence },

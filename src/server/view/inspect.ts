@@ -45,14 +45,18 @@ import type { InspectRow, InspectView } from '../../shared/protocol.ts';
 import {
   combatAPR,
   combatArmor,
+  combatArmorHardiness,
   combatAttack,
   combatCrit,
   combatDamage,
   combatDamageRange,
   combatDefense,
   combatMentalResist,
+  combatMindpower,
   combatPhysicalResist,
+  combatPhysicalpower,
   combatSpellResist,
+  combatSpellpower,
   stat,
 } from '../engine/derived.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
@@ -230,6 +234,32 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
   rows.push({ label: 'Damage', value: damageBand(c), group: InspectGroup.Attack });
   rows.push({ label: 'APR', value: whole(combatAPR(c)), group: InspectGroup.Attack });
   rows.push({ label: 'Crit. chance', value: pct(combatCrit(c)), group: InspectGroup.Attack });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE THREE POWERS — CharacterSheet.lua:1161, :1167-1168, :1179-1181.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream prints all three side by side under Physical / Magical / Mental,
+   * for every character, whatever they are. These were computed here and shown
+   * nowhere, and that was invisible while the sheet was one crowded page.
+   *
+   * ═══ THE REDACTOR IS WHY THIS IS NOT COSMETIC ═══
+   * `indelible.ts` and `open_ledger` raise `genericPower` specifically to move
+   * MINDPOWER — that is the whole argument in `indelible.ts`'s docblock, that
+   * for a class whose economy is "did the mark land", power is what a damage
+   * bonus is. A player could spend five points on it and every screen in the
+   * game would look identical. A number worth building around must be a number
+   * you can read.
+   *
+   * ALL THREE FOR EVERYONE, as upstream does, rather than only the one a class
+   * uses. A Watchman's Mindpower is what says his marks would not land, and
+   * hiding the two a class does not use would mean the sheet could not answer
+   * "should I even try this" — which is the question the numbers are for.
+   */
+  const power = InspectGroup.Attack;
+  rows.push({ label: 'Phys. power', value: whole(combatPhysicalpower(c)), group: power });
+  rows.push({ label: 'Spellpower', value: whole(combatSpellpower(c)), group: power });
+  rows.push({ label: 'Mindpower', value: whole(combatMindpower(c)), group: power });
 
   // ═══ 3. DEFENSE — CharacterSheet.lua:1304-1321 ═══
   // "Armor" (:1304), "Defense" (:1306), then the three saves under a "Saves:"
@@ -240,6 +270,24 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
   // thing it is not.
   rows.push({ label: 'Armour', value: whole(combatArmor(c)), group: InspectGroup.Defence });
   rows.push({ label: 'Defence', value: whole(combatDefense(c)), group: InspectGroup.Defence });
+  /**
+   * ═══ ARMOUR HARDINESS — CharacterSheet.lua:1302, and :1860 in the dump ═══
+   * What FRACTION of a blow armour is allowed to touch. Armour says how much it
+   * could stop; hardiness says how often it is allowed to try, and a player
+   * reading `Armour 4` has been told half a sentence.
+   *
+   * IT IS THE NUMBER `BREACHED` HALVES. `combatArmorHardiness` applies the 0.5
+   * after the 0-100 bound, verbatim from Combat.lua:1334 — so a breached body's
+   * armour does not merely get worse, it gets bypassed. The Redactor's
+   * `redaction.ts` and the Overwritten Husk's `breaching_blow.ts` both do it,
+   * and until this row there was no screen on which the effect could be seen as
+   * anything but "I seem to be taking more damage".
+   */
+  rows.push({
+    label: 'Armour hardiness',
+    value: `${whole(combatArmorHardiness(c))}%`,
+    group: InspectGroup.Defence,
+  });
   const save = InspectGroup.Defence;
   rows.push({ label: 'Physical save', value: whole(combatPhysicalResist(c)), group: save });
   rows.push({ label: 'Spell save', value: whole(combatSpellResist(c)), group: save });
