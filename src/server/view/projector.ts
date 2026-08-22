@@ -384,12 +384,25 @@ export function projectWorld(world: World): WorldView {
 const MONSTERS_DISPLAY_NAME = 'The Filed';
 
 /**
- * Class icon per player sprite family — KEYED OFF THE THREE REAL CLASSES.
+ * Class icon per player sprite family — KEYED OFF THE REAL CLASSES.
  *
- * These three rows are exactly `CLASSES` in content/classes.ts: the Watchman,
- * the Inspector and the Alchemist of Ashwick Row, which is every class a joining
- * body can now be handed (`classForJoin`). A player who has a class always finds
- * their own face here, because the sprite came off the same `ClassDef`.
+ * These rows are exactly `CLASSES` in content/classes.ts: the Watchman, the
+ * Inspector, the Alchemist of Ashwick Row and the Redactor, which is every class
+ * a joining body can now be handed (`classForJoin`). A player who has a class
+ * always finds their own face here, because the sprite came off the same
+ * `ClassDef`.
+ *
+ * ═══ A ROW IS ADDED WHEN A CLASS IS, NOT WHEN ITS ART IS ═══
+ * `icon_character_the_redactor` is not in the manifest and may not be for a
+ * while — `client/public/assets/` is gitignored wholesale and the art is cut by
+ * hand. That is deliberately not a reason to leave the row out: a class without
+ * a row falls through to the generic detective, which is what
+ * `class-wiring.test.ts` calls "a fourth class shipping a generic face", and
+ * the card would then be WRONG rather than merely undrawn.
+ *
+ * With the row present and the art absent, `blitPortrait` draws the character's
+ * initials instead (ui/turncards.ts:449) — which that file notes is the common
+ * case rather than the regression case, since half this family is uncut.
  *
  * `icon_character_the_detective` is the generic and it is a REAL portrait rather
  * than a placeholder. It still has work to do: `world.ts#PLAYER_SPRITES` keeps
@@ -403,6 +416,7 @@ const PORTRAIT_BY_CLASS: Record<string, string> = {
   watchman: 'icon_character_the_watchman',
   inspector: 'icon_character_the_inspector',
   alchemist: 'icon_character_the_alchemist',
+  redactor: 'icon_character_the_redactor',
 };
 
 const GENERIC_PORTRAIT = 'icon_character_the_detective';

@@ -843,6 +843,73 @@ export const SetEffectOutcome = {
 } as const;
 export type SetEffectOutcome = (typeof SetEffectOutcome)[keyof typeof SetEffectOutcome];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHO, IF ANYONE, GETS PAID FOR THIS EFFECT LANDING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Returns the id of the actor to credit, or `null` when nobody is owed anything.
+ *
+ * ═══ WHY THIS IS A FUNCTION AND NOT FOUR CONDITIONS IN `main.ts` ═══
+ * It was four conditions in `main.ts`, inside a closure, and it was the ONLY
+ * place `ResourceKind.Ink` could ever be earned. Nothing could reach it from a
+ * test without booting a server, so the rule that defines an entire class's
+ * economy had no coverage of its own — and it shipped months before any class
+ * that could earn Ink existed, which is exactly the arrangement where a wrong
+ * condition survives indefinitely.
+ *
+ * The wiring stays in `main.ts` (it is the only place the applier and the talent
+ * engine are both in scope). The RULE lives here, where it can be asked.
+ *
+ * ═══ THE FOUR CONDITIONS, EACH OF WHICH IS A REAL DECISION ═══
+ *
+ *   1. THERE IS A SOURCE. An effect with no `srcId` — a trap, a floor, a
+ *      lingering cloud nobody threw — pays nobody, because nobody did it.
+ *
+ *   2. THE SOURCE IS NOT THE VICTIM. A Redactor who is bleeding does not get
+ *      paid for bleeding. Self-inflicted marks would otherwise be the cheapest
+ *      income in the game.
+ *
+ *   3. IT LANDED, AND FOR A REAL DURATION. A save the target MADE pays nothing.
+ *      Paying on the ATTEMPT would make Ink a flat tax on pressing buttons and
+ *      would reward spraying marks at things that shrug them off — the opposite
+ *      of the class. `dur > 0` catches the immune and refused cases that report
+ *      `Applied` with nothing on the clock.
+ *
+ *   4. IT IS DETRIMENTAL. A bandage on an ally is not something written down.
+ *
+ * ═══ `Applied` ONLY, WHICH MEANS A REFRESH PAYS NOTHING, AND THAT IS THE
+ *     CONDITION HOLDING THE WHOLE ECONOMY UP ═══
+ * Condition 3 asks for `Applied` specifically, so `Merged` — the outcome when
+ * the effect was ALREADY on the target and `onMerge` folded the two together —
+ * earns nothing. That reads like an oversight and is the opposite of one.
+ *
+ * `strike_out` costs 8 Ink and a landed mark pays `INK_PER_MARK`, which is 12.
+ * The talent is net-positive on purpose: it is the one unconditional way to
+ * prime a well that is nearly dry. If a REFRESH also paid, a Redactor could
+ * stand in front of one already-effaced husk and press the same button forever
+ * for +4 Ink a press, and the resource would stop being a resource.
+ *
+ * The mark has to be NEW. One mark, one payment — and re-marking something you
+ * already marked is not a new mark, whatever it does to the clock.
+ *
+ * ═══ AND IT IS ONCE, WHICH IS ENFORCED BY WHERE IT IS CALLED ═══
+ * Income per TICK would make duration the only stat worth having and would pay
+ * a long slow twice over. This is asked at the moment of APPLYING and nowhere
+ * else, so one mark is one payment however long it burns.
+ */
+export function creditForLanding(
+  targetId: string,
+  landed: SetEffectResult,
+  srcId: string | undefined,
+  status: EffectStatus | undefined,
+): string | null {
+  if (srcId === undefined || srcId === targetId) return null;
+  if (landed.outcome !== SetEffectOutcome.Applied || landed.dur <= 0) return null;
+  if (status !== EffectStatus.Detrimental) return null;
+  return srcId;
+}
+
 export type SetEffectResult = {
   readonly outcome: SetEffectOutcome;
   /** Turns that actually landed. 0 for every refusal. */

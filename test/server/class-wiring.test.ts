@@ -330,22 +330,27 @@ describe('a first-ever join', () => {
 
   it('rotates past six players without ever reaching a class that does not exist', async () => {
     // `world.ts#PLAYER_SPRITES` is still SIX wide — it is the classless fallback
-    // — and `CLASSES` is three. Before the overlay, the fourth player joined as
+    // — and `CLASSES` is four. Before the overlay, the fourth player joined as
     // `chr_player_enforcer_s`: art for a class with no `_downed_s` variant, no
     // portrait and no loadout. The rotation that decides a class is the
-    // gateway's and is three wide, so the fourth is a Watchman again.
+    // gateway's and is as wide as `CLASSES`, so the wrap moved when the Redactor
+    // shipped — which is the whole property, and why the expectation below is
+    // BUILT from `CLASSES` rather than spelled out. A literal here would have to
+    // be re-typed every time a class is added, and re-typing it is exactly the
+    // moment nobody checks whether the wrap is still correct.
     server = await boot('class-rotation-wrap');
 
+    const rounds = CLASSES.length + 1;
     const bodies: PlayerActor[] = [];
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < rounds; i += 1) {
       bodies.push(bodyOf(await (await connect(server.port)).hello()));
     }
 
     expect(bodies.map((actor) => actor.classId)).toEqual([
-      WATCHMAN.id,
-      INSPECTOR.id,
-      ALCHEMIST.id,
-      WATCHMAN.id,
+      ...CLASSES.map((definition) => definition.id),
+      // AND THE WRAP. One past the end is the first class again, which is the
+      // fact this test exists for — not that the list has any given length.
+      CLASSES[0]?.id,
     ]);
     expect(bodies.every((actor) => actor.sprite.includes('enforcer'))).toBe(false);
   });
@@ -455,10 +460,23 @@ describe('every class sprite resolves to real art', () => {
       bellDurationMs: null,
     };
 
+    /**
+     * SPELLED OUT, unlike the rotation above, and the difference is deliberate.
+     * This test is about the KEY NAMES themselves — a table row that pointed at
+     * `icon_character_redactor` or at another class's face would still be one
+     * row per class and would still pass anything derived from `CLASSES`. The
+     * literal is the only thing that can catch it.
+     *
+     * `icon_character_the_redactor` is not cut yet; the row exists anyway. See
+     * `PORTRAIT_BY_CLASS` — a class with no row falls through to the generic
+     * detective, which is a WRONG face rather than an undrawn one, and the
+     * client already draws initials when a portrait is missing.
+     */
     const expected = [
       'icon_character_the_watchman',
       'icon_character_the_inspector',
       'icon_character_the_alchemist',
+      'icon_character_the_redactor',
     ];
     CLASSES.forEach((definition, index) => {
       world.addPlayer(`p${String(index)}`, definition.name, { sprite: definition.sprite });

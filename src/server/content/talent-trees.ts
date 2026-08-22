@@ -256,6 +256,52 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
   },
   {
     /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE REDACTOR'S FIRST — what you strike from the record.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The mark tree. Every active in it puts a detrimental effect on something,
+     * which is not a theme so much as the class's income statement: Ink pays
+     * `INK_PER_MARK` when a mark LANDS, so this tree is where the resource comes
+     * from and the other one is where it goes.
+     *
+     * CUNNING, which with `ledger/testimony`'s Will is the pair
+     * `combatMindpower` is fed by — 0.7 Wil + 0.4 Cun, Combat.lua:2076, the only
+     * power in the game fed by two stats. See `indelible.ts`: the class's stat
+     * spread is the shape the engine already rewards rather than flavour laid
+     * over it.
+     */
+    id: 'ledger/redaction',
+    mastery: 1,
+    name: 'Redaction',
+    classId: ClassId.Redactor,
+    blurb: 'What you strike from the record, and what it costs the thing you struck.',
+  },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE REDACTOR'S SECOND — what the record says once you have written in it.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Where `ledger/redaction` earns, this tree spends and endures: two stances
+     * on one slot, two saves, a blow that does not go all the way in, and a
+     * capstone that reaches through a wall.
+     *
+     * ═══ THE STANCES ARE WHY THIS CLASS FEELS ITS RESERVE ═══
+     * A sustain holds resource back. For an Inspector that is Focus she was not
+     * spending. For a Redactor it is Ink, and Ink is what marks are made of — so
+     * standing in a stance means fewer marks, and fewer marks means less income.
+     * No other class in this game pays for a stance out of the thing it needs to
+     * earn more of. See `ledger_stances.ts`.
+     */
+    id: 'ledger/testimony',
+    mastery: 1,
+    name: 'Testimony',
+    classId: ClassId.Redactor,
+    blurb: 'What the record says once you have written in it, and how hard you are to rewrite.',
+  },
+  {
+    /**
      * THE ONE EVERY CLASS CARRIES. See `TalentTree.classId` for why it is shared
      * rather than tripled, and `talent-trees.test.ts` for why it is allowed to
      * be entirely passive when a class tree is not.

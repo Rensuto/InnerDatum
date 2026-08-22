@@ -12,7 +12,7 @@
  * carry an explicit `.ts` extension.
  */
 
-import { SetEffectOutcome, recomposeCombat } from './engine/effects.ts';
+import { creditForLanding, recomposeCombat } from './engine/effects.ts';
 import { resolveItem } from './content/resolve.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -842,16 +842,22 @@ export function buildServer() {
     const apply = statusApplier(effects, forWorld.rng);
     return (target, effectId, duration, params = {}) => {
       const landed = apply(target, effectId, duration, params);
-      const srcId = params.srcId;
-      if (
-        srcId !== undefined &&
-        srcId !== target.id &&
-        landed.outcome === SetEffectOutcome.Applied &&
-        landed.dur > 0 &&
-        effectById(effectId)?.status === EffectStatus.Detrimental
-      ) {
-        talentEngine.noteAfflicted(srcId);
-      }
+      /**
+       * THE RULE IS `creditForLanding`'S; THE WIRING IS THIS FILE'S.
+       *
+       * It used to be four conditions written out here, which meant the only
+       * path by which `ResourceKind.Ink` could ever be earned had no test of its
+       * own — nothing can reach a closure in `main.ts` without booting a server.
+       * See engine/effects.ts for the four conditions and why each one is a real
+       * decision rather than a guard.
+       */
+      const credit = creditForLanding(
+        target.id,
+        landed,
+        params.srcId,
+        effectById(effectId)?.status,
+      );
+      if (credit !== null) talentEngine.noteAfflicted(credit);
       return landed;
     };
   };

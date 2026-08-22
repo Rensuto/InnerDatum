@@ -7,6 +7,7 @@ import {
   ALCHEMIST,
   INSPECTOR,
   WATCHMAN,
+  CLASSES,
   classById,
   createContentTalentEngine,
   createTalentBook,
@@ -507,11 +508,19 @@ describe('who owes a class choice', () => {
 
     const rows = options?.['options'];
     if (!Array.isArray(rows)) throw new Error('the class_options frame carried no options');
-    expect(rows.map((row: { id?: unknown }) => String(row.id))).toEqual([
-      WATCHMAN.id,
-      INSPECTOR.id,
-      ALCHEMIST.id,
-    ]);
+    /**
+     * EVERY CLASS THAT SHIPS, IN THE ORDER `CLASSES` LISTS THEM — built from the
+     * registry rather than spelled out.
+     *
+     * The property is that the picker offers ALL of them and offers them in the
+     * order the content declares. A literal states neither: it silently becomes
+     * a partial list the day a class is added, which is the one day the picker
+     * is most likely to be missing one. This spelled out three and the Redactor
+     * made it four.
+     */
+    expect(rows.map((row: { id?: unknown }) => String(row.id))).toEqual(
+      CLASSES.map((definition) => definition.id),
+    );
   });
 
   it('offers it when the restore names no class at all', async () => {

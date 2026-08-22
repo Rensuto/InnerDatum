@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   GENERIC_PASSIVES,
   ALCHEMIST,
+  REDACTOR,
   INSPECTOR,
   WATCHMAN,
   createContentTalentEngine,
@@ -355,6 +356,32 @@ const CASES: readonly ScalingCase[] = [
   singleTargetCase('shin_crack', WATCHMAN, 'damage dealt', '80%', 1),
   singleTargetCase('pistol_whip', INSPECTOR, 'damage dealt', '50%', 1),
   singleTargetCase('line_of_enquiry', INSPECTOR, 'damage dealt', '40%', 4),
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE REDACTOR'S SIX, AND EVERY ONE OF THEM THROWS A SMALL NUMBER.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The authored constants here are the lowest in the file — 30% for `expunge`
+   * against `crude_blow`'s 100% — and that is the class rather than a mistake
+   * in the tuning. A Redactor's turn is a MARK; the damage is what the mark
+   * rode in on, and `INK_PER_MARK` pays for the mark landing rather than for
+   * the figure. These cases still measure the figure, because the figure is
+   * what this file is an instrument for, and a mark whose damage silently
+   * stopped scaling would be as dishonest here as anywhere else.
+   */
+  singleTargetCase('strike_out', REDACTOR, 'damage dealt', '55%', 4),
+  singleTargetCase('redaction', REDACTOR, 'damage dealt', '35%', 4),
+  singleTargetCase('deposition', REDACTOR, 'damage dealt', '40%', 4),
+  singleTargetCase('final_draft', REDACTOR, 'damage dealt', '140%', 4),
+  singleTargetCase('struck_from_the_record', REDACTOR, 'damage dealt', '90%', 4),
+  /**
+   * EXPUNGE IS A BALL AND IS MEASURED ON ONE BODY, for the reason
+   * `truncheon_sweep` states above: a case with three husks in the radius would
+   * grow when the multiplier did AND when it did not, because three times a
+   * flat number rises too. One body makes the number under test per-target.
+   */
+  singleTargetCase('expunge', REDACTOR, 'damage dealt per body', '30%', 4),
 
   {
     /**

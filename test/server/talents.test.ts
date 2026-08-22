@@ -339,7 +339,19 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * ceiling, a class owns a talent that can be seen in the panel and never
      * put on a key — and nothing throws, the bar just quietly stops.
      */
-    expect(CLASSES).toHaveLength(3);
+    /**
+     * NO LITERAL CLASS COUNT HERE, and it used to say three.
+     *
+     * The test two below states the rule this one was breaking: "DISTINCT is the
+     * property; the COUNT is whatever the content is. A literal here says nothing
+     * a reader can check and fails on every addition." A fourth class is an
+     * addition, and this line failed on it while the bounds it exists to check
+     * were all satisfied.
+     *
+     * What is asserted instead is that the loop had something to walk — an empty
+     * `CLASSES` would otherwise pass every bound vacuously.
+     */
+    expect(CLASSES.length, 'there are no classes to check').toBeGreaterThan(0);
     for (const definition of CLASSES) {
       expect(definition.loadout.length, definition.id).toBeGreaterThanOrEqual(
         TALENTS_PER_CLASS_MIN,

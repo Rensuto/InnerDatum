@@ -152,6 +152,16 @@ export const ClassId = {
   Watchman: 'watchman',
   Inspector: 'inspector',
   Alchemist: 'alchemist',
+  /**
+   * THE FOURTH, AND THE ONE THAT TURNS ON A SUBSYSTEM THAT SHIPPED INERT.
+   *
+   * `ResourceKind.Ink`, `INK_PER_MARK`, `INK_PER_TURN` and `noteAfflicted` all
+   * landed before this id did — written, wired from `main.ts`'s status applier,
+   * tested, and reachable by nothing, because a resource with no class that
+   * declares it is a branch no sheet can ever take. This line is what makes the
+   * rest of it run.
+   */
+  Redactor: 'redactor',
 } as const;
 export type ClassId = (typeof ClassId)[keyof typeof ClassId];
 

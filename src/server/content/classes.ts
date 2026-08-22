@@ -123,6 +123,17 @@ import { longHours } from '../talents/long_hours.ts';
 import { bedsideManner } from '../talents/bedside_manner.ts';
 import { measuredDoses } from '../talents/measured_doses.ts';
 import { issuedKit } from '../talents/issued_kit.ts';
+import { closedLedger, openLedger } from '../talents/ledger_stances.ts';
+import { deposition } from '../talents/deposition.ts';
+import { expunge } from '../talents/expunge.ts';
+import { finalDraft } from '../talents/final_draft.ts';
+import { indelible } from '../talents/indelible.ts';
+import { marginalia } from '../talents/marginalia.ts';
+import { redaction } from '../talents/redaction.ts';
+import { sealedRecord } from '../talents/sealed_record.ts';
+import { strikeOut } from '../talents/strike_out.ts';
+import { struckFromTheRecord } from '../talents/struck_from_the_record.ts';
+import { weightOfPrecedent } from '../talents/weight_of_precedent.ts';
 import { lightOnTheFeet } from '../talents/light_on_the_feet.ts';
 import { rangeTime } from '../talents/range_time.ts';
 import { unflinching } from '../talents/unflinching.ts';
@@ -590,11 +601,108 @@ export const ALCHEMIST: ClassDef = {
 };
 
 // ---------------------------------------------------------------------------
+// The Redactor -- ranged control | Ink
+// ---------------------------------------------------------------------------
+
+/**
+ * THE FOURTH, AND THE ONE THAT MAKES AN EXISTING SUBSYSTEM RUN.
+ *
+ * `ResourceKind.Ink`, `INK_PER_MARK`, `INK_PER_TURN`, the regen entry and
+ * `noteAfflicted` all shipped before this definition did -- written, wired from
+ * `main.ts`'s status applier, tested, and reachable by nothing, because a
+ * resource that no class declares is a branch no sheet can take. The client had
+ * its pip art key and its label for it too (ui/resource.ts). This is the line
+ * that turns all of it on.
+ *
+ * ═══ WHAT THE CLASS IS ═══
+ * A clerk who decides what the record says. Every active it owns puts a
+ * detrimental effect on something, and every one of those pays `INK_PER_MARK`
+ * when it LANDS -- so the class is poor when nothing is wrong and rich when a
+ * great deal is. `ResourceKind.Ink`'s own note has said so since before there
+ * was anything to say it about.
+ *
+ * ═══ WILL AND CUNNING, BECAUSE MINDPOWER IS FED BY BOTH ═══
+ * Combat.lua:2076, ported verbatim: `mindpower = combat_mindpower + wil * 0.7 +
+ * cun * 0.4`. It is the only power in the game fed by two stats and the weights
+ * sum above 1.0, so splitting beats pouring. The two trees gate on exactly those
+ * two -- `ledger/redaction` on Cunning, `ledger/testimony` on Will -- which
+ * makes the class's stat spread the shape the engine already rewards rather
+ * than flavour laid on top of it. `indelible.ts` makes the full argument.
+ *
+ * ═══ THE FRAILEST BODY THAT SHIPS, AND NO ARMOUR ANSWER ═══
+ * Life rating 8 against the Watchman's, and nothing in either tree raises
+ * armour. `closed_ledger` and `weight_of_precedent` raise the MENTAL and SPELL
+ * saves and say in writing that they do nothing about a stick. A controller who
+ * could also hold a line would have no reason to stand anywhere else.
+ */
+export const REDACTOR: ClassDef = {
+  id: ClassId.Redactor,
+  name: 'The Redactor',
+  description:
+    'Keeps the file, and decides what is in it. Marks things so they are less true, ' +
+    'and is paid in ink every time a mark takes.',
+  sprite: 'chr_player_redactor_s',
+  downedSprite: 'chr_player_redactor_downed_s',
+  maxHp: 48,
+  /** 8 -- under the Alchemist's 9 and the Inspector's 10. See the header. */
+  lifeRating: 8,
+  hpRegen: 0.5,
+  resource: ResourceKind.Ink,
+  maxAp: BASE_MAX_AP,
+  maxMp: BASE_MAX_MP,
+  combat: {
+    /** Will first, Cunning close behind -- the 0.7/0.4 weighting, as stats. */
+    stats: { wil: 22, cun: 20, con: 13, dex: 12, mag: 10, str: 10 },
+    /** Mental save only. This class has no armour answer and is not getting one. */
+    mods: { mentalResist: 4 },
+    weapon: {
+      // A marking stylus. `damMod` is where the identity lives: the same
+      // `combatDamage` curve everyone else uses, fed by the two stats that feed
+      // mindpower, in the same order.
+      dam: 15,
+      damRange: 1.15,
+      damMod: { wil: 0.5, cun: 0.3 },
+    },
+    /** The range every active in the class shares. */
+    range: 6,
+    minRange: 0,
+    damageType: DamageType.Darkness,
+  },
+  loadout: [
+    // ─── REDACTION, the tree that earns. ───
+    strikeOut,
+    redaction,
+    expunge,
+    finalDraft,
+    // ─── TESTIMONY, the tree that spends and endures. ───
+    deposition,
+    struckFromTheRecord,
+    // ─── THE STANCES. Two on one slot, so raising either lowers the other;
+    //     they go on the bar because a sustain is toggled through the ordinary
+    //     talent key and so needs a slot. See `ledger_stances.ts`. ───
+    openLedger,
+    closedLedger,
+  ],
+  /**
+   * The mark, the passive that makes marks land, one stance, and the kit.
+   *
+   * OPENS BOTH TREES, which `birth-talents.test.ts` requires and which matters
+   * here more than usual: a Redactor who could not reach `ledger/testimony` on
+   * day one would have no stance, and the stance reserve is the decision the
+   * class is built around. See `ClassDef.birthTalents`.
+   */
+  birthTalents: [strikeOut, indelible, openLedger, issuedKit],
+  passives: [indelible, marginalia, weightOfPrecedent, sealedRecord],
+  // A marker first, and hard to unwrite second.
+  masteries: { 'ledger/redaction': SIGNATURE, 'ledger/testimony': SUPPORTING },
+};
+
+// ---------------------------------------------------------------------------
 // The registry
 // ---------------------------------------------------------------------------
 
-/** The three, in the order the art was cut and the order the picker shows them. */
-export const CLASSES: readonly ClassDef[] = [WATCHMAN, INSPECTOR, ALCHEMIST];
+/** The four, in the order the art was cut and the order the picker shows them. */
+export const CLASSES: readonly ClassDef[] = [WATCHMAN, INSPECTOR, ALCHEMIST, REDACTOR];
 
 /**
  * KEYED BY `string`, NOT BY `ClassId`, AND THAT IS THE POINT OF THE LOOKUP.
