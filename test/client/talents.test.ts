@@ -754,6 +754,87 @@ describe('the description column', () => {
     expect(talentPanelGeometry(narrow, talentPanelRows(view()), NO_SCROLL).detail).toBeNull();
   });
 
+  it('never spends width on prose that the grid still needs', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE DEFECT NOTHING IN THIS FILE COULD SEE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The pane was taken the moment its pieces fitted — `fullW` 622 — so a
+     * thousand-pixel window showed TWO columns of disciplines while spending 280
+     * pixels on a description the hover card already answers. Every test here
+     * passed throughout: they check that the pane appears, that it is tall
+     * enough, and that it costs no ROWS. Nobody asked what it costs in COLUMNS.
+     *
+     * Measured through the real geometry, eight disciplines:
+     *
+     *     before  900=2  960=2  1024=2  1100=2  1152=2  1280=3  1440=4
+     *     after   900=3  960=3  1024=3  1100=3  1152=2  1280=3  1440=4
+     *
+     * ═══ AND WHY THIS IS NOT A MONOTONICITY TEST ═══
+     * I wrote that first. It is not achievable and it is worth writing down why:
+     * the pane is a FIXED width and the grid is width-packed, so taking it
+     * always costs about a column. The grid's own curve without a pane runs
+     * 900=3 1152=4 1440=5 1920=7 — about one above the with-pane curve
+     * everywhere — so there is NO threshold at which the pane appears for free.
+     * A monotonic layout would mean never showing the pane at all.
+     *
+     * What IS true, and is what this asserts: the pane never appears on a window
+     * upstream would have given a tooltip, and where it does appear it costs the
+     * grid at most one column.
+     */
+    const many = view({
+      loadout: Array.from({ length: 8 }, (_unused, i) =>
+        talent({
+          id: `talent:probe_${String(i)}`,
+          name: `Probe ${String(i)}`,
+          tree: `probe/tree_${String(i)}`,
+          treeName: `Tree ${String(i)}`,
+        }),
+      ),
+      passives: [],
+    });
+
+    const at = (width: number): { cols: number; pane: boolean; panelW: number } => {
+      const rect = talentPanelRect({ width, height: 900, top: 60, bottom: 820 });
+      if (rect === null) return { cols: 0, pane: false, panelW: 0 };
+      const g = talentPanelGeometry(rect, talentPanelRows(many), NO_SCROLL);
+      const cats = g.placed.filter((row) => row.row.kind === TalentRowKind.Category);
+      const firstY = cats.length === 0 ? 0 : Math.min(...cats.map((row) => row.rect.y));
+      return {
+        cols: cats.filter((row) => row.rect.y === firstY).length,
+        pane: g.detail !== null,
+        panelW: rect.w,
+      };
+    };
+
+    // ═══ NO PANE ON A PANEL NARROWER THAN UPSTREAM'S THOUSAND ═══
+    // LevelupDialog.lua:90 — `if game.w * 0.9 >= 1000 then self.no_tooltip = true`.
+    for (const width of [640, 768, 900, 1024, 1100]) {
+      const seen = at(width);
+      expect(seen.pane, `${String(width)} -> panel ${String(seen.panelW)}`).toBe(false);
+    }
+    for (const width of [1280, 1440, 1920]) {
+      expect(at(width).pane, String(width)).toBe(true);
+    }
+
+    /**
+     * ═══ AND WHERE IT APPEARS, THE GRID IS STILL WORTH LOOKING AT ═══
+     * The pane costs about a column wherever it lands (see the note above), so
+     * the guard is a FLOOR on what is left rather than a comparison against a
+     * layout that does not exist. Two columns is the floor the original
+     * `PANEL_W_STATS` argument was built on — a panel that can hold the pane and
+     * only ONE strip has become the reserved strip that was deleted, on the
+     * other axis.
+     */
+    for (const width of [1280, 1440, 1920]) {
+      expect(at(width).cols, `${String(width)} columns beside the pane`).toBeGreaterThanOrEqual(2);
+    }
+
+    // ═══ AND THE GRID STILL GROWS WITH THE WINDOW OVERALL ═══
+    expect(at(1920).cols).toBeGreaterThan(at(640).cols);
+  });
+
   it('takes width from the panel and never a row from the grid', () => {
     // ═══ THE ASSERTION THAT KEEPS THE OLD ARGUMENT HONEST ═══
     // The strip that was removed cost HEIGHT. If this ever starts costing rows,

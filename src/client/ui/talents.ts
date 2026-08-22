@@ -311,15 +311,32 @@ const CLOSE_PX = 13;
  * width above this was widened to fix.
  */
 /**
- * 266 AND NOT 268, WHICH IS TWO PIXELS CHOSEN BY MEASUREMENT.
+ * 266, and the two pixels it was haggled over no longer decide anything.
  *
- * The threshold is `PANEL_W + COL_GAP + DETAIL_W + PANEL_MARGIN * 2`, and at 268
- * that lands on 774 — which puts 772x480, a size this client's own viewport
- * table tests at, two pixels the wrong side of having a description column. 266
- * moves the threshold to 772 exactly. Two pixels of prose against a whole common
- * window is not a close call.
+ * This note read: *"266 AND NOT 268 ... at 268 the threshold lands on 774, which
+ * puts 772x480, a size this client's own viewport table tests at, two pixels the
+ * wrong side of having a description column."* That was a real measurement of a
+ * threshold made of THIS number. The threshold is `DETAIL_MIN_PANEL_W` now, so
+ * the width of the column and the window that earns one are separate decisions —
+ * which is why 772x480 lands firmly on the no-column side rather than by two
+ * pixels, and why changing this number cannot move a threshold again.
  */
 const DETAIL_W = 266;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW WIDE THE PANEL MUST BE BEFORE IT SPENDS 266 PIXELS ON PROSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported verbatim from LevelupDialog.lua:90 — `if game.w * 0.9 >= 1000 then
+ * self.no_tooltip = true end`. Upstream's dialog IS `game.w * 0.9`, which is
+ * what `talentPanelRect` computes, so the comparison is the same one: a
+ * thousand pixels of PANEL, not of window.
+ *
+ * Below it upstream keeps the floating tooltip and gives the list every pixel.
+ * So do we — `talentTipAt` is that tooltip and it answers the same question.
+ */
+const DETAIL_MIN_PANEL_W = 1000;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1318,7 +1335,61 @@ export function talentPanelGeometry(
     : null;
   const afterStats = hasStats ? STATS_W + COL_GAP : 0;
 
-  const hasDetail = fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W + COL_GAP + DETAIL_W;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT NEEDS A WIDE PANEL, NOT MERELY A PANEL THE PIECES FIT IN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from LevelupDialog.lua:89-91, which is the whole rule upstream has:
+   *
+   *     Dialog.init(self, ..., game.w * 0.9, game.h * 0.9, ...)
+   *     if game.w * 0.9 >= 1000 then self.no_tooltip = true end
+   *
+   * The in-dialog description REPLACES the floating tooltip, and it only does so
+   * once the dialog is a thousand pixels wide. Below that upstream shows the
+   * tooltip and gives the list the whole width.
+   *
+   * ═══ OURS TRIGGERED AS SOON AS THE PIECES FITTED, WHICH IS FAR TOO EARLY ═══
+   * The test was "do two grid columns, the stats strip and the pane all fit",
+   * satisfied at `fullW` 622. Measured through this very function, over a
+   * character holding eight disciplines, columns of talent trees by viewport:
+   *
+   *     before  900=2  960=2  1024=2  1100=2  1152=2  1280=3  1440=4  1920=5
+   *     after   900=3  960=3  1024=3  1100=3  1152=2  1280=3  1440=4  1920=5
+   *
+   * A THOUSAND-PIXEL-WIDE WINDOW WAS SHOWING TWO COLUMNS OF DISCIPLINES while
+   * spending 280 pixels on a description the hover card already gives. Every
+   * width in the range gains one, and none loses.
+   *
+   * ═══ THE STEP AT THE THRESHOLD IS INHERENT, AND IS NOT A BUG TO CHASE ═══
+   * The pane is a FIXED 266 and the grid is width-packed, so taking it always
+   * costs about one column — the grid's own curve without it runs 900=3
+   * 1152=4 1440=5 1920=7, roughly one above the with-pane curve everywhere.
+   * There is therefore NO threshold at which the pane can appear for free: the
+   * count steps down by one wherever it lands. Raising the threshold only moves
+   * the step to a wider window and costs every window below it a column of
+   * prose it had.
+   *
+   * So the step is priced, not eliminated, and 1000 is where upstream prices it.
+   * `never costs the grid more than one column` below is the guard on that.
+   *
+   * ═══ THE DECISION THAT ADDED THIS COLUMN RESTED ON A PREMISE THAT MOVED ═══
+   * DECISIONS.md, "The talent screen gets ToME's description column": *"A column
+   * costs WIDTH, which the grid cannot use anyway: it packs into two fixed
+   * columns and a third will not fit."*
+   *
+   * True when written. The grid stopped packing into two fixed columns in a
+   * later pass — see the note under `columns` below, which records that the old
+   * `innerW >= COL_W * 2 + COL_GAP ? 2 : 1` rule was "costing whole talent
+   * trees". The grid uses every pixel it is given now, so the one reason the
+   * column was affordable is gone, and the threshold goes back to upstream's.
+   *
+   * The hover card still stands up wherever the column stands down — the
+   * geometry owns that decision and this is still the single place it is made.
+   */
+  const hasDetail =
+    rect.w >= DETAIL_MIN_PANEL_W &&
+    fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W + COL_GAP + DETAIL_W;
   const detail: PanelRect | null = hasDetail
     ? {
         x: x + fullW - DETAIL_W,
