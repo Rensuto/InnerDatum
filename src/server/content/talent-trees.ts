@@ -302,6 +302,35 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
   },
   {
     /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE REDACTOR'S THIRD — corrections, including to where you were standing.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `ledger/redaction` earns and `ledger/testimony` spends, and between them
+     * the class had eleven things to do TO a body and not one place to stand.
+     * A Redactor is life rating 8 with no armour answer by design; the turn
+     * something closed the gap, it had no move at all.
+     *
+     * ═══ IT IS THE ALCHEMIST'S THIRD-TREE PROBLEM WITH A DIFFERENT ANSWER ═══
+     * `ashwick/loads` deepened three buttons rather than adding more, because
+     * that class already had six things to press and no reason to press them
+     * differently. This class's gap is not variety, it is POSITION — so the
+     * third tree adds the axis the other two do not touch, and two of its three
+     * actives are worth pressing with nothing in range at all.
+     *
+     * CUNNING, shared with `ledger/redaction` rather than reaching for a third
+     * stat. `combatMindpower` is 0.7 Wil + 0.4 Cun and nothing else this class
+     * owns cares about a third; a tree gated on Dexterity would be five talents
+     * asking a Redactor to raise a stat that moves none of their numbers.
+     */
+    id: 'ledger/errata',
+    mastery: 1,
+    name: 'Errata',
+    classId: ClassId.Redactor,
+    blurb: 'Corrections to the record, including where you were standing.',
+  },
+  {
+    /**
      * THE ONE EVERY CLASS CARRIES. See `TalentTree.classId` for why it is shared
      * rather than tripled, and `talent-trees.test.ts` for why it is allowed to
      * be entirely passive when a class tree is not.

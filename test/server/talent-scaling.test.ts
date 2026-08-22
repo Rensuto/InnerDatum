@@ -383,6 +383,80 @@ const CASES: readonly ScalingCase[] = [
    */
   singleTargetCase('expunge', REDACTOR, 'damage dealt per body', '30%', 4),
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE ERRATA TREE MOVES A BODY RATHER THAN A HIT POINT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Three of the Redactor's talents deal no damage at all, so `damageOf` reads
+   * 0 at every rank and the ordinary case shape would report them as flat when
+   * they are not. What scales is the DISTANCE, and `TalentUseResult.moved`
+   * already carries it — `netMoves` drops any entry whose from and to are the
+   * same tile, so this counts steps that actually happened rather than steps
+   * that were asked for.
+   *
+   * A LONG EMPTY CORRIDOR, on purpose. These walk through `world.tryMove`, so a
+   * wall or a body silently shortens the answer and the measurement would be of
+   * the room rather than of the talent.
+   */
+  ...(
+    [
+      { bare: 'errata', authored: '2 tiles' },
+      { bare: 'excise', authored: '2 tiles' },
+      { bare: 'recension', authored: '3 tiles' },
+    ] as const
+  ).map(({ bare, authored }) => ({
+    bare,
+    moves: 'tiles actually stepped',
+    authored,
+    cast: (level: number) => {
+      const f = fixture();
+      /**
+       * MID-GRID, because two of these WALK AWAY and the edge is a wall.
+       *
+       * Placed at 2,2 the caster had two tiles of room behind it, so `excise`
+       * retreated exactly two at every rank — capped by the fixture rather than
+       * by the talent — and the case reported a talent that does not scale. The
+       * grid is 16 wide; 8,8 leaves room for the longest retreat any rank buys.
+       */
+      const caster = f.add(REDACTOR, 'caster', 8, 8);
+      // `excise` names a BODY and steps away from it; the other two name ground.
+      const husk = f.addMonster('husk', 9, 8);
+      f.setLevel('caster', bare, level);
+      f.refill('caster');
+      /**
+       * AIMED INSIDE THE TALENT'S OWN RANGE. The first version of this pointed
+       * at (2,20): outside the 16x16 fixture AND past `errata`'s range of 5, so
+       * every cast came back refused and the case reported a flat 0 at both
+       * ranks — a talent measured as broken by a test that never let it fire.
+       *
+       * `errata` reaches 5 and `recension` 6, so the far edge of each is the
+       * honest aim: it is the longest walk the talent is allowed to ask for.
+       */
+      const aim =
+        bare === 'excise'
+          ? { x: husk.x, y: husk.y, actorId: husk.id }
+          : { x: 8, y: 8 + (bare === 'recension' ? 6 : 5) };
+      const result = useTalent(f.engine, caster, talentId(bare), aim, f.ctx);
+      /**
+       * THE DISTANCE, NOT THE HEADCOUNT. `netMoves` returns one entry per ACTOR
+       * that ended somewhere new — a Map keyed by id — so `moved.length` is 1
+       * whether the caster walked one tile or six, and the first version of this
+       * case read a flat 1 at every rank and called the talent broken.
+       *
+       * The entry carries `from` and `to`; the tiles walked is the Chebyshev
+       * span between them, which is what `stepToward` counts out one step at a
+       * time.
+       */
+      const step = result.ok ? result.moved.find((m) => m.id === caster.id) : undefined;
+      const observed =
+        step === undefined
+          ? 0
+          : Math.max(Math.abs(step.to.x - step.from.x), Math.abs(step.to.y - step.from.y));
+      return { observed, result, fixture: f };
+    },
+  })),
+
   {
     /**
      * THE SWEEP. One body adjacent, so the number under test is PER-TARGET

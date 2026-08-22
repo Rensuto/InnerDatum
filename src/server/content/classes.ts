@@ -132,6 +132,12 @@ import { marginalia } from '../talents/marginalia.ts';
 import { redaction } from '../talents/redaction.ts';
 import { sealedRecord } from '../talents/sealed_record.ts';
 import { strikeOut } from '../talents/strike_out.ts';
+import { betweenTheLines } from '../talents/between_the_lines.ts';
+import { errata } from '../talents/errata.ts';
+import { excise } from '../talents/excise.ts';
+import { looseLeaf } from '../talents/loose_leaf.ts';
+import { recension } from '../talents/recension.ts';
+import { setInStone } from '../talents/set_in_stone.ts';
 import { struckFromTheRecord } from '../talents/struck_from_the_record.ts';
 import { weightOfPrecedent } from '../talents/weight_of_precedent.ts';
 import { lightOnTheFeet } from '../talents/light_on_the_feet.ts';
@@ -682,6 +688,11 @@ export const REDACTOR: ClassDef = {
     //     talent key and so needs a slot. See `ledger_stances.ts`. ───
     openLedger,
     closedLedger,
+    // ─── ERRATA, the third tree. The only axis the other two do not touch:
+    //     where the Redactor is standing. See `ledger/errata`. ───
+    errata,
+    excise,
+    recension,
   ],
   /**
    * The mark, the passive that makes marks land, one stance, and the kit.
@@ -692,7 +703,15 @@ export const REDACTOR: ClassDef = {
    * class is built around. See `ClassDef.birthTalents`.
    */
   birthTalents: [strikeOut, indelible, openLedger, issuedKit],
-  passives: [indelible, marginalia, weightOfPrecedent, sealedRecord],
+  passives: [
+    indelible,
+    marginalia,
+    weightOfPrecedent,
+    sealedRecord,
+    looseLeaf,
+    setInStone,
+    betweenTheLines,
+  ],
   // A marker first, and hard to unwrite second.
   masteries: { 'ledger/redaction': SIGNATURE, 'ledger/testimony': SUPPORTING },
 };
