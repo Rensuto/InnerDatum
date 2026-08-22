@@ -838,6 +838,32 @@ const CASES: readonly ScalingCase[] = [
       return { observed: before - watchman.x, result, fixture: f };
     },
   },
+  {
+    /**
+     * THE OTHER HALF OF `technique/mobility`: Disengage pushes away and Tumble
+     * closes in, and a tree called "getting there, and getting out" needs both.
+     *
+     * MEASURED AT FULL HEALTH, deliberately. `HURT_BONUS` adds a flat tile below
+     * a quarter, and a fixture that happened to spawn hurt would report the same
+     * number at two adjacent ranks and read as a talent that stopped scaling.
+     */
+    bare: 'downhill',
+    moves: 'tiles tumbled',
+    authored: '2 tiles',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 3, 5, ['generic/legwork']);
+      f.setLevel('caster', 'downhill', level);
+      f.refill('caster');
+      const before = watchman.x;
+      // Aimed at the EDGE OF RANGE — six tiles, which is further than any rank
+      // can walk — so the rank is what stops the tumble rather than the
+      // destination, the mistake `excise.ts` records. Aiming past the range
+      // instead makes `canUseTalent` refuse and the case reports `ok: false`.
+      const result = useTalent(f.engine, watchman, talentId('downhill'), { x: 9, y: 5 }, f.ctx);
+      return { observed: watchman.x - before, result, fixture: f };
+    },
+  },
 ];
 
 describe('every talent level moves a number — the honesty gate', () => {

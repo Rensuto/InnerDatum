@@ -11,6 +11,7 @@ import {
   LEGWORK,
   disengageAt,
   downhill,
+  flightAt,
   kickOff,
   lightFeet,
   longStride,
@@ -119,13 +120,37 @@ describe('the movement talents', () => {
     expect(new Set(steps).size, steps.join(',')).toBe(steps.length);
   });
 
-  it('Downhill pays only below a quarter, and not one point above it', () => {
-    // A stated threshold rather than a ramp: movement is a whole step or it is
-    // nothing, so a ramp would round to the same integer across most of the bar.
-    expect(downhill.passive?.(3, viewOf({ hpFraction: () => 0.26 }))?.mods?.moveMp ?? 0).toBe(0);
-    expect(
-      downhill.passive?.(3, viewOf({ hpFraction: () => 0.25 }))?.mods?.moveMp ?? 0,
-    ).toBeGreaterThan(0);
+  it('Downhill is the OTHER button, and keeps its threshold as a rider', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * IT WAS A PASSIVE, AND UPSTREAM SPENDS A BUTTON HERE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `technique/mobility` — the tree this file's own Kick Off cites — is
+     * Disengage, Evasion and Tumble, all `action =`, plus Trained Reactions as
+     * `mode = "sustained"`. Kick Off is Disengage, the getting OUT. This is
+     * Tumble (mobility.lua:239), the getting THERE, and until it existed nothing
+     * in a discipline called "Getting there, and getting out" could be pressed
+     * to get anywhere.
+     *
+     * ═══ AND THE THRESHOLD SURVIVED THE CONVERSION ═══
+     * The old passive's note argued it: "This is the talent for the turn you
+     * decide to leave, and it should not be paying during the ordinary business
+     * of being hit." A turn you DECIDE on is exactly what a button is. So the
+     * quarter is the rider now rather than the whole talent — the tumble works
+     * at any health and goes a tile further on the turn it was named for.
+     */
+    expect(downhill.passive).toBeUndefined();
+    expect(downhill.onUse).toBeTypeOf('function');
+    expect(downhill.kind).toBe('active');
+    // AP ONLY: four classes may buy this tree and they spend four resources.
+    expect(downhill.cost.resource ?? 0).toBe(0);
+    // Every rank moves the distance, which 2..4 did not — see `flightAt`.
+    const steps = [1, 2, 3, 4, 5].map((rank) => flightAt(rank));
+    expect(new Set(steps).size, steps.join(',')).toBe(steps.length);
+    // The SENTENCE is checked in talent-scaling.test.ts, which has an actor to
+    // hand: `authored` pins '2 tiles' at rank 1 and the descNext rule pins that
+    // every rank reads differently.
   });
 });
 

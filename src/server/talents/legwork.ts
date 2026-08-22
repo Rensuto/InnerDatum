@@ -347,16 +347,63 @@ export const lightFeet: Talent = {
 };
 
 // ---------------------------------------------------------------------------
-// DOWNHILL — the last of the movement, and the most conditional
+// DOWNHILL — the tree's other button, and upstream's Tumble
+// Ported from techniques/mobility.lua:239-262 (Tumble)
 // ---------------------------------------------------------------------------
 
-/** Below this much health it pays. A quarter — genuinely in trouble. */
+/** Below this much health it goes further. A quarter — genuinely in trouble. */
 const HURT = 0.25;
 
-/** Extra movement while badly hurt, at a rank. */
+/**
+ * Extra tiles while under that quarter.
+ *
+ * ═══ THE TALENT'S OLD IDENTITY, KEPT ═══
+ * This was a PASSIVE — "always on, below a quarter of your health, +1 movement"
+ * — and its note argued the threshold at length: "This is the talent for the
+ * turn you decide to leave, and it should not be paying during the ordinary
+ * business of being hit."
+ *
+ * A TURN YOU DECIDE ON IS A BUTTON, which is what upstream spends here (Tumble,
+ * mobility.lua:239, `action =`). The threshold survives the conversion as the
+ * rider rather than as the whole talent: the tumble works at any health, and it
+ * goes further on the turn it was named for. Flat rather than scaled, because
+ * movement is a whole step or it is nothing — the old note's own argument.
+ */
+const HURT_BONUS = 1;
+
+/**
+ * Tiles of dash, at a rank.
+ *
+ * Upstream is `range = combatTalentScale(t, 2, 4, "log")` (mobility.lua:255).
+ * Ours is 2..6 for `errata.ts`'s reason, which is now the third time this exact
+ * band has come up: 2..4 floors to 2,2,3,3,4, so ranks 1 and 2 buy nothing a
+ * player can read and neither do 3 and 4. `class-wiring.test.ts` refuses that
+ * ("descNext must not equal desc"). The distance is this talent's only scaling
+ * number, so it has to move every rank on its own.
+ */
+const DASH_LOW = 2;
+const DASH_HIGH = 6;
+
 export function flightAt(level: number): number {
-  return movementAt(level);
+  return Math.floor(combatTalentScale(level, DASH_LOW, DASH_HIGH, CURVE));
 }
+
+/** How far off the destination may be named. */
+const DOWNHILL_RANGE = 6;
+/** Two of six: a tumble is a step, not the round. */
+const DOWNHILL_AP = 2;
+/**
+ * Ported from mobility.lua:245 — `cooldown = combatTalentLimit(t, 4, 11, 5)`.
+ *
+ * UPSTREAM'S SLIDES FROM ELEVEN TO FIVE AND OURS CANNOT: `Talent.cooldownTurns`
+ * is one number for every rank. Taking eleven — upstream's value at rank ONE —
+ * is the conservative end and the one a reader can check against the Lua; taking
+ * the rank-five five would be handing a fresh buy the cooldown upstream only
+ * gives a maxed talent. What scales here is the distance, which is the number
+ * the honesty gate reads.
+ */
+const TUMBLE_COOLDOWN_ACTIONS = 11;
+const DOWNHILL_COOLDOWN = tomeCooldownToTurns(TUMBLE_COOLDOWN_ACTIONS);
 
 /**
  * DOWNHILL.
@@ -381,12 +428,43 @@ export const downhill: Talent = {
   name: 'Downhill',
   /** Tier 3 of its tree. See `src/shared/tiers.ts`. */
   tier: 3,
-  iconId: 'icon_passive_downhill',
-  passive: (level, view = EMPTY_PASSIVE_VIEW) =>
-    view.hpFraction() <= HURT ? { mods: { moveMp: flightAt(level) } } : {},
+  kind: TalentKind.Active,
+  iconId: 'icon_active_downhill',
+  cost: { ap: DOWNHILL_AP },
+  cooldownTurns: DOWNHILL_COOLDOWN,
+  targeting: {
+    shape: TargetShape.Tile,
+    range: DOWNHILL_RANGE,
+    minRange: 0,
+    radius: 0,
+    requiresLos: true,
+    /**
+     * A TILE, NOT A BODY — `errata.ts`'s note applies word for word: `Ally` is
+     * the shape's own affinity and not a claim about who is standing there. This
+     * names GROUND, and `tryMove` refuses an occupied tile like any other step.
+     */
+    affinity: Affinity.Ally,
+  },
+
+  onUse: (ctx, self, target) => {
+    const hurt = self.maxHp > 0 && self.hp / self.maxHp <= HURT;
+    const steps = flightAt(ctx.talentLevel) + (hurt ? HURT_BONUS : 0);
+    const moved = stepToward(ctx.world, self, target, steps);
+    // NOTHING MOVED IS A REFUSAL, NOT A SPENT TURN. `errata.ts`'s rule, and it
+    // matters more on the tier-3 escape: a body cornered against a wall must not
+    // be charged the AP and the cooldown for having tried.
+    if (moved === 0) return talentRefused(TalentRefusal.NoTarget);
+    return talentDone(
+      [],
+      [moved === 1 ? 'You go a step downhill.' : `You go ${String(moved)} downhill.`],
+    );
+  },
+
   describe: (_self, level) =>
-    `Always on, below a quarter of your health. ${String(flightAt(level))} more movement — the ` +
-    `turn you decide to leave, and not one before it.`,
+    `Tumble up to ${String(flightAt(level))} tiles toward a point within ${String(DOWNHILL_RANGE)} ` +
+    `— ${String(flightAt(level) + HURT_BONUS)} while below a quarter of your health. It walks, so ` +
+    `a wall still stops it, and a tumble that got nowhere costs nothing. ${String(DOWNHILL_AP)} AP, ` +
+    `${String(DOWNHILL_COOLDOWN)}-turn cooldown.`,
 };
 
 // ---------------------------------------------------------------------------
