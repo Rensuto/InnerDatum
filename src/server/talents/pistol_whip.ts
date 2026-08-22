@@ -49,6 +49,35 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * UPSTREAM CHARGES Focus FOR THIS AND WE DO NOT — RECORDED, NOT DECIDED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `2hweapon.lua:216, Stunning Blow` is ``stamina = 8``. The NUMBERS header above carried its
+ * cooldown, its damage curve and its effect across; the resource line was not
+ * carried, and nothing in this file ever said so.
+ *
+ * ═══ WHY IT MATTERS MORE THAN ONE TALENT'S PRICE ═══
+ * `tools/class-live.mjs` asks each class, over a socket, what it can spend at
+ * the level everybody starts at:
+ *
+ *     inspector  learned: Revolver Shot(0) | Pistol Whip(0)
+ *              NOTHING LEARNED SPENDS FOCUS
+ *
+ * This talent is the reason. A inspector opens with a full Focus bar, drawn
+ * prominently, that cannot be spent on anything until a tier-3 talent — while the
+ * Alchemist and the Redactor both spend theirs on the first button they press.
+ *
+ * ═══ AND IT IS NOT CHANGED HERE ═══
+ * Restoring the cost is a balance change to a game people are playing tonight,
+ * and the CONVERSION is a real question rather than a transcription: upstream's
+ * pools and ours are not the same size, and `RESOLVE_ON_STRUCK` is 6, so a cost
+ * near upstream's is two or three earned clauses per press. That is somebody's
+ * call to make deliberately. This note exists so it is made deliberately, at the
+ * line where it would be made, rather than rediscovered by writing a socket
+ * probe a third time.
+ */
 const AP_COST = 4;
 const COOLDOWN = 5;
 const MULT_LOW = 0.5;
