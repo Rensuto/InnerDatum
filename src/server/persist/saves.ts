@@ -3625,6 +3625,38 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
      * made even for a character whose file does not exist yet — that is the
      * whole point of asking here rather than reading a restore that is null.
      */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * EVERY CHARACTER OF THIS ACCOUNT THAT IS LIVE RIGHT NOW.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ═══ THE DISK IS NOT THE WHOLE TRUTH, AND MINTING AN ID DEPENDED ON IT ═══
+     * A new character's id comes from `nextCharacterId(rows)` in the gateway,
+     * and `rows` is `listCharacters` — a `readdir`. A character's first file is
+     * written by `savePlayersNow`, which is deliberately FIRE AND FORGET:
+     * `void store.saveCharacter(...)`, so that the frame a player is waiting for
+     * does not queue behind a disk.
+     *
+     * So there is a window, however short, in which a character EXISTS, is
+     * bound, is being played — and its file is not yet on disk. A second
+     * `hello { newCharacter: true }` inside that window reads an account that
+     * looks emptier than it is and is handed an id that is already taken.
+     * `chr_main` is the one an empty account gets, so the second character
+     * lands on the first one's file and the first is gone.
+     *
+     * This answers from MEMORY, which is where the truth is during that window.
+     * The two sources are unioned by the caller; neither is sufficient alone —
+     * the disk knows about characters nobody is playing, and this knows about
+     * characters the disk has not heard of yet.
+     */
+    boundCharacterIds(ownerId: string): readonly string[] {
+      const out: string[] = [];
+      for (const binding of bindings.values()) {
+        if (binding.ownerId === ownerId) out.push(binding.characterId);
+      }
+      return out;
+    },
+
     boundCharacter(actorId: string): string | undefined {
       return bindings.get(actorId)?.characterId;
     },

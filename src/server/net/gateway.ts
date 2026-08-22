@@ -1919,6 +1919,18 @@ export type PersistPort = {
    * file this build refused — both of them people whose evening is not being
    * written down, and neither of them somebody to hand an id to.
    */
+  /**
+   * EVERY CHARACTER OF THIS ACCOUNT THAT IS LIVE RIGHT NOW, from memory.
+   *
+   * Unioned with the disk listing before an id is minted: a character's first
+   * file is written fire-and-forget, so for a moment it exists without being on
+   * disk, and an id minted from the disk alone can collide with it. See the
+   * implementation in persist/saves.ts.
+   *
+   * OPTIONAL like every seam here — absent means "no live bindings known", which
+   * is the behaviour every fixture in the tree already has.
+   */
+  boundCharacterIds?(ownerId: string): readonly string[];
   boundCharacter?(actorId: string): string | undefined;
 };
 
@@ -6854,7 +6866,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * or a file is refused, count+1 starts returning ids that are already taken.
    * The rows include unplayable files precisely so this can see them.
    */
-  const nextCharacterId = (rows: readonly CharacterHeader[]): string | undefined => {
+  /**
+   * IDS THAT ARE SPOKEN FOR — on disk, or live in memory, or both.
+   *
+   * See `PersistPort.boundCharacterIds`. The disk knows about characters nobody
+   * is playing; memory knows about characters whose first write has not landed.
+   * An id minted against either one alone can collide with the other.
+   */
+  const takenCharacterIds = (
+    rows: readonly CharacterHeader[],
+    ownerId: string,
+  ): readonly string[] => {
+    const taken = new Set(rows.map((row) => row.id));
+    for (const id of opts.persist?.boundCharacterIds?.(ownerId) ?? []) taken.add(id);
+    return [...taken];
+  };
+
+  const nextCharacterId = (taken: readonly string[]): string | undefined => {
     /**
      * ═══ AN EMPTY ACCOUNT ASKS FOR NOTHING, WHICH MEANS `chr_main` ═══
      *
@@ -6870,10 +6898,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * `data/characters/` is already called. The first character of an account
      * has one name in every build, old and new.
      */
-    if (rows.length === 0) return undefined;
+    if (taken.length === 0) return undefined;
     let highest = 1;
-    for (const row of rows) {
-      const match = /^chr_(\d{4})$/.exec(row.id);
+    for (const id of taken) {
+      const match = /^chr_(\d{4})$/.exec(id);
       if (match === null) continue;
       const n = Number(match[1]);
       if (Number.isFinite(n) && n > highest) highest = n;
@@ -7057,7 +7085,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         app.log.info({ conn: session.connId }, 'ws closed while a character was being allocated');
         return;
       }
-      if (rows.length >= MAX_CHARACTERS_PER_ACCOUNT) {
+      /**
+       * COUNTED AND MINTED AGAINST THE SAME UNION, on purpose. A character whose
+       * first write has not landed is invisible to `rows` but is real, is being
+       * played, and holds an id — so counting it is what stops the cap being one
+       * short, and including it is what stops the next id colliding with it.
+       * See `takenCharacterIds`.
+       */
+      const taken = takenCharacterIds(rows, verified.ownerId);
+      if (taken.length >= MAX_CHARACTERS_PER_ACCOUNT) {
         // AT THE CAP, THE ANSWER IS THE LIST AGAIN — not an error frame with no
         // screen behind it. The client already draws `canCreate: false` with a
         // reason, so this lands the player back where they can act.
@@ -7065,7 +7101,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         sendRoster(session, rows);
         return;
       }
-      wantedCharacter = nextCharacterId(rows);
+      wantedCharacter = nextCharacterId(taken);
     }
 
     /**
