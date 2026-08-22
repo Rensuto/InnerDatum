@@ -193,6 +193,60 @@ function overlaps(a: Box | null | undefined, b: Box | null | undefined): boolean
 /** A band that comfortably holds the whole panel, strip included. */
 const ROOMY = { width: 800, height: 800, top: 20, bottom: 700 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE PANEL DOES AT THE FLOOR — which is not what its own comments said.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `DOLL_ROWS`' budget was worked out "against the 480-pixel floor", and the
+ * doll's shed-a-row branch called itself "unreachable at any viewport this
+ * client renders". The floor is 320: `DEFAULT_VIEWPORT` is `tilesH: 10` and
+ * `minLogicalH = tilesH * TILE_PX`. Three doll rows are 226 pixels plus 58 of
+ * panel chrome against a band of about 183, so the branch is the ORDINARY case
+ * on the smallest window.
+ *
+ * These cases exist because a comment cannot be run. Both halves are asserted —
+ * that the smallest window sheds AND that the real device size does not — so
+ * neither a layout change that quietly breaks 768x384 nor a comment that drifts
+ * back to 480 can pass unnoticed.
+ */
+describe('the paper doll at the sizes this client actually renders', () => {
+  /** 20x10 tiles at TILE_PX 32 — the smallest logical backbuffer there is. */
+  const FLOOR_W = 640;
+  const FLOOR_H = 320;
+  /** What a 1538x769 device lands on, and the size the char sheet is tuned to. */
+  const REAL_W = 768;
+  const REAL_H = 384;
+
+  function notesAt(w: number, h: number): readonly string[] {
+    const rect = inventoryPanelRect({ width: w, height: h, top: 20, bottom: h - 40 });
+    if (rect === null) throw new Error(`no panel at ${String(w)}x${String(h)}`);
+    const geometry = inventoryPanelGeometry(rect, inventoryPanelRows(view()));
+    return geometry.placed.flatMap((entry) =>
+      entry.row.kind === InventoryRowKind.Note ? [entry.row.text] : [],
+    );
+  }
+
+  it('sheds doll slots on the smallest window, and says how many', () => {
+    const notes = notesAt(FLOOR_W, FLOOR_H);
+    const hidden = notes.filter((note) => note.includes('hidden'));
+    expect(
+      hidden,
+      'the floor stopped shedding — if that is a fix, DOLL_ROWS’ budget needs re-running',
+    ).not.toEqual([]);
+    // AND IT COUNTS THEM. A bare "some hidden" would leave a player unable to
+    // tell one missing slot from three.
+    for (const note of hidden) expect(note).toMatch(/^\d+ hidden/);
+  });
+
+  it('shows the whole doll at the size a real device renders', () => {
+    expect(
+      notesAt(REAL_W, REAL_H).filter((note) => note.includes('hidden')),
+      'the doll is now shedding at 768x384, which no player should ever see',
+    ).toEqual([]);
+  });
+});
+
 function roomyRect() {
   const rect = inventoryPanelRect(ROOMY);
   if (rect === null) throw new Error('unreachable: the roomy band must hold a panel');

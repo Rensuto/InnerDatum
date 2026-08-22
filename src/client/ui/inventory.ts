@@ -277,10 +277,33 @@ const CAPTION_BASELINE = 6;
 /**
  * THE DOLL IS THREE ROWS AND THE COUNT IS ARITHMETIC, NOT TASTE.
  *
- * Measured against the smallest viewport this client will ever render at. The
- * logical backbuffer height is pinned to 480 by `minTilesH` in render/canvas.ts
- * (`tilesH = min(MAX_TILES_H, max(minTilesH, fitTilesH))`, canvas.ts:729-730), so
- * 480 is the floor rather than a comfortable case, and `panelBand` (main.ts:534-541)
+ * ═══ THE FLOOR IN THIS ARITHMETIC IS 480 AND THE REAL ONE IS 320 ═══
+ * Read the rest of this block as a budget against a COMFORTABLE window, not
+ * against the smallest one. It cites `minTilesH` for a 480-pixel backbuffer
+ * floor; `minTilesH` is `viewport.tilesH`, `DEFAULT_VIEWPORT` is
+ * `{ tilesW: 20, tilesH: 10 }`, and `minLogicalH = minTilesH * TILE_PX` is
+ * 10 * 32 = 320. Every figure below is 160 pixels too generous.
+ *
+ * At the real floor the band is about 183 and three rows plus this panel's own
+ * chrome need 284, so THE DOLL SHEDS ROWS THERE — which is exactly what the
+ * conclusion below says cannot happen. The drop policy in `inventoryPanelGeometry`
+ * is therefore load-bearing rather than theoretical, and its own comment saying
+ * the case is "unreachable at any viewport this client renders" is wrong in the
+ * same way and for the same reason.
+ *
+ * IT IS NOT FIXABLE BY LAYOUT. `CELL_PX` is 72 around 64-pixel art; shrinking it
+ * would resample pixel art at a non-integer scale, which is the one thing the
+ * backbuffer exists to prevent (render/canvas.ts). The band is what it is. So the
+ * floor gets a doll that says how many slots it is holding back, and that note is
+ * the feature rather than an apology — the block below is kept, corrected, because
+ * the reasoning about a FOURTH row is still right and still the reason there are
+ * three.
+ *
+ * The strip's own budget two hundred lines down measures against 640x320
+ * correctly. One file, two floors; this is the one that was never re-run.
+ *
+ * ─── the original budget, against 480 ───
+ * `panelBand` (main.ts:534-541)
  * gives back `height - HOTBAR_TOTAL_H - RESOURCE_H - LINE_H*2 - DOCK_MARGIN`:
  *
  *     480 - 88 - 18 - 28 - 3 = 343, band top ~17  ->  band 326
@@ -299,7 +322,8 @@ const CAPTION_BASELINE = 6;
  * shedding the tail row: the FEET slot would simply not be on the doll on the
  * most common small window, with one line of grey text to say so. So the doll is
  * three rows, and a fourth may not be added without moving the panel's whole
- * budget first.
+ * budget first — which is now understated rather than overstated, since at the
+ * real 320 floor even the third row is already being shed.
  */
 const DOLL_ROWS = 3;
 /** Three cells tall with two gaps between them, and no trailing gap. */
@@ -1534,11 +1558,14 @@ export function inventoryPanelGeometry(
 
     if (row.kind === InventoryRowKind.Doll) {
       // THE DOLL SHEDS GRID ROWS FROM THE TAIL, exactly as the bag sheds cell
-      // rows, and says how many slots went. Unreachable at any viewport this
-      // client renders — see `DOLL_ROWS`, where the budget is worked out against
-      // the 480-pixel floor — but a rect can be handed to this function by
-      // anything, and a doll silently missing three slots is precisely the "a gap,
-      // not a slot" failure the tab exists to prevent.
+      // rows, and says how many slots went.
+      //
+      // THIS SAID "UNREACHABLE AT ANY VIEWPORT THIS CLIENT RENDERS", citing
+      // `DOLL_ROWS`' budget "against the 480-pixel floor". The floor is 320 —
+      // `DEFAULT_VIEWPORT.tilesH` is 10 and `minLogicalH = tilesH * TILE_PX` —
+      // and at 320 this branch runs and sheds three cells. It is the ordinary
+      // case on the smallest window, not a defensive guard, which is why the
+      // note it produces has to be right.
       const fit = dollRowsThatFit(limit - cursor);
       if (fit === 0) {
         droppedCells += row.cells.length;
