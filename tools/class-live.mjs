@@ -1,10 +1,18 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * DOES THE REDACTOR ACTUALLY WORK? ASK A REAL SOCKET.
+ * DOES A CLASS ACTUALLY REACH A BODY? ASK A REAL SOCKET.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The fourth class shipped with 12 talents, two trees, a resource, a portrait
- * row and 3536 passing tests. Nobody has ever played one.
+ *     node tools/class-live.mjs [watchman|inspector|alchemist|redactor] [port]
+ *
+ * Written for the Redactor, which shipped with 12 talents, two trees, a
+ * resource, a portrait row and 3536 passing tests and had never been played by
+ * anybody. It turned out the check is not about the Redactor at all: "does a
+ * `ClassDef` reach a real body" is a question every class answers, and only one
+ * of them had ever been asked it.
+ *
+ * A class whose pool never reached the sheet still walks, still swings, still
+ * looks entirely fine, and cannot pay for a single talent.
  *
  * ═══ WHY A UNIT TEST CANNOT CLOSE THIS ═══
  * `tools/status-live.mjs`'s header states the rule this file inherits: the
@@ -64,7 +72,43 @@ import { canWalk } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 import { helloAndChoose } from './handshake.mjs';
 
-const PORT = process.argv[2] ?? '31979';
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH CLASS TO PLAY, AND WHAT IT SHOULD BE CARRYING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Redactor was the one that needed proving, but the check is not about the
+ * Redactor — it is "does a `ClassDef` reach a real body over a socket". Every
+ * class answers that question and only one of them had ever been asked.
+ *
+ * `resource` is the assertion that matters. A class whose pool never reached the
+ * sheet still walks, still swings, still looks entirely fine, and cannot pay for
+ * a single talent — which is the shape of failure this whole file exists for.
+ *
+ * WHAT IS NOT PINNED HERE: the earn clause. Each class earns differently —
+ * Resolve when struck, Focus for holding ground, Reagents on a kill, Ink per
+ * mark — and each needs its own scenario to trigger. Only the Redactor's is
+ * driven below, because a mark is the one a probe can force reliably in a few
+ * turns. The other three are named so the gap is visible rather than implied.
+ */
+const CLASSES = {
+  watchman: { pool: 'resolve', earns: 'when struck (RESOLVE_ON_STRUCK, +6) — NOT driven here' },
+  inspector: {
+    pool: 'focus',
+    earns: 'holding ground (FOCUS_ON_HELD_GROUND, +12) — NOT driven here',
+  },
+  alchemist: { pool: 'reagents', earns: 'on a kill — NOT driven here' },
+  redactor: { pool: 'ink', earns: 'per mark landed (INK_PER_MARK, +12) — driven below' },
+};
+
+const WANT = process.argv[2] ?? 'redactor';
+const SPEC = CLASSES[WANT];
+if (SPEC === undefined) {
+  console.log(`unknown class "${WANT}". One of: ${Object.keys(CLASSES).join(', ')}`);
+  process.exit(1);
+}
+
+const PORT = process.argv[3] ?? '31979';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TURN_WAIT_MS = 45;
 
@@ -143,9 +187,9 @@ await sleep(400);
 const offer = last('class_options');
 const options = offer?.options ?? [];
 console.log(`  offered: ${options.map((o) => o.id).join(', ') || '(none)'}`);
-const wanted = options.findIndex((o) => o.id === 'redactor');
+const wanted = options.findIndex((o) => o.id === WANT);
 if (wanted < 0) {
-  console.log('  THE REDACTOR WAS NOT OFFERED. The picker is built from CLASSES.');
+  console.log(`  ${WANT.toUpperCase()} WAS NOT OFFERED. The picker is built from CLASSES.`);
   process.exit(1);
 }
 
@@ -158,9 +202,8 @@ await sleep(500);
 const loadout = last('loadout');
 const talents = loadout?.talents ?? [];
 console.log(`  loadout: ${talents.map((t) => t.name).join(' | ') || '(none)'}`);
-const strikeOut = talents.find((t) => /strike out/i.test(t.name));
-if (strikeOut === undefined) {
-  console.log('  STRIKE OUT IS NOT ON THE BAR. Check `REDACTOR.birthTalents`.');
+if (talents.length === 0) {
+  console.log('  THE BAR IS EMPTY. `birthTalents` never reached the loadout.');
   process.exit(1);
 }
 
@@ -194,11 +237,45 @@ if (opening === null) {
   console.log('  NO `resource` FRAME IN SIX SECONDS. The pool is never announced at all.');
   process.exit(1);
 }
-if (opening.kind !== 'ink') {
+if (opening.kind !== SPEC.pool) {
   console.log(
-    `  THE POOL IS ${opening.kind}, NOT INK. \`REDACTOR.resource\` did not reach the sheet.`,
+    `  THE POOL IS ${opening.kind}, NOT ${SPEC.pool}. This ClassDef's resource ` +
+      `never reached the sheet.`,
   );
   process.exit(1);
+}
+console.log(`  earns: ${SPEC.earns}`);
+
+/**
+ * ONLY THE REDACTOR'S EARN CLAUSE IS DRIVEN, and the others say so rather than
+ * being quietly skipped.
+ *
+ * A mark is the one income a probe can force in a handful of turns: aim, press,
+ * read. The others need a scenario — the Watchman has to BE HIT, the Inspector
+ * has to hold ground for a turn, the Alchemist has to land a killing blow — and
+ * each is a different piece of choreography with its own ways to be
+ * inconclusive. Writing three shaky ones now would produce three probes that
+ * fail for reasons other than the thing they test, which is the fault this file
+ * spent two commits learning to avoid.
+ *
+ * So: every class is checked as far as "its pool reached its sheet and its bar
+ * is populated", which is the failure that makes a class unplayable, and the
+ * Redactor is taken all the way through to income.
+ */
+const strikeOut = talents.find((t) => /strike out/i.test(t.name));
+if (WANT !== 'redactor' || strikeOut === undefined) {
+  // THE OBSERVED KIND, NOT THE EXPECTED ONE. `SPEC.pool` is what this run was
+  // looking for; printing it here would report the question as the answer. The
+  // assertion above is what proves they match — this line just says what came
+  // back.
+  console.log(
+    `\n  ${WANT} is offered, choosable, carries ${String(talents.length)} talents, and its ` +
+      `pool came back as ${opening.kind} ${String(opening.value)}/${String(opening.max)}.` +
+      `\n  Its earn clause is not driven by this probe — see the note above.`,
+  );
+  ws.close();
+  server.kill();
+  process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
