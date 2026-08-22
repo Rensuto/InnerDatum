@@ -69,7 +69,34 @@ import type { ActorView } from '../../shared/protocol.ts';
  * the menu must not try to anticipate it, or it starts leaking which is which.
  */
 export type VerbTarget =
-  | { readonly kind: 'player'; readonly actor: ActorView }
+  | {
+      readonly kind: 'player';
+      readonly actor: ActorView;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE OBJECT LAYER, READ INDEPENDENTLY OF THE ACTOR LAYER.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ═══ WITHOUT THIS THE PICK UP ROW COULD NEVER RENDER ENABLED ═══
+       * `loot` used to live only on the `tile` variant, which `targetAt` returns
+       * ONLY when no actor stands there — and `lootAt` answers `Underfoot` ONLY
+       * on the tile you are standing on, where the actor is YOU. So the two
+       * conditions were mutually exclusive by construction: the row was built,
+       * dispatched correctly, and unreachable on every tile in the game. Solo,
+       * standing on a pile, the menu did not even open.
+       *
+       * ═══ ToME COMPOSES LAYERS RATHER THAN CLASSIFYING A TILE ═══
+       * MapMenu.lua:128-133 asks the five map layers separately — TERRAIN, TRAP,
+       * OBJECT, ACTOR, PROJECTILE — and MapMenu.lua:138's "Pickup item" row sits
+       * beside MapMenu.lua:140's actor row on one tile. A tile is never
+       * collapsed to a single kind upstream, and that collapse was the bug.
+       *
+       * SET FOR THE VIEWER'S OWN BODY AND NOBODY ELSE'S, because `pickup`
+       * carries no coordinate: the server takes what is under the SENDER. A row
+       * offered on a teammate's tile would be a row that lies.
+       */
+      readonly loot?: TileLoot;
+    }
   | { readonly kind: 'hostile'; readonly actor: ActorView }
   | { readonly kind: 'body'; readonly actor: ActorView }
   | {
@@ -214,9 +241,26 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
         // Leaving is the only thing you can do to yourself, and only when there
         // is somebody to leave. Alone, the menu has nothing to say — and that
         // silence is what keeps right-click-to-cancel-aim alive.
-        return ctx.partyIds.size > 1
-          ? { title, items: [{ action: PartyAction.Leave, label: LEAVE, enabled: true }] }
-          : { title, items: NO_ITEMS };
+        /**
+         * ═══ WHAT IS UNDER YOUR OWN FEET, ABOVE WHATEVER ELSE THIS MENU SAYS ═══
+         *
+         * First because it is the only row here that acts on the WORLD; Leave
+         * acts on the party. It is offered only when something is actually
+         * there, so the "alone, the menu has nothing to say" silence below —
+         * which is what keeps right-click-to-cancel-aim alive — survives intact
+         * on every tile that has no pile on it.
+         */
+        const mine: MenuItem[] =
+          (target.loot ?? TileLoot.None) === TileLoot.Underfoot
+            ? [{ action: MapVerb.Pickup, label: PICK_UP, enabled: true }]
+            : [];
+        if (ctx.partyIds.size > 1) {
+          return {
+            title,
+            items: [...mine, { action: PartyAction.Leave, label: LEAVE, enabled: true }],
+          };
+        }
+        return mine.length > 0 ? { title, items: mine } : { title, items: NO_ITEMS };
       }
       if (ctx.partyIds.has(target.actor.id)) {
         // A disabled Kick is still SHOWN to somebody who is not the leader — see

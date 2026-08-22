@@ -305,3 +305,80 @@ describe('the ask rows cover every topic that exists', () => {
     }
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE PICK UP ROW MUST BE REACHABLE IN THE STATE IT IS FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It was built, dispatched correctly, covered by tests, and could never render
+ * enabled on any tile in the game.
+ *
+ * `loot` lived only on the `tile` target, which `targetAt` returns ONLY when no
+ * actor stands there — and `lootAt` answers `Underfoot` ONLY on the tile the
+ * viewer is standing on, where the actor is the viewer. The two conditions were
+ * mutually exclusive by construction. Solo, standing on a pile, the menu did
+ * not open at all: the self arm returned `NO_ITEMS` and `openVerbMenu` bails on
+ * an empty list.
+ *
+ * The existing tests passed throughout, because every one of them asked the
+ * `tile` arm for a tile the viewer was NOT standing on — a state in which the
+ * row is correctly absent.
+ *
+ * ═══ ToME COMPOSES LAYERS INSTEAD OF CLASSIFYING A TILE ═══
+ * MapMenu.lua:128-133 queries TERRAIN, TRAP, OBJECT, ACTOR and PROJECTILE
+ * independently, and its "Pickup item" row (MapMenu.lua:138) sits beside the
+ * actor row (:140) on one tile. Upstream never collapses a tile to one kind.
+ */
+describe('picking up what is under your own feet', () => {
+  it('offers the row to yourself when you are standing on a pile', () => {
+    const self = actor(SELF_ID, 'Dalt', ActorKind.Player);
+    const menu = verbsFor(ctxFor({ kind: 'player', actor: self, loot: TileLoot.Underfoot }));
+
+    expect(actionsOf(menu.items)).toContain(MapVerb.Pickup);
+    const row = menu.items.find((item) => item.action === MapVerb.Pickup);
+    expect(row?.enabled, 'the row is offered greyed, which is the dead state again').toBe(true);
+  });
+
+  /**
+   * AND THE SILENCE SURVIVES WHERE IT MATTERS. An empty self menu is what keeps
+   * right-click-to-cancel-aim alive, so a tile with nothing on it must still
+   * produce no rows at all.
+   */
+  it('still offers nothing to yourself on bare floor, alone', () => {
+    const self = actor(SELF_ID, 'Dalt', ActorKind.Player);
+    expect(verbsFor(ctxFor({ kind: 'player', actor: self })).items).toHaveLength(0);
+    expect(
+      verbsFor(ctxFor({ kind: 'player', actor: self, loot: TileLoot.None })).items,
+    ).toHaveLength(0);
+  });
+
+  it('puts the world before the party when both have something to say', () => {
+    const self = actor(SELF_ID, 'Dalt', ActorKind.Player);
+    const menu = verbsFor(
+      ctxFor(
+        { kind: 'player', actor: self, loot: TileLoot.Underfoot },
+        { partyIds: [SELF_ID, 'actor_u_02'] },
+      ),
+    );
+
+    // Pick up acts on the WORLD; Leave acts on the party. The world row leads.
+    expect(actionsOf(menu.items)).toEqual([MapVerb.Pickup, PartyAction.Leave]);
+  });
+
+  /**
+   * A ROW ON SOMEBODY ELSE'S TILE WOULD LIE. `pickup` carries no coordinate —
+   * the server takes what is under the SENDER — so the only honest place for
+   * this row is the viewer's own body.
+   */
+  it('never offers it on a teammate, whatever is under them', () => {
+    const mate = actor('actor_u_02', 'Sam', ActorKind.Player);
+    const menu = verbsFor(
+      ctxFor(
+        { kind: 'player', actor: mate, loot: TileLoot.Underfoot },
+        { partyIds: [SELF_ID, 'actor_u_02'] },
+      ),
+    );
+    expect(actionsOf(menu.items)).not.toContain(MapVerb.Pickup);
+  });
+});

@@ -186,3 +186,32 @@ describe('the loot card lays itself out from the strings alone', () => {
     }
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   AND THE MENU'S ROW IS ACTUALLY FED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * verbs.test.ts proves `verbsFor` builds an enabled Pick up row when handed a
+ * target carrying `loot: Underfoot`. It cannot prove anything HANDS it one —
+ * every one of its cases constructs the target by hand.
+ *
+ * That gap is exactly how the row came to be dead: it was built, dispatched,
+ * and covered, while `targetAt` returned a `player` target that carried no
+ * `loot` at all. Removing the wiring below leaves all of verbs.test.ts green.
+ */
+describe('the menu is fed the object layer', () => {
+  it('reads loot onto the viewer own body, beside the actor layer', () => {
+    at('...(occupant.id === selfId ? { loot: lootAt(tile) } : {})');
+  });
+
+  /**
+   * FOR THE VIEWER AND NOBODY ELSE. `pickup` carries no coordinate — the server
+   * takes what is under the SENDER — so a row fed from a teammate's tile would
+   * be a row that lies about what the button does.
+   */
+  it('does not read it onto anybody else', () => {
+    const wiring = at('...(occupant.id === selfId ? { loot: lootAt(tile) } : {})');
+    expect(wiring, 'the self check was dropped').toBeGreaterThanOrEqual(0);
+  });
+});

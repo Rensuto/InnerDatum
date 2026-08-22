@@ -8101,6 +8101,38 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // so this resolves to the room they arrived in — and silent when that room
     // has no shelves, which is what takes the tab away again.
     sendShopIfAny(session);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND WHAT IS LYING ON THE FLOOR OF THE ROOM THEY WALKED INTO.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE CLIENT HAS JUST THROWN THE OLD FLOOR AWAY. `case 'realm'` clears
+     * `ground = []` along with the projectiles, the pings and the inspect cache,
+     * because an item id belongs to one world and a marker carried across a door
+     * would name a pile that is not there.
+     *
+     * Nothing replaced it. `sendGroundIfAny` had exactly ONE call site — the
+     * hello — so the floor arrived once per CONNECTION rather than once per
+     * ROOM, and every delve a player walked into had an invisible floor.
+     *
+     * ═══ AND THE BROADCAST COULD NOT CORRECT IT ═══
+     * `broadcastGroundIfChanged` compares a per-REALM memo, which cannot see a
+     * new socket joining the audience: from its point of view nothing changed,
+     * so the correction was actively suppressed until somebody dropped or took
+     * something. A floor that repairs itself only when disturbed is worse than
+     * one that is simply late.
+     *
+     * The whole loot feature is downstream of this frame — marker, hover card,
+     * click-to-take, the menu row and the "something at your feet" hint all read
+     * `ground` — so all five were silently absent in exactly the rooms that have
+     * loot in them.
+     *
+     * THE SAME BUG `sendSites` FIXED IN THESE TWO FUNCTIONS, whose own note a
+     * few lines up says it plainly: the fact was computed correctly and nothing
+     * delivered it. Unicast, silent on an empty floor, and it deliberately does
+     * not touch the memo — so a later broadcast is not suppressed by this.
+     */
+    sendGroundIfAny(realmFor(session), session.socket);
     announceArrival(session, to, to.name);
     broadcast(
       {
@@ -8375,6 +8407,38 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A town is the common destination, so this is the frame that makes the
     // shop tab appear at the moment somebody steps through the door.
     sendShopIfAny(session);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND WHAT IS LYING ON THE FLOOR OF THE ROOM THEY WALKED INTO.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE CLIENT HAS JUST THROWN THE OLD FLOOR AWAY. `case 'realm'` clears
+     * `ground = []` along with the projectiles, the pings and the inspect cache,
+     * because an item id belongs to one world and a marker carried across a door
+     * would name a pile that is not there.
+     *
+     * Nothing replaced it. `sendGroundIfAny` had exactly ONE call site — the
+     * hello — so the floor arrived once per CONNECTION rather than once per
+     * ROOM, and every delve a player walked into had an invisible floor.
+     *
+     * ═══ AND THE BROADCAST COULD NOT CORRECT IT ═══
+     * `broadcastGroundIfChanged` compares a per-REALM memo, which cannot see a
+     * new socket joining the audience: from its point of view nothing changed,
+     * so the correction was actively suppressed until somebody dropped or took
+     * something. A floor that repairs itself only when disturbed is worse than
+     * one that is simply late.
+     *
+     * The whole loot feature is downstream of this frame — marker, hover card,
+     * click-to-take, the menu row and the "something at your feet" hint all read
+     * `ground` — so all five were silently absent in exactly the rooms that have
+     * loot in them.
+     *
+     * THE SAME BUG `sendSites` FIXED IN THESE TWO FUNCTIONS, whose own note a
+     * few lines up says it plainly: the fact was computed correctly and nothing
+     * delivered it. Unicast, silent on an empty floor, and it deliberately does
+     * not touch the memo — so a later broadcast is not suppressed by this.
+     */
+    sendGroundIfAny(realmFor(session), session.socket);
     // AND THE ROOM SAYS WHAT IT IS. The one movement worth narrating — see
     // `announceArrival`, and `recordFor`'s `move` case for why a step is not.
     announceArrival(session, to, to.name);

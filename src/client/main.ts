@@ -6435,9 +6435,16 @@ async function boot(): Promise<void> {
       liveActorAt(all, tile) ?? all.find((actor) => actor.x === tile.x && actor.y === tile.y);
     if (occupant !== undefined) {
       if (!occupant.alive) return { kind: 'body', actor: occupant };
+      // THE OBJECT LAYER, BESIDE THE ACTOR LAYER RATHER THAN BEHIND IT. See
+      // `VerbTarget`'s `loot` for why a tile must not be collapsed to one kind,
+      // and why this is read for the viewer's own body alone.
       return isHostileBody(occupant)
         ? { kind: 'hostile', actor: occupant }
-        : { kind: 'player', actor: occupant };
+        : {
+            kind: 'player',
+            actor: occupant,
+            ...(occupant.id === selfId ? { loot: lootAt(tile) } : {}),
+          };
     }
     // `walkable` is exactly `travelTargetAllowed` and nothing else — the ONE
     // named predicate the future "has this tile been seen" clause lands behind.
