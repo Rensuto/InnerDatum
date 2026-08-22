@@ -880,12 +880,35 @@ export function talentPanelRect(options: {
   // width hands back every size between the tiers, and a column born narrow is a
   // column that is useless on exactly the windows it is least useful on.
   const room = width - PANEL_MARGIN * 2;
-  const w =
+  const tier =
     room >= PANEL_W_WIDE
       ? PANEL_W_WIDE
       : room >= PANEL_W_STATS
         ? PANEL_W_STATS
         : Math.min(PANEL_W, room);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TIER IS A FLOOR, NOT A CEILING — LevelupDialog.lua:89's `game.w * 0.9`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The tiers above decide WHICH COLUMNS APPEAR: the stats strip needs room, the
+   * description pane needs more, and a column born narrow is useless on exactly
+   * the windows it is least useful on. That argument is intact and is why the
+   * tier is still computed and still the minimum.
+   *
+   * ═══ WHAT IT MUST NOT DO IS CAP THE PANEL ═══
+   * Taking the tier as the final width meant the panel was 572 wide on a
+   * 772-pixel viewport — TWO HUNDRED PIXELS UNUSED — while the category grid ran
+   * out of vertical room and dropped whole talent trees with a row saying so.
+   * At 1280 it was 852 against 428 spare. The panel was refusing width it had
+   * while telling the player it was too small.
+   *
+   * Upstream takes nine tenths of the screen. The tier stays as the floor, so a
+   * window too narrow for the description pane still gets the whole shape it can
+   * hold, and a window with room to spare gets more grid columns instead of
+   * whitespace.
+   */
+  const w = Math.max(tier, Math.min(Math.floor(width * PANEL_MAX_FILL_H), room));
   /**
    * AGAINST THE WHOLE WINDOW, THEN FITTED TO THE BAND — LevelupDialog.lua:89
    * measures `game.h`, the entire screen, and the band is already that screen
@@ -1197,12 +1220,28 @@ export function talentPanelGeometry(
    * HOW MANY COLUMNS OF CATEGORIES FIT, WHICH IS ONE OR TWO AND NEVER THREE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Two is what the player's screenshot shows and what this panel is sized for.
    * One is the honest answer on a window too narrow to hold two — the strips
    * stack instead of being squeezed, because a five-icon strip cannot shrink:
    * every icon is a click target and a 20-pixel icon is a miss waiting to happen.
+   *
+   * ═══ AND THE CEILING OF TWO WAS COSTING WHOLE TALENT TREES ═══
+   * This read `innerW >= COL_W * 2 + COL_GAP ? 2 : 1` — two columns, however
+   * much room there was. A strip is `COL_W` = 118 wide, so two of them plus the
+   * gap is 246 pixels; the panel at the viewport this game actually renders is
+   * 572 wide with 556 inside it. THREE HUNDRED AND TEN PIXELS SAT EMPTY while
+   * the grid ran out of vertical room and dropped categories with a row reading
+   * "N categories hidden — panel too small".
+   *
+   * MEASURED at that panel: 2 columns x 3 lines = 6 strips, against the 8 a
+   * class can hold (three of its own, two open generics, three locked). Two
+   * disciplines invisible, on a panel with half its width unused. Reported as
+   * "the talent (G) is too small to accomodate and the page says so".
+   *
+   * As many as fit at full width, which is 4 there — 12 strips against 8, and
+   * the drop stops. The strips never shrink; there are simply more of them per
+   * line, which is the one axis this grid had spare.
    */
-  const columns = innerW >= COL_W * 2 + COL_GAP ? 2 : 1;
+  const columns = Math.max(1, Math.floor((innerW + COL_GAP) / (COL_W + COL_GAP)));
   const gridW = columns * COL_W + (columns - 1) * COL_GAP;
   /** CENTRED. A left-aligned grid in a wider panel reads as a layout bug. */
   const gridX = x + afterStats + Math.max(0, Math.floor((innerW - gridW) / 2));

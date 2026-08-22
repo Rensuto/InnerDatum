@@ -192,7 +192,44 @@ const COL_GAP = 10;
  * damage band, so a column under ~22 characters stops being able to show a
  * label and its value on one line at all.
  */
-const TWO_COL_MIN_W = 22 * 2 * CHAR_W + COL_GAP;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY COLUMNS THE SHEET WILL RUN, AND WHY IT IS NOT TWO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from ToME's general tab, which is FOUR columns — CharacterSheet.lua
+ * places its four text zones at x = 0 (:602-603), `self.w*0.25` (:675-676),
+ * `self.w*0.5` (:795-796) and `self.w*0.77` (:844-845).
+ *
+ * ═══ WIDTH WAS NEVER THE BINDING CONSTRAINT. HEIGHT IS. ═══
+ * The panel is centred in the band between the HUD docks, and on the viewport
+ * this game is actually played at — a 768x384 logical backbuffer, from a
+ * 20x10-tile floor at integer scale — that band is 226 pixels tall. So the
+ * sheet is 729 WIDE and 214 TALL, and no sizing rule can make it taller than
+ * the space it sits in.
+ *
+ * Two columns of ~185 usable pixels is 370 against roughly 400 pixels of rows
+ * (GENERAL 114, COMBAT 180, TALENTS 106), so the sheet ran out by a whisker and
+ * dropped a whole section with a row saying so. FOUR columns is 740 against the
+ * same 400, and the drop stops firing at every size this client renders.
+ *
+ * ═══ A MINIMUM WIDTH PER COLUMN, DERIVED FROM THE WIDEST ROW ═══
+ * A narrow window must fall back to fewer columns rather than four unreadable
+ * slivers, and the floor is not a taste: this file already states it two
+ * paragraphs down. `AP 5 · melee/personal · ready` needs 29 monospace
+ * characters AND THE COLUMN MUST HOLD THAT AFTER THE ICON — a talent row is an
+ * 18-pixel icon and then the text.
+ *
+ * THE FIRST ATTEMPT HERE WAS 26 CHARACTERS AND FORGOT THE ICON, which let four
+ * columns open at 772 wide and cost two of the four talent rows their cooldown
+ * word — the exact regression the paragraph below was written about. The tests
+ * caught it. Deriving the floor from the row instead of picking a number is
+ * what stops it happening again.
+ */
+const SHEET_MAX_COLS = 4;
+const TALENT_META_CHARS = 29;
+const COL_MIN_W = TALENT_ICON + TALENT_META_CHARS * CHAR_W + COL_GAP;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1083,8 +1120,17 @@ function sheetGeometry(rect: PanelRect, rows: readonly SheetRow[]): SheetGeometr
   const top = rect.y + HEADER_H + INSET;
   const bottom = rect.y + rect.h - INSET;
 
-  const columns = innerW >= TWO_COL_MIN_W ? 2 : 1;
-  const colW = columns === 2 ? Math.floor((innerW - COL_GAP) / 2) : innerW;
+  /**
+   * AS MANY COLUMNS AS FIT AT `COL_MIN_W`, capped at ToME's four. The `+ COL_GAP`
+   * on both sides of the division is the gap arithmetic: N columns carry N-1
+   * gaps, so adding one gap to each side counts them evenly and the result is
+   * the largest N whose columns and gaps fit inside `innerW`.
+   */
+  const columns = Math.max(
+    1,
+    Math.min(SHEET_MAX_COLS, Math.floor((innerW + COL_GAP) / (COL_MIN_W + COL_GAP))),
+  );
+  const colW = columns === 1 ? innerW : Math.floor((innerW - COL_GAP * (columns - 1)) / columns);
 
   let candidate = rows;
   for (let attempt = 0; attempt <= DROP_ORDER.length; attempt += 1) {

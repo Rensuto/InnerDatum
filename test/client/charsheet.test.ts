@@ -991,6 +991,64 @@ describe('the sheet shows what it says it shows', () => {
       ).toBeLessThanOrEqual(w);
     }
   });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   NOTHING IS HIDDEN AT THE VIEWPORT THE GAME IS ACTUALLY PLAYED AT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A player reported "the characteristics page improperly shows info due to
+   * lack of space", and this sheet answers that by DROPPING a whole section and
+   * saying so in a row. The reply is honest; the behaviour is the bug.
+   *
+   * ═══ THE VIEWPORT IS NOT THE WINDOW, AND ASSUMING IT WAS COST A ROUND ═══
+   * The screenshot came from a 1538-pixel window, so the first fix widened the
+   * panel against 1538 and reported a 1200-pixel sheet. The panel never sees
+   * that number. `createRenderer` draws into a LOGICAL BACKBUFFER of
+   * `tilesW * TILE_PX`, and a 20x10-tile floor at integer scale on that window
+   * is 768x384 — so the sheet is 729 wide, and the band between the HUD docks
+   * caps it at 214 TALL however wide the monitor is.
+   *
+   * Height is the binding constraint and no sizing rule can move it. What fixes
+   * the drop is COLUMNS, which is what ToME's general tab does — four of them,
+   * at CharacterSheet.lua:602-603, :675-676, :795-796 and :844-845.
+   *
+   * These cases assert at the real backbuffer rather than a flattering one.
+   */
+  describe('at the backbuffer this game actually renders', () => {
+    /** 20x10 tiles at TILE_PX 32 — the floor every device lands on or above. */
+    const REAL_W = 768;
+    const REAL_H = 384;
+
+    it('hides no section, and says so about nothing', () => {
+      const hidden = painted(REAL_W, REAL_H).filter((text) => text.includes('panel too small'));
+      expect(hidden, `still dropping at the real viewport: ${hidden.join(', ')}`).toEqual([]);
+    });
+
+    it('still shows a row from every section at that size', () => {
+      const texts = painted(REAL_W, REAL_H);
+      for (const heading of ['GENERAL', 'COMBAT', 'TALENTS']) {
+        expect(texts, `${heading} is missing`).toContain(heading);
+      }
+    });
+
+    /**
+     * AND THE COLUMNS STAY WIDE ENOUGH TO READ. More columns helps only while
+     * each still holds a talent row's meta line — four columns of slivers costs
+     * the cooldown word, which is the regression `COL_MIN_W` is derived to
+     * prevent, and which an earlier version of this change caused.
+     */
+    it('keeps every talent meta line whole at that size', () => {
+      const texts = painted(REAL_W, REAL_H);
+      const metas = texts.filter((text) => text.includes(' · ') && !text.startsWith('['));
+      expect(metas.length, 'a talent row lost its meta line').toBe(LOADOUT.length);
+      for (const meta of metas) expect(meta).toMatch(/(ready|turns?)$/);
+      expect(
+        texts.filter((text) => text.includes('…')),
+        'something was ellipsised',
+      ).toEqual([]);
+    });
+  });
 });
 
 /**

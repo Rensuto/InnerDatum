@@ -767,3 +767,82 @@ describe('the attribute column', () => {
     expect(silent).not.toContain('STR');
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE PANEL USES THE WIDTH IT HAS. IT STILL DOES NOT FIT EVERY TREE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported: "the talent (G) is too small to accomodate and the page says so."
+ * It says so by dropping whole CATEGORIES — talent trees — with a row reading
+ * "N categories hidden — panel too small".
+ *
+ * ═══ WHAT IS FIXED HERE ═══
+ * The panel snapped to a fixed tier however much room there was: 572 wide on a
+ * 772-pixel viewport, 852 on a 1280 one, with two hundred and four hundred
+ * pixels unused respectively. It now takes upstream's share
+ * (LevelupDialog.lua:89, `game.w * 0.9`) with the tier kept as a FLOOR, and the
+ * category grid runs as many strips per line as fit instead of a hard two.
+ *
+ * ═══ WHAT IS NOT, AND THIS FILE WILL NOT PRETEND OTHERWISE ═══
+ * At the smaller viewports the extra width crosses the threshold that turns on
+ * the DESCRIPTION PANE, which consumes it — so the grid is back to two columns
+ * and eight trees still do not all fit. No width rule can guarantee they will:
+ * the tree count grows with content and the band between the HUD docks does not.
+ *
+ * The answer upstream uses is SCROLLING — TalentTrees.lua:72 gives the list a
+ * slider, :388 clips with `glScissor`, :451-455 draws the bar only while the
+ * pane is focused. That is the next change and deliberately not this one: a
+ * scrolled grid means the hit test must subtract the offset, and a talent icon
+ * SPENDS A POINT with no refund gesture, so a mis-targeted click is an
+ * irreversible spend on a live server.
+ *
+ * So there is no case below asserting that nothing is hidden — because
+ * something still is.
+ */
+describe('the talent panel uses the room it has', () => {
+  /** More categories than any class holds, so the grid is genuinely pressed. */
+  function manyCategories(n: number): readonly TalentRow[] {
+    const base = categories(talentPanelRows(view()));
+    const first = base[0];
+    if (first === undefined) throw new Error('the fixture has no categories');
+    return Array.from({ length: n }, (_, i) => ({ ...first, name: `Tree ${String(i)}` }));
+  }
+
+  it('takes a share of the viewport rather than a fixed tier', () => {
+    const rect = rectAt(REAL);
+    expect(rect.w, 'the panel is back on a fixed width tier').toBeGreaterThan(600);
+    expect(rect.w, 'the panel overran the viewport').toBeLessThanOrEqual(REAL.width);
+  });
+
+  it('grows with the viewport instead of snapping', () => {
+    expect(rectAt({ width: 1280, height: 640, top: 40, bottom: 560 }).w).toBeGreaterThan(
+      rectAt(REAL).w,
+    );
+  });
+
+  /**
+   * AND THE STRIPS NEVER SHRINK. Every icon is a click target that spends a
+   * point with no refund, so a narrower strip is a mis-click waiting to happen.
+   * More width must mean more strips per line, never smaller ones.
+   */
+  it('keeps every strip one width', () => {
+    const widths = new Set(
+      placedAt(REAL, manyCategories(8))
+        .filter((row) => row.row.kind === TalentRowKind.Category)
+        .map((row) => row.rect.w),
+    );
+    expect(widths.size, 'the strips are not all one width').toBe(1);
+  });
+
+  /**
+   * WHATEVER IS DROPPED IS COUNTED OUT LOUD. While trees can still be hidden,
+   * the row that says so is the only thing between a player and a discipline
+   * they do not know exists.
+   */
+  it('still says so when it hides something', () => {
+    const placed = placedAt(REAL, manyCategories(12));
+    const note = placed.find((row) => row.row.kind === TalentRowKind.Note);
+    expect(note, 'trees are being hidden silently').toBeDefined();
+  });
+});
