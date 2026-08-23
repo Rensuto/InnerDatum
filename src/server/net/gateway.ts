@@ -82,6 +82,7 @@ import {
   expChart,
   isGenericTree,
   canRaiseStat,
+  STAT_MAX,
   pointsForLevel,
   statPointsForLevel,
   totalStatPointsAtLevel,
@@ -177,7 +178,7 @@ import { Faction, StandingOrder, incMoney, isMonster } from '../engine/actor.ts'
  * one door the type system cannot close.
  */
 import { combatArmor, stat as statValue } from '../engine/derived.ts';
-import { recomposeCombat } from '../engine/effects.ts';
+import { boughtSheet, recomposeCombat } from '../engine/effects.ts';
 /**
  * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
  * moment: the step that walks onto a site cell.
@@ -4395,6 +4396,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     unspentCategories: number;
     unspentStatPoints?: number;
     combat?: Combatant;
+    // The two `boughtSheet` needs — see the base clause in the key below.
+    baseCombat?: Combatant;
+    spentStats?: PrimaryStats;
   }): string =>
     // EVERY FIELD ON THE FRAME BELONGS IN THE KEY — the rule this key's own note
     // states, and the reason the attribute pair is here. Spending a point moves
@@ -4405,7 +4409,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       knownFiled(filed.get(viewer.id) ?? [], SITES).length,
     )}|${String(viewer.unspentStatPoints ?? 0)}|${STAT_ORDER.map((which) =>
       String(statValue(viewer.combat ?? {}, which)),
+    ).join(',')}|${STAT_ORDER.map((which) =>
+      String(statValue(boughtSheet(viewer, viewer.baseCombat ?? viewer.combat) ?? {}, which)),
     ).join(',')}`;
+  // ═══ THE BASE IS IN THE KEY TOO, AND IT IS NOT REDUNDANT ═══
+  // Spending a point moves both numbers, so most of the time either would do.
+  // They come apart exactly when a +2 ring comes off in the same window as a
+  // point goes in: the composed value is unchanged and the BASE rose by one —
+  // and the base is what the `+` greys on, so a key without it would leave a
+  // greyed control that should be live. This key's own note states the rule:
+  // every field on the frame belongs in it.`;
 
   /**
    * The two things a tier gate reads. See `Session.gateKey`.
@@ -4419,6 +4432,31 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * known here, gear can move any of them, and six numbers in a string is not
    * a cost worth being clever about.
    */
+  /**
+   * THE SIX, OFF ONE SHEET. Spelled once rather than six times in three places.
+   *
+   * `STAT_ORDER` IS THE ORDER AND THE FIELD NAMES ARE THE SAME SIX, so the
+   * object literal is built from it rather than beside it — a seventh attribute
+   * lands in the key, the frame and the base together or in none of them.
+   */
+  const statSix = (
+    sheet: Combatant,
+  ): {
+    str: number;
+    dex: number;
+    con: number;
+    mag: number;
+    wil: number;
+    cun: number;
+  } => ({
+    str: statValue(sheet, 'str'),
+    dex: statValue(sheet, 'dex'),
+    con: statValue(sheet, 'con'),
+    mag: statValue(sheet, 'mag'),
+    wil: statValue(sheet, 'wil'),
+    cun: statValue(sheet, 'cun'),
+  });
+
   const gateKeyFor = (viewer: { level: number; combat?: Combatant }): string =>
     `${String(viewer.level)}|${STAT_ORDER.map((which) =>
       String(statValue(viewer.combat ?? {}, which)),
@@ -4480,14 +4518,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // THE OTHER HALF OF A LEVELUP. Read off the COMPOSED sheet, so the six are
       // what the player can see rather than what their class authored.
       unspentStats: viewer.unspentStatPoints,
-      stats: {
-        str: statValue(viewer.combat ?? {}, 'str'),
-        dex: statValue(viewer.combat ?? {}, 'dex'),
-        con: statValue(viewer.combat ?? {}, 'con'),
-        mag: statValue(viewer.combat ?? {}, 'mag'),
-        wil: statValue(viewer.combat ?? {}, 'wil'),
-        cun: statValue(viewer.combat ?? {}, 'cun'),
-      },
+      stats: statSix(viewer.combat ?? {}),
+      // AND THE SAME SIX AS BOUGHT — see `ProgressMsg.statBase`. It is what the
+      // level ceiling binds on, so a client that greyed a `+` off the COMPOSED
+      // number would grey the wrong ones the moment anybody put a coat on.
+      statBase: statSix(boughtSheet(viewer, viewer.baseCombat ?? viewer.combat) ?? {}),
     });
     /**
      * `closedCases` IS IN THE KEY, AND LEAVING IT OUT WOULD HAVE BEEN A SILENT
@@ -11414,17 +11449,41 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     /**
-     * THE CEILING, ASKED OF THE COMPOSED VALUE. `canRaiseStat` answers about
-     * what the player can SEE — class sheet plus points plus gear plus passives
-     * — rather than about the delta, because a cap on the delta would let a
-     * character in good armour pass a limit a naked one could not.
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CEILING, ASKED OF WHAT THE PLAYER HAS BOUGHT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ═══ THIS USED TO ASK THE COMPOSED VALUE, AND THE NOTE ARGUED FOR IT ═══
+     * *"`canRaiseStat` answers about what the player can SEE — class sheet plus
+     * points plus gear plus passives — rather than about the delta, because a cap
+     * on the delta would let a character in good armour pass a limit a naked one
+     * could not."* Sound reasoning; upstream took the other trade deliberately
+     * and every one of its three comparisons passes `no_inc` to drop gear
+     * (LevelupDialog.lua:255, :259; Actor.lua:755-756). The difference could not
+     * be observed while the only cap was an unreachable 100. It can now, and it
+     * matters in the direction that would hurt: a coat that costs you a point you
+     * already own is a coat you would take off to level up.
+     *
+     * `boughtSheet` IS THE SAME COMPUTATION `recomposeCombat` FOLDS — one answer
+     * to "what has this body bought", not a second one assembled here from
+     * `classById` and `spentStats`.
      */
-    const current = statValue(body.combat ?? {}, msg.stat);
-    if (!canRaiseStat(current)) {
+    const base = statValue(boughtSheet(body, body.baseCombat ?? body.combat) ?? {}, msg.stat);
+    if (!canRaiseStat(base, body.level)) {
+      /**
+       * TWO SENTENCES, BECAUSE UPSTREAM SAYS TWO AND THEY MEAN OPPOSITE THINGS
+       * TO A PLAYER: *"You cannot increase this stat further until next level!"*
+       * sends them to spend the point elsewhere and come back; *"You cannot
+       * increase this stat further!"* means never. Telling them the second when
+       * it is the first strands a point that would have been spendable in an
+       * hour.
+       */
       sendError(
         session.socket,
         ErrorCode.NotYourTurn,
-        `spend refused: ${msg.stat} is already at its maximum`,
+        base < STAT_MAX
+          ? `spend refused: ${msg.stat} is at its maximum for level ${String(body.level)}`
+          : `spend refused: ${msg.stat} is already at its maximum`,
       );
       return;
     }

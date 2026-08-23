@@ -795,28 +795,76 @@ export function totalStatPointsAtLevel(level: number): number {
  * `ActorStats:defineStat(name, short, 10, 1, 100, ...)`: base ten, minimum one,
  * maximum one hundred, for all six and for Luck.
  *
- * ═══ THE 60 IN `useBuildOrder` IS NOT THIS NUMBER ═══
- * `Actor.lua:755-756` refuses to auto-assign past `level * 1.4 + 20` and past
- * `60 + max(0, level - 50)`. Both belong to the AUTO-LEVELLER — the build order
- * a player can hand the game — and neither binds a human spending their own
- * points. Porting them as hard rules would forbid a build ToME allows.
+ * ═══ THIS IS THE OUTER BOUND, NOT THE ONE THAT BINDS ═══
+ * `statCeilingForLevel` below is the one a player meets. 100 is the floor and
+ * ceiling of the STAT ITSELF and would still be right if every other rule went
+ * away, so it stays here as its own fact.
  *
- * IT IS ALSO UNREACHABLE HERE AND STILL WORTH HAVING. Nine levels grant 27
- * points against a class base near 24, so nothing can pass 51 — but a cap that
- * exists only because the arithmetic cannot reach it is a cap that breaks the
- * day `MAX_CHARACTER_LEVEL` moves.
+ * ═══ WHAT THIS COMMENT USED TO SAY, AND WHY IT WAS WRONG ═══
+ * It read: *"Both belong to the AUTO-LEVELLER — the build order a player can
+ * hand the game — and neither binds a human spending their own points. Porting
+ * them as hard rules would forbid a build ToME allows."*
+ *
+ * That was written from `Actor.lua:755-756` alone, which IS the auto-leveller.
+ * The same two clauses are also in `LevelupDialog:incStat` (:255, :259) — the
+ * `+` button a human presses — where they refuse with player-facing text:
+ * *"You cannot increase this stat further until next level!"*. The dialog paints
+ * the row green when either binds (:584, :593, :610-616), so upstream not only
+ * enforces it on the human, it puts it on screen before the press.
+ *
+ * CLAUDE.md's rule decided this: when a document and the Lua disagree, the Lua
+ * wins. The document here was one of ours.
  */
 export const STAT_MIN = 1;
 export const STAT_MAX = 100;
 
 /**
- * May this character put another point into a stat currently at `value`?
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW HIGH ONE ATTRIBUTE MAY GO AT THIS LEVEL — LevelupDialog.lua:255-260.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ IT IS THE REASON A LEVEL-2 CHARACTER IS NOT A SPECIALIST YET ═══
+ * Without it, three points a level all go into one attribute and a level-2
+ * character is as strong in one direction as a level-6 one — which is the
+ * fifteen years of tuning this port exists to inherit, thrown away for the sake
+ * of a missing line. Upstream's shape is: SPREAD EARLY, SPECIALISE LATE.
+ *
+ * ═══ TWO CLAUSES, MINIMUM WINS ═══
+ * `level * 1.4 + 20` is the per-level pace. `60 + max(0, level - 50)` is the
+ * lifetime bound, which only starts moving past level 50. Upstream tests them
+ * separately so it can say two different sentences; `AdvanceActor.lua:291`
+ * composes exactly this minimum when it needs one number, which is what this is.
+ *
+ * ═══ NOT FLOORED HERE ═══
+ * `1.4` makes fractional ceilings — 21.4 at level 1 — and the comparison is
+ * `>=`, so a base of 21 may still be raised and 22 may not. Flooring would
+ * change that boundary by one at every level where the fraction is not zero, so
+ * the fraction is kept and the caller compares against it directly.
+ */
+export function statCeilingForLevel(level: number): number {
+  return Math.min(level * 1.4 + 20, 60 + Math.max(0, level - 50));
+}
+
+/**
+ * May this character put another point into a stat whose BASE is `base`?
+ *
+ * ═══ `base`, NOT THE COMPOSED VALUE, AND UPSTREAM IS EXPLICIT ═══
+ * Every one of these comparisons is `getStat(sid, nil, nil, true)` — the fourth
+ * argument is `no_inc`, which drops `inc_stats`: gear, effects, everything worn.
+ * So the ceiling is on what the player has BOUGHT, and wearing a good coat can
+ * never cost you the ability to spend a point you own.
+ *
+ * This function used to take the composed value and argue for it — *"a cap on
+ * the delta would let a character in good armour pass a limit a naked one could
+ * not"*. That reasoning is sound and upstream chose the opposite trade, on
+ * purpose, and while the only cap was an unreachable 100 the difference could
+ * not be observed. It can now.
  *
  * PURE, AND IT ANSWERS ONLY THE CEILING. Whether a point is in hand is the
  * caller's ledger question — `totalStatPointsAtLevel` minus what is spent — and
  * keeping the two apart is what lets the client grey a `+` without a second copy
  * of the ledger.
  */
-export function canRaiseStat(value: number): boolean {
-  return value < STAT_MAX;
+export function canRaiseStat(base: number, level: number): boolean {
+  return base < STAT_MAX && base < statCeilingForLevel(level);
 }

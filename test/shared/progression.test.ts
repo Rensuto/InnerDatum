@@ -13,6 +13,9 @@ import {
   rankWorth,
   totalPointsAtLevel,
   worthExp,
+  STAT_MAX,
+  canRaiseStat,
+  statCeilingForLevel,
 } from '../../src/shared/progression.ts';
 
 /**
@@ -316,5 +319,67 @@ describe('PACING — kills from level 1 to the cap', () => {
     const boss = worthExp(5, ActorRank.Boss);
     const normal = worthExp(5, ActorRank.Normal);
     expect(boss / normal).toBeCloseTo(25 / 0.8, 10);
+  });
+});
+
+describe('how high one attribute may go at this level', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SPREAD EARLY, SPECIALISE LATE — LevelupDialog.lua:255-260.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Three points arrive every level. Without a ceiling all three go into one
+   * attribute and a level-2 character is as strong in one direction as a level-6
+   * one — which throws away the tuning this port exists to inherit.
+   *
+   * THIS FILE USED TO ARGUE THE OPPOSITE, and the note is worth keeping: it read
+   * *"Both belong to the AUTO-LEVELLER … neither binds a human spending their
+   * own points"*, written from `Actor.lua:755-756`, which IS the auto-leveller.
+   * The same two clauses are also in `LevelupDialog:incStat` — the `+` a human
+   * presses — with player-facing refusals. The Lua wins over our own document.
+   */
+  it('is the per-level pace below level 50', () => {
+    // `level * 1.4 + 20`, unfloored — see `statCeilingForLevel`.
+    expect(statCeilingForLevel(1)).toBeCloseTo(21.4);
+    expect(statCeilingForLevel(10)).toBeCloseTo(34);
+    expect(statCeilingForLevel(28)).toBeCloseTo(59.2);
+  });
+
+  it('becomes the lifetime bound where the two cross', () => {
+    /**
+     * `60 + max(0, level - 50)` overtakes the pace at level 29 (60.6 vs 60), and
+     * from there it is the one that binds — which is why upstream tests both and
+     * `AdvanceActor.lua:291` composes them with `min`.
+     */
+    expect(statCeilingForLevel(29)).toBe(60);
+    expect(statCeilingForLevel(49)).toBe(60);
+    // ...and only past 50 does it move again, one a level.
+    expect(statCeilingForLevel(51)).toBe(61);
+    expect(statCeilingForLevel(60)).toBe(70);
+  });
+
+  it('refuses at the ceiling and allows just under it', () => {
+    // `>=` in the Lua, and the fraction is why the boundary is where it is: at
+    // level 1 the ceiling is 21.4, so 21 may still be raised and 22 may not.
+    expect(canRaiseStat(21, 1)).toBe(true);
+    expect(canRaiseStat(22, 1)).toBe(false);
+  });
+
+  it('locks a class primary until the level catches up, exactly as upstream does', () => {
+    /**
+     * THE CASE A PLAYER MEETS FIRST, and it is not a bug. Our classes open at
+     * 22-24 in their primary (`classes.ts` — Watchman str 24, Inspector dex 24),
+     * which is already ABOVE the level-1 ceiling of 21.4 — and ToME's level-1
+     * warriors are in the same position for the same reason. So the first few
+     * points go into the other five, which is the whole shape of the rule.
+     */
+    expect(canRaiseStat(24, 2), 'level 2 ceiling is 22.8').toBe(false);
+    expect(canRaiseStat(24, 3), 'level 3 ceiling is 24.2').toBe(true);
+  });
+
+  it('still refuses at the absolute maximum, whatever the level', () => {
+    // The outer bound is its own fact — `STAT_MAX` would be right if every other
+    // rule went away.
+    expect(canRaiseStat(STAT_MAX, 999)).toBe(false);
   });
 });

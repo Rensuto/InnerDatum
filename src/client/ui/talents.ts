@@ -148,7 +148,7 @@ import {
   PANEL_PAD,
   PanelSkin,
 } from './panel.ts';
-import { CATEGORY_POINT_LEVELS, isGenericTree } from '../../shared/progression.ts';
+import { CATEGORY_POINT_LEVELS, canRaiseStat, isGenericTree } from '../../shared/progression.ts';
 import type { LoadoutTalent, ProgressMsg, UnlockableTree } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
@@ -2117,6 +2117,9 @@ function drawStats(
   values: Readonly<Record<string, number>> | null,
   unspent: number,
   armed: string | null,
+  /** As bought. Null against a server that does not send it. See `statBase`. */
+  bought: Readonly<Record<string, number>> | null,
+  level: number,
 ): void {
   if (box.w <= 0 || box.h <= 0) return;
 
@@ -2140,23 +2143,60 @@ function drawStats(
     const entry = STAT_ROWS[i];
     if (row === undefined || entry === undefined) continue;
     const value = values[entry.key] ?? 0;
+    const base = bought?.[entry.key] ?? null;
     const mid = row.y + row.h / 2;
 
     ctx.fillStyle = PALETTE.GREY_HI;
     ctx.fillText(entry.label, row.x, mid);
+    /**
+     * ═══ `25 (20)` — COMPOSED, WITH WHAT YOU BOUGHT IN BRACKETS ═══
+     * LevelupDialog.lua:624-627 draws exactly this pair, and it answers the
+     * question a single number cannot: how much of my Strength is MINE. It also
+     * explains a greyed `+` beside a value that looks nowhere near any limit —
+     * the ceiling binds on the bracketed number.
+     *
+     * ONLY WHEN THEY DIFFER. Printing `(20)` beside a bare 20 on every row would
+     * be furniture, and the same argument the mastery header makes for leaving
+     * `(x1.00)` unsaid.
+     */
     ctx.fillStyle = PALETTE.PARCHMENT;
-    ctx.fillText(String(Math.round(value)), row.x + 26, mid);
+    const shown =
+      base === null || Math.round(base) === Math.round(value)
+        ? String(Math.round(value))
+        : `${String(Math.round(value))} (${String(Math.round(base))})`;
+    ctx.fillText(shown, row.x + 26, mid);
 
     if (unspent <= 0) continue;
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE `+` GOES DEAD AT THE LEVEL CEILING — LevelupDialog.lua:255-260.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream refuses the press AND paints the row when either clause binds
+     * (:584, :593, :610-616), so a player learns the limit before spending
+     * rather than by being told no. This is that, on the control itself.
+     *
+     * ASKED OF THE BOUGHT VALUE, not the composed one — see `statBase`. With no
+     * base in hand (an older server) every `+` stays live and the server's
+     * refusal is the backstop, which is the behaviour this column has always had.
+     */
+    const capped = base !== null && !canRaiseStat(base, level);
     const plus = statPlusRect(row);
-    const isArmed = armed === entry.key;
+    const isArmed = armed === entry.key && !capped;
     // ARMED IS A FILL, NOT A COLOUR CHANGE ALONE — `ui/partypanel.ts` states the
     // rule this file follows everywhere: never colour alone.
     ctx.fillStyle = isArmed ? PALETTE.GOLD : PALETTE.SLATE;
     ctx.fillRect(plus.x, plus.y, plus.w, plus.h);
-    ctx.fillStyle = isArmed ? PALETTE.INK : PALETTE.BONE;
+    /**
+     * AND A CAPPED CONTROL WEARS A DASH, NOT A PLUS. A greyed `+` is still a
+     * plus, and the one thing a player must not do here is press hopefully at a
+     * control that has nothing to give — the glyph change is the shape signal
+     * this file uses everywhere in place of colour alone.
+     */
+    ctx.fillStyle = capped ? PALETTE.GREY : isArmed ? PALETTE.INK : PALETTE.BONE;
     ctx.textAlign = 'center';
-    ctx.fillText('+', plus.x + plus.w / 2, plus.y + plus.h / 2);
+    ctx.fillText(capped ? '–' : '+', plus.x + plus.w / 2, plus.y + plus.h / 2);
     ctx.textAlign = 'left';
   }
 }
@@ -2512,6 +2552,19 @@ export type TalentPanelDrawOptions = {
    * and no rows, which is honest about a build with nothing to show.
    */
   readonly stats?: Readonly<Record<string, number>> | null;
+  /**
+   * THE SIX AS BOUGHT, from `ProgressMsg.statBase` — class sheet plus points
+   * spent, nothing worn. Two things read it and neither can use `stats`:
+   *
+   *   the CEILING, which upstream binds on the bought value (`no_inc`) so that a
+   *     good coat never costs you a point you already own;
+   *   and the ROW, which draws `25 (20)` when the two differ — the only way to
+   *     tell "I bought this" from "my armour is doing this".
+   *
+   * Null against a server too old to send it, and then the column behaves
+   * exactly as it did before this existed: every `+` live, no brackets.
+   */
+  readonly statBase?: Readonly<Record<string, number>> | null;
   /** Attribute points in hand. Zero draws no `+` anywhere. */
   readonly unspentStats?: number;
   /**
@@ -2632,6 +2685,13 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
       options.stats ?? null,
       Math.max(0, Math.floor(options.unspentStats ?? 0)),
       options.armedStat ?? null,
+      options.statBase ?? null,
+      // LEVEL 1 IS THE SAFE DEFAULT and it is never reached in practice: the
+      // column only draws with a `progress` frame in hand, which carries a real
+      // level. If it ever were, it would grey MORE `+` than it should — a
+      // refusal the server would have made anyway, rather than a spend it
+      // would not.
+      Math.max(1, Math.floor(options.level ?? 1)),
     );
   }
 

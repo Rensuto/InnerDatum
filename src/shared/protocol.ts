@@ -4764,6 +4764,40 @@ export type ProgressMsg = {
     wil: number;
     cun: number;
   };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SIX AS **BOUGHT** — class sheet plus points spent, nothing worn.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's `getStat(sid, nil, nil, true)`, whose fourth argument drops every
+   * increment from gear and effects. It answers a different question from
+   * `stats` above and the screen needs both:
+   *
+   *   WHAT THE CEILING IS ASKED OF. `statCeilingForLevel` binds on what the
+   *     player has bought, not on what they are standing in — otherwise a good
+   *     coat would cost you a point you already own, and taking it off would be
+   *     a way to level up.
+   *
+   *   AND WHAT THE ROW SAYS. Upstream draws `25 (20)`, composed with the base in
+   *     brackets (LevelupDialog.lua:624-627), which is the only way to tell "I
+   *     bought this" from "my armour is doing this" — and the second number is
+   *     the one that decides whether the `+` works.
+   *
+   * NOT DERIVABLE CLIENT-SIDE, for the same reason `stats` is not: the fold is
+   * `recomposeCombat`'s and lives entirely on the server.
+   *
+   * OPTIONAL, so adding it forces no version bump. Absent means a server too old
+   * to send it, and the screen falls back to drawing `stats` alone — which is
+   * exactly what it did before this field existed.
+   */
+  statBase?: {
+    str: number;
+    dex: number;
+    con: number;
+    mag: number;
+    wil: number;
+    cun: number;
+  };
 };
 
 // ---------------------------------------------------------------------------

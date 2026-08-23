@@ -1729,6 +1729,40 @@ export type EquippedActor = EffectActor & {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS BODY HAS BOUGHT — the class sheet plus the attribute points spent,
+ * and NOTHING WORN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's `getStat(sid, nil, nil, true)`: the fourth argument is `no_inc` and it
+ * drops `inc_stats` — every increment from gear, effects and temporary sources.
+ * Upstream asks for exactly this in three places and they are all the same
+ * question: how high has the PLAYER pushed this attribute, as opposed to how
+ * high are they standing today.
+ *
+ * ═══ EXPORTED, BECAUSE THE ANSWER IS NEEDED OUTSIDE THE FOLD ═══
+ * `recomposeCombat` uses it as stage one and a half. The gateway uses it for
+ * `statCeilingForLevel` — a ceiling asked of the COMPOSED value would let a good
+ * coat cost you the ability to spend a point you own — and to send the base to
+ * the client, which draws `25 (20)` the way upstream's dialog does
+ * (LevelupDialog.lua:624-627).
+ *
+ * ONE COMPUTATION AND NOT THREE. The gateway could reach `classById(...)` and
+ * add `spentStats` itself; that would be a second opinion about what a base is,
+ * and the first thing to drift would be the day something else joins the fold
+ * below gear.
+ */
+export function boughtSheet(
+  actor: { readonly spentStats?: PrimaryStats },
+  baseSheet: CombatSheet | undefined,
+): CombatSheet | undefined {
+  const grown = actor.spentStats;
+  return grown === undefined || baseSheet === undefined
+    ? baseSheet
+    : composeWielders(baseSheet, [{ stats: grown }]);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  *        THE SINGLE WRITER OF `actor.combat`. THE ORDER IS FIXED.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -1796,11 +1830,7 @@ export function recomposeCombat(
    * coat off" exact and what lets a retune of any class correct every existing
    * character instead of stranding them.
    */
-  const grown = actor.spentStats;
-  const base =
-    grown === undefined || baseSheet === undefined
-      ? baseSheet
-      : composeWielders(baseSheet, [{ stats: grown }]);
+  const base = boughtSheet(actor, baseSheet);
 
   // Stage two.
   if (base !== undefined) {

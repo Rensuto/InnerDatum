@@ -269,6 +269,9 @@ import {
   partyPaneView,
   PARTY_PANE_MARGIN,
 } from './ui/partypanel.ts';
+// THE CEILING RULE, SHARED WITH THE SERVER THAT ENFORCES IT. One function, so
+// a greyed `+` and a refused frame can never disagree about where the limit is.
+import { STAT_MAX, canRaiseStat } from '../shared/progression.ts';
 import { drawLife, LIFE_W } from './ui/life.ts';
 import { drawResource, RESOURCE_H, resourceLabel } from './ui/resource.ts';
 import {
@@ -3653,6 +3656,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // agree with the character sheet a key away rather than showing a class
       // base nothing else in the client reports.
       stats: progress?.stats ?? null,
+      // AND THE SIX AS BOUGHT — what the level ceiling binds on, and what the
+      // row prints in brackets. See `ProgressMsg.statBase`.
+      statBase: progress?.statBase ?? null,
       unspentStats: progress?.unspentStats ?? 0,
       armedStat: talentsArmedStat,
     });
@@ -6033,6 +6039,38 @@ async function boot(): Promise<void> {
    * on something the player never armed.
    */
   function pressStatPlus(stat: string): void {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A CAPPED CONTROL STILL ANSWERS, AND SAYS WHICH KIND OF NO IT IS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The column already draws a dash instead of a `+` at the ceiling, so this
+     * is the press that arrives anyway — a touch, a click on the way past. Sent
+     * as a frame it earns a full red refusal banner, which is the loudest answer
+     * in the client for the most ordinary thing a player can do.
+     *
+     * TWO SENTENCES, BECAUSE UPSTREAM SAYS TWO AND THEY MEAN OPPOSITE THINGS.
+     * *"…until next level"* sends the player to spend the point elsewhere and
+     * come back; the bare maximum means never. LevelupDialog.lua:255-260 keeps
+     * them apart for exactly this reason, and the server's own refusal does too.
+     *
+     * ASKED OF THE BOUGHT VALUE — `ProgressMsg.statBase`. Off the composed one
+     * this would fire on the wrong rows the moment anybody put a coat on.
+     */
+    const base = progress?.statBase?.[stat as 'str'] ?? null;
+    if (base !== null && progress !== null && !canRaiseStat(base, progress.level)) {
+      showNotice(
+        base < STAT_MAX
+          ? `${stat} is at its maximum for level ${String(progress.level)} — try again next level`
+          : `${stat} is already at its maximum`,
+      );
+      // THE ARM IS CLEARED TOO. Leaving it armed would put a gold plate on a
+      // control that cannot be bought, which is the "lit button that does
+      // nothing" ui/hotbar.ts refuses.
+      talentsArmedStat = null;
+      requestDraw();
+      return;
+    }
     const next = pressSpend(talentsArmedStat, stat);
     talentsArmedStat = next.armed;
     if (next.spend === null) {

@@ -1299,3 +1299,84 @@ describe('the two purses, which are not interchangeable', () => {
     );
   });
 });
+
+describe('the attribute ceiling is on the control, not only in the refusal', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * LevelupDialog.lua:255-260 refuses the press; :584, :593 and :610-616 PAINT
+   * the row so the player knows before they press.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ours had no ceiling at all below an unreachable 100, so three points a level
+   * could all go into one attribute. Now the rule is ported, this column has to
+   * show it — a `+` that looks live and earns a red refusal banner is the worst
+   * of both.
+   */
+
+  /** `SIX` is str 25 / dex 14 / con 21 / mag 10 / wil 14 / cun 12, all composed. */
+  const glyphs = (over: Partial<Parameters<typeof drawTalentPanel>[0]>) =>
+    paintPanel(over).filter((text) => text === '+' || text === '–');
+
+  it('greys the attributes at the ceiling and leaves the rest live', () => {
+    /**
+     * At level 3 the ceiling is 24.2. Of the six BOUGHT values below, only `str`
+     * at 25 is at or over it, so exactly one control goes dead — and the other
+     * five must not, or the whole column would look broken on the level where
+     * one attribute happens to be ahead.
+     */
+    const drawn = glyphs({
+      level: 3,
+      statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+    });
+    expect(drawn.filter((g) => g === '–')).toHaveLength(1);
+    expect(drawn.filter((g) => g === '+')).toHaveLength(5);
+  });
+
+  it('opens the control again as the level catches up', () => {
+    // Level 18: the ceiling is 45.2 and nothing here is near it.
+    const drawn = glyphs({
+      level: 18,
+      statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+    });
+    expect(drawn.filter((g) => g === '–')).toHaveLength(0);
+  });
+
+  it('asks the BOUGHT value, not the composed one', () => {
+    /**
+     * ═══ THE ONE THAT WOULD HURT ═══
+     * `stats` here says str 25 while `statBase` says 20 — a body wearing +5 to
+     * Strength. Upstream drops every increment (`no_inc`) for exactly this: a
+     * good coat must never cost you a point you already own, or taking it off
+     * would be a way to level up.
+     */
+    const drawn = glyphs({
+      level: 3,
+      stats: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+      statBase: { str: 20, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+    });
+    expect(drawn.filter((g) => g === '–')).toHaveLength(0);
+  });
+
+  it('leaves every control live against a server that sends no base', () => {
+    // The additive-field contract: an older server loses the affordance, never
+    // the ability to spend. The server's refusal is the backstop.
+    const drawn = glyphs({ level: 1, statBase: null });
+    expect(drawn.filter((g) => g === '–')).toHaveLength(0);
+    expect(drawn.filter((g) => g === '+')).toHaveLength(6);
+  });
+
+  it('prints the base in brackets when armour is doing some of the work', () => {
+    // `25 (20)` — LevelupDialog.lua:624-627. It is also what explains a greyed
+    // control beside a number that looks nowhere near any limit.
+    const texts = paintPanel({
+      level: 3,
+      stats: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+      statBase: { str: 20, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+    });
+    expect(texts).toContain('25 (20)');
+    // ...AND NOT WHEN THEY AGREE. `(14)` beside a bare 14 on every row is
+    // furniture — the same argument the mastery header makes for `(x1.00)`.
+    expect(texts).toContain('14');
+    expect(texts).not.toContain('14 (14)');
+  });
+});
