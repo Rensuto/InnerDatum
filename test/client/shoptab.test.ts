@@ -42,6 +42,7 @@ function shopFrame(over: Partial<ShopMsg> = {}): ShopMsg {
         tier: ItemTier.Rare,
         buy: 49,
         sell: 2,
+        desc: 'Reinforced against the kind of night this beat has.',
       },
       {
         itemId: 'item_leather_chest~ol1',
@@ -50,6 +51,7 @@ function shopFrame(over: Partial<ShopMsg> = {}): ShopMsg {
         tier: ItemTier.Uncommon,
         buy: 24,
         sell: 1,
+        desc: 'Oiled against the rain, which is most of the year.',
       },
     ],
     ...over,
@@ -212,6 +214,7 @@ describe('the strip’s one control', () => {
               icon: 'item_leather_chest',
               tier: ItemTier.Common,
               desc: 'x',
+              compare: [],
             },
           },
         },
@@ -312,5 +315,104 @@ describe('a shelf row cannot be picked up', () => {
     });
     const { rect, rows, x, y } = firstCell(v);
     expect(inventoryPanelDragAt(rect, rows, x, y)?.kind).toBe(InventoryHitKind.DragStart);
+  });
+});
+
+describe('a shelf row carries its own description', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SHELF WAS A PICTURE, A NAME AND A PRICE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The strip printed a shelf row's description by resolving the item out of the
+   * player's OWN bag — so a coat you did not already own showed nothing at all,
+   * which is every coat worth looking at. `ShowStore.lua:145` renders the full
+   * text for every row on the shelf.
+   */
+  const detailOf = (rows: readonly ReturnType<typeof inventoryPanelRows>[number][]) => {
+    const row = rows.find((r) => r.kind === InventoryRowKind.Detail);
+    if (row === undefined || row.kind !== InventoryRowKind.Detail) throw new Error('no strip');
+    return row;
+  };
+
+  it('shows the prose for something the player does not own', () => {
+    const v = view({ focus: { kind: 'item', itemId: 'item_watchmans_coat~rf1' } });
+    expect(detailOf(inventoryPanelRows(v)).desc).toBe(
+      'Reinforced against the kind of night this beat has.',
+    );
+  });
+
+  it('falls back to the bag against a server that sends none', () => {
+    // The additive-field contract: an older server loses the sentence for
+    // items you do not own, never for the ones you do.
+    const shop = shopFrame();
+    const v = view({
+      focus: { kind: 'item', itemId: 'item_watchmans_coat~rf1' },
+      shop: {
+        ...shop,
+        stock: shop.stock.map((row) => ({ ...row, desc: '' })),
+      },
+    });
+    // Nothing in the bag either, so the honest answer is an empty line rather
+    // than a sentence about the wrong item.
+    expect(detailOf(inventoryPanelRows(v)).desc).toBe('');
+  });
+});
+
+describe('a worn item says what it is giving you', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TAB THE PANEL OPENS ON COULD NOT ANSWER THE QUESTION IT EXISTS FOR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `compare` lived on `CarriedItemView` alone, so a worn item reached the client
+   * as a name, a tier and one line of flavour. `ShowEquipment.lua:89` renders the
+   * full description for the selected worn item.
+   */
+  const armour = [{ label: 'Armour', value: '+4' }];
+
+  const wornView = (panelH?: number) =>
+    view({
+      tab: InventoryTab.Equipped,
+      shop: null,
+      focus: { kind: 'item', itemId: 'w' },
+      inventory: {
+        ...inventoryFrame(100),
+        equipped: {
+          body: {
+            itemId: 'w',
+            name: 'Watchman’s Coat',
+            icon: 'item_watchmans_coat',
+            tier: ItemTier.Common,
+            desc: 'Heavy wool, official issue.',
+            compare: armour,
+          },
+        },
+      },
+      ...(panelH === undefined ? {} : { panelH }),
+    });
+
+  const detailOf = (rows: readonly ReturnType<typeof inventoryPanelRows>[number][]) => {
+    const row = rows.find((r) => r.kind === InventoryRowKind.Detail);
+    if (row === undefined || row.kind !== InventoryRowKind.Detail) throw new Error('no strip');
+    return row;
+  };
+
+  it('carries the stat rows the doll used to be handed empty', () => {
+    expect(detailOf(inventoryPanelRows(wornView())).rows).toEqual(armour);
+  });
+
+  it('says the same thing whether the strip is tall or short', () => {
+    /**
+     * THE HEIGHT IS THE SPACE; THE ROWS ARE THE ANSWER. `drawDetail`'s compact
+     * branch returns before it reads `rows`, so a short strip draws none of them
+     * — but the answer must not change, or the two tabs become two panels
+     * wearing one header.
+     */
+    const short = detailOf(inventoryPanelRows(wornView(120)));
+    const tall = detailOf(inventoryPanelRows(wornView(600)));
+    expect(short.rows).toEqual(tall.rows);
+    expect(short.compact, 'a small panel still protects the doll').toBe(true);
+    expect(tall.compact, 'a big one can afford the strip').toBe(false);
   });
 });

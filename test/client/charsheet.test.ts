@@ -621,6 +621,9 @@ describe('the equipment rows', () => {
     icon: 'item_watchmans_coat',
     tier: ItemTier.Common,
     desc: 'Heavy wool, official issue.',
+    // WHAT IT IS GIVING YOU — `ItemView.compare`. The sheet does not draw these
+    // rows (the inventory panel does), so an empty list is the honest fixture.
+    compare: [],
   } as const;
 
   it('lists every slot in the wire’s order, worn or not', () => {

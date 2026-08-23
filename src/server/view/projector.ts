@@ -1408,8 +1408,14 @@ export function projectGroundItems(world: World): GroundMsg {
  * says so on the wire; this is where the compiler enforces it, because the day
  * `Item` grows a `dropWeight` or a `debugNotes` a spread would put it in front
  * of every player and nothing would stop it.
+ *
+ * ═══ EVERYTHING BUT `compare`, AND THAT OMISSION IS THE POINT ═══
+ * A catalogue row is a fact about an ITEM; `ItemView.compare` is a fact about
+ * what one particular BODY is wearing, and this function is handed no body. So
+ * the return type says so, and every caller is made to answer the question with
+ * a sheet in hand rather than being able to forget it and ship an empty list.
  */
-function toItemView(item: Item): ItemView {
+function toItemView(item: Item): Omit<ItemView, 'compare'> {
   return {
     itemId: item.id,
     name: item.name,
@@ -1673,20 +1679,52 @@ export function projectInventory(
    */
   sellFor?: (id: string) => number,
 ): InventoryMsg {
+  // The same fold `recomposeCombat` ran to build `actor.combat`, re-run here so
+  // the "before" side of every comparison is the sheet the player is actually
+  // wearing rather than one this function guessed at.
+  //
+  // HOISTED ABOVE THE DOLL, because the doll needs it now — see below.
+  const base = viewer.baseCombat ?? viewer.combat;
+  const worn = wornOf(viewer.equipped, resolveItem);
+
   const equipped: { [K in Slot]?: ItemView } = {};
   for (const slot of SLOT_ORDER) {
     const id = viewer.equipped?.[slot];
     if (id === undefined) continue;
     const item = resolveItem(id);
     if (item === undefined || item.slot !== slot) continue;
-    equipped[slot] = toItemView(item);
+    equipped[slot] = {
+      ...toItemView(item),
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WHAT THIS WORN ITEM IS GIVING YOU — and it is the SAME function the bag
+       * uses, with the candidate on the other side.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `compareRows(base, worn, candidate)` answers "what changes if I put this
+       * on", by swapping the candidate for whatever occupies its slot. Hand it
+       * the worn set WITHOUT this item and this item as the candidate, and the
+       * same arithmetic answers "what is this giving me" — because the swap it
+       * computes is then exactly this item against nothing.
+       *
+       * ONE FUNCTION AND NOT TWO, which is the point: a second "what does a worn
+       * item add" routine would be a second opinion about how a sheet folds, and
+       * the two would disagree the first time anything joined the fold.
+       *
+       * Until this existed the doll sent a name, a tier and one line of flavour
+       * — so the panel could not answer "what is this coat actually doing" on the
+       * tab it opens on.
+       */
+      compare:
+        base === undefined
+          ? []
+          : compareRows(
+              base,
+              worn.filter((other) => other !== item),
+              item,
+            ),
+    };
   }
-
-  // The same fold `recomposeCombat` ran to build `actor.combat`, re-run here so
-  // the "before" side of every comparison is the sheet the player is actually
-  // wearing rather than one this function guessed at.
-  const base = viewer.baseCombat ?? viewer.combat;
-  const worn = wornOf(viewer.equipped, resolveItem);
 
   const carried: CarriedItemView[] = [];
   for (const id of viewer.carried ?? []) {
@@ -1753,6 +1791,11 @@ export function projectShop(name: string, stock: readonly string[], level: numbe
       tier: item.tier,
       buy: buyPrice(itemId, level),
       sell: sellPrice(itemId),
+      // THE SENTENCE THE CATALOGUE WAS AUTHORED FOR. The panel used to resolve a
+      // shelf row's description out of the player's own bag, so a coat you did
+      // not already own had none — which is every coat worth looking at. See
+      // `ShopItemView.desc`, which also records why there is no comparison here.
+      desc: item.desc,
     });
   }
   return { v: PROTOCOL_VERSION, t: 'shop', name, stock: items };

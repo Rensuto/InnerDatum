@@ -483,20 +483,41 @@ const DESC_LINES = 2;
 const DETAIL_H = ROW_H * (2 + DESC_LINES + DETAIL_ROWS_MAX);
 
 /**
- * THE EQUIPPED TAB'S STRIP: ONE LINE, and that is the honest size rather than a
- * concession to the doll.
+ * THE EQUIPPED TAB'S STRIP WHEN THE PANEL CANNOT AFFORD MORE: ONE LINE.
  *
- * `compare` lives on `CarriedItemView` and on nothing else (shared/protocol.ts:
- * 1390-1403), and `detailRow` hands a worn item `rows: []`, so six of the seven
- * lines `DETAIL_H` reserves are for content the doll tab structurally cannot
- * produce. One line carries what it CAN produce: the name, and either the meta
- * (tier, slot, worn/empty) or the DROP control when the sticky focus is still on
- * a bag item the player looked at before switching tabs.
+ * ═══ IT USED TO BE THE ONLY SIZE, AND THE REASON HAS GONE AWAY ═══
+ * This said, correctly at the time: *"`compare` lives on `CarriedItemView` and
+ * on nothing else, and `detailRow` hands a worn item `rows: []`, so six of the
+ * seven lines `DETAIL_H` reserves are for content the doll tab structurally
+ * cannot produce."*
  *
- * See the header for why reserving per-TAB does not reintroduce the oscillation
- * that reserving per-FOCUS would.
+ * `compare` is on `ItemView` now, so the doll tab produces exactly the same
+ * rows the bag does — "what is this coat giving me" — and a one-line strip would
+ * be throwing them away. `ShowEquipment.lua:89` renders the full description for
+ * the selected worn item; ours rendered a name.
+ *
+ * ═══ SO IT IS A FLOOR RATHER THAN THE SIZE, AND THE DOLL STILL WINS ═══
+ * Measured: a full-height strip at the 640x320 floor takes the doll from four
+ * visible cells to two. The doll IS this tab. `equippedStripFits` decides, off
+ * the PANEL's height and never off the focus — see the header for why per-focus
+ * would make a cell vanish because it was pointed at.
  */
 const DETAIL_COMPACT_H = ROW_H;
+
+/**
+ * Can this panel show the Equipped tab's full strip WITHOUT costing the doll a
+ * single cell?
+ *
+ * THE CONDITION IS THE ANSWER, not a threshold somebody measured once. The doll
+ * wants `DOLL_H`; the tabs row and the strip are what sit around it; if what is
+ * left still covers the doll, the strip is affordable and nothing is lost. A
+ * magic pixel number would have been a fourth thing to re-measure the day a row
+ * changed height.
+ */
+function equippedStripFits(panelH: number): boolean {
+  const inner = panelH - INSET * 2;
+  return inner - TAB_ROW_H - DETAIL_H >= DOLL_H;
+}
 
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
@@ -963,6 +984,21 @@ export type InventoryPanelView = {
   /** The strip's subject. See `InventoryFocus` — the caller must not clear it. */
   readonly focus: InventoryFocus | null;
   /**
+   * HOW TALL THE PANEL IS, in logical pixels — `PanelRect.h`.
+   *
+   * ONE READER: `equippedStripFits`, which decides whether the Equipped tab can
+   * afford a full detail strip without costing the doll a cell. It is a fact
+   * about the PANEL and never about the focus, which is what keeps it out of the
+   * oscillation this file's header refuses — a strip that grew when a cell was
+   * pointed at would drop the grid's tail row at that instant, so the cell under
+   * the pointer could vanish because it was pointed at.
+   *
+   * OPTIONAL, like `cols` beside it and for the same reason: a caller with no
+   * panel on screen still gets the shape this tab has always had, which is the
+   * compact one.
+   */
+  readonly panelH?: number;
+  /**
    * THE VIEWER'S OWN CLASS PORTRAIT, for the middle of the doll.
    *
    * An `icon_character_the_*` asset KEY, exactly as `TurnActor.portrait`
@@ -1165,12 +1201,47 @@ function itemOnShelf(view: InventoryPanelView, itemId: string): CarriedItemView 
   return view.inventory?.carried.find((row) => row.itemId === itemId);
 }
 
+/**
+ * THE CAP, AND IT KEEPS A WHOLE PREFIX.
+ *
+ * Showing four of five and saying "1 more" is a table that has stopped short and
+ * admits it; showing four of five silently is a table that looks complete —
+ * ui/caselog.ts:467-478's rule, which this panel follows everywhere.
+ *
+ * ONE HELPER, TWO CALLERS. The bag inlined this and the doll had `rows: []`
+ * because the wire could not fill them; now both sides produce the same rows and
+ * a second copy of the arithmetic would be two concessions that could disagree
+ * about how many fit.
+ *
+ * ═══ IT DOES NOT KNOW ABOUT `compact`, AND THAT IS DELIBERATE ═══
+ * A compact strip is one line and cannot draw a row — but that is a fact about
+ * the SPACE, not about the ANSWER. `drawDetail`'s compact branch returns before
+ * it ever reads `rows`, so emptying the list here would buy nothing and would
+ * break the property `test/client/inventory.test.ts` pins: what the strip SAYS
+ * is one answer to one question on both tabs, and only the reserved height
+ * differs. Two tabs disagreeing about an item's stats would be two panels
+ * wearing one header.
+ */
+function detailRows(all: readonly InspectRow[]): {
+  rows: readonly InspectRow[];
+  hiddenRows: number;
+} {
+  const capped = all.length > DETAIL_ROWS_MAX;
+  return capped
+    ? { rows: all.slice(0, DETAIL_ROWS_MAX - 1), hiddenRows: all.length - (DETAIL_ROWS_MAX - 1) }
+    : { rows: all, hiddenRows: 0 };
+}
+
 function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): InventoryRow {
   // THE HEIGHT IS THE TAB'S AND NEVER THE FOCUS'S. See `DETAIL_COMPACT_H` and the
   // header: a strip that grew when a cell was pointed at would drop the tail row
   // of the grid at that instant, so the cell under the pointer could vanish
   // because it was pointed at.
-  const compact = view.tab === InventoryTab.Equipped;
+  // COMPACT ONLY WHEN THE PANEL CANNOT AFFORD OTHERWISE — see
+  // `equippedStripFits`. `panelH` is absent for a caller with no rect (a hit
+  // test replaying last frame's rows, a fixture), and absent reads as the
+  // smallest panel, which is the shape this tab has always had.
+  const compact = view.tab === InventoryTab.Equipped && !equippedStripFits(view.panelH ?? 0);
 
   const blank = {
     kind: InventoryRowKind.Detail,
@@ -1210,19 +1281,13 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
 
   const carried = inventory.carried.find((item) => item.itemId === focus.itemId);
   if (carried !== undefined) {
-    const all = carried.compare;
-    // THE CAP, AND IT KEEPS A WHOLE PREFIX. Showing four of five and saying "1
-    // more" is a table that has stopped short and admits it; showing four of five
-    // silently is a table that looks complete.
-    const capped = all.length > DETAIL_ROWS_MAX;
     return {
       kind: InventoryRowKind.Detail,
       compact,
       title: carried.name,
       meta: `${tierWord(carried.tier)} · ${carried.slot}`,
       desc: carried.desc,
-      rows: capped ? all.slice(0, DETAIL_ROWS_MAX - 1) : all,
-      hiddenRows: capped ? all.length - (DETAIL_ROWS_MAX - 1) : 0,
+      ...detailRows(carried.compare),
       // DROP IS OFFERED FOR A CARRIED ITEM ONLY. ToME's `playerDrop`
       // (Game.lua:2173-2176 -> `DROP_FLOOR`) drops out of INVEN, and taking a
       // worn thing off is a separate act there and here.
@@ -1251,8 +1316,18 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       title: worn.name,
       meta: `${tierWord(worn.tier)} · ${slot} · worn`,
       desc: worn.desc,
-      rows: [],
-      hiddenRows: 0,
+      /**
+       * ═══ WHAT THIS COAT IS ACTUALLY GIVING YOU ═══
+       * `rows: []` was here because the wire had nothing to put in them —
+       * `compare` lived on `CarriedItemView` alone, so the tab the panel OPENS
+       * ON could not answer the question it exists to answer. It is on
+       * `ItemView` now and means the same thing on both sides of the swap.
+       *
+       * CAPPED THE SAME WAY THE BAG'S ARE, through the same `detailRows`
+       * helper — one concession, said out loud in `hiddenRows`, rather than two
+       * that could disagree about how many fit.
+       */
+      ...detailRows(worn.compare),
       // NO CONTROL ON A WORN ITEM, in a shop or out of one. Selling the coat off
       // your own back is one click from being an accident, and taking it off is
       // already a separate act.
@@ -1271,7 +1346,11 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       compact,
       title: shelved.name,
       meta: `${tierWord(shelved.tier)} · ${String(shelved.buy)} gold · sells back for ${String(shelved.sell)}`,
-      desc: item?.desc ?? '',
+      // THE SHELF'S OWN SENTENCE — `ShopItemView.desc`. This used to resolve the
+      // item out of the player's OWN bag (`item?.desc`), so a coat you did not
+      // already own showed no description at all, which is every coat worth
+      // looking at. The fallback stays for a server too old to send one.
+      desc: shelved.desc !== '' ? shelved.desc : (item?.desc ?? ''),
       // THE SAME COMPARISON A CARRIED ITEM GETS, which is the whole reason this
       // is a tab on this panel rather than a shop dialog of its own: the
       // question at a shop is never "what is this", it is "is it better than

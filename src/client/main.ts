@@ -2400,7 +2400,9 @@ function lootAt(tile: TileXY): TileLoot {
  */
 function inventoryRowsFor(rect: PanelRect | null): readonly InventoryRow[] {
   return inventoryPanelRows(
-    inventoryPanelView(),
+    // THE HEIGHT TRAVELS WITH THE WIDTH. `equippedStripFits` reads it to decide
+    // whether the doll tab can afford a full detail strip — see that function.
+    { ...inventoryPanelView(), ...(rect === null ? {} : { panelH: rect.h }) },
     rect === null ? undefined : inventoryColumnsFor(rect.w),
   );
 }

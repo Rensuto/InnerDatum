@@ -176,7 +176,9 @@ function view(over: Partial<HotbarView> = {}): HotbarView {
 }
 
 function itemView(itemId: string): ItemView {
-  return { itemId, name: itemId, icon: itemId, tier: 'common', desc: '' };
+  // `compare: []` — a hotbar binding never draws stat rows, and an empty list
+  // is the honest answer for a fixture with no body behind it.
+  return { itemId, name: itemId, icon: itemId, tier: 'common', desc: '', compare: [] };
 }
 
 /**

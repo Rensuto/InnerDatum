@@ -17,6 +17,7 @@ import {
   projectParty,
   projectPartyState,
   projectProjectiles,
+  projectShop,
   projectTurn,
   toActorView,
 } from '../../src/server/view/projector.ts';
@@ -1004,8 +1005,11 @@ describe('projectInventory', () => {
     body.carried = ['item_watchmans_cap'];
 
     const msg = projectInventory(body);
+    // `compare` IS ON BOTH SIDES NOW and `slot` is still on one — which is the
+    // claim this test is making. A worn item's key IS its slot; what it is
+    // GIVING you is a fact neither side can read off a key.
     expect(Object.keys(msg.equipped['feet'] ?? {}).sort()).toEqual(
-      ['desc', 'icon', 'itemId', 'name', 'tier'].sort(),
+      ['compare', 'desc', 'icon', 'itemId', 'name', 'tier'].sort(),
     );
     expect(Object.keys(msg.carried[0] ?? {}).sort()).toEqual(
       ['compare', 'desc', 'icon', 'itemId', 'name', 'slot', 'tier'].sort(),
@@ -1429,5 +1433,56 @@ describe('the viewer gets every budget the server knows about', () => {
     for (const [key, value] of Object.entries(view)) {
       expect(out[key as keyof typeof out], `projectResource dropped ${key}`).toBe(value);
     }
+  });
+});
+
+describe('what an item is worth, wherever it appears', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `compare` LIVED ON `CarriedItemView` ALONE, SO THE DOLL COULD NOT ANSWER
+   * THE QUESTION THE PANEL OPENS ON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A worn item reached the client as a name, a tier and one line of flavour.
+   * `ShowEquipment.lua:89` renders the full description for the selected worn
+   * item; ours rendered a sentence. It is on `ItemView` now, filled by the same
+   * `compareRows` the bag uses with the candidate on the other side of the swap.
+   */
+  it('tells a worn item what it is giving this body', () => {
+    const world = room();
+    const body = watchman(world);
+    // BOOTS ARE THE RIGHT FIXTURE: `wielder.mods.def = 2`, and the catalogue
+    // says why — "+2 armour would be exactly zero against all three of them",
+    // so a piece chosen for armour could measure as no change and pass a weaker
+    // version of this test.
+    body.equipped = { feet: 'item_watchmans_boots' };
+
+    const worn = projectInventory(body).equipped['feet'];
+    expect(worn).toBeDefined();
+    expect(worn?.compare.length, 'the doll used to be handed an empty list').toBeGreaterThan(0);
+    expect(worn?.compare.some((row) => row.label.toLowerCase().includes('def'))).toBe(true);
+  });
+
+  it('measures it against NOT having it, not against having it twice', () => {
+    /**
+     * THE ARITHMETIC THAT WOULD BE WRONG. `compareRows(base, worn, candidate)`
+     * swaps the candidate for whatever occupies its slot — so handing it the
+     * FULL worn set with the item already in it compares the boots against the
+     * boots and answers "no change", which is the failure this fixture catches.
+     * The worn set must exclude the item being described.
+     */
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { feet: 'item_watchmans_boots' };
+    const worn = projectInventory(body).equipped['feet'];
+    expect(worn?.compare).not.toEqual([]);
+  });
+
+  it('gives a shelf row the sentence the catalogue authored for it', () => {
+    // A shelf was a picture, a name and a price: the panel resolved a row's
+    // description out of the player's OWN bag, so a coat you did not already own
+    // had none. `ShowStore.lua:145` renders the text for every row.
+    const shop = projectShop('Threadneedle Row', ['item_watchmans_boots'], 1);
+    expect(shop.stock[0]?.desc).toContain('Hobnailed');
   });
 });

@@ -98,7 +98,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 function worn(itemId: string, name: string, tier: ItemTier): ItemView {
-  return { itemId, name, icon: itemId, tier, desc: `${name}, worn.` };
+  return { itemId, name, icon: itemId, tier, desc: `${name}, worn.`, compare: [] };
 }
 
 function bagged(
@@ -294,6 +294,7 @@ describe('knowing when to point at the bag', () => {
     icon: 'i',
     tier: ItemTier.Common,
     desc: '',
+    compare: [],
   });
 
   it('points at the bag when a bare slot has something for it', () => {
@@ -356,6 +357,7 @@ describe('hasSomethingToBuy', () => {
     tier: 'common',
     buy,
     sell: Math.floor(buy / 20),
+    desc: `${itemId}, on the shelf.`,
   });
 
   it('points at the counter when the purse covers something on it', () => {
@@ -585,11 +587,17 @@ describe('the tabs', () => {
     // ═══ THE CONTENT IS IDENTICAL; ONLY THE RESERVED HEIGHT IS NOT ═══
     // `compact` is deliberately excluded from the comparison, and that exclusion
     // is the point rather than a loophole: the Equipped tab reserves ONE LINE for
-    // the strip because `compare` exists only on `CarriedItemView`
-    // (protocol.ts:1390-1403) and a worn item is handed `rows: []`, so the other
-    // six lines would be reserved for content the doll tab cannot produce. What
-    // the strip SAYS still has to be one answer to one question on both tabs, or
-    // the two halves are two panels wearing one header.
+    // the strip WHEN THE PANEL CANNOT AFFORD MORE — measured, a full strip at the
+    // 640x320 floor takes the doll from four visible cells to two, and the doll
+    // IS that tab (`equippedStripFits`). What the strip SAYS is one answer to one
+    // question on both tabs either way, or the two halves are two panels wearing
+    // one header.
+    //
+    // THIS COMMENT USED TO SAY the reservation was because *"`compare` exists
+    // only on `CarriedItemView` and a worn item is handed `rows: []`"*. That was
+    // true and is not: `compare` is on `ItemView` now, so the doll produces the
+    // same rows the bag does — which is why the content assertion below is doing
+    // real work rather than comparing two empty lists.
     const stripBody = (rows: readonly InventoryRow[]) =>
       rows
         .filter(

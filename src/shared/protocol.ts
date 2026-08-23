@@ -2051,6 +2051,33 @@ export type ItemView = {
    * when somebody's inventory changes rather than on every pump.
    */
   readonly desc: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS ITEM IS WORTH TO **THIS** BODY, PRE-FORMATTED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ IT WAS ON `CarriedItemView` ONLY, AND THE DOLL PAID FOR THAT ═══
+   * A worn item reached the client as a name, a tier and one line of flavour and
+   * NOTHING ELSE — so "what is this coat actually giving me?" could not be
+   * answered from the paper doll, on the tab the panel opens on, every single
+   * time it opens. `ShowEquipment.lua:89` renders the full description for the
+   * selected worn item; ours rendered a sentence.
+   *
+   * ═══ ONE QUESTION, ASKED FROM TWO PLACES ═══
+   * For an item in the BAG this is the delta of putting it on — "is this better
+   * than what I am wearing". For an item ON THE DOLL it is that item measured
+   * against not having it — "what is this giving me". Those are the same
+   * arithmetic (`compareRows`, one function) with the candidate on different
+   * sides, which is why ONE field carries both rather than two that could
+   * disagree about how a sheet folds.
+   *
+   * EMPTY IS A REAL ANSWER and means "this moves nothing you can see" — which
+   * happens honestly, because armour below the attacker's armour penetration
+   * measures as exactly zero (`max(0, armour - apr)`,
+   * src/server/engine/damage.ts). Drawing an empty list as a blank row is the
+   * correct rendering; inventing a "no change" line is not this type's job.
+   */
+  readonly compare: readonly InspectRow[];
 };
 
 /**
@@ -2094,15 +2121,6 @@ export type CarriedItemView = ItemView & {
    */
   readonly slot?: Slot;
   /**
-   * THE DELTA AGAINST WHAT IS IN `slot` RIGHT NOW, PRE-FORMATTED.
-   *
-   * EMPTY IS A REAL ANSWER and means "equipping this moves nothing you can
-   * see" — which happens honestly, because armour below the attacker's armour
-   * penetration measures as exactly zero (`max(0, armour - apr)`,
-   * src/server/engine/damage.ts). Drawing an empty list as a blank row is the
-   * correct rendering; inventing a "no change" line is not this type's job.
-   */
-  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THIS SHOP WOULD PAY FOR IT. Absent outside a room with a counter.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -2119,7 +2137,6 @@ export type CarriedItemView = ItemView & {
    * inventory frame is one more thing that has to be explained as meaningless.
    */
   readonly sell?: number;
-  readonly compare: readonly InspectRow[];
 };
 
 /**
@@ -4927,6 +4944,25 @@ export type ShopItemView = {
    * shrug.
    */
   readonly sell: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SENTENCE. A shelf was a picture, a name and a price.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The panel prints a shelf row's description by resolving the item out of the
+   * player's OWN bag — so a coat you do not already own showed no description at
+   * all, which is every coat worth looking at. `ShowStore.lua:145` renders the
+   * full text for every row on the shelf.
+   *
+   * ═══ AND WHY THERE IS NO `compare` HERE ═══
+   * A delta depends on who is wearing what, and this frame is a BROADCAST: two
+   * players at one counter see the same four coats at the same prices, and one
+   * of them buying is a fact the other needs immediately. `desc` is a fact about
+   * the ITEM and rides that broadcast honestly; a comparison is a fact about a
+   * VIEWER and would have to become a viewer frame first. Still missing, and
+   * named here rather than left to be re-found.
+   */
+  readonly desc: string;
 };
 
 /**

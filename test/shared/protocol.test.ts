@@ -1378,6 +1378,9 @@ describe('the floor is broadcast and the bag is not', () => {
         icon: 'item_watchmans_cap',
         tier: ItemTier.Uncommon,
         desc: 'Reinforced felt with a brass band.',
+        // WHAT THE CAP IS GIVING THIS BODY — `ItemView.compare`, which the doll
+        // needs and used to be carried only for items still in the bag.
+        compare: [{ label: 'Armour', value: '+2' }],
       },
     },
     money: 27,
@@ -1506,7 +1509,13 @@ describe('the floor is broadcast and the bag is not', () => {
     const worn = inventory.equipped[Slot.Head];
     expect(worn).toBeDefined();
     if (!worn) return;
-    expect(Object.keys(worn).sort()).toEqual(['desc', 'icon', 'itemId', 'name', 'tier'].sort());
+    // `compare` JOINED THE LIST DELIBERATELY, and it is the opposite of a leak:
+    // it is the arithmetic already done, which is exactly why the raw table can
+    // stay off the wire. It used to live on `CarriedItemView` alone, so the doll
+    // could not answer "what is this coat giving me" at all.
+    expect(Object.keys(worn).sort()).toEqual(
+      ['compare', 'desc', 'icon', 'itemId', 'name', 'tier'].sort(),
+    );
     expect('wielder' in worn).toBe(false);
     expect('mods' in worn).toBe(false);
   });
