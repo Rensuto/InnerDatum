@@ -68,6 +68,29 @@ describe('a death in a room that resets', () => {
         HOST: '127.0.0.1',
         LOG_LEVEL: 'error',
         DATA_DIR: dataDir,
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * NO WORLD CLOCK, BECAUSE THIS TEST SCRIPTS A WALK.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The tide (net/gateway.ts) turns a shared realm's game turn over every
+         * couple of seconds whether or not anybody acts, which is what stops the
+         * moor being frozen when nobody is walking and running six times too
+         * fast when six people are.
+         *
+         * It also drifts the roamers WHILE THIS TEST PATHS 106 TILES ACROSS
+         * THEM. That is the feature working, and it is precisely what makes a
+         * scripted walk non-deterministic: bump into a wanderer on the way and
+         * you arrive at a different encounter than the one this test chose for
+         * being dangerous enough to die in. Measured: with the tide on, the walk
+         * completes and the player never reaches the room they set out for.
+         *
+         * So this is not the feature being switched off for being inconvenient
+         * — it is this test declaring that it measures KILL ATTRIBUTION and
+         * wants the world to hold still while it does. The tide's own behaviour
+         * is measured in test/server/tide.test.ts, and over a real socket.
+         */
+        TIDE_MS: '0',
       },
       stdio: ['ignore', 'ignore', 'ignore'],
     });

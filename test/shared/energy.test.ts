@@ -379,3 +379,86 @@ describe('tickLevel termination', () => {
     expect(() => tickLevel([actor], { ...ctx, maxTicks: 1.5 })).toThrow(RangeError);
   });
 });
+
+describe('a level whose clock free-runs', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SHARED-REALM BUG, IN ONE ASSERTION.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `anyCanGainEnergy` asks only about the ACT clock, so once every body sits at
+   * `ENERGY_TO_ACT` the loop stops granting — and because `grantBaseEnergy` is
+   * granted INSIDE that branch, the speed-independent BASE clock stops with it.
+   *
+   * Right for a dungeon: nobody is waiting, so no time should pass. Wrong for a
+   * town other people are standing in, where it means the world only moves when
+   * somebody presses a key, six players move it six times faster than one, and
+   * an empty street is frozen.
+   */
+  function idleLevel(freeRuns: boolean): {
+    baseTurns: number;
+    result: TickLevelResult;
+    actor: EnergyActor;
+    clock: TurnClock;
+  } {
+    const actor = createEnergyActor('idler', {});
+    // AT THE CAP AND STAYING THERE — nobody submits an intent, which is what a
+    // player standing in town doing nothing actually looks like.
+    actor.energy = ENERGY_TO_ACT;
+    const clock = createTurnClock();
+    let baseTurns = 0;
+    const result = tickLevel([actor], {
+      clock,
+      actBase: () => {
+        baseTurns += 1;
+      },
+      act: () => ActResult.Done,
+      maxTicks: 10 * TICKS_PER_GAME_TURN,
+      ...(freeRuns ? { freeRuns: true } : {}),
+    });
+    return { baseTurns, result, actor, clock };
+  }
+
+  it('advances nothing at all when it does not, which is the bug', () => {
+    const idle = idleLevel(false);
+    expect(idle.baseTurns).toBe(0);
+    expect(idle.clock.gameTurn).toBe(0);
+    expect(idle.result.status).toBe('idle');
+  });
+
+  it('advances EXACTLY one game turn when it does', () => {
+    const run = idleLevel(true);
+    // The point of the whole feature: regen, effects, cooldowns and the downed
+    // countdown all hang off this pass.
+    expect(run.baseTurns).toBe(1);
+    expect(run.clock.gameTurn).toBe(1);
+  });
+
+  it('stops after that one turn rather than running away', () => {
+    /**
+     * The bound is `clock.gameTurn - startGameTurn < 1`, read off the clock's
+     * OWN progress rather than a counter, so the arithmetic cannot disagree with
+     * what happened. Without it a free-running level never stops granting: every
+     * sweep sets `progressed`, so the idle exit is never reached and the loop
+     * runs to the tick budget on every call.
+     */
+    const run = idleLevel(true);
+    expect(run.result.status).toBe('idle');
+    expect(run.result.gameTurns).toBe(1);
+    expect(run.result.ticks).toBeLessThanOrEqual(2 * TICKS_PER_GAME_TURN);
+  });
+
+  it('banks the idler no extra actions, which is what makes it safe', () => {
+    /**
+     * `grantEnergy` accrues only while STRICTLY below the threshold, and its own
+     * note says why: "it is why a player who idles for a minute out of combat
+     * does not bank sixty turns and then teleport across the map."
+     *
+     * That guard is what lets a wall clock drive this at all. Without it, a tide
+     * every two seconds would hand a player standing in town a free action every
+     * two seconds, and they would cross the map the moment they moved.
+     */
+    const run = idleLevel(true);
+    expect(run.actor.energy).toBe(ENERGY_TO_ACT);
+  });
+});

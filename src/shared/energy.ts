@@ -444,6 +444,40 @@ export type TickLevelCtx = {
    * frame, it is a server that never answers again.
    */
   readonly maxTicks?: number;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ADVANCE ONE GAME TURN EVEN THOUGH NOBODY NEEDS ENERGY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `anyCanGainEnergy` asks only about the ACT clock — `actor.energy <
+   * ENERGY_TO_ACT` — and answers false once every active body is at the cap.
+   * The whole loop then stops, and because `grantBaseEnergy` is granted INSIDE
+   * the `granting` branch, the speed-independent BASE clock stops with it.
+   *
+   * That coupling is right for a dungeon: nobody is waiting, so no time should
+   * pass. It is wrong for a shared realm that other people are standing in,
+   * where it means the world only moves when somebody presses a key — six
+   * players walking advance it six times faster than one, and an empty town is
+   * frozen solid.
+   *
+   * Set for ONE call by a wall-clock timer upstream (`turn-engine.ts`'s `tide`,
+   * fired by the gateway, which is the only layer allowed a clock). While set,
+   * the loop keeps granting until the game turn actually completes, and then
+   * stops — `clock.gameTurn - startGameTurn < 1` is the bound, so this can never
+   * run away and never advances more than the one turn it was asked for.
+   *
+   * ═══ IT IS A REQUEST FOR A TURN, NOT A SPEED ═══
+   * Deliberately NOT a standing property of the level. A level that free-ran on
+   * every pump would be back to advancing on player keystrokes, which is the
+   * thing this exists to stop — it would simply also advance on everyone else's.
+   * The clock belongs to the timer that asked.
+   *
+   * ═══ ABSENT IS BYTE-IDENTICAL ═══
+   * `granting` is `wanted || owed`, and `owed` is false whenever this is unset,
+   * so every existing caller runs the loop it has always run.
+   */
+  readonly freeRuns?: boolean;
 };
 
 export type TickLevelResult = {
@@ -597,7 +631,18 @@ export function tickLevel(actors: readonly EnergyActor[], ctx: TickLevelCtx): Ti
   for (;;) {
     // ---- sweep boundary --------------------------------------------------
     if (!first) {
-      granting = anyCanGainEnergy(actors, ctx.isActive);
+      const wanted = anyCanGainEnergy(actors, ctx.isActive);
+      /**
+       * THE OWED TURN — see `TickLevelCtx.freeRuns`.
+       *
+       * Bounded by the clock's OWN progress rather than by a counter, so the
+       * arithmetic cannot disagree with what actually happened: the moment
+       * `gameTurn` moves, the debt is paid and this goes false. A body at the
+       * act cap gains nothing from the ticks it grants — `grantEnergy` stops at
+       * the ceiling — so an idle player banks no extra actions out of it.
+       */
+      const owed = ctx.freeRuns === true && clock.gameTurn - startGameTurn < 1;
+      granting = wanted || owed;
       if (granting) {
         resolvePasses = 0;
         if (clock.tick - startTick >= maxTicks) return finish('budget', EMPTY_PARKED);

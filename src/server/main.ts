@@ -102,6 +102,21 @@ const APP_VERSION = env['npm_package_version'] ?? '0.0.0';
 const WORLD_SEED = env['WORLD_SEED'] ?? 'inner-datum-m1';
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW OFTEN A SHARED REALM'S CLOCK TURNS OVER, OR 0 TO STOP IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Absent → `TIDE_MS`, which is the number the game runs on and which
+ * world/realms.ts argues. Set to `0` by integration tests that SCRIPT a walk:
+ * a live world clock drifts the roamers under a 106-tile path, which is the
+ * feature working and is exactly what makes such a walk non-deterministic.
+ *
+ * An env var rather than an argument, because these tests spawn `main.ts` as a
+ * child process and `PORT`, `HOST` and `WORLD_SEED` already arrive the same way.
+ */
+const TIDE_MS_OVERRIDE = env['TIDE_MS'] === undefined ? undefined : Number(env['TIDE_MS']);
+
+/**
  * ESM has no `__dirname`, and @fastify/static refuses a relative root — a
  * cwd-relative path would work under `npm start` and break under the Windows
  * service that actually runs this. Resolved from `import.meta.url`, which is
@@ -1655,6 +1670,7 @@ export function buildServer() {
   app.register(wsGateway, {
     world,
     engine: gatewayEngine,
+    tideMs: TIDE_MS_OVERRIDE,
     realms,
     parties,
     downed,

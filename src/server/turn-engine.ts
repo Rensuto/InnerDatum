@@ -1146,6 +1146,15 @@ export type ReapingTurnEngine = Omit<TurnEngine, 'pump'> & {
   readonly barrier: Barrier;
   pump(): ReapingPumpResult;
   /**
+   * A WALL-CLOCK TICK ARRIVED — one game turn is owed to this realm.
+   *
+   * Fired by the gateway's per-realm timer for a shared realm, where the world
+   * must keep moving whether or not anybody is pressing keys. Marks the debt;
+   * the next `pump()` pays it and broadcasts, exactly as `bellExpired()` does.
+   * Calling it twice before a pump still buys one turn.
+   */
+  tide(): void;
+  /**
    * BURY ONE MONSTER — the full cleanup contract, in order, ending with the
    * world. Answers false for a player and for an unknown id; calling it twice is
    * free. Drain `ReapingPumpResult.reaped` through this and broadcast one
@@ -1158,6 +1167,14 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
   const { world } = opts;
   const now = opts.now ?? (() => Date.now());
   const barrier = opts.barrier ?? createBarrier();
+  /**
+   * ONE GAME TURN IS OWED TO THIS REALM. See `tide()`.
+   *
+   * Lives out here beside `barrier` and for the same reason: it is state that
+   * must survive between pumps. A tide can arrive at any moment; the pump that
+   * follows is what spends it.
+   */
+  let owedTurn = false;
   const talents = opts.talents ?? EMPTY_TALENT_BOOK;
   const log = opts.log ?? SILENT_LOGGER;
   const reseedFloor = opts.reseedFloor ?? seedTestEncounter;
@@ -2021,6 +2038,39 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       };
     },
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TIDE — one game turn passes here because time passed, not because
+     * somebody pressed a key.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Takes no arguments and returns nothing, exactly like `bellExpired()` above
+     * and for the identical reason: the socket layer fires it from a real timer
+     * and must not have to thread time through. This adapter owns the clock; the
+     * engine below stays a pure state transition.
+     *
+     * ═══ IT MARKS A DEBT AND THE NEXT PUMP PAYS IT ═══
+     * `bellExpired` sets `pendingIntent` and lets the pump that follows resolve
+     * and broadcast; this sets one flag and does the same. The alternative — a
+     * second path that runs the base pass itself — would be a second copy of
+     * "what happens when a turn passes", and the scheduler's own note is blunt
+     * about what that costs: regen, effects, cooldowns and the downed countdown
+     * must fire EXACTLY ONCE PER GAME TURN AT ANY SPEED, and "on the act clock a
+     * hasted body would refill more often, which is a haste that shortens
+     * cooldowns by another name."
+     *
+     * So there is one base pass, and this only decides that a turn is owed.
+     *
+     * ═══ WHY A FLAG AND NOT A STANDING PROPERTY OF THE LEVEL ═══
+     * A level that free-ran on every pump would advance on player keystrokes
+     * again — everyone's, this time — which is the exact thing the tide exists
+     * to stop. The debt is cleared by the pump that pays it, so two tides
+     * arriving before a pump still buy one turn rather than two.
+     */
+    tide(): void {
+      owedTurn = true;
+    },
+
     bellExpired(): void {
       const level = levelOf(world);
       const nowMs = now();
@@ -2120,6 +2170,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         },
         nowMs: now(),
         barrier,
+        // See `tide()`. Read here and cleared below, so the debt is paid by
+        // exactly one pump however many tides arrived before it.
+        freeRuns: owedTurn,
         downed: opts.downed,
         // Threaded in for the same reason `downed` is: party membership lives
         // across pumps, and it is what makes the barrier and the wipe per-party
@@ -2188,6 +2241,15 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          */
         drainStatusLog: () => statusNotes.splice(0, statusNotes.length),
       });
+      /**
+       * THE DEBT IS SPENT, whatever the pump made of it.
+       *
+       * Cleared HERE rather than inside the ctx literal, because a throw between
+       * the two would leave a realm free-running for every later pump — the
+       * gateway wraps `pump()` in a try/catch precisely because it can throw, and
+       * "the world did not advance" must not also mean "and now it never stops".
+       */
+      owedTurn = false;
 
       /**
        * ═══════════════════════════════════════════════════════════════════════

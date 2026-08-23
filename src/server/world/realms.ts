@@ -119,6 +119,47 @@ export function isShared(kind: RealmKind): boolean {
   return kind === RealmKind.Overworld || kind === RealmKind.Common;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW OFTEN A SHARED REALM'S CLOCK TURNS OVER, IN WALL-CLOCK MILLISECONDS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The one number behind the tide (net/gateway.ts). Every SHARED realm gets one
+ * — `isShared` above is the gate — because the argument is about the realm being
+ * open to people who are not in your party, not about the overworld in
+ * particular: a town where one person is shopping and another is idle has the
+ * same problem the moor did.
+ *
+ * ═══ IT IS PRICED AGAINST REGENERATION, WHICH IS WHAT IT DRIVES ═══
+ * A tide advances exactly one GAME TURN, and a game turn is what pays out
+ * `actBase`. So this number is really "how long is a turn when nobody is
+ * acting", and the honest way to choose it is to read what a turn is worth:
+ *
+ *     hpRegen              0.5 / turn      ->  15 hp per minute
+ *     RESOLVE_PER_TURN     0.6 / turn      ->  18 per minute
+ *     INK_PER_TURN         0.6 / turn      ->  18 per minute
+ *     FOCUS_PER_TURN       0.4 / turn      ->  12 per minute
+ *     REAGENT_REGEN_EVERY_TURNS  1 per 12  ->  2.5 vials per minute
+ *
+ * At two seconds a turn that is a full hundred-point pool in five to eight
+ * minutes of standing about, a full eight-vial bag in three, and a sixty-point
+ * body healed in four. Long enough that resting is a decision and not a reflex;
+ * short enough that a party regrouping in town is not reading a progress bar.
+ *
+ * ═══ AND AGAINST THE MOOR, WHICH IS THE OTHER READER ═══
+ * `MOVE_EVERY_TURNS` is 3 (world/roamers.ts), so a roamer takes a step every six
+ * seconds — the drift its own note asks for ("so they drift rather than chase")
+ * and, critically, a rate that no longer depends on how many people are walking
+ * or how fast they type.
+ *
+ * ═══ THE COST OF THE NUMBER BEING WRONG IS SMALL IN ONE DIRECTION ═══
+ * Too slow is a town that feels dead and a bag that never refills. Too fast is a
+ * server pumping realms nobody is looking at — bounded, because the tide does
+ * not re-arm for an EMPTY realm, but real. Two seconds is the slow end of what
+ * still feels alive, which is the side to err on.
+ */
+export const TIDE_MS = 2000;
+
 /** The one realm id that is a constant, because there is only ever one. */
 export const OVERWORLD_ID = 'realm:overworld';
 

@@ -238,7 +238,14 @@ import {
  * injected as `opts.realms`, so a build with no registry is still a build with
  * one world, and `crossIntoSite` returns on its first line.
  */
-import { ENCOUNTER_SITE, OVERWORLD_ID, RealmKind, SITES, isShared } from '../world/realms.ts';
+import {
+  ENCOUNTER_SITE,
+  OVERWORLD_ID,
+  RealmKind,
+  SITES,
+  TIDE_MS,
+  isShared,
+} from '../world/realms.ts';
 import { regionNamedIn } from '../../shared/level.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
 // `ALDERBROOK_REGIONS` IS DELIBERATELY GONE FROM THIS IMPORT. The realm frame
@@ -1936,6 +1943,29 @@ export type PersistPort = {
 };
 
 export type WsGatewayOptions = {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW OFTEN A SHARED REALM'S CLOCK TURNS OVER. ZERO STOPS IT ENTIRELY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Defaults to `TIDE_MS` (world/realms.ts), which carries the argument for the
+   * number. This is the injection seam, and it exists for the same reason
+   * `turn-engine.ts` injects `now()`: *"so tests can drive it without a real
+   * clock either."*
+   *
+   * ═══ A SCRIPTED WALK AND A LIVE WORLD CLOCK ARE DIFFERENT EXPERIMENTS ═══
+   * `killer-named.test.ts` spawns a real server, paths 106 tiles across the moor
+   * and expects to arrive somewhere dangerous. With a tide running, the roamers
+   * drift WHILE IT WALKS — which is the whole point of the feature and exactly
+   * what makes that walk non-deterministic: bump into one on the way and you get
+   * a different encounter than the one the test picked.
+   *
+   * Zero is therefore not "turn the feature off because it is inconvenient"; it
+   * is a test declaring that it is measuring something else. The tide's own
+   * behaviour is measured in test/server/tide.test.ts against the engine, and
+   * over a real socket.
+   */
+  readonly tideMs?: number;
   /**
    * THE DEFAULT REALM — the world a session is in until it is told otherwise.
    *
@@ -3739,6 +3769,102 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE TIDE — a shared realm keeps time whether or not anybody presses a key.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ THE WORLD'S CLOCK WAS THE PLAYERS' KEYSTROKES ═══
+   * `pumpAndBroadcast`'s own note states the rule this corrects: "a realm
+   * advances when somebody standing in it acts. Liveness for a realm nobody is
+   * acting in ... comes from that realm's OWN Bell timer, and from the reap
+   * timers." A dungeon wants exactly that. A shared realm does not, and the
+   * overworld had neither timer, so:
+   *
+   *   nobody moving        the map is frozen — no drift, no spawns, no regen
+   *   one player walking   roamers step every three of THAT player's actions
+   *   six players walking  the world runs about six times faster
+   *   one player holding a key   they speed the world up for everyone else
+   *
+   * `roamerSeq` was incremented once per pump and `tickRoamers` says so on the
+   * tin — "Call once per pump". So the danger on the moor moved at the rate the
+   * party typed, which is neither a threat nor a clock.
+   *
+   * ═══ IT IS THE THIRD TIMER OF A FAMILY, NOT A NEW MECHANISM ═══
+   * The Bell and the reap timer are the other two, and this borrows from both:
+   *
+   *   KEYED PER REALM, never one shared variable. `bells` carries the essay —
+   *   "the second realm to arm in a tick called `clearBell` on the first" — and
+   *   a single tide would reproduce it exactly.
+   *
+   *   UNREF'D, like the reap timer, so a quiet server still exits.
+   *
+   *   OCCUPANCY RE-CHECKED AT FIRE TIME, which is the reap timer's rule and its
+   *   reason: a body can arrive, or leave, by a path that never touches the arm
+   *   site. Trusting arm time here would tick an empty town forever.
+   *
+   * ═══ IT ARMS ITSELF FROM THE PUMP, SO THERE IS NO ENTER/LEAVE HOOK ═══
+   * `pumpRealm` runs whenever anybody acts in a realm, so arming there means the
+   * first footstep in a town starts its clock and the tide keeps itself alive
+   * afterwards. When the last body leaves, the next fire finds the realm empty
+   * and simply does not re-arm — so an empty realm costs nothing at all, which
+   * is the property `anyCanGainEnergy` was protecting in the first place. The
+   * cost of being wrong is one wasted tick, not a leak.
+   */
+  const tides = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const clearTide = (realmId: string): void => {
+    const timer = tides.get(realmId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    tides.delete(realmId);
+  };
+
+  /** Is anybody standing here? The reap timer's own occupancy question. */
+  const realmOccupied = (realm: Realm): boolean =>
+    realm.world.allActors().some((a: Actor) => a.kind === ActorKind.Player);
+
+  /**
+   * Arm the tide for this realm unless it already has one.
+   *
+   * KEYED OFF THE REGISTRY, not `PumpTarget`, for two reasons that both matter:
+   * a `PumpTarget` carries no `kind`, so it cannot answer whether this realm
+   * takes a tide at all; and its `engine` is the narrow `TurnEngine`, while
+   * `tide()` lives on the `ReapingTurnEngine` the registry holds. A gateway
+   * running without a realm registry — the fallback single-world path — has no
+   * shared realms and therefore no tide, which is correct rather than a gap.
+   *
+   * IDEMPOTENT ON PURPOSE. `pumpRealm` calls it on every action, which is many
+   * times a second under a walking party; re-arming there would push the
+   * deadline out on every keystroke and produce the opposite bug — a world that
+   * stops advancing precisely while people are busy.
+   */
+  const tideMs = opts.tideMs ?? TIDE_MS;
+
+  const armTide = (realmId: string): void => {
+    // ZERO STOPS THE CLOCK. See `WsGatewayOptions.tideMs`.
+    if (tideMs <= 0) return;
+    if (tides.has(realmId)) return;
+    const realm = opts.realms?.get(realmId);
+    if (realm === undefined || !isShared(realm.kind)) return;
+    const timer = setTimeout(() => {
+      tides.delete(realmId);
+      // RE-READ, because a realm can be replaced between arm and fire and the
+      // captured object would be a world nobody is standing in any more.
+      const still = opts.realms?.get(realmId);
+      if (still === undefined) return;
+      // AT FIRE TIME, NOT ARM TIME. See the essay above.
+      if (!realmOccupied(still)) return;
+      // ONE GAME TURN IS OWED. `tide()` marks it; the pump below pays it and
+      // broadcasts, exactly as `bellExpired()` does.
+      still.engine.tide();
+      pumpRealm(still);
+      armTide(realmId);
+    }, tideMs);
+    timer.unref?.();
+    tides.set(realmId, timer);
+  };
+
+  /**
    * Bring the timer into line with what the scheduler is asking for.
    *
    * Three cases, and the middle one is the whole reason this is not just
@@ -4400,7 +4526,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   /**
    * How many times the overworld has pumped. Drives the roamers' cadence and
-   * their ids, so a wanderer's identity does not depend on wall-clock time.
+   * their ids.
+   *
+   * ═══ THIS SHOULD BE THE REALM'S GAME TURN AND IS NOT YET ═══
+   * Counting PUMPS means the moor drifts at the rate the party types: frozen
+   * when nobody walks, six times faster with six people. The tide fixes the
+   * realm's CLOCK, and pointing this at `world.turn.clock.gameTurn` is the
+   * remaining half — held back deliberately, because it moves every roamer to a
+   * different tile and `killer-named.test.ts` scripts a 106-tile walk that
+   * turns out to depend on where they are. See DECISIONS.md.
    */
   let roamerSeq = 0;
 
@@ -4721,6 +4855,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const { world, engine } = realm;
 
     /**
+     * THE TIDE ARMS ITSELF HERE — see `armTide`, which carries the argument.
+     *
+     * Idempotent, so the many pumps a walking party makes cost one `Map.has`
+     * each and never push the deadline out. A shared realm that nobody has
+     * touched since boot has no tide and needs none; the first footstep in it
+     * starts the clock, and the tide keeps itself alive from then on until the
+     * realm empties.
+     */
+    armTide(realm.id);
+
+    /**
      * ═══════════════════════════════════════════════════════════════════════
      * EVERY NAME IN THE ROOM, TAKEN BEFORE THE ROOM CAN CHANGE.
      * ═══════════════════════════════════════════════════════════════════════
@@ -4750,6 +4895,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * renderer path, and no second way for a marker to be wrong. If the level
      * payload ever hurts, the fix is a `sites` frame, not a second marker
      * system.
+     */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE MOOR MOVES ON THE TIDE'S CLOCK, NOT ON THE PARTY'S KEYSTROKES.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `roamerSeq` was bumped HERE, once per pump, and `tickRoamers` still says
+     * "Call once per pump" on the tin. That made the danger on the map advance
+     * at the rate the party typed: frozen when nobody moved, six times faster
+     * with six people walking, and faster still for anyone holding a key.
+     *
+     * The counter is the realm's GAME TURN now, which the tide advances every
+     * `TIDE_MS` whether or not anybody is acting. Two consequences worth stating:
+     * a roamer's step is a fixed six seconds of wall clock (`MOVE_EVERY_TURNS`
+     * is 3), and a pump that advances no game turn — every ordinary keystroke —
+     * passes the SAME number it passed last time, so `seq % MOVE_EVERY_TURNS`
+     * cannot be walked forward by acting.
      */
     const full = opts.realms?.get(realm.id);
     if (full !== undefined && full.kind === RealmKind.Overworld) {
@@ -12973,6 +13135,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // EVERY REALM'S BELL. One per floor now (see `bells`), and a timer left
     // running is what makes a test process hang after the app is shut down.
     for (const realmId of [...bells.keys()]) clearBell(realmId);
+    // AND EVERY REALM'S TIDE — the fifth timer that outlives a socket. Unref'd,
+    // like the reap timer, so it cannot hold the process open; cleared anyway,
+    // because a tide that fires after shutdown would pump a realm the app has
+    // finished with and broadcast to sockets nobody is reading.
+    for (const realmId of [...tides.keys()]) clearTide(realmId);
     for (const timer of graceTimers.values()) clearTimeout(timer);
     graceTimers.clear();
     // The speaking sweep is the fourth timer that outlives a socket. Unref'd, so

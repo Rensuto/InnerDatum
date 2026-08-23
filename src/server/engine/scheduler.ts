@@ -915,6 +915,18 @@ export type PumpCtx = {
    */
   readonly barrier: Barrier;
   /**
+   * ONE GAME TURN IS OWED TO THIS LEVEL, whether or not anybody needs energy.
+   *
+   * Forwarded verbatim to `TickLevelCtx.freeRuns`, which carries the whole
+   * argument. Set for a SINGLE pump by `turn-engine.ts`'s `tide()`, which the
+   * gateway fires from a wall-clock timer — this module still reads no clock and
+   * still decides no cadence. It is handed a debt and it pays it.
+   *
+   * Absent is the behaviour every existing caller has: time passes on this level
+   * only when somebody standing in it acts.
+   */
+  readonly freeRuns?: boolean;
+  /**
    * The status pass — `timedEffects` plus the `no_talents_cooldown` answer.
    *
    * PASSED IN, exactly like `nowMs` and `barrier`, and for the layering reason
@@ -1402,6 +1414,9 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
 
   const result = tickLevel(ticking, {
     clock: world.turn.clock,
+    // See `PumpCtx.freeRuns`. Forwarded and not interpreted: the cadence belongs
+    // to the timer that asked, and the bound belongs to `tickLevel`.
+    freeRuns: ctx.freeRuns,
 
     // engine/Actor.lua:59 — a dead actor does not act. The body stays in the
     // array either way, which is exactly what a disconnected player needs too.
