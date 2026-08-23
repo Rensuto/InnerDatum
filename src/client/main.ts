@@ -4951,12 +4951,22 @@ function applyTurnEvent(event: TurnEvent): void {
       // is one line — `actors.delete`.
       //
       // The two frames are not redundant and neither can do the other's job.
-      // `death` is what HAPPENED, and it is what flips the flag on a body that
-      // has to stay: a downed or erased PLAYER is never reaped, because
-      // engine/downed.ts depends on the body being there for an ally to walk to.
-      // `left` is presence-removal STATED — which is the exact exception the
-      // paragraph above allows, since it forbids inferring death from absence,
-      // not an explicit frame that says the body is gone.
+      // `death` is what HAPPENED; `left` is presence-removal stated.
+      //
+      // ═══ AND IT NO LONGER ARRIVES FOR A PLAYER AT ALL ═══
+      // It used to. `killed` is true of any body taken to 0, and for a player
+      // that is the DOWNED state — so this arm ran on somebody with five turns
+      // on the clock and set `alive: false` on them, which is the exact thing
+      // the `downed` arm above refuses to do and says why: "the M3 client
+      // treated 0 hp as a corpse, and a corpse is not something anybody runs
+      // to". The two arms disagreed about the same body, and the Record lane
+      // printed "X is unfiled." over them for good measure.
+      //
+      // `hitToWire` now raises `death` only for a MONSTER, so this arm is a
+      // monster's arm. It is still not a removal: the corpse stays until `left`,
+      // which is presence-removal STATED — the exact exception the paragraph
+      // above allows, since it forbids inferring death from ABSENCE, not an
+      // explicit frame saying the body is gone.
       const actor = actors.get(event.id);
       if (actor === undefined) break;
       actors.set(event.id, { ...actor, alive: false, hp: 0 });

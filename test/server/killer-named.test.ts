@@ -291,6 +291,27 @@ describe('a death in a room that resets', () => {
       );
 
       expect(downEv.length, 'no `downed` event reached the client').toBeGreaterThan(0);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND NOBODY TOLD THEM THEY WERE DEAD FOR GOOD.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This instrument is what found it. The stream it measured, in the order
+       * the client received it:
+       *
+       *     damage x13, death, downed, erased/wipe, damage
+       *
+       * `killed` is `applyDamage`'s answer and is true of any body taken to 0 —
+       * for a player that is the Downed state, `alive === false` on purpose. The
+       * Record lane renders `death` as "X is unfiled.", the game's word for a
+       * monster removed for good, so the transcript read "Player 1 is unfiled."
+       * and then "Player 1 is DOWN — 5 turns". Two lines about one body
+       * disagreeing about whether the run was over, wrong one first.
+       */
+      expect(
+        mine.filter((e) => e['k'] === 'death'),
+        'a DOWNED player was announced as permanently dead',
+      ).toEqual([]);
       expect(erasedEv.length, 'no `erased` event reached the client').toBeGreaterThan(0);
       // THE REASON IS THE WHOLE POINT: a timer erasure keeps its record and the
       // frame-driven plate still works for it. Only `wipe` is unreachable that

@@ -305,18 +305,46 @@ describe('the wipe is narrated in the order it happened', () => {
   });
 
   it('puts the erasure AFTER the blow and the countdown that caused it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS CHAIN USED TO HAVE A `death` IN IT, AND THAT WAS THE BUG.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It asserted `damage < death < downed < erased` — pinning, as correct, a
+     * `death` event raised for a PLAYER. `killed` is `applyDamage`'s answer and
+     * is true of any body taken to 0, which for a player is the Downed state
+     * (`alive === false` on purpose). The Record lane renders `death` as "X is
+     * unfiled." — the game's word for a monster removed for good — so the
+     * transcript read:
+     *
+     *     Player 1 is unfiled.
+     *     Player 1 is DOWN — 5 turns, and nobody is coming.
+     *
+     * Two lines about one body disagreeing about whether the run is over, with
+     * the wrong one first, at the moment a player is reading most carefully.
+     *
+     * The ORDER this test is about is unchanged and still asserted; what left is
+     * a link that should never have been in the chain.
+     */
     const { sweep } = killedByTheSweep('order-sequence');
 
     const at = (predicate: (event: TurnEvent) => boolean): number => sweep.findIndex(predicate);
     const damage = at((event) => event.k === 'damage');
-    const death = at((event) => event.k === 'death');
     const downed = at((event) => event.k === 'downed');
     const erased = at((event) => event.k === 'erased');
 
     expect(damage).toBeGreaterThanOrEqual(0);
-    expect(death).toBeGreaterThan(damage);
-    expect(downed).toBeGreaterThan(death);
-    expect(erased).toBeGreaterThan(downed);
+    expect(downed, 'the countdown is announced before the blow that started it').toBeGreaterThan(
+      damage,
+    );
+    expect(erased, 'the erasure is announced before the countdown').toBeGreaterThan(downed);
+
+    // AND NOT A WORD ABOUT A DEATH. `downed` is the player's event and it
+    // carries the killer's id already; `death` belongs to a monster.
+    expect(
+      sweep.filter((event) => event.k === 'death'),
+      'a downed player was announced as permanently dead',
+    ).toEqual([]);
   });
 
   it('reports the hp the BLOW left, not the hp the reset handed back', () => {

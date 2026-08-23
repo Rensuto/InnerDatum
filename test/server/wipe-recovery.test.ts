@@ -551,19 +551,32 @@ describe('the events are broadcast in causal order', () => {
 
     const blow = at((event) => event.k === 'attack' && event.id === 'm_husk');
     const damage = at((event) => event.k === 'damage' && event.hp === 0);
-    const death = at((event) => event.k === 'death');
     const floored = at((event) => event.k === 'downed');
     const restored = at((event) => event.k === 'erased' && event.reason === ErasedReason.Wipe);
     const next = at((event) => event.k === 'attack' && event.id === 'm_witness');
 
     expect(blow).toBeGreaterThanOrEqual(0);
     expect(damage).toBeGreaterThan(blow);
-    expect(death).toBeGreaterThan(damage);
-    expect(floored).toBeGreaterThan(death);
+    /**
+     * ═══ A `death` LINK USED TO SIT BETWEEN THESE TWO, AND IT WAS WRONG ═══
+     * `killed` is true of any body taken to 0, and for a PLAYER that is the
+     * Downed state. The Record lane renders `death` as "X is unfiled." — a
+     * monster's permanent removal — so the transcript announced the detective
+     * gone for good on the line above the one giving them five turns and an
+     * ally. The causal order this test is about is unchanged.
+     */
+    expect(floored).toBeGreaterThan(damage);
     // THE LINE THE TRANSCRIPT GOT WRONG.
     expect(restored).toBeGreaterThan(floored);
     // ...and the world carried on afterwards, in that order and not before it.
     expect(next).toBeGreaterThan(restored);
+
+    // AND NOBODY WAS DECLARED DEAD. `downed` is the player's event; `death`
+    // belongs to a monster and the Record lane's words for it say so.
+    expect(
+      narration.filter((event) => event.k === 'death'),
+      'a downed player was announced as permanently dead',
+    ).toEqual([]);
 
     // The restoration is announced ONCE. Two `erased` frames for one body is how
     // a client ends up drawing the marker over somebody who is standing up.

@@ -1103,7 +1103,34 @@ function hitToWire(
     maxHp: victim?.maxHp ?? 0,
     sourceId: attackerId,
   });
-  if (killed) out.push({ k: 'death', id: targetId, killerId: attackerId });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A DOWNED PLAYER IS NOT DEAD, AND THIS USED TO SAY THEY WERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `killed` is `applyDamage`'s answer, and it is true of ANY body taken to 0 —
+   * which for a player is the Downed state, deliberately (`alive === false` on
+   * purpose, engine/downed.ts). This pushed `death` for it, and the Record lane
+   * renders that as *"X is unfiled."*: the game's own word for a monster being
+   * removed for good, printed over somebody with five turns on the clock and an
+   * ally two tiles away.
+   *
+   * MEASURED over a real socket, walking a Watchman into an ambush — the events
+   * in the order the client received them:
+   *
+   *     damage x13, death, downed, erased/wipe, damage
+   *
+   * So the transcript read "Player 1 is unfiled." and then, underneath it,
+   * "Player 1 is DOWN — 5 turns". Two lines about the same body disagreeing
+   * about whether the run is over, with the wrong one first.
+   *
+   * THE PLAYER'S EVENT IS `downed`, and `noteCasualty` already raises it with
+   * the killer's id on it. Nothing is lost by this guard; a line is stopped
+   * from being invented.
+   */
+  if (killed && world.getActor(targetId)?.kind === ActorKind.Monster) {
+    out.push({ k: 'death', id: targetId, killerId: attackerId });
+  }
   return out;
 }
 
