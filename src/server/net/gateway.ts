@@ -5893,12 +5893,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const bag: string[] = [];
     for (const id of restore.carried ?? []) {
-      // `carried` IS A SET, not a bag of duplicates — persist/saves.ts keeps the
-      // first occurrence because a saved id carries no per-instance handle. The
-      // same rule is enforced here and in `handlePickup`, so a party that finds
-      // two identical pairs of trousers keeps one and learns that immediately
-      // rather than at the next reload.
-      if (resolveItem(id) === undefined || wornIds.has(id) || bag.includes(id)) {
+      // DUPLICATES SURVIVE A RELOAD. This used to drop any id already worn or
+      // already in the bag, which meant a night spent farming two identical
+      // coats gave one of them back to nobody at the next restore — a silent
+      // deletion of a thing the player earned. `persist/saves.ts` explains at
+      // length why two copies of one id need no per-instance handle.
+      if (resolveItem(id) === undefined) {
         dropped.push(id);
         continue;
       }
@@ -9148,10 +9148,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     const bag = bagOf(body);
-    if (alreadyOwns(body, msg.itemId)) {
-      sendError(session.socket, ErrorCode.BadMessage, 'you already have one of those');
-      return;
-    }
     if (bag.length >= INVENTORY_CAP) {
       sendError(session.socket, ErrorCode.Refused, 'your evidence bag is full');
       noteBagFull(body);
@@ -12032,9 +12028,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   /** This body's bag as a plain array. Absent and empty are the same to a reader. */
   const bagOf = (body: PlayerActor): readonly string[] => body.carried ?? [];
 
-  /** Is this id already on the body, worn or carried? `carried` IS A SET. */
-  const alreadyOwns = (body: PlayerActor, itemId: string): boolean =>
-    bagOf(body).includes(itemId) || SLOT_ORDER.some((slot) => body.equipped?.[slot] === itemId);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAG HOLDS DUPLICATES, SO REMOVAL HAS TO MEAN "ONE OF THEM".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `bag.filter(id => id !== itemId)` is the obvious line, and it is the reason
+   * the bag stayed a SET for so long: allow two coats with that in place and
+   * dropping one destroys both. Three call sites had it, and each was a silent
+   * deletion waiting for the day duplicates became legal.
+   *
+   * `indexOf` takes the FIRST — the oldest by pickup order, and the one the
+   * inventory grid draws first. Two copies of an id are interchangeable, which
+   * is exactly what makes "one of them" well defined with no per-instance
+   * handle, so which one leaves is not a question a player can ask.
+   *
+   * An id that is not there returns the bag unchanged rather than throwing.
+   * Every caller has already tested `bag.includes`, and a helper that trusts
+   * that and is wrong once is a `splice(-1)` that eats the last item instead.
+   */
+  const withoutOneCopy = (bag: readonly string[], itemId: string): string[] => {
+    const at = bag.indexOf(itemId);
+    if (at < 0) return [...bag];
+    return [...bag.slice(0, at), ...bag.slice(at + 1)];
+  };
 
   /**
    * Which GAME TURN each player was last told their bag is full.
@@ -12301,8 +12318,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * the removal cannot credit anybody.
      *
      * IT SKIPS EVERY RULE BELOW IT, and each skip is deliberate. Not
-     * `alreadyOwns` — a purse is not a set, and "you already have 14 gold"
-     * would be nonsense. Not `INVENTORY_CAP` — a full bag must never stop you
+     * a duplicate check — a purse is not a bag, and gold does not occupy a
+     * slot. Not `INVENTORY_CAP` — a full bag must never stop you
      * picking up gold, or the cap becomes an economic penalty nobody designed.
      */
     const coins = moneyAmountOf(top.itemId);
@@ -12329,11 +12346,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // Answered rather than swallowed, and the item is LEFT WHERE IT IS: a
       // silent removal would delete somebody's drop to tidy up after a deploy.
       sendError(session.socket, ErrorCode.Internal, 'that item is not in this build');
-      return;
-    }
-
-    if (alreadyOwns(body, top.itemId)) {
-      sendError(session.socket, ErrorCode.BadMessage, `you already have a ${item.name}`);
       return;
     }
 
@@ -12508,7 +12520,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // the alternative is a free "am I hurt?" probe, and worse, an item that
     // sometimes silently declines to be used is an item a player stops trusting
     // in the one moment they need to trust it.
-    body.carried = bag.filter((id) => id !== msg.itemId);
+    body.carried = withoutOneCopy(bag, msg.itemId);
 
     /**
      * A CASE LOG LINE, WHERE `equip` DELIBERATELY HAS NONE. The asymmetry is the
@@ -12570,7 +12582,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const previous = body.equipped?.[item.slot];
     // The bag, with the incoming item out and the outgoing one in. Built as one
     // new array rather than two splices — see engine/actor.ts on `carried`.
-    const bagAfter = bag.filter((id) => id !== msg.itemId);
+    const bagAfter = withoutOneCopy(bag, msg.itemId);
     if (previous !== undefined) bagAfter.push(previous);
 
     // BEFORE THE RECOMPOSE, because the whole point of the line below is the
@@ -12735,7 +12747,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    body.carried = bag.filter((id) => id !== msg.itemId);
+    body.carried = withoutOneCopy(bag, msg.itemId);
     // THE SENDER'S OWN TILE, and no terrain check: world.ts's `addGroundItem`
     // states why in its own words — a player drops onto the tile they are
     // standing on, which is somewhere somebody was legally standing.

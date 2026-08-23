@@ -2498,8 +2498,11 @@ function lootAt(tile: TileXY): TileLoot {
  * of exactly this list.
  *
  * It feeds `pickupRows`, which is the port of `ShowPickupFloor`: one row per
- * item, so an item the player already owns sitting on top no longer makes
- * everything under it unreachable.
+ * item, so the player chooses WHICH thing they are taking rather than always
+ * getting whatever landed last. (This used to be justified by a refusal — an
+ * item you already owned on top made the pile unreachable — and that rule is
+ * gone. The picker outlived it: a full bag over a pile with coins in it, and
+ * simply wanting the boots and not the cap, are reason enough.)
  */
 function pileAt(tile: TileXY): readonly { id: string; name?: string }[] {
   return ground

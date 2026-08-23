@@ -1478,33 +1478,44 @@ function parseEquipped(value: unknown, problems: string[]): Record<string, strin
 /**
  * THE BACKPACK, validated the same way and de-duplicated against what is worn.
  *
- * TAKES THE ALREADY-PARSED `equipped` because the two lists are one loadout and
- * the rule between them has to live somewhere: AN ID IN BOTH KEEPS THE EQUIPPED
- * COPY. Worn is the more specific claim — it names a slot and it is moving the
- * character's numbers right now — and a duplicate in the bag would let a player
- * re-equip the same coat into a second slot on some future build and quietly own
- * two.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DUPLICATES ARE KEPT. THIS FUNCTION USED TO COLLAPSE THEM, AND THAT WAS A BUG.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * DUPLICATES WITHIN THE BAG COLLAPSE TOO, for the reason the `carried` field's
- * docblock states: with no `uid`, two entries of one id ARE one item as far as
- * every consumer can tell. This is the honest cost of rejecting `ItemInstance`
- * and it is recorded rather than hidden.
+ * The old rule dropped any id already worn or already in the bag, on the stated
+ * ground that *"with no `uid`, two entries of one id ARE one item as far as
+ * every consumer can tell"*.
  *
- * ORDER IS PRESERVED — first occurrence wins — because pickup order is what the
- * inventory panel draws.
+ * THAT REASONING IS TRUE OF INSTANCES AND FALSE OF STACKS. Per-instance identity
+ * is what you need to tell two items APART — to enchant one and not the other,
+ * to know which one broke. It is not what you need to HOLD two, because two
+ * copies of one id are interchangeable by definition: that is precisely what
+ * makes taking "one of them" a well-defined operation without a handle.
+ *
+ * And every consumer could in fact tell. `carried.length` counts them, the
+ * inventory grid draws one cell each, `INVENTORY_CAP` charges for both, and the
+ * player can sell them one at a time. The only thing that could not tell was
+ * removal — `bag.filter(id => id !== itemId)` took every copy — and that is a
+ * bug in removal, which is now index-based everywhere, not a fact about items.
+ *
+ * ═══ WHAT IT COST ═══
+ * Measured, in the voice channel: *"cannot pick up item if you already have
+ * one — effectively cutting the ability to farm monsters for gear"*. A coat you
+ * already own is the single most likely thing to drop, so the rule fired
+ * hardest on the loop it destroyed, and the refusal named the item to make sure
+ * you knew what you were not allowed to have.
+ *
+ * ORDER IS PRESERVED, because pickup order is what the inventory panel draws.
+ * WORN NO LONGER SUPPRESSES CARRIED: wearing one coat and carrying a spare is
+ * the ordinary result of a good night's farming.
  */
-function parseCarried(
-  value: unknown,
-  equipped: Readonly<Record<string, string>> | undefined,
-  problems: string[],
-): string[] | undefined {
+function parseCarried(value: unknown, problems: string[]): string[] | undefined {
   if (value === undefined || value === null) return undefined;
   const out: string[] = [];
   if (!Array.isArray(value)) {
     problems.push('carried: not an array — dropped, the bag is empty');
     return out;
   }
-  const seen = new Set<string>(Object.values(equipped ?? {}));
   for (const [index, entry] of value.entries()) {
     const id = asString(entry);
     if (id === null || id === '') {
@@ -1515,14 +1526,6 @@ function parseCarried(
       problems.push(`carried[${index}]: '${id}' is not an item this build knows — dropped`);
       continue;
     }
-    if (seen.has(id)) {
-      problems.push(
-        `carried[${index}]: '${id}' is already worn or already in the bag — dropped ` +
-          '(an item is its id, so a second copy is the same copy)',
-      );
-      continue;
-    }
-    seen.add(id);
     out.push(id);
   }
   return out;
@@ -1903,7 +1906,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
   // `equipped` (unknown, or filed under the wrong slot) would still suppress the
   // bag's copy, and the character would lose the item twice over.
   const equipped = parseEquipped(doc.equipped, problems);
-  const carried = parseCarried(doc.carried, equipped, problems);
+  const carried = parseCarried(doc.carried, problems);
 
   return {
     ok: true,

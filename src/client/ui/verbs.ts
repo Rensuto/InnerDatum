@@ -101,11 +101,10 @@ export type VerbTarget =
        * standing on it. Empty or absent everywhere else.
        *
        * ═══ ONE ROW PER ITEM IS THE PORT OF `ShowPickupFloor` ═══
-       * A single "Pick up" row could only ever mean index 0, so an item the
-       * player already owns sitting on top made everything under it permanently
-       * unreachable. Upstream opens a list when a tile holds more than one thing;
-       * this is that list, in the menu that already exists rather than in a
-       * second dialog.
+       * A single "Pick up" row could only ever mean index 0 — whatever landed
+       * last — with no way to ask for anything under it. Upstream opens a list
+       * when a tile holds more than one thing; this is that list, in the menu
+       * that already exists rather than in a second dialog.
        *
        * NAMES ARE OPTIONAL ON THE WIRE (`GroundItemView.name`), so a row falls
        * back to the bare verb rather than to a blank label.
@@ -251,12 +250,10 @@ const PILE_ROWS_MAX = 6;
  * THE TILE'S PILE AS ROWS — `ShowPickupFloor`, in the menu that already exists.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ═══ ONE ROW MEANT INDEX 0, AND INDEX 0 COULD BE A WALL ═══
- * `pickup` takes the top of the pile, and the top can be something the player
- * already owns — at which point the refusal is "you already have a Watchman's
- * Coat" and everything under it is unreachable, permanently, with no control
- * anywhere that could ask for it. Same for a full bag over a pile with coins
- * in it.
+ * ═══ ONE ROW MEANT INDEX 0, AND INDEX 0 IS WHATEVER LANDED LAST ═══
+ * `pickup` takes the top of the pile, so with one row there is no control
+ * anywhere that can ask for the thing underneath — the boots under the cap, or
+ * the coins under a coat you cannot carry because the bag is full.
  *
  * ═══ ONE ITEM KEEPS THE BARE ROW, DELIBERATELY ═══
  * With nothing to choose between, "Pick up" is the right label and the bare

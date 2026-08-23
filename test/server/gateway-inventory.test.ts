@@ -1047,20 +1047,27 @@ describe('what the bag refuses', () => {
     expect(ren.all('log')).toHaveLength(0);
   });
 
-  it('refuses an id the body already owns, because `carried` IS A SET', async () => {
-    // ═══════════════════════════════════════════════════════════════════════
-    // THE REFUSAL THAT PREVENTS A BUG THAT WOULD LOOK LIKE A PERSISTENCE BUG.
-    // ═══════════════════════════════════════════════════════════════════════
-    // A saved id carries no per-instance handle, so persist/saves.ts keeps the
-    // FIRST occurrence and drops later ones. Without this check a party that
-    // found two identical caps would appear to keep both until the next reload,
-    // and the loss would present as "my second cap vanished when I relogged" —
-    // with the bug looking like it is in persistence when it is here.
-    //
-    // WORN COUNTS AS OWNED TOO. The doll and the bag are one set for this
-    // purpose, or picking up a duplicate of what you are wearing would be legal
-    // and would vanish the same way.
-    server = await boot('loot-set-not-bag');
+  it('takes a second copy of something you already own', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE RULE THIS REPLACED CUT THE LOOP THE GAME IS ABOUT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Pickup refused any id already worn or carried, naming it: *"you already
+     * have a Fitted Oiled Inspector's Oxfords"*. A coat you already own is the
+     * single most likely thing to drop, so the rule fired hardest on the exact
+     * activity it destroyed — farming monsters for gear — and it fired at the
+     * moment of reward.
+     *
+     * Its stated ground was that a saved id carries no per-instance handle, so
+     * two entries of one id "ARE one item as far as every consumer can tell".
+     * They are not: `carried.length` counts them, the grid draws one cell each,
+     * `INVENTORY_CAP` charges for both, and they sell one at a time. What was
+     * actually true is that REMOVAL could not tell — `filter(id => id !== x)`
+     * took every copy — and that is fixed in `withoutOneCopy`, which is the
+     * test below this one.
+     */
+    server = await boot('loot-duplicates');
     const ren = await connect(server.port);
     playsThe(WATCHMAN);
     const body = bodyOf(await ren.hello('ren-handle'));
@@ -1071,18 +1078,51 @@ describe('what the bag refuses', () => {
 
     ren.send({ t: 'pickup' });
     await ren.settle();
-    expect(ren.last('error')?.['code']).toBe('bad_message');
-    expect(body.carried).toEqual(['item_watchmans_cap']);
-    expect(floorIds()).toEqual(['item_watchmans_cap']);
+    expect(ren.last('error'), 'a second copy was refused').toBeUndefined();
+    expect(body.carried).toEqual(['item_watchmans_cap', 'item_watchmans_cap']);
+    expect(floorIds(), 'the floor kept a copy it handed over').toEqual([]);
 
-    // The same refusal when the duplicate is being WORN rather than carried.
+    // AND WHEN THE DUPLICATE IS BEING WORN. The doll and the bag were one set
+    // for this purpose; wearing a cap and carrying a spare is the ordinary
+    // result of a good night, not a state to refuse.
     body.carried = [];
     body.equipped = { head: 'item_watchmans_cap' };
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_cap');
     ren.clear();
     ren.send({ t: 'pickup' });
     await ren.settle();
-    expect(ren.last('error')?.['code']).toBe('bad_message');
-    expect(floorIds()).toEqual(['item_watchmans_cap']);
+    expect(ren.last('error'), 'a spare for the one you are wearing was refused').toBeUndefined();
+    expect(body.carried).toEqual(['item_watchmans_cap']);
+  });
+
+  it('drops ONE of two identical coats, not both', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TRAP THAT MADE THE SET RULE LOOK NECESSARY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Three removal sites read `bag.filter(id => id !== msg.itemId)`. That is
+     * correct for a set and a silent deletion for a bag: with duplicates legal
+     * and that line in place, dropping one of two coats destroys both, and the
+     * player sees an item they earned disappear with no message at all.
+     *
+     * So this is the load-bearing half of allowing duplicates, and it is
+     * asserted on the SERVER'S OWN BAG rather than a projection — a view that
+     * collapsed duplicates would hide exactly this.
+     */
+    server = await boot('loot-drop-one');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.carried = ['item_watchmans_cap', 'item_watchmans_cap'];
+    ren.clear();
+
+    ren.send({ t: 'drop', itemId: 'item_watchmans_cap' });
+    await ren.settle();
+
+    expect(body.carried, 'dropping one copy took both').toEqual(['item_watchmans_cap']);
+    expect(floorIds(), 'the dropped copy is not on the floor').toEqual(['item_watchmans_cap']);
   });
 
   it('refuses an unequip into a full bag rather than discarding the coat', async () => {
@@ -1405,9 +1445,17 @@ describe('a loadout survives a snapshot and a restore', () => {
     // into the slot the catalogue names — both repairs were considered and
     // rejected in persist/saves.ts's `parseEquipped`.
     expect(body.equipped).toEqual({ head: 'item_watchmans_cap' });
-    // The unknown id is gone, and so is the duplicate of the WORN cap: `carried`
-    // is a set, and an id in both lists keeps the equipped copy.
-    expect(body.carried).toEqual([]);
+    /**
+     * THE UNKNOWN ID IS GONE — that is this test's claim, and the only one the
+     * repair makes about the bag.
+     *
+     * BOTH CAPS SURVIVE, including the one whose id is also being WORN. The old
+     * rule collapsed them ("an id in both lists keeps the equipped copy") and
+     * that is what made a night of farming lose an item at the next reload. A
+     * cap on your head and two spares in the bag is three caps, and the restore
+     * is not the place to decide the player only meant to have one.
+     */
+    expect(body.carried).toEqual(['item_watchmans_cap', 'item_watchmans_cap']);
   });
 });
 
@@ -1511,26 +1559,36 @@ describe('a pile is not a lid', () => {
    * every other helper here read that binding, so a locally-scoped one would
    * shadow it and hand these tests a body out of a different world.
    */
-  it('reaches an item buried under one the player already owns', async () => {
+  it('reaches an item buried under another one', async () => {
     server = await boot('pickup-buried');
     const ren = await connect(server.port);
     playsThe(WATCHMAN);
     const body = bodyOf(await ren.hello('ren-handle'));
     standAt(body, 10, 10);
 
-    // The cap FIRST so it is index 0, and the player is already carrying one.
-    body.carried = ['item_watchmans_cap'];
+    /**
+     * THE SETUP USED TO LEAN ON A REFUSAL. It gave the player a cap they already
+     * owned, so the bare frame was REFUSED and the buried boots were the only
+     * thing they could get — which demonstrated targeting by demonstrating a
+     * rule that no longer exists (duplicates are legal now, and the top is
+     * simply taken).
+     *
+     * The claim never needed the refusal. It is that a BARE frame takes the top
+     * of the pile and an ID'd frame reaches past it, and that is asserted
+     * directly: two takes, two different items, chosen by the caller.
+     */
+    body.carried = [];
+    // The cap FIRST so it is index 0 — the top, and what a bare frame takes.
     server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_cap');
     const buried = server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_boots');
 
-    // THE OLD BEHAVIOUR, PINNED: the bare frame still takes the top, and the top
-    // is still refused. That was never the bug — the bug was having no
-    // alternative to it.
     ren.send({ t: 'pickup' });
     await ren.settle();
-    expect(body.carried).toEqual(['item_watchmans_cap']);
+    expect(body.carried, 'a bare frame did not take the top of the pile').toEqual([
+      'item_watchmans_cap',
+    ]);
 
-    // AND NOW THE WAY OUT.
+    // AND THE WAY PAST IT.
     ren.send({ t: 'pickup', id: buried });
     await ren.settle();
     expect(body.carried).toContain('item_watchmans_boots');

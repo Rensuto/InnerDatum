@@ -1632,14 +1632,27 @@ describe('character files: the bag and the paper doll', () => {
   });
 
   /**
-   * ═══ ONE LOADOUT, NOT TWO LISTS ═══
-   * An id in both places keeps the WORN copy: it is the more specific claim, it
-   * names a slot, and it is moving the character's numbers right now. Duplicates
-   * inside the bag collapse for the same reason — with no `uid` (rejected in
-   * `CharacterFile`'s docblock, with the dangling-index bug it would have
-   * brought), two entries of one id are indistinguishable to every consumer.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TWO LISTS, AND A BAG THAT COUNTS. THIS USED TO COLLAPSE BOTH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The old rule dropped any carried id that was also worn, and collapsed
+   * duplicates inside the bag, because *"with no `uid` … two entries of one id
+   * are indistinguishable to every consumer"*.
+   *
+   * Indistinguishable is not the same as absent. A `uid` is what you need to
+   * tell two items APART; it is not what you need to HOLD two, because the
+   * whole point of a stack is that its members are interchangeable. Every
+   * consumer could count: `carried.length`, the grid, `INVENTORY_CAP`, and the
+   * player selling them one at a time.
+   *
+   * The cost was measured in the voice channel — *"cannot pick up item if you
+   * already have one, effectively cutting the ability to farm monsters for
+   * gear"* — and the save layer was the half that made it permanent: an item
+   * kept in memory but dropped on load presents as "my second cap vanished when
+   * I relogged", with the bug looking like it is in persistence.
    */
-  it('keeps the equipped copy when an id is in both lists, and collapses bag duplicates', () => {
+  it('keeps every copy in the bag, worn or not', () => {
     const parsed = parseCharacterFile({
       ...V1_BEFORE_PROGRESSION,
       equipped: { head: 'item_watchmans_cap' },
@@ -1654,16 +1667,26 @@ describe('character files: the bag and the paper doll', () => {
     if (!parsed.ok) return;
 
     expect(parsed.file.equipped).toEqual({ head: 'item_watchmans_cap' });
-    expect(parsed.file.carried).toEqual(['item_leather_chest', 'item_inspectors_signet']);
-    expect(parsed.problems).toHaveLength(2);
-    expect(parsed.problems.every((problem) => problem.startsWith('carried['))).toBe(true);
+    // A cap on the head AND a cap in the bag, and two chests, is four items.
+    expect(parsed.file.carried).toEqual([
+      'item_watchmans_cap',
+      'item_leather_chest',
+      'item_leather_chest',
+      'item_inspectors_signet',
+    ]);
+    // AND NOT A WORD OF COMPLAINT. The old parser reported two `carried[...]`
+    // problems here; a repair log that narrates deletions it is no longer making
+    // would read as data loss to whoever next debugs a save.
+    expect(parsed.problems).toEqual([]);
   });
 
   /**
-   * ORDER BETWEEN THE TWO PARSERS. `parseCarried` de-duplicates against what is
-   * WORN, so `equipped` has to be validated first: an id that is about to be
-   * dropped out of `equipped` must not still suppress the bag's copy, or the
-   * character loses the item twice over for one mistake.
+   * ═══ THE TWO LISTS ARE PARSED INDEPENDENTLY, AND THIS PINS THAT ═══
+   * `parseCarried` used to take `equipped` as an argument and de-duplicate
+   * against it, which coupled the two parsers: an id about to be REJECTED out of
+   * `equipped` could still suppress the bag's copy, and the character lost the
+   * item twice over for one mistake. The parameter is gone, so the coupling
+   * cannot come back by accident — this is the test that notices if it does.
    */
   it('does not let a REJECTED equipped entry suppress the same id in the bag', () => {
     const parsed = parseCharacterFile({
