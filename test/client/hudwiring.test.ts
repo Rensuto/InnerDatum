@@ -282,20 +282,34 @@ describe('hudLayout clamps exactly the four movable panels into the band', () =>
 // ---------------------------------------------------------------------------
 
 describe('the level badge and the xp track are drawn on the resource strip', () => {
-  it('is given the SAME x, y and width as drawResource', () => {
-    // ═══ THE SHARED BOX IS THE WHOLE POINT ═══
-    // The pips are left-aligned (ui/resource.ts:70-74) and ui/xpbar.ts
-    // right-aligns itself inside the box it is given, so the two occupy the empty
-    // end of ONE 18-pixel strip rather than costing a second row of the viewport
-    // — and neither has to know the other's width. Handing this widget a
-    // different box is how they start overlapping on narrow windows only.
-    expect(CODE).toContain(
-      'drawResource({ ctx, sprites, resource, x: 4, y: resourceY + 3, width: width - 8 });',
+  it('shares one measured strip with the life readout and the pips', () => {
+    /**
+     * ═══ THE SHARED BOX IS THE WHOLE POINT ═══
+     * THREE widgets live on this 18-pixel row and none of them measures another:
+     * life is a fixed `LIFE_W` at the left, the pips are left-aligned in what is
+     * left of the box (ui/resource.ts:70-74), and ui/xpbar.ts right-aligns itself
+     * inside the FULL box — so it takes the empty end without needing to know how
+     * much the two on the left used. Handing any of them a different box is how
+     * they start overlapping on narrow windows only.
+     *
+     * ASSERTED AS THE ARITHMETIC RATHER THAN AS A LITERAL LINE. This test used
+     * to pin `drawResource({ ctx, sprites, resource, x: 4, … });` verbatim and
+     * broke on the reformat that added the third widget, which is a test failing
+     * on whitespace rather than on the claim it is making.
+     */
+    const strip = between('const resourceY =', 'const hint =');
+    // Life first, at the left edge.
+    expect(strip).toMatch(/drawLife\(\{[\s\S]*?x: 4,/);
+    // Pips after it, in what is left.
+    expect(strip).toMatch(
+      /drawResource\(\{[\s\S]*?x: 4 \+ LIFE_W,[\s\S]*?width: width - 8 - LIFE_W,/,
     );
-    expect(CODE).toContain(
+    // XP right-aligned inside the FULL box — deliberately NOT offset, because it
+    // aligns from the far end and offsetting it would move it left by 88px.
+    expect(strip).toContain(
       'drawXpBar({ ctx, progress, x: 4, y: resourceY + 3, width: width - 8 });',
     );
-    // ...and both are inside the same measured strip, not at a hand-copied y.
+    // ...and all of them inside the same measured strip, not at a hand-copied y.
     expect(CODE).toContain('const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;');
   });
 
@@ -552,5 +566,58 @@ describe('the character sheet block is guarded against every panel drawn over it
         `!inRect(${term}, point.x, point.y)`,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE LIFE READOUT IS ON PERMANENT FURNITURE
+// ---------------------------------------------------------------------------
+
+describe('the player can always see their own health', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE GAP: this is a combat roguelike and there was no self HP anywhere that
+   * is always on screen.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Three copies existed and each could be absent when it mattered: the party
+   * pane toggles off with `p` and degrades to a three-pixel sliver with no
+   * digits on a narrow window; the turn cards are drawn only in combat; the
+   * character sheet is behind a keypress. ToME spends its largest permanent
+   * element on life (Minimalist.lua:762-830).
+   *
+   * `ui/life.ts` owns the drawing and is tested on its own. THIS file pins the
+   * WIRING, which is the half that can rot silently — a widget nobody calls is
+   * indistinguishable from one that was never written.
+   */
+  it('draws it every frame, unconditionally', () => {
+    const frame = between('const resourceY =', 'const hint =');
+    expect(frame).toContain('drawLife({');
+    // NOT INSIDE A BRANCH. `drawLife` makes its own refusal (no body yet), and
+    // a caller-side `if` would be a second, different answer to "when is this
+    // on screen" — which is precisely how the party pane came to be the only
+    // copy of the number.
+    const call = frame.slice(frame.indexOf('drawLife({'));
+    const line = frame.slice(0, frame.indexOf('drawLife({')).split('\n').at(-1) ?? '';
+    expect(line.trim(), 'drawLife is a statement, not a conditional expression').toBe('');
+    expect(call).toContain('hp:');
+  });
+
+  it('reads its HP from `actors`, the one map that is always populated', () => {
+    /**
+     * NOT from the party frame and not from the turn frame. `actors` holds the
+     * body under this socket's control in combat and out of it, solo and in a
+     * party — so the widget has the same lifetime as the strip it sits on.
+     * Sourcing it from `turn` would have rebuilt the combat-only bug in a new
+     * place.
+     */
+    const frame = between('const resourceY =', 'drawLife({');
+    expect(frame).toContain('actors.get(selfId)');
+  });
+
+  it('offsets the resource pips by the widget, so the two cannot overlap', () => {
+    const frame = between('drawLife({', 'const hint =');
+    expect(frame).toContain('x: 4 + LIFE_W');
+    expect(frame).toContain('width: width - 8 - LIFE_W');
   });
 });

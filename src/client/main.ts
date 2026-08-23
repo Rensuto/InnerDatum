@@ -269,6 +269,7 @@ import {
   partyPaneView,
   PARTY_PANE_MARGIN,
 } from './ui/partypanel.ts';
+import { drawLife, LIFE_W } from './ui/life.ts';
 import { drawResource, RESOURCE_H, resourceLabel } from './ui/resource.ts';
 import {
   TalentHitKind,
@@ -3837,7 +3838,40 @@ const paintHud: HudPainter = (ctx, width, height) => {
   }
 
   const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;
-  drawResource({ ctx, sprites, resource, x: 4, y: resourceY + 3, width: width - 8 });
+
+  /**
+   * ═══ YOUR OWN LIFE, FIRST ON THE ROW AND ALWAYS ON SCREEN ═══
+   *
+   * See ui/life.ts for what this closes: until it existed, every copy of the
+   * player's own HP could be absent at the moment it mattered — the party pane
+   * toggles off with `p` and sheds its digits on a narrow window, the turn cards
+   * are drawn only in combat, and the character sheet is behind a keypress.
+   *
+   * IT IS READ OFF `actors`, NOT off the party frame or the turn frame. That map
+   * is the one thing that is always populated for the body under this socket's
+   * control, in combat and out of it, solo and in a party — so this widget has
+   * the same lifetime as the strip it sits on.
+   *
+   * THE PIPS SHIFT RIGHT BY A CONSTANT. `LIFE_W` is fixed at the widest digits
+   * the widget can hold rather than measured, so healing and being hit cannot
+   * shuffle the resource row sideways.
+   */
+  const meBody = selfId === null ? null : (actors.get(selfId) ?? null);
+  drawLife({
+    ctx,
+    hp: meBody === null ? null : meBody.hp,
+    maxHp: meBody?.maxHp ?? 0,
+    x: 4,
+    y: resourceY + 4,
+  });
+  drawResource({
+    ctx,
+    sprites,
+    resource,
+    x: 4 + LIFE_W,
+    y: resourceY + 3,
+    width: width - 8 - LIFE_W,
+  });
   // ═══ v12 — `Lv 3` AND THE XP TRACK, SHARING THIS ONE 18-PIXEL STRIP ═══
   //
   // THE SAME x/y/width AS `drawResource` ABOVE, DELIBERATELY. The pips are
