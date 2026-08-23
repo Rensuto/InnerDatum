@@ -727,3 +727,48 @@ describe('there is a pointer route into the escape menu', () => {
     expect(mini).toBeLessThan(shift);
   });
 });
+
+describe('auto-explore walks through the travel system', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `RUN_AUTO` (Game.lua:2064-2098) WAS ABSENT ENTIRELY, and `engine/actor.ts`
+   * already named the hole: "`travel` / `explore` / `rest` / `follow` join it
+   * once those exist".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * input/explore.ts tests the RULE against a map drawn as a picture. This pins
+   * the thing that makes the feature safe: it does not walk anybody itself.
+   */
+  it('picks a target and hands it to beginTravel', () => {
+    /**
+     * TRAVEL ALREADY STOPS for a hostile coming into view, for being hit, for a
+     * refusal from the server and for a disconnect. An explorer with its own
+     * copy of those rules would be a second traveller, and the first one to
+     * drift would be the one that stops for monsters.
+     */
+    const start = at('case TurnCommand.Explore: {');
+    const arm = CODE.slice(start, CODE.indexOf('case TurnCommand.Rest:', start));
+    expect(arm).toContain('exploreTarget({');
+    expect(arm).toContain('beginTravel(answer.to, false)');
+    // NO FRAME OF ITS OWN. The server is never told an explore happened; it sees
+    // the same moves a hand-walked route would send.
+    expect(arm, 'explore must not invent a wire verb').not.toContain('socket.send(');
+  });
+
+  it('asks the SAME walkability question the verb menu greys its row on', () => {
+    // "Somewhere I can walk" is one question and must have one answer, or the
+    // explorer aims at a tile travel will then refuse.
+    const start = at('case TurnCommand.Explore: {');
+    const arm = CODE.slice(start, CODE.indexOf('case TurnCommand.Rest:', start));
+    expect(arm).toContain('travelTargetAllowed(here, { x, y })');
+  });
+
+  it('refuses in words rather than doing nothing', () => {
+    // Three reasons and three sentences — see `exploreStopText`. A key that
+    // appears to do nothing is indistinguishable from one that is not bound.
+    const start = at('case TurnCommand.Explore: {');
+    const arm = CODE.slice(start, CODE.indexOf('case TurnCommand.Rest:', start));
+    expect(arm).toContain('exploreStopText(');
+    expect(arm).toContain('bearingWord(');
+  });
+});

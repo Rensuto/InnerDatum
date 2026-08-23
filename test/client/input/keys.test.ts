@@ -421,6 +421,8 @@ describe('every row that already worked still works', () => {
     // v11. `r` RESTS — the Angband-lineage idiom, taken from `revive`, which
     // moved to `e`. The keymap row carries the argument.
     [{ key: 'r' }, TurnCommand.Rest],
+    // AND `z` EXPLORES — upstream's own key for `RUN_AUTO`, and it was free.
+    [{ key: 'z' }, TurnCommand.Explore],
   ];
 
   for (const [init, command] of COMMANDS) {
@@ -638,12 +640,12 @@ describe('a rebind reaches an already-registered listener', () => {
     const live = createLiveKeymap();
     const run = session(live);
 
-    run.send({ key: 'z', code: 'KeyZ' });
+    run.send({ key: 'q', code: 'KeyQ' });
     expect(run.calls).toEqual([]);
 
-    setKeymap({ show_inventory: ['key:z'] }, live);
+    setKeymap({ show_inventory: ['key:q'] }, live);
 
-    run.send({ key: 'z', code: 'KeyZ' });
+    run.send({ key: 'q', code: 'KeyQ' });
     expect(run.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowInventory }]);
     run.dispose();
   });
@@ -651,31 +653,35 @@ describe('a rebind reaches an already-registered listener', () => {
   it('the old key stops answering, so a rebind is a MOVE and not a second key', () => {
     const live = createLiveKeymap();
     const run = session(live);
-    setKeymap({ show_inventory: ['key:z'] }, live);
+    setKeymap({ show_inventory: ['key:q'] }, live);
     run.send({ key: 'i' });
     expect(run.calls).toEqual([]);
     run.dispose();
   });
 
   it('an empty remap is RESET ALL, and it is a real value rather than a no-op', () => {
-    const live = createLiveKeymap({ show_inventory: ['key:z'] });
+    const live = createLiveKeymap({ show_inventory: ['key:q'] });
     const run = session(live);
     setKeymap({}, live);
     run.send({ key: 'i' });
-    run.send({ key: 'z', code: 'KeyZ' });
+    run.send({ key: 'q', code: 'KeyQ' });
     expect(run.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowInventory }]);
     run.dispose();
   });
 
   it('a capital captured key still matches, because the compile lowercases', () => {
     // A capture field reads `event.key` raw, so a player with capslock on binds
-    // 'Z'. Every key-side lookup in this file lowercases first, so a stored
+    // 'Q'. Every key-side lookup in this file lowercases first, so a stored
     // capital that was not lowered at compile time would be a key no press could
     // ever match — the rebind takes, the row draws, and nothing happens.
-    const live = createLiveKeymap({ show_inventory: ['key:Z'] });
+    //
+    // THE LETTER USED TO BE `Z` AND HAD TO MOVE: `z` is auto-explore's default
+    // now, so a fixture binding something else to it would be testing the
+    // conflict arbiter rather than the lowercasing. `q` is free.
+    const live = createLiveKeymap({ show_inventory: ['key:Q'] });
     const run = session(live);
-    run.send({ key: 'z', code: 'KeyZ' });
-    run.send({ key: 'Z', shiftKey: true, code: 'KeyZ' });
+    run.send({ key: 'q', code: 'KeyQ' });
+    run.send({ key: 'Q', shiftKey: true, code: 'KeyQ' });
     expect(run.calls).toEqual([
       { kind: 'ui', command: UiCommand.ShowInventory },
       { kind: 'ui', command: UiCommand.ShowInventory },
@@ -702,7 +708,7 @@ describe('a rebind reaches an already-registered listener', () => {
   });
 
   it('Escape cannot be rebound away, so the menu is always one press off', () => {
-    const live = createLiveKeymap({ cancel: ['key:z'], toggle_log: ['key:escape'] });
+    const live = createLiveKeymap({ cancel: ['key:q'], toggle_log: ['key:escape'] });
     const run = session(live);
     run.send({ key: 'Escape' });
     expect(run.calls).toEqual([{ kind: 'cancel' }]);

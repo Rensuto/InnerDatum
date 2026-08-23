@@ -310,6 +310,8 @@ import { hotbarTipAt } from './ui/hotbar.ts';
 import { inventoryTipAt } from './ui/inventory.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
 import { drawMenuButton, menuButtonHit } from './ui/menubutton.ts';
+import { exploreStopText, exploreTarget } from './input/explore.ts';
+import { bearingWord } from '../shared/coords.ts';
 import {
   CROSSING_INK,
   doorwayAt,
@@ -2442,6 +2444,38 @@ function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null 
     meta: walkable ? 'click to travel here' : 'you cannot walk there',
     lines: ['middle-click opens the region map'],
   };
+}
+
+/**
+ * THE NEAREST HOSTILE THIS CLIENT CAN SEE, as an offset — or null.
+ *
+ * ═══ AN OFFSET, BECAUSE THAT IS WHAT BOTH REFUSALS WANT ═══
+ * The same shape `RestView.threat` uses, so `bearingWord` serves the rest
+ * sentence and the explore sentence without either converting.
+ *
+ * ═══ IT IS NOT LINE OF SIGHT, AND THE COMMENT IS THE HONEST PART ═══
+ * The client has no LOS — `hasLineOfSight` is the server's, and this file may
+ * not import it. What it has is every actor in the realm (`projectActors` sends
+ * them all today and says so), so this bounds by DISTANCE and lets
+ * `exploreTarget` apply `EXPLORE_SIGHT`. The consequence is a husk behind a wall
+ * ten tiles away still refuses an explore — which is the safe direction to be
+ * wrong in, and it stops being wrong at all when per-player FOV lands.
+ */
+function nearestVisibleHostile(
+  me: TileXY,
+): { readonly name: string; readonly dx: number; readonly dy: number } | null {
+  let best: { name: string; dx: number; dy: number } | null = null;
+  let bestDist = Infinity;
+  for (const actor of actors.values()) {
+    if (!actor.alive || actor.id === selfId || !isHostileBody(actor)) continue;
+    const dx = actor.x - me.x;
+    const dy = actor.y - me.y;
+    const dist = Math.max(Math.abs(dx), Math.abs(dy));
+    if (dist >= bestDist) continue;
+    bestDist = dist;
+    best = { name: actor.name, dx, dy };
+  }
+  return best;
 }
 
 function lootAt(tile: TileXY): TileLoot {
@@ -8019,6 +8053,57 @@ async function boot(): Promise<void> {
         case TurnCommand.Hold:
           socket.send({ v: PROTOCOL_VERSION, t: 'hold' });
           return;
+        case TurnCommand.Explore: {
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * AUTO-EXPLORE — `RUN_AUTO`, Game.lua:2064-2098.
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * NO FRAME GOES OUT. `input/explore.ts` picks a tile and the existing
+           * travel system walks to it, which is the whole design: travel already
+           * stops for a hostile coming into view, for being hit, for a refusal
+           * from the server and for a disconnect, and an explorer with its own
+           * copy of those rules would be a second traveller whose stopping rules
+           * drift from the first.
+           */
+          const me = selfTile();
+          if (me === null || level === null || currentRealmId === null) {
+            showNotice('the floor has not arrived yet');
+            return;
+          }
+          // CAPTURED, because `level` is a mutable module binding and the
+          // predicate below is a closure — TypeScript is right to refuse the
+          // narrowing, and a frame landing mid-flood would be a real hazard.
+          const here = level;
+          const near = nearestVisibleHostile(me);
+          const answer = exploreTarget({
+            from: me,
+            w: here.w,
+            h: here.h,
+            // THE SAME PREDICATE THE VERB MENU GREYS ITS TRAVEL ROW ON, so
+            // "somewhere I can walk" is one question with one answer.
+            passable: (x, y) => travelTargetAllowed(here, { x, y }),
+            seen: explored.get(currentRealmId) ?? new Set<string>(),
+            items: ground
+              .filter((item) => item.cell[0] !== me.x || item.cell[1] !== me.y)
+              .map((item) => ({ x: item.cell[0], y: item.cell[1] })),
+            threat: near,
+          });
+          if (!answer.go) {
+            showNotice(
+              exploreStopText(
+                answer.stop,
+                answer.threat === undefined
+                  ? 'here'
+                  : bearingWord(answer.threat.dx, answer.threat.dy),
+                answer.threat?.name,
+              ),
+            );
+            return;
+          }
+          beginTravel(answer.to, false);
+          return;
+        }
         case TurnCommand.Rest:
           // ONE FRAME FOR THE WHOLE REST. The server decides how many turns pass
           // and stops for the right reasons (`restCheck`); the client's only job

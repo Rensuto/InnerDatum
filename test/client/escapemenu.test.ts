@@ -319,9 +319,9 @@ describe('the root screen', () => {
     const before = entryRows(escapeMenuRows(view()))[3];
     expect(before?.keyLabel).toBe(labelFor('show_sheet', DEFAULT_KEYMAP));
 
-    const rebound = compileKeymap(ACTIONS, { show_sheet: ['key:z'] });
+    const rebound = compileKeymap(ACTIONS, { show_sheet: ['key:q'] });
     const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[3];
-    expect(after?.keyLabel).toBe('Z');
+    expect(after?.keyLabel).toBe('Q');
   });
 });
 
@@ -693,7 +693,7 @@ describe('paging', () => {
 
 describe('applyCapture', () => {
   function press(over: Partial<Parameters<typeof applyCapture>[1]> = {}) {
-    return { key: 'z', code: 'KeyZ', ctrlKey: false, altKey: false, metaKey: false, ...over };
+    return { key: 'q', code: 'KeyQ', ctrlKey: false, altKey: false, metaKey: false, ...over };
   }
 
   function keymapOf(remap: KeyRemap) {
@@ -705,12 +705,12 @@ describe('applyCapture', () => {
     // KeyBind.lua:114-116, where any remap shadows the whole default array.
     const outcome = applyCapture({ actionId: 'say', slot: 0 }, press(), DEFAULT_KEYMAP);
     if (outcome.kind !== CaptureKind.Bound) throw new Error(`expected bound, got ${outcome.kind}`);
-    expect(outcome.remap).toEqual({ say: ['key:z'] });
+    expect(outcome.remap).toEqual({ say: ['key:q'] });
 
     const after = keymapOf(outcome.remap);
-    expect(labelFor('say', after, 0)).toBe('Z');
+    expect(labelFor('say', after, 0)).toBe('Q');
     expect(labelFor('say', after, 1)).toBe('/');
-    expect(outcome.message).toContain('Z');
+    expect(outcome.message).toContain('Q');
   });
 
   it('reports the bare key for a shifted press, because the dispatcher cannot tell', () => {
@@ -723,11 +723,11 @@ describe('applyCapture', () => {
     // been passing for the wrong reason.
     const outcome = applyCapture(
       { actionId: 'say', slot: 0 },
-      press({ key: 'Z', code: 'KeyZ' }),
+      press({ key: 'Q', code: 'KeyZ' }),
       DEFAULT_KEYMAP,
     );
     if (outcome.kind !== CaptureKind.Bound) throw new Error('expected bound');
-    expect(outcome.remap).toEqual({ say: ['key:z'] });
+    expect(outcome.remap).toEqual({ say: ['key:q'] });
   });
 
   it('REFUSES a key somebody else already answers, and names them', () => {
@@ -870,8 +870,8 @@ describe('reset', () => {
     // mutated — the trap KeyBinder.lua:96-103 falls into by storing
     // `t.k.default` by reference and then writing through it, which is why
     // upstream has no reset button at all.
-    const rebound: KeyRemap = { say: ['key:z'], move_north: ['key:w'] };
-    expect(labelFor('say', compileKeymap(ACTIONS, rebound), 0)).toBe('Z');
+    const rebound: KeyRemap = { say: ['key:q'], move_north: ['key:w'] };
+    expect(labelFor('say', compileKeymap(ACTIONS, rebound), 0)).toBe('Q');
 
     const after = resetOne(rebound, 'say');
     expect(labelFor('say', compileKeymap(ACTIONS, after), 0)).toBe('T');

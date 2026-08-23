@@ -454,10 +454,29 @@ export const ACTIONS = [
     rebindable: true,
   },
   {
+    id: 'explore',
+    // SHORT ENOUGH FOR THE KEYS SCREEN AT 640 WIDE. The first draft read
+    // "Explore (walk to the next unseen place)" — 38 characters — and the panel
+    // ellipsised it at the two narrowest viewports, which its own test catches.
+    // `Rest (until something stops you)` is 32 and fits; this is 28.
+    name: 'Explore (walk to the unseen)',
+    group: 'Turn',
+    order: 12,
+    effect: { kind: 'command', command: 'explore' },
+    // `z` IS UPSTREAM'S KEY for auto-explore and it is free here — `a`, `d`,
+    // `e`, `o`, `q`, `s`, `w` and `x` were the letters left after the vi ring
+    // and the screens took theirs, and `e` went to revive when rest took `r`.
+    defaults: [{ kind: 'key', value: 'z' }],
+    // NOTHING FROZEN, for `rest`'s reason: the numpad hand does not reach for
+    // this mid-fight, because it is refused with anything in sight.
+    fixed: [],
+    rebindable: true,
+  },
+  {
     id: 'pickup',
     name: 'Pick up',
     group: 'Turn',
-    order: 12,
+    order: 13,
     effect: { kind: 'command', command: 'pickup' },
     // ═══ `,` PICKS UP. CONVENTIONAL, NOT PORTED, AND IT SAYS SO ═══
     // ToME's own mnemonic for this act is `g`: `PICKUP_FLOOR` is a real virtual
@@ -481,7 +500,7 @@ export const ACTIONS = [
     id: 'revive',
     name: 'Revive a fallen ally',
     group: 'Turn',
-    order: 13,
+    order: 14,
     effect: { kind: 'ui', command: 'revive' },
     // `e` BECAUSE `r` WENT TO REST — see the note on that row for the argument.
     // A free letter with no roguelike lineage on it, and the one modern games
@@ -494,7 +513,7 @@ export const ACTIONS = [
     id: 'respawn',
     name: 'Refile yourself',
     group: 'Turn',
-    order: 14,
+    order: 15,
     effect: { kind: 'ui', command: 'respawn' },
     // F FOR REFILE — the game's own word for coming back. A letter vi movement
     // never claimed, nowhere near R, and the only key in the game a player will
@@ -507,7 +526,7 @@ export const ACTIONS = [
     id: 'cancel',
     name: 'Cancel / menu',
     group: 'Turn',
-    order: 15,
+    order: 16,
     effect: { kind: 'cancel' },
     // ═══ ESCAPE IS FROZEN, AND IT IS THE PRIMARY RECOVERY HATCH ═══
     // keys.ts calls it "the one key in the game that means 'put that back', and
@@ -543,7 +562,7 @@ export const ACTIONS = [
     id: 'say',
     name: 'Open the command line',
     group: 'Screens',
-    order: 16,
+    order: 17,
     effect: { kind: 'ui', command: 'say' },
     // `/` sits beside `t` because it is the chat key in every MUD, every IRC
     // client and Discord itself, and half the table will reach for it first.
@@ -558,7 +577,7 @@ export const ACTIONS = [
     id: 'show_sheet',
     name: 'Character sheet',
     group: 'Screens',
-    order: 17,
+    order: 18,
     effect: { kind: 'ui', command: 'show_sheet' },
     // ═══ PORTED, and the citation is a mnemonic rather than a bindings table ═══
     // uiset/Classic.lua:270 asks which key is bound to SHOW_CHARACTER_SHEET and
@@ -575,7 +594,7 @@ export const ACTIONS = [
     id: 'show_talents',
     name: 'Talents',
     group: 'Screens',
-    order: 18,
+    order: 19,
     effect: { kind: 'ui', command: 'show_talents' },
     // THE KEY IS CHOSEN, NOT PORTED. ToME's levelup screen is opened by a VIRTUAL
     // action (class/Game.lua:2215) whose default lives in the /data/keybinds
@@ -589,7 +608,7 @@ export const ACTIONS = [
     id: 'show_inventory',
     name: 'Inventory',
     group: 'Screens',
-    order: 19,
+    order: 20,
     effect: { kind: 'ui', command: 'show_inventory' },
     // ═══ ToME'S OWN LETTER, VIA A DIALOG-LOCAL MNEMONIC ═══
     // `SHOW_INVENTORY` is a real virtual action (class/Game.lua:2177-2191) and
@@ -608,7 +627,7 @@ export const ACTIONS = [
     id: 'show_world_map',
     name: 'World map',
     group: 'Screens',
-    order: 20,
+    order: 21,
     effect: { kind: 'ui', command: 'show_world_map' },
     /**
      * `M`, which is what every map in the genre is bound to, and ToME is no
@@ -624,7 +643,7 @@ export const ACTIONS = [
     id: 'zoom_out',
     name: 'Zoom out',
     group: 'Screens',
-    order: 21,
+    order: 22,
     effect: { kind: 'ui', command: 'zoom_out' },
     defaults: [{ kind: 'key', value: '-' }],
     fixed: [],
@@ -634,7 +653,7 @@ export const ACTIONS = [
     id: 'zoom_in',
     name: 'Zoom in',
     group: 'Screens',
-    order: 22,
+    order: 23,
     effect: { kind: 'ui', command: 'zoom_in' },
     // `=` rather than `+`: it is the unshifted key, so it works without a
     // modifier on every layout this game has been played on.
@@ -646,7 +665,7 @@ export const ACTIONS = [
     id: 'toggle_party',
     name: 'Party panel',
     group: 'Screens',
-    order: 23,
+    order: 24,
     effect: { kind: 'ui', command: 'toggle_party' },
     defaults: [{ kind: 'key', value: 'p' }],
     fixed: [],
@@ -673,7 +692,7 @@ export const ACTIONS = [
     id: 'hotbar_1',
     name: 'Talent slot 1',
     group: 'Hotbar',
-    order: 24,
+    order: 25,
     effect: { kind: 'slot', slot: 0 },
     defaults: [],
     fixed: [{ kind: 'key', value: '1' }],
@@ -683,7 +702,7 @@ export const ACTIONS = [
     id: 'hotbar_2',
     name: 'Talent slot 2',
     group: 'Hotbar',
-    order: 25,
+    order: 26,
     effect: { kind: 'slot', slot: 1 },
     defaults: [],
     fixed: [{ kind: 'key', value: '2' }],
@@ -693,7 +712,7 @@ export const ACTIONS = [
     id: 'hotbar_3',
     name: 'Talent slot 3',
     group: 'Hotbar',
-    order: 26,
+    order: 27,
     effect: { kind: 'slot', slot: 2 },
     defaults: [],
     fixed: [{ kind: 'key', value: '3' }],
@@ -703,7 +722,7 @@ export const ACTIONS = [
     id: 'hotbar_4',
     name: 'Talent slot 4',
     group: 'Hotbar',
-    order: 27,
+    order: 28,
     effect: { kind: 'slot', slot: 3 },
     defaults: [],
     fixed: [{ kind: 'key', value: '4' }],
@@ -750,7 +769,7 @@ export const ACTIONS = [
     id: 'hotbar_5',
     name: 'Talent slot 5',
     group: 'Hotbar',
-    order: 28,
+    order: 29,
     effect: { kind: 'slot', slot: 4 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit5' }],
@@ -760,7 +779,7 @@ export const ACTIONS = [
     id: 'hotbar_6',
     name: 'Talent slot 6',
     group: 'Hotbar',
-    order: 29,
+    order: 30,
     effect: { kind: 'slot', slot: 5 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit6' }],
@@ -796,7 +815,7 @@ export const ACTIONS = [
     id: 'hotbar_7',
     name: 'Talent slot 7',
     group: 'Hotbar',
-    order: 30,
+    order: 31,
     effect: { kind: 'slot', slot: 6 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit7' }],
@@ -806,7 +825,7 @@ export const ACTIONS = [
     id: 'hotbar_8',
     name: 'Talent slot 8',
     group: 'Hotbar',
-    order: 31,
+    order: 32,
     effect: { kind: 'slot', slot: 7 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit8' }],
@@ -816,7 +835,7 @@ export const ACTIONS = [
     id: 'hotbar_9',
     name: 'Talent slot 9',
     group: 'Hotbar',
-    order: 32,
+    order: 33,
     effect: { kind: 'slot', slot: 8 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit9' }],
@@ -830,7 +849,7 @@ export const ACTIONS = [
     id: 'toggle_log',
     name: 'Case Log',
     group: 'Log',
-    order: 33,
+    order: 34,
     effect: { kind: 'ui', command: 'toggle_log' },
     // THE KEY IS CHOSEN, NOT PORTED, AND THIS SAYS SO RATHER THAN DRESSING A
     // GUESS AS A CITATION. ToME has a SHOW_MESSAGE_LOG action and its Classic HUD
@@ -858,7 +877,7 @@ export const ACTIONS = [
     id: 'scroll_back',
     name: 'Scroll the log back',
     group: 'Log',
-    order: 34,
+    order: 35,
     // +1 is BACK IN TIME, matching what Page Up does in every document ever
     // written. Shift picks the other lane, and that is a fact about a panel
     // rather than about a key, so it is not an action here.
@@ -871,7 +890,7 @@ export const ACTIONS = [
     id: 'scroll_forward',
     name: 'Scroll the log forward',
     group: 'Log',
-    order: 35,
+    order: 36,
     effect: { kind: 'scroll', steps: -1 },
     defaults: [{ kind: 'key', value: 'pagedown' }],
     fixed: [],

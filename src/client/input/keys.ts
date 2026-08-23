@@ -186,6 +186,16 @@ export const TurnCommand = {
    */
   Rest: 'rest',
   /**
+   * Walk to the nearest thing worth walking to — ToME's `RUN_AUTO`
+   * (Game.lua:2064-2098), on ToME's own key.
+   *
+   * A TURN COMMAND rather than a UI one, and it belongs beside `Rest` for the
+   * same reason: both spend many turns off one press. It sends NO FRAME of its
+   * own — `input/explore.ts` picks a target and the existing travel system walks
+   * it — so unlike `rest` there is nothing here for the server to rule on.
+   */
+  Explore: 'explore',
+  /**
    * Take the top thing off the tile you are standing on (v10).
    *
    * IT CARRIES NO COORDINATE, HERE OR ON THE WIRE. The server reads the sender's

@@ -122,10 +122,13 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
         ['enter', TurnCommand.Commit],
         ['.', TurnCommand.Hold],
         [',', TurnCommand.Pickup],
-        // A LETTER AMONG THE PUNCTUATION, and the only one. Every other row here
-        // is a mark that does not move with the keyboard layout; `r` is here
-        // because rest is the one turn verb the genre already has a letter for.
+        // TWO LETTERS AMONG THE PUNCTUATION, and they are the reason the note
+        // below the table is worth reading. Every other row here is a mark that
+        // does not move with the keyboard layout; these two are here because
+        // rest and auto-explore are the turn verbs the genre already has letters
+        // for — `r` from Angband's lineage, `z` from ToME's own `RUN_AUTO`.
         ['r', TurnCommand.Rest],
+        ['z', TurnCommand.Explore],
       ]),
     );
   });
@@ -202,8 +205,9 @@ describe('the action registry', () => {
     // ONE THAT MATTERS; the first is here so growing the table stays a
     // deliberate act with a diff. 29 -> 31 when the bar gained slots 5 and 6;
     // 31 -> 34 when it gained 7, 8 and 9 and became one row of nine keys;
-    // 34 -> 35 when `rest` was ported (Player.lua:971).
-    expect(ACTIONS).toHaveLength(35);
+    // 34 -> 35 when `rest` was ported (Player.lua:971); 35 -> 36 with
+    // auto-explore (Game.lua:2064).
+    expect(ACTIONS).toHaveLength(36);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 
@@ -296,17 +300,17 @@ describe('composition is PER SLOT, which is the property ToME lacks', () => {
 });
 
 describe('an unknown action id is ignored, not thrown', () => {
-  const REMAP: KeyRemap = { ui_toggle_lore: ['key:z'], move_north: ['key:w'] };
+  const REMAP: KeyRemap = { ui_toggle_lore: ['key:q'], move_north: ['key:w'] };
 
   it('compiles without complaint and binds nothing for it', () => {
     const keymap = compileKeymap(ACTIONS, REMAP);
     expect(keymap.dirByKey.get('w')).toBe(Dir.N);
-    expect(keymap.uiByKey.get('z')).toBeUndefined();
-    expect(resolveAction({ key: 'z', code: '' }, keymap)).toBeUndefined();
+    expect(keymap.uiByKey.get('q')).toBeUndefined();
+    expect(resolveAction({ key: 'q', code: '' }, keymap)).toBeUndefined();
   });
 
   it('a write to it is refused rather than inventing a row', () => {
-    expect(setBinding({}, 'ui_toggle_lore', 0, key('z'))).toEqual({});
+    expect(setBinding({}, 'ui_toggle_lore', 0, key('q'))).toEqual({});
     expect(labelFor('ui_toggle_lore', DEFAULT_KEYMAP)).toBe('--');
   });
 });
@@ -355,10 +359,10 @@ describe('reset', () => {
   it('resetOne drops just that action back to its shipped keys', () => {
     let remap: KeyRemap = {};
     remap = setBinding(remap, 'say', 0, key(';'));
-    remap = setBinding(remap, 'toggle_log', 0, key('z'));
+    remap = setBinding(remap, 'toggle_log', 0, key('q'));
     const after = resetOne(remap, 'say');
     expect(resolve(def('say'), after)).toEqual([key('t'), key('/')]);
-    expect(resolve(def('toggle_log'), after)).toEqual([key('z'), undefined]);
+    expect(resolve(def('toggle_log'), after)).toEqual([key('q'), undefined]);
     expect(Object.keys(after)).toEqual(['toggle_log']);
   });
 
@@ -405,13 +409,13 @@ describe('a locked action refuses every write', () => {
 
   for (const id of LOCKED) {
     it(`${id} ignores setBinding, clearBinding and a hand-edited overlay`, () => {
-      expect(setBinding({}, id, 0, key('z'))).toEqual({});
+      expect(setBinding({}, id, 0, key('q'))).toEqual({});
       expect(clearBinding({}, id, 0)).toEqual({});
       // ...and the overlay is not even consulted, so a save file that names it
       // changes nothing.
-      const keymap = compileKeymap(ACTIONS, { [id]: ['key:z'] });
-      expect(keymap.uiByKey.get('z')).toBeUndefined();
-      expect(bindingsFor(def(id), { [id]: ['key:z'] })).toEqual(bindingsFor(def(id), {}));
+      const keymap = compileKeymap(ACTIONS, { [id]: ['key:q'] });
+      expect(keymap.uiByKey.get('q')).toBeUndefined();
+      expect(bindingsFor(def(id), { [id]: ['key:q'] })).toEqual(bindingsFor(def(id), {}));
     });
   }
 
@@ -469,8 +473,8 @@ describe('a locked action refuses every write', () => {
   });
 
   it('a slot outside the two the wire carries is refused', () => {
-    expect(setBinding({}, 'say', SLOTS_PER_ACTION, key('z'))).toEqual({});
-    expect(setBinding({}, 'say', -1, key('z'))).toEqual({});
+    expect(setBinding({}, 'say', SLOTS_PER_ACTION, key('q'))).toEqual({});
+    expect(setBinding({}, 'say', -1, key('q'))).toEqual({});
   });
 
   it('a `code` binding on a namespace with no code table is refused', () => {
@@ -544,14 +548,14 @@ describe('conflicts are resolved by dispatch and not by string equality', () => 
   });
 
   it('a free key conflicts with nothing', () => {
-    expect(conflictsFor({ action: 'toggle_log', binding: key('z') }, DEFAULT_KEYMAP)).toEqual([]);
+    expect(conflictsFor({ action: 'toggle_log', binding: key('q') }, DEFAULT_KEYMAP)).toEqual([]);
   });
 
   it('is asked about the CURRENT keymap, so a freed key stops conflicting', () => {
-    const after = compileKeymap(ACTIONS, { toggle_log: ['key:z'] });
+    const after = compileKeymap(ACTIONS, { toggle_log: ['key:q'] });
     expect(conflictsFor({ action: 'show_inventory', binding: key('v') }, after)).toEqual([]);
     expect(
-      conflictsFor({ action: 'show_inventory', binding: key('z') }, after).map((c) => c.holder),
+      conflictsFor({ action: 'show_inventory', binding: key('q') }, after).map((c) => c.holder),
     ).toEqual(['toggle_log']);
   });
 
@@ -573,8 +577,8 @@ describe('conflicts are resolved by dispatch and not by string equality', () => 
     // build. Only a hand-edited save can reach this state here — the capture
     // field refuses the bind — but when it does, the lower `order` keeps the key
     // and the answer is the same every time.
-    const keymap = compileKeymap(ACTIONS, { show_sheet: ['key:z'], toggle_log: ['key:z'] });
-    expect(resolveAction({ key: 'z', code: '' }, keymap)).toBe('show_sheet');
+    const keymap = compileKeymap(ACTIONS, { show_sheet: ['key:q'], toggle_log: ['key:q'] });
+    expect(resolveAction({ key: 'q', code: '' }, keymap)).toBe('show_sheet');
   });
 });
 
