@@ -808,7 +808,18 @@ function toWireEvents(
         break;
       // M4 — the survival system (engine/downed.ts, game-design.md § 9).
       case 'downed':
-        out.push({ k: 'downed', id: ev.id, turns: ev.turnsLeft });
+        out.push({
+          k: 'downed',
+          id: ev.id,
+          turns: ev.turnsLeft,
+          // ═══ `sourceId` WAS ON THE WIRE ALREADY AND NOTHING FILLED IT ═══
+          // `DownedEvent.sourceId` is declared and documented — "who put them
+          // there, when there is an actor to blame" — and both bridge sites
+          // dropped it, which is the field-by-field mapper losing a field that
+          // `test/server/projector.test.ts` was made a compile error for once
+          // before. Absent stays absent: a body that bled out has nobody to name.
+          ...(ev.byId === undefined ? {} : { sourceId: ev.byId }),
+        });
         break;
       case 'revived':
         out.push({
@@ -1102,7 +1113,13 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
       // paces this like any other step, so the countdown appears on the beat the
       // blow landed rather than after the whole monster turn has played out.
       case 'downed':
-        out.push({ k: 'downed', id: step.id, turns: step.turnsLeft });
+        out.push({
+          k: 'downed',
+          id: step.id,
+          turns: step.turnsLeft,
+          // The sweep lane's copy of the same fill — see the other site.
+          ...(step.byId === undefined ? {} : { sourceId: step.byId }),
+        });
         break;
       /**
        * ═══════════════════════════════════════════════════════════════════════

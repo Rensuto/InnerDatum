@@ -15,7 +15,16 @@ import {
   partyPaneView,
   survivalWord,
 } from '../../src/client/ui/partypanel.ts';
-import { respawnPromptHit, respawnPromptRect } from '../../src/client/ui/respawnprompt.ts';
+import {
+  DeathStage,
+  deathAction,
+  deathCause,
+  deathHeadline,
+  respawnPromptHit,
+  respawnPromptRect,
+} from '../../src/client/ui/respawnprompt.ts';
+import type { DeathView } from '../../src/client/ui/respawnprompt.ts';
+import { DEFAULT_KEYMAP } from '../../src/client/input/keymap.ts';
 import { ActorKind, ActorRank, DownedStatus, PartyAction } from '../../src/shared/protocol.ts';
 import { TurnActorState, VoiceState } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -855,5 +864,126 @@ describe('the party card carries what the pane cannot', () => {
     const card = partyPaneTipAt(view, layout, point.x, point.y);
     expect(card).not.toBeNull();
     expect(card?.title).toContain('Dalt');
+  });
+});
+
+describe('the death plate covers both stages', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A PLAYER WHO DIED SAW NOTHING FOR FIVE TURNS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The plate was gated on ERASED alone, so the five turns that decide whether
+   * the run continues — the loudest moment in the game — had no surface at all.
+   * The countdown lived in the party pane, which toggles off with `p` and sheds
+   * its digits on a narrow window, and in the Case Log, which is a transcript
+   * nobody reads while dying.
+   */
+  const view = (over: Partial<DeathView> = {}): DeathView => ({
+    stage: DeathStage.Down,
+    turnsLeft: 5,
+    by: 'Index Husk',
+    rescuers: false,
+    ...over,
+  });
+
+  it('says DOWN while the clock is running and ERASED once it has stopped', () => {
+    expect(deathHeadline(view())).toBe('YOU ARE DOWN');
+    expect(deathHeadline(view({ stage: DeathStage.Erased }))).toBe('YOU ARE ERASED');
+  });
+
+  it('names what put you there', () => {
+    // `DownedEvent.sourceId` was declared on the wire and filled by nothing.
+    // "You are down" with no cause is the one sentence a player is guaranteed to
+    // read carefully and guaranteed to learn nothing from.
+    expect(deathCause(view())).toBe('Index Husk put you here');
+  });
+
+  it('loses the line rather than inventing a culprit', () => {
+    // A body that bled out from an effect whose source is gone has nobody to
+    // name, and the plate reads as the tight two-line surface it always was.
+    expect(deathCause(view({ by: null }))).toBe('');
+  });
+
+  it('does NOT advertise the respawn key while you are merely down', () => {
+    /**
+     * THE ONE THAT WOULD BE CRUEL. `attemptRespawn` refuses in the Downed stage —
+     * the countdown and the ally running at you ARE the mechanic — so naming the
+     * key here would be an instruction that does not work, given to the one
+     * player in the game who cannot do anything else.
+     */
+    expect(deathAction(view(), DEFAULT_KEYMAP)).not.toMatch(/refile/);
+    expect(deathAction(view({ stage: DeathStage.Erased }), DEFAULT_KEYMAP)).toMatch(/refile/);
+  });
+
+  it('has a stage for the death a solo player actually dies', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE STAGE THE OTHER TWO COULD NOT REACH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Both stages above are read off `PartyMember.downed`. A wipe deletes that
+     * record — `resetFloorParty` -> `standUp` -> `state.byActor.delete` — INSIDE
+     * the pump that raised the death, so the `party` frame at the end of it
+     * already says the body is up. The plate had nothing to draw from on any
+     * frame.
+     *
+     * And one player alone IS the whole party, so every solo death is a wipe:
+     * the unreachable stage was the one that covers playing by yourself.
+     * Measured over a real socket in test/server/killer-named.test.ts, which
+     * saw `downed, erased/wipe` arrive for a lone Watchman's death.
+     */
+    const wiped = view({ stage: DeathStage.Wiped, turnsLeft: 0 });
+    // The Record lane says "erased" for a wipe in the same breath
+    // ("X is erased — nobody is left standing. The floor resets."), and two
+    // vocabularies for one event would read as two different deaths.
+    expect(deathHeadline(wiped)).toBe('YOU ARE ERASED');
+    // The culprit still survives the reset — it is held on the client from the
+    // `downed` event, which arrives in the same batch as the wipe.
+    expect(deathCause(wiped)).toBe('Index Husk put you here');
+  });
+
+  it('tells a wiped player it is already over, not that a clock is running', () => {
+    /**
+     * PAST TENSE, AND NOT A COUNTDOWN. By the time this plate can be drawn the
+     * floor is rebuilt and the body is standing on it at full hp. A countdown
+     * here would be the one sentence on this surface that is actively false, and
+     * "refile yourself" would be an instruction to do a thing the server has
+     * already done without asking.
+     */
+    const said = deathAction(view({ stage: DeathStage.Wiped, turnsLeft: 0 }), DEFAULT_KEYMAP);
+    expect(said).toMatch(/floor has reset/);
+    expect(said, 'a wipe has no clock left to run').not.toMatch(/turn/);
+    expect(said, 'the body is already up — there is nothing to refile').not.toMatch(/refile/);
+    // It still names a key. The plate has to go away, and one that dismisses
+    // itself on a timer is one a player who looked away never reads.
+    expect(said).toMatch(/press/);
+  });
+
+  it('counts the turns, and says whether anyone could reach you', () => {
+    /**
+     * THE SAME DISTINCTION THE CASE LOG ALREADY MAKES: "turns to reach you" is
+     * addressed to somebody, and read by a player alone it is an instruction
+     * about help that is not coming.
+     */
+    expect(deathAction(view({ turnsLeft: 4, rescuers: true }), DEFAULT_KEYMAP)).toBe(
+      '4 turns for an ally to reach you',
+    );
+    expect(deathAction(view({ turnsLeft: 4, rescuers: false }), DEFAULT_KEYMAP)).toBe(
+      '4 turns, and nobody is coming',
+    );
+  });
+
+  it('says "one turn" rather than "1 turns" on the last one', () => {
+    // The turn a player is most likely to be reading it on.
+    expect(deathAction(view({ turnsLeft: 1, rescuers: true }), DEFAULT_KEYMAP)).toBe(
+      'one turn for an ally to reach you',
+    );
+  });
+
+  it('never counts below zero', () => {
+    expect(deathAction(view({ turnsLeft: -2, rescuers: false }), DEFAULT_KEYMAP)).toBe(
+      '0 turns, and nobody is coming',
+    );
   });
 });

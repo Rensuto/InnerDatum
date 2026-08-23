@@ -795,3 +795,50 @@ describe('a walk that crosses loot stops on it', () => {
     expect(body).toContain("keyHint('pickup')");
   });
 });
+
+describe('the death plate appears the moment you go down', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT WAS GATED ON ERASED ALONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A player who died saw NOTHING on the canvas for the five turns that decide
+   * whether the run continues. The countdown lived in the party pane — which
+   * toggles off with `p` and sheds its digits on a narrow window — and in the
+   * Case Log, which is a transcript nobody reads while dying.
+   *
+   * ui/respawnprompt.ts tests what the plate SAYS. This pins that it is reached
+   * at all, and that the caption cannot outlive the death it belongs to.
+   */
+  it('is laid out for both stages, not only Erased', () => {
+    expect(CODE).toMatch(/deathView\(\) !== null && !menuOpen/);
+    expect(CODE, 'the old Erased-only gate is back').not.toMatch(/selfErased\(\) && !menuOpen/);
+  });
+
+  it('hands the painter the stage rather than letting it assume one', () => {
+    const start = at('drawRespawnPrompt({');
+    expect(CODE.slice(start, start + 260)).toContain('view: dying');
+  });
+
+  it('clears the culprit structurally, not on an event', () => {
+    /**
+     * A respawn produces no event of its own — `standUp` restores the body and
+     * the next `party` snapshot simply stops saying Downed — so there is no
+     * frame to hang a "forget the killer" on. Clearing it where the view is
+     * BUILT means a stale name cannot outlive its death by any route, including
+     * one nobody has thought of.
+     */
+    const start = at('function deathView(): DeathView | null {');
+    const body = CODE.slice(start, start + 700);
+    expect(body).toContain('downedBy = null');
+    // ...and that clear is on the "not down" branch, before any early return of
+    // a view, or it would fire while the plate was still being drawn.
+    expect(body.indexOf('downedBy = null')).toBeLessThan(body.indexOf('return {'));
+  });
+
+  it('reads the culprit off the event, which is the only thing that names it', () => {
+    // `DownedView` carries the stage and the countdown and is re-sent on every
+    // party snapshot; only `DownedEvent.sourceId` names who did it, once.
+    expect(CODE).toContain('downedBy = event.sourceId === undefined');
+  });
+});

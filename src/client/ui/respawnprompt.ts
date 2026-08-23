@@ -41,7 +41,69 @@ import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 
 /** The heading. Short, so it survives any width. */
-const HEADLINE = 'YOU ARE ERASED';
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT COVERS BOTH STAGES NOW, AND IT USED TO COVER ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This plate was gated on ERASED alone, so a player who died saw NOTHING on the
+ * canvas for the five turns that decide whether the run continues — the loudest
+ * moment in the game, and the screen said nothing. The countdown existed only in
+ * the party pane, which toggles off with `p` and sheds its digits on a narrow
+ * window, and in the Case Log, which is a transcript a dying player is not
+ * reading.
+ *
+ * The two stages want opposite sentences and that is the whole reason they are
+ * one surface rather than two:
+ *
+ *   DOWN    — a clock is running and somebody may reach you. The respawn key is
+ *             REFUSED here (main.ts's `attemptRespawn` says so), so advertising
+ *             it would be an instruction that does not work.
+ *   ERASED  — nothing is coming. The key is the only thing that does anything,
+ *             and it is the only state it works in.
+ *   WIPED   — it is already over. The floor has reset and the body is back on
+ *             its feet at full hp, so there is nothing to wait for and nothing
+ *             to press; the plate is the only record the PLAYER gets that they
+ *             died at all.
+ *
+ * ═══ AND `WIPED` IS THE ONLY STAGE A SOLO PLAYER EVER REACHES ═══
+ * A party wipe fires the instant nobody is left standing, and one player alone
+ * IS the whole party — so their death and their wipe are the same event, raised
+ * inside a single pump. `resetFloorParty` calls `standUp`, which does
+ * `state.byActor.delete(actor.id)`, and the record is gone before the `party`
+ * frame at the end of that pump is ever projected.
+ *
+ * So a plate driven off `PartyMember.downed` — which is what the first two
+ * stages are — CANNOT DRAW A SINGLE FRAME for a player who dies by themselves,
+ * or for anybody on a party wipe. It is not a timing window that could be
+ * widened: the record never reaches the wire in that state at all. This stage
+ * is driven by the `erased` event instead (`ErasedReason.Wipe`), which is the
+ * one thing that does arrive.
+ */
+export const DeathStage = {
+  Down: 'down',
+  Erased: 'erased',
+  Wiped: 'wiped',
+} as const;
+export type DeathStage = (typeof DeathStage)[keyof typeof DeathStage];
+
+/** What the plate is about. Everything else on it follows from this. */
+export type DeathView = {
+  readonly stage: DeathStage;
+  /** Game turns until Erased. Only read on `Down`. */
+  readonly turnsLeft: number;
+  /** What put them there, or null when nothing can be named. */
+  readonly by: string | null;
+  /**
+   * Is anybody else still standing on this floor?
+   *
+   * THE SAME DISTINCTION THE CASE LOG ALREADY MAKES, and for the reason it
+   * records at length: "turns to reach them" is addressed to somebody, and read
+   * by a player alone it is an instruction about help that is not coming. The
+   * countdown is the same countdown; what it MEANS is not.
+   */
+  readonly rescuers: boolean;
+};
 
 /**
  * THE KEY THAT REFILES YOU, AS THIS PLAYER'S KEYBOARD SPELLS IT TODAY.
@@ -77,8 +139,92 @@ function instruction(keymap: Keymap): string {
   return `press ${respawnKey(keymap)} — or click here — to refile yourself`;
 }
 
+/**
+ * THE SAME KEY, DOING THE ONLY THING LEFT TO DO.
+ *
+ * Not a second binding. The keymap owns what a key DOES and this file does not
+ * get a second opinion about it (main.ts's `keydown` listener says so at
+ * length), so the dismissal rides the key the player is already told about in
+ * the state next door — and `attemptRespawn` branches on the stage rather than
+ * the wire deciding twice.
+ */
+function dismissal(keymap: Keymap): string {
+  return `the floor has reset — press ${respawnKey(keymap)}, or click here`;
+}
+
+/**
+ * The headline. One word of state, and it is the word the game uses.
+ *
+ * WIPED READS `ERASED` TOO, because that is what the Record lane calls it in the
+ * same breath — *"X is erased — nobody is left standing. The floor resets."* Two
+ * vocabularies for one event would make the plate and the transcript look like
+ * they are describing different deaths.
+ */
+export function deathHeadline(view: DeathView): string {
+  return view.stage === DeathStage.Down ? 'YOU ARE DOWN' : 'YOU ARE ERASED';
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT PUT YOU HERE — its own line, or empty when nothing can be named.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `DownedEvent.sourceId` has been on the wire, declared and documented, with
+ * nothing filling it. "You are down" with no cause is the one sentence a player
+ * is guaranteed to read carefully and guaranteed to learn nothing from — and the
+ * blow that did it is in the transcript, which is exactly where they are not
+ * looking.
+ *
+ * ═══ ITS OWN LINE RATHER THAN A PREFIX, AND THAT IS A MEASUREMENT ═══
+ * Folded into the sentence below it, "Index Husk put you here · press F — or
+ * click here — to refile yourself" is about seventy characters against the
+ * plate's forty-eight, so `fitText` would have ellipsised — cutting off either
+ * the cause that was just added or the instruction that is the only way out.
+ * A third line costs sixteen pixels of a plate nothing else competes with.
+ *
+ * EMPTY IS A REAL ANSWER. A body that bled out from an effect whose source is
+ * gone has nobody to name, and the plate simply loses a line rather than
+ * inventing one.
+ */
+export function deathCause(view: DeathView): string {
+  return view.by === null ? '' : `${view.by} put you here`;
+}
+
+/**
+ * The last line: what happens next. A clock while a clock is running, and the
+ * only key that works once it has stopped.
+ */
+export function deathAction(view: DeathView, keymap: Keymap = gameKeymap.current): string {
+  /**
+   * ═══ THE WIPE SENTENCE IS PAST TENSE, AND THAT IS THE POINT ═══
+   * The other two stages describe something that has not finished. This one
+   * describes something that already has: by the time this plate can be drawn
+   * the floor is rebuilt and the body is standing on it at full hp. Telling the
+   * player to press a key to be restored would be an instruction to do a thing
+   * the server did without asking.
+   *
+   * It still names a key, because the plate has to go away and a plate that
+   * dismisses itself on a timer is one a player who looked away never reads.
+   */
+  if (view.stage === DeathStage.Wiped) return dismissal(keymap);
+  if (view.stage === DeathStage.Erased) return instruction(keymap);
+
+  const turns = Math.max(0, Math.floor(view.turnsLeft));
+  if (turns === 1) {
+    return view.rescuers ? 'one turn for an ally to reach you' : 'one turn, and nobody is coming';
+  }
+  return view.rescuers
+    ? `${String(turns)} turns for an ally to reach you`
+    : `${String(turns)} turns, and nobody is coming`;
+}
+
 const PROMPT_W = 304;
-const PROMPT_H = 48;
+/**
+ * 48 -> 66 FOR THE CAUSE LINE. Measured rather than nudged: the head sits at
+ * +16 and the two body lines at +33 and +49, and the border and the panel's own
+ * inset want the rest. See `deathCause` for why it is a line and not a prefix.
+ */
+const PROMPT_H = 66;
 const BORDER = 2;
 
 const FONT_HEAD = 'bold 12px ui-monospace, Consolas, monospace';
@@ -168,9 +314,23 @@ export function drawRespawnPrompt(options: {
    * change and the prompt cannot disagree with the dispatcher.
    */
   readonly keymap?: Keymap;
+  /**
+   * WHICH STAGE, AND WHAT TO SAY ABOUT IT.
+   *
+   * OPTIONAL, defaulting to the Erased shape this plate had before it covered
+   * both — so a caller that predates the split still gets exactly the surface it
+   * has always drawn rather than a blank one.
+   */
+  readonly view?: DeathView;
 }): void {
   const { ctx, sprites, rect, hovered } = options;
   const keymap = options.keymap ?? gameKeymap.current;
+  const view: DeathView = options.view ?? {
+    stage: DeathStage.Erased,
+    turnsLeft: 0,
+    by: null,
+    rescuers: false,
+  };
   if (rect.w <= 0 || rect.h <= 0) return;
 
   ctx.save();
@@ -198,11 +358,25 @@ export function drawRespawnPrompt(options: {
   const midX = rect.x + Math.floor(rect.w / 2);
   ctx.font = FONT_HEAD;
   ctx.fillStyle = PALETTE.PARCHMENT;
-  ctx.fillText(fitText(ctx, HEADLINE, inner.w - 8), midX, rect.y + 16);
+  ctx.fillText(fitText(ctx, deathHeadline(view), inner.w - 8), midX, rect.y + 16);
 
   ctx.font = FONT_BODY;
   ctx.fillStyle = PALETTE.GOLD;
-  ctx.fillText(fitText(ctx, instruction(keymap), inner.w - 8), midX, rect.y + 33);
+  /**
+   * THE CAUSE, THEN THE CLOCK. A plate with nothing to name simply loses the
+   * middle line and the action moves up into its place — so a death with no
+   * culprit reads as the tight two-line plate this surface has always been
+   * rather than as one with a hole in it.
+   */
+  const cause = deathCause(view);
+  if (cause !== '') {
+    ctx.fillText(fitText(ctx, cause, inner.w - 8), midX, rect.y + 33);
+  }
+  ctx.fillText(
+    fitText(ctx, deathAction(view, keymap), inner.w - 8),
+    midX,
+    cause === '' ? rect.y + 33 : rect.y + 49,
+  );
 
   ctx.restore();
 }

@@ -299,11 +299,13 @@ import {
 // month. They share one 18px strip and nothing else.
 import { drawXpBar } from './ui/xpbar.ts';
 import {
+  DeathStage,
   drawRespawnPrompt,
   respawnPromptHit,
   respawnPromptRect,
   respawnPromptSpeech,
 } from './ui/respawnprompt.ts';
+import type { DeathView } from './ui/respawnprompt.ts';
 import { drawLootTip, drawTooltip } from './ui/tooltip.ts';
 import { drawHoverCard } from './ui/panel.ts';
 import type { HoverCard } from './ui/panel.ts';
@@ -330,6 +332,7 @@ import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
   ActorKind,
   DownedStatus,
+  ErasedReason,
   ErrorCode,
   LogLane,
   PartyAction,
@@ -2659,6 +2662,49 @@ function adjacentDowned(): { readonly id: string; readonly dir: Dir; readonly na
  * whether the respawn prompt is on screen — and the prompt is the only place a
  * player ever learns the key exists, because it is the only moment it works.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT PUT THIS BODY ON THE FLOOR, or null.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ IT COMES OFF THE EVENT, BECAUSE THE PARTY FRAME DOES NOT CARRY IT ═══
+ * `DownedView` answers the STAGE and the COUNTDOWN and nothing else, and it is
+ * re-sent on every party snapshot — so it is the right source for both of those
+ * and cannot answer this. `DownedEvent.sourceId` names the culprit exactly once,
+ * on the beat it happened, which means somebody has to hold it.
+ *
+ * CLEARED WHENEVER THE BODY IS BACK UP, and by the same events that put it
+ * back: a stale name would caption the NEXT death with the last one's killer,
+ * which is worse than no caption at all.
+ */
+let downedBy: string | null = null;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PARTY WIPED, AND THIS IS THE ONLY TRACE OF IT THE CLIENT WILL EVER HOLD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every other death stage is READ OFF THE `party` FRAME — `PartyMember.downed`
+ * carries the marker and the countdown, and the plate is a projection of it. A
+ * wipe cannot work that way, and not by a near miss:
+ *
+ *   `resetFloorParty` -> `standUp` -> `state.byActor.delete(actor.id)`
+ *
+ * runs INSIDE the pump that raised the death. The `party` frame at the end of
+ * that pump already says the body is up, so `selfDowned()` is null on the first
+ * frame the client ever sees and on every frame after it. A plate gated on the
+ * frame is not merely brief for a wipe — it is unreachable.
+ *
+ * And a wipe is not the rare case. One player alone IS the whole party, so
+ * EVERY solo death is a wipe. The stage that could not draw was the stage that
+ * covers playing by yourself.
+ *
+ * So the `erased` event is the anchor, and this flag is what holds it until the
+ * player says they have read it. Set by `ErasedReason.Wipe` for the viewer,
+ * cleared by `attemptRespawn`.
+ */
+let wipedFloor = false;
+
 function selfDowned(): DownedView | null {
   if (selfId === null) return null;
   return party.find((member) => member.id === selfId)?.downed ?? null;
@@ -2667,6 +2713,57 @@ function selfDowned(): DownedView | null {
 /** True while the viewer's countdown has run out and only a respawn is left. */
 function selfErased(): boolean {
   return selfDowned()?.status === DownedStatus.Erased;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE DEATH PLATE IS ABOUT, or null when the viewer is on their feet.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE CAPTION IS CLEARED STRUCTURALLY, NOT ON AN EVENT ═══
+ * A respawn produces no event of its own — `standUp` restores the body and the
+ * next `party` snapshot simply stops saying Downed — so there is no frame to
+ * hang a "forget the killer" on. Clearing it HERE, whenever the viewer is up,
+ * means a stale name cannot outlive the death it belongs to by any route
+ * including one nobody has thought of.
+ *
+ * The remaining window is between the `party` frame that says DOWN and the
+ * `downed` event that says WHO, and it fails in the safe direction: no cause
+ * rather than the previous death's.
+ */
+function deathView(): DeathView | null {
+  const stage = selfDowned();
+  if (stage === null && !wipedFloor) {
+    downedBy = null;
+    return null;
+  }
+  /**
+   * IS ANYBODY LEFT WHO COULD REACH YOU? Read off `actors` rather than the party
+   * list, because a rescue does not require a party — anybody standing on this
+   * floor can revive you, and `revive`'s own checks are about reach and not
+   * membership.
+   */
+  const rescuers = [...actors.values()].some(
+    (other) => other.id !== selfId && other.kind === ActorKind.Player && other.alive,
+  );
+  /**
+   * THE WIPE WINS OVER THE FRAME, on the one pump where both could be true.
+   * `erased`/Wipe and the `party` frame that says DOWN arrive in the same batch
+   * — the event first, the resync behind it — and for that single frame the
+   * record may still read Downed. Drawing "3 turns for an ally to reach you"
+   * over a floor that has already been rebuilt is the one sentence here that is
+   * actively false.
+   */
+  if (wipedFloor) {
+    return { stage: DeathStage.Wiped, turnsLeft: 0, by: downedBy, rescuers: false };
+  }
+  if (stage === null) return null;
+  return {
+    stage: stage.status === DownedStatus.Erased ? DeathStage.Erased : DeathStage.Down,
+    turnsLeft: stage.turnsLeft,
+    by: downedBy,
+    rescuers,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -3016,7 +3113,14 @@ function hudLayout(width: number, height: number): HudLayout {
     // HIT-TEST ORDER MIRRORS PAINT ORDER — is kept by removing the overlap
     // instead of adding a fifth exception to it.
     respawn:
-      selfErased() && !menuOpen
+      /**
+       * ═══ BOTH STAGES, AND IT USED TO BE ERASED ALONE ═══
+       * A player who died saw nothing on the canvas for the five turns that
+       * decide whether the run continues. The countdown lived in the party pane
+       * — which toggles off with `p` and sheds its digits on a narrow window —
+       * and in the Case Log, which is a transcript nobody reads while dying.
+       */
+      deathView() !== null && !menuOpen
         ? respawnPromptRect({ width, top: band.top, bottom: band.bottom })
         : null,
     // ═══ THE FOUR MOVABLE PANELS, EACH THROUGH `movePanel` AND THE SAME BAND ═══
@@ -4132,7 +4236,16 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // pressing keys that are all being refused, on a screen where nothing is
   // moving. See ui/respawnprompt.ts. It is also a button.
   if (layout.respawn !== null) {
-    drawRespawnPrompt({ ctx, sprites, rect: layout.respawn, hovered: respawnHovered });
+    const dying = deathView();
+    if (dying !== null) {
+      drawRespawnPrompt({
+        ctx,
+        sprites,
+        rect: layout.respawn,
+        hovered: respawnHovered,
+        view: dying,
+      });
+    }
   }
 
   // ═══ v12 — THE THING IN THE PLAYER'S HAND, UNDER THE POINTER ═══
@@ -4901,7 +5014,14 @@ function applyTurnEvent(event: TurnEvent): void {
       // window firing frames at a server that answers `not_your_turn` — and it
       // would leave a route drawn across the map from a body that is not going
       // anywhere.
-      if (event.id === selfId) cancelTravel('you went down — travel stopped');
+      if (event.id === selfId) {
+        cancelTravel('you went down — travel stopped');
+        // WHO DID IT, HELD FOR THE DEATH PLATE. The party frame carries the
+        // stage and the clock; only this event names the culprit, and it says it
+        // once. `toDisplayName` is not needed — the server has already filtered
+        // it (`ActorView.name`'s contract).
+        downedBy = event.sourceId === undefined ? null : (actors.get(event.sourceId)?.name ?? null);
+      }
       break;
     }
     case 'revived': {
@@ -4921,6 +5041,19 @@ function applyTurnEvent(event: TurnEvent): void {
     case 'erased':
       // Erased is followed by the floor resetting and a fresh `welcome`, which
       // replaces the board wholesale. Deleting the token here would race that.
+      //
+      // ═══ AND FOR A WIPE THIS IS THE DEATH SCREEN'S ONLY TRIGGER ═══
+      // Not a convenience: the record is deleted by `resetFloorParty` inside the
+      // pump that raised it, so no `party` frame ever carries this stage and the
+      // plate has nothing else to hang on. See `wipedFloor`.
+      if (event.id === selfId && event.reason === ErasedReason.Wipe) {
+        wipedFloor = true;
+        // The walk dies with the floor it was crossing. `cancelTravel` on the
+        // `downed` event above covers the ordinary death; a body that was NEVER
+        // downed on this client — a resync that skipped straight to the wipe —
+        // would otherwise keep a route drawn across a map that no longer exists.
+        cancelTravel('the floor reset — travel stopped');
+      }
       break;
   }
 }
@@ -6746,6 +6879,19 @@ async function boot(): Promise<void> {
    *   UP      — nothing to file. Almost always a stray press.
    */
   function attemptRespawn(): void {
+    /**
+     * ═══ FIRST, BECAUSE AFTER A WIPE THE BODY IS ALREADY UP ═══
+     * `selfDowned()` is null here — the record was deleted by the reset — so
+     * every check below would fall through to "you are on your feet", which is
+     * true and useless. There is nothing to refile; the plate is an
+     * acknowledgement, and this is the player acknowledging it.
+     */
+    if (wipedFloor) {
+      wipedFloor = false;
+      downedBy = null;
+      clearNotice();
+      return;
+    }
     const stage = selfDowned();
     if (stage === null) {
       showNotice('you are on your feet — nothing to refile');

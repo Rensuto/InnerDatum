@@ -346,7 +346,28 @@ export type SweepStep =
    */
   | { readonly t: 'status'; readonly id: string; readonly note: EffectLogLine }
   /** A monster's blow put a player on the floor. game-design.md § 9. */
-  | { readonly t: 'downed'; readonly id: string; readonly turnsLeft: number }
+  | {
+      readonly t: 'downed';
+      readonly id: string;
+      readonly turnsLeft: number;
+      /**
+       * WHO PUT THEM THERE. The `killerId` `noteCasualty` was already handed —
+       * see `Effect`'s own note on why that is ONE id and not a list.
+       *
+       * ═══ IT TRAVELS BECAUSE THE LOG AND THE DEATH SCREEN BOTH NEED IT ═══
+       * "You are erased" without a cause is the one sentence in the game a
+       * player is guaranteed to read carefully and guaranteed to learn nothing
+       * from. The blow that did it is on the line above in the Case Log, but a
+       * player who has just gone down is looking at the middle of the screen and
+       * not at the transcript.
+       *
+       * OPTIONAL, because a body can reach 0 with nobody to blame — bleeding out
+       * from an effect whose source is gone, or a floor reset. Absent means "no
+       * one thing did this", which is the honest answer and reads differently
+       * from a name.
+       */
+      readonly byId?: string;
+    }
   /**
    * A BODY THAT DIED MID-SWEEP LEFT SOMETHING ON THE FLOOR.
    *
@@ -519,7 +540,28 @@ export type GameEvent =
    * A player hit 0 HP and went DOWN, not dead — game-design.md § 9. The five
    * turns start now; `turnsLeft` is what the countdown ring starts at.
    */
-  | { readonly t: 'downed'; readonly id: string; readonly turnsLeft: number }
+  | {
+      readonly t: 'downed';
+      readonly id: string;
+      readonly turnsLeft: number;
+      /**
+       * WHO PUT THEM THERE. The `killerId` `noteCasualty` was already handed —
+       * see `Effect`'s own note on why that is ONE id and not a list.
+       *
+       * ═══ IT TRAVELS BECAUSE THE LOG AND THE DEATH SCREEN BOTH NEED IT ═══
+       * "You are erased" without a cause is the one sentence in the game a
+       * player is guaranteed to read carefully and guaranteed to learn nothing
+       * from. The blow that did it is on the line above in the Case Log, but a
+       * player who has just gone down is looking at the middle of the screen and
+       * not at the transcript.
+       *
+       * OPTIONAL, because a body can reach 0 with nobody to blame — bleeding out
+       * from an effect whose source is gone, or a floor reset. Absent means "no
+       * one thing did this", which is the honest answer and reads differently
+       * from a name.
+       */
+      readonly byId?: string;
+    }
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * A BODY SPILLED ITS GEAR ONTO THE TILE IT DIED ON.
@@ -3041,7 +3083,15 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
     const record = goDown(survival.state, victim, run.world.turn.clock.gameTurn);
     if (record === null) continue; // already on the floor
 
-    const step = { t: 'downed', id: victim.id, turnsLeft: record.turnsLeft } as const;
+    const step = {
+      t: 'downed',
+      id: victim.id,
+      turnsLeft: record.turnsLeft,
+      // WHO PUT THEM THERE — the same id the experience and the kill credit
+      // were just paid on, so the log, the screen and the ledger cannot
+      // disagree about who did this.
+      byId: killerId,
+    } as const;
     if (sweepTurn === null) run.sink.push(step);
     else run.sink.sweep(sweepTurn, step);
 

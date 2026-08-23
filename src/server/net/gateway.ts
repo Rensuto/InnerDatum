@@ -9624,15 +9624,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * before a restart, a fixture with no body — but it is no longer what a dead
    * wraith's orb narrates as.
    */
-  const nameOf = (id: string): string =>
+  /**
+   * The three places a name can still be found, or null when none of them has
+   * it. `nameOf` below is this with the fallback applied.
+   *
+   * ═══ SPLIT SO A CALLER CAN CHOOSE SILENCE OVER "SOMEONE" ═══
+   * Most sentences want a word there and `someone` is the right one — a blow has
+   * to be attributed to something. The DOWNED line is different: it appends
+   * "by X", and "Player 1 is DOWN by someone" is worse than saying nothing at
+   * all, because it looks like the game knows and will not say.
+   *
+   * That case is not hypothetical. `test/server/killer-named.test.ts` records it
+   * in full: a solo player's death raises a wipe and a floor reset in the SAME
+   * pump, the reset removes every hostile in the room, and all three lookups
+   * miss — which is why `namesThisPump` exists at all.
+   */
+  const nameOrNull = (id: string): string | null =>
     // WHEREVER THAT BODY IS. The Case Log narrates one realm at a time, but a
     // name is a fact about an actor and not about a floor, and threading a world
     // through `recordFor`'s twelve call sites would put a parameter on every
     // sentence in the game to answer a question `homeOf` answers in one lookup.
-    homeOf(id).world.getActor(id)?.name ??
-    reapedNames.get(id) ??
-    namesThisPump.get(id) ??
-    'someone';
+    homeOf(id).world.getActor(id)?.name ?? reapedNames.get(id) ?? namesThisPump.get(id) ?? null;
+
+  const nameOf = (id: string): string => nameOrNull(id) ?? 'someone';
 
   /**
    * A talent's display name, from the CASTER'S OWN BOOK where there is one.
@@ -9835,12 +9849,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         const others = homeOf(event.id)
           .world.allActors()
           .filter((a) => a.kind === ActorKind.Player && a.id !== event.id && a.alive).length;
+        /**
+         * ═══ AND WHAT PUT THEM THERE ═══
+         * `DownedEvent.sourceId` was declared on the wire and filled by nothing
+         * until now. The blow itself is the line above at depth 1, but this is
+         * the line a player reads — the loud one, at depth 0 — and "X is DOWN"
+         * with no cause makes them scroll back at the exact moment five turns
+         * are running.
+         *
+         * ABSENT IS A REAL ANSWER and reads differently: a body that bled out
+         * from an effect whose source is gone has nobody to name, and inventing
+         * one would be worse than the silence.
+         */
+        /**
+         * NAMED, OR NOT MENTIONED. `nameOrNull` rather than `nameOf`: this
+         * clause is an aside, and "Player 1 is DOWN by someone" reads as a game
+         * that knows and will not say. The solo-death case is exactly where the
+         * lookup misses — see `nameOrNull`.
+         */
+        const culprit = event.sourceId === undefined ? null : nameOrNull(event.sourceId);
+        const put = culprit === null ? '' : ` by ${culprit}`;
         return [
           {
             text:
               others > 0
-                ? `${nameOf(event.id)} is DOWN — ${String(event.turns)} turns to reach them.`
-                : `${nameOf(event.id)} is DOWN — ${String(event.turns)} turns, and nobody is coming.`,
+                ? `${nameOf(event.id)} is DOWN${put} — ${String(event.turns)} turns to reach them.`
+                : `${nameOf(event.id)} is DOWN${put} — ${String(event.turns)} turns, and nobody is coming.`,
             depth: 0,
           },
         ];

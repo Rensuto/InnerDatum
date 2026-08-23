@@ -110,12 +110,17 @@ describe('a death in a room that resets', () => {
       const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/ws`);
       const frames: Record<string, unknown>[] = [];
       const lines: string[] = [];
+      const events: Record<string, unknown>[] = [];
       socket.addEventListener('message', (ev: MessageEvent) => {
         for (const raw of String(ev.data).split('\n')) {
           if (raw.trim() === '') continue;
           try {
             const frame = JSON.parse(raw) as Record<string, unknown>;
             frames.push(frame);
+            // EVERY LANE THAT CARRIES EVENTS, not just `sweep` — the immediate
+            // lane sends one thing on its own and a death can land in either.
+            for (const ev of (frame['events'] ?? []) as Record<string, unknown>[]) events.push(ev);
+            if (typeof frame['k'] === 'string') events.push(frame);
             if (frame['t'] === 'log') {
               for (const line of (frame['lines'] ?? []) as { text?: string }[]) {
                 lines.push(line.text ?? '');
@@ -229,6 +234,71 @@ describe('a death in a room that resets', () => {
         lines.filter((l) => l.includes('someone')),
         `anonymous lines: ${lines.slice(-8).join(' | ')}`,
       ).toEqual([]);
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE DOWNED LINE NAMES WHAT DID IT, OR SAYS NOTHING — NEVER A
+       * DANGLING CLAUSE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `DownedEvent.sourceId` was declared on the wire and filled by nothing;
+       * the line read "Player 1 is DOWN — 5 turns, and nobody is coming" with no
+       * cause, at the one moment a player is reading carefully.
+       *
+       * THE SOLO CASE IS THE HARD ONE and it is the one this file exists for: a
+       * lone death raises a wipe and a floor reset in the SAME pump, the reset
+       * removes every hostile, and all three name lookups can miss. So the rule
+       * is not "always names somebody" — it is that the sentence is never left
+       * half-built. `by ` with nothing after it, or "by someone", are the two
+       * failures, and the assertion above already forbids the second.
+       */
+      const down = lines.filter((l) => /is DOWN/.test(l));
+      expect(down.length, `no DOWN line: ${lines.slice(-6).join(' | ')}`).toBeGreaterThan(0);
+      for (const line of down) {
+        expect(line, `dangling attribution: ${line}`).not.toMatch(/is DOWN by\s*(—|$)/);
+      }
+      // MEASURED, not assumed — printed so a human reading a failure sees the
+      // sentence a player would have seen.
+      console.log(`DOWNED LINE: ${down.join(' | ')}`);
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE SCREEN. THE LOG IS NOT THE SCREEN, AND THIS IS WHERE THEY PART.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Everything above measures the TRANSCRIPT. A player who has just died is
+       * not reading a transcript, and the death plate they are looking at
+       * instead is driven by `PartyMember.downed` — a projection of a record
+       * that `resetFloorParty` DELETES inside the pump that raised the death.
+       * For a solo player, whose death and whose wipe are the same event, the
+       * plate therefore had nothing to draw from on any frame, ever.
+       *
+       * So the plate is driven off `erased`/`wipe` instead, and this asserts the
+       * two frames it needs actually arrive — over the socket, from the real
+       * death this test already stages. Without it the client change is an
+       * assumption about a wire nobody has looked at.
+       */
+      const mine = events.filter((e) => e['id'] === selfId);
+      const downEv = mine.filter((e) => e['k'] === 'downed');
+      const erasedEv = mine.filter((e) => e['k'] === 'erased');
+      console.log(
+        `EVENTS: ${mine
+          .map((e) => {
+            const why = e['reason'];
+            return `${String(e['k'])}${typeof why === 'string' ? `/${why}` : ''}`;
+          })
+          .join(', ')}`,
+      );
+
+      expect(downEv.length, 'no `downed` event reached the client').toBeGreaterThan(0);
+      expect(erasedEv.length, 'no `erased` event reached the client').toBeGreaterThan(0);
+      // THE REASON IS THE WHOLE POINT: a timer erasure keeps its record and the
+      // frame-driven plate still works for it. Only `wipe` is unreachable that
+      // way, and only `wipe` happens to somebody playing alone.
+      expect(
+        erasedEv.map((e) => e['reason']),
+        'a solo death must be a WIPE — nobody was left standing',
+      ).toContain('wipe');
 
       socket.close();
     } finally {

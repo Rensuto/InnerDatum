@@ -697,7 +697,7 @@ describe('the mouse layer', () => {
     // TWO RECTS CENTRED IN THE SAME BAND, PAINTED IN ONE ORDER AND HIT-TESTED
     // IN THE OTHER.
     // ═══════════════════════════════════════════════════════════════════════
-    // `respawnPromptRect` is 304x48 at `top + (band-48)/3` and `escapeMenuRect`
+    // `respawnPromptRect` is 304x66 at `top + (band-66)/3` and `escapeMenuRect`
     // is 360x252 at `top + (band-252)/2`, so the plate always lands INSIDE the
     // menu and never beside it. `paintHud` draws the menu and THEN the plate,
     // while `mousedown` tests the plate at step 3 and the menu at step 3a — so a
@@ -708,7 +708,11 @@ describe('the mouse layer', () => {
     //
     // NOTHING IS LOST BY SUPPRESSING IT: the plate's key is let through by
     // `onUi`, and this menu carries no respawn row for it to have been shadowing.
-    expect(CODE).toContain('selfErased() && !menuOpen');
+    // MATCHED AS THE CLAIM, not the literal. This pinned `selfErased() &&
+    // !menuOpen` verbatim and broke when the plate learned to cover the DOWNED
+    // stage as well — a failure about which predicate names the state, not about
+    // the thing being guarded, which is that the menu stands the plate down.
+    expect(CODE).toMatch(/deathView\(\) !== null && !menuOpen/);
   });
 
   it('opens no token menu while the escape menu is up, so the cancel chain agrees', () => {
