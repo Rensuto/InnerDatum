@@ -2276,6 +2276,29 @@ const HoldSchema = z.strictObject({
 });
 
 /**
+ * "Rest until something stops me." Ported from ToME's `rest` (Player.lua:971).
+ *
+ * ═══ WHY IT IS ITS OWN VERB AND NOT A HUNDRED `hold` FRAMES ═══
+ * Regeneration is half a hit point a game turn, so the only way to walk into the
+ * next room whole was to press hold eighty times. That is not a decision the
+ * player is making eighty times — it is one decision, and every frame after the
+ * first is the client asking the server to do the same thing again.
+ *
+ * As one frame the server can also STOP for the right reasons. `restCheck` ends
+ * a rest the moment something hostile comes into view; eighty hold frames would
+ * each arrive one round late, and the eightieth would land while a husk was
+ * already swinging.
+ *
+ * NO PAYLOAD. How long to rest is not the client's to say — that is exactly the
+ * decision `restCheck` makes, and a `turns` field on the wire would be a way to
+ * ask the server to pass six hundred turns in one frame.
+ */
+const RestSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('rest'),
+});
+
+/**
  * Highest coordinate a client may name. The map is 30x30 and the largest one
  * ever planned is nothing like 4096, so this is not a map bound — it is a bound
  * on what arithmetic the server will perform on an attacker-supplied number
@@ -3329,6 +3352,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   TalentSchema,
   CommitSchema,
   HoldSchema,
+  RestSchema,
   SaySchema,
   PointSchema,
   TalkSchema,
@@ -3362,6 +3386,7 @@ export type ClientMove = z.infer<typeof MoveSchema>;
 export type ClientTalent = z.infer<typeof TalentSchema>;
 export type ClientCommit = z.infer<typeof CommitSchema>;
 export type ClientHold = z.infer<typeof HoldSchema>;
+export type ClientRest = z.infer<typeof RestSchema>;
 export type ClientSay = z.infer<typeof SaySchema>;
 export type ClientPoint = z.infer<typeof PointSchema>;
 export type ClientTalk = z.infer<typeof TalkSchema>;

@@ -23,6 +23,7 @@ import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
+import { RestStop } from '../../src/shared/rest.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Projectile } from '../../src/server/engine/projectile.ts';
 import type { PumpResult, TurnEngine } from '../../src/server/net/gateway.ts';
@@ -223,6 +224,9 @@ function stubEngine(pending: Pending): TurnEngine {
     resourceOf: () => undefined,
     commit: () => ({ ok: true }),
     hold: () => ({ ok: true }),
+    // A stub world where nothing regenerates and nothing threatens: rest ends
+    // immediately with nothing gained, which is the honest answer for a fake.
+    rest: () => ({ turns: 0, stop: RestStop.Done }),
     bellExpired: () => undefined,
     // Accepts unconditionally, because the claim under test is about what the
     // gateway sends AFTER a success and not about who is allowed to ask.

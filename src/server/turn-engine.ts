@@ -22,7 +22,9 @@
  * counters, the countdown's start time) must outlive any single pump.
  */
 
-import { inBounds, step } from '../shared/coords.ts';
+import { chebyshev, inBounds, step } from '../shared/coords.ts';
+import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
+import type { RestResult, RestView } from '../shared/rest.ts';
 import { ErasedReason, ErrorCode, PartyAction, TalentShape } from '../shared/protocol.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type { LoadoutTalent, ResourceView, TurnEvent, UnlockableTree } from '../shared/protocol.ts';
@@ -30,7 +32,7 @@ import { seedTestEncounter } from './content/encounter.ts';
 import { SLOT_ORDER } from './content/items.ts';
 import { isMoneyId } from './content/money.ts';
 import { resolveItem } from './content/resolve.ts';
-import { HOLD_INTENT, IntentKind, cooldownOf, isPlayer } from './engine/actor.ts';
+import { HOLD_INTENT, IntentKind, cooldownOf, isHostile, isPlayer } from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
 import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
@@ -41,6 +43,9 @@ import {
   forgetActor as forgetEffects,
   statusApplier,
   statusPass,
+  effectDef,
+  effectsOn,
+  EffectStatus,
 } from './engine/effects.ts';
 import type { EffectLogLine, EffectState } from './engine/effects.ts';
 import { combatDistance } from './engine/combat.ts';
@@ -73,7 +78,7 @@ import type {
 } from './net/gateway.ts';
 import { toDisplayName } from './view/projector.ts';
 import type { TurnState } from './view/projector.ts';
-import { hasLineOfSight } from './world/world.ts';
+import { DEFAULT_SIGHT_RADIUS, hasLineOfSight } from './world/world.ts';
 import type { Actor, World } from './world/world.ts';
 
 /**
@@ -115,6 +120,28 @@ export type TalentBook = {
   unlockableOf?(actor: Actor): readonly UnlockableTree[];
   /** This actor's class resource, or undefined for an actor that has none. */
   resourceOf(actor: Actor): ResourceView | undefined;
+  /**
+   * HOW FAST THAT POOL REFILLS, per game turn. Only `rest` asks.
+   *
+   * ═══ WHY THIS IS NOT A FIELD ON `ResourceView` ═══
+   * `ResourceView` goes over the wire. A bar that is drawing `current/max` has
+   * never needed the trickle rate, and adding a field to a protocol type to
+   * answer a server-side question would make every client parse a number it
+   * does not draw.
+   *
+   * ═══ AND WHY IT IS NOT DERIVED FROM `discrete` ═══
+   * `RESOURCE_RULES` already holds `regenPerTurn` per kind, and Reagents is the
+   * kind that regenerates on a counter rather than per turn — so `discrete`
+   * happens to correlate with "trickle is zero" TODAY. Restating a constant
+   * that lives somewhere else is the failure this codebase keeps finding: the
+   * copy stays right until the original moves, and then nothing says so.
+   *
+   * Optional for the reason `passivesOf` is — a fixture predating rest still
+   * satisfies the type. Absent reads as zero, which makes `restCheck` treat the
+   * pool as one that cannot fill, which is the safe end: a rest that stops early
+   * rather than one that never stops.
+   */
+  poolRegenOf?(actor: Actor): number;
   /**
    * THE AUTHORITATIVE LEGALITY CHECK, when one exists. Null means legal.
    *
@@ -1163,6 +1190,14 @@ export type ReapingTurnEngine = Omit<TurnEngine, 'pump'> & {
   readonly barrier: Barrier;
   pump(): ReapingPumpResult;
   /**
+   * PASS TURNS UNTIL THERE IS A REASON TO STOP — ToME's `rest`.
+   *
+   * Answers how many turns went by and why it ended, so the caller can say one
+   * sentence. See `src/shared/rest.ts` for the rule and why it is a pure
+   * predicate here when upstream's heals inside itself.
+   */
+  rest(actorId: string): RestResult;
+  /**
    * A WALL-CLOCK TICK ARRIVED — one game turn is owed to this realm.
    *
    * Fired by the gateway's per-realm timer for a shared realm, where the world
@@ -1179,6 +1214,81 @@ export type ReapingTurnEngine = Omit<TurnEngine, 'pump'> & {
    */
   reap(actorId: string): boolean;
 };
+
+/**
+ * WHAT A RESTING BODY CAN SEE — the engine half of `src/shared/rest.ts`.
+ *
+ * Every field is read fresh each turn, because every one of them can change on
+ * the turn that just passed: a husk walks into view, a bleed expires, the last
+ * cooldown turns over. A view built once and reused would rest through all of it.
+ */
+function buildRestView(
+  world: World,
+  self: Actor,
+  talents: TalentBook,
+  effects: EffectState | undefined,
+): RestView {
+  /**
+   * THE NEAREST HOSTILE THIS BODY CAN SEE. Upstream keeps a `spotted` list
+   * maintained by its FOV pass (Player.lua:974); we have no such list yet
+   * (CLAUDE.md is blunt that per-player FOV is M6), so this asks the same
+   * question directly of every actor in the realm.
+   *
+   * NEAREST rather than first, because the bearing is the whole point of the
+   * message — pointing a player at a husk across the room while one stands
+   * beside them would be worse than saying nothing.
+   */
+  let threat: RestView['threat'] = null;
+  let best = Infinity;
+  for (const other of world.allActors()) {
+    if (other === self || !other.alive || !isHostile(self, other)) continue;
+    // `chebyshev` and `hasLineOfSight` are the same pair `visibleEnemies` uses
+    // for monster aggro (scheduler.ts:3772-3785) — one measure of "can see", so
+    // a rest cannot end for a husk that could not have noticed you, or continue
+    // through one that has.
+    const dist = chebyshev(self, other);
+    // RANGE FIRST, then walls. `hasLineOfSight` alone is unbounded — see
+    // `DEFAULT_SIGHT_RADIUS`, which exists because this call site found that out
+    // the hard way: on open floor every husk on the level was "in sight" and no
+    // rest could ever begin.
+    if (dist > DEFAULT_SIGHT_RADIUS) continue;
+    if (dist >= best || !hasLineOfSight(world.level, self, other)) continue;
+    best = dist;
+    threat = { name: toDisplayName(other.name), dx: other.x - self.x, dy: other.y - self.y };
+  }
+
+  /**
+   * ANY DETRIMENTAL EFFECT STILL RUNNING (Player.lua:1023-1029). Beneficial ones
+   * are deliberately NOT counted: a rest that waited out its own buffs would end
+   * exactly when the party is weakest, which is upstream's reason for testing
+   * `status` rather than merely `dur > 0`.
+   */
+  let afflicted = false;
+  if (effects !== undefined) {
+    for (const instance of effectsOn(effects, self.id)) {
+      if (effectDef(effects, instance.effectId)?.status === EffectStatus.Detrimental) {
+        afflicted = true;
+        break;
+      }
+    }
+  }
+
+  const view = talents.resourceOf(self);
+  const regen = talents.poolRegenOf?.(self) ?? 0;
+
+  return {
+    hp: self.hp,
+    maxHp: self.maxHp,
+    hpRegen: self.hpRegen,
+    resource:
+      view === undefined ? null : { value: view.current, max: view.max, regenPerTurn: regen },
+    afflicted,
+    // `> 0` and not `.size > 0`: a cooldown map holds zeroes for talents that are
+    // ready, because `projectCooldowns` reads the same map to grey the buttons.
+    cooling: [...self.cooldowns.values()].some((turns) => turns > 0),
+    threat,
+  };
+}
 
 export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
   const { world } = opts;
@@ -1449,7 +1559,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     return accepted ? TALENT_OK : refuseTalent(ErrorCode.NotYourTurn, 'no_actor');
   };
 
-  return {
+  const api: ReapingTurnEngine = {
     barrier,
 
     join(actorId: string): void {
@@ -2088,6 +2198,100 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       owedTurn = true;
     },
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * REST — ported from Player.lua:971-1075, with the heal taken out of the
+     * check.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ═══ IT IS THE TIDE'S MECHANISM WITH A DIFFERENT REASON ═══
+     * A tide advances one game turn because TIME PASSED. A rest advances one
+     * because the player ASKED. Both want exactly the same thing from the
+     * engine — a base turn that happens without anybody spending energy — so
+     * this drives `owedTurn` in a loop rather than inventing a second way to
+     * make a turn go by. Regen, cooldowns, status durations and the downed
+     * countdown all follow from that, once each, at any speed.
+     *
+     * ═══ BOUNDED, BECAUSE TURN RESOLUTION IS SYNCHRONOUS ═══
+     * Upstream's rest can be interrupted by a keypress inside a Lua game loop.
+     * Nothing here can: this call holds the realm until it returns. So
+     * `REST_MAX_TURNS` is a liveness bound, and hitting it is reported rather
+     * than hidden — a rest that ran two hundred turns without reaching Done has
+     * found a state the rule does not describe, and saying so is the only honest
+     * answer.
+     */
+    rest(actorId: string): RestResult {
+      const self = world.getActor(actorId);
+      if (self === undefined || !self.alive) return { turns: 0, stop: RestStop.Done };
+
+      let turns = 0;
+      for (;;) {
+        const answer = restCheck(buildRestView(world, self, talents, opts.effects));
+        if (!answer.rest) {
+          return {
+            turns,
+            stop: answer.stop,
+            ...(answer.threat == null ? {} : { threat: answer.threat }),
+          };
+        }
+        if (turns >= REST_MAX_TURNS) return { turns, stop: RestStop.Budget };
+
+        /**
+         * THE BONUS IS PAID BEFORE THE TURN, not after, and it uses the count
+         * SO FAR — so the first turn of a rest is worth exactly an ordinary
+         * turn (`restBonus(0)` is 0) and the acceleration is something the rest
+         * earns rather than something it starts with. Upstream does the same:
+         * `cnt` is incremented after the check that reads it.
+         */
+        const bonus = restBonus(turns);
+        if (bonus > 0 && self.hp < self.maxHp) {
+          self.hp = Math.min(self.maxHp, self.hp + self.hpRegen * bonus);
+        }
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * A REST IS N HOLDS. It is not a special way to make time pass.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * THIS WAS `owedTurn = true` — the tide's mechanism — AND THAT WAS
+         * WRONG IN A WAY A TEST CAUGHT. `freeRuns` advances the clocks without
+         * anybody deciding anything, so the resting body PARKED every turn; and
+         * a parked actor stops the sweep for everything the world drives
+         * (energy.ts: *"Someone ahead of us is parked, so the world is frozen
+         * for everything the world drives"*). Thirty-nine turns of rest went by
+         * with a husk fourteen tiles away NEVER TAKING A STEP.
+         *
+         * That is a rest that heals you in a frozen world, which is a cheat and
+         * not a port. Upstream's rest passes REAL turns — that is the entire
+         * reason `restCheck` re-scans for hostiles on each one.
+         *
+         * `HOLD_INTENT` directly, exactly as `bellExpired` hands it to a
+         * straggler, rather than through `hold()`: the barrier has already been
+         * consulted (`handleRest` refuses in combat) and a refusal here would
+         * leave the loop with a turn it asked for and did not get.
+         */
+        const beforeTurn = world.turn.clock.gameTurn;
+        self.pendingIntent = HOLD_INTENT;
+        api.pump();
+
+        /**
+         * THE CLOCK IS THE PROOF THE TURN HAPPENED, and checking it is what
+         * makes this loop safe. Anything that leaves the body unable to act —
+         * a stun, a barrier that closed, a state nothing here anticipated —
+         * would otherwise spin two hundred times doing nothing. It is reported
+         * as `Budget` because that is what it is: the loop stopped because it
+         * could not make progress, and the player is told so.
+         */
+        if (world.turn.clock.gameTurn === beforeTurn) return { turns, stop: RestStop.Budget };
+        turns += 1;
+
+        // A REST THE WORLD ENDED. Dying mid-rest, or being reaped, must not keep
+        // asking a body that is no longer there whether it feels better.
+        const still = world.getActor(actorId);
+        if (still === undefined || !still.alive) return { turns, stop: RestStop.Bleeding };
+      }
+    },
+
     bellExpired(): void {
       const level = levelOf(world);
       const nowMs = now();
@@ -2456,4 +2660,5 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
 
     turnState,
   };
+  return api;
 }

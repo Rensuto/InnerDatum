@@ -122,6 +122,10 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
         ['enter', TurnCommand.Commit],
         ['.', TurnCommand.Hold],
         [',', TurnCommand.Pickup],
+        // A LETTER AMONG THE PUNCTUATION, and the only one. Every other row here
+        // is a mark that does not move with the keyboard layout; `r` is here
+        // because rest is the one turn verb the genre already has a letter for.
+        ['r', TurnCommand.Rest],
       ]),
     );
   });
@@ -140,7 +144,7 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
   it('KEY_TO_UI — every row for every verb, `/` beside `t`', () => {
     expect(entries(DEFAULT_KEYMAP.uiByKey)).toEqual(
       sorted([
-        ['r', UiCommand.Revive],
+        ['e', UiCommand.Revive],
         ['f', UiCommand.Respawn],
         ['t', UiCommand.Say],
         ['/', UiCommand.Say],
@@ -197,8 +201,9 @@ describe('the action registry', () => {
     // `bad_message` with nobody able to guess why. THE SECOND ASSERTION IS THE
     // ONE THAT MATTERS; the first is here so growing the table stays a
     // deliberate act with a diff. 29 -> 31 when the bar gained slots 5 and 6;
-    // 31 -> 34 when it gained 7, 8 and 9 and became one row of nine keys.
-    expect(ACTIONS).toHaveLength(34);
+    // 31 -> 34 when it gained 7, 8 and 9 and became one row of nine keys;
+    // 34 -> 35 when `rest` was ported (Player.lua:971).
+    expect(ACTIONS).toHaveLength(35);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 

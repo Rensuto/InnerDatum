@@ -168,6 +168,38 @@ const FALLBACK_SPRITE = 'chr_player_watchman_s';
 const SPAWN_SEARCH_RADIUS = 8;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR A BODY NOTICES THINGS — ported from `self.sight or 10`
+ * (Player.lua:854, inside `spotHostiles`).
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHY THIS HAD TO EXIST BEFORE REST COULD ═══
+ * `hasLineOfSight` answers "is anything solid between these two tiles" and
+ * NOTHING ELSE — no range at all. On an open floor that is true across the whole
+ * map, so the first thing built on it that means "can see" rather than "can
+ * shoot" discovered the gap immediately: a rest was interrupted by a husk
+ * EIGHTEEN TILES AWAY, which on any open level means nobody can ever rest.
+ *
+ * Upstream never had that problem because its `spotHostiles` walks a
+ * `calc_circle` of radius `sight` and asks about line of sight only INSIDE it.
+ * This is that radius.
+ *
+ * ═══ A DEFAULT, NOT A CONSTANT ═══
+ * Upstream reads it off the actor (`self.sight`) and only falls back to 10, so
+ * blindness, a lit radius and a telescope all have somewhere to live. Nothing
+ * here carries a per-body sight yet, so every body uses this — and when one
+ * does, the name already says which end wins.
+ *
+ * ═══ AND IT IS NOT `aggroRange` ═══
+ * Monsters have their own (8 for a MeleeChaser, `AI_RANGES` in engine/actor.ts),
+ * and it is a different question: how far something will START HUNTING, tuned
+ * per profile so a pack does not all wake at once. This is how far a body can
+ * SEE, and the asymmetry is deliberate — a husk you can see from ten tiles has
+ * not necessarily noticed you.
+ */
+export const DEFAULT_SIGHT_RADIUS = 10;
+
+/**
  * Line of sight between two tiles, walls blocking.
  *
  * Bresenham's symmetry is what makes this usable as a visibility test: the walk

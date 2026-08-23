@@ -175,6 +175,17 @@ export const TurnCommand = {
   Commit: 'commit',
   Hold: 'hold',
   /**
+   * Rest until something stops you — ToME's `rest`, on ToME's key.
+   *
+   * A TURN COMMAND rather than a UI one, and it is the strongest example on the
+   * list: it moves the clock further than any other key in the game, up to two
+   * hundred game turns in one press. It carries no payload for the reason
+   * `RestSchema` gives — how long is the server's decision, not the client's.
+   *
+   * It sits on `r`, which `revive` used to hold. See the keymap row for why.
+   */
+  Rest: 'rest',
+  /**
    * Take the top thing off the tile you are standing on (v10).
    *
    * IT CARRIES NO COORDINATE, HERE OR ON THE WIRE. The server reads the sender's

@@ -418,6 +418,9 @@ describe('every row that already worked still works', () => {
     // (PICKUP_FLOOR, class/Game.lua:2169) and `g` has been the talent panel since
     // v9. See the row in keys.ts, which says so at length.
     [{ key: ',' }, TurnCommand.Pickup],
+    // v11. `r` RESTS — the Angband-lineage idiom, taken from `revive`, which
+    // moved to `e`. The keymap row carries the argument.
+    [{ key: 'r' }, TurnCommand.Rest],
   ];
 
   for (const [init, command] of COMMANDS) {
@@ -449,7 +452,7 @@ describe('every row that already worked still works', () => {
    * verb with no key is a screen nobody can reach.
    */
   const UI_ROWS: readonly (readonly [string, UiCommand])[] = [
-    ['r', UiCommand.Revive],
+    ['e', UiCommand.Revive],
     ['f', UiCommand.Respawn],
     ['t', UiCommand.Say],
     ['/', UiCommand.Say],

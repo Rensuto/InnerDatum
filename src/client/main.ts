@@ -7726,6 +7726,13 @@ async function boot(): Promise<void> {
         case TurnCommand.Hold:
           socket.send({ v: PROTOCOL_VERSION, t: 'hold' });
           return;
+        case TurnCommand.Rest:
+          // ONE FRAME FOR THE WHOLE REST. The server decides how many turns pass
+          // and stops for the right reasons (`restCheck`); the client's only job
+          // is to ask. The answer arrives as a Margin line saying how long it
+          // lasted and why it ended, plus the ordinary state frames.
+          socket.send({ v: PROTOCOL_VERSION, t: 'rest' });
+          return;
         case TurnCommand.Pickup:
           // ═══ `,` — AND IT GOES OUT LIKE A MOVE, NOT LIKE AN `inspect` ═══
           // It PUMPS, which is why keys.ts files it under `TurnCommand` rather

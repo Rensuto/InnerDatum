@@ -1426,6 +1426,8 @@ export function createTalentBook(
    */
   unlockableOf(actor: Actor): readonly UnlockableTree[];
   resourceOf(actor: Actor): ResourceView | undefined;
+  /** Per-game-turn trickle on that pool. See `TalentBook.poolRegenOf`. */
+  poolRegenOf(actor: Actor): number;
   check(actor: Actor, talentId: string, target: TileXY | undefined): RefusalCode | null;
 } {
   return {
@@ -1552,6 +1554,21 @@ export function createTalentBook(
     resourceOf: (actor: Actor): ResourceView | undefined => {
       const sheet = engine.sheetOf(actor.id);
       return sheet === undefined ? undefined : toResourceView(sheet);
+    },
+
+    /**
+     * STRAIGHT OFF `RESOURCE_RULES`, which is where `regenResource` reads it,
+     * so rest and regeneration can never disagree about how fast a pool fills.
+     * Reagents answer 0 here on purpose — that kind refills on `regenEvery`
+     * rather than per turn, and `restCheck` is explicitly built to stop rather
+     * than wait on a pool whose trickle is zero (upstream's own comment at
+     * Player.lua:1000: *"make sure they CAN go up, otherwise we will never
+     * stop"*).
+     */
+    poolRegenOf: (actor: Actor): number => {
+      const sheet = engine.sheetOf(actor.id);
+      if (sheet === undefined) return 0;
+      return RESOURCE_RULES[sheet.resource.kind].regenPerTurn;
     },
 
     /**

@@ -57,6 +57,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import websocket from '@fastify/websocket';
 
 import { bearingWord, inBounds, step } from '../../shared/coords.ts';
+import { RestStop, restStopText } from '../../shared/rest.ts';
+import type { RestResult } from '../../shared/rest.ts';
 import {
   ActorKind,
   ErasedReason,
@@ -1251,6 +1253,21 @@ export type TurnEngine = {
   commit(actorId: string): IntentResult;
   /** "Pass this turn." */
   hold(actorId: string): IntentResult;
+  /**
+   * "Pass turns until something stops me" — ToME's `rest` (Player.lua:971).
+   *
+   * ON THE NARROW CONTRACT beside `commit` and `hold`, and NOT on
+   * `ReapingTurnEngine` where `tide()` sits, because the two are different
+   * kinds of thing. A tide is a property of a REALM — it needs the registry's
+   * `kind` to know whether this world takes one at all — while a rest is a
+   * player verb, submitted by a socket about a body, exactly as the two above
+   * are. Putting it here also means it works in the single-world fallback,
+   * which has no registry to look anything up in.
+   *
+   * It advances many game turns in one synchronous call. The caller broadcasts
+   * ONCE afterwards; see `handleRest`.
+   */
+  rest(actorId: string): RestResult;
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * "THIS PLAYER IS AT THE KEYBOARD." CLEARS STANDING BY AND NOTHING ELSE.
@@ -9287,6 +9304,66 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     pumpAndBroadcast(realmFor(session));
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REST — the third turn verb, and the one that passes more than one turn.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from ToME's `rest` (Player.lua:971-1075). The rule is in
+   * `src/shared/rest.ts`, the loop is `engine.rest`, and this is the seam that
+   * turns the answer into a sentence.
+   *
+   * ═══ ONE PUMP-AND-BROADCAST FOR THE WHOLE REST, NOT ONE PER TURN ═══
+   * `engine.rest` advances up to two hundred turns internally, so broadcasting
+   * inside its loop would send a party two hundred frames to watch a health bar
+   * fill — an animation nobody asked for, at a rate the socket would queue
+   * rather than draw. The rest is one player decision, so it is one state
+   * change on the wire, exactly as a talent that hits four bodies is.
+   *
+   * ═══ AND ONLY THIS REALM, for `handleTurnVerb`'s reason ═══
+   * A rest changes the resting party's world. No other realm's clock moves
+   * because somebody in a different one sat down.
+   */
+  const handleRest = (session: Session): void => {
+    const realm = realmFor(session);
+    const { engine } = realm;
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before rest');
+      return;
+    }
+    unparkOnCommand(session);
+
+    /**
+     * IT IS REFUSED IN COMBAT, and the barrier is what knows. `restCheck` would
+     * stop on the first hostile in sight anyway — but "stopped after zero turns"
+     * is a confusing answer to a key pressed mid-fight, and the barrier already
+     * holds the authoritative answer to "is this party in a turn". Saying so
+     * plainly costs one branch and spares the player a non-sequitur.
+     */
+    if (engine.turnState(actorId).engagement > 0) {
+      sendError(session.socket, ErrorCode.NotYourTurn, 'rest refused: in_combat');
+      return;
+    }
+
+    const result = engine.rest(actorId);
+    const threat = result.threat;
+    sendMargin(session, realm, {
+      text: restStopText(
+        result.stop === RestStop.Hostile && threat !== undefined
+          ? { rest: false, stop: result.stop, threat }
+          : { rest: false, stop: result.stop },
+        result.turns,
+        threat === undefined ? 'here' : bearingWord(threat.dx, threat.dy),
+      ),
+    });
+
+    // A rest that passed no turns changed nothing — the same argument `ping`
+    // makes. Broadcasting a world that did not move is a frame the whole party
+    // pays for so that one person can be told "no".
+    if (result.turns > 0) pumpAndBroadcast(realm);
+  };
+
   // -------------------------------------------------------------------------
   // THE CASE LOG'S RECORD LANE — turn events, in prose
   //
@@ -13093,6 +13170,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'hold':
         handleTurnVerb(session, 'hold');
+        return;
+      case 'rest':
+        handleRest(session);
         return;
       // The Margin lane. Neither pumps — see the block comment above
       // `broadcastMargin`: speech is not a turn action and must never be one.

@@ -267,6 +267,11 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       'pickup',
       'point',
       'respawn',
+      // ONE FRAME FOR AS MANY AS TWO HUNDRED TURNS — ToME's `rest`
+      // (Player.lua:971), ported v11. It is in this list rather than exempt from
+      // it because it is a genuine new verb: the server decides how many turns
+      // pass and why it stops, and the client's whole part is the empty frame.
+      'rest',
       'revive',
       'say',
       // THE BAR'S ARRANGEMENT, and it belongs in this list for the reason the
