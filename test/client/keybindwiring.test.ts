@@ -1142,3 +1142,53 @@ describe('the capture-phase listener', () => {
     expect(body).toContain('{ capture: true }');
   });
 });
+
+describe('the menu rows that end something take two presses', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `SWITCH CHARACTER` AND `LEAVE PARTY` FIRED ON ONE CLICK.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ui/escapemenu.ts tests the LABEL. This pins the GATE — and the gate is the
+   * half that matters, because a row that says `SURE?` and commits anyway is
+   * worse than one that never asked.
+   *
+   * Upstream interposes a yes/no popup on the equivalent (Game.lua:2561-2570,
+   * :2577-2587: "Save and go back to main menu?").
+   */
+  const gate = (): string => {
+    const start = at('function armsFirst(index: number): boolean {');
+    return CODE.slice(start, start + 700);
+  };
+
+  it('routes BOTH press paths through the arm', () => {
+    /**
+     * The keyboard path (`pressMenuSelection`, Enter on the hovered row) and the
+     * pointer path (`runMenuHit`) are two entry points into the same act. A gate
+     * on one of them is a gate a player walks around by using the other hand.
+     */
+    expect(CODE).toContain('armsFirst(row.index)');
+    expect(CODE).toContain('armsFirst(hit.index)');
+  });
+
+  it('spends the press on arming, so it cannot fall through to the turn', () => {
+    // `pressMenuSelection` returns FALSE for "nothing was activated" and the
+    // caller then lets the key reach the commit underneath. An arm that reported
+    // false would end the player's turn as the price of asking them a question.
+    expect(CODE).toContain('if (armsFirst(row.index)) return true;');
+  });
+
+  it('names the rows by constant rather than by number', () => {
+    // The indices belong to `rootRows`, which exports them. A literal 5 or 6 here
+    // would move the confirmation onto INVENTORY the day a row is inserted — a
+    // guard protecting the wrong thing, which reads as protection.
+    expect(gate()).toContain('ROW_LEAVE_PARTY');
+    expect(gate()).toContain('ROW_SWITCH_CHARACTER');
+    expect(gate(), 'a bare index would drift').not.toMatch(/index === [0-9]/);
+  });
+
+  it('disarms on anything else, including the second press that commits', () => {
+    // ONE BRANCH FOR BOTH, so there is no path that leaves a stale arm behind.
+    expect(gate()).toContain('if (!guarded || menuConfirm === index) {');
+  });
+});

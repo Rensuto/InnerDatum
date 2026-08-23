@@ -566,6 +566,29 @@ export type EscapeMenuView = {
    * unchanged and degrades to the label this row has always had.
    */
   readonly unspent?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH ROOT ROW IS ONE PRESS FROM HAPPENING — or null.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ TWO ROWS HERE END SOMETHING, AND NEITHER ASKED ═══
+   * `SWITCH CHARACTER` takes the world away and `LEAVE PARTY` drops the party
+   * the barrier scopes to — and both fired on a single click, from rows 6 and 7
+   * of the menu every player opens most, adjacent to each other and one row from
+   * `INVENTORY`. Upstream puts a yes/no popup in front of the equivalent
+   * (`Game.lua:2561-2570`, `:2577-2587`: *"Save and go back to main menu?"*).
+   *
+   * ═══ AN ARM, NOT A POPUP, BECAUSE THIS CLIENT HAS NO POPUPS ═══
+   * It has an ARM — the roster's `DEL` becomes `SURE?` (ui/roster.ts) and the
+   * talent panel's `+` is two presses because "there is no refund". This is the
+   * same gesture on the same kind of act, so it is one vocabulary rather than a
+   * modal invented for two rows.
+   *
+   * IT DISARMS ON ANYTHING ELSE — see `menuConfirm` in main.ts. An arm that
+   * survived a hover to another row would be a `SURE?` sitting under a pointer
+   * that had moved on.
+   */
+  readonly confirming?: number | null;
 };
 
 /**
@@ -630,6 +653,24 @@ function entryRow(
  * rule and went inside row 3's label instead, which is the distinction — a fact
  * about an existing row goes on that row, a new verb gets a row.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO ROWS THAT END SOMETHING, BY INDEX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `LEAVE PARTY` drops the party the barrier scopes to; `SWITCH CHARACTER` takes
+ * the world away. Both take a confirming second press — see
+ * `EscapeMenuView.confirming` — and the gate that enforces it lives in main.ts,
+ * so the numbers have to be stated somewhere BOTH can read them.
+ *
+ * HERE, BESIDE `rootRows`, WHICH IS WHAT ASSIGNS THEM. A copy in main.ts would
+ * be two opinions about which row is which, and the day somebody inserts a row
+ * the confirmation would silently move to `INVENTORY` — a guard protecting the
+ * wrong thing is worse than no guard, because it reads as protection.
+ */
+export const ROW_LEAVE_PARTY = 5;
+export const ROW_SWITCH_CHARACTER = 6;
+
 function rootRows(view: EscapeMenuView): readonly MenuRow[] {
   const keymap = view.keymap;
   // THE COUNT, ON THE LABEL, ONLY WHILE THERE IS ONE. A row reading
@@ -641,6 +682,19 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
   // launcher, not the screen.
   const unspent = Math.max(0, Math.floor(view.unspent ?? 0));
   const talentsLabel = unspent > 0 ? `TALENTS (${String(unspent)})` : 'TALENTS';
+
+  /**
+   * ═══ A ROW THAT IS ONE PRESS FROM HAPPENING SAYS SO, IN ITS OWN LABEL ═══
+   * The roster's DEL does exactly this (`ui/roster.ts`), and putting the state
+   * ON the control is what makes the second press deliberate: the player is no
+   * longer pressing "SWITCH CHARACTER", they are pressing "SURE?".
+   *
+   * THE LABEL KEEPS ITS NAME BESIDE THE WORD. `SURE? SWITCH CHARACTER` rather
+   * than a bare `SURE?`, because the arm can outlive a glance away and a row
+   * that had lost its name would be a question about nothing.
+   */
+  const arm = (index: number, label: string): string =>
+    view.confirming === index ? `SURE? ${label}` : label;
   return [
     // 'Esc', read off the keymap like every other row here — even though the key
     // is frozen, because the row must not become the one place a hard-coded
@@ -675,9 +729,9 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
     // party of one — so leaving alone is a no-op the server would refuse, which
     // is the same fact input/commands.ts answers locally for `/leave`.
     entryRow(
-      5,
+      ROW_LEAVE_PARTY,
       { kind: 'party', action: PartyAction.Leave },
-      'LEAVE PARTY',
+      arm(ROW_LEAVE_PARTY, 'LEAVE PARTY'),
       '',
       view.inParty,
       view.inParty ? null : 'you are a party of one',
@@ -699,9 +753,9 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
      * it is losing one.
      */
     entryRow(
-      6,
+      ROW_SWITCH_CHARACTER,
       { kind: 'leave-character' },
-      'SWITCH CHARACTER',
+      arm(ROW_SWITCH_CHARACTER, 'SWITCH CHARACTER'),
       '',
       view.canSwitchCharacter === true,
       view.canSwitchCharacter === true ? null : 'you are not signed in',

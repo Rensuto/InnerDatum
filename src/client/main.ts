@@ -247,6 +247,8 @@ import {
   MenuScreen,
   applyCapture,
   escapeMenuDragAt,
+  ROW_LEAVE_PARTY,
+  ROW_SWITCH_CHARACTER,
 } from './ui/escapemenu.ts';
 import {
   drawInventoryPanel,
@@ -1691,6 +1693,14 @@ let menuPage = 0;
  */
 let menuArmed: ArmedCapture | null = null;
 /**
+ * WHICH ROOT ROW IS ONE PRESS FROM HAPPENING — see `EscapeMenuView.confirming`.
+ *
+ * SEPARATE FROM `menuArmed`, which is the Keys screen's key CAPTURE. Two arms on
+ * two screens with two meanings; folding them would make a half-typed rebind and
+ * a half-pressed SWITCH CHARACTER the same piece of state.
+ */
+let menuConfirm: number | null = null;
+/**
  * THE LAST THING THE CAPTURE SAID — a refusal, a conflict, or what was bound.
  *
  * Cleared when the screen changes and when the menu closes, or a "Tab is already
@@ -1762,6 +1772,7 @@ function resetMenuState(): void {
   menuScreen = MenuScreen.Root;
   menuPage = 0;
   menuArmed = null;
+  menuConfirm = null;
   menuMessage = null;
   menuHovered = null;
   menuCloseHovered = false;
@@ -2686,6 +2697,7 @@ function escapeMenuView(): EscapeMenuView {
     inParty: inParty(),
     page: menuPage,
     armed: menuArmed,
+    confirming: menuConfirm,
     message: menuMessage,
     // v12 — THE COUNT GOES ON THE CONTROL THAT ALREADY ROUTES TO THE PANEL.
     // Root row 3 opens the talent screen and never said how many points were
@@ -7325,6 +7337,7 @@ async function boot(): Promise<void> {
     menuScreen = screen;
     menuPage = 0;
     menuArmed = null;
+    menuConfirm = null;
     menuMessage = null;
     menuHovered = null;
     menuCloseHovered = false;
@@ -7359,6 +7372,7 @@ async function boot(): Promise<void> {
     menuScreen = screen;
     menuPage = 0;
     menuArmed = null;
+    menuConfirm = null;
     menuMessage = null;
     menuHovered = null;
     requestDraw();
@@ -7531,6 +7545,48 @@ async function boot(): Promise<void> {
    * the table cannot resolve is silently dropped and upstream ships a dead
    * "highscores" row as a result.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TWO ROWS THAT END SOMETHING ASK FIRST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `SWITCH CHARACTER` takes the world away; `LEAVE PARTY` drops the party the
+   * barrier scopes to. Both fired on ONE CLICK, from adjacent rows of the menu
+   * every player opens most, one row below `INVENTORY`. Upstream interposes a
+   * yes/no popup on the equivalent (Game.lua:2561-2570, :2577-2587).
+   *
+   * ═══ AN ARM, WHICH IS THIS CLIENT'S OWN GESTURE FOR EXACTLY THIS ═══
+   * The roster's `DEL` becomes `SURE?` and the talent `+` takes two presses
+   * because "there is no refund". `pressSpend` is the shape: press once to arm,
+   * press the same thing again to commit.
+   *
+   * ═══ WHY NOT THE OTHER FIVE ═══
+   * RESUME, KEY BINDINGS, CHARACTER SHEET, TALENTS and INVENTORY all open
+   * something the player can close again. A confirm in front of a reversible act
+   * is a keypress tax that teaches people to press twice without reading, which
+   * is how a confirmation stops working on the row that needed one.
+   *
+   * @returns true when the press was spent ARMING, so the caller does not run it
+   */
+  function armsFirst(index: number): boolean {
+    const guarded = index === ROW_LEAVE_PARTY || index === ROW_SWITCH_CHARACTER;
+    /**
+     * PRESSING ANYTHING ELSE DISARMS, and so does the second press on the armed
+     * row itself — the first because a `SURE?` left on a row the player has
+     * walked away from is a question about nothing, the second because that IS
+     * the commit and the arm has been spent.
+     *
+     * ONE BRANCH FOR BOTH, so there is no path that leaves a stale arm behind.
+     */
+    if (!guarded || menuConfirm === index) {
+      menuConfirm = null;
+      return false;
+    }
+    menuConfirm = index;
+    requestDraw();
+    return true;
+  }
+
   function runMenuEffect(effect: MenuEffect): void {
     switch (effect.kind) {
       case 'resume':
@@ -7598,6 +7654,9 @@ async function boot(): Promise<void> {
     if (menuHovered === null) return false;
     for (const row of menuRows()) {
       if (row.kind === MenuRowKind.Entry && row.index === menuHovered && row.enabled) {
+        // ARMED IS STILL "ACTIVATED" — the press was spent on this row, so the
+        // caller must not let it fall through to the turn commit underneath.
+        if (armsFirst(row.index)) return true;
         runMenuEffect(row.effect);
         return true;
       }
@@ -7624,6 +7683,7 @@ async function boot(): Promise<void> {
         closeMenu();
         return;
       case MenuHitKind.Entry:
+        if (armsFirst(hit.index)) return;
         runMenuEffect(hit.effect);
         return;
       case MenuHitKind.Rebind:

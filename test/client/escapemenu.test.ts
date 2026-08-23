@@ -18,6 +18,8 @@ import {
   MenuRowKind,
   MenuScreen,
   MenuTone,
+  ROW_LEAVE_PARTY,
+  ROW_SWITCH_CHARACTER,
 } from '../../src/client/ui/escapemenu.ts';
 import {
   ACTIONS,
@@ -1199,5 +1201,67 @@ describe('the escape menu is sized for the screen it is showing', () => {
         String(screen),
       ).toBeNull();
     }
+  });
+});
+
+describe('the two rows that end something ask first', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BOTH FIRED ON ONE CLICK.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `SWITCH CHARACTER` takes the world away and `LEAVE PARTY` drops the party the
+   * barrier scopes to — from adjacent rows of the menu every player opens most,
+   * one row below `INVENTORY`. Upstream interposes a yes/no popup on the
+   * equivalent (Game.lua:2561-2570, :2577-2587: "Save and go back to main
+   * menu?").
+   *
+   * This client has no popups; it has an ARM — the roster's DEL becomes `SURE?`,
+   * the talent `+` takes two presses because "there is no refund". One
+   * vocabulary rather than a modal invented for two rows.
+   */
+  const labels = (over: Partial<EscapeMenuView> = {}) =>
+    entryRows(escapeMenuRows(view(over))).map((row) => row.label);
+
+  it('says SURE? on the armed row and keeps its name beside it', () => {
+    // The arm can outlive a glance away, so a bare `SURE?` would be a question
+    // about nothing.
+    const armed = labels({ confirming: ROW_SWITCH_CHARACTER });
+    expect(armed[ROW_SWITCH_CHARACTER]).toBe('SURE? SWITCH CHARACTER');
+  });
+
+  it('arms one row at a time and leaves the rest alone', () => {
+    const armed = labels({ confirming: ROW_LEAVE_PARTY });
+    expect(armed[ROW_LEAVE_PARTY]).toBe('SURE? LEAVE PARTY');
+    expect(armed[ROW_SWITCH_CHARACTER]).toBe('SWITCH CHARACTER');
+    // ...and the five reversible rows never wear it at all.
+    expect(armed.slice(0, ROW_LEAVE_PARTY).some((l) => l.includes('SURE?'))).toBe(false);
+  });
+
+  it('reads as it always did with nothing armed', () => {
+    const plain = labels();
+    expect(plain[ROW_LEAVE_PARTY]).toBe('LEAVE PARTY');
+    expect(plain[ROW_SWITCH_CHARACTER]).toBe('SWITCH CHARACTER');
+    expect(plain.some((l) => l.includes('SURE?'))).toBe(false);
+  });
+
+  it('names the rows by constant, so inserting one cannot move the guard', () => {
+    /**
+     * A GUARD PROTECTING THE WRONG THING IS WORSE THAN NO GUARD, because it
+     * reads as protection. `rootRows` assigns the indices and exports them, so
+     * the confirmation and the row it guards are one fact.
+     */
+    const rows = entryRows(escapeMenuRows(view()));
+    expect(rows[ROW_LEAVE_PARTY]?.label).toBe('LEAVE PARTY');
+    expect(rows[ROW_SWITCH_CHARACTER]?.label).toBe('SWITCH CHARACTER');
+    expect(rows[ROW_LEAVE_PARTY]?.index).toBe(ROW_LEAVE_PARTY);
+    expect(rows[ROW_SWITCH_CHARACTER]?.index).toBe(ROW_SWITCH_CHARACTER);
+  });
+
+  it('still greys LEAVE PARTY for a party of one, armed or not', () => {
+    // The arm is about the SECOND press; it must not make an impossible row
+    // pressable, or a solo player could arm a refusal.
+    const alone = entryRows(escapeMenuRows(view({ inParty: false, confirming: ROW_LEAVE_PARTY })));
+    expect(alone[ROW_LEAVE_PARTY]?.enabled).toBe(false);
   });
 });
