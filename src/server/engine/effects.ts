@@ -368,6 +368,45 @@ export type EffectDef = {
   readonly breaksOnDamage?: boolean;
 
   readonly modifiers?: EffectModifiers;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS EFFECT ADDS TO THE BODY WHILE IT IS UP — the same block a worn
+   * item returns.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `modifiers` above is a fixed set of FLAGS and budget knobs — stunned, dazed,
+   * `mpPenalty` — and every one of them was written for something being taken
+   * AWAY. There was no way for a timed effect to add defence, accuracy, damage
+   * or a resistance, which is to say: no way to write a BUFF. Every effect this
+   * game has authored is `EffectStatus.Detrimental`, and that is why.
+   *
+   * ═══ IT IS `Item['wielder']`, AND THE CODEBASE ALREADY ARGUED FOR THAT ═══
+   * `Talent.sustain`'s note settles the question this raises: *"THE CONTRIBUTION
+   * COMES FROM `passive`, WHICH IS THE POINT. A sustain IS a passive you can
+   * switch off — same shape, same fold, same `PassiveContribution` gear and
+   * talents already stack through. Giving sustains their own contribution type
+   * would be a second combine to keep in step with the first."*
+   *
+   * A timed effect is the same case one more time: a buff is a passive with a
+   * clock on it. So it hands back a `PassiveContribution` — which equipment.ts
+   * defines as the very block a worn item returns — and
+   * `recomposeCombat` folds it with `composeWielders` — the identical additive
+   * combine gear and passives already use — at a stage of its own between the
+   * passives and the flags.
+   *
+   * ═══ A FUNCTION OF THE INSTANCE, SO POWER CAN SCALE ═══
+   * `modifiers` is a static object because a flag has no magnitude. A buff does:
+   * the defence Evasion grants depends on the rank that cast it, which arrives
+   * in `params` and lives on the instance. Taking the instance also means the
+   * remaining duration is readable, should an effect ever want to fade.
+   *
+   * ═══ AND IT NEEDS NO REMOVAL PATH ═══
+   * docs/tome-port.md lists "Temp values -> recompute-from-base" as a deliberate
+   * deviation, *"removes float drift on buff removal"*. `recomposeCombat`
+   * rebuilds from the base sheet every time, so an effect that expires simply
+   * stops being folded. There is nothing to undo and nothing to drift.
+   */
+  readonly wielder?: (instance: EffectInstance) => PassiveContribution;
   /** Parameter defaults — ActorTemporaryEffects.lua:113-115. */
   readonly parameters?: EffectParams;
 
@@ -485,6 +524,36 @@ export type EffectCtx = {
   activatableTalents?: (actorId: string) => readonly string[];
   /** Fired on every state change, for the Case Log's Record lane. */
   log?: (line: EffectLogLine) => void;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS BODY'S SHEET IS STALE — REBUILD IT FROM BASE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Fired when an effect that CONTRIBUTES STATS lands, merges or leaves. See
+   * `EffectDef.wielder`.
+   *
+   * ═══ WHY IT CANNOT JUST CALL `recomposeCombat` ═══
+   * That function takes an `ItemCatalogue`, because stage two folds worn gear.
+   * This file must not learn what an item is — the whole point of `EffectCtx` is
+   * that effects.ts imports none of the systems it cooperates with. The adapter
+   * that holds the catalogue AND the talent engine (server/main.ts) is the only
+   * layer that can rebuild a sheet, so it is handed the request instead.
+   *
+   * ═══ AND WHY NOT `recomputeAttributes`, WHICH IS ALREADY CALLED HERE ═══
+   * Because it does `{ ...sheet, flags }` — it PRESERVES the sheet and replaces
+   * only the flags. Folding a stat grant there would add the buff again on top
+   * of the already-buffed sheet on every subsequent call, which is precisely the
+   * float-drift-on-removal that docs/tome-port.md § 9 records this engine as
+   * having escaped by recomputing from base. A buff has to go through the
+   * rebuild or it does not go anywhere.
+   *
+   * ═══ ABSENT MEANS ONE TURN OF LATENCY, NOT A WRONG NUMBER ═══
+   * `refreshPassives` rebuilds every sheet once per base turn anyway, so a
+   * fixture with no hook still converges — it is simply a turn late, which for a
+   * four-turn buff is a quarter of it missing at one end and a quarter overstayed
+   * at the other.
+   */
+  sheetDirty?: (actorId: string) => void;
 };
 
 /** One line for the Case Log's Record lane. Terse and mechanical, by design. */
@@ -653,12 +722,43 @@ export function canBe(
   def: EffectDef,
   rng: Rng,
 ): CanBeResult {
-  if (def.status === EffectStatus.Detrimental) {
-    // :6956 — the blanket one, then :6958-6960's per-channel one.
-    if (immunityOf(state, actor.id, ImmunityKey.AllNegative) > 0) return { can: false, chance: 0 };
-    if (immunityOf(state, actor.id, BLANKET_IMMUNITY[def.type]) > 0) {
-      return { can: false, chance: 0 };
-    }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NOTHING RESISTS A BUFF, AND THE WHOLE BLOCK BELOW IS INSIDE THE GUARD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Read the Lua again with the indentation in mind (Actor.lua:6955-6970). The
+   * subtype product AND ITS `rng.percent` DRAW are both inside
+   * `if e and e.status == "detrimental" then`. A beneficial effect skips every
+   * line of it, falls through to :6974's `local test = self.StatusTypes[what]`
+   * with `what == nil`, and returns `true, 100`.
+   *
+   * ═══ THIS PORT HOISTED THE PRODUCT OUT OF THE GUARD, AND IT MATTERS TWICE ═══
+   * Only the blanket immunities were guarded here; the subtype loop ran for
+   * every effect. Harmless for exactly as long as every authored effect was
+   * detrimental, which was true until `EVASIVE` (content/effects.ts). Two
+   * consequences, and the second is the serious one:
+   *
+   *   A BUFF COULD BE REFUSED. An actor carrying an immunity that happened to
+   *   match one of the buff's subtypes would shrug off a blessing. Upstream
+   *   never refuses one.
+   *
+   *   AND IT COULD FIRE AN RNG DRAW UPSTREAM NEVER MAKES. `rollPercent` pulls
+   *   from the labelled stream, so a buff landing on a partially-immune body
+   *   would shift every subsequent draw in that turn — the determinism contract
+   *   (docs/tome-port.md § 7) broken by a blessing.
+   *
+   * Latent rather than live: `chance >= 100` short-circuits before the draw, and
+   * nothing in the game grants an immunity matching a buff's subtypes today. It
+   * is fixed here because the first beneficial effect has just been authored and
+   * this is the shape of bug that waits for content to arrive.
+   */
+  if (def.status !== EffectStatus.Detrimental) return { can: true, chance: 100 };
+
+  // :6956 — the blanket one, then :6958-6960's per-channel one.
+  if (immunityOf(state, actor.id, ImmunityKey.AllNegative) > 0) return { can: false, chance: 0 };
+  if (immunityOf(state, actor.id, BLANKET_IMMUNITY[def.type]) > 0) {
+    return { can: false, chance: 0 };
   }
 
   // :6964-6968 — the subtype product.
@@ -1098,6 +1198,7 @@ export function setEffect(
         table.set(effectId, kept);
         state.byActor.set(target.id, table);
         recomputeAttributes(state, target);
+        if (def.wielder !== undefined) ctx.sheetDirty?.(target.id);
         ctx.log?.({ actorId: target.id, effectId, kind: 'merged', dur: kept.dur, maximum });
         return {
           outcome: SetEffectOutcome.Merged,
@@ -1125,6 +1226,8 @@ export function setEffect(
   // instance is in the table, so a hook that reads `effectsOn` sees itself.
   def.activate?.({ state, actor: target, eff: instance, def, rng, ctx });
   recomputeAttributes(state, target);
+  // A CONTRIBUTING EFFECT JUST LANDED. See `EffectCtx.sheetDirty`.
+  if (def.wielder !== undefined) ctx.sheetDirty?.(target.id);
 
   ctx.log?.({
     actorId: target.id,
@@ -1232,6 +1335,16 @@ export function removeEffect(
   table.delete(effectId);
   if (table.size === 0) state.byActor.delete(actor.id);
   recomputeAttributes(state, actor);
+  /**
+   * AND IT HAS TO FIRE ON THE WAY OUT TOO. See `EffectCtx.sheetDirty`.
+   *
+   * `recomposeCombat` rebuilds from base and folds only what is STILL live, so
+   * removal needs no undo — but it does need the rebuild, or the body keeps the
+   * defence of a buff that expired until something else happens to ask for one.
+   * An expiry nobody notices is the worse half of this bug: the grant is
+   * visible, the overstay is not.
+   */
+  if (def?.wielder !== undefined) ctx.sheetDirty?.(actor.id);
 
   if (!silent) ctx.log?.({ actorId: actor.id, effectId, kind: 'lost' });
   return true;
@@ -1703,6 +1816,33 @@ export function recomposeCombat(
   const passive = actor.passiveCombat;
   if (passive !== undefined && actor.combat !== undefined) {
     actor.combat = composeWielders(actor.combat, [passive]);
+  }
+
+  /**
+   * Stage two and three quarters — THE LIVE TIMED EFFECTS. See `EffectDef.wielder`.
+   *
+   * ═══ ABOVE THE PASSIVES AND BELOW THE FLAGS, WHICH IS THE ONLY PLACE IT GOES ═══
+   * Above the passives because a buff is temporary and a passive is a property
+   * of the body: the thing that fades should stack ON the thing that does not,
+   * the way a potion sits on top of a breastplate.
+   *
+   * Below stage three because that is where `recomputeAttributes` puts the
+   * STATUS FLAGS, and stage two and a half's note already states the rule those
+   * enforce — *"a stun that zeroes a flag must still win"*. A buff that outranked
+   * a stun would be a buff that makes you immune to being stunned, which is a
+   * different feature and not this one.
+   *
+   * ═══ ONLY WHEN THERE IS AN EFFECT TABLE ═══
+   * `state === null` is a fixture with no status system, and every one of them
+   * keeps the sheet it has always had.
+   */
+  if (state !== null && actor.combat !== undefined) {
+    const blocks: (PassiveContribution | undefined)[] = [];
+    for (const instance of effectsOn(state, actor.id)) {
+      const contribute = effectDef(state, instance.effectId)?.wielder;
+      if (contribute !== undefined) blocks.push(contribute(instance));
+    }
+    if (blocks.length > 0) actor.combat = composeWielders(actor.combat, blocks);
   }
 
   // Stage three.

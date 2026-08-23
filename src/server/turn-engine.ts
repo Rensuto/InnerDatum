@@ -291,6 +291,23 @@ export type TurnEngineOptions = {
    */
   readonly talentRuntime?: TalentRuntime;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REBUILD THIS BODY'S SHEET FROM BASE — an effect that grants stats moved.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Forwarded to `EffectCtx.sheetDirty`, which carries the whole argument.
+   * Passed in for exactly the reason `onActBase` beside it is: the rebuild is
+   * `refreshPassives`, which lives inside the server closure in main.ts because
+   * it is the one place that can see the item catalogue, the talent registry and
+   * the world at once. This adapter cannot reach it, so the capability arrives
+   * as an argument rather than as an import.
+   *
+   * OPTIONAL: absent means a buff's grant lands on the next base turn instead of
+   * immediately, which every fixture that builds an engine by hand is content
+   * with and no player would be.
+   */
+  readonly onSheetDirty?: (actorId: string) => void;
+  /**
    * THE STATUS TABLE (engine/effects.ts). Who is bleeding, stunned, slowed.
    *
    * Read here for ONE purpose: `reap` has to clear it, and it is the first entry
@@ -2157,6 +2174,11 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
                 log: (line: EffectLogLine): void => {
                   statusNotes.push(line);
                 },
+                // A CONTRIBUTING EFFECT LANDED OR LEFT, so this body needs its
+                // sheet rebuilt from base. See EffectCtx.sheetDirty: only the
+                // layer holding the item catalogue can do that, and it is not
+                // this one either — main.ts passes the capability in.
+                sheetDirty: opts.onSheetDirty,
               },
             };
 

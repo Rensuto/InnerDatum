@@ -35,6 +35,8 @@ type StatusRequest = {
   readonly targetId: string;
   readonly effectId: string;
   readonly duration: number;
+  /** The magnitude, for effects that carry one. See the note at the recorder. */
+  readonly power?: unknown;
 };
 import type { ClassDef } from '../../src/server/content/classes.ts';
 import type {
@@ -242,7 +244,10 @@ function fixture(): Fixture {
     rng,
     talentLevel: 1,
     status: (target, effectId, duration, params) => {
-      statusCalls.push({ targetId: target.id, effectId, duration });
+      // POWER TOO. A buff's magnitude travels in `params.power` rather than in
+      // the duration, so a case that measured only the duration would report a
+      // flat number for a talent that scales perfectly well.
+      statusCalls.push({ targetId: target.id, effectId, duration, power: params?.power });
       return applier(target, effectId, duration, params);
     },
     cure: (target, status) => {
@@ -968,6 +973,36 @@ const CASES: readonly ScalingCase[] = [
       const before = watchman.hp;
       const result = useTalent(f.engine, watchman, talentId('shake_it_off'), { x: 5, y: 5 }, f.ctx);
       return { observed: watchman.hp - before, result, fixture: f };
+    },
+  },
+  {
+    /**
+     * mobility.lua:205 — Evasion, and the FIRST talent in this game to apply a
+     * BENEFICIAL effect. It could not exist until `EffectDef.wielder` did: a
+     * timed effect had no way to ADD anything, so every effect ever authored was
+     * detrimental and every buff in ToME was unportable.
+     *
+     * WHAT IT ASKED FOR, like every other status case in this file —
+     * `statusCalls` records the authored power. Nothing rolls against a buff
+     * anyway (`applySave` only rolls for a detrimental effect), so here the
+     * request and the outcome are the same number.
+     */
+    bare: 'moving_target',
+    moves: 'defence granted',
+    authored: 'defence for 4 turns',
+    cast: (level) => {
+      const f = fixture();
+      const watchman = f.add(WATCHMAN, 'caster', 5, 5, ['generic/legwork']);
+      f.setLevel('caster', 'moving_target', level);
+      f.refill('caster');
+      const result = useTalent(
+        f.engine,
+        watchman,
+        talentId('moving_target'),
+        { x: 5, y: 5 },
+        f.ctx,
+      );
+      return { observed: Number(f.statusCalls[0]?.power ?? 0), result, fixture: f };
     },
   },
 ];

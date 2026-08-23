@@ -1127,6 +1127,9 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.Effaced,
       EffectId.Breached,
       EffectId.Dazed,
+      // The first beneficial one. Appended rather than slotted in, so a client
+      // holding an older badge atlas keeps the indices it already has.
+      EffectId.Evasive,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1135,6 +1138,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_effaced',
       'icon_status_breached',
       'icon_status_dazed',
+      'icon_status_evasive',
     ]);
   });
 
@@ -1149,11 +1153,40 @@ describe('the status roster (game-design.md § 12)', () => {
    * and being overwritten is not something you shrug off by being sturdy. Each
    * effect's channel is asserted against its own source below.
    */
-  it('is entirely detrimental and entirely temporary', () => {
+  it('is entirely TEMPORARY, and no longer entirely detrimental', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS ASSERTED `status === Detrimental` FOR EVERY EFFECT, AND IT WAS TRUE
+     * FOR AS LONG AS A TIMED EFFECT HAD NO WAY TO ADD ANYTHING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `EffectModifiers` is a fixed set of flags and budget penalties — stunned,
+     * dazed, `mpPenalty` — every one of them written for something being taken
+     * away. So all six authored effects were detrimental, and an assertion that
+     * they all were read like a property of the design rather than a
+     * consequence of the machinery.
+     *
+     * The engine never agreed. `canBe` skips the immunity checks for a
+     * beneficial effect, `creditForLanding` refuses to pay a caster for one,
+     * `dispel` will not touch one, and the save block carries the comment *"A
+     * beneficial effect keeps its scaled duration and is never refused"*. Four
+     * branches built for a kind of effect no content had ever authored.
+     *
+     * `EffectDef.wielder` is what unlocked it: an effect can hand back the block
+     * a worn item hands back, and `recomposeCombat` folds it exactly as it folds
+     * gear and passives.
+     *
+     * ═══ TEMPORARY IS STILL THE RULE, AND IT IS THE HALF WORTH KEEPING ═══
+     * `decrease: 1` means every effect here ticks down. A permanent one would be
+     * a property of the body wearing a duration, which is what a passive or a
+     * piece of gear is for.
+     */
     for (const def of MVP_EFFECTS) {
-      expect(def.status).toBe(EffectStatus.Detrimental);
-      expect(def.decrease).toBe(1);
+      expect(def.decrease, def.id).toBe(1);
     }
+    const kinds = new Set(MVP_EFFECTS.map((def) => def.status));
+    expect(kinds.has(EffectStatus.Detrimental), 'the roster lost its detrimental half').toBe(true);
+    expect(kinds.has(EffectStatus.Beneficial), 'nothing points at the beneficial path').toBe(true);
   });
 
   it('gives each status the save channel its source names', () => {
@@ -1169,6 +1202,13 @@ describe('the status roster (game-design.md § 12)', () => {
       [EffectId.Breached]: SaveChannel.Magical,
       // physical.lua:562 — `EFF_DAZED` is physical, subtype stun.
       [EffectId.Dazed]: SaveChannel.Physical,
+      /**
+       * physical.lua's `EFF_EVASION`. THE CHANNEL IS A LABEL HERE, NOT A GATE:
+       * nothing resists a buff, because `canBe` only consults immunities for a
+       * detrimental effect and `applySave` only rolls for one. It is recorded
+       * anyway so the badge and any future dispel-by-channel agree with upstream.
+       */
+      [EffectId.Evasive]: SaveChannel.Physical,
     });
   });
 

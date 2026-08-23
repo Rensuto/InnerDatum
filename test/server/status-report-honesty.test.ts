@@ -36,7 +36,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
-import { SetEffectOutcome } from '../../src/server/engine/effects.ts';
+import { EffectStatus, SetEffectOutcome } from '../../src/server/engine/effects.ts';
+import { MVP_EFFECTS } from '../../src/server/content/effects.ts';
 import { isMonsterTalent } from '../../src/server/talents/monster.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { createRng } from '../../src/shared/rng.ts';
@@ -101,19 +102,22 @@ function bodies(): { world: ReturnType<typeof createWorld>; self: TalentActor; f
 function castWith(
   talentId: string,
   result: SetEffectResult,
-): { notes: readonly string[]; asked: boolean } | null {
+): { notes: readonly string[]; asked: boolean; wanted: readonly string[] } | null {
   const talent = engine.registry.get(talentId);
   if (talent?.onUse === undefined) return null;
 
   const { world, self, foe } = bodies();
   let asked = false;
+  /** WHICH effects it asked for — see the beneficial skip in the loop below. */
+  const wanted: string[] = [];
   const ctx = {
     engine,
     world,
     rng: createRng(`honesty:${talentId}`),
     talentLevel: 1,
-    status: (): SetEffectResult => {
+    status: (_target: unknown, effectId: string): SetEffectResult => {
       asked = true;
+      wanted.push(effectId);
       return result;
     },
   } as unknown as TalentCtx;
@@ -124,7 +128,7 @@ function castWith(
     // a nested shape here made every talent look identical and flagged four that
     // report correctly, which cost a round of false accusations.
     const done = out as { notes?: readonly string[] };
-    return { notes: done.notes ?? [], asked };
+    return { notes: done.notes ?? [], asked, wanted };
   } catch {
     // A talent this bare fixture cannot satisfy. Skipped, and the floor below
     // is what stops "skipped everything" from reading as a pass.
@@ -142,9 +146,29 @@ describe('a talent reports the status that happened', () => {
   const dishonest: string[] = [];
   const reached: string[] = [];
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BUFF HAS NO SAVE TO REPORT, SO IT IS NOT ASKED TO REPORT ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The rule this file enforces is right and catches a real lie: a talent that
+   * says "they are stunned" when they saved. It cannot apply to a BENEFICIAL
+   * effect. Nothing resists one — `canBe` consults immunities only for a
+   * detrimental effect and `applySave` rolls only for one — so `Negated` is an
+   * outcome the engine will never hand a self-buff, and a talent printing a
+   * different sentence for it would be describing something that cannot happen.
+   *
+   * Read off the EFFECT the talent actually asked for, not a list of talent ids,
+   * so the next buff is covered without anybody remembering to come back here.
+   */
+  const beneficial = new Set(
+    MVP_EFFECTS.filter((def) => def.status === EffectStatus.Beneficial).map((def) => def.id),
+  );
+
   for (const id of ids) {
     const applied = castWith(id, landing(SetEffectOutcome.Applied, 3));
     if (applied === null || !applied.asked) continue;
+    if (applied.wanted.every((effectId) => beneficial.has(effectId))) continue;
     const negated = castWith(id, landing(SetEffectOutcome.Negated, 0));
     if (negated === null) continue;
     exercised += 1;

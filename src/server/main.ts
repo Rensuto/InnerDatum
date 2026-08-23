@@ -906,6 +906,12 @@ export function buildServer() {
   const engineFor = (forWorld: World): ReapingTurnEngine =>
     createTurnEngine({
       world: forWorld,
+      // AN EFFECT THAT GRANTS STATS LANDED OR LEFT. See EffectCtx.sheetDirty:
+      // rebuilding a sheet needs the item catalogue, which only this closure
+      // holds, so the engine is handed the capability rather than the catalogue.
+      onSheetDirty: (actorId: string): void => {
+        refreshPassives(actorId);
+      },
       downed,
       parties,
       talents: createTalentBook(talentEngine, forWorld),

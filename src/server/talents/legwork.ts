@@ -39,6 +39,7 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
+import { EffectId } from '../content/effects.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -143,16 +144,48 @@ export function defenceAt(level: number): number {
   return Math.round(combatTalentScale(level, DEF_LOW, DEF_HIGH, CURVE));
 }
 
+/** Ported from mobility.lua:211 — Evasion's `combatTalentLimit(t, 10, 28, 15)`. */
+const EVASION_COOLDOWN_ACTIONS = 28;
+const MOVING_TARGET_COOLDOWN = tomeCooldownToTurns(EVASION_COOLDOWN_ACTIONS);
+/** Three of six. Upstream is `speed = "combat"`; ours is most of a turn. */
+const MOVING_TARGET_AP = 3;
+/** mobility.lua:215 — `getDur = function(self, t) return 4 end`. Flat, upstream's. */
+const EVASION_TURNS = 4;
+
 /**
  * MOVING TARGET.
  *
  * "Standing still is a decision. Usually the wrong one."
  *
- * THE THIRD READING OF ONE BINARY. `braced.ts` sells armour for NOT moving and
- * `leverage.ts`'s Second Look sells criticals for it; this sells defence for
- * the opposite. A character can hold all three and will always be paid by
- * exactly two of them, which is the property that makes "did I move" a decision
- * every turn rather than a habit.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT WAS A PASSIVE, AND IT IS THE LAST OF MOBILITY'S FOUR TO BECOME A BUTTON
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `technique/mobility` is Disengage, Evasion and Tumble — all `action =` — plus
+ * Trained Reactions as `mode = "sustained"` (mobility.lua:41, 205, 239, 285).
+ * Kick Off is Disengage, Downhill is Tumble, Second Exit is Trained Reactions.
+ * This was the one still standing still, and it is Evasion.
+ *
+ * ═══ IT COULD NOT HAVE BEEN PORTED UNTIL NOW ═══
+ * Evasion's whole shape is "for a few turns, you are harder to hit" — a timed
+ * BUFF. Every effect this game had authored was detrimental, because
+ * `EffectModifiers` is a fixed set of flags and budget penalties with no way to
+ * ADD anything. `EffectDef.wielder` is what changed: an effect hands back the
+ * block a worn item hands back, and `recomposeCombat` folds it exactly as it
+ * folds gear and passives. `EVASIVE` (content/effects.ts) is the first
+ * beneficial effect in the game and this is its first caller.
+ *
+ * ═══ WHAT THE OLD PASSIVE WAS DOING, AND WHERE IT WENT ═══
+ * It sold defence for having MOVED, and its note called that the third reading
+ * of one binary — `braced.ts` sells armour for standing still,
+ * `leverage.ts`'s Second Look sells criticals for it, this sold defence for the
+ * opposite. That triad is not lost: `lightFeet` two tiers down still reads
+ * `movedThisTurn` and pays accuracy for it, so "did I move" remains a question
+ * three talents in three disciplines ask, in both directions.
+ *
+ * What the conversion buys is that the defence is now something you SPEND a
+ * turn on when you expect the blow, rather than something you happen to be
+ * owed because you walked. Upstream's own tactical table says the same thing:
+ * `{ ESCAPE = 2, DEFEND = 2 }`.
  */
 export const movingTarget: Talent = {
   ...SHARED,
@@ -160,12 +193,41 @@ export const movingTarget: Talent = {
   name: 'Moving Target',
   /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
   tier: 1,
-  iconId: 'icon_passive_moving_target',
-  passive: (level, view = EMPTY_PASSIVE_VIEW) =>
-    view.movedThisTurn() ? { mods: { def: defenceAt(level) } } : {},
+  kind: TalentKind.Active,
+  iconId: 'icon_active_moving_target',
+  cost: { ap: MOVING_TARGET_AP },
+  cooldownTurns: MOVING_TARGET_COOLDOWN,
+  targeting: {
+    shape: TargetShape.Self,
+    range: 0,
+    minRange: 0,
+    radius: 0,
+    requiresLos: false,
+    affinity: Affinity.Ally,
+  },
+
+  onUse: (ctx, self) => {
+    /**
+     * ON YOURSELF, AND IT CANNOT FAIL.
+     *
+     * `ctx.status` is the same door a stun goes through, and nothing about it
+     * is detrimental-only — `canBe` skips the immunity checks for a beneficial
+     * effect and `applySave` never rolls for one, so this lands. The absent
+     * seam is the only refusal, and it is a fixture with no status table rather
+     * than anything a player can produce.
+     */
+    const landed = ctx.status?.(self, EffectId.Evasive, EVASION_TURNS, {
+      power: defenceAt(ctx.talentLevel),
+      srcId: self.id,
+    });
+    if (landed === undefined) return talentRefused(TalentRefusal.NoTarget);
+    return talentDone([], ['You put yourself where the blow is not.']);
+  },
+
   describe: (_self, level) =>
-    `Always on, on any turn you change tiles. ${String(defenceAt(level))} defence — the exact ` +
-    `opposite of Braced, and you can own both.`,
+    `${String(defenceAt(level))} defence for ${String(EVASION_TURNS)} turns — spent on the turn ` +
+    `you expect the blow rather than owed for having walked. ${String(MOVING_TARGET_AP)} AP, ` +
+    `${String(MOVING_TARGET_COOLDOWN)}-turn cooldown.`,
 };
 
 // ---------------------------------------------------------------------------

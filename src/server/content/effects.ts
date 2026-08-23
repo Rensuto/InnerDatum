@@ -97,6 +97,24 @@ export const EffectId = {
    * for a dazed body — the same eight rolls `scoured` divides, twice as hard.
    */
   Dazed: 'effect:dazed',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FIRST BENEFICIAL EFFECT IN THE GAME, AND THE POINT IS THE CATEGORY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every effect above this line is `EffectStatus.Detrimental`. All six of them.
+   * The engine has supported the other kind since the port — `canBe` skips the
+   * immunity checks for it, `creditForLanding` refuses to pay for it, `dispel`
+   * will not touch it, and the save block carries a comment reading *"A
+   * beneficial effect keeps its scaled duration and is never refused"* — and no
+   * content had ever pointed at any of it.
+   *
+   * That is the tenth time this codebase has found a finished system with
+   * nothing aimed at it, and it is the most expensive one so far: ToME is built
+   * out of buffs, and not one of its self-buff talents could be ported while a
+   * timed effect had no way to ADD anything.
+   */
+  Evasive: 'effect:evasive',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -688,6 +706,59 @@ export const DAZED: EffectDef = Object.freeze({
 // ---------------------------------------------------------------------------
 
 /** Every MVP status, in a fixed order — for iteration that must be reproducible. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVASIVE — you saw it coming.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 data/timed_effects/physical.lua's `EFF_EVASION`, the
+ * effect `technique/mobility`'s Evasion applies (mobility.lua:205-228):
+ * *"Your quick wit and reflexes allow you to anticipate attacks against you,
+ * granting you a %d%% chance to evade melee and ranged attacks and %d increased
+ * defense for %d turns."*
+ *
+ * ═══ THE DEFENCE HALF ONLY, AND IT IS STATED RATHER THAN DROPPED ═══
+ * Upstream grants a flat evade CHANCE as well as defence. This engine has no
+ * evade attribute — `checkHit` is accuracy against defence and there is no
+ * second roll for it to short-circuit — so porting the chance would mean
+ * inventing a mechanic to hang it on. `BREACHED` above records the identical
+ * decision in the identical words for the four immunities it does not halve:
+ * the missing half is written down, not quietly dropped.
+ *
+ * Defence is the half that already exists, and it is the half that carries the
+ * talent's meaning: a body that is harder to connect with for a few turns.
+ *
+ * ═══ NO SAVE, NO CHANNEL THAT MATTERS ═══
+ * Nothing resists a buff. `canBe` only consults immunities for a detrimental
+ * effect, and `applySave` only rolls for one, so `type` here is a label for the
+ * badge rather than a gate. Physical is upstream's own subtype.
+ *
+ * ═══ WHERE THE NUMBER COMES FROM ═══
+ * `params.power`, which the talent hands over at cast time. Upstream scales its
+ * defence on talent level AND Dexterity (`combatScale(getTalentLevel * getDex,
+ * ...)`); ours scales on rank alone, because a stat-scaled talent number is a
+ * separate decision this codebase has not taken anywhere else yet.
+ */
+export const EVASIVE: EffectDef = Object.freeze({
+  id: EffectId.Evasive,
+  badge: 'Ev',
+  displayName: 'Evasive',
+  description: 'You saw it coming. Harder to land a blow on.',
+  type: SaveChannel.Physical,
+  status: EffectStatus.Beneficial,
+  // physical.lua's EFF_EVASION declares no `on_merge`, so a re-cast replaces.
+  stackMode: StackMode.Refresh,
+  subtypes: ['evasion'],
+  decrease: 1,
+  icon: 'icon_status_evasive',
+  /**
+   * THE FIRST USE OF `EffectDef.wielder` — the block a worn item returns, folded
+   * by `recomposeCombat` with the same `composeWielders` gear and passives go
+   * through. A buff is a passive with a clock on it.
+   */
+  wielder: (instance) => ({ mods: { def: Number(instance.params['power'] ?? 0) } }),
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -695,6 +766,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   EFFACED,
   BREACHED,
   DAZED,
+  EVASIVE,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

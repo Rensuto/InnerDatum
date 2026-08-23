@@ -22,6 +22,7 @@ import { braced } from '../../src/server/talents/braced.ts';
 import { secondLook } from '../../src/server/talents/leverage.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { PassiveView } from '../../src/server/engine/hooks.ts';
+import type { Talent } from '../../src/server/engine/talents.ts';
 
 const viewOf = (over: Partial<Record<keyof PassiveView, unknown>>): PassiveView =>
   ({ ...EMPTY_PASSIVE_VIEW, ...over }) as PassiveView;
@@ -154,33 +155,103 @@ describe('the movement talents', () => {
   });
 });
 
+describe('Moving Target is upstream\u2019s Evasion', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LAST OF MOBILITY'S FOUR TO STOP BEING A PASSIVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `technique/mobility` is Disengage, Evasion and Tumble — all `action =` —
+   * plus Trained Reactions as `mode = "sustained"` (mobility.lua:41, 205, 239,
+   * 285). Kick Off is Disengage, Downhill is Tumble, Second Exit is Trained
+   * Reactions. This was the one still standing still.
+   *
+   * ═══ AND IT COULD NOT HAVE BEEN PORTED BEFORE ═══
+   * Evasion's whole shape is "for a few turns you are harder to hit", which is a
+   * timed BUFF. `EffectModifiers` is a fixed set of flags and budget penalties
+   * with no way to ADD anything, so every effect this game had authored was
+   * detrimental. `EffectDef.wielder` is what changed it.
+   */
+  it('is an active that applies a BENEFICIAL effect, not a passive', () => {
+    expect(movingTarget.passive).toBeUndefined();
+    expect(movingTarget.onUse).toBeTypeOf('function');
+    expect(movingTarget.kind).toBe('active');
+    // AP only: four classes may buy this tree and they spend four resources.
+    expect(movingTarget.cost.resource ?? 0).toBe(0);
+  });
+
+  it('asks for the defence its rank bought, and every rank differs', () => {
+    const asked: number[] = [];
+    for (const rank of [1, 2, 3, 4, 5]) {
+      const ctx = {
+        talentLevel: rank,
+        status: (_t: unknown, _id: string, _dur: number, params: { power?: number }) => {
+          asked.push(Number(params.power ?? 0));
+          return { outcome: 'applied' };
+        },
+      } as unknown as Parameters<NonNullable<typeof movingTarget.onUse>>[0];
+      const self = { id: 'a', name: 'A' } as unknown as Parameters<
+        NonNullable<typeof movingTarget.onUse>
+      >[1];
+      movingTarget.onUse?.(ctx, self, { x: 0, y: 0 });
+    }
+    expect(asked).toHaveLength(5);
+    expect(new Set(asked).size, asked.join(',')).toBe(5);
+  });
+
+  it('refuses only when there is no status table at all', () => {
+    // A buff cannot be resisted — `canBe` consults immunities only for a
+    // detrimental effect and `applySave` rolls only for one — so the absent seam
+    // is the single refusal, and it is a fixture rather than anything a player
+    // can produce.
+    const ctx = { talentLevel: 3 } as unknown as Parameters<
+      NonNullable<typeof movingTarget.onUse>
+    >[0];
+    const self = { id: 'a', name: 'A' } as unknown as Parameters<
+      NonNullable<typeof movingTarget.onUse>
+    >[1];
+    expect(movingTarget.onUse?.(ctx, self, { x: 0, y: 0 })?.ok).toBe(false);
+  });
+});
+
 describe('the triad on one binary', () => {
-  it('pays two of three whichever way the turn went', () => {
+  it('still pays two of three whichever way the turn went', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * ONE QUESTION — DID THIS BODY CHANGE TILES — READ BY THREE DISCIPLINES.
      * ═══════════════════════════════════════════════════════════════════════
      *
      * `braced` sells armour for standing still, `secondLook` sells criticals
-     * for it, and `movingTarget` sells defence for the opposite. A character
-     * who owns all three is always paid by exactly two, which is what turns
-     * "did I move" into a decision every turn rather than a habit.
+     * for it, and something in this tree sells for the opposite. A character who
+     * owns all three is always paid by exactly two, which is what turns "did I
+     * move" into a decision every turn rather than a habit.
      *
      * ASSERTED ACROSS THE THREE FILES, because that property is the reason all
      * three exist and NONE of them can state it alone.
+     *
+     * ═══ THE THIRD LEG MOVED, AND THE PROPERTY DID NOT ═══
+     * It used to be `movingTarget`, which became upstream's Evasion — a BUTTON,
+     * because "for a few turns you are harder to hit" is a timed buff and this
+     * game could not author one until `EffectDef.wielder` existed. An active has
+     * no `passive` to read, so naming it here would assert nothing.
+     *
+     * `lightFeet` is the leg now. It reads the same binary in the same
+     * direction — accuracy for having moved — so the triad is intact and the
+     * only thing that changed is which talent in this discipline carries it.
      */
     const still = viewOf({ movedThisTurn: () => false });
     const moved = viewOf({ movedThisTurn: () => true });
 
-    const paidStill = [braced, secondLook, movingTarget].filter(
-      (talent) => Object.keys(talent.passive?.(3, still)?.mods ?? {}).length > 0,
-    );
-    const paidMoved = [braced, secondLook, movingTarget].filter(
-      (talent) => Object.keys(talent.passive?.(3, moved)?.mods ?? {}).length > 0,
-    );
+    const paid = (view: PassiveView): readonly Talent[] =>
+      [braced, secondLook, lightFeet].filter(
+        (talent) => Object.keys(talent.passive?.(3, view)?.mods ?? {}).length > 0,
+      );
 
-    expect(paidStill.map((t) => t.id).sort()).toEqual([braced.id, secondLook.id].sort());
-    expect(paidMoved.map((t) => t.id)).toEqual([movingTarget.id]);
+    expect(paid(still).length, 'standing still paid the wrong number').toBe(2);
+    expect(paid(moved).length, 'moving paid the wrong number').toBe(1);
+    // AND THEY ARE DIFFERENT TALENTS, or "two of three" would be satisfied by
+    // the same two paying twice.
+    expect(paid(still).some((t) => paid(moved).includes(t))).toBe(false);
   });
 
   it('Light Feet is the other half of moving, so a step is a whole turn', () => {
