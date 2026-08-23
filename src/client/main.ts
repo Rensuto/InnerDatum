@@ -188,6 +188,7 @@ import {
 import {
   DragKind,
   DraggablePanel,
+  DRAGGABLE_PANELS,
   NO_OFFSET,
   createPanelOffsets,
   moveIntoBand,
@@ -2759,6 +2760,10 @@ function escapeMenuView(zoom: number): EscapeMenuView {
     confirming: menuConfirm,
     // THE ROW IS A READOUT AS WELL AS A CONTROL — see `EscapeMenuView.zoom`.
     zoom,
+    // ONLY WHETHER, never which: the row is greyed or it is not.
+    panelsMoved: DRAGGABLE_PANELS.some(
+      (panel) => panelOffsets[panel].dx !== 0 || panelOffsets[panel].dy !== 0,
+    ),
     message: menuMessage,
     // v12 — THE COUNT GOES ON THE CONTROL THAT ALREADY ROUTES TO THE PANEL.
     // Root row 3 opens the talent screen and never said how many points were
@@ -7671,6 +7676,22 @@ async function boot(): Promise<void> {
         return;
       case 'keys':
         showMenuScreen(MenuScreen.Keys);
+        return;
+      case 'reset-panels':
+        /**
+         * ═══ PUT ALL FOUR BACK — `Minimalist.lua:354-359`'s `resetPlaces` ═══
+         *
+         * `createPanelOffsets` walks `DRAGGABLE_PANELS`, so this cannot leave a
+         * fifth panel behind the day one is added — the same reason that helper
+         * exists rather than an object literal.
+         *
+         * THE MENU STAYS OPEN, like the zoom row and for the same reason: the
+         * player can see the result and is one press from the row again if a
+         * drag was what they wanted after all.
+         */
+        for (const panel of DRAGGABLE_PANELS) panelOffsets[panel] = NO_OFFSET;
+        showNotice('panels put back');
+        requestDraw();
         return;
       case 'zoom': {
         /**

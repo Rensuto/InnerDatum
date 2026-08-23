@@ -433,6 +433,25 @@ export type MenuEffect =
    * look at the map and press again.
    */
   | { readonly kind: 'zoom' }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PUT THE PANELS BACK — `Minimalist.lua:354-359`'s `resetPlaces`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Four panels can be dragged and there was no way to undo it. A panel parked
+   * somewhere awkward is a nuisance; one dragged to the far edge on a window
+   * that then SHRANK is a panel whose close control the player has to fish for
+   * — `moveIntoBand` clamps it back into view, so nothing is ever truly lost,
+   * but "drag it back by hand, four times" is not a recovery story.
+   *
+   * ═══ ONE PRESS, NO CONFIRMATION, AND THAT IS THE RULE FOR A HATCH ═══
+   * The Keys screen's RESET ALL is argued the same way in this file: a recovery
+   * control *"must never acquire a keyboard-only path or a confirmation step
+   * that needs one — the player who needs them may have no working key at all"*.
+   * Undoing this is four drags, which is exactly what the player was already
+   * doing.
+   */
+  | { readonly kind: 'reset-panels' }
   | { readonly kind: 'party'; readonly action: PartyAction };
 
 // ---------------------------------------------------------------------------
@@ -628,6 +647,14 @@ export type EscapeMenuView = {
    * `settings` frame yet is actually looking at.
    */
   readonly zoom?: number;
+  /**
+   * HAS ANY PANEL BEEN DRAGGED? Decides only whether RESET PANELS is greyed.
+   *
+   * GREYED, NOT DROPPED — the rule this menu follows everywhere: a row that
+   * vanished when it had nothing to do would change the panel's height and move
+   * the row somebody was reaching for.
+   */
+  readonly panelsMoved?: boolean;
 };
 
 /**
@@ -707,8 +734,8 @@ function entryRow(
  * the confirmation would silently move to `INVENTORY` — a guard protecting the
  * wrong thing is worse than no guard, because it reads as protection.
  */
-export const ROW_LEAVE_PARTY = 6;
-export const ROW_SWITCH_CHARACTER = 7;
+export const ROW_LEAVE_PARTY = 7;
+export const ROW_SWITCH_CHARACTER = 8;
 
 /**
  * How the three zoom steps read. `ZOOM_MIN`..`ZOOM_MAX` is -1..1, and the row is
@@ -769,8 +796,21 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       true,
       null,
     ),
+    /**
+     * THE THIRD AND LAST OF THE SETTINGS ROWS. Key bindings, zoom, and putting
+     * the panels back are the three that change how the game is SET UP; the four
+     * below them open something or end something.
+     */
     entryRow(
       3,
+      { kind: 'reset-panels' },
+      'RESET PANELS',
+      '',
+      view.panelsMoved === true,
+      view.panelsMoved === true ? null : 'nothing has been moved',
+    ),
+    entryRow(
+      4,
       { kind: 'ui', command: UiCommand.ShowSheet },
       'CHARACTER SHEET',
       labelFor('show_sheet', keymap),
@@ -778,7 +818,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      4,
+      5,
       { kind: 'ui', command: UiCommand.ShowTalents },
       talentsLabel,
       labelFor('show_talents', keymap),
@@ -786,7 +826,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      5,
+      6,
       { kind: 'ui', command: UiCommand.ShowInventory },
       'INVENTORY',
       labelFor('show_inventory', keymap),

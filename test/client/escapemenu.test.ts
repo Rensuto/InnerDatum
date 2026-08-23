@@ -208,11 +208,12 @@ describe('the root screen', () => {
     // are the only rows that change how the game is SET UP — the five below them
     // open a panel — and two rows is not a settings screen, so they group here
     // rather than behind a sixth surface.
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(9);
     expect(rows.map((row) => row.label)).toEqual([
       'RESUME',
       'KEY BINDINGS',
       'ZOOM: NORMAL',
+      'RESET PANELS',
       'CHARACTER SHEET',
       'TALENTS',
       'INVENTORY',
@@ -226,6 +227,9 @@ describe('the root screen', () => {
       // closes a panel; this one changes a persisted preference and leaves the
       // menu open so the player can look at the map and press again.
       { kind: 'zoom' },
+      // A RECOVERY HATCH, and one press — see `MenuEffect`. It is greyed here
+      // because the fixture has moved nothing, which is the common state.
+      { kind: 'reset-panels' },
       // A LAUNCHER, NOT A SECOND SHEET. Game.lua:2308 is
       // `key:triggerVirtual("SHOW_CHARACTER_SHEET")`, and this is the same act:
       // the row emits the verb the KEY emits, so main.ts's existing toggle runs.
@@ -239,7 +243,7 @@ describe('the root screen', () => {
       // the first thing to go wrong would be a keybinding for it.
       { kind: 'leave-character' },
     ]);
-    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it('draws SWITCH CHARACTER greyed for a player with no account', () => {
@@ -276,11 +280,12 @@ describe('the root screen', () => {
     const labels = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.label);
 
     const waiting = escapeMenuRows(view({ unspent: 2 }));
-    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
     expect(labels(waiting)).toEqual([
       'RESUME',
       'KEY BINDINGS',
       'ZOOM: NORMAL',
+      'RESET PANELS',
       'CHARACTER SHEET',
       'TALENTS (2)',
       'INVENTORY',
@@ -289,15 +294,15 @@ describe('the root screen', () => {
     ]);
     // The effect on row 3 is untouched — it is still the launcher, and a longer
     // label must not turn it into a different act.
-    expect(entryRows(waiting)[4]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
-    expect(entryRows(waiting)[4]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
+    expect(entryRows(waiting)[5]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
+    expect(entryRows(waiting)[5]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
 
     // WITHOUT POINTS THE LABEL IS UNCHANGED, at zero and with the field absent
     // entirely — which is what main.ts's existing `escapeMenuView()` passes. A
     // row reading "TALENTS (0)" on every open is furniture within one session.
-    expect(labels(escapeMenuRows(view({ unspent: 0 })))[4]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view()))[4]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view({ unspent: 1 })))[4]).toBe('TALENTS (1)');
+    expect(labels(escapeMenuRows(view({ unspent: 0 })))[5]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view()))[5]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view({ unspent: 1 })))[5]).toBe('TALENTS (1)');
   });
 
   it('draws LEAVE PARTY greyed for a party of one rather than dropping it', () => {
@@ -305,7 +310,7 @@ describe('the root screen', () => {
     // row you were reaching for, and a player who cannot see the row at all
     // learns nothing about why they cannot use it.
     const alone = entryRows(escapeMenuRows(view({ inParty: false })));
-    expect(alone).toHaveLength(8);
+    expect(alone).toHaveLength(9);
     const leave = alone[ROW_LEAVE_PARTY];
     expect(leave?.label).toBe('LEAVE PARTY');
     expect(leave?.enabled).toBe(false);
@@ -316,11 +321,11 @@ describe('the root screen', () => {
   it('names the LIVE key beside each screen row and never a hard-coded letter', () => {
     // A printed "press C" is a lie the moment somebody rebinds. The row reads
     // the same keymap the dispatcher reads.
-    const before = entryRows(escapeMenuRows(view()))[3];
+    const before = entryRows(escapeMenuRows(view()))[4];
     expect(before?.keyLabel).toBe(labelFor('show_sheet', DEFAULT_KEYMAP));
 
     const rebound = compileKeymap(ACTIONS, { show_sheet: ['key:q'] });
-    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[3];
+    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[4];
     expect(after?.keyLabel).toBe('Q');
   });
 });
@@ -347,7 +352,10 @@ describe('escapeMenuHitAt on the root screen', () => {
     // SWITCH CHARACTER does not, because `canSwitchCharacter` is absent and a
     // greyed row is unpressable STRUCTURALLY — the property the next test is
     // about, seen here from the other side.
-    expect(seen).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    // RESET PANELS is greyed in the fixture (nothing moved) and so is SWITCH
+    // CHARACTER (not signed in) — both unpressable STRUCTURALLY, which is why
+    // the scan skips them.
+    expect(seen).toEqual([0, 1, 2, 4, 5, 6, 7]);
   });
 
   it('answers the × in the header and nothing else up there', () => {
@@ -1327,5 +1335,53 @@ describe('the zoom row', () => {
     // second ROUTE to one preference, not a second owner of it.
     expect(row?.keyLabel).toBe(labelFor('zoom_in', DEFAULT_KEYMAP));
     expect(row?.enabled).toBe(true);
+  });
+});
+
+describe('the reset-panels row', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * FOUR PANELS COULD BE DRAGGED AND THERE WAS NO WAY TO UNDO IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Minimalist.lua:354-359` has `resetPlaces`. Ours had four draggable panels
+   * and no reset — `moveIntoBand` clamps a stray panel back into view so nothing
+   * is truly lost, but "drag it back by hand, four times" is not a recovery
+   * story.
+   */
+  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[3];
+
+  it('is greyed with a reason when nothing has been moved', () => {
+    // GREYED, NOT DROPPED — a row that vanished when it had nothing to do would
+    // change the panel's height and move the row somebody was reaching for.
+    const row = rowAt();
+    expect(row?.label).toBe('RESET PANELS');
+    expect(row?.enabled).toBe(false);
+    expect(row?.reason).toBe('nothing has been moved');
+  });
+
+  it('comes alive once a panel has been dragged', () => {
+    const row = rowAt({ panelsMoved: true });
+    expect(row?.enabled).toBe(true);
+    expect(row?.reason).toBeNull();
+  });
+
+  it('carries its own effect and takes no confirming press', () => {
+    /**
+     * ONE PRESS, NO ARM. The Keys screen's RESET ALL is argued the same way in
+     * this file: a recovery control must never acquire a confirmation step,
+     * because the player who needs it may have no working key at all. Undoing
+     * this is four drags, which is what they were doing anyway.
+     */
+    expect(rowAt({ panelsMoved: true })?.effect).toEqual({ kind: 'reset-panels' });
+    expect(rowAt({ panelsMoved: true })?.label).toBe('RESET PANELS');
+    // ...and it is NOT one of the two rows that arm.
+    expect(rowAt({ panelsMoved: true, confirming: 3 })?.label).toBe('RESET PANELS');
+  });
+
+  it('has no key, because it is a pointer hatch', () => {
+    // A player who has dragged a panel somewhere awkward has a working pointer
+    // by construction. A binding would be a key nobody presses on purpose.
+    expect(rowAt({ panelsMoved: true })?.keyLabel).toBe('');
   });
 });

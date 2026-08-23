@@ -1227,3 +1227,36 @@ describe('the zoom row changes the setting rather than owning it', () => {
     expect(arm()).not.toContain('closeMenu()');
   });
 });
+
+describe('reset-panels puts all four back', () => {
+  /**
+   * ui/escapemenu.ts tests the ROW. This pins the act — and the thing that
+   * matters about it is that it cannot leave a panel behind.
+   */
+  it('walks DRAGGABLE_PANELS rather than naming them', () => {
+    /**
+     * `createPanelOffsets` walks the same list for the same reason: a fifth
+     * draggable panel must not be able to appear with no way to reset it. A
+     * hand-written four would be a list to keep in step with a list.
+     */
+    const start = at("case 'reset-panels':");
+    const arm = CODE.slice(start, CODE.indexOf("      case 'zoom': {", start));
+    expect(arm).toContain('for (const panel of DRAGGABLE_PANELS)');
+    expect(arm).toContain('panelOffsets[panel] = NO_OFFSET');
+  });
+
+  it('leaves the menu open and says something happened', () => {
+    // A control that resets four panels the player cannot see behind the menu
+    // and then says nothing is indistinguishable from a dead row.
+    const start = at("case 'reset-panels':");
+    const arm = CODE.slice(start, CODE.indexOf("      case 'zoom': {", start));
+    expect(arm).toContain('showNotice(');
+    expect(arm).not.toContain('closeMenu()');
+  });
+
+  it('reports whether anything has moved from the offsets themselves', () => {
+    // Not from a "has been dragged" flag kept beside them, which is a second
+    // copy of the same fact and the one that would go stale.
+    expect(CODE).toContain('panelsMoved: DRAGGABLE_PANELS.some(');
+  });
+});
