@@ -609,6 +609,32 @@ type Session = {
    */
   progressKey: string | null;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE TIER LADDER WAS LAST TOLD, as a comparison key.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `LoadoutTalent.locked` is computed server-side by `gateFor` and travels on
+   * the `loadout` frame. The client refuses to send a spend at all for a locked
+   * row — `canSpend` is `... && talent.locked !== true` (ui/talents.ts) and the
+   * press is gated on it — which is right, and which makes a STALE `locked` a
+   * dead end rather than a cosmetic slip.
+   *
+   * `sendLoadout` had five callers: hello, choose class, unlock tree, toggle
+   * sustain, spend talent point. NOT levelling up, and NOT spending an attribute
+   * point — the two events whose entire purpose is to clear a gate. A player who
+   * reached exactly the level their one wanted talent needed was hard stuck: the
+   * server would have allowed it, the client would not ask, and nothing moved
+   * until they spent a point elsewhere or reconnected.
+   *
+   * ═══ WHY A KEY OF ITS OWN AND NOT `progressKey` ═══
+   * That one includes `xp`, which moves on every kill. Resending the whole
+   * loadout — every talent, every description, both prose lines each — on every
+   * kill would be a frame the size of the talent panel several times a fight.
+   * This holds only what can actually OPEN A GATE: the character level and the
+   * six attributes `statRequiredFor` reads.
+   */
+  gateKey: string | null;
+  /**
    * The last `inventory` frame sent to THIS socket, as a comparison key.
    *
    * A FOURTH KEY, for the reason `partyKey` and `progressKey` are the second and
@@ -1043,7 +1069,29 @@ export type TurnEngine = {
    *   not on it. Null must cost the caller nothing — the point is decremented
    *   only after this has answered.
    */
-  raiseTalentPoint?(actorId: string, talentId: string): number | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE NEW RANK, OR WHY NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `null` used to mean three different things — no talent engine, not on this
+   * sheet, and THE TIER LADDER REFUSED YOU — and the third got
+   * `ErrorCode.Internal` with a sentence about the build being broken. A player
+   * short of the Willpower for a tier-2 talent was told the server was
+   * misconfigured.
+   *
+   * `tierRefusalText` exists precisely so "the panel and the log agree word for
+   * word" (shared/tiers.ts), and it never reached a player on this path.
+   * Upstream returns `nil, "not enough stat: STR"` (ActorTalents.lua:698) and
+   * surfaces it.
+   *
+   * So a refusal now carries its sentence, and `null` goes back to meaning only
+   * what it says: this seam cannot answer.
+   */
+  raiseTalentPoint?(
+    actorId: string,
+    talentId: string,
+  ): number | { readonly refused: string } | null;
   /**
    * TURN A SUSTAINED TALENT ON OR OFF. Answers the NEW state, or null for a
    * refusal — a talent this body does not own, one that is not sustained, or a
@@ -4342,6 +4390,44 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       String(statValue(viewer.combat ?? {}, which)),
     ).join(',')}`;
 
+  /**
+   * The two things a tier gate reads. See `Session.gateKey`.
+   *
+   * `checkTier` asks for exactly two numbers — the character level against
+   * `levelRequiredFor` and one attribute against `statRequiredFor` — plus the
+   * tree depth, which cannot move without a talent point being spent, and that
+   * path already resends the loadout.
+   *
+   * ALL SIX ATTRIBUTES rather than the gated one: a talent's `statGate` is not
+   * known here, gear can move any of them, and six numbers in a string is not
+   * a cost worth being clever about.
+   */
+  const gateKeyFor = (viewer: { level: number; combat?: Combatant }): string =>
+    `${String(viewer.level)}|${STAT_ORDER.map((which) =>
+      String(statValue(viewer.combat ?? {}, which)),
+    ).join(',')}`;
+
+  /**
+   * Resend the hotbar when — and only when — a gate could have opened or shut.
+   *
+   * Silent on the first sight of a body: `sendLoadout` has already gone out with
+   * the frame that introduced it, and seeding the key here rather than sending
+   * again is the difference between this being free and this being a duplicate
+   * of the largest viewer-private frame there is.
+   */
+  const sendLoadoutIfGatesMoved = (session: Session): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) return;
+    const viewer = world.getActor(actorId);
+    if (viewer === undefined || viewer.kind !== 'player') return;
+    const key = gateKeyFor(viewer);
+    if (key === session.gateKey) return;
+    const seeded = session.gateKey !== null;
+    session.gateKey = key;
+    if (seeded) sendLoadout(session);
+  };
+
   const sendProgress = (session: Session): boolean => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -4482,6 +4568,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // reaches nobody's panel until they spend a point, which they cannot,
       // because the panel still says they have none.
       sendProgressIfChanged(session);
+      // AND THE HOTBAR, WHEN A GATE MOVED — see Session.gateKey. It rides this
+      // loop for the reason the line above does: a LEVEL moves under a pump the
+      // viewer did not cause, because the whole party is paid for one killing
+      // blow. Levelling to exactly the level a talent wanted used to leave the
+      // panel drawing that + as locked, and the client will not send a spend for
+      // a locked row — so the point could not be spent until they spent a
+      // different one or reconnected.
+      sendLoadoutIfGatesMoved(session);
       // THE FOURTH MEMOISED VIEWER FRAME, and it rides this loop for the same
       // reason: a bag changes under a pump the viewer did not cause. A restore
       // at join fills one before the first frame goes out, and the day something
@@ -11287,6 +11381,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     realmFor(session).engine.notePresence?.(actorId);
 
     sendProgress(session);
+    // AND THE HOTBAR, IF THAT POINT JUST OPENED A GATE. See Session.gateKey:
+    // raising Willpower 19 -> 20 clears the tier-2 stat gate on a whole tree,
+    // and without this the panel keeps drawing the + as locked and the client
+    // will not even send the spend.
+    sendLoadoutIfGatesMoved(session);
     sendInventoryIfChanged(session);
   };
 
@@ -11424,6 +11523,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // answer costs the player nothing. Doing it the other way round would spend
     // a point on a rank that never happened.
     const raised = engine.raiseTalentPoint?.(actorId, talent.id);
+    /**
+     * A REFUSAL IS THE LADDER'S SENTENCE, NOT AN INTERNAL ERROR.
+     *
+     * `tierRefusalText` wrote it, the panel is already showing it under the
+     * greyed `+`, and this is the path that used to answer a player short of a
+     * stat with "talent points are not wired into this build".
+     *
+     * `Refused` rather than `Internal` because nothing went wrong: the rules
+     * said no, which is an ordinary answer and one the client already knows how
+     * to show.
+     */
+    if (typeof raised === 'object' && raised !== null) {
+      sendError(session.socket, ErrorCode.Refused, raised.refused);
+      return;
+    }
     if (raised === undefined || raised === null) {
       sendError(session.socket, ErrorCode.Internal, 'talent points are not wired into this build');
       return;
@@ -13177,6 +13291,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       viewerKey: null,
       partyKey: null,
       progressKey: null,
+      gateKey: null,
       // NOT null — see `EMPTY_INVENTORY_KEY`. A fresh socket believes its bag is
       // empty before it is told anything, so seeding with the empty state is
       // what keeps a bare player's frame set byte-identical to the pre-loot one.

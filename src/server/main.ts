@@ -24,7 +24,7 @@ import Fastify from 'fastify';
 import { startOps } from './ops/routes.ts';
 
 import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
-import { checkTier } from '../shared/tiers.ts';
+import { checkTier, tierRefusalText } from '../shared/tiers.ts';
 import { treeById } from './content/talent-trees.ts';
 import { PLAYER_RANK, maxLifeFor } from '../shared/leveling.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
@@ -1394,7 +1394,10 @@ export function buildServer() {
      * must NOT clamp — a level above 5 has to extrapolate honestly — which is
      * precisely why the cap has to live wherever a level is written.
      */
-    raiseTalentPoint: (actorId: string, talentId: string): number | null => {
+    raiseTalentPoint: (
+      actorId: string,
+      talentId: string,
+    ): number | { readonly refused: string } | null => {
       const sheet = talentEngine.sheetOf(actorId);
       if (sheet === undefined) return null;
       // NOT IN THE LOADOUT IS NOT A RANK. `points` is keyed by an id that must
@@ -1460,9 +1463,24 @@ export function buildServer() {
         characterLevel: body !== undefined && isPlayer(body) ? body.level : 1,
         treeKnown: known,
       });
-      // REFUSED IS `null`, which is exactly what this seam already answers for
-      // a talent that cannot be raised — the gateway turns it into a sentence.
-      if (!gate.ok) return null;
+      /**
+       * REFUSED CARRIES ITS OWN SENTENCE.
+       *
+       * This returned `null` under a comment claiming "the gateway turns it
+       * into a sentence". It did not: `null` also means "no talent engine" and
+       * "not on this sheet", so the gateway answered `ErrorCode.Internal` and
+       * told a player who was two points of Willpower short that talent points
+       * were not wired into the build.
+       *
+       * `tierRefusalText` is the same function the PANEL uses, which is the
+       * whole point — shared/tiers.ts keeps them one sentence so the greyed `+`
+       * and the refusal cannot disagree.
+       */
+      // `?? ` NEVER FIRES: `tierRefusalText` answers null only for a PASSING
+      // check, and this branch is the failing one. The fallback is here because
+      // the compiler cannot see that and a thrown assertion would be a worse
+      // answer to a player than a plain sentence.
+      if (!gate.ok) return { refused: tierRefusalText(gate) ?? 'Not yet.' };
       sheet.points.set(talentId, next);
       // AND IF THAT WAS A PASSIVE, IT IS NOW WORTH MORE. Unconditional rather
       // than guarded on membership: the helper reads the sheet's own passive
