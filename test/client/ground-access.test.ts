@@ -202,16 +202,39 @@ describe('the loot card lays itself out from the strings alone', () => {
  */
 describe('the menu is fed the object layer', () => {
   it('reads loot onto the viewer own body, beside the actor layer', () => {
-    at('...(occupant.id === selfId ? { loot: lootAt(tile) } : {})');
+    // MATCHED AS A SHAPE. This pinned the whole literal and broke the day the
+    // row list joined it — a failure about an object literal rather than about
+    // the claim, which is that the OBJECT layer reaches the own-body target.
+    expect(CODE).toMatch(/occupant\.id === selfId \? \{ loot: lootAt\(tile\)/);
   });
 
   /**
-   * FOR THE VIEWER AND NOBODY ELSE. `pickup` carries no coordinate — the server
-   * takes what is under the SENDER — so a row fed from a teammate's tile would
-   * be a row that lies about what the button does.
+   * FOR THE VIEWER AND NOBODY ELSE. The server takes what is under the SENDER —
+   * `pickup` carries no coordinate, only an optional id resolved against the
+   * sender's own tile — so a row fed from a teammate's tile would be a row that
+   * lies about what the button does.
    */
   it('does not read it onto anybody else', () => {
-    const wiring = at('...(occupant.id === selfId ? { loot: lootAt(tile) } : {})');
-    expect(wiring, 'the self check was dropped').toBeGreaterThanOrEqual(0);
+    // THE GUARD IS THE CLAIM: the object layer reaches the own-body target
+    // through a `selfId` ternary, so there is no arm that could feed a
+    // teammate's tile. Both halves are asserted — the ternary is present, and
+    // the fields are only ever reached from inside it.
+    const guarded =
+      /occupant\.id === selfId \? \{ loot: lootAt\(tile\), pile: pileAt\(tile\) \} : \{\}/;
+    expect(CODE, 'the self check was dropped').toMatch(guarded);
+    expect(
+      CODE.replace(guarded, ''),
+      'loot reaches an occupant target from somewhere unguarded',
+    ).not.toContain('loot: lootAt(tile), pile');
+  });
+
+  /**
+   * ═══ AND THE PILE TRAVELS WITH IT ═══
+   * `pickupRows` is the port of `ShowPickupFloor` and it is fed from here. Without
+   * this line the menu could only ever offer one row, which means index 0, which
+   * means an item you already own on top of a pile hides everything under it.
+   */
+  it('reads the whole pile, not just whether there is one', () => {
+    expect(CODE).toContain('pile: pileAt(tile)');
   });
 });

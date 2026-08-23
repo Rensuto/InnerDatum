@@ -96,6 +96,21 @@ export type VerbTarget =
        * offered on a teammate's tile would be a row that lies.
        */
       readonly loot?: TileLoot;
+      /**
+       * WHAT IS ACTUALLY ON THE TILE, newest-on-top order, when the viewer is
+       * standing on it. Empty or absent everywhere else.
+       *
+       * ═══ ONE ROW PER ITEM IS THE PORT OF `ShowPickupFloor` ═══
+       * A single "Pick up" row could only ever mean index 0, so an item the
+       * player already owns sitting on top made everything under it permanently
+       * unreachable. Upstream opens a list when a tile holds more than one thing;
+       * this is that list, in the menu that already exists rather than in a
+       * second dialog.
+       *
+       * NAMES ARE OPTIONAL ON THE WIRE (`GroundItemView.name`), so a row falls
+       * back to the bare verb rather than to a blank label.
+       */
+      readonly pile?: readonly { readonly id: string; readonly name?: string }[];
     }
   | { readonly kind: 'hostile'; readonly actor: ActorView }
   | { readonly kind: 'body'; readonly actor: ActorView }
@@ -124,6 +139,8 @@ export type VerbTarget =
        * `ground` IT MUST PASS THIS, or the verb is reachable only from `,`.
        */
       readonly loot?: TileLoot;
+      /** The tile's pile — same field as the `self` variant above. */
+      readonly pile?: readonly { readonly id: string; readonly name?: string }[];
     };
 
 /**
@@ -218,6 +235,70 @@ const TOPIC_ROWS = Object.values(TopicId).map((topic) => ({
 const TRAVEL_HERE = 'Travel here';
 const POINT_HERE = 'Point here';
 const PICK_UP = 'Pick up';
+/**
+ * How many named rows a pile is allowed before the list stops naming them.
+ *
+ * The menu draws every row at `ROW_H` with no scroll (ui/contextmenu.ts), so an
+ * unbounded pile would be a box taller than the window. Six is chosen against
+ * that geometry rather than against any rule about loot: at 16 pixels a row plus
+ * a title, six named rows and the ordinary tile verbs still fit inside the
+ * smallest logical viewport this client renders.
+ */
+const PILE_ROWS_MAX = 6;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TILE'S PILE AS ROWS — `ShowPickupFloor`, in the menu that already exists.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ ONE ROW MEANT INDEX 0, AND INDEX 0 COULD BE A WALL ═══
+ * `pickup` takes the top of the pile, and the top can be something the player
+ * already owns — at which point the refusal is "you already have a Watchman's
+ * Coat" and everything under it is unreachable, permanently, with no control
+ * anywhere that could ask for it. Same for a full bag over a pile with coins
+ * in it.
+ *
+ * ═══ ONE ITEM KEEPS THE BARE ROW, DELIBERATELY ═══
+ * With nothing to choose between, "Pick up" is the right label and the bare
+ * frame is the right frame — it is what `,` sends, and the two controls saying
+ * the same thing is worth more than naming an item the player can already see.
+ * Upstream opens its dialog on the same condition: more than one.
+ *
+ * ═══ AND A GREYED ROW STILL NAMES WHAT IS THERE ═══
+ * Out of reach, the list still lists — the whole point of a greyed row is that a
+ * player learns what is on a tile they are not standing on, which is what makes
+ * walking there a decision.
+ */
+function pickupRows(
+  pile: readonly { readonly id: string; readonly name?: string }[],
+  loot: TileLoot,
+): readonly MenuItem[] {
+  const enabled = loot === TileLoot.Underfoot;
+  if (pile.length <= 1) return [{ action: MapVerb.Pickup, label: PICK_UP, enabled }];
+
+  const rows: MenuItem[] = pile.slice(0, PILE_ROWS_MAX).map((entry) => ({
+    action: MapVerb.Pickup,
+    // `Take` RATHER THAN `Pick up`, because the name has to fit beside it: the
+    // box is 28 glyphs wide (see `LABELS ARE SIZED IN CHARACTERS` above) and a
+    // five-character verb leaves twenty-three for the item.
+    label: entry.name === undefined ? PICK_UP : `Take ${entry.name}`,
+    enabled,
+    groundId: entry.id,
+  }));
+
+  // ═══ NOTHING IS DROPPED SILENTLY ═══ ui/caselog.ts's rule, which every
+  // surface in this client follows: a list that has stopped short says so. The
+  // row is disabled because there is nothing to press — it is a sentence, not a
+  // control — and pressing a disabled row closes the menu and does nothing else.
+  if (pile.length > PILE_ROWS_MAX) {
+    rows.push({
+      action: MapVerb.Pickup,
+      label: `…and ${String(pile.length - PILE_ROWS_MAX)} more underneath`,
+      enabled: false,
+    });
+  }
+  return rows;
+}
 
 /** No rows. Shared so every "nothing to offer" branch is visibly the same one. */
 const NO_ITEMS: readonly MenuItem[] = [];
@@ -252,7 +333,10 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
          */
         const mine: MenuItem[] =
           (target.loot ?? TileLoot.None) === TileLoot.Underfoot
-            ? [{ action: MapVerb.Pickup, label: PICK_UP, enabled: true }]
+            ? // THE SAME LIST THE TILE ROW BUILDS — see `pickupRows`. Right-clicking
+              // your OWN BODY and right-clicking the ground under it are the same
+              // question, and answering it two ways would be two menus.
+              [...pickupRows(target.pile ?? [], TileLoot.Underfoot)]
             : [];
         if (ctx.partyIds.size > 1) {
           return {
@@ -389,11 +473,7 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
       // thing under the cursor.
       const loot = target.loot ?? TileLoot.None;
       if (loot !== TileLoot.None) {
-        items.unshift({
-          action: MapVerb.Pickup,
-          label: PICK_UP,
-          enabled: loot === TileLoot.Underfoot,
-        });
+        items.unshift(...pickupRows(target.pile ?? [], loot));
       }
 
       return { title, items };

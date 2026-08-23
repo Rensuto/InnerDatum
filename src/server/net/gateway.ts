@@ -284,6 +284,7 @@ import type {
   ClientShopSell,
   ShopMsg,
   ClientEquip,
+  ClientPickup,
   ClientHello,
   ClientInspect,
   ClientMove,
@@ -12092,16 +12093,43 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * second cap vanished when I relogged" with the bug looking like it is in
    * persistence when it is here.
    */
-  const handlePickup = (session: Session): void => {
+  const handlePickup = (session: Session, msg: ClientPickup): void => {
     const { world } = realmFor(session);
     const body = lootActor(session, 'pickup');
     if (body === undefined) return;
 
     // THE SENDER'S OWN TILE. Not a tile from the frame — there is none.
     const pile = world.itemsAt(body.x, body.y);
-    const top = pile[0];
-    if (top === undefined) {
+    if (pile.length === 0) {
       sendError(session.socket, ErrorCode.Refused, 'there is nothing to pick up here');
+      return;
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHICH ONE — the named item, or the top of the pile.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ═══ THE DEAD END THIS CLOSES ═══
+     * This was `pile[0]` and nothing else, so an item you ALREADY OWN sitting on
+     * top made everything under it permanently unreachable: the refusal says
+     * "you already have a Watchman's Coat" and there was no way to ask for the
+     * thing beneath it. Upstream's `ShowPickupFloor` lists the tile and lets you
+     * choose; `PickupMsg.id` is that choice.
+     *
+     * RESOLVED AGAINST THIS PILE AND NOTHING ELSE, which is the whole safety
+     * argument (see the schema): an id naming a tile the sender is not standing
+     * on simply is not in this array, and the worst a forged one achieves is the
+     * refusal below. Same shape as `equip`, which resolves its id against the
+     * sender's own bag.
+     *
+     * ABSENT STILL MEANS INDEX 0 — `,` is unchanged, and `World.itemsAt` fixes
+     * the order precisely so "the top of the pile" means one thing to the
+     * server, the prompt and a replay.
+     */
+    const top = msg.id === undefined ? pile[0] : pile.find((entry) => entry.id === msg.id);
+    if (top === undefined) {
+      sendError(session.socket, ErrorCode.Refused, 'that is not on this tile any more');
       return;
     }
 
@@ -13344,7 +13372,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // and `drop` carry an item id resolved against the SENDER'S OWN bag, and
       // `unequip` carries one of seven slots. See the four handlers.
       case 'pickup':
-        handlePickup(session);
+        handlePickup(session, msg);
         return;
       case 'equip':
         handleEquip(session, msg);

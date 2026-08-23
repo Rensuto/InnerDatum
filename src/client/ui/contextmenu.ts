@@ -126,6 +126,21 @@ export type MenuItem = {
    * arm for.
    */
   readonly topic?: string;
+  /**
+   * WHICH ITEM ON THE TILE, for a `Pickup` row and nothing else — a
+   * `GroundItemView.id`, or absent for "the top of the pile".
+   *
+   * Carried on the row for the reason `topic` above gives: one verb with a
+   * payload, not one verb per item, so the switch over `action` stays a closed
+   * union the compiler can check.
+   *
+   * ═══ IT EXISTS BECAUSE A PILE HAD A DEAD END ═══
+   * `pickup` took index 0 and nothing else, so an item you already own on top of
+   * a pile made everything under it permanently unreachable. Upstream's answer is
+   * `ShowPickupFloor` — the tile's whole list, and you choose. These rows are
+   * that list.
+   */
+  readonly groundId?: string;
 };
 
 export type ContextMenuOptions = {

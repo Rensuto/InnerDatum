@@ -1494,3 +1494,88 @@ describe('the first thing you ever pick up', () => {
     expect(saidTo(ren).some((line) => line.startsWith('Nothing on your'))).toBe(false);
   });
 });
+
+describe('a pile is not a lid', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `pickup` TOOK INDEX 0, SO INDEX 0 COULD BE A WALL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * An item the player ALREADY OWNS on top of a pile made everything under it
+   * permanently unreachable: the refusal is "you already have a Watchman's Cap"
+   * and there was no frame that could ask for the thing beneath it. Upstream's
+   * `ShowPickupFloor` lists the tile and lets you choose; `PickupMsg.id` is that
+   * choice.
+   *
+   * THE MODULE'S OWN `server` AND ITS `afterEach`, deliberately: `bodyOf` and
+   * every other helper here read that binding, so a locally-scoped one would
+   * shadow it and hand these tests a body out of a different world.
+   */
+  it('reaches an item buried under one the player already owns', async () => {
+    server = await boot('pickup-buried');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+
+    // The cap FIRST so it is index 0, and the player is already carrying one.
+    body.carried = ['item_watchmans_cap'];
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_cap');
+    const buried = server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_boots');
+
+    // THE OLD BEHAVIOUR, PINNED: the bare frame still takes the top, and the top
+    // is still refused. That was never the bug — the bug was having no
+    // alternative to it.
+    ren.send({ t: 'pickup' });
+    await ren.settle();
+    expect(body.carried).toEqual(['item_watchmans_cap']);
+
+    // AND NOW THE WAY OUT.
+    ren.send({ t: 'pickup', id: buried });
+    await ren.settle();
+    expect(body.carried).toContain('item_watchmans_boots');
+  });
+
+  it('refuses an id that is not on the sender’s own tile', async () => {
+    /**
+     * THE WHOLE SAFETY ARGUMENT. The frame still carries no coordinate; the id is
+     * resolved against `itemsAt(sender.x, sender.y)` and nothing else, so an item
+     * lying somewhere else simply is not in that array. Same guarantee `equip`
+     * gets by resolving against the sender's own bag.
+     */
+    server = await boot('pickup-elsewhere');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.carried = [];
+
+    const faraway = server.world.addGroundItem({ x: 2, y: 2 }, 'item_watchmans_boots');
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_cap');
+
+    ren.send({ t: 'pickup', id: faraway });
+    await ren.settle();
+    expect(body.carried, 'a forged id must take nothing at all').toEqual([]);
+    // ...and the item is still where it was, rather than quietly deleted.
+    expect(server.world.itemsAt(2, 2)).toHaveLength(1);
+  });
+
+  it('still takes the top when no id is named', async () => {
+    // `,` is unchanged and still means "the top of the pile", which is what
+    // `World.itemsAt` fixes the order for.
+    server = await boot('pickup-top');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.carried = [];
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_cap');
+    server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_boots');
+
+    const top = server.world.itemsAt(10, 10)[0];
+    expect(top).toBeDefined();
+    ren.send({ t: 'pickup' });
+    await ren.settle();
+    expect(body.carried).toEqual([top?.itemId]);
+  });
+});

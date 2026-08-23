@@ -2800,6 +2800,36 @@ export const ITEM_ID_MAX_CHARS = 64;
 const PickupSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('pickup'),
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH ONE — a `GroundItemView.id`, or absent for the top of the pile.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ THE DEAD END THIS OPENS ═══
+   * `handlePickup` took `pile[0]` and nothing else, so an item you ALREADY OWN
+   * sitting on top of a pile made everything under it permanently unreachable —
+   * the refusal is "you already have a Watchman's Coat" and there was no way to
+   * ask for the thing beneath it. Same for a full bag over a pile with coins in
+   * it. Upstream's answer is `ShowPickupFloor`: the tile's whole list, and you
+   * pick.
+   *
+   * ═══ THIS IS NOT THE COORDINATE THE NOTE ABOVE REFUSES ═══
+   * That paragraph is about naming a TILE — *"it would still let a patched
+   * client name a pile it is nowhere near"* — and it still stands. This id is
+   * resolved against `itemsAt(sender.x, sender.y)` and nothing else, so an id
+   * from another tile is refused: the worst a forged one achieves is an error,
+   * which is exactly the guarantee `EquipSchema.itemId` gives by resolving
+   * against the sender's own `carried`.
+   *
+   * ═══ OPTIONAL, SO THE KEY IS UNCHANGED ═══
+   * `,` still sends the bare frame and still means "the top of the pile", which
+   * is what `World.itemsAt` fixes the order for. The id is what the tile's verb
+   * menu sends when a player picks a row out of the list.
+   *
+   * A GROUND ID, NOT AN `itemId`. A pile can hold two of the same thing, and a
+   * catalogue id would name both — this is the instance.
+   */
+  id: z.string().min(1).max(ITEM_ID_MAX_CHARS).optional(),
 });
 
 /**

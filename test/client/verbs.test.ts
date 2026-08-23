@@ -382,3 +382,84 @@ describe('picking up what is under your own feet', () => {
     expect(actionsOf(menu.items)).not.toContain(MapVerb.Pickup);
   });
 });
+
+describe('a pile is a list, not a lid', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `pickup` TOOK INDEX 0 AND NOTHING ELSE, SO INDEX 0 COULD BE A WALL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * An item the player ALREADY OWNS sitting on top of a pile made everything
+   * under it permanently unreachable — the refusal is "you already have a
+   * Watchman's Coat" and no control anywhere could ask for the thing beneath.
+   * Same for a full bag over a pile with coins in it.
+   *
+   * Upstream's answer is `ShowPickupFloor`: the tile's whole list, and you pick.
+   * These rows are that list, in the menu that already exists.
+   */
+  const tile = { x: 12, y: 7 };
+  const pileOf = (...names: string[]) => names.map((name, i) => ({ id: `g${String(i)}`, name }));
+
+  const rows = (
+    pile: readonly { id: string; name?: string }[],
+    loot: TileLoot = TileLoot.Underfoot,
+  ) =>
+    verbsFor(ctxFor({ kind: 'tile', tile, walkable: true, loot, pile })).items.filter(
+      (item) => item.action === MapVerb.Pickup,
+    );
+
+  it('keeps one bare row when there is nothing to choose between', () => {
+    // WITH ONE ITEM the bare frame is the right frame — it is what `,` sends,
+    // and two controls saying the same thing beats naming something the player
+    // can already see. Upstream opens its dialog on the same condition.
+    const only = rows(pileOf('Watchman’s Coat'));
+    expect(only).toHaveLength(1);
+    expect(only[0]?.label).toBe('Pick up');
+    expect(only[0]?.groundId, 'a lone row means the top of the pile').toBeUndefined();
+  });
+
+  it('names every item once there is a choice', () => {
+    const many = rows(pileOf('Watchman’s Coat', 'Signet', 'Boots'));
+    expect(many).toHaveLength(3);
+    expect(many.map((item) => item.label)).toEqual([
+      'Take Watchman’s Coat',
+      'Take Signet',
+      'Take Boots',
+    ]);
+    // THE ID IS WHAT MAKES THE SECOND ITEM REACHABLE AT ALL.
+    expect(many.map((item) => item.groundId)).toEqual(['g0', 'g1', 'g2']);
+  });
+
+  it('keeps the server’s order and never re-sorts it', () => {
+    // `World.itemsAt` fixes the order so "the top of the pile" means one thing
+    // to the server, this menu and a replay. A sort here would make the bare
+    // `,` frame and the first row disagree about which item that is.
+    const many = rows(pileOf('Zeta', 'Alpha', 'Mid'));
+    expect(many.map((item) => item.label)).toEqual(['Take Zeta', 'Take Alpha', 'Take Mid']);
+  });
+
+  it('still lists what is on a tile you are not standing on, greyed', () => {
+    // A greyed row is how a player learns what is over there, which is what
+    // makes walking to it a decision.
+    const far = rows(pileOf('Coat', 'Signet'), TileLoot.OutOfReach);
+    expect(far).toHaveLength(2);
+    expect(far.every((item) => !item.enabled)).toBe(true);
+  });
+
+  it('says out loud when a pile is deeper than the menu', () => {
+    // ui/caselog.ts's rule: a list that has stopped short says so. The menu has
+    // no scroll, so an unbounded pile would be a box taller than the window.
+    const deep = rows(pileOf('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'));
+    expect(deep).toHaveLength(7);
+    expect(deep.at(-1)?.label).toBe('…and 2 more underneath');
+    expect(deep.at(-1)?.enabled, 'the note is a sentence, not a control').toBe(false);
+  });
+
+  it('falls back to the bare verb for an item with no name', () => {
+    // `GroundItemView.name` is optional on the wire, and a blank label is worse
+    // than a generic one.
+    const rowsHere = rows([{ id: 'g0' }, { id: 'g1', name: 'Signet' }]);
+    expect(rowsHere[0]?.label).toBe('Pick up');
+    expect(rowsHere[0]?.groundId, 'it still names WHICH one').toBe('g0');
+  });
+});

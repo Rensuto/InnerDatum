@@ -2376,6 +2376,24 @@ function lootAt(tile: TileXY): TileLoot {
 }
 
 /**
+ * EVERYTHING ON ONE TILE, in the `ground` frame's own order.
+ *
+ * THE ORDER IS THE SERVER'S AND IS NEVER RE-SORTED. `World.itemsAt` fixes it so
+ * that "the top of the pile" means the same thing to the server, to this menu
+ * and to a replay — and the bare `pickup` frame, which `,` sends, takes index 0
+ * of exactly this list.
+ *
+ * It feeds `pickupRows`, which is the port of `ShowPickupFloor`: one row per
+ * item, so an item the player already owns sitting on top no longer makes
+ * everything under it unreachable.
+ */
+function pileAt(tile: TileXY): readonly { id: string; name?: string }[] {
+  return ground
+    .filter((item) => item.cell[0] === tile.x && item.cell[1] === tile.y)
+    .map((item) => ({ id: item.id, ...(item.name === undefined ? {} : { name: item.name }) }));
+}
+
+/**
  * THE ONE FRAME AND TWO PIECES OF LOCAL STATE THE INVENTORY PANEL IS BUILT FROM.
  *
  * DELIBERATELY NOT `charSheetView()`'S SHAPE. The sheet joins four frames through
@@ -6206,8 +6224,12 @@ async function boot(): Promise<void> {
    * pickup somebody else won by a tenth of a second, and the second of those is a
    * thing this design deliberately allows.
    */
-  function sendPickup(): void {
-    if (!socket.send({ v: PROTOCOL_VERSION, t: 'pickup' })) {
+  /**
+   * @param id which item on the tile — a `GroundItemView.id` — or undefined for
+   *   the top of the pile, which is what `,` means and has always meant.
+   */
+  function sendPickup(id?: string): void {
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'pickup', ...(id === undefined ? {} : { id }) })) {
       showNotice('not connected — that did not go out');
     }
   }
@@ -6701,7 +6723,7 @@ async function boot(): Promise<void> {
         : {
             kind: 'player',
             actor: occupant,
-            ...(occupant.id === selfId ? { loot: lootAt(tile) } : {}),
+            ...(occupant.id === selfId ? { loot: lootAt(tile), pile: pileAt(tile) } : {}),
           };
     }
     // `walkable` is exactly `travelTargetAllowed` and nothing else — the ONE
@@ -6720,6 +6742,7 @@ async function boot(): Promise<void> {
       tile,
       walkable: level !== null && travelTargetAllowed(level, tile),
       loot: lootAt(tile),
+      pile: pileAt(tile),
     };
   }
 
@@ -6817,7 +6840,16 @@ async function boot(): Promise<void> {
         // that gets here is already about the tile the player is standing on. A
         // disabled row still closes the menu and does nothing else (step 1 of
         // `mousedown`), so this cannot be reached from the greyed form.
-        sendPickup();
+        //
+        // ═══ THE ROW MAY NAME WHICH ITEM, AND STILL NAMES NO TILE ═══
+        // `MenuItem.groundId` is a `GroundItemView.id`, and the server resolves
+        // it against `itemsAt(sender.x, sender.y)` — the sender's OWN live tile,
+        // exactly as before. So the security argument above is untouched: there
+        // is still no coordinate on the frame, and an id from anywhere else is
+        // simply not in that array. What it buys is the pile's second item,
+        // which `ShowPickupFloor` has offered upstream all along and which was
+        // unreachable here whenever the top was something you already owned.
+        sendPickup(item.groundId);
         return;
       case MapVerb.Talk:
         /**
