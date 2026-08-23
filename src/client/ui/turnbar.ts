@@ -50,6 +50,7 @@
 
 import { TurnActorState } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
+import { MENU_BUTTON_W } from './menubutton.ts';
 import { drawPlayfieldFrame } from './combatbanner.ts';
 import { fitText } from './panel.ts';
 import { bellSeconds, owedCount, selfCard, turnCardsHeight } from './turncards.ts';
@@ -263,7 +264,15 @@ export function drawTurnBar(options: TurnBarOptions): void {
   ctx.fillRect(0, 0, width, TURN_BAR_H);
   ctx.font = FONT_BOLD;
   ctx.fillStyle = yours ? PALETTE.GOLD : PALETTE.SILVER;
-  ctx.fillText(fitText(ctx, bannerFor(view), width - PAD * 2), PAD, TURN_BAR_H / 2);
+  /**
+   * THE BANNER STARTS AFTER THE MENU BUTTON, which owns the left end of this
+   * strip — see ui/menubutton.ts for why the top-left is the one corner nothing
+   * else claims. The two share the row the way `drawResource` and `drawXpBar`
+   * share theirs: a constant offset, so neither measures the other and neither
+   * can move under the other's text.
+   */
+  const left = MENU_BUTTON_W + PAD;
+  ctx.fillText(fitText(ctx, bannerFor(view), width - left - PAD), left, TURN_BAR_H / 2);
 
   // THE FRAME AROUND THE PLAYFIELD. Two concentric rings, one painter, and it
   // lives in ui/combatbanner.ts — see the long note there on why combat does not

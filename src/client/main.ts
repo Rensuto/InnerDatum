@@ -307,6 +307,7 @@ import type { HoverCard } from './ui/panel.ts';
 import { hotbarTipAt } from './ui/hotbar.ts';
 import { inventoryTipAt } from './ui/inventory.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
+import { drawMenuButton, menuButtonHit } from './ui/menubutton.ts';
 import {
   CROSSING_INK,
   doorwayAt,
@@ -3627,6 +3628,18 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // stack against, so nothing below can overlap the strip by carrying its own
   // copy of how tall it is.
   drawTurnBar({ ctx, view, width, height });
+  /**
+   * ═══ THE ONLY POINTER ROUTE INTO THE ESCAPE MENU — Minimalist.lua:1888-1897 ═══
+   *
+   * AFTER the bar so it sits on top of the strip, and UNCONDITIONALLY because
+   * `drawTurnBar` returns early with no `turn` frame — see ui/menubutton.ts. A
+   * way into the menu that came and went with a frame would be worse than none.
+   */
+  drawMenuButton(
+    ctx,
+    pointerPoint !== null && menuButtonHit(pointerPoint.x, pointerPoint.y),
+    view.turn !== null,
+  );
   const hudTop = layout.hudTop;
   drawTurnCards({ ctx, sprites, view, width, y: TURN_BAR_H });
 
@@ -10092,6 +10105,21 @@ async function boot(): Promise<void> {
      * `tileAtClient` and would silently resolve a minimap click to whatever
      * happens to be behind the corner of the screen.
      */
+    /**
+     * ═══ THE MENU BUTTON — the only pointer route in, and it takes the click
+     *     before anything that reads a world tile ═══
+     *
+     * Upstream's `tb_mainmenu` fires `game.key:triggerVirtual("EXIT")`, the same
+     * virtual key Escape sends; this calls the same `openMenu` the key handler
+     * does. One verb, two ways in — and the menu's own refusal (no room for the
+     * panel) is inside `openMenu`, so a short window answers in words here too.
+     */
+    if (point !== null && menuButtonHit(point.x, point.y)) {
+      event.preventDefault();
+      openMenu();
+      return;
+    }
+
     if (point !== null) {
       const mapped = minimapTileAt(point.x, point.y, logicalW);
       if (mapped !== null) {

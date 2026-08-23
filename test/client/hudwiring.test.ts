@@ -685,3 +685,45 @@ describe('the minimap is wired to something', () => {
     expect(CODE).toContain('minimapCardAt(pointerPoint.x, pointerPoint.y, width)');
   });
 });
+
+describe('there is a pointer route into the escape menu', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT OPENED ON THE ESCAPE KEY AND ON NOTHING ELSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `escapemenu.ts` says of its RESUME row that "a surface that changed what
+   * Escape means owes the player a visible, clickable way OUT". That was true and
+   * implemented; there was no clickable way IN, so a pointer-only player inside a
+   * Discord Activity could reach the character sheet, the talents, the inventory
+   * and the key bindings by no route at all.
+   *
+   * ui/menubutton.ts tests the control. This pins the WIRING.
+   */
+  it('draws the button every frame, not only when the bar is drawn', () => {
+    // `drawTurnBar` returns early with no `turn` frame. A route into the menu
+    // that came and went with a frame would be worse than none.
+    expect(CODE).toContain('drawMenuButton(');
+    const start = at('drawMenuButton(');
+    const line = CODE.slice(CODE.lastIndexOf('\n', start), start);
+    expect(line.trim(), 'drawMenuButton is a statement, not a conditional').toBe('');
+  });
+
+  it('opens the SAME menu the key opens', () => {
+    // Upstream's `tb_mainmenu` fires `triggerVirtual("EXIT")` — the very key
+    // Escape sends. One verb, two ways in, and the menu's own "no room" refusal
+    // lives inside `openMenu` so both routes answer alike.
+    const start = at('menuButtonHit(point.x, point.y)');
+    expect(CODE.slice(start, start + 200)).toContain('openMenu()');
+  });
+
+  it('takes the click before anything that reads a world tile', () => {
+    // Both the minimap branch and shift-click resolve a TILE; either would walk
+    // the player somewhere because they reached for the menu.
+    const button = at('menuButtonHit(point.x, point.y)');
+    const mini = at('minimapTileAt(point.x, point.y, logicalW)');
+    const shift = at('if (event.shiftKey) {');
+    expect(button).toBeLessThan(mini);
+    expect(mini).toBeLessThan(shift);
+  });
+});
