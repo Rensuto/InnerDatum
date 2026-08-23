@@ -96,6 +96,31 @@ function handlerBody(name: (typeof HANDLER_MARKERS)[number]): string {
   return CODE.slice(start, end);
 }
 
+/**
+ * The body of a plain named function, brace-matched.
+ *
+ * NOT `handlerBody`, which slices between the six `KeyHandlers` markers and
+ * would silently return the wrong region for anything else — it did, and the
+ * assertion below passed on a slice that was not the function at all.
+ */
+function fnBody(head: string): string {
+  const start = CODE.indexOf(head);
+  expect(start, `${head} still exists`).toBeGreaterThanOrEqual(0);
+  let depth = 0;
+  let seen = false;
+  for (let i = start; i < CODE.length; i += 1) {
+    const ch = CODE[i];
+    if (ch === '{') {
+      depth += 1;
+      seen = true;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (seen && depth === 0) return CODE.slice(start, i + 1);
+    }
+  }
+  throw new Error(`${head} has no end`);
+}
+
 /** Where a snippet sits in the whole file, asserted to exist as it goes. */
 function at(snippet: string, within: string = CODE): number {
   const index = within.indexOf(snippet);
@@ -353,6 +378,64 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
 
 describe('the Escape chain gained three head links and one tail link', () => {
   const body = handlerBody('onCancel: () => {');
+
+  it('closes an open panel before it opens the menu over the top of it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * REPORTED FROM PLAY: "the interface is clunky as each panel can only be
+     * opened AND closed with hotkey".
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A player who opened the inventory with `i` had exactly one way out of it,
+     * and Escape — the key every other game has trained them to press — opened
+     * the escape menu ON TOP of the panel instead.
+     *
+     * This file's own chain comment used to argue the panels should stay out,
+     * because adding ONLY the character sheet would make Escape depend on which
+     * panel happened to be open. That was a fair objection to a half measure:
+     * all three answer now, so there is nothing left to depend on. It is also
+     * the more faithful port, which the old comment conceded in passing —
+     * "ToME's sheet IS closed by Escape".
+     */
+    const panels = at('if (closeTopPanel()) return;', body);
+    const menu = at('openMenu();', body);
+    expect(panels, 'no panel link in the chain').toBeGreaterThan(-1);
+    expect(panels, 'the menu opens over a panel that is still up').toBeLessThan(menu);
+
+    // AND BELOW THE IN-PROGRESS ACTIONS. A running walk and a live aim are
+    // things the player STARTED and the panel is a surface they left open;
+    // Escape stops the action first, which is the order the rest of this chain
+    // already argues for.
+    expect(at('if (cancelTravelIfActive()) return;', body)).toBeLessThan(panels);
+    expect(at('if (targeting !== null && targeting.active()) {', body)).toBeLessThan(panels);
+  });
+
+  it('closes the panel on top, and leaves the HUD furniture alone', () => {
+    /**
+     * ═══ THE ORDER IS THE HIT-TEST ORDER, WHICH IS PAINT ORDER REVERSED ═══
+     * `mousedown` tests inventory, then talents, then sheet. Escape reading the
+     * same list is what makes one press and one click do the same thing to the
+     * same surface — the one the player can see on top.
+     */
+    const picker = fnBody('function closeTopPanel(): boolean {');
+    const inv = at('if (invVisible) {', picker);
+    const talents = at('if (talentsVisible) {', picker);
+    const sheet = at('if (sheetVisible) {', picker);
+    expect(inv).toBeGreaterThan(-1);
+    expect(inv, 'talents close before the inventory drawn over them').toBeLessThan(talents);
+    expect(talents, 'the sheet closes before the talents drawn over it').toBeLessThan(sheet);
+
+    /**
+     * ═══ AND THE CASE LOG AND PARTY PANE ARE NOT IN IT ═══
+     * They default ON and are HUD furniture, not opened interfaces. ToME's
+     * message log and party frame are not dialogs and its Escape does not close
+     * them either, so `m` and `p` stay their only toggles. Escape hiding the
+     * party pane would be a key that quietly removes the thing telling you a
+     * friend is bleeding out.
+     */
+    expect(picker, 'Escape hides the Case Log').not.toContain('logVisible');
+    expect(picker, 'Escape hides the party pane').not.toContain('partyVisible');
+  });
 
   it('puts all three head links below the picker swallow and above the token menu', () => {
     // BELOW THE PICKER because a required screen must stay undismissible: there

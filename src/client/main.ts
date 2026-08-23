@@ -1510,9 +1510,9 @@ let sheetTalentsHovered = false;
 /**
  * THE TALENT PANEL, AND IT DEFAULTS OFF FOR THE SHEET'S OWN REASON.
  *
- * `g` opens it, `g` closes it, and the × on its header is the mouse's copy of
- * that act. It is NOT in the Escape chain — see `onCancel`, which explains at
- * length why no dock surface is.
+ * `g` opens it, `g` closes it, the × on its header is the mouse's copy of
+ * that act, and Escape closes it as the topmost open panel — see
+ * `closeTopPanel`.
  *
  * ═══ IT IS A PANEL AND THE SERVER IS NEVER TOLD IT IS OPEN ═══
  * Nothing here parks a body, sets a standing order or touches the barrier, and
@@ -1590,9 +1590,9 @@ let talentsArmedId: string | null = null;
 /**
  * THE INVENTORY PANEL (v10), AND IT DEFAULTS OFF FOR THE SHEET'S OWN REASON.
  *
- * `i` opens it, `i` closes it, and the × on its header is the mouse's copy of
- * that act. It is NOT in the Escape chain — see `onCancel`, which explains at
- * length why no dock surface is.
+ * `i` opens it, `i` closes it, the × on its header is the mouse's copy of
+ * that act, and Escape closes it as the topmost open panel — see
+ * `closeTopPanel`.
  *
  * ═══ IT IS A PANEL AND THE SERVER IS NEVER TOLD IT IS OPEN ═══
  * Nothing here parks a body, sets a standing order or touches the barrier, and
@@ -6492,6 +6492,62 @@ async function boot(): Promise<void> {
    * a preference, and re-selecting it on every open would be the panel forgetting
    * something the player told it.
    */
+  /**
+   * A TOGGLE, and the `inspect` goes out on the way OPEN only. The panel is
+   * built from four frames and three of them (`loadout`, `cooldowns`,
+   * `resource`) are already held here; the fourth is the viewer's own
+   * `inspected` answer, which is cached per game turn — so opening the sheet
+   * either draws from a fresh cache entry immediately or asks once and fills in
+   * a frame later, and ui/charsheet.ts draws "gathering…" rather than an empty
+   * box in that window.
+   *
+   * IT IS A FUNCTION RATHER THAN TWO LINES IN THE `ShowSheet` CASE because
+   * Escape closes this panel too now, and a second copy of the close would be a
+   * second place to forget the hover reset — which is exactly the shape that
+   * leaves a × highlighted under a pointer that has since moved.
+   */
+  /**
+   * Close the topmost open panel, and say whether there was one.
+   *
+   * ═══ ORDER IS THE HIT-TEST ORDER, WHICH IS PAINT ORDER REVERSED ═══
+   * `mousedown` tests inventory, then talents, then sheet, because that is the
+   * order they are drawn in reverse and "the thing you can see on top is the
+   * thing you hit" is a rule this file already keeps. Escape reads the same
+   * list for the same reason: the panel it closes is always the one on top, so
+   * one press and one click do the same thing to the same surface.
+   *
+   * ONE PER CALL. The Escape chain's contract is that a press backs out of
+   * exactly one thing, and three panels open is three presses — which is also
+   * what ToME does, one `unregisterDialog` per press.
+   */
+  function closeTopPanel(): boolean {
+    if (invVisible) {
+      toggleInventoryPanel(false);
+      return true;
+    }
+    if (talentsVisible) {
+      toggleTalentPanel(false);
+      return true;
+    }
+    if (sheetVisible) {
+      toggleSheetPanel(false);
+      return true;
+    }
+    return false;
+  }
+
+  function toggleSheetPanel(open?: boolean): void {
+    sheetVisible = open ?? !sheetVisible;
+    // The hover state goes with it, or the × would come back highlighted next
+    // time the panel opens under a pointer that has since moved.
+    if (!sheetVisible) {
+      sheetCloseHovered = false;
+      sheetTalentsHovered = false;
+    }
+    requestSelfSheet();
+    requestDraw();
+  }
+
   function toggleInventoryPanel(open?: boolean): void {
     invVisible = open ?? !invVisible;
     if (!invVisible) {
@@ -7432,22 +7488,7 @@ async function boot(): Promise<void> {
         attemptRespawn();
         return;
       case UiCommand.ShowSheet:
-        // A TOGGLE, and the `inspect` goes out on the way OPEN only. The panel
-        // is built from four frames and three of them (`loadout`, `cooldowns`,
-        // `resource`) are already held here; the fourth is the viewer's own
-        // `inspected` answer, which is cached per game turn — so opening the
-        // sheet either draws from a fresh cache entry immediately or asks once
-        // and fills in a frame later, and ui/charsheet.ts draws "gathering…"
-        // rather than an empty box in that window.
-        sheetVisible = !sheetVisible;
-        // The hover state goes with it, or the × would come back highlighted
-        // next time the panel opens under a pointer that has since moved.
-        if (!sheetVisible) {
-          sheetCloseHovered = false;
-          sheetTalentsHovered = false;
-        }
-        requestSelfSheet();
-        requestDraw();
+        toggleSheetPanel();
         return;
       case UiCommand.ShowTalents:
         // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING. Unlike the sheet, both
@@ -7492,10 +7533,8 @@ async function boot(): Promise<void> {
         //
         // AND THE SERVER IS NOT TOLD IT IS OPEN. No standing hold, no park, no
         // barrier interaction of any kind — see `invVisible` for the whole of
-        // decision (g). This case is also NOT mirrored in `onCancel`: no dock
-        // surface is in the Escape chain, and that block explains why adding one
-        // would make the key's behaviour depend on which panel happened to be
-        // open.
+        // decision (g). Escape reaches this panel through `closeTopPanel`, which
+        // is a separate question from the barrier one and is answered there.
         //
         // `i` IS PORTED AS A DIALOG-LOCAL MNEMONIC, not as a shipped binding.
         // The default keybind tables are absent from this sparse clone of
@@ -8502,16 +8541,11 @@ async function boot(): Promise<void> {
       // recently opened of them and the most modal-feeling: it sits over the map
       // with the pointer already on it.
       //
-      // ═══ AND THE CHARACTER SHEET IS NOT IN THIS CHAIN AT ALL ═══
-      // Deliberately, and for consistency over fidelity. ToME's sheet IS closed
-      // by Escape, but ToME's sheet is a registered modal dialog and ours is a
-      // panel; porting the dismissal without the modality is the half-port. Here
-      // the Case Log and the party pane both cover the map and neither answers to
-      // Escape, so adding only the sheet would make this key's behaviour depend on
-      // which panel happened to be open — and the contract below is that ONE
-      // press backs out of exactly ONE thing, in a fixed order. `c` toggles the
-      // sheet, symmetrically with `m` and `p`, and the × on its header is the
-      // mouse's copy of that key.
+      // ═══ THE THREE OPENED PANELS ARE IN THE CHAIN NOW — SEE `closeTopPanel` ═══
+      // This block used to argue they should not be, on the ground that adding
+      // ONLY the sheet would make Escape's behaviour depend on which panel
+      // happened to be open. That objection was right about the half-measure and
+      // wrong about the conclusion: the fix is to take all three, not none.
       if (tokenMenu?.close() === true) return;
       // TRAVEL INTERRUPT (3), AND IT IS INSIDE THE CHAIN RATHER THAN BESIDE IT.
       // Appending it after the chain would let one press stop a walk AND clear
@@ -8530,6 +8564,41 @@ async function boot(): Promise<void> {
         clearNotice();
         return;
       }
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THEN WHATEVER PANEL IS COVERING THE MAP.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ═══ REPORTED FROM PLAY, IN THESE WORDS ═══
+       * *"the escape button should close any open interface/ui before opening
+       * the escape menu directly. right now the interface is clunky as each
+       * panel can only be opened AND closed with hotkey"* — a player who opened
+       * the inventory with `i` had exactly one way out of it, and the key every
+       * game has trained them to press opened a menu ON TOP of it instead.
+       *
+       * ═══ IT IS ALSO THE MORE FAITHFUL PORT, WHICH THE OLD COMMENT CONCEDED ═══
+       * The block above used to read *"ToME's sheet IS closed by Escape, but
+       * ToME's sheet is a registered modal dialog and ours is a panel"* — and
+       * refused the dismissal on the ground that adding only the sheet would
+       * make the key depend on which panel happened to be open. That is a real
+       * objection to a HALF measure and not to this one: all three opened panels
+       * answer, so there is nothing left for the behaviour to depend on.
+       *
+       * ═══ WHICH PANELS, AND WHY NOT THE OTHER TWO ═══
+       * These three default CLOSED and are opened deliberately as interfaces —
+       * they are the ones upstream registers as dialogs, and upstream's Escape
+       * closes all of them. The Case Log and the party pane default ON and are
+       * HUD furniture; ToME's message log and party frame are not dialogs and
+       * its Escape does not close them either. So the line is drawn where
+       * upstream draws it, and `m`/`p` stay the only toggles for those two.
+       *
+       * ═══ ONE PER PRESS, TOPMOST FIRST ═══
+       * The contract this whole chain keeps. The order is the HIT-TEST order —
+       * inventory, talents, sheet — which this file already requires to mirror
+       * paint order in reverse, so the panel Escape closes is always the one
+       * the player would have clicked and always the one they can see on top.
+       */
+      if (closeTopPanel()) return;
       // BOTH LANES SNAP TOGETHER. `toBottom` reports whether it actually moved,
       // and Escape means "put the log back where it was" as one action — leaving
       // the Margin scrolled up because only the Record had moved would make the
