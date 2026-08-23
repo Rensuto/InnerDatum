@@ -920,3 +920,36 @@ export function stairsLockedFor(lastKillTurn: number | undefined, now: number): 
   const until = lastKillTurn + NO_STAIRS_GAME_TURNS;
   return now >= until ? 0 : until - now;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MUCH A HOSTILE RECOVERS WHILE YOU ARE AWAY — Game.lua:1369-1388.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE OTHER HALF OF ANTI-STAIRSCUM, AND THE HALF THAT MATTERS MORE ═══
+ * `NO_STAIRS_GAME_TURNS` stops you leaving IMMEDIATELY. This stops you gaining
+ * by leaving at all: soften a room, walk out, rest to full outside, walk back in
+ * to the same half-dead monsters with their cooldowns still spent and your
+ * debuffs still on them. That is a fight paused rather than a fight fled, and
+ * `Realm.sealed` already names the failure in those words — it just closes it for
+ * roaming encounters alone, by sealing them, and leaves every site open.
+ *
+ * ═══ A TENTH OF MAXIMUM PER GAME TURN AWAY, CAPPED AT FULL ═══
+ * Upstream: `perc = bound(floor((turn - last_turn) / 10), 0, 10)` then
+ * `life + max_life * perc / 10`. Its `turn` is engine ticks and ten of those are
+ * one game turn, so `perc` IS game turns away — capped at ten, which is the
+ * point at which a monster is simply whole again.
+ *
+ * ═══ A FRACTION AND NOT AN AMOUNT ═══
+ * The caller has `maxHp` and this does not; keeping it a fraction is what makes
+ * the rule testable without a body, and it is the same split `restBonus` makes.
+ *
+ * @param turnsAway game turns since the last body left. Negative or fractional
+ *   input is floored and clamped, because a clock that went backwards across a
+ *   reconnect must not heal anybody by a negative amount.
+ */
+export function reentryHealFraction(turnsAway: number): number {
+  if (!Number.isFinite(turnsAway)) return 0;
+  const turns = Math.min(10, Math.max(0, Math.floor(turnsAway)));
+  return turns / 10;
+}

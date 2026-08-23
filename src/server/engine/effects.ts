@@ -79,6 +79,7 @@
  */
 
 import { ActorKind } from '../../shared/protocol.ts';
+import { reentryHealFraction } from '../../shared/progression.ts';
 import { bound } from '../../shared/scale.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
 import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './derived.ts';
@@ -2107,4 +2108,105 @@ export function lockoutTalents(
   const picked = rng.shuffle(label, ready).slice(0, count);
   for (const id of picked) setCooldown(actor, id, 1); // :503
   return picked;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FLOOR RECOVERS WHILE NOBODY IS ON IT — Game.lua:1369-1388.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHAT IT STOPS ═══
+ * Soften a room, walk out, rest to full outside, walk back in to the same
+ * half-dead monsters with their cooldowns still spent and your debuffs still on
+ * them. `Realm.sealed` already names that failure — *"'run away' and 'pause the
+ * fight' would be the same verb"* — and closes it for roaming encounters by
+ * sealing them. Every site is still open, and this is what makes walking back in
+ * cost something.
+ *
+ * ═══ THREE THINGS, AND ALL THREE ARE UPSTREAM'S ═══
+ * Hostiles heal a tenth of maximum per game turn away (`reentryHealFraction`),
+ * every talent cooldown is cleared, and every DETRIMENTAL effect is stripped.
+ * Beneficial ones are deliberately left: upstream tests `e.status ==
+ * "detrimental"` and nothing else, and a rule that also cancelled a monster's
+ * own buffs would be handing the player something for leaving.
+ *
+ * ═══ HOSTILES ONLY ═══
+ * `reactionToward(target) < 0` upstream. A shopkeeper is not part of the fight
+ * being paused, and healing one would be a rule about the wrong bodies.
+ */
+export function restoreOnReentry(
+  // `EffectActor` AND NOT THE ENGINE'S ACTOR: this module deliberately does not
+  // import `engine/actor.ts`, and everything the rule touches — hp, maxHp,
+  // alive, cooldowns — is already on the narrow shape it takes everywhere else.
+  actors: readonly EffectActor[],
+  /**
+   * WHOSE FIGHT THIS IS. Upstream asks `reactionToward(target) < 0`; hostility
+   * is a FACTION question and this module has no faction table, so the caller
+   * owns it — the same seam `exploreTarget` uses for the same reason. A
+   * shopkeeper is not part of the fight being paused.
+   */
+  isHostile: (actor: EffectActor) => boolean,
+  state: EffectState | undefined,
+  turnsAway: number,
+  rng: Rng,
+): void {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NO TIME, NO RECOVERY — and the guard is upstream's, wrapping everything.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `if self.level.last_turn and self.level.last_turn < self.turn then` (:1370).
+   * STRICTLY less: at zero turns away the whole block is skipped, cooldowns and
+   * effects included, and it is worth being exact about because the difference
+   * is exploitable HERE in a way it cannot be upstream. `follow` costs no game
+   * turn, so a player who steps out of a delve and immediately follows a friend
+   * back in would otherwise clear every hostile cooldown and strip every debuff
+   * the party had landed — for free, as often as they liked. The rule that
+   * closes an exploit would have opened a better one.
+   *
+   * INSIDE THE RULE RATHER THAN AT THE CALLER, because this function IS
+   * upstream's block and the guard is the first line of it. A caller-side check
+   * would be a second place to remember.
+   */
+  if (!Number.isFinite(turnsAway) || turnsAway <= 0) return;
+
+  const fraction = reentryHealFraction(turnsAway);
+
+  for (const actor of actors) {
+    if (!actor.alive || !isHostile(actor)) continue;
+
+    // THE HEAL IS CLAMPED TO THE CEILING, exactly as upstream's `util.bound`
+    // does. A fraction of maximum added to a body already near full must not
+    // overshoot into a monster with more life than it was authored with.
+    if (fraction > 0) actor.hp = Math.min(actor.maxHp, actor.hp + actor.maxHp * fraction);
+
+    // EVERY COOLDOWN, NOT THE EXPIRED ONES. `talents_cd = {}` upstream: the
+    // point is that a monster which spent its big talent on you has it back.
+    actor.cooldowns.clear();
+
+    if (state === undefined) continue;
+    /**
+     * COLLECTED FIRST, THEN REMOVED — AND TODAY THAT IS A GUARD, NOT A FIX.
+     *
+     * Upstream builds a `todel` list because its `tmp` table IS the live one and
+     * deleting mid-walk would skip entries. Ours does not have that bug:
+     * `effectsOn` returns `[...table.values()]`, a snapshot, so removing while
+     * iterating is already safe. A mutation test confirmed it — rewriting this
+     * as a direct remove-in-loop breaks nothing.
+     *
+     * It is kept because the shape is one `effectsOn` change away from
+     * mattering: the day that function returns the live view for cheapness, a
+     * direct loop starts silently leaving every second effect on the body, and
+     * this is the only place that walks it while deleting. Written down rather
+     * than left to look load-bearing, so nobody deletes it believing a test
+     * covers it — `NEXUS/knowledge/mistakes-ledger.md`'s second check.
+     */
+    const doomed: string[] = [];
+    for (const instance of effectsOn(state, actor.id)) {
+      if (effectDef(state, instance.effectId)?.status === EffectStatus.Detrimental) {
+        doomed.push(instance.effectId);
+      }
+    }
+    for (const effectId of doomed) removeEffect(state, actor, effectId, rng);
+  }
 }

@@ -381,6 +381,37 @@ export type Realm = {
    * side table that points at the realm's id.
    */
   sealed: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHEN THIS REALM LAST BECAME EMPTY — `level.last_turn`, Game.lua:1370.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Anti-stairscum's second half: on re-entry the hostiles heal by how long
+   * nobody was here, their cooldowns clear and the party's debuffs come off
+   * (`restoreOnReentry`). Undefined while anybody is still standing in it.
+   *
+   * ═══ EMPTY, NOT "SOMEBODY LEFT" — AND THE DIFFERENCE IS A GRIEFING BUG ═══
+   * The first version of this stamped on every departure. A party of four in a
+   * delve, one of whom steps out to sell loot and walks back in, would have had
+   * the boss the other three were fighting HEALED TO FULL with its cooldowns
+   * back and their debuffs stripped. The rule exists to stop a fight being
+   * paused; stamping a realm somebody is still standing in hands the player a
+   * way to reset one.
+   *
+   * Upstream never meets this because it is single-player: leaving IS emptying.
+   *
+   * ═══ MILLISECONDS, NOT GAME TURNS, AND THAT IS FORCED ═══
+   * Upstream has one global `turn`. Every realm here keeps its OWN clock and the
+   * tide only advances an occupied one (`realmOccupied`), so there is no shared
+   * turn count that keeps running: the overworld freezes the moment everybody is
+   * indoors, and a solo player who leaves a delve, walks to a town and rests
+   * three hundred turns would measure as two turns away. The wall clock is the
+   * only monotonic reference the process has, and `TIDE_MS` is exactly the
+   * conversion — one game turn per tide on an occupied realm.
+   *
+   * SET BY THE GATEWAY, which is the only layer allowed a clock at all.
+   */
+  leftAtMs?: number;
 };
 
 /**

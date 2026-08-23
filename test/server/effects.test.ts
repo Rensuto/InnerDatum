@@ -27,6 +27,7 @@ import {
   recomputeAttributes,
   registerEffect,
   removeEffect,
+  restoreOnReentry,
   rollSaveDuration,
   saveOf,
   setEffect,
@@ -1351,5 +1352,161 @@ describe('determinism', () => {
     }
     // Binary application would give {0, 5}. Partial saves give the middle.
     expect(seen.size).toBeGreaterThan(3);
+  });
+});
+
+describe('restoreOnReentry — the floor recovers while nobody is on it', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ANTI-STAIRSCUM, SECOND HALF — Game.lua:1369-1388.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Soften a room, walk out, rest to full outside, walk back in to the same
+   * half-dead monsters with their cooldowns spent and your debuffs still on
+   * them. `Realm.sealed` already names that failure in those words and closes it
+   * for roaming encounters by sealing them; every site stayed open.
+   *
+   * The FRACTION is `reentryHealFraction` and is tested in
+   * test/shared/progression.test.ts. This file is about what the rule DOES to a
+   * body: which bodies, and which three things.
+   */
+  const hostileToPlayer = (actor: EffectActor): boolean => actor.kind !== 'player';
+
+  it('heals a hostile by a tenth of maximum per turn away', () => {
+    const husk = monster({ maxHp: 100, hp: 10 });
+    restoreOnReentry([husk], hostileToPlayer, undefined, 3, createRng('reentry-heal'));
+    expect(husk.hp).toBe(40);
+  });
+
+  it('never overshoots the ceiling', () => {
+    // `util.bound(..., 0, max_life)` upstream. A fraction of maximum added to a
+    // body already near full must not invent a monster with more life than it
+    // was authored with.
+    const husk = monster({ maxHp: 100, hp: 95 });
+    restoreOnReentry([husk], hostileToPlayer, undefined, 10, createRng('reentry-cap'));
+    expect(husk.hp).toBe(100);
+  });
+
+  it('clears every cooldown, not merely the expired ones', () => {
+    /**
+     * `talents_cd = {}` upstream, and the point is the big one: a monster that
+     * spent its heaviest talent on you has it back when you walk in again. A
+     * rule that only ticked them down would leave the exploit half open.
+     */
+    const husk = monster({ maxHp: 100, hp: 100 });
+    setCooldown(husk, 'talent:lockdown', 9);
+    setCooldown(husk, 'talent:ward_rush', 2);
+
+    restoreOnReentry([husk], hostileToPlayer, undefined, 1, createRng('reentry-cd'));
+
+    expect(husk.cooldowns.size).toBe(0);
+  });
+
+  it('strips detrimental effects and LEAVES beneficial ones', () => {
+    /**
+     * Upstream tests `e.status == "detrimental"` and nothing else. A rule that
+     * also cancelled a monster's own buffs would be handing the player something
+     * for leaving — the exact opposite of what it is for.
+     */
+    const state = createMvpEffectState();
+    const husk = monster({ maxHp: 100, hp: 100 });
+    const rng = createRng('reentry-effects');
+    setEffect(state, husk, EffectId.Bleeding, 9, {}, rng);
+    setEffect(state, husk, EffectId.Evasive, 9, { power: 4 }, rng);
+    expect(hasEffect(state, husk.id, EffectId.Bleeding), 'the fixture must apply').toBe(true);
+    expect(hasEffect(state, husk.id, EffectId.Evasive), 'the fixture must apply').toBe(true);
+
+    restoreOnReentry([husk], hostileToPlayer, state, 1, rng);
+
+    expect(hasEffect(state, husk.id, EffectId.Bleeding)).toBe(false);
+    expect(
+      hasEffect(state, husk.id, EffectId.Evasive),
+      'its own buff is not the player’s to take',
+    ).toBe(true);
+  });
+
+  it('strips EVERY detrimental effect, not all but the last', () => {
+    /**
+     * ═══ A GUARD, NOT A LIVE CATCH, AND THE DIFFERENCE IS SAID OUT LOUD ═══
+     * Rewriting `restoreOnReentry` to remove-while-iterating does NOT fail this
+     * test — measured, by doing it. `effectsOn` returns `[...table.values()]`, a
+     * snapshot, so the loop is already safe and the collect-first is defensive.
+     *
+     * The test earns its place anyway: it is the only thing that would catch the
+     * day `effectsOn` starts returning the live view. A guard is worth keeping;
+     * a guard BELIEVED to be a catch is how a rule gets deleted by somebody who
+     * thinks a test still covers it.
+     */
+    const state = createMvpEffectState();
+    const husk = monster({ maxHp: 100, hp: 100 });
+    const rng = createRng('reentry-two');
+    setEffect(state, husk, EffectId.Bleeding, 9, {}, rng);
+    setEffect(state, husk, EffectId.Slowed, 9, {}, rng);
+    expect(effectsOn(state, husk.id).length, 'the fixture must apply BOTH').toBe(2);
+
+    restoreOnReentry([husk], hostileToPlayer, state, 1, rng);
+
+    expect(effectsOn(state, husk.id)).toEqual([]);
+  });
+
+  it('leaves the player alone entirely', () => {
+    /**
+     * `reactionToward(target) < 0` upstream. Healing the body that just walked in
+     * would make leaving and returning a way to top up — the exploit with an
+     * extra step rather than the rule that closes it.
+     */
+    const ren = player({ maxHp: 100, hp: 10 });
+    ren.cooldowns.set('talent:ward_rush', 4);
+    restoreOnReentry([ren], hostileToPlayer, undefined, 5, createRng('reentry-self'));
+    expect(ren.hp).toBe(10);
+    expect(ren.cooldowns.get('talent:ward_rush')).toBe(4);
+  });
+
+  it('leaves a corpse where it fell', () => {
+    // A dead body healed back to full would be a monster resurrected by the
+    // player walking out of the room.
+    const husk = monster({ maxHp: 100, hp: 0, alive: false });
+    restoreOnReentry([husk], hostileToPlayer, undefined, 10, createRng('reentry-dead'));
+    expect(husk.hp).toBe(0);
+    expect(husk.alive).toBe(false);
+  });
+
+  it('does NOTHING AT ALL when no time has passed', () => {
+    /**
+     * ═══ UPSTREAM'S GUARD IS STRICT, AND HERE IT IS LOAD-BEARING ═══
+     * `if self.level.last_turn and self.level.last_turn < self.turn` (:1370)
+     * wraps the WHOLE block — the heal, the cooldowns and the effects.
+     *
+     * An earlier draft of this file asserted the opposite, on the reasoning that
+     * "leaving and stepping straight back in is exactly the gesture the rule is
+     * aimed at". That was backwards. `follow` costs no game turn, so a player who
+     * steps out of a delve and immediately follows a friend back in would clear
+     * every hostile cooldown and strip every debuff the party had landed — for
+     * free, as often as they liked. The rule that closes an exploit would have
+     * opened a better one.
+     */
+    const state = createMvpEffectState();
+    const husk = monster({ maxHp: 100, hp: 50 });
+    const rng = createRng('reentry-zero');
+    setEffect(state, husk, EffectId.Bleeding, 9, {}, rng);
+    setCooldown(husk, 'talent:lockdown', 9);
+    expect(hasEffect(state, husk.id, EffectId.Bleeding), 'the fixture must apply').toBe(true);
+
+    restoreOnReentry([husk], hostileToPlayer, state, 0, rng);
+
+    expect(husk.hp, 'no time passed, so no healing').toBe(50);
+    expect(husk.cooldowns.size, 'and the cooldown is still spent').toBe(1);
+    expect(hasEffect(state, husk.id, EffectId.Bleeding), 'and the bleed is still on it').toBe(true);
+  });
+
+  it('does nothing for a clock that ran backwards', () => {
+    // A negative interval is a clock that moved the wrong way — across a
+    // reconnect, or a realm rebuilt under a stale stamp. Healing by a negative
+    // fraction would DAMAGE the monster, which is the exploit inverted.
+    const husk = monster({ maxHp: 100, hp: 50 });
+    setCooldown(husk, 'talent:lockdown', 9);
+    restoreOnReentry([husk], hostileToPlayer, undefined, -5, createRng('reentry-back'));
+    expect(husk.hp).toBe(50);
+    expect(husk.cooldowns.size).toBe(1);
   });
 });

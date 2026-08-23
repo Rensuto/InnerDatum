@@ -156,7 +156,7 @@ import { resolveItem } from '../content/resolve.ts';
  * at the chooser owes no decision anybody may wait for, and `standingOrder` is
  * the field engine/barrier.ts:302-303 already reads to mean exactly that.
  */
-import { Faction, StandingOrder, incMoney, isMonster } from '../engine/actor.ts';
+import { Faction, StandingOrder, incMoney, isHostile, isMonster } from '../engine/actor.ts';
 /**
  * THE SINGLE WRITER OF `actor.combat`, IMPORTED RATHER THAN INJECTED, AND THE
  * ASYMMETRY WITH `attachClass` IS DELIBERATE.
@@ -179,7 +179,7 @@ import { Faction, StandingOrder, incMoney, isMonster } from '../engine/actor.ts'
  * one door the type system cannot close.
  */
 import { combatArmor, stat as statValue } from '../engine/derived.ts';
-import { boughtSheet, recomposeCombat } from '../engine/effects.ts';
+import { boughtSheet, recomposeCombat, restoreOnReentry } from '../engine/effects.ts';
 /**
  * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
  * moment: the step that walks onto a site cell.
@@ -8249,6 +8249,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (realms === undefined || isShared(realm.kind)) return;
     if (realm.world.allActors().some((a: Actor) => a.kind === ActorKind.Player)) return;
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FLOOR REMEMBERS WHEN IT EMPTIED — `level.last_turn`, Game.lua:1370.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * HERE, AND NOT AT THE DOOR. The first version stamped on every departure,
+     * which meant a party of four with one member popping out to sell loot came
+     * back to a boss healed to full — the rule that exists to stop a fight being
+     * paused, handing them a way to reset one. This runs only once the check
+     * above has confirmed NOBODY IS LEFT, which is the condition upstream gets
+     * for free by being single-player.
+     *
+     * IT ALSO CATCHES THE DOORS NOBODY WALKS THROUGH. This function is reached
+     * from the crossing paths AND from the reconnect-grace recall (`recallBody`),
+     * so a delve emptied by a dropped socket or a character swap is stamped too —
+     * where a stamp at the threshold would have missed both, and walking back in
+     * after ten minutes offline would have healed nothing.
+     */
+    realm.leftAtMs = Date.now();
+
     if (realm.lingerMs <= 0) {
       cancelReap(realm.id);
       if (realms.close(realm.id)) {
@@ -8325,6 +8345,60 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       `not so soon after a kill — ${String(left)} turn${left === 1 ? '' : 's'} to wait`,
     );
     return true;
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND ON THE WAY BACK IN, THE FLOOR HAS RECOVERED — Game.lua:1369-1388.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `restoreOnReentry` is the rule; this measures the absence and finds the
+   * hostiles. It runs BEFORE the body is placed, so nothing heals on the same
+   * frame a player is standing in front of it.
+   *
+   * ═══ THE GUARD IS UPSTREAM'S AND IT IS STRICT ═══
+   * `if self.level.last_turn and self.level.last_turn < self.turn` (:1370) — the
+   * WHOLE block is skipped when no time has passed, cooldowns and effects
+   * included. That matters here in a way it cannot upstream: `follow` costs no
+   * turn, so a player who steps out of a delve and immediately follows a friend
+   * back in would otherwise clear every hostile cooldown and strip every debuff
+   * the party had landed, for free, as often as they liked.
+   *
+   * ONCE PER ABSENCE. `leftAtMs` is cleared first, so a party of four walking
+   * back in through the same door does not heal the room four times.
+   */
+  const restoreRealm = (realm: Realm, viewer: Actor): void => {
+    const left = realm.leftAtMs;
+    if (left === undefined) return;
+    realm.leftAtMs = undefined;
+
+    /**
+     * MILLISECONDS TO GAME TURNS through `tideMs` — see `Realm.leftAtMs` for why
+     * this cannot be a turn count. `tideMs` is the injected one rather than the
+     * constant, so a test that drives the clock drives this too.
+     *
+     * A ZERO OR NEGATIVE INTERVAL STOPS THE TIDE (`WsGatewayOptions.tideMs`), and
+     * a realm whose clock does not run cannot meaningfully measure an absence in
+     * turns — so the rule stands down rather than dividing by it.
+     */
+    if (tideMs <= 0) return;
+
+    restoreOnReentry(
+      realm.world.allActors(),
+      /**
+       * HOSTILE TO THE BODY WALKING IN. `isHostile` is faction-based and lives
+       * on the engine's actor, so the cast is where the narrow `EffectActor` the
+       * rule takes meets the wide one this file already holds — every member of
+       * `allActors()` is one.
+       */
+      (other) => other.id !== viewer.id && isHostile(viewer, other as unknown as Actor),
+      opts.effects,
+      // ZERO OR LESS IS A NO-OP INSIDE THE RULE — upstream's `last_turn < turn`
+      // guard lives there, so this hands over the raw count rather than keeping
+      // a second copy of the test.
+      Math.floor((Date.now() - left) / tideMs),
+      realm.world.rng,
+    );
   };
 
   const leaveRealm = (session: Session): boolean => {
@@ -8407,6 +8481,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       session.connId,
       audienceFor(from.id),
     );
+
+    // ═══ AND THE FLOOR HAS RECOVERED WHILE THEY WERE GONE ═══ Before the body
+    // is placed, so nothing heals on the frame a player is standing in front of
+    // it. See `restoreRealm`.
+    restoreRealm(to, body);
 
     const definition = body.classId === undefined ? undefined : classById(body.classId);
     const placed = to.world.addPlayer(
@@ -8729,6 +8808,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       session.connId,
       audienceFor(from.id),
     );
+
+    // ═══ AND THE FLOOR HAS RECOVERED WHILE THEY WERE GONE ═══ Before the body
+    // is placed, so nothing heals on the frame a player is standing in front of
+    // it. See `restoreRealm`.
+    restoreRealm(to, body);
 
     const definition = body.classId === undefined ? undefined : classById(body.classId);
     const placed = to.world.addPlayer(

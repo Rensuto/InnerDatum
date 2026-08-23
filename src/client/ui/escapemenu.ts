@@ -285,15 +285,25 @@ const KEYS_FILL_W = 0.62;
  * over two rows of headroom, and the max is raised past it so the fill is what
  * decides at 720p rather than the cap.
  *
- * ═══ THE HEADROOM IS THIN AND THE REASON IS `LOCKED_ROW_H` ═══
- * Its own note reads "five rows in twenty-six are locked, so the whole cost of
- * doing it properly is fifty pixels." It is TEN rows in thirty-four now, which
- * is a hundred — and nine of those ten carry the SAME sentence, because every
- * hotbar digit is locked for the identical reason. That sentence belongs to the
- * Hotbar GROUP, not to nine rows of it, and `MenuRowKind.Note` already exists to
- * say it once. Doing that returns ninety pixels and this pair could go back
- * down; it is a layout change rather than a sizing one, so it is not smuggled in
- * here.
+ * ═══ THE NINETY PIXELS HAVE SINCE BEEN RETURNED, AND THIS SAID OTHERWISE ═══
+ * This paragraph used to end: *"Doing that returns ninety pixels and this pair
+ * could go back down; it is a layout change rather than a sizing one, so it is
+ * not smuggled in here."* It was done — `sharedLockReason` says the hotbar's
+ * lock reason ONCE, at the group, instead of on nine rows each paying
+ * `LOCKED_ROW_H`'s ten extra pixels — so the note was describing a past state and
+ * pointing the next reader at ninety pixels that are no longer there to find.
+ *
+ * ═══ WHERE THE BUDGET ACTUALLY STANDS, MEASURED ═══
+ * `ACTIONS` is 36 now (rest and auto-explore joined it), and at 1280x720 the
+ * keys screen still fits on ONE PAGE, which is the property this sizing exists
+ * for. At 1024x600 it pages at two, and no cap can fix that: the panel is bound
+ * by the BAND between the top HUD and the hotbar — 518 pixels there against
+ * about 620 of content — rather than by `KEYS_MAX_H`. Raising the cap would move
+ * nothing.
+ *
+ * So the next action that joins the table costs a row and nothing is being held
+ * in reserve for it. If 1280x720 ever starts paging, the fix is fewer rows or a
+ * second screen, not a bigger number here.
  */
 const KEYS_FILL_H = 0.96;
 const KEYS_MAX_W = 560;

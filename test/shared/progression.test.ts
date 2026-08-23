@@ -18,6 +18,7 @@ import {
   statCeilingForLevel,
   NO_STAIRS_GAME_TURNS,
   stairsLockedFor,
+  reentryHealFraction,
 } from '../../src/shared/progression.ts';
 
 /**
@@ -431,5 +432,58 @@ describe('the stairs shut for a moment after a kill', () => {
      */
     expect(stairsLockedFor(10, 10)).toBeGreaterThan(0);
     expect(typeof stairsLockedFor(10, 10)).toBe('number');
+  });
+});
+
+describe('a floor recovers while nobody is standing on it', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE OTHER HALF OF ANTI-STAIRSCUM — Game.lua:1369-1388.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `NO_STAIRS_GAME_TURNS` stops you leaving immediately. This stops you gaining
+   * by leaving at all: soften a room, walk out, rest to full outside, walk back
+   * in to the same half-dead monsters. `Realm.sealed` already names that failure
+   * — "'run away' and 'pause the fight' would be the same verb" — and closes it
+   * for roaming encounters alone, by sealing them.
+   */
+  it('heals a tenth of maximum per game turn away', () => {
+    // Upstream: `perc = bound(floor((turn - last_turn) / 10), 0, 10)` then
+    // `max_life * perc / 10`. Its turn is engine ticks and ten of those are one
+    // game turn, so `perc` IS game turns away.
+    expect(reentryHealFraction(0)).toBe(0);
+    expect(reentryHealFraction(1)).toBeCloseTo(0.1);
+    expect(reentryHealFraction(5)).toBeCloseTo(0.5);
+  });
+
+  it('caps at whole, because ten turns away is a monster that is simply better', () => {
+    expect(reentryHealFraction(10)).toBe(1);
+    expect(reentryHealFraction(11)).toBe(1);
+    expect(reentryHealFraction(10_000)).toBe(1);
+  });
+
+  it('floors a fraction rather than healing by part of a turn', () => {
+    // `math.floor` upstream. Half a turn away is no turns away.
+    expect(reentryHealFraction(0.9)).toBe(0);
+    expect(reentryHealFraction(3.7)).toBeCloseTo(0.3);
+  });
+
+  it('never heals by a negative amount, whatever the clock says', () => {
+    /**
+     * `util.bound(..., 0, 10)` upstream, and the reason it matters HERE rather
+     * than there: our absence is measured against the overworld's clock across a
+     * realm boundary, so a reconnect or a rebuild could hand this a difference
+     * that went backwards. Healing a monster by a negative fraction would DAMAGE
+     * it, which is the exploit inverted.
+     */
+    expect(reentryHealFraction(-1)).toBe(0);
+    expect(reentryHealFraction(-9999)).toBe(0);
+  });
+
+  it('answers zero for a clock that is not a number at all', () => {
+    // Absent state arrives as NaN through arithmetic on `undefined`, and NaN
+    // would propagate into `hp` and make a monster unkillable.
+    expect(reentryHealFraction(Number.NaN)).toBe(0);
+    expect(reentryHealFraction(Number.POSITIVE_INFINITY)).toBe(0);
   });
 });
