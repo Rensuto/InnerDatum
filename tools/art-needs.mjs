@@ -159,19 +159,36 @@ function briefFor(id, files) {
     // The nearest `name:` / `displayName:` ABOVE or BELOW the id, whichever is
     // closer — content files put the sprite before the name as often as after.
     /**
-     * THE WHOLE FILE FOR A TALENT, A WINDOW FOR A TABLE.
+     * THE TALENT'S OWN BLOCK, A WINDOW FOR A TABLE.
      *
-     * A talent module is ONE talent: its `iconId` is near the top and its
-     * `describe` is the last thing in the file, usually far more than a window
-     * apart — so a window found the name and never the prose. A content TABLE
-     * (monsters, items) holds dozens of entries, and reading the whole file
-     * there would attach entry one's description to entry forty's sprite.
+     * ═══ "ONE TALENT PER FILE" STOPPED BEING TRUE, AND THIS MISLED THE ARTIST ═══
+     * This used to read the WHOLE FILE for anything under `talents/`, on the
+     * stated grounds that "one talent per file is a project rule, not an
+     * accident". It is not a rule any more: every locked generic tree is six
+     * talents in one module, and `legwork.ts` opens by saying so — *"SIX TALENTS
+     * IN ONE FILE, which is the shape every LOCKED generic tree uses"*.
      *
-     * One talent per file is a project rule, not an accident, so the file path
-     * is a reliable way to tell the two apart.
+     * So the first `name:` in the file won for all six. `icon_active_downhill`
+     * was listed as **Long Stride**, carrying Long Stride's prose — an artist
+     * following this list would have drawn the wrong talent, and the list would
+     * have looked complete while they did it.
+     *
+     * The fix is to stop guessing from the path. A talent is a literal
+     * `export const x: Talent = { … };`, so the block containing the id is the
+     * exact scope its name and prose live in — right for one per file and for
+     * six, and it needs no rule to stay true.
+     *
+     * A content TABLE (monsters, items) has no such literal, so it falls back to
+     * the window: reading the whole file there would attach entry one's
+     * description to entry forty's sprite.
      */
-    const perFile = rel.includes('/talents/') || rel.includes('\\talents\\');
-    const window = perFile ? text : text.slice(Math.max(0, at - 900), at + 900);
+    const blockStart = text.lastIndexOf('export const ', at);
+    const declaresTalent =
+      blockStart >= 0 && /^export const \w+: Talent = \{/.test(text.slice(blockStart, at));
+    const blockEnd = declaresTalent ? text.indexOf('\n};', at) : -1;
+    const window = declaresTalent
+      ? text.slice(blockStart, blockEnd < 0 ? text.length : blockEnd)
+      : text.slice(Math.max(0, at - 900), at + 900);
     const name =
       /displayName:\s*'([^']+)'/.exec(window)?.[1] ?? /\bname:\s*'([^']+)'/.exec(window)?.[1];
     /**
