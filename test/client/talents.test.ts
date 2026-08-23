@@ -89,9 +89,24 @@ function view(over: Partial<TalentPanelView> = {}): TalentPanelView {
   };
 }
 
-function progress(unspent: number): ProgressMsg {
-  return { level: 2, xp: 1, xpToNext: 61, unspent } as ProgressMsg;
+/**
+ * THE SECOND ARGUMENT IS THE ONE THAT WAS MISSING, and its absence is most of
+ * why the two-purse bug survived: `as ProgressMsg` casts away every field this
+ * object does not set, so `unspentGenerics` was silently `undefined` in every
+ * test on this screen and the panel's `?? 0` read it as an empty generic purse.
+ */
+function progress(unspent: number, generics = 0): ProgressMsg {
+  return {
+    level: 2,
+    xp: 1,
+    xpToNext: 61,
+    unspent,
+    unspentGenerics: generics,
+  } as ProgressMsg;
 }
+
+/** A generic tree, which spends the OTHER purse. See `isGenericTree`. */
+const GROUNDWORK = { tree: 'generic/groundwork', treeName: 'Groundwork' };
 
 /** The floor every window clears: `DEFAULT_VIEWPORT` is 20x10 tiles. */
 const FLOOR = { width: 640, height: 320, top: 40, bottom: 280 };
@@ -1185,5 +1200,102 @@ describe('the talent panel uses the room it has', () => {
     const placed = placedAt(REAL, manyCategories(12));
     const note = placed.find((row) => row.row.kind === TalentRowKind.Note);
     expect(note, 'the panel is still conceding a tail').toBeUndefined();
+  });
+});
+
+describe('the two purses, which are not interchangeable', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BUG: the panel read `unspent` for everything, and generic points arrive
+   * FOUR LEVELS OUT OF FIVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The server has kept the purses apart since they existed —
+   * `fromGenerics ? body.unspentGenerics : body.unspentPoints` (gateway.ts) —
+   * and `ProgressMsg` carries both. The panel read one, so the ordinary
+   * level-up state (class 0, generic 2) drew "no points — next at level 3" over
+   * a screen of live generic icons that could not be pressed.
+   *
+   * Upstream shows both counters side by side, always, and marks every node
+   * `(generic)` or `(class)` (LevelupDialog.lua:583, :754-789).
+   */
+
+  /** Two talents, one in a class tree and one in a generic tree. */
+  function twoTrees(over: Partial<TalentPanelView> = {}): TalentPanelView {
+    return view({
+      loadout: [
+        talent({ id: 'talent:hold_the_line', name: 'Hold the Line', ...DISCIPLINE }),
+        talent({ id: 'talent:long_stride', name: 'Long Stride', ...GROUNDWORK }),
+      ],
+      passives: [],
+      ...over,
+    });
+  }
+
+  const cellFor = (rows: readonly TalentRow[], id: string) =>
+    categories(rows)
+      .flatMap((row) => row.talents)
+      .find((cell) => cell.id === id);
+
+  it('lets a generic point buy a generic talent when the class purse is empty', () => {
+    // THE REGRESSION, stated the way a player meets it: two generic points in
+    // hand, every generic icon dead.
+    const rows = talentPanelRows(twoTrees({ progress: progress(0, 2) }));
+    expect(cellFor(rows, 'talent:long_stride')?.canSpend).toBe(true);
+  });
+
+  it('does not let a generic point buy a CLASS talent', () => {
+    // The other direction, and the server would refuse it: a live `+` the
+    // server answers "no class talent points in hand" is worse than a grey one.
+    const rows = talentPanelRows(twoTrees({ progress: progress(0, 2) }));
+    expect(cellFor(rows, 'talent:hold_the_line')?.canSpend).toBe(false);
+  });
+
+  it('does not let a class point buy a GENERIC talent', () => {
+    const rows = talentPanelRows(twoTrees({ progress: progress(2, 0) }));
+    expect(cellFor(rows, 'talent:hold_the_line')?.canSpend).toBe(true);
+    expect(cellFor(rows, 'talent:long_stride')?.canSpend).toBe(false);
+  });
+
+  it('names both purses rather than only one', () => {
+    const rows = talentPanelRows(twoTrees({ progress: progress(2, 1) }));
+    const points = rows.find((row) => row.kind === TalentRowKind.Points);
+    expect(points?.kind === TalentRowKind.Points ? points.text : '').toBe(
+      '2 class · 1 generic to spend',
+    );
+  });
+
+  it('does not say "no points" while a generic point is in hand', () => {
+    // THE EXACT SENTENCE THE BUG PRODUCED, pinned so it cannot come back.
+    const rows = talentPanelRows(twoTrees({ progress: progress(0, 2) }));
+    const points = rows.find((row) => row.kind === TalentRowKind.Points);
+    const text = points?.kind === TalentRowKind.Points ? points.text : '';
+    expect(text).not.toContain('no points');
+    expect(text).toBe('2 generic to spend');
+  });
+
+  it('lights the plate for a level-up that granted only generics', () => {
+    // `unspent` on the row is what the painter highlights on. Reading the class
+    // purse alone left it dark on four level-ups in five.
+    const rows = talentPanelRows(twoTrees({ progress: progress(0, 2) }));
+    const points = rows.find((row) => row.kind === TalentRowKind.Points);
+    expect(points?.kind === TalentRowKind.Points ? points.unspent : 0).toBe(2);
+  });
+
+  it('marks the generic strip so the player can see which purse it spends', () => {
+    const rows = talentPanelRows(twoTrees({ progress: progress(1, 1) }));
+    const generic = categories(rows).find((row) => row.tree === 'generic/groundwork');
+    const klass = categories(rows).find((row) => row.tree === 'watch/discipline');
+    expect(generic?.text).toContain('generic');
+    // AND THE CLASS ONE IS NOT MARKED. Labelling the majority case is furniture.
+    expect(klass?.text).toBe('Discipline');
+  });
+
+  it('still falls back to the level sentence when every purse is empty', () => {
+    const rows = talentPanelRows(twoTrees({ progress: progress(0, 0) }));
+    const points = rows.find((row) => row.kind === TalentRowKind.Points);
+    expect(points?.kind === TalentRowKind.Points ? points.text : '').toBe(
+      'no points — next at level 3',
+    );
   });
 });

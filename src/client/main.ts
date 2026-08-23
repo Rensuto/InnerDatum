@@ -277,6 +277,7 @@ import {
   talentPanelDragAt,
   talentPanelHitAt,
   talentIdAt,
+  pointsWaiting,
   talentPanelGeometry,
   talentTipAt,
   talentPanelRect,
@@ -2618,9 +2619,9 @@ function escapeMenuView(): EscapeMenuView {
     // v12 — THE COUNT GOES ON THE CONTROL THAT ALREADY ROUTES TO THE PANEL.
     // Root row 3 opens the talent screen and never said how many points were
     // behind it, so it reads `TALENTS (2)` while any are waiting and the bare
-    // word at zero. `?? 0` because `progress` is null for a real window on
-    // connect and "(0)" would be a number stated confidently about nothing.
-    unspent: progress?.unspent ?? 0,
+    // word at zero. `pointsWaiting` rather than `progress?.unspent` because the
+    // panel spends four purses and this counted one — see that function.
+    unspent: pointsWaiting(progress),
     /**
      * v19 — WHETHER THERE IS A LIST TO GO BACK TO.
      *
@@ -3605,7 +3606,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // the BODY and sheds whole sections on a short panel, and a header control
       // that went quiet on exactly the window where the sheet is hardest to read
       // would be the wrong half to drop.
-      unspent: progress?.unspent ?? 0,
+      unspent: pointsWaiting(progress),
     });
   }
 
@@ -4896,12 +4897,16 @@ async function boot(): Promise<void> {
      * as it does for the revive affordance three blocks up. A canvas-only badge
      * would have been silent for the players it matters most to.
      */
-    if (progress !== null && progress.unspent > 0) {
+    // EVERY PURSE, NOT THE CLASS ONE. See `pointsWaiting`: this line said
+    // nothing at all on a level that granted only generics and attributes, which
+    // is four level-ups in five.
+    const waiting = pointsWaiting(progress);
+    if (waiting > 0) {
       // v11: `press g` was written out three times in this file and every one of
       // them went through `keyHint` — the talent panel's key is rebindable, and
       // this is the line that teaches a player the panel exists at all.
       parts.push(
-        `${progress.unspent} talent ${progress.unspent === 1 ? 'point' : 'points'} — press ${keyHint('show_talents')}`,
+        `${String(waiting)} ${waiting === 1 ? 'point' : 'points'} to spend — press ${keyHint('show_talents')}`,
       );
     }
     /**
@@ -10568,9 +10573,20 @@ function applyServerMessage(msg: ServerMsg): void {
         // player who took the trouble to rebind.
         const talentKey = keyHint('show_talents');
         const levelled = before !== null && msg.level > before.level;
-        const gained = before !== null && msg.unspent > before.unspent;
+        /**
+         * ALL FOUR PURSES, not the class one — see `pointsWaiting`. A level-up
+         * that granted 2 generics and 3 attribute points and no class point
+         * announced *"level 3 — 0 talent points in hand"*, which is both a lie
+         * and the ordinary case: generics arrive four levels out of five and
+         * attribute points arrive every level.
+         *
+         * `gained` widened with it, so a point arriving between levels (a respec
+         * handing points back) is still noticed.
+         */
+        const waiting = pointsWaiting(msg);
+        const gained = before !== null && waiting > pointsWaiting(before);
         if (levelled || gained) {
-          const points = `${String(msg.unspent)} talent ${msg.unspent === 1 ? 'point' : 'points'}`;
+          const points = `${String(waiting)} ${waiting === 1 ? 'point' : 'points'}`;
           onGoodNews(
             levelled
               ? `level ${String(msg.level)} — ${points} in hand, press ${talentKey}`

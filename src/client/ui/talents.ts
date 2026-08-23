@@ -148,7 +148,7 @@ import {
   PANEL_PAD,
   PanelSkin,
 } from './panel.ts';
-import { CATEGORY_POINT_LEVELS } from '../../shared/progression.ts';
+import { CATEGORY_POINT_LEVELS, isGenericTree } from '../../shared/progression.ts';
 import type { LoadoutTalent, ProgressMsg, UnlockableTree } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
@@ -699,10 +699,86 @@ export type TalentPanelView = {
  * second; the first is a protocol change for a sentence). "next at level 11"
  * for a level-10 character would be a promise the game cannot keep.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY POINTS ARE WAITING, OF ANY KIND — the number every nag counts.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Four purses reach this panel: class talents, generic talents, whole
+ * disciplines, and attributes. Every affordance that points a player AT the
+ * panel used to count only the first — the escape menu's `TALENTS (2)`, the
+ * character sheet's `[G·2]`, the status line's "press g" nag and the level-up
+ * toast — so a level that granted 2 generics and 3 attribute points and no class
+ * point said nothing at all, on all four, while five points sat in hand.
+ *
+ * Generic points arrive four levels out of five and attribute points arrive
+ * every level, so THAT WAS THE ORDINARY CASE rather than an edge.
+ *
+ * Upstream's own plate tests all four and says so in one expression —
+ * `player.unused_stats > 0 or player.unused_talents > 0 or player.unused_generics
+ * > 0 or player.unused_talents_types > 0` (Minimalist.lua:1512).
+ *
+ * ONE FUNCTION, so the four affordances cannot drift apart again, and so a fifth
+ * purse is one edit rather than five.
+ */
+export function pointsWaiting(progress: ProgressMsg | null): number {
+  if (progress === null) return 0;
+  // `?? 0` ON THE OPTIONAL THREE: a server too old to send a purse must read as
+  // an empty one, never as NaN — see `ProgressMsg`, where only `unspent` is
+  // required.
+  return (
+    Math.max(0, Math.floor(progress.unspent)) +
+    Math.max(0, Math.floor(progress.unspentGenerics ?? 0)) +
+    Math.max(0, Math.floor(progress.unspentCategories ?? 0)) +
+    Math.max(0, Math.floor(progress.unspentStats ?? 0))
+  );
+}
+
 function pointsText(progress: ProgressMsg): string {
-  if (progress.unspent > 0) {
-    return progress.unspent === 1 ? '1 point to spend' : `${progress.unspent} points to spend`;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY PURSE, NAMED. This used to say only `unspent`, AND THAT WAS A BUG.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * There are three purses and they are not interchangeable: `unspent` buys
+   * class talents, `unspentGenerics` buys `generic/` ones, `unspentCategories`
+   * buys whole disciplines. The server has kept them apart since they existed
+   * (gateway.ts:11582's `fromGenerics ? body.unspentGenerics : body.unspentPoints`)
+   * and sends all three; this row read one of them.
+   *
+   * ═══ WHAT THAT LOOKED LIKE, AT NEARLY EVERY LEVEL-UP ═══
+   * Generic points arrive four levels out of five. So the ordinary state was
+   * class 0, generic 2 — and the panel said **"no points — next at level N"**
+   * over a screen of generic icons that were live, affordable and, because
+   * `canSpend` read the same one number, unpressable. A player was told they had
+   * nothing while holding two points they could have spent.
+   *
+   * Upstream shows the counters side by side and always — `Stats`, `Class
+   * points`, `Generic points`, `Category points` (LevelupDialog.lua:754-789),
+   * each glowing above zero. This is one row rather than four, so it names the
+   * ones that have something in them and falls back to the level sentence only
+   * when every purse is empty.
+   */
+  const purses: string[] = [];
+  if (progress.unspent > 0) purses.push(`${String(progress.unspent)} class`);
+  if (progress.unspentGenerics > 0) purses.push(`${String(progress.unspentGenerics)} generic`);
+  // OPTIONAL ON THE WIRE, unlike the two above — a server that predates category
+  // points sends nothing, and nothing must read as none rather than as NaN.
+  const categories = progress.unspentCategories ?? 0;
+  if (categories > 0) {
+    purses.push(categories === 1 ? '1 category' : `${String(categories)} category`);
   }
+  // AND ATTRIBUTES, which are spent on this same screen (the column on the
+  // right) and were named nowhere else in the client — `unspentStats` reached
+  // exactly one call site, inside a column that a narrow panel drops entirely.
+  const stats = progress.unspentStats ?? 0;
+  if (stats > 0) purses.push(`${String(stats)} stat`);
+  if (purses.length > 0) {
+    // "2 class · 1 generic to spend". The middot rather than a comma because
+    // these are three separate quantities and not a list of one thing.
+    return `${purses.join(' · ')} to spend`;
+  }
+
   // The cap. `xpToNext` is 0 there and is never a denominator — ui/charsheet.ts
   // :428-441 and ui/xpbar.ts handle the same sentinel the same way.
   if (!Number.isFinite(progress.xpToNext) || progress.xpToNext <= 0) {
@@ -731,8 +807,20 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
   const rows: TalentRow[] = [];
   const progress = view.progress;
   const unspent = progress?.unspent ?? 0;
+  const generics = progress?.unspentGenerics ?? 0;
   if (progress !== null) {
-    rows.push({ kind: TalentRowKind.Points, unspent, text: pointsText(progress) });
+    /**
+     * THE PLATE COUNTS BOTH SPENDABLE PURSES. `unspent` alone left the "you have
+     * points" highlight dark on a level-up that granted only generics, which is
+     * four level-ups in five. Categories are deliberately NOT added: they are
+     * spent on the locked rows at the foot of the panel, which carry their own
+     * price, and a plate that lit for them would point at the talents above.
+     */
+    rows.push({
+      kind: TalentRowKind.Points,
+      unspent: unspent + generics,
+      text: pointsText(progress),
+    });
   }
 
   /**
@@ -762,7 +850,20 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     // an older server that has never heard of tiers sends nothing at all. That
     // must read as "not locked" — the behaviour this panel has always had —
     // rather than as a lock nobody can explain.
-    canSpend: unspent > 0 && talent.level < talent.maxLevel && talent.locked !== true,
+    /**
+     * THE PURSE IS CHOSEN BY THE TREE, exactly as the server chooses it
+     * (`isGenericTree` at gateway.ts:11582). Reading `unspent` for everything
+     * made every generic icon unpressable whenever the class purse was empty —
+     * and, the other way round, advertised a live `+` on a generic icon the
+     * server would refuse with "no generic points in hand".
+     *
+     * A TALENT WITH NO `tree` (a server too old to send one) falls to the class
+     * purse, which is the behaviour this panel has always had.
+     */
+    canSpend:
+      (isGenericTree(talent.tree ?? '') ? generics : unspent) > 0 &&
+      talent.level < talent.maxLevel &&
+      talent.locked !== true,
     lockedReason: talent.locked === true ? (talent.lockedReason ?? 'Not yet.') : null,
     passive: talent.kind === 'passive',
     desc: talent.desc,
@@ -801,7 +902,20 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         // "Discipline  (x1.30)" — upstream's own header shape. ONE POINT OH IS
         // LEFT UNSAID: printing "(x1.00)" on every category would be furniture
         // teaching a player to stop reading the number that matters.
-        text: mastery === 1 ? heading : `${heading}  (x${mastery.toFixed(2)})`,
+        /**
+         * AND WHICH PURSE IT SPENDS FROM. Upstream marks every node `(generic)`
+         * or `(class)` (LevelupDialog.lua:583) and puts the two in physically
+         * separate columns (:812-836); ours mixes both kinds into one flow grid,
+         * so without the mark there is nothing on screen that says why one strip
+         * is live and the one under it is grey.
+         *
+         * ONLY GENERIC IS MARKED. Class trees are the majority and the default,
+         * and labelling every one of them `(class)` is the furniture the mastery
+         * line above already refuses to print.
+         */
+        text: `${mastery === 1 ? heading : `${heading}  (x${mastery.toFixed(2)})`}${
+          isGenericTree(key) ? '  — generic' : ''
+        }`,
         cells: [],
       };
       byTree.set(key, group);
