@@ -82,6 +82,7 @@ import {
   expChart,
   isGenericTree,
   canRaiseStat,
+  stairsLockedFor,
   STAT_MAX,
   pointsForLevel,
   statPointsForLevel,
@@ -8298,6 +8299,34 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * out, heal, and step back into a fight frozen exactly as they left it —
    * making "run away" and "pause the fight" the same verb. See `Realm.sealed`.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MAY THIS BODY CHANGE LEVEL YET? — `changeLevelCheck`, Game.lua:879-884.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Anti-stairscum. The rule and the arithmetic are `stairsLockedFor` in
+   * shared/progression.ts; this is the seam that says it out loud.
+   *
+   * THE REFUSAL CARRIES THE COUNT, exactly as upstream's does (`:881`): "not
+   * yet" with no number is a rule a player cannot plan around, and this one
+   * lasts two turns — short enough that a number turns a refusal into a wait.
+   *
+   * @returns true when the crossing was REFUSED and the caller must stop.
+   */
+  const stairsShut = (session: Session, body: Actor, world: World): boolean => {
+    // A MONSTER HAS NO `lastKillTurn` AND CANNOT TAKE STAIRS. Narrowed rather
+    // than cast: the field is a `PlayerActor`'s, and this reads it as one.
+    const since = body.kind === ActorKind.Player ? body.lastKillTurn : undefined;
+    const left = stairsLockedFor(since, world.turn.clock.gameTurn);
+    if (left === 0) return false;
+    sendError(
+      session.socket,
+      ErrorCode.Refused,
+      `not so soon after a kill — ${String(left)} turn${left === 1 ? '' : 's'} to wait`,
+    );
+    return true;
+  };
+
   const leaveRealm = (session: Session): boolean => {
     const realms = opts.realms;
     const actorId = session.actorId;
@@ -8334,6 +8363,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     if (from === undefined) return false;
     if (from.kind === RealmKind.Overworld && session.enteredFromRealm === null) return false;
+    // ═══ BOTH DIRECTIONS ARE A LEVEL CHANGE ═══ Upstream's `changeLevelCheck`
+    // guards the act rather than the direction, and the exploit uses both legs:
+    // in, kill, straight back out to a floor that regenerates.
+    {
+      const leaver = from.world.getActor(actorId);
+      if (leaver !== undefined && stairsShut(session, leaver, from.world)) return false;
+    }
 
     const body = from.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return false;
@@ -8493,6 +8529,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (from === undefined) return;
     const body = from.world.getActor(actorId);
     if (body === undefined || body.kind !== 'player' || !body.alive) return;
+    // ═══ THE OTHER LEG OF THE SAME RULE ═══ See `stairsShut`: upstream guards
+    // the ACT of changing level, and walking in is half of "in, kill, out".
+    if (stairsShut(session, body, from.world)) return;
 
     /**
      * A ROAMER FIRST. It is standing on the tile, so it is the more specific

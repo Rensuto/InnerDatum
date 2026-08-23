@@ -868,3 +868,55 @@ export function statCeilingForLevel(level: number): number {
 export function canRaiseStat(base: number, level: number): boolean {
   return base < STAT_MAX && base < statCeilingForLevel(level);
 }
+
+// ---------------------------------------------------------------------------
+// ANTI-STAIRSCUM — Game.lua:868-884
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW LONG THE STAIRS ARE SHUT AFTER A KILL, in GAME TURNS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHAT IT STOPS ═══
+ * Stairscumming: walk in, kill the first thing, walk straight back out, walk in
+ * again to a freshly generated floor. It turns a delve into a slot machine —
+ * the player takes every easy fight and pays for none of the hard ones — and it
+ * is the single oldest exploit in the genre.
+ *
+ * ═══ THE NUMBER IS UPSTREAM'S NORMAL DIFFICULTY ═══
+ * `noStairsTime` returns `nb * 10` engine turns with `nb = 2` on Normal
+ * (Game.lua:868-876), and ten engine turns is one game turn — the same
+ * `TICKS_PER_GAME_TURN` this codebase already runs on. So: two game turns.
+ *
+ * The other four difficulties (0 on Easy, 3 on Nightmare, 5 on Insane, 9 on
+ * Madness) have NO REFERENT HERE — this game ships one difficulty, which
+ * `docs/game-design.md` settled — so porting the table would be four dead
+ * branches and a knob nobody can turn.
+ *
+ * ═══ IT IS SHORT ON PURPOSE ═══
+ * Two turns is long enough that leaving is a decision and short enough that it
+ * never feels like a lock. Upstream tuned it there over fifteen years, and the
+ * temptation to "make it meaningful" by raising it is the temptation to punish
+ * the ordinary case in order to close an exploit the number already closes.
+ */
+export const NO_STAIRS_GAME_TURNS = 2;
+
+/**
+ * How many game turns are left before this body may change level, or 0.
+ *
+ * PURE, so the refusal the server sends and any affordance a client draws are
+ * one arithmetic rather than two. Upstream computes its own remaining count for
+ * exactly the same reason: the refusal names it (`:881`), because "not yet" with
+ * no number is a rule a player cannot plan around.
+ *
+ * @param lastKillTurn the game turn a kill was credited on, or undefined for a
+ *   body that has not killed anything — which is most bodies, most of the time.
+ */
+export function stairsLockedFor(lastKillTurn: number | undefined, now: number): number {
+  if (lastKillTurn === undefined) return 0;
+  // `>=` MATCHES UPSTREAM'S COMPARISON (`last_kill_turn >= turn - noStairsTime`),
+  // so the turn of the kill itself counts as one of the two.
+  const until = lastKillTurn + NO_STAIRS_GAME_TURNS;
+  return now >= until ? 0 : until - now;
+}

@@ -16,6 +16,8 @@ import {
   STAT_MAX,
   canRaiseStat,
   statCeilingForLevel,
+  NO_STAIRS_GAME_TURNS,
+  stairsLockedFor,
 } from '../../src/shared/progression.ts';
 
 /**
@@ -381,5 +383,53 @@ describe('how high one attribute may go at this level', () => {
     // The outer bound is its own fact — `STAT_MAX` would be right if every other
     // rule went away.
     expect(canRaiseStat(STAT_MAX, 999)).toBe(false);
+  });
+});
+
+describe('the stairs shut for a moment after a kill', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ANTI-STAIRSCUM — `changeLevelCheck`, Game.lua:879-884.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Walk in, kill the first thing, walk straight back out to a freshly generated
+   * floor. It turns a delve into a slot machine — every easy fight taken, no
+   * hard ones paid for — and it is the oldest exploit in the genre.
+   */
+  it('locks for upstream’s Normal-difficulty span', () => {
+    // `noStairsTime` returns `nb * 10` engine turns with `nb = 2` on Normal, and
+    // ten engine turns is one game turn — the same `TICKS_PER_GAME_TURN` this
+    // engine runs on. So: two.
+    expect(NO_STAIRS_GAME_TURNS).toBe(2);
+  });
+
+  it('counts the turn of the kill as one of the two', () => {
+    // Upstream's comparison is `last_kill_turn >= turn - noStairsTime`, so the
+    // kill's own turn is inside the window.
+    expect(stairsLockedFor(10, 10)).toBe(2);
+    expect(stairsLockedFor(10, 11)).toBe(1);
+    expect(stairsLockedFor(10, 12)).toBe(0);
+  });
+
+  it('never locks a body that has not killed anything', () => {
+    // Which is most bodies most of the time — and the field is ABSENT rather
+    // than 0, because turn 0 is a real turn.
+    expect(stairsLockedFor(undefined, 0)).toBe(0);
+    expect(stairsLockedFor(undefined, 9999)).toBe(0);
+  });
+
+  it('does not lock on a stale kill from long ago', () => {
+    expect(stairsLockedFor(3, 400)).toBe(0);
+  });
+
+  it('answers a count rather than a boolean, so the refusal can say it', () => {
+    /**
+     * "Not yet" with no number is a rule a player cannot plan around, and this
+     * one lasts two turns — short enough that a number turns a refusal into a
+     * wait. Upstream computes its own remaining count for the same reason
+     * (Game.lua:881).
+     */
+    expect(stairsLockedFor(10, 10)).toBeGreaterThan(0);
+    expect(typeof stairsLockedFor(10, 10)).toBe('number');
   });
 });

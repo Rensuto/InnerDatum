@@ -698,6 +698,25 @@ export type PlayerActor = ActorCommon & {
    * derived value" is why the save stores raw per-talent points and recomputes
    * this from `totalPointsAtLevel` rather than trusting whatever was written.
    */
+  /**
+   * THE GAME TURN THIS BODY LAST GOT A KILL CREDITED ON — anti-stairscum.
+   *
+   * `last_kill_turn` (Game.lua:880). Undefined for a body that has not killed
+   * anything, which is most bodies most of the time, and absent rather than 0
+   * because turn 0 is a real turn.
+   *
+   * ═══ CREDITED TO THE WHOLE PARTY, LIKE THE EXPERIENCE ═══
+   * `awardExperience` already treats a kill as the PARTY's event — no division
+   * by headcount, no proximity check — and this rides the same recipients loop.
+   * Upstream is single-player so "you" is unambiguous there; here, charging only
+   * the killer would leave the exploit wide open, because one player kills and
+   * another opens the door.
+   *
+   * NOT PERSISTED. A reconnect that forgot it hands back at most two game turns
+   * of a lock nobody can observe having lost — the same invisible class of loss
+   * `TalentSheet.movedThisTurn` and `ResourcePool.regenCounter` already accept.
+   */
+  lastKillTurn?: number;
   unspentPoints: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════

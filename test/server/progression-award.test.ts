@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { NO_STAIRS_GAME_TURNS, stairsLockedFor } from '../../src/shared/progression.ts';
+
 import { AiProfile, IntentKind } from '../../src/server/engine/actor.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
@@ -961,5 +963,55 @@ describe('the level-up narration seam', () => {
     // ...and the award did land, so this is silence about a LEVEL rather than
     // silence about a kill that never happened.
     expect(scene.actor('p1').xp).toBe(AWARD);
+  });
+});
+
+describe('a kill shuts the stairs for a moment', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ANTI-STAIRSCUM — `last_kill_turn`, Game.lua:880.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Walk in, kill the first thing, walk straight back out to a freshly generated
+   * floor. The arithmetic is `stairsLockedFor` and is tested on its own; this is
+   * about the STAMP — that a real kill through the real award path actually
+   * records the turn, on everybody it should.
+   */
+  it('records the turn on the killer', () => {
+    const scene = table({ seed: 'stairs-one', players: 1 });
+    expect(scene.actor('p1').lastKillTurn, 'nothing killed yet').toBeUndefined();
+
+    scene.commitAll(['p1'], 'm1', 0);
+
+    const ren = scene.actor('p1');
+    expect(ren.lastKillTurn).toBeDefined();
+    expect(stairsLockedFor(ren.lastKillTurn, ren.lastKillTurn ?? 0)).toBe(NO_STAIRS_GAME_TURNS);
+  });
+
+  it('records it on EVERY party member, not just the one who swung', () => {
+    /**
+     * ═══ THE HALF THAT CLOSES THE EXPLOIT IN CO-OP ═══
+     * This file already establishes that a kill is the PARTY's event — "pays
+     * every member the FULL award", no division and no proximity check. The
+     * stairs rule rides the same loop, and it has to: charge only the killer and
+     * one player kills while another opens the door.
+     *
+     * Upstream is single-player, so `getPlayer(true)` is unambiguous there and
+     * this is the reading that carries the same intent here.
+     */
+    const scene = table({ seed: 'stairs-party', players: 3, party: true });
+    scene.commitAll(['p1'], 'm1', 0);
+
+    for (const id of ['p1', 'p2', 'p3']) {
+      expect(scene.actor(id).lastKillTurn, `${id} was not charged`).toBeDefined();
+    }
+  });
+
+  it('leaves a body that killed nothing free to walk out', () => {
+    // Which is the ordinary case, and the one the rule must not touch: fleeing a
+    // fight you are LOSING is exactly what upstream still allows, because the
+    // trigger is a kill.
+    const scene = table({ seed: 'stairs-none', players: 1 });
+    expect(stairsLockedFor(scene.actor('p1').lastKillTurn, 50)).toBe(0);
   });
 });

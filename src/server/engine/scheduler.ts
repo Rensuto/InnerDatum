@@ -3270,6 +3270,21 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
     member.level = gained.level;
     member.xp = gained.xp;
     member.pendingLevels += gained.levelsGained;
+
+    /**
+     * ═══ AND THE STAIRS SHUT FOR A MOMENT — `last_kill_turn`, Game.lua:880 ═══
+     *
+     * Anti-stairscum: walk in, kill the first thing, walk straight back out to a
+     * freshly generated floor. See `NO_STAIRS_GAME_TURNS`.
+     *
+     * ON THE SAME LOOP AS THE EXPERIENCE, deliberately. This file has already
+     * decided a kill is the PARTY's event — no division by headcount, no
+     * proximity check — and the exploit needs that reading to be closed: charge
+     * only the killer and one player kills while another opens the door. Riding
+     * the existing loop is also what stops the two answers to "whose kill was
+     * that" from drifting apart.
+     */
+    member.lastKillTurn = run.world.turn.clock.gameTurn;
   }
 }
 
