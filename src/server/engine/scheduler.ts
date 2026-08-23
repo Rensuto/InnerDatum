@@ -107,7 +107,7 @@ import type { TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
 import type { World } from '../world/world.ts';
 import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
-import type { StatusApply } from './effects.ts';
+import type { StatusApply, StatusHit } from './effects.ts';
 import type { ActorMove, GuardCounter, TalentHit } from './talents.ts';
 import type { Projectile } from './projectile.ts';
 import type { Barrier, BellState, PartyScope } from './barrier.ts';
@@ -536,6 +536,36 @@ export type GameEvent =
    * are genuinely different events (Actor.lua:7034-7037 vs :7038-7040).
    */
   | { readonly t: 'status'; readonly note: EffectLogLine }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A STATUS DEALT DAMAGE — the line a bleed never had.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `attacked` carries a blow struck by somebody taking a turn, and `hitToWire`
+   * derives the `damage` frame from it. A bleed strikes nobody's blow, so it
+   * produced no frame and the whole transcript of a death by bleeding was one
+   * sentence with no number, no hp and no cause.
+   *
+   * SEPARATE FROM `attacked` RATHER THAN FAKED AS ONE, because there is no
+   * attacker and no swing: an `attacked` event with `hit: true` and no accuracy
+   * roll would put a lie in the structure the Record lane reads back, and the
+   * accuracy arithmetic it prints verbatim would have to be invented.
+   *
+   * Upstream needs no equivalent because it logs at the PROJECTOR — every hit
+   * goes through `takeHit` and then `"%d %s"` (damage_types.lua:491-501),
+   * whether it came from a sword or a wound.
+   */
+  | {
+      readonly t: 'status_damage';
+      /** The VICTIM, matching `DamageEvent.id`. */
+      readonly id: string;
+      /** Whoever is to blame, or null for a wound whose owner is gone. */
+      readonly sourceId: string | null;
+      readonly amount: number;
+      readonly hp: number;
+      readonly maxHp: number;
+      readonly killed: boolean;
+    }
   /**
    * A player hit 0 HP and went DOWN, not dead — game-design.md § 9. The five
    * turns start now; `turnsLeft` is what the countdown ring starts at.
@@ -1026,7 +1056,7 @@ export type PumpCtx = {
    * the one that caused it — which is also what makes the reap idempotent
    * without a second flag on the body.
    */
-  readonly drainKills?: () => readonly StatusKill[];
+  readonly drainHits?: () => readonly StatusHit[];
   /**
    * Take everything `EffectCtx.log` has recorded since the last call, and CLEAR
    * it. `pump` turns each line into a `status` event, in place.
@@ -1379,12 +1409,6 @@ export type PumpResult = {
  * returned in `bell.deadlineMs` elapses. It is cheap to call when there is
  * nothing to do — an idle pump advances no clock and allocates one array.
  */
-/** One body a status killed, and whoever is to blame if anybody is. */
-export type StatusKill = {
-  readonly victimId: string;
-  readonly killerId: string | null;
-};
-
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * BURY WHOEVER A STATUS KILLED — the monster arm of `survivalPass`.
@@ -1410,22 +1434,46 @@ export type StatusKill = {
  * standing because nobody could be paid for it would be the original bug with a
  * smaller footprint.
  */
-function reapStatusKills(run: Run, sweepTurn: number | null): void {
-  const drain = run.ctx.drainKills;
+function resolveStatusHits(run: Run, sweepTurn: number | null): void {
+  const drain = run.ctx.drainHits;
   if (drain === undefined) return;
 
-  for (const kill of drain()) {
-    const victim = run.world.getActor(kill.victimId);
+  for (const hit of drain()) {
+    /**
+     * THE LINE FIRST, AND UNCONDITIONALLY. It is reported even for a body that
+     * has since left the world, because the damage HAPPENED and the transcript
+     * is a record of what happened — and because withholding it is the exact
+     * failure this event exists to fix.
+     */
+    run.sink.push({
+      t: 'status_damage',
+      id: hit.victimId,
+      sourceId: hit.sourceId,
+      amount: hit.amount,
+      hp: hit.hp,
+      maxHp: hit.maxHp,
+      killed: hit.killed,
+    });
+
+    if (!hit.killed) continue;
+    const victim = run.world.getActor(hit.victimId);
     if (victim === undefined) continue;
+    /**
+     * THE GUARD IS POSITIVE — `kind === Monster` — for the reason `noteCasualty`
+     * gives where it does the same thing: a DOWNED player is `alive === false`
+     * on purpose, `removePlayer` is literally the same closure as `removeActor`,
+     * and a mistake here deletes somebody's character rather than merely
+     * mis-scoring. The player arm is `survivalPass`, which runs a line above.
+     */
     if (victim.kind !== ActorKind.Monster) continue;
-    // A body that is somehow back on its feet by the time this drains is not a
-    // casualty. Cheap, and it keeps the note advisory rather than authoritative.
+    // Back on its feet by the time this drains? Then it is not a casualty. Cheap,
+    // and it keeps the note advisory rather than authoritative.
     if (victim.alive) continue;
 
     run.reaped.push(victim.id);
-    if (kill.killerId !== null) {
-      run.ctx.talents?.noteKill(kill.killerId);
-      awardExperience(run, kill.killerId, victim);
+    if (hit.sourceId !== null) {
+      run.ctx.talents?.noteKill(hit.sourceId);
+      awardExperience(run, hit.sourceId, victim);
     }
     spillLoot(run, victim, sweepTurn);
   }
@@ -1652,11 +1700,23 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       // labelled draw stream. See `applyPendingLevels`.
       applyPendingLevels(actor, run);
       drainStatus(ctx, sink, null);
-      // THE TWO ARMS OF "SOMETHING JUST BLED OUT", players then monsters. Both
-      // AFTER the status drain so "you are bleeding" is logged before "you are
-      // down", which is the order it happened in.
+      /**
+       * ═══ THE BLOW, THEN WHAT IT COST — WHICH IS THE ORDER IT HAPPENED IN ═══
+       * `drainStatus` above says "Dalt is Bleeding". This says "5 damage. Dalt
+       * 0/4." And `survivalPass` below says "Dalt is DOWN".
+       *
+       * `resolveStatusHits` FIRST, and it was the other way round for one
+       * measured pump: the events came out `downed, erased, damage`, so the
+       * transcript announced the consequence and then the cause — a player read
+       * that they were down, and only afterwards what had done it.
+       *
+       * The two do not otherwise interact: this one buries MONSTERS (the player
+       * arm is `survivalPass`, and the positive `kind === Monster` guard is what
+       * keeps them apart), and `survivalPass` only ever looks at the one actor
+       * whose base clock just ticked.
+       */
+      resolveStatusHits(run, null);
       survivalPass(actor, run);
-      reapStatusKills(run, null);
     },
 
     // THE SPEED-DEPENDENT PASS. A hasted monster arrives here more often, and

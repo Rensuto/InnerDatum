@@ -405,14 +405,23 @@ export const BLEEDING: EffectDef = Object.freeze({
 
     /**
      * ═════════════════════════════════════════════════════════════════════════
-     * AND IF THAT KILLED IT, SAY SO. THE RETURN USED TO BE DISCARDED.
+     * AND SAY WHAT IT DID. THE RETURN USED TO BE DISCARDED ENTIRELY.
      * ═════════════════════════════════════════════════════════════════════════
      *
-     * A blow is buried because the scheduler reads the ACTION OUTCOME it
-     * produced. A bleed tick produces no outcome, so nothing ever looked: the
-     * body sat at 0 hp with `alive === false`, in the world, un-narrated,
-     * un-reaped and unpaid, blocking the "quiet now" that asks whether anything
-     * is still standing. See `EffectCtx.noteKill` for the measurement.
+     * TWO THINGS WENT MISSING WITH IT, and they are the same omission:
+     *
+     *   THE LINE.  Ours derives the `damage` frame from the ACTION OUTCOME a
+     *              blow produces (`hitToWire`). A bleed produces no outcome, so
+     *              a death by bleeding was one bare sentence with no number, no
+     *              hp and no cause. Upstream has no such gap because it logs at
+     *              the PROJECTOR — `takeHit` then `"%d %s"`, the same path for a
+     *              sword and a wound (damage_types.lua:491-501).
+     *   THE BODY.  `applyDamage` set `alive = false` and returned `killed`, and
+     *              nothing buried it: 0 hp, still on its tile, unpaid, and
+     *              counted by whatever asks if the site is clear.
+     *
+     * So the hit is reported and the death is a flag on it, which is the order
+     * it happens in. See `EffectCtx.noteDamage` for the measurement.
      *
      * THE BLAME IS `srcId`, NOT `blame`. `blame` falls back to the VICTIM so the
      * damage always has a name to print (physical.lua:150, `eff.src or self`),
@@ -423,10 +432,19 @@ export const BLEEDING: EffectDef = Object.freeze({
      * every `party.ts` call — so this is DEFENCE IN DEPTH rather than the only
      * thing standing between a corpse and a level. What it does buy on its own
      * is that `talents.noteKill` is not fired on a dead husk's id, and that null
-     * means "nobody is owed for this", which is true and is not the same claim
-     * as "the victim is owed for this".
+     * means "nobody is owed for this", which is not the same claim as "the
+     * victim is owed for this".
      */
-    if (outcome.killed) ctx.noteKill?.(actor.id, srcId ?? null);
+    if (outcome.dealt > 0 || outcome.killed) {
+      ctx.noteDamage?.({
+        victimId: actor.id,
+        sourceId: srcId ?? null,
+        amount: outcome.dealt,
+        hp: actor.hp,
+        maxHp: actor.maxHp,
+        killed: outcome.killed,
+      });
+    }
 
     // ActorTemporaryEffects.lua:85 — returning true removes the effect. A bleed
     // never self-terminates; it runs its duration out.

@@ -90,6 +90,145 @@ describe('a monster killed by a status', () => {
     expect(world.getActor('m1'), 'the corpse is still on the board').toBeUndefined();
   });
 
+  it('puts the blow itself on the wire, with a number and a cause', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE WHOLE TRANSCRIPT OF A DEATH BY BLEEDING WAS ONE SENTENCE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `hitToWire` derives the `damage` frame from an ACTION OUTCOME, so a blow
+     * nobody struck produced no frame: no number, no hp, no cause. A player
+     * watching their health fall had nothing in the log saying what was doing
+     * it.
+     *
+     * UPSTREAM HAS NO SUCH GAP BECAUSE IT LOGS AT THE PROJECTOR — every hit
+     * goes through `takeHit` and is then logged as `"%d %s"`, the same path for
+     * a sword swing and a wound (damage_types.lua:491-501). The log is attached
+     * to DAMAGE there, not to attacks, which is exactly the distinction ours
+     * had lost.
+     */
+    const { engine } = stage();
+    const damage: { id?: string; amount?: number; hp?: number; sourceId?: string }[] = [];
+    const deaths: { id?: string }[] = [];
+    for (let turn = 0; turn < 8; turn += 1) {
+      for (const ev of engine.pump().playerEvents) {
+        if (ev.k === 'damage') damage.push(ev);
+        if (ev.k === 'death') deaths.push(ev);
+      }
+    }
+
+    expect(damage.length, 'a bleed put nothing on the wire').toBeGreaterThan(0);
+    const first = damage[0];
+    expect(first?.id, 'the line is about the wrong body').toBe('m1');
+    expect(first?.amount ?? 0, 'a damage line with no damage in it').toBeGreaterThan(0);
+    // THE CAUSE. "Something is hurting you" with no name is the sentence this
+    // whole event exists to replace.
+    expect(first?.sourceId, 'the blow has no cause on it').toBe('p1');
+    // ...and the hp is the victim's AFTER the hit, so the Case Log can print
+    // the pair the way every other damage line does.
+    expect(first?.hp).toBeLessThan(3);
+
+    // AND THE DEATH LINE, so a monster that bleeds out does not simply vanish.
+    expect(
+      deaths.map((d) => d.id),
+      'the kill was never announced',
+    ).toContain('m1');
+  });
+
+  it('narrates the ticks that do NOT kill, which is most of them', () => {
+    /**
+     * THE FIXTURE ABOVE KILLS ON ITS FIRST TICK, so on its own it cannot tell a
+     * report-the-hit implementation from a report-only-the-kill one — and the
+     * second is the bug: a player watching their own health fall three turns
+     * running with nothing in the log saying why is the ordinary experience of
+     * being bled, and it is the case the killing blow never covers.
+     */
+    const world = createWorld('dot-survives');
+    const effects = createEffectState();
+    registerEffect(effects, BLEEDING);
+    const engine = createTurnEngine({ world, downed: createDownedState(), effects });
+    world.addPlayer('p1', 'Dalt');
+    const husk = world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 7,
+      y: 2,
+      profile: AiProfile.MeleeChaser,
+    });
+    husk.maxHp = 200;
+    husk.hp = 200;
+    setEffect(effects, husk, EffectId.Bleeding, 20, { power: 5, srcId: 'p1' }, world.rng);
+
+    const lines: number[] = [];
+    let died = false;
+    for (let turn = 0; turn < 4; turn += 1) {
+      // A HELD TURN IS STILL A TURN. Without it the pump parks waiting on the
+      // player and the base clock never advances, so the bleed ticks once and
+      // the test measures a single tick while claiming to measure several.
+      engine.hold('p1');
+      for (const ev of engine.pump().playerEvents) {
+        if (ev.k === 'damage' && ev.id === 'm1') lines.push(ev.amount);
+        if (ev.k === 'death') died = true;
+      }
+    }
+
+    expect(died, 'the husk was supposed to survive — the fixture is wrong').toBe(false);
+    expect(lines.length, 'a bleed that does not kill says nothing').toBeGreaterThan(1);
+    expect(Math.min(...lines), 'a damage line with no damage in it').toBeGreaterThan(0);
+  });
+
+  it('does not print a monster`s death line over a player who is merely DOWNED', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `hitToWire` PUSHES `death` FOR WHOEVER `killed` NAMES, PLAYER OR NOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The Record lane prints "X is unfiled." for a `death` — the game's own word
+     * for a monster's permanent removal — so a player bled to 0 with an ally two
+     * tiles away and five turns to reach them reads as gone for good. That is a
+     * real fault on the attack path and it is queued; what this pins is that the
+     * status path does not repeat it.
+     *
+     * A PLAYER AT 0 IS `alive === false` ON PURPOSE (engine/downed.ts) — the
+     * `downed` event is the one that belongs to them, and `survivalPass` raises
+     * it a line above `resolveStatusHits`.
+     */
+    const world = createWorld('dot-player');
+    const effects = createEffectState();
+    registerEffect(effects, BLEEDING);
+    const engine = createTurnEngine({ world, downed: createDownedState(), effects });
+    const dalt = world.addPlayer('p1', 'Dalt');
+    dalt.maxHp = 4;
+    dalt.hp = 4;
+    setEffect(effects, dalt, EffectId.Bleeding, 20, { power: 9 }, world.rng);
+
+    const kinds: string[] = [];
+    for (let turn = 0; turn < 6; turn += 1) {
+      // See the note above: a parked pump advances no base clock.
+      engine.hold('p1');
+      for (const ev of engine.pump().playerEvents) kinds.push(ev.k);
+    }
+
+    /**
+     * ═══ THE SETUP HAS TO HAVE WORKED, AND NOT VIA HP ═══
+     * `hp` reads 4 again by the end: a lone player IS the whole party, so going
+     * down raises a wipe and `resetFloorParty` restores them inside the same
+     * pump. (That collapse is why the death plate is driven off `erased`/Wipe
+     * rather than the party frame.) The EVENTS are the honest witness.
+     */
+    expect(kinds, 'the bleed never put them down — the fixture is not measuring').toContain(
+      'downed',
+    );
+    expect(kinds, 'the blow itself was never narrated').toContain('damage');
+    // ═══ AND THE ORDER: THE BLOW BEFORE WHAT IT COST ═══
+    expect(
+      kinds.indexOf('damage'),
+      'the transcript announced the downing before the blow that caused it',
+    ).toBeLessThan(kinds.indexOf('downed'));
+    // ═══ AND THE CLAIM ═══
+    expect(kinds, 'a DOWNED player was announced as permanently dead').not.toContain('death');
+  });
+
   it('pays the bleeder for the kill', () => {
     /**
      * A KILL PAYS THREE THINGS — the talent layer's `noteKill` (the Alchemist's

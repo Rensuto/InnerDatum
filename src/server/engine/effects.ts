@@ -582,10 +582,40 @@ export type EffectCtx = {
    * the hook says WHAT HAPPENED and the scheduler decides what that means — the
    * same division `log` and `drainStatusLog` already keep, for the same reason.
    *
-   * `killerId` is null when the wound has nobody left to blame; the scheduler
+   * ═══ IT REPORTS THE DAMAGE, NOT ONLY THE DEATH — WHICH IS UPSTREAM'S SHAPE ═══
+   * ToME attaches the log to DAMAGE and not to attacks: every hit goes through
+   * `DamageType`'s default projector, which calls `takeHit` and then logs
+   * `"%d %s"` (damage_types.lua:496-501) — the same path for a sword swing and a
+   * bleed tick. That is exactly why upstream has no bug here.
+   *
+   * Ours derived the `damage` frame from the ACTION OUTCOME instead
+   * (`hitToWire`), so a bleed produced no damage line at all: the whole
+   * transcript of a death by bleeding was one sentence, with no number, no hp
+   * and no cause. Reporting the hit rather than the kill puts the line back and
+   * costs nothing extra — the death is a flag on it, which is the order it
+   * happens in.
+   *
+   * `sourceId` is null when the wound has nobody left to blame; the scheduler
    * pays nothing in that case rather than crediting an arbitrary body.
    */
-  noteKill?: (victimId: string, killerId: string | null) => void;
+  noteDamage?: (hit: StatusHit) => void;
+};
+
+/**
+ * ONE BLOW DEALT BY A STATUS, as reported to whoever is driving the pump.
+ *
+ * `hp`/`maxHp` are captured AT THE HIT rather than read back when the pump
+ * drains this: two effects ticking on one body in one base pass would otherwise
+ * both report the second one's hp, and the Case Log would print a number the
+ * player never had.
+ */
+export type StatusHit = {
+  readonly victimId: string;
+  readonly sourceId: string | null;
+  readonly amount: number;
+  readonly hp: number;
+  readonly maxHp: number;
+  readonly killed: boolean;
 };
 
 /** One line for the Case Log's Record lane. Terse and mechanical, by design. */

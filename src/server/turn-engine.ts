@@ -25,7 +25,13 @@
 import { chebyshev, inBounds, step } from '../shared/coords.ts';
 import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
 import type { RestResult, RestView } from '../shared/rest.ts';
-import { ErasedReason, ErrorCode, PartyAction, TalentShape } from '../shared/protocol.ts';
+import {
+  ActorKind,
+  ErasedReason,
+  ErrorCode,
+  PartyAction,
+  TalentShape,
+} from '../shared/protocol.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type { LoadoutTalent, ResourceView, TurnEvent, UnlockableTree } from '../shared/protocol.ts';
 import { seedTestEncounter } from './content/encounter.ts';
@@ -47,7 +53,7 @@ import {
   effectsOn,
   EffectStatus,
 } from './engine/effects.ts';
-import type { EffectLogLine, EffectState } from './engine/effects.ts';
+import type { EffectLogLine, EffectState, StatusHit } from './engine/effects.ts';
 import { combatDistance } from './engine/combat.ts';
 import {
   MAX_PARTY_SIZE,
@@ -64,7 +70,7 @@ import {
   partyOf,
 } from './engine/party.ts';
 import type { PartyResult, PartyState } from './engine/party.ts';
-import type { GameEvent, StatusKill, SweepStep, TalentResolution } from './engine/scheduler.ts';
+import type { GameEvent, SweepStep, TalentResolution } from './engine/scheduler.ts';
 import { disconnectActor, pump, reconnectActor, submitIntent } from './engine/scheduler.ts';
 import type {
   IntentResult,
@@ -806,6 +812,55 @@ function toWireEvents(
       case 'status':
         out.push(...statusToWire(ev.note));
         break;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A BLEED, AS A DAMAGE LINE. THE ONE A DEATH BY BLEEDING NEVER HAD.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `hitToWire` builds the `damage` frame out of an ACTION OUTCOME, so a
+       * blow that nobody struck produced nothing at all: the transcript of a
+       * death by bleeding was a single sentence with no number, no hp and no
+       * cause. Upstream has no equivalent gap because it logs at the projector
+       * — `takeHit`, then `"%d %s"` — for a sword and a wound alike
+       * (damage_types.lua:491-501).
+       *
+       * ═══ WHAT THIS STILL DOES NOT SAY, AND WHY IT IS NOT SAID HERE ═══
+       * The line reads "5 damage. Index Husk 0/3." — a number and an hp pair,
+       * with the CAUSE missing. Upstream's is "5 physical" and bolds a crit,
+       * because it logs at the projector and has the type and the crit in hand.
+       * `DamageEvent` carries neither, and neither does `AttackEvent` past
+       * `hitToWire`, so a swing's crit is dropped on the identical line — one
+       * fault, one fix, and it is a WIRE change: `PROTOCOL_VERSION` must be
+       * argued on one stated reason in its own commit (src/shared/version.ts).
+       * That commit is the one that names the cause; this one stops the damage
+       * being invisible, which is the half that needs no new field.
+       *
+       * ═══ AND `death` ONLY FOR A MONSTER ═══
+       * `hitToWire` pushes `death` for whoever `killed` names, player or not,
+       * and the Record lane prints "X is unfiled." for it — which is a monster's
+       * permanent death printed over a player who is merely DOWNED with an ally
+       * running at them. That is a real fault and it is not this event's to
+       * repeat: here the player arm is `survivalPass`, which raises `downed`,
+       * and only a monster gets the death line.
+       */
+      case 'status_damage': {
+        out.push({
+          k: 'damage',
+          id: ev.id,
+          amount: ev.amount,
+          hp: ev.hp,
+          maxHp: ev.maxHp,
+          ...(ev.sourceId === null ? {} : { sourceId: ev.sourceId }),
+        });
+        if (ev.killed && world.getActor(ev.id)?.kind === ActorKind.Monster) {
+          out.push({
+            k: 'death',
+            id: ev.id,
+            ...(ev.sourceId === null ? {} : { killerId: ev.sourceId }),
+          });
+        }
+        break;
+      }
       // M4 — the survival system (engine/downed.ts, game-design.md § 9).
       case 'downed':
         out.push({
@@ -2358,12 +2413,13 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * buffers the ctx writes into and the pump reads back out.
        */
       const statusNotes: EffectLogLine[] = [];
-      // WHO A STATUS KILLED THIS PUMP. The same buffer shape and the same
-      // lifetime as `statusNotes` beside it — written by the `EffectCtx`,
-      // spliced empty by the pump — because it is the same problem: the effect
-      // system knows something the scheduler has to act on and must not reach
-      // into the world to act on it itself. See `PumpCtx.drainKills`.
-      const statusKills: StatusKill[] = [];
+      // WHAT A STATUS DID TO A BODY THIS PUMP — the damage, and whether it
+      // finished them. The same buffer shape and lifetime as `statusNotes`
+      // beside it — written by the `EffectCtx`, spliced empty by the pump —
+      // because it is the same problem: the effect system knows something the
+      // scheduler has to act on and must not reach into the world to act on it
+      // itself. See `PumpCtx.drainHits`.
+      const statusHits: StatusHit[] = [];
 
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -2407,14 +2463,14 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
                 // this one either — main.ts passes the capability in.
                 sheetDirty: opts.onSheetDirty,
                 /**
-                 * A BLEED THAT FINISHES SOMETHING. `applyDamage` set `alive`
-                 * false and returned `killed`, and the bleed used to discard
-                 * that — so the body stayed on its tile at 0 hp forever, never
-                 * reaped, never announced, paying no experience and no loot.
-                 * `reapStatusKills` is the far end of this.
+                 * WHAT A BLEED DID. The return from `applyDamage` used to be
+                 * discarded, which cost two things: the damage LINE (ours is
+                 * derived from an action outcome, and a bleed produces none) and
+                 * the BURIAL (`alive` false, still on its tile forever, unpaid).
+                 * `resolveStatusHits` is the far end of this.
                  */
-                noteKill: (victimId: string, killerId: string | null): void => {
-                  statusKills.push({ victimId, killerId });
+                noteDamage: (hit: StatusHit): void => {
+                  statusHits.push(hit);
                 },
               },
             };
@@ -2499,9 +2555,10 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * one that produced it.
          */
         drainStatusLog: () => statusNotes.splice(0, statusNotes.length),
-        // AND THE SAME DRAIN FOR THE BODIES. Spliced rather than read, so a kill
-        // is acted on exactly once and cannot survive into the next turn.
-        drainKills: () => statusKills.splice(0, statusKills.length),
+        // AND THE SAME DRAIN FOR THE BLOWS. Spliced rather than read, so a hit
+        // is narrated exactly once and a kill acted on exactly once, and neither
+        // can survive into the turn after the one that caused it.
+        drainHits: () => statusHits.splice(0, statusHits.length),
       });
       /**
        * THE DEBT IS SPENT, whatever the pump made of it.
