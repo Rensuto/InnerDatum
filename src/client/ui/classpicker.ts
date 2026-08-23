@@ -132,12 +132,36 @@ const INSET = PANEL_PAD + 3;
  * to cover the hotbar", so there is nothing to leave visible and no reason to
  * hold pixels back. It takes the window, up to the cap.
  *
- * `PICKER_MAX_W` is what stops it becoming a wall of whitespace on a wide
- * monitor: past it, more window buys nothing, because there are only three
- * cards. The small-viewport case is untouched -- the modal still shrinks rather
- * than refusing, for the reason `classPickerRect` records.
+ * `pickerMaxW` is what stops it becoming a wall of whitespace on a wide monitor:
+ * past it, more window buys nothing. The small-viewport case is untouched -- the
+ * modal still shrinks rather than refusing, for the reason `classPickerRect`
+ * records.
+ *
+ * ═══ IT WAS A FLAT 880 AND THAT NUMBER WAS SIZED FOR THREE CARDS ═══
+ * The paragraph above used to end *"because there are only three cards"*. A
+ * fourth class shipped. 880 across four is a card of 210 pixels, and
+ * `The Alchemist of Ashwick Row` is twenty-eight characters -- so the modal went
+ * straight back to clipping a class name mid-word on a 1920-pixel monitor, which
+ * is the exact failure this whole block was written to kill, re-created by the
+ * one number that still counted the cards.
+ *
+ * SO THE CAP IS DERIVED FROM THE COUNT NOW. `CARD_MAX_W` is what a card is
+ * allowed to be, the cap is whatever holds that many of them, and a fifth class
+ * costs nothing but a wider modal on a wide screen.
  */
-const PICKER_MAX_W = 880;
+const CARD_MAX_W = 282;
+
+/**
+ * The widest this modal is worth being, for `count` cards.
+ *
+ * 282 IS WHAT THREE CARDS ENJOYED AT THE OLD CAP -- measured, not chosen: 880
+ * minus two insets, minus two gaps, over three. It is known good, because it is
+ * the width that made `Iron Curtain` fit when this block was written.
+ */
+function pickerMaxW(count: number): number {
+  const n = Math.max(1, count);
+  return n * CARD_MAX_W + (n - 1) * CARD_GAP + INSET * 2;
+}
 const PICKER_MAX_H = 520;
 const PICKER_MARGIN = 8;
 
@@ -160,9 +184,6 @@ const PORTRAIT_PX = 64;
 /** A talent's icon box on a card. Centre-cropped, never scaled. */
 const TALENT_ICON = 16;
 const TALENT_ROW_H = 18;
-/** How many sentences of `description` a card will show before truncating. */
-const DESC_MAX_LINES = 4;
-
 const ROW_H = 12;
 
 const FONT_NAME = 'bold 12px ui-monospace, Consolas, monospace';
@@ -182,7 +203,21 @@ const PICKER_TITLE = 'WHO ARE YOU?';
  * (CharacterSheet.lua:95-99) — and this line names the rest of the keyboard,
  * because a modal that swallows every key must say which ones it kept.
  */
-const PICKER_HINT = 'pick with 1-3 or the arrows · Enter confirms · this choice is permanent';
+/**
+ * THE DIGITS ARE COUNTED, NOT WRITTEN OUT.
+ *
+ * This was the literal string `pick with 1-3 …` and a fourth class shipped
+ * behind it — so the screen taught three shortcuts while the server offered
+ * four, and `4` worked and was never mentioned. `main.ts` bounds the digit
+ * handler by `pickerCards().length`, which is the number this now reads.
+ *
+ * The same drift this codebase keeps catching: a literal restating a fact that
+ * lives somewhere else, silent the day the fact moves.
+ */
+function pickerHint(count: number): string {
+  const keys = count <= 1 ? '1' : `1-${String(count)}`;
+  return `pick with ${keys} or the arrows · Enter confirms · this choice is permanent`;
+}
 const CONFIRM_LABEL = 'CONFIRM';
 /** The word half of the selection mark. See the header: never colour alone. */
 const SELECTED_WORD = 'SELECTED';
@@ -217,7 +252,7 @@ export type ClassPickerHit =
  * Computed from the FULL VIEWPORT rather than from the map band, because a modal
  * is allowed to cover the hotbar: nothing under it is pressable while it is up.
  */
-export function classPickerRect(width: number, height: number): PanelRect {
+export function classPickerRect(width: number, height: number, count = 3): PanelRect {
   /**
    * THE WINDOW, UP TO THE CAP — not a fraction of it.
    *
@@ -234,7 +269,10 @@ export function classPickerRect(width: number, height: number): PanelRect {
    * means by "allowed to cover the hotbar" -- so there is nothing to leave
    * visible and no reason to hold pixels back.
    */
-  const wantW = Math.min(PICKER_MAX_W, width - PICKER_MARGIN * 2);
+  // `count` DEFAULTS TO THREE so the fixtures that predate it compile unchanged,
+  // and every real caller passes the options they are about to draw — see
+  // `pickerMaxW` for why a hard-coded count was the bug.
+  const wantW = Math.min(pickerMaxW(count), width - PICKER_MARGIN * 2);
   const wantH = Math.min(PICKER_MAX_H, height - PICKER_MARGIN * 2);
 
   // The outer clamp is unchanged and still last: a modal wider than its viewport
@@ -569,12 +607,49 @@ function drawCard(
   ctx.font = FONT_BODY;
   ctx.fillStyle = PALETTE.BONE;
   const lines = wrapText(ctx, option.description, w);
-  for (let i = 0; i < lines.length && i < DESC_MAX_LINES; i += 1) {
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY LINES THE CARD CAN ACTUALLY SPARE — not a flat four.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ THE FLAT FOUR TRUNCATED ALL FOUR CLASSES, AT EVERY WIDTH ═══
+   * `DESC_MAX_LINES = 4` was a guess, and the blurbs are 130-140 characters
+   * apiece. At the old cap a card was 210 wide — about thirty-three columns —
+   * so every class ended in an ellipsis with its last clause unreachable, ON
+   * THE ONE SCREEN WHERE THE DECISION IS PERMANENT AND THERE IS NO SCROLL, NO
+   * TOOLTIP AND NO EXPAND. Upstream's equivalent pane is a scrollable
+   * `TextzoneList` fed the whole descriptor (Birther.lua:113, :516-520), and
+   * ToME's descriptors are far longer than ours.
+   *
+   * ═══ THE BUDGET IS WHAT IS LEFT AFTER EVERYTHING BELOW IS PAID FOR ═══
+   * The prose never takes a row from the numbers or from a talent, because the
+   * reserve below is subtracted first. So a card that has the room shows the
+   * whole blurb, a card that has not still ends in an honest ellipsis, and
+   * neither outcome is a number somebody guessed.
+   *
+   * ═══ THE NUMBERS ARE RESERVED. THE TALENTS ARE NOT, AND THAT IS ON PURPOSE ═══
+   * Reserving the talent rows too was tried and it INVERTED A DECISION THIS FILE
+   * had already made and tested: at the 640x320 floor the prose would have been
+   * cut to two lines so that four talent rows could fit, when the existing policy
+   * is the other way round — the prose gets the room and the talent list concedes
+   * with `+2 more`, which the block below argues at length and two tests pin.
+   *
+   * That policy is right and this change does not touch it. The talents' own
+   * concession is the shock absorber; the two `field` rows are not, because a
+   * card with no Life on it is a card missing a number the player is comparing.
+   */
+  const reserveBelow = 3 + ROW_H * 2 + 3;
+  // AT LEAST ONE LINE. A card with the room for prose at all says something; the
+  // loop's own `y + ROW_H > bottom` guard is what stops it drawing off the end.
+  const descBudget = Math.max(1, Math.floor((bottom - y - reserveBelow) / ROW_H));
+
+  for (let i = 0; i < lines.length && i < descBudget; i += 1) {
     const line = lines[i];
     if (line === undefined || y + ROW_H > bottom) break;
     // The last line this card can show gets an ellipsis when there is more,
     // rather than stopping mid-sentence as though the text simply ended.
-    const more = i === DESC_MAX_LINES - 1 && lines.length > DESC_MAX_LINES;
+    const more = i === descBudget - 1 && lines.length > descBudget;
     ctx.fillText(fitText(ctx, more ? `${line}…` : line, w), x, y + ROW_H / 2);
     y += ROW_H;
   }
@@ -725,7 +800,7 @@ export function drawClassPicker(options: ClassPickerDrawOptions): void {
   ctx.font = FONT_BODY;
   ctx.fillStyle = PALETTE.GREY_HI;
   ctx.fillText(
-    fitText(ctx, PICKER_HINT, geometry.hint.w),
+    fitText(ctx, pickerHint(options.options.length), geometry.hint.w),
     geometry.hint.x,
     geometry.hint.y + HINT_H / 2,
   );

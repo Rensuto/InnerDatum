@@ -2915,7 +2915,10 @@ function hudLayout(width: number, height: number): HudLayout {
     // of one `rightReserved` handshake that a free-floating panel would make
     // meaningless, and the plate is a plate — one sentence, one key, and already
     // suppressed under the menu.
-    picker: classOptions === null ? null : classPickerRect(width, height),
+    // THE COUNT IS PASSED, because the modal's width cap is what holds that
+    // many cards — see `pickerMaxW`. A hard-coded three is what put a fourth
+    // class back into a box sized for three.
+    picker: classOptions === null ? null : classPickerRect(width, height, classOptions.length),
     // THE SAME ARGUMENT AS `picker`, one step earlier in the evening: a scrimmed
     // full-viewport modal, not band-derived, and nothing under it is pressable.
     roster: roster === null ? null : rosterRect(width, height),
@@ -6877,7 +6880,7 @@ async function boot(): Promise<void> {
   function pickerCards(): readonly PanelRect[] {
     if (classOptions === null) return [];
     const { logicalW, logicalH } = renderer.metrics();
-    return classPickerCards(classOptions, classPickerRect(logicalW, logicalH));
+    return classPickerCards(classOptions, classPickerRect(logicalW, logicalH, classOptions.length));
   }
 
   /**

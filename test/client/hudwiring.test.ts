@@ -271,8 +271,13 @@ describe('hudLayout clamps exactly the four movable panels into the band', () =>
     }
     // Stated positively as well, so a rename of `movePanel` cannot make the four
     // assertions above vacuous while these four still pass.
-    expect(layout).toContain(
-      'picker: classOptions === null ? null : classPickerRect(width, height)',
+    //
+    // A SHAPE, NOT A LITERAL. This pinned the call verbatim and broke when the
+    // modal's width cap started counting the classes it is about to draw — a
+    // failure about an argument list rather than about the claim. The claim is
+    // that the picker comes straight from the viewport.
+    expect(layout).toMatch(
+      /picker: classOptions === null \? null : classPickerRect\(width, height[^)]*\)/,
     );
   });
 });

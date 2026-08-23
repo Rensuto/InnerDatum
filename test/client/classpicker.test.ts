@@ -93,6 +93,31 @@ function option(id: string, name: string, over: Partial<ClassOptionView> = {}): 
  * descending by hp. Any sort at all reorders this list, so the assertion below
  * cannot pass by accident.
  */
+/**
+ * The measuring recorder, at module scope.
+ *
+ * `describe('classPickerRect')` has its own copy scoped inside it. This is the
+ * same proxy — it MEASURES for real and owns a `canvas`, both of which this
+ * painter reads — hoisted so a second describe can paint too.
+ */
+function measuringCtx(texts: string[]): CanvasRenderingContext2D {
+  return new Proxy(
+    {},
+    {
+      get: (_t, prop: string) => {
+        if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+        if (prop === 'canvas') return { width: 1920, height: 1080 };
+        if (prop === 'fillText' || prop === 'strokeText')
+          return (text: string) => {
+            texts.push(text);
+          };
+        return () => {};
+      },
+      set: () => true,
+    },
+  ) as unknown as CanvasRenderingContext2D;
+}
+
 const OPTIONS: readonly ClassOptionView[] = [
   option('zeta', 'The Zealot', { maxHp: 90 }),
   option('mid', 'The Middler', { maxHp: 70 }),
@@ -490,5 +515,93 @@ describe('the class picker at every window size', () => {
     const rect = classPickerRect(320, 200);
     expect(rect.w).toBeGreaterThan(0);
     expect(rect.h).toBeGreaterThan(0);
+  });
+});
+
+describe('the modal is sized for the classes that exist, not for three', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A FOURTH CLASS SHIPPED BEHIND THREE HARD-CODED THREES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `PICKER_MAX_W = 880` was justified in this file as *"there are only three
+   * cards"*; the hint read `pick with 1-3`; and `DESC_MAX_LINES = 4` was a guess
+   * against 130-140 character blurbs. So a new player met a screen that named
+   * three shortcuts of four, cut a class name mid-word on a 1920-pixel monitor,
+   * and ellipsised every description — on the one screen in the game where the
+   * decision is permanent and there is no scroll, no tooltip and no expand.
+   *
+   * The recurring shape: a literal restating a fact that lives somewhere else,
+   * silent the day the fact moves.
+   */
+
+  /** The real Alchemist name and blurb — 28 characters and 133. */
+  const REAL = option('alchemist', 'The Alchemist of Ashwick Row', {
+    description:
+      'Trained on the Row, where the apothecaries mix something different every week. ' +
+      'Carries eight vials and a field kit, and counts both.',
+  });
+  const FOUR: readonly ClassOptionView[] = [REAL, ...OPTIONS];
+
+  function paintFour(width: number, height: number): string[] {
+    const texts: string[] = [];
+    drawClassPicker({
+      ctx: measuringCtx(texts),
+      sprites: { sprite: () => undefined },
+      rect: classPickerRect(width, height, FOUR.length),
+      options: FOUR,
+      selected: 0,
+      hovered: null,
+    });
+    return texts;
+  }
+
+  it('gives four cards the width three used to get', () => {
+    // MEASURED, not asserted from the constant: 880 across three is 282 a card,
+    // and that is the width that made `Iron Curtain` fit when this file's header
+    // was written. Four must get the same, which means a wider modal.
+    const three = classPickerCards(OPTIONS, classPickerRect(1280, 720, 3));
+    const four = classPickerCards(FOUR, classPickerRect(1280, 720, 4));
+    expect(four[0]?.w).toBe(three[0]?.w);
+  });
+
+  it('does not cut a class name on a monitor with room to spare', () => {
+    // `The Alchemist of Ashwick Row` is 28 characters. At the old flat cap it
+    // landed in a 210-pixel card and clipped at 1920x1080.
+    const texts = paintFour(1920, 1080);
+    expect(texts.filter((t) => t.includes('…'))).toEqual([]);
+    expect(texts).toContain('The Alchemist of Ashwick Row');
+  });
+
+  it('shows a whole blurb where there is room for one', () => {
+    // The flat four-line cap truncated all four classes at EVERY viewport
+    // including the maximum. The budget is the room left after the numbers now.
+    const texts = paintFour(1280, 720);
+    expect(texts.filter((t) => t.includes('…'))).toEqual([]);
+    expect(texts.join(' ')).toContain('counts both.');
+  });
+
+  it('counts the digits in the hint instead of writing them out', () => {
+    expect(paintFour(1280, 720).some((t) => t.includes('pick with 1-4'))).toBe(true);
+    const three: string[] = [];
+    drawClassPicker({
+      ctx: measuringCtx(three),
+      sprites: { sprite: () => undefined },
+      rect: classPickerRect(1280, 720, 3),
+      options: OPTIONS,
+      selected: 0,
+      hovered: null,
+    });
+    expect(three.some((t) => t.includes('pick with 1-3'))).toBe(true);
+  });
+
+  it('still shrinks rather than refusing at the floor', () => {
+    // The modal cannot be wider than the window, so four cards at 640 are narrow
+    // and that is inherent. What must not happen is the modal disappearing or
+    // overflowing — see `classPickerRect`'s own note.
+    const rect = classPickerRect(640, 320, 4);
+    expect(rect.w).toBeLessThanOrEqual(640);
+    expect(rect.x).toBeGreaterThanOrEqual(0);
+    expect(classPickerCards(FOUR, rect)).toHaveLength(4);
   });
 });

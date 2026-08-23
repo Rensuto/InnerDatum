@@ -178,7 +178,17 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
 
     // ...and the picker, one line below it, still is not derived that way — so
     // this test fails if somebody makes the two the same in EITHER direction.
-    expect(CODE).toContain('picker: classOptions === null ? null : classPickerRect(width, height)');
+    //
+    // MATCHED AS A SHAPE, not as a literal line. It used to pin
+    // `classPickerRect(width, height)` verbatim and broke the day the modal's
+    // width cap started counting the classes — a test failing on an added
+    // argument rather than on the claim it is making. What the claim actually is:
+    // the picker is built from the VIEWPORT and never from `panelBand`, because
+    // it is the one real modal here and is allowed to cover the hotbar.
+    expect(CODE).toMatch(
+      /picker: classOptions === null \? null : classPickerRect\(width, height[^)]*\)/,
+    );
+    expect(CODE).not.toMatch(/picker:.*panelBand/);
   });
 
   it('re-applies that refusal when the window shrinks UNDER an open menu', () => {
