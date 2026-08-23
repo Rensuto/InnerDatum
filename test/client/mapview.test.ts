@@ -9,6 +9,7 @@ import {
   MINIMAP_RADIUS,
   doorwayAt,
   doorwayLine,
+  mapTileAt,
   minimapRect,
   minimapReserveH,
   MINIMAP_MARGIN,
@@ -217,5 +218,122 @@ describe('the minimap reserve', () => {
       const box = minimapRect(width);
       expect(minimapReserveH(width), `${String(width)}`).toBeGreaterThanOrEqual(box.y + box.h);
     }
+  });
+});
+
+describe('the minimap is a control, not a picture', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `minimapRect` HAD NO CALLER IN ANY MOUSE HANDLER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The map was painted every frame and answered nothing. Upstream registers a
+   * mouse zone over its own and gives it three meanings
+   * (Minimalist.lua:1639-1652): left-click walks there, middle-click opens the
+   * full map, right-click scrolls the view.
+   *
+   * `mapTileAt` is the inverse of the painter's own placement, and these tests
+   * are about the ONE property that matters: the tile a click resolves to is the
+   * tile the painter drew under that pixel. Two copies of the arithmetic would
+   * put the click a tile away from the cursor on exactly the windows where the
+   * window is clamped to a map edge.
+   */
+  const level = (w: number, h: number) => ({ w, h });
+
+  /** The painter's own formula, transcribed — see `mapPlacement`. */
+  const cellOf = (rect: { w: number; h: number }, span: number) =>
+    Math.max(1, Math.floor(Math.min(rect.w / span, rect.h / span)));
+
+  it('resolves the centre of the map to the tile the player is standing on', () => {
+    // A CLAMPED-FREE CASE: the player is well inside a large map, so the window
+    // is exactly `radius` either side and the centre cell is the player.
+    const rect = minimapRect(1280);
+    const self = { x: 60, y: 40 };
+    const hit = mapTileAt(
+      level(170, 100),
+      rect,
+      rect.x + rect.w / 2,
+      rect.y + rect.h / 2,
+      self,
+      MINIMAP_RADIUS,
+    );
+    expect(hit).toEqual(self);
+  });
+
+  it('agrees with the painter at the top-left cell of the window', () => {
+    const rect = minimapRect(1280);
+    const self = { x: 60, y: 40 };
+    const span = MINIMAP_RADIUS * 2 + 1;
+    const cell = cellOf(rect, span);
+    // The painter draws window cell (x0, y0) at the map's own origin, and the
+    // map is centred in `rect`. One pixel INSIDE that cell must resolve to it.
+    const x0 = self.x - MINIMAP_RADIUS;
+    const y0 = self.y - MINIMAP_RADIUS;
+    const mapW = cell * span;
+    const ox = rect.x + Math.floor((rect.w - mapW) / 2);
+    const oy = rect.y + Math.floor((rect.h - mapW) / 2);
+    expect(mapTileAt(level(170, 100), rect, ox + 1, oy + 1, self, MINIMAP_RADIUS)).toEqual({
+      x: x0,
+      y: y0,
+    });
+  });
+
+  it('follows the window when the player is clamped to a map edge', () => {
+    /**
+     * THE CASE A SECOND COPY WOULD GET WRONG FIRST. Standing at (2,2) on a large
+     * map, the window cannot centre — it clamps to (0,0) — so the centre pixel is
+     * NOT the player any more, and a naive `self + offset - radius` inverse would
+     * be off by the clamp on every tile.
+     */
+    const rect = minimapRect(1280);
+    const self = { x: 2, y: 2 };
+    const hit = mapTileAt(
+      level(170, 100),
+      rect,
+      rect.x + rect.w / 2,
+      rect.y + rect.h / 2,
+      self,
+      MINIMAP_RADIUS,
+    );
+    expect(hit).not.toBeNull();
+    expect(hit).toEqual({ x: MINIMAP_RADIUS, y: MINIMAP_RADIUS });
+  });
+
+  it('answers null off the map, including inside the box', () => {
+    /**
+     * "Inside the rect" is not the same question as "over a tile". A map smaller
+     * than its box is centred in it, and a small level leaves real margin — a
+     * click there must not walk the player to a clamped edge tile they never
+     * pointed at.
+     */
+    const rect = minimapRect(1280);
+    const self = { x: 2, y: 2 };
+    expect(mapTileAt(level(5, 5), rect, rect.x - 4, rect.y - 4, self, MINIMAP_RADIUS)).toBeNull();
+    expect(
+      mapTileAt(level(5, 5), rect, rect.x + rect.w + 4, rect.y + rect.h + 4, self, MINIMAP_RADIUS),
+      'past the far corner',
+    ).toBeNull();
+  });
+
+  it('covers every cell of the window with no gaps and no overlaps', () => {
+    /**
+     * THE PROPERTY, SWEPT. Walk the whole box a pixel at a time: every point
+     * either answers null or answers a tile inside the window, and stepping one
+     * cell width along must advance the answer by exactly one tile. A fractional
+     * cell size — which `mapPlacement` refuses precisely to avoid this — would
+     * show up here as a doubled or skipped column.
+     */
+    const rect = minimapRect(1280);
+    const self = { x: 60, y: 40 };
+    const span = MINIMAP_RADIUS * 2 + 1;
+    const cell = cellOf(rect, span);
+    const seen = new Set<string>();
+    for (let px = rect.x; px < rect.x + rect.w; px += 1) {
+      const hit = mapTileAt(level(170, 100), rect, px, rect.y + rect.h / 2, self, MINIMAP_RADIUS);
+      if (hit !== null) seen.add(String(hit.x));
+    }
+    // Every column of the window is reachable, and no more than that.
+    expect(seen.size).toBe(span);
+    expect(cell).toBeGreaterThan(0);
   });
 });

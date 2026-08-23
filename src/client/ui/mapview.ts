@@ -26,6 +26,7 @@
 import { PALETTE } from '../render/canvas.ts';
 import { TileCode, isWalkable, isSafeGround } from '../../shared/protocol.ts';
 import type { LevelView, RegionView, SiteView } from '../../shared/protocol.ts';
+import type { TileXY } from '../../shared/coords.ts';
 
 /** Where the minimap sits and how big it is allowed to get. */
 export const MINIMAP_MARGIN = 8;
@@ -189,10 +190,34 @@ export function partyMarks(
  * Returns the cell size actually used, which the caller needs in order to hit
  * test — the full-screen map has to turn a click back into a tile.
  */
-export function paintMap(paint: MapPaint): number {
-  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled, regions, party } =
-    paint;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THIS MAP PUTS ITS CELLS — one derivation, two readers.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `paintMap` draws cell `(x, y)` at `(ox + x * cell, oy + y * cell)`, and
+ * `mapTileAt` inverts exactly that. They HAVE to be the same arithmetic: two
+ * copies is a map drawn in one place and clicked in another, which
+ * ui/partypanel.ts:93-99 records as the failure this project has already had
+ * once — and here the misclick sends a player walking to the wrong tile.
+ *
+ * So the window, the cell size and the origin are computed here and nowhere
+ * else.
+ */
+type MapPlacement = {
+  readonly win: { x0: number; y0: number; x1: number; y1: number };
+  /** Whole pixels per cell. Never fractional — see the note below. */
+  readonly cell: number;
+  readonly ox: number;
+  readonly oy: number;
+};
 
+function mapPlacement(
+  level: { readonly w: number; readonly h: number },
+  rect: MapRect,
+  self: TileXY | undefined,
+  windowRadius: number | undefined,
+): MapPlacement {
   /**
    * THE WINDOW. A minimap that showed the whole 170x100 region would be a
    * postage stamp of a continent — every cell under a pixel, the player a dot
@@ -225,8 +250,55 @@ export function paintMap(paint: MapPaint): number {
   const cell = Math.max(1, Math.floor(Math.min(rect.w / spanW, rect.h / spanH)));
   const mapW = cell * spanW;
   const mapH = cell * spanH;
-  const ox = rect.x + Math.floor((rect.w - mapW) / 2) - win.x0 * cell;
-  const oy = rect.y + Math.floor((rect.h - mapH) / 2) - win.y0 * cell;
+  return {
+    win,
+    cell,
+    ox: rect.x + Math.floor((rect.w - mapW) / 2) - win.x0 * cell,
+    oy: rect.y + Math.floor((rect.h - mapH) / 2) - win.y0 * cell,
+  };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH TILE A POINT ON THIS MAP IS OVER — Minimalist.lua:1639-1642.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE MINIMAP WAS DECORATIVE, AND UPSTREAM'S IS NOT ═══
+ * `minimapRect` had no caller in any mouse handler: the map was painted every
+ * frame and answered nothing. Upstream registers a mouse zone over its own —
+ * left-click walks there (`game.player:mouseMove`), middle-click opens the full
+ * map — and a minimap that cannot be clicked is a picture of a map.
+ *
+ * ═══ IT INVERTS `mapPlacement` AND NOTHING ELSE ═══
+ * Same window, same cell size, same origin as the painter, because they are one
+ * function. A second copy of this arithmetic would put the click a tile away
+ * from the thing under the cursor on exactly the windows where the map is
+ * clamped to an edge.
+ *
+ * NULL FOR A POINT OFF THE MAP, including one inside `rect` but outside the
+ * drawn cells — the map is centred in its box and a clamped window can leave a
+ * margin, so "inside the box" is not the same question as "over a tile".
+ */
+export function mapTileAt(
+  level: { readonly w: number; readonly h: number },
+  rect: MapRect,
+  px: number,
+  py: number,
+  self?: TileXY,
+  windowRadius?: number,
+): TileXY | null {
+  const { win, cell, ox, oy } = mapPlacement(level, rect, self, windowRadius);
+  const x = Math.floor((px - ox) / cell);
+  const y = Math.floor((py - oy) / cell);
+  if (x < win.x0 || x > win.x1 || y < win.y0 || y > win.y1) return null;
+  return { x, y };
+}
+
+export function paintMap(paint: MapPaint): number {
+  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled, regions, party } =
+    paint;
+
+  const { win, cell, ox, oy } = mapPlacement(level, rect, self, windowRadius);
 
   if (framed) {
     ctx.fillStyle = PALETTE.INK;

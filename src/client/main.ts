@@ -303,6 +303,7 @@ import {
 } from './ui/respawnprompt.ts';
 import { drawLootTip, drawTooltip } from './ui/tooltip.ts';
 import { drawHoverCard } from './ui/panel.ts';
+import type { HoverCard } from './ui/panel.ts';
 import { hotbarTipAt } from './ui/hotbar.ts';
 import { inventoryTipAt } from './ui/inventory.ts';
 import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
@@ -312,6 +313,7 @@ import {
   doorwayLine,
   minimapReserveH,
   MINIMAP_RADIUS,
+  mapTileAt,
   minimapRect,
   paintMap,
   partyMarks,
@@ -2368,6 +2370,50 @@ function lootMarkers(): readonly LootMarker[] {
  * self is `OutOfReach` rather than `Underfoot` — the honest answer, since a
  * viewer with no body is standing nowhere.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH TILE THE MINIMAP IS SHOWING UNDER THIS POINT — or null.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE MINIMAP WAS DECORATIVE ═══
+ * `minimapRect` was painted every frame and had NO CALLER in any mouse handler,
+ * so the map answered nothing. Upstream registers a mouse zone over its own and
+ * gives it three meanings (Minimalist.lua:1639-1652) — left-click walks there,
+ * middle-click opens the full map, right-click scrolls the view.
+ *
+ * ONE RESOLVER, USED BY THE CLICK AND BY THE HOVER, so the tile a card describes
+ * and the tile a click walks to can never be two different tiles.
+ *
+ * IT RETURNS NULL WHENEVER THE MAP IS NOT THERE — no level, no realm, no body,
+ * or the world map is open over it — which is exactly the condition the painter
+ * draws under. The two must agree or a click lands on a map that is not on
+ * screen.
+ */
+function minimapTileAt(px: number, py: number, viewW: number): TileXY | null {
+  if (worldMapOpen || level === null || currentRealmId === null) return null;
+  const me = selfId === null ? undefined : actors.get(selfId);
+  if (me === undefined) return null;
+  return mapTileAt(level, minimapRect(viewW), px, py, { x: me.x, y: me.y }, MINIMAP_RADIUS);
+}
+
+/**
+ * WHAT THE MINIMAP DOES, as a hover card — upstream's `desc_fct`.
+ *
+ * It names the tile as well as the verbs, because "walk here" is only useful if
+ * the player can tell WHICH cell the pointer is on: the map is three or four
+ * pixels a tile, so the coordinate is the confirmation.
+ */
+function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null {
+  const tile = minimapTileAt(px, py, viewW);
+  if (tile === null) return null;
+  const walkable = level !== null && travelTargetAllowed(level, tile);
+  return {
+    title: `${String(tile.x)},${String(tile.y)}`,
+    meta: walkable ? 'click to travel here' : 'you cannot walk there',
+    lines: ['middle-click opens the region map'],
+  };
+}
+
 function lootAt(tile: TileXY): TileLoot {
   const here = ground.some((item) => item.cell[0] === tile.x && item.cell[1] === tile.y);
   if (!here) return TileLoot.None;
@@ -3838,6 +3884,19 @@ const paintHud: HudPainter = (ctx, width, height) => {
             pointerPoint.x,
             pointerPoint.y,
           )) ??
+      /**
+       * ═══ THE MINIMAP, WHICH IS A CONTROL AND HAS TO SAY SO ═══
+       *
+       * Upstream registers a `desc_fct` over its minimap zone
+       * (Minimalist.lua:1652) for the same reason: three mouse meanings that
+       * nothing on screen would otherwise announce. A control nobody knows about
+       * is very nearly no control.
+       *
+       * ASKED FIRST, because the minimap sits in the top-right corner where no
+       * panel is docked — anything else answering there would be answering about
+       * the map behind it.
+       */
+      minimapCardAt(pointerPoint.x, pointerPoint.y, width) ??
       /**
        * THE PARTY PANE, AND IT IS ASKED BEFORE THE BAR FOR A REASON.
        *
@@ -9455,6 +9514,30 @@ async function boot(): Promise<void> {
         return;
       }
 
+      /**
+       * ═══ MIDDLE-CLICK THE MINIMAP OPENS THE FULL MAP — Minimalist.lua:1647 ═══
+       *
+       * `game.key:triggerVirtual("SHOW_MAP")`, and this is the same toggle `m`
+       * drives rather than a second path to the same state.
+       *
+       * ═══ THE THIRD ARM IS DELIBERATELY ABSENT ═══
+       * Upstream's right-click arm (:1644-1645) scrolls the minimap's view with
+       * `moveViewSurround`. There is nothing here for it to do: our minimap is
+       * always centred on the player and holds no scroll state at all — see
+       * `MINIMAP_RADIUS`, whose whole design is a window that follows you. A
+       * right-click here therefore keeps its meaning everywhere else in this
+       * client: cancel the aim, clear the notice.
+       */
+      if (event.button === 1) {
+        const pt = renderer.backbufferPoint(event.clientX, event.clientY);
+        const { logicalW: mw } = renderer.metrics();
+        if (pt !== null && minimapTileAt(pt.x, pt.y, mw) !== null && overworldLevel !== null) {
+          worldMapOpen = true;
+          requestDraw();
+          return;
+        }
+      }
+
       // ═══════════════════════════════════════════════════════════════════════
       // v12 — RIGHT-CLICK ON AN ITEM SLOT UNBINDS IT. THE ONLY WAY TO CLEAR ONE.
       // ═══════════════════════════════════════════════════════════════════════
@@ -9987,6 +10070,42 @@ async function boot(): Promise<void> {
     if (overPanel(event.clientX, event.clientY)) {
       event.preventDefault();
       return;
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE MINIMAP IS A CONTROL — Minimalist.lua:1639-1642's left-click arm.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `game.player:mouseMove(tmx, tmy)` upstream: a left-click on the minimap
+     * walks you there. Ours painted the map and hit-tested it nowhere.
+     *
+     * ═══ IT IS `beginTravel`, NOT A NEW PATH ═══
+     * The same call the verb menu's "Travel here" makes, so the minimap gains a
+     * route to travel rather than a second implementation of it — including the
+     * interruption rules, which is what stops this being a way to walk through a
+     * fight.
+     *
+     * AFTER THE PANEL GUARD, because a panel dragged over the corner should win:
+     * the minimap is chrome and a panel is something the player put there.
+     * BEFORE shift-click and targeting, because those read a WORLD tile through
+     * `tileAtClient` and would silently resolve a minimap click to whatever
+     * happens to be behind the corner of the screen.
+     */
+    if (point !== null) {
+      const mapped = minimapTileAt(point.x, point.y, logicalW);
+      if (mapped !== null) {
+        event.preventDefault();
+        // A REFUSAL IN WORDS, not a dead click. Water and walls are on this map
+        // and pointing at one is an ordinary thing to do; `travelTargetAllowed`
+        // is the same question the verb menu greys its own row on.
+        if (level === null || !travelTargetAllowed(level, mapped)) {
+          showNotice('you cannot walk there');
+          return;
+        }
+        beginTravel(mapped, false);
+        return;
+      }
     }
 
     // SHIFT + CLICK IS `point` — "there, behind the pillar", which is the

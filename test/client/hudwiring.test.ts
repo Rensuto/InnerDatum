@@ -626,3 +626,62 @@ describe('the player can always see their own health', () => {
     expect(frame).toContain('width: width - 8 - LIFE_W');
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE MINIMAP ANSWERS THE MOUSE
+// ---------------------------------------------------------------------------
+
+describe('the minimap is wired to something', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT WAS PAINTED EVERY FRAME AND HAD NO CALLER IN ANY MOUSE HANDLER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ui/mapview.ts tests `mapTileAt` against the painter's own placement. This
+   * pins the WIRING, which is the half that rots silently — a resolver nobody
+   * calls is indistinguishable from one that was never written, and that is
+   * exactly the state the minimap was in.
+   *
+   * Upstream gives its own minimap three meanings (Minimalist.lua:1639-1652).
+   */
+  it('resolves a click on it to a tile', () => {
+    // A plain containment check: `between` needs two anchors in one function and
+    // the mousedown handler has no stable second one this far down.
+    expect(CODE).toContain('minimapTileAt(point.x, point.y, logicalW)');
+  });
+
+  it('travels through the SAME call the verb menu uses', () => {
+    /**
+     * `beginTravel` and not a second walk path — so the minimap gains a route to
+     * travel rather than its own implementation of it, including the
+     * interruption rules that stop travel being a way to cross a fight.
+     */
+    const start = at('minimapTileAt(point.x, point.y, logicalW)');
+    const body = CODE.slice(start, start + 700);
+    expect(body).toContain('beginTravel(mapped, false)');
+    // AND IT REFUSES IN WORDS on ground you cannot walk on, rather than being a
+    // dead click on the water that is drawn right there on the map.
+    expect(body).toContain('travelTargetAllowed(level, mapped)');
+  });
+
+  it('sits after the panel guard and before shift-click and targeting', () => {
+    /**
+     * AFTER the panels, because one dragged over the corner is something the
+     * player put there and should win. BEFORE shift-click and the aim, because
+     * both of those read a WORLD tile through `tileAtClient` and would silently
+     * resolve a minimap click to whatever is behind that corner of the screen.
+     */
+    const guard = at('if (overPanel(event.clientX, event.clientY)) {');
+    const mini = at('minimapTileAt(point.x, point.y, logicalW)');
+    const shift = at('if (event.shiftKey) {');
+    expect(guard).toBeLessThan(mini);
+    expect(mini).toBeLessThan(shift);
+  });
+
+  it('says what it does, because a control nobody knows about is not one', () => {
+    // Upstream registers a `desc_fct` over the zone (Minimalist.lua:1652) for
+    // the same reason. Ours is a hover card, asked first because nothing else is
+    // docked in that corner.
+    expect(CODE).toContain('minimapCardAt(pointerPoint.x, pointerPoint.y, width)');
+  });
+});
