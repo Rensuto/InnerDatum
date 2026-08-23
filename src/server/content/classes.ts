@@ -186,8 +186,13 @@ import {
   TALENTS_PER_CLASS_MIN,
   TALENT_MAX_LEVEL,
 } from '../../shared/progression.ts';
-import { checkTier, tierRefusalText } from '../../shared/tiers.ts';
-import type { TierCheck } from '../../shared/tiers.ts';
+import {
+  checkTier,
+  tierRefusalText,
+  tierRequirementText,
+  tierRequirements,
+} from '../../shared/tiers.ts';
+import type { TierCheck, TierRequirement } from '../../shared/tiers.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { LoadoutTalent, ResourceView, UnlockableTree } from '../../shared/protocol.ts';
 import type { CombatSheet } from '../engine/combat.ts';
@@ -1094,7 +1099,7 @@ export function toLoadoutView(
    * all and must not be made to invent one — it passes nothing, and a preview
    * correctly shows no lock, because nobody is spending points on that screen.
    */
-  gate?: TierCheck,
+  gate?: TalentGate,
 ): LoadoutTalent {
   return {
     // Already `talent:<id>` — the registry key IS the wire id, so the cooldown
@@ -1148,11 +1153,30 @@ export function toLoadoutView(
      * common case off the wire. A present `locked: true` is the only shape
      * that means anything, which is the shape that cannot be misread.
      */
-    ...(gate === undefined || gate.ok
+    ...(gate === undefined || gate.check.ok
       ? {}
       : {
           locked: true,
-          ...(tierRefusalText(gate) === null ? {} : { lockedReason: tierRefusalText(gate) ?? '' }),
+          ...(tierRefusalText(gate.check) === null
+            ? {}
+            : { lockedReason: tierRefusalText(gate.check) ?? '' }),
+        }),
+    /**
+     * ═══ AND WHAT THE NEXT RANK WANTS, WHETHER OR NOT IT IS MET ═══
+     * `locked` above is absent in the common case, so on its own it taught a
+     * player nothing until the day it refused them. See `LoadoutTalent.requires`.
+     *
+     * OMITTED WHEN EMPTY rather than sent as `[]`: a tier-one talent with no
+     * stat gate genuinely requires nothing beyond level 1, and an empty array on
+     * the wire is a heading with nothing under it.
+     */
+    ...(gate === undefined || gate.requires.length === 0
+      ? {}
+      : {
+          requires: gate.requires.map((req) => ({
+            text: tierRequirementText(req),
+            met: req.met,
+          })),
         }),
   };
 }
@@ -1180,7 +1204,7 @@ function gateFor(
   talent: Talent,
   actor: Actor,
   rank: number,
-): TierCheck {
+): TalentGate {
   // OTHER talents of the same tree — never this one. Counting itself would let
   // a talent satisfy its own depth requirement.
   // RANK >= 1, exactly as the spend path counts it. A panel that counted
@@ -1190,7 +1214,14 @@ function gateFor(
     ([other, rank]) =>
       other !== talent.id && rank >= 1 && engine.registry.get(other)?.tree === talent.tree,
   ).length;
-  return checkTier({
+  /**
+   * ONE CONTEXT, READ TWICE. `checkTier` answers "may this point be spent" and
+   * short-circuits on the first failure; `tierRequirements` lists every clause
+   * whether or not it is met, which is what the panel prints BEFORE the player
+   * commits. Building the context once is what stops the advertised requirement
+   * and the enforced one drifting apart — see `tierRequirements`.
+   */
+  const ctx = {
     tier: talent.tier,
     rank,
     stat: talent.statGate,
@@ -1199,8 +1230,15 @@ function gateFor(
     // `1` is what the spend path assumes for one too.
     characterLevel: 'level' in actor && typeof actor.level === 'number' ? actor.level : 1,
     treeKnown: known,
-  });
+  };
+  return { check: checkTier(ctx), requires: tierRequirements(ctx) };
 }
+
+/** What `gateFor` answers: the verdict, and the whole list behind it. */
+export type TalentGate = {
+  readonly check: TierCheck;
+  readonly requires: readonly TierRequirement[];
+};
 
 /**
  * A STAND-IN BODY FOR THE CLASS PICKER, which has no actor at all.

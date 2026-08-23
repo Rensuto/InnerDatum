@@ -833,6 +833,10 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
      */
     ...(talent.locked === undefined ? {} : { locked: talent.locked }),
     ...(talent.lockedReason === undefined ? {} : { lockedReason: talent.lockedReason }),
+    // WHAT THE NEXT RANK WANTS — `LoadoutTalent.requires`. Spread the same way
+    // as the two above so an absent list stays absent rather than becoming `[]`,
+    // which the wire type reserves for "this server does not send them".
+    ...(talent.requires === undefined ? {} : { requires: talent.requires }),
   };
 }
 

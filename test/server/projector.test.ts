@@ -1305,6 +1305,11 @@ describe('the loadout projection loses no field', () => {
       sustained: false,
       locked: true,
       lockedReason: 'Learn 2 more of this discipline first.',
+      // EVERY REQUIREMENT OF THE NEXT RANK, met or not — `LoadoutTalent.requires`.
+      // It is here because this fixture is the compile-time reminder that a field
+      // added to the wire has to survive the projector; `locked` was added, dropped
+      // and unnoticed for months before that was made a compile error.
+      requires: [{ text: 'level 4', met: true }],
     };
 
     const projected = projectLoadout({ id: 'a' } as never, [full]).talents[0];

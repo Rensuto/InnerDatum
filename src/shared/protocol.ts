@@ -1125,6 +1125,34 @@ export type LoadoutTalent = {
    * common case and keeps the frame small.
    */
   lockedReason?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE **NEXT** RANK WANTS — every requirement, met or not.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ `locked` SAYS NO. THIS SAYS WHAT IT WOULD TAKE, BEFORE IT SAYS NO ═══
+   * `locked` and `lockedReason` are absent whenever the gate passes, which is
+   * the common case — and that meant a player learned a talent's requirements
+   * only by being refused. Someone at rank 2 saw a live `+`, spent into it, and
+   * discovered at rank 4 that it had wanted 18 Strength all along.
+   *
+   * Upstream lists every requirement every time, coloured by whether it is met
+   * (`getTalentReqDesc`, ActorTalents.lua:744-798), and diffs the current list
+   * against the next rank's in the levelup pane (LevelupDialog.lua:963-970). A
+   * requirement you can read before you commit is most of what turns a talent
+   * tree into a plan.
+   *
+   * ═══ PRE-FORMATTED, LIKE EVERY OTHER SENTENCE ON THIS TYPE ═══
+   * `text` is `tierRequirementText`, rendered where `desc` and `lockedReason`
+   * are and for the identical reason: the browser must not hold a second copy of
+   * the ladder. `met` is the only thing the panel decides anything from.
+   *
+   * ═══ EMPTY IS A REAL ANSWER ═══
+   * A talent at its cap has no next rank to require anything, and the array is
+   * omitted. ABSENT also means a server too old to send it — the panel then
+   * shows what it always showed, which is `lockedReason` alone.
+   */
+  requires?: readonly { readonly text: string; readonly met: boolean }[];
 };
 
 /**

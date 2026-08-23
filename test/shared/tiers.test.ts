@@ -13,6 +13,8 @@ import {
   statRequiredFor,
   tierRefusalText,
   treeDepthRequiredFor,
+  tierRequirements,
+  tierRequirementText,
 } from '../../src/shared/tiers.ts';
 
 /**
@@ -208,5 +210,100 @@ describe('what the player is told', () => {
 
   it('says nothing at all when the answer is yes', () => {
     expect(tierRefusalText({ ok: true })).toBeNull();
+  });
+});
+
+describe('every requirement, met or not — what a player reads BEFORE spending', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `checkTier` SHORT-CIRCUITS ON THE FIRST FAILURE AND SAYS NOTHING AT ALL WHEN
+   * THE ANSWER IS YES. That is right for a refusal and useless as a screen.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The consequence was a player at rank 2 with 14 Strength seeing a live `+`,
+   * spending into it, and discovering at rank 4 that the talent had wanted 18 all
+   * along — three points into a tree they had already committed to.
+   *
+   * `getTalentReqDesc` (ActorTalents.lua:744-798) lists every requirement every
+   * time, coloured by whether it is met.
+   */
+  const ctx = (over: Partial<Parameters<typeof tierRequirements>[0]> = {}) => ({
+    tier: 3,
+    rank: 1,
+    stat: 'str',
+    statValue: 14,
+    characterLevel: 5,
+    treeKnown: 2,
+    ...over,
+  });
+
+  it('lists the clauses that apply, whether or not they are met', () => {
+    const reqs = tierRequirements(ctx());
+    expect(reqs.map((r) => r.kind).sort()).toEqual(['depth', 'level', 'stat']);
+    // AND EACH ONE KNOWS BOTH NUMBERS, so a pane can print "14 / 18" rather than
+    // "no" — the difference between a wall and a target.
+    const stat = reqs.find((r) => r.kind === 'stat');
+    expect(stat?.have).toBe(14);
+    expect(stat?.needed).toBeGreaterThan(14);
+    expect(stat?.met).toBe(false);
+  });
+
+  it('does not stop at the first unmet one, which is what `checkTier` does', () => {
+    // THE WHOLE POINT. A body that fails all three must be told all three, or
+    // fixing the first reveals a second the player could have planned for.
+    const reqs = tierRequirements(ctx({ statValue: 0, characterLevel: 1, treeKnown: 0 }));
+    expect(reqs.every((r) => !r.met)).toBe(true);
+    expect(reqs).toHaveLength(3);
+  });
+
+  it('still lists them when every one is met', () => {
+    // `checkTier` answers `{ok: true}` and nothing else here — which is exactly
+    // why a player never learned a requirement until it stopped them.
+    const reqs = tierRequirements(ctx({ statValue: 99, characterLevel: 50, treeKnown: 9 }));
+    expect(reqs).toHaveLength(3);
+    expect(reqs.every((r) => r.met)).toBe(true);
+  });
+
+  it('omits a depth requirement of zero rather than printing it', () => {
+    // Tier one wants none. "Learn 0 more of this discipline" on every opening
+    // talent of every tree is furniture, and furniture teaches a player to stop
+    // reading the list.
+    expect(tierRequirements(ctx({ tier: 1 })).map((r) => r.kind)).not.toContain('depth');
+  });
+
+  it('omits the stat when the talent names none', () => {
+    // `checkTier`'s own note: the generic trees are things true of a body rather
+    // than of a discipline, and nothing about your Cunning should gate them.
+    expect(tierRequirements(ctx({ stat: undefined })).map((r) => r.kind)).not.toContain('stat');
+  });
+
+  it('reads the SAME ladder the refusal does', () => {
+    /**
+     * THE FAILURE THIS PREVENTS is a panel advertising a requirement the server
+     * does not enforce. Both call `statRequiredFor`/`levelRequiredFor`/
+     * `treeDepthRequiredFor`, so the number a player plans against is the number
+     * that will be checked.
+     */
+    const c = ctx({ statValue: 0 });
+    const check = checkTier(c);
+    const listed = tierRequirements(c).find((r) => r.kind === 'stat');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    // The check reports the first failure; whichever clause that is, the listing
+    // must agree with it on the number.
+    const same = tierRequirements(c).find((r) => r.kind === check.reason);
+    expect(same?.needed).toBe(check.needed);
+    expect(listed?.needed).toBeGreaterThan(0);
+  });
+
+  it('reads in the present tense whether or not it is met', () => {
+    // A list that switched grammar as you levelled would read as two screens.
+    // The refusal has its own sentence; this is a fact about the talent.
+    const met = tierRequirements(ctx({ characterLevel: 50 })).find((r) => r.kind === 'level');
+    const unmet = tierRequirements(ctx({ characterLevel: 1 })).find((r) => r.kind === 'level');
+    expect(met).toBeDefined();
+    expect(unmet).toBeDefined();
+    if (met === undefined || unmet === undefined) return;
+    expect(tierRequirementText(met)).toBe(tierRequirementText(unmet));
   });
 });

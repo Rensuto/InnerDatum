@@ -220,3 +220,103 @@ export function tierRefusalText(check: TierCheck): string | null {
       return `Needs ${String(check.needed)} ${String(check.stat ?? 'aptitude')}; you have ${String(check.have)}.`;
   }
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY REQUIREMENT, MET OR NOT — `getTalentReqDesc`, ActorTalents.lua:744-798.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE GAP THIS CLOSES ═══
+ * `checkTier` above short-circuits on the FIRST failing clause, which is right
+ * for a refusal and wrong for a screen. It also says nothing at all when the
+ * answer is yes — so a player at rank 2 saw a live `+`, spent into it, and only
+ * discovered at rank 4 that the talent had wanted 18 Strength all along. The
+ * requirement existed, was enforced, and was invisible until it bit.
+ *
+ * Upstream never does that. `getTalentReqDesc` lists EVERY requirement — the
+ * category, the lower talents of it, each stat, the level — every time, each one
+ * coloured by whether it is met, and the levelup pane renders the current and
+ * next-rank lists diffed against each other (LevelupDialog.lua:963-970). A
+ * requirement you can read before you commit is most of what makes a talent tree
+ * a plan rather than a series of surprises.
+ *
+ * ═══ THE SAME THREE CLAUSES, IN THE SAME ORDER, NOT A SECOND COPY ═══
+ * Every number here comes from the same `treeDepthRequiredFor`,
+ * `levelRequiredFor` and `statRequiredFor` that `checkTier` calls. If the two
+ * ever disagreed, the panel would advertise a requirement the server does not
+ * enforce — so they read one ladder, and this function is the listing of it
+ * rather than a restatement.
+ */
+export type TierRequirement = {
+  readonly kind: TierRefusal;
+  /** What is needed, and what the character has. Lets a panel print "14 / 18". */
+  readonly needed: number;
+  readonly have: number;
+  readonly met: boolean;
+  /** Which stat, on a stat requirement. */
+  readonly stat?: string;
+};
+
+export function tierRequirements(ctx: TierContext): readonly TierRequirement[] {
+  const tier = ctx.tier ?? MIN_TIER;
+  const out: TierRequirement[] = [];
+
+  /**
+   * A TIER-ONE TALENT'S DEPTH REQUIREMENT IS ZERO, and a requirement of zero is
+   * not a requirement — printing "learn 0 more of this discipline" on every
+   * opening talent of every tree would be furniture, and would teach a player to
+   * stop reading the list that matters.
+   */
+  const depth = treeDepthRequiredFor(tier);
+  if (depth > 0) {
+    out.push({
+      kind: TierRefusal.Depth,
+      needed: depth,
+      have: ctx.treeKnown,
+      met: ctx.treeKnown >= depth,
+    });
+  }
+
+  // THE LEVEL IS ALWAYS LISTED, even when it is 1. It is the requirement that
+  // moves with every rank — "opens at level 6" is the answer to "when", and a
+  // player planning three ranks ahead is asking exactly that.
+  const level = levelRequiredFor(tier, ctx.rank);
+  out.push({
+    kind: TierRefusal.Level,
+    needed: level,
+    have: ctx.characterLevel,
+    met: ctx.characterLevel >= level,
+  });
+
+  // AND THE STAT ONLY WHEN THERE IS ONE — see `checkTier`'s note: a talent that
+  // names no stat is not gated on one, and the generic trees are exactly that.
+  if (ctx.stat !== undefined) {
+    const needed = statRequiredFor(tier, ctx.rank);
+    out.push({
+      kind: TierRefusal.Stat,
+      needed,
+      have: ctx.statValue,
+      met: ctx.statValue >= needed,
+      stat: ctx.stat,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * One requirement, as the player reads it. Present tense whether or not it is
+ * met, because this line is a FACT about the talent and not a refusal — the
+ * refusal has its own sentence in `tierRefusalText`, and a list that switched
+ * grammar as you levelled would read as two different screens.
+ */
+export function tierRequirementText(req: TierRequirement): string {
+  switch (req.kind) {
+    case TierRefusal.Depth:
+      return `${String(req.needed)} others in this discipline (${String(req.have)})`;
+    case TierRefusal.Level:
+      return `level ${String(req.needed)}`;
+    case TierRefusal.Stat:
+      return `${String(req.needed)} ${String(req.stat ?? 'aptitude')} (${String(req.have)})`;
+  }
+}

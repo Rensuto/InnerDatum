@@ -1380,3 +1380,65 @@ describe('the attribute ceiling is on the control, not only in the refusal', () 
     expect(texts).not.toContain('14 (14)');
   });
 });
+
+describe('the pane says what the next rank wants, before it refuses you', () => {
+  /**
+   * `lockedReason` exists only while a gate is closed, so on its own it taught
+   * nobody anything until the day it stopped them. `LoadoutTalent.requires` is
+   * present either way — ToME's `getTalentReqDesc` lists every requirement every
+   * time (ActorTalents.lua:744-798).
+   */
+  const withReqs = (
+    requires: readonly { text: string; met: boolean }[],
+    over: Partial<LoadoutTalent> = {},
+  ) =>
+    paintPanel({
+      rows: talentPanelRows(
+        view({
+          loadout: [
+            talent({
+              id: 'talent:hold_the_line',
+              name: 'Hold the Line',
+              requires,
+              ...DISCIPLINE,
+              ...over,
+            }),
+          ],
+          passives: [],
+        }),
+      ),
+      focusId: 'talent:hold_the_line',
+    });
+
+  it('prints a requirement that is already met', () => {
+    // THE ONE THAT WAS MISSING ENTIRELY. A met requirement is the whole reason
+    // this exists — it is what lets a player plan three ranks ahead.
+    const texts = withReqs([{ text: '18 str (25)', met: true }]);
+    expect(texts).toContain('Needs');
+    expect(texts.some((t) => t.includes('18 str (25)'))).toBe(true);
+  });
+
+  it('marks an unmet one differently without relying on colour', () => {
+    // `!` versus `·` — the rule ui/partypanel.ts states and this file follows
+    // everywhere. A player who cannot separate orange from bone still reads it.
+    const unmet = withReqs([{ text: '18 str (14)', met: false }]);
+    const met = withReqs([{ text: '18 str (25)', met: true }]);
+    expect(unmet.some((t) => t.startsWith('!'))).toBe(true);
+    expect(met.some((t) => t.startsWith('·'))).toBe(true);
+    expect(met.some((t) => t.startsWith('!'))).toBe(false);
+  });
+
+  it('lists every clause rather than only the first that fails', () => {
+    const texts = withReqs([
+      { text: '2 others in this discipline (0)', met: false },
+      { text: 'level 6', met: false },
+      { text: '18 str (14)', met: false },
+    ]);
+    expect(texts.filter((t) => t.startsWith('!'))).toHaveLength(3);
+  });
+
+  it('says nothing at all when there is nothing to require', () => {
+    // A talent at its cap has no next rank, and an empty heading is furniture.
+    expect(withReqs([])).not.toContain('Needs');
+  });
+});

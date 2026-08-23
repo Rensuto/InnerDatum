@@ -561,6 +561,17 @@ export type TalentCell = {
    */
   readonly lockedReason: string | null;
   /**
+   * EVERY REQUIREMENT OF THE NEXT RANK, met or not — `LoadoutTalent.requires`.
+   *
+   * `lockedReason` above is a REFUSAL and exists only while one applies. This is
+   * a FACT about the talent and is here whether or not the point can be spent,
+   * which is the whole difference: without it a player learned a requirement by
+   * being stopped at it, three points into a tree they had already committed to.
+   *
+   * Empty for a talent at its cap, and for a server too old to send them.
+   */
+  readonly requires: readonly { readonly text: string; readonly met: boolean }[];
+  /**
    * THE TREE THIS CELL WOULD UNLOCK, or null for one the character already owns.
    *
    * PRESENT IS WHAT MAKES A PRESS AN UNLOCK. A cell in a locked tree does not
@@ -865,6 +876,9 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       talent.level < talent.maxLevel &&
       talent.locked !== true,
     lockedReason: talent.locked === true ? (talent.lockedReason ?? 'Not yet.') : null,
+    // `?? []` — absent means a server that does not send them, and the pane then
+    // shows exactly what it showed before this existed.
+    requires: talent.requires ?? [],
     passive: talent.kind === 'passive',
     desc: talent.desc,
     descNext: talent.descNext,
@@ -995,6 +1009,15 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         // so the `+` is live exactly when a category point is in hand, whatever
         // the talent's own rank or tier would say.
         canSpend: purse > 0,
+        /**
+         * NO REQUIREMENT LIST ON A TREE YOU DO NOT OWN. The only thing standing
+         * between the player and these icons is the DISCIPLINE — a category
+         * point — and listing a talent's stat and level gates underneath that
+         * would offer four things to fix when exactly one of them is the answer.
+         * They appear the moment the tree is bought, which is when they start
+         * being actionable.
+         */
+        requires: [],
         lockedReason:
           purse > 0
             ? `Unlock ${tree.name} — 1 category point. ${tree.blurb}`
@@ -2323,6 +2346,44 @@ function drawDetail(
     for (const text of wrap(cell.lockedReason, w)) {
       if (y + 12 > bottom) return;
       ctx.fillText(text, x, y + 6);
+      y += 12;
+    }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE NEXT RANK WANTS — every clause, met or not.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ THE REFUSAL ABOVE ONLY EXISTS ONCE IT IS TOO LATE ═══
+   * `lockedReason` is absent whenever the gate passes, so it taught nobody
+   * anything until the day it stopped them. A player at rank 2 with 14 Strength
+   * saw a live `+`, spent, and found out at rank 4 that the talent had wanted 18
+   * all along — three points into a tree already committed to.
+   *
+   * `getTalentReqDesc` (ActorTalents.lua:744-798) lists every requirement EVERY
+   * time, coloured by whether it is met, and the levelup pane diffs the current
+   * list against the next rank's (LevelupDialog.lua:963-970). This is that list.
+   *
+   * ═══ A MARK AND A COLOUR, NEVER A COLOUR ALONE ═══
+   * `·` for met and `!` for not, before the ink is chosen — the rule
+   * ui/partypanel.ts states and this file follows everywhere. The unmet ones
+   * take ORANGE, the same ink the refusal above uses, because they are the same
+   * fact seen earlier.
+   */
+  if (cell.requires.length > 0) {
+    y += 4;
+    ctx.font = FONT_META;
+    ctx.fillStyle = PALETTE.GREY;
+    if (y + 12 <= bottom) {
+      ctx.fillText('Needs', x, y + 6);
+      y += 12;
+    }
+    ctx.font = FONT_BODY;
+    for (const req of cell.requires) {
+      if (y + 12 > bottom) return;
+      ctx.fillStyle = req.met ? PALETTE.BONE : PALETTE.ORANGE;
+      ctx.fillText(fitText(ctx, `${req.met ? '·' : '!'} ${req.text}`, w), x, y + 6);
       y += 12;
     }
   }
