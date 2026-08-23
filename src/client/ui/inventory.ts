@@ -1976,6 +1976,39 @@ export function inventoryPanelDragAt(
       const cell = row.cells[i];
       if (box === undefined || cell === undefined || !inside(box)) continue;
       if (cell.kind === 'empty') return null;
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * A SHELF ROW IS NOT PICKED UP. It is not yours yet.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * ═══ WHAT THIS WAS ═══
+       * `shopCells` sets `worn: false`, so a shelf row fell through to
+       * `DragKind.Carried` carrying the SHOP's item id. Dragging a coat towards
+       * your own body then sprang the panel to the Equipped tab mid-gesture and
+       * the drop sent `equip` for an item the player does not own — which the
+       * server answers *"you are not carrying that"*, and `case 'error'` turns
+       * into a full refusal banner that cancels any aim and interrupts a walk.
+       * So the drag punished you for reaching towards the shelf.
+       *
+       * ═══ AND THIS IS THE DECISION THE CLICK PATH ALREADY MADE ═══
+       * `runInventoryHit` fixed exactly this on press — a grid click on the
+       * shop tab sets the focus and sends nothing, because *"BUYING HAS ITS OWN
+       * CONTROL … it knows the price and whether the purse covers it, and it is
+       * the only thing on this panel that should ever send `shop_buy`"*. The
+       * drag path was left open.
+       *
+       * REFUSING THE GRAB IS WHAT MAKES THE TWO AGREE, and it costs nothing the
+       * player can feel: with no drag to begin, the press falls through to
+       * `inventoryPanelHitAt` and behaves as the click does — the strip
+       * describes what was pressed. A drag-to-buy would be a second control
+       * that spends money without ever showing the price.
+       *
+       * `price` IS THE MARKER because it is the one field only the shelf has —
+       * `shopCells` reads it off `ShopItemView.buy` and every other tab leaves
+       * it null. `worn` cannot answer this: a shelf row and a bag row are both
+       * `worn: false`, which is how the bug got in.
+       */
+      if (cell.price !== null && cell.price !== undefined) return null;
       return {
         kind: InventoryHitKind.DragStart,
         // `cell.worn` implies a slot — nothing slotless can be on the doll —

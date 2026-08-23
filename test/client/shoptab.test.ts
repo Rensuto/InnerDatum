@@ -5,6 +5,11 @@ import {
   InventoryHitKind,
   InventoryRowKind,
   InventoryTab,
+  inventoryColumnsFor,
+  inventoryPanelDragAt,
+  inventoryPanelGeometry,
+  inventoryPanelHitAt,
+  inventoryPanelRect,
   inventoryPanelRows,
   tabsFor,
 } from '../../src/client/ui/inventory.ts';
@@ -225,5 +230,87 @@ describe('the hit kinds', () => {
     expect(InventoryHitKind.Buy).toBe('buy');
     expect(InventoryHitKind.Sell).toBe('sell');
     expect(InventoryHitKind.Drop).toBe('drop');
+  });
+});
+
+describe('a shelf row cannot be picked up', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BUG: dragging a coat off the shelf sent `equip` for an item you do not
+   * own, and the refusal was not quiet.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `shopCells` sets `worn: false`, so a shelf row fell through to
+   * `DragKind.Carried` carrying the shop's item id. `springInventoryTab` then
+   * flipped the panel to Equipped mid-drag and the drop sent `equip`, which the
+   * server answers *"you are not carrying that"* — and `case 'error'` puts a
+   * full refusal banner on the canvas, cancels any aim and interrupts a walk.
+   *
+   * The CLICK path had already decided this: a grid press on the shop tab sets
+   * the focus and sends nothing, because BUY is the only control that spends
+   * money and the only one that knows the price. This makes the drag agree.
+   */
+  const rectFor = () => {
+    const rect = inventoryPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    return rect;
+  };
+
+  /** The middle of the first cell on whichever tab `v` is showing. */
+  function firstCell(v: InventoryPanelView) {
+    const rect = rectFor();
+    const rows = inventoryPanelRows(v, inventoryColumnsFor(rect.w));
+    for (const placed of inventoryPanelGeometry(rect, rows).placed) {
+      if (placed.row.kind !== InventoryRowKind.Cells) continue;
+      const box = placed.cells[0];
+      const cell = placed.row.cells[0];
+      if (box === undefined || cell === undefined || cell.kind === 'empty') continue;
+      return { rect, rows, x: box.x + box.w / 2, y: box.y + box.h / 2 };
+    }
+    throw new Error('no filled cell');
+  }
+
+  it('refuses the grab, so no drag begins', () => {
+    const v = view();
+    const { rect, rows, x, y } = firstCell(v);
+    expect(inventoryPanelDragAt(rect, rows, x, y)).toBeNull();
+  });
+
+  it('still answers the press, so the strip describes what was pressed', () => {
+    // A REFUSED GRAB IS NOT A DEAD CONTROL. With no drag to begin, the press
+    // falls through to `inventoryPanelHitAt` and behaves exactly as the click
+    // does — which is the whole reason refusing the grab is safe here.
+    const v = view();
+    const { rect, rows, x, y } = firstCell(v);
+    const hit = inventoryPanelHitAt(rect, rows, x, y);
+    expect(hit?.kind).toBe(InventoryHitKind.Item);
+  });
+
+  it('does NOT refuse a bag row, which is the gesture the doll exists for', () => {
+    /**
+     * THE OTHER HALF, and the one that makes the fix a fix rather than a
+     * disabling. `price` is the marker precisely because it is the only field
+     * the shelf has and the bag does not — `worn` cannot tell them apart, since
+     * a shelf row and a bag row are both `worn: false`, which is how the bug
+     * got in.
+     */
+    const v = view({
+      tab: InventoryTab.Carried,
+      inventory: inventoryFrame(100, [
+        {
+          itemId: 'item_watchmans_coat~mine',
+          name: "Watchman's Coat",
+          icon: 'item_watchmans_coat',
+          tier: ItemTier.Common,
+          slot: 'body',
+          desc: 'A coat you already own, which is the whole point of this row.',
+          // EMPTY IS A REAL ANSWER — see `CarriedItemView.compare`. This fixture
+          // is about who owns the row, not about what wearing it would change.
+          compare: [],
+        },
+      ]),
+    });
+    const { rect, rows, x, y } = firstCell(v);
+    expect(inventoryPanelDragAt(rect, rows, x, y)?.kind).toBe(InventoryHitKind.DragStart);
   });
 });
