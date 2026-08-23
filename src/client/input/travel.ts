@@ -172,6 +172,18 @@ export const TravelObservation = {
   Continue: 'continue',
   /** Something hostile arrived. See `hostileAlert`. */
   Hostile: 'interrupt-hostile',
+  /**
+   * THE WALK CROSSED SOMETHING WORTH STOPPING FOR — upstream's `runCheck`
+   * (Player.lua:1126-1196), which halts on an unseen object.
+   *
+   * ═══ TRAVEL WALKED STRAIGHT OVER LOOT ═══
+   * The route is a path to a tile, and everything between was scenery: a player
+   * who clicked across a room walked over a coat and learned nothing about it.
+   * Upstream stops for exactly this, and for a `notice` grid, a store entrance
+   * and a talkable NPC besides — the last three name things this game does not
+   * have on the floor.
+   */
+  Notable: 'interrupt-notable',
 } as const;
 export type TravelObservation = (typeof TravelObservation)[keyof typeof TravelObservation];
 
@@ -213,8 +225,14 @@ export type Travel = {
   readonly cancel: () => void;
   /** THE ONLY PRODUCER OF A STEP. Null means "not this frame", not "never". */
   readonly nextStep: (world: TravelWorld) => { readonly dir: Dir } | null;
-  /** A `moved` frame naming the viewer arrived. */
-  readonly observeSelfMoved: (at: TileXY) => void;
+  /**
+   * A `moved` frame naming the viewer arrived.
+   *
+   * @param notable is there something on this tile worth stopping for — the
+   *   caller's own question, because `ground` lives in main.ts and this module
+   *   takes a world rather than a catalogue. See `TravelObservation.Notable`.
+   */
+  readonly observeSelfMoved: (at: TileXY, notable?: boolean) => TravelObservation;
   /** A `turn` frame arrived — ANY `turn` frame, including somebody else's. */
   readonly observeTurn: (world: TravelWorld) => TravelObservation;
   /** The tiles still to walk, for `Scene.path`. Never a painter. */
@@ -490,8 +508,8 @@ export function createTravel(): Travel {
     return { dir };
   }
 
-  function observeSelfMoved(at: TileXY): void {
-    if (!active()) return;
+  function observeSelfMoved(at: TileXY, notable = false): TravelObservation {
+    if (!active()) return TravelObservation.Continue;
 
     const want = expected;
     // ANY move that is not the one we asked for cancels, including a move we
@@ -500,7 +518,7 @@ export function createTravel(): Travel {
     // route from a tile we are not on.
     if (want === null || !sameTile(want, at)) {
       cancel();
-      return;
+      return TravelObservation.Continue;
     }
 
     awaitingStep = false;
@@ -508,7 +526,30 @@ export function createTravel(): Travel {
     index += 1;
     // ARRIVAL — a normal end rather than an interrupt. The caller learns of it
     // by `active()` going false, and the preview empties with it.
-    if (index >= path.length) cancel();
+    if (index >= path.length) {
+      cancel();
+      return TravelObservation.Continue;
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND SOMETHING IS UNDERFOOT — `runCheck`'s "unseen object" arm.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ═══ AFTER THE ARRIVAL CHECK, DELIBERATELY ═══
+     * Auto-explore aims AT item tiles, so arriving on one is the plan working
+     * rather than an interruption — and reporting it as an interrupt would put a
+     * "travel stopped" notice on top of a walk that finished.
+     *
+     * ═══ REACHING, NOT NOTICING, AND THE DIFFERENCE IS DELIBERATE ═══
+     * Upstream halts when an object comes into VIEW. Ours halts when the walk
+     * puts you ON one. Noticing needs "have I seen this object before" tracked
+     * per item — without it the same coat across the room would stop every walk
+     * that faces it — and stopping for everything ADJACENT would fire constantly
+     * in a room somebody has already looted into a pile. Standing on a thing is
+     * rare, unambiguous, and always actionable: `,` takes it.
+     */
+    return notable ? TravelObservation.Notable : TravelObservation.Continue;
   }
 
   /**

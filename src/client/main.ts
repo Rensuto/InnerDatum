@@ -5399,7 +5399,21 @@ async function boot(): Promise<void> {
   };
 
   onSelfMoved = (x, y) => {
-    travel?.observeSelfMoved({ x, y });
+    /**
+     * ═══ A WALK THAT CROSSES LOOT STOPS ON IT — `runCheck`, Player.lua:1126 ═══
+     *
+     * The route was a path to a tile and everything between was scenery, so a
+     * player who clicked across a room walked over a coat and learned nothing
+     * about it. `ground` already tells this client what is on every tile, so the
+     * question costs a lookup.
+     *
+     * THE NOTICE NAMES THE KEY, because a walk that stopped for a reason the
+     * player cannot act on is just a walk that stopped.
+     */
+    const underfoot = ground.some((item) => item.cell[0] === x && item.cell[1] === y);
+    if (travel?.observeSelfMoved({ x, y }, underfoot) === TravelObservation.Notable) {
+      cancelTravel(`something on the ground here — ${keyHint('pickup')} to take it`);
+    }
   };
 
   /** For Escape's ordered chain: did this press actually back out of a walk? */
@@ -10837,6 +10851,14 @@ function applyServerMessage(msg: ServerMsg): void {
       switch (travel?.observeTurn(travelWorld()) ?? TravelObservation.Continue) {
         case TravelObservation.Hostile:
           onRefusal('something is moving nearby — travel stopped');
+          break;
+        case TravelObservation.Notable:
+          // UNREACHABLE HERE, AND NOT A LIE. `Notable` is `observeSelfMoved`'s
+          // answer — it is about the tile a step LANDED on, and a `turn` frame
+          // lands nobody anywhere. The arm exists because both observers share
+          // one result union, and `switch-exhaustiveness-check` is what made
+          // that fact visible rather than letting a future producer here be
+          // silently dropped.
           break;
         case TravelObservation.Continue:
           break;

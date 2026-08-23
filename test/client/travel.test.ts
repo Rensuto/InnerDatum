@@ -549,3 +549,58 @@ describe('hostileAlert', () => {
     expect(hostileAlert(sense(false, []), after, TRAVEL_ALERT_RADIUS)).toBe(false);
   });
 });
+
+describe('a walk that crosses something worth stopping for', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TRAVEL WALKED STRAIGHT OVER LOOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The route is a path to a tile and everything between it was scenery, so a
+   * player who clicked across a room walked over a coat and learned nothing
+   * about it. Upstream's `runCheck` (Player.lua:1126-1196) halts on an unseen
+   * object — and on a `notice` grid, a store entrance and a talkable NPC, none
+   * of which this game has on the floor.
+   */
+  it('reports the tile it stopped on rather than walking on', () => {
+    const travel = createTravel();
+    travel.begin({ from: { x: 2, y: 2 }, to: { x: 5, y: 2 }, level: OPEN, stopShort: false });
+    travel.nextStep(world());
+
+    expect(travel.observeSelfMoved({ x: 3, y: 2 }, true)).toBe(TravelObservation.Notable);
+  });
+
+  it('says nothing when the tile is bare, which is nearly every tile', () => {
+    const travel = createTravel();
+    travel.begin({ from: { x: 2, y: 2 }, to: { x: 5, y: 2 }, level: OPEN, stopShort: false });
+    travel.nextStep(world());
+
+    expect(travel.observeSelfMoved({ x: 3, y: 2 })).toBe(TravelObservation.Continue);
+    expect(travel.active(), 'a bare tile must not end the walk').toBe(true);
+  });
+
+  it('does NOT report arrival as an interruption', () => {
+    /**
+     * AUTO-EXPLORE AIMS AT ITEM TILES, so arriving on one is the plan working.
+     * Reporting it would put a "travel stopped" notice on top of a walk that
+     * finished — and the check sits after the arrival branch for exactly that.
+     */
+    const travel = createTravel();
+    travel.begin({ from: { x: 2, y: 2 }, to: { x: 3, y: 2 }, level: OPEN, stopShort: false });
+    travel.nextStep(world());
+
+    expect(travel.observeSelfMoved({ x: 3, y: 2 }, true)).toBe(TravelObservation.Continue);
+    expect(travel.active(), 'it arrived, so the walk is over either way').toBe(false);
+  });
+
+  it('still cancels for a move nobody asked for, loot or no loot', () => {
+    // The shove case outranks it: the rest of the route is a plan from a tile we
+    // are not standing on, and what is underfoot there is beside the point.
+    const travel = createTravel();
+    travel.begin({ from: { x: 2, y: 2 }, to: { x: 5, y: 2 }, level: OPEN, stopShort: false });
+    travel.nextStep(world());
+
+    expect(travel.observeSelfMoved({ x: 2, y: 3 }, true)).toBe(TravelObservation.Continue);
+    expect(travel.active()).toBe(false);
+  });
+});

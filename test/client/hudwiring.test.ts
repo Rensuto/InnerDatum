@@ -772,3 +772,26 @@ describe('auto-explore walks through the travel system', () => {
     expect(arm).toContain('bearingWord(');
   });
 });
+
+describe('a walk that crosses loot stops on it', () => {
+  /**
+   * input/travel.ts tests the machine. This pins the half main.ts owns: `ground`
+   * lives here, so the "is there something underfoot" question is asked here and
+   * handed in — the module takes a world, not a catalogue.
+   */
+  it('asks the ground frame and hands the answer to travel', () => {
+    const start = at('onSelfMoved = (x, y) => {');
+    const body = CODE.slice(start, start + 900);
+    expect(body).toContain('ground.some(');
+    expect(body).toContain('observeSelfMoved({ x, y }, underfoot)');
+  });
+
+  it('names the key, because a stop the player cannot act on is just a stop', () => {
+    const start = at('onSelfMoved = (x, y) => {');
+    const body = CODE.slice(start, start + 900);
+    expect(body).toContain('TravelObservation.Notable');
+    // `keyHint` and never a printed letter — `,` is rebindable like everything
+    // else, and a hard-coded one is a lie the moment somebody changes it.
+    expect(body).toContain("keyHint('pickup')");
+  });
+});
