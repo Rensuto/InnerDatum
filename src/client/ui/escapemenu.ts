@@ -145,6 +145,7 @@
 
 import { PartyAction } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
+import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import {
   ACTIONS,
   actionById,
@@ -406,6 +407,32 @@ export type MenuEffect =
    */
   | { readonly kind: 'leave-character' }
   | { readonly kind: 'ui'; readonly command: UiCommand }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * STEP THE TILE SIZE — a pointer route to the one persisted preference that
+   * had none.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ WHAT WAS ACTUALLY MISSING ═══
+   * Zoom is a real preference: a dedicated wire verb (`set_zoom`), a server echo
+   * (`SettingsMsg`), and storage that follows the account. It IS discoverable —
+   * `zoom_in`/`zoom_out` are rows on the Keys screen, so it is not invisible the
+   * way an audit of the options screen alone would suggest. What it had no route
+   * to was CHANGING it without a keyboard, which for a Discord Activity on a
+   * touch device means not at all. Upstream exposes it on a settings screen in
+   * two places (GraphicMode.lua:139, VideoOptions.lua:77).
+   *
+   * ═══ ONE ROW THAT CYCLES, NOT A `-` / `+` PAIR ═══
+   * `ZOOM_MIN` is -1 and `ZOOM_MAX` is +1: THREE VALUES, and shared/version.ts
+   * argues that range at length — "one step each way is a real range and no
+   * setting is useless". Cycling three things is what a press does naturally,
+   * and it costs no new row kind, no new hit kind and no new geometry, so the
+   * typed union that makes a dead row a compile error stays as it is.
+   *
+   * IT LEAVES THE MENU OPEN, unlike every other row here. The whole point is to
+   * look at the map and press again.
+   */
+  | { readonly kind: 'zoom' }
   | { readonly kind: 'party'; readonly action: PartyAction };
 
 // ---------------------------------------------------------------------------
@@ -589,6 +616,18 @@ export type EscapeMenuView = {
    * that had moved on.
    */
   readonly confirming?: number | null;
+  /**
+   * THE CURRENT ZOOM STEP, `ZOOM_MIN`..`ZOOM_MAX` — see the `zoom` effect.
+   *
+   * ON THE VIEW rather than read from the renderer, because this module draws
+   * and never touches a canvas: the row is a READOUT as well as a control, and
+   * a label that lagged the setting by a frame would be a preference screen
+   * lying about the preference.
+   *
+   * ABSENT READS AS 0, the shipped default — which is what a client with no
+   * `settings` frame yet is actually looking at.
+   */
+  readonly zoom?: number;
 };
 
 /**
@@ -668,8 +707,19 @@ function entryRow(
  * the confirmation would silently move to `INVENTORY` — a guard protecting the
  * wrong thing is worse than no guard, because it reads as protection.
  */
-export const ROW_LEAVE_PARTY = 5;
-export const ROW_SWITCH_CHARACTER = 6;
+export const ROW_LEAVE_PARTY = 6;
+export const ROW_SWITCH_CHARACTER = 7;
+
+/**
+ * How the three zoom steps read. `ZOOM_MIN`..`ZOOM_MAX` is -1..1, and the row is
+ * a readout as much as a control, so the value is a WORD rather than a number —
+ * "ZOOM: 0" tells a player nothing about what they are looking at.
+ */
+function zoomWord(step: number): string {
+  if (step <= ZOOM_MIN) return 'SMALLER';
+  if (step >= ZOOM_MAX) return 'BIGGER';
+  return 'NORMAL';
+}
 
 function rootRows(view: EscapeMenuView): readonly MenuRow[] {
   const keymap = view.keymap;
@@ -701,8 +751,26 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
     // letter survives.
     entryRow(0, { kind: 'resume' }, 'RESUME', labelFor('cancel', keymap), true, null),
     entryRow(1, { kind: 'keys' }, 'KEY BINDINGS', '', true, null),
+    /**
+     * ═══ BESIDE THE OTHER PREFERENCE ROW, WHICH IS WHERE A PLAYER LOOKS ═══
+     * The five rows below it open a panel; these two change how the game is set
+     * up. Grouping them is the whole reason upstream has a settings screen at
+     * all — and two rows is not a screen, so they sit together here instead.
+     *
+     * THE KEY IS SHOWN TOO, read off the live keymap like every other row. Zoom
+     * already has keys and they are already on the Keys screen; this row is the
+     * pointer route to the same preference, not a second way to own it.
+     */
     entryRow(
       2,
+      { kind: 'zoom' },
+      `ZOOM: ${zoomWord(view.zoom ?? 0)}`,
+      labelFor('zoom_in', keymap),
+      true,
+      null,
+    ),
+    entryRow(
+      3,
       { kind: 'ui', command: UiCommand.ShowSheet },
       'CHARACTER SHEET',
       labelFor('show_sheet', keymap),
@@ -710,7 +778,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      3,
+      4,
       { kind: 'ui', command: UiCommand.ShowTalents },
       talentsLabel,
       labelFor('show_talents', keymap),
@@ -718,7 +786,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      4,
+      5,
       { kind: 'ui', command: UiCommand.ShowInventory },
       'INVENTORY',
       labelFor('show_inventory', keymap),

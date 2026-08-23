@@ -334,7 +334,7 @@ import {
   TalentShape,
   TurnActorState,
 } from '../shared/protocol.ts';
-import { PROTOCOL_VERSION } from '../shared/version.ts';
+import { PROTOCOL_VERSION, ZOOM_MAX, ZOOM_MIN } from '../shared/version.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type {
   ActorView,
@@ -1752,6 +1752,24 @@ let zoomPersisted = false;
 let storedZoom: number | null = null;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE RENDERER SETTLED ON, LAST TIME ANYBODY ASKED IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ A MIRROR, AND THE SEAM IS THE SAME ONE `storedZoom` DESCRIBES ═══
+ * The escape menu's ZOOM row is a readout as well as a control, and `paintHud`
+ * is module scope while `renderer` belongs to `boot`'s closure — the very split
+ * the note above records. So the value has to be carried rather than read.
+ *
+ * ═══ WRITTEN FROM THE AUTHORITATIVE ANSWER, NEVER COMPUTED ═══
+ * Both writers take `renderer.setZoom`'s RETURN, which is the clamped step the
+ * renderer actually adopted. Nothing here does its own arithmetic, so this
+ * cannot drift into a second opinion about the clamp — which is the failure a
+ * mirror usually is.
+ */
+let liveZoom = 0;
+
+/**
  * PUT EVERY PIECE OF THE MENU'S STATE BACK, AND NOTHING ELSE.
  *
  * ═══ WHY THIS IS MODULE SCOPE WHEN `closeMenu` IS NOT ═══
@@ -2689,7 +2707,14 @@ function inParty(): boolean {
  * handler dereferences on every press, so what the screen says a key does and
  * what the key does are the same fact and not two.
  */
-function escapeMenuView(): EscapeMenuView {
+/**
+ * @param zoom the renderer's current step. PASSED IN rather than read, because
+ *   this function is module scope and the renderer belongs to `boot`'s closure —
+ *   the same seam `storedZoom` above describes. A module-level MIRROR of the
+ *   zoom would be a second copy of state the renderer already owns, and the two
+ *   would disagree the first time anything clamped.
+ */
+function escapeMenuView(zoom: number): EscapeMenuView {
   return {
     screen: menuScreen,
     keymap: gameKeymap.current,
@@ -2698,6 +2723,8 @@ function escapeMenuView(): EscapeMenuView {
     page: menuPage,
     armed: menuArmed,
     confirming: menuConfirm,
+    // THE ROW IS A READOUT AS WELL AS A CONTROL — see `EscapeMenuView.zoom`.
+    zoom,
     message: menuMessage,
     // v12 — THE COUNT GOES ON THE CONTROL THAT ALREADY ROUTES TO THE PANEL.
     // Root row 3 opens the talent screen and never said how many points were
@@ -3877,7 +3904,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       sprites,
       rect: layout.menu,
       screen: menuScreen,
-      rows: escapeMenuRows(escapeMenuView()),
+      rows: escapeMenuRows(escapeMenuView(liveZoom)),
       hoveredClose: menuCloseHovered,
       hovered: menuHovered,
     });
@@ -5713,7 +5740,8 @@ async function boot(): Promise<void> {
       // Cleared as it is consumed so a later frame about something else does not
       // re-apply a stale preference over a zoom the player has since changed.
       if (storedZoom !== null) {
-        renderer.setZoom(storedZoom);
+        // MIRRORED FROM THE RETURN, like the other writer — see `liveZoom`.
+        liveZoom = renderer.setZoom(storedZoom);
         storedZoom = null;
       }
       // RE-ANCHOR THE RING. The caster can be shoved while it is open —
@@ -7288,7 +7316,7 @@ async function boot(): Promise<void> {
 
   /** The rows, as the painter builds them. One call, one answer, no cache. */
   function menuRows(): readonly MenuRow[] {
-    return escapeMenuRows(escapeMenuView());
+    return escapeMenuRows(escapeMenuView(liveZoom));
   }
 
   /**
@@ -7439,6 +7467,7 @@ async function boot(): Promise<void> {
   function applyZoom(next: number): number {
     const before = renderer.zoom();
     const got = renderer.setZoom(next);
+    liveZoom = got;
     if (got !== before) {
       if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_zoom', zoom: got })) {
         showNotice('not connected — that zoom was not saved');
@@ -7595,6 +7624,24 @@ async function boot(): Promise<void> {
       case 'keys':
         showMenuScreen(MenuScreen.Keys);
         return;
+      case 'zoom': {
+        /**
+         * ═══ IT CYCLES, AND THE MENU STAYS OPEN ═══
+         * `ZOOM_MIN`..`ZOOM_MAX` is three values (shared/version.ts argues that
+         * range), so a press wraps rather than dead-ending at the top — and the
+         * whole point of the row is to look at the map behind the menu and press
+         * again, which closing would make impossible.
+         *
+         * IT IS `applyZoom`, THE SAME CALL THE KEYS MAKE, so this is a second
+         * ROUTE to one preference rather than a second owner of it: the clamp,
+         * the `set_zoom` frame and both "that will not be saved" warnings all
+         * come along.
+         */
+        const next = renderer.zoom() >= ZOOM_MAX ? ZOOM_MIN : renderer.zoom() + 1;
+        applyZoom(next);
+        requestDraw();
+        return;
+      }
       case 'leave-character':
         // ═══ THE MENU GOES AWAY FIRST, THEN THE VERB — the same port the `ui`
         // case cites below, and the same reason applies more strongly: this one

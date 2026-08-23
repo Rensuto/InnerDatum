@@ -1192,3 +1192,38 @@ describe('the menu rows that end something take two presses', () => {
     expect(gate()).toContain('if (!guarded || menuConfirm === index) {');
   });
 });
+
+describe('the zoom row changes the setting rather than owning it', () => {
+  /**
+   * ONE PREFERENCE, TWO ROUTES. The keys and the row must both go through
+   * `applyZoom` — that is where the clamp lives, where the `set_zoom` frame is
+   * sent, and where both "that will not be saved" warnings are said. A row that
+   * called `renderer.setZoom` directly would be a zoom that silently stopped
+   * persisting, which is precisely what the comment above `applyZoom` records
+   * having already happened once.
+   */
+  /** The `zoom` case's own body, ending where the next case begins. */
+  const arm = (): string => {
+    const start = at("case 'zoom': {");
+    const end = CODE.indexOf("      case '", start + 10);
+    expect(end, 'the zoom case has a neighbour below it').toBeGreaterThan(start);
+    return CODE.slice(start, end);
+  };
+
+  it('goes through applyZoom, not through the renderer', () => {
+    expect(arm()).toContain('applyZoom(next)');
+    expect(arm(), 'a direct setZoom would skip the persist and the warnings').not.toContain(
+      'renderer.setZoom(',
+    );
+  });
+
+  it('cycles rather than dead-ending at the top', () => {
+    // `ZOOM_MIN`..`ZOOM_MAX` is three values, so one row can carry all of them.
+    expect(arm()).toContain('>= ZOOM_MAX ? ZOOM_MIN :');
+  });
+
+  it('leaves the menu open, unlike every other row', () => {
+    // The whole point is to look at the map behind the menu and press again.
+    expect(arm()).not.toContain('closeMenu()');
+  });
+});

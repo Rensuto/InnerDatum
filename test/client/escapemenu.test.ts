@@ -204,10 +204,15 @@ describe('the root screen', () => {
     // about a row that already existed. The count is still FIXED: the row is
     // drawn greyed for a player with no account rather than dropped, exactly as
     // LEAVE PARTY is for a party of one, so no row ever moves under a pointer.
-    expect(rows).toHaveLength(7);
+    // EIGHT SINCE THE ZOOM ROW. It sits beside KEY BINDINGS because those two
+    // are the only rows that change how the game is SET UP — the five below them
+    // open a panel — and two rows is not a settings screen, so they group here
+    // rather than behind a sixth surface.
+    expect(rows).toHaveLength(8);
     expect(rows.map((row) => row.label)).toEqual([
       'RESUME',
       'KEY BINDINGS',
+      'ZOOM: NORMAL',
       'CHARACTER SHEET',
       'TALENTS',
       'INVENTORY',
@@ -217,6 +222,10 @@ describe('the root screen', () => {
     expect(rows.map((row) => row.effect)).toEqual([
       { kind: 'resume' },
       { kind: 'keys' },
+      // ITS OWN EFFECT KIND, not a `ui` command. Every `UiCommand` opens or
+      // closes a panel; this one changes a persisted preference and leaves the
+      // menu open so the player can look at the map and press again.
+      { kind: 'zoom' },
       // A LAUNCHER, NOT A SECOND SHEET. Game.lua:2308 is
       // `key:triggerVirtual("SHOW_CHARACTER_SHEET")`, and this is the same act:
       // the row emits the verb the KEY emits, so main.ts's existing toggle runs.
@@ -230,7 +239,7 @@ describe('the root screen', () => {
       // the first thing to go wrong would be a keybinding for it.
       { kind: 'leave-character' },
     ]);
-    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 
   it('draws SWITCH CHARACTER greyed for a player with no account', () => {
@@ -260,16 +269,18 @@ describe('the root screen', () => {
     // row that already opens the spend screen — never a row of its own and never
     // a reorder — and this asserts the whole list on both sides of it.
     //
-    // (The list is seven rows since v19. A new VERB earned one; a fact about an
-    // existing row still does not, which is the distinction this test pins.)
+    // (The list is EIGHT rows since ZOOM. A new VERB earns one — `SWITCH
+    // CHARACTER` did, and so does a preference with no other pointer route — a
+    // fact about an existing row still does not, which is the distinction.)
     const shape = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.index);
     const labels = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.label);
 
     const waiting = escapeMenuRows(view({ unspent: 2 }));
-    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     expect(labels(waiting)).toEqual([
       'RESUME',
       'KEY BINDINGS',
+      'ZOOM: NORMAL',
       'CHARACTER SHEET',
       'TALENTS (2)',
       'INVENTORY',
@@ -278,15 +289,15 @@ describe('the root screen', () => {
     ]);
     // The effect on row 3 is untouched — it is still the launcher, and a longer
     // label must not turn it into a different act.
-    expect(entryRows(waiting)[3]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
-    expect(entryRows(waiting)[3]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
+    expect(entryRows(waiting)[4]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
+    expect(entryRows(waiting)[4]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
 
     // WITHOUT POINTS THE LABEL IS UNCHANGED, at zero and with the field absent
     // entirely — which is what main.ts's existing `escapeMenuView()` passes. A
     // row reading "TALENTS (0)" on every open is furniture within one session.
-    expect(labels(escapeMenuRows(view({ unspent: 0 })))[3]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view()))[3]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view({ unspent: 1 })))[3]).toBe('TALENTS (1)');
+    expect(labels(escapeMenuRows(view({ unspent: 0 })))[4]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view()))[4]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view({ unspent: 1 })))[4]).toBe('TALENTS (1)');
   });
 
   it('draws LEAVE PARTY greyed for a party of one rather than dropping it', () => {
@@ -294,8 +305,8 @@ describe('the root screen', () => {
     // row you were reaching for, and a player who cannot see the row at all
     // learns nothing about why they cannot use it.
     const alone = entryRows(escapeMenuRows(view({ inParty: false })));
-    expect(alone).toHaveLength(7);
-    const leave = alone[5];
+    expect(alone).toHaveLength(8);
+    const leave = alone[ROW_LEAVE_PARTY];
     expect(leave?.label).toBe('LEAVE PARTY');
     expect(leave?.enabled).toBe(false);
     // ...and it says WHY, in words, not merely in a shade.
@@ -305,11 +316,11 @@ describe('the root screen', () => {
   it('names the LIVE key beside each screen row and never a hard-coded letter', () => {
     // A printed "press C" is a lie the moment somebody rebinds. The row reads
     // the same keymap the dispatcher reads.
-    const before = entryRows(escapeMenuRows(view()))[2];
+    const before = entryRows(escapeMenuRows(view()))[3];
     expect(before?.keyLabel).toBe(labelFor('show_sheet', DEFAULT_KEYMAP));
 
     const rebound = compileKeymap(ACTIONS, { show_sheet: ['key:z'] });
-    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[2];
+    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[3];
     expect(after?.keyLabel).toBe('Z');
   });
 });
@@ -332,7 +343,11 @@ describe('escapeMenuHitAt on the root screen', () => {
       if (hit === null || hit.kind !== MenuHitKind.Entry) continue;
       if (seen[seen.length - 1] !== hit.index) seen.push(hit.index);
     }
-    expect(seen).toEqual([0, 1, 2, 3, 4, 5]);
+    // SEVEN OF THE EIGHT. The fixture is in a party, so LEAVE PARTY answers;
+    // SWITCH CHARACTER does not, because `canSwitchCharacter` is absent and a
+    // greyed row is unpressable STRUCTURALLY — the property the next test is
+    // about, seen here from the other side.
+    expect(seen).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
   it('answers the × in the header and nothing else up there', () => {
@@ -356,7 +371,7 @@ describe('escapeMenuHitAt on the root screen', () => {
     for (let y = rect.y; y < rect.y + rect.h; y += 1) {
       for (let x = rect.x; x < rect.x + rect.w; x += 5) {
         const hit = escapeMenuHitAt(rect, rows, x, y);
-        if (hit?.kind === MenuHitKind.Entry && hit.index === 5) leaveHits += 1;
+        if (hit?.kind === MenuHitKind.Entry && hit.index === ROW_LEAVE_PARTY) leaveHits += 1;
       }
     }
     expect(leaveHits).toBe(0);
@@ -367,7 +382,7 @@ describe('escapeMenuHitAt on the root screen', () => {
     let ok = 0;
     for (let y = rect.y; y < rect.y + rect.h; y += 1) {
       const hit = escapeMenuHitAt(rect, grouped, rect.x + 12, y);
-      if (hit?.kind === MenuHitKind.Entry && hit.index === 5) ok += 1;
+      if (hit?.kind === MenuHitKind.Entry && hit.index === ROW_LEAVE_PARTY) ok += 1;
     }
     expect(ok).toBeGreaterThan(0);
   });
@@ -1263,5 +1278,54 @@ describe('the two rows that end something ask first', () => {
     // pressable, or a solo player could arm a refusal.
     const alone = entryRows(escapeMenuRows(view({ inParty: false, confirming: ROW_LEAVE_PARTY })));
     expect(alone[ROW_LEAVE_PARTY]?.enabled).toBe(false);
+  });
+});
+
+describe('the zoom row', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A PERSISTED PREFERENCE WITH NO POINTER ROUTE TO CHANGE IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Zoom has a wire verb (`set_zoom`), a server echo (`SettingsMsg`) and storage
+   * that follows the account — and it IS discoverable, because `zoom_in` and
+   * `zoom_out` are rows on the Keys screen. What it had no route to was being
+   * CHANGED without a keyboard, which for a Discord Activity on a touch device
+   * means not at all. Upstream exposes it on a settings screen twice
+   * (GraphicMode.lua:139, VideoOptions.lua:77).
+   */
+  const labelAt = (zoom: number | undefined) =>
+    entryRows(escapeMenuRows(view(zoom === undefined ? {} : { zoom })))[2]?.label;
+
+  it('reads the setting as a word, not as a number', () => {
+    // "ZOOM: 0" tells a player nothing about what they are looking at. The row
+    // is a readout as much as a control.
+    expect(labelAt(-1)).toBe('ZOOM: SMALLER');
+    expect(labelAt(0)).toBe('ZOOM: NORMAL');
+    expect(labelAt(1)).toBe('ZOOM: BIGGER');
+  });
+
+  it('reads the shipped default when no settings frame has landed', () => {
+    // Absent is 0, which is what a client with no `settings` yet is actually
+    // looking at — not an unknown to be drawn as a blank.
+    expect(labelAt(undefined)).toBe('ZOOM: NORMAL');
+  });
+
+  it('clamps a value from outside the range rather than inventing a word', () => {
+    // `ZOOM_MIN`..`ZOOM_MAX` is the whole vocabulary. A server or a save that
+    // somehow held something else still gets one of the three.
+    expect(labelAt(-9)).toBe('ZOOM: SMALLER');
+    expect(labelAt(9)).toBe('ZOOM: BIGGER');
+  });
+
+  it('carries its own effect kind and shows the live key beside it', () => {
+    const row = entryRows(escapeMenuRows(view()))[2];
+    // NOT A `ui` COMMAND: every one of those opens or closes a panel, and this
+    // changes a preference and leaves the menu open on purpose.
+    expect(row?.effect).toEqual({ kind: 'zoom' });
+    // The key is read off the live keymap like every other row — this is a
+    // second ROUTE to one preference, not a second owner of it.
+    expect(row?.keyLabel).toBe(labelFor('zoom_in', DEFAULT_KEYMAP));
+    expect(row?.enabled).toBe(true);
   });
 });
