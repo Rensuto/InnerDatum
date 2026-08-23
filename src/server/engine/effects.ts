@@ -555,6 +555,37 @@ export type EffectCtx = {
    * at the other.
    */
   sheetDirty?: (actorId: string) => void;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A STATUS JUST KILLED SOMEBODY, AND NOTHING ELSE IS GOING TO NOTICE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A blow reaches `noteCasualty` through the ACTION OUTCOME it produced — the
+   * scheduler reads `killedBy(effect)` and buries whoever is named there. A
+   * bleed tick produces no outcome, so it produced no burial: `applyDamage` set
+   * `alive = false`, returned `{ killed: true }`, and this file threw the answer
+   * away.
+   *
+   * MEASURED, driving a 3 hp husk with a 5-power bleed through the real pump:
+   *
+   *     hp=0 alive=false  ·  still in world: true  ·  reaped: []
+   *     events: held, turn_ended, engagement
+   *
+   * A corpse standing on the tile forever — never removed, never announced, no
+   * experience, no loot, and counted alive by anything asking whether the site
+   * is clear. Bleeding a monster out was strictly worse than letting it live.
+   *
+   * ═══ A NOTE RATHER THAN A REAP ═══
+   * This module cannot bury anybody: `world` is the scheduler's and reaching it
+   * from here is the import cycle `statusPass`'s docblock exists to prevent. So
+   * the hook says WHAT HAPPENED and the scheduler decides what that means — the
+   * same division `log` and `drainStatusLog` already keep, for the same reason.
+   *
+   * `killerId` is null when the wound has nobody left to blame; the scheduler
+   * pays nothing in that case rather than crediting an arbitrary body.
+   */
+  noteKill?: (victimId: string, killerId: string | null) => void;
 };
 
 /** One line for the Case Log's Record lane. Terse and mechanical, by design. */

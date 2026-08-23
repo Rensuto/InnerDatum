@@ -64,7 +64,7 @@ import {
   partyOf,
 } from './engine/party.ts';
 import type { PartyResult, PartyState } from './engine/party.ts';
-import type { GameEvent, SweepStep, TalentResolution } from './engine/scheduler.ts';
+import type { GameEvent, StatusKill, SweepStep, TalentResolution } from './engine/scheduler.ts';
 import { disconnectActor, pump, reconnectActor, submitIntent } from './engine/scheduler.ts';
 import type {
   IntentResult,
@@ -2358,6 +2358,12 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * buffers the ctx writes into and the pump reads back out.
        */
       const statusNotes: EffectLogLine[] = [];
+      // WHO A STATUS KILLED THIS PUMP. The same buffer shape and the same
+      // lifetime as `statusNotes` beside it — written by the `EffectCtx`,
+      // spliced empty by the pump — because it is the same problem: the effect
+      // system knows something the scheduler has to act on and must not reach
+      // into the world to act on it itself. See `PumpCtx.drainKills`.
+      const statusKills: StatusKill[] = [];
 
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -2400,6 +2406,16 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
                 // layer holding the item catalogue can do that, and it is not
                 // this one either — main.ts passes the capability in.
                 sheetDirty: opts.onSheetDirty,
+                /**
+                 * A BLEED THAT FINISHES SOMETHING. `applyDamage` set `alive`
+                 * false and returned `killed`, and the bleed used to discard
+                 * that — so the body stayed on its tile at 0 hp forever, never
+                 * reaped, never announced, paying no experience and no loot.
+                 * `reapStatusKills` is the far end of this.
+                 */
+                noteKill: (victimId: string, killerId: string | null): void => {
+                  statusKills.push({ victimId, killerId });
+                },
               },
             };
 
@@ -2483,6 +2499,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * one that produced it.
          */
         drainStatusLog: () => statusNotes.splice(0, statusNotes.length),
+        // AND THE SAME DRAIN FOR THE BODIES. Spliced rather than read, so a kill
+        // is acted on exactly once and cannot survive into the next turn.
+        drainKills: () => statusKills.splice(0, statusKills.length),
       });
       /**
        * THE DEBT IS SPENT, whatever the pump made of it.

@@ -1007,6 +1007,26 @@ export type PumpCtx = {
    * Absent → `strike` takes the branch it has always taken. No draw, no shift.
    */
   readonly applyStatus?: StatusApply;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHO A STATUS KILLED THIS PUMP. A DRAIN, exactly like `drainStatusLog`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A blow is buried because `noteCasualty` reads `killedBy(effect)` off the
+   * ACTION OUTCOME. A bleed tick produces no outcome, so a monster bled to death
+   * was never reaped: 0 hp, `alive === false`, still standing on its tile,
+   * un-narrated, unpaid, and counted by anything asking whether the site is
+   * clear. See `EffectCtx.noteKill` for the measurement that found it.
+   *
+   * A DRAIN AND NOT A CALLBACK, for the reason `drainStatusLog` gives in full: a
+   * push from inside the effect system would close whatever event batch happened
+   * to be open and split one sweep into several. The buffer is per-pump and is
+   * spliced empty by whoever asks, so a kill cannot survive into the turn after
+   * the one that caused it — which is also what makes the reap idempotent
+   * without a second flag on the body.
+   */
+  readonly drainKills?: () => readonly StatusKill[];
   /**
    * Take everything `EffectCtx.log` has recorded since the last call, and CLEAR
    * it. `pump` turns each line into a `status` event, in place.
@@ -1359,6 +1379,58 @@ export type PumpResult = {
  * returned in `bell.deadlineMs` elapses. It is cheap to call when there is
  * nothing to do — an idle pump advances no clock and allocates one array.
  */
+/** One body a status killed, and whoever is to blame if anybody is. */
+export type StatusKill = {
+  readonly victimId: string;
+  readonly killerId: string | null;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BURY WHOEVER A STATUS KILLED — the monster arm of `survivalPass`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `survivalPass` is the PLAYER arm: it runs at the tail of `actBase` and enrols
+ * a body that bled out into the Downed system. There was no monster arm at all,
+ * because a monster's death normally arrives through an action outcome and a
+ * bleed produces none.
+ *
+ * IT DOES THE SAME FOUR THINGS `noteCasualty` DOES, and deliberately not by
+ * calling it: that function takes an `Effect` and derives its victims from
+ * `killedBy`, and manufacturing a fake outcome to feed it would put a lie in the
+ * one structure the Record lane reads back.
+ *
+ * THE GUARD IS POSITIVE — `kind === Monster` — for the reason `noteCasualty`
+ * states where it does the same thing: a DOWNED player is `alive === false` on
+ * purpose, `removePlayer` is literally the same closure as `removeActor`, and a
+ * mistake here deletes somebody's character rather than merely mis-scoring.
+ *
+ * AN UNPAID KILL IS STILL A BURIAL. With `killerId` null the body is reaped,
+ * narrated and spills its pockets; only the credit is skipped. A corpse left
+ * standing because nobody could be paid for it would be the original bug with a
+ * smaller footprint.
+ */
+function reapStatusKills(run: Run, sweepTurn: number | null): void {
+  const drain = run.ctx.drainKills;
+  if (drain === undefined) return;
+
+  for (const kill of drain()) {
+    const victim = run.world.getActor(kill.victimId);
+    if (victim === undefined) continue;
+    if (victim.kind !== ActorKind.Monster) continue;
+    // A body that is somehow back on its feet by the time this drains is not a
+    // casualty. Cheap, and it keeps the note advisory rather than authoritative.
+    if (victim.alive) continue;
+
+    run.reaped.push(victim.id);
+    if (kill.killerId !== null) {
+      run.ctx.talents?.noteKill(kill.killerId);
+      awardExperience(run, kill.killerId, victim);
+    }
+    spillLoot(run, victim, sweepTurn);
+  }
+}
+
 export function pump(world: World, ctx: PumpCtx): PumpResult {
   if (!Number.isFinite(ctx.nowMs)) {
     throw new RangeError('pump: ctx.nowMs must be a finite number');
@@ -1580,7 +1652,11 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       // labelled draw stream. See `applyPendingLevels`.
       applyPendingLevels(actor, run);
       drainStatus(ctx, sink, null);
+      // THE TWO ARMS OF "SOMETHING JUST BLED OUT", players then monsters. Both
+      // AFTER the status drain so "you are bleeding" is logged before "you are
+      // down", which is the order it happened in.
       survivalPass(actor, run);
+      reapStatusKills(run, null);
     },
 
     // THE SPEED-DEPENDENT PASS. A hasted monster arrives here more often, and

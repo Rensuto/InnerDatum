@@ -396,12 +396,37 @@ export const BLEEDING: EffectDef = Object.freeze({
     // damage_types.lua:146-153 — the projector applies the SOURCE's own daze and
     // stun multipliers to every projected hit, DoTs included. Faithful and
     // slightly surprising: stunning the thing that cut you weakens its bleed.
-    applyDamage(actor, power, DamageType.Physical, blame, rng, {
+    const outcome = applyDamage(actor, power, DamageType.Physical, blame, rng, {
       sourceDazed: src?.combat?.flags?.dazed,
       sourceStunned: src?.combat?.flags?.stunned,
       increase: src?.combat?.increase,
       penetration: src?.combat?.penetration,
     });
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND IF THAT KILLED IT, SAY SO. THE RETURN USED TO BE DISCARDED.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * A blow is buried because the scheduler reads the ACTION OUTCOME it
+     * produced. A bleed tick produces no outcome, so nothing ever looked: the
+     * body sat at 0 hp with `alive === false`, in the world, un-narrated,
+     * un-reaped and unpaid, blocking the "quiet now" that asks whether anything
+     * is still standing. See `EffectCtx.noteKill` for the measurement.
+     *
+     * THE BLAME IS `srcId`, NOT `blame`. `blame` falls back to the VICTIM so the
+     * damage always has a name to print (physical.lua:150, `eff.src or self`),
+     * and passing that here would credit a husk with bleeding itself out.
+     *
+     * SAID EXACTLY: `awardExperience` would refuse it anyway — it returns early
+     * for a killer that is a monster, and says at length why that check precedes
+     * every `party.ts` call — so this is DEFENCE IN DEPTH rather than the only
+     * thing standing between a corpse and a level. What it does buy on its own
+     * is that `talents.noteKill` is not fired on a dead husk's id, and that null
+     * means "nobody is owed for this", which is true and is not the same claim
+     * as "the victim is owed for this".
+     */
+    if (outcome.killed) ctx.noteKill?.(actor.id, srcId ?? null);
 
     // ActorTemporaryEffects.lua:85 — returning true removes the effect. A bleed
     // never self-terminates; it runs its duration out.
