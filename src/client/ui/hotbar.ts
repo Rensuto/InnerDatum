@@ -1072,8 +1072,53 @@ function drawFrame(
   sprites: SpriteSource,
   state: FrameState,
   rect: SlotRect,
+  /** Is this a stance that is currently UP? See the ring below. */
+  sustained = false,
 ): void {
   drawPanel(ctx, sprites, PanelSkin.Inset, rect);
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE STANCE IS UP — HotkeysIconsDisplay.lua:120-125, :184-186.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ WITHOUT IT, A TOGGLE'S TWO OPPOSITE MEANINGS LOOK IDENTICAL ═══
+   * `LoadoutTalent.sustained` has been on the wire since stances existed and
+   * says exactly why: *"a sustain is the one talent whose state a player must
+   * READ before pressing … without this the same key would sometimes put a
+   * stance up and sometimes take it down, with nothing on screen to say which
+   * was about to happen."* The server has been sending it and
+   * `grep -rn sustained src/client/` returned NOTHING — a stance that was up was
+   * pixel-identical to one that was down, on the bar and everywhere else.
+   *
+   * ═══ NOT A FOURTH `FrameState`, AND THAT IS THE DESIGN ═══
+   * The three states are mutually exclusive answers to "can I press this"; being
+   * up is a different question entirely, and a stance can be up AND hovered AND
+   * on cooldown at once. Folding it into that enum would make hovering a raised
+   * stance hide the fact that it is raised — which is the exact moment the
+   * player is about to press it.
+   *
+   * ═══ A RING, WHICH IS A SHAPE AND NOT ONLY A COLOUR ═══
+   * An inset outline the other three states do not draw, so the difference
+   * survives at a glance and for the roughly one man in twelve who cannot
+   * separate the violet from the slate — the same rule ui/resource.ts applies to
+   * the pips and ui/turncards.ts to the chips. VIOLET_HI because a raised stance
+   * is a thing the player did on purpose, and gold is already spoken for by
+   * hover.
+   */
+  if (sustained) {
+    ctx.save();
+    ctx.fillStyle = PALETTE.VIOLET_HI;
+    const x = rect.x + 2;
+    const y = rect.y + 2;
+    const w = rect.w - 4;
+    const h = rect.h - 4;
+    ctx.fillRect(x, y, w, 1);
+    ctx.fillRect(x, y + h - 1, w, 1);
+    ctx.fillRect(x, y, 1, h);
+    ctx.fillRect(x + w - 1, y, 1, h);
+    ctx.restore();
+  }
 
   if (state === FrameState.Disabled) {
     // THE HATCH, corner to corner, clipped to the well. Spaced at 6 so it reads
@@ -1126,7 +1171,16 @@ function paintSlot(
   armed: boolean,
   dragging: boolean,
 ): void {
-  drawFrame(ctx, sprites, frameIdFor(slot, hovered, armed, dragging), rect);
+  drawFrame(
+    ctx,
+    sprites,
+    frameIdFor(slot, hovered, armed, dragging),
+    rect,
+    // `=== true` RATHER THAN TRUTHINESS: the field is optional and absent on
+    // everything that is not a sustain, which must read as "not up" and never as
+    // a claim that an active could be sustained.
+    slot.kind === HotbarSlotKind.Talent && slot.talent.sustained === true,
+  );
 
   const iconX = rect.x + ICON_INSET;
   const iconY = rect.y + ICON_INSET;
@@ -1403,6 +1457,28 @@ export function hotbarTipAt(
     const meta = passive
       ? 'always on'
       : [
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * WHAT THIS KEY IS ABOUT TO DO, FIRST, because on a stance it is the
+           * only thing on the card that changes between two presses.
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * The RING on the frame says a stance is up at a glance; this says
+           * which direction pressing takes it, in words. Both are needed and
+           * neither replaces the other — the ring is readable without stopping,
+           * and the sentence is what a player checks when they have stopped.
+           *
+           * THREE-VALUED ON PURPOSE, and the wire type is built for it:
+           * `sustained` is present ONLY on a sustained talent, so `true` is up,
+           * `false` is a stance that is down, and `undefined` is a talent that
+           * is not a stance at all and gets no word. `false` on an active would
+           * be a claim that it could be sustained.
+           */
+          talent.sustained === true
+            ? 'UP — press to drop'
+            : talent.sustained === false
+              ? 'press to raise'
+              : null,
           slot.cooldown > 0 ? `cooling — ${String(slot.cooldown)}t` : null,
           `${String(talent.cost.ap)} AP`,
           talent.cost.resource > 0 ? `${String(talent.cost.resource)} resolve` : null,

@@ -894,3 +894,114 @@ describe('hotbarTipAt', () => {
     expect(hotbarTipAt(barView(), 2, 2, W, H)).toBeNull();
   });
 });
+
+describe('a stance that is up says so', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE GAP: `LoadoutTalent.sustained` was on the wire and the client read it
+   * NOWHERE. `grep -rn sustained src/client/` returned nothing functional.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The wire type argues the case itself: *"a sustain is the one talent whose
+   * state a player must READ before pressing … without this the same key would
+   * sometimes put a stance up and sometimes take it down, with nothing on screen
+   * to say which was about to happen."* The field shipped; nothing drew it. A
+   * raised stance was pixel-identical to a dropped one.
+   *
+   * ToME says it twice and both are permanent: a sustain frame on the hotkey
+   * slot (HotkeysIconsDisplay.lua:120-125, :184-186) and a persistent icon in
+   * the buff column (Minimalist.lua:1274-1338). We have no buff column yet, so
+   * the frame is the one that matters most.
+   */
+
+  const W = 1280;
+  const H = 480;
+
+  const withSustain = (sustained: boolean | undefined): HotbarView => ({
+    slots: barSlots().map((slot, i) =>
+      i === 0 && slot.kind === HotbarSlotKind.Talent
+        ? { ...slot, talent: { ...slot.talent, sustained } }
+        : slot,
+    ),
+    hovered: -1,
+    armed: -1,
+  });
+
+  /**
+   * How many rectangles the painter filled. The ring is four of them.
+   *
+   * ITS OWN RECORDER rather than `describe('drawing')`'s `paint`, which is
+   * scoped to that block — and this needs only one channel, so a four-line proxy
+   * is honester than widening a shared harness for one caller.
+   */
+  function rects(v: HotbarView): number {
+    let filled = 0;
+    const ctx = new Proxy(
+      {},
+      {
+        get: (_t, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'canvas') return undefined;
+          return () => {
+            if (prop === 'fillRect') filled += 1;
+          };
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+    const sprites: SpriteSource = {
+      sprite: (id: string) =>
+        id.startsWith('item_') || id.startsWith('icon_') || id.startsWith('ui_')
+          ? { id, image: { id } as unknown as HTMLImageElement, w: 48, h: 48 }
+          : undefined,
+    };
+    drawHotbar({ ctx, sprites, view: v, width: W, height: H });
+    return filled;
+  }
+
+  it('draws a ring a dropped stance does not', () => {
+    // A DIFFERENTIAL, not an absolute: the exact rectangle count of the whole
+    // bar is nobody's business and would break on any unrelated change. What
+    // must hold is that raising a stance ADDS the ring's four sides.
+    expect(rects(withSustain(true))).toBe(rects(withSustain(false)) + 4);
+  });
+
+  it('draws nothing extra for a talent that is not a stance at all', () => {
+    /**
+     * `sustained` is ABSENT on everything but a sustain — the wire type says
+     * `false` on an active would be a claim that it could be sustained. Absent
+     * and false must draw identically; only `true` may add anything.
+     */
+    expect(rects(withSustain(undefined))).toBe(rects(withSustain(false)));
+  });
+
+  it('is not a fourth FrameState, so hovering a raised stance still shows it', () => {
+    /**
+     * THE DESIGN POINT. The three frame states are mutually exclusive answers to
+     * "can I press this"; being up is a different question, and a stance can be
+     * up AND hovered at once. Folding them into one enum would hide the raised
+     * ring at exactly the moment the player is about to press the key.
+     */
+    const up = withSustain(true);
+    const hoveredUp: HotbarView = { ...up, hovered: 0 };
+    const hoveredDown: HotbarView = { ...withSustain(false), hovered: 0 };
+    expect(rects(hoveredUp)).toBe(rects(hoveredDown) + 4);
+  });
+
+  it('tells the pointer which way the key goes', () => {
+    const rect = slotRect(0, withSustain(true).slots.length, W, H);
+    const up = hotbarTipAt(withSustain(true), rect.x + 2, rect.y + 2, W, H);
+    const down = hotbarTipAt(withSustain(false), rect.x + 2, rect.y + 2, W, H);
+    expect(up?.meta ?? '').toContain('UP');
+    expect(down?.meta ?? '').toContain('press to raise');
+  });
+
+  it('says nothing about stances on a talent that is not one', () => {
+    const rect = slotRect(0, withSustain(undefined).slots.length, W, H);
+    const card = hotbarTipAt(withSustain(undefined), rect.x + 2, rect.y + 2, W, H);
+    expect(card?.meta ?? '').not.toContain('press to raise');
+    expect(card?.meta ?? '').not.toContain('UP');
+    // ...and it still says the ordinary things.
+    expect(card?.meta ?? '').toContain('AP');
+  });
+});
