@@ -1047,6 +1047,56 @@ describe('what the bag refuses', () => {
     expect(ren.all('log')).toHaveLength(0);
   });
 
+  it('tells a downed player why they cannot move, not that a wall is there', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "YOU CANNOT GO THAT WAY" IS A SENTENCE ABOUT A WALL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A body on the floor refuses every move with `no_actor` — `submitIntent`
+     * answers false for anything not `alive`, and a Downed player is
+     * `alive === false` deliberately. `no_actor` is not in the small table of
+     * refusals the gateway routes to a better code, so it fell through to
+     * `illegal_move`, which the client renders as "you cannot go that way".
+     *
+     * CONFIDENTLY WRONG, for the whole five-turn window, at the one moment a
+     * player is pressing keys hardest: it describes the GEOMETRY of the room, so
+     * it reads as "try another direction" to somebody who cannot move in any
+     * direction at all — and every key they try confirms it.
+     *
+     * ASSERTED HERE rather than in the ambush probe next door, because a SOLO
+     * death is a party wipe: the floor resets and the body is back on its feet
+     * inside the same pump, so there is no downed window to press a key in. This
+     * harness can hold one open.
+     */
+    server = await boot('downed-move');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+
+    goDown(server.downed, body, 0);
+    expect(body.alive, 'the fixture did not actually put them down').toBe(false);
+    ren.clear();
+
+    ren.send({ t: 'move', dir: 'n' });
+    await ren.settle();
+
+    const refusal = ren.last('error');
+    expect(refusal, 'moving while down was not refused at all').toBeDefined();
+    expect(refusal?.['code'], 'a downed body was told the WALL was the problem').not.toBe(
+      'illegal_move',
+    );
+    // `Refused` passes the server's own sentence through — its docstring's case
+    // exactly: "the server already holds the whole fact and the client cannot
+    // improve on it". Only the server knows this body is in the survival table.
+    const said = typeof refusal?.['message'] === 'string' ? refusal['message'] : '';
+    expect(said).toMatch(/you are down/);
+    // AND NOT THE COUNTDOWN, which is on the death plate and already ticking.
+    // Two places printing the same number is two places to get it wrong.
+    expect(said).not.toMatch(/\d/);
+  });
+
   it('takes a second copy of something you already own', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

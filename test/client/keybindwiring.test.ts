@@ -379,6 +379,50 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
 describe('the Escape chain gained three head links and one tail link', () => {
   const body = handlerBody('onCancel: () => {');
 
+  it('offers a revive only to somebody who could actually perform one', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "GO AND PICK YOUR FRIEND UP", SAID TO SOMEBODY LYING BESIDE THEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Both prompts — the canvas hint line and the aria-live status — branched on
+     * `selfErased()`, and `adjacentDowned()` is about OTHER bodies. So a viewer
+     * who was merely DOWNED fell through to the revive arm and was told, seen
+     * and heard, to revive the ally on the floor next to them. `revive` needs a
+     * body that can act and theirs cannot: `submitIntent` refuses anything not
+     * `alive`, and a Downed player is `alive === false` deliberately.
+     *
+     * The ERASED arm already made the whole argument — "an erased player cannot
+     * act at all — they cannot revive anybody, so the prompt below would be an
+     * instruction they cannot follow" — and it was simply written one stage too
+     * late.
+     *
+     * ASSERTED ON EVERY CALL SITE rather than on one named function, because
+     * there are THREE surfaces and they must not drift: the canvas hint, the
+     * aria-live status, and `attemptRevive` — seen, heard, and pressed. A screen
+     * reader and a canvas disagreeing about what a stuck player can do is the
+     * cruellest bug this state has, and a key that fires anyway makes liars of
+     * both.
+     *
+     * THE ASSERTION IS "IT ASKED", NOT A PARTICULAR SPELLING. The prompts skip
+     * themselves with `selfDowned() === null` and the action early-returns on
+     * `!== null` with a sentence, which is right for each — pinning one form
+     * would force the other to contort.
+     */
+    const calls = [...CODE.matchAll(/adjacentDowned\(\)/g)].filter(
+      // The declaration itself, not a use of it.
+      (call) => !CODE.slice(Math.max(0, (call.index ?? 0) - 40), call.index).includes('function '),
+    );
+    expect(calls.length, 'the revive lost a surface').toBeGreaterThanOrEqual(3);
+
+    for (const call of calls) {
+      const before = CODE.slice(Math.max(0, (call.index ?? 0) - 320), call.index);
+      expect(before, 'a revive is offered or sent without asking if the viewer is up').toContain(
+        'selfDowned()',
+      );
+    }
+  });
+
   it('closes an open panel before it opens the menu over the top of it', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

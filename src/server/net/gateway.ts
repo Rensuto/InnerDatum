@@ -272,7 +272,7 @@ import {
   revealDiscExcept,
 } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
-import { isDowned } from '../engine/downed.ts';
+import { Survival, downedView, isDowned } from '../engine/downed.ts';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -7991,6 +7991,39 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     const result = engine.submitMove(actorId, msg.dir);
     if (!result.ok) {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * "YOU CANNOT GO THAT WAY" IS A SENTENCE ABOUT A WALL.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A body on the floor refuses every move with `no_actor` — `submitIntent`
+       * answers false for anything not `alive`, and a Downed player is
+       * `alive === false` on purpose. `no_actor` is not in the small table of
+       * refusals routed to a better code, so it fell through to `illegal_move`,
+       * and the client renders that as "you cannot go that way".
+       *
+       * Which is CONFIDENTLY WRONG, for the whole five-turn window, at the one
+       * moment a player is pressing keys hardest: it describes the geometry of
+       * the room, so it reads as "try another direction" to somebody who cannot
+       * move in any direction at all. Every key they try confirms it.
+       *
+       * `Refused` IS THE CODE FOR THIS, and its own docstring says why — "the
+       * server already holds the whole fact and the client cannot improve on
+       * it". Only the server knows this body is enrolled in the survival table.
+       * The plate carries the countdown, so this says the SHAPE of the refusal
+       * and does not restate a number that is already on screen and ticking.
+       */
+      const survival = opts.downed === undefined ? undefined : downedView(opts.downed, actorId);
+      if (survival !== undefined) {
+        sendError(
+          session.socket,
+          ErrorCode.Refused,
+          survival.status === Survival.Downed
+            ? 'you are down — you cannot move until somebody reaches you'
+            : 'you are erased — there is nothing left on the floor to move',
+        );
+        return;
+      }
       // Only the sender hears about a refusal: a wall nobody walked into is not
       // an event, and telling the room would leak where people are trying to go.
       sendError(session.socket, ErrorCode.IllegalMove, `move blocked: ${result.reason}`);

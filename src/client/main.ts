@@ -4210,7 +4210,28 @@ const paintHud: HudPainter = (ctx, width, height) => {
       width,
       hintY,
     );
-  } else {
+  } else if (selfDowned() === null) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONLY WHEN THE VIEWER IS ACTUALLY ON THEIR FEET — AND IT USED TO BE `else`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The branch above catches ERASED, so a merely DOWNED viewer fell through to
+     * here — and `adjacentDowned()` is about OTHER bodies, so a player lying on
+     * the floor beside a friend who is also down was told to go and revive them.
+     * `revive` needs a body that can act; theirs cannot, and `submitIntent`
+     * refuses anything not `alive`.
+     *
+     * The argument the ERASED arm already makes is the whole of this one: "an
+     * erased player cannot act at all — they cannot revive anybody, so the
+     * prompt below would be an instruction they cannot follow". That is equally
+     * true one stage earlier, and the test was written for the wrong stage.
+     *
+     * NOTHING IS DRAWN FOR A DOWNED VIEWER, deliberately: the death plate is
+     * already on the canvas telling them what is happening and how long they
+     * have, and a second line under it competing for the same eyes would either
+     * repeat it or contradict it.
+     */
     // THE REVIVE PROMPT, in the hint's slot when nothing is being aimed.
     //
     // It is a PROMPT rather than a permanent legend, and it appears only while
@@ -5208,7 +5229,11 @@ async function boot(): Promise<void> {
       // — a string cannot follow a rebind — so leaving it here would have made
       // the heard copy the one surface that still named the old key.
       parts.push(respawnPromptSpeech());
-    } else {
+    } else if (selfDowned() === null) {
+      // ═══ AND THE HEARD COPY MAKES THE SAME DISTINCTION AS THE SEEN ONE ═══
+      // A merely DOWNED viewer fell through to here and had a screen reader
+      // announce that they could revive the body next to them. See the canvas
+      // arm above: `revive` needs a body that can act, and theirs cannot.
       const reachable = adjacentDowned();
       const firstDown = reachable[0];
       if (firstDown !== undefined) {
@@ -6907,6 +6932,34 @@ async function boot(): Promise<void> {
    * rescue is indistinguishable from a dropped packet.
    */
   function attemptRevive(): void {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * YOU CANNOT PICK SOMEBODY UP FROM THE FLOOR BESIDE THEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `revive` needs a body that can act: `submitIntent` refuses anything not
+     * `alive`, and a Downed player is `alive === false` deliberately. Without
+     * this the key sent a frame the server was always going to refuse, and the
+     * refusal came back as `no_actor` — which is not in the gateway's table of
+     * refusals with a better code, so it arrived as `illegal_move` and the
+     * client rendered it "you cannot go that way": a sentence about a WALL, to
+     * somebody lying next to the friend they were trying to help.
+     *
+     * The two PROMPTS make the same check (see the hint line and the aria-live
+     * status), and this is the third surface: seen, heard, and pressed.
+     */
+    if (selfDowned() !== null) {
+      reviveArmed = false;
+      // The plate already says how long they have and, if anybody is left,
+      // that somebody may reach them. This says only the part the plate does
+      // not: why the key they just pressed did nothing.
+      showNotice(
+        selfErased()
+          ? 'you are erased — refile yourself before you can help anybody'
+          : 'you are down yourself — somebody has to reach you first',
+      );
+      return;
+    }
     const candidates = adjacentDowned();
     const first = candidates[0];
     if (first === undefined) {
