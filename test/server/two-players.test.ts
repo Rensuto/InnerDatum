@@ -1,4 +1,4 @@
-import { partyHint, specFor } from '../../src/server/content/delve.ts';
+import { delveLevel, partyHint, specFor } from '../../src/server/content/delve.ts';
 import { RealmKind, SITES, TIDE_MS } from '../../src/server/world/realms.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { canWalk } from '../../src/shared/level.ts';
@@ -1420,6 +1420,61 @@ describe('what the moor tells you when you come back out', () => {
  * still act on.
  */
 describe('the moor hears when somebody does not come back', () => {
+  it('tells you what you are walking into, before the fight it is about', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE LEVEL FEELING — `Game.lua:1338-1353`, on a real crossing.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The bands are unit-tested in test/shared/zone.test.ts; this is the wiring
+     * question those cannot answer — whether a body walking through a real door
+     * is ever told. A feature that computes a correct sentence and shows it to
+     * nobody is the exact shape `test/server/reentry-wiring.test.ts` was written
+     * about.
+     *
+     * ═══ THE DOOR IS CHOSEN BY LEVEL, NOT TAKEN FIRST ═══
+     * The silent band is three levels wide either side, and the first door on
+     * the overworld is The Drowned Chapel at level 1 — which a level-1 body
+     * enters to exactly the silence upstream intends. Taking `[0]` would have
+     * produced a test that passed for the wrong reason and then went on passing
+     * after the feature was deleted.
+     */
+    const player = await connect(server.port);
+    const playerId = await player.hello();
+    await sleep(200);
+
+    const hard = [...server.realms.overworld.sites].find(([, siteId]) => {
+      const spec = specFor(siteId);
+      return spec !== undefined && delveLevel(spec, { level: 1, size: 1 }) >= 6;
+    });
+    if (hard === undefined) throw new Error('no room on the map is far above a beginner');
+    const [tile, siteId] = hard;
+    const spec = specFor(siteId);
+    if (spec === undefined) throw new Error('unreachable — filtered above');
+
+    // `level` lives on `PlayerActor`; `getActor` answers the wider `EngineActor`.
+    const body = server.realms.overworld.world.getActor(playerId);
+    if (body === undefined || body.kind !== ActorKind.Player) throw new Error('no body');
+    expect(body.level, 'the fixture is not a beginner').toBe(1);
+    // ...and the gap is what the sentence is about, so it is asserted rather
+    // than assumed: at 5 or more above, upstream's band is Terror.
+    expect(delveLevel(spec, { level: 1, size: 1 }) - body.level).toBeGreaterThanOrEqual(5);
+
+    const [xs, ys] = tile.split(',');
+    body.x = Number(xs) - 1;
+    body.y = Number(ys);
+    const before = player.lines().length;
+    player.send({ t: 'move', dir: 'e' });
+    await sleep(500);
+
+    expect(server.realms.realmOf(playerId)?.siteId, 'never crossed the threshold').toBe(siteId);
+    const said = player.lines().slice(before);
+    expect(
+      said.some((line) => /past you/.test(line)),
+      `walked into a level-${String(delveLevel(spec, { level: 1, size: 1 }))} room at level 1 and was told nothing — log was ${said.join(' | ')}`,
+    ).toBe(true);
+  });
+
   it('does not promise a rescue from somebody who has stopped playing', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

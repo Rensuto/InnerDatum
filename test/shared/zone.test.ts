@@ -6,7 +6,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
-import { ZoneLevelScheme, zoneBaseLevel } from '../../src/shared/zone.ts';
+import {
+  LevelFeeling,
+  ZoneLevelScheme,
+  levelFeeling,
+  levelFeelingText,
+  zoneBaseLevel,
+} from '../../src/shared/zone.ts';
 
 describe('a fixed zone', () => {
   it('is its own level and nobody else’s', () => {
@@ -58,5 +64,73 @@ describe('the floor of 1, which is ours and not upstream’s', () => {
     // Not upstream behaviour — upstream would return a nonsense bound. An
     // authored table is written by hand and this is the typo it will make.
     expect(zoneBaseLevel([9, 4], ZoneLevelScheme.Player, 30)).toBe(9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LEVEL FEELING — Game.lua:1338-1353
+// ---------------------------------------------------------------------------
+
+describe('how the place feels when you walk in', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BANDS ARE THE TUNING, SO THEY ARE PINNED AT THEIR EDGES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Game.lua:1345-1351` reads `>= 5`, `>= 2`, `>= -2`, `>= -5`, else. Every one
+   * of those is a boundary somebody could shift by one while "tidying", and the
+   * whole value of this feature is that the sentence is trustworthy — a room
+   * that says "you have closed worse than this" and then kills you is worse
+   * than a room that says nothing at all.
+   */
+  it('puts each boundary exactly where upstream puts it', () => {
+    // diff >= 5 — terror. 4 is NOT terror.
+    expect(levelFeeling(15, 10)).toBe(LevelFeeling.Terror);
+    expect(levelFeeling(14, 10)).toBe(LevelFeeling.Wary);
+    // diff >= 2 — wary. 1 is not.
+    expect(levelFeeling(12, 10)).toBe(LevelFeeling.Wary);
+    expect(levelFeeling(11, 10)).toBe(LevelFeeling.Even);
+    // diff >= -2 — the silent band, and it is three wide plus the two above it.
+    expect(levelFeeling(8, 10)).toBe(LevelFeeling.Even);
+    expect(levelFeeling(7, 10)).toBe(LevelFeeling.Confident);
+    // diff >= -5 — confident. -6 is bored.
+    expect(levelFeeling(5, 10)).toBe(LevelFeeling.Confident);
+    expect(levelFeeling(4, 10)).toBe(LevelFeeling.Bored);
+  });
+
+  it('says NOTHING for a room at your own level, which is the point', () => {
+    /**
+     * Upstream returns `nil` for this band and prints no line. It is not an
+     * omission to be tidied up: a sentence on every entrance is furniture and
+     * stops being read — `input/explore.ts` makes the same argument about a
+     * permanent legend — and the four that remain are worth reading precisely
+     * because they only appear when the answer is interesting.
+     */
+    expect(levelFeelingText(levelFeeling(10, 10))).toBeNull();
+    // ...and every other band DOES have something to say, or the band is dead.
+    for (const feeling of [
+      LevelFeeling.Terror,
+      LevelFeeling.Wary,
+      LevelFeeling.Confident,
+      LevelFeeling.Bored,
+    ]) {
+      expect(levelFeelingText(feeling), `${feeling} has no sentence`).not.toBeNull();
+    }
+  });
+
+  it('cannot be fed the subtraction backwards', () => {
+    // It takes the two levels rather than a difference, so the one mistake that
+    // produces a confident sentence about a room that is about to kill somebody
+    // is not expressible at the call site.
+    expect(levelFeeling(20, 1)).toBe(LevelFeeling.Terror);
+    expect(levelFeeling(1, 20)).toBe(LevelFeeling.Bored);
+  });
+
+  it('reads whole levels, so a fractional level cannot straddle a band', () => {
+    // `partyMaxLevel` and the xp curve both deal in whole levels, but nothing
+    // stops a caller handing this a float; flooring both sides keeps the
+    // boundary exact rather than "about 5".
+    expect(levelFeeling(15.9, 10.9)).toBe(LevelFeeling.Terror);
+    expect(levelFeeling(14.9, 10)).toBe(LevelFeeling.Wary);
   });
 });

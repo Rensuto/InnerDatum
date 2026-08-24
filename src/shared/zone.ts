@@ -75,3 +75,87 @@ export function zoneBaseLevel(
   if (scheme !== ZoneLevelScheme.Player) return low;
   return Math.min(high, Math.max(low, Math.floor(playerLevel)));
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW THE PLACE FEELS WHEN YOU WALK IN — `Game.lua:1338-1353`, exactly.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream compares the level of the area against the player's and prints one
+ * of four sentences, or nothing. The BANDS ARE PORTED VERBATIM because they are
+ * the tuning: `>= 5`, `>= 2`, `>= -2`, `>= -5`, and below.
+ *
+ * ═══ THE SILENT BAND IS THE FEATURE ═══
+ * `diff >= -2` returns nothing at all upstream, and that is not an omission to
+ * be tidied up. A line on every single entrance is furniture and stops being
+ * read — the same argument `input/explore.ts` makes about a permanent legend —
+ * and the whole value of the four sentences is that they only appear when the
+ * answer is INTERESTING. A room within two levels of you is the ordinary case,
+ * and the honest thing to say about it is nothing.
+ *
+ * ═══ IT IS A WARNING, AND THEREFORE IT IS PER-PLAYER ═══
+ * Upstream is single-player, so "the player's level" is unambiguous there. Here
+ * six people walk through the same door with six different levels, and the
+ * sentence is addressed to ONE of them: a level-3 Watchman and a level-12
+ * Inspector entering the same delve are owed different sentences, and telling
+ * the room either one would be wrong for somebody. See the caller.
+ *
+ * ═══ THE WORDS ARE OURS, THE MEANING IS THEIRS ═══
+ * Upstream's read "You feel a thrill of terror and your heart begins to pound
+ * in your chest" — a fantasy adventurer's interior. The Record lane is a
+ * detective's case file written in the third person and the fiction's own
+ * vocabulary, so the sentences are rewritten to that voice and the RULE is
+ * untouched. Each still says the same two things upstream's does: how far out
+ * of your depth you are, and in which direction.
+ */
+export const LevelFeeling = {
+  /** `diff >= 5`. Upstream: "terribly threatened upon entering this area." */
+  Terror: 'terror',
+  /** `diff >= 2`. Upstream: "mildly anxious, and walk with caution." */
+  Wary: 'wary',
+  /** `diff >= -2`. Upstream says NOTHING here, and neither do we. */
+  Even: 'even',
+  /** `diff >= -5`. Upstream: "very confident walking into this place." */
+  Confident: 'confident',
+  /** Below that. Upstream: "stifling a yawn... time might be better spent". */
+  Bored: 'bored',
+} as const;
+export type LevelFeeling = (typeof LevelFeeling)[keyof typeof LevelFeeling];
+
+/**
+ * Which band a body walking in falls into. `Game.lua:1345-1351`.
+ *
+ * TAKES THE TWO LEVELS RATHER THAN THE DIFFERENCE, so no caller can compute the
+ * subtraction the wrong way round — which is the one mistake here that produces
+ * a confident sentence about a room that is about to kill somebody.
+ */
+export function levelFeeling(areaLevel: number, bodyLevel: number): LevelFeeling {
+  const diff = Math.floor(areaLevel) - Math.floor(bodyLevel);
+  if (diff >= 5) return LevelFeeling.Terror;
+  if (diff >= 2) return LevelFeeling.Wary;
+  if (diff >= -2) return LevelFeeling.Even;
+  if (diff >= -5) return LevelFeeling.Confident;
+  return LevelFeeling.Bored;
+}
+
+/**
+ * The sentence, or null for the band that says nothing.
+ *
+ * NULL RATHER THAN AN EMPTY STRING, so a caller cannot print a blank line by
+ * forgetting to check — the silent band is the common case and the easiest to
+ * get wrong.
+ */
+export function levelFeelingText(feeling: LevelFeeling): string | null {
+  switch (feeling) {
+    case LevelFeeling.Terror:
+      return 'Nothing here is filed under anything you have read. This is far past you.';
+    case LevelFeeling.Wary:
+      return 'The paperwork here is heavier than yours. Walk carefully.';
+    case LevelFeeling.Even:
+      return null;
+    case LevelFeeling.Confident:
+      return 'You have closed worse than this. It should not hold you long.';
+    case LevelFeeling.Bored:
+      return 'There is nothing here you have not already filed twice. Your time is worth more elsewhere.';
+  }
+}

@@ -229,6 +229,21 @@ describe('a death in a room that resets', () => {
         'never took a blow',
       ).toBeGreaterThan(0);
 
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE ROOM TOLD THEM WHAT THEY WERE WALKING INTO — Game.lua:1338-1353.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This probe deliberately picks the WORST room on the map for a level-1
+       * character, which is what makes the feeling deterministic here: the
+       * lowest-graded site it will accept is `dangerous`, and every one of those
+       * is authored at level 5 or above, so `diff` is at least 4 and the band is
+       * never the silent one.
+       *
+       * IT IS THE SAME WALK THAT KILLS THEM, which is the point: the sentence is
+       * only worth anything if it arrives BEFORE the fight it is about, from the
+       * real crossing, on the real socket.
+       */
       // ═══ THE ASSERTION THAT WAS FAILING ═══
       expect(
         lines.filter((l) => l.includes('someone')),

@@ -66,7 +66,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 // correct here — but `specFor` is the one that knows about both maps, and the
 // import disappearing is the proof there is no reader left asking the narrower
 // question.
-import { populateDelve, redactedSpec, specFor } from '../content/delve.ts';
+import { delveLevel, populateDelve, redactedSpec, specFor } from '../content/delve.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
@@ -412,6 +412,31 @@ export type Realm = {
    * SET BY THE GATEWAY, which is the only layer allowed a clock at all.
    */
   leftAtMs?: number;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT LEVEL THE THINGS IN HERE WERE BUILT AT — `Zone.base_level`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * RECORDED WHERE IT IS DECIDED, and not re-derived later. `delveLevel(spec,
+   * party)` is deterministic, so a reader could call it again — and would get a
+   * DIFFERENT number for any site on the `player` scheme, because the party that
+   * opened the room is not always the party asking. A room populated for a
+   * level-3 body does not become harder because a level-12 friend walks in
+   * afterwards, and a second answer to "how dangerous is this" is exactly the
+   * shape that has bitten this codebase before.
+   *
+   * ABSENT FOR EVERY REALM WITH NO POPULATION — the overworld, a town, an office.
+   * There is nothing in them whose level could be compared to anybody's, and
+   * `undefined` says that rather than a 1 that reads like an answer.
+   *
+   * WRITTEN EXACTLY ONCE, immediately after `populate`, and never again. It is
+   * mutable for the reason `leftAtMs` beside it is: `build` REGISTERS the realm
+   * before this is known, so a `{...realm, baseLevel}` copy would hand the
+   * caller a realm the registry does not hold — the field would be correct in
+   * the returned object and absent in every later lookup.
+   */
+  baseLevel?: number;
 };
 
 /**
@@ -923,6 +948,14 @@ export function createRealms(opts: RealmsOptions): Realms {
       lingerMs: site.lingerMs,
     });
     site.populate?.(realm.world, builtMap, party, lead);
+    /**
+     * AND WHAT LEVEL THAT POPULATION WAS BUILT AT, for whoever has to SAY it —
+     * the level feeling on arrival (shared/zone.ts) is the only reader today.
+     * Taken from the same `spec` and the same `party` the population just used,
+     * one line above, so the two cannot disagree.
+     */
+    const spec = specFor(site.id);
+    if (spec !== undefined) realm.baseLevel = delveLevel(spec, party);
     return realm;
   };
 

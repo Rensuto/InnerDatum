@@ -273,6 +273,7 @@ import {
 } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import { Survival, downedView, isDowned } from '../engine/downed.ts';
+import { levelFeeling, levelFeelingText } from '../../shared/zone.ts';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -10718,6 +10719,36 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           text: `Graded ${dangerWord(spec)} — ${hint}. You are one.`,
           depth: 1,
         });
+      }
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND HOW THE PLACE FEELS TO *THIS* BODY — `Game.lua:1338-1353`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The grade above is a fact about the ROOM and is the same for everybody
+       * who walks in. This is a fact about the room AND THE READER, and the two
+       * are different sentences on purpose: a level-3 Watchman and a level-12
+       * Inspector opening the same door are owed opposite advice.
+       *
+       * WHICH IS WHY IT IS UNICAST. Upstream is single-player, so "the player's
+       * level" needs no thought there; six people walk through this door with
+       * six different levels, and broadcasting any one of these to the room
+       * would be wrong for somebody in it — usually for the person it matters
+       * most to.
+       *
+       * SILENT FOR THE MIDDLE BAND, which is upstream's own behaviour and the
+       * reason the other four are worth reading (see `levelFeeling`). Silent
+       * too for a realm with no population — a town has nothing whose level
+       * could be compared to anybody's.
+       *
+       * IN THE MARGIN, beside the party hint, because it is the same register:
+       * advice, not a thing that happened.
+       */
+      const arriving = realm.world.getActor(actorId);
+      if (full?.baseLevel !== undefined && arriving?.kind === ActorKind.Player) {
+        const said = levelFeelingText(levelFeeling(full.baseLevel, arriving.level));
+        if (said !== null) sendMargin(session, realm, { text: said, depth: 1 });
       }
     }
 
