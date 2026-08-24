@@ -749,3 +749,64 @@ export function doorwayLine(site: SiteView): string {
     ? `${site.name} — step in`
     : `${site.name} — ${site.danger} · step in`;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE YOU ARE, WRITTEN ON THE SCREEN — `Game.lua:1497-1507`, `getZoneName`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream keeps the zone name as a standing GOLD label beside the minimap and
+ * has done in both shipped UI sets: `uiset/Classic.lua:303-308` right-aligns it
+ * at the top-right of the map, `uiset/Minimalist.lua:1654-1660` centres it over
+ * the minimap. It is not a flourish on arrival — it is there the whole time you
+ * are in the place, because "where am I" is a question a player asks on the
+ * turn after they stopped paying attention, not on the turn they walked in.
+ *
+ * ═══ OURS SAID IT ONCE, OUT LOUD, TO NOBODY WATCHING ═══
+ * `realmName` reached exactly one surface: the aria-live region. A player using
+ * a screen reader was told where they were and a player looking at the screen
+ * was not — the arrival line scrolls out of the Record within a few turns, and
+ * after that nothing on the canvas named the room at all.
+ *
+ * ═══ IT FITS IN SPACE THAT WAS ALREADY RESERVED, WHICH IS THE WHOLE TRICK ═══
+ * `minimapReserveH` ends `+ MINIMAP_MARGIN + 4` below the box — twelve pixels
+ * the dock already refuses to place anything in, and that nothing draws in. The
+ * label goes THERE rather than growing the reserve, and that is not tidiness:
+ * that function's own docblock records the Case Log VANISHING the instant a
+ * fight began because the reserve was thirty-one pixels too greedy, and the
+ * repair left about nine to spare. A line of text costs eleven. Growing the
+ * reserve to hold this would have put the transcript of who hit whom back on
+ * the edge of disappearing, to make room for a label saying where it happened.
+ */
+export const ZONE_LABEL_FONT = '9px ui-monospace, Consolas, monospace';
+
+/** The baseline for the zone label, inside the reserve and never past it. */
+export function zoneLabelBaseline(viewW: number): number {
+  const box = minimapRect(viewW);
+  // `+ 10` of the twelve. The descender of a 9px face lands inside the last two.
+  return box.y + box.h + 10;
+}
+
+/**
+ * The name, shortened until it fits.
+ *
+ * RIGHT-ALIGNED TO THE MINIMAP'S EDGE and allowed to run left across empty
+ * screen, so the common case is untouched — but a long name is CUT rather than
+ * allowed to run under the turn cards, because the top-left of this strip is
+ * where they appear the moment a fight starts.
+ */
+export function fitZoneLabel(
+  measure: (text: string) => number,
+  name: string,
+  maxPx: number,
+): string {
+  if (maxPx <= 0) return '';
+  if (measure(name) <= maxPx) return name;
+  // A NAME CUT TO NOTHING IS WORSE THAN NO NAME. Below the width of an ellipsis
+  // there is no honest shortening left, and a bare "…" beside the minimap reads
+  // as a rendering fault rather than as a place.
+  if (measure('…') > maxPx) return '';
+  let cut = name;
+  while (cut.length > 0 && measure(`${cut}…`) > maxPx) cut = cut.slice(0, -1);
+  return cut.length === 0 ? '' : `${cut}…`;
+}

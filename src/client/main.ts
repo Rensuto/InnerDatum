@@ -322,7 +322,10 @@ import {
   minimapReserveH,
   MINIMAP_RADIUS,
   mapTileAt,
+  ZONE_LABEL_FONT,
+  fitZoneLabel,
   minimapRect,
+  zoneLabelBaseline,
   paintMap,
   partyMarks,
 } from './ui/mapview.ts';
@@ -4542,6 +4545,41 @@ const paintHud: HudPainter = (ctx, width, height) => {
       seen,
       windowRadius: MINIMAP_RADIUS,
     });
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND ITS NAME UNDER IT — `Game.lua:1497-1507`, drawn as upstream draws it.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A STANDING LABEL, not a flourish on arrival: "where am I" is a question a
+     * player asks on the turn after they stopped paying attention, and the
+     * arrival line has scrolled out of the Record by then. Ours reached the
+     * aria-live region and nothing else, so a player using a screen reader was
+     * told where they were and a player looking at the screen was not.
+     *
+     * In the twelve pixels `minimapReserveH` already holds below the box — see
+     * `zoneLabelBaseline` for why growing that reserve instead would have put
+     * the Case Log back on the edge of vanishing mid-fight.
+     */
+    if (realmName !== null) {
+      const box = minimapRect(width);
+      ctx.save();
+      ctx.font = ZONE_LABEL_FONT;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'alphabetic';
+      // GOLD, which is upstream's own colour for this label (`colors.GOLD`) and
+      // is already this client's word for "a thing the game is telling you".
+      ctx.fillStyle = PALETTE.GOLD;
+      const said = fitZoneLabel(
+        (text) => ctx.measureText(text).width,
+        realmName,
+        // As far left as the minimap is wide again, and no further: past that
+        // it would run under where the turn cards appear when a fight starts.
+        box.w * 2,
+      );
+      if (said !== '') ctx.fillText(said, box.x + box.w, zoneLabelBaseline(width));
+      ctx.restore();
+    }
   }
 
   combatBanner?.draw({ ctx, width, top: hudTop });

@@ -9,12 +9,14 @@ import {
   MINIMAP_RADIUS,
   doorwayAt,
   doorwayLine,
+  fitZoneLabel,
   mapTileAt,
   minimapRect,
   minimapReserveH,
   MINIMAP_MARGIN,
   MINIMAP_MAX_H,
   partyMarks,
+  zoneLabelBaseline,
 } from '../../src/client/ui/mapview.ts';
 import type { SiteView } from '../../src/shared/protocol.ts';
 
@@ -335,5 +337,81 @@ describe('the minimap is a control, not a picture', () => {
     // Every column of the window is reachable, and no more than that.
     expect(seen.size).toBe(span);
     expect(cell).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE ZONE LABEL — Game.lua:1497-1507, uiset/Classic.lua:303-308
+// ---------------------------------------------------------------------------
+
+describe('the name of the place you are standing in', () => {
+  // A monospace stand-in: every glyph six wide. Real metrics come from the
+  // canvas, and the rule under test is about WIDTH, not about a font.
+  const measure = (text: string): number => text.length * 6;
+
+  it('leaves a name that fits completely alone', () => {
+    expect(fitZoneLabel(measure, 'Alderbrook', 200)).toBe('Alderbrook');
+    // Exactly the available width is a fit, not an overflow.
+    expect(fitZoneLabel(measure, 'Alderbrook', 60)).toBe('Alderbrook');
+  });
+
+  it('cuts a long name rather than letting it run under the turn cards', () => {
+    /**
+     * The label is right-aligned to the minimap and runs LEFT across empty
+     * screen — but the top-left of that strip is where the turn cards appear
+     * the moment a fight starts, so a long name is shortened rather than
+     * allowed to reach them.
+     */
+    const said = fitZoneLabel(measure, 'The Drowned Chapel of Saint Alder', 60);
+    expect(measure(said)).toBeLessThanOrEqual(60);
+    expect(said.endsWith('…'), `did not mark the cut: ${said}`).toBe(true);
+    expect(said.startsWith('The Drow'), `cut from the wrong end: ${said}`).toBe(true);
+  });
+
+  it('says nothing at all rather than a bare ellipsis', () => {
+    /**
+     * Below the width of one ellipsis there is no honest shortening left. A "…"
+     * on its own beside the minimap reads as a rendering fault rather than as a
+     * place, which is worse than the silence it replaced.
+     */
+    expect(fitZoneLabel(measure, 'Alderbrook', 5)).toBe('');
+    expect(fitZoneLabel(measure, 'Alderbrook', 0)).toBe('');
+    expect(fitZoneLabel(measure, 'Alderbrook', -10)).toBe('');
+    /**
+     * AND THE WIDTH THAT FITS THE ELLIPSIS AND NOTHING ELSE — the case the two
+     * above cannot reach, because they fail the cheap "is there room for a `…`
+     * at all" check before the shortening loop is entered. At exactly one
+     * ellipsis wide the loop runs, eats the whole name, and the question is
+     * what it does with what is left.
+     */
+    expect(fitZoneLabel(measure, 'Alderbrook', measure('…'))).toBe('');
+  });
+
+  it('stays inside the space the minimap reserve already holds', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE THAT MATTERS, AND IT IS ABOUT A DIFFERENT PANEL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `minimapReserveH`'s own docblock records the Case Log VANISHING the
+     * instant a fight began, because the reserve was thirty-one pixels greedier
+     * than the box it was reserving for; the repair left about nine to spare.
+     * A label that grew the reserve would have spent that and put the
+     * transcript of who hit whom back on the edge of disappearing — to make
+     * room for a line saying where it happened.
+     *
+     * So the baseline has to sit inside the reserve, and this is what notices
+     * if somebody moves it out.
+     */
+    for (const width of [320, 480, 640, 960, 1280]) {
+      const box = minimapRect(width);
+      const baseline = zoneLabelBaseline(width);
+      expect(baseline, `label above the minimap at ${String(width)}`).toBeGreaterThan(
+        box.y + box.h,
+      );
+      expect(baseline, `label past the reserve at ${String(width)}`).toBeLessThanOrEqual(
+        minimapReserveH(width),
+      );
+    }
   });
 });

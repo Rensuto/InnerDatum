@@ -842,3 +842,39 @@ describe('the death plate appears the moment you go down', () => {
     expect(CODE).toContain('downedBy = event.sourceId === undefined');
   });
 });
+
+describe('the zone label is actually drawn', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `fitZoneLabel` IS UNIT-TESTED AND CANNOT SEE WHETHER ANYTHING CALLS IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Which is exactly how a feature ships dead — `test/client/ground-access.test.ts`
+   * records the same shape happening for real: *"it was built, dispatched, and
+   * covered, while `targetAt` returned a `player` target that carried no `loot`
+   * at all"*. The name of the place you are standing in reached the aria-live
+   * region and no pixels for the whole of M4; a rule about ellipsis widths that
+   * nothing paints would be the same bug with tests around it.
+   */
+  it('paints the name beside the minimap, from the same frame that named it', () => {
+    const paint = at('paintMap({');
+    const label = at('fitZoneLabel(');
+    expect(label, 'the label is not painted with the minimap').toBeGreaterThan(paint);
+    // The realm frame's own field, not a second copy of "where am I".
+    expect(CODE.slice(paint, label + 400)).toContain('realmName');
+  });
+
+  it('says nothing at all before a realm frame has arrived', () => {
+    /**
+     * `realmName` is null until the first `realm` frame, and `welcome` carries
+     * none. The aria-live arm already refuses to guess here and says why — "a
+     * confidently wrong location is worse than an absent one" — and a label
+     * reading "null" beside the minimap would be that, in gold, permanently.
+     */
+    const label = at('fitZoneLabel(');
+    const before = CODE.slice(Math.max(0, label - 400), label);
+    expect(before, 'the label is drawn without checking there is a name').toContain(
+      'realmName !== null',
+    );
+  });
+});
