@@ -274,7 +274,12 @@ export function placeVault(
   bounds: { readonly w: number; readonly h: number },
   isOpen: (x: number, y: number) => boolean,
   rng: Rng,
-): { readonly at: { x: number; y: number }; readonly shape: VaultShape } | null {
+): {
+  readonly at: { x: number; y: number };
+  readonly shape: VaultShape;
+  /** Which of the six it was laid in — recorded on `AuthoredMap.vaults`. */
+  readonly turn: VaultTurn;
+} | null {
   const turns = vault.turns.length === 0 ? [VaultTurn.None] : vault.turns;
   // ONE DRAW, ALWAYS, whether or not a fit is found. A draw that happens only
   // on some paths moves every later number in the stream — the labelled-draw
@@ -293,7 +298,7 @@ export function placeVault(
   for (let n = 0; n < spots; n += 1) {
     const i = (start + n) % spots;
     const at = { x: i % cols, y: Math.floor(i / cols) };
-    if (vaultFits(shape, at, isOpen, vault.border)) return { at, shape };
+    if (vaultFits(shape, at, isOpen, vault.border)) return { at, shape, turn };
   }
   return null;
 }

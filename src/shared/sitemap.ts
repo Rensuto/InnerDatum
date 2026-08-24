@@ -382,7 +382,22 @@ export function makeSiteMap(
    * it CAN — which is precisely why the threshold is re-asserted afterwards
    * rather than trusted.
    */
-  for (const vault of VAULTS_BY_SHAPE[shape] ?? []) {
+  /**
+   * ═══ ONE ROOM, DRAWN FROM THE LIST — AND IT USED TO BE ALL OF THEM ═══
+   * The first version stamped every vault the shape owned, which meant a works
+   * always contained all three and every works was the same works. Upstream
+   * rolls for its vaults per level; the variety is meant to be in WHICH room you
+   * got, not only in where it landed.
+   *
+   * THE DRAW IS UNCONDITIONAL, like the two inside `placeVault`: a shape with an
+   * empty list (a town) still consumes it, so adding a room to one shape cannot
+   * shift the number stream of another.
+   */
+  const placed: { id: string; at: { x: number; y: number }; turn: string }[] = [];
+  const forShape = VAULTS_BY_SHAPE[shape] ?? [];
+  const pick = rng.int('vault.pick', 0, Math.max(0, forShape.length - 1));
+  for (const vault of forShape.length === 0 ? [] : [forShape[pick] ?? forShape[0]]) {
+    if (vault === undefined) continue;
     const spot = placeVault(
       vault,
       { w: W, h: H },
@@ -400,6 +415,7 @@ export function makeSiteMap(
     );
     // NULL IS AN ORDINARY ANSWER. A floor with no open patch big enough simply
     // does not get the room; see `placeVault`.
+    if (spot !== null) placed.push({ id: vault.id, at: spot.at, turn: spot.turn });
     if (spot !== null)
       stampVault(spot.shape, spot.at, (x, y, code) => {
         put(g, x, y, code);
@@ -444,6 +460,7 @@ export function makeSiteMap(
   }
 
   return {
+    vaults: placed,
     view: { w: W, h: H, tiles: g },
     spawns: [spawn],
     /** A floor is somewhere you are, not somewhere you leave from. */

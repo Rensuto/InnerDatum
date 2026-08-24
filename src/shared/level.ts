@@ -49,6 +49,33 @@ export type AuthoredMap = {
   readonly sites: ReadonlyMap<string, string>;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH DRAWN ROOMS WERE STAMPED INTO THIS FLOOR, AND WHERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Absent for a map with no generator behind it — an authored fixture, the
+   * arena — which is why it is optional rather than an empty array: "this map
+   * has no vault system" and "this floor rolled no room" are different facts.
+   *
+   * ═══ IT EXISTS BECAUSE THE TILES ARE NOT A HONEST WITNESS ═══
+   * The first test of the vault system asked whether a room's exact pattern
+   * appeared in the finished map, which is a proxy and a bad one. Measured over
+   * forty seeds a shape: the smallest room matched 40/40 in every shape because
+   * eight wall cells in an L is a thing procedural noise produces by accident,
+   * while the largest matched 3/40 in a works and the middle one 0/40 — because
+   * `connect` tunnels through a room it cannot otherwise reach and destroys the
+   * pattern, which is CORRECT behaviour and indistinguishable from never having
+   * stamped it.
+   *
+   * So the generator records what it did. This is server-side only: `RealmMsg`
+   * carries a `LevelView`, never an `AuthoredMap`.
+   */
+  readonly vaults?: readonly {
+    readonly id: string;
+    readonly at: TileXY;
+    readonly turn: string;
+  }[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THE COUNTRY ON THIS MAP IS CALLED.
    * ═══════════════════════════════════════════════════════════════════════════
    *

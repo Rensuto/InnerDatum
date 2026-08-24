@@ -7,8 +7,6 @@ import {
   makeSiteMap,
 } from '../../src/shared/sitemap.ts';
 import { RealmKind, SITES } from '../../src/server/world/realms.ts';
-import { VAULT_TURNS, turnVault } from '../../src/shared/vault.ts';
-import type { Vault } from '../../src/shared/vault.ts';
 import { VAULTS_BY_SHAPE } from '../../src/shared/vaults.ts';
 import { TileCode, blocksSight, isWalkable } from '../../src/shared/protocol.ts';
 import type { SitePalette } from '../../src/shared/sitemap.ts';
@@ -323,63 +321,83 @@ describe('a stamped room never seals the floor it was stamped into', () => {
     }
   });
 
-  it('actually puts EACH drawn room into the floor', () => {
+  it('stamps exactly one drawn room per floor, and rolls which', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE OTHER TESTS ALL PASS WITH ZERO VAULTS PLACED, AND SO DID THIS ONE.
+     * MEASURED OFF THE GENERATOR'S OWN RECORD, NOT OFF THE TILES.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * Reachability and determinism are properties of a map with no rooms in it
-     * at all, so on their own they would sign off a feature that had quietly
-     * stopped running. This was written to catch that — and the FIRST version
-     * of it did not, because it asked whether ANY vault matched anywhere, and
-     * the smallest one is eight wall cells in an L that generated noise
-     * produces by accident. Verified by mutation: with the stamp removed, it
-     * passed.
+     * Two earlier versions of this test read the finished map and asked whether
+     * a room's exact pattern was in it. Both were wrong, in opposite directions,
+     * and the numbers are worth keeping:
      *
-     * So every room is required SEPARATELY. The large ones cannot appear by
-     * chance — a seven-by-seven with a specific interior is not a thing a cave
-     * generator stumbles into — and they are what makes the assertion mean
-     * "the stamp ran" rather than "the noise was noisy".
+     *   half_partition   40/40 in every shape — eight wall cells in an L is a
+     *                    thing procedural noise produces by accident, so it
+     *                    "passed" with the stamp removed entirely.
+     *   sealed_shaft     0/40 in a works, 8/40 in a cave.
+     *   filing_chamber   3/40 in a works, 17/40 in a ruin.
      *
-     * SOME seed rather than every seed: `connect` may dig a corridor straight
-     * through a room it could not otherwise reach, which is correct and
-     * destroys the pattern. One survivor in forty is proof; zero is not.
+     * The low numbers are not a bug: `connect` tunnels through a room it cannot
+     * otherwise reach, which is correct and destroys the pattern. But it makes
+     * "is the pattern there" a proxy that answers about the noise and about the
+     * repair pass at once, and a test built on it passes or fails by which seeds
+     * it happened to pick.
+     *
+     * `AuthoredMap.vaults` is the generator saying what it did.
      */
-    const found = (shape: SiteShape, vault: Vault): number => {
-      let intact = 0;
-      for (let n = 0; n < 40; n += 1) {
-        const map = makeSiteMap(`vault-present-${shape}-${String(n)}`, shape);
-        const { w, h, tiles } = map.view;
-        const hit = VAULT_TURNS.some((turn) => {
-          const shaped = turnVault(vault, turn);
-          for (let y = 0; y + shaped.h <= h; y += 1) {
-            for (let x = 0; x + shaped.w <= w; x += 1) {
-              let all = true;
-              for (let vy = 0; vy < shaped.h && all; vy += 1) {
-                for (let vx = 0; vx < shaped.w && all; vx += 1) {
-                  const want = shaped.tiles[vy * shaped.w + vx];
-                  if (want === null || want === undefined) continue;
-                  if (tiles[(y + vy) * w + (x + vx)] !== want) all = false;
-                }
-              }
-              if (all) return true;
-            }
-          }
-          return false;
-        });
-        if (hit) intact += 1;
-      }
-      return intact;
-    };
-
     for (const shape of SHAPES) {
-      for (const vault of VAULTS_BY_SHAPE[shape] ?? []) {
+      const list = VAULTS_BY_SHAPE[shape] ?? [];
+      const chosen: string[] = [];
+
+      for (let n = 0; n < 40; n += 1) {
+        const map = makeSiteMap(`vault-roll-${shape}-${String(n)}`, shape);
+        const placed = map.vaults ?? [];
         expect(
-          found(shape, vault),
-          `'${vault.id}' never survived into a ${shape} in forty seeds`,
-        ).toBeGreaterThan(0);
+          placed.length,
+          `a ${shape} stamped ${String(placed.length)} rooms — the list is being stamped whole`,
+        ).toBeLessThanOrEqual(1);
+        for (const one of placed) {
+          expect(
+            list.some((vault) => vault.id === one.id),
+            `a ${shape} stamped '${one.id}', which is not one of its rooms`,
+          ).toBe(true);
+          chosen.push(one.id);
+        }
+      }
+
+      if (list.length === 0) {
+        // A town has no rooms and must get none — a building among buildings is
+        // noise with extra steps, which is why the list is empty rather than shared.
+        expect(chosen, `a ${shape} has no rooms and got one anyway`).toEqual([]);
+        continue;
+      }
+
+      expect(chosen.length, `no room was stamped into any ${shape} in forty seeds`).toBeGreaterThan(
+        0,
+      );
+      if (list.length > 1) {
+        expect(
+          new Set(chosen).size,
+          `every ${shape} got the same room: ${[...new Set(chosen)].join(', ')}`,
+        ).toBeGreaterThan(1);
       }
     }
+  });
+
+  it('turns the room it rolled, rather than always laying it the same way', () => {
+    // The six orientations are the reason a short list of rooms does not read as
+    // a short list. If every stamp used `none` they would be three fixed shapes.
+    const turns = new Set<string>();
+    for (const shape of SHAPES) {
+      for (let n = 0; n < 40; n += 1) {
+        for (const one of makeSiteMap(`vault-turn-${shape}-${String(n)}`, shape).vaults ?? []) {
+          turns.add(one.turn);
+        }
+      }
+    }
+    expect(
+      turns.size,
+      `every room was laid the same way: ${[...turns].join(', ')}`,
+    ).toBeGreaterThan(1);
   });
 });
