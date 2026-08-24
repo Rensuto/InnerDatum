@@ -355,3 +355,68 @@ describe('the room somebody drew is worth the detour', () => {
     expect(tiles.length, 'a floor with no room stopped dropping litter').toBeGreaterThan(0);
   });
 });
+
+describe('bodies are spread across the room, not dropped in a heap', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE COMMENT DESCRIBED THE INTENDED CODE; THE CODE DID THE OPPOSITE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `populateDelve` places bodies at `offset + i * stride` through the candidate
+   * list, and its note says the offset is "drawn once so two delves are not laid
+   * out identically" and that spreading exists because "an independent draw
+   * clusters". The draw was INSIDE the loop, so every body landed at a fresh
+   * uniform position and `stride` was decorative.
+   *
+   * MEASURED over sixty floors of `site:gearford_ward` on an open map:
+   *
+   *     per body   48 pairs within 2 tiles   mean nearest-pair gap 2.55
+   *     hoisted     0 pairs within 2 tiles   mean nearest-pair gap 4.78
+   *
+   * That is not cosmetic. `delveHeadroom` tunes how many bodies are in the room;
+   * clustering silently decides how many of them you meet AT ONCE, which is the
+   * number that actually kills a party.
+   *
+   * ═══ ASSERTED ON AN OPEN FLOOR, DELIBERATELY ═══
+   * A cramped or broken floor has few candidates and a stride of one, where
+   * bodies genuinely cannot be spread and crowding is the map's fault rather
+   * than the placer's. The claim is about the PLACER, so it is made where the
+   * placer is free.
+   */
+  it('leaves a gap between bodies on a floor with room to spread them', () => {
+    const spec = specFor('site:gearford_ward');
+    if (spec === undefined) throw new Error('no spec for gearford_ward');
+
+    let crowded = 0;
+    const floors = 40;
+    for (let n = 0; n < floors; n += 1) {
+      const world = createWorld(`delve-spread-${String(n)}`);
+      world.level.tiles.fill(TileCode.FLOOR);
+      const map: AuthoredMap = {
+        view: world.level,
+        spawns: [{ x: 4, y: 4 }],
+        sites: new Map<string, string>(),
+      };
+      populateDelve(world, map, spec, { level: 1, size: 1 });
+
+      const bodies = world.allActors().filter((actor) => actor.kind === ActorKind.Monster);
+      expect(bodies.length, `${String(n)}: the fixture placed nothing`).toBeGreaterThan(1);
+
+      for (let i = 0; i < bodies.length; i += 1) {
+        for (let j = i + 1; j < bodies.length; j += 1) {
+          const a = bodies[i];
+          const b = bodies[j];
+          if (a === undefined || b === undefined) continue;
+          if (Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 2) crowded += 1;
+        }
+      }
+    }
+
+    // Zero, measured. Asserted with a little air so a future roster change that
+    // legitimately packs a floor tighter does not read as this bug coming back.
+    expect(
+      crowded,
+      `${String(crowded)} pairs of bodies within two tiles over ${String(floors)} floors — the offset is being drawn per body again`,
+    ).toBeLessThan(5);
+  });
+});

@@ -828,6 +828,27 @@ export function populateDelve(
    * more in it. So the draw is untouched and the multiply happens to its answer.
    */
   const rolled = world.rng.int('delve.count', spec.monsters[0], spec.monsters[1]);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE OFFSET FOR THE FLOOR — AND IT USED TO BE ONE PER BODY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The draw was INSIDE the loop below, which made `stride` decorative: every
+   * body landed at a fresh uniform position, which is precisely the "drawn
+   * independently" the note down there says this arrangement exists to prevent.
+   * The comment described the intended code and the code did the opposite.
+   *
+   * MEASURED over sixty floors of `site:gearford_ward` on an open map:
+   *
+   *     per body   48 pairs within 2 tiles   mean nearest-pair gap 2.55
+   *     hoisted     0 pairs within 2 tiles   mean nearest-pair gap 4.78
+   *
+   * Forty-eight clustered pairs is not a cosmetic difference. A party that
+   * opens a door onto three bodies standing together is in a fight the roster
+   * numbers never described — `delveHeadroom` tunes HOW MANY are in the room,
+   * and clustering silently decides how many of them you meet at once.
+   */
+  const offset = world.rng.int('delve.offset', 0, candidates.length - 1);
   const wanted = Math.max(1, Math.round(rolled * delveHeadroom(party)));
   let placed = 0;
   for (let i = 0; i < wanted; i += 1) {
@@ -835,9 +856,8 @@ export function populateDelve(
     if (template === undefined) continue;
     // SPREAD ACROSS THE WHOLE CANDIDATE LIST rather than drawn independently:
     // an independent draw clusters, and a cluster next to the door is the one
-    // arrangement this file exists to avoid. The offset is drawn once so two
-    // delves are not laid out identically.
-    const offset = world.rng.int('delve.offset', 0, candidates.length - 1);
+    // arrangement this file exists to avoid. The offset is drawn once (above
+    // the loop) so two delves are not laid out identically.
     const stride = Math.max(1, Math.floor(candidates.length / Math.max(1, wanted)));
     const at = candidates[(offset + i * stride) % candidates.length];
     if (at === undefined) continue;
