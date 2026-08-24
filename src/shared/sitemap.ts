@@ -38,6 +38,8 @@
 import { tileIndex } from './coords.ts';
 import { createRng } from './rng.ts';
 import { TileCode } from './protocol.ts';
+import { placeVault, stampVault } from './vault.ts';
+import { VAULTS_BY_SHAPE } from './vaults.ts';
 import type { TileXY } from './coords.ts';
 import type { Rng } from './rng.ts';
 import type { AuthoredMap } from './level.ts';
@@ -360,6 +362,49 @@ export function makeSiteMap(
         : shape === SiteShape.Ruin
           ? ruin(g, rng)
           : works(g, rng);
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A ROOM SOMEBODY DREW, DROPPED INTO THE NOISE — see `shared/vault.ts`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * BEFORE THE THRESHOLD AND BEFORE `connect`, and both halves of that matter.
+   *
+   * BEFORE `connect` because a vault writes WALLS, and walls can cut a floor in
+   * two. `connect` already exists to find orphaned floor and dig a corridor to
+   * it — twelve passes of it — so stamping first means the repair pass treats a
+   * vault exactly as it treats a cave that generated two chambers. Stamping
+   * after it would be the one arrangement that can seal a room permanently.
+   *
+   * BEFORE the threshold is written, so the arrival tile is restored on the line
+   * below whatever the vault did to it. A vault cannot be placed ON the spawn —
+   * `isOpen` is false for anything not already floor and the spawn is floor, so
+   * it CAN — which is precisely why the threshold is re-asserted afterwards
+   * rather than trusted.
+   */
+  for (const vault of VAULTS_BY_SHAPE[shape] ?? []) {
+    const spot = placeVault(
+      vault,
+      { w: W, h: H },
+      // BOUNDS, NOT OCCUPANCY, and never the threshold. See `placeVault`: a
+      // room may land in rock, because `connect` below digs to any floor it
+      // cannot otherwise reach. What it may not do is run off the map or bury
+      // the tile the party arrives on.
+      (x, y) =>
+        x >= MARGIN &&
+        y >= MARGIN &&
+        x < W - MARGIN &&
+        y < H - MARGIN &&
+        !(x === spawn.x && y === spawn.y),
+      rng,
+    );
+    // NULL IS AN ORDINARY ANSWER. A floor with no open patch big enough simply
+    // does not get the room; see `placeVault`.
+    if (spot !== null)
+      stampVault(spot.shape, spot.at, (x, y, code) => {
+        put(g, x, y, code);
+      });
+  }
 
   // The threshold is always floor, whatever the shape did to it — you arrive
   // here, and `leaveRealm` treats it as the door.

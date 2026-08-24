@@ -7,6 +7,9 @@ import {
   makeSiteMap,
 } from '../../src/shared/sitemap.ts';
 import { RealmKind, SITES } from '../../src/server/world/realms.ts';
+import { VAULT_TURNS, turnVault } from '../../src/shared/vault.ts';
+import type { Vault } from '../../src/shared/vault.ts';
+import { VAULTS_BY_SHAPE } from '../../src/shared/vaults.ts';
 import { TileCode, blocksSight, isWalkable } from '../../src/shared/protocol.ts';
 import type { SitePalette } from '../../src/shared/sitemap.ts';
 
@@ -236,6 +239,147 @@ describe('every shipped site is painted with a legal pair', () => {
       const middleBlocks = [...solid].filter((c) => c !== corner);
       expect(corner).toBe(TileCode.TOWN_WALL);
       expect(middleBlocks).toHaveLength(1);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VAULTS — the drawn rooms stamped into the noise (shared/vault.ts)
+// ---------------------------------------------------------------------------
+
+describe('a stamped room never seals the floor it was stamped into', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE PROPERTY A VAULT COULD PLAUSIBLY BREAK.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A vault writes WALLS into a floor that has already been generated, so the
+   * failure it can cause is not a wrong tile — it is a floor cut in two, or a
+   * threshold walled in, and either one is a delve a party cannot play. The
+   * arrangement that prevents it is an ORDER: the stamp runs before `connect`,
+   * which already exists to find orphaned floor and dig a corridor to it.
+   *
+   * SWEPT ACROSS SEEDS RATHER THAN ASSERTED ON ONE, because placement depends
+   * on the shape of the floor that happens to generate. A single seed proves a
+   * single map; the bug this is about is one that appears on the unlucky one.
+   */
+  for (const shape of SHAPES) {
+    it(`leaves every floor tile reachable from the threshold in a ${shape}`, () => {
+      for (let n = 0; n < 40; n += 1) {
+        const seed = `vault-reach-${shape}-${String(n)}`;
+        const map = makeSiteMap(seed, shape);
+        const { w, h, tiles } = map.view;
+        const spawn = map.spawns[0];
+        expect(spawn, `${seed}: no threshold`).toBeDefined();
+        if (spawn === undefined) return;
+
+        expect(
+          isWalkable(tiles[spawn.y * w + spawn.x] ?? TileCode.WALL),
+          `${seed}: the threshold itself was walled in`,
+        ).toBe(true);
+
+        const seen = new Set<number>([spawn.y * w + spawn.x]);
+        const stack = [spawn.y * w + spawn.x];
+        while (stack.length > 0) {
+          const idx = stack.pop();
+          if (idx === undefined) break;
+          const x = idx % w;
+          const y = (idx - x) / w;
+          for (const [dx, dy] of [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ] as const) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const n2 = ny * w + nx;
+            if (seen.has(n2)) continue;
+            if (!isWalkable(tiles[n2] ?? TileCode.WALL)) continue;
+            seen.add(n2);
+            stack.push(n2);
+          }
+        }
+
+        const walkable = walkableSet(tiles);
+        const stranded = [...walkable].filter((i) => !seen.has(i));
+        expect(
+          stranded.length,
+          `${seed}: ${String(stranded.length)} floor tiles are cut off from the threshold`,
+        ).toBe(0);
+      }
+    });
+  }
+
+  it('is the same map for the same seed, vault and all', () => {
+    // A vault drawn from an unseeded number would make two players in one
+    // instance disagree about where the walls are. `docs/tome-port.md`'s
+    // determinism contract is that a seed is the whole map.
+    for (const shape of SHAPES) {
+      const once = makeSiteMap(`vault-determinism-${shape}`, shape);
+      const twice = makeSiteMap(`vault-determinism-${shape}`, shape);
+      expect(once.view.tiles).toEqual(twice.view.tiles);
+    }
+  });
+
+  it('actually puts EACH drawn room into the floor', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE OTHER TESTS ALL PASS WITH ZERO VAULTS PLACED, AND SO DID THIS ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Reachability and determinism are properties of a map with no rooms in it
+     * at all, so on their own they would sign off a feature that had quietly
+     * stopped running. This was written to catch that — and the FIRST version
+     * of it did not, because it asked whether ANY vault matched anywhere, and
+     * the smallest one is eight wall cells in an L that generated noise
+     * produces by accident. Verified by mutation: with the stamp removed, it
+     * passed.
+     *
+     * So every room is required SEPARATELY. The large ones cannot appear by
+     * chance — a seven-by-seven with a specific interior is not a thing a cave
+     * generator stumbles into — and they are what makes the assertion mean
+     * "the stamp ran" rather than "the noise was noisy".
+     *
+     * SOME seed rather than every seed: `connect` may dig a corridor straight
+     * through a room it could not otherwise reach, which is correct and
+     * destroys the pattern. One survivor in forty is proof; zero is not.
+     */
+    const found = (shape: SiteShape, vault: Vault): number => {
+      let intact = 0;
+      for (let n = 0; n < 40; n += 1) {
+        const map = makeSiteMap(`vault-present-${shape}-${String(n)}`, shape);
+        const { w, h, tiles } = map.view;
+        const hit = VAULT_TURNS.some((turn) => {
+          const shaped = turnVault(vault, turn);
+          for (let y = 0; y + shaped.h <= h; y += 1) {
+            for (let x = 0; x + shaped.w <= w; x += 1) {
+              let all = true;
+              for (let vy = 0; vy < shaped.h && all; vy += 1) {
+                for (let vx = 0; vx < shaped.w && all; vx += 1) {
+                  const want = shaped.tiles[vy * shaped.w + vx];
+                  if (want === null || want === undefined) continue;
+                  if (tiles[(y + vy) * w + (x + vx)] !== want) all = false;
+                }
+              }
+              if (all) return true;
+            }
+          }
+          return false;
+        });
+        if (hit) intact += 1;
+      }
+      return intact;
+    };
+
+    for (const shape of SHAPES) {
+      for (const vault of VAULTS_BY_SHAPE[shape] ?? []) {
+        expect(
+          found(shape, vault),
+          `'${vault.id}' never survived into a ${shape} in forty seeds`,
+        ).toBeGreaterThan(0);
+      }
     }
   });
 });
