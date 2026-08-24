@@ -1,5 +1,5 @@
 import { partyHint, specFor } from '../../src/server/content/delve.ts';
-import { RealmKind, SITES } from '../../src/server/world/realms.ts';
+import { RealmKind, SITES, TIDE_MS } from '../../src/server/world/realms.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { canWalk } from '../../src/shared/level.ts';
 
@@ -1420,6 +1420,81 @@ describe('what the moor tells you when you come back out', () => {
  * still act on.
  */
 describe('the moor hears when somebody does not come back', () => {
+  it('does not promise a rescue from somebody who has stopped playing', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TWO CONSECUTIVE LINES, COUNTING DIFFERENT PEOPLE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The DOWN line counted `alive`. The WIPE counts PRESENCE — `surveyParty`
+     * only adds a body to `survivors` when `isPresent(actor)` holds, and that is
+     * `connected && !standingBy`. So a teammate who was alive but had dropped
+     * their socket, or was Standing By, counted for the first sentence and not
+     * for the second, and the transcript read:
+     *
+     *     Dalt is DOWN — 5 turns to reach them.
+     *     Dalt is erased — the party is down. The floor resets.
+     *
+     * A rescue window announced, and cancelled by the wipe underneath it.
+     *
+     * "TURNS TO REACH THEM" IS A CLAIM ABOUT SOMEBODY WHO CAN ACT, and a body
+     * nobody is driving cannot walk over. It is the difference between a friend
+     * running and a friend who logged off — told to the player least able to
+     * check which.
+     */
+    const stayer = await connect(server.port);
+    const stayerId = await stayer.hello();
+    const afk = await connect(server.port);
+    const afkId = await afk.hello();
+    await sleep(200);
+    stayer.send({ t: 'party', action: 'invite', targetId: afkId });
+    await sleep(150);
+    afk.send({ t: 'party', action: 'accept', targetId: stayerId });
+    await sleep(250);
+    expect(membersOf(server.parties, stayerId), 'the party never formed').toHaveLength(2);
+
+    // THE ONLY OTHER MEMBER STOPS PLAYING. Standing By rather than a dropped
+    // socket, because it is the case a player CHOOSES and therefore the one
+    // that happens on an ordinary evening — somebody stepping away mid-delve.
+    const helper = server.realms.overworld.world.getActor(afkId);
+    if (helper === undefined) throw new Error('no helper body');
+    helper.standingBy = true;
+    expect(helper.alive, 'the fixture killed them instead of parking them').toBe(true);
+
+    const body = server.realms.overworld.world.getActor(stayerId);
+    if (body === undefined) throw new Error('no body');
+    /**
+     * DOWNED BY THE PUMP, NOT BY HAND. Calling `goDown` here would create the
+     * record and then `enrolCasualties` would find one already there and push
+     * NO `downed` event — so the line under test would never be written. The
+     * body is put at 0 and the pump enrols it, which is what happens in play.
+     */
+    const before = stayer.lines().length;
+    body.hp = 0;
+    body.alive = false;
+    /**
+     * AND NOTHING IS SENT BY EITHER OF THEM — THE TIDE DRIVES THIS PUMP.
+     *
+     * A command from the parked client IS presence: it clears `standingBy`, and
+     * would un-park the very body this test is about. A command from the downed
+     * one is refused before it reaches the barrier, because `submitIntent` takes
+     * nothing from a body that is not `alive`.
+     *
+     * So the only thing left that can advance the world is the tide, which is
+     * exactly what advances it in play when a party stops pressing keys.
+     */
+    await sleep(TIDE_MS + 900);
+
+    const said = stayer.lines().slice(before);
+    const down = said.filter((line) => /is DOWN/.test(line));
+    expect(down.length, `no DOWN line at all — log was ${said.join(' | ')}`).toBeGreaterThan(0);
+    for (const line of down) {
+      expect(line, 'promised a rescue from somebody who is Standing By').not.toMatch(
+        /to reach them/,
+      );
+    }
+  });
+
   it('tells a party member standing outside that their friend went down', async () => {
     const outside = await connect(server.port);
     const outsideId = await outside.hello();

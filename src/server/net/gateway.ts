@@ -9899,9 +9899,40 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * though it were the first is the game misreading the room at the one
          * moment a player is paying complete attention.
          */
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * THE SAME QUESTION THE WIPE ASKS, OR THE TWO LINES CONTRADICT.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * This counted `alive` alone. The wipe counts PRESENCE — `surveyParty`
+         * only adds a body to `survivors` when `isPresent(actor)` holds, and
+         * that is `connected && !standingBy` (scheduler.ts) — so a party member
+         * who was alive but had dropped their socket, or was Standing By,
+         * counted here and not there. The Record lane printed
+         *
+         *     Dalt is DOWN — 5 turns to reach them.
+         *     Dalt is erased — the party is down. The floor resets.
+         *
+         * in consecutive lines: a rescue window announced, and cancelled by the
+         * wipe underneath it, because the two sentences were counting different
+         * people.
+         *
+         * A BODY NOBODY IS DRIVING CANNOT WALK OVER, which is the whole of it.
+         * "Turns to reach them" is a claim about somebody who can act, and an
+         * AFK teammate is exactly the case where that claim is most confidently
+         * wrong and most cruel — it is the difference between a friend running
+         * and a friend who logged off.
+         */
         const others = homeOf(event.id)
           .world.allActors()
-          .filter((a) => a.kind === ActorKind.Player && a.id !== event.id && a.alive).length;
+          .filter(
+            (a) =>
+              a.kind === ActorKind.Player &&
+              a.id !== event.id &&
+              a.alive &&
+              a.connected &&
+              !a.standingBy,
+          ).length;
         /**
          * ═══ AND WHAT PUT THEM THERE ═══
          * `DownedEvent.sourceId` was declared on the wire and filled by nothing
