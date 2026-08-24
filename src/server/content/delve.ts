@@ -169,9 +169,16 @@ export type DelveSpec = {
    *
    * THE LADDER IS THE WALK. The step counts in the comments below were already
    * the gradient this table was authored against; this reads them off, at
-   * roughly a level per nine steps, so nothing about the map's difficulty order
+   * roughly a level per seven steps, so nothing about the map's difficulty order
    * changes — it is the same order, finally expressed in a number the combat
    * code can see.
+   *
+   * THE COUNTS ARE MEASURED, NOT ESTIMATED, and they have been re-measured since
+   * they were first written down: `findPath` from the Alderbrook spawn over the
+   * authored overworld, which is the ground a player actually crosses. Several
+   * had drifted — two of them had the ORDER wrong — and
+   * `test/server/delve-curve.test.ts` now walks the map itself rather than
+   * trusting any number in a comment, including these.
    */
   readonly levelRange: ZoneLevelRange;
   /**
@@ -289,8 +296,15 @@ const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK, INDEX_HUSK
  * A player leaves Alderbrook, walks seventeen steps, finds the nearest marker on
  * the map and it is one of the two hardest rooms in the game — a DEEP roster
  * with a ninety-five hit point elite in it. Meanwhile the row commented *"the
- * near country: where a level-1 party learns the game"* sat on the site that is
- * a hundred and thirty-one steps away, the furthest thing on the moor.
+ * near country: where a level-1 party learns the game"* sat on the site that was
+ * then the furthest thing on the moor.
+ *
+ * THE DISTANCES IN THAT TABLE ARE AS THEY WERE MEASURED THEN. The map has been
+ * edited since and several have moved — Blackwood is 106 steps now and Gearford
+ * 109, so Gearford is the longer walk — which is why the per-row counts below
+ * were re-measured and why the gradient has a test that walks the map instead of
+ * reading a comment. This block is kept as the record of the fault it describes,
+ * not as a current distance table.
  *
  * That is worse than no gradient at all. With no gradient a player learns
  * nothing; with an inverted one they learn something FALSE on their first
@@ -360,30 +374,30 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
     'site:drowned_chapel',
     { monsters: [2, 2], roster: DROWNED, litter: [1, 2], levelRange: [1, 1] },
   ],
-  //     30 steps.
+  //     19 steps.
   [
     'site:underworks',
     { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3], levelRange: [3, 3] },
   ],
   // ─── worked places: more of them, and more to carry home ────────────────
-  //     70 steps.
+  //     41 steps.
   [
     'site:watchers_altar',
     { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [7, 7] },
   ],
-  //     87 steps.
+  //     61 steps.
   [
     'site:hollow_mine',
     { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [9, 9] },
   ],
   // ─── quiet and wrong: fewer bodies, harder ones ─────────────────────────
-  //     88 steps. The roster changes here, which is the real threshold on the
+  //     90 steps. The roster changes here, which is the real threshold on the
   //     map: from this marker outward, things bite.
   ['site:outer_index', { monsters: [3, 4], roster: DEEP, litter: [3, 4], levelRange: [10, 10] }],
-  //     92 steps.
+  //     77 steps.
   ['site:glass_archive', { monsters: [3, 5], roster: DEEP, litter: [2, 3], levelRange: [11, 11] }],
   // ─── the far end ────────────────────────────────────────────────────────
-  //     108 steps.
+  //     109 steps.
   ['site:gearford_ward', { monsters: [6, 8], roster: DEEP, litter: [3, 5], levelRange: [13, 13] }],
   // ─── and the three nobody is told about ─────────────────────────────────
   //     All three sit in the MIDDLE band by distance (47-62 steps), which is
@@ -392,7 +406,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     trivial is a disappointment. They pay in LITTER instead — finding
   //     something should be worth more than the same danger elsewhere, and loot
   //     is the axis that rewards exploring without punishing it.
-  //     62 steps, in the western downs.
+  //     48 steps, in the western downs.
   //     ═══ AND IT HAS CAIRNS IN IT, WHICH IT DID NOT ═══
   //     A site called CAIRNFOOT drew `RANK_AND_FILE` — two husks and a wraith,
   //     the same three creatures as The Underworks, The Watcher's Altar and The
@@ -413,9 +427,10 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     47 steps, in the clearing inside the southern wood — so it draws on the
   //     wood's own roster, which is the same rule Blackwood follows.
   ['site:barrow_end', { monsters: [5, 7], roster: THICKET, litter: [3, 5], levelRange: [5, 5] }],
-  //     62 steps, on the beach behind the wood.
+  //     71 steps, on the beach behind the wood.
   ['site:the_weir', { monsters: [4, 6], roster: DROWNED, litter: [3, 4], levelRange: [6, 6] }],
-  //     131 steps, the furthest walk on the moor, and now the worst room on it.
+  //     106 steps, and the worst room on the moor. NOT the furthest — Gearford
+  //     Ward is 109 — which the note here claimed until the walk was measured.
   //     THE TREES START HERE, which `places.ts` has said since before there was
   //     anything in them. Now there is: `THICKET` is a third eidolons, and eight
   //     to ten bodies of which a third move faster than you do is what the far
