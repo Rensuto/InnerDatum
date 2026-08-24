@@ -827,6 +827,32 @@ export function populateDelve(
    * litter, different everything downstream — rather than the same floor with
    * more in it. So the draw is untouched and the multiply happens to its answer.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DRAWN ROOM, IF THIS FLOOR ROLLED ONE — see `shared/vault.ts`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Read once, above BOTH placement passes, because the room is one fact and
+   * the two passes are two uses of it: something is put in it, and something is
+   * left standing over that.
+   *
+   * Empty when the floor rolled no room, when the map has no vault system at
+   * all (an authored fixture, the arena), or when the room's interior is solid
+   * wall and contributed no candidate tiles. All three fall through to the
+   * behaviour the game had before there were rooms.
+   */
+  const room = map.vaults?.[0];
+  const inRoom =
+    room === undefined
+      ? []
+      : candidates.filter(
+          (tile) =>
+            tile.x >= room.at.x &&
+            tile.y >= room.at.y &&
+            tile.x < room.at.x + room.w &&
+            tile.y < room.at.y + room.h,
+        );
+
   const rolled = world.rng.int('delve.count', spec.monsters[0], spec.monsters[1]);
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -859,7 +885,30 @@ export function populateDelve(
     // arrangement this file exists to avoid. The offset is drawn once (above
     // the loop) so two delves are not laid out identically.
     const stride = Math.max(1, Math.floor(candidates.length / Math.max(1, wanted)));
-    const at = candidates[(offset + i * stride) % candidates.length];
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONE BODY STANDS IN THE DRAWN ROOM — upstream's guarded vault, in small.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The room already holds a piece of the floor's litter, which made it worth
+     * the detour and made the detour FREE. Upstream's vaults are guarded; a
+     * reward you can walk to unopposed is a reward the floor may as well have
+     * left by the door.
+     *
+     * TAKEN FROM THE COUNT, NOT ADDED TO IT. `delveHeadroom` tunes how many
+     * bodies are in the room and that number is unchanged — this decides where
+     * ONE of them stands. A guard on top of the roster would be a silent
+     * difficulty rise on every floor in the game, which is the thing the commit
+     * before this one was about.
+     *
+     * AND IT IS THE ONE DELIBERATE EXCEPTION TO THE SPREAD above. The stride
+     * exists so bodies do not clump; this puts one body somewhere specific for
+     * a reason, and one is the whole of it.
+     */
+    const at =
+      i === 0 && inRoom.length > 0
+        ? inRoom[(offset + i * stride) % inRoom.length]
+        : candidates[(offset + i * stride) % candidates.length];
     if (at === undefined) continue;
 
     // Qualified by realm — `delve_0` was the same string in every party's copy
@@ -1006,18 +1055,12 @@ export function populateDelve(
    * walking, which is the opposite of the problem being fixed. One is enough to
    * make the detour pay, and the remainder are spread as they always were.
    */
-  const room = map.vaults?.[0];
-  const inRoom =
-    room === undefined
-      ? []
-      : candidates.filter(
-          (tile) =>
-            tile.x >= room.at.x &&
-            tile.y >= room.at.y &&
-            tile.x < room.at.x + room.w &&
-            tile.y < room.at.y + room.h,
-        );
-
+  /**
+   * AND THE ROOM SOMEBODY DREW HAS SOMETHING IN IT — one piece, not all of
+   * them. Everything in the drawn room would make the rest of the floor not
+   * worth walking. `inRoom` is computed above, beside the guard that stands
+   * over this.
+   */
   const litter = world.rng.int('delve.litter', spec.litter[0], spec.litter[1]);
   for (let i = 0; i < litter; i += 1) {
     // THE FIRST PIECE GOES IN THE ROOM WHEN THERE IS A ROOM TO PUT IT IN. A

@@ -348,6 +348,67 @@ describe('the room somebody drew is worth the detour', () => {
     ).toBeGreaterThan(0);
   });
 
+  it('leaves a body standing over it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * UPSTREAM'S VAULTS ARE GUARDED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The room holds a piece of the floor's litter, which made it worth the
+     * detour and made the detour free — a reward you can walk to unopposed is
+     * one the floor may as well have left by the door.
+     *
+     * TAKEN FROM THE COUNT, NOT ADDED TO IT: `delveHeadroom` still decides how
+     * many bodies are in the room, and this only decides where one of them
+     * stands. Asserted below, because a guard that was an EXTRA body would be a
+     * silent difficulty rise on every floor in the game.
+     */
+    const world = createWorld('delve-vault-guard');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const map: AuthoredMap = {
+      view: world.level,
+      spawns: [{ x: 4, y: 4 }],
+      sites: new Map<string, string>(),
+      vaults: [ROOM],
+    };
+    const spec = specFor('site:underworks');
+    if (spec === undefined) throw new Error('no spec');
+    const placed = populateDelve(world, map, spec, { level: 1, size: 1 });
+
+    const bodies = world.allActors().filter((actor) => actor.kind === ActorKind.Monster);
+    expect(bodies.length, 'the fixture placed nothing').toBeGreaterThan(0);
+    const guards = bodies.filter((body) => inside({ x: body.x, y: body.y })).length;
+    expect(guards, 'nothing was left guarding the room').toBeGreaterThan(0);
+    /**
+     * ONE BODY, NOT THE ROSTER. Putting every body in the drawn room would turn
+     * a guarded reward into a bottleneck holding the whole floor's danger — and
+     * would empty the rest of the map, which is the same fault the litter arm
+     * above guards against from the other side.
+     *
+     * TWO IS ALLOWED, not because two is intended, but because the strided
+     * placement can drop a second body inside a rectangle by coincidence and a
+     * test that forbade it would be pinning the arithmetic of the stride rather
+     * than the rule.
+     */
+    expect(guards, 'the whole roster was put in the room').toBeLessThanOrEqual(2);
+    expect(bodies.length, 'the fixture is too small to tell one from all').toBeGreaterThan(3);
+
+    // ═══ AND THE COUNT IS UNTOUCHED ═══
+    const withoutRoom = createWorld('delve-vault-guard');
+    withoutRoom.level.tiles.fill(TileCode.FLOOR);
+    const bare = populateDelve(
+      withoutRoom,
+      {
+        view: withoutRoom.level,
+        spawns: [{ x: 4, y: 4 }],
+        sites: new Map<string, string>(),
+      },
+      spec,
+      { level: 1, size: 1 },
+    );
+    expect(placed, 'the guard was an extra body rather than a moved one').toBe(bare);
+  });
+
   it('drops litter as it always did when the floor has no drawn room', () => {
     // A map with no vault system at all — an authored fixture, the arena — and
     // a floor that rolled no room both reach here, and neither is an error.
