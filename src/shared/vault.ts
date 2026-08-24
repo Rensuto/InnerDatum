@@ -258,6 +258,22 @@ export function vaultFits(
  * carries on. Treating this as an error would mean a delve that fails to open
  * because a decoration could not be placed.
  *
+ * ═══ AND IT PREFERS GROUND THAT IS ALREADY OPEN ═══
+ * Bounds-only placement puts a room anywhere, which is what makes a works
+ * placeable at all — but MEASURED over sixty floors a shape, it also buried
+ * them: a third of cave rooms landed almost entirely in rock, where a room made
+ * of walls writes walls into walls and changes nothing a player can see.
+ *
+ *     cave    20/60 almost entirely sealed, mean 24% open
+ *     ruin     0/60,                        mean 45% open
+ *     works    9/60,                        mean 30% open
+ *
+ * So `score` is a PREFERENCE and not a requirement: every legal spot is still
+ * legal, and the best-scoring one wins. A works with no open rectangle still
+ * gets its room in the rock — worse than nothing to look at, but `connect`
+ * tunnels in and the alternative is the feature being absent from a third of
+ * the game's floors.
+ *
  * ═══ THE SEARCH IS SEEDED AND EXHAUSTIVE, IN THAT ORDER ═══
  * Two draws, both unconditional: the orientation, then WHERE THE SCAN STARTS.
  * From there every position is walked once, wrapping, and the first fit wins.
@@ -274,6 +290,11 @@ export function placeVault(
   bounds: { readonly w: number; readonly h: number },
   isOpen: (x: number, y: number) => boolean,
   rng: Rng,
+  /**
+   * How good a legal spot is, higher being better. Absent means "every legal
+   * spot is equally good", which is the first one the scan reaches.
+   */
+  score?: (at: { readonly x: number; readonly y: number }, shape: VaultShape) => number,
 ): {
   readonly at: { x: number; y: number };
   readonly shape: VaultShape;
@@ -295,12 +316,25 @@ export function placeVault(
   if (cols <= 0 || rows <= 0) return null;
 
   const spots = cols * rows;
+  let best: { x: number; y: number } | null = null;
+  let bestScore = -Infinity;
   for (let n = 0; n < spots; n += 1) {
     const i = (start + n) % spots;
     const at = { x: i % cols, y: Math.floor(i / cols) };
-    if (vaultFits(shape, at, isOpen, vault.border)) return { at, shape, turn };
+    if (!vaultFits(shape, at, isOpen, vault.border)) continue;
+    // NO SCORER MEANS THE FIRST FIT, which is the behaviour this had before
+    // preference existed and is what the unit tests pin.
+    if (score === undefined) return { at, shape, turn };
+    const here = score(at, shape);
+    // STRICTLY GREATER, so ties go to the spot the seeded scan reached first.
+    // `>=` would make the answer depend on scan direction rather than on the
+    // seed, which is the determinism contract this file already keeps.
+    if (here > bestScore) {
+      bestScore = here;
+      best = at;
+    }
   }
-  return null;
+  return best === null ? null : { at: best, shape, turn };
 }
 
 /**

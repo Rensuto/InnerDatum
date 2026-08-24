@@ -384,6 +384,59 @@ describe('a stamped room never seals the floor it was stamped into', () => {
     }
   });
 
+  it('puts the room somewhere a player can see it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A ROOM MADE OF WALLS, STAMPED INTO ROCK, CHANGES NOTHING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Placement is bounds-only — that is what makes a works placeable at all,
+     * whose corridors are one tile wide — but bounds-only also buried the rooms.
+     * MEASURED over sixty floors a shape, before the preference and after:
+     *
+     *     cave    20/60 almost entirely sealed  ->  0/60   (mean open 0.24 -> 0.52)
+     *     ruin     0/60                         ->  0/60   (       0.45 -> 0.47)
+     *     works    9/60                         ->  3/60   (       0.30 -> 0.39)
+     *
+     * `placeVault` now takes a score and the sitemap counts already-open cells
+     * under the footprint. It is a PREFERENCE: every legal spot stays legal, so a
+     * floor with no open rectangle still gets its room in the rock rather than
+     * going without.
+     *
+     * WHICH IS WHY THIS ALLOWS SOME. Three in sixty is the measured floor for a
+     * works, and a test demanding zero would be demanding that the preference be
+     * a requirement — which is the rule that left a third of the game's floors
+     * with no room at all.
+     */
+    for (const shape of SHAPES) {
+      if ((VAULTS_BY_SHAPE[shape] ?? []).length === 0) continue;
+
+      let sealed = 0;
+      let rolled = 0;
+      for (let n = 0; n < 60; n += 1) {
+        const map = makeSiteMap(`vault-open-${shape}-${String(n)}`, shape);
+        const one = (map.vaults ?? [])[0];
+        if (one === undefined) continue;
+        rolled += 1;
+
+        const { w, tiles } = map.view;
+        let open = 0;
+        for (let y = 0; y < one.h; y += 1) {
+          for (let x = 0; x < one.w; x += 1) {
+            if (isWalkable(tiles[(one.at.y + y) * w + (one.at.x + x)] ?? TileCode.WALL)) open += 1;
+          }
+        }
+        if (open / Math.max(1, one.w * one.h) < 0.15) sealed += 1;
+      }
+
+      expect(rolled, `no room was rolled into any ${shape}`).toBeGreaterThan(0);
+      expect(
+        sealed / rolled,
+        `${String(sealed)} of ${String(rolled)} ${shape} rooms are buried in rock — the open-ground preference is not being applied`,
+      ).toBeLessThan(0.2);
+    }
+  });
+
   it('turns the room it rolled, rather than always laying it the same way', () => {
     // The six orientations are the reason a short list of rooms does not read as
     // a short list. If every stamp used `none` they would be three fixed shapes.

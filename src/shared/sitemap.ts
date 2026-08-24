@@ -418,6 +418,23 @@ export function makeSiteMap(
         y < H - MARGIN &&
         !(x === spawn.x && y === spawn.y),
       rng,
+      /**
+       * PREFER GROUND THAT IS ALREADY OPEN. A room made of walls, stamped into
+       * rock, writes walls into walls and changes nothing anybody can see — and
+       * measured over sixty floors a shape, a third of cave rooms landed exactly
+       * there. This counts how much of the footprint is already floor and lets
+       * the best spot win; every legal spot stays legal, so a works with no open
+       * rectangle still gets its room rather than none.
+       */
+      (spot, shape) => {
+        let open = 0;
+        for (let y = 0; y < shape.h; y += 1) {
+          for (let x = 0; x < shape.w; x += 1) {
+            if (at(g, spot.x + x, spot.y + y) === TileCode.FLOOR) open += 1;
+          }
+        }
+        return open;
+      },
     );
     // NULL IS AN ORDINARY ANSWER. A floor with no open patch big enough simply
     // does not get the room; see `placeVault`.

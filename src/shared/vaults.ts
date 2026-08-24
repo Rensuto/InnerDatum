@@ -83,6 +83,62 @@ const SEALED_SHAFT = defineVault(
 );
 
 /**
+ * A COLLAPSED GALLERY.
+ *
+ * The only room here with no straight line in it. Caves are dug and then they
+ * fall in, and a fall reads as a fall precisely because it is not square — the
+ * three built rooms above cannot say this and the cave generator cannot either,
+ * because noise makes texture rather than events.
+ *
+ * Open on both ends, so it is a passage that got worse rather than a dead end.
+ */
+const COLLAPSED_GALLERY = defineVault(
+  'vault:collapsed_gallery',
+  ['  ##   ', ' ##### ', '### ###', '##   ##', ' #  ## ', '  ###  '],
+  LEGEND,
+  { border: 1 },
+);
+
+/**
+ * A SUMP — a small chamber hung off one side of nothing.
+ *
+ * Three walls and a mouth. It is the cheapest possible "somewhere to put a
+ * thing", and that is the point: a floor needs a few places that are obviously
+ * FOR something, or every corner reads the same and a player stops looking in
+ * any of them.
+ */
+const SUMP = defineVault('vault:sump', ['####', '#  #', '#  #', '## #'], LEGEND, { border: 1 });
+
+/**
+ * A RUN OF SHELVING.
+ *
+ * Parallel walls with aisles between them — the one shape in the list that is
+ * about SIGHT rather than about walls. An archive is dangerous because you
+ * cannot see down the next aisle, and three parallel lines produce that in a way
+ * a block of rock never does. It is also the shape the six orientations change
+ * most: turned, the aisles run the other way and the whole approach changes.
+ */
+const SHELVING_RUN = defineVault(
+  'vault:shelving_run',
+  ['#######', '       ', '#######', '       ', '#######'],
+  LEGEND,
+  { border: 1 },
+);
+
+/**
+ * A CLERK'S BOX — one wall with a gap in it, and nothing else.
+ *
+ * The smallest room in the list and the only one that is not a room at all: it
+ * is a doorway with no building, which in a works reads as a partition somebody
+ * put up and somebody else walked through. It exists because a floor with only
+ * BIG set pieces has all its character in three places, and a small one can land
+ * where none of the others fit.
+ */
+const CLERKS_BOX = defineVault('vault:clerks_box', ['##.##', '#   #', '#####'], LEGEND, {
+  border: 1,
+});
+
+/**
  * WHICH ROOMS SUIT WHICH GROUND.
  *
  * A filing chamber in a cave would be a built room in a dug hole, and the point
@@ -92,13 +148,21 @@ const SEALED_SHAFT = defineVault(
  * among buildings, which is noise with extra steps.
  */
 export const VAULTS_BY_SHAPE: Readonly<Record<string, readonly Vault[]>> = {
-  cave: [SEALED_SHAFT, HALF_PARTITION],
-  ruin: [HALF_PARTITION, FILING_CHAMBER],
-  works: [FILING_CHAMBER, HALF_PARTITION, SEALED_SHAFT],
+  cave: [SEALED_SHAFT, HALF_PARTITION, COLLAPSED_GALLERY, SUMP],
+  ruin: [HALF_PARTITION, FILING_CHAMBER, COLLAPSED_GALLERY, CLERKS_BOX],
+  works: [FILING_CHAMBER, HALF_PARTITION, SEALED_SHAFT, SHELVING_RUN, CLERKS_BOX],
   town: [],
 };
 
 /** Every room, for the tests that must cover all of them. */
-export const ALL_VAULTS: readonly Vault[] = [FILING_CHAMBER, HALF_PARTITION, SEALED_SHAFT];
+export const ALL_VAULTS: readonly Vault[] = [
+  FILING_CHAMBER,
+  HALF_PARTITION,
+  SEALED_SHAFT,
+  COLLAPSED_GALLERY,
+  SUMP,
+  SHELVING_RUN,
+  CLERKS_BOX,
+];
 
 export { VaultTurn };
