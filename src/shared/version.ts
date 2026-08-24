@@ -432,6 +432,52 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (WHAT HIT YOU, AND HOW HARD). `DamageEvent` gains
+ * OPTIONAL `type` and `crit`, and PROTOCOL_VERSION STAYS 19.
+ *
+ * The change: the Case Log could not say what a blow was or whether it landed
+ * hard, so a critical hit from a Redacted's darkness read character-for-
+ * character like a graze off a husk — "7 damage. Dalt 41/58." Upstream logs
+ * "%d %s" and bolds a crit at the projector, for every source of damage in the
+ * game (damage_types.lua:496-501). Neither field is new information: `combat.ts`
+ * has computed both since M3, `Blow` dropped `type`, and `hitToWire` then
+ * dropped `crit` — a field-by-field mapper losing one field at each of two hops.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP, BY THE RULE THIS FILE ALREADY APPLIES ═══
+ * Every bump above argues that an old client would draw a LIE (6 -> 7, 9 -> 10,
+ * 11, 17), or draw NOTHING (18 -> 19), or show something indistinguishable from
+ * a bug (15 -> 16). A v19 client meeting a `damage` frame with two unknown keys
+ * ignores them — there is no `safeParse` on the outbound side, and unknown keys
+ * on a JS object are simply not read — and prints the exact line it printed
+ * yesterday. Nothing on screen becomes false, nothing goes missing, and no room
+ * behaves differently for two people standing in it.
+ *
+ * The nearest precedent is 15 -> 16, which bumped for a weaker reason than the
+ * others: a silently goldless purse "is indistinguishable from a broken drop
+ * table". This is not that. `money` was REQUIRED and its absence made a real
+ * number wrong; these are optional and their absence makes a true line shorter.
+ * A v19 client showing no damage types is a client that has never shown damage
+ * types, which is not a symptom anybody would report as a bug.
+ *
+ * ═══ AND THE COST OF BUMPING IS NOT ZERO ═══
+ * The gate is a hard refusal. This is a Discord Activity played in a voice
+ * channel, deployed live after every commit, so the clients a bump actually
+ * catches are the ones ALREADY IN A SESSION — friends mid-delve, told their
+ * client is out of date because the log gained an adjective. The gate exists to
+ * convert catastrophe into an honest refusal; spending it on an additive field
+ * teaches everyone to expect a refusal for no reason.
+ *
+ * If a later pass makes either field REQUIRED, or renders one in a way an
+ * absent value cannot fall back from, that pass bumps and this paragraph is the
+ * argument it has to answer.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Damage types have always been written into
+ * `content/` JSON as these same lowercase strings, and no saved character has
+ * ever held a damage event.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 18 -> 19 (WHO ARE YOU TONIGHT). `RosterMsg` is a new outbound frame,
  * `hello` gains `characterId` and `newCharacter`, and an account may now own
  * more than one character.

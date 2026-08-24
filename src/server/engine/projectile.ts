@@ -463,6 +463,19 @@ export type ProjectileImpact = {
   /** HP actually removed. */
   readonly damage: number;
   readonly killed: boolean;
+  /**
+   * WHAT KIND OF DAMAGE — a wraith's void blast is darkness, and the Case Log
+   * printed it as a bare number because this dropped it. `applyDamage` resolves
+   * the type and returns it on the outcome one line below; carrying it costs
+   * nothing and is the third hop in this chain that was losing it (`Blow` and
+   * `hitToWire` were the others).
+   *
+   * NO `crit` BESIDE IT, and that is not an oversight: the impact call passes no
+   * `critChance`, and `DamageSpec.critChance`'s contract is "absent → no crit
+   * and no draw". An orb genuinely cannot crit, so reporting one would be the
+   * invention these fields exist to prevent.
+   */
+  readonly type: DamageType;
   /** The victim's hp and tile the instant this landed — `GameEvent.attacked`'s rule. */
   readonly hp: number;
   readonly at: TileXY;
@@ -654,6 +667,7 @@ function projectDoStop(
     targetId: foe.id,
     damage: outcome.dealt,
     killed: outcome.killed,
+    type: outcome.type,
     // Read HERE, one line after the blow, and never again — `GameEvent.attacked`
     // has the Case Log transcript that produced that rule.
     hp: foe.hp,

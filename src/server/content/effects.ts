@@ -443,6 +443,12 @@ export const BLEEDING: EffectDef = Object.freeze({
         hp: actor.hp,
         maxHp: actor.maxHp,
         killed: outcome.killed,
+        // FROM THE OUTCOME, NOT FROM THE CONSTANT ABOVE. The projector applies
+        // resists and the source's own modifiers, and it is what the arithmetic
+        // actually resolved as — re-stating `DamageType.Physical` here would be
+        // a second copy of a fact one line away.
+        type: outcome.type,
+        crit: outcome.crit,
       });
     }
 

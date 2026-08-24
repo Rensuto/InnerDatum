@@ -108,6 +108,7 @@ import type { AiCtx } from '../ai/npc.ts';
 import type { World } from '../world/world.ts';
 import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
 import type { StatusApply, StatusHit } from './effects.ts';
+import type { DamageType } from '../../shared/damagetype.ts';
 import type { ActorMove, GuardCounter, TalentHit } from './talents.ts';
 import type { Projectile } from './projectile.ts';
 import type { Barrier, BellState, PartyScope } from './barrier.ts';
@@ -258,6 +259,8 @@ export type SweepStep =
       /** Did it connect? See `GameEvent.attacked.hit` — a miss is not a refusal. */
       readonly hit: boolean;
       readonly crit: boolean;
+      /** What kind of damage. See `Blow.type`. */
+      readonly type?: DamageType;
       /** The three numbers the Record lane prints. See `GameEvent.attacked`. */
       readonly atk?: number;
       readonly def?: number;
@@ -416,6 +419,8 @@ export type GameEvent =
        */
       readonly hit: boolean;
       readonly crit: boolean;
+      /** What kind of damage. See `Blow.type`. */
+      readonly type?: DamageType;
       /**
        * THE ARITHMETIC THE CASE LOG PRINTS VERBATIM — "Hits Bent Watchman (acc
        * 41 vs def 33, 70%)" (game-design.md § 11, combat.ts:174-181). They are
@@ -565,6 +570,9 @@ export type GameEvent =
       readonly hp: number;
       readonly maxHp: number;
       readonly killed: boolean;
+      /** What kind of damage the status dealt. See `Blow.type`. */
+      readonly type?: DamageType;
+      readonly crit: boolean;
     }
   /**
    * A player hit 0 HP and went DOWN, not dead — game-design.md § 9. The five
@@ -1453,6 +1461,8 @@ function resolveStatusHits(run: Run, sweepTurn: number | null): void {
       hp: hit.hp,
       maxHp: hit.maxHp,
       killed: hit.killed,
+      type: hit.type,
+      crit: hit.crit,
     });
 
     if (!hit.killed) continue;
@@ -2079,6 +2089,18 @@ type Blow = {
   /** False is a MISS. See `GameEvent.attacked.hit`. */
   readonly hit: boolean;
   readonly crit: boolean;
+  /**
+   * WHAT KIND OF DAMAGE. Dropped here for four milestones: `combat.ts`'s attack
+   * result has carried `type` since M3 and every mapping between it and the wire
+   * left it behind, so the Case Log printed "7 damage" for a Redacted's darkness
+   * and for a husk's fist alike. Upstream logs the type on every line
+   * (damage_types.lua:496-501).
+   *
+   * OPTIONAL, because the two blows that are not swings genuinely have none to
+   * report: a miss did no damage of any kind, and an orb's damage was frozen at
+   * the muzzle. Absent means "do not say", not "physical".
+   */
+  readonly type?: DamageType;
   /** Absent when no to-hit roll happened. See `GameEvent.attacked.atk`. */
   readonly atk?: number;
   readonly def?: number;
@@ -2232,6 +2254,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
           targetId: hit.targetId,
           hit: hit.hit,
           crit: hit.crit,
+          type: hit.type,
           damage: hit.damage,
           // CARRIED, NOT DROPPED. This mapping used to keep `damage` alone, and
           // a heal became a blow with `damage: 0, hit: true` — see `Blow.healed`.
@@ -2591,6 +2614,9 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
     targetId: target.id,
     hit: outcome.hit,
     crit: outcome.crit,
+    // CARRIED, NOT DROPPED — the same note `healed` earned on the talent map
+    // below. `combat.ts` has computed this since M3 and nothing passed it on.
+    type: outcome.type,
     atk: outcome.atk,
     def: outcome.def,
     chance: outcome.chance,
@@ -2745,6 +2771,10 @@ function actProjectile(proj: Projectile, run: Run): ActResult {
     targetId: impact.targetId,
     hit: true,
     crit: false,
+    // CARRIED. A wraith is the ranged kiter — "the reason positioning exists" —
+    // so its void blast is the damage a player most needs named, and it was the
+    // one blow in the game arriving as a bare number after the swings were fixed.
+    type: impact.type,
     damage: impact.damage,
     killed: impact.killed,
     hp: impact.hp,
@@ -3111,6 +3141,7 @@ function noteGuardCounter(
     targetId: counter.hit.targetId,
     hit: counter.hit.hit,
     crit: counter.hit.crit,
+    type: counter.hit.type,
     damage: counter.hit.damage,
     killed: counter.hit.killed,
     hp: victim?.hp ?? 0,

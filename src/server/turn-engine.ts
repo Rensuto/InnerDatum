@@ -34,6 +34,7 @@ import {
 } from '../shared/protocol.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type { LoadoutTalent, ResourceView, TurnEvent, UnlockableTree } from '../shared/protocol.ts';
+import type { DamageType } from '../shared/damagetype.ts';
 import { seedTestEncounter } from './content/encounter.ts';
 import { SLOT_ORDER } from './content/items.ts';
 import { isMoneyId } from './content/money.ts';
@@ -756,17 +757,11 @@ function toWireEvents(
         break;
       case 'attacked':
         out.push(
-          ...hitToWire(
-            world,
-            ev.id,
-            ev.targetId,
-            ev.hit,
-            ev.damage,
-            ev.killed,
-            ev.hp,
-            ev.at,
-            ev.healed,
-          ),
+          ...hitToWire(world, ev.id, ev.targetId, ev.hit, ev.damage, ev.killed, ev.hp, ev.at, {
+            healed: ev.healed,
+            crit: ev.crit,
+            type: ev.type,
+          }),
         );
         break;
       /**
@@ -851,6 +846,8 @@ function toWireEvents(
           hp: ev.hp,
           maxHp: ev.maxHp,
           ...(ev.sourceId === null ? {} : { sourceId: ev.sourceId }),
+          ...(ev.type === undefined ? {} : { type: ev.type }),
+          ...(ev.crit ? { crit: true } : {}),
         });
         if (ev.killed && world.getActor(ev.id)?.kind === ActorKind.Monster) {
           out.push({
@@ -1019,12 +1016,25 @@ function hitToWire(
   hp: number,
   at: TileXY,
   /**
-   * HP PUT BACK. Trailing and defaulted because exactly one of the three callers
-   * can produce it — the player lane's talent blows — and a monster sweep or a
-   * travelling orb has nothing to say here. See `Blow.healed`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE REST OF THE BLOW, BY NAME — AND IT WAS A POSITIONAL TAIL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `healed` was the eighth positional argument, defaulted, and one of the two
+   * callers simply stopped short of it. That is the shape that lost `crit`: a
+   * long positional list where a caller passing four of five is indistinguishable
+   * from a caller that meant to.
+   *
+   * `healed` — HP PUT BACK. Exactly one caller can produce it (the player lane's
+   *   talent blows); a monster sweep or a travelling orb has nothing to say.
+   *   See `Blow.healed`.
+   * `crit`  — computed since M3 and dropped HERE, so a critical hit read
+   *   character-for-character like a graze.
+   * `type`  — computed since M3 and dropped a hop earlier, in `Blow`.
    */
-  healed = 0,
+  extra: { healed?: number; crit?: boolean; type?: DamageType } = {},
 ): TurnEvent[] {
+  const healed = extra.healed ?? 0;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * A HEAL IS NOT A SWING: NO `attack` FRAME, AND THEREFORE NO SWING ANYWHERE.
@@ -1102,6 +1112,11 @@ function hitToWire(
     hp,
     maxHp: victim?.maxHp ?? 0,
     sourceId: attackerId,
+    // Both omitted rather than defaulted when the blow has nothing to say:
+    // absent means "do not name it", which is not the same as "physical" or
+    // "not a crit". See `DamageEvent.type`.
+    ...(extra.type === undefined ? {} : { type: extra.type }),
+    ...(extra.crit === true ? { crit: true } : {}),
   });
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1159,6 +1174,7 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
             step.killed,
             step.hp,
             step.at,
+            { crit: step.crit, type: step.type },
           ),
         );
         break;

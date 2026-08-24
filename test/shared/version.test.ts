@@ -116,7 +116,11 @@ describe('shared constants', () => {
       'utf8',
     );
 
-    const afterHeading = source.split('18 -> 19')[1] ?? '';
+    // THE FULL HEADING, NOT THE BARE NUMBERS. Entries cite each other — the
+    // "considered and not bumped" note below argues against its own case by
+    // pointing at "(18 -> 19)" — so splitting on the digits alone lands inside
+    // whichever paragraph mentions them first and reads the wrong entry.
+    const afterHeading = source.split('18 -> 19 (WHO ARE YOU TONIGHT)')[1] ?? '';
     // The entry ends where the constant it explains begins.
     const entry = afterHeading.split('export const PROTOCOL_VERSION')[0] ?? '';
 
@@ -128,6 +132,43 @@ describe('shared constants', () => {
     expect(entry).toContain('shop_buy');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
+    expect(entry).toContain('SCHEMA_VERSION');
+  });
+
+  it('argues the changes that did NOT bump, beside the ones that did', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE DISCIPLINE IS THE ARGUMENT, NOT THE NUMBER MOVING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The test above guards a bump's justification. This guards the other half,
+     * which is the easier one to lose: a change that touched the wire and was
+     * deliberately NOT bumped leaves no trace in the constant, so a later pass
+     * finds two optional fields on `DamageEvent`, no entry, and no way to tell
+     * whether the previous author thought about it or forgot.
+     *
+     * `DamageEvent.type` and `.crit` are that change. By this file's own rule a
+     * bump is forced when an old client draws a LIE or draws NOTHING; an older
+     * client here ignores two keys it cannot name and prints the line it printed
+     * before. Bumping anyway would hard-refuse friends who are mid-delve —
+     * clients are served fresh on every launch, so the only ones a bump catches
+     * are the ones already playing — because the log gained an adjective.
+     */
+    const source = readFileSync(
+      join(import.meta.dirname, '..', '..', 'src', 'shared', 'version.ts'),
+      'utf8',
+    );
+    const entry = source.split('CONSIDERED AND NOT BUMPED')[1]?.split('18 -> 19 (')[0] ?? '';
+
+    expect(entry.trim().length, 'no argument for the fields that did not bump').toBeGreaterThan(
+      200,
+    );
+    // It must name what it added, and say what makes the addition safe.
+    expect(entry).toContain('DamageEvent');
+    expect(entry, 'the reason it is safe is that the fields are optional').toContain('OPTIONAL');
+    // And it must say what a later pass would have to answer to bump — an entry
+    // that only says "no" is one the next author has to re-derive.
+    expect(entry).toContain('REQUIRED');
     expect(entry).toContain('SCHEMA_VERSION');
   });
 

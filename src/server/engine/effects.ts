@@ -79,6 +79,7 @@
  */
 
 import { ActorKind } from '../../shared/protocol.ts';
+import type { DamageType } from '../../shared/damagetype.ts';
 import { reentryHealFraction } from '../../shared/progression.ts';
 import { bound } from '../../shared/scale.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
@@ -616,6 +617,15 @@ export type StatusHit = {
   readonly hp: number;
   readonly maxHp: number;
   readonly killed: boolean;
+  /**
+   * WHAT KIND OF DAMAGE, so the log can say "5 physical" the way upstream does
+   * for every source of damage in the game (damage_types.lua:496-501). Optional
+   * for the same reason `Blow.type` is: absent means "do not say", never
+   * "physical".
+   */
+  readonly type?: DamageType;
+  /** True on a critical. A DoT can crit — `applyDamage` rolls one either way. */
+  readonly crit: boolean;
 };
 
 /** One line for the Case Log's Record lane. Terse and mechanical, by design. */

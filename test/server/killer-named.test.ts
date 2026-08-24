@@ -312,6 +312,30 @@ describe('a death in a room that resets', () => {
         mine.filter((e) => e['k'] === 'death'),
         'a DOWNED player was announced as permanently dead',
       ).toEqual([]);
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND EVERY BLOW SAYS WHAT KIND IT WAS.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The Case Log printed "7 damage. Dalt 41/58." for every source of damage
+       * in the game, so a critical hit from a Redacted's darkness was
+       * indistinguishable from a graze off a husk's fist. `combat.ts` has
+       * computed `type` and `crit` since M3 — `Blow` dropped the first and
+       * `hitToWire` dropped the second, one field per hop.
+       *
+       * ASSERTED HERE, over a real socket, because this is the ATTACK path: the
+       * unit tests next door drive a status, and the swing is the case that
+       * traverses `attackTarget -> Blow -> attacked -> hitToWire -> the wire`
+       * and had two chances to lose something on the way.
+       */
+      const hits = mine.filter((e) => e['k'] === 'damage' && Number(e['amount'] ?? 0) > 0);
+      expect(hits.length, 'nothing hit the player — the probe is not measuring').toBeGreaterThan(0);
+      const typed = hits.filter((e) => typeof e['type'] === 'string');
+      expect(
+        typed.length,
+        `a blow arrived with no type: ${JSON.stringify(hits.filter((e) => e['type'] === undefined))}`,
+      ).toBe(hits.length);
       expect(erasedEv.length, 'no `erased` event reached the client').toBeGreaterThan(0);
       // THE REASON IS THE WHOLE POINT: a timer erasure keeps its record and the
       // frame-driven plate still works for it. Only `wipe` is unreachable that

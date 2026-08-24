@@ -229,6 +229,32 @@ describe('a monster killed by a status', () => {
     expect(kinds, 'a DOWNED player was announced as permanently dead').not.toContain('death');
   });
 
+  it('says what kind of damage it was', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "7 damage" FOR EVERY BLOW IN THE GAME.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A critical hit from a Redacted's darkness read character-for-character
+     * like a graze off a husk's fist. `combat.ts`'s attack result has carried
+     * `type` and `crit` since M3; `Blow` dropped the first and `hitToWire`
+     * dropped the second — one field lost at each of two hops, which is why
+     * neither was ever missed.
+     *
+     * `DamageType`'s own docblock gave "the client's log renderer" as the reason
+     * its values are lowercase, and that described no code at all until the
+     * field existed to carry them.
+     */
+    const { engine } = stage();
+    const damage: { type?: string }[] = [];
+    for (let turn = 0; turn < 8; turn += 1) {
+      for (const ev of engine.pump().playerEvents) if (ev.k === 'damage') damage.push(ev);
+    }
+
+    expect(damage.length, 'no damage frame at all').toBeGreaterThan(0);
+    expect(damage[0]?.type, 'the blow does not say what kind it was').toBe('physical');
+  });
+
   it('pays the bleeder for the kill', () => {
     /**
      * A KILL PAYS THREE THINGS — the talent layer's `noteKill` (the Alchemist's

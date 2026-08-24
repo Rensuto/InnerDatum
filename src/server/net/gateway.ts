@@ -9763,8 +9763,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
              * and the absolute vitals). When it lands, "19 physical" goes here
              * and nothing else in this function changes.
              */
+            /**
+             * ═══════════════════════════════════════════════════════════════
+             * "%d %s" — UPSTREAM'S LINE, AND A CRIT THAT LOOKS LIKE ONE.
+             * ═══════════════════════════════════════════════════════════════
+             *
+             * This read "7 damage. Dalt 41/58." for every blow in the game, so
+             * a critical hit from a Redacted's darkness was indistinguishable
+             * from a graze off a husk's fist. Upstream logs the type on every
+             * damage line and renders a crit in bold, at the projector, for
+             * every source of damage there is (damage_types.lua:496-501).
+             *
+             * THE TYPE IS OMITTED WHEN THE FRAME DOES NOT CARRY ONE rather than
+             * defaulted to "physical". A miss and an orb frozen at the muzzle
+             * genuinely have nothing to say, and naming a type for them would
+             * be the invention this field exists to prevent.
+             *
+             * A CRIT IS MARKED WITH A WORD, NOT WITH WEIGHT. The Record lane is
+             * one monospace face with no bold — `depth` is the only formatting
+             * it has (ui/caselog.ts indents by it and nothing else) — so the
+             * emphasis upstream gets from `#{bold}#` has to be carried by the
+             * text or not at all. It is PARENTHETICAL because that is how this
+             * lane already says arithmetic: "(acc 41 vs def 33, 70%)".
+             */
             text:
-              `${Math.round(event.amount)} damage. ` +
+              `${Math.round(event.amount)}${event.type === undefined ? '' : ` ${event.type}`}` +
+              ` damage${event.crit === true ? ' (critical)' : ''}. ` +
               `${nameOf(event.id)} ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
             depth: 1,
           },

@@ -233,6 +233,7 @@
 import { z } from 'zod';
 
 import { DIR_ORDER } from './coords.ts';
+import type { DamageType } from './damagetype.ts';
 import { PROTOCOL_VERSION, ZOOM_MAX, ZOOM_MIN } from './version.ts';
 
 // ---------------------------------------------------------------------------
@@ -3658,6 +3659,35 @@ export type DamageEvent = {
   maxHp: number;
   /** Who dealt it, when there is an actor to blame. */
   sourceId?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IT WAS, AND WHETHER IT LANDED HARD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream logs "%d %s" and bolds a crit, at the projector, for every source
+   * of damage in the game (damage_types.lua:496-501). Ours printed a bare
+   * number, so a critical hit from a Redacted's darkness read character-for-
+   * character the same as a graze from a husk.
+   *
+   * NEITHER IS NEW INFORMATION. `combat.ts`'s attack result has carried both
+   * since M3; `Blow` dropped `type` and `hitToWire` then dropped `crit` — one
+   * field lost at each of two hops. `DamageType`'s docblock has always given
+   * "the client's log renderer" as the reason its values are lowercase, and
+   * that reason described no code until this field existed.
+   *
+   * BOTH OPTIONAL, and that is load-bearing rather than convenient: it is why
+   * this did NOT bump `PROTOCOL_VERSION`. A heal rides this frame too and
+   * neither field means anything for one, an older client ignores keys it
+   * cannot name and prints exactly the line it printed before, and a blow with
+   * nothing to report omits them rather than defaulting. Absent means "do not
+   * say" — never "physical", never "not a crit". src/shared/version.ts carries
+   * the full argument, including what a later pass would have to answer to make
+   * either field required.
+   */
+  type?: DamageType;
+  /** True on a critical hit. The log renders it differently; it is not a flag
+   * about the arithmetic, which the server has already done. */
+  crit?: boolean;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE BLOW WENT THE OTHER WAY: HP RESTORED, NOT REMOVED.
