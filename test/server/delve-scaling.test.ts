@@ -287,3 +287,71 @@ describe('a body in a delve carries what the party is worth', () => {
     expect(high).not.toEqual(low);
   });
 });
+
+describe('the room somebody drew is worth the detour', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A VAULT WITH NOTHING IN IT TEACHES A PLAYER NOT TO WALK INTO ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `shared/vault.ts` stamps a drawn room into every delve floor, and it was
+   * pure architecture: an interesting-looking chamber that paid nothing. One
+   * piece of the floor's litter goes inside it now.
+   *
+   * THE VAULT STILL DOES NOT DECIDE WHAT IS IN IT — see `shared/vaults.ts` on
+   * why upstream's per-tile object filters are not ported. The room says WHERE;
+   * this file still says WHAT, out of the same table with the same roll.
+   */
+  const ROOM = { id: 'vault:test', at: { x: 20, y: 20 }, turn: 'none', w: 4, h: 4 };
+
+  function litterTiles(vaults: AuthoredMap['vaults']): readonly { x: number; y: number }[] {
+    const world = createWorld('delve-vault-litter');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const map: AuthoredMap = {
+      view: world.level,
+      spawns: [{ x: 4, y: 4 }],
+      sites: new Map<string, string>(),
+      ...(vaults === undefined ? {} : { vaults }),
+    };
+    const spec = specFor('site:underworks');
+    if (spec === undefined) throw new Error('no spec');
+    populateDelve(world, map, spec, { level: 1, size: 1 });
+    return world.groundItems().map((item) => ({ x: item.x, y: item.y }));
+  }
+
+  const inside = (tile: { x: number; y: number }): boolean =>
+    tile.x >= ROOM.at.x &&
+    tile.y >= ROOM.at.y &&
+    tile.x < ROOM.at.x + ROOM.w &&
+    tile.y < ROOM.at.y + ROOM.h;
+
+  it('puts a piece of the floor litter inside the drawn room', () => {
+    const tiles = litterTiles([ROOM]);
+    expect(tiles.length, 'the fixture dropped no litter at all').toBeGreaterThan(0);
+    expect(
+      tiles.filter(inside).length,
+      `nothing landed in the room: ${JSON.stringify(tiles)}`,
+    ).toBeGreaterThan(0);
+  });
+
+  it('does not empty the rest of the floor into it', () => {
+    /**
+     * Everything in the drawn room would make the rest of the floor not worth
+     * walking, which is the opposite of the problem being fixed. `site:underworks`
+     * carries two to three pieces, so at least one must be elsewhere.
+     */
+    const tiles = litterTiles([ROOM]);
+    expect(tiles.length).toBeGreaterThan(1);
+    expect(
+      tiles.filter((tile) => !inside(tile)).length,
+      'the whole floor was in one room',
+    ).toBeGreaterThan(0);
+  });
+
+  it('drops litter as it always did when the floor has no drawn room', () => {
+    // A map with no vault system at all — an authored fixture, the arena — and
+    // a floor that rolled no room both reach here, and neither is an error.
+    const tiles = litterTiles(undefined);
+    expect(tiles.length, 'a floor with no room stopped dropping litter').toBeGreaterThan(0);
+  });
+});

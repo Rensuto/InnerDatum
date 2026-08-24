@@ -963,9 +963,49 @@ export function populateDelve(
   // Weir are `hidden`, carry the best litter counts on the map, and were paying
   // them at the level-1 band — so the reward for finding a secret was more of
   // the cheapest thing.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ROOM SOMEBODY DREW HAS SOMETHING IN IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `shared/vault.ts` stamps one drawn room into every delve floor, and until
+   * now it was pure architecture: a player walked into a filing chamber, found
+   * it empty, and learned that the interesting-looking room is not worth the
+   * detour. Upstream's vaults are worth finding — that is what makes them a
+   * feature rather than a tileset.
+   *
+   * ═══ THE VAULT STILL DOES NOT DECIDE WHAT IS IN IT ═══
+   * `shared/vaults.ts` says at length why upstream's per-tile object filters are
+   * not ported: rooms are populated HERE, from a weight, and a vault that also
+   * spawned things would be a second answer to "what is in this room". That rule
+   * is intact. The room says WHERE it is; this file still decides what lands
+   * there, out of the same table, with the same roll.
+   *
+   * ═══ ONE PIECE, NOT ALL OF THEM ═══
+   * Everything in the drawn room would make the rest of the floor not worth
+   * walking, which is the opposite of the problem being fixed. One is enough to
+   * make the detour pay, and the remainder are spread as they always were.
+   */
+  const room = map.vaults?.[0];
+  const inRoom =
+    room === undefined
+      ? []
+      : candidates.filter(
+          (tile) =>
+            tile.x >= room.at.x &&
+            tile.y >= room.at.y &&
+            tile.x < room.at.x + room.w &&
+            tile.y < room.at.y + room.h,
+        );
+
   const litter = world.rng.int('delve.litter', spec.litter[0], spec.litter[1]);
   for (let i = 0; i < litter; i += 1) {
-    const at = candidates[world.rng.int('delve.litter.at', 0, candidates.length - 1)];
+    // THE FIRST PIECE GOES IN THE ROOM WHEN THERE IS A ROOM TO PUT IT IN. A
+    // vault whose interior is entirely wall, or that `connect` never tunnelled
+    // into, contributes no candidates and this falls through to the floor —
+    // which is the same answer the game gave before there were rooms at all.
+    const from = i === 0 && inRoom.length > 0 ? inRoom : candidates;
+    const at = from[world.rng.int('delve.litter.at', 0, from.length - 1)];
     if (at === undefined) continue;
     const base =
       INDEX_HUSK.drops?.pick[

@@ -73,6 +73,14 @@ export type AuthoredMap = {
     readonly id: string;
     readonly at: TileXY;
     readonly turn: string;
+    /**
+     * The footprint AFTER the turn, so a reader never has to re-derive it. A
+     * quarter turn swaps width and height, and a consumer that looked the room
+     * up by id and forgot that would be testing the wrong rectangle — silently,
+     * and only for two of the six orientations.
+     */
+    readonly w: number;
+    readonly h: number;
   }[];
   /**
    * ═══════════════════════════════════════════════════════════════════════════
