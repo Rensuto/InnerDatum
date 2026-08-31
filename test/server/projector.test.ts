@@ -1305,6 +1305,9 @@ describe('the loadout projection loses no field', () => {
       radius: 0,
       level: 1,
       maxLevel: 5,
+      // The respec window's answer. Server-computed, absent means no — see
+      // `LoadoutTalent.unlearnable`.
+      unlearnable: false,
       desc: 'Always on.',
       descNext: null,
       tree: 'watch/the-line',

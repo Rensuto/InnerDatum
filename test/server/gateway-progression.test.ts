@@ -327,6 +327,21 @@ async function boot(seed: string): Promise<Harness> {
       sheet.points.set(talentId, next);
       return next;
     },
+    /**
+     * THE TAKE-BACK SEAM, copied from main.ts like the other three.
+     *
+     * Deliberately as short as the shipped one, and for its reason: there is no
+     * ladder to re-check on the way DOWN, so a copy that added one here would be
+     * testing a rule the server does not have.
+     */
+    lowerTalentPoint: (actorId: string, talentId: string): number | null => {
+      const sheet = talents.sheetOf(actorId);
+      const current = sheet?.points.get(talentId);
+      if (sheet === undefined || current === undefined || current < 1) return null;
+      const next = current - 1;
+      sheet.points.set(talentId, next);
+      return next;
+    },
     talentPointsOf: (actorId: string): Readonly<Record<string, number>> | undefined => {
       const sheet = talents.sheetOf(actorId);
       if (sheet === undefined) return undefined;
@@ -1241,5 +1256,129 @@ describe('a character comes back the size it logged off', () => {
     const body = bodyOf(await ren.hello('ren-handle'));
     expect(body.hp).toBe(body.maxHp);
     expect(body.maxHp).toBe(maxLifeFor(WATCHMAN.maxHp, WATCHMAN.lifeRating, 3, PLAYER_RANK, 0));
+  });
+});
+
+describe('a mis-clicked point can be taken back, for a little while', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE MIS-CLICKED `+` WAS PERMANENT, AND THAT IS WHY NOBODY EXPERIMENTED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * In a game where three friends are waiting in a voice channel, an
+   * irreversible mistake is not a hardcore rule — it is the reason nobody reads
+   * a talent properly and nobody tries anything. The cost of an error is the
+   * character; the cost of being careful is everyone's evening.
+   *
+   * Upstream's answer is a WINDOW, not an undo: the last four class or three
+   * generic spends, unwindable only somewhere quiet (Actor.lua:4773-4783,
+   * LevelupDialog.lua:343-360). These tests are mostly about what it REFUSES,
+   * because an unlimited refund would make a build a suggestion.
+   */
+  const CRUDE = 'talent:crude_blow';
+  const SHIN = 'talent:shin_crack';
+
+  async function watchmanWithPoints(seed: string, points = 6) {
+    server = await boot(seed);
+    playsThe(WATCHMAN);
+    const ren = await connect(server.port);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    body.unspentPoints = points;
+    await ren.settle();
+    return { ren, body };
+  }
+
+  it('gives back the point and the rank it just bought', async () => {
+    const { ren, body } = await watchmanWithPoints('unlearn-basic');
+    const before = body.unspentPoints;
+
+    ren.send({ t: 'spend_point', talentId: CRUDE });
+    await ren.settle();
+    const raised = server.talents.sheetOf(body.id)?.points.get(CRUDE) ?? 1;
+    expect(body.unspentPoints).toBe(before - 1);
+
+    ren.send({ t: 'unlearn', talentId: CRUDE });
+    await ren.settle();
+
+    expect(server.talents.sheetOf(body.id)?.points.get(CRUDE)).toBe(raised - 1);
+    expect(body.unspentPoints, 'the point did not come back').toBe(before);
+  });
+
+  it('refuses a talent that has fallen out of the window', async () => {
+    /**
+     * THE ASSERTION THE WHOLE FEATURE TURNS ON. Four later spends push the first
+     * one off the front of the ledger and it becomes permanent — which is what
+     * keeps a build a decision rather than a draft.
+     */
+    const { ren, body } = await watchmanWithPoints('unlearn-window', 12);
+    ren.send({ t: 'spend_point', talentId: CRUDE });
+    await ren.settle();
+    // Four more spends on a DIFFERENT talent, filling the four-deep class window.
+    for (let i = 0; i < 4; i += 1) {
+      ren.send({ t: 'spend_point', talentId: SHIN });
+      await ren.settle();
+    }
+    const rank = server.talents.sheetOf(body.id)?.points.get(CRUDE);
+    ren.clear();
+
+    ren.send({ t: 'unlearn', talentId: CRUDE });
+    await ren.settle();
+
+    expect(ren.last('error')?.['code']).toBe('refused');
+    expect(String(ren.last('error')?.['message'])).toMatch(/not one of your last few/i);
+    expect(server.talents.sheetOf(body.id)?.points.get(CRUDE), 'the rank came off anyway').toBe(
+      rank,
+    );
+  });
+
+  it('does not let one take-back refund two ranks', async () => {
+    // A ledger of SPENDS, not of talents: three ranks are three entries and each
+    // press returns one. A version keyed by talent id would drop a talent from 3
+    // to 0 and hand back three points for a single press.
+    const { ren, body } = await watchmanWithPoints('unlearn-one-rank');
+    for (let i = 0; i < 3; i += 1) {
+      ren.send({ t: 'spend_point', talentId: CRUDE });
+      await ren.settle();
+    }
+    const raised = server.talents.sheetOf(body.id)?.points.get(CRUDE) ?? 0;
+    const purse = body.unspentPoints;
+
+    ren.send({ t: 'unlearn', talentId: CRUDE });
+    await ren.settle();
+
+    expect(server.talents.sheetOf(body.id)?.points.get(CRUDE)).toBe(raised - 1);
+    expect(body.unspentPoints).toBe(purse + 1);
+  });
+
+  it('refuses a talent that is not in this body book at all', async () => {
+    const { ren } = await watchmanWithPoints('unlearn-foreign');
+    ren.clear();
+    ren.send({ t: 'unlearn', talentId: 'talent:not_in_any_book' });
+    await ren.settle();
+    expect(ren.last('error')?.['code']).toBe('bad_message');
+  });
+
+  it('tells the panel which ranks are open, and only those', async () => {
+    /**
+     * THE READOUT HALF. A verb with no affordance is a feature no player can
+     * reach, so the loadout carries the server's own answer and the panel draws
+     * a badge on it — the client has neither the ledger nor the realm kind and
+     * must not guess.
+     */
+    const { ren } = await watchmanWithPoints('unlearn-flag');
+    ren.send({ t: 'spend_point', talentId: CRUDE });
+    await ren.settle();
+
+    const rows = (ren.last('loadout')?.['talents'] ?? []) as {
+      id: string;
+      unlearnable?: boolean;
+    }[];
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.find((t) => t.id === CRUDE)?.unlearnable, 'no badge on the rank just bought').toBe(
+      true,
+    );
+    // AND NOT ON EVERYTHING ELSE. An always-true flag would satisfy the
+    // assertion above while telling the player they can refund their career.
+    expect(rows.filter((t) => t.unlearnable === true).map((t) => t.id)).toEqual([CRUDE]);
   });
 });

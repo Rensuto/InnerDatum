@@ -142,6 +142,8 @@
 import { BIRTH_TALENT_GRANTS } from '../../shared/progression.ts';
 import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { noteSpend } from '../../shared/respec.ts';
+import type { Purse } from '../../shared/respec.ts';
 import { readFile, readdir, rename } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -436,6 +438,26 @@ export type CharacterFile = {
    * instead of stranding them.
    */
   readonly spentStats?: Readonly<Record<string, number>>;
+  /**
+   * THE TAKE-BACK WINDOW — `last_learnt_talents` (Actor.lua:4773-4783).
+   *
+   * The last few talent spends, oldest first, per purse. See
+   * `src/shared/respec.ts`; the caps live there and are applied on write, so a
+   * file carrying a longer list is trimmed on load rather than trusted.
+   *
+   * OPTIONAL, SO `SCHEMA_VERSION` STAYS PUT. Every character file already on
+   * disk simply has no window open, which is exactly the state they were in
+   * before the feature existed — docs/data-schemas.md:48-49 on optional fields.
+   *
+   * IT IS PERSISTED RATHER THAN DERIVED because nothing else records the ORDER
+   * ranks were bought in, and the order IS the rule. A window that reset on
+   * reconnect would make the feature a lie on the one occasion it matters most:
+   * a player who logs off to think about a mis-click.
+   */
+  readonly lastLearnt?: {
+    readonly class?: readonly string[];
+    readonly generic?: readonly string[];
+  };
 
   // ═════════════════════════════════════════════════════════════════════════
   // ITEMS. TWO OPTIONAL FIELDS, AND AN ITEM IS NOTHING BUT ITS ID.
@@ -940,6 +962,26 @@ export type CharacterInit = {
    */
   readonly spentStats?: Readonly<Record<string, number>>;
   /**
+   * THE TAKE-BACK WINDOW — `last_learnt_talents` (Actor.lua:4773-4783).
+   *
+   * The last few talent spends, oldest first, per purse. See
+   * `src/shared/respec.ts`; the caps live there and are applied on write, so a
+   * file carrying a longer list is trimmed on load rather than trusted.
+   *
+   * OPTIONAL, SO `SCHEMA_VERSION` STAYS PUT. Every character file already on
+   * disk simply has no window open, which is exactly the state they were in
+   * before the feature existed — docs/data-schemas.md:48-49 on optional fields.
+   *
+   * IT IS PERSISTED RATHER THAN DERIVED because nothing else records the ORDER
+   * ranks were bought in, and the order IS the rule. A window that reset on
+   * reconnect would make the feature a lie on the one occasion it matters most:
+   * a player who logs off to think about a mis-click.
+   */
+  readonly lastLearnt?: {
+    readonly class?: readonly string[];
+    readonly generic?: readonly string[];
+  };
+  /**
    * ITEMS, PASSED STRAIGHT THROUGH — including the absence.
    *
    * Unlike the four progression fields, these are NOT defaulted on the way in.
@@ -1048,6 +1090,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     unspentPoints: init.unspentPoints ?? unspentFromLedger(level, talentPoints),
     talentPoints,
     spentStats,
+    lastLearnt: init.lastLearnt,
     // NO `??` ON THESE THREE, AND THAT IS THE POINT. An undefined here is
     // written as an undefined, `JSON.stringify` omits the key, and a file that
     // says nothing about items stays a file that says nothing about items.
@@ -1256,6 +1299,34 @@ function parseSpentStats(value: unknown): Record<string, number> | undefined {
     if (points > 0) out[key] = points;
   }
   return Object.keys(out).length === 0 ? undefined : out;
+}
+
+/**
+ * The take-back window, read back off disk.
+ *
+ * REPAIR, NEVER REJECT, exactly as `parseSpentStats` above: a non-object is
+ * dropped, a non-string entry is skipped, and a list longer than the cap is
+ * TRIMMED FROM THE FRONT rather than refused — a hand-edited file must not be
+ * able to hand somebody an unlimited respec, and it must not cost them their
+ * character either.
+ *
+ * The trim uses `noteSpend`, so the cap lives in exactly one place
+ * (`shared/respec.ts`) and a file written by a build with a wider window
+ * narrows on load instead of being trusted.
+ */
+function parseLastLearnt(value: unknown): { class: string[]; generic: string[] } | undefined {
+  if (!isRecord(value)) return undefined;
+  const read = (raw: unknown, purse: Purse): string[] => {
+    if (!Array.isArray(raw)) return [];
+    let out: string[] = [];
+    for (const entry of raw) {
+      if (typeof entry !== 'string' || entry.length === 0) continue;
+      out = noteSpend(out, entry, purse);
+    }
+    return out;
+  };
+  const out = { class: read(value['class'], 'class'), generic: read(value['generic'], 'generic') };
+  return out.class.length === 0 && out.generic.length === 0 ? undefined : out;
 }
 
 function parseTalentPoints(value: unknown, problems: string[]): Record<string, number> {
@@ -1898,6 +1969,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
   // spent. `parseTalentPoints` is not reused because its floor is the BIRTH rank
   // of a talent, and an attribute's floor is simply zero.
   const spentStats = parseSpentStats(doc.spentStats);
+  const lastLearnt = parseLastLearnt(doc.lastLearnt);
   const unspentPoints = parseUnspentPoints(doc.unspentPoints, level, talentPoints, problems);
 
   // ═══ AND ORDER MATTERS BETWEEN THESE TWO, FOR A DIFFERENT REASON ═══
@@ -1927,6 +1999,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       unspentPoints,
       talentPoints,
       spentStats,
+      lastLearnt,
       // NAMED WITH THEIR UNDEFINED INTACT. These three are the only fields here
       // that may legitimately be `undefined`, and writing them anyway is what
       // keeps the key SET identical between `createCharacterFile` and this
@@ -2139,6 +2212,7 @@ export function serialiseCharacter(file: CharacterFile): string {
     // (`filed` and `explored`), so the round-trip test covering it is not
     // optional for a third.
     spentStats: file.spentStats,
+    lastLearnt: file.lastLearnt,
     explored: file.explored,
     layoutRevision: file.layoutRevision,
     exploredElsewhere: file.exploredElsewhere,
@@ -3151,6 +3225,11 @@ type Binding = {
   readonly talentPoints: Readonly<Record<string, number>>;
   /** What the file said had been spent on attributes when it was opened. */
   readonly spentStats?: Readonly<Record<string, number>>;
+  /** And the take-back window it was carrying. `shared/respec.ts`. */
+  readonly lastLearnt?: {
+    readonly class?: readonly string[];
+    readonly generic?: readonly string[];
+  };
   /**
    * ═══ THE PURSE JOINS THE REQUIRED FOUR, NOT THE OPTIONAL THREE ═══
    * It is world-given state that the engine changes under the player, like a
@@ -3274,6 +3353,8 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // forward what the file held when it was opened, so a body that has spent
       // nothing this session does not overwrite what a previous one spent.
       spentStats: snapshot.spentStats ?? binding.spentStats,
+      // The take-back window, on the same snapshot-wins rule.
+      lastLearnt: snapshot.lastLearnt ?? binding.lastLearnt,
       // THE SAME RULE ONE MORE TIME. A producer that cannot say what somebody
       // is carrying must not write the birth purse over an evening's takings.
       money: snapshot.money ?? binding.money,
@@ -3419,6 +3500,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // carried forward AS an absence, so a character who has never spent a
       // point produces no key rather than an assertion that they spent none.
       spentStats: file?.spentStats,
+      lastLearnt: file?.lastLearnt,
       money: file?.money ?? BIRTH_MONEY,
       // NO `??` AND NO DEFAULT: an absent inventory is carried forward AS an
       // absence, so `fileFor` leaves the key off the file rather than asserting
@@ -3480,6 +3562,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // THE RAW SPENDS. The gateway derives `unspentStatPoints` from them and the
       // character's level — see `restoreProgression`.
       spentStats: file.spentStats,
+      lastLearnt: file.lastLearnt,
       money: file.money,
       // ═══ AND THE LOADOUT COMING BACK — THE OTHER HALF, AGAIN ═══
       // `fileFor` above now writes the live bag to disk. A load that did not

@@ -549,6 +549,16 @@ export type TalentCell = {
    */
   readonly canSpend: boolean;
   /**
+   * MAY THIS RANK BE TAKEN BACK RIGHT NOW? The server's answer, carried whole.
+   *
+   * NOT COMPUTED HERE, and it could not be: the rule turns on the ORDER ranks
+   * were bought in (the last four class / three generic spends) and on what
+   * kind of realm the body is standing in, and the client has neither fact. A
+   * panel that guessed would draw a `-` the server then refuses, which reads as
+   * a broken button rather than as a rule. See `LoadoutTalent.unlearnable`.
+   */
+  readonly canUnlearn: boolean;
+  /**
    * WHY THE NEXT POINT CANNOT GO HERE, in the server's own words — or null.
    *
    * ═══ A GREY BUTTON WITHOUT THIS IS WORSE THAN A LIVE ONE ═══
@@ -875,6 +885,9 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       (isGenericTree(talent.tree ?? '') ? generics : unspent) > 0 &&
       talent.level < talent.maxLevel &&
       talent.locked !== true,
+    // ABSENT MEANS NO, which is what every client believed before the field
+    // existed and is why the server may omit it.
+    canUnlearn: talent.unlearnable === true,
     lockedReason: talent.locked === true ? (talent.lockedReason ?? 'Not yet.') : null,
     // `?? []` — absent means a server that does not send them, and the pane then
     // shows exactly what it showed before this existed.
@@ -1009,6 +1022,9 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         // so the `+` is live exactly when a category point is in hand, whatever
         // the talent's own rank or tier would say.
         canSpend: purse > 0,
+        // A LOCKED TREE HAS NOTHING TO TAKE BACK. Its ranks were never bought,
+        // so no spend of theirs is in the ledger and the server would refuse.
+        canUnlearn: false,
         /**
          * NO REQUIREMENT LIST ON A TREE YOU DO NOT OWN. The only thing standing
          * between the player and these icons is the DISCIPLINE — a category
@@ -1371,6 +1387,12 @@ const STAT_ROW_H = 14;
 const STAT_PLUS_PX = 11;
 
 /**
+ * The take-back badge, in pixels. Deliberately smaller than `STAT_PLUS_PX`:
+ * this is the rarest control on the screen and the only destructive one.
+ */
+const MINUS_PX = 10;
+
+/**
  * Where each attribute row lands inside the column.
  *
  * ONE FUNCTION, TWO READERS — the painter and the hit test — which is this
@@ -1394,6 +1416,28 @@ export function statRowRects(box: PanelRect): readonly PanelRect[] {
 }
 
 /** The `+` inside a row, which is the only part of it that is pressable. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TAKE-BACK CORNER OF AN ICON. LevelupDialog.lua's `minus`, placed.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A SMALL TARGET IN THE TOP-LEFT, and the smallness is the design rather than a
+ * compromise. `talentPanelHitAt` states the panel's rule — *"five plus-buttons
+ * inside a 176-pixel strip would each be a small target beside a large one, and
+ * the wrong one is always the easy press"* — and that argument is about two
+ * controls competing for the SAME action. Here the two actions are opposites,
+ * and the risk runs the other way: the common one (arm, then spend) must stay
+ * the whole icon, and the rare one must be deliberate. A player cannot take a
+ * rank back by fumbling a spend.
+ *
+ * TOP-LEFT because the rank counter is centred UNDER the icon and the ring is
+ * drawn around it; the upper corners are the only quiet pixels a badge can have
+ * without covering something a player reads.
+ */
+export function talentMinusRect(icon: PanelRect): PanelRect {
+  return { x: icon.x - 2, y: icon.y - 2, w: MINUS_PX, h: MINUS_PX };
+}
+
 export function statPlusRect(row: PanelRect): PanelRect {
   return {
     x: row.x + row.w - STAT_PLUS_PX,
@@ -1751,6 +1795,12 @@ export const TalentHitKind = {
   Close: 'close',
   /** A row's `+`. The caller runs it through `pressSpend`. */
   Spend: 'spend',
+  /**
+   * THE `-` ON AN ICON — take one rank back. Only ever produced for a cell the
+   * SERVER marked `unlearnable`, so the panel cannot offer a refund the server
+   * will refuse.
+   */
+  Unlearn: 'unlearn',
   /** Somewhere on a talent row, but not on its `+`. Cosmetic — it hovers. */
   Row: 'row',
   /**
@@ -1774,6 +1824,17 @@ export type TalentHit =
   | { readonly kind: typeof TalentHitKind.Close }
   | {
       readonly kind: typeof TalentHitKind.Spend;
+      readonly index: number;
+      readonly talentId: string;
+    }
+  | {
+      /**
+       * CARRIES AN `index` LIKE `Spend` DOES, and it has to: main.ts's hover
+       * block reads `hit.index` for every kind except `Close`, and a variant
+       * without one stops that line compiling. See the `Header` note below,
+       * which is the same constraint that forced a whole second reader.
+       */
+      readonly kind: typeof TalentHitKind.Unlearn;
       readonly index: number;
       readonly talentId: string;
     }
@@ -1950,6 +2011,16 @@ export function talentPanelHitAt(
        * spend and a press on any other is an arm. That is the same safety the
        * old `+` had, on a bigger target.
        */
+      /**
+       * THE TAKE-BACK CORNER IS TESTED FIRST, and it has to be: it is carved
+       * OUT of the icon's own box, so a fall-through to the icon would make the
+       * badge unreachable. It needs no arm/confirm of its own — the two-press
+       * rule exists because a spend is irreversible, and this is the thing that
+       * makes one reversible.
+       */
+      if (cell.canUnlearn && inside(talentMinusRect(box))) {
+        return { kind: TalentHitKind.Unlearn, index: n, talentId: cell.id };
+      }
       return cell.id === armedId && cell.canSpend
         ? { kind: TalentHitKind.Spend, index: n, talentId: cell.id }
         : { kind: TalentHitKind.Row, index: n };
@@ -2518,6 +2589,38 @@ function drawRow(
         drawRowRing(ctx, box, armed ? 2 : 1);
 
         drawTalentIcon(ctx, sprites, cell.icon, cell.name, box, ink);
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * THE TAKE-BACK BADGE — drawn only on what the SERVER says is open.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * A filled square with a bar through it, because a bare `-` glyph at
+         * ten pixels is indistinguishable from a stray line on the ring. The
+         * fill is what makes it read as a control, and it is drawn OVER the
+         * icon's own corner so it cannot be mistaken for part of the art.
+         *
+         * ═══ THE FORM CARRIES IT, NOT THE COLOUR ═══
+         * The obvious choice was CRIMSON and it is FORBIDDEN:
+         * `test/client/assets.test.ts` reserves it for "hostiles are engaged"
+         * and nothing else, and reserves VIOLET_HI for the missing-asset box.
+         * The same rule (`ui/partypanel.ts:78-92`) says a state must never be
+         * carried by colour ALONE anyway — so this is the only FILLED BLOCK on
+         * any icon in the grid, which is what distinguishes it in greyscale, at
+         * a glance, and for a player who cannot separate red from green.
+         *
+         * SLATE, which the grid already uses for "you cannot press this", with a
+         * PARCHMENT bar over it. Quiet on purpose: it is the rarest control on
+         * the screen and it should not compete with fourteen icons a player is
+         * actually choosing between.
+         */
+        if (cell.canUnlearn) {
+          const minus = talentMinusRect(box);
+          ctx.fillStyle = PALETTE.SLATE;
+          ctx.fillRect(minus.x, minus.y, minus.w, minus.h);
+          ctx.fillStyle = PALETTE.PARCHMENT;
+          ctx.fillRect(minus.x + 2, minus.y + Math.floor(minus.h / 2), minus.w - 4, 1);
+        }
 
         // `n/max`, centred under the icon — TalentTrees.lua:429-433, with
         // LevelupDialog.lua:537-549's three-way colour split on this palette.

@@ -797,6 +797,43 @@ export type PlayerActor = ActorCommon & {
   unspentStatPoints: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * THE LAST FEW TALENTS THIS BODY LEARNT — `last_learnt_talents`, Actor.lua:4773.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * function _M:lastLearntTalentsMax(what)
+   *   if self:attr("infinite_respec") then return 99999 end
+   *   return what == "generic" and 3 or 4
+   * end
+   *
+   * function _M:capLastLearntTalents(what)
+   *   local list = self.last_learnt_talents[what]
+   *   while #list > max do table.remove(list, 1) end     -- trimmed from the FRONT
+   * end
+   * ```
+   *
+   * OLDEST FIRST, newest last, capped per category — four class, three generic.
+   * A spend pushes; the cap drops the oldest. So the window is "the last few
+   * things you did", which is exactly the mistake a take-back is for, and it can
+   * never become "unwind the whole build".
+   *
+   * ═══ WHY A LEDGER AND NOT A DERIVED ANSWER ═══
+   * Nothing else in the save records the ORDER talents were learnt in.
+   * `TalentSheet.points` is a map of id to rank — it knows a body has Iron
+   * Curtain at 3 and says nothing about whether that third rank was bought this
+   * level or twenty levels ago. The order IS the feature, so it has to be
+   * stored.
+   *
+   * ═══ IT IS A LEDGER OF SPENDS, NOT OF TALENTS ═══
+   * The same id appears once per rank bought. Buying Iron Curtain three times
+   * puts it in three times, and unlearning pops one rank at a time — otherwise a
+   * single take-back would refund three points and drop a talent from 3 to 0,
+   * which is not what the player did and not what upstream does
+   * (`unlearnTalent` is one rank).
+   */
+  lastLearnt: { class: string[]; generic: string[] };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * GOLD. A WHOLE NUMBER, NEVER NEGATIVE, AND NOT A DERIVED VALUE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1294,6 +1331,10 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     // has been granted nothing yet (`statPointsForLevel` answers 0 at 1), and
     // the class sheet is where their starting attributes already live.
     unspentStatPoints: 0,
+    // EMPTY, AND FRESH PER BODY. A shared literal here would give every
+    // character in the process one ledger — `Object.freeze`'s absence is the
+    // point, these two arrays are written to.
+    lastLearnt: { class: [], generic: [] },
     money: STARTING_MONEY,
     pendingLevels: 0,
     cooldowns: new Map<string, number>(),

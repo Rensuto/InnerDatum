@@ -1503,6 +1503,50 @@ export function buildServer() {
     },
 
     /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE SAME POINT BACK OUT — `Actor:unlearnTalent`, ONE RANK.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The mirror of `raiseTalentPoint`, and deliberately a much shorter
+     * function, because THE LADDER IS NOT RE-CHECKED ON THE WAY DOWN. A tier
+     * gate answers "may this body reach rank N"; a body going from 3 to 2 is
+     * not reaching for anything, and asking would refuse a refund to exactly
+     * the player who most needs one — somebody who bought a rank and then took
+     * off the coat whose Willpower qualified them for it. Upstream does not ask
+     * either: `LevelupDialog.lua:399` calls `unlearnTalent` outright and only
+     * re-checks `canLearnTalent` afterwards to decide whether to put it BACK.
+     *
+     * ═══ IT WILL NOT TAKE A RANK BELOW ONE ═══
+     * A talent at rank 0 is one the class owns and has not bought; rank 1 is
+     * the cheapest thing a player can hold. Refusing at the floor is what keeps
+     * "known" a real predicate — `treeKnown` above counts `rank >= 1`, so a
+     * talent refunded to 0 correctly stops satisfying anybody's depth
+     * requirement, and stepping below 0 would make that count nonsense.
+     *
+     * BIRTH TALENTS ARE NOT PROTECTED HERE, and they do not need to be: they
+     * were never SPENT, so they are not in the ledger the gateway checks
+     * against, and the gateway refuses anything the ledger does not name.
+     *
+     * @returns the NEW raw level, or null when there is no sheet, no such
+     *   talent on it, or nothing left to take back. Re-derived from the sheet
+     *   rather than echoing an argument, exactly as the raise half is.
+     */
+    lowerTalentPoint: (actorId: string, talentId: string): number | null => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return null;
+      const current = sheet.points.get(talentId);
+      if (current === undefined || current < 1) return null;
+      const next = current - 1;
+      sheet.points.set(talentId, next);
+      // AND IF THAT WAS A PASSIVE, IT IS NOW WORTH LESS. The same unconditional
+      // call the raise half makes, for the same reason — and this direction is
+      // the one that would leave a player permanently holding the benefit of a
+      // refunded rank if it were forgotten.
+      refreshPassives(actorId);
+      return next;
+    },
+
+    /**
      * THE PUBLIC NAME FOR `refreshPassives`, and the only reason it is a seam:
      * spending Constitution changes a hit-point ceiling that net/** cannot
      * compute for itself. See `TurnEngine.refreshBody` for the whole argument.

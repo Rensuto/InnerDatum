@@ -6564,6 +6564,30 @@ async function boot(): Promise<void> {
   }
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TAKE ONE RANK BACK. The badge's press.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * NO ARM/CONFIRM, and its absence is the point. `pressSpend` owns the
+   * two-press rule because a spend is irreversible and says so in the sentence
+   * it shows in between; this is the control that makes one reversible. Asking
+   * a player to confirm an undo twice is asking them to confirm the thing they
+   * are already confirming.
+   *
+   * IT CLEARS THE ARM, though. A player who armed an icon and then pressed its
+   * badge has changed their mind about spending, and leaving a live arm behind
+   * would mean their next press anywhere on that icon buys the rank they just
+   * took back.
+   */
+  function pressTalentMinus(talentId: string): void {
+    talentsArmedId = null;
+    if (!socket.send({ v: PROTOCOL_VERSION, t: 'unlearn', talentId })) {
+      showNotice('not connected — that did not go out');
+    }
+    requestDraw();
+  }
+
+  /**
    * The panel cell for a talent id, or null.
    *
    * WALKS THE ROWS THE PANEL IS ACTUALLY DRAWING rather than the frames behind
@@ -10465,6 +10489,14 @@ async function boot(): Promise<void> {
       if (hit !== null && hit.kind === TalentHitKind.Spend) {
         event.preventDefault();
         pressTalentPlus(hit.talentId);
+        return;
+      }
+      // THE TAKE-BACK BADGE, above the Row branch for the Spend branch's own
+      // reason: a press that changes a rank must never also be read as a press
+      // that merely points at something.
+      if (hit !== null && hit.kind === TalentHitKind.Unlearn) {
+        event.preventDefault();
+        pressTalentMinus(hit.talentId);
         return;
       }
       // AN ATTRIBUTE'S `+`, ABOVE THE ROW BRANCH BELOW for the reason the grid's

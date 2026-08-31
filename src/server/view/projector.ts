@@ -805,6 +805,13 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     // `projectResource`, which now has a test that says so.
     ...(talent.sustained === undefined ? {} : { sustained: talent.sustained }),
     /**
+     * THE TAKE-BACK ANSWER, and it very nearly became the FOURTH field this
+     * function dropped in silence. `projector.test.ts`'s key-set comparison is
+     * what caught it — the guard the note above says was added for exactly this
+     * — before the panel could ship a `-` that never appeared.
+     */
+    ...(talent.unlearnable === undefined ? {} : { unlearnable: talent.unlearnable }),
+    /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE TIER GATE — DROPPED HERE UNTIL NOW, AND IT COST THE WHOLE FEATURE.
      * ═══════════════════════════════════════════════════════════════════════

@@ -1049,6 +1049,27 @@ export type LoadoutTalent = {
    */
   maxLevel: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MAY THIS RANK BE TAKEN BACK RIGHT NOW? — LevelupDialog.lua:343-360.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * True only when this talent is inside the take-back window (the last four
+   * class or three generic spends) AND the body is somewhere quiet. Both halves
+   * are the SERVER's answer; the panel draws a `−` on it and sends `unlearn`.
+   *
+   * ═══ COMPUTED SERVER-SIDE FOR THE REASON EVERY OTHER FIELD HERE IS ═══
+   * The client has no ledger — it never sees what order anything was learnt in,
+   * and it must not, because that is the whole state the rule turns on. A panel
+   * that guessed would offer a `−` the server then refuses, and a button that
+   * fails reads as a broken game rather than as a rule.
+   *
+   * ═══ OPTIONAL, SO NO VERSION BUMP ═══
+   * Absent means "no", which is exactly what every client before this field
+   * existed already believed. See `shared/version.ts` on why an added outbound
+   * field is not a bump.
+   */
+  unlearnable?: boolean;
+  /**
    * WHAT THIS TALENT DOES AT `level`, AS A SENTENCE, RENDERED SERVER-SIDE.
    *
    * ═══ A STRING, NOT A BAG OF NUMBERS, AND NOT NEGOTIABLE ═══
@@ -2709,6 +2730,37 @@ const SpendPointSchema = z.strictObject({
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * `unlearn` — "TAKE THAT LAST POINT BACK." The other half of `spend_point`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONE RANK, ONE TALENT, NO AMOUNT — `spend_point`'s shape exactly, and for its
+ * reason: an amount is a decision the client would be making on the player's
+ * behalf, and a mis-typed one is unrecoverable in the direction that matters.
+ *
+ * ═══ IT IS NOT AN UNDO, IT IS A WINDOW ═══
+ * The server refuses anything outside the last four class / three generic
+ * spends (`shared/respec.ts`, Actor.lua:4773-4783), and refuses it anywhere but
+ * a quiet place. `spend_point` is still a one-way door for everything older
+ * than the window, which is what keeps a build a decision.
+ *
+ * ═══ NO VERSION BUMP, AND THE RULE IS THIS FILE'S OWN ═══
+ * A new INBOUND verb is one a v19 client never sends, and the optional
+ * `unlearnable` on `LoadoutTalent` is one it ignores. `shared/version.ts` states
+ * it at every bump since 2 -> 3: *"an old client ignores a frame it does not
+ * know"*. Nothing an existing client renders changes shape or meaning.
+ *
+ * NON-PUMPING, with `inspect`, `choose_class`, `spend_point` and `spend_stat`.
+ * A refund must not buy the sender a free monster turn any more than a spend
+ * does.
+ */
+const UnlearnSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('unlearn'),
+  talentId: z.string().min(1).max(TALENT_ID_MAX_CHARS),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * `spend_stat` — "PUT MY NEXT ATTRIBUTE POINT INTO THIS ONE." The v19 verb.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -3437,6 +3489,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   ChooseClassSchema,
   DeleteCharacterSchema,
   SpendPointSchema,
+  UnlearnSchema,
   SpendStatSchema,
   PickupSchema,
   EquipSchema,
@@ -3470,6 +3523,7 @@ export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
 export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
 export type ClientSpendPoint = z.infer<typeof SpendPointSchema>;
+export type ClientUnlearn = z.infer<typeof UnlearnSchema>;
 export type ClientSpendStat = z.infer<typeof SpendStatSchema>;
 export type ClientPickup = z.infer<typeof PickupSchema>;
 export type ClientEquip = z.infer<typeof EquipSchema>;

@@ -355,6 +355,13 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // grow the set of things the barrier can be made to wait for.
       'talk',
       'unequip',
+      // THE TAKE-BACK. The second destructive verb the client has, and listed
+      // here for `delete_character`'s reason — so it stays a thing somebody had
+      // to decide rather than a thing that appeared. It is bounded on the server
+      // (the last four class / three generic spends, and only somewhere quiet)
+      // and the panel draws its badge only on what the server marked, so the
+      // client cannot offer a refund that will be refused.
+      'unlearn',
       // BUYING A LOCKED DISCIPLINE, and it is its own verb rather than a branch
       // of spend_point because the three currencies do not convert — a frame
       // that sometimes cost the scarcest one would eventually cost it by

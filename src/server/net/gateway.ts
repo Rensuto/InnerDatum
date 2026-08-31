@@ -58,6 +58,8 @@ import websocket from '@fastify/websocket';
 
 import { bearingWord, inBounds, step } from '../../shared/coords.ts';
 import { RestStop, restStopText } from '../../shared/rest.ts';
+import { dropSpend, noteSpend, unlearnableAt } from '../../shared/respec.ts';
+import type { Purse } from '../../shared/respec.ts';
 import type { RestResult } from '../../shared/rest.ts';
 import {
   ActorKind,
@@ -301,6 +303,7 @@ import type {
   ClientSetKeybinds,
   ClientSetZoom,
   ClientSpendPoint,
+  ClientUnlearn,
   ClientSpendStat,
   ClientTalent,
   ClientUnequip,
@@ -1099,6 +1102,22 @@ export type TurnEngine = {
     talentId: string,
   ): number | { readonly refused: string } | null;
   /**
+   * TAKE ONE RANK BACK — the mirror of the seam above, and the write half of
+   * the respec window.
+   *
+   * IT IS NOT AN AUTHORISATION. `handleUnlearn` has already decided, from the
+   * body's own ledger and the realm it is standing in, that this rank may be
+   * taken back. This is the WRITE — and, like the raise, it re-derives the
+   * level it reports from the sheet so a caller cannot invent one.
+   *
+   * NO `{ refused }` ARM, unlike the raise. Every reason to say no lives in the
+   * gateway (the window, the quiet place) or is a plain absence (no sheet, no
+   * such talent, nothing left to refund). There is no ladder to fail on the way
+   * down — see the implementation in src/server/main.ts for why asking would
+   * refuse a refund to exactly the player who most needs one.
+   */
+  lowerTalentPoint?(actorId: string, talentId: string): number | null;
+  /**
    * TURN A SUSTAINED TALENT ON OR OFF. Answers the NEW state, or null for a
    * refusal — a talent this body does not own, one that is not sustained, or a
    * stance there is no room in the pool to raise.
@@ -1542,6 +1561,16 @@ export type CharacterSnapshot = {
    */
   readonly spentStats?: Readonly<Record<string, number>>;
   /**
+   * THE TAKE-BACK WINDOW, carried to disk. `shared/respec.ts`.
+   *
+   * Optional for `spentStats`' reason: a body that has spent nothing has no
+   * window, and must write no key rather than an assertion that it has none.
+   */
+  readonly lastLearnt?: {
+    readonly class?: readonly string[];
+    readonly generic?: readonly string[];
+  };
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE BAG AND THE PAPER DOLL. IDS ONLY, AND ABSENT IS NOT EMPTY.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1774,6 +1803,17 @@ export type CharacterRestore = {
    * class base still reaches every character.
    */
   readonly spentStats?: Readonly<Record<string, number>>;
+  /**
+   * THE TAKE-BACK WINDOW COMING BACK. `shared/respec.ts`.
+   *
+   * Restored rather than reset, because the one moment a player most wants a
+   * mis-click back is after they have logged off to think about it. A window
+   * that closed on reconnect would make the feature a lie exactly then.
+   */
+  readonly lastLearnt?: {
+    readonly class?: readonly string[];
+    readonly generic?: readonly string[];
+  };
   /**
    * Gold, as the file holds it. NOT reconciled against anything, because there
    * is nothing to reconcile it against — see `CharacterSnapshot.money`. Absent
@@ -3700,6 +3740,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * early — the first one.
          */
         ...(actor.spentStats === undefined ? {} : { spentStats: actor.spentStats }),
+        /**
+         * AND THE TAKE-BACK WINDOW, on the same terms. Omitted when both lists
+         * are empty, so a character who has never spent a point writes no key —
+         * the shape every file already on disk has, which is what lets
+         * `SCHEMA_VERSION` stay put.
+         */
+        ...(actor.lastLearnt.class.length === 0 && actor.lastLearnt.generic.length === 0
+          ? {}
+          : { lastLearnt: { class: actor.lastLearnt.class, generic: actor.lastLearnt.generic } }),
         // ═══ AND THE BAG AND THE DOLL, UNDER THE SAME PROVISIONAL-CLASS RULE ═══
         // Read straight off the body, for the reason engine/actor.ts gives at
         // both fields: this pass cannot reach an equipment engine any more than
@@ -4287,8 +4336,38 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * point is spent, and a stale `range` is the one that misleads a player into
    * clicking a tile the server would have accepted.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * STAMP THE TAKE-BACK ANSWER ONTO EACH ROW. LevelupDialog.lua:343-360.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Both halves of the rule are decided HERE and sent as a boolean, because the
+   * client has neither of the two facts it would need to work it out: it never
+   * sees the ledger (the order things were learnt in) and it does not know what
+   * kind of realm it is standing in. A panel that guessed would draw a `−` the
+   * server then refuses, and a button that fails reads as a broken game rather
+   * than as a rule.
+   *
+   * THE FIELD IS OMITTED RATHER THAN SET FALSE, so a body with nothing to take
+   * back produces the frame it produced before this existed — the same rule
+   * `projectLoadout` follows for `passives` and `unlockable` one function down.
+   */
+  const withUnlearnable = (
+    talents: readonly LoadoutTalent[],
+    body: PlayerActor,
+    quiet: boolean,
+  ): readonly LoadoutTalent[] => {
+    if (!quiet) return talents;
+    return talents.map((talent) => {
+      const from: Purse = isGenericTree(talent.tree ?? '') ? 'generic' : 'class';
+      if (unlearnableAt(body.lastLearnt[from], talent.id) < 0) return talent;
+      return { ...talent, unlearnable: true };
+    });
+  };
+
   const sendLoadout = (session: Session): void => {
-    const { world, engine } = realmFor(session);
+    const target = realmFor(session);
+    const { world, engine } = target;
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -4297,11 +4376,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // An actor with no talents gets no hotbar rather than an empty one. A row of
     // four blank buttons is a bug report; the absence of a row is not.
     if (talents.length === 0) return;
+    // See `withUnlearnable`. A realm table with no entry for this id is a
+    // fixture world with no delve to be standing in, and counts as quiet.
+    const kind = opts.realms?.get(target.id)?.kind;
+    const marked =
+      viewer.kind === 'player'
+        ? withUnlearnable(talents, viewer, kind === undefined || isShared(kind))
+        : talents;
     send(
       session.socket,
       projectLoadout(
         viewer,
-        talents,
+        marked,
         engine.passivesOf?.(actorId) ?? [],
         // AND WHAT THERE IS LEFT TO BUY. Re-read on every loadout frame rather
         // than cached, because the list SHRINKS as points are spent — a cached
@@ -6239,6 +6325,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       recomposeCombat(actor, opts.effects ?? null, resolveItem);
     } else {
       actor.unspentStatPoints = Math.max(0, totalStatPointsAtLevel(actor.level));
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE TAKE-BACK WINDOW COMES BACK WITH THEM. `shared/respec.ts`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * COPIED INTO FRESH ARRAYS. `restore` is a value the persist layer handed
+     * over and may hold by reference; assigning its arrays straight onto the
+     * body would make a later `noteSpend` write through into whatever else is
+     * looking at that object.
+     *
+     * `parseLastLearnt` has already trimmed both lists to the cap on the way
+     * off disk, so a hand-edited file cannot widen anybody's window here.
+     */
+    const window = restore.lastLearnt;
+    if (window !== undefined) {
+      actor.lastLearnt = {
+        class: [...(window.class ?? [])],
+        generic: [...(window.generic ?? [])],
+      };
     }
 
     const spread = engine.talentPointsOf?.(actor.id);
@@ -8323,6 +8430,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     to.level = from.level;
     to.xp = from.xp;
     to.unspentPoints = from.unspentPoints;
+    /**
+     * THE TAKE-BACK WINDOW FOLLOWS TOO — and this is the SEVENTH field to be
+     * added to this hand-written list, which the crossing test's own docblock
+     * calls out as the shape that keeps biting. Fresh arrays, so the two bodies
+     * do not share one ledger and a later spend cannot write through the door.
+     *
+     * IT MATTERS MOST IN THIS DIRECTION: walking OUT of a delve is exactly when
+     * a player reaches a quiet place and can finally use the window they have
+     * been carrying, and dropping it here would mean the trip home closed it.
+     */
+    to.lastLearnt = {
+      class: [...from.lastLearnt.class],
+      generic: [...from.lastLearnt.generic],
+    };
     if (from.keybinds !== undefined) to.keybinds = from.keybinds;
     // THE BAG AND THE DOLL, THEN THE SHEET. `equipped` is owned by the equipment
     // verbs and `combat` by `recomposeCombat` and nothing else — a write to the
@@ -12129,6 +12250,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (fromGenerics) body.unspentGenerics -= 1;
     else body.unspentPoints -= 1;
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND IT GOES IN THE LEDGER, so it can be taken back. Actor.lua:4773-4783.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * AFTER the write and the deduction, so a spend that was refused above
+     * leaves no trace — a ledger entry for a rank that never happened would
+     * offer the player a refund of a point they still have.
+     *
+     * INTO THE PURSE'S OWN LIST. The two windows are different sizes (four and
+     * three) because upstream's are, and one shared list would let four class
+     * spends push a generic one out of a window it should still be inside.
+     */
+    const spentFrom: Purse = fromGenerics ? 'generic' : 'class';
+    body.lastLearnt = {
+      ...body.lastLearnt,
+      [spentFrom]: noteSpend(body.lastLearnt[spentFrom], talent.id, spentFrom),
+    };
+
     // ═══ AND THE BARRIER IS TOLD SOMEBODY IS THERE ═══
     // See this handler's docblock. Clears Standing By without restarting the
     // Bell, so a player who spent forty-five seconds reading a current->next
@@ -12195,6 +12335,131 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // still moving, and `snapshotPlayers` builds a fresh `CharacterFile` on
     // every call precisely so that neither path can file a half-written state.
     saveNow('spend');
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `unlearn` — "TAKE THAT LAST POINT BACK." LevelupDialog.lua:343-403.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The other half of `spend_point`, and deliberately NOT its inverse: a spend
+   * is still a one-way door for everything older than the window.
+   *
+   * ═══ THREE RULES, AND THE ORDER THEY ARE CHECKED IN IS THE ERROR MESSAGE ═══
+   *   1. IS IT IN THE WINDOW? The last four class or three generic SPENDS
+   *      (`shared/respec.ts`). A talent the ledger does not name cannot be
+   *      refunded at all, which is what makes a build a decision.
+   *   2. IS THIS A QUIET PLACE? `isShared` — the overworld and the towns, the
+   *      two realm kinds that hold no hostiles. Upstream's
+   *      `force_town_respec`, and its own sentence for the refusal is *"You
+   *      could unlearn this talent in a quiet place, like a town."*
+   *   3. IS THERE A RANK LEFT? The seam answers null at the floor.
+   *
+   * The window is checked FIRST because it is the rule a player cannot see. A
+   * body standing in a delve holding a talent that is three spends old should
+   * be told the thing that will still be true when they walk out.
+   *
+   * ═══ IT REFUNDS TO THE PURSE IT CAME FROM ═══
+   * The same pairing `handleSpendPoint` uses, and the same bug it exists to
+   * prevent: a generic rank refunding a class point would be a slow leak that
+   * converts one currency into the other, and upstream keeps them apart
+   * precisely so the dull tree cannot be weighed against the interesting one.
+   *
+   * NON-PUMPING, with the rest of its group. A refund must not buy the sender a
+   * free monster turn.
+   */
+  const handleUnlearn = (session: Session, msg: ClientUnlearn): void => {
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before unlearn');
+      return;
+    }
+    const realm = realmFor(session);
+    const body = realm.world.getActor(actorId);
+    if (body === undefined || body.kind !== 'player') {
+      // `kind !== 'player'` rather than `isPlayer`, matching `handleSpendPoint`
+      // three hundred lines up: it is the narrowing the compiler follows here.
+      sendError(session.socket, ErrorCode.BadMessage, 'no body to unlearn with');
+      return;
+    }
+
+    const talent = realm.engine.loadoutOf?.(actorId)?.find((t) => t.id === msg.talentId);
+    if (talent === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'that talent is not in your book');
+      return;
+    }
+
+    const spentFrom: Purse = isGenericTree(talent.tree ?? '') ? 'generic' : 'class';
+    const at = unlearnableAt(body.lastLearnt[spentFrom], talent.id);
+    if (at < 0) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        `${talent.name} is not one of your last few — a point settles once you have moved on.`,
+      );
+      return;
+    }
+
+    // THE QUIET PLACE. `isShared` is the existing predicate for "no hostiles
+    // here", which is the same set of realms upstream means by a town, and
+    // reusing it means there is one answer to where a body is safe rather than
+    // two that can drift.
+    /**
+     * `realmFor` answers a `PumpTarget` — an id, a world and an engine — and
+     * deliberately not a realm, so the KIND is looked up separately. A build
+     * with no realm table at all is a single test world with no delve to be
+     * standing in, and answers "quiet": refusing there would make every fixture
+     * in the tree unable to reach this verb.
+     */
+    const kind = opts.realms?.get(realm.id)?.kind;
+    if (kind !== undefined && !isShared(kind)) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        'not here — you could think this over somewhere quiet, back in town.',
+      );
+      return;
+    }
+
+    // THE FALLIBLE HALF FIRST, exactly as the spend does: the refund is only
+    // credited if the rank actually came off, so a build with no talent engine
+    // cannot mint points.
+    const lowered = realm.engine.lowerTalentPoint?.(actorId, talent.id);
+    if (lowered === undefined || lowered === null) {
+      sendError(session.socket, ErrorCode.Internal, 'talent points are not wired into this build');
+      return;
+    }
+
+    if (spentFrom === 'generic') body.unspentGenerics += 1;
+    else body.unspentPoints += 1;
+    body.lastLearnt = {
+      ...body.lastLearnt,
+      [spentFrom]: dropSpend(body.lastLearnt[spentFrom], at),
+    };
+
+    realm.engine.notePresence?.(actorId);
+    sendLoadout(session);
+    sendProgress(session);
+    sendHotbarIfChanged(session);
+
+    /**
+     * SAID OUT LOUD, for `handleSpendPoint`'s reason turned around. That
+     * handler's note argues a rank is *"a fact about a body the rest of the
+     * party is standing next to"* — which is just as true of a rank going away,
+     * and more so: the party is about to NOT see a thing they were counting on.
+     */
+    broadcastRecordLine(
+      homeOf(body.id),
+      lowered === 0
+        ? `${nameOf(body.id)} sets ${talent.name} aside.`
+        : `${nameOf(body.id)} eases ${talent.name} back to rank ${String(lowered)}.`,
+    );
+
+    app.log.info({ actorId, talentId: talent.id, level: lowered }, 'talent point taken back');
+
+    // IMMEDIATE, for the spend's reason exactly: the two halves must not have
+    // different durability, or a crash between them is a lost point.
+    saveNow('unlearn');
   };
 
   // -------------------------------------------------------------------------
@@ -13813,6 +14078,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // full for the next person who goes looking for one.
       case 'spend_point':
         handleSpendPoint(session, msg);
+        return;
+      case 'unlearn':
+        handleUnlearn(session, msg);
         return;
       // THE FIFTH MEMBER OF THE SAME GROUP, and non-pumping for every reason
       // `spend_point` is: it reads no RNG, advances no clock, and the screen it
