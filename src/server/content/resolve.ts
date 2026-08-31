@@ -461,6 +461,21 @@ export function resolveItem(id: string): Item | undefined {
   for (const [key, value] of Object.entries(base.wielder.mods ?? {})) {
     mods[key] = atMaterial(value, material);
   }
+  /**
+   * RESISTS SCALE WITH THE GRADE TOO, and the alternative was considered and
+   * rejected. A per-channel exception — "the grade improves the armour but not
+   * the fireproofing" — would be a rule with no mechanical statement behind it,
+   * and the first question a player asks about a Bespoke coat is whether it is
+   * better at everything or only at some things. It is better at everything.
+   *
+   * `MAX_ITEM_RESIST` therefore bounds the AUTHORED number and the resolved one
+   * can reach twice it at grade 5, exactly as an authored `armour: 4` resolves
+   * to 8. That is why the cap is set well under a quarter of the 100 ceiling.
+   */
+  const resists: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.resists ?? {})) {
+    resists[key] = atMaterial(value, material);
+  }
   for (const [index, ego] of egos.entries()) {
     const ref = parsed.egos[index];
     if (ref === undefined) continue;
@@ -471,11 +486,15 @@ export function resolveItem(id: string): Item | undefined {
     for (const [key, value] of Object.entries(wielder.mods ?? {})) {
       mods[key] = (mods[key] ?? 0) + value;
     }
+    for (const [key, value] of Object.entries(wielder.resists ?? {})) {
+      resists[key] = (resists[key] ?? 0) + value;
+    }
   }
 
-  const merged: { stats?: typeof stats; mods?: typeof mods } = {};
+  const merged: { stats?: typeof stats; mods?: typeof mods; resists?: typeof resists } = {};
   if (Object.keys(stats).length > 0) merged.stats = stats;
   if (Object.keys(mods).length > 0) merged.mods = mods;
+  if (Object.keys(resists).length > 0) merged.resists = resists;
 
   // Prefixes carry their own trailing space and suffixes their own leading one
   // (`validateEgos` proves it), so this is concatenation with no separator

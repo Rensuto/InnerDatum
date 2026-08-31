@@ -128,6 +128,8 @@
  */
 
 import { resolveMBonus } from './resolvers.ts';
+import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
+import type { DamageType } from '../../shared/damagetype.ts';
 import type { CombatMods, PrimaryStats } from '../engine/derived.ts';
 
 // ---------------------------------------------------------------------------
@@ -232,6 +234,37 @@ export type AdditiveMods = Omit<CombatMods, 'physSpeed' | 'spellPower' | 'mindPo
 export type Wielder = {
   readonly stats?: Partial<AdditiveStats>;
   readonly mods?: Partial<AdditiveMods>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `resists` — THE THIRD CHANNEL, AND THE FIRST DEFENCE AGAINST AN ELEMENT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's `wielder = { resists = { [DamageType.FIRE] = 10 } }`, which is one of
+   * the commonest affixes in its whole object table.
+   *
+   * The engine side has been complete since damage.ts was written:
+   * `combatGetResist` is a full port INCLUDING the caps that stop the formula
+   * inverting above 100%, `DamageProfile.resists` is read on every hit, and
+   * monsters have carried resist tables for milestones. The player had no way to
+   * obtain a single point of it. Six damage types, three of them a class's whole
+   * identity, and no defence against any of them.
+   *
+   * ═══ PERCENTAGES, AND TYPED ONLY — NO `all` ROW ═══
+   * `TypeTable` permits an `all` key and `combatGetResist` composes it
+   * MULTIPLICATIVELY with the typed row (Combat.lua:2220-2231). That is upstream's
+   * rarest and strongest affix and it is deliberately not authorable here yet: a
+   * fold that is additive everywhere else must not grow one multiplicative corner
+   * as its first exception, and `equipment.ts` argues at length that additive-only
+   * is what makes unequip exact by construction. One axis at a time — the day
+   * `all` is wanted, it needs its own fold and its own argument.
+   *
+   * A NEGATIVE IS LEGAL HERE AND NOWHERE ELSE IN A `Wielder`. A coat that shields
+   * you from fire and leaves you open to cold is upstream's most characteristic
+   * trade (`resists = { [DamageType.FIRE] = 15, [DamageType.COLD] = -10 }`), and
+   * it is the only interesting thing this channel can express that `mods` cannot.
+   * The import-time check below permits it for this key and no other.
+   */
+  readonly resists?: Partial<Record<DamageType, number>>;
 };
 
 /** Rarity, and — by construction — the drop tier. See the file header. */
@@ -823,6 +856,17 @@ export function itemsForSlot(slot: Slot): readonly Item[] {
  * test/server/items.test.ts asserts the same list at runtime against the shipped
  * catalogue, and two copies that must agree are better named once.
  */
+/**
+ * The most one item may move one resistance, either way.
+ *
+ * `combatGetResist` caps a resistance at 100 by default (Actor.lua:211,
+ * `resists_cap = { all = 100 }`), so a single slot granting more than a quarter
+ * of that is a slot that decides an element on its own. Upstream's strongest
+ * TYPED wielder rolls on ordinary gear sit in the teens and low twenties; the
+ * bigger numbers live on artifacts, which this game does not have yet.
+ */
+export const MAX_ITEM_RESIST = 15;
+
 export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -927,6 +971,42 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
         throw new Error(
           `items: ${item.id} grants ${key} = ${String(value)}; wielder values must be ` +
             `finite non-negative INTEGERS (see the note on this check for why)`,
+        );
+      }
+    }
+
+    /**
+     * RESISTS ARE CHECKED SEPARATELY, because they are the one channel where a
+     * NEGATIVE is a legitimate thing to author — the fire-proof coat that leaves
+     * you open to cold. Everything else about the check is the same: integers,
+     * finite, and a known damage type rather than a typo that would sit in the
+     * table contributing to nothing.
+     *
+     * The magnitude is bounded because `combatGetResist` caps at 100 by default
+     * (Actor.lua:211) and a single item granting more than that would be handing
+     * out immunity in one slot — upstream's own strongest typed rolls sit in the
+     * teens and twenties.
+     */
+    for (const [key, value] of Object.entries(item.wielder.resists ?? {})) {
+      if (!DAMAGE_TYPES.includes(key as DamageType)) {
+        throw new Error(
+          `items: ${item.id} resists '${key}', which is not one of the ` +
+            `${String(DAMAGE_TYPES.length)} damage types — it would be a row nothing reads`,
+        );
+      }
+      if (value === undefined) continue;
+      if (!Number.isFinite(value) || !Number.isInteger(value)) {
+        throw new Error(
+          `items: ${item.id} resists ${key} = ${String(value)}; resist values must be ` +
+            `finite INTEGER percentages`,
+        );
+      }
+      if (Math.abs(value) > MAX_ITEM_RESIST) {
+        throw new Error(
+          `items: ${item.id} resists ${key} = ${String(value)}%, beyond the ` +
+            `${String(MAX_ITEM_RESIST)}% one item may AUTHOR for a resistance — the grade doubles ` +
+            `it (a Bespoke one resolves to twice this) and the ceiling is 100 ` +
+            `(Actor.lua:211) and one slot must not spend it all`,
         );
       }
     }

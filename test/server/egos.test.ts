@@ -87,6 +87,13 @@ describe('the ego roster', () => {
       'so',
       'lt',
       'rd',
+      // The resistance suffixes — the first defence against an element that a
+      // player can obtain at all. See the block above them in egos.ts for why
+      // there is no Mind one.
+      'kl',
+      'cs',
+      'er',
+      'lm',
     ]);
   });
 

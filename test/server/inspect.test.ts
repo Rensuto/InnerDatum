@@ -759,3 +759,80 @@ describe('inspecting a hostile', () => {
     for (const label of SHEET_ONLY_LABELS) expect(labels).not.toContain(label);
   });
 });
+
+// ===========================================================================
+// RESISTANCES — the readout half of the elemental-resistance change
+// ===========================================================================
+
+describe('what a body shrugs off is finally on a screen', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ENGINE KNEW THIS NUMBER ALL ALONG AND NO SCREEN WOULD SAY IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combatGetResist` has been a complete port since damage.ts was written and
+   * monsters have carried resist tables for milestones. Nothing displayed one.
+   * The Alchemist's whole kit is Fire, so against a fire-resistant body she was
+   * doing a fraction of the damage her own card advertised, with no way to find
+   * out why — "it barely scratched it" was an unanswerable question about a
+   * number the server had in hand.
+   *
+   * A CHANNEL WITH NO READOUT IS INVISIBLE AND A READOUT WITH NO CHANNEL IS
+   * UNACTIONABLE, which is why both halves shipped together: the hostile card
+   * teaches that elements differ, and the character sheet is where the player
+   * learns they can answer it.
+   */
+  it('names the element a hostile resists, on the hostile card', async () => {
+    const floor = await scene();
+    const target = actorOf(floor.adjacent.id);
+    target.combat = { ...(target.combat ?? {}), profile: { resists: { fire: 40 } } };
+
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.adjacent.id)));
+    const fire = rows.find((r) => String(r['label']) === 'Fire resist');
+    expect(fire, 'the card never named the resistance').toBeDefined();
+    expect(fire?.['value']).toBe('40%');
+  });
+
+  it('says nothing at all about an element a body does not resist', async () => {
+    /**
+     * Six rows of "0%" on every card would push the rows that matter off the
+     * pane and teach a player to stop reading. Absence is the statement.
+     */
+    const floor = await scene();
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.adjacent.id)));
+    expect(rows.filter((r) => String(r['label']).endsWith(' resist'))).toEqual([]);
+  });
+
+  it('shows the player their own resistances on the character sheet', async () => {
+    const floor = await scene();
+    const me = floor.viewer;
+    me.combat = { ...(me.combat ?? {}), profile: { resists: { cold: 22, darkness: -5 } } };
+
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.viewer.id)));
+    expect(rows).toContainEqual(expect.objectContaining({ label: 'Cold resist', value: '22%' }));
+    // A NEGATIVE IS SHOWN, not hidden. A body that is WORSE against an element
+    // is the single most important thing this block can tell somebody, and it
+    // is the case a "only show what helps" filter would silently swallow.
+    expect(rows).toContainEqual(
+      expect.objectContaining({ label: 'Darkness resist', value: '-5%' }),
+    );
+  });
+
+  it('prints the figure the damage pipeline actually spends, cap and all', async () => {
+    /**
+     * `combatGetResist` applies the ceiling that stops the formula inverting
+     * above 100% (Combat.lua:2227-2228). A sheet printing the RAW table would
+     * promise 90% to a body the dice treat as 40% — the exact shape of lie this
+     * whole file exists to prevent, per its header on the client-side formula.
+     */
+    const floor = await scene();
+    const me = floor.viewer;
+    me.combat = {
+      ...(me.combat ?? {}),
+      profile: { resists: { fire: 90 }, resistsCap: { fire: 40 } },
+    };
+
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.viewer.id)));
+    expect(rows).toContainEqual(expect.objectContaining({ label: 'Fire resist', value: '40%' }));
+  });
+});

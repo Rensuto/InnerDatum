@@ -113,8 +113,11 @@
 
 import { SLOT_ORDER } from '../content/items.ts';
 import { STAT_BASE } from './derived.ts';
+import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import type { AdditiveMods, AdditiveStats, Item, ItemCatalogue, Slot } from '../content/items.ts';
 import type { CombatSheet } from './combat.ts';
+import type { DamageType } from '../../shared/damagetype.ts';
+import type { TypeTable } from './damage.ts';
 import type { CombatMods, PrimaryStats } from './derived.ts';
 
 /**
@@ -249,6 +252,7 @@ export function composeWielders(
 ): CombatSheet {
   const statDelta = new Map<keyof AdditiveStats, number>();
   const modDelta = new Map<keyof AdditiveMods, number>();
+  const resistDelta = new Map<DamageType, number>();
 
   for (const wielder of blocks) {
     if (wielder === undefined) continue;
@@ -268,6 +272,27 @@ export function composeWielders(
         modDelta.set(key, (modDelta.get(key) ?? 0) + value);
       }
     }
+    /**
+     * THE THIRD CHANNEL. Additive like the other two, and over a FIXED key list
+     * for the same reason: `DAMAGE_TYPES` is the enumeration, so a table that
+     * reached this fold with a seventh key contributes nothing rather than
+     * writing a row `combatGetResist` will never read.
+     *
+     * ADDITIVE IS CORRECT HERE AND IS NOT THE SAME AS ToME'S `all` ROW. Two
+     * coats at +10 fire make +20 fire, which is what upstream does for TYPED
+     * resistances — `addTemporaryValue` on `resists[FIRE]` is a plain add. The
+     * multiplicative composition in `combatGetResist` is between the `all` row
+     * and the typed row at READ time, not between two items, and `Wielder`
+     * refuses `all` precisely so this fold never has to know about it.
+     */
+    const resists = wielder.resists;
+    if (resists !== undefined) {
+      for (const key of DAMAGE_TYPES) {
+        const value = resists[key];
+        if (value === undefined) continue;
+        resistDelta.set(key, (resistDelta.get(key) ?? 0) + value);
+      }
+    }
   }
 
   // A MUTABLE copy, built and then frozen. `CombatSheet`'s fields are readonly,
@@ -285,6 +310,32 @@ export function composeWielders(
     const mods: { -readonly [K in keyof CombatMods]: CombatMods[K] } = { ...base.mods };
     for (const [key, delta] of modDelta) mods[key] = baseMod(base.mods, key) + delta;
     out.mods = Object.freeze(mods);
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE RESIST ROW LIVES UNDER `profile`, WHICH THIS FOLD OTHERWISE CARRIES BY
+   * REFERENCE — SO IT IS REBUILT RATHER THAN MUTATED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The note above lists `profile` among the fields *"carried across BY
+   * REFERENCE … readonly all the way down and nothing in the process mutates
+   * them"*. That stays true: this writes a NEW `profile` object with a NEW
+   * `resists` table and leaves the caller's alone. Writing into `base.profile`
+   * would be exactly the cross-actor contamination this file exists to prevent
+   * — every classless body in the process sharing one frozen sheet.
+   *
+   * `resistsCap` AND `flatDamageArmour` ARE CARRIED THROUGH UNTOUCHED. An item
+   * cannot move either: a cap is what stops the resist formula inverting above
+   * 100% (Combat.lua:2227-2228), and letting gear raise its own ceiling would be
+   * an item that grants immunity in two affixes rather than one.
+   */
+  if (resistDelta.size > 0) {
+    const resists: { -readonly [K in keyof TypeTable]: TypeTable[K] } = {
+      ...base.profile?.resists,
+    };
+    for (const [key, delta] of resistDelta) resists[key] = (resists[key] ?? 0) + delta;
+    out.profile = Object.freeze({ ...base.profile, resists: Object.freeze(resists) });
   }
 
   return Object.freeze(out);

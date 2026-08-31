@@ -58,3 +58,35 @@ export const DAMAGE_TYPES: readonly DamageType[] = [
   DamageType.Darkness,
   DamageType.Mind,
 ] as const;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT TO CALL ONE ON A SCREEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The ids are lowercase because they are keys — they go in `TypeTable`, in
+ * authored content and on the wire. A player should never read one: `fire` is a
+ * field name and "Fire" is a word.
+ *
+ * IN `shared/` BECAUSE BOTH SIDES NAME THEM. The character sheet builds its
+ * resistance rows server-side (`view/inspect.ts`) and the client draws damage
+ * numbers; two capitalisation tables would be two answers to what an element is
+ * called, and the first to drift would be the one nobody looks at.
+ *
+ * A LOOKUP RATHER THAN `charAt(0).toUpperCase()`, because that trick is only
+ * right while every name is one lowercase word, and it would quietly produce
+ * "Item_antimagic_manaburn" the day a compound type is added.
+ */
+export const DAMAGE_TYPE_NAMES: Readonly<Record<DamageType, string>> = Object.freeze({
+  [DamageType.Physical]: 'Physical',
+  [DamageType.Fire]: 'Fire',
+  [DamageType.Cold]: 'Cold',
+  [DamageType.Lightning]: 'Lightning',
+  [DamageType.Darkness]: 'Darkness',
+  [DamageType.Mind]: 'Mind',
+});
+
+/** The word for one element. */
+export function damageTypeName(type: DamageType): string {
+  return DAMAGE_TYPE_NAMES[type];
+}

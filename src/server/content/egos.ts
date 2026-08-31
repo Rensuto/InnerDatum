@@ -66,6 +66,7 @@
  * what one IS.
  */
 
+import { DAMAGE_TYPES, DamageType } from '../../shared/damagetype.ts';
 import { Slot } from './items.ts';
 import type { AdditiveMods, AdditiveStats, ItemTier, Wielder } from './items.ts';
 
@@ -133,6 +134,22 @@ export type Ego = {
   readonly grants: {
     readonly stats?: Partial<Record<keyof AdditiveStats, EgoGrant>>;
     readonly mods?: Partial<Record<keyof AdditiveMods, EgoGrant>>;
+    /**
+     * Elemental resistance, as a percentage. The third `Wielder` channel.
+     *
+     * SAME `EgoGrant` SHAPE, so a resistance suffix scales with power and tier
+     * exactly as every other affix does and there is one answer to "how much
+     * better is a rare one". `grantValue` is not told which channel it is
+     * serving, and must not be.
+     *
+     * A resist ego may not roll a NEGATIVE. The trade-off coat — proof against
+     * fire, open to cold — is an authored item's decision to make deliberately
+     * (see `Wielder.resists`); an ego is a random roll on top of somebody's
+     * gear, and a roll that can silently make a coat WORSE in an element the
+     * player has no way to foresee is a different and much crueller feature.
+     * `validateEgos` already refuses a grant that computes to <= 0.
+     */
+    readonly resists?: Partial<Record<DamageType, EgoGrant>>;
   };
   /**
    * Gold added to the base's cost. `applyEgo` strips `unided_name`,
@@ -457,6 +474,88 @@ const SUFFIXES: readonly Ego[] = [
     },
     cost: 140,
   },
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE RESISTANCE SUFFIXES — the first defence against an element in the game.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `combatGetResist` has been a complete port since damage.ts was written, six
+   * damage types have been landing on players for milestones, and until these
+   * there was no way for a player to obtain one point of resistance to any of
+   * them. These are that, and they are deliberately the plainest possible
+   * version of it: one element each, no second channel, so the first thing a
+   * player learns about resistance is the mechanic and not an ego's personality.
+   *
+   * ═══ WHY THESE FOUR ELEMENTS ═══
+   * Fire is the Alchemist's entire kit, Darkness is the Redactor's signature and
+   * the Redaction's own hazard, and Cold and Lightning are what the deep rosters
+   * throw. Mind has no suffix here on purpose: it is resisted by the MENTAL SAVE
+   * as well (damage_types.lua:876-904), so it is the one element the game
+   * already lets you answer, and a suffix for it would be the weakest of the set
+   * while reading as the strongest.
+   *
+   * ═══ THE MAGNITUDES ═══
+   * `floor 5, step 2` tops out at 5 + 2x3x3 = 23 on a rare at full power, inside
+   * `MAX_ITEM_RESIST` (25) with a point to spare. Two such pieces is 46% — a real
+   * answer to one element and nowhere near the 100% cap, which is what keeps
+   * resistance a decision about which element rather than a switch that turns one
+   * off. Upstream's ordinary typed rolls sit in exactly this band.
+   *
+   * ═══ ART ═══
+   * None. An ego is a NAME and a set of numbers — it recolours nothing and adds
+   * no icon, which is why 19 of them have shipped without a single sprite.
+   */
+  {
+    code: 'kl',
+    name: ' of the Kiln',
+    tag: EgoSlotTag.Suffix,
+    // Common enough to be the one a player meets first, because fire is the
+    // element the early floors actually throw at them.
+    rarity: 6,
+    levelRange: [1, 30],
+    grants: { resists: { [DamageType.Fire]: { floor: 5, step: 2 } } },
+    cost: 40,
+  },
+  {
+    code: 'cs',
+    name: ' of the Cold Store',
+    tag: EgoSlotTag.Suffix,
+    rarity: 7,
+    levelRange: [1, 30],
+    grants: { resists: { [DamageType.Cold]: { floor: 5, step: 2 } } },
+    cost: 40,
+  },
+  {
+    code: 'er',
+    name: ' of Earthing',
+    tag: EgoSlotTag.Suffix,
+    /**
+     * A CONDUCTOR TO GROUND, which is what earthing a circuit is — the most
+     * literal name on the table and the only one that is a technique rather than
+     * a place or a person.
+     */
+    rarity: 8,
+    levelRange: [1, 30],
+    grants: { resists: { [DamageType.Lightning]: { floor: 5, step: 2 } } },
+    cost: 40,
+  },
+  {
+    code: 'lm',
+    name: ' of the Lamp',
+    tag: EgoSlotTag.Suffix,
+    /**
+     * The rarest of the four and the deepest, because Darkness is what the
+     * Redaction deals and this is the only thing in the game that answers it.
+     * Not `of the Redaction` — that suffix already exists and grants two other
+     * channels; two egos with one theme and different numbers is how a table
+     * stops being readable.
+     */
+    rarity: 12,
+    levelRange: [8, 50],
+    grants: { resists: { [DamageType.Darkness]: { floor: 5, step: 2 } } },
+    cost: 55,
+  },
 ];
 
 /** Every authored ego, prefixes then suffixes. Order is `EGO_TAG_ORDER`. */
@@ -549,14 +648,30 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
 
     const statGrants = Object.entries(ego.grants.stats ?? {});
     const modGrants = Object.entries(ego.grants.mods ?? {});
-    if (statGrants.length === 0 && modGrants.length === 0) {
+    const resistGrants = Object.entries(ego.grants.resists ?? {});
+    if (statGrants.length === 0 && modGrants.length === 0 && resistGrants.length === 0) {
       throw new Error(
         `egos: ${ego.code} grants nothing — it would be a name that changes no number a ` +
           `player can see, which is worse than no ego at all`,
       );
     }
 
-    for (const [key, grant] of [...statGrants, ...modGrants]) {
+    /**
+     * A RESIST GRANT NAMES A REAL DAMAGE TYPE. `composeWielders` folds over
+     * `DAMAGE_TYPES`, so a typo here would be a row the fold never reads and an
+     * ego that silently grants nothing — which is the exact failure the
+     * "grants nothing" check above exists to prevent, arriving by another door.
+     */
+    for (const [key] of resistGrants) {
+      if (!DAMAGE_TYPES.includes(key as DamageType)) {
+        throw new Error(
+          `egos: ${ego.code} resists '${key}', which is not one of the ` +
+            `${String(DAMAGE_TYPES.length)} damage types — the fold would never read it`,
+        );
+      }
+    }
+
+    for (const [key, grant] of [...statGrants, ...modGrants, ...resistGrants]) {
       if (DEAD_GRANT_KEYS.includes(key)) {
         throw new Error(
           `egos: ${ego.code} grants '${key}', which has ZERO call sites in src/ — ` +
@@ -669,12 +784,19 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     mods[key as keyof AdditiveMods] = grantValue(grant, power, tier);
   }
 
+  const resists: Partial<Record<DamageType, number>> = {};
+  for (const [key, grant] of Object.entries(ego.grants.resists ?? {})) {
+    if (grant === undefined) continue;
+    resists[key as DamageType] = grantValue(grant, power, tier);
+  }
+
   // A key is written only when something contributed to it — the same rule
   // `composeSheet` follows, and for the same reason: an empty `stats: {}` is
   // structurally different from no `stats` at all, and one of the two is what a
   // deep-equal round-trip test compares against.
-  const out: { stats?: typeof stats; mods?: typeof mods } = {};
+  const out: { stats?: typeof stats; mods?: typeof mods; resists?: typeof resists } = {};
   if (Object.keys(stats).length > 0) out.stats = stats;
   if (Object.keys(mods).length > 0) out.mods = mods;
+  if (Object.keys(resists).length > 0) out.resists = resists;
   return out;
 }

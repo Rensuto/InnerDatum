@@ -38,6 +38,8 @@
 
 import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
+import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
+import { combatGetResist } from '../engine/damage.ts';
 import { ActorKind, InspectGroup } from '../../shared/protocol.ts';
 import { classById } from '../content/classes.ts';
 import { MELEE_REACH, combatDistance } from '../engine/combat.ts';
@@ -60,6 +62,7 @@ import {
   stat,
 } from '../engine/derived.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
+import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
 import { hasLineOfSight } from '../world/world.ts';
 
@@ -109,8 +112,47 @@ function pct(n: number): string {
  * sheet through a second path — and a second path is a path that can disagree
  * with the one the dice roll against.
  */
-function combatantOf(actor: Actor): Combatant {
+function combatantOf(actor: Actor): CombatSheet {
   return actor.combat ?? {};
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE RESISTANCE ROWS — CharacterSheet.lua:1310-1330.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Six damage types have been landing on players since the damage pipeline was
+ * written, `combatGetResist` has been a complete port the whole time, and until
+ * the `Wielder.resists` channel there was no way for a player to have any. There
+ * was also no row: monsters have carried resist tables for milestones and no
+ * screen in the game named one, so "why did that barely scratch it" had no
+ * answer available anywhere.
+ *
+ * ═══ THE EFFECTIVE FIGURE, NOT THE RAW TABLE ═══
+ * `combatGetResist` is what the damage pipeline actually spends — it composes
+ * the `all` row multiplicatively with the typed one and applies the cap that
+ * stops the formula inverting above 100% (Combat.lua:2220-2231). Printing
+ * `profile.resists[type]` instead would be a second opinion about a number, and
+ * on a capped or `all`-bearing body it would be the WRONG one.
+ *
+ * ROUNDED, because that composition is floating-point: a flat -10 comes back as
+ * -10.000000000000009, and a character sheet must not show a player that.
+ *
+ * ═══ ONLY THE NON-ZERO ONES ═══
+ * Six rows of "0%" on every character would push the rows that matter off the
+ * pane and teach the player to stop reading the group. A resistance is
+ * interesting exactly when somebody has one.
+ */
+function pushResistRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup): void {
+  for (const type of DAMAGE_TYPES) {
+    const value = Math.round(combatGetResist(c.profile ?? {}, type));
+    if (value === 0) continue;
+    rows.push({
+      label: `${damageTypeName(type)} resist`,
+      value: `${String(value)}%`,
+      ...(group === undefined ? {} : { group }),
+    });
+  }
 }
 
 /**
@@ -292,6 +334,18 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
   rows.push({ label: 'Physical save', value: whole(combatPhysicalResist(c)), group: save });
   rows.push({ label: 'Spell save', value: whole(combatSpellResist(c)), group: save });
   rows.push({ label: 'Mental save', value: whole(combatMentalResist(c)), group: save });
+
+  /**
+   * AND WHAT THIS BODY SHRUGS OFF. Last in the Defence group, below the saves,
+   * which is upstream's own order — CharacterSheet.lua prints the three saves
+   * and then the resistance block.
+   *
+   * A SAVE AND A RESISTANCE ARE NOT THE SAME THING and the adjacency is the
+   * point: a save is a roll against an EFFECT landing, a resistance is a
+   * percentage off the DAMAGE once it has. A player who has just read three
+   * saves is in exactly the right frame to be told the difference.
+   */
+  pushResistRows(rows, c, InspectGroup.Defence);
 }
 
 /**
@@ -377,6 +431,28 @@ export function inspectActor(world: World, viewer: Actor, target: Actor): Inspec
 
     const crit = combatCrit(combatantOf(viewer));
     if (crit > 0) rows.push({ label: 'Your crit', value: pct(crit) });
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT THIS THING SHRUGS OFF — the row that makes an element a DECISION.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Seven monsters have carried resist tables for milestones and no screen in
+     * the game named one. The Alchemist's whole kit is Fire; against a body
+     * resisting it she was doing a fraction of the damage her own card
+     * advertised, with nothing anywhere to say why. "Why did that barely
+     * scratch it" was an unanswerable question about a number the server knew.
+     *
+     * ═══ AND THIS IS THE HALF THAT MAKES THE OTHER HALF WORTH HAVING ═══
+     * A resistance CHANNEL with no readout is invisible; a readout with no
+     * channel is unactionable. This card is where a player learns that elements
+     * differ, and the sheet is where they learn they can answer it — which is
+     * why both landed in one change rather than one being left for later.
+     *
+     * NO GROUP: a hostile tooltip is not tabbed (see `InspectRow.group`), so
+     * these sit inline with the rest of the card in the order pushed.
+     */
+    pushResistRows(rows, combatantOf(target));
 
     rows.push({ label: 'Distance', value: `${chebyshev(viewer, target)} tiles` });
   } else {

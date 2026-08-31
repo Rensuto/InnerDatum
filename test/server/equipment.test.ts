@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { WATCHMAN } from '../../src/server/content/classes.ts';
 import { ITEMS, SLOT_ORDER, Slot, itemById } from '../../src/server/content/items.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
-import { composeSheet, wornOf } from '../../src/server/engine/equipment.ts';
+import { composeSheet, composeWielders, wornOf } from '../../src/server/engine/equipment.ts';
+import { combatGetResist } from '../../src/server/engine/damage.ts';
+import { DamageType } from '../../src/shared/damagetype.ts';
 import {
   createEffectState,
   recomposeCombat,
@@ -690,5 +693,107 @@ describe('attribute points a character has spent', () => {
     withEmpty.spentStats = {};
     recomposeCombat(withEmpty, null, resolveItem);
     expect(derivedVector(withEmpty.combat)).toEqual(derivedVector(untouched.combat));
+  });
+});
+
+describe('gear can finally answer an element', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SIX DAMAGE TYPES, AND UNTIL THIS CHANNEL NO DEFENCE AGAINST ANY OF THEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combatGetResist` has been a complete port — caps and all — since damage.ts
+   * was written, monsters have carried resist tables for milestones, and
+   * `DamageProfile.resists` is read on every single hit. The player had no way
+   * to obtain one point of it, because `Wielder` was `{ stats, mods }` and the
+   * fold knew about exactly those two.
+   *
+   * These tests are about the CHANNEL: that a wielder's resists reach the
+   * composed sheet, add across pieces, survive taking a coat off, and are
+   * readable through the same getter the damage pipeline spends.
+   */
+  const FIRE = DamageType.Fire;
+  const COLD = DamageType.Cold;
+
+  /**
+   * ROUNDED, and the rounding is not slack in the test.
+   *
+   * `combatGetResist` composes the `all` row with the typed one as
+   * `1 - (1 - a) * (1 - b)` (Combat.lua:2220-2231), which is floating point: a
+   * flat 15 comes back as 15.000000000000002 and a flat -10 as
+   * -10.000000000000009. That is upstream's formula and predates this channel.
+   * `view/inspect.ts#pushResistRows` rounds for exactly the same reason, so
+   * asserting on the rounded figure is asserting on the number a player is
+   * actually shown.
+   */
+  const resistOf = (sheet: { profile?: unknown }, type: DamageType): number =>
+    Math.round(combatGetResist((sheet as { profile?: object }).profile ?? {}, type));
+
+  it('carries a resistance from a worn item onto the sheet', () => {
+    const sheet = composeWielders(WATCHMAN.combat, [{ resists: { [FIRE]: 15 } }]);
+    expect(resistOf(sheet, FIRE)).toBe(15);
+  });
+
+  it('adds two pieces together, like every other channel', () => {
+    // Additive, NOT the multiplicative composition `combatGetResist` uses
+    // between the `all` row and a typed one — see the fold's note. Two coats at
+    // +10 fire are +20 fire, which is what upstream's plain `add` does.
+    const sheet = composeWielders(WATCHMAN.combat, [
+      { resists: { [FIRE]: 10 } },
+      { resists: { [FIRE]: 12, [COLD]: 5 } },
+    ]);
+    expect(resistOf(sheet, FIRE)).toBe(22);
+    expect(resistOf(sheet, COLD)).toBe(5);
+  });
+
+  it('lets an authored item trade one element away for another', () => {
+    // The only thing this channel can express that `mods` cannot, and the
+    // reason a negative is legal here and nowhere else in a `Wielder`.
+    const sheet = composeWielders(WATCHMAN.combat, [{ resists: { [FIRE]: 15, [COLD]: -10 } }]);
+    expect(resistOf(sheet, FIRE)).toBe(15);
+    expect(resistOf(sheet, COLD)).toBe(-10);
+  });
+
+  it('gives it all back when the coat comes off', () => {
+    // The property this whole file exists for, on the new channel: unequip is a
+    // re-fold over the smaller set, not a subtraction.
+    const bare = composeWielders(WATCHMAN.combat, []);
+    const worn = composeWielders(WATCHMAN.combat, [{ resists: { [FIRE]: 15 } }]);
+    expect(resistOf(worn, FIRE)).toBe(15);
+    expect(resistOf(bare, FIRE)).toBe(0);
+  });
+
+  it('never writes into the sheet it was handed', () => {
+    // `profile` is one of the fields the fold otherwise carries BY REFERENCE, so
+    // this is the channel where a careless `base.profile.resists[x] = …` would
+    // contaminate every body sharing the frozen class sheet.
+    const before = structuredClone(WATCHMAN.combat.profile ?? null);
+    composeWielders(WATCHMAN.combat, [{ resists: { [FIRE]: 15 } }]);
+    expect(WATCHMAN.combat.profile ?? null).toEqual(before);
+  });
+
+  it('keeps the cap and the flat reduction it was given', () => {
+    // An item may move a resistance. It may not raise its own ceiling — that is
+    // what stops the formula inverting above 100% (Combat.lua:2227-2228).
+    const base = {
+      ...WATCHMAN.combat,
+      profile: { resists: { [FIRE]: 5 }, resistsCap: { [FIRE]: 40 } },
+    };
+    const sheet = composeWielders(base, [{ resists: { [FIRE]: 90 } }]);
+    expect(sheet.profile?.resistsCap).toEqual({ [FIRE]: 40 });
+    // 95 raw, capped at 40 by the profile's own ceiling.
+    expect(resistOf(sheet, FIRE)).toBe(40);
+  });
+
+  it('is order-independent across a whole kit, like the other two channels', () => {
+    const blocks = [
+      { resists: { [FIRE]: 3 } },
+      { resists: { [FIRE]: 5, [COLD]: 2 } },
+      { stats: { str: 3 } },
+      { resists: { [COLD]: 7 } },
+    ];
+    const forward = composeWielders(WATCHMAN.combat, blocks);
+    const backward = composeWielders(WATCHMAN.combat, [...blocks].reverse());
+    expect(forward.profile).toEqual(backward.profile);
   });
 });
