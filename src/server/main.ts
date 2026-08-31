@@ -66,7 +66,7 @@ import {
   toggleSustain,
   useTalent,
 } from './engine/talents.ts';
-import { authRoutes, readAuthConfig } from './http/auth.ts';
+import { authRoutes, isConfigured, readAuthConfig } from './http/auth.ts';
 import { createSessionStore } from './http/session.ts';
 import { wsGateway } from './net/gateway.ts';
 import { createCharacterBridge, createSaveStore } from './persist/saves.ts';
@@ -1705,6 +1705,21 @@ export function buildServer() {
     // the badge row. One method, narrowed at the option — see `talentEffects`.
     talentEffects: talentEngine,
     sessions,
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE DEPLOYED SERVER IS NOT A DEV BUILD, AND NOW IT KNOWS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `handleHello` admits an unverified socket as an anonymous player so a
+     * build with no Discord app stays playable. Publicly reachable, that handed
+     * a body to anyone who typed the URL — the allowlist never saw them, because
+     * it gates who may obtain a SESSION and they never asked for one.
+     *
+     * `isConfigured` is both halves of the OAuth credential being present, which
+     * is exactly the line between the two situations: a dev `.env` without them
+     * behaves as it always has, and the deployed one refuses.
+     */
+    requireIdentity: isConfigured(authConfig),
     persist,
   });
 

@@ -240,7 +240,7 @@ type Harness = {
   close(): Promise<void>;
 };
 
-async function boot(): Promise<Harness> {
+async function boot(opts: { readonly requireIdentity?: boolean } = {}): Promise<Harness> {
   const app = Fastify({ logger: false });
   const world = createWorld('identity-test');
   const downed = createDownedState();
@@ -254,6 +254,9 @@ async function boot(): Promise<Harness> {
     engine,
     downed,
     sessions,
+    // Off unless a test asks, which is how the production wiring differs from a
+    // dev build — see `WsGatewayOptions.requireIdentity`.
+    ...(opts.requireIdentity === true ? { requireIdentity: true } : {}),
     // Shortened only so a stray timer cannot outlive the test process; nothing
     // here waits for it.
     disconnectGraceMs: 30_000,
@@ -683,5 +686,82 @@ describe('anonymous play', () => {
 
     client.close();
     await app.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE FRONT DOOR — a public URL is not an invitation
+// ---------------------------------------------------------------------------
+
+describe('when there is a Discord app behind this server', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REPORTED FROM THE LIVE SERVER, AND SEEN IN A SCREENSHOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The deployed host answers a public name, and `handleHello` admitted an
+   * unverified socket as an ANONYMOUS player — so anybody who typed the URL was
+   * handed a body and stood in the town. Several strangers were in it at once.
+   *
+   * `ALLOWED_USER_IDS` could not stop them and was never going to: it decides
+   * who may obtain a SESSION, and a socket that never authenticates never asks
+   * for one. The refusal that matters was unreachable by exactly the people it
+   * exists to stop.
+   *
+   * The anonymous path keeps its reason — it is what makes a build with no
+   * Discord app playable, which is how this game is developed — and loses its
+   * reach. `main.ts` passes `isConfigured(authConfig)`, both halves of the OAuth
+   * credential being present, which is the line between the two situations.
+   */
+  it('refuses a socket that never authenticated, and gives it no body', async () => {
+    const server = await boot({ requireIdentity: true });
+    try {
+      const stranger = await connect(server.port);
+      const welcome = await stranger.hello();
+
+      expect(welcome, 'a stranger was handed a character').toBeUndefined();
+      const refusal = stranger.frames.find((frame) => frame['t'] === 'error');
+      expect(refusal?.['code'], 'refused for the wrong reason').toBe('not_authenticated');
+      const said = typeof refusal?.['message'] === 'string' ? refusal['message'] : '';
+      expect(said, 'the sentence does not say where to go').toMatch(/discord/i);
+
+      // THE HALF THAT MATTERS MOST: nothing was added to the world. A refusal
+      // that still left a token standing in the town would be no refusal at all.
+      expect(server.world.allActors(), 'a refused socket still got a body').toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('still lets a verified player in', async () => {
+    // The rule has to refuse the right people and only them — a gate that keeps
+    // everybody out is a server nobody plays.
+    const server = await boot({ requireIdentity: true });
+    try {
+      const ren = server.sessions.create(REN, 'Ren');
+      const client = await connect(server.port);
+      const welcome = await client.hello({ sessionId: ren.id });
+
+      expect(welcome, 'a verified player was refused').toBeDefined();
+      expect(server.world.allActors(), 'a verified player got no body').toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('leaves a build with no Discord app exactly as it was', async () => {
+    /**
+     * The affordance this rule narrows rather than removes. With no credentials
+     * there is no identity system to bypass, and an empty select screen shown to
+     * somebody who can never fill it would be a menu that only says no.
+     */
+    const server = await boot();
+    try {
+      const client = await connect(server.port);
+      expect(await client.hello(), 'a dev build stopped admitting anonymous play').toBeDefined();
+      expect(server.world.allActors()).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
   });
 });

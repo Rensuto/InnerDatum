@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import Fastify from 'fastify';
@@ -723,5 +725,46 @@ describe('display names', () => {
   it('never produces a nameless row in the party panel', () => {
     expect(safeDisplayName({ ...REN, globalName: '​', username: ' ' })).toBe('Detective');
     expect(safeDisplayName({ ...REN, globalName: null })).toBe('ren');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE FRONT DOOR IS WIRED — main.ts, not just the gateway
+// ---------------------------------------------------------------------------
+
+describe('the deployed server requires a Discord identity', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE GATE EXISTS IN `gateway.ts` AND IS USELESS UNLESS `main.ts` PASSES IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `WsGatewayOptions.requireIdentity` defaults to FALSE so every fixture keeps
+   * the behaviour it was written against — which means the one place that turns
+   * it on is production wiring, and nothing that constructs its own gateway can
+   * notice if that line is deleted. Verified by mutation: replacing it with
+   * `false` fails no test in `identity.test.ts`, because those build their own.
+   *
+   * This is the shape that put anonymous strangers in the town in the first
+   * place: a refusal that was correct everywhere except where it had to run.
+   */
+  const SOURCE = readFileSync('src/server/main.ts', 'utf8');
+
+  it('turns the gate on whenever Discord credentials are configured', () => {
+    expect(SOURCE, 'main.ts no longer requires an identity').toMatch(
+      /requireIdentity:\s*isConfigured\(authConfig\)/,
+    );
+  });
+
+  it('decides it from the credentials, not from a hard-coded answer', () => {
+    /**
+     * `isConfigured` is both halves of the OAuth credential being present, and
+     * it is the whole reason a dev build with an empty `.env` still plays. A
+     * literal here — either literal — would break one of the two situations:
+     * `true` locks every developer out of their own build, `false` reopens the
+     * public door.
+     */
+    expect(SOURCE, 'the gate was hard-coded instead of read from the config').not.toMatch(
+      /requireIdentity:\s*(true|false)\b/,
+    );
   });
 });

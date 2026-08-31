@@ -2138,6 +2138,33 @@ export type WsGatewayOptions = {
    * common, so the compiler catches any confusion between them.
    */
   readonly sessions?: IdentityPort;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IS THERE A DISCORD APP BEHIND THIS SERVER? IF SO, NOBODY PLAYS WITHOUT IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `handleHello` has always admitted an unverified socket as an ANONYMOUS
+   * player, and the reason was good: it is what keeps a build with no Discord
+   * app configured playable, which is how this game is developed.
+   *
+   * REPORTED FROM THE LIVE SERVER: that rule does not know it is in production.
+   * The host is reachable at a public name, so anyone who typed the URL was
+   * handed a body and stood in the town — several at once. The allowlist could
+   * not stop them, because `ALLOWED_USER_IDS` gates who may obtain a SESSION and
+   * an anonymous socket never asks for one. The one refusal that matters was
+   * unreachable by the people it was written for.
+   *
+   * So the affordance keeps its reason and loses its reach: anonymous play
+   * exists exactly where there is no identity system to bypass. `main.ts` passes
+   * `isConfigured(authConfig)` — both halves of the OAuth credential present —
+   * so a dev build with an empty `.env` is unchanged, and the deployed one, which
+   * has them, refuses.
+   *
+   * DEFAULTS TO FALSE so every existing fixture and harness keeps the behaviour
+   * it was written against. The production wiring is the one place that opts in.
+   */
+  readonly requireIdentity?: boolean;
 };
 
 function frameBytes(raw: WsFrame): number {
@@ -7335,6 +7362,42 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     session.helloPending = true;
 
     const verified = verify(msg.sessionId);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * NO DISCORD, NO BODY — when there is a Discord to have.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The fork below admits an unverified socket as an anonymous player, which
+     * is what keeps a build with no Discord app playable. On the deployed
+     * server that meant anyone who typed the public URL was handed a body and
+     * stood in the town: MEASURED, several strangers at once.
+     *
+     * `ALLOWED_USER_IDS` could not help. It decides who may obtain a SESSION,
+     * and a socket that never authenticates never asks for one — so the refusal
+     * that matters was unreachable by exactly the people it exists to stop.
+     *
+     * REFUSED HERE, BEFORE `helloPending` IS CLEARED AND BEFORE ANY BODY IS
+     * ADDED, so the connection completes nothing: no actor in the world, no
+     * `welcome`, nothing for another player to walk up to. The socket is left
+     * open rather than closed, because the client shows an error sentence and a
+     * closed socket would present as "the server is down" to somebody whose
+     * real problem is that they opened the wrong door.
+     *
+     * See `WsGatewayOptions.requireIdentity` for why this is a flag rather than
+     * a hard rule.
+     */
+    if (verified === null && opts.requireIdentity === true) {
+      session.helloPending = false;
+      sendError(
+        session.socket,
+        ErrorCode.NotAuthenticated,
+        'Inner Datum is played inside Discord — launch it as an Activity in a voice channel',
+      );
+      app.log.warn('ws: refused an unverified socket — Discord auth is configured');
+      return;
+    }
+
     // Kept for the heartbeat, which slides the session's idle expiry. Stored
     // only when it actually resolved to somebody, so a junk handle is not
     // retained and re-looked-up every thirty seconds.
