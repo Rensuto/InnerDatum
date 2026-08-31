@@ -11857,13 +11857,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      *
      * THE FALLBACK IS THE OLD LINE VERBATIM, for a build with no talent book:
      * gear and effects still recompose, there is simply no class curve to apply.
+     *
+     * THE SEAM AND ITS FALLBACK MOVED INTO `refoldBody` when equip and unequip
+     * turned out to need the identical pair — three spellings of "refold this
+     * body and resize its pools" would be three chances for one of them to keep
+     * calling the bare recomposer, which is exactly the bug that was shipped.
      */
-    const realm = realmFor(session);
-    if (realm.engine.refreshBody !== undefined) {
-      realm.engine.refreshBody(actorId);
-    } else {
-      recomposeCombat(body, opts.effects ?? null, resolveItem);
-    }
+    refoldBody(session, body);
 
     // AND THE BARRIER IS TOLD SOMEBODY IS THERE — the same courtesy
     // `handleSpendPoint` extends: reading a stat screen is not being absent.
@@ -12629,6 +12629,44 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
+   * REFOLD A BODY AND RESIZE ITS POOLS. THE ONE ANSWER, FOR ALL THREE VERBS.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `recomposeCombat` rebuilds `actor.combat`. It does NOT resize the pools that
+   * are DERIVED from that sheet — the hit-point ceiling and the movement pool
+   * live behind `TurnEngine.refreshBody`, because computing them needs the class
+   * table and `net/**` may not import it.
+   *
+   * `handleSpendStat` already knew this and said so:
+   *
+   *     *"CON is worth four hit points a point and `refreshBody` is the only
+   *     thing that knows it; without the seam a player buys toughness and reads
+   *     the old number until the next base turn."*
+   *
+   * That paragraph is just as true of a ring as it is of a bought point, and
+   * equip/unequip called the bare recomposer anyway — so a player put on a
+   * Constitution ego, watched the stat row rise, and read their old maximum
+   * until a base turn happened to tick. Reported from the live game, together
+   * with the deeper half of the same bug: `maxLifeFor` was reading the POINTS
+   * LEDGER rather than the composed stat, so the refresh would not have helped
+   * a ring even when it ran. Both halves are needed; neither alone is a fix.
+   *
+   * ═══ THE FALLBACK IS THE OLD LINE VERBATIM ═══
+   * A build with no talent book has no class curve to apply, so gear and effects
+   * still recompose and the pools keep whatever they had. Same shape, same
+   * reason, as the fallback in `handleSpendStat`.
+   */
+  const refoldBody = (session: Session, body: PlayerActor): void => {
+    const realm = realmFor(session);
+    if (realm.engine.refreshBody !== undefined) {
+      realm.engine.refreshBody(body.id);
+    } else {
+      recomposeCombat(body, opts.effects ?? null, resolveItem);
+    }
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
    * `equip` — "PUT THIS ON." IT NAMES AN OBJECT, NEVER A SUBJECT, NEVER A SLOT.
    * ═════════════════════════════════════════════════════════════════════════
    *
@@ -12790,7 +12828,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     body.equipped = { ...body.equipped, [item.slot]: msg.itemId };
     body.carried = bagAfter;
-    recomposeCombat(body, opts.effects ?? null, resolveItem);
+    // THROUGH THE SEAM, so the hit-point ceiling this coat just moved is the one
+    // the player reads a line from now. See `refoldBody`.
+    refoldBody(session, body);
 
     // NO CASE LOG LINE, and the asymmetry with `pickup`/`drop` is deliberate:
     // those two change the SHARED floor, which is the thing the party is
@@ -12895,7 +12935,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     delete next[msg.slot];
     body.equipped = next;
     body.carried = [...bag, worn];
-    recomposeCombat(body, opts.effects ?? null, resolveItem);
+    // AND THE POOLS SHRINK BACK, which is the half of reversibility that lives
+    // outside the fold — `refoldBody` again, for the reason it gives.
+    refoldBody(session, body);
 
     // AND IT COSTS THE TURN — Actor.lua:7420, the takeoff half of the same rule.
     spendLootTurn(body, 'unequip');

@@ -13,6 +13,7 @@
  */
 
 import { creditForLanding, recomposeCombat } from './engine/effects.ts';
+import { maxLifeOf } from './engine/pools.ts';
 import { resolveItem } from './content/resolve.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,7 +27,7 @@ import { startOps } from './ops/routes.ts';
 import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
 import { checkTier, tierRefusalText } from '../shared/tiers.ts';
 import { treeById } from './content/talent-trees.ts';
-import { PLAYER_RANK, maxLifeFor } from '../shared/leveling.ts';
+import { PLAYER_RANK } from '../shared/leveling.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
 import {
   classById,
@@ -1302,13 +1303,24 @@ export function buildServer() {
     if (isPlayer(actor) && actor.classId !== undefined) {
       const definition = classById(actor.classId);
       if (definition !== undefined) {
-        actor.maxHp = maxLifeFor(
-          definition.maxHp,
-          definition.lifeRating,
-          actor.level,
-          PLAYER_RANK,
-          actor.spentStats?.con ?? 0,
-        );
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         *   THE CONSTITUTION THIS BODY IS STANDING AT — NOT THE ONE IT BOUGHT.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * This was `maxLifeFor(..., actor.spentStats?.con ?? 0)` and that was a
+         * live bug: `spentStats` is the ledger of points the PLAYER PURCHASED,
+         * so gear, passives and timed effects paid nothing into the pool. The
+         * whole argument, and the reason it is now a named function with a test
+         * rather than an expression nothing could reach, is in `engine/pools.ts`.
+         *
+         * IT READS `actor.combat`, which the `recomposeCombat` a few lines above
+         * has just rebuilt from the class sheet, the bought points, the worn
+         * gear, the passives and the live effects. That ordering is the entire
+         * contract of this block: the resize must follow the refold, or it sizes
+         * the body the player had a moment ago.
+         */
+        actor.maxHp = maxLifeOf(actor, definition, PLAYER_RANK);
         actor.hp = Math.min(actor.hp, actor.maxHp);
 
         /**

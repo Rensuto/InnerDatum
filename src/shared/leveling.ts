@@ -205,6 +205,14 @@ export function statPointsGainedTo(level: number, rank: number): number {
  * Four per point, flat, no curve. It is the only stat that pays into a pool in
  * our game today; upstream also routes WIL into mana and psi, which we have no
  * equivalent of yet.
+ *
+ * ═══ AND IT DOES NOT CARE WHERE THE POINT CAME FROM ═══
+ * `onStatChange` is reached from `onTemporaryValueChange` (Actor.lua:3866-3872),
+ * which fires for ANY write to `inc_stats` — and `inc_stats` is exactly what a
+ * worn item's `wielder` pushes through `addTemporaryValue`
+ * (ActorInventory.lua:563-572). So upstream pays the four hit points for a ring
+ * as readily as for a point the player bought, and takes them back when the ring
+ * comes off. See `maxLifeFor` for why that distinction cost us a live bug.
  */
 export const LIFE_PER_CON = 4;
 
@@ -215,7 +223,38 @@ export const LIFE_PER_CON = 4;
  *
  * Upstream keeps `max_life` as a running mutable total and adds to it in two
  * places. We compute it instead, from three inputs that are all facts the save
- * already holds: the class base, the level, and the Constitution actually spent.
+ * already holds: the class base, the level, and the Constitution this body is
+ * standing at over the one its class was authored with.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `conAbove` IS THE EFFECTIVE STAT, NOT THE POINTS LEDGER. THIS WAS A BUG.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This parameter was `conSpent` and was fed `actor.spentStats?.con ?? 0` — the
+ * count of points the PLAYER BOUGHT. Every other source of Constitution in the
+ * game was therefore worth nothing at all: an ego rolling `con` (egos.ts:334
+ * and :376 both do), a passive, a timed effect. A player equipped a ring, watched
+ * the Constitution row on their sheet go up, and watched their hit points sit
+ * exactly where they were. Reported from the live game.
+ *
+ * The stat pipeline was never the problem — `recomposeCombat` folds gear into
+ * `actor.combat.stats.con` correctly and always did, which is why every OTHER
+ * consumer of Constitution was right. This one function reached around the fold
+ * to the ledger underneath it, and so was the only reader that disagreed with
+ * the character sheet.
+ *
+ * It now takes the effective Constitution MINUS the class's own, because the
+ * class's authored `maxHp` already prices the Constitution it was written with:
+ * a Watchman's 72 is 72 at CON 20, not 72 plus eighty hit points. The caller
+ * does that subtraction because the caller is the one holding both numbers.
+ *
+ * NEGATIVE IS MEANINGFUL NOW AND IS NO LONGER CLAMPED. Under the old parameter a
+ * negative was nonsense — you cannot spend minus fifty points — so it was floored
+ * at zero defensively. Under the new one it is a body dragged below its class's
+ * Constitution by a curse, and upstream shrinks such a body: `onStatChange` runs
+ * the same `+ 4 * v` with a negative `v`. Nothing in the catalogue rolls a
+ * negative stat today; this is the behaviour waiting correctly for the first one
+ * that does. The `Math.max(1, …)` floor below is what keeps it a live body.
  *
  * ═══ WHY DERIVED, WHEN UPSTREAM MUTATES ═══
  * Because a mutable total is a value that can drift from its own inputs, and
@@ -237,10 +276,10 @@ export function maxLifeFor(
   lifeRating: number,
   level: number,
   rank: number,
-  conSpent: number,
+  conAbove: number,
 ): number {
   const gained = lifeGainedTo(lifeRating, level, rank);
-  const fromCon = Math.max(0, conSpent) * LIFE_PER_CON;
+  const fromCon = conAbove * LIFE_PER_CON;
   /**
    * FLOORED TO AN INTEGER AT THE END, and only at the end. Upstream carries
    * `max_life` as a float from level 2 onward and never rounds it, so rounding

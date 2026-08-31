@@ -93,8 +93,30 @@ describe('Constitution finally buys something', () => {
     expect(ten - none).toBe(10 * LIFE_PER_CON);
   });
 
-  it('never lets a negative spend shrink a body', () => {
-    expect(maxLifeFor(72, 16, 10, PLAYER_RANK, -50)).toBe(maxLifeFor(72, 16, 10, PLAYER_RANK, 0));
+  it('shrinks a body dragged below its class Constitution', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS ASSERTION USED TO SAY THE OPPOSITE, AND THE REVERSAL IS THE POINT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read *"never lets a negative spend shrink a body"* and floored the
+     * parameter at zero, which was right when the parameter meant POINTS SPENT:
+     * a player cannot buy minus fifty points, so a negative was corrupt input.
+     *
+     * The parameter now means Constitution ABOVE THE CLASS'S OWN, and a negative
+     * is an ordinary fact about a cursed body. Upstream runs the same
+     * `+ 4 * v` for it (Actor.lua:3884-3885 via `onStatChange`), so the clamp
+     * would now be a free immunity to any Constitution drain we ever author.
+     */
+    const level = maxLifeFor(72, 16, 10, PLAYER_RANK, 0);
+    expect(maxLifeFor(72, 16, 10, PLAYER_RANK, -5)).toBe(level - 5 * LIFE_PER_CON);
+  });
+
+  it('leaves a live body even when the drain exceeds the pool', () => {
+    // The one floor that survives: a readout of `-128/72` is a number nothing
+    // in this game can draw, and a body at zero is a death the damage pipeline
+    // is supposed to declare, not an arithmetic accident.
+    expect(maxLifeFor(72, 16, 10, PLAYER_RANK, -5000)).toBe(1);
   });
 });
 

@@ -14,6 +14,10 @@ import {
 import { ITEMS } from '../../src/server/content/items.ts';
 import { moneyIdFor } from '../../src/server/content/money.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
+import { recomposeCombat } from '../../src/server/engine/effects.ts';
+import { maxLifeOf } from '../../src/server/engine/pools.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
+import { LIFE_PER_CON, PLAYER_RANK } from '../../src/shared/leveling.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -277,6 +281,8 @@ type Harness = {
   readonly world: World;
   readonly downed: DownedState;
   readonly saves: Recorder;
+  /** Every actor id `TurnEngine.refreshBody` was asked about, in order. */
+  readonly refreshed: string[];
   close(): Promise<void>;
 };
 
@@ -307,11 +313,40 @@ async function boot(seed: string): Promise<Harness> {
     talentRuntime: talentRuntimeFor(talents, world),
   });
 
+  const refreshed: string[] = [];
+
   const engine: TurnEngine = {
     ...base,
     attachClass: (actorId: string, classId: string): void => {
       const definition = classById(classId);
       if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
+    },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SEAM THAT RESIZES A BODY — COPIED FROM main.ts LIKE THE OTHERS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This harness had no `refreshBody` at all, so every verb in this file took
+     * the gateway's FALLBACK path and no test in the tree had ever driven the
+     * seam. That is precisely how equip and unequip came to call the bare
+     * recomposer: the branch that resizes the pools did not exist in any
+     * fixture, so nothing could notice it was never reached.
+     *
+     * It records the call AND does the real work, so a test can assert either
+     * the rule (the seam was reached) or its consequence (the ceiling moved).
+     * The computation itself is not what this file proves — `pools.test.ts`
+     * owns that, and aims at `maxLifeOf` directly rather than at this copy.
+     */
+    refreshBody: (actorId: string): void => {
+      refreshed.push(actorId);
+      const actor = world.getActor(actorId);
+      if (actor === undefined) return;
+      recomposeCombat(actor, null, resolveItem);
+      if (actor.kind !== ActorKind.Player || actor.classId === undefined) return;
+      const definition = classById(actor.classId);
+      if (definition === undefined) return;
+      actor.maxHp = maxLifeOf(actor, definition, PLAYER_RANK);
+      actor.hp = Math.min(actor.hp, actor.maxHp);
     },
     raiseTalentPoint: (actorId: string, talentId: string): number | null => {
       const sheet = talents.sheetOf(actorId);
@@ -350,6 +385,7 @@ async function boot(seed: string): Promise<Harness> {
     world,
     downed,
     saves,
+    refreshed,
     close: async (): Promise<void> => {
       await app.close();
     },
@@ -1685,5 +1721,139 @@ describe('a pile is not a lid', () => {
     ren.send({ t: 'pickup' });
     await ren.settle();
     expect(body.carried).toEqual([top?.itemId]);
+  });
+});
+
+describe('what you put on changes how much of you there is', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REPORTED FROM THE LIVE GAME: "I equip gear with CON and it doesn't properly
+   * raise my HP."
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It was two bugs wearing one symptom, and neither alone would have been
+   * enough to notice the other:
+   *
+   *   1. `maxLifeFor` was fed `spentStats.con` — the ledger of points BOUGHT —
+   *      so Constitution from a ring, a passive or an effect paid nothing. That
+   *      half is `engine/pools.ts` and is proved in `pools.test.ts`.
+   *   2. THIS half: `handleEquip` and `handleUnequip` called the bare
+   *      `recomposeCombat` rather than the `refreshBody` seam, so even a correct
+   *      computation would not have RUN until some later base turn happened to
+   *      tick. `handleSpendStat` had gone through the seam since the day it was
+   *      written, with a docblock saying exactly why — *"without the seam a
+   *      player buys toughness and reads the old number until the next base
+   *      turn"* — and nobody applied that sentence to a coat.
+   *
+   * ═══ THE ITEM IS REAL LOOT, NOT A FIXTURE ═══
+   * `item_watchmans_brass_ring~lw0` is the Brass Constable Ring with the *of the
+   * Long Watch* suffix — an ego that ships in `EGOS` and rolls `con: 3` at power
+   * 0. This is reproducible from the drop table, which is how the player found it.
+   */
+  const CON_RING = 'item_watchmans_brass_ring~lw0';
+  const RING_CON = 3;
+
+  it('pays hit points for a Constitution ring the moment it goes on', async () => {
+    server = await boot('con-ring');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.carried = [CON_RING];
+    await ren.settle();
+
+    // THE RING IS WHAT THIS TEST THINKS IT IS. Without this the whole test could
+    // pass against an ego that silently stopped granting Constitution, and it
+    // would read as a proof about hit points while proving nothing at all.
+    expect(resolveItem(CON_RING)?.wielder.stats?.con).toBe(RING_CON);
+
+    const before = body.maxHp;
+    ren.send({ t: 'equip', itemId: CON_RING });
+    await ren.settle();
+
+    expect(body.equipped?.['ring']).toBe(CON_RING);
+    expect(body.combat?.stats?.con).toBe((WATCHMAN.combat.stats?.con ?? 0) + RING_CON);
+    // ═══ THE ASSERTION THAT WAS FAILING ═══ It read exactly `before`.
+    expect(body.maxHp).toBe(before + RING_CON * LIFE_PER_CON);
+  });
+
+  it('takes them back off when the ring does, exactly', async () => {
+    server = await boot('con-ring-off');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.carried = [CON_RING];
+    await ren.settle();
+
+    const before = body.maxHp;
+    ren.send({ t: 'equip', itemId: CON_RING });
+    await ren.settle();
+    expect(body.maxHp).toBeGreaterThan(before);
+
+    ren.send({ t: 'unequip', slot: 'ring' });
+    await ren.settle();
+
+    // EXACT, not approximate. `equipment.ts` refolds rather than subtracting
+    // precisely so that this lands on the number it started from — a pool that
+    // drifted by one on every swap would be a save file that decays.
+    expect(body.maxHp).toBe(before);
+    expect(body.carried).toContain(CON_RING);
+  });
+
+  it('does not shrink a wounded body below the blood still in it', async () => {
+    /**
+     * The ceiling falling is not a heal and not a wound. `main.ts` clamps
+     * downward only — *"a pool reading 90/72 is a number no other part of this
+     * game can be shown"* — and the blood stays where it was otherwise.
+     */
+    server = await boot('con-ring-wounded');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.carried = [CON_RING];
+    await ren.settle();
+
+    ren.send({ t: 'equip', itemId: CON_RING });
+    await ren.settle();
+    const ceiling = body.maxHp;
+
+    // Hurt, but by less than the ring is worth, so the ceiling drops past the
+    // current pool and the clamp is what decides the answer.
+    body.hp = ceiling - 2;
+    ren.send({ t: 'unequip', slot: 'ring' });
+    await ren.settle();
+
+    expect(body.maxHp).toBe(ceiling - RING_CON * LIFE_PER_CON);
+    expect(body.hp).toBe(body.maxHp);
+    expect(body.hp).toBeLessThanOrEqual(body.maxHp);
+  });
+
+  it('routes both verbs through the seam, which is the rule underneath', async () => {
+    /**
+     * The three tests above measure the CONSEQUENCE, and they would all still
+     * pass if some future refactor resized the body from a second place. This
+     * one names the RULE: equip and unequip ask the engine to refresh the body,
+     * the way `spend_stat` always has. It is the assertion that fails first if
+     * anybody puts the bare recomposer back.
+     */
+    server = await boot('con-ring-seam');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    standAt(body, 10, 10);
+    body.carried = [CON_RING];
+    await ren.settle();
+
+    server.refreshed.length = 0;
+    ren.send({ t: 'equip', itemId: CON_RING });
+    await ren.settle();
+    expect(server.refreshed, 'equip never refreshed the body').toContain(body.id);
+
+    server.refreshed.length = 0;
+    ren.send({ t: 'unequip', slot: 'ring' });
+    await ren.settle();
+    expect(server.refreshed, 'unequip never refreshed the body').toContain(body.id);
   });
 });
