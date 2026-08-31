@@ -91,10 +91,21 @@ const SEALED_SHAFT = defineVault(
  * because noise makes texture rather than events.
  *
  * Open on both ends, so it is a passage that got worse rather than a dead end.
+ *
+ * ═══ IT WAS NOT, FOR THREE COMMITS ═══
+ * The first shape enclosed six cells: the ring of walls closed on itself under
+ * four-connectivity, so the room was a sealed pocket and this sentence was
+ * false. Nothing failed — `connect` digs to any orphaned floor, so the pocket
+ * was tunnelled into and the floor stayed finishable — but a tunnelled-into
+ * pocket is a DEAD END, which is the shape `SEALED_SHAFT` already covers. The
+ * room was doing another room's job while claiming to do its own.
+ *
+ * `vaults.test.ts` now floods every room from outside and refuses one that
+ * encloses anything, which is the check that would have caught it.
  */
 const COLLAPSED_GALLERY = defineVault(
   'vault:collapsed_gallery',
-  ['  ##   ', ' ##### ', '### ###', '##   ##', ' #  ## ', '  ###  '],
+  ['  ##   ', ' ###   ', '###  ##', '##   ##', ' #  ## ', '  ##   '],
   LEGEND,
   { border: 1 },
 );

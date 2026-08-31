@@ -187,3 +187,73 @@ describe('placing a room in ground that already exists', () => {
     expect(vaultFits(shape, { x: 4, y: 4 }, field(9, 9), 2)).toBe(true);
   });
 });
+
+describe('every drawn room is a room, not a sealed pocket', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A ROOM THAT CLOSES ON ITSELF IS DOING A DIFFERENT ROOM'S JOB.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `COLLAPSED_GALLERY` shipped for three commits as a ring of walls that closed
+   * under four-connectivity, enclosing six cells — while its own docblock called
+   * it "open on both ends, a passage that got worse rather than a dead end".
+   *
+   * Nothing failed. `connect` digs a corridor to any orphaned floor, so the
+   * pocket was tunnelled into and every reachability test stayed green. But a
+   * tunnelled-into pocket IS a dead end, which is the shape `SEALED_SHAFT`
+   * already covers — so the list had two rooms doing one job and one job
+   * undone, and no test could tell because the repair pass hid it.
+   *
+   * ═══ FLOODED FROM OUTSIDE, THROUGH THE CELLS THE ROOM DOES NOT WALL ═══
+   * A blank means "leave whatever is here", so a blank the room encloses is a
+   * pocket of whatever ground it landed on. A floor cell it carves is the same.
+   * Both are flooded; only `#` stops the flood. Four-connected, because that is
+   * what `connect` uses.
+   */
+  for (const vault of ALL_VAULTS) {
+    it(`'${vault.id}' encloses nothing`, () => {
+      const w = vault.w + 2;
+      const h = vault.h + 2;
+      const wall = (x: number, y: number): boolean => {
+        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) return false;
+        return vault.tiles[(y - 1) * vault.w + (x - 1)] === TileCode.WALL;
+      };
+
+      const seen = new Set<number>([0]);
+      const stack = [0];
+      while (stack.length > 0) {
+        const idx = stack.pop();
+        if (idx === undefined) break;
+        const x = idx % w;
+        const y = (idx - x) / w;
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ] as const) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const next = ny * w + nx;
+          if (seen.has(next) || wall(nx, ny)) continue;
+          seen.add(next);
+          stack.push(next);
+        }
+      }
+
+      const trapped: string[] = [];
+      for (let y = 1; y < h - 1; y += 1) {
+        for (let x = 1; x < w - 1; x += 1) {
+          if (!wall(x, y) && !seen.has(y * w + x))
+            trapped.push(`(${String(x - 1)},${String(y - 1)})`);
+        }
+      }
+
+      expect(
+        trapped,
+        `'${vault.id}' seals ${String(trapped.length)} cell(s) off from outside: ${trapped.join(' ')}`,
+      ).toEqual([]);
+    });
+  }
+});
