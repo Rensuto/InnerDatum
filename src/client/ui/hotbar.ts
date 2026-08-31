@@ -399,6 +399,17 @@ export const ItemSlotAction = {
   /** The item is worn. Click sends `unequip {slot}` (protocol.ts:1938-1942). */
   Unequip: 'unequip',
   /**
+   * The item is carried and CANNOT be worn — a draught, a flare. Click sends
+   * `use {itemId}` (protocol.ts's `UseSchema`).
+   *
+   * `CarriedItemView.slot` is the whole test, and it was put there for this:
+   * *"ABSENT ON A CONSUMABLE, which is also how the client knows not to offer
+   * 'Equip' for it"*. The inventory panel already made that check; this bar did
+   * not, so it captioned a draught EQUIP and sent an intent the server answers
+   * with "that is not something you can wear".
+   */
+  Use: 'use',
+  /**
    * The item is in neither collection: dropped, destroyed, or never held.
    * PlayerHotkeys.lua:176-177 is the same case upstream, and it does not silently
    * do nothing either — it says "You do not have any <name>."
@@ -688,6 +699,13 @@ export function hotbarDropTargetAt(
 /** The one field either collection has to carry for the state machine to run. */
 export type ItemIdentity = {
   readonly itemId: string;
+  /**
+   * WHERE IT WOULD GO, absent on a consumable — `CarriedItemView.slot`'s own
+   * contract. Optional because the EQUIPPED map is keyed by slot already and
+   * its values have nothing to add; it is the CARRIED list that needs to say
+   * whether a thing can be worn at all.
+   */
+  readonly slot?: Slot;
 };
 
 /**
@@ -738,8 +756,11 @@ export function itemSlotAction(
   equipped: Readonly<Partial<Record<Slot, ItemIdentity>>>,
 ): ItemSlotAction {
   if (wornSlotOf(itemId, equipped) !== null) return ItemSlotAction.Unequip;
-  if (carried.some((item) => item.itemId === itemId)) return ItemSlotAction.Equip;
-  return ItemSlotAction.Gone;
+  const held = carried.find((item) => item.itemId === itemId);
+  if (held === undefined) return ItemSlotAction.Gone;
+  // NO SLOT MEANS IT CANNOT BE WORN, which for this game means it is drunk or
+  // thrown. See `ItemSlotAction.Use`.
+  return held.slot === undefined ? ItemSlotAction.Use : ItemSlotAction.Equip;
 }
 
 // ---------------------------------------------------------------------------
@@ -841,6 +862,8 @@ function captionForAction(action: ItemSlotAction): string {
   switch (action) {
     case ItemSlotAction.Equip:
       return 'EQUIP';
+    case ItemSlotAction.Use:
+      return 'USE';
     case ItemSlotAction.Unequip:
       return 'REMOVE';
     case ItemSlotAction.Gone:
@@ -1274,10 +1297,20 @@ type StripLine = { readonly text: string; readonly colour: string };
  * and `noFallthroughCasesInSwitch` is on for exactly the reason that would be a
  * bad idea.
  */
-function itemStrip(name: string, action: ItemSlotAction): StripLine {
+/**
+ * EXPORTED FOR THE SAME REASON `itemSlotAction` IS. This and `itemActionWord`
+ * are two sentences about one press, read by the same player half a second
+ * apart — the strip under the bar and the hover card — and two verbs for one
+ * button is how a control stops being trusted. Only one of them was reachable
+ * from a test, so a mutation that made the strip say "equip" over a draught
+ * passed while the card said "use".
+ */
+export function itemStrip(name: string, action: ItemSlotAction): StripLine {
   switch (action) {
     case ItemSlotAction.Equip:
       return { text: `${name} — click to equip`, colour: PALETTE.GOLD };
+    case ItemSlotAction.Use:
+      return { text: `${name} — click to use`, colour: PALETTE.GOLD };
     case ItemSlotAction.Unequip:
       return { text: `${name} — click to remove`, colour: PALETTE.GOLD };
     case ItemSlotAction.Gone:
@@ -1512,10 +1545,12 @@ export function hotbarTipAt(
 }
 
 /** The verb a press on this slot would perform, in the player's words. */
-function itemActionWord(action: ItemSlotAction): string {
+export function itemActionWord(action: ItemSlotAction): string {
   switch (action) {
     case ItemSlotAction.Equip:
       return 'press to put it on';
+    case ItemSlotAction.Use:
+      return 'press to use it';
     case ItemSlotAction.Unequip:
       return 'worn — press to take it off';
     case ItemSlotAction.Gone:

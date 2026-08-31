@@ -36,7 +36,9 @@ import {
   hotbarVisibleCount,
   isItemSlotIndex,
   isSlotDisabled,
+  itemActionWord,
   itemSlotAction,
+  itemStrip,
   slotRect,
   wornSlotOf,
 } from '../../src/client/ui/hotbar.ts';
@@ -336,9 +338,42 @@ describe('geometry', () => {
 
 describe('itemSlotAction', () => {
   const COAT = 'item_watchmans_coat';
+  const DRAUGHT = 'item_draught';
 
-  it('answers EQUIP for something in the bag', () => {
-    expect(itemSlotAction(COAT, [{ itemId: COAT }], {})).toBe(ItemSlotAction.Equip);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FIXTURES HERE USED TO SAY `{ itemId }` AND MEAN "A COAT".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * They were written when `ItemIdentity` was `{itemId}` and every carried thing
+   * was wearable, so leaving the slot off cost nothing. It costs something now:
+   * an absent slot is exactly how `CarriedItemView` says "this is a consumable",
+   * so those fixtures had quietly become draughts and asserted that a draught
+   * offers EQUIP.
+   *
+   * Naming the slot is not ceremony — it is the difference between the two
+   * cases this function now distinguishes.
+   */
+  const wearable = (itemId: string): { itemId: string; slot: Slot } => ({ itemId, slot: 'body' });
+
+  it('answers EQUIP for a wearable thing in the bag', () => {
+    expect(itemSlotAction(COAT, [wearable(COAT)], {})).toBe(ItemSlotAction.Equip);
+  });
+
+  it('answers USE for something in the bag that cannot be worn', () => {
+    /**
+     * The bar captioned a draught EQUIP and sent that intent, and the server
+     * answers "that is not something you can wear" — so the one item a player
+     * most wants a keypress away was the one the bar refused. `slot` absent IS
+     * the consumable test, and `CarriedItemView` documents it as such.
+     */
+    expect(itemSlotAction(DRAUGHT, [{ itemId: DRAUGHT }], {})).toBe(ItemSlotAction.Use);
+  });
+
+  it('does not confuse the two when the bag holds both', () => {
+    const bag = [wearable(COAT), { itemId: DRAUGHT }];
+    expect(itemSlotAction(COAT, bag, {})).toBe(ItemSlotAction.Equip);
+    expect(itemSlotAction(DRAUGHT, bag, {})).toBe(ItemSlotAction.Use);
   });
 
   it('answers UNEQUIP for the occupant of a worn slot, and names that slot', () => {
@@ -365,7 +400,7 @@ describe('itemSlotAction', () => {
     // this caption. A slot that cached "this equips" would keep saying so over an
     // item already on the body, and the player would only find out from a server
     // refusal.
-    const before = itemSlotAction(COAT, [{ itemId: COAT }], {});
+    const before = itemSlotAction(COAT, [wearable(COAT)], {});
     const after = itemSlotAction(COAT, [], { body: itemView(COAT) });
     expect(before).toBe(ItemSlotAction.Equip);
     expect(after).toBe(ItemSlotAction.Unequip);
@@ -374,7 +409,7 @@ describe('itemSlotAction', () => {
   it('never answers EQUIP once the item has left both collections', () => {
     // Dropped, destroyed, or traded. Upstream's own dangling case
     // (PlayerHotkeys.lua:176-177) and it is loud there too.
-    let action = itemSlotAction(COAT, [{ itemId: COAT }], {});
+    let action = itemSlotAction(COAT, [wearable(COAT)], {});
     expect(action).toBe(ItemSlotAction.Equip);
     action = itemSlotAction(COAT, [], { body: itemView(COAT) });
     expect(action).toBe(ItemSlotAction.Unequip);
@@ -1005,5 +1040,96 @@ describe('a stance that is up says so', () => {
     expect(card?.meta ?? '').not.toContain('UP');
     // ...and it still says the ordinary things.
     expect(card?.meta ?? '').toContain('AP');
+  });
+});
+
+describe('a consumable on the bar is drunk, not worn', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAR ACCEPTED THE DRAUGHT AND THEN REFUSED IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Worse than absent: the four item slots took the consumable you dragged onto
+   * them, captioned it EQUIP, and answered the keypress with the server's "that
+   * is not something you can wear" — so a player concluded the bar was broken,
+   * while the party waited at the barrier.
+   *
+   * The rule was right when it was written. `hotbar.ts`'s header argued that
+   * shipping a `use` intent would be "a verb with nothing behind it, which is
+   * the 'control that does nothing' trap wearing a protocol change". Then `use`
+   * shipped — and keeping the rule inverted the trap.
+   *
+   * ═══ THE SWITCHES ARE THE COMPILER'S JOB, NOT A TEST'S ═══
+   * Four `switch`es read this union and every one is exhaustive with no default,
+   * so a member that nothing handles is a BUILD failure — adding `Use` produced
+   * exactly that until each arm was written. What a test can add is that the
+   * arms AGREE: the caption a player reads and the hover line they read half a
+   * second later must name one verb, because two verbs for one press is how a
+   * control stops being trusted.
+   */
+  const DRAUGHT = 'item_draught';
+  const W = 640;
+  const H = 320;
+
+  const withDraught = (action: ItemSlotAction): HotbarView => ({
+    slots: [
+      {
+        kind: HotbarSlotKind.Item,
+        itemId: DRAUGHT,
+        name: 'Steadying Draught',
+        icon: 'icon_item_draught',
+        action,
+      },
+    ],
+    hovered: -1,
+    armed: -1,
+  });
+
+  it('resolves to USE rather than EQUIP', () => {
+    expect(itemSlotAction(DRAUGHT, [{ itemId: DRAUGHT }], {})).toBe(ItemSlotAction.Use);
+  });
+
+  it('offers to use it under the pointer, and does not offer to equip it', () => {
+    const view = withDraught(ItemSlotAction.Use);
+    const rect = slotRect(0, view.slots.length, W, H);
+    const card = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H);
+    expect(card, 'no hover card over a consumable slot').not.toBeNull();
+    const said = `${card?.title ?? ''} ${card?.meta ?? ''} ${(card?.lines ?? []).join(' ')}`;
+    expect(said).toMatch(/use/i);
+    expect(said, 'the hover line still offers to equip a draught').not.toMatch(/equip/i);
+  });
+
+  it('says the same verb in both places a player reads it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TWO SENTENCES ABOUT ONE PRESS, AND ONLY ONE WAS REACHABLE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The hover CARD comes from `itemActionWord`; the strip under the bar comes
+     * from `itemStrip`. The first version of this test drove the card only —
+     * so a mutation making the strip say "click to equip" over a draught PASSED,
+     * because the card still said "use". Two verbs for one button is how a
+     * control stops being trusted, and the test could only see one of them.
+     */
+    const strip = itemStrip('Steadying Draught', ItemSlotAction.Use);
+    expect(strip.text).toMatch(/use/i);
+    expect(strip.text, 'the strip under the bar still offers to equip it').not.toMatch(/equip/i);
+
+    const word = itemActionWord(ItemSlotAction.Use);
+    expect(word).toMatch(/use/i);
+    expect(word, 'the hover card still offers to equip it').not.toMatch(/equip|wear|put it on/i);
+
+    // ...and the wearable case still says the other verb, in both places.
+    expect(itemStrip('Coat', ItemSlotAction.Equip).text).toMatch(/equip/i);
+    expect(itemActionWord(ItemSlotAction.Equip)).toMatch(/put it on/i);
+  });
+
+  it('is a live slot — pressing it does something', () => {
+    // `isSlotDisabled` greys the states a press cannot act on. A new member that
+    // fell through to "dead" would grey out the one slot that now works.
+    const live = withDraught(ItemSlotAction.Use);
+    const gone = withDraught(ItemSlotAction.Gone);
+    expect(isSlotDisabled(live.slots[0] as HotbarSlot)).toBe(false);
+    expect(isSlotDisabled(gone.slots[0] as HotbarSlot)).toBe(true);
   });
 });

@@ -6253,6 +6253,17 @@ async function boot(): Promise<void> {
       case ItemSlotAction.Equip:
         sendEquip(binding.itemId);
         return;
+      /**
+       * A DRAUGHT ON THE BAR IS DRUNK, NOT WORN. The bar used to caption a
+       * consumable EQUIP and send that intent, which the server answers with
+       * "that is not something you can wear" — so the one item a player most
+       * wants a keypress away was the one the bar refused, while the party
+       * waited at the barrier. `use` costs the sender's turn server-side, the
+       * same as every other loot verb.
+       */
+      case ItemSlotAction.Use:
+        sendUse(binding.itemId);
+        return;
       case ItemSlotAction.Unequip: {
         // `unequip` NAMES A SLOT, NOT AN ITEM (protocol.ts:1938-1942), so the
         // binding's id has to be resolved back to the doll cell wearing it.
