@@ -82,6 +82,7 @@ import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
 import { TILE_PX, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { isLowLife, lifeFraction } from '../../shared/vitals.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type {
   ActorView,
@@ -552,6 +553,81 @@ const LOOT_PILE_OFFSET = 3;
  * shape difference, which is the same rule ui/resource.ts applies to an empty
  * pip and ui/turnbar.ts applies to the four turn chips.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LIFE BAR ON A CREATURE TOKEN — `Actor.lua:931-961`, `smallTacticalFrame`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHAT IT COSTS WITHOUT IT ═══
+ * Standing in a room with six husks, nobody in the voice channel can see which
+ * one is a single hit from dying. Focus fire is the decision co-op turn-based
+ * combat is actually about, and it had to be reconstructed from log text or by
+ * hovering each token in turn — which is not a thing anyone does mid-fight.
+ *
+ * ═══ TWO DEPARTURES FROM UPSTREAM, BOTH FORCED BY THINGS WE HAVE AND IT DOES NOT
+ * SIDE. Upstream puts the bar on the left for friends and the right for foes
+ *   (`if friend < 0 then sx = w * .9375`), because the side is its only
+ *   faction signal. Ours is always on the LEFT: the token RING already says
+ *   ally, hostile or elite far more loudly than an edge could, and the right
+ *   edge is the status-pip column (`paintStatusPips`).
+ * COLOUR. Upstream steps green/yellow/orange/red at .75/.50/.25. This game has
+ *   one step — `shared/vitals.ts` — because `ui/life.ts` reserves CRIMSON for
+ *   "hostiles are engaged" and a four-band ramp would spend it, and because
+ *   every other readout here already agrees on one boundary. The FRACTION is
+ *   carried by the bar's height, which is continuous; the colour only has to
+ *   answer "is this one nearly dead", and that is the question being asked.
+ *
+ * GOLD AND ORANGE FOR FRIEND AND FOE ALIKE. The colour answers "in trouble",
+ * not "whose side" — orange means one more hit whoever is wearing it, which is
+ * exactly the focus-fire signal. The ring says whose side.
+ */
+const LIFE_BAR_W = 2;
+const LIFE_BAR_INSET = 1;
+/** Matches the pip column's top inset, so the two edges start on one line. */
+const LIFE_BAR_PAD = 2;
+
+/** Where a token's life bar goes and how much of it is filled. */
+export type LifeBar = {
+  /** The dark backing, always the full height. */
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** The filled part, measured from the bottom. `fillH` is 0 for a dead body. */
+  readonly fillY: number;
+  readonly fillH: number;
+  /** True under `shared/vitals.ts`'s one threshold — the caller picks the ink. */
+  readonly low: boolean;
+};
+
+/**
+ * THE GEOMETRY, SEPARATED FROM THE PAINTING, so it can be tested without a
+ * canvas — `paintLifeBar` below is then four `fillRect` calls with no arithmetic
+ * in them. The same split `ui/mapview.ts` uses for the zone label, and for the
+ * same reason: the interesting part is where the pixels land, and a closure
+ * inside `createRenderer` cannot be called by a test.
+ */
+export function lifeBar(hp: number, maxHp: number, cellX: number, cellY: number): LifeBar {
+  const h = Math.max(0, TILE_PX - LIFE_BAR_PAD * 2);
+  const filled = Math.round(h * lifeFraction(hp, maxHp));
+  /**
+   * A BODY WITH ANYTHING LEFT KEEPS A PIXEL. Rounding a sliver to zero draws an
+   * empty bar over something still standing, and "it is already dead" is the one
+   * thing this must never say wrongly — it is the difference between walking
+   * past a husk and turning your back on one.
+   */
+  const fillH = hp > 0 ? Math.min(h, Math.max(1, filled)) : 0;
+  return {
+    x: cellX + LIFE_BAR_INSET,
+    y: cellY + LIFE_BAR_PAD,
+    w: LIFE_BAR_W,
+    h,
+    fillY: cellY + LIFE_BAR_PAD + h - fillH,
+    fillH,
+    low: isLowLife(hp, maxHp),
+  };
+}
+
 const PIP_MAX = 4;
 const PIP_SIZE = 4;
 const PIP_STEP = 5;
@@ -1867,6 +1943,32 @@ export function createRenderer(options: RendererOptions): Renderer {
    * of a cell is somebody's head. The right edge is the one strip of a tile that
    * a bottom-centred 24-wide sprite in a 32-wide cell reliably leaves alone.
    */
+  /**
+   * One creature's life, as a bar down the left edge of its tile.
+   *
+   * FILLED FROM THE BOTTOM, which is upstream's own direction
+   * (`y + sy + dy * (1 - lp)`, Actor.lua:948) and the one that reads as a
+   * draining vessel rather than a growing one.
+   *
+   * A DARK BACKING UNDER IT, always the full height, so the bar is legible on a
+   * pale floor and so the EMPTY part of it is visible — a bar with no backing
+   * shows a short gold stub and says nothing about how short it is.
+   */
+  function paintLifeBar(actor: ActorView, cellX: number, cellY: number): void {
+    const bar = lifeBar(actor.hp, actor.maxHp, cellX, cellY);
+    if (bar.h <= 0) return;
+
+    // THE BACKING IS ALWAYS THE FULL HEIGHT, so the bar is legible on a pale
+    // floor and so the EMPTY part is visible — a bar with no backing shows a
+    // short gold stub and says nothing about how short it is.
+    backCtx.fillStyle = PALETTE.INK;
+    backCtx.fillRect(bar.x, bar.y, bar.w, bar.h);
+
+    if (bar.fillH <= 0) return;
+    backCtx.fillStyle = bar.low ? PALETTE.ORANGE : PALETTE.GOLD;
+    backCtx.fillRect(bar.x, bar.fillY, bar.w, bar.fillH);
+  }
+
   function paintStatusPips(effects: readonly EffectView[], cellX: number, cellY: number): void {
     if (effects.length === 0) return;
     const solid = Math.min(PIP_MAX, effects.length);
@@ -1987,6 +2089,17 @@ export function createRenderer(options: RendererOptions): Renderer {
         const cellX = actor.x * TILE_PX - camX;
         const cellY = actor.y * TILE_PX - camY;
         if (visible(cellX, cellY)) blitSprite(actor.sprite, cellX, cellY);
+      }
+
+      // THE LIFE PASS, and it is its own pass for the reason the pips below are:
+      // interleaved with the sprite loop, the bar of an actor standing behind
+      // would be painted over by the boots of the one in front — and a life bar
+      // you cannot see is worse than none, because its absence reads as "that
+      // one is fine".
+      for (const actor of ordered) {
+        const cellX = actor.x * TILE_PX - camX;
+        const cellY = actor.y * TILE_PX - camY;
+        if (visible(cellX, cellY)) paintLifeBar(actor, cellX, cellY);
       }
 
       // THE PIP PASS, after every sprite. Its own pass rather than a tail on the
