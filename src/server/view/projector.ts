@@ -78,8 +78,8 @@ import {
   stat,
 } from '../engine/derived.ts';
 import { downedView } from '../engine/downed.ts';
-import { EffectStatus, effectDef, effectsOn } from '../engine/effects.ts';
-import { composeSheet, wornOf } from '../engine/equipment.ts';
+import { EffectStatus, boughtSheet, effectDef, effectsOn } from '../engine/effects.ts';
+import { composeSheet, composeWielders, wornOf } from '../engine/equipment.ts';
 import { aimTile, currentTile, turnsToImpact } from '../engine/projectile.ts';
 import type {
   ActorEffects,
@@ -1679,12 +1679,54 @@ export function projectInventory(
    */
   sellFor?: (id: string) => number,
 ): InventoryMsg {
-  // The same fold `recomposeCombat` ran to build `actor.combat`, re-run here so
-  // the "before" side of every comparison is the sheet the player is actually
-  // wearing rather than one this function guessed at.
-  //
-  // HOISTED ABOVE THE DOLL, because the doll needs it now — see below.
-  const base = viewer.baseCombat ?? viewer.combat;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BASELINE IS EVERYTHING THIS BODY IS EXCEPT THE GEAR BEING PRICED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This read `viewer.baseCombat ?? viewer.combat`, described as *"the sheet the
+   * player is actually wearing rather than one this function guessed at"*. It
+   * was the guess. `baseCombat` is the CLASS SHEET — the bottom of the five
+   * layers `recomposeCombat` folds (class, bought points, gear, passives,
+   * effects) — so every swap was priced on a character who had spent no
+   * attribute points and had no passive talents.
+   *
+   * ═══ WHY THAT IS NOT A ROUNDING ERROR ═══
+   * `rescaleCombatStats` is CONCAVE: the same +3 Dexterity is worth less the
+   * higher you already stand. Measured on a Watchman holding the Inspector's
+   * Oxfords (`stats.dex: 3`), against what the character sheet actually does:
+   *
+   *     bought Dex     panel said     sheet moved
+   *      0              +3             +3
+   *     10              +3             +2
+   *     30              +3             +1
+   *     60              +3             +1
+   *
+   * The panel is the ONE screen whose entire job is "what does this do for me",
+   * and past the early game it was overstating by up to three times. A row can
+   * also vanish entirely at the top of the curve, which `CarriedItemView.compare`
+   * defines as "this item changes nothing" — a straight lie about an upgrade.
+   *
+   * ═══ BOUGHT POINTS AND PASSIVES, THROUGH THE SAME TWO COMBINES THE ENGINE
+   *     USES ═══
+   * `boughtSheet` is the identical call `recomposeCombat` makes at stage one and
+   * a half, and `composeWielders` is the identical fold it makes at stage two and
+   * a half. Not re-derived here: a second opinion about what a baseline is would
+   * be the very bug this is fixing, one layer along.
+   *
+   * ═══ WHAT IS STILL MISSING, STATED RATHER THAN HIDDEN ═══
+   * Live timed effects (stage two and three quarters) are NOT folded in, because
+   * `projectInventory` takes the actor and not the `EffectState` — the same
+   * layering reason `world.ts` cannot recompose. So a swap priced while a
+   * Dexterity buff is running is still measured from slightly below where the
+   * player stands. That is bounded and temporary, where the old error was
+   * permanent and grew with every point spent all career.
+   */
+  const classSheet = viewer.baseCombat ?? viewer.combat;
+  const bought = boughtSheet(viewer, classSheet);
+  const passive = viewer.passiveCombat;
+  const base =
+    bought === undefined || passive === undefined ? bought : composeWielders(bought, [passive]);
   const worn = wornOf(viewer.equipped, resolveItem);
 
   const equipped: { [K in Slot]?: ItemView } = {};

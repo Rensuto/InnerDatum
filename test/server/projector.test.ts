@@ -22,6 +22,11 @@ import {
   toActorView,
 } from '../../src/server/view/projector.ts';
 import { CLASSES, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
+import { recomposeCombat } from '../../src/server/engine/effects.ts';
+import { combatAttack } from '../../src/server/engine/derived.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
+import type { EngineActor } from '../../src/server/engine/actor.ts';
+import type { Combatant } from '../../src/server/engine/derived.ts';
 import { RESOURCE_RULES } from '../../src/server/engine/talents.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
@@ -1484,5 +1489,101 @@ describe('what an item is worth, wherever it appears', () => {
     // had none. `ShowStore.lua:145` renders the text for every row.
     const shop = projectShop('Threadneedle Row', ['item_watchmans_boots'], 1);
     expect(shop.stock[0]?.desc).toContain('Hobnailed');
+  });
+});
+
+describe('the compare panel measures from where the character actually stands', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE SCREEN THAT EXISTS TO ANSWER "WHAT DOES THIS DO FOR ME" WAS
+   * ANSWERING IT FOR SOMEBODY ELSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `projectInventory` took `viewer.baseCombat` as the "before" side. That is
+   * the CLASS SHEET — it does not include the attribute points the player has
+   * bought, and it does not include their passive talents. `recomposeCombat`
+   * folds class -> bought -> gear -> passives -> effects, so `baseCombat` is
+   * the bottom of a five-layer stack being used to price a swap that happens at
+   * the top of it.
+   *
+   * It matters because `rescaleCombatStats` is CONCAVE: the same +3 Dexterity is
+   * worth progressively less the higher you already are. Pricing the swap at the
+   * bottom of the curve therefore OVERSTATES it, and the panel promised numbers
+   * the character sheet then refused to deliver — up to about three times the
+   * real gain on a heavily-invested character.
+   *
+   * ═══ MEASURED AGAINST GROUND TRUTH, NOT AGAINST A NUMBER I WORKED OUT ═══
+   * The assertion does not hard-code what the row should say. It equips the item
+   * for real, recomposes, and reads what the CHARACTER SHEET actually moved by.
+   * That is the only definition of correct here, and it means the test survives
+   * any retune of the curve, the class or the item.
+   */
+  // The only Dexterity piece in the catalogue, and Dexterity is what Accuracy
+  // is rescaled from — a mods-only item would show no curve effect at all,
+  // which is how the first draft of this test passed against the bug.
+  const SIGNET = 'item_inspectors_oxfords';
+
+  /** What the sheet really does when this item goes on. The ground truth. */
+  function actualDelta(body: EngineActor, itemId: string, read: (c: Combatant) => number): number {
+    const item = resolveItem(itemId);
+    if (item?.slot === undefined) throw new Error('fixture: unwearable item');
+    const before = Math.round(read(body.combat ?? {}));
+    const wasEquipped = body.equipped;
+    body.equipped = { ...body.equipped, [item.slot]: itemId };
+    recomposeCombat(body, null, resolveItem);
+    const after = Math.round(read(body.combat ?? {}));
+    body.equipped = wasEquipped;
+    recomposeCombat(body, null, resolveItem);
+    return after - before;
+  }
+
+  it('prices a ring against the attribute points the player has bought', () => {
+    const world = room();
+    const body = watchman(world);
+
+    // ═══ THE FIXTURE IS THE BOUGHT POINTS. Without them `baseCombat` and the
+    // real sheet are the same object and the bug cannot be expressed — which is
+    // exactly why every existing test in this file passes against it.
+    body.spentStats = { dex: 30 };
+    body.carried = [SIGNET];
+    recomposeCombat(body, null, resolveItem);
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    const claimed = Number(rows.find((r) => r.label === 'Accuracy')?.value ?? '0');
+    const actual = actualDelta(body, SIGNET, combatAttack);
+
+    expect(claimed, 'the panel promised a number the sheet does not deliver').toBe(actual);
+  });
+
+  it('prices it against the passive talents the player has, too', () => {
+    // The other layer `baseCombat` is missing. A passive contributes exactly
+    // what a worn item does — `equipment.ts` makes that the same combine — so a
+    // panel that ignores one would ignore the other.
+    const world = room();
+    const body = watchman(world);
+
+    body.passiveCombat = { stats: { dex: 25 } };
+    body.carried = [SIGNET];
+    recomposeCombat(body, null, resolveItem);
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    const claimed = Number(rows.find((r) => r.label === 'Accuracy')?.value ?? '0');
+    const actual = actualDelta(body, SIGNET, combatAttack);
+
+    expect(claimed).toBe(actual);
+  });
+
+  it('still agrees with the sheet for a character who has bought nothing', () => {
+    // THE SAFETY PROPERTY. A level-1 body has no bought points and no passives,
+    // so the old baseline and the new one are the same sheet and every number
+    // the panel has ever printed is unchanged.
+    const world = room();
+    const body = watchman(world);
+    body.carried = [SIGNET];
+    recomposeCombat(body, null, resolveItem);
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    const claimed = Number(rows.find((r) => r.label === 'Accuracy')?.value ?? '0');
+    expect(claimed).toBe(actualDelta(body, SIGNET, combatAttack));
   });
 });
