@@ -59,7 +59,7 @@
 
 import { EGO_TAG_ORDER, egoByCode, egosForTag } from './egos.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
-import { MAX_EGO_POWER, formatItemId, parseItemId } from './resolve.ts';
+import { MAX_EGO_POWER, formatItemId, materialMultiplier, parseItemId } from './resolve.ts';
 import { ITEMS, itemById } from './items.ts';
 import { isMoneyId } from './money.ts';
 import { LEVELS_PER_BAND, bandFor, materialFor } from './loot.ts';
@@ -112,7 +112,43 @@ export function priceOf(id: string): number {
   const base = itemById(parsed.base);
   if (base === undefined) return 0;
 
-  let price = baseCost(base.tier);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BASE IS WORTH WHAT ITS GRADE MAKES IT WORTH. THE EGO IS NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This read `baseCost(base.tier)` alone, and so the material grade reached
+   * every number on an item except the one on the price tag. `resolveItem` runs
+   * `atMaterial` over the base's whole `wielder`, so a Bespoke Watchman's Coat
+   * carries EIGHT armour against the plain one's four — and both cost 25 and
+   * both sold for the same. Buying was strictly dominated by grade, and a shelf
+   * could stand two visibly different coats side by side at one price.
+   *
+   * ═══ UPSTREAM PRICES BY MATERIAL; IT SIMPLY DOES IT BY HAND ═══
+   * ToME authors five separate objects where we author one base and a suffix,
+   * and each carries its own `cost` — heavy-armors.lua:39-95 runs iron 20,
+   * steel 25, dwarven-steel 30, stralite 40, voratun 50. It is not ONE
+   * multiplier across the game (swords.lua:40-97 is 5/10/15/25/35, a far
+   * steeper 7x), so the thing to port is the principle, not a constant.
+   *
+   * ═══ THE MULTIPLIER IS THE ONE THE NUMBERS THEMSELVES GET ═══
+   * `materialMultiplier` is 1.00 at grade 1 and 2.00 at grade 5. Reusing it
+   * puts the price on the same curve as the armour it is buying — twice the
+   * coat, twice the money — and sits at the conservative end of upstream's
+   * observed range. A second curve invented for the price would be a second
+   * answer to "how much better is a Bespoke one", and the two would drift.
+   *
+   * ═══ AND THE EGO COST IS ADDED AFTER, UNSCALED ═══
+   * `resolveItem` refuses to scale ego magnitudes by the grade, and says why:
+   * *"an ego is a fact about what happened to it, which does not get better
+   * because the coat underneath did."* Scaling the ego's COST while its GRANT
+   * stays fixed would charge for power the item does not have.
+   *
+   * ROUNDED, not floored, and only once at the end: the grades are quarter
+   * steps on small integers, so flooring each would make grades 2 and 3 of a
+   * common base cost the same and the ladder would have flat rungs in it.
+   */
+  let price = Math.round(baseCost(base.tier) * materialMultiplier(parsed.material));
   for (const ref of parsed.egos) {
     const ego = egoByCode(ref.code);
     if (ego === undefined) return 0;

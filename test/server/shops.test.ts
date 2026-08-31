@@ -586,3 +586,84 @@ describe('the shelf keeps pace with the floor', () => {
     }
   });
 });
+
+describe('a better-made thing is worth more', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MATERIAL GRADE REACHED EVERY NUMBER ON THE ITEM EXCEPT ITS PRICE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `resolveItem` runs `atMaterial` over the base's whole `wielder`
+   * (resolve.ts:456-463), so a Bespoke Watchman's Coat carries eight armour
+   * where the plain one carries four. `priceOf` read `parsed.base` and
+   * `parsed.egos` and never `parsed.material`, so both cost 25 and both sold
+   * for the same. Measured before the fix:
+   *
+   *     grade 1  armour 4  hardiness 10  buy 30  sell 1
+   *     grade 5  armour 8  hardiness 20  buy 30  sell 1
+   *
+   * Twice the coat, same money — so buying was strictly dominated by grade and
+   * a shelf could offer two visibly different coats at one price.
+   *
+   * ═══ UPSTREAM PRICES BY MATERIAL, IT JUST DOES IT BY HAND ═══
+   * ToME authors five separate objects where we author one base and a grade
+   * suffix, and each carries its own cost — heavy-armors.lua:39-95 is iron 20,
+   * steel 25, dwarven-steel 30, stralite 40, voratun 50. The relationship is
+   * not one multiplier across the game (swords.lua:40-97 runs 5/10/15/25/35,
+   * a far steeper 7x), so what ports is the PRINCIPLE rather than a constant.
+   *
+   * ═══ THE SAME MULTIPLIER THE NUMBERS THEMSELVES GET ═══
+   * `materialMultiplier` — 1.00 at grade 1, 2.00 at grade 5 — which sits at the
+   * conservative end of upstream's observed range and means a player can reason
+   * about it in one sentence: twice the numbers, twice the price. Anything else
+   * would be a second, unrelated curve for the same fact about an object.
+   *
+   * ═══ AND THE EGO COST DOES NOT SCALE, FOR resolve.ts'S OWN REASON ═══
+   * *"an ego is a fact about what happened to it, which does not get better
+   * because the coat underneath did."* The ego magnitudes do not scale with the
+   * grade, so pricing them as though they did would charge for power the item
+   * does not have.
+   */
+  it('charges more for a higher grade of the same base', () => {
+    const plain = priceOf(COAT);
+    let last = 0;
+    for (const grade of [1, 2, 3, 4, 5]) {
+      const price = priceOf(`${COAT}#${String(grade)}`);
+      expect(
+        price,
+        `grade ${String(grade)} is not dearer than grade ${String(grade - 1)}`,
+      ).toBeGreaterThan(last);
+      last = price;
+    }
+    // Grade 1 IS the plain item — the absence of a suffix is the grade, so the
+    // two spellings must not price differently.
+    expect(priceOf(`${COAT}#1`)).toBe(plain);
+    // 1.00 -> 2.00 across the five grades, the same span the armour spans.
+    expect(priceOf(`${COAT}#5`)).toBe(plain * 2);
+  });
+
+  it('prices the grade and the ego on their own terms', () => {
+    /**
+     * The grade doubles the BASE and leaves the ego alone, exactly as
+     * `resolveItem` doubles the base's armour and leaves the ego's grant alone.
+     * A test that only checked "dearer" would pass against a version that
+     * scaled the whole sum, which would be a different rule.
+     */
+    const ego = priceOf(`${COAT}~rf1`) - priceOf(COAT);
+    expect(ego).toBeGreaterThan(0);
+    expect(priceOf(`${COAT}#5~rf1`)).toBe(priceOf(COAT) * 2 + ego);
+  });
+
+  it('carries through to both sides of the counter', () => {
+    // The number a player actually sees. `buyPrice` and `sellPrice` both route
+    // through `priceOf`, so this is what makes the fix visible rather than
+    // internal.
+    expect(buyPrice(`${COAT}#5`, 1)).toBeGreaterThan(buyPrice(`${COAT}#1`, 1));
+    expect(sellPrice(`${COAT}#5`)).toBeGreaterThan(sellPrice(`${COAT}#1`));
+  });
+
+  it('still refuses a grade it cannot read', () => {
+    expect(priceOf(`item_cut_before_ship#3`)).toBe(0);
+    expect(priceOf(moneyIdFor(40))).toBe(0);
+  });
+});
