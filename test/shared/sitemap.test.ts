@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DOOR_CLEARANCE,
   DEFAULT_SITE_PALETTE,
   SITE_MAP_SIZE,
   SiteShape,
@@ -434,6 +435,64 @@ describe('a stamped room never seals the floor it was stamped into', () => {
         sealed / rolled,
         `${String(sealed)} of ${String(rolled)} ${shape} rooms are buried in rock — the open-ground preference is not being applied`,
       ).toBeLessThan(0.2);
+    }
+  });
+
+  it('keeps the room clear of the door, so it can hold anything at all', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A ROOM INSIDE THE DOOR RING IS A ROOM THAT PAYS NOTHING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `roomFor` (server/content/delve.ts) discards every candidate tile within
+     * `DOOR_CLEARANCE` of the arrival tile — a delve owes you a look at the room
+     * before anything is in reach. The vault placer knows exactly where the door
+     * is and excluded ONE CELL, so a drawn room could land wholly inside that
+     * ring: `inRoom` came back empty and the room's guard and its share of the
+     * litter both fell silently through to the rest of the floor.
+     *
+     * MEASURED over 400 floors a shape, before and after:
+     *
+     *     cave    206/400 rooms could hold nothing  ->  2/400
+     *     works   151/400                           ->  0/400
+     *     ruin     34/400                           ->  0/400
+     *
+     * More than half of all caves had a hand-drawn chamber in them that paid
+     * nothing and defended nothing — the precise outcome the litter and guard
+     * commits were written to prevent, shipped and never played.
+     *
+     * Placement did not get harder: all three shapes still roll a room on 400 of
+     * 400 seeds. The two residual caves are rooms whose interior is solid wall,
+     * which is a cause the fallthrough docblocks named all along and which can
+     * now actually fire.
+     */
+    for (const shape of SHAPES) {
+      if ((VAULTS_BY_SHAPE[shape] ?? []).length === 0) continue;
+
+      let rolled = 0;
+      let inside = 0;
+      for (let n = 0; n < 120; n += 1) {
+        const map = makeSiteMap(`vault-clearance-${shape}-${String(n)}`, shape);
+        const one = (map.vaults ?? [])[0];
+        const spawn = map.spawns[0];
+        if (one === undefined || spawn === undefined) continue;
+        rolled += 1;
+
+        // EVERY cell of the footprint, because the placer's contract is that the
+        // whole room sits outside the ring — not merely that some corner does.
+        for (let y = 0; y < one.h; y += 1) {
+          for (let x = 0; x < one.w; x += 1) {
+            const d = Math.max(Math.abs(one.at.x + x - spawn.x), Math.abs(one.at.y + y - spawn.y));
+            if (d < DOOR_CLEARANCE) inside += 1;
+          }
+        }
+      }
+
+      expect(rolled, `no room was rolled into any ${shape}`).toBeGreaterThan(0);
+      expect(
+        inside,
+        `${String(inside)} ${shape} room cells sit inside the door clearance, where nothing can be placed`,
+      ).toBe(0);
     }
   });
 

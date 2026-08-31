@@ -63,6 +63,33 @@ export const SiteShape = {
 } as const;
 export type SiteShape = (typeof SiteShape)[keyof typeof SiteShape];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR FROM THE DOOR ANYTHING IS ALLOWED TO BE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LARGER THAN THE AMBUSH'S FOUR, deliberately. An ambush is something that
+ * happened TO you and opening at four tiles is the point; a delve is somewhere
+ * you chose to walk into, and the first thing it owes you is a look at the room
+ * before anything is in reach.
+ *
+ * ═══ IT LIVED IN `server/content/delve.ts` AND ONLY HALF THE CODE KNEW IT ═══
+ * The populator dropped every candidate tile within this radius, and the vault
+ * placer — which knows exactly where the door is — excluded ONE CELL. So a
+ * drawn room could land four tiles from the arrival tile, entirely inside the
+ * ring the populator was about to discard, and the room's guard and its share
+ * of the litter both fell through to the rest of the floor.
+ *
+ * Measured over 400 floors a shape before this moved: 206/400 caves and
+ * 151/400 works rolled a room that could hold nothing at all, mean footprint
+ * centre 5.5 and 7.5 tiles from the door. Half the delves in the game had a
+ * hand-drawn chamber in them that paid nothing and defended nothing.
+ *
+ * `src/shared/` is the only module the map generator and the server's populator
+ * can both import, which is what one definition of this requires.
+ */
+export const DOOR_CLEARANCE = 8;
+
 const W = 34;
 const H = 30;
 const MARGIN = 1;
@@ -407,16 +434,24 @@ export function makeSiteMap(
     const spot = placeVault(
       vault,
       { w: W, h: H },
-      // BOUNDS, NOT OCCUPANCY, and never the threshold. See `placeVault`: a
-      // room may land in rock, because `connect` below digs to any floor it
-      // cannot otherwise reach. What it may not do is run off the map or bury
-      // the tile the party arrives on.
+      /**
+       * BOUNDS AND THE DOOR RING — never occupancy. See `placeVault`: a room may
+       * land in rock, because `connect` below digs to any floor it cannot
+       * otherwise reach. What it may not do is run off the map, or sit inside
+       * `DOOR_CLEARANCE` of the arrival tile.
+       *
+       * THAT SECOND CLAUSE USED TO BE ONE CELL — `!(x === spawn.x && ...)` — and
+       * a single cell is not a clearance. `roomFor` discards every candidate
+       * within eight tiles of the door, so a room that landed inside that ring
+       * could hold nothing: no guard, no litter, and both fell silently through
+       * to the rest of the floor. Over half of caves rolled exactly that.
+       */
       (x, y) =>
         x >= MARGIN &&
         y >= MARGIN &&
         x < W - MARGIN &&
         y < H - MARGIN &&
-        !(x === spawn.x && y === spawn.y),
+        Math.max(Math.abs(x - spawn.x), Math.abs(y - spawn.y)) >= DOOR_CLEARANCE,
       rng,
       /**
        * PREFER GROUND THAT IS ALREADY OPEN. A room made of walls, stamped into

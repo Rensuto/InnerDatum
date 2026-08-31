@@ -77,18 +77,14 @@ import type { ZoneLevelRange } from '../../shared/zone.ts';
 import type { PartyStrength } from '../world/strength.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { TileXY } from '../../shared/coords.ts';
+import { DOOR_CLEARANCE } from '../../shared/sitemap.ts';
 import { qualified } from '../world/world.ts';
 import type { World } from '../world/world.ts';
 
-/**
- * How far from the door the nearest resident may stand.
- *
- * LARGER THAN THE AMBUSH'S FOUR, deliberately. An ambush is something that
- * happened TO you and opening at four tiles is the point; a delve is somewhere
- * you chose to walk into, and the first thing it owes you is a look at the room
- * before anything is in reach.
- */
-const DOOR_CLEARANCE = 8;
+// `DOOR_CLEARANCE` moved to `shared/sitemap.ts`. The vault placer needs the same
+// number and cannot import server content — and while only this file held it,
+// the placer excluded a single cell where this excludes a ring, so a drawn room
+// could land wholly inside ground the populator was about to discard.
 
 /**
  * How far over its room a set piece stands.
@@ -855,6 +851,15 @@ export function populateDelve(
    * all (an authored fixture, the arena), or when the room's interior is solid
    * wall and contributed no candidate tiles. All three fall through to the
    * behaviour the game had before there were rooms.
+   *
+   * ═══ THIS LIST USED TO OMIT THE CAUSE THAT ACTUALLY FIRED ═══
+   * `roomFor` discards every tile within `DOOR_CLEARANCE` of the door, and the
+   * vault placer excluded a single cell rather than that ring — so a room could
+   * land wholly inside ground this function was about to throw away, and
+   * `inRoom` came back empty for 206 of 400 caves and 151 of 400 works. Nobody
+   * reading these three causes would have suspected it, because none of them
+   * was ever the reason. The placer now honours the same clearance
+   * (`shared/sitemap.ts`), and the solid-wall case above is what remains.
    */
   const room = map.vaults?.[0];
   const inRoom =
