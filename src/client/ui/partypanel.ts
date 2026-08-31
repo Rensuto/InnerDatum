@@ -119,6 +119,7 @@ import type {
 } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
+import { HP_LOW } from '../../shared/vitals.ts';
 
 // ---------------------------------------------------------------------------
 // Geometry. See the layout note in the header before changing any of it.
@@ -169,7 +170,7 @@ const BADGE_GAP = 2;
 const MAX_BADGES = 2;
 
 /** Below this fraction the bar turns, and the row earns a word as well. */
-const HP_LOW = 1 / 3;
+
 const BAR_H = 7;
 const COMPACT_BAR_H = 3;
 

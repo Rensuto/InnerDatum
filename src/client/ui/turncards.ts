@@ -146,6 +146,7 @@ import { drawPanel, fitText, PanelSkin } from './panel.ts';
 import type { TurnActor, TurnMsg } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
+import { HP_LOW } from '../../shared/vitals.ts';
 
 // ---------------------------------------------------------------------------
 // Geometry. See the height budget in the header before changing any of it.
@@ -211,7 +212,6 @@ const CARD_W_MIN = 44;
 const BAR_H = 5;
 const TEXT_GAP = 4;
 /** Below this fraction the hp bar turns, and the digits turn with it. */
-const HP_LOW = 1 / 3;
 
 const FONT_NAME = '10px ui-monospace, Consolas, monospace';
 const FONT_NAME_SELF = 'bold 10px ui-monospace, Consolas, monospace';

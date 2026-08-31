@@ -47,6 +47,7 @@
  */
 
 import { PALETTE } from '../render/canvas.ts';
+import { HP_LOW } from '../../shared/vitals.ts';
 
 /**
  * Below this fraction the bar turns. THE PARTY PANE'S NUMBER — see the header.
@@ -54,7 +55,6 @@ import { PALETTE } from '../render/canvas.ts';
  * has to reach into the other's; the pairing is stated in both headers and
  * pinned by a test.
  */
-const HP_LOW = 1 / 3;
 
 const BAR_W = 34;
 const BAR_H = 10;
