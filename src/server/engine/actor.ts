@@ -215,6 +215,32 @@ export type MonsterAi = {
    */
   minRange: number;
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE IT LAST SAW YOU — `ai_state.target_last_seen` (ActorAI.lua:130-135).
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream stamps this every turn the target is in view, and `move_simple`
+   * (ai/simple.lua:27-38) then walks to the REMEMBERED TILE rather than to the
+   * actor. Without it a monster can only ever move toward something it can see
+   * this instant, which is why breaking line of sight used to stop a chase dead:
+   * step round a corner and everything hunting you stands still, permanently, so
+   * a party at ten percent could back behind one wall and rest to full.
+   *
+   * Null when it has never seen anybody, and cleared when the memory goes stale.
+   */
+  lastSeen: TileXY | null;
+  /**
+   * Turns since the target was last in view — upstream's `game.turn -
+   * target_last_seen.turn` (ai/simple.lua:210), counted rather than subtracted
+   * because `decideNpcAction` runs exactly once per monster turn and this file
+   * has no clock.
+   *
+   * Reset to 0 by any sighting. Past `PURSUIT_TURNS` the memory is forgotten and
+   * the monster stops, which is what keeps a chase from becoming a patrol.
+   */
+  unseenTurns: number;
+
   // --- ELITE BEHAVIOUR ------------------------------------------------------
   // Two flags rather than a `rank === elite` test, because rank is what the
   // player SEES (it picks the token ring) and these are what the monster DOES.
@@ -1397,6 +1423,9 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     ai: {
       profile: init.profile,
       targetId: null,
+      // Never seen anybody. See `MonsterAi.lastSeen`.
+      lastSeen: null,
+      unseenTurns: 0,
       aggroRange: init.aggroRange ?? ranges.aggro,
       preferredRange,
       minRange: init.minRange ?? ranges.min,

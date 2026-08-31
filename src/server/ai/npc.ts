@@ -192,8 +192,21 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
     // resumes a flank around a body that is no longer there.
     self.ai.blockedTurns = 0;
     self.ai.shoulderTurns = 0;
-    return HOLD_INTENT;
+    return pursueLastSeen(self, ctx);
   }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT CAN SEE YOU — REMEMBER WHERE. `ActorAI.lua:130-135`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Stamped on every turn the target is in view, which is upstream's own cadence
+   * and the reason the memory is worth anything: the tile a monster walks to
+   * after you break line of sight is the last one it actually saw you on, not
+   * the one you were on when it first noticed you.
+   */
+  self.ai.lastSeen = { x: target.x, y: target.y };
+  self.ai.unseenTurns = 0;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -274,7 +287,23 @@ function acquireTarget(self: MonsterActor, ctx: AiCtx): EngineActor | undefined 
   // `visible` is nearest-first, so the plain case is ToME's walk down
   // `fov.actors_dist` (simple.lua:259-267) taking the closest live hostile.
   const chosen = self.ai.huntsIsolated ? mostIsolated(visible, ctx) : visible[0];
-  self.ai.targetId = chosen?.id ?? null;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NOTHING IN SIGHT DOES NOT MEAN NOTHING TO CHASE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This used to write `chosen?.id ?? null` unconditionally, so the instant a
+   * target stepped out of view the monster forgot WHO it had been fighting —
+   * and `decideNpcAction` then had nothing left to pursue toward.
+   *
+   * Upstream keeps the target with no visibility test at all (`target_simple`,
+   * ai/simple.lua:250-253); the memory is bounded by `unseenTurns` instead. So
+   * an empty view leaves the id alone and the caller decides whether to hunt or
+   * to give up.
+   */
+  if (chosen === undefined) return undefined;
+  self.ai.targetId = chosen.id;
   return chosen;
 }
 
@@ -396,6 +425,79 @@ function chase(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
  * threat. The `move_wander` branch (:211) is out for the reason the scheduler
  * gives: wandering costs the idle fixed point.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW LONG A MONSTER HUNTS SOMETHING IT CANNOT SEE — `ai/simple.lua:210`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's own number: past ten turns without a sighting it stops hunting the
+ * remembered tile and wanders instead. We have no wander (see `actMonster`'s
+ * idle fixed point, which this must not break), so ten turns is where the
+ * memory is forgotten and the monster stands.
+ *
+ * IN PRACTICE `ENGAGEMENT_TURNS` USUALLY BITES FIRST, and that is the pleasant
+ * part of the design rather than a redundancy. Engagement is level-wide and
+ * lasts three turns past the last contact, so a monster that cannot re-find you
+ * within three stops being asked to act at all and the pump idles. This counter
+ * is what stops a monster resuming a stale hunt minutes later, when engagement
+ * has been raised again by somebody else's fight on the far side of the floor.
+ */
+const PURSUIT_TURNS = 10;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT SAW YOU GO ROUND THE CORNER — `ai/simple.lua:27-38`, `move_simple`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHAT THIS COSTS WITHOUT IT ═══
+ * Everything hunting you stopped dead the instant you broke line of sight, and
+ * stayed stopped. A party at ten percent could step behind one wall, drop out of
+ * contact, and rest to full while the thing mid-swing waited a tile away. There
+ * were no fighting retreats, no kiting a pack down a corridor, and no being
+ * HUNTED — every fight was opt-in and resettable at will, which is the single
+ * largest gap between this and the game it ports.
+ *
+ * ═══ IT WALKS TO A TILE, NOT TO A BODY ═══
+ * That is the whole mechanic and it is upstream's: `move_simple` prefers
+ * `target_last_seen` over the target's real position, so a monster commits to
+ * where you WERE and arrives to find you gone. Walking to where you actually are
+ * would be omniscience wearing a chase's clothes.
+ *
+ * ═══ AND IT MUST TERMINATE, WHICH IS NOT OPTIONAL HERE ═══
+ * `actMonster` documents an idle fixed point: a monster that spends energy at an
+ * empty room re-accrues and does it again, and `pump` never returns idle — a
+ * server that never sleeps and a home PC with a fan. Three things end this walk:
+ * arriving at the tile, failing to find a route to it, and `PURSUIT_TURNS`. All
+ * three clear the memory, so the next call falls straight through to HOLD.
+ */
+function pursueLastSeen(self: MonsterActor, ctx: AiCtx): Intent {
+  const seen = self.ai.lastSeen;
+  if (seen === null) return HOLD_INTENT;
+
+  // ARRIVED, AND NOBODY IS HERE. The hunt is over whether or not the counter has
+  // run out — standing on the remembered tile is the answer to the question the
+  // walk was asking.
+  if (self.x === seen.x && self.y === seen.y) return forget(self);
+
+  self.ai.unseenTurns += 1;
+  if (self.ai.unseenTurns > PURSUIT_TURNS) return forget(self);
+
+  // `keepAway: 0` DELIBERATELY, even for a kiter. The dead zone exists to stop a
+  // ranged monster walking into melee with something it can SEE; there is
+  // nothing here to keep away from, and a kiter that refused to approach the
+  // corner would never re-acquire.
+  const step = approach(self, seen, ctx, { keepAway: 0 });
+  return step ?? forget(self);
+}
+
+/** Give up: no target, no memory, and no turn spent. */
+function forget(self: MonsterActor): Intent {
+  self.ai.targetId = null;
+  self.ai.lastSeen = null;
+  self.ai.unseenTurns = 0;
+  return HOLD_INTENT;
+}
+
 function advance(self: MonsterActor, target: EngineActor, ctx: AiCtx, keepAway: number): Intent {
   const ai = self.ai;
 
@@ -700,7 +802,12 @@ type ApproachOpts = {
  */
 function approach(
   self: MonsterActor,
-  target: EngineActor,
+  /**
+   * A PLACE, NOT A BODY. Widened from `EngineActor` when pursuit arrived: this
+   * function only ever read `x`/`y` off it, and the remembered tile a monster
+   * hunts has no actor standing on it — that is the point of remembering it.
+   */
+  target: TileXY,
   ctx: AiCtx,
   opts: ApproachOpts = {},
 ): Intent | undefined {
@@ -736,7 +843,8 @@ function intentForStep(
   self: MonsterActor,
   to: TileXY,
   ctx: AiCtx,
-  target: EngineActor,
+  /** A place, not a body — see `approach`. Only the dead-zone test reads it. */
+  target: TileXY,
   keepAway: number,
 ): Intent | undefined {
   // THE DEAD ZONE, CHECKED BEFORE ANYTHING ELSE. This is guarantee 2 in `kite`,

@@ -637,3 +637,240 @@ describe('a CORNERED kiter does something legible', () => {
     expect(monster.ai.shoulderTurns).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PURSUIT — it saw you go round the corner (ActorAI.lua:130-135, simple.lua:27-38)
+// ---------------------------------------------------------------------------
+
+describe('a monster that loses sight of you', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS COST BEFORE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Everything hunting you stopped dead the instant you broke line of sight, and
+   * stayed stopped. A party at ten percent could step behind one wall, drop out
+   * of contact, and rest to full while the thing mid-swing waited a tile away —
+   * so there were no fighting retreats, no kiting a pack down a corridor, and no
+   * being hunted. Every fight was opt-in and resettable at will.
+   *
+   * ═══ THE FIXTURE HIDES THE PLAYER BY MOVING THEM OUT OF AGGRO RANGE ═══
+   * `aiCtx`'s `visibleEnemies` filters on `aggroRange`, which is the harness's
+   * stand-in for sight. Teleporting the detective out of it is "you turned the
+   * corner" as far as the AI is concerned, and it is the state the monster has
+   * to cope with — an empty `visibleEnemies` and a memory.
+   */
+  const OPEN = ['##########', '#........#', '#........#', '#........#', '##########'];
+
+  function seenThenGone(): { monster: MonsterActor; ctx: AiCtx; player: EngineActor } {
+    const player = detective('p1', { x: 7, y: 2 });
+    const monster = husk('m1', { x: 2, y: 2 });
+    const actors: EngineActor[] = [player, monster];
+    const ctx = aiCtx(OPEN, actors, createRng('pursuit'));
+
+    // One turn in view — this is the sighting that gets remembered.
+    decideNpcAction(monster, ctx);
+    expect(monster.ai.lastSeen, 'the sighting was not remembered').toEqual({ x: 7, y: 2 });
+
+    // ...and now out of sight. Far enough that `visibleEnemies` is empty.
+    player.x = 40;
+    player.y = 40;
+    return { monster, ctx, player };
+  }
+
+  it('walks toward where it last saw you, instead of standing still', () => {
+    const { monster, ctx } = seenThenGone();
+    const before = { x: monster.x, y: monster.y };
+
+    const intent = decideNpcAction(monster, ctx);
+    expect(intent.kind, 'it stopped dead the moment sight broke').toBe(IntentKind.Move);
+    applyMove(monster, intent);
+    expect(
+      chebyshev(monster, { x: 7, y: 2 }),
+      'it moved, but not toward the remembered tile',
+    ).toBeLessThan(chebyshev(before, { x: 7, y: 2 }));
+  });
+
+  it('walks to the tile it saw, not to where you actually are', () => {
+    /**
+     * The whole mechanic, and upstream's: `move_simple` prefers
+     * `target_last_seen` over the target's real position. Walking to where you
+     * ARE would be omniscience wearing a chase's clothes.
+     */
+    const { monster, ctx, player } = seenThenGone();
+    // Put the player somewhere unseen and in the OPPOSITE direction.
+    player.x = 1;
+    player.y = 40;
+
+    const intent = decideNpcAction(monster, ctx);
+    expect(intent.kind).toBe(IntentKind.Move);
+    applyMove(monster, intent);
+    expect(monster.x, 'it walked toward the player rather than the memory').toBeGreaterThan(2);
+  });
+
+  it('stops when it reaches the tile and finds nobody', () => {
+    const { monster, ctx } = seenThenGone();
+    for (let turn = 0; turn < 12; turn += 1) {
+      const intent = decideNpcAction(monster, ctx);
+      if (intent.kind !== IntentKind.Move) break;
+      applyMove(monster, intent);
+    }
+    expect(decideNpcAction(monster, ctx), 'it kept hunting an empty tile').toEqual({
+      kind: IntentKind.Hold,
+    });
+    expect(monster.ai.lastSeen, 'the memory outlived the hunt').toBeNull();
+    expect(monster.ai.targetId, 'it is still chasing somebody who is gone').toBeNull();
+  });
+
+  it('gives up rather than hunting forever, even with nowhere to arrive', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CONSTRAINT THAT MAKES THIS DANGEROUS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `actMonster` documents an idle fixed point: a monster that spends its turn
+     * at an empty room re-accrues and does it again, and `pump` never returns
+     * idle — a server that never sleeps and a home PC with a fan. A pursuit that
+     * did not terminate would break exactly that.
+     *
+     * Here the remembered tile is UNREACHABLE — walled off — so "arriving" can
+     * never end the hunt and only the counter can.
+     */
+    const WALLED = ['##########', '#..#.....#', '#..#.....#', '#..#.....#', '##########'];
+    const player = detective('p1', { x: 6, y: 2 });
+    const monster = husk('m1', { x: 1, y: 2 });
+    const actors: EngineActor[] = [player, monster];
+    const ctx = aiCtx(WALLED, actors, createRng('walled'));
+    monster.ai.aggroRange = 20;
+
+    decideNpcAction(monster, ctx);
+    expect(monster.ai.lastSeen).not.toBeNull();
+    player.x = 40;
+    player.y = 40;
+
+    let holds = 0;
+    for (let turn = 0; turn < 40; turn += 1) {
+      const intent = decideNpcAction(monster, ctx);
+      if (intent.kind === IntentKind.Move) applyMove(monster, intent);
+      else holds += 1;
+    }
+    expect(holds, 'the hunt never ended — the pump would never idle').toBeGreaterThan(0);
+    expect(monster.ai.lastSeen, 'it is still holding a stale memory').toBeNull();
+  });
+
+  it('gives up on a walk it could finish, but not within ten turns', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONLY CASE THE COUNTER ITSELF DECIDES.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The walled test above ends the hunt through "no route", so it passes with
+     * `PURSUIT_TURNS` deleted — verified by mutation, which is why this exists.
+     * Here the remembered tile is perfectly reachable and simply FAR: a corridor
+     * longer than the counter, so arrival can never come first and only
+     * `unseenTurns > PURSUIT_TURNS` can end the walk.
+     *
+     * Upstream's number is ten (ai/simple.lua:210), past which it stops hunting
+     * the remembered tile. We have no `move_wander` to fall into — see
+     * `actMonster`'s idle fixed point — so ten is where the memory is dropped.
+     */
+    const CORRIDOR = ['######################', '#....................#', '######################'];
+    const player = detective('p1', { x: 20, y: 1 });
+    const monster = husk('m1', { x: 1, y: 1 });
+    const actors: EngineActor[] = [player, monster];
+    const ctx = aiCtx(CORRIDOR, actors, createRng('long'));
+    // Wide enough to SEE all the way down the corridor for the one sighting.
+    monster.ai.aggroRange = 30;
+
+    decideNpcAction(monster, ctx);
+    expect(monster.ai.lastSeen, 'the sighting was not remembered').toEqual({ x: 20, y: 1 });
+    player.x = 100;
+    player.y = 100;
+
+    let moves = 0;
+    let gaveUp = -1;
+    for (let turn = 0; turn < 30; turn += 1) {
+      const intent = decideNpcAction(monster, ctx);
+      if (intent.kind === IntentKind.Move) {
+        moves += 1;
+        applyMove(monster, intent);
+      } else if (gaveUp < 0) {
+        gaveUp = turn;
+      }
+    }
+
+    // THE SETUP HAS TO BE THE ONE DESCRIBED: it must still be walking when the
+    // counter fires, or this is the walled test again under another name.
+    expect(monster.x, 'it reached the tile, so arrival ended the hunt').toBeLessThan(20);
+    expect(moves, 'it never set off at all').toBeGreaterThan(3);
+    expect(gaveUp, 'the hunt never ended — the pump would never idle').toBeGreaterThan(-1);
+    expect(monster.ai.lastSeen, 'it is still holding a stale memory').toBeNull();
+  });
+
+  it('starts counting again every time it catches sight of you', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A RUNNING FIGHT IS NOT ONE LONG LOSS OF SIGHT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Backing down a corridor with pillars, you break line of sight over and
+     * over. If the counter only ever climbed, those glimpses would add up and
+     * the monster would give up mid-fight while looking straight at you — the
+     * chase ending for a reason no player could see.
+     *
+     * Upstream counts from the LAST sighting (`game.turn -
+     * target_last_seen.turn`), so any sighting restarts it. Verified by
+     * mutation: without the reset this fixture's twelve unseen turns exceed the
+     * ten-turn window and the hunt dies.
+     */
+    const CORRIDOR = ['######################', '#....................#', '######################'];
+    const player = detective('p1', { x: 20, y: 1 });
+    const monster = husk('m1', { x: 1, y: 1 });
+    const actors: EngineActor[] = [player, monster];
+    const ctx = aiCtx(CORRIDOR, actors, createRng('glimpse'));
+    monster.ai.aggroRange = 30;
+
+    const hide = (): void => {
+      player.x = 100;
+      player.y = 100;
+    };
+    const show = (): void => {
+      player.x = 20;
+      player.y = 1;
+    };
+
+    // Seen, then six turns of cover — under the window on its own.
+    decideNpcAction(monster, ctx);
+    hide();
+    for (let turn = 0; turn < 6; turn += 1) {
+      const intent = decideNpcAction(monster, ctx);
+      if (intent.kind === IntentKind.Move) applyMove(monster, intent);
+    }
+    expect(monster.ai.lastSeen, 'it gave up inside the window').not.toBeNull();
+
+    // A glimpse, then six more. Twelve unseen turns in total, and eleven would
+    // be enough to end the hunt if they accumulated.
+    show();
+    decideNpcAction(monster, ctx);
+    hide();
+    for (let turn = 0; turn < 6; turn += 1) {
+      const intent = decideNpcAction(monster, ctx);
+      if (intent.kind === IntentKind.Move) applyMove(monster, intent);
+    }
+
+    expect(monster.x, 'it reached the tile, so this measures arrival not the counter').toBeLessThan(
+      20,
+    );
+    expect(
+      monster.ai.lastSeen,
+      'the glimpse did not restart the clock — it gave up while looking at you',
+    ).not.toBeNull();
+  });
+
+  it('does not hunt anything it has never seen', () => {
+    const monster = husk('m1', { x: 2, y: 2 });
+    const ctx = aiCtx(OPEN, [monster], createRng('alone'));
+    expect(decideNpcAction(monster, ctx)).toEqual({ kind: IntentKind.Hold });
+    expect(monster.ai.lastSeen).toBeNull();
+  });
+});
