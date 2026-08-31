@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AiProfile,
   HOLD_INTENT,
+  isMonster,
   IntentKind,
   cooldownOf,
   setCooldown,
@@ -19,6 +20,8 @@ import {
 } from '../../src/server/engine/scheduler.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { chebyshev } from '../../src/shared/coords.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
 import { TICKS_PER_GAME_TURN } from '../../src/shared/energy.ts';
 import type { EngineActor, Intent } from '../../src/server/engine/actor.ts';
 import type { Barrier } from '../../src/server/engine/barrier.ts';
@@ -479,6 +482,78 @@ describe('a bump is now a real swing', () => {
 
     return { world, barrier: createBarrier() };
   }
+
+  it('wakes a second monster that watched the first one get hit', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE WIRING, WHICH A UNIT TEST OF `raiseAlarm` CANNOT SEE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `test/server/alarm.test.ts` proves the RULE — who gets roused and who does
+     * not — by calling the function. It says nothing whatever about whether the
+     * scheduler ever calls it, and this project has shipped that exact gap
+     * before: `passives-wired.test.ts` exists because twenty-four passives were
+     * correct in the engine and reached no player, with every engine test green.
+     *
+     * So this drives a real swing through `pump` and asks a bystander whether it
+     * noticed. It fails if any of the three call sites is removed from
+     * `resolveIntent`.
+     */
+    const table = duel('alarm-wiring');
+    const world = table.world;
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE GEOMETRY IS THE TEST, AND THE FIRST VERSION OF IT PROVED NOTHING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The bystander was first placed next to the fight with a default aggro
+     * range. It ended the pump targeting `p1` — and still did with the alarm
+     * ripped out, because it could simply SEE the player and `acquireTarget`
+     * picked them up the ordinary way. The mutation caught it; nothing else
+     * would have.
+     *
+     * So the range is cut to four and the husk stands five tiles from the
+     * player and four from its friend. `visibleEnemies` filters on
+     * `chebyshev > self.ai.aggroRange`, so the player is INVISIBLE to it and
+     * the victim is not. Ordinary targeting therefore cannot explain a target
+     * on this body; only the alarm can.
+     */
+    for (let x = 19; x <= 27; x += 1) world.level.tiles[18 * world.level.w + x] = TileCode.FLOOR;
+
+    const spawned = world.addMonster('m2', {
+      name: 'Index Husk',
+      sprite: HUSK_SPRITE,
+      x: 25,
+      y: 18,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 1_000,
+    });
+    // Narrowed rather than cast: every line below reads `ai`.
+    if (!isMonster(spawned)) throw new Error('test fixture: m2 is not a monster');
+    const bystander = spawned;
+    bystander.x = 25;
+    bystander.y = 18;
+    bystander.ai.aggroRange = 4;
+    bystander.ai.targetId = null;
+    bystander.ai.lastSeen = null;
+
+    // THE CONTROL: with the player out of range and the victim in it, a pump
+    // that never raised an alarm leaves this body with nothing.
+    expect(chebyshev(bystander, must(world.getActor('p1'), 'p1'))).toBeGreaterThan(
+      bystander.ai.aggroRange,
+    );
+    expect(chebyshev(bystander, must(world.getActor('m1'), 'm1'))).toBeLessThanOrEqual(
+      bystander.ai.aggroRange,
+    );
+
+    expect(submitIntent(world, table.barrier, 'p1', { kind: 'attack', targetId: 'm1' })).toBe(true);
+    pump(world, { nowMs: 0, barrier: table.barrier });
+
+    // ═══ THE ASSERTION ═══ Before the wiring, this husk had never heard of p1.
+    expect(bystander.ai.targetId, 'the bystander never learned who did that').toBe('p1');
+    expect(bystander.ai.lastSeen).not.toBeNull();
+  });
 
   it('takes the checkhit / damage-range / crit draws, under those exact labels', () => {
     // ═══════════════════════════════════════════════════════════════════════

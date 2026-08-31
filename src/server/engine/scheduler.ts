@@ -72,6 +72,7 @@ import {
   worthExp,
 } from '../../shared/progression.ts';
 import { ActorKind } from '../../shared/protocol.ts';
+import { raiseAlarm } from '../ai/alarm.ts';
 import { decideNpcAction } from '../ai/npc.ts';
 import type { MonsterCast } from '../ai/npc.ts';
 import { hasLineOfSight } from '../world/world.ts';
@@ -2264,6 +2265,31 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
           at: victim === undefined ? used.landing.at : { x: victim.x, y: victim.y },
         };
       });
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE ROOM HEARD THAT TOO. NPC.lua:342-367 — see `ai/alarm.ts`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * HERE RATHER THAN INSIDE `talentDamage`, and the layering is the reason.
+       * `TalentWorld` (engine/talents.ts) deliberately narrows the world to five
+       * members and hands out `TalentActor`, which has no `ai` field at all — a
+       * talent must not be able to reach into a monster's targeting state, and
+       * widening that interface to let one would trade a real boundary for a
+       * convenience. The scheduler is the layer that invoked the talent and it
+       * holds the real `World`, so the alarm is raised from here, once, over
+       * whatever the talent actually hit.
+       *
+       * ONE CALL PER VICTIM THAT TOOK DAMAGE. A heal (`healed > 0`, `damage: 0`)
+       * raises nothing, and neither does a talent that missed — upstream's guard
+       * is `value > 0` and a whiff that pulls a room would make missing worse
+       * than not acting.
+       */
+      for (const blow of blows) {
+        if (blow.damage <= 0) continue;
+        const victim = world.getActor(blow.targetId);
+        if (victim !== undefined) raiseAlarm(world, victim, actor);
+      }
+
       return { ok: true, effect: { kind: 'talent', landing: used.landing, blows } };
     }
 
@@ -2587,6 +2613,25 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
     });
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHOEVER SAW THAT HAPPEN NOW KNOWS WHERE YOU ARE. NPC.lua:342-367.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ai/alarm.ts` carries the whole argument. The condition is upstream's
+   * `value > 0` and nothing more: a MISS raises no alarm, because the defence
+   * stat has to mean something and a whiff that pulls a room would make missing
+   * worse than not swinging.
+   *
+   * AFTER the rider, so a creature's own on-hit effect is applied to the body
+   * before its friends are told — and, more to the point, after every draw this
+   * swing takes. `raiseAlarm` draws nothing, so its position cannot move the
+   * stream; keeping it last anyway means it stays true if it ever needs to.
+   */
+  if (outcome.ok && outcome.hit && outcome.damage > 0) {
+    raiseAlarm(world, target, attacker);
+  }
+
   // UNREACHABLE BY CONSTRUCTION — `skipLegality` is the only thing that can make
   // `attackTarget` refuse, and it is set on the line above. Written out rather
   // than asserted away because the alternative is a cast, and the honest answer
@@ -2745,6 +2790,31 @@ function actProjectile(proj: Projectile, run: Run): ActResult {
         srcId: proj.sourceId,
       });
     }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ROOM HEARD IT — the site this whole mechanic is FOR. `ai/alarm.ts`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A thrown orb is how a player opens on a group from across a room, and it is
+   * the case where the gap was widest: the two husks standing behind the one
+   * that got hit have no line to the thrower and nothing in their own field of
+   * view, so until now they stood still while their friend burned.
+   *
+   * HERE AND NOT IN `engine/projectile.ts`, for the reason the rider block above
+   * gives about itself: that module works through `ProjectileWorld`, a narrowed
+   * view with no `getActor` and no AI state on its bodies. This function already
+   * holds the real world, exactly as it already holds the status door.
+   *
+   * THE SHOOTER MAY BE A CORPSE by the time an orb lands — flight is two or
+   * three game turns. `raiseAlarm` answers with an empty list for a dead source
+   * rather than sending a pack after a body that is no longer standing, which is
+   * the same honesty the impact event's own attribution note is about.
+   */
+  if (impact.damage > 0) {
+    const victim = world.getActor(impact.targetId);
+    if (victim !== undefined) raiseAlarm(world, victim, world.getActor(proj.sourceId));
   }
 
   /**

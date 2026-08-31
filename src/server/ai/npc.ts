@@ -442,7 +442,7 @@ function chase(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
  * is what stops a monster resuming a stale hunt minutes later, when engagement
  * has been raised again by somebody else's fight on the far side of the floor.
  */
-const PURSUIT_TURNS = 10;
+export const PURSUIT_TURNS = 10;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
