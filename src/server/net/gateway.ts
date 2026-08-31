@@ -2226,11 +2226,28 @@ function messageForEvent(event: TurnEvent): BroadcastMsg | null {
       return { v: PROTOCOL_VERSION, t: 'used', ev: event };
     // M4. Delivered by `effects` / `party` in the same pump, and by the batch
     // inside a `sweep`. See the note above.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `erased` LEFT THIS LIST, AND THE REST OF IT IS STILL RIGHT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The four below are carried by the `effects` and `party` snapshots in this
+     * same pump, so the event adds nothing. `erased` WAS one of them and stopped
+     * being one the day a party wipe started deleting the downed record inside
+     * the pump that raised it: the snapshot then says the body is up, and the
+     * event is the only thing that knows otherwise.
+     *
+     * It reached clients anyway — but only inside a `sweep`, which sends its
+     * batch wholesale, and a wipe is filed there only when a MONSTER'S BLOW
+     * caused it. A bleed-out, a countdown expiry and a last-survivor wipe found
+     * at pump entry are all player-lane, and all three were dropped here.
+     */
+    case 'erased':
+      return { v: PROTOCOL_VERSION, t: 'erased', ev: event };
     case 'effect_applied':
     case 'effect_expired':
     case 'downed':
     case 'revived':
-    case 'erased':
       return null;
   }
 }

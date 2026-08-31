@@ -5088,6 +5088,30 @@ function applyTurnEvent(event: TurnEvent): void {
       // anywhere.
       if (event.id === selfId) {
         cancelTravel('you went down — travel stopped');
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * A NEW DOWNING SUPERSEDES AN UNACKNOWLEDGED WIPE.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `wipedFloor` was cleared in exactly one place — `attemptRespawn` —
+         * so a player who never pressed the key carried the wipe plate for the
+         * rest of the session. The next time they went down, `deathView`
+         * preferred the Wiped stage (it is checked first, deliberately, for the
+         * one pump where both are true) and drew "the floor has reset" with NO
+         * COUNTDOWN while five turns ran out, and the first press only dismissed
+         * the stale plate instead of doing anything.
+         *
+         * CLEARED HERE RATHER THAN ON `welcome`, which is the other place it
+         * looked like it belonged: the post-wipe welcome arrives immediately
+         * after the wipe, so clearing there would wipe the plate before anybody
+         * read it. A fresh `downed` is strictly later than the wipe that
+         * preceded it, which makes it the honest boundary.
+         *
+         * ORDER IS SAFE ON THE WIPE PUMP ITSELF. Measured, the events arrive
+         * `downed` then `erased` — so this clears and the wipe re-sets it in the
+         * same batch, which is the state that pump should end in.
+         */
+        wipedFloor = false;
         // WHO DID IT, HELD FOR THE DEATH PLATE. The party frame carries the
         // stage and the clock; only this event names the culprit, and it says it
         // once. `toDisplayName` is not needed — the server has already filtered
@@ -11226,6 +11250,24 @@ function applyServerMessage(msg: ServerMsg): void {
       break;
     case 'attacked':
     case 'damaged':
+    case 'erased':
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE ONLY WITNESS TO A WIPE THAT NO MONSTER CAUSED.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Every other survival marker rides the `party` snapshot, and `erased`
+       * used to be one of them. A wipe broke that: `resetFloorParty` deletes the
+       * downed record inside the pump that raised it, so the snapshot says the
+       * body is up and this event is the only thing that knows otherwise.
+       *
+       * It arrived inside a `sweep` when a monster's blow caused the wipe, and
+       * not at all when the clock did — a bleed-out, a countdown expiry, or the
+       * last survivor dropping out are all player-lane. So the death plate drew
+       * for the one case it was not written for and stayed dark for the rest.
+       */
+      applyTurnEvent(msg.ev);
+      break;
     case 'died':
     case 'used':
       // The immediate lane: a player's own action, which must land at once

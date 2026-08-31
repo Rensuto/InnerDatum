@@ -878,3 +878,55 @@ describe('the zone label is actually drawn', () => {
     );
   });
 });
+
+describe('the wipe plate does not outlive the wipe', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT WAS CLEARED IN EXACTLY ONE PLACE, AND THAT PLACE WAS A KEYPRESS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `wipedFloor` is set by an `erased`/Wipe event and was cleared only by
+   * `attemptRespawn`. A player who never pressed the key — and after a wipe
+   * nothing forces them to, because the party is standing up at full hp —
+   * carried the plate for the rest of the session.
+   *
+   * `deathView` checks the Wiped stage FIRST, deliberately, so that on the one
+   * pump where both are true the wipe wins over a frame that still reads Downed.
+   * With a stale flag that preference becomes a trap: the next real downing drew
+   * "the floor has reset" with NO COUNTDOWN while five turns ran out, and the
+   * first keypress went on dismissing the old plate.
+   */
+  it('forgets an unacknowledged wipe the moment the viewer goes down again', () => {
+    const downed = at("case 'downed': {");
+    const clears = CODE.indexOf('wipedFloor = false', downed);
+    expect(clears, 'the downed arm never clears a stale wipe').toBeGreaterThan(-1);
+
+    // Inside the SELF branch, not merely somewhere later in the file: a clear
+    // that ran for any body would drop the plate when a teammate went down.
+    const selfBranch = CODE.indexOf('if (event.id === selfId) {', downed);
+    expect(selfBranch, 'the downed arm lost its self branch').toBeGreaterThan(-1);
+    expect(clears, 'the clear is outside the self branch').toBeGreaterThan(selfBranch);
+
+    // ...and still before the next case, so it is this arm and not a later one.
+    const nextCase = CODE.indexOf("case 'erased':", downed);
+    expect(nextCase).toBeGreaterThan(-1);
+    expect(clears, 'the clear drifted out of the downed arm').toBeLessThan(nextCase);
+  });
+
+  it('still has exactly one other place that clears it — the acknowledgement', () => {
+    /**
+     * The plate is an acknowledgement and must not dismiss itself on a timer or
+     * a resync: a player who looked away has to be able to read what killed
+     * them. So there are two clears and only two — this one, and the new downing
+     * above — and neither is a `welcome`, because the post-wipe welcome arrives
+     * immediately after the wipe and would erase the plate before anybody saw it.
+     */
+    // The declaration `let wipedFloor = false` is not a clear, and counting it
+    // would make this assertion pass for the wrong reason.
+    const clears = [...CODE.matchAll(/(?<!let )wipedFloor = false/g)];
+    expect(clears.length, 'a third place clears the wipe plate').toBe(2);
+    expect(CODE, 'the plate is cleared on a resync, which races the player reading it').not.toMatch(
+      /forgetTheWorld[\s\S]{0,400}wipedFloor = false/,
+    );
+  });
+});

@@ -1475,6 +1475,56 @@ describe('the moor hears when somebody does not come back', () => {
     ).toBe(true);
   });
 
+  it('tells the client about a wipe no monster caused', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE DEATH PLATE DREW FOR ONE KIND OF DEATH AND NO OTHER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The plate's Wiped stage reads the `erased` EVENT and nothing else, because
+     * `resetFloorParty` deletes the downed record inside the pump that raised it
+     * — the `party` snapshot says the body is up, so the event is the only
+     * witness.
+     *
+     * That event reached clients only inside a `sweep`, which carries its batch
+     * wholesale, and `party_wipe` is filed there only when `duringSweep` is
+     * true. THREE of the four `checkWipe` call sites raise it on the player lane
+     * instead: at pump entry (`enrolCasualties`, scheduler.ts:3588), on a
+     * bleed-out (:3617) and on a countdown expiry (:3624). `messageForEvent`
+     * returned null for `erased`, and the player-lane loop drops null — so all
+     * three were discarded before they reached a socket.
+     *
+     * The result was the exact inverse of the intent: the plate drew when a
+     * monster landed the killing blow, and stayed dark for a lone player
+     * bleeding to death, which is the case it was written for.
+     *
+     * ═══ WHY THE FIXTURE PUTS THEM DOWN BY HAND ═══
+     * A wipe needs no survivors, and the pump has to be driven by something
+     * other than the dead. Setting hp to 0 and letting `enrolCasualties` enrol
+     * them on the way into a tide pump is the player-lane path, which is the one
+     * under test — a monster's blow would take the sweep lane and pass even with
+     * the bug present.
+     */
+    const alone = await connect(server.port);
+    const aloneId = await alone.hello();
+    await sleep(250);
+
+    const body = server.realms.overworld.world.getActor(aloneId);
+    if (body === undefined) throw new Error('no body');
+    body.hp = 0;
+    body.alive = false;
+
+    // Nothing is sent: a dead body's commands are refused, and the tide is what
+    // advances the world when a party has stopped pressing keys.
+    await sleep(TIDE_MS + 900);
+
+    const erased = alone.latest('erased');
+    expect(erased, 'no `erased` frame reached the client at all').toBeDefined();
+    const ev = erased?.['ev'] as Record<string, unknown> | undefined;
+    expect(ev?.['id'], 'the frame is about the wrong body').toBe(aloneId);
+    expect(ev?.['reason'], 'a lone death is a WIPE — nobody was left standing').toBe('wipe');
+  });
+
   it('does not promise a rescue from somebody who has stopped playing', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

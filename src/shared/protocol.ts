@@ -4378,6 +4378,39 @@ export type UsedMsg = {
   ev: TalentEvent;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A BODY WAS ERASED, ON A TURN THAT WAS NOT A MONSTER'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `erased` used to have no immediate-lane wrapper at all, and the reason given
+ * was sound while it was true: the marker it sets is carried by the `party`
+ * snapshot in the same pump, so the event itself had nothing to add.
+ *
+ * A PARTY WIPE BROKE THAT, because `resetFloorParty` DELETES the downed record
+ * inside the pump that raised it — so the snapshot says the body is up and the
+ * event is the only witness. The death plate's Wiped stage reads that event and
+ * nothing else (client/ui/respawnprompt.ts).
+ *
+ * The event did reach the client, but only ever inside a `sweep` batch, which
+ * carries its events wholesale. `party_wipe` is filed in the sweep lane only
+ * when `duringSweep` — and THREE of the four `checkWipe` call sites raise it on
+ * the player lane: at pump entry (`enrolCasualties`), on a bleed-out, and on a
+ * countdown expiry. So the plate drew for a monster's killing blow and for
+ * nothing else, which is the opposite of the case it was written for: a lone
+ * player bleeding to death is exactly a player-lane wipe.
+ *
+ * NO PROTOCOL BUMP. This file's own rule since 2 -> 3 is that a NEW OUTBOUND
+ * FRAME does not force one — an older client cannot name `erased`, drops it,
+ * and behaves precisely as it does today, which is to say it shows no wipe
+ * plate. See src/shared/version.ts.
+ */
+export type ErasedMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'erased';
+  ev: ErasedEvent;
+};
+
 // ---------------------------------------------------------------------------
 // The viewer-private frames. See `BroadcastMsg` at the bottom.
 // ---------------------------------------------------------------------------
@@ -5554,6 +5587,7 @@ export type ServerMsg =
   | DamagedMsg
   | DiedMsg
   | UsedMsg
+  | ErasedMsg
   | LogMsg
   | EffectsMsg
   | ProjectilesMsg
