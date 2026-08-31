@@ -261,6 +261,82 @@ describe('what follows a character through a door', () => {
     expect(after?.spentStats, 'spent attribute points did not follow').toEqual({ str: 4 });
     expect(after?.kind === 'player' ? after.unspentStatPoints : null).toBe(2);
   });
+
+  it('carries the hit-point ceiling, and does not file the body down to it', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * THE SEVENTH TIME THE HAND-WRITTEN LIST BIT, AND THE FIRST THAT COST BLOOD.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * The test directly above this one is called *"leaves every derived number
+     * exactly where it was"* and it PASSES against this bug, because it compares
+     * `after.combat` — and `maxHp` is not a field of the combat sheet. The sheet
+     * survived the door; the hit points did not.
+     *
+     * `carryAcross` clamps `to.hp` against `to.maxHp` on its first line, and
+     * `to` is a body `world.addPlayer` has just built from `overlayFor`, whose
+     * `maxHp` is the class's AUTHORED CONSTANT. `to.level = from.level` is five
+     * lines further down, and nothing on the path re-derives the ceiling. So the
+     * clamp ran against a level-1 number.
+     *
+     * A level-30 Watchman crossed at 768/768 and arrived at 72. The ceiling
+     * repairs itself on the next base turn — `refreshPassives` runs once per
+     * turn — but that clamp is DOWNWARD ONLY by deliberate design, so the blood
+     * never comes back. Both directions, every doorway.
+     *
+     * ═══ WHY NO TEST COULD SEE IT UNTIL NOW ═══
+     * `maxHp` was an authored constant until `maxLifeFor` landed. While it was,
+     * `to.maxHp` and `from.maxHp` really were the same number and the clamp
+     * really did cost nothing — which is exactly what `carryAcross`'s comment
+     * still claimed. A level-1 fixture reproduces that vanished world perfectly
+     * and passes. THE LEVEL IS THE WHOLE FIXTURE, so it is set explicitly here.
+     */
+    const { actorId, socket } = await hello(server.port);
+    const before = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(before, 'no body on the near side').toBeDefined();
+    if (before === undefined || before.kind !== 'player') return;
+
+    // A BODY THAT HAS EARNED SOMETHING. The ceiling is set by hand because this
+    // harness builds its own gateway with no `refreshBody` seam — the same
+    // honesty the passive test above states about `refreshPassives`. The rule
+    // under test is not "this harness derives a ceiling"; it is "whatever
+    // ceiling a body has, a door does not replace it with the class's".
+    before.level = 10;
+    before.maxHp = 252;
+    before.hp = 252;
+
+    await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
+
+    const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(after, 'no body on the far side').toBeDefined();
+    // ═══ THE TWO ASSERTIONS THAT WERE FAILING ═══
+    // Before the fix: maxHp came back as the fresh body's authored default and
+    // hp had been clamped to it.
+    expect(after?.maxHp, 'the ceiling was rebuilt from the class table').toBe(252);
+    expect(after?.hp, 'a door took the hit points off a levelled body').toBe(252);
+  });
+
+  it('still clamps a body whose blood exceeds the ceiling it carries', async () => {
+    /**
+     * The clamp is not deleted, only moved onto the right number. A save that
+     * arrives at 90/72 is corrupt input and must land at 72 — `main.ts` says a
+     * pool reading above its own ceiling is *"a number no other part of this
+     * game can be shown"*.
+     */
+    const { actorId, socket } = await hello(server.port);
+    const before = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    if (before === undefined || before.kind !== 'player') return;
+
+    before.level = 3;
+    before.maxHp = 100;
+    before.hp = 400;
+
+    await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
+
+    const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(after?.maxHp).toBe(100);
+    expect(after?.hp).toBe(100);
+  });
 });
 
 describe('walking into the dark territory', () => {

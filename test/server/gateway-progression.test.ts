@@ -14,6 +14,10 @@ import {
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
+import { recomposeCombat } from '../../src/server/engine/effects.ts';
+import { maxLifeOf } from '../../src/server/engine/pools.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
+import { LIFE_PER_CON, PLAYER_RANK, maxLifeFor } from '../../src/shared/leveling.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { UNASSIGNED_CLASS } from '../../src/server/persist/saves.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -295,6 +299,24 @@ async function boot(seed: string): Promise<Harness> {
     attachClass: (actorId: string, classId: string): void => {
       const definition = classById(classId);
       if (definition !== undefined) talents.attach(actorId, trained(sheetForClass(definition)));
+    },
+    /**
+     * THE FOURTH SEAM, copied from main.ts like the other three.
+     *
+     * It was missing from this harness, and its absence is exactly why the
+     * restore path could file a levelled character down to its class base with
+     * every test here green: `maxHp` never moved off the authored constant in a
+     * fixture, so a clamp against the authored constant never cost anything.
+     */
+    refreshBody: (actorId: string): void => {
+      const actor = world.getActor(actorId);
+      if (actor === undefined) return;
+      recomposeCombat(actor, null, resolveItem);
+      if (actor.kind !== ActorKind.Player || actor.classId === undefined) return;
+      const definition = classById(actor.classId);
+      if (definition === undefined) return;
+      actor.maxHp = maxLifeOf(actor, definition, PLAYER_RANK);
+      actor.hp = Math.min(actor.hp, actor.maxHp);
     },
     raiseTalentPoint: (actorId: string, talentId: string): number | null => {
       const sheet = talents.sheetOf(actorId);
@@ -1126,5 +1148,98 @@ describe('progression survives a snapshot and a restore', () => {
     expect(body.xp).toBe(0);
     expect(body.unspentPoints).toBe(0);
     expect(server.talents.sheetOf(body.id)?.points.get('talent:crude_blow')).toBe(1);
+  });
+});
+
+describe('a character comes back the size it logged off', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY SERVER RESTART FILED EVERY LEVELLED CHARACTER DOWN TO ITS CLASS BASE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `applyRestore` clamps the saved hit points against `actor.maxHp` — and it
+   * runs inside `resolveActor`, on a body `world.addPlayer` has just built from
+   * `overlayFor`, whose `maxHp` is the class's AUTHORED CONSTANT. The level is
+   * not restored until `restoreProgression`, several hundred lines later in
+   * `handleHello`. So the clamp ran against a level-1 ceiling.
+   *
+   * A level-10 Watchman logged off at 252/252 and came back at 72. The ceiling
+   * repaired itself on his first base turn; the blood did not.
+   *
+   * ═══ THE CODEBASE PREDICTED THIS, IN WRITING, AND WAS WATCHING THE WRONG
+   *     MECHANISM ═══
+   * gateway.ts, one screen above the clamp:
+   *
+   *     *"NO ITEM IN THIS CATALOGUE CONTRIBUTES `maxHp` … which is the only
+   *     reason that clamp is safe where it is. THE DAY ONE DOES, that clamp runs
+   *     against the BARE-CLASS ceiling and silently shaves hit points off a
+   *     geared character on every single load, with nothing failing anywhere.
+   *     The fix would be to move the clamp below this call."*
+   *
+   * The guard was right about the consequence and watched the wrong door. No
+   * item ever did contribute `maxHp`; instead `maxHp` itself became DERIVED from
+   * level and Constitution, and the premise died without the sentence noticing.
+   *
+   * ═══ WHY EVERY TEST HERE STAYED GREEN ═══
+   * `maxHp` was an authored constant, so `min(classBase, savedHp)` was a no-op
+   * for any honest save. A level-1 fixture still reproduces that vanished world.
+   * THE LEVEL IS THE ENTIRE FIXTURE, which is why these two set it explicitly.
+   */
+  it('does not shave a levelled body down to its class base on a reconnect', async () => {
+    server = await boot('restore-ceiling');
+    const ren = await connect(server.port);
+
+    // A level-10 Watchman: 72 + 16 x 11.25 = 252. Computed, not written down,
+    // so a retune of the curve moves the fixture with it rather than making
+    // this a test about the number 252.
+    const level = 10;
+    const ceiling = maxLifeFor(WATCHMAN.maxHp, WATCHMAN.lifeRating, level, PLAYER_RANK, 0);
+    expect(ceiling, 'the fixture is not levelled enough to express the bug').toBeGreaterThan(
+      WATCHMAN.maxHp,
+    );
+
+    playsThe(WATCHMAN, { hp: ceiling, level });
+    const body = bodyOf(await ren.hello('ren-handle'));
+
+    // ═══ THE ASSERTIONS THAT WERE FAILING ═══ hp came back as WATCHMAN.maxHp.
+    expect(body.maxHp, 'the ceiling was never re-derived from the restored level').toBe(ceiling);
+    expect(body.hp, 'a reconnect took the hit points off a levelled body').toBe(ceiling);
+  });
+
+  it('counts the Constitution on the gear it comes back wearing', async () => {
+    /**
+     * The other half of the same ordering. Gear is restored by
+     * `restoreLoadout`, which runs INSIDE `restoreProgression` — so a ceiling
+     * derived before that call would miss a Constitution ring, and the clamp
+     * would take the difference out of the player's blood.
+     */
+    server = await boot('restore-ceiling-gear');
+    const ren = await connect(server.port);
+
+    const RING = 'item_watchmans_brass_ring~lw0';
+    const ringCon = resolveItem(RING)?.wielder.stats?.con ?? 0;
+    expect(ringCon, 'the fixture ring stopped granting Constitution').toBeGreaterThan(0);
+
+    const level = 10;
+    const bare = maxLifeFor(WATCHMAN.maxHp, WATCHMAN.lifeRating, level, PLAYER_RANK, 0);
+    const withRing = bare + ringCon * LIFE_PER_CON;
+
+    playsThe(WATCHMAN, { hp: withRing, level, equipped: { ring: RING } });
+    const body = bodyOf(await ren.hello('ren-handle'));
+
+    expect(body.equipped?.['ring'], 'the ring did not come back').toBe(RING);
+    expect(body.maxHp).toBe(withRing);
+    expect(body.hp).toBe(withRing);
+  });
+
+  it('still files down a save whose blood exceeds its ceiling', async () => {
+    // The clamp is moved, not deleted. A file reading 9000 hp is corrupt input
+    // and must land on the ceiling rather than being honoured.
+    server = await boot('restore-ceiling-corrupt');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN, { hp: 9000, level: 3 });
+    const body = bodyOf(await ren.hello('ren-handle'));
+    expect(body.hp).toBe(body.maxHp);
+    expect(body.maxHp).toBe(maxLifeFor(WATCHMAN.maxHp, WATCHMAN.lifeRating, 3, PLAYER_RANK, 0));
   });
 });

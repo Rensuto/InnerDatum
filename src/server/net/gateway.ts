@@ -5802,7 +5802,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const applyRestore = (actor: Actor, restore: CharacterRestore | null): void => {
     if (restore === null) return;
     if (restore.hp !== null) {
-      actor.hp = Math.max(1, Math.min(actor.maxHp, Math.floor(restore.hp)));
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * NOT CLAMPED HERE. THE CEILING DOES NOT EXIST YET.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This read `Math.min(actor.maxHp, …)` and the comment one screen above
+       * had already written down what would go wrong:
+       *
+       *     *"NO ITEM IN THIS CATALOGUE CONTRIBUTES `maxHp` … which is the only
+       *     reason that clamp is safe where it is. THE DAY ONE DOES, that clamp
+       *     runs against the BARE-CLASS ceiling and silently shaves hit points
+       *     off a geared character on every single load, with nothing failing
+       *     anywhere. The fix would be to move the clamp below this call."*
+       *
+       * The guard was right about the consequence and was watching the wrong
+       * door. No item ever did contribute `maxHp`; instead `maxHp` BECAME
+       * DERIVED — `classBase + Σ level gains + 4 × Constitution` — and the
+       * premise died without the sentence noticing. `actor` here is a body
+       * `addPlayer` built from `overlayFor` moments ago: level 1, wearing
+       * nothing. A level-10 Watchman's saved 252 was filed down to 72 on every
+       * single load, which means on every deploy.
+       *
+       * So the saved figure lands RAW, floored at 1 because a save reading zero
+       * or less is a corpse this path is not entitled to declare. The upper
+       * clamp moved to `handleHello`, immediately after `restoreProgression` —
+       * which restores the level AND the gear — where the ceiling is finally a
+       * real number. Between here and there the body may briefly hold more blood
+       * than pool; nothing is sent in that window, and `refreshBody` is what
+       * closes it.
+       */
+      actor.hp = Math.max(1, Math.floor(restore.hp));
     }
     actor.cooldowns.clear();
     for (const [talentId, turns] of Object.entries(restore.cooldowns)) {
@@ -7731,7 +7761,34 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // recomputed from that spread, so restoring the level without it would
       // hand the player back every point they had already spent. The two halves
       // are done together, here, after the sheet exists.
-      if (restore !== null) restoreProgression(actor, restore, engine);
+      if (restore !== null) {
+        restoreProgression(actor, restore, engine);
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND NOW — ONLY NOW — HOW BIG IS THIS BODY, AND IS THE BLOOD IN IT.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * This is the "below this call" that `applyRestore`'s note asks for.
+         * `restoreProgression` has just put back the LEVEL and, through
+         * `restoreLoadout`, the GEAR — the two things `maxHp` is derived from
+         * besides the class. Before this line the ceiling was the class's
+         * level-1 constant, and clamping the saved hit points against it took
+         * roughly two thirds of a level-10 character's pool on every load.
+         *
+         * `refreshBody` is the same seam equip, unequip and spend-stat use; it
+         * recomposes the sheet, re-derives the ceiling and clamps the pool in
+         * one place, so this cannot drift from what a base turn would compute.
+         *
+         * THE CLAMP IS REPEATED HERE RATHER THAN TRUSTED TO THE SEAM, because
+         * the seam is OPTIONAL — a build with no talent book has no class curve
+         * to apply and leaves `maxHp` on the class constant. A save is
+         * untrusted input either way, and a body holding more blood than pool is
+         * a number nothing downstream can draw.
+         */
+        engine.refreshBody?.(actor.id);
+        actor.hp = Math.max(1, Math.min(actor.maxHp, actor.hp));
+      }
 
       // ═══ AND DOES THIS BODY OWE US A CHOICE? A THREE-VALUED READ ═══
       // Three states of the character file mean "nobody has ever picked": there
@@ -8219,9 +8276,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   const carryAcross = (from: PlayerActor, to: Actor): void => {
     if (to.kind !== 'player') return;
-    // CLAMPED, not copied raw, on `applyRestore`'s terms: the two bodies are the
-    // same class so the ceiling is the same number, and the clamp costs nothing
-    // and cannot be wrong.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CEILING FOLLOWS THE BODY. IT IS NOT REBUILT FROM THE CLASS TABLE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This line used to read only the clamp, justified as:
+     *
+     *     *"the two bodies are the same class so the ceiling is the same
+     *     number, and the clamp costs nothing and cannot be wrong."*
+     *
+     * That was true, and stopped being true the day `maxHp` became DERIVED —
+     * `classBase + Σ level gains + 4 × Constitution` — rather than an authored
+     * constant. `to` is a body `world.addPlayer` built a few lines ago from
+     * `overlayFor`, whose `maxHp` is the class's level-1 number; `to.level` is
+     * not assigned until five lines below this one, and nothing on this path
+     * re-derives the ceiling. So the clamp ran against a level-1 figure and a
+     * level-30 Watchman crossed at 768/768 and arrived at 72.
+     *
+     * `refreshPassives` restores the CEILING on the next base turn, which made
+     * this nearly invisible — the bar reads 72/768 for one turn and then just
+     * 72/768 with a slowly-refilling pool, looking like damage taken in the
+     * doorway. It never restores the blood: that clamp is downward-only by
+     * deliberate design, so the hit points are gone.
+     *
+     * ═══ CARRIED RATHER THAN RECOMPUTED, WHICH IS ALSO WHAT UPSTREAM DOES ═══
+     * A zone change in ToME moves the same actor object; `max_life` is a
+     * property of that object and no zone change rebuilds it from a class
+     * descriptor (Actor.lua:3818-3822 only ever ADDS to it). Recomputing here
+     * would need the class table and the composed sheet, which is the
+     * `refreshBody` seam's job — and this path deliberately does not call
+     * `attachClass`, so there is no seam here to use. The number the body is
+     * already standing at IS the answer, and the next base turn re-derives it
+     * anyway if anything has moved.
+     *
+     * THE CLAMP STAYS, on the carried ceiling. A body arriving with more blood
+     * than pool is corrupt input, and `main.ts` is clear that a pool reading
+     * above its own ceiling is a number nothing in this game can draw.
+     */
+    to.maxHp = from.maxHp;
     to.hp = Math.max(1, Math.min(to.maxHp, from.hp));
     to.cooldowns.clear();
     for (const [talentId, turns] of from.cooldowns) {
