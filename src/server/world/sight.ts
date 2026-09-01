@@ -41,6 +41,7 @@ export const SIGHT_RADIUS = 20;
 import { hasLineOfSight } from './world.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { TileXY } from '../../shared/coords.ts';
+import { fogHas } from '../../shared/fog.ts';
 
 /** `core.fov.distance` — the straight line between two tiles, in tiles. */
 export function sightDistance(from: TileXY, to: TileXY): number {
@@ -68,4 +69,45 @@ export function canSee(
 ): boolean {
   if (sightDistance(from, to) > radius) return false;
   return hasLineOfSight(level, from, to);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAY THIS CHARACTER BE SHOWN WHAT IS LYING ON THIS TILE? SEEN, OR REMEMBERED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Object.lua:28-29` gives objects `display_on_seen = true` AND
+ * `display_on_remember = true` — the same pair `Grid.lua:30-32` gives TERRAIN,
+ * and the opposite of `Actor.lua:30-34`, which is remember-FALSE. You remember a
+ * coat you walked past; you do not remember where a husk was standing.
+ *
+ * ═══ BOTH TERMS ARE NECESSARY, AND NOT AS BELT AND BRACES ═══
+ *   REMEMBERED is the character's own persisted fog bitset, revealed at
+ *     `REVEAL_RADIUS` (12) as they walk.
+ *   SEEN is `canSee` at `SIGHT_RADIUS` (20).
+ *
+ * THOSE RADII DISAGREE BY EIGHT TILES. Upstream has ONE — `self.sight` drives
+ * FOV and remembering follows from it — so there, a tile you can see is always
+ * a tile you have revealed and the second term would be redundant. Ours grew a
+ * sight radius later than its reveal radius and the two were never reconciled.
+ * That divergence is real and is RECORDED rather than silently fixed here:
+ * raising `REVEAL_RADIUS` changes how fast the map uncovers, which is a visible
+ * change to a game people are in the middle of playing.
+ *
+ * ═══ WHY IT IS HERE AND NOT IN THE GATEWAY CLOSURE ═══
+ * It was in the closure, and two mutations survived — delete the memory term,
+ * delete the sight term — because every test passed its own predicate to
+ * `projectGroundItems` and nothing ever drove the real one. The rule is
+ * extracted and the plumbing left behind, which is the shape `sheetForBody` and
+ * `spendByPurse` already established here.
+ */
+export function knownTile(
+  level: LevelView,
+  eyes: readonly TileXY[],
+  remembered: Uint8Array | undefined,
+  x: number,
+  y: number,
+): boolean {
+  if (remembered !== undefined && fogHas(remembered, level.w, x, y)) return true;
+  return eyes.some((eye) => canSee(level, eye, { x, y }));
 }

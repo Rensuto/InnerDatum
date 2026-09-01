@@ -243,7 +243,6 @@ describe('viewer-private frames cannot be broadcast', () => {
       // `CarriedItemView.compare` is a delta against the RECIPIENT'S OWN doll,
       // so one shared copy would be arithmetically wrong for everybody but its
       // author. See the v10 suites at the bottom of this file.
-      'ground',
       'pong',
       'error',
     ]);
@@ -582,7 +581,6 @@ describe('the inspect pair at the trust boundary', () => {
       // `CarriedItemView.compare` is a delta against the RECIPIENT'S OWN doll,
       // so one shared copy would be arithmetically wrong for everybody but its
       // author. See the v10 suites at the bottom of this file.
-      'ground',
       'pong',
       'error',
     ]);
@@ -1392,24 +1390,34 @@ describe('the floor is broadcast and the bag is not', () => {
     money: 27,
   };
 
-  it('puts `ground` in ServerMsg and NOT in ViewerMsg', () => {
-    // THE ASSERTION IS THE `@ts-expect-error`, NOT THE `expect`. A floor item is
-    // a POSITION — world state, identical for everybody under shared party FOV —
-    // and `ProjectilesMsg` is the exact precedent, broadcast today with the
-    // written caveat that it moves to `ViewerMsg` the day per-player FOV lands.
-    // Ground items ride that same caveat and it is written on `GroundMsg`.
+  it('puts `ground` in ViewerMsg — the migration this suite predicted', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE DAY ARRIVED, AND THE OLD REASONING WAS RIGHT UNTIL IT WAS NOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This test used to assert the opposite, on the grounds that *"a floor item
+     * is a POSITION — world state, identical for everybody under shared party
+     * FOV"*. Every clause of that was true while FOV was shared, and it named
+     * its own expiry: *"exactly the migration per-player FOV will one day
+     * require."*
+     *
+     * What made it expire is not sight but MEMORY. `Object.lua:28-29` gives
+     * objects `display_on_remember = true` — a pile shows on any tile that
+     * character has personally walked past — and no two characters have walked
+     * the same map. There is no realm-wide answer left to build, which is a
+     * stronger reason than the one that moved `state` and `sweep`.
+     */
     const asServer: ServerMsg = ground;
-    const asBroadcast: BroadcastMsg = ground;
+    const asViewer: ViewerMsg = ground;
     expect(asServer.t).toBe('ground');
-    expect(asBroadcast.t).toBe('ground');
+    expect(asViewer.t).toBe('ground');
 
-    // @ts-expect-error `ground` is NOT viewer-private. Delete this suppression
-    // and the file stops building the day somebody moves it into `ViewerMsg`
-    // without also moving every `broadcast(groundMsg)` call site — which is the
-    // point of the Exclude, and is exactly the migration per-player FOV will one
-    // day require.
-    const notViewerPrivate: ViewerMsg = ground;
-    expect(notViewerPrivate).toBe(ground);
+    // @ts-expect-error `ground` is viewer-private now. This suppression is the
+    // assertion: delete it and the file stops building the day somebody widens
+    // `BroadcastMsg` back over it.
+    const notBroadcast: BroadcastMsg = ground;
+    expect(notBroadcast).toBe(ground);
   });
 
   it('puts `inventory` in BOTH ServerMsg and ViewerMsg', () => {
@@ -1440,9 +1448,9 @@ describe('the floor is broadcast and the bag is not', () => {
     // — the type would widen and the literal would simply be one tag short.
     // These assignments are `Exclude`-derived: `broadcastable` accepts only tags
     // that SURVIVE the Exclude, and `viewerOnly` only tags that do not.
-    const broadcastable: BroadcastMsg['t'] = 'ground';
+    const broadcastable: BroadcastMsg['t'] = 'used';
     const viewerOnly: Exclude<ServerMsg['t'], BroadcastMsg['t']> = 'inventory';
-    expect(broadcastable).toBe('ground');
+    expect(broadcastable).toBe('used');
     expect(viewerOnly).toBe('inventory');
 
     // @ts-expect-error `inventory` does not survive the Exclude. This is the
@@ -1451,9 +1459,11 @@ describe('the floor is broadcast and the bag is not', () => {
     const wrongWay: BroadcastMsg['t'] = 'inventory';
     expect(wrongWay).toBe('inventory');
 
-    // @ts-expect-error and `ground` is not viewer-only, in the other direction.
-    const alsoWrong: Exclude<ServerMsg['t'], BroadcastMsg['t']> = 'ground';
-    expect(alsoWrong).toBe('ground');
+    // AND `ground` IS VIEWER-ONLY NOW, which is the direction this pair used to
+    // assert the other way round. `used` took its place above as the
+    // broadcastable example: everyone should see the Alchemist throw the vial.
+    const groundIsPrivate: Exclude<ServerMsg['t'], BroadcastMsg['t']> = 'ground';
+    expect(groundIsPrivate).toBe('ground');
   });
 
   it('treats an empty `ground` array as a valid frame — the floor is CLEAR', () => {
@@ -1466,9 +1476,11 @@ describe('the floor is broadcast and the bag is not', () => {
     // because the pile is unowned and first pickup wins, what they conclude is
     // that a friend took it.
     //
-    // So the frame is still SENT when the last item is taken, and it is still
-    // broadcastable when it says nothing is there.
-    const cleared: BroadcastMsg = { v: V, t: 'ground', items: [] };
+    // So the frame is still SENT when the last item is taken, and it is still a
+    // valid frame when it says nothing is there. (It is a `ViewerMsg` now — see
+    // the migration above — and "clear" is per viewer for the same reason: a
+    // floor you have never walked reads as clear because you cannot remember it.)
+    const cleared: ViewerMsg = { v: V, t: 'ground', items: [] };
     expect(cleared.t).toBe('ground');
     if (cleared.t !== 'ground') return;
     expect(cleared.items).toEqual([]);

@@ -6005,6 +6005,13 @@ export type ViewerMsg =
   // `broadcast(fogged)`.
   | StateMsg
   | SweepMsg
+  // ═══ AND GROUND LOOT, FOR A DIFFERENT REASON THAN THOSE TWO ═══
+  // `state` and `sweep` are per viewer because of what a viewer can SEE. This
+  // one is per viewer because of what a viewer REMEMBERS: `Object.lua:28-29`
+  // gives objects `display_on_remember = true`, so a pile shows on any tile
+  // that character has personally walked past, and no two characters have
+  // walked the same map. There is no realm-wide answer to build.
+  | GroundMsg
   | CooldownsMsg
   | ResourceMsg
   | TurnMsg

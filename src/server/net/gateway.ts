@@ -212,6 +212,7 @@ import { membersOf, partyIdOf, sameParty } from '../engine/party.ts';
 // saves.ts's only reference back to this file is `import type`, so this arrow
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
+import { knownTile } from '../world/sight.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   fogEvent,
@@ -525,6 +526,15 @@ type Session = {
    * disagree; `reconcileSight` writes each id beside the send that carries it.
    */
   visible: Set<string>;
+  /**
+   * The last `ground` frame this socket was sent, as its own memo key.
+   *
+   * PER SESSION RATHER THAN PER REALM, because since FOV the frame is per
+   * viewer: loot shows on tiles that character REMEMBERS (`Object.lua:28-29`),
+   * and no two characters have walked the same map. A realm-wide memo would
+   * compare one player's frame against another's and suppress a send.
+   */
+  lastGroundKey?: string;
   /**
    * The overworld cell this body stepped off when it crossed into a site, and
    * where `leaveRealm` puts it back.
@@ -2886,7 +2896,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * EMPTY FLOOR for exactly the reason `lastProjectilesKeys` is seeded with the
    * empty sky, missing row and all. See `NO_GROUND_KEY`.
    */
-  const lastGroundKeys = new Map<string, string>();
   /** Per realm, like the floor. A shelf is shared, so this is not per socket. */
   const lastShopKeys = new Map<string, string>();
   /**
@@ -3151,11 +3160,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * than a "removed" patch.
    */
   const broadcastGroundIfChanged = (realm: PumpTarget): void => {
-    const msg = projectGroundItems(realm.world);
-    const key = JSON.stringify(msg.items);
-    if (key === (lastGroundKeys.get(realm.id) ?? NO_GROUND_KEY)) return;
-    lastGroundKeys.set(realm.id, key);
-    broadcast(msg, undefined, audienceFor(realm.id));
+    // One frame per viewer, each against that viewer's own memory of the floor.
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+      const msg = projectGroundItems(realm.world, knownTilesFor(session, realm));
+      const key = JSON.stringify(msg.items);
+      if (key === (session.lastGroundKey ?? NO_GROUND_KEY)) continue;
+      session.lastGroundKey = key;
+      send(session.socket, msg);
+    }
   };
 
   /**
@@ -3248,15 +3261,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *   form updates the memo, so a `broadcastGroundIfChanged` later in the same
    *   pump correctly sends nothing.
    */
-  const sendGroundIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
-    const msg = projectGroundItems(realm.world);
+  const sendGroundIfAny = (realm: PumpTarget, session: Session): void => {
+    const msg = projectGroundItems(realm.world, knownTilesFor(session, realm));
     if (msg.items.length === 0) return;
-    if (socket !== undefined) {
-      send(socket, msg);
-      return;
-    }
-    lastGroundKeys.set(realm.id, JSON.stringify(msg.items));
-    broadcast(msg, undefined, audienceFor(realm.id));
+    // THE MEMO IS WRITTEN HERE TOO. It was not before, because the realm-wide
+    // version had a separate `broadcast` arm that did it; sending a frame and
+    // leaving the key stale would make the very next pump resend it.
+    session.lastGroundKey = JSON.stringify(msg.items);
+    send(session.socket, msg);
   };
 
   /**
@@ -5274,6 +5286,39 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           : `${String(loot)} things are still on the floor.`,
       );
     }
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH TILES A CHARACTER MAY BE SHOWN LOOT ON: SEEN NOW, OR REMEMBERED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Object.lua:28-29` — `display_on_seen = true` AND `display_on_remember =
+   * true`, the same pair `Grid.lua:30-32` gives terrain. A coat you walked past
+   * stays on your map; a husk you walked past does not (`Actor.lua:30-34` is
+   * remember-FALSE). Both terms are needed, and NOT because of belt and braces:
+   *
+   *   REMEMBERED is `fogFor` — this character's own persisted bitset, revealed
+   *     at `REVEAL_RADIUS` (12) as they walk.
+   *   SEEN is `canSee` at `SIGHT_RADIUS` (20).
+   *
+   * THOSE TWO RADII DISAGREE BY EIGHT TILES, which is why neither term alone
+   * would do. Upstream has ONE radius — `self.sight` drives FOV, and remembering
+   * follows from it — so a tile you can see is always a tile you have revealed.
+   * Ours grew a sight radius later than its reveal radius and they were never
+   * reconciled; that divergence is real and is recorded rather than fixed here,
+   * because raising `REVEAL_RADIUS` changes how fast the map uncovers and is a
+   * visible change to a game people are playing.
+   */
+  const knownTilesFor = (
+    session: Session,
+    realm: PumpTarget,
+  ): ((x: number, y: number) => boolean) => {
+    const world = realm.world;
+    const eyes = eyesIn(world);
+    const remembered =
+      session.actorId === null ? undefined : fogFor(session.actorId, opts.realms?.get(realm.id));
+    return (x, y) => knownTile(world.level, eyes, remembered, x, y);
   };
 
   /**
@@ -8438,7 +8483,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // which out of combat can be the whole evening. `welcome` cannot carry it —
     // that frame is the level and the actors, and a ground item is neither.
     // Silent on an empty floor; see `sendGroundIfAny`.
-    sendGroundIfAny(realmFor(session), session.socket);
+    sendGroundIfAny(realmFor(session), session);
     // AND THE SHELVES, if this room has any. Silent everywhere else, which is
     // how a client knows not to offer the tab: no `shop` frame, no shop.
     sendShopIfAny(session);
@@ -8954,7 +8999,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     lastPartyKeys.delete(realmId);
     lastEffectsKeys.delete(realmId);
     lastProjectilesKeys.delete(realmId);
-    lastGroundKeys.delete(realmId);
     lastShopKeys.delete(realmId);
     clearedRealms.delete(realmId);
     residentCounts.delete(realmId);
@@ -9302,7 +9346,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * delivered it. Unicast, silent on an empty floor, and it deliberately does
      * not touch the memo — so a later broadcast is not suppressed by this.
      */
-    sendGroundIfAny(realmFor(session), session.socket);
+    sendGroundIfAny(realmFor(session), session);
     announceArrival(session, to, to.name);
     broadcast(
       {
@@ -9616,7 +9660,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * delivered it. Unicast, silent on an empty floor, and it deliberately does
      * not touch the memo — so a later broadcast is not suppressed by this.
      */
-    sendGroundIfAny(realmFor(session), session.socket);
+    sendGroundIfAny(realmFor(session), session);
     // AND THE ROOM SAYS WHAT IT IS. The one movement worth narrating — see
     // `announceArrival`, and `recordFor`'s `move` case for why a step is not.
     announceArrival(session, to, to.name);

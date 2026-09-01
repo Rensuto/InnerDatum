@@ -21,13 +21,16 @@
  *   - `projectLevel` sends the WHOLE map. This is the correct long-term answer
  *     for the TERRAIN of an explored floor; the client already keeps its own
  *     explored mask.
- *   - `projectGroundItems` — items on the floor, and the ONE remaining leak.
- *     Note it is NOT gated like an actor: `Object.lua:28-29` sets
- *     `display_on_remember = true`, exactly as `Grid.lua:30-32` does for
- *     terrain, so a coat you have walked past is remembered. Fogging it to
- *     currently-visible tiles would be a DEVIATION dressed as a fidelity fix.
- *     The faithful filter is each player's EXPLORED bitset — per player,
- *     persisted, and its own commit.
+ *   - `projectLevel` alone. Everything else is fogged.
+ *
+ * `projectGroundItems` closed the last of them, and NOT the way the others did:
+ * `Object.lua:28-29` gives objects `display_on_remember = true`, exactly as
+ * `Grid.lua:30-32` does for terrain, so a pile shows on any tile that CHARACTER
+ * has walked past. Gating it on current sight would have been a deviation
+ * dressed as a fidelity fix. The predicate is `knownTile` — seen, or
+ * remembered — and because memory is per player there is no realm-wide answer
+ * left to build, which is why `GroundMsg` is a `ViewerMsg` with a per-session
+ * memo key.
  *
  * THE EVENT STREAM WAS ON THAT LIST FOR ONE COMMIT AND IS NOW OFF IT.
  * `SweepMsg` is a `ViewerMsg`, each recipient's copy passed through `fogEvent`:
@@ -1579,10 +1582,29 @@ export function projectProjectiles(world: World, eyes?: readonly TileXY[]): Proj
  * colour a marker with. It is reachable only from a content reload that deleted
  * an authored item out from under a live floor.
  */
-export function projectGroundItems(world: World): GroundMsg {
+export function projectGroundItems(
+  world: World,
+  /**
+   * Whether this viewer may be shown loot on a tile: SEEN NOW OR REMEMBERED.
+   * Absent means every tile — the GM console, and every fixture.
+   *
+   * ═══ A PILE IS NOT GATED LIKE A BODY, AND THE DIFFERENCE IS UPSTREAM'S ═══
+   * `Object.lua:28-29` sets `display_on_seen = true` AND
+   * `display_on_remember = true` — the same pair `Grid.lua:30-32` gives
+   * TERRAIN, and the opposite of `Actor.lua:30-34`, which is remember-FALSE.
+   * You remember a coat you walked past; you do not remember where a husk was
+   * standing. Gating loot on current sight would therefore be a DEVIATION
+   * dressed as a fidelity fix, and it is the obvious wrong move here.
+   *
+   * So the predicate is the caller's, because "remembered" is per player: it
+   * reads that character's own persisted fog bitset.
+   */
+  known?: (x: number, y: number) => boolean,
+): GroundMsg {
   const items: GroundItemView[] = [];
 
   for (const dropped of world.groundItems()) {
+    if (known !== undefined && !known(dropped.x, dropped.y)) continue;
     // MONEY FIRST, because `resolveItem` cannot answer for it and never will —
     // a coin pile has no `slot`, so it is not an `Item` (content/money.ts). It
     // draws at the plainest tier: a pile of gold is not a rare find, it is the
