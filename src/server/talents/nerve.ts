@@ -368,7 +368,11 @@ export const grit: Talent = {
       // without this a downed character would heal themselves off the floor
       // past the rescue rules. `walk_it_off.ts` guards the same edge.
       if (!ctx.self.alive || ctx.self.hp <= 0) return;
-      ctx.self.hp = Math.min(ctx.self.maxHp, ctx.self.hp + mendAt(ctx.level));
+      // THROUGH `healActor`, WHICH IS THIS GAME'S `onHeal`. Its docblock says
+      // why: the receiver's Constitution decides what a heal is worth, and it
+      // lives there *"rather than in each of the four talents that heal … so a
+      // fifth heal added later cannot forget it"*. All four forgot it.
+      healActor(ctx.self, mendAt(ctx.level));
     },
   },
   describe: (_self, level) =>
@@ -463,7 +467,11 @@ export const stillStanding: Talent = {
   hooks: {
     onKill: (ctx) => {
       if (!ctx.self.alive || ctx.self.hp <= 0) return;
-      ctx.self.hp = Math.min(ctx.self.maxHp, ctx.self.hp + reliefAt(ctx.level));
+      // THROUGH `healActor`, WHICH IS THIS GAME'S `onHeal`. Its docblock says
+      // why: the receiver's Constitution decides what a heal is worth, and it
+      // lives there *"rather than in each of the four talents that heal … so a
+      // fifth heal added later cannot forget it"*. All four forgot it.
+      healActor(ctx.self, reliefAt(ctx.level));
     },
   },
   describe: (_self, level) =>

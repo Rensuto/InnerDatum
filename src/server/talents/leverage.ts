@@ -39,6 +39,7 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
+import { healActor } from '../engine/talents.ts';
 import { EffectId } from '../content/effects.ts';
 import { EffectStatus, SetEffectOutcome } from '../engine/effects.ts';
 import { combatPhysicalpower } from '../engine/derived.ts';
@@ -201,7 +202,11 @@ export const bloodPrice: Talent = {
       if (hit.dam <= 0) return;
       if (!ctx.self.alive || ctx.self.hp <= 0) return;
       if (!ctx.procs.once('talent:blood_price')) return;
-      ctx.self.hp = Math.min(ctx.self.maxHp, ctx.self.hp + returnedAt(ctx.level));
+      // THROUGH `healActor`, WHICH IS THIS GAME'S `onHeal`. Its docblock says
+      // why: the receiver's Constitution decides what a heal is worth, and it
+      // lives there *"rather than in each of the four talents that heal … so a
+      // fifth heal added later cannot forget it"*. All four forgot it.
+      healActor(ctx.self, returnedAt(ctx.level));
     },
   },
   describe: (_self, level) =>

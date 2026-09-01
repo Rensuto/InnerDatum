@@ -59,6 +59,8 @@
 
 import type { PassiveContribution } from './equipment.ts';
 import type { BoundHooks, TurnProcs } from './hooks.ts';
+import { bound } from '../../shared/scale.ts';
+import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './derived.ts';
 import { createEnergyActor } from '../../shared/energy.ts';
 import { spendForAction } from '../../shared/energy.ts';
 import { ActorKind, ActorRank } from '../../shared/protocol.ts';
@@ -1641,10 +1643,27 @@ export type StatusPass = (actor: EngineActor) => boolean;
 export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
   if (!actor.alive) return;
 
-  // Actor.lua:525 `regenLife`. Clamped rather than accumulated past max so a
-  // long rest cannot bank overheal.
+  /**
+   * Actor.lua:525 `regenLife`. Clamped rather than accumulated past max so a
+   * long rest cannot bank overheal.
+   *
+   * ═══ AND THE HEALING FACTOR, WHICH UPSTREAM APPLIES HERE TOO ═══
+   * Actor.lua:2055 — `self.life_regen * util.bound(self.healing_factor, 0, 2.5)`.
+   * `healing_factor` is the Constitution scale (`:3889`), so a sturdy body
+   * regenerates faster as well as taking better bandages. Ours applied it in
+   * `healActor` alone, which regeneration does not go through — so half of what
+   * Constitution buys reached nothing.
+   *
+   * THE SAME BOUND AS `healActor`, from the same two constants, because it is
+   * literally the same `util.bound(..., 0, 2.5)` in the Lua.
+   *
+   * NOT ROUNDED, unlike `healActor`: a regen tick is a fraction by design
+   * (`hpRegen` is authored fractional) and rounding each tick would quantise a
+   * slow drip to nothing or to double. `hp` is already fractional on this path.
+   */
   if (actor.hpRegen !== 0 && actor.hp < actor.maxHp) {
-    actor.hp = Math.min(actor.maxHp, actor.hp + actor.hpRegen);
+    const factor = bound(healingFactor(actor.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
+    actor.hp = Math.min(actor.maxHp, actor.hp + actor.hpRegen * factor);
   }
 
   // Actor.lua:597 — `self:timedEffects()`. Status durations tick HERE, before

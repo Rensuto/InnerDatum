@@ -23,6 +23,8 @@
  */
 
 import { chebyshev, inBounds, step } from '../shared/coords.ts';
+import { bound } from '../shared/scale.ts';
+import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './engine/derived.ts';
 import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
 import type { RestResult, RestView } from '../shared/rest.ts';
 import {
@@ -2443,7 +2445,13 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          */
         const bonus = restBonus(turns);
         if (bonus > 0 && self.hp < self.maxHp) {
-          self.hp = Math.min(self.maxHp, self.hp + self.hpRegen * bonus);
+          // AND THE HEALING FACTOR, on `actBase`'s terms: this is the SAME
+          // `life_regen` upstream multiplies by `healing_factor` at
+          // Actor.lua:2055, just paid at the rest's accelerated rate. Without it
+          // a rest and an ordinary turn would disagree about what Constitution
+          // is worth, which is the kind of split nobody would ever notice.
+          const factor = bound(healingFactor(self.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
+          self.hp = Math.min(self.maxHp, self.hp + self.hpRegen * bonus * factor);
         }
 
         /**

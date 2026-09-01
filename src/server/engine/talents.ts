@@ -3182,8 +3182,26 @@ export function talentBaseDamage(self: TalentActor): number {
   return combatDamage(combatOf(self));
 }
 
+/**
+ * What `healActor` needs of a body — hit points and a sheet to read Constitution
+ * off, and nothing else.
+ *
+ * A NARROW STRUCTURAL SLICE rather than `TalentActor`, for `DamageTarget`'s and
+ * `PooledBody`'s reason: a passive hook is handed a `HookSelf`, which has no
+ * `kind` and no `cooldowns`, so requiring the full actor is what pushed four
+ * talent heals into writing `hp = min(maxHp, hp + n)` by hand instead — and
+ * every one of them then skipped the healing factor this function exists to
+ * apply.
+ */
+export type HealTarget = {
+  hp: number;
+  readonly maxHp: number;
+  readonly alive: boolean;
+  readonly combat?: CombatSheet;
+};
+
 /** Restore HP, clamped at max. Returns what was actually restored. */
-export function healActor(target: TalentActor, amount: number): number {
+export function healActor(target: HealTarget, amount: number): number {
   if (!target.alive || amount <= 0) return 0;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -3209,7 +3227,7 @@ export function healActor(target: TalentActor, amount: number): number {
    * game can draw. Rounded rather than floored so the factor cannot make a heal
    * of 1 into a heal of 0, which would read as a talent that did nothing.
    */
-  const factor = bound(healingFactor(combatOf(target)), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
+  const factor = bound(healingFactor(target.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
   const scaled = Math.round(amount * factor);
   if (scaled <= 0) return 0;
   const before = target.hp;

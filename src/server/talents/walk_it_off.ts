@@ -46,6 +46,7 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
+import { healActor } from '../engine/talents.ts';
 import { DamageType } from '../engine/damage.ts';
 import { Affinity, TalentKind, TargetShape } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
@@ -87,7 +88,11 @@ export const walkItOff: Talent = {
       // character would quietly heal themselves off the floor and the rescue
       // rules would have a second, invisible exit.
       if (!ctx.self.alive || ctx.self.hp <= 0) return;
-      ctx.self.hp = Math.min(ctx.self.maxHp, ctx.self.hp + regenAt(ctx.level));
+      // THROUGH `healActor`, WHICH IS THIS GAME'S `onHeal`. Its docblock says
+      // why: the receiver's Constitution decides what a heal is worth, and it
+      // lives there *"rather than in each of the four talents that heal … so a
+      // fifth heal added later cannot forget it"*. All four forgot it.
+      healActor(ctx.self, regenAt(ctx.level));
     },
   },
 
