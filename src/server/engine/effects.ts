@@ -82,6 +82,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import { reentryHealFraction } from '../../shared/progression.ts';
 import { bound, getTierDiff } from '../../shared/scale.ts';
+import { recomputeGlobalSpeed } from '../../shared/energy.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
 import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './derived.ts';
 import { composeSheet, composeWielders, wornOf } from './equipment.ts';
@@ -1921,9 +1922,38 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     const current = actor.globalSpeed ?? 1;
     if (!state.baseGlobalSpeed.has(actor.id)) state.baseGlobalSpeed.set(actor.id, current);
     const baseSpeed = state.baseGlobalSpeed.get(actor.id) ?? current;
-    // The 0.1 floor mirrors `combatSpeed`'s (Combat.lua:1409): a stacked slow
-    // must not reach zero, or the actor's clock stops and it never acts again.
-    actor.globalSpeed = Math.max(0.1, baseSpeed + (mods.globalSpeedAdd ?? 0));
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * SYMMETRIC SCALING — Actor.lua:3910-3913. A SLOW DIVIDES; IT DOES NOT
+     * SUBTRACT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ```lua
+     * if self.global_speed_add >= 0 then self.global_speed = base + add
+     * else self.global_speed = base / (1 + math.abs(add))  -- Symmetric scaling
+     * end
+     * ```
+     *
+     * This line was `max(0.1, base + add)` for both signs, and the comment
+     * beside it said the floor existed because *"a stacked slow must not reach
+     * zero"* — which is true, and is the symptom rather than the rule. Upstream
+     * does not need a floor to stop a slow reaching zero: division cannot get
+     * there. The floor is a backstop for a base speed authored at zero.
+     *
+     * ═══ THE DIFFERENCE IS NOT SMALL ═══
+     * At `SLOW_POWER = 0.3`: one slow was 0.70 against upstream's 0.769; TWO
+     * were 0.40 against 0.625; FOUR were 0.10 — the floor, a body that has
+     * effectively stopped — against 0.455. Stacking slows was a hard disable
+     * here and a diminishing return upstream, and "a +N and a −N compose back
+     * to 1" was false.
+     *
+     * `recomputeGlobalSpeed` in `shared/energy.ts` has been the correct port of
+     * this since it was written, with the asymmetry spelled out in its docblock,
+     * and had NO caller anywhere in `src/` — found by walking every exported
+     * function in the engine and shared layers for readers, with comments
+     * stripped. The same shape as `getTierDiff`, which shipped unused for months.
+     */
+    actor.globalSpeed = recomputeGlobalSpeed(baseSpeed, mods.globalSpeedAdd ?? 0);
   }
 }
 

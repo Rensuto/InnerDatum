@@ -68,6 +68,22 @@ import type { EffectActor, EffectDef } from '../../src/server/engine/effects.ts'
 import type { Rng } from '../../src/shared/rng.ts';
 
 /**
+ * Upstream's own arithmetic, written out — Actor.lua:3910-3913.
+ *
+ * A SLOW DIVIDES; A HASTE ADDS. Expectations here used to read `1 - SLOW_POWER`,
+ * which is the additive composition this engine used to do and upstream never
+ * did: at `SLOW_POWER = 0.3` a single slow was 0.70 against upstream's 0.769 and
+ * FOUR stacked slows hit the 0.1 floor — a body that had stopped — against
+ * upstream's 0.455.
+ *
+ * SPELT OUT RATHER THAN CALLING `recomputeGlobalSpeed`, so these assertions
+ * measure the RULE and not the implementation against itself.
+ */
+function speedWith(base: number, add: number): number {
+  return Math.max(0.1, add >= 0 ? base + add : base / (1 + Math.abs(add)));
+}
+
+/**
  * ===========================================================================
  * THE THREE THINGS THIS FILE EXISTS FOR
  * ===========================================================================
@@ -906,7 +922,7 @@ describe('SLOWED — two mechanisms, one effect (physical.lua:631-636 + DECISION
 
     setEffect(state, target, EffectId.Slowed, 3, {}, scriptedRng([]));
     // physical.lua:632 — `global_speed_add = -eff.power`. NEGATIVE.
-    expect(target.globalSpeed).toBeCloseTo(1 - SLOW_POWER, 10);
+    expect(target.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
     // speedFactor — the COST multiplier — is untouched. Reducing it would make
     // the monster FASTER, which is the inversion derived.ts warns about.
     expect((target as unknown as { speedFactor: number }).speedFactor).toBe(1);
@@ -924,10 +940,10 @@ describe('SLOWED — two mechanisms, one effect (physical.lua:631-636 + DECISION
     const target = monster();
     setEffect(state, target, EffectId.Slowed, 3, {}, scriptedRng([]));
     setEffect(state, target, other.id, 3, {}, scriptedRng([]));
-    expect(target.globalSpeed).toBeCloseTo(1 - 2 * SLOW_POWER, 10);
+    expect(target.globalSpeed).toBeCloseTo(speedWith(1, -2 * SLOW_POWER), 10);
 
     removeEffect(state, target, other.id, scriptedRng([]));
-    expect(target.globalSpeed).toBeCloseTo(1 - SLOW_POWER, 10);
+    expect(target.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
     removeEffect(state, target, EffectId.Slowed, scriptedRng([]));
     expect(target.globalSpeed).toBe(1);
   });
@@ -936,7 +952,7 @@ describe('SLOWED — two mechanisms, one effect (physical.lua:631-636 + DECISION
     const state = createMvpEffectState();
     const fast = monster({ globalSpeed: 1.4 });
     setEffect(state, fast, EffectId.Slowed, 3, {}, scriptedRng([]));
-    expect(fast.globalSpeed).toBeCloseTo(1.4 - SLOW_POWER, 10);
+    expect(fast.globalSpeed).toBeCloseTo(speedWith(1.4, -SLOW_POWER), 10);
     removeEffect(state, fast, EffectId.Slowed, scriptedRng([]));
     expect(fast.globalSpeed).toBeCloseTo(1.4, 10);
   });
@@ -952,7 +968,22 @@ describe('SLOWED — two mechanisms, one effect (physical.lua:631-636 + DECISION
     expect(budgetPenalty(state, detective.id)).toEqual({ ap: 0, mp: 1 });
   });
 
-  it('floors a stacked slow at 0.1 so a monster`s clock can never stop', () => {
+  it('cannot stop a monster`s clock however hard the slow is', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FLOOR USED TO BE WHAT GUARANTEED THIS. NOW THE ARITHMETIC DOES.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This asserted `globalSpeed === 0.1` for a −0.95 slow, because the engine
+     * SUBTRACTED and 1 − 0.95 = 0.05 was clamped up to the floor. Upstream
+     * divides (Actor.lua:3911, its own comment: *"Symmetric scaling"*), so
+     * `1 / 1.95 = 0.513` and the floor is never approached — which is the whole
+     * reason upstream needs no special case for stacking.
+     *
+     * SO THE ASSERTION IS THE PROPERTY, NOT THE NUMBER. A slow must leave a
+     * monster acting, and the old test measured the clamp that was papering
+     * over a subtraction rather than the rule that makes the clamp unnecessary.
+     */
     const state = createEffectState();
     const heavy: EffectDef = {
       ...SLOWED,
@@ -962,7 +993,21 @@ describe('SLOWED — two mechanisms, one effect (physical.lua:631-636 + DECISION
     registerEffect(state, heavy);
     const target = monster();
     setEffect(state, target, heavy.id, 3, {}, scriptedRng([]));
-    expect(target.globalSpeed).toBe(0.1);
+    expect(target.globalSpeed).toBeCloseTo(speedWith(1, -0.95), 10);
+    // COMFORTABLY ABOVE THE FLOOR, and that is the point: subtraction reached
+    // it at −0.9 and division does not reach it at any finite slow.
+    expect(target.globalSpeed ?? 0).toBeGreaterThan(0.1);
+  });
+
+  it('a +N and a −N compose back to 1 — what "symmetric" means', () => {
+    /**
+     * Actor.lua:3911's own word. Under the old subtraction a +0.5 haste and a
+     * −0.5 slow composed to 1.0 by luck of the arithmetic, but +0.5 then −0.5
+     * applied to the RESULT did not, and four −0.3 slows summed to a dead body.
+     * Division is what makes the two directions genuine inverses.
+     */
+    expect(speedWith(speedWith(1, 0.5), -0.5)).toBeCloseTo(1, 10);
+    expect(speedWith(speedWith(1, -0.5), 0.5)).toBeGreaterThan(0.6);
   });
 });
 

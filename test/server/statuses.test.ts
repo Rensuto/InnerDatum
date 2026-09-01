@@ -49,6 +49,18 @@ import type { EffectLogLine } from '../../src/server/engine/effects.ts';
 import type { GameEvent } from '../../src/server/engine/scheduler.ts';
 
 /**
+ * Upstream's own arithmetic, written out — Actor.lua:3910-3913. A SLOW DIVIDES;
+ * a haste adds. These expectations used to read `1 - SLOW_POWER`, which is the
+ * additive composition this engine did and upstream never did.
+ *
+ * SPELT OUT rather than calling `recomputeGlobalSpeed`, so the assertions
+ * measure the RULE and not the implementation against itself.
+ */
+function speedWith(base: number, add: number): number {
+  return Math.max(0.1, add >= 0 ? base + add : base / (1 + Math.abs(add)));
+}
+
+/**
  * ===========================================================================
  * THE THREE MVP STATUSES, AS BEHAVIOUR RATHER THAN AS DATA
  * ===========================================================================
@@ -448,7 +460,7 @@ describe('SLOWED slows a MONSTER`s turn rate — physical.lua:632', () => {
     const healthy = husk('m2');
 
     setEffect(state, slowed, EffectId.Slowed, 99, {}, scriptedRng([]));
-    expect(slowed.globalSpeed).toBeCloseTo(1 - SLOW_POWER, 10);
+    expect(slowed.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
     expect(healthy.globalSpeed).toBe(1);
 
     const pass = statusPass(state, createRng('slow-rate'));
@@ -486,7 +498,9 @@ describe('SLOWED slows a MONSTER`s turn rate — physical.lua:632', () => {
     const brisk = husk('m1', { globalSpeed: 1.4 });
 
     setEffect(state, brisk, EffectId.Slowed, 2, {}, scriptedRng([]));
-    expect(brisk.globalSpeed).toBeCloseTo(1.1, 10);
+    // 1.4 / 1.3, not 1.4 − 0.3. A fast body slowed keeps more of its speed than
+    // subtraction gave it — Actor.lua:3911's division scales with what is there.
+    expect(brisk.globalSpeed).toBeCloseTo(speedWith(1.4, -SLOW_POWER), 10);
 
     // Two ticks to run the duration out, a third for the removal pass (:80-81).
     runGameTurns(brisk, 3, statusPass(state, createRng('slow-expiry')));
@@ -586,7 +600,7 @@ describe('SLOWED spends a PLAYER`s budget instead — DECISIONS.md § D1', () =>
       effectDur(state, beast.id, EffectId.Slowed),
     );
     expect(dalt.globalSpeed).toBe(1);
-    expect(beast.globalSpeed).toBeCloseTo(1 - SLOW_POWER, 10);
+    expect(beast.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
     expect(budgetPenalty(state, dalt.id).mp).toBe(SLOW_PLAYER_MP_PENALTY);
     // The monster carries the same modifier; nothing reads it for a monster,
     // because a monster has no intra-turn budget to spend.
@@ -609,7 +623,7 @@ describe('the three compose without fighting each other', () => {
     setEffect(state, target, EffectId.Slowed, 3, {}, scriptedRng([]));
 
     expect(target.combat?.flags?.stunned).toBe(true);
-    expect(target.globalSpeed).toBeCloseTo(1 - SLOW_POWER, 10);
+    expect(target.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
 
     const run = runGameTurns(target, 3, statusPass(state, createRng('all-three')));
 
@@ -639,6 +653,6 @@ describe('the three compose without fighting each other', () => {
     expect(target.cooldowns.get('talent:crude_blow')).toBe(7);
     // ...and the stun's ×0.4 flag came off with it while the slow stayed on.
     expect(target.combat?.flags?.stunned).toBe(false);
-    expect(target.globalSpeed).toBeCloseTo(1 - SLOW_POWER, 10);
+    expect(target.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
   });
 });
