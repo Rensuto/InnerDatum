@@ -21,10 +21,13 @@
  *   - `projectLevel` sends the WHOLE map. This is the correct long-term answer
  *     for the TERRAIN of an explored floor; the client already keeps its own
  *     explored mask.
- *   - `projectProjectiles` — orbs in the air.
- *   - `projectGroundItems` — items on the floor. An unowned pile IS hidden
- *     information now that FOV has landed: a coat in an unexplored room says
- *     something died in it.
+ *   - `projectGroundItems` — items on the floor, and the ONE remaining leak.
+ *     Note it is NOT gated like an actor: `Object.lua:28-29` sets
+ *     `display_on_remember = true`, exactly as `Grid.lua:30-32` does for
+ *     terrain, so a coat you have walked past is remembered. Fogging it to
+ *     currently-visible tiles would be a DEVIATION dressed as a fidelity fix.
+ *     The faithful filter is each player's EXPLORED bitset — per player,
+ *     persisted, and its own commit.
  *
  * THE EVENT STREAM WAS ON THAT LIST FOR ONE COMMIT AND IS NOW OFF IT.
  * `SweepMsg` is a `ViewerMsg`, each recipient's copy passed through `fogEvent`:
@@ -1331,11 +1334,22 @@ export function projectEffects(
    * exactly what it always was.
    */
   talents?: TalentBadgeSource,
+  /**
+   * The actors this realm's party can see. Absent means "everyone" — the GM
+   * console and every fixture written before FOV.
+   *
+   * A BADGE IS A FACT ABOUT A BODY, so it is gated exactly as the body is
+   * (`Actor.lua:30-34` — `display_on_seen` true, `display_on_remember` FALSE).
+   * Shipping the row for an unseen monster told a client that something it
+   * could not see was Off-balance, which names it and roughly places it.
+   */
+  seen?: ReadonlySet<string>,
 ): EffectsMsg {
   const actors: ActorEffects[] = [];
 
   for (const actor of world.allActors()) {
     if (!actor.alive) continue;
+    if (seen !== undefined && !seen.has(actor.id)) continue;
 
     const live = effectsOn(effects, actor.id);
     const badges: EffectView[] = [];
@@ -1449,8 +1463,10 @@ export function projectEffects(
  * field. The compiler stopping here and asking whether the client is allowed to
  * know IS the point.
  */
-export function projectProjectiles(world: World): ProjectilesMsg {
+export function projectProjectiles(world: World, eyes?: readonly TileXY[]): ProjectilesMsg {
   const projectiles: ProjectileView[] = [];
+  // Resolved once rather than per orb: `sourceId` is redacted against it below.
+  const seen = eyes === undefined ? undefined : visibleActorIds(world, eyes);
 
   for (const proj of world.projectilesInFlight()) {
     // A DETONATED ORB IS NOT IN THE AIR. `actProjectile` drops a landed orb from
@@ -1464,6 +1480,24 @@ export function projectProjectiles(world: World): ProjectilesMsg {
     const at = currentTile(proj);
     const aim = aimTile(proj);
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ORB IS GATED ON ITS OWN TILE, NEVER ON ITS SHOOTER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `Projectile.lua:29-31` — `display_on_seen = true`,
+     * `display_on_remember = false`, `display_on_unknown = false`. Drawn where
+     * you can see RIGHT NOW and never remembered, because where a bolt was two
+     * turns ago is not where it is.
+     *
+     * Gating on the SHOOTER instead would hide incoming fire from the dark,
+     * which is the one thing a player most needs to see and which the engine is
+     * still going to resolve either way. So the shot shows and the shooter is
+     * redacted — see `ProjectileView.sourceId`.
+     */
+    if (eyes !== undefined && !eyes.some((eye) => canSee(world.level, eye, at))) continue;
+    const shooterSeen = seen === undefined || seen.has(proj.sourceId);
+
     projectiles.push({
       id: proj.id,
       // WHERE IT IS RIGHT NOW — `path[cursor - 1]`, the tile it is standing on.
@@ -1472,7 +1506,7 @@ export function projectProjectiles(world: World): ProjectilesMsg {
       // WHO FIRED IT. May name a corpse: an orb outlives its shooter, upstream
       // included (Projectile.lua holds a hard `src` reference with no liveness
       // check, and attributes the kill to the dead shooter).
-      sourceId: proj.sourceId,
+      ...(shooterSeen ? { sourceId: proj.sourceId } : {}),
       // THE TILE IT IS FLYING AT — the last tile of the frozen line, which is
       // where the target was standing when it was fired and NOT where they are
       // now. The orb does not re-aim, and this field is what lets a client draw

@@ -1525,7 +1525,28 @@ export type ProjectileView = {
   x: number;
   y: number;
   /** WHO FIRED IT. May name a body that is already a corpse — an orb outlives its shooter. */
-  sourceId: string;
+  /**
+   * WHO FIRED IT — OPTIONAL SINCE FOV, AND ABSENT MEANS "NOT SAID".
+   *
+   * An orb is drawn whenever its own tile is visible (`Projectile.lua:29-31` —
+   * `display_on_seen`, and remember is FALSE), which is right: a shot coming out
+   * of the dark is the counterplay signal, and withholding it would delete from
+   * the screen a fact the engine is still acting on. But the SHOOTER may be
+   * standing somewhere the viewer cannot see, and a required id would name them.
+   *
+   * So it is redacted rather than gating, exactly as `DamageEvent.sourceId` is.
+   * Optional costs nothing here: no client reads this field at all today —
+   * `render/canvas.ts` says it is *"deliberately NOT drawn"* and
+   * `state/projectiles.ts` says *"there is no `sourceId === selfId` filter
+   * here"*. It is kept because upstream's `Projectile` holds a hard `src`
+   * reference and a later "who shot that?" line would want it, not because
+   * anything consumes it now.
+   *
+   * Per `shared/version.ts`, an outbound field becoming optional is not a
+   * PROTOCOL_VERSION bump: a client that ignores it is unaffected, and this one
+   * ignores it.
+   */
+  sourceId?: string;
   /**
    * THE TILE IT IS FLYING AT — the target's tile at the instant of firing, not
    * the target's tile now. It does not re-aim, and the whole counterplay is that

@@ -347,7 +347,12 @@ describe('the projectiles frame', () => {
         id: proj.id,
         x: 2,
         y: LANE_Y,
-        sourceId: 'mon_a',
+        // NO `sourceId`. `fire` names a shooter that was never added to the
+        // world, and since FOV the field is REDACTED when the viewer cannot see
+        // the body it names — a phantom is the strongest case of that. The frame
+        // is still sent, because an orb is gated on ITS OWN tile and never on
+        // its shooter: a shot out of the dark is the one thing a player most
+        // needs to see. See `ProjectileView.sourceId`.
         targetX: 8,
         targetY: LANE_Y,
         // Six tiles at two tiles a game turn. TURNS, never milliseconds.
@@ -396,7 +401,12 @@ describe('the projectiles frame', () => {
         id: proj.id,
         x: 3,
         y: LANE_Y,
-        sourceId: 'mon_a',
+        // NO `sourceId`. `fire` names a shooter that was never added to the
+        // world, and since FOV the field is REDACTED when the viewer cannot see
+        // the body it names — a phantom is the strongest case of that. The frame
+        // is still sent, because an orb is gated on ITS OWN tile and never on
+        // its shooter: a shot out of the dark is the one thing a player most
+        // needs to see. See `ProjectileView.sourceId`.
         targetX: 8,
         targetY: LANE_Y,
         // Five tiles left at two a turn, rounded UP: a partial turn is still a

@@ -3047,7 +3047,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // exactly as the Downed countdown does — world/realms.ts:188-199), and
     // `projectEffects` filters it against the actors it can see. So each realm's
     // frame lists that realm's badges and nobody else's.
-    const msg = projectEffects(realm.world, effects, opts.talentEffects);
+    const msg = projectEffects(
+      realm.world,
+      effects,
+      opts.talentEffects,
+      visibleActorIds(realm.world, eyesIn(realm.world)),
+    );
     const key = JSON.stringify(msg.actors);
     if (key === lastEffectsKeys.get(realm.id)) return;
     lastEffectsKeys.set(realm.id, key);
@@ -3080,7 +3085,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `setTimeout` in the turn path.
    */
   const broadcastProjectilesIfChanged = (realm: PumpTarget): void => {
-    const msg = projectProjectiles(realm.world);
+    const msg = projectProjectiles(realm.world, eyesIn(realm.world));
     const key = JSON.stringify(msg.projectiles);
     if (key === (lastProjectilesKeys.get(realm.id) ?? NO_PROJECTILES_KEY)) return;
     lastProjectilesKeys.set(realm.id, key);
@@ -3112,7 +3117,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *   lines later in the same pump correctly sends nothing.
    */
   const sendProjectilesIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
-    const msg = projectProjectiles(realm.world);
+    const msg = projectProjectiles(realm.world, eyesIn(realm.world));
     if (msg.projectiles.length === 0) return;
     if (socket !== undefined) {
       send(socket, msg);
@@ -5272,6 +5277,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * EVERY PAIR OF EYES IN A REALM — the party's, unioned (`Game.lua#playerFOV`).
+   *
+   * REALM-WIDE RATHER THAN PARTY-WIDE, and the two are the same wherever it
+   * could matter: an `Inner` realm is instanced, *"one party, alone, with the
+   * monsters"* (`realms.ts`), and a `Common` realm *"requires that nothing ever
+   * spawns here"*. So the only realms holding several parties are the ones with
+   * nothing to hide, and this is why the effects and projectile frames can still
+   * be BUILT ONCE and broadcast: every viewer standing in a realm gets a frame
+   * that is byte-identical anyway.
+   *
+   * Dead bodies keep their eyes. A downed detective is still a player watching
+   * the screen, and blacking them out would punish the one person who most needs
+   * to see what is happening to the party standing over them.
+   */
+  const eyesIn = (world: World): TileXY[] =>
+    world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE PARTY'S EYES, AND THE FRAMES EACH CLIENT IS OWED BECAUSE OF THEM.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -5292,7 +5315,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * are the party's and the party is the realm — see `projectActors`.
    */
   const reconcileSight = (realmId: string, world: World): void => {
-    const eyes = world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const eyes = eyesIn(world);
     const seen = visibleActorIds(world, eyes);
     const byId = new Map(world.allActors().map((actor) => [actor.id, actor] as const));
 
@@ -5332,7 +5355,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * had. Hence per-session, and hence the ledger assignment beside the send.
    */
   const resyncBoard = (realmId: string, world: World, exceptConnId?: string): void => {
-    const eyes = world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const eyes = eyesIn(world);
     const actors = projectActors(world, eyes);
     // THE LEDGER IS THE FRAME'S OWN ID LIST, not a second computation that could
     // disagree with it. See `sendRealm`.
@@ -7287,7 +7310,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `view.actors` rather than recomputing visibility makes that structural: it
     // is not possible for the frame and the ledger to disagree, because there is
     // only one list.
-    const eyes = realm.world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const eyes = eyesIn(realm.world);
     const view = projectWorld(realm.world, eyes);
     session.visible = new Set(view.actors.map((actor) => actor.id));
     /**
@@ -8286,7 +8309,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     engine.setConnected(actor.id, true);
 
     // Fogged, and the ledger taken from the frame — see `sendRealm`.
-    const welcomeEyes = world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const welcomeEyes = eyesIn(world);
     const view = projectWorld(world, welcomeEyes);
     session.visible = new Set(view.actors.map((actor) => actor.id));
     send(session.socket, {
@@ -8391,7 +8414,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // time. A reconnecting player must see the Downed timer immediately; it is
     // the thing they came back for.
     if (opts.effects !== undefined) {
-      send(session.socket, projectEffects(world, opts.effects));
+      send(
+        session.socket,
+        projectEffects(world, opts.effects, undefined, visibleActorIds(world, eyesIn(world))),
+      );
     }
     send(session.socket, projectParty(world, opts.downed, speakingNow(Date.now())));
 
