@@ -79,7 +79,7 @@
  * is the only layer allowed to see both.
  */
 
-import { MASTERY_STEP } from '../../shared/progression.ts';
+import { MASTERY_STEP, isGenericTree, spentFromSpread } from '../../shared/progression.ts';
 import { braced } from '../talents/braced.ts';
 import { deadOnYourFeet } from '../talents/dead_on_your_feet.ts';
 import { longNights } from '../talents/long_nights.ts';
@@ -1018,6 +1018,58 @@ function deepenedMastery(definition: ClassDef, deepened: readonly string[]): Map
  *
  * A BODY WITH NEITHER LIST BUILDS EXACTLY THE SHEET IT ALWAYS DID.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *      WHAT THIS SHEET HAS SPENT, SPLIT BY THE PURSE THAT PAID FOR IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `spend_point` charges a `generic/` tree to `unspentGenerics` and everything
+ * else to `unspentPoints` (net/gateway.ts). The restore path summed the WHOLE
+ * spread against the class budget, so every rank bought with a generic point
+ * was charged to the class purse on the next load — and the generic purse was
+ * never reconstructed at all, because a single total cannot be partitioned
+ * after the fact.
+ *
+ * ═══ THE BIRTH GRANT DOES NOT SPLIT FOUR-AND-NOTHING ═══
+ * One of the four birth talents (`talent:issued_kit`) sits in a `generic/` tree,
+ * so the class partition is owed three free ranks and the generic partition one.
+ * Counted from the class definition rather than assumed, so moving a birth
+ * talent between trees stays correct without anybody remembering this function.
+ *
+ * ═══ A FUNCTION RATHER THAN A CLOSURE IN main.ts, FOR `sheetForBody`'s REASON ═══
+ * The first version lived inside `buildServer` and could not be reached from
+ * `test/` — every gateway test injects its own engine stub. It took three wrong
+ * guesses and a `console.error` to find out that the harness which was failing
+ * never called it at all. `treeOf` is a parameter because the talent registry
+ * lives in the engine and this file may not reach into it.
+ */
+export function spendByPurse(
+  sheet: TalentSheet,
+  definition: ClassDef | undefined,
+  treeOf: (talentId: string) => string | undefined,
+): { class: number; generic: number } {
+  const born = new Set((definition?.birthTalents ?? []).map((talent) => talent.id));
+  const classRanks: number[] = [];
+  const genericRanks: number[] = [];
+  let classBirth = 0;
+  let genericBirth = 0;
+  for (const [id, raw] of sheet.points) {
+    // AN ID THE REGISTRY NO LONGER KNOWS counts as a CLASS rank — the same
+    // coarse-but-safe reading `spentTalentPoints` takes. It is a rank somebody
+    // paid for, and the alternative is refunding it silently.
+    const generic = isGenericTree(treeOf(id) ?? '');
+    (generic ? genericRanks : classRanks).push(raw);
+    if (born.has(id)) {
+      if (generic) genericBirth += 1;
+      else classBirth += 1;
+    }
+  }
+  return {
+    class: spentFromSpread(classRanks, classBirth),
+    generic: spentFromSpread(genericRanks, genericBirth),
+  };
+}
+
 export function sheetForBody(definition: ClassDef, body?: PurchasedTrees): TalentSheet {
   return sheetForClass(definition, body?.unlockedTrees ?? [], body?.deepenedTrees ?? []);
 }

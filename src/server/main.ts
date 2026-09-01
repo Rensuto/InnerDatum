@@ -35,6 +35,7 @@ import {
   createContentTalentEngine,
   createTalentBook,
   sheetForBody,
+  spendByPurse,
   treesForClass,
 } from './content/classes.ts';
 import { seedTestEncounter } from './content/encounter.ts';
@@ -1773,6 +1774,43 @@ export function buildServer() {
       // a flag in a set and nothing on the body changes.
       refreshPassives(actorId);
       return answer;
+    },
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT THIS BODY HAS SPENT, SPLIT BY PURSE — the accurate ledger.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `spend_point` draws from `unspentGenerics` for a `generic/` tree and from
+     * `unspentPoints` for everything else, and the restore path summed the WHOLE
+     * spread against the class budget — so every rank bought with a generic
+     * point was charged to the class purse on the next load, and the generic
+     * purse itself was never reconstructed at all.
+     *
+     * ═══ HERE, BECAUSE THIS IS WHERE ALL THREE INPUTS MEET ═══
+     * The partition needs the talent registry (for each id's tree), the class
+     * definition (for which ids were granted at birth) and `isGenericTree`.
+     * `persist/saves.ts` has none of them and says so — *"this layer cannot
+     * import the talent registry … Giving the points back is the restore path's
+     * job, and it has the registry to do it with"* — and the gateway has only
+     * the seam. This file has all three.
+     *
+     * ═══ THE BIRTH GRANT DOES NOT SPLIT FOUR-AND-NOTHING ═══
+     * One of the four (`talent:issued_kit`) sits in a generic tree, so the
+     * class partition is owed three free ranks and the generic partition one.
+     * Counted from the class definition rather than assumed, so a content
+     * change that moves a birth talent between trees stays correct.
+     */
+    talentSpendOf: (actorId: string): { class: number; generic: number } | undefined => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return undefined;
+      // THE SHEET'S OWN `classId`, not the body's: `createTalentSheet` stamps it,
+      // so the class is reachable from the one object already in hand.
+      return spendByPurse(
+        sheet,
+        classById(sheet.classId),
+        (id) => talentEngine.registry.get(id)?.tree,
+      );
     },
 
     talentPointsOf: (actorId: string): Readonly<Record<string, number>> | undefined => {

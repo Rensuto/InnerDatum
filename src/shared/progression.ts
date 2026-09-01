@@ -727,6 +727,45 @@ export const MASTERY_STEP = 0.2;
  */
 export const MASTERY_DEEPEN_LIMIT = 1;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * POINTS SPENT, given a set of raw ranks and how many of them were FREE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Σ max(0, raw)` minus the birth grant, and the grant is capped at what was
+ * actually learned: a spread listing two talents is owed two free ranks, not
+ * four, and subtracting a flat figure would hand its owner points it never paid.
+ *
+ * ═══ IT USED TO BE `Σ max(0, raw - 1)` IN TWO PLACES, AND STILL IS IN ONE ═══
+ * That was exactly right while every talent a class owned was born at rank 1.
+ * `ClassDef.birthTalents` made it false — only four are free now — and the old
+ * sum went on forgiving a rank on every entry. The consequence is a POINT
+ * DUPLICATION rather than a rounding error: a 0 → 1 purchase is counted as free,
+ * so the ledger hands the point back on the next load, forever.
+ *
+ * `persist/saves.ts` was fixed and `net/gateway.ts` was not, under a comment
+ * claiming the two were written in the same form so they *"cannot disagree"*.
+ * They disagreed for as long as both existed, which is why the arithmetic lives
+ * here now and neither file owns a copy of it.
+ *
+ * `birthGrants` IS A PARAMETER RATHER THAN THE CONSTANT because the two purses
+ * do not split it evenly: one of the four birth talents (`talent:issued_kit`)
+ * sits in a `generic/` tree, so the class partition is owed three free ranks and
+ * the generic partition one. A caller that cannot tell them apart — the save
+ * layer, which may not import the talent registry — passes the whole grant and
+ * accepts being coarse; its own docblock says the restore path is the accurate
+ * one and has the registry to be accurate with.
+ */
+export function spentFromSpread(ranks: Iterable<number>, birthGrants: number): number {
+  let raised = 0;
+  let known = 0;
+  for (const raw of ranks) {
+    raised += Math.max(0, raw);
+    if (raw >= 1) known += 1;
+  }
+  return Math.max(0, raised - Math.min(birthGrants, known));
+}
+
 /** Every category point a character of this level has ever been granted. */
 export function totalCategoryPointsAtLevel(level: number): number {
   let total = 0;

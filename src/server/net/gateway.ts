@@ -90,6 +90,8 @@ import {
   statPointsForLevel,
   totalStatPointsAtLevel,
   totalPointsAtLevel,
+  totalGenericPointsAtLevel,
+  totalCategoryPointsAtLevel,
 } from '../../shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 /**
@@ -1232,6 +1234,13 @@ export type TurnEngine = {
    * keeps the field ABSENT from the snapshot rather than present and empty.
    */
   talentPointsOf?(actorId: string): Readonly<Record<string, number>> | undefined;
+  /**
+   * What this body has spent, SPLIT BY PURSE. `spend_point` charges a `generic/`
+   * tree to `unspentGenerics` and everything else to `unspentPoints`, so a
+   * single total cannot rebuild either. See the implementation in main.ts for
+   * why the split lives there and not here.
+   */
+  talentSpendOf?(actorId: string): { class: number; generic: number } | undefined;
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * WRITE A SAVED SPREAD ONTO A FRESHLY-ATTACHED SHEET. THE RESTORE HALF.
@@ -6482,16 +6491,67 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    let spent = 0;
-    for (const raw of Object.values(spread)) {
-      // `raw - 1`, never `raw`. Written in the same form as
-      // `spentTalentPoints` in persist/saves.ts so the two cannot disagree
-      // about how many points are in hand; the shorthand
-      // `totalPointsAtLevel(level) - sum(points)` that appears in two docblocks
-      // elsewhere hands a fresh level-1 character MINUS FOUR.
-      spent += Math.max(0, raw - 1);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE THREE PURSES, ALL DERIVED — and two of them used to be dropped.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This computed `Σ max(0, raw - 1)` under a comment claiming it was
+     * *"written in the same form as `spentTalentPoints` in persist/saves.ts so
+     * the two cannot disagree"*. That file was fixed when `birthTalents` landed
+     * and this was not, so the two had disagreed ever since: forgiving a rank on
+     * EVERY entry rather than on the four free ones means every 0 → 1 purchase
+     * was refunded on the next load. Breadth was free, permanently.
+     *
+     * ═══ AND THE OTHER TWO PURSES WERE NEVER REBUILT AT ALL ═══
+     * `unspentGenerics` and `unspentCategories` appear nowhere in
+     * `persist/saves.ts`, and `createActor` starts both at 0 — so every
+     * reconnect that rebuilt a body from file (a restart, a grace expiry, a
+     * character swap) silently emptied both. A level-50 character is granted 42
+     * generic points and 3 category points over a career.
+     *
+     * ═══ DERIVED RATHER THAN PERSISTED, WHICH IS WHY THIS IS THE WHOLE FIX ═══
+     * Every spend is already recorded somewhere durable: talent ranks in the
+     * spread, disciplines in `unlockedTrees`, deepenings in `deepenedTrees`. So
+     * all three purses are a subtraction from what the level granted, and adding
+     * three more fields to the save format would be storing a number that can be
+     * recomputed — and can therefore drift. `unspentStatPoints` is already
+     * derived exactly this way, two blocks up.
+     */
+    const split = engine.talentSpendOf?.(actor.id);
+    /**
+     * THE FALLBACK IS THE OLD `raw - 1`, DELIBERATELY, AND IT IS NOT THE BUG.
+     *
+     * Which sum is right depends on how the SHEET was seeded, and only the seam
+     * can tell: `createTalentSheet` still supports the pre-`birthTalents` shape
+     * where every talent is born at rank 1 — *"Absent means the old behaviour"* —
+     * and for such a sheet `Σ max(0, raw - 1)` is exactly correct, while
+     * forgiving only four would charge a fresh character for ranks it was given.
+     * Several test harnesses build sheets that way.
+     *
+     * So a build whose engine cannot answer keeps the reading that matches the
+     * sheets it can produce. Production has the seam and gets the split.
+     */
+    const spentClass =
+      split?.class ?? Object.values(spread).reduce((sum, raw) => sum + Math.max(0, raw - 1), 0);
+    const ledger = Math.max(0, totalPointsAtLevel(actor.level) - spentClass);
+    // THE GENERIC PURSE. Only the split seam can say, because a total cannot be
+    // partitioned after the fact; a build without it leaves the purse alone
+    // rather than guessing, which is the pre-existing behaviour.
+    if (split !== undefined) {
+      actor.unspentGenerics = Math.max(0, totalGenericPointsAtLevel(actor.level) - split.generic);
     }
-    const ledger = Math.max(0, totalPointsAtLevel(actor.level) - spent);
+    /**
+     * AND THE CATEGORY PURSE, off the two lists that record every way one can be
+     * spent — `unlockTree` appends to the first, `deepenTree` to the second, and
+     * there is no third. Both are persisted, so this survives a reconnect
+     * without the purse itself ever being written down.
+     */
+    const categoriesSpent = (actor.unlockedTrees?.length ?? 0) + (actor.deepenedTrees?.length ?? 0);
+    actor.unspentCategories = Math.max(
+      0,
+      totalCategoryPointsAtLevel(actor.level) - categoriesSpent,
+    );
     const claimed = restore.unspentPoints;
     if (claimed !== undefined && Math.floor(claimed) !== ledger) {
       // LOGGED RATHER THAN SILENTLY PREFERRED. A file that disagrees with its
@@ -8553,6 +8613,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     to.level = from.level;
     to.xp = from.xp;
     to.unspentPoints = from.unspentPoints;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE OTHER TWO PURSES AND BOTH PURCHASE LISTS — a door emptied all four.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `createActor` starts every one of these at 0 or absent, and this function
+     * is the ONLY thing that carries a body's state onto the fresh actor a realm
+     * change builds. `unspentPoints` and `unspentStatPoints` had lines; the
+     * generic and category purses did not, so levelling in a delve and walking
+     * home cost the generic point every time and, at 10, 20 and 36, the category
+     * point — one of only three in a fifty-level career.
+     *
+     * THE TWO LISTS MATTER MORE THAN THEY LOOK. The talent SHEET is per-actor in
+     * the shared engine and is not rebuilt here, so a bought discipline keeps
+     * working across the door — but `unlockableOf` reads the BODY's list, so it
+     * would re-offer a tree the character already owns, `deepenTree` would refuse
+     * one they own, and the next save would write the loss down as fact.
+     */
+    to.unspentGenerics = from.unspentGenerics;
+    to.unspentCategories = from.unspentCategories;
+    if (from.hotbar !== undefined) to.hotbar = [...from.hotbar];
+    if (from.unlockedTrees !== undefined) to.unlockedTrees = [...from.unlockedTrees];
+    if (from.deepenedTrees !== undefined) to.deepenedTrees = [...from.deepenedTrees];
     /**
      * THE TAKE-BACK WINDOW FOLLOWS TOO — and this is the SEVENTH field to be
      * added to this hand-written list, which the crossing test's own docblock

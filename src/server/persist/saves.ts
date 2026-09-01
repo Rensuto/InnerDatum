@@ -139,7 +139,7 @@
  *   their bag, and their bag is in this file.
  */
 
-import { BIRTH_TALENT_GRANTS } from '../../shared/progression.ts';
+import { BIRTH_TALENT_GRANTS, spentFromSpread } from '../../shared/progression.ts';
 import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { noteSpend } from '../../shared/respec.ts';
@@ -910,21 +910,19 @@ function spentTalentPoints(talentPoints: Readonly<Record<string, number>>): numb
    * may not see the class table — see the constant's own docblock, and
    * test/server/birth-talents.test.ts for what pins the two together.
    */
-  let raised = 0;
-  let known = 0;
-  for (const raw of Object.values(talentPoints)) {
-    raised += Math.max(0, raw);
-    if (raw >= 1) known += 1;
-  }
   /**
-   * FORGIVENESS IS CAPPED AT WHAT WAS ACTUALLY LEARNED, and that is what makes
-   * this exact rather than merely usual. A spread listing only two talents --
-   * a hand-written fixture, or a file older than half the tree -- is owed two
-   * free ranks, not four, and subtracting a flat four would hand its owner two
-   * points it never paid for. `min` is the whole of the difference and it costs
-   * one counter.
+   * THE ARITHMETIC MOVED TO `shared/progression.ts`, and the reason is the
+   * comment that used to sit in `net/gateway.ts` beside a second copy: it
+   * claimed the two were written in the same form so they *"cannot disagree"*,
+   * and they had disagreed since `birthTalents` landed. Two copies of a rule
+   * that must agree is one copy too many.
+   *
+   * THE WHOLE GRANT, COARSELY, because this layer may not import the talent
+   * registry and therefore cannot tell a class rank from a generic one. See the
+   * note on `unspentFromLedger`: giving points back accurately is the restore
+   * path's job and it has the registry to do it with.
    */
-  return Math.max(0, raised - Math.min(BIRTH_TALENT_GRANTS, known));
+  return spentFromSpread(Object.values(talentPoints), BIRTH_TALENT_GRANTS);
 }
 
 /**
