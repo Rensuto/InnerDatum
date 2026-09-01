@@ -265,6 +265,38 @@ export type Wielder = {
    * The import-time check below permits it for this key and no other.
    */
   readonly resists?: Partial<Record<DamageType, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `inc_damage` — HOW MUCH HARDER THIS ELEMENT LANDS. A percentage.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The offensive mirror of `resists`, and the same story: `CombatSheet.increase`
+   * is read on every blow (`combat.ts` passes `self.increase` into
+   * `applyDamage`), a CLASS may author it — the Alchemist's whole identity is
+   * `increase: { fire: 10 }` (classes.ts:579) — and no item or ego could grant a
+   * point of it, because the fold carried the field across by reference and
+   * never added to it.
+   */
+  readonly damage?: Partial<Record<DamageType, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `resists_pen` — HOW MUCH OF A TARGET'S RESISTANCE THIS IGNORES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The one that matters most in this bestiary. SEVEN of the nine authored
+   * creatures carry `darkness: 50` — the Wraith, the Eidolon, the Cairn, the
+   * Glut, the Disgraced Inspector, the High Inquisitor and the Watcher — and the
+   * Redactor's `damageType` IS Darkness (classes.ts:682). So that class deals
+   * half damage to most of the game and, until this channel, had no way to build
+   * against it: penetration was on the sheet, spent by `combatGetResist`'s
+   * multiplicative pen term on every hit, and unreachable from content.
+   *
+   * ═══ CAPPED WHERE UPSTREAM CAPS IT ═══
+   * `damage_types.lua:345-352` bounds penetration to 0..100 before applying it,
+   * so a value above 100 is not stronger — it is the same as 100 and reads as a
+   * bigger number that does nothing. The import check refuses one.
+   */
+  readonly penetration?: Partial<Record<DamageType, number>>;
 };
 
 /** Rarity, and — by construction — the drop tier. See the file header. */
@@ -867,6 +899,15 @@ export function itemsForSlot(slot: Slot): readonly Item[] {
  */
 export const MAX_ITEM_RESIST = 15;
 
+/**
+ * The most one item may add to a damage type, as a percentage.
+ *
+ * The Alchemist's whole class specialisation is `increase: { fire: 10 }`, so an
+ * item worth more than that would make the gear the identity and the class the
+ * accessory. Twenty is two of those and still under a class-defining number.
+ */
+export const MAX_ITEM_DAMAGE = 20;
+
 export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -987,6 +1028,34 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
      * out immunity in one slot — upstream's own strongest typed rolls sit in the
      * teens and twenties.
      */
+    /**
+     * THE TWO ATTACKER-SIDE TABLES, checked on the resists' terms. Both are
+     * percentages and neither may be negative: an item that made you WORSE at
+     * your own element is a different feature, and one nobody would predict from
+     * a name. Penetration is additionally bounded at 100, where
+     * damage_types.lua:345-352 bounds it.
+     */
+    for (const [table, cap] of [
+      [item.wielder.damage, MAX_ITEM_DAMAGE] as const,
+      [item.wielder.penetration, 100] as const,
+    ]) {
+      for (const [key, value] of Object.entries(table ?? {})) {
+        if (!DAMAGE_TYPES.includes(key as DamageType)) {
+          throw new Error(
+            `items: ${item.id} names damage type '${key}', which is not one of the ` +
+              `${String(DAMAGE_TYPES.length)} — it would be a row nothing reads`,
+          );
+        }
+        if (value === undefined) continue;
+        if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > cap) {
+          throw new Error(
+            `items: ${item.id} grants ${key} = ${String(value)}; attacker-side damage values ` +
+              `must be whole percentages between 0 and ${String(cap)}`,
+          );
+        }
+      }
+    }
+
     for (const [key, value] of Object.entries(item.wielder.resists ?? {})) {
       if (!DAMAGE_TYPES.includes(key as DamageType)) {
         throw new Error(

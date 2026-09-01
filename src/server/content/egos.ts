@@ -150,6 +150,10 @@ export type Ego = {
      * `validateEgos` already refuses a grant that computes to <= 0.
      */
     readonly resists?: Partial<Record<DamageType, EgoGrant>>;
+    /** `inc_damage`. See `Wielder.damage`. */
+    readonly damage?: Partial<Record<DamageType, EgoGrant>>;
+    /** `resists_pen`. See `Wielder.penetration` — the Redactor's answer. */
+    readonly penetration?: Partial<Record<DamageType, EgoGrant>>;
   };
   /**
    * Gold added to the base's cost. `applyEgo` strips `unided_name`,
@@ -540,6 +544,49 @@ const SUFFIXES: readonly Ego[] = [
     grants: { resists: { [DamageType.Lightning]: { floor: 5, step: 2 } } },
     cost: 40,
   },
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE ANSWER TO A BESTIARY THAT RESISTS YOU. `resists_pen` reaches content.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * SEVEN of the nine authored creatures carry `darkness: 50` — the Wraith, the
+   * Eidolon, the Cairn, the Glut, the Disgraced Inspector, the High Inquisitor
+   * and the Watcher. The Redactor's `damageType` IS Darkness (classes.ts:682).
+   * So that class has been dealing half damage to most of the game with no way
+   * to do anything about it: penetration was on the sheet and spent on every
+   * blow, and no item, ego, passive or effect could grant a point of it.
+   *
+   * ═══ PENETRATION AND NOT MORE DAMAGE, WHICH IS THE INTERESTING CHOICE ═══
+   * `+10% darkness damage` against a 50% resist is worth half of `+10%
+   * penetration`, and it is worth the same against everything else. Penetration
+   * is the one that answers the specific problem, so it is the one the deep
+   * suffix grants — and `of the Ledger` below grants plain damage, so the two
+   * are a real decision rather than a strictly-better pair.
+   *
+   * `floor 8, step 3` tops out at 8 + 3x3x3 = 35% on a rare at full power, which
+   * turns a 50% resist into roughly 32% rather than removing it. Cutting it out
+   * entirely would make the bestiary's signature defence a shopping problem.
+   */
+  {
+    code: 'ub',
+    name: ' of the Unbound Page',
+    tag: EgoSlotTag.Suffix,
+    rarity: 14,
+    levelRange: [6, 50],
+    grants: { penetration: { [DamageType.Darkness]: { floor: 8, step: 3 } } },
+    cost: 70,
+  },
+  {
+    code: 'kn',
+    name: ' of Kindling',
+    tag: EgoSlotTag.Suffix,
+    // The Alchemist's mirror: her class already specialises in Fire
+    // (`increase: { fire: 10 }`), and this is the first gear that can add to it.
+    rarity: 10,
+    levelRange: [1, 40],
+    grants: { damage: { [DamageType.Fire]: { floor: 5, step: 2 } } },
+    cost: 55,
+  },
   {
     code: 'lm',
     name: ' of the Lamp',
@@ -649,7 +696,15 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
     const statGrants = Object.entries(ego.grants.stats ?? {});
     const modGrants = Object.entries(ego.grants.mods ?? {});
     const resistGrants = Object.entries(ego.grants.resists ?? {});
-    if (statGrants.length === 0 && modGrants.length === 0 && resistGrants.length === 0) {
+    const damageGrants = Object.entries(ego.grants.damage ?? {});
+    const penGrants = Object.entries(ego.grants.penetration ?? {});
+    if (
+      statGrants.length === 0 &&
+      modGrants.length === 0 &&
+      resistGrants.length === 0 &&
+      damageGrants.length === 0 &&
+      penGrants.length === 0
+    ) {
       throw new Error(
         `egos: ${ego.code} grants nothing — it would be a name that changes no number a ` +
           `player can see, which is worse than no ego at all`,
@@ -662,7 +717,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
      * ego that silently grants nothing — which is the exact failure the
      * "grants nothing" check above exists to prevent, arriving by another door.
      */
-    for (const [key] of resistGrants) {
+    for (const [key] of [...resistGrants, ...damageGrants, ...penGrants]) {
       if (!DAMAGE_TYPES.includes(key as DamageType)) {
         throw new Error(
           `egos: ${ego.code} resists '${key}', which is not one of the ` +
@@ -671,7 +726,13 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       }
     }
 
-    for (const [key, grant] of [...statGrants, ...modGrants, ...resistGrants]) {
+    for (const [key, grant] of [
+      ...statGrants,
+      ...modGrants,
+      ...resistGrants,
+      ...damageGrants,
+      ...penGrants,
+    ]) {
       if (DEAD_GRANT_KEYS.includes(key)) {
         throw new Error(
           `egos: ${ego.code} grants '${key}', which has ZERO call sites in src/ — ` +
@@ -790,13 +851,33 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     resists[key as DamageType] = grantValue(grant, power, tier);
   }
 
+  const damage: Partial<Record<DamageType, number>> = {};
+  for (const [key, grant] of Object.entries(ego.grants.damage ?? {})) {
+    if (grant === undefined) continue;
+    damage[key as DamageType] = grantValue(grant, power, tier);
+  }
+
+  const penetration: Partial<Record<DamageType, number>> = {};
+  for (const [key, grant] of Object.entries(ego.grants.penetration ?? {})) {
+    if (grant === undefined) continue;
+    penetration[key as DamageType] = grantValue(grant, power, tier);
+  }
+
   // A key is written only when something contributed to it — the same rule
   // `composeSheet` follows, and for the same reason: an empty `stats: {}` is
   // structurally different from no `stats` at all, and one of the two is what a
   // deep-equal round-trip test compares against.
-  const out: { stats?: typeof stats; mods?: typeof mods; resists?: typeof resists } = {};
+  const out: {
+    stats?: typeof stats;
+    mods?: typeof mods;
+    resists?: typeof resists;
+    damage?: typeof damage;
+    penetration?: typeof penetration;
+  } = {};
   if (Object.keys(stats).length > 0) out.stats = stats;
   if (Object.keys(mods).length > 0) out.mods = mods;
   if (Object.keys(resists).length > 0) out.resists = resists;
+  if (Object.keys(damage).length > 0) out.damage = damage;
+  if (Object.keys(penetration).length > 0) out.penetration = penetration;
   return out;
 }

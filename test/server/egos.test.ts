@@ -93,6 +93,10 @@ describe('the ego roster', () => {
       'kl',
       'cs',
       'er',
+      // The attacker-side pair — the first gear that can move `inc_damage` or
+      // `resists_pen`. See the block above them on why the Redactor needed one.
+      'ub',
+      'kn',
       'lm',
     ]);
   });

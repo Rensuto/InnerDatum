@@ -476,6 +476,16 @@ export function resolveItem(id: string): Item | undefined {
   for (const [key, value] of Object.entries(base.wielder.resists ?? {})) {
     resists[key] = atMaterial(value, material);
   }
+  // THE TWO ATTACKER-SIDE TABLES, on the same grade curve as everything else a
+  // base authors. See the note above on why resists scale with the material.
+  const damage: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.damage ?? {})) {
+    damage[key] = atMaterial(value, material);
+  }
+  const penetration: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.penetration ?? {})) {
+    penetration[key] = atMaterial(value, material);
+  }
   for (const [index, ego] of egos.entries()) {
     const ref = parsed.egos[index];
     if (ref === undefined) continue;
@@ -489,12 +499,26 @@ export function resolveItem(id: string): Item | undefined {
     for (const [key, value] of Object.entries(wielder.resists ?? {})) {
       resists[key] = (resists[key] ?? 0) + value;
     }
+    for (const [key, value] of Object.entries(wielder.damage ?? {})) {
+      damage[key] = (damage[key] ?? 0) + value;
+    }
+    for (const [key, value] of Object.entries(wielder.penetration ?? {})) {
+      penetration[key] = (penetration[key] ?? 0) + value;
+    }
   }
 
-  const merged: { stats?: typeof stats; mods?: typeof mods; resists?: typeof resists } = {};
+  const merged: {
+    stats?: typeof stats;
+    mods?: typeof mods;
+    resists?: typeof resists;
+    damage?: typeof damage;
+    penetration?: typeof penetration;
+  } = {};
   if (Object.keys(stats).length > 0) merged.stats = stats;
   if (Object.keys(mods).length > 0) merged.mods = mods;
   if (Object.keys(resists).length > 0) merged.resists = resists;
+  if (Object.keys(damage).length > 0) merged.damage = damage;
+  if (Object.keys(penetration).length > 0) merged.penetration = penetration;
 
   // Prefixes carry their own trailing space and suffixes their own leading one
   // (`validateEgos` proves it), so this is concatenation with no separator

@@ -276,6 +276,9 @@ export function composeWielders(
   const statDelta = new Map<keyof AdditiveStats, number>();
   const modDelta = new Map<keyof AdditiveMods, number>();
   const resistDelta = new Map<DamageType, number>();
+  // THE TWO ATTACKER-SIDE TABLES. Same shape, same fixed key list, same reason.
+  const damageDelta = new Map<DamageType, number>();
+  const penDelta = new Map<DamageType, number>();
 
   for (const wielder of blocks) {
     if (wielder === undefined) continue;
@@ -314,6 +317,32 @@ export function composeWielders(
         const value = resists[key];
         if (value === undefined) continue;
         resistDelta.set(key, (resistDelta.get(key) ?? 0) + value);
+      }
+    }
+    /**
+     * AND THE OFFENSIVE PAIR — `inc_damage` and `resists_pen`.
+     *
+     * The note at the head of this fold lists `increase` and `penetration`
+     * among the fields *"carried across BY REFERENCE"*, and that was true and
+     * complete right up until content could move them. A class could already
+     * author both (the Alchemist's `increase: { fire: 10 }`); an item could not,
+     * and the Redactor — whose damage type is resisted 50% by seven of the nine
+     * creatures in the game — had no way to build against that at all.
+     */
+    const damage = wielder.damage;
+    if (damage !== undefined) {
+      for (const key of DAMAGE_TYPES) {
+        const value = damage[key];
+        if (value === undefined) continue;
+        damageDelta.set(key, (damageDelta.get(key) ?? 0) + value);
+      }
+    }
+    const pen = wielder.penetration;
+    if (pen !== undefined) {
+      for (const key of DAMAGE_TYPES) {
+        const value = pen[key];
+        if (value === undefined) continue;
+        penDelta.set(key, (penDelta.get(key) ?? 0) + value);
       }
     }
   }
@@ -359,6 +388,31 @@ export function composeWielders(
     };
     for (const [key, delta] of resistDelta) resists[key] = (resists[key] ?? 0) + delta;
     out.profile = Object.freeze({ ...base.profile, resists: Object.freeze(resists) });
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TWO ATTACKER-SIDE TABLES, REBUILT RATHER THAN MUTATED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `increase` and `penetration` sit directly on the sheet rather than under
+   * `profile`, so each is one fresh frozen table — but the rule is the resist
+   * row's exactly: never write into the caller's, because the class sheet is
+   * shared by every body of that class and a write would contaminate all of them.
+   *
+   * ADDITIVE, and for `resists`' reason: two rings at +5 fire are +10 fire,
+   * which is what upstream's plain `add` on `inc_damage` does.
+   */
+  if (damageDelta.size > 0) {
+    const table: { -readonly [K in keyof TypeTable]: TypeTable[K] } = { ...base.increase };
+    for (const [key, delta] of damageDelta) table[key] = (table[key] ?? 0) + delta;
+    out.increase = Object.freeze(table);
+  }
+
+  if (penDelta.size > 0) {
+    const table: { -readonly [K in keyof TypeTable]: TypeTable[K] } = { ...base.penetration };
+    for (const [key, delta] of penDelta) table[key] = (table[key] ?? 0) + delta;
+    out.penetration = Object.freeze(table);
   }
 
   return Object.freeze(out);

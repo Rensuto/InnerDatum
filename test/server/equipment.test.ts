@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { WATCHMAN } from '../../src/server/content/classes.ts';
+import { EGOS } from '../../src/server/content/egos.ts';
 import { ITEMS, SLOT_ORDER, Slot, itemById } from '../../src/server/content/items.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { composeSheet, composeWielders, wornOf } from '../../src/server/engine/equipment.ts';
-import { combatGetResist } from '../../src/server/engine/damage.ts';
+import { applyDamage, combatGetResist } from '../../src/server/engine/damage.ts';
 import { DamageType } from '../../src/shared/damagetype.ts';
+import { createRng } from '../../src/shared/rng.ts';
 import {
   createEffectState,
   recomposeCombat,
@@ -795,5 +797,97 @@ describe('gear can finally answer an element', () => {
     const forward = composeWielders(WATCHMAN.combat, blocks);
     const backward = composeWielders(WATCHMAN.combat, [...blocks].reverse());
     expect(forward.profile).toEqual(backward.profile);
+  });
+});
+
+describe('gear can finally answer a bestiary that resists you', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE REDACTOR DEALT HALF DAMAGE TO MOST OF THE GAME, WITH NO ANSWER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * SEVEN of the nine authored creatures carry `darkness: 50` and the Redactor's
+   * `damageType` IS Darkness. `CombatSheet.increase` and `.penetration` are read
+   * on every blow — `combat.ts` passes both into `applyDamage` — and a CLASS
+   * could author them (the Alchemist's `increase: { fire: 10 }` is her whole
+   * identity) while no item, ego, passive or effect could move either. This
+   * fold's own note listed them among the fields *"carried across BY
+   * REFERENCE"*, which was true and complete until content could reach them.
+   *
+   * It is the exact mirror of the resist channel: that gave a player DEFENCE
+   * against an element, and this is the offence.
+   */
+  const DARK = DamageType.Darkness;
+
+  it('carries a penetration from a worn item onto the sheet', () => {
+    const sheet = composeWielders(WATCHMAN.combat, [{ penetration: { [DARK]: 20 } }]);
+    expect(sheet.penetration?.[DARK]).toBe(20);
+  });
+
+  it('carries a damage bonus, and adds to a class that already has one', () => {
+    // The Alchemist authors `increase: { fire: 10 }`. Gear adds to it rather
+    // than replacing it, which is what makes a specialist's gear feel like a
+    // specialisation.
+    const base = { ...WATCHMAN.combat, increase: { fire: 10 } };
+    expect(composeWielders(base, [{ damage: { fire: 5 } }]).increase?.fire).toBe(15);
+  });
+
+  it('cuts into a resistance without erasing it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ASSERTION THE WHOLE CHANNEL EXISTS FOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `damage_types.lua:345-352` applies penetration MULTIPLICATIVELY against
+     * the resistance: `res = res * (100 - pen) / 100`. So 35% penetration turns
+     * a 50% resist into 32.5%, and a hundred points of Darkness that used to
+     * land for fifty now lands for 67.5.
+     *
+     * NOT ERASED, which is the balance point: penetration that removed a
+     * resistance outright would make the bestiary's signature defence a
+     * shopping problem rather than a decision.
+     */
+    const wraith = () => ({
+      hp: 1000,
+      maxHp: 1000,
+      alive: true,
+      combat: { profile: { resists: { [DARK]: 50 } } },
+    });
+    const sheet = composeWielders(WATCHMAN.combat, [{ penetration: { [DARK]: 35 } }]);
+
+    const plain = applyDamage(wraith(), 100, DARK, { id: 'r' }, createRng('a'), {});
+    const pierced = applyDamage(wraith(), 100, DARK, { id: 'r' }, createRng('a'), {
+      penetration: sheet.penetration,
+    });
+    expect(plain.dealt).toBe(50);
+    expect(pierced.dealt).toBeGreaterThan(plain.dealt);
+    expect(pierced.dealt).toBeLessThan(100);
+  });
+
+  it('adds across pieces and gives it all back when they come off', () => {
+    const two = composeWielders(WATCHMAN.combat, [
+      { penetration: { [DARK]: 10 } },
+      { penetration: { [DARK]: 15 }, damage: { [DARK]: 4 } },
+    ]);
+    expect(two.penetration?.[DARK]).toBe(25);
+    expect(two.increase?.[DARK]).toBe(4);
+    // Unequip is a re-fold over the smaller set, never a subtraction.
+    expect(composeWielders(WATCHMAN.combat, []).penetration?.[DARK]).toBeUndefined();
+  });
+
+  it('never writes into the sheet it was handed', () => {
+    // `increase` and `penetration` were carried BY REFERENCE, so this is the
+    // channel where a careless write would contaminate every body of the class.
+    const base = Object.freeze({ ...WATCHMAN.combat, increase: Object.freeze({ fire: 10 }) });
+    composeWielders(base, [{ damage: { fire: 5 } }]);
+    expect(base.increase.fire).toBe(10);
+  });
+
+  it('ships an ego a Redactor can actually find', () => {
+    // Anchored to the real table: if the last penetration ego is ever deleted,
+    // this fails and says so rather than the coverage evaporating.
+    const pen = EGOS.filter((ego) => ego.grants.penetration !== undefined);
+    expect(pen.length).toBeGreaterThan(0);
+    expect(pen.some((ego) => ego.grants.penetration?.[DARK] !== undefined)).toBe(true);
   });
 });
