@@ -19,7 +19,7 @@ import {
   projectProjectiles,
 } from '../../src/server/view/projector.ts';
 import { visibleActorIds } from '../../src/server/view/projector.ts';
-import { SIGHT_RADIUS, knownTile, sightDistance } from '../../src/server/world/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, knownTile, sightDistance } from '../../src/server/world/sight.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -93,7 +93,7 @@ describe('the effects frame', () => {
     player.x = 1;
     player.y = 1;
     const near = husk(world, 'near', 3, 1);
-    const far = husk(world, 'far', 1 + SIGHT_RADIUS + 3, 1);
+    const far = husk(world, 'far', 1 + DEFAULT_SIGHT_RADIUS + 3, 1);
     expect(world.level.w).toBeGreaterThan(far.x);
 
     const effects = createEffectState([STUNNED]);
@@ -140,7 +140,7 @@ describe('the projectiles frame', () => {
     player.x = 1;
     player.y = 1;
     husk(world, 'shooter', 4, 1);
-    husk(world, 'sniper', 1 + SIGHT_RADIUS + 3, 1);
+    husk(world, 'sniper', 1 + DEFAULT_SIGHT_RADIUS + 3, 1);
 
     // One orb in front of the party, one crossing the far end of the map.
     const near = world.addProjectile({
@@ -153,8 +153,8 @@ describe('the projectiles frame', () => {
     });
     const far = world.addProjectile({
       sourceId: 'sniper',
-      origin: { x: 1 + SIGHT_RADIUS + 3, y: 1 },
-      to: { x: 1 + SIGHT_RADIUS + 1, y: 1 },
+      origin: { x: 1 + DEFAULT_SIGHT_RADIUS + 3, y: 1 },
+      to: { x: 1 + DEFAULT_SIGHT_RADIUS + 1, y: 1 },
       projSpeed: 1,
       range: 10,
       damage: { dam: 5, type: DamageType.Physical, apr: 0 },
@@ -255,7 +255,7 @@ describe('the ground frame', () => {
   });
 
   it('shows a pile you can see but have not walked to', () => {
-    // `REVEAL_RADIUS` is 12 and `SIGHT_RADIUS` is 20, so the two terms are not
+    // `REVEAL_RADIUS` is 12 and `DEFAULT_SIGHT_RADIUS` is 20, so the two terms are not
     // redundant: there are eight tiles' worth of ground you can see and have
     // never revealed. Upstream has one radius and no such gap.
     const world = floors();
@@ -301,10 +301,20 @@ describe('knownTile — the rule the gateway actually spends', () => {
   });
 
   it('a tile you can see is known even with no memory at all', () => {
-    // `REVEAL_RADIUS` 12 vs `SIGHT_RADIUS` 20: eight tiles of ground you can
-    // see and have never revealed. Sight alone must carry this.
+    /**
+     * Sight alone must carry this — a character with no fog recorded at all
+     * (the very first frame, before a step) still sees what is in front of them.
+     *
+     * THE COMMENT HERE USED TO CLAIM MORE THAN THAT. It said sight 20 exceeded
+     * `REVEAL_RADIUS` 12 by eight tiles, so both terms were load-bearing. With
+     * the radius corrected to 10 the containment runs the other way: everything
+     * within sight is inside the reveal disc, so once a character has taken a
+     * step this term is subsumed. It is kept because upstream ORs seen and
+     * remembered (`Object.lua:28-29`) and because "before the first step" is a
+     * real state, not because it catches ground memory misses.
+     */
     const lvl = level();
-    expect(knownTile(lvl, [{ x: 1, y: 1 }], undefined, 15, 1)).toBe(true);
+    expect(knownTile(lvl, [{ x: 1, y: 1 }], undefined, 9, 1)).toBe(true);
   });
 
   it('a tile that is neither is not', () => {
@@ -476,9 +486,9 @@ describe('a remembered floor, over the wire', () => {
 
     // Then leave — far enough that `canSee` cannot reach the old ground, so ONLY
     // memory can put the pile in the frame.
-    body.x = Math.min(world.level.w - 2, walked.x + SIGHT_RADIUS + 6);
+    body.x = Math.min(world.level.w - 2, walked.x + DEFAULT_SIGHT_RADIUS + 6);
     world.addGroundItem(walked, 'item_watchmans_cap');
-    expect(sightDistance(body, walked)).toBeGreaterThan(SIGHT_RADIUS);
+    expect(sightDistance(body, walked)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 
     frames.length = 0;
     socket.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'hold' }));

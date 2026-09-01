@@ -10,7 +10,7 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { actorsNamedBy, fogEvent } from '../../src/server/view/projector.ts';
-import { SIGHT_RADIUS, sightDistance } from '../../src/server/world/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, sightDistance } from '../../src/server/world/sight.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -400,7 +400,7 @@ function darkButReachable(world: World, from: TileXY): TileXY {
       const d = sightDistance(from, { x, y });
       // Beyond sight with a margin, and close enough to hunt. The NEAREST such
       // tile, so the walk is short and several of its steps fall in the dark.
-      if (d <= SIGHT_RADIUS + 2 || d > AGGRO * 0.5) continue;
+      if (d <= DEFAULT_SIGHT_RADIUS + 2 || d > AGGRO * 0.5) continue;
       /**
        * AND IT MUST BE ABLE TO SEE THE PARTY, or it never wakes up.
        *
@@ -452,7 +452,7 @@ describe('the sweep a viewer is sent', () => {
     expect(
       sightDistance(body, startedAt),
       'the hunter was placed inside sight — there is no dark walk to test',
-    ).toBeGreaterThan(SIGHT_RADIUS);
+    ).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 
     /**
      * AND SOMETHING THE PLAYER CAN SEE, or the invariant is vacuous: a run in
@@ -516,7 +516,7 @@ describe('the sweep a viewer is sent', () => {
       aggroRange: AGGRO,
     });
     const startedAt = { x: chaser.x, y: chaser.y };
-    expect(sightDistance(body, startedAt)).toBeGreaterThan(SIGHT_RADIUS);
+    expect(sightDistance(body, startedAt)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 
     // Two turns only — long enough to act, short enough that it is still out
     // of sight when we look.
@@ -533,7 +533,7 @@ describe('the sweep a viewer is sent', () => {
     expect(
       now === undefined ? 0 : sightDistance(body, now),
       'it arrived already — shorten the walk or this proves nothing',
-    ).toBeGreaterThan(SIGHT_RADIUS);
+    ).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 
     const named = client.frames.some((frame) => JSON.stringify(frame).includes('chaser'));
     expect(named, 'a monster still in the dark was named on the wire').toBe(false);

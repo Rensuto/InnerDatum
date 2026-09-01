@@ -5296,19 +5296,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `Object.lua:28-29` — `display_on_seen = true` AND `display_on_remember =
    * true`, the same pair `Grid.lua:30-32` gives terrain. A coat you walked past
    * stays on your map; a husk you walked past does not (`Actor.lua:30-34` is
-   * remember-FALSE). Both terms are needed, and NOT because of belt and braces:
-   *
-   *   REMEMBERED is `fogFor` — this character's own persisted bitset, revealed
-   *     at `REVEAL_RADIUS` (12) as they walk.
-   *   SEEN is `canSee` at `SIGHT_RADIUS` (20).
-   *
-   * THOSE TWO RADII DISAGREE BY EIGHT TILES, which is why neither term alone
-   * would do. Upstream has ONE radius — `self.sight` drives FOV, and remembering
-   * follows from it — so a tile you can see is always a tile you have revealed.
-   * Ours grew a sight radius later than its reveal radius and they were never
-   * reconciled; that divergence is real and is recorded rather than fixed here,
-   * because raising `REVEAL_RADIUS` changes how fast the map uncovers and is a
-   * visible change to a game people are playing.
+   * remember-FALSE). The rule itself is `knownTile` in `world/sight.ts`, which
+   * carries the argument for both terms — briefly: sight (10) sits inside
+   * reveal (12), so after one step the seen term is subsumed and is kept
+   * because upstream ORs the two, not because it is load-bearing.
    */
   const knownTilesFor = (
     session: Session,

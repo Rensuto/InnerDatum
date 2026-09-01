@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SIGHT_RADIUS, canSee } from '../../src/server/world/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, canSee } from '../../src/server/world/sight.ts';
 import { projectActors, visibleActorIds } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
@@ -70,33 +70,57 @@ describe('the sight rule', () => {
     return world;
   }
 
-  it('is upstream`s twenty, not a number somebody picked', () => {
-    // `engine/Actor.lua:47` — `self.sight = t.sight or 20`. PLAN.md called
-    // choosing this a design decision still to be taken; it is a port.
-    expect(SIGHT_RADIUS).toBe(20);
+  it('is upstream`s TEN — and this test asserted 20 for three commits', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ENGINE SAYS 20. THE MODULE SAYS 10. THE MODULE IS THE GAME.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `engine/Actor.lua:47` is `self.sight = t.sight or 20`, and that citation
+     * is what this file shipped with — under the heading "not a number somebody
+     * picked", which was true and beside the point.
+     *
+     * ToME is a MODULE on that engine. `modules/tome/class/Actor.lua:178` sets
+     * `t.sight = t.sight or 10` in its own `init` and delegates to
+     * `engine.Actor.init` at :264, so `t.sight` is already 10 when the engine's
+     * line runs and the `or 20` never fires. Every module call site agrees:
+     * `Player.lua:648`, `:854`, `NPC.lua:102`, `:114`, `Game.lua:2068` all pass
+     * `self.sight or 10`.
+     *
+     * CLAUDE.md's rule is "when the docs and the Lua disagree, the Lua wins".
+     * The sharper version, learned here: WHEN THE ENGINE AND THE MODULE
+     * DISAGREE, THE MODULE WINS — it is the game we are porting.
+     */
+    expect(DEFAULT_SIGHT_RADIUS).toBe(10);
   });
 
   it('sees to the radius and not one tile past it', () => {
     const world = field();
     // THE FIXTURE MUST BE ABLE TO FAIL. A map narrower than the radius would
     // make every assertion below true of the wall instead of the rule.
-    expect(world.level.w).toBeGreaterThan(SIGHT_RADIUS + 1);
+    expect(world.level.w).toBeGreaterThan(DEFAULT_SIGHT_RADIUS + 1);
 
     const eye = { x: 1, y: 1 };
-    expect(canSee(world.level, eye, { x: 1 + SIGHT_RADIUS, y: 1 })).toBe(true);
-    expect(canSee(world.level, eye, { x: 2 + SIGHT_RADIUS, y: 1 })).toBe(false);
+    expect(canSee(world.level, eye, { x: 1 + DEFAULT_SIGHT_RADIUS, y: 1 })).toBe(true);
+    expect(canSee(world.level, eye, { x: 2 + DEFAULT_SIGHT_RADIUS, y: 1 })).toBe(false);
   });
 
   it('measures a circle, not a king`s walk', () => {
     /**
      * `core.fov.distance` is Euclidean. This codebase uses `chebyshev` for
      * REACH, and using it here would make the diagonal corner of a square
-     * visible at 20 while the cardinal edge at 21 was not — the wrong shape for
-     * a torch, and a real difference: (16,16) is 21.2 from (1,1) and must be
-     * dark, though its king-move distance is only 15.
+     * visible while the cardinal edge just past the radius was not — the wrong
+     * shape for a torch.
+     *
+     * (9,9) is the discriminating tile at radius 10: its king-move distance from
+     * (1,1) is 8 and would be IN, its true distance is 11.3 and is OUT. A
+     * mutation to `chebyshev` fails here and nowhere else.
      */
     const world = field();
-    expect(canSee(world.level, { x: 1, y: 1 }, { x: 16, y: 16 })).toBe(false);
+    expect(canSee(world.level, { x: 1, y: 1 }, { x: 9, y: 9 })).toBe(false);
+    // ...while the cardinal tile at exactly the radius is in, so the assertion
+    // above is about the METRIC and not merely about the distance.
+    expect(canSee(world.level, { x: 1, y: 1 }, { x: 11, y: 1 })).toBe(true);
   });
 
   it('still stops at a wall well inside the radius', () => {
@@ -139,7 +163,7 @@ describe('the projected board', () => {
     const far = world.addMonster('far', {
       name: 'Index Husk',
       sprite: 'enemy_index_husk_s',
-      x: 1 + SIGHT_RADIUS + 3,
+      x: 1 + DEFAULT_SIGHT_RADIUS + 3,
       y: 1,
       profile: AiProfile.MeleeChaser,
     });
@@ -164,7 +188,7 @@ describe('the projected board', () => {
      */
     const { world } = peopled();
     const mate = world.addPlayer('p2', 'Mate');
-    mate.x = 1 + SIGHT_RADIUS + 3;
+    mate.x = 1 + DEFAULT_SIGHT_RADIUS + 3;
     mate.y = 1;
     expect(projectActors(world, [{ x: 1, y: 1 }]).map((a) => a.id)).toContain('p2');
   });
@@ -177,7 +201,7 @@ describe('the projected board', () => {
     const alone = projectActors(world, [{ x: 1, y: 1 }]).map((a) => a.id);
     const scouted = projectActors(world, [
       { x: 1, y: 1 },
-      { x: 1 + SIGHT_RADIUS, y: 1 },
+      { x: 1 + DEFAULT_SIGHT_RADIUS, y: 1 },
     ]).map((a) => a.id);
     expect(alone).not.toContain(far);
     expect(scouted).toContain(far);

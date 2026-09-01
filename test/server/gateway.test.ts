@@ -75,8 +75,21 @@ import type { TurnEvent } from '../../src/shared/protocol.ts';
 /** How long a `waitFor` waits before deciding a frame is never coming. */
 const FRAME_TIMEOUT_MS = 2_000;
 
-/** Row 17 of the test map is open floor from x=1 to x=28 — nothing blocks a shot. */
-const LANE_Y = 17;
+/**
+ * An open lane with nothing blocking a shot — row 1 of the test map is clear
+ * from x=1 to x=28.
+ *
+ * IT WAS ROW 17 UNTIL FOV, and the move is not cosmetic. The spawn block sits
+ * at rows 2-3, so row 17 is about fifteen tiles from where the player stands —
+ * inside the sight radius while that was (wrongly) 20, and outside it at
+ * upstream's real 10. Every orb in this suite then flew where nobody could see
+ * it, and seven tests about the gateway's MEMO started failing for a reason
+ * that had nothing to do with memos.
+ *
+ * Row 1 is adjacent to the spawn and equally clear, so the shots are watched
+ * rather than merely fired. The player is never ON it, so nothing here is hit.
+ */
+const LANE_Y = 1;
 
 /** The Watchman's at-will swing, and the Alchemist's heal he must not be able to press. */
 const CRUDE_BLOW = talentId('crude_blow');
