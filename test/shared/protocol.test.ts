@@ -220,11 +220,14 @@ describe('viewer-private frames cannot be broadcast', () => {
     // that survives the Exclude is a tag the room may hear.
     const broadcastTags = new Set<BroadcastMsg['t']>([
       'welcome',
-      'state',
+      // `state` AND `sweep` LEFT THIS SET WHEN FOV LANDED, and their absence is
+      // the point. Both are now built per viewer — one against that viewer's own
+      // eyes, the other filtered against that viewer's own ledger — so a single
+      // shared copy would show the whole room one player's fog. Being outside
+      // this union is what makes broadcasting either a compile error.
       'moved',
       'joined',
       'left',
-      'sweep',
       'attacked',
       'damaged',
       'died',
@@ -556,11 +559,14 @@ describe('the inspect pair at the trust boundary', () => {
 
     const broadcastTags = new Set<BroadcastMsg['t']>([
       'welcome',
-      'state',
+      // `state` AND `sweep` LEFT THIS SET WHEN FOV LANDED, and their absence is
+      // the point. Both are now built per viewer — one against that viewer's own
+      // eyes, the other filtered against that viewer's own ledger — so a single
+      // shared copy would show the whole room one player's fog. Being outside
+      // this union is what makes broadcasting either a compile error.
       'moved',
       'joined',
       'left',
-      'sweep',
       'attacked',
       'damaged',
       'died',

@@ -25,11 +25,12 @@
  *   - `projectGroundItems` — items on the floor. An unowned pile IS hidden
  *     information now that FOV has landed: a coat in an unexplored room says
  *     something died in it.
- *   - THE EVENT STREAM. `SweepMsg` still goes to the whole realm, so a client
- *     is told the position of every monster that moved whether or not it can
- *     see it. The BOARD is fogged and the WIRE is not, and that distinction is
- *     the honest description of what shipped. CLAUDE.md non-negotiable 4 says
- *     the same in the same words.
+ *
+ * THE EVENT STREAM WAS ON THAT LIST FOR ONE COMMIT AND IS NOW OFF IT.
+ * `SweepMsg` is a `ViewerMsg`, each recipient's copy passed through `fogEvent`:
+ * an event naming a body the viewer does not hold is withheld, and an OPTIONAL
+ * id on an event that is otherwise fine is redacted rather than withheld — so a
+ * blow from the dark still prints its number and names nobody.
  *
  * ═══ THIS HEADER PREDICTED THE WORK AND GOT IT WRONG, WHICH IS WORTH KEEPING ═══
  * It used to say FOV meant giving these functions a viewer parameter, and:
@@ -124,6 +125,7 @@ import type {
   ResourceMsg,
   ResourceView,
   TurnActor,
+  TurnEvent,
   TurnMsg,
   UnlockableTree,
 } from '../../shared/protocol.ts';
@@ -394,6 +396,108 @@ export function projectActors(world: World, eyes?: readonly TileXY[]): ActorView
  * the symptom would be a monster that is on your board but not in your sight,
  * or worse, the reverse.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY ACTOR A TURN EVENT NAMES. THE KEY THE SWEEP IS FILTERED BY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `projectActors` fogged the BOARD; this fogs the STREAM. Without it a client is
+ * told the tile of every monster that moved whether or not it can see one — the
+ * board was filtered and the wire was not, which is a position leak by the exact
+ * definition CLAUDE.md non-negotiable 4 exists for.
+ *
+ * ═══ EVERY id, NOT JUST THE SUBJECT ═══
+ * An event is shown only when EVERY actor it names is visible, so a client can
+ * never receive a frame referring to a body it does not hold. That is stricter
+ * than "the subject is visible" and it is the strictness that makes the rule
+ * safe: `applyTurnEvent` would otherwise take an `attack` whose `targetId` it
+ * has never seen, and `client/main.ts:4940` only carves out the `move` case.
+ *
+ * IT READS BETTER THAN IT SOUNDS. Players are never fogged, so when an unseen
+ * thing mauls your teammate the `attack` is withheld and the `damage` — whose
+ * only actor is the victim — still arrives. You watch a friend take twelve and
+ * are not told by what, which is what a roguelike is supposed to do.
+ *
+ * `talentId` and `effectId` are NOT actor ids and are deliberately absent.
+ * `sweep-fog.test.ts` scrapes this union out of protocol.ts and fails if a new
+ * variant grows an id field this function does not account for.
+ */
+export function actorsNamedBy(event: TurnEvent): readonly string[] {
+  if (event.k === 'attack') return [event.id, event.targetId];
+  // The one event in the game that names a friend — see `RevivedEvent.byId`.
+  if (event.k === 'revived') return [event.id, event.byId];
+  return [event.id];
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE RULE IS READABLE OFF THE TYPE: REQUIRED IDS GATE, OPTIONAL IDS REDACT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every actor id on a `TurnEvent` falls into one of two groups, and which one
+ * is decided by whether the protocol made it OPTIONAL:
+ *
+ *   REQUIRED — `id` on every variant, `AttackEvent.targetId`,
+ *     `RevivedEvent.byId`. The event is meaningless without it: an attack is an
+ *     animation from A to B and cannot be drawn with one end missing. So the
+ *     whole event is withheld. That set is `actorsNamedBy`.
+ *
+ *   OPTIONAL — the four below. The client ALREADY renders these events without
+ *     them (a bleed tick has no `sourceId`; `main.ts:5137` reads one as
+ *     `actors.get(id)?.name ?? null`), so dropping one costs a name and nothing
+ *     else. The blow still lands and the number still prints.
+ *
+ * THAT CORRESPONDENCE IS NOT A COINCIDENCE — a field is optional precisely
+ * because the renderer copes without it — but it is not enforced by the
+ * compiler either, so `sweep-fog.test.ts` derives both groups from the
+ * declaration and asserts no fogged event serialises an unheld id.
+ *
+ * `AttackEvent.targetId` appears here AND in `actorsNamedBy`. That is harmless:
+ * it is required there, so the gate has already passed on it and this loop can
+ * never find it unheld.
+ */
+const OPTIONAL_ACTOR_IDS = ['sourceId', 'killerId', 'targetId'] as const;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE EVENT AS ONE VIEWER MAY HEAR IT: WITHHELD, REDACTED, OR WHOLE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `null` means say nothing at all.
+ *
+ * ═══ ATTRIBUTION IS REDACTED, NOT WITHHELD, AND THE DIFFERENCE IS THE FEATURE ═══
+ * Three variants carry an optional `sourceId` — *"who dealt it, when there is an
+ * actor to blame"*. It is NOT in `actorsNamedBy`, deliberately: gating on it
+ * would mean that when something you cannot see mauls your teammate, the whole
+ * damage frame is withheld and a player watches a health bar drop for no stated
+ * reason. Leaking it is worse still — it names a body in the dark.
+ *
+ * So the blow lands, the number is printed, and nobody is named. "Something hits
+ * you for twelve" is what a roguelike is supposed to say, and the client already
+ * reads this field defensively (`main.ts:5137` — `actors.get(sourceId)?.name ??
+ * null`), so an absent one renders the way it already renders for a bleed tick.
+ *
+ * THE GUARD IN `sweep-fog.test.ts` FOUND THIS FIELD, and a hand-written grep for
+ * id fields had missed it one hour earlier — because `sourceId?:` has a `?`
+ * where the grep expected a colon. That is the whole argument for scraping the
+ * declaration instead of trusting a search.
+ */
+export function fogEvent(event: TurnEvent, held: ReadonlySet<string>): TurnEvent | null {
+  for (const id of actorsNamedBy(event)) {
+    if (!held.has(id)) return null;
+  }
+  let out = event;
+  for (const key of OPTIONAL_ACTOR_IDS) {
+    const named: unknown = (out as unknown as Record<string, unknown>)[key];
+    if (typeof named !== 'string' || held.has(named)) continue;
+    // `JSON.stringify` omits an undefined value, so this reaches the wire as a
+    // frame with no such key at all — which is exactly what these fields' own
+    // docblocks say absent must mean: "do not say", never a default.
+    out = { ...out, [key]: undefined };
+  }
+  return out;
+}
+
 export function visibleActorIds(world: World, eyes: readonly TileXY[]): Set<string> {
   const out = new Set<string>();
   for (const actor of world.allActors()) {

@@ -214,6 +214,7 @@ import { membersOf, partyIdOf, sameParty } from '../engine/party.ts';
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
+  fogEvent,
   projectActors,
   visibleActorIds,
   projectClassOptions,
@@ -5570,14 +5571,52 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       );
     }
 
-    // ONE frame for the whole monster turn. Never one per monster.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONE FRAME FOR THE WHOLE MONSTER TURN — AND NOW ONE PER VIEWER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Never one per monster; that has always been the rule here. What changed
+     * is that FOV made a single shared copy WRONG rather than merely wasteful:
+     * a sweep names actors and an actor's tile is a position, so broadcasting
+     * it told every client where every monster went whether or not it could see
+     * one. The board was fogged and the wire was not.
+     *
+     * ═══ THE LEDGER IS ONE PUMP STALE HERE, AND THAT IS THE CORRECT READING ═══
+     * `reconcileSight` runs at the END of this function, so `session.visible` is
+     * still what this client held when the turn STARTED. Work the four cases:
+     *
+     *   seen -> seen      in the ledger, event sent. Right.
+     *   unseen -> seen    NOT in the ledger, so the move is dropped — and
+     *                     `reconcileSight` then sends `joined` carrying the
+     *                     final position. The client learns of it once, in the
+     *                     right place, with no frame naming a body it lacks.
+     *   seen -> unseen    still in the ledger, so you watch it step into the
+     *                     dark and then get `left`. Upstream shows a last known
+     *                     position too; vanishing mid-stride reads as a bug.
+     *   unseen -> unseen  dropped, which is the whole point.
+     *
+     * Recomputing visibility here instead would break the second case: the move
+     * would arrive for an actor the client has never been told about, which is
+     * exactly the frame `client/main.ts:4940` throws away with a warning.
+     */
     if (result.sweep.length > 0) {
-      say({
-        v: PROTOCOL_VERSION,
-        t: 'sweep',
-        gameTurn: result.turn.gameTurn,
-        events: [...result.sweep],
-      });
+      for (const session of sessions.values()) {
+        if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+        const events = result.sweep
+          .map((event) => fogEvent(event, session.visible))
+          .filter((event): event is TurnEvent => event !== null);
+        // A viewer who saw nothing happen gets no frame at all, rather than an
+        // empty one — an idle pump for a player alone in a room is silent, the
+        // way it was before any of this.
+        if (events.length === 0) continue;
+        send(session.socket, {
+          v: PROTOCOL_VERSION,
+          t: 'sweep',
+          gameTurn: result.turn.gameTurn,
+          events,
+        });
+      }
     }
 
     // THE RECORD LANE, after the events it narrates and before the snapshots.

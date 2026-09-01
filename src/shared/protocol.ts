@@ -5971,6 +5971,19 @@ export type SettingsMsg = {
 
 export type ViewerMsg =
   | LoadoutMsg
+  // ═══ BOTH FOGGED PER VIEWER SINCE FOV LANDED ═══
+  // `state` is the whole board and `sweep` names actors, and an actor's tile is
+  // a position. Each recipient's copy is built against its own eyes
+  // (`resyncBoard`) or filtered against its own ledger (`Session.visible`), so
+  // one shared copy is now WRONG rather than merely leaky — handing the room a
+  // board built for one viewer would show everyone that viewer's fog.
+  //
+  // Membership here is what makes that a compile error instead of a rule to
+  // remember. It is the guard the FOV commit needed and did not have: a regex
+  // test caught an unfogged `projectActors(world)`, and nothing at all caught
+  // `broadcast(fogged)`.
+  | StateMsg
+  | SweepMsg
   | CooldownsMsg
   | ResourceMsg
   | TurnMsg
