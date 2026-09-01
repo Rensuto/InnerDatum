@@ -1771,11 +1771,57 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
 
   const before = composeSheet(base, worn);
   const withIt = composeSheet(base, after);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE ITEM IS WORTH ON ITS OWN, beside what swapping it would change.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream prints BOTH. `Object.lua:648-670` (`compareFields`) writes the
+   * item's own value first — `resvalue = item1[field]`, coloured green or red —
+   * and only then appends the difference against each compared item.
+   *
+   * Ours printed the difference alone, and a difference alone is ambiguous in
+   * the case that matters most: a coat giving 20 fire resist over one giving 15
+   * reads `+5%`, which is the same line a coat giving 5 over an empty slot
+   * draws. The player cannot tell "this is a big coat and yours is nearly as
+   * good" from "this is a small coat". Every channel added this session —
+   * resists, immunities, damage, penetration — inherited that.
+   *
+   * SO: THE ITEM ALONE, against the same body wearing nothing in any slot. Not
+   * `withIt − before`, which is the swap; this is what the item contributes,
+   * which is what upstream's `item1[field]` means.
+   *
+   * ═══ WHICH ROWS APPEAR IS UNCHANGED, AND THAT IS A DELIBERATE DIVERGENCE ═══
+   * Upstream adds a line whenever the ITEM has the field (`if item1[field] then
+   * add = true`), so its tooltip lists everything the object does. Ours is a
+   * comparison STRIP inside an inventory row rather than a full tooltip, and
+   * `projector.test.ts` pins *"says NOTHING at all when the swap moves no number
+   * a player can see"* as a design statement. Showing every field of every item
+   * would make that strip as long as the panel.
+   *
+   * So the row rule stays `delta !== 0` and only the VALUE gains the item's own
+   * figure. That fixes the ambiguity this is about — `+5%` meaning "five better
+   * than yours" was indistinguishable from `+5%` meaning "this gives five" —
+   * without turning a decision aid into a datasheet.
+   */
+  const bare = composeSheet(base, []);
+  const alone = composeSheet(base, [candidate]);
+
+  /**
+   * "+20% (+5%)" — the item's own worth, then the swap, and the second half is
+   * omitted when the two agree. An empty slot makes them agree, which is why a
+   * first pickup still reads as one clean number.
+   */
+  const both = (own: string, delta: string): string => (own === delta ? own : `${own} (${delta})`);
 
   const rows: InspectRow[] = [];
   for (const [label, key] of COMPARE_STATS) {
     const delta = Math.round(stat(withIt, key)) - Math.round(stat(before, key));
-    if (delta !== 0) rows.push({ label, value: signed(delta) });
+    const own = Math.round(stat(alone, key)) - Math.round(stat(bare, key));
+    // A ROW APPEARS WHEN EITHER HALF IS INTERESTING. An item worth +2 Cunning
+    // swapped for one worth +2 Cunning has a delta of nothing and is still a
+    // +2 Cunning ring, which is what upstream's line says.
+    if (delta !== 0) rows.push({ label, value: both(signed(own), signed(delta)) });
   }
   for (const [label, read, shape] of COMPARE_ROWS) {
     if (shape === CompareShape.Band) {
@@ -1788,10 +1834,12 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
       continue;
     }
     const delta = Math.round(read(withIt)) - Math.round(read(before));
+    const own = Math.round(read(alone)) - Math.round(read(bare));
     if (delta !== 0) {
+      const suffix = shape === CompareShape.Percent ? '%' : '';
       rows.push({
         label,
-        value: shape === CompareShape.Percent ? `${signed(delta)}%` : signed(delta),
+        value: both(`${signed(own)}${suffix}`, `${signed(delta)}${suffix}`),
       });
     }
   }
@@ -1827,18 +1875,23 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
       ['penetration', (c: CombatSheet) => combatGetResistPen(c.penetration, type)],
     ] as const) {
       const delta = Math.round(read(withIt)) - Math.round(read(before));
+      const own = Math.round(read(alone)) - Math.round(read(bare));
       if (delta !== 0) {
-        rows.push({ label: `${damageTypeName(type)} ${suffix}`, value: `${signed(delta)}%` });
+        rows.push({
+          label: `${damageTypeName(type)} ${suffix}`,
+          value: both(`${signed(own)}%`, `${signed(delta)}%`),
+        });
       }
     }
   }
   for (const key of IMMUNITY_KEYS) {
     const delta =
       Math.round(withIt.immunities?.[key] ?? 0) - Math.round(before.immunities?.[key] ?? 0);
+    const own = Math.round(alone.immunities?.[key] ?? 0) - Math.round(bare.immunities?.[key] ?? 0);
     if (delta !== 0) {
       rows.push({
         label: `${key.charAt(0).toUpperCase()}${key.slice(1)} immunity`,
-        value: `${signed(delta)}%`,
+        value: both(`${signed(own)}%`, `${signed(delta)}%`),
       });
     }
   }

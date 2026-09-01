@@ -1061,12 +1061,30 @@ describe('projectInventory', () => {
     body.equipped = { body: 'item_watchmans_coat' };
     body.carried = ['item_leather_chest'];
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * BOTH NUMBERS NOW — "+3 (-1)" — AND THE FIRST ONE IS WHY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `compareFields` (Object.lua:648-670) prints the ITEM'S OWN value first and
+     * only then the difference. This row used to be `-1` alone, and a lone
+     * difference is ambiguous in exactly the case that matters: a coat giving 20
+     * fire resist over one giving 15 reads `+5%`, which is the same line a coat
+     * giving 5 over an empty slot draws.
+     *
+     * So the Leather Chestpiece says `+3` — what it is worth — and `(-1)` — what
+     * swapping costs. It is still a downgrade and the panel still says so; the
+     * player can now also see that it is a real coat rather than a bad one.
+     */
     const rows = projectInventory(body).carried[0]?.compare ?? [];
-    expect(rows).toContainEqual({ label: 'Armour', value: '-1' });
+    expect(rows).toContainEqual({ label: 'Armour', value: '+3 (-1)' });
     // HARDINESS IS ON THE COMPARISON TABLE AND NOT ON THE INSPECT SHEET, and
     // this is why: it is the Watchman's coat's headline contribution, and an
     // item whose headline had no row would read as an item that does nothing.
-    expect(rows).toContainEqual({ label: 'Hardiness', value: '-10%' });
+    // `0% (-10%)` — the Chestpiece grants no hardiness at all, and taking the
+    // coat off costs ten. `signed(0)` is "0" rather than "+0", which is right:
+    // there is nothing to sign.
+    expect(rows).toContainEqual({ label: 'Hardiness', value: '0% (-10%)' });
   });
 
   it('measures the Damage row as the SHEET measures it — a truncated band, not a rounded scalar', () => {
@@ -1541,6 +1559,24 @@ describe('what an item is worth, wherever it appears', () => {
     );
     expect(projector).toContain('`${damageTypeName(type)} ${suffix}`');
     expect(projector).toContain('`${key.charAt(0).toUpperCase()}${key.slice(1)} immunity`');
+  });
+
+  it('a first pickup reads as ONE number, not a number and its echo', () => {
+    /**
+     * `both()` omits the parenthesis when the two halves agree, and an EMPTY
+     * slot makes them agree by construction: the item's own worth IS the swap.
+     * Without that, the commonest case in the game — picking up the first thing
+     * that fits — would read "+3 (+3)" on every row.
+     */
+    const world = room();
+    const body = watchman(world);
+    body.equipped = {};
+    body.carried = ['item_leather_chest'];
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.value, `${row.label} echoed itself`).not.toContain('(');
+    }
   });
 
   it('measures it against NOT having it, not against having it twice', () => {
