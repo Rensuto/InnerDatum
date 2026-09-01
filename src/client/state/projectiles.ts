@@ -92,3 +92,51 @@ export function orbsAimedAt(projectiles: readonly ProjectileView[], tile: TileXY
   }
   return count;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW LONG YOU HAVE — the soonest impact among the orbs aimed at this tile.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `null` when nothing is aimed here.
+ *
+ * ═══ WHY THIS EXISTS AT ALL ═══
+ * `ProjectileView.turnsToImpact` is computed by the engine, sent on every
+ * `projectiles` frame, and was read by NOTHING. Its own wire docblock says why
+ * the unit matters: *"it would be the difference between 'you have two turns to
+ * move' and 'it lands before you can press a key'"* — and the notice line
+ * beside it said only *"an orb is aimed at this tile — move"*, which is the
+ * half of the sentence that does not answer whether moving is still possible.
+ *
+ * THE SOONEST, NOT THE COUNT AND NOT THE LATEST. Three orbs landing in four
+ * turns and one landing next turn is a one-turn problem; a player told "4"
+ * would spend the turn they had. `Math.min` is the whole of the rule and it is
+ * the reason this is a function rather than a field on the first match.
+ */
+export function soonestImpact(
+  projectiles: readonly ProjectileView[],
+  tile: TileXY | null,
+): number | null {
+  if (tile === null) return null;
+  let soonest: number | null = null;
+  for (const orb of projectiles) {
+    if (orb.targetX !== tile.x || orb.targetY !== tile.y) continue;
+    if (soonest === null || orb.turnsToImpact < soonest) soonest = orb.turnsToImpact;
+  }
+  return soonest;
+}
+
+/**
+ * The clause the notice line hangs on the end. Empty when there is nothing
+ * useful to say, so the caller concatenates unconditionally.
+ *
+ * ═══ ZERO IS "NOW", NOT "0 TURNS" ═══
+ * `turnsToImpact` floors at 0 for an orb that lands this pump, and "0 turns to
+ * move" is a sentence that invites a player to try. "landing now" says the
+ * decision has already been made.
+ */
+export function impactClause(turns: number | null): string {
+  if (turns === null) return '';
+  if (turns <= 0) return ' — landing now';
+  return turns === 1 ? ' — 1 turn' : ` — ${String(turns)} turns`;
+}

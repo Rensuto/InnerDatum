@@ -168,7 +168,13 @@ import { createSweepPlayback } from './render/sweep.ts';
 // vitest has no jsdom, so the half of this feature with a rule in it has to be
 // reachable from a node test, and the half that draws must have nothing in it
 // worth reaching.
-import { applyProjectilesFrame, clearProjectiles, orbsAimedAt } from './state/projectiles.ts';
+import {
+  applyProjectilesFrame,
+  clearProjectiles,
+  impactClause,
+  orbsAimedAt,
+  soonestImpact,
+} from './state/projectiles.ts';
 import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
 import {
   charSheetHitAt,
@@ -11729,11 +11735,17 @@ function applyServerMessage(msg: ServerMsg): void {
       // refusal is the rarer and more urgent fact and it wins; the orb re-offers
       // its sentence on the next pump, because it is still coming.
       if (notice === null) {
-        const incoming = orbsAimedAt(projectiles, selfTile());
+        // AND HOW LONG YOU HAVE, which is the half of the sentence that says
+        // whether moving is still an option. `turnsToImpact` has been computed
+        // by the engine and sent on every frame since the feature shipped, and
+        // nothing read it — see `soonestImpact`.
+        const tile = selfTile();
+        const incoming = orbsAimedAt(projectiles, tile);
+        const clause = impactClause(soonestImpact(projectiles, tile));
         if (incoming === 1) {
-          onRefusal('an orb is aimed at this tile — move, or break line of sight');
+          onRefusal(`an orb is aimed at this tile${clause} — move, or break line of sight`);
         } else if (incoming > 1) {
-          onRefusal(`${incoming} orbs are aimed at this tile — move`);
+          onRefusal(`${incoming} orbs are aimed at this tile${clause} — move`);
         }
       }
       break;

@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   applyProjectilesFrame,
   clearProjectiles,
   orbsAimedAt,
+  impactClause,
+  soonestImpact,
 } from '../../src/client/state/projectiles.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { ProjectileView, ProjectilesMsg } from '../../src/shared/protocol.ts';
@@ -150,5 +153,104 @@ describe('the module stays testable', () => {
     const imports = code.match(/^import .*$/gm) ?? [];
     expect(imports.length).toBeGreaterThan(0);
     for (const line of imports) expect(line.startsWith('import type ')).toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `turnsToImpact` WAS COMPUTED, SENT ON EVERY FRAME, AND READ BY NOTHING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The engine computes it (`engine/projectile.ts`), `projectLoadout`'s sibling
+ * puts it on the wire, `ProjectileView` documents its unit at length — *"the
+ * difference between 'you have two turns to move' and 'it lands before you can
+ * press a key'"* — and `grep -rn turnsToImpact src/client/` returned exactly one
+ * hit, in a comment.
+ *
+ * The notice line beside it already said "an orb is aimed at this tile — move".
+ * That is the half of the sentence that does not answer whether moving is still
+ * possible, which is the only question a player has at that moment.
+ */
+describe('soonestImpact', () => {
+  it('answers null when nothing is aimed at the tile', () => {
+    expect(soonestImpact([orb({ id: 'a', targetX: 9, targetY: 9 })], { x: 1, y: 1 })).toBeNull();
+    expect(soonestImpact([], { x: 1, y: 1 })).toBeNull();
+  });
+
+  it('answers null for no tile at all — a viewer with no body', () => {
+    expect(soonestImpact([orb({ id: 'a' })], null)).toBeNull();
+  });
+
+  it('takes the SOONEST, not the first and not the latest', () => {
+    /**
+     * THE RULE, AND THE ONE THAT WOULD BE WRONG BY ACCIDENT. Three orbs landing
+     * in four turns and one landing next turn is a ONE-turn problem; a player
+     * told "4" would spend the turn they had. Ordered so that neither "first
+     * match" nor "last match" would pass.
+     */
+    const aimed = [
+      orb({ id: 'a', targetX: 3, targetY: 3, turnsToImpact: 4 }),
+      orb({ id: 'b', targetX: 3, targetY: 3, turnsToImpact: 1 }),
+      orb({ id: 'c', targetX: 3, targetY: 3, turnsToImpact: 3 }),
+    ];
+    expect(soonestImpact(aimed, { x: 3, y: 3 })).toBe(1);
+  });
+
+  it('ignores an orb aimed at a DIFFERENT tile, however soon it lands', () => {
+    // The whole counterplay is that the orb does not re-aim, so an orb about to
+    // land next door is not this player's problem and must not raise their
+    // notice — that is the "phantom warning" failure the frame rules exist for.
+    const mixed = [
+      orb({ id: 'near', targetX: 4, targetY: 4, turnsToImpact: 1 }),
+      orb({ id: 'mine', targetX: 3, targetY: 3, turnsToImpact: 5 }),
+    ];
+    expect(soonestImpact(mixed, { x: 3, y: 3 })).toBe(5);
+  });
+});
+
+describe('impactClause', () => {
+  it('says nothing when there is nothing to say', () => {
+    // So the caller can concatenate unconditionally rather than branching twice.
+    expect(impactClause(null)).toBe('');
+  });
+
+  it('reads zero as NOW rather than as "0 turns"', () => {
+    // `turnsToImpact` floors at 0 for an orb landing this pump, and "0 turns to
+    // move" is a sentence that invites a player to try.
+    expect(impactClause(0)).toBe(' — landing now');
+    expect(impactClause(-1)).toBe(' — landing now');
+  });
+
+  it('agrees with itself about singular and plural', () => {
+    expect(impactClause(1)).toBe(' — 1 turn');
+    expect(impactClause(2)).toBe(' — 2 turns');
+  });
+});
+
+describe('and the sentence actually carries it', () => {
+  it('main.ts hangs the clause on both the one-orb and the many-orb line', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A SOURCE GUARD, and this file's own header says why it is the only option.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * *"vitest has no jsdom, so the half of this feature with a rule in it has
+     * to be reachable from a node test, and the half that draws must have
+     * nothing in it worth reaching."* The rule above is reachable; the line that
+     * SPENDS it lives in `main.ts` beside a canvas, and nothing here can call it.
+     *
+     * Without this, `soonestImpact` is a correct function with no caller —
+     * which is precisely the state `turnsToImpact` was in for the whole life of
+     * the feature, and precisely what this commit exists to end.
+     *
+     * BOTH BRANCHES, because the plural one is the easy one to forget: a player
+     * with two orbs incoming is in more trouble, not less.
+     */
+    const main = readFileSync(new URL('../../src/client/main.ts', import.meta.url), 'utf8');
+    expect(main).toContain('impactClause(soonestImpact(projectiles, tile))');
+    expect(main).toContain(
+      '`an orb is aimed at this tile${clause} — move, or break line of sight`',
+    );
+    expect(main).toContain('`${incoming} orbs are aimed at this tile${clause} — move`');
   });
 });
