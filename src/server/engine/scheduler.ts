@@ -2727,6 +2727,12 @@ function fire(
       apr: sheet === undefined ? 0 : combatAPR(sheet),
       increase: sheet?.increase,
       penetration: sheet?.penetration,
+      // AND THE SHOOTER'S OWN DEBUFFS, on the same terms as `apr` above: the
+      // flight cannot reach back to this body, so what is true now is what the
+      // bolt carries. See `ProjectileDamage`.
+      sourceDazed: sheet?.flags?.dazed,
+      sourceStunned: sheet?.flags?.stunned,
+      sourceNumbed: sheet?.mods?.numbed,
     },
   });
 

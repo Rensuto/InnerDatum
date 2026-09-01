@@ -613,8 +613,25 @@ describe('the three compose without fighting each other', () => {
 
     const run = runGameTurns(target, 3, statusPass(state, createRng('all-three')));
 
-    // The bleed ticked three times through the stun and the slow: 40 − 9 = 31.
-    expect(target.hp).toBe(31);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A SOURCELESS BLEED IS SELF-SOURCED, SO THE HUSK'S OWN STUN WEAKENS IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * physical.lua:150 — `projector(eff.src or self, ...)`. With no `srcId` the
+     * VICTIM is the source, and `setDefaultProjector` then applies the victim's
+     * own Stunned ×0.4 to the wound. This fixture applies the bleed with no
+     * source, so all three ticks are penalised: `3 × 3 × 0.4 = 3.6`.
+     *
+     * IT WAS 9 HERE, and that was our divergence rather than upstream's: the
+     * bleed read `src?.combat` — undefined when `eff.src` is absent — where
+     * upstream reads `eff.src or self`. Nothing in the live game reaches this
+     * branch: `srcId` is set by the swing (scheduler.ts:2612), the projectile
+     * (:2796) and every talent that applies a bleed, so a real wound is
+     * penalised by the CUTTER's stun. Only a bleed whose source has been reaped
+     * self-blames, which is what upstream does with it too.
+     */
+    expect(target.hp).toBeCloseTo(40 - 3 * 3 * 0.4, 10);
     // Slowed all three turns → 0.7 × 3 turns of gain = 2 actions.
     expect(run.actions).toBe(2);
     expect(run.basePasses).toBe(3);

@@ -417,8 +417,8 @@ export const BLEEDING: EffectDef = Object.freeze({
     // stun multipliers to every projected hit, DoTs included. Faithful and
     // slightly surprising: stunning the thing that cut you weakens its bleed.
     const outcome = applyDamage(actor, power, DamageType.Physical, blame, rng, {
-      sourceDazed: src?.combat?.flags?.dazed,
-      sourceStunned: src?.combat?.flags?.stunned,
+      // Dazed, Stunned and `numbed` come off `source.combat` inside
+      // `applyDamage` now. This passed the first two and never `numbed`.
       increase: src?.combat?.increase,
       penetration: src?.combat?.penetration,
     });

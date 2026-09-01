@@ -190,6 +190,21 @@ export type ProjectileDamage = {
   readonly increase?: TypeTable;
   /** The shooter's `resists_pen` table. */
   readonly penetration?: TypeTable;
+  /**
+   * THE SHOOTER'S OWN DEBUFFS, frozen at the instant of firing like everything
+   * else here — Dazed and Stunned as flags, `numbed` as a percentage
+   * (damage_types.lua:146-160).
+   *
+   * CARRIED RATHER THAN READ ON IMPACT, and it has to be: `ProjectileWorld` is
+   * deliberately narrowed to `level`, `actorAt` and `rng`, so the flight has no
+   * way back to the shooter's body — the same constraint that made `apr`,
+   * `increase` and `penetration` snapshots. Upstream reads them at impact off a
+   * live `src`; ours differ only for a debuff that lands in the same turn as
+   * the bolt, which is the trade `apr` already makes.
+   */
+  readonly sourceDazed?: boolean;
+  readonly sourceStunned?: boolean;
+  readonly sourceNumbed?: number;
 };
 
 /**
@@ -654,6 +669,11 @@ function projectDoStop(
       apr: proj.damage.apr,
       increase: proj.damage.increase,
       penetration: proj.damage.penetration,
+      // FROZEN AT LAUNCH — the source here is a bare `{ id }`, so `applyDamage`
+      // cannot read the shooter's sheet the way it does for every other path.
+      sourceDazed: proj.damage.sourceDazed,
+      sourceStunned: proj.damage.sourceStunned,
+      sourceNumbed: proj.damage.sourceNumbed,
     },
   );
 

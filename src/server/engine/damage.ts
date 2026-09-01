@@ -679,6 +679,26 @@ function notifySource(
  */
 export type DamageSource = {
   readonly id: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ATTACKER'S SHEET, narrowed to what the projector reads off it.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `flags` carries Dazed and Stunned; `mods.numbed` is the percentage version.
+   * All three reduce OUTGOING damage (damage_types.lua:146-160), and until this
+   * field existed `applyDamage` had no way to see any of them — so each caller
+   * passed whichever it happened to remember, and they had drifted into three
+   * different subsets: the weapon swing sent all three, a bleed sent two, a
+   * talent sent none, and a projectile sent nothing at all.
+   *
+   * A NARROW STRUCTURAL VIEW rather than `CombatSheet`, on `DamageTarget.combat`'s
+   * terms exactly: dozens of fixtures pass `{ id }` and a required sheet would
+   * break every one of them.
+   */
+  readonly combat?: {
+    readonly flags?: { readonly dazed?: boolean; readonly stunned?: boolean };
+    readonly mods?: { readonly numbed?: number };
+  };
   readonly name?: string;
   hp?: number;
   readonly maxHp?: number;
@@ -790,8 +810,50 @@ export function applyDamage(
    * is this body's Dexterity" separated by nothing a player could see.
    */
   const shrug = ignoreDirectCrits(target.combat ?? {});
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ATTACKER'S OWN DEBUFFS, HERE, BECAUSE THIS IS THE ONE DOOR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream applies Dazed, Stunned and `numbed` inside `setDefaultProjector`
+   * (damage_types.lua:48, block at :146-160) — the single function EVERY damage
+   * type routes through, so a talent, a bolt and a swing are all penalised
+   * identically. `applyDamage` is our equivalent: all four damage paths in the
+   * server call it and nothing else calls `resolveDamage`.
+   *
+   * ═══ IT WAS A PER-CALLER RESPONSIBILITY AND THEY HAD ALL DRIFTED ═══
+   * The weapon swing passed all three, `BLEEDING` passed Dazed and Stunned but
+   * not `numbed`, `talentDamage` passed none, and a projectile passed a bare
+   * `{ id }` with no sheet at all. So a stunned caster's talent dealt FULL
+   * damage while a stunned swing dealt 40% — from the same body, in the same
+   * turn. Off-balance, shipped earlier today, reached only one of the four.
+   *
+   * ═══ `?? ` SO AN EXPLICIT SPEC STILL WINS ═══
+   * A caller that knows better than the sheet — a projectile carrying the
+   * shooter's state frozen at launch, which is the only way it can — passes the
+   * value and this defers. Every other caller now passes nothing and gets the
+   * rule for free, which is the point: the next damage path cannot forget.
+   */
+  const wielder = source.combat;
+  const attackerDebuffs = {
+    ...((spec.sourceDazed ?? wielder?.flags?.dazed) === undefined
+      ? {}
+      : { sourceDazed: spec.sourceDazed ?? wielder?.flags?.dazed }),
+    ...((spec.sourceStunned ?? wielder?.flags?.stunned) === undefined
+      ? {}
+      : { sourceStunned: spec.sourceStunned ?? wielder?.flags?.stunned }),
+    ...((spec.sourceNumbed ?? wielder?.mods?.numbed) === undefined
+      ? {}
+      : { sourceNumbed: spec.sourceNumbed ?? wielder?.mods?.numbed }),
+  };
   const resolved = resolveDamage(
-    { ...spec, base: amount, type, ...(shrug > 0 ? { ignoreDirectCrits: shrug } : {}) },
+    {
+      ...spec,
+      ...attackerDebuffs,
+      base: amount,
+      type,
+      ...(shrug > 0 ? { ignoreDirectCrits: shrug } : {}),
+    },
     target.combat?.profile ?? {},
     rng,
     `combat.damage.${type}`,

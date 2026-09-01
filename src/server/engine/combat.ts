@@ -457,11 +457,11 @@ export function attackTarget(
     // projector rather than in any getter. Stunned is ×0.4 and Dazed ×0.5, and
     // Dazed ALSO halves accuracy inside `combatAttack` above; that double dip is
     // upstream's and is why Dazed reads as the more punishing of the two.
-    sourceDazed: self.flags?.dazed,
-    sourceStunned: self.flags?.stunned,
-    // damage_types.lua:158-160, the same block. A percentage off the sheet
-    // rather than a flag — see `CombatMods.numbed`.
-    sourceNumbed: self.mods?.numbed,
+    // DAZED, STUNNED AND `numbed` ARE NO LONGER PASSED FROM HERE.
+    // `applyDamage` reads all three off `source.combat`, which is this same
+    // sheet — see its note. They were passed here and NOT from the talent, bleed
+    // or projectile paths, which is how a stunned caster's talent came to deal
+    // full damage while a stunned swing dealt 40%.
     increase: self.increase,
     penetration: self.penetration,
   });
