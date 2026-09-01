@@ -486,6 +486,19 @@ export function resolveItem(id: string): Item | undefined {
   for (const [key, value] of Object.entries(base.wielder.penetration ?? {})) {
     penetration[key] = atMaterial(value, material);
   }
+  /**
+   * AND THE STATUS DEFENCE, on the grade curve with everything else — "it is
+   * better at everything", the rule stated above.
+   *
+   * Note which half that scales: a BASE item's authored immunity, the same as
+   * its authored resistance. An EGO's contribution is added raw below, because
+   * `egoWielder` has already resolved it against the ego's own power and the
+   * base's tier — grading it again would multiply two curves together.
+   */
+  const immunities: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.immunities ?? {})) {
+    immunities[key] = atMaterial(value, material);
+  }
   for (const [index, ego] of egos.entries()) {
     const ref = parsed.egos[index];
     if (ref === undefined) continue;
@@ -505,6 +518,19 @@ export function resolveItem(id: string): Item | undefined {
     for (const [key, value] of Object.entries(wielder.penetration ?? {})) {
       penetration[key] = (penetration[key] ?? 0) + value;
     }
+    /**
+     * THE LINE WHOSE ABSENCE MADE THE WHOLE IMMUNITY CHANNEL INVISIBLE.
+     *
+     * `Shockproof ` and ` of Whole Cloth` rolled onto real loot from the day
+     * they were authored — 390 and 142 times in a 5,938-item sample — and every
+     * one of them resolved to an item with no immunity on it, because this merge
+     * is field-by-field and did not know the field existed. The ego roster, the
+     * fold, `canBe` and both readouts were all correct and connected; a player
+     * would have found a Shockproof cap that did nothing and had no way to tell.
+     */
+    for (const [key, value] of Object.entries(wielder.immunities ?? {})) {
+      immunities[key] = (immunities[key] ?? 0) + value;
+    }
   }
 
   const merged: {
@@ -513,12 +539,14 @@ export function resolveItem(id: string): Item | undefined {
     resists?: typeof resists;
     damage?: typeof damage;
     penetration?: typeof penetration;
+    immunities?: typeof immunities;
   } = {};
   if (Object.keys(stats).length > 0) merged.stats = stats;
   if (Object.keys(mods).length > 0) merged.mods = mods;
   if (Object.keys(resists).length > 0) merged.resists = resists;
   if (Object.keys(damage).length > 0) merged.damage = damage;
   if (Object.keys(penetration).length > 0) merged.penetration = penetration;
+  if (Object.keys(immunities).length > 0) merged.immunities = immunities;
 
   // Prefixes carry their own trailing space and suffixes their own leading one
   // (`validateEgos` proves it), so this is concatenation with no separator

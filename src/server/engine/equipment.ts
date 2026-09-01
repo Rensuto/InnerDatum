@@ -114,6 +114,9 @@
 import { SLOT_ORDER } from '../content/items.ts';
 import { STAT_BASE } from './derived.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
+import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
+import { bound } from '../../shared/scale.ts';
+import type { ImmunitySubtype } from '../../shared/immunity.ts';
 import type { AdditiveMods, AdditiveStats, Item, ItemCatalogue, Slot } from '../content/items.ts';
 import type { CombatSheet } from './combat.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
@@ -279,6 +282,7 @@ export function composeWielders(
   // THE TWO ATTACKER-SIDE TABLES. Same shape, same fixed key list, same reason.
   const damageDelta = new Map<DamageType, number>();
   const penDelta = new Map<DamageType, number>();
+  const immunityDelta = new Map<ImmunitySubtype, number>();
 
   for (const wielder of blocks) {
     if (wielder === undefined) continue;
@@ -343,6 +347,26 @@ export function composeWielders(
         const value = pen[key];
         if (value === undefined) continue;
         penDelta.set(key, (penDelta.get(key) ?? 0) + value);
+      }
+    }
+    /**
+     * AND THE STATUS DEFENCE, over `IMMUNITY_KEYS` for the same fixed-list
+     * reason as the three above it.
+     *
+     * ADDITIVE WITHIN A KEY AND MULTIPLICATIVE ACROSS SUBTYPES, and the split is
+     * not an inconsistency. Upstream keeps ONE `stun_immune` attr that every
+     * source adds into (`addTemporaryValue`, a plain add), so two rings at 15%
+     * stun make 30% stun. The multiplicative composition lives one level up, in
+     * `canBe`, BETWEEN the subtypes of a single effect — 50% wound and 50% bleed
+     * leave a quarter chance of being cut. Adding there instead would make two
+     * mediocre immunities into a total one, and `canBe`'s docblock says so.
+     */
+    const immunities = wielder.immunities;
+    if (immunities !== undefined) {
+      for (const key of IMMUNITY_KEYS) {
+        const value = immunities[key];
+        if (value === undefined) continue;
+        immunityDelta.set(key, (immunityDelta.get(key) ?? 0) + value);
       }
     }
   }
@@ -413,6 +437,24 @@ export function composeWielders(
     const table: { -readonly [K in keyof TypeTable]: TypeTable[K] } = { ...base.penetration };
     for (const [key, delta] of penDelta) table[key] = (table[key] ?? 0) + delta;
     out.penetration = Object.freeze(table);
+  }
+
+  /**
+   * THE STATUS DEFENCE, rebuilt on the same terms and BOUNDED AT 100 HERE.
+   *
+   * The other three tables are left unbounded because their readers clamp:
+   * `combatGetResist` has `resists_cap`, `damage_types.lua:345-352` bounds
+   * penetration. `canBe` clamps too, but a sheet that says 140% would still be
+   * a sheet the character panel prints as 140% — a number the player cannot act
+   * on, above a ceiling nothing shows them. Clamped where it is composed, so the
+   * sheet and the die agree about what is on it.
+   */
+  if (immunityDelta.size > 0) {
+    const table: Record<string, number> = { ...base.immunities };
+    for (const [key, delta] of immunityDelta) {
+      table[key] = bound((table[key] ?? 0) + delta, 0, 100);
+    }
+    out.immunities = Object.freeze(table);
   }
 
   return Object.freeze(out);

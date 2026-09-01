@@ -129,6 +129,8 @@
 
 import { resolveMBonus } from './resolvers.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
+import { IMMUNITY_KEYS, MAX_ITEM_IMMUNITY } from '../../shared/immunity.ts';
+import type { ImmunitySubtype } from '../../shared/immunity.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import type { CombatMods, PrimaryStats } from '../engine/derived.ts';
 
@@ -297,6 +299,31 @@ export type Wielder = {
    * bigger number that does nothing. The import check refuses one.
    */
   readonly penetration?: Partial<Record<DamageType, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `stun_immune` AND ITS SIX SIBLINGS — REFUSING A STATUS OUTRIGHT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Percent chance to refuse an effect carrying that subtype, 0..100, keyed by
+   * `IMMUNITY_KEYS`. `canBe` reads it off the composed sheet.
+   *
+   * ═══ THE GAP THIS CLOSES ═══
+   * The immunity engine has been complete since M4 — the blanket check, the
+   * multiplicative subtype product, the no-draw short-circuit, all ported from
+   * Actor.lua:6951-6978 and all tested. Nothing could reach it. `grantImmunity`
+   * had no caller outside `test/`, so being Stunned — which `content/effects.ts`
+   * calls *"the most feared status in ToME"* because it locks out three of your
+   * talents — was something the game did to you and you could not answer. Half
+   * of ToME's gearing decision is "what disables me, and what stops it", and
+   * that half of the decision did not exist here.
+   *
+   * ═══ CAPPED, AND THE CAP MATTERS MORE THAN THE RESIST ONE ═══
+   * `MAX_ITEM_IMMUNITY`. Subtypes compose multiplicatively, so BLEEDING's three
+   * (`wound`, `cut`, `bleed`) meet the product of all three rolls: an item
+   * granting 100% of any one of them is an item that deletes an entire status
+   * from that player's game, permanently, from one slot.
+   */
+  readonly immunities?: Partial<Record<ImmunitySubtype, number>>;
 };
 
 /** Rarity, and — by construction — the drop tier. See the file header. */
@@ -1053,6 +1080,37 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
               `must be whole percentages between 0 and ${String(cap)}`,
           );
         }
+      }
+    }
+
+    /**
+     * THE IMMUNITY TABLE. Same shape of check as the resists below it, with one
+     * difference that is the whole reason `IMMUNITY_KEYS` exists: an unknown key
+     * here is not merely a row nothing reads, it is a row that LOOKS like a
+     * defence on the character sheet and silently is not one. And no negatives —
+     * an item that made you EASIER to stun is a curse, which is a feature this
+     * game does not have and nobody would predict from an affix name.
+     */
+    for (const [key, value] of Object.entries(item.wielder.immunities ?? {})) {
+      if (!IMMUNITY_KEYS.includes(key as ImmunitySubtype)) {
+        throw new Error(
+          `items: ${item.id} grants immunity to '${key}', which is not one of the ` +
+            `${String(IMMUNITY_KEYS.length)} buildable subtypes — no effect carries it, ` +
+            `so it would read as a defence and refuse nothing`,
+        );
+      }
+      if (value === undefined) continue;
+      if (
+        !Number.isFinite(value) ||
+        !Number.isInteger(value) ||
+        value < 0 ||
+        value > MAX_ITEM_IMMUNITY
+      ) {
+        throw new Error(
+          `items: ${item.id} grants ${key} immunity = ${String(value)}; immunities must be ` +
+            `whole percentages between 0 and ${String(MAX_ITEM_IMMUNITY)} — subtypes compose ` +
+            `multiplicatively, so one big roll deletes a status from the game`,
+        );
       }
     }
 

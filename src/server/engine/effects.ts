@@ -760,6 +760,31 @@ export function immunityOf(state: EffectState, actorId: string, key: string): nu
   return state.immunities.get(actorId)?.get(key) ?? 0;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME QUESTION, ASKED OF BOTH PLACES AN ANSWER CAN COME FROM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `state.immunities` is the effect system's own table, and `grantImmunity`
+ * SETS a key rather than adding to it. That is right for its one caller — a
+ * timed effect owns its grant and drops it when it expires — and it is exactly
+ * wrong for gear: two rings would not stack, and taking one off could not be
+ * undone without the `addTemporaryValue` ledger this codebase deliberately does
+ * not have. `equipment.ts` says so at length about `resists`.
+ *
+ * So WORN immunity rides the COMPOSED SHEET instead, rebuilt from nothing by
+ * `recomposeCombat` on every equip, unequip, level and effect tick. Removing
+ * the ring removes the immunity because the sheet is recomputed, not because
+ * anybody remembered to subtract.
+ *
+ * ADDITIVE between the two sources and then bounded, which is what upstream's
+ * single `stun_immune` attr is: one number every source adds into.
+ */
+function immunityAgainst(state: EffectState, actor: EffectActor, key: string): number {
+  const worn = actor.combat?.immunities?.[key] ?? 0;
+  return bound(immunityOf(state, actor.id, key) + worn, 0, 100);
+}
+
 /** `canBe`'s two return values — Actor.lua:6950, `true/false` plus the chance. */
 export type CanBeResult = {
   /** Can it be applied? */
@@ -827,7 +852,16 @@ export function canBe(
    */
   if (def.status !== EffectStatus.Detrimental) return { can: true, chance: 100 };
 
-  // :6956 — the blanket one, then :6958-6960's per-channel one.
+  /**
+   * :6956 — the blanket one, then :6958-6960's per-channel one.
+   *
+   * `immunityOf` AND NOT `immunityAgainst`, deliberately: these four are tested
+   * for TRUTH rather than for a percentage, so any nonzero value is TOTAL
+   * refusal. `IMMUNITY_KEYS` already refuses to let content author them, and
+   * reading the sheet here as well would make a validation bug — one blanket key
+   * slipping into one ego — into immunity to every detrimental effect in the
+   * game. Two locks on the same door, because that door is the whole M4 system.
+   */
   if (immunityOf(state, actor.id, ImmunityKey.AllNegative) > 0) return { can: false, chance: 0 };
   if (immunityOf(state, actor.id, BLANKET_IMMUNITY[def.type]) > 0) {
     return { can: false, chance: 0 };
@@ -836,7 +870,7 @@ export function canBe(
   // :6964-6968 — the subtype product.
   let chance = 100;
   for (const subtype of def.subtypes) {
-    const resist = bound(immunityOf(state, actor.id, subtype), 0, 100);
+    const resist = immunityAgainst(state, actor, subtype);
     chance = (chance * (100 - resist)) / 100;
   }
 

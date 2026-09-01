@@ -38,6 +38,7 @@
 
 import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
+import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
 import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
 import { combatGetResist } from '../engine/damage.ts';
 import { ActorKind, InspectGroup } from '../../shared/protocol.ts';
@@ -154,6 +155,41 @@ function pushResistRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup
     if (value === 0) continue;
     rows.push({
       label: `${damageTypeName(type)} resist`,
+      value: `${String(value)}%`,
+      ...(group === undefined ? {} : { group }),
+    });
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT YOU CAN REFUSE — the other half of a defensive build, newly ownable.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A resist row says how much less a thing hurts. This says how often it does not
+ * happen at all, which is a categorically different purchase: `Stunned` locks
+ * out three talents (content/effects.ts), so 20% stun immunity is one fight in
+ * five where the plan survives contact.
+ *
+ * ═══ ORDERED BY `IMMUNITY_KEYS` AND NOT BY THE OBJECT'S OWN KEYS ═══
+ * `composeWielders` builds the table by spreading the base and writing whatever
+ * the gear names, so its insertion order is a function of what the player
+ * happens to be WEARING. A card whose rows reshuffle when you swap a ring is a
+ * card nobody can read at a glance. The fixed list is the same instrument
+ * `pushResistRows` uses one function up.
+ *
+ * ZERO ROWS ARE SKIPPED, as everywhere else on this card: an inspect panel that
+ * lists every subtype at 0% is seven lines of nothing on every monster in the
+ * game.
+ */
+function pushImmunityRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup): void {
+  const table = c.immunities;
+  if (table === undefined) return;
+  for (const key of IMMUNITY_KEYS) {
+    const value = Math.round(table[key] ?? 0);
+    if (value === 0) continue;
+    rows.push({
+      label: `${key.charAt(0).toUpperCase()}${key.slice(1)} immunity`,
       value: `${String(value)}%`,
       ...(group === undefined ? {} : { group }),
     });
@@ -493,6 +529,7 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
   });
 
   pushResistRows(rows, c, InspectGroup.Defence);
+  pushImmunityRows(rows, c, InspectGroup.Defence);
 }
 
 /**
@@ -625,6 +662,14 @@ export function inspectActor(
      * these sit inline with the rest of the card in the order pushed.
      */
     pushResistRows(rows, combatantOf(target));
+    /**
+     * AND WHAT IT REFUSES, which on a HOSTILE card is worth more than on your
+     * own. "Should I spend my one Stun on this thing" is a decision a player
+     * makes several times a floor, and until this row the only way to find out
+     * was to spend it and watch the save line. Upstream's monster tooltip lists
+     * the immunities for exactly this reason.
+     */
+    pushImmunityRows(rows, combatantOf(target));
 
     pushEffectRows(rows, effects, target);
 

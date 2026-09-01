@@ -119,6 +119,17 @@ export type CombatSheet = Combatant & {
   readonly increase?: TypeTable;
   /** `resists_pen` — resistance penetration. Read when this actor ATTACKS. */
   readonly penetration?: TypeTable;
+  /**
+   * `*_immune` — percent chance to REFUSE a status outright, by subtype.
+   *
+   * Keyed by the strings in `EffectDef.subtypes`; `IMMUNITY_KEYS` is the list
+   * content may author. Read by `canBe` when this actor is the TARGET of a
+   * detrimental effect, and composed MULTIPLICATIVELY across an effect's
+   * subtypes there — 50% wound and 50% bleed leave a 25% chance of being cut,
+   * not none. On the sheet rather than in `EffectState` because a worn immunity
+   * has to survive being taken off, and only recomposition does that.
+   */
+  readonly immunities?: Readonly<Record<string, number>>;
   /** Reach, in Euclidean tiles. 1 is melee. */
   readonly range?: number;
   /**

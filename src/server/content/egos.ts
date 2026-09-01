@@ -67,6 +67,8 @@
  */
 
 import { DAMAGE_TYPES, DamageType } from '../../shared/damagetype.ts';
+import { IMMUNITY_KEYS, MAX_ITEM_IMMUNITY } from '../../shared/immunity.ts';
+import type { ImmunitySubtype } from '../../shared/immunity.ts';
 import { Slot } from './items.ts';
 import type { AdditiveMods, AdditiveStats, ItemTier, Wielder } from './items.ts';
 
@@ -154,6 +156,18 @@ export type Ego = {
     readonly damage?: Partial<Record<DamageType, EgoGrant>>;
     /** `resists_pen`. See `Wielder.penetration` — the Redactor's answer. */
     readonly penetration?: Partial<Record<DamageType, EgoGrant>>;
+    /**
+     * `*_immune`. See `Wielder.immunities` — the answer to being DISABLED
+     * rather than to being hurt, which until now the game had none of.
+     *
+     * Capped at `MAX_ITEM_IMMUNITY` AT EVERY RESOLVED POWER AND TIER, not
+     * merely at the authored floor. The item check bounds what a hand-written
+     * `wielder` may say; an ego resolves at generation time and never passes
+     * through it, so `floor + step × 3 × 3` is the number that has to fit —
+     * `validateEgos` walks all twelve combinations and refuses the ego if any
+     * one of them clears the cap.
+     */
+    readonly immunities?: Partial<Record<ImmunitySubtype, EgoGrant>>;
   };
   /**
    * Gold added to the base's cost. `applyEgo` strips `unided_name`,
@@ -310,6 +324,31 @@ const PREFIXES: readonly Ego[] = [
     levelRange: [20, 50],
     grants: { mods: { apr: { floor: 3, step: 2 }, atk: { floor: 3, step: 2 } } },
     cost: 80,
+  },
+  {
+    code: 'sf',
+    name: 'Shockproof ',
+    tag: EgoSlotTag.Prefix,
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE FIRST AFFIX IN THE GAME THAT ANSWERS BEING DISABLED.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Every defensive ego before it answers being HURT — armour, a resistance,
+     * a save. None of them touch the thing `content/effects.ts` calls *"the
+     * entire reason Stun is the most feared status in ToME"*: three of your
+     * talents locked out while somebody else decides how the fight goes. The
+     * engine could always refuse a Stun (`canBe`, ported from
+     * Actor.lua:6951-6978); there was no way to own a single point of it.
+     *
+     * RARER THAN THE ELEMENTAL SUFFIXES ON PURPOSE. A resistance is a discount
+     * on a number; this is a chance the status does not happen, and partial
+     * immunity is the strongest thing per point that gear can carry.
+     */
+    rarity: 14,
+    levelRange: [8, 50],
+    grants: { immunities: { stun: { floor: 5, step: 2 } } },
+    cost: 70,
   },
   {
     code: 'ct',
@@ -544,6 +583,25 @@ const SUFFIXES: readonly Ego[] = [
     grants: { resists: { [DamageType.Lightning]: { floor: 5, step: 2 } } },
     cost: 40,
   },
+  {
+    code: 'wc',
+    name: ' of Whole Cloth',
+    tag: EgoSlotTag.Suffix,
+    /**
+     * The archivist's idiom for a thing invented entire, and literally a bolt
+     * nobody has cut into — which is what the affix does.
+     *
+     * IT NAMES `cut` AND NOT ALL THREE OF BLEEDING'S SUBTYPES, and that is the
+     * whole design of the cap. `canBe` composes `{wound, cut, bleed}`
+     * multiplicatively, so an ego granting every one of them at 23% would refuse
+     * a Bleed 55% of the time from one slot. One subtype is one term in that
+     * product; a player who wants the other two goes and finds them.
+     */
+    rarity: 12,
+    levelRange: [5, 50],
+    grants: { immunities: { cut: { floor: 5, step: 2 } } },
+    cost: 55,
+  },
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * THE ANSWER TO A BESTIARY THAT RESISTS YOU. `resists_pen` reaches content.
@@ -698,12 +756,14 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
     const resistGrants = Object.entries(ego.grants.resists ?? {});
     const damageGrants = Object.entries(ego.grants.damage ?? {});
     const penGrants = Object.entries(ego.grants.penetration ?? {});
+    const immunityGrants = Object.entries(ego.grants.immunities ?? {});
     if (
       statGrants.length === 0 &&
       modGrants.length === 0 &&
       resistGrants.length === 0 &&
       damageGrants.length === 0 &&
-      penGrants.length === 0
+      penGrants.length === 0 &&
+      immunityGrants.length === 0
     ) {
       throw new Error(
         `egos: ${ego.code} grants nothing — it would be a name that changes no number a ` +
@@ -726,12 +786,44 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       }
     }
 
+    /**
+     * AN IMMUNITY GRANT NAMES A REAL SUBTYPE, and the cap is checked against the
+     * RESOLVED value rather than the authored floor. `assertGrant` already walks
+     * every tier and power to prove the number is a positive integer; this walks
+     * the same grid to prove it is not a number that deletes a status. Nothing
+     * else in the pipeline would catch it — an ego never passes through
+     * `validateItems`, which is where `MAX_ITEM_IMMUNITY` is otherwise enforced.
+     */
+    for (const [key, grant] of immunityGrants) {
+      if (!IMMUNITY_KEYS.includes(key as ImmunitySubtype)) {
+        throw new Error(
+          `egos: ${ego.code} grants immunity to '${key}', which is not one of the ` +
+            `${String(IMMUNITY_KEYS.length)} buildable subtypes — the fold would never read it`,
+        );
+      }
+      if (grant === undefined) continue;
+      for (const tier of ALL_TIERS) {
+        for (let power = 0; power <= 3; power += 1) {
+          const value = grantValue(grant, power, tier);
+          if (value > MAX_ITEM_IMMUNITY) {
+            throw new Error(
+              `egos: ${ego.code} grants ${key} immunity = ${String(value)} at power ` +
+                `${String(power)} on a ${tier} item, past the ${String(MAX_ITEM_IMMUNITY)}% one ` +
+                `slot may reach — subtypes compose multiplicatively and this is how a status ` +
+                `stops existing`,
+            );
+          }
+        }
+      }
+    }
+
     for (const [key, grant] of [
       ...statGrants,
       ...modGrants,
       ...resistGrants,
       ...damageGrants,
       ...penGrants,
+      ...immunityGrants,
     ]) {
       if (DEAD_GRANT_KEYS.includes(key)) {
         throw new Error(
@@ -863,6 +955,12 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     penetration[key as DamageType] = grantValue(grant, power, tier);
   }
 
+  const immunities: Partial<Record<ImmunitySubtype, number>> = {};
+  for (const [key, grant] of Object.entries(ego.grants.immunities ?? {})) {
+    if (grant === undefined) continue;
+    immunities[key as ImmunitySubtype] = grantValue(grant, power, tier);
+  }
+
   // A key is written only when something contributed to it — the same rule
   // `composeSheet` follows, and for the same reason: an empty `stats: {}` is
   // structurally different from no `stats` at all, and one of the two is what a
@@ -873,11 +971,13 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     resists?: typeof resists;
     damage?: typeof damage;
     penetration?: typeof penetration;
+    immunities?: typeof immunities;
   } = {};
   if (Object.keys(stats).length > 0) out.stats = stats;
   if (Object.keys(mods).length > 0) out.mods = mods;
   if (Object.keys(resists).length > 0) out.resists = resists;
   if (Object.keys(damage).length > 0) out.damage = damage;
   if (Object.keys(penetration).length > 0) out.penetration = penetration;
+  if (Object.keys(immunities).length > 0) out.immunities = immunities;
   return out;
 }

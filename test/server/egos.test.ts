@@ -74,6 +74,8 @@ describe('the ego roster', () => {
       'sl',
       'cw',
       'fd',
+      // The first affix that answers being DISABLED rather than being hurt.
+      'sf',
       'ct',
       // The shallow suffixes.
       'lg',
@@ -93,6 +95,10 @@ describe('the ego roster', () => {
       'kl',
       'cs',
       'er',
+      // Its suffix half. `sf` and `wc` are the only two egos that reach
+      // `canBe` — see test/server/immunity.test.ts for why that took a
+      // channel, a fold, a merge and two readouts rather than one field.
+      'wc',
       // The attacker-side pair — the first gear that can move `inc_damage` or
       // `resists_pen`. See the block above them on why the Redactor needed one.
       'ub',
