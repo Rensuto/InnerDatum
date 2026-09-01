@@ -941,6 +941,35 @@ export type PumpResult = {
    */
   readonly refusals: readonly RefundedIntent[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SAVES AND IMMUNITIES, AS SENTENCES. The Record lane's, and nothing else's.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Assembled by the engine for `refusals`' exact reason: THE WIRE CANNOT CARRY
+   * IT. `negated`, `resisted` and `immune` mean nothing landed, so there is no
+   * badge to pop and no duration to time — `toWireEvents` correctly maps all
+   * three to no event at all, and an old client would drop a new `TurnEvent`
+   * variant inside a batched sweep anyway (`shared/version.ts` records that at
+   * 2 -> 3 and 3 -> 4, and the level-up narration avoids it for the same
+   * reason).
+   *
+   * So they arrive as text and go out as an ordinary Record `log` line, which
+   * every client since v4 already renders.
+   *
+   * ═══ FOUR PLACES IN THIS CODEBASE PROMISED THIS AND NONE DELIVERED IT ═══
+   * `EffectView`: *"the Record lane answers the rest in words, which is where
+   * the save maths belongs."* `statusToWire`: *"They are still real and still
+   * recorded: they go into the Case Log's Record lane as words."*
+   * `PumpCtx.statusPass` and `docs/game-design.md` § 11 both print the sample
+   * line. `statusToWire` returned `[]` and no other path existed, so a save has
+   * never once been visible — you spend points and gear on Physical save and a
+   * rider that is refused looks identical to a rider that was never rolled.
+   *
+   * OPTIONAL, like every structural member added after the fact: a test
+   * registering this plugin against a fake scheduler must not have to grow one.
+   */
+  readonly saves?: readonly string[];
+  /**
    * Bodies moved by somebody else's action this pump — see `PumpResult.displaced`
    * in engine/scheduler.ts, which owns the whole argument.
    *
@@ -5348,6 +5377,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (where.spawns.some((tile) => tile.x === body.x && tile.y === body.y)) {
         moved.exitArmed = false;
       }
+    }
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE SAVES, WHICH THE PLAYER HAS NEVER ONCE BEEN SHOWN.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Broadcast rather than unicast, unlike the refusals directly below. A
+     * refund is nobody's business but the owner's; a save is a fact about a
+     * fight the whole party is in — and it is the ONLY evidence that the
+     * Physical save they have all been buying does anything.
+     */
+    for (const line of result.saves ?? []) {
+      broadcastRecordLine(realm, line);
     }
 
     for (const refusal of result.refusals) {

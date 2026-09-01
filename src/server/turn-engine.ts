@@ -943,6 +943,83 @@ function toWireEvents(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE THREE REFUSALS, AS RECORD LINES. Actor.lua:7034-7040, :6951-6978.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream writes two DIFFERENT sentences here and the distinction is real:
+ *
+ *     saved:          "%s shrugs off %s '%s'!"      (:7036)
+ *     scaled to zero: "%s resists %s '%s'!"         (:7039)
+ *
+ * `statusToWire`'s own note already says they are "genuinely different events".
+ * A shrug is the save roll beating the power outright; a resist is the save
+ * losing and the duration grinding away to nothing anyway. A player who cannot
+ * tell them apart cannot tell whether their save is worth another point.
+ *
+ * ═══ THE NUMBERS ARE THE POINT, NOT DECORATION ═══
+ * `docs/game-design.md` § 11's sample Record is *"Dalt saves (phys 38 vs power
+ * 31, 68%)"*, and the whole reason `EffectLogLine` carries `saveChance` and
+ * `savedVs` is so this line can print them. Without the odds a save reads as
+ * the game being arbitrary; with them it reads as a stat that is working.
+ *
+ * ═══ WALKS THE SWEEP STEPS TOO ═══
+ * A monster's rider is refused INSIDE its turn, so its note is a `status` step
+ * in a batched sweep rather than a top-level event — which is most of them, and
+ * a version that only read the player lane would miss every save made against
+ * a monster's blow.
+ *
+ * ═══ EXPORTED SO THE RULE CAN BE STATED AS A TEST ═══
+ * The same call `engine/pools.ts` and `view/projector.ts#statGainLines` made,
+ * for the same reason and after the same lesson: the four docblocks that
+ * promised this line all described behaviour nothing could reach, and a rule
+ * that cannot be aimed at is a rule that gets to be wrong indefinitely. It is
+ * a pure function of its three arguments, so a test needs no pump.
+ */
+export function saveLines(
+  world: World,
+  effects: EffectState | undefined,
+  events: readonly GameEvent[],
+): string[] {
+  if (effects === undefined) return [];
+  const out: string[] = [];
+
+  const say = (note: EffectLogLine): void => {
+    if (note.kind !== 'negated' && note.kind !== 'resisted' && note.kind !== 'immune') return;
+    const who = world.getActor(note.actorId)?.name;
+    const what = effectDef(effects, note.effectId)?.displayName;
+    // A body or an effect that is gone is a content reload under a live game —
+    // the same case `projectEffects` skips, and there is nothing honest to say.
+    if (who === undefined || what === undefined) return;
+
+    if (note.kind === 'immune') {
+      out.push(`${who} is immune to ${what}.`);
+      return;
+    }
+    // THE ODDS, when the roll carried them. `saveChance` is null for a refusal
+    // that took no roll at all, and inventing a percentage would be worse than
+    // omitting one.
+    const odds =
+      note.saveChance === null || note.saveChance === undefined
+        ? ''
+        : ` (${note.savedVs ?? 'save'} ${String(Math.round(note.saveChance))}%)`;
+    out.push(
+      note.kind === 'negated'
+        ? `${who} shrugs off ${what}${odds}.`
+        : `${who} resists ${what}${odds}.`,
+    );
+  };
+
+  for (const event of events) {
+    if (event.t === 'status') say(event.note);
+    else if (event.t === 'sweep') {
+      for (const step of event.steps) if (step.t === 'status') say(step.note);
+    }
+  }
+  return out;
+}
+
+/**
  * One `EffectLogLine` -> the events a client can draw, which is not all of them.
  *
  * SIX KINDS IN, TWO OUT, and the four that produce nothing are the interesting
@@ -2750,12 +2827,33 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         if (event.t === 'refunded') refusals.push({ id: event.id, reason: event.reason });
       }
 
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE SAVES, AS SENTENCES. Assembled here for `refusals`' exact reason.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `toWireEvents` maps `negated`, `resisted` and `immune` to NOTHING, and
+       * it is right to: they mean nothing landed, so there is no badge to pop
+       * and no duration to time. But they are the only evidence a save ever
+       * works, and four docblocks in this codebase — `EffectView`,
+       * `statusToWire`, `PumpCtx.statusPass` and `docs/game-design.md` § 11 —
+       * promise they reach the Record lane in words. None of them did.
+       *
+       * BUILT HERE BECAUSE THIS IS WHERE THE NAMES ARE. The sentence needs the
+       * body's name (`world`) and the effect's display name (`opts.effects`),
+       * and the gateway has neither — it may not import the effect registry at
+       * all. It receives finished text and broadcasts it, exactly as it does
+       * with the refusals below.
+       */
+      const saves = saveLines(world, opts.effects, result.events);
+
       return {
         status: result.status,
         turn: turnState(),
         playerEvents: toWireEvents(world, playerEvents, 'player'),
         sweep: toWireEvents(world, sweepEvents, 'sweep'),
         refusals,
+        ...(saves.length === 0 ? {} : { saves }),
         // ═══ AND WHO WAS MOVED WITHOUT ASKING TO BE ═══
         // Straight through, for the same reason `refusals` is assembled just
         // above: the wire cannot carry it. Two `moved` events say where both
