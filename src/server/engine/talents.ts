@@ -190,9 +190,28 @@ export const TalentKind = {
   /** Costs its resources and resolves now. Everything shipped so far. */
   Active: 'active',
   /**
-   * Toggled. Pays once, stays on, and reserves something until it is toggled
-   * off. Nothing implements this yet — the value is declared so the panel can
-   * be built once rather than twice.
+   * Toggled. Pays once, stays on, and reserves a share of the pool until it is
+   * toggled off.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS SAID "NOTHING IMPLEMENTS THIS YET" LONG AFTER FIVE THINGS DID.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Careful Method, Working Fast, Legwork, Loads and the Ledger stances are all
+   * sustains, and `content/talent-trees.ts` records the moment the system got
+   * used — quoting this very sentence as the thing that had gone false. The
+   * quote was written and this line was not corrected, so the codebase held both
+   * halves of the contradiction for as long as anybody cared to read it.
+   *
+   * THAT IS THE THIRD STALE ABSENCE-CLAIM FOUND IN ONE DAY. The other two cost
+   * real work: `AdditiveMods` forbade `spellPower`/`mindPower` on the strength of
+   * a pasted grep that had expired, and an audit finding was refuted on the
+   * strength of a symbol name that did not exist. A comment asserting that
+   * something has no implementation is a fact with a short shelf life and no
+   * expiry date printed on it.
+   *
+   * `test/server/talent-kinds.test.ts` now counts the implementations of every
+   * kind, so this sentence cannot go stale again without a test saying so.
    */
   Sustained: 'sustained',
   /** Never pressed. True for as long as there is a point in it. */
