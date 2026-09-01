@@ -2135,6 +2135,20 @@ export function serialiseCharacter(file: CharacterFile): string {
     }
   }
   const carried = file.carried === undefined ? undefined : [...file.carried];
+  /**
+   * THE BAR AND THE TWO PURCHASE LISTS, copied on exactly `carried`'s terms.
+   *
+   * `undefined` STAYS `undefined` so an absent field emits no key at all — see
+   * the note beside `carried` in the canonical object below. A `[]` here would
+   * assert "this player cleared their bar" about every save on disk today and
+   * rewrite all of them on first load.
+   *
+   * COPIED RATHER THAN ALIASED because this literal is the file that goes to
+   * disk and must not share an array with the live body.
+   */
+  const hotbar = file.hotbar === undefined ? undefined : [...file.hotbar];
+  const unlockedTrees = file.unlockedTrees === undefined ? undefined : [...file.unlockedTrees];
+  const deepenedTrees = file.deepenedTrees === undefined ? undefined : [...file.deepenedTrees];
   // ═══ THE ACTION KEYS ARE SORTED; THE KEY STRINGS INSIDE ONE ARE NOT ═══
   // Exactly the asymmetry `equipped` and `carried` have, and for the identical
   // reasons. The MAP's key order follows whichever order the player happened to
@@ -2198,6 +2212,27 @@ export function serialiseCharacter(file: CharacterFile): string {
     // steps every `.bak` a generation for nothing, and asserts "this player
     // reset every binding" about somebody who did not.
     keybinds,
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE THREE THAT WERE NEVER WRITTEN DOWN AT ALL — THE SAME BUG AGAIN.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The note thirty lines down says what a missing name costs — *"a field
+     * missing from this literal is never written at ALL … it silently drops
+     * anything it does not name"* — and it was written about `filed`,
+     * `explored`, `exploredElsewhere` and `layoutRevision`. `hotbar`,
+     * `unlockedTrees` and `deepenedTrees` were missing from it too.
+     *
+     * SO A BOUGHT DISCIPLINE NEVER REACHED DISK. `CharacterFile` declared it,
+     * `parseCharacterFile` validated it on the way in, `snapshotPlayers` filled
+     * it and `restoreProgression` had a branch to read it back — every layer but
+     * the one that writes the bytes. A category point is one of THREE in a
+     * fifty-level career and it bought something that did not survive the night.
+     * The hotbar went the same way, every session.
+     */
+    hotbar,
+    unlockedTrees,
+    deepenedTrees,
     zoom: file.zoom,
     /**
      * ═════════════════════════════════════════════════════════════════════════
@@ -3331,6 +3366,17 @@ type Binding = {
   readonly exploredElsewhere?: Readonly<Record<string, string>>;
   /** Site ids this character has cleared. See CharacterFile. */
   readonly filed?: readonly string[];
+  /**
+   * WHAT THE FILE SAID ABOUT THE BAR AND THE DISCIPLINES WHEN IT WAS OPENED.
+   *
+   * The carry-forward half of `fileFor`'s `?? binding`: a producer with nothing
+   * to say about the bar leaves whatever is already on disk, exactly as it does
+   * for `keybinds`, `carried` and `equipped`. Absent means the file never
+   * mentioned them, which is not the same statement as an empty bar.
+   */
+  readonly hotbar?: readonly (string | null)[];
+  readonly unlockedTrees?: readonly string[];
+  readonly deepenedTrees?: readonly string[];
 };
 
 export type CharacterBridgeOptions = {
@@ -3431,6 +3477,34 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // found it. A producer that CAN say and says `{}` writes `{}`, and that is
       // a real statement — the player pressed RESET ALL.
       keybinds: snapshot.keybinds ?? binding.keybinds,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE BAR, THE DISCIPLINES AND THE DEEPENINGS — THE VALVE, A FOURTH TIME.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * All three fields existed at every OTHER layer and at neither end of this
+       * one: `CharacterFile` declares them and `parseCharacterFile` validates
+       * them (`parseUnlockedTrees`, `parseHotbar`), `LoadoutSnapshot` and
+       * `Binding` declare them, `snapshotPlayers` fills them, and
+       * `restoreProgression` reads them back under a log line reading *"restored
+       * a character's bought disciplines"*. Between those two working halves,
+       * `fileFor` never wrote them and `openCharacter` never returned them — so
+       * the snapshot's spread was a value with no reader and the gateway's
+       * restore branch was dead code in production.
+       *
+       * A category point is one of THREE in a fifty-level career
+       * (`CATEGORY_POINT_LEVELS`), and it bought a discipline that did not
+       * survive the next reconnect. The bar went the same way, every time.
+       *
+       * SAME `?? binding` CARRY-FORWARD as the three above, and for the reason
+       * they each state at length: a producer that cannot speak for the player —
+       * a fixture, the e2e harness, a build not yet taught to fill the field —
+       * must leave the disk exactly as it found it rather than asserting an
+       * empty bar or an unbought discipline on their behalf.
+       */
+      hotbar: snapshot.hotbar ?? binding.hotbar,
+      unlockedTrees: snapshot.unlockedTrees ?? binding.unlockedTrees,
+      deepenedTrees: snapshot.deepenedTrees ?? binding.deepenedTrees,
       // THE SAME CARRY-FORWARD RULE. A producer with no opinion about the zoom
       // leaves the disk exactly as it found it.
       zoom: snapshot.zoom ?? binding.zoom,
@@ -3559,6 +3633,14 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // of a file that never mentioned keys.
       keybinds: file?.keybinds,
       zoom: file?.zoom,
+      // NO `??` ON ANY OF THESE THREE EITHER, and the keymap's sentence covers
+      // all of them: an absent bar or an unbought discipline is carried forward
+      // AS an absence, so `fileFor` leaves the key off the file rather than
+      // asserting "this player cleared their bar" on behalf of a file that never
+      // mentioned one.
+      hotbar: file?.hotbar,
+      unlockedTrees: file?.unlockedTrees,
+      deepenedTrees: file?.deepenedTrees,
     });
 
     if (file === null) {
@@ -3638,6 +3720,29 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       keybinds: file.keybinds,
       // AND HOW BIG THEY LIKE THEIR TILES, on the same argument.
       zoom: file.zoom,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE BAR AND THE DISCIPLINES COMING BACK — THE OTHER HALF, A FOURTH
+       * TIME.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The paragraph above this one is exact about what happens when only one
+       * half ships: *"the identical one-way valve progression and items each
+       * shipped once … the two halves are one fix and reverting either is the
+       * whole bug."* These three had NEITHER half, so `CharacterRestore`'s
+       * fields were permanently undefined and `restoreProgression`'s branch for
+       * them — with its own "restored a character's bought disciplines" log line
+       * — never ran once in production.
+       *
+       * HANDED OVER EXACTLY AS `parseCharacterFile` LEFT THEM. Every id has
+       * already been length-checked and de-duplicated on the way in; whether a
+       * tree id still exists in this build is a question only the content table
+       * can answer, and `unlockableOf` and `sheetForClass` both already ignore
+       * one they do not recognise.
+       */
+      hotbar: file.hotbar,
+      unlockedTrees: file.unlockedTrees,
+      deepenedTrees: file.deepenedTrees,
       // AND THE MAP THEY WALKED, on the same argument the line above makes:
       // nobody should have to re-explore a region because they closed a tab.
       // Named in this literal DELIBERATELY -- saves.ts:1366-1369 warns that a

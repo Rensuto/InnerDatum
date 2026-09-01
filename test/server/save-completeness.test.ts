@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 import { LAYOUT_REVISION } from '../../src/shared/level.ts';
 
@@ -58,6 +60,20 @@ const FULL = {
   carried: ['item_watchmans_cap'],
   equipped: { body: 'item_watchmans_coat' },
   keybinds: { move_n: ['w'] },
+  /**
+   * THE FOUR THIS FIXTURE NEVER MENTIONED, and whose absence made the guard at
+   * the foot of this file structurally unable to see them. See its note.
+   */
+  // BOUNDED -1..1 (`ZOOM_MIN`/`ZOOM_MAX`). A 2 here is silently dropped by
+  // `parseZoom`, which is the parser being right and the fixture being wrong.
+  zoom: 1,
+  // AND THE TWO THE FIXED GUARD BELOW IMMEDIATELY EXPOSED. Both were declared,
+  // parsed and serialised the whole time; nothing here had ever exercised them.
+  spentStats: { str: 2, con: 1 },
+  lastLearnt: { class: ['talent:crude_blow'], generic: ['talent:second_wind'] },
+  hotbar: ['talent:crude_blow', null, 'talent:lockdown'],
+  unlockedTrees: ['generic/leverage'],
+  deepenedTrees: ['watch/discipline'],
   explored: 'AAAABBBB',
   exploredElsewhere: { 'realm:site:redaction': 'CCCCDDDD' },
   filed: ['site:underworks', 'site:cairnfoot'],
@@ -221,19 +237,39 @@ describe('a character file keeps everything it was given', () => {
     // THE FIELDS THAT ARE THE CHARACTER'S OWN PROPERTY. Identity and timestamps
     // are the FILE's, not the player's, and the gateway neither needs nor gets
     // them — so this names what a player would notice losing.
-    const owned = [
-      'level',
-      'xp',
-      'unspentPoints',
-      'talentPoints',
-      'carried',
-      'equipped',
-      'keybinds',
-      'explored',
-      'exploredElsewhere',
-      'filed',
-      'money',
-    ] as const;
+    /**
+     * DERIVED FROM THE FIXTURE, NOT LISTED BESIDE IT.
+     *
+     * This was a hand-written array, and it is the same trap the guard at the
+     * foot of this file fell into: a field added to `FULL` and forgotten HERE
+     * sails past, which is exactly how `hotbar`, `unlockedTrees` and
+     * `deepenedTrees` reached production unreturned. Two lists that must agree
+     * are one list too many.
+     */
+    const identity = new Set(['id', 'ownerId', 'name', 'createdAt', 'classId']);
+    /**
+     * FOUR THAT DO NOT COME BACK UNDER THEIR OWN NAME, each for a stated reason
+     * in `openCharacter`. Named here rather than silently skipped, so that a
+     * fifth one appearing is a decision somebody has to write down.
+     */
+    const notReturnedAsIs = new Map([
+      // Only the CURRENT pool crosses, as `hp`. Every `max*` is derived from the
+      // class at load — docs/data-schemas.md § 3.
+      ['resources', 'hp'],
+      ['talentCooldowns', 'cooldowns'],
+      // "Statuses are a fight's state, measured in single-figure turns, and a
+      // save is a session boundary." Written for humans, never restored.
+      ['effects', null],
+      // "SAVED BUT NOT RESTORED YET — see `CharacterRestore`."
+      ['position', null],
+    ]);
+    const owned = Object.keys(FULL).filter(
+      (key) => !identity.has(key) && !notReturnedAsIs.has(key),
+    );
+    // AND THE TWO RENAMED ONES, CHECKED UNDER THE NAMES THEY ARRIVE AS — a
+    // rename is not permission to stop checking.
+    expect(back['hp']).toBe(FULL.resources.hp);
+    expect(back['cooldowns']).toEqual(FULL.talentCooldowns);
 
     const dropped: string[] = [];
     for (const key of owned) {
@@ -261,6 +297,45 @@ describe('a character file keeps everything it was given', () => {
      * level up. So the fixture is compared against the type's own key set,
      * taken from a file the producer builds with everything supplied.
      */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * IT READ THE PRODUCED OBJECT, AND SO IT COULD NOT SEE A MISSING FIELD.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `Object.keys(createCharacterFile(FULL))` plus a `file[key] !== undefined`
+     * filter is a closed loop: `createCharacterFile` copies each optional field
+     * straight off `init`, so a field the FIXTURE omits comes back `undefined`
+     * and the filter drops it. The guard could only ever report fields `FULL`
+     * already covered — a test true of its fixture and not of its rule, which is
+     * this project's most-repeated test defect, in the very guard written to
+     * stop that class of bug.
+     *
+     * It shipped: `hotbar`, `unlockedTrees` and `deepenedTrees` were declared on
+     * `CharacterFile`, validated by the parser, and dropped by both the
+     * serialiser and the bridge, and this assertion passed the whole time.
+     *
+     * SO THE KEYS COME FROM THE TYPE DECLARATION ITSELF. A source scrape is a
+     * blunt instrument and it is the only one available: TypeScript types are
+     * erased, so there is nothing at runtime to enumerate. It is worth it here
+     * because this single assertion is what makes every other test in the file
+     * self-extending.
+     */
+    const source = readFileSync(
+      new URL('../../src/server/persist/saves.ts', import.meta.url),
+      'utf8',
+    );
+    const start = source.indexOf('export type CharacterFile = {');
+    expect(start, 'CharacterFile was renamed — this guard is now blind').toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf('\n};', start));
+    // EXACTLY TWO SPACES, so nested members do not count. `lastLearnt` holds its
+    // own `class` and `generic` fields and a looser `\s+` reported both as
+    // uncovered top-level fields that do not exist.
+    const declared = [...body.matchAll(/^ {2}readonly (\w+)\??:/gm)].flatMap((m) => m[1] ?? []);
+    expect(
+      declared.length,
+      'scraped no fields at all — the regex stopped matching',
+    ).toBeGreaterThan(10);
+
     const file = createCharacterFile(FULL) as unknown as Record<string, unknown>;
     // Written by the producer rather than by the player: nothing a save could
     // lose, and nothing a fixture should have to state.
@@ -276,9 +351,13 @@ describe('a character file keeps everything it was given', () => {
       'updatedAt',
       'layoutRevision',
     ]);
-    const uncovered = Object.keys(file).filter(
-      (key) => !notTheirs.has(key) && !(key in FULL) && file[key] !== undefined,
-    );
+    // NO `file[key] !== undefined` CLAUSE. That was the whole bug: it made an
+    // uncovered field invisible, because uncovered is exactly what makes it
+    // undefined. The key set comes from the type, so the check is now "does the
+    // fixture exercise every field a save can hold" rather than "does the
+    // fixture exercise the fields the fixture supplies".
+    const uncovered = declared.filter((key) => !notTheirs.has(key) && !(key in FULL));
+    expect(Object.keys(file).length, 'the producer built nothing').toBeGreaterThan(10);
     expect(uncovered, 'CharacterFile grew a field this test does not exercise').toEqual([]);
   });
 });

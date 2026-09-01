@@ -1383,6 +1383,24 @@ describe('character files: the bag and the paper doll', () => {
       // per-LITERAL, not per-field, and one test naming every optional field
       // pins both literals at once.
       zoom: 1,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE THREE THIS TEST'S OWN DOCBLOCK PREDICTED IT WOULD MISS.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * *"the general test passes vacuously for a field that is missing from
+       * BOTH halves"* — and `hotbar`, `unlockedTrees` and `deepenedTrees` were
+       * missing from both, so nothing here failed while a bought discipline and
+       * the player's bar never reached disk at all. `serialiseCharacter` rebuilds
+       * its canonical object from scratch and silently drops anything it does
+       * not name; `parseCharacterFile` validated all three on the way in, so the
+       * READ half had been correct the whole time and had nothing to read.
+       *
+       * NAMED, therefore, rather than trusted to the key-set check above.
+       */
+      hotbar: ['talent:crude_blow', null, 'talent:ward_rush'],
+      unlockedTrees: ['generic/leverage'],
+      deepenedTrees: ['watch/discipline'],
       resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
       createdAt: '2026-08-15T00:00:00.000Z',
     });
@@ -1398,6 +1416,12 @@ describe('character files: the bag and the paper doll', () => {
     expect(Object.keys(parsed.file)).toContain('equipped');
     expect(Object.keys(parsed.file)).toContain('keybinds');
     expect(Object.keys(parsed.file)).toContain('zoom');
+    expect(Object.keys(parsed.file)).toContain('hotbar');
+    expect(Object.keys(parsed.file)).toContain('unlockedTrees');
+    expect(Object.keys(parsed.file)).toContain('deepenedTrees');
+    expect(parsed.file.hotbar).toEqual(['talent:crude_blow', null, 'talent:ward_rush']);
+    expect(parsed.file.unlockedTrees).toEqual(['generic/leverage']);
+    expect(parsed.file.deepenedTrees).toEqual(['watch/discipline']);
     expect(parsed.file.zoom).toBe(1);
     expect(parsed.file.equipped).toEqual(WORN_KIT);
     expect(parsed.file.carried).toEqual(IN_THE_BAG);
