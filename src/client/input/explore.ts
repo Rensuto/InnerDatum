@@ -90,9 +90,16 @@ export type ExploreView = {
  * ═══ IT IS THE REVEAL RADIUS, AND THAT IS NOT AN ACCIDENT ═══
  * `REVEAL_RADIUS` is how far a body uncovers the map as it walks, so a hostile
  * inside it is standing on ground this player has personally lit. Anything
- * further is something the client happens to hold a frame about — `projectActors`
- * is documented as sending everybody today — and refusing to explore because of
- * a husk three rooms away would make the key useless on a populated floor.
+ * further is something the client happens to hold a frame about, and refusing to
+ * explore because of a husk three rooms away would make the key useless on a
+ * populated floor.
+ *
+ * THAT SENTENCE USED TO READ *"`projectActors` is documented as sending
+ * everybody today"*, and it stopped being true when FOV landed: the client is
+ * now only handed monsters the party can see. This radius therefore does LESS
+ * work than it used to — most of what it filtered never arrives — but it is
+ * still the right predicate, because a monster your SCOUT can see is on your
+ * board and is not on ground you have personally lit.
  *
  * NOT IMPORTED FROM `REVEAL_RADIUS` DIRECTLY, because they answer different
  * questions and are equal only today: one is "what have I mapped", this is "what

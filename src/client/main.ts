@@ -2471,11 +2471,14 @@ function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null 
  *
  * ═══ IT IS NOT LINE OF SIGHT, AND THE COMMENT IS THE HONEST PART ═══
  * The client has no LOS — `hasLineOfSight` is the server's, and this file may
- * not import it. What it has is every actor in the realm (`projectActors` sends
- * them all today and says so), so this bounds by DISTANCE and lets
- * `exploreTarget` apply `EXPLORE_SIGHT`. The consequence is a husk behind a wall
- * ten tiles away still refuses an explore — which is the safe direction to be
- * wrong in, and it stops being wrong at all when per-player FOV lands.
+ * not import it. So this bounds by DISTANCE and lets `exploreTarget` apply
+ * `EXPLORE_SIGHT`.
+ *
+ * IT USED TO SAY `projectActors` *"sends them all today and says so"*. It no
+ * longer does: FOV filters the actor list to what the party can see, so the
+ * husk-behind-a-wall case this comment called the safe direction to be wrong in
+ * is now mostly gone — the server never sends that husk. What remains is a husk
+ * behind a wall that a TEAMMATE can see, which is on your board legitimately.
  */
 function nearestVisibleHostile(
   me: TileXY,

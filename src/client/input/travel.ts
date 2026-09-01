@@ -293,10 +293,13 @@ export function liveActorAt(actors: readonly ActorView[], tile: TileXY): ActorVi
  * ===========================================================================
  * THIS IS A PROXY. IT IS NOT REAL VISIBILITY, BECAUSE THERE IS NONE YET
  * ===========================================================================
- * `projectActors` (src/server/view/projector.ts:279) is labelled FOV SEAM and
- * today returns EVERY actor to EVERYONE: nothing on the wire ever becomes
- * visible, because nothing was ever hidden. So "newly visible" is approximated
- * by two things the client can honestly observe:
+ * THIS WAS WRITTEN WHEN NOTHING ON THE WIRE COULD BECOME VISIBLE, because
+ * nothing was ever hidden. FOV has since landed and a `joined` frame for a
+ * monster now IS the event this proxy approximates — so a better rule is
+ * available and this one is no longer the only thing the client can honestly
+ * observe. It is kept because it is CONSERVATIVE (it stops travel in cases real
+ * visibility also would) and replacing it is a behaviour change worth making on
+ * its own, not as a rider. The two observations it uses:
  *
  *   1. `inCombat` crossing false -> true. The server arms the engagement clock
  *      from `anyContact` (scheduler.ts:1533-1544) the moment a monster has both

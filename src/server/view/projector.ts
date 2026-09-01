@@ -10,39 +10,40 @@
  * this file as the sole producer of the future `Projected` brand for the same
  * reason.
  *
- * WHAT IS STILL UNFILTERED, AND IT IS NO LONGER TRUE THAT NOTHING IS HIDDEN.
+ * WHAT IS FILTERED NOW, AND WHAT IS STILL AN ACCEPTED LEAK.
  *
- * `projectLevel` returns the WHOLE 30x30 map and `projectActors` returns EVERY
- * actor, unfiltered. That was a deliberate M1 shortcut when M1's definition of
- * done was two people seeing each other move on a hand-authored map.
+ * FILTERED: `projectActors`. Every player-facing snapshot passes the party's
+ * eyes and a monster out of sight is not in it — `Actor.lua:520`'s two terms,
+ * range AND line. `fov.test.ts` drives it over a real socket.
  *
- * THIS PARAGRAPH USED TO END "there is no hidden information in the game yet —
- * no monsters, no traps, no loot". ALL THREE CLAUSES ARE NOW FALSE. There are
- * monsters (content/monsters.ts), there are orbs in the air
- * (`projectProjectiles`), and from v10 there are ITEMS ON THE FLOOR
- * (`projectGroundItems` below). Every one of the three is broadcast to the whole
- * room today, and that is an ACCEPTED LEAK rather than a gate: fog of war is
- * still level-wide — one `LevelView`, one actor list for everybody
- * (game-design.md § 12 makes per-player FOV an M6 refinement) — so a floor item
- * leaks nothing `projectActors` does not already leak. It is written down as a
- * leak rather than dressed up as a filter, because an unowned pile IS hidden
- * information the moment FOV lands: a coat lying in an unexplored room says
- * something died in it.
+ * STILL UNFILTERED, and each is written down as a LEAK rather than dressed up
+ * as a gate:
+ *   - `projectLevel` sends the WHOLE map. This is the correct long-term answer
+ *     for the TERRAIN of an explored floor; the client already keeps its own
+ *     explored mask.
+ *   - `projectProjectiles` — orbs in the air.
+ *   - `projectGroundItems` — items on the floor. An unowned pile IS hidden
+ *     information now that FOV has landed: a coat in an unexplored room says
+ *     something died in it.
+ *   - THE EVENT STREAM. `SweepMsg` still goes to the whole realm, so a client
+ *     is told the position of every monster that moved whether or not it can
+ *     see it. The BOARD is fogged and the WIRE is not, and that distinction is
+ *     the honest description of what shipped. CLAUDE.md non-negotiable 4 says
+ *     the same in the same words.
  *
- * Sending the whole level is also the correct long-term answer for the TERRAIN
- * of an already-explored floor; it is the ACTORS on it — and the orbs, and the
- * loot — that must be filtered, and that is why they are separate functions
- * below.
+ * ═══ THIS HEADER PREDICTED THE WORK AND GOT IT WRONG, WHICH IS WORTH KEEPING ═══
+ * It used to say FOV meant giving these functions a viewer parameter, and:
+ * *"Nothing outside this file changes."* That was false, and believing it is
+ * what made FOV look like a one-file job for five milestones.
  *
- * WHEN FOV LANDS (M3) both functions take the viewing `Actor` as a second
- * parameter and `projectActors` becomes
- *
- *   world.allActors().filter((a) => a.id === viewer.id || visible(viewer, a))
- *
- * with `visible` built on the shadowcaster and `bresenham` from coords.ts.
- * Nothing outside this file changes. The event log will need the same treatment
- * and it leaks visibility more often than the tile grid does — "you hear a door
- * open" is a position.
+ * `state` is a RESYNC frame — realm change, rename, level-up, respawn, and
+ * nothing else. The per-turn transport is the sweep stream, and the client DROPS
+ * a move for an actor it has never seen. So filtering here and stopping would
+ * have hidden a monster at the last resync and never shown it again however
+ * close it walked: a board silently wrong for minutes, and green under every
+ * unit test you could write for this file. FOV is a per-viewer TRANSITION
+ * machine, and it lives in the gateway (`Session.visible`, `reconcileSight`).
+ * This file only answers "who is visible".
  *
  * SYNCHRONOUS: src/server/view/** carries the engine's no-async lint block.
  */
@@ -133,6 +134,8 @@ import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
+import { canSee } from '../world/sight.ts';
+import type { TileXY } from '../../shared/coords.ts';
 
 /**
  * Nobody is speaking. A frozen shared instance rather than a fresh `new Set()`
@@ -344,24 +347,74 @@ export function projectLevel(world: World): LevelView {
 }
 
 /**
- * The actors a viewer may see.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ACTORS A VIEWER MAY SEE. THE FOV SEAM, NOW LOAD-BEARING.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * FOV SEAM: this is the one that matters. Everything hidden in a roguelike is
- * hidden here — invisible monsters, actors behind a wall, an ally's exact tile
- * when they are out of sight. Today: everyone.
+ * This docblock said *"Today: everyone"* from M1 until this commit, and
+ * CLAUDE.md non-negotiable 4 called it an ACCEPTED LEAK.
+ *
+ * ═══ EYES ARE THE PARTY'S, NOT THE VIEWER'S ═══
+ * `mod/class/Game.lua#playerFOV` computes FOV for the player AND every party
+ * member, unioned onto one `seens` map. Ours is a co-op game played in a voice
+ * channel over a shared Case Log, so the union is both the faithful answer and
+ * the only tolerable one — a party that cannot see what its own scout sees would
+ * spend the session reading tile coordinates to each other out loud.
+ *
+ * ═══ PLAYERS ARE NEVER HIDDEN FROM PLAYERS ═══
+ * Upstream's party is always on the map because it is always `game.party`. The
+ * filter here is about MONSTERS. Hiding a teammate would also break the
+ * `standingBy` tracker, the party panel and the turn banner, all of which are
+ * fed from the actor list and all of which are about people you are playing
+ * with rather than things you are hunting.
+ *
+ * ═══ `eyes` UNDEFINED MEANS "EVERYTHING", AND THAT IS NOT A BACK DOOR ═══
+ * The GM console and the ops listener genuinely want the whole board, and both
+ * are 127.0.0.1-only. Every call that serves a PLAYER passes eyes; the test
+ * `fov.test.ts` asserts that, by scraping the gateway, so a future unfiltered
+ * send is a red test rather than a silent leak.
  */
-export function projectActors(world: World): ActorView[] {
-  return world.allActors().map(toActorView);
+export function projectActors(world: World, eyes?: readonly TileXY[]): ActorView[] {
+  if (eyes === undefined) return world.allActors().map(toActorView);
+  const seen = visibleActorIds(world, eyes);
+  return world
+    .allActors()
+    .filter((actor) => seen.has(actor.id))
+    .map(toActorView);
+}
+
+/**
+ * Which actor ids are visible from any of `eyes`.
+ *
+ * Returned as a SET rather than a list of views because the gateway needs to
+ * DIFF it against what each client already holds — `joined` for what entered
+ * sight, `left` for what walked out of it. The snapshot path and the
+ * incremental path therefore share one definition of visible, which is the
+ * whole reason this is a separate function: two definitions would drift, and
+ * the symptom would be a monster that is on your board but not in your sight,
+ * or worse, the reverse.
+ */
+export function visibleActorIds(world: World, eyes: readonly TileXY[]): Set<string> {
+  const out = new Set<string>();
+  for (const actor of world.allActors()) {
+    // See the header: teammates are never fogged.
+    if (actor.kind === ActorKind.Player) {
+      out.add(actor.id);
+      continue;
+    }
+    if (eyes.some((eye) => canSee(world.level, eye, actor))) out.add(actor.id);
+  }
+  return out;
 }
 
 /**
  * The full snapshot sent in `welcome`, and the recovery path when the server is
  * unsure what a client knows.
  */
-export function projectWorld(world: World): WorldView {
+export function projectWorld(world: World, eyes?: readonly TileXY[]): WorldView {
   return {
     level: projectLevel(world),
-    actors: projectActors(world),
+    actors: projectActors(world, eyes),
   };
 }
 
@@ -1049,13 +1102,17 @@ function toClassOptionView(definition: ClassDef): ClassOptionView {
  * correct amount of work — and protocol.ts's `EffectsMsg` and `PartyMsg` are
  * `BroadcastMsg` members for exactly that reason.
  *
- * THE SEAM IS THE SAME ONE `projectActors` ALREADY CARRIES, and it is why these
- * live here rather than being built in the gateway: when per-player FOV lands,
- * `projectEffects` gains a `viewer: Actor` parameter and a
- * `visible(viewer, actorId)` test, and `EffectsMsg` moves from `BroadcastMsg` to
- * `ViewerMsg`. Two edits in this file plus a loop in the gateway. Nothing else
- * in the process learns anything new — which is the entire argument for a
- * projection layer that copies fields by hand.
+ * FOV HAS LANDED FOR THE ACTOR LIST AND NOT FOR THIS, so the direction of the
+ * argument has REVERSED and the note has to say so: `projectActors` now filters
+ * and `projectEffects` does not, which means this frame describes the timed effects on
+ * monsters the recipient cannot see. It is a live leak, not a parked one.
+ *
+ * The fix is unchanged and still small: `projectEffects` gains the eyes and a
+ * `visibleActorIds` test, and `EffectsMsg` moves from `BroadcastMsg` to
+ * `ViewerMsg` — which `Exclude`-derives a compile error at every site that was
+ * broadcasting it. What FOV actually cost in the gateway (a per-session ledger
+ * and a transition machine) it will NOT cost again here: effects are keyed by
+ * actor id, and the ledger that says which ids a client holds already exists.
  *
  * A BADGE IS NOT A LEAK; THE MECHANICS BEHIND IT WOULD BE. What goes on the wire
  * is the icon, the name and the turns remaining. The save that was rolled, the
@@ -1251,9 +1308,11 @@ export function projectEffects(
  * Upstream marks a projectile `display_on_seen = true`, `display_on_remember =
  * false`, `display_on_unknown = false` (Projectile.lua:29-31): an orb is drawn
  * on tiles you can SEE RIGHT NOW and is never remembered, because where a bolt
- * was two turns ago is not where it is. Ours is level-wide today — there is one
- * `LevelView` and one actor list for everybody — so shipping the whole sky
- * leaks nothing `projectActors` does not already leak.
+ * was two turns ago is not where it is. Ours ships the whole sky to everybody,
+ * and the sentence that used to excuse that — *"leaks nothing `projectActors`
+ * does not already leak"* — is now FALSE IN THE OTHER DIRECTION: the actor list
+ * is filtered and the sky is not, so an orb is currently the most direct
+ * position leak on the wire.
  *
  * THE DAY PER-PLAYER FOV LANDS, THE FILTER IS AN EDIT TO THIS BODY AND TO
  * NOTHING ELSE: this function takes the viewer and admits only orbs whose
@@ -1354,11 +1413,12 @@ export function projectProjectiles(world: World): ProjectilesMsg {
  * caveat that it moves to `ViewerMsg` the day per-player FOV lands). The caveat
  * applies here VERBATIM and it is sharper: an orb crossing an unexplored room
  * says something is shooting in it; a coat lying in one says something DIED in
- * it, and it stays there for the rest of the delve. Fog of war is level-wide
- * today (one `LevelView`, one actor list), so this leaks nothing
- * `projectActors` does not already leak — but the day FOV lands, this function
- * takes the viewer, admits only items on tiles `visible(viewer, cell)` allows,
- * and `GroundMsg` moves from `BroadcastMsg` to `ViewerMsg` in the same commit.
+ * it, and it stays there for the rest of the delve. This used to be excused by
+ * fog of war being level-wide — *"leaks nothing `projectActors` does not already
+ * leak"*. THAT EXCUSE IS SPENT: the actor list is filtered now and this is not,
+ * so a coat in an unexplored room is a live leak. The fix is unchanged — this
+ * function takes the eyes, admits only items on tiles those eyes allow, and
+ * `GroundMsg` moves from `BroadcastMsg` to `ViewerMsg` in the same commit.
  * `BroadcastMsg` is `Exclude`-derived, so that is one line in protocol.ts plus a
  * compile error at every site that was broadcasting it.
  *

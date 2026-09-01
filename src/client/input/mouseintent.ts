@@ -93,11 +93,11 @@ export type MouseSnapshot = {
  * ===========================================================================
  * THIS IS THE SINGLE PLACE AN M6 "HAS THIS TILE BEEN SEEN" CLAUSE LANDS
  * ===========================================================================
- * There is no fog of war on the wire yet — `projectLevel` sends the whole map
- * and `projectActors` returns every actor, both labelled FOV SEAM in
- * src/server/view/projector.ts — so "can I click into the dark" is currently a
- * vacuous question. It will not stay vacuous, and the cost of that landing must
- * be one clause in one predicate.
+ * HALF OF THIS ARRIVED. `projectActors` now filters to what the party can see,
+ * so a monster in the dark is genuinely absent from the client's actor map and
+ * cannot be clicked. `projectLevel` still sends the whole map, so "can I click
+ * into an unseen TILE" remains open — and that is the clause this predicate
+ * still exists to hold, in one place, at one cost.
  *
  * SO NOTHING ELSE IN THIS FEATURE MAY ASK THE QUESTION DIRECTLY. Not the click
  * handler, not the path preview, not the verb menu: they call this. A second

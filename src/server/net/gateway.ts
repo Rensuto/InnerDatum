@@ -215,6 +215,7 @@ import { UNASSIGNED_CLASS } from '../persist/saves.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   projectActors,
+  visibleActorIds,
   projectClassOptions,
   projectCooldowns,
   projectEffects,
@@ -491,6 +492,38 @@ type Session = {
    * non-negotiable 5's reason.
    */
   realmId: string | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EXACTLY WHICH ACTORS THIS CLIENT'S BOARD HOLDS. THE FOV LEDGER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Per-player FOV is not a filter, and finding that out is what made this field
+   * necessary. `state` is a RESYNC frame — it is sent on a realm change, a
+   * rename, a level-up and a respawn, and on nothing else. The per-turn
+   * transport is the sweep event stream, and `applyTurnEvent`'s `move` case
+   * DROPS an event for an actor it has never seen (`client/main.ts:4940` —
+   * *"Not fatal — the next `state` resyncs"*). So filtering only the snapshot
+   * would hide a monster at the last resync and never show it again, however
+   * close it walked. The board would be wrong for minutes at a time.
+   *
+   * What FOV needs instead is TRANSITIONS, and this set is what makes a
+   * transition computable: the difference between it and `visibleActorIds` is
+   * exactly the frames this client is owed.
+   *
+   * ═══ AND THE FRAMES ALREADY EXISTED ═══
+   * `joined` sets an actor on the client's map and `left` deletes one. Neither
+   * needed a single line of client change, and `LeftMsg`'s own docblock turns
+   * out to have been written for this day: it warns against inferring a death
+   * from absence because *"an actor missing from a snapshot is usually an actor
+   * who walked out of view"*. So no new `TurnEvent` variant, and — per the wire
+   * rule in `shared/version.ts` — no PROTOCOL_VERSION bump.
+   *
+   * INVARIANT: this set is what the client HOLDS, never what it SHOULD hold.
+   * The three snapshot senders derive it from the frame's own `actors` list
+   * rather than recomputing visibility, so the frame and the ledger cannot
+   * disagree; `reconcileSight` writes each id beside the send that carries it.
+   */
+  visible: Set<string>;
   /**
    * The overworld cell this body stepped off when it crossed into a site, and
    * where `leaveRealm` puts it back.
@@ -5237,6 +5270,80 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PARTY'S EYES, AND THE FRAMES EACH CLIENT IS OWED BECAUSE OF THEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Actor.lua:520` gates sight on TWO terms — `core.fov.distance <= self.sight`
+   * AND a clear line — and this codebase had only the second. `hasLineOfSight`
+   * has gated combat, talents and AI since M2; nothing anywhere bounded how FAR
+   * a body could see, so on a 30x30 overworld every client was shown every
+   * monster on the map, permanently.
+   *
+   * ═══ WHY THIS IS A DIFF AND NOT A FILTER ═══
+   * See `Session.visible`. `state` is a resync frame sent on four rare events;
+   * the per-turn transport is the sweep stream, and the client DROPS a move for
+   * an actor it does not know. Filtering the snapshot alone would therefore hide
+   * a monster until the next level-up. The transitions are the feature.
+   *
+   * Computed ONCE for the realm rather than once per session, because the eyes
+   * are the party's and the party is the realm — see `projectActors`.
+   */
+  const reconcileSight = (realmId: string, world: World): void => {
+    const eyes = world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const seen = visibleActorIds(world, eyes);
+    const byId = new Map(world.allActors().map((actor) => [actor.id, actor] as const));
+
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realmId) continue;
+
+      // ENTERED SIGHT. `joined` carries the whole `ActorView`, which is exactly
+      // what a client that has never held this actor needs — sprite, maxHp and
+      // position, none of which any delta carries.
+      for (const id of seen) {
+        if (session.visible.has(id)) continue;
+        const actor = byId.get(id);
+        if (actor === undefined) continue;
+        send(session.socket, { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(actor) });
+        session.visible.add(id);
+      }
+
+      // LEFT SIGHT. Copied before iterating — `session.visible` is written
+      // inside the loop, and deleting from a Set being iterated is a bug that
+      // would silently skip every other departure.
+      for (const id of [...session.visible]) {
+        if (seen.has(id)) continue;
+        send(session.socket, { v: PROTOCOL_VERSION, t: 'left', id });
+        session.visible.delete(id);
+      }
+    }
+  };
+
+  /**
+   * RESEND THE WHOLE BOARD, FOGGED, and reset each ledger to match it.
+   *
+   * The four `state` senders — realm change, rename, level-up, respawn — all
+   * resend the actor list because `sprite`, `maxHp`, `name` and a respawn's
+   * position travel only on `ActorView`. Each one used to `broadcast` an
+   * UNFILTERED list, so any of them would have handed the room every monster on
+   * the map and left `Session.visible` describing a board the client no longer
+   * had. Hence per-session, and hence the ledger assignment beside the send.
+   */
+  const resyncBoard = (realmId: string, world: World, exceptConnId?: string): void => {
+    const eyes = world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const actors = projectActors(world, eyes);
+    // THE LEDGER IS THE FRAME'S OWN ID LIST, not a second computation that could
+    // disagree with it. See `sendRealm`.
+    const held = new Set(actors.map((actor) => actor.id));
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realmId) continue;
+      if (session.connId === exceptConnId) continue;
+      send(session.socket, { v: PROTOCOL_VERSION, t: 'state', actors });
+      session.visible = new Set(held);
+    }
+  };
+
   const pumpRealm = (realm: PumpTarget): void => {
     const { world, engine } = realm;
 
@@ -5630,7 +5737,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           }
         }
       }
-      say({ v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) });
+      resyncBoard(realm.id, world);
       // ═══ AND THE SKY WITH IT — `state` CARRIES NO ORB ═══
       // The resync above is the "the client's board may be out of step" hammer,
       // and it swings over `ActorView` alone. An orb is not an actor, so a
@@ -5696,6 +5803,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A body hitting the floor jumps the debounce; everything else rides it.
     // See `isSaveWorthy`. Note that a client cannot farm the immediate path
     // either: it takes somebody actually going down, which the engine decides.
+    /**
+     * ═══ AND WHO CAN NOW SEE WHOM ═══
+     * Last, because it must read the world as the turn LEFT it: a monster that
+     * stepped out of the corridor this turn is judged on where it now stands,
+     * not where it started. Placed after every event broadcast so a client is
+     * told what happened before it is told what it can see.
+     */
+    reconcileSight(realm.id, world);
+
     if (isSaveWorthy(result)) {
       // `death` is the reason the store names for this path; a level gained
       // rides it rather than inventing a second reason string, because the
@@ -7127,7 +7243,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // case at length: answer rather than throw, because an exception here costs
     // every player their session and a missing HUD label costs one their label.
     if (realm === undefined) return;
-    const view = projectWorld(realm.world);
+    // ═══ FOGGED, AND THE LEDGER TAKEN FROM THE FRAME ITSELF ═══
+    // `Session.visible` must equal the ids this client holds. Deriving it from
+    // `view.actors` rather than recomputing visibility makes that structural: it
+    // is not possible for the frame and the ledger to disagree, because there is
+    // only one list.
+    const eyes = realm.world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const view = projectWorld(realm.world, eyes);
+    session.visible = new Set(view.actors.map((actor) => actor.id));
     /**
      * THE LANDMARKS, and they are the reason the first overworld had none.
      * `Realm.sites` is `"x,y" -> site id`; the client needs a POSITION, an art
@@ -8123,7 +8246,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
     engine.setConnected(actor.id, true);
 
-    const view = projectWorld(world);
+    // Fogged, and the ledger taken from the frame — see `sendRealm`.
+    const welcomeEyes = world.allActors().filter((actor) => actor.kind === ActorKind.Player);
+    const view = projectWorld(world, welcomeEyes);
+    session.visible = new Set(view.actors.map((actor) => actor.id));
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'welcome',
@@ -8294,11 +8420,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // `name` travels only on `ActorView`. No delta can express it, so the board
       // is resent — the same deliberately dumb answer `needsFullResync` gives,
       // for the same reason, and at the same cost of a few KB once.
-      broadcast(
-        { v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) },
-        session.connId,
-        audienceFor(realmFor(session).id),
-      );
+      resyncBoard(realmFor(session).id, world, session.connId);
       // ═══ AND THE SKY WITH IT — THE CLIENT CLEARS ITS ORBS ON `state` ═══
       // src/client/main.ts's `case 'state'` runs `clearProjectiles()`, so this
       // broadcast wipes every orb from every OTHER player's screen. The memo
@@ -12055,11 +12177,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // No delta carries either one. This is the same deliberately dumb answer
     // `needsFullResync` gives and the same one the rename path in `hello` gives
     // at :2669-2677 — resend the actor list and let it cost a few KB once.
-    broadcast(
-      { v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) },
-      undefined,
-      audienceFor(realm.id),
-    );
+    resyncBoard(realm.id, world);
     // ═══ AND THE SKY WITH IT — THE CLIENT CLEARS ITS ORBS ON `state` ═══
     // src/client/main.ts's `case 'state'` runs `clearProjectiles()`, so the
     // broadcast above wipes every orb from every screen that receives it, and
@@ -13742,11 +13860,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // the `_downed_s` variant), the POSITION (a spawn tile — an erased body does
     // not block, so it may have been lying under somebody) and the hp. The same
     // deliberately dumb answer `needsFullResync` gives, for the same reason.
-    broadcast(
-      { v: PROTOCOL_VERSION, t: 'state', actors: projectActors(world) },
-      undefined,
-      audienceFor(realm.id),
-    );
+    resyncBoard(realm.id, world);
     // ═══ AND THE SKY WITH IT, FOR THE THIRD AND LAST TIME IN THIS FILE ═══
     // Every `state` broadcast clears the client's orb list (src/client/main.ts's
     // `case 'state'`), and the memo suppresses the restate because the list
@@ -14502,6 +14616,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // and `realmFor`. A socket with no body cannot be anywhere, and a build
       // with no `opts.realms` never leaves this value.
       realmId: null,
+      // Empty, not "everything": a socket that has not said `hello` holds no
+      // board at all, and the first pump after it does will send the frames.
+      visible: new Set<string>(),
       enteredFrom: null,
       enteredFromRealm: null,
       exitArmed: false,
