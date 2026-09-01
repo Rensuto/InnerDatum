@@ -129,7 +129,14 @@ import { Faction, areEnemies, cooldownOf, setCooldown } from './actor.ts';
 import type { Sided } from './actor.ts';
 import { attackTarget, combatDistance } from './combat.ts';
 import { DamageType, applyDamage } from './damage.ts';
-import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, combatDamage, healingFactor } from './derived.ts';
+import {
+  HEAL_FACTOR_MAX,
+  HEAL_FACTOR_MIN,
+  combatCrit,
+  combatCritPower,
+  combatDamage,
+  healingFactor,
+} from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -3164,6 +3171,36 @@ export function talentProject(
     mult: mult * markMultiplier(ctx.engine, victim.id),
     increase: combatOf(self).increase,
     penetration: combatOf(self).penetration,
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A SPELL CRITS. Ten talents came through here and none of them could.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `Flame` is `projector(..., self:spellCrit(t.getDamage(self, t)))`
+     * (spells/fire.lua:46) — the damage goes THROUGH a crit roll before it is
+     * projected, and every direct-damage talent in ToME is written that way.
+     *
+     * This passed no `critChance`, and `applyDamage` takes no crit roll without
+     * one — deliberately, so a bleed tick does not crit. So the Alchemist's
+     * whole kit and the Redactor's whole kit could not crit, while the sixteen
+     * uses of `talentAttack` beside them could, out of the same `physCrit` that
+     * gear and two egos grant. A player buying crit chance bought nothing for
+     * half the classes in the game.
+     *
+     * ═══ `combatCrit`, BECAUSE THIS GAME HAS ONE CRIT STAT ═══
+     * Upstream keeps three (`combatCrit`/`combatSpellCrit`/`combatMindCrit`),
+     * differing only in which base they read and a flat `+1` where the physical
+     * one reads `weapon.physcrit or 1`. There is no spell or mind school here —
+     * `combatSpellpower` and `combatMindpower` are ported and have zero call
+     * sites — so a second crit stat would be a number with nothing to attach to.
+     * For a weaponless caster the two formulas agree exactly.
+     *
+     * `combatCritPower` was already shared: its own docblock says upstream's
+     * :1950-1951, :1979-1980 and :2027-2028 are identical, *"which is why one
+     * function serves all three"*.
+     */
+    critChance: combatCrit(combatOf(self)),
+    critPower: combatCritPower(combatOf(self)),
   });
   // NO `noteKill` HERE either, for the reason on `talentAttack` above.
   return {

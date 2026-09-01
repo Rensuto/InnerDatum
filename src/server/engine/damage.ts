@@ -823,7 +823,7 @@ export function applyDamage(
    *
    * ═══ IT WAS A PER-CALLER RESPONSIBILITY AND THEY HAD ALL DRIFTED ═══
    * The weapon swing passed all three, `BLEEDING` passed Dazed and Stunned but
-   * not `numbed`, `talentDamage` passed none, and a projectile passed a bare
+   * not `numbed`, `talentProject` passed none, and a projectile passed a bare
    * `{ id }` with no sheet at all. So a stunned caster's talent dealt FULL
    * damage while a stunned swing dealt 40% — from the same body, in the same
    * turn. Off-balance, shipped earlier today, reached only one of the four.

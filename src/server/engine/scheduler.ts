@@ -2270,7 +2270,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        * AND THE ROOM HEARD THAT TOO. NPC.lua:342-367 — see `ai/alarm.ts`.
        * ═══════════════════════════════════════════════════════════════════════
        *
-       * HERE RATHER THAN INSIDE `talentDamage`, and the layering is the reason.
+       * HERE RATHER THAN INSIDE `talentProject`, and the layering is the reason.
        * `TalentWorld` (engine/talents.ts) deliberately narrows the world to five
        * members and hands out `TalentActor`, which has no `ai` field at all — a
        * talent must not be able to reach into a monster's targeting state, and
