@@ -229,11 +229,13 @@
 import { AiProfile } from '../engine/actor.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
+  LIFE_PER_CON,
   RANK_VALUE,
   lifeGainedTo,
   spreadStatPoints,
   statPointsGainedTo,
 } from '../../shared/leveling.ts';
+import { STAT_BASE } from '../engine/derived.ts';
 import { ActorRank } from '../../shared/protocol.ts';
 import { ITEMS, itemById } from './items.ts';
 import { resolveLevelup, resolveMBonus, resolveRngAvg } from './resolvers.ts';
@@ -580,8 +582,34 @@ export type MonsterTemplate = {
  * you are hit.
  */
 export const INDEX_HUSK: MonsterTemplate = Object.freeze({
-  // Grows into what it already leads with. See `autoStats`.
-  autoStats: ['con', 'str'],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ANT'S OWN SCHEME. `ant.lua:32` -> `autolevel_schemes.lua:25-27`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This read `['con', 'str']` and that was a divergence from the creature it
+   * is adopted from. `BASE_NPC_ANT` declares `autolevel = "warrior"`, and the
+   * warrior scheme is:
+   *
+   *     self:learnStats{ self.STAT_STR, self.STAT_STR, self.STAT_DEX }
+   *
+   * No Constitution at all. The husk copied the ant's authored `con = 13`
+   * verbatim and then grew it, which upstream's ant never does.
+   *
+   * ═══ IT MATTERED THE DAY CONSTITUTION STARTED PAYING MONSTERS ═══
+   * It was invisible while a monster's Constitution bought nothing — the husk
+   * was quietly hoarding a stat that did nothing, and the two lists produced the
+   * same creature. `monsterInit` now pays four hit points a point, exactly as a
+   * player is paid, and on the old list that made a level-20 husk 47% tougher on
+   * its own. Correcting the scheme is what keeps this a PARITY change rather
+   * than a retune of the early game: the commonest creature in the game keeps
+   * the hit points it has always had.
+   *
+   * WHAT IT GAINS INSTEAD is what the ant gains — two thirds Strength rather
+   * than one half, and Dexterity where the Constitution was. It hits slightly
+   * harder and slightly more often as it levels, which is the ant's own curve.
+   */
+  autoStats: ['str', 'str', 'dex'],
   id: 'index_husk',
   displayName: 'Index Husk',
   description:
@@ -2665,14 +2693,13 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
    * up to half a point a level — about twenty-five hit points across a career,
    * all of it invisible.
    */
-  const maxHp = Math.max(
-    1,
-    Math.floor(template.maxHp + lifeGainedTo(template.lifeRating ?? 10, grown, rank)),
-  );
   /**
-   * AND THE STATS IT GREW INTO. A template with no `autoStats` keeps the sheet
-   * it was authored with, which is what makes this safe to land before every
-   * template has been given a list.
+   * THE STATS IT GREW INTO, AND THEY ARE RESOLVED FIRST. A template with no
+   * `autoStats` keeps the sheet it was authored with, which is what makes this
+   * safe to land before every template has been given a list.
+   *
+   * ═══ THIS USED TO COME AFTER `maxHp`, AND THE ORDER WAS THE BUG ═══
+   * A pool sized before the stats exist cannot include them. See below.
    */
   const combat =
     template.autoStats === undefined || template.autoStats.length === 0
@@ -2685,6 +2712,52 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
             statPointsGainedTo(grown, rank),
           ),
         };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BASE, EVERY LEVEL SINCE, AND THE CONSTITUTION IT GREW INTO.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Floored once at the end, never per level: upstream carries `max_life` as a
+   * float and rounding each step would drift by up to half a point a level —
+   * about twenty-five hit points across a career, all of it invisible.
+   *
+   * ═══ THE CONSTITUTION TERM WAS MISSING, AND PLAYERS HAD IT ═══
+   * `engine/pools.ts#maxLifeOf` pays a player four hit points per point of
+   * Constitution over their class's own. This function paid a monster nothing,
+   * while `spreadStatPoints` handed three of the authored templates
+   * (`autoStats: ['con', 'str']` and `['str', 'con']`) a growing pile of it. A
+   * level-20 creature built around toughness was therefore no tougher for it.
+   *
+   * UPSTREAM PAYS BOTH, through one function. `Actor:levelup` adds the life
+   * rating (Actor.lua:3818-3822) and THEN calls `Autolevel:autoLevel`
+   * (:3835-3837), whose schemes call `learnStats` -> `incIncStat` ->
+   * `onStatChange` -> `max_life = max_life + 4 * v`. There is no player branch
+   * anywhere in that path; a monster gains life from Constitution for exactly
+   * the reason a player does.
+   *
+   * ═══ WHICH CREATURES GAIN IT IS AN AUTHORING DECISION, NOT THIS FUNCTION'S ═══
+   * Upstream's `warrior` scheme is `{STR, STR, DEX}` and grants no Constitution
+   * at all, so an ant gets none of this — the schemes differ per creature
+   * (autolevel_schemes.lua:25-39) and `autoStats` is our equivalent of that
+   * choice. This line pays for whatever a template asked for; a creature that
+   * should not grow tough should not list `con`.
+   *
+   * OVER THE AUTHORED SHEET, exactly as the player's is over the class's. A
+   * template's `maxHp` is its hit points AT the Constitution it was written
+   * with, so paying for the whole stat would hand every creature in the game a
+   * free pile of life on the day this landed.
+   */
+  const authoredCon = template.combat.stats?.con ?? STAT_BASE;
+  const grownCon = combat.stats?.con ?? authoredCon;
+  const maxHp = Math.max(
+    1,
+    Math.floor(
+      template.maxHp +
+        lifeGainedTo(template.lifeRating ?? 10, grown, rank) +
+        (grownCon - authoredCon) * LIFE_PER_CON,
+    ),
+  );
   // WHAT IT KNOWS, CARRIED ONTO THE BODY. Copied rather than aliased: the
   // template is frozen and shared by every creature built from it, so a body
   // that ever learned something would teach the whole species.

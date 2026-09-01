@@ -6,6 +6,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { WATCHMAN } from '../../src/server/content/classes.ts';
+import {
+  INDEX_GLUT,
+  INDEX_HUSK,
+  MONSTER_TEMPLATES,
+  monsterInit,
+} from '../../src/server/content/monsters.ts';
+import { maxLifeOf } from '../../src/server/engine/pools.ts';
+import { LIFE_PER_CON, PLAYER_RANK, RANK_VALUE, lifeGainedTo } from '../../src/shared/leveling.ts';
+import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
 import { applyDamage } from '../../src/server/engine/damage.ts';
 import { DamageType } from '../../src/shared/damagetype.ts';
 import { healingFactor, ignoreDirectCrits } from '../../src/server/engine/derived.ts';
@@ -198,5 +207,114 @@ describe('Dexterity shrugs off critical hits', () => {
     const dex = WATCHMAN.combat.stats?.dex ?? 0;
     expect(dex).toBeGreaterThan(0);
     expect(ignoreDirectCrits(WATCHMAN.combat)).toBeCloseTo(0.3 * dex, 10);
+  });
+});
+
+describe('a monster is paid for Constitution the same way a player is', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THERE IS NO PLAYER BRANCH IN UPSTREAM'S PATH, AND THERE SHOULD BE NONE HERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Actor:levelup` adds the life rating (Actor.lua:3818-3822) and then calls
+   * `Autolevel:autoLevel` (:3835-3837). The schemes call `learnStats` ->
+   * `incIncStat` -> `onStatChange` -> `max_life = max_life + 4 * v`. A monster
+   * gains life from Constitution for exactly the reason a player does.
+   *
+   * Ours paid players and not monsters, while `spreadStatPoints` handed three
+   * templates a growing pile of Constitution. A creature authored around
+   * toughness got none of it.
+   */
+  const levelled = (t: MonsterTemplate, level: number) => monsterInit(t, { x: 1, y: 1 }, level);
+
+  it('pays four hit points a point, over the sheet it was authored with', () => {
+    const t = INDEX_GLUT;
+    const authored = t.combat.stats?.con ?? 0;
+    expect(authored, 'the fixture stopped growing Constitution').toBeGreaterThan(0);
+    expect(t.autoStats).toContain('con');
+
+    const body = levelled(t, 20);
+    const grownCon = body.combat?.stats?.con ?? 0;
+    expect(grownCon).toBeGreaterThan(authored);
+
+    // The life-rating curve alone, without the Constitution term — which is
+    // exactly what this used to return.
+    const withoutCon = Math.floor(
+      t.maxHp + lifeGainedTo(t.lifeRating ?? 10, 20, RANK_VALUE[t.rank]),
+    );
+    expect(body.maxHp).toBe(withoutCon + (grownCon - authored) * LIFE_PER_CON);
+  });
+
+  it('pays a monster and a player at the same rate', () => {
+    /**
+     * THE ASYMMETRY THIS REMOVES, stated as an assertion. Two bodies, one
+     * player and one monster, each five points of Constitution above their own
+     * authored sheet — the same twenty hit points.
+     */
+    const con = 5;
+    const player = maxLifeOf(
+      { level: 1, combat: { stats: { con: (WATCHMAN.combat.stats?.con ?? 0) + con } } },
+      WATCHMAN,
+      PLAYER_RANK,
+    );
+    const playerBase = maxLifeOf({ level: 1, combat: WATCHMAN.combat }, WATCHMAN, PLAYER_RANK);
+    expect(player - playerBase).toBe(con * LIFE_PER_CON);
+  });
+
+  it('changes nothing at all at level one', () => {
+    /**
+     * THE SAFETY PROPERTY, over every shipped template rather than one. At level
+     * 1 no points have been spread, so the grown Constitution equals the
+     * authored Constitution and the term is zero — every creature on the first
+     * floor is the creature it has always been.
+     */
+    for (const t of MONSTER_TEMPLATES) {
+      expect(levelled(t, 1).maxHp, t.displayName).toBe(t.maxHp);
+    }
+  });
+
+  it('leaves a creature that grows no Constitution on the pure life curve', () => {
+    // The other half: a template whose scheme has no `con` must be untouched by
+    // this at every level, or the term is being applied to something it did not
+    // earn.
+    const t = MONSTER_TEMPLATES.find(
+      (m) => m.autoStats !== undefined && !m.autoStats.includes('con'),
+    );
+    expect(t, 'no fixture without con in its scheme').toBeDefined();
+    if (t === undefined) return;
+    for (const level of [5, 20]) {
+      const expected = Math.floor(
+        t.maxHp + lifeGainedTo(t.lifeRating ?? 10, level, RANK_VALUE[t.rank]),
+      );
+      expect(levelled(t, level).maxHp, `${t.displayName} at ${String(level)}`).toBe(expected);
+    }
+  });
+
+  it('grows the Index Husk on the ant’s own scheme, which has no Constitution', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A CONTENT PIN, AND IT IS WHAT KEEPS THIS A PARITY CHANGE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The husk is adopted from `BASE_NPC_ANT`, which declares
+     * `autolevel = "warrior"` (ant.lua:32), and the warrior scheme is
+     * `{STR, STR, DEX}` (autolevel_schemes.lua:25-27). It carried `['con','str']`
+     * — a divergence that was invisible while Constitution bought a monster
+     * nothing, and that would have made the commonest creature in the game 47%
+     * tougher on the day it started to.
+     *
+     * PINNED HERE so the next person to touch the list has to decide rather than
+     * drift: the husk's hit points at every level are the ant's, and the stat it
+     * hoards is the stat the ant hoards.
+     */
+    expect(INDEX_HUSK.autoStats).toEqual(['str', 'str', 'dex']);
+    const twenty = levelled(INDEX_HUSK, 20);
+    expect(twenty.combat?.stats?.con).toBe(INDEX_HUSK.combat.stats?.con);
+    expect(twenty.maxHp).toBe(
+      Math.floor(
+        INDEX_HUSK.maxHp +
+          lifeGainedTo(INDEX_HUSK.lifeRating ?? 10, 20, RANK_VALUE[INDEX_HUSK.rank]),
+      ),
+    );
   });
 });
