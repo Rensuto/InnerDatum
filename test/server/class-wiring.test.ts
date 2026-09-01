@@ -12,6 +12,7 @@ import {
   loadoutViewFor,
   sheetForClass,
   toResourceView,
+  PLAYER_RESIST_CAP,
 } from '../../src/server/content/classes.ts';
 import { downedSpriteFor } from '../../src/server/engine/downed.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
@@ -321,11 +322,26 @@ describe('a first-ever join', () => {
     expect(first.maxHp).toBe(WATCHMAN.maxHp);
     expect(first.hp).toBe(WATCHMAN.maxHp);
     expect(first.hpRegen).toBe(WATCHMAN.hpRegen);
-    expect(first.combat).toBe(WATCHMAN.combat);
+    /**
+     * `toEqual` ON THE SHEET'S OWN FIELDS, NOT `toBe` ON THE OBJECT.
+     *
+     * The body's sheet is the class's PLUS the birth descriptor's resist cap
+     * (`playerCombat`, descriptors.lua:63) — one field every player gets
+     * whatever they picked, exactly as upstream applies it. So it is no longer
+     * the same OBJECT, and asserting identity would be asserting that no
+     * player-wide rule may ever exist.
+     *
+     * The claim this test is making — the body is clothed from that ClassDef
+     * and not from a rotation counter or a stale file — is unchanged.
+     */
+    expect(first.combat?.stats).toEqual(WATCHMAN.combat.stats);
+    expect(first.combat?.mods).toEqual(WATCHMAN.combat.mods);
+    expect(first.combat?.profile?.resistsCap?.all).toBe(PLAYER_RESIST_CAP);
     // …and the Alchemist really is the squishiest body rather than a third
     // Watchman with different art.
     expect(third.maxHp).toBe(ALCHEMIST.maxHp);
-    expect(third.combat).toBe(ALCHEMIST.combat);
+    expect(third.combat?.stats).toEqual(ALCHEMIST.combat.stats);
+    expect(third.combat?.mods).toEqual(ALCHEMIST.combat.mods);
   });
 
   it('rotates past six players without ever reaching a class that does not exist', async () => {

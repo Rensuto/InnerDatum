@@ -1070,6 +1070,54 @@ export function spendByPurse(
   };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PLAYER RESISTS LESS THAN A MONSTER MAY — descriptors.lua:63.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * resists_cap = {all=70},
+ * ```
+ *
+ * `Actor.lua:211` gives every body an engine default of `{ all = 100 }`, and
+ * the PLAYER birth descriptor overrides it to 70. `DEFAULT_RESIST_CAP`'s own
+ * docblock in `engine/damage.ts` has recorded that distinction since it was
+ * written — *"it matters because a monster authored with 100 fire resist is
+ * genuinely immune and a player with the same number is not"* — and nothing
+ * applied it, so players capped at 100 like everything else.
+ *
+ * ═══ IT ONLY STARTED MATTERING RECENTLY ═══
+ * Until gear could move a resistance at all there was nothing to cap. Four
+ * resistance egos and a `Wielder.resists` channel shipped this session; typed
+ * resists ADD across worn items, so a player in a matched set can now push one
+ * element past 70 and the cap is a live rule rather than decoration.
+ *
+ * ═══ HERE, BECAUSE IT IS A PLAYER RULE AND NOT A CLASS ONE ═══
+ * Upstream puts it on the birth descriptor, which every player gets whatever
+ * they picked. Authoring it on four `ClassDef`s would be four copies of one
+ * rule and a fifth class that forgets it. `overlayFor` in the gateway is the
+ * single door a class sheet walks through to become a player's.
+ *
+ * ═══ GEAR CANNOT RAISE IT ═══
+ * `composeWielders` carries `resistsCap` across untouched and says why: *"a cap
+ * is what stops the resist formula inverting above 100% and letting gear raise
+ * its own ceiling would be an item that grants immunity in two affixes rather
+ * than one."*
+ */
+export const PLAYER_RESIST_CAP = 70;
+
+export function playerCombat(base: CombatSheet): CombatSheet {
+  return {
+    ...base,
+    profile: {
+      ...base.profile,
+      // MERGED, not replaced: a class authoring its own typed cap keeps it, and
+      // `combatGetResist` sums `all` with the typed row (Combat.lua:2229).
+      resistsCap: { ...base.profile?.resistsCap, all: PLAYER_RESIST_CAP },
+    },
+  };
+}
+
 export function sheetForBody(definition: ClassDef, body?: PurchasedTrees): TalentSheet {
   return sheetForClass(definition, body?.unlockedTrees ?? [], body?.deepenedTrees ?? []);
 }

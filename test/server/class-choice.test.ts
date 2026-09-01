@@ -12,6 +12,7 @@ import {
   createContentTalentEngine,
   createTalentBook,
   sheetForClass,
+  PLAYER_RESIST_CAP,
 } from '../../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -801,7 +802,21 @@ describe('choose_class, accepted', () => {
     expect(body.classId).toBe(ALCHEMIST.id);
     expect(body.sprite).toBe(ALCHEMIST.sprite);
     expect(body.maxHp).toBe(ALCHEMIST.maxHp);
-    expect(body.combat).toBe(ALCHEMIST.combat);
+    /**
+     * `toEqual` ON THE SHEET'S OWN FIELDS, NOT `toBe` ON THE OBJECT.
+     *
+     * The body's sheet is the class's PLUS the birth descriptor's resist cap
+     * (`playerCombat`, descriptors.lua:63) — one field every player gets
+     * whatever they picked, exactly as upstream applies it. So it is no longer
+     * the same OBJECT, and asserting identity would be asserting that no
+     * player-wide rule may ever exist.
+     *
+     * The claim this test is making — the body is clothed from that ClassDef
+     * and not from a rotation counter or a stale file — is unchanged.
+     */
+    expect(body.combat?.stats).toEqual(ALCHEMIST.combat.stats);
+    expect(body.combat?.mods).toEqual(ALCHEMIST.combat.mods);
+    expect(body.combat?.profile?.resistsCap?.all).toBe(PLAYER_RESIST_CAP);
     expect(body.hpRegen).toBe(ALCHEMIST.hpRegen);
     // FULL, at the NEW ceiling: the choice happens at character creation, so the
     // body is undamaged by construction and there is nothing to carry across.

@@ -104,7 +104,7 @@ import { PROTOCOL_VERSION } from '../../shared/version.ts';
  * every other engine capability, because `engine/talents.ts` is on the far side
  * of a boundary this file may not reach across.
  */
-import { classById, classForJoin } from '../content/classes.ts';
+import { classById, classForJoin, playerCombat } from '../content/classes.ts';
 /**
  * THE SECOND CONTENT IMPORT, AND IT IS DATA ONLY — THE SAME TERMS AS THE FIRST.
  *
@@ -7318,7 +7318,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sprite: definition.sprite,
     maxHp: definition.maxHp,
     hpRegen: definition.hpRegen,
-    combat: definition.combat,
+    // THE BIRTH DESCRIPTOR'S RESIST CAP (descriptors.lua:63). One door, because
+    // it is a PLAYER rule rather than a class one — see `playerCombat`.
+    combat: playerCombat(definition.combat),
     classId: definition.id,
   });
 
