@@ -61,6 +61,7 @@ import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
 import { bound } from '../../shared/scale.ts';
+import { LIFE_PER_CON } from '../../shared/leveling.ts';
 import { isMoneyId, moneyAmountOf, moneyName } from '../content/money.ts';
 import { buyPrice, sellPrice } from '../content/shops.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -68,6 +69,10 @@ import {
   HEAL_FACTOR_MAX,
   HEAL_FACTOR_MIN,
   healingFactor,
+  ignoreDirectCrits,
+  combatMindpower,
+  combatPhysicalpower,
+  combatSpellpower,
   combatAPR,
   combatArmor,
   combatArmorHardiness,
@@ -1438,6 +1443,97 @@ function toItemView(item: Item, drinker?: Combatant): Omit<ItemView, 'compare'> 
     desc: item.desc,
     ...(item.use === undefined ? {} : { use: useText(item.use, drinker) }),
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT ONE MORE POINT IN A STAT WOULD ACTUALLY DO — measured, not tabulated.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `LevelupDialog.lua:850-909` (`getStatDesc`) puts this under the pointer
+ * BEFORE the press, and upstream can afford to hardcode its coefficients
+ * because its dialog can be cancelled. Ours cannot: `unspend_stat` is a
+ * documented deliberate omission (protocol.ts) and the take-back window covers
+ * talent points only. A stat point here is permanent, and the column is six
+ * three-letter codes and a `+`.
+ *
+ * ═══ MEASURED BY MOVING THE STAT, NOT BY LISTING THE COEFFICIENTS ═══
+ * The obvious port is upstream's list — "Accuracy +1", "Defence +0.35". It
+ * would be WRONG here for the reason the compare panel was wrong this morning:
+ * every one of those getters ends in `rescaleCombatStats`, which is CONCAVE, so
+ * the raw coefficient is not what the sheet moves by and the gap widens the more
+ * you have invested. A player at Dexterity 45 told "+1 Accuracy" would watch
+ * their sheet move by less and conclude the game was lying to them.
+ *
+ * So this composes the body's own sheet with one more point through
+ * `composeWielders` — the same fold gear goes through — and reports the
+ * DIFFERENCE the real getters produce. It cannot drift from the game, because
+ * it IS the game: retune any coefficient and this follows on the next frame.
+ *
+ * ═══ MEASURED OVER TEN POINTS AND DIVIDED, NOT OVER ONE ═══
+ * The first version bumped the stat by 1 and reported the difference. It was
+ * honest and it was USELESS, because `rescaleCombatStats` FLOORS
+ * (shared/scale.ts) — so a Watchman at Strength 24 gaining one point moves his
+ * Physical power by exactly nothing, and the panel would have said Strength
+ * does nothing for him. It is the same fact `content/items.ts` states as a
+ * design rule: *"A +1 or +2 primary can rescale to the same integer it started
+ * on and move nothing at all"*, which is why no item in the game grants fewer
+ * than three.
+ *
+ * A ten-point sample straddles those steps and divides back out to a RATE. It
+ * is still measured rather than tabulated, so it still cannot drift from the
+ * game — and it still bends correctly on the concave part of the curve, which
+ * is the whole reason not to print a fixed coefficient.
+ *
+ * ═══ ONE DECIMAL, AND ZEROES ARE DROPPED ═══
+ * Upstream prints `%0.2f` for the same reason: a save moves 0.35 a point, so
+ * whole numbers would show "+0" for three of the six stats and teach a player
+ * that Constitution does nothing for their saves. A row that genuinely does not
+ * move is omitted rather than shown as zero.
+ */
+const STAT_GAIN_ROWS: readonly (readonly [string, (c: Combatant) => number])[] = [
+  ['Accuracy', combatAttack],
+  ['Damage', combatDamage],
+  ['Crit. chance', combatCrit],
+  ['Phys. power', (c) => combatPhysicalpower(c)],
+  ['Spellpower', (c) => combatSpellpower(c)],
+  ['Mindpower', (c) => combatMindpower(c)],
+  ['Defence', combatDefense],
+  ['Physical save', combatPhysicalResist],
+  ['Spell save', combatSpellResist],
+  ['Mental save', combatMentalResist],
+  ['Healing mod.', (c) => healingFactor(c) * 100],
+  ['Crit. shrug off', ignoreDirectCrits],
+];
+
+/** `+1.4` / `-0.4`, to one decimal, which is upstream's own precision. */
+function signedTenth(n: number): string {
+  const rounded = Math.round(n * 10) / 10;
+  return `${rounded >= 0 ? '+' : ''}${rounded.toFixed(1)}`;
+}
+
+/** How many points the rate is measured across. See the note on flooring. */
+const GAIN_SAMPLE = 10;
+
+export function statGainLines(sheet: Combatant, which: keyof PrimaryStats): readonly string[] {
+  const after = composeWielders(sheet, [{ stats: { [which]: GAIN_SAMPLE } }]);
+  const lines: string[] = [];
+
+  /**
+   * MAX LIFE FIRST, and it is the one row not measured by a getter — it is not
+   * on the sheet at all. Four a point, flat, and `pools.ts` pays it over the
+   * class's own Constitution so a point is always worth exactly this.
+   */
+  if (which === 'con') lines.push(`Max life ${signedTenth(LIFE_PER_CON)}`);
+
+  for (const [label, read] of STAT_GAIN_ROWS) {
+    const delta = (read(after) - read(sheet)) / GAIN_SAMPLE;
+    if (Math.abs(delta) < 0.05) continue;
+    lines.push(
+      `${label} ${signedTenth(delta)}${label === 'Healing mod.' || label === 'Crit. shrug off' ? '%' : ''}`,
+    );
+  }
+  return lines;
 }
 
 /**

@@ -2109,7 +2109,59 @@ export function talentTipAt(
   py: number,
   /** The same offset the painter used — see `talentPanelGeometry`. */
   scroll: number,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT EACH ATTRIBUTE IS BUYING, from `ProgressMsg.statGains`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * OPTIONAL, so a server that does not send them — or a fixture — produces the
+   * card behaviour this panel has always had, which is no card over a stat row
+   * at all.
+   */
+  statGains?: Readonly<Record<string, readonly string[]>>,
 ): HoverCard | null {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ATTRIBUTE COLUMN ANSWERS FIRST, AND ONLY TO A HOVER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `talentPanelHitAt` states the press rule for this column and it is
+   * unchanged: *"ONLY THE `+` ANSWERS. The rest of a row is a label and a
+   * number, and a hit on it would arm a spend the player never aimed at."*
+   *
+   * A HOVER IS NOT A PRESS, which is the whole reason this can be a second
+   * reader over the same geometry rather than a new `TalentHit` variant — the
+   * same split the file already makes for `Header`, and for the same stated
+   * reason. Pointing at a row is safe; pressing it is not.
+   *
+   * ═══ WHY THE ROW AND NOT JUST THE `+` ═══
+   * The card is the thing that makes the `+` a decision rather than a guess, so
+   * it has to be readable BEFORE the pointer is over the button. A player
+   * hovering the word "Constitution" is asking exactly the question this
+   * answers.
+   */
+  if (statGains !== undefined) {
+    const statBox = talentPanelGeometry(rect, rows, scroll).stats;
+    if (statBox !== null) {
+      const rowRects = statRowRects(statBox);
+      for (let i = 0; i < rowRects.length; i += 1) {
+        const row = rowRects[i];
+        const entry = STAT_ROWS[i];
+        if (row === undefined || entry === undefined) continue;
+        if (px < row.x || px >= row.x + row.w || py < row.y || py >= row.y + row.h) continue;
+        const lines = statGains[entry.key] ?? [];
+        return {
+          title: entry.name,
+          meta: 'per point',
+          // AND IT SAYS SO WHEN IT BUYS NOTHING. A stat with an empty list is a
+          // real answer — a body whose Magic feeds nothing it owns — and a card
+          // that vanished would read as a broken hover.
+          lines: lines.length === 0 ? ['Nothing this body can use.'] : [...lines],
+        };
+      }
+    }
+  }
+
   /**
    * THE SAME TRAVERSAL A CLICK USES, so the card appears over exactly the icon a
    * press would hit. Two walks of the same rects are two chances to disagree

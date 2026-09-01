@@ -5009,6 +5009,40 @@ export type ProgressMsg = {
     wil: number;
     cun: number;
   };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT EACH ATTRIBUTE IS BUYING THIS BODY, PER POINT. LevelupDialog.lua:850-909.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Six short lists — `['Accuracy +1.0', 'Defence +0.3', ...]` — one per stat,
+   * shown under the pointer BEFORE the `+` is pressed.
+   *
+   * ═══ IT MATTERS MORE HERE THAN IT DOES UPSTREAM ═══
+   * Upstream's dialog can be cancelled, so its list informs a decision you can
+   * still take back. Ours cannot: `unspend_stat` is a documented deliberate
+   * omission and the take-back window covers talent points only. A stat point
+   * here is permanent, and until this field the column was six three-letter
+   * codes, a number and a `+`.
+   *
+   * ═══ SENTENCES, NOT NUMBERS, AND RENDERED PER VIEWER ═══
+   * The client is banned from importing the combat maths outright
+   * (`NO_COMBAT_MATH_PATTERNS`), so it could not compute these if it wanted to.
+   * More to the point it should not: the rates BEND — `rescaleCombatStats` is
+   * concave, so Accuracy is +1.0 a point at Dexterity 14 and +0.5 at 54 — and
+   * they are measured off this body's own composed sheet rather than tabulated,
+   * so a retune of any coefficient moves them on the next frame.
+   *
+   * ABSENT rather than empty when a body has no sheet to measure, so a fixture
+   * produces the frame it produced before this existed.
+   */
+  statGains?: {
+    str: readonly string[];
+    dex: readonly string[];
+    con: readonly string[];
+    mag: readonly string[];
+    wil: readonly string[];
+    cun: readonly string[];
+  };
 };
 
 // ---------------------------------------------------------------------------

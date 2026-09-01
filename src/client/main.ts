@@ -3968,6 +3968,10 @@ const paintHud: HudPainter = (ctx, width, height) => {
         pointerPoint.x,
         pointerPoint.y,
         talentScroll,
+        // WHAT EACH ATTRIBUTE IS BUYING — see `ProgressMsg.statGains`. Passed
+        // straight through: the server measured these against this body's own
+        // composed sheet and the panel's job is to put them under the pointer.
+        progress?.statGains,
       );
       if (card !== null) {
         drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);

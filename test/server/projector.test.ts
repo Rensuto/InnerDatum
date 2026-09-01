@@ -23,6 +23,9 @@ import {
 } from '../../src/server/view/projector.ts';
 import { CLASSES, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import { recomposeCombat } from '../../src/server/engine/effects.ts';
+import { composeWielders } from '../../src/server/engine/equipment.ts';
+import { combatPhysicalpower } from '../../src/server/engine/derived.ts';
+import { statGainLines } from '../../src/server/view/projector.ts';
 import { combatAttack } from '../../src/server/engine/derived.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import type { EngineActor } from '../../src/server/engine/actor.ts';
@@ -1640,5 +1643,82 @@ describe('a consumable says what it does, in this body’s own number', () => {
     const body = watchman(world);
     body.carried = ['item_watchmans_cap'];
     expect(projectInventory(body).carried[0]?.use).toBeUndefined();
+  });
+});
+
+describe('what an attribute point is actually buying', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A STAT POINT HERE IS PERMANENT, AND THE COLUMN WAS SIX LETTERS AND A `+`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `LevelupDialog.lua:850-909` puts this under the pointer before the press,
+   * and upstream can afford to hardcode its coefficients because its dialog can
+   * be cancelled. Ours cannot: `unspend_stat` is a documented deliberate
+   * omission and the take-back window covers talent points only.
+   */
+  it('names every channel a stat actually feeds', () => {
+    // Measured off the shipped Watchman, so a retune of any coefficient shows up
+    // here rather than silently changing what a player is told.
+    const con = statGainLines(WATCHMAN.combat, 'con');
+    expect(con.some((l) => l.startsWith('Max life'))).toBe(true);
+    expect(con.some((l) => l.startsWith('Physical save'))).toBe(true);
+    expect(con.some((l) => l.startsWith('Healing mod.'))).toBe(true);
+
+    const dex = statGainLines(WATCHMAN.combat, 'dex');
+    expect(dex.some((l) => l.startsWith('Accuracy'))).toBe(true);
+    expect(dex.some((l) => l.startsWith('Defence'))).toBe(true);
+    expect(dex.some((l) => l.startsWith('Crit. shrug off'))).toBe(true);
+  });
+
+  it('measures across ten points, because the rescale FLOORS', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TRAP, AND THE FIRST VERSION FELL STRAIGHT INTO IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The obvious implementation bumps the stat by ONE and reports the
+     * difference. It is honest and useless: `rescaleCombatStats` floors, so a
+     * Watchman at Strength 24 gaining a point moves his Physical power by
+     * exactly nothing — and the panel would have told him Strength does nothing
+     * for him. `content/items.ts` states the same fact as a design rule, which
+     * is why no item in the game grants fewer than three points of a primary.
+     *
+     * This pins the consequence rather than the sample size: Strength must be
+     * seen to buy Physical power on a body where a single point does not move it.
+     */
+    const before = combatPhysicalpower(WATCHMAN.combat);
+    const onePoint = combatPhysicalpower(composeWielders(WATCHMAN.combat, [{ stats: { str: 1 } }]));
+    expect(onePoint, 'the fixture no longer demonstrates the flooring').toBe(before);
+
+    expect(statGainLines(WATCHMAN.combat, 'str').some((l) => l.startsWith('Phys. power'))).toBe(
+      true,
+    );
+  });
+
+  it('bends with what the body already has, because the curve is concave', () => {
+    /**
+     * THE REASON THIS IS MEASURED RATHER THAN TABULATED. A fixed coefficient
+     * would print the same "+1.0 Accuracy" to a Dexterity 14 body and a
+     * Dexterity 54 one, and only the first would be true — the same class of lie
+     * the item comparison was telling before it was fixed to measure from where
+     * the character actually stands.
+     */
+    const shallow = statGainLines(WATCHMAN.combat, 'dex');
+    const deep = statGainLines(composeWielders(WATCHMAN.combat, [{ stats: { dex: 40 } }]), 'dex');
+    const accuracy = (lines: readonly string[]): string =>
+      lines.find((l) => l.startsWith('Accuracy')) ?? '';
+    expect(accuracy(shallow)).not.toBe('');
+    expect(accuracy(deep)).not.toBe('');
+    expect(accuracy(deep), 'the rate did not fall on the concave part').not.toBe(accuracy(shallow));
+  });
+
+  it('says nothing about a channel a stat does not feed', () => {
+    // Magic feeds spellpower and the spell save and nothing else in this game.
+    // A list that named everything would be a list nobody reads.
+    const mag = statGainLines(WATCHMAN.combat, 'mag');
+    expect(mag.some((l) => l.startsWith('Max life'))).toBe(false);
+    expect(mag.some((l) => l.startsWith('Accuracy'))).toBe(false);
+    expect(mag.length).toBeGreaterThan(0);
   });
 });

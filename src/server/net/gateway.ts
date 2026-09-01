@@ -217,6 +217,7 @@ import {
   projectGroundItems,
   projectInventory,
   projectLoadout,
+  statGainLines,
   projectParty,
   projectPartyState,
   projectShop,
@@ -4656,6 +4657,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // level ceiling binds on, so a client that greyed a `+` off the COMPOSED
       // number would grey the wrong ones the moment anybody put a coat on.
       statBase: statSix(boughtSheet(viewer, viewer.baseCombat ?? viewer.combat) ?? {}),
+      /**
+       * AND WHAT EACH ONE IS BUYING, measured off the COMPOSED sheet — see
+       * `ProgressMsg.statGains`. The composed one and not the bought one: a
+       * player deciding where the next point goes is standing in their gear,
+       * and the rates bend with what they are already carrying.
+       */
+      ...(viewer.combat === undefined
+        ? {}
+        : {
+            statGains: {
+              str: statGainLines(viewer.combat, 'str'),
+              dex: statGainLines(viewer.combat, 'dex'),
+              con: statGainLines(viewer.combat, 'con'),
+              mag: statGainLines(viewer.combat, 'mag'),
+              wil: statGainLines(viewer.combat, 'wil'),
+              cun: statGainLines(viewer.combat, 'cun'),
+            },
+          }),
     });
     /**
      * `closedCases` IS IN THE KEY, AND LEAVING IT OUT WOULD HAVE BEEN A SILENT
