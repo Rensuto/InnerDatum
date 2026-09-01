@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { projectLoadout, projectResource } from '../../src/server/view/projector.ts';
@@ -1476,6 +1478,69 @@ describe('what an item is worth, wherever it appears', () => {
     expect(worn).toBeDefined();
     expect(worn?.compare.length, 'the doll used to be handed an empty list').toBeGreaterThan(0);
     expect(worn?.compare.some((row) => row.label.toLowerCase().includes('def'))).toBe(true);
+  });
+
+  it('shows the four PER-TYPE channels a swap moves, which no scalar row can', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `COMPARE_ROWS` HOLDS `(c) => number`, AND FOUR CHANNELS ARE NOT NUMBERS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Its Crit. power entry says *"Every other channel gear can move has been
+     * on this table since it was written"*, and that was true on the day it was
+     * written. `resists`, `immunities`, `increase` and `penetration` have landed
+     * since, with eight egos between them, and every one is a number PER DAMAGE
+     * TYPE — so none could be a row and none appeared. A coat that made you
+     * proof against fire compared identically to one that did not.
+     *
+     * ROLLED THROUGH THE REAL RESOLVER rather than hand-built, so this measures
+     * what a player would actually pick up.
+     */
+    const world = room();
+    const body = watchman(world);
+    const fireproof = resolveItem('item_watchmans_coat~kl3');
+    expect(fireproof?.wielder?.resists, 'the ego stopped granting fire resist').toBeDefined();
+
+    const bag = projectInventory(
+      Object.assign(body, { carried: ['item_watchmans_coat~kl3'] }),
+    ).carried;
+    expect(bag.length, 'the coat never reached the bag view').toBe(1);
+    const rows = bag[0]?.compare;
+    expect(rows, 'the bag row carries no comparison').toBeDefined();
+    expect(
+      rows?.some((row) => row.label === 'Fire resist'),
+      `no fire-resist row: ${JSON.stringify(rows)}`,
+    ).toBe(true);
+  });
+
+  it('names those channels EXACTLY as the character card names them', () => {
+    /**
+     * Two surfaces describing one quantity must use one label. The Crit. power
+     * note makes this argument about units — *"the getter carries a 1.5
+     * multiplier and the two surfaces must not disagree"* — and a name is the
+     * same hazard with a wider blast radius: "Fire resist" here and "Fire res."
+     * on the card reads as two different numbers that happen to move together.
+     *
+     * ASSERTED AGAINST THE SOURCE of `inspect.ts`, because the card builds its
+     * label from a template and there is no constant to import.
+     */
+    const inspect = readFileSync(
+      new URL('../../src/server/view/inspect.ts', import.meta.url),
+      'utf8',
+    );
+    for (const template of [
+      '`${damageTypeName(type)} resist`',
+      '`${damageTypeName(type)} ${suffix}`',
+      '`${key.charAt(0).toUpperCase()}${key.slice(1)} immunity`',
+    ]) {
+      expect(inspect, `inspect.ts stopped using ${template}`).toContain(template);
+    }
+    const projector = readFileSync(
+      new URL('../../src/server/view/projector.ts', import.meta.url),
+      'utf8',
+    );
+    expect(projector).toContain('`${damageTypeName(type)} ${suffix}`');
+    expect(projector).toContain('`${key.charAt(0).toUpperCase()}${key.slice(1)} immunity`');
   });
 
   it('measures it against NOT having it, not against having it twice', () => {

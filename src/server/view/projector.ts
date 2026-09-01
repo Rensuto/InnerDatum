@@ -91,6 +91,9 @@ import { downedView } from '../engine/downed.ts';
 import { EffectStatus, boughtSheet, effectDef, effectsOn } from '../engine/effects.ts';
 import { composeSheet, composeWielders, wornOf } from '../engine/equipment.ts';
 import { aimTile, currentTile, turnsToImpact } from '../engine/projectile.ts';
+import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
+import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
+import { combatGetDamageIncrease, combatGetResist, combatGetResistPen } from '../engine/damage.ts';
 import type {
   ActorEffects,
   ActorView,
@@ -1789,6 +1792,53 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
       rows.push({
         label,
         value: shape === CompareShape.Percent ? `${signed(delta)}%` : signed(delta),
+      });
+    }
+  }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE FOUR PER-TYPE TABLES, WHICH `COMPARE_ROWS` CANNOT HOLD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Crit. power entry above says *"Every other channel gear can move has
+   * been on this table since it was written"*, and that was true on the day it
+   * was written. Four channels have landed since — `resists`, `immunities`,
+   * `increase` and `penetration` — with eight egos between them, and none of
+   * them fits `COMPARE_ROWS`: every entry there is a `(c) => number`, and these
+   * are one number PER DAMAGE TYPE. So a coat that made you proof against fire
+   * compared identically to one that did not.
+   *
+   * ═══ THROUGH THE GETTERS, NOT THE RAW TABLES ═══
+   * `combatGetResist` composes the `all` row multiplicatively with the typed
+   * one and applies the cap; `combatGetResistPen` sums them. Diffing
+   * `profile.resists[type]` directly would print a number the damage pipeline
+   * never spends — which is the failure the Crit. power note is about, one
+   * table over.
+   *
+   * ═══ THE LABELS MATCH `inspect.ts` EXACTLY ═══
+   * "Fire resist", "Stun immunity", "Fire damage", "Fire penetration". The swap
+   * strip and the character card describe the same quantity, and two surfaces
+   * naming it differently is how a player concludes they are different numbers.
+   */
+  for (const type of DAMAGE_TYPES) {
+    for (const [suffix, read] of [
+      ['resist', (c: CombatSheet) => combatGetResist(c.profile ?? {}, type)],
+      ['damage', (c: CombatSheet) => combatGetDamageIncrease(c.increase, type)],
+      ['penetration', (c: CombatSheet) => combatGetResistPen(c.penetration, type)],
+    ] as const) {
+      const delta = Math.round(read(withIt)) - Math.round(read(before));
+      if (delta !== 0) {
+        rows.push({ label: `${damageTypeName(type)} ${suffix}`, value: `${signed(delta)}%` });
+      }
+    }
+  }
+  for (const key of IMMUNITY_KEYS) {
+    const delta =
+      Math.round(withIt.immunities?.[key] ?? 0) - Math.round(before.immunities?.[key] ?? 0);
+    if (delta !== 0) {
+      rows.push({
+        label: `${key.charAt(0).toUpperCase()}${key.slice(1)} immunity`,
+        value: `${signed(delta)}%`,
       });
     }
   }

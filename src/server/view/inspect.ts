@@ -40,7 +40,7 @@ import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
 import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
-import { combatGetResist } from '../engine/damage.ts';
+import { combatGetDamageIncrease, combatGetResist, combatGetResistPen } from '../engine/damage.ts';
 import { ActorKind, InspectGroup } from '../../shared/protocol.ts';
 import { classById } from '../content/classes.ts';
 import { MELEE_REACH, combatDistance } from '../engine/combat.ts';
@@ -158,6 +158,55 @@ function pushResistRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup
       value: `${String(value)}%`,
       ...(group === undefined ? {} : { group }),
     });
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT YOU HIT HARDER, AND WHAT YOU HIT THROUGH — the attacker-side pair.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `inc_damage` and `resists_pen`. Both reached content this session — three
+ * egos grant them (`ub`, `kn`, `lm`) and `Wielder` declares both — and neither
+ * appeared on ANY screen: not this card, not the character sheet, not the swap
+ * comparison. So a player could find a ring whose whole purpose is to punch
+ * through the Darkness resistance that seven of nine creatures carry, and have
+ * nothing anywhere tell them it had worked.
+ *
+ * ═══ IN `Attack`, WHERE THE SHEET PUTS THE THINGS YOU DO TO OTHERS ═══
+ * `InspectGroup.Attack` is *"Accuracy, damage, APR, crit"*. These are damage
+ * and armour-piercing by another name; the resist rows opposite them are
+ * `Defence` for the mirrored reason.
+ *
+ * ═══ ORDERED BY `DAMAGE_TYPES`, NOT BY THE TABLE'S OWN KEYS ═══
+ * `composeWielders` builds these by spreading a base and writing whatever the
+ * gear names, so key order follows the loadout. `pushResistRows` and
+ * `pushImmunityRows` both iterate the fixed list for this reason, and a row
+ * that moved when you swapped a ring would be unreadable at a glance.
+ */
+function pushOffenceRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup): void {
+  for (const [table, suffix] of [
+    [c.increase, 'damage'],
+    [c.penetration, 'penetration'],
+  ] as const) {
+    if (table === undefined) continue;
+    for (const type of DAMAGE_TYPES) {
+      // THE `all` ROW IS NOT ADDED IN HERE. `combatGetDamageIncrease` composes
+      // it at READ time and `combatGetResistPen` sums it, so printing
+      // `table[type]` alone would understate a sheet carrying both. The getters
+      // are the authority on what the number means.
+      const value = Math.round(
+        suffix === 'damage'
+          ? combatGetDamageIncrease(table, type)
+          : combatGetResistPen(table, type),
+      );
+      if (value === 0) continue;
+      rows.push({
+        label: `${damageTypeName(type)} ${suffix}`,
+        value: `${value > 0 ? '+' : ''}${String(value)}%`,
+        ...(group === undefined ? {} : { group }),
+      });
+    }
   }
 }
 
@@ -528,6 +577,7 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
     group: InspectGroup.Defence,
   });
 
+  pushOffenceRows(rows, c, InspectGroup.Attack);
   pushResistRows(rows, c, InspectGroup.Defence);
   pushImmunityRows(rows, c, InspectGroup.Defence);
 }
@@ -670,6 +720,9 @@ export function inspectActor(
      * the immunities for exactly this reason.
      */
     pushImmunityRows(rows, combatantOf(target));
+    // AND WHAT IT HITS HARDER WITH — the same argument the resist rows make one
+    // line up: a monster's own `inc_damage` decides how much its claw is worth.
+    pushOffenceRows(rows, combatantOf(target));
 
     pushEffectRows(rows, effects, target);
 
