@@ -92,6 +92,8 @@ import {
   totalPointsAtLevel,
   totalGenericPointsAtLevel,
   totalCategoryPointsAtLevel,
+  genericPointsForLevel,
+  categoryPointsForLevel,
 } from '../../shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 /**
@@ -10637,6 +10639,62 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             stats === 1
               ? 'An attribute point to spend.'
               : `${String(stats)} attribute points to spend.`,
+          depth: 1,
+        });
+      }
+      /**
+       * ═══════════════════════════════════════════════════════════════════
+       * AND THE OTHER TWO PURSES, WHICH ARRIVED SILENTLY FOR LONGER STILL.
+       * ═══════════════════════════════════════════════════════════════════
+       *
+       * The two paragraphs above make this argument twice already — the level
+       * line *"announced the LEVEL and still never mentioned the POINT"*, and
+       * the attribute points *"arrived silently for two commits"* — and neither
+       * was extended to the currencies that were added afterwards.
+       * `genericPointsForLevel` and `categoryPointsForLevel` had exactly ONE
+       * caller each in the whole server: the line that grants them.
+       *
+       * ═══ THE CATEGORY POINT IS THE ONE THAT MATTERS ═══
+       * A generic point arrives at four levels in five and is at least visible
+       * on the panel afterwards. A CATEGORY point arrives THREE TIMES IN A
+       * FIFTY-LEVEL CAREER (`CATEGORY_POINT_LEVELS`) and buys a whole
+       * discipline, or deepens one — and it landed with no word at all. A player
+       * hitting level 10 was never told the scarcest currency in the game had
+       * just appeared.
+       *
+       * SAID SEPARATELY RATHER THAN SUMMED. Three purses that do not convert
+       * cannot be one sentence: "3 points to spend" in front of a player who
+       * can only spend one of them on the thing they are looking at is the kind
+       * of line that reads as a bug.
+       */
+      const generics = genericPointsForLevel(note.level);
+      if (generics > 0) {
+        logSeq += 1;
+        lines.push({
+          seq: logSeq,
+          lane: LogLane.Record,
+          gameTurn,
+          text:
+            generics === 1
+              ? 'A generic point to spend.'
+              : `${String(generics)} generic points to spend.`,
+          depth: 1,
+        });
+      }
+      const categories = categoryPointsForLevel(note.level);
+      if (categories > 0) {
+        logSeq += 1;
+        lines.push({
+          seq: logSeq,
+          lane: LogLane.Record,
+          gameTurn,
+          // NAMED FOR WHAT IT BUYS, not for what it is called. "A category
+          // point" means nothing to somebody who has never had one; three
+          // arrive in a career and this is the only sentence that introduces it.
+          text:
+            categories === 1
+              ? 'A category point — buy a new discipline, or deepen one you have.'
+              : `${String(categories)} category points — buy new disciplines, or deepen yours.`,
           depth: 1,
         });
       }

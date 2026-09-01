@@ -422,6 +422,24 @@ describe('somebody else turns up', () => {
       said.some((text) => text.includes('talent point')),
       `the level was announced and the point was not — ${JSON.stringify(said)}`,
     ).toBe(true);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE GENERIC POINT, WHICH ARRIVED AT FOUR LEVELS IN FIVE IN SILENCE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `genericPointsForLevel` had exactly ONE caller in the whole server — the
+     * line that grants it. The comment above says the talent point "was missing
+     * for a while"; the two purses added after it were never given the same
+     * treatment, and a category point (three in a fifty-level career, and it
+     * buys a whole discipline) arrived with no word at all.
+     *
+     * ASSERTED SEPARATELY, on the same grounds the line above states: dropping
+     * one must fail on its own terms rather than hiding behind the others.
+     */
+    expect(
+      said.some((text) => text.includes('generic point')),
+      `the generic point was granted and not announced — ${JSON.stringify(said)}`,
+    ).toBe(true);
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
