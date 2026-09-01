@@ -249,6 +249,52 @@ export function combatTalentLimit(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `combatStatLimit` — Combat.lua:1603-1619. THE SAME CURVE, ANCHORED ON A STAT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Byte for byte the formula `combatTalentLimit` above already implements, with
+ * the two anchor points moved from talent levels (1 and 5) to STAT VALUES (10
+ * and 100). Upstream keeps them as two functions for exactly that reason and so
+ * do we, rather than one with the anchors as parameters: every call site would
+ * then have to pass the pair, and the first one to pass the wrong pair would
+ * produce a curve that is plausible everywhere and correct nowhere.
+ *
+ * `low` is what the value equals at stat 10 — a body with NO investment, since
+ * `STAT_BASE` is 10 — and `high` is what it equals at stat 100. `limit` is the
+ * asymptote nothing reaches. So the shape is "your first points are worth the
+ * most", which is the whole reason upstream uses it for anything a stat buys
+ * beyond a flat rate.
+ *
+ * ═══ `low = 0` IS A REAL ARGUMENT, NOT AN ABSENT ONE ═══
+ * In Lua `0` is truthy, so `if low then` takes the FIRST branch for it — and
+ * the one caller this file has, `healingFactorFrom`, passes exactly that. A
+ * port that read Lua's `if low` as JavaScript's `if (low)` would silently take
+ * the second branch and return a different curve, with both branches looking
+ * equally reasonable. `low !== undefined` is the correct translation and the
+ * sibling above already gets it right.
+ */
+export function combatStatLimit(
+  stat: number,
+  limit: number,
+  low: number | undefined,
+  high: number,
+): number {
+  const xLow = 10;
+  const xHigh = 100;
+
+  if (low !== undefined) {
+    const p = limit * (xHigh - xLow);
+    const m = xHigh * high - xLow * low;
+    const ah = (limit * (xHigh * low - xLow * high) + high * low * (xLow - xHigh)) / (high - low);
+    return (limit * stat + ah) / (stat + (p - m) / (high - low));
+  }
+
+  const halfpoint = (limit * xHigh) / high - xHigh;
+  return (limit * stat) / (stat + halfpoint);
+}
+
+/**
  * `combatTalentWeaponDamage` — Combat.lua:1782-1788.
  *
  * The weapon-damage MULTIPLIER a talent applies, `base + (max-base)·sqrt(tl/5)`.

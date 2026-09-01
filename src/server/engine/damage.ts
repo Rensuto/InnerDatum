@@ -87,6 +87,8 @@
 
 import { FLAT_RESIST_INTERVAL, bound, rescaleCombatStats } from '../../shared/scale.ts';
 import type { Rng } from '../../shared/rng.ts';
+import { ignoreDirectCrits } from './derived.ts';
+import type { PrimaryStats } from './derived.ts';
 import { fireDealDamage, fireKill, fireTakeDamage } from './hooks.ts';
 import type { BoundHooks, HookHost, TurnProcs } from './hooks.ts';
 
@@ -392,6 +394,19 @@ export type DamageSpec = {
   readonly critChance?: number;
   /** `combatCritPower()`. Only read when `critChance` is present. */
   readonly critPower?: number;
+  /**
+   * THE DEFENDER'S CHANCE TO SHRUG THE CRIT OFF ENTIRELY, as a percentage.
+   * `ignore_direct_crits` — Actor.lua:3891, spent at damage_types.lua:104-110.
+   *
+   * ON THE SPEC RATHER THAN READ FROM THE PROFILE, because `resolveDamage` is
+   * handed a `DamageProfile` and this is not one: a profile is resistances,
+   * caps and flat reduction, and widening it to carry a stat-derived roll would
+   * make it two things. `applyDamage` holds the whole target and computes it.
+   *
+   * ABSENT MEANS NO ROLL AT ALL — not a roll at 0%. See the step itself: a draw
+   * that happened on every blow would move every later number in the stream.
+   */
+  readonly ignoreDirectCrits?: number;
 
   // --- step 4 ---------------------------------------------------------------
   /** The talent multiplier (Combat.lua:546). Sniper's Mark is 1.65. */
@@ -460,6 +475,44 @@ export function resolveDamage(
     crit = rolled.crit;
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 3b. AND THE DEFENDER MAY SHRUG IT OFF. damage_types.lua:104-110.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * local ignore_direct_crits = target:attr 'ignore_direct_crits'
+   * if crit_power > 1 and ignore_direct_crits and rng.percent(ignore_direct_crits) then
+   *   dam = dam / crit_power
+   *   crit_power = 1
+   *   game.logSeen(target, "%s shrugs off the critical damage!", ...)
+   * ```
+   *
+   * DIVIDED BACK BY THE WHOLE MULTIPLIER, not reduced — so a body does not take
+   * slightly smaller crits, it occasionally takes none of the crit at all. That
+   * distinction is the entire feel of the stat: "that should have hurt far more"
+   * is a moment a player notices, and a quiet 8% shaved off every big hit is not.
+   *
+   * `crit` GOES BACK TO FALSE WITH IT, which is upstream's `crit_power = 1`. The
+   * flag is what the log line and the damage plate read, and a blow reported as
+   * a crit that did ordinary damage would be the readout lying about the dice.
+   *
+   * ═══ THE DRAW IS CONDITIONAL, AND DELIBERATELY SO ═══
+   * Only when a crit actually landed AND the target has some chance to negate
+   * it. `shared/rng.ts` states the rule this obeys — adding or removing a draw
+   * alters a replay — so the draw is placed where upstream places it and taken
+   * only on the branch upstream takes it on. An unconditional roll would be one
+   * extra number consumed on every blow in the game.
+   */
+  const shrug = spec.ignoreDirectCrits;
+  if (crit && shrug !== undefined && shrug > 0) {
+    const power = spec.critPower ?? 1.5;
+    if (rng.int(`${label}.crit.shrug`, 1, 100) <= bound(shrug, 0, 100)) {
+      dam = dam / power;
+      crit = false;
+    }
+  }
+
   // 4. TALENT MULTIPLIER — Combat.lua:546.
   if (spec.mult !== undefined) dam = dam * spec.mult;
 
@@ -499,7 +552,22 @@ export function resolveDamage(
 export type DamageTarget = {
   hp: number;
   alive: boolean;
-  readonly combat?: { readonly profile?: DamageProfile };
+  /**
+   * THE DEFENDER'S SHEET, narrowed to the two things this module reads off it.
+   *
+   * `profile` is the resistances. `stats` arrived with `ignore_direct_crits`
+   * (Actor.lua:3891), which is the first number the DEFENDER contributes to the
+   * pipeline out of a primary rather than out of a profile.
+   *
+   * STILL A NARROW STRUCTURAL VIEW rather than `CombatSheet`, and deliberately:
+   * the dozens of fixtures in this suite pass `{ hp, alive }` and a required
+   * sheet would break every one of them. Both members stay optional, and a
+   * target with no stats simply takes no shrug roll.
+   */
+  readonly combat?: {
+    readonly profile?: DamageProfile;
+    readonly stats?: PrimaryStats;
+  };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THIS BODY DOES ABOUT BEING HIT. See engine/hooks.ts.
@@ -675,8 +743,41 @@ export function applyDamage(
   rng: Rng,
   spec: Omit<DamageSpec, 'base' | 'type'> = {},
 ): DamageOutcome {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DEFENDER'S DEXTERITY JOINS THE SPEC HERE, AND ONLY HERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `resolveDamage` is pure arithmetic over a spec and a profile; it never sees
+   * an actor. This function does, and it is already the place the target's
+   * `profile` is read off the composed sheet — so the one stat-derived number
+   * the DEFENDER contributes to the pipeline is resolved on the same line.
+   *
+   * OMITTED WHEN IT IS ZERO, never passed as 0. `resolveDamage` takes no draw
+   * for an absent value, and a body with no Dexterity at all must consume the
+   * same numbers it always did — `shared/rng.ts`'s rule about the stream, and
+   * the same reason `applyDamage` omits `mult` at 1 rather than passing it.
+   *
+   * FROM THE COMPOSED SHEET, so a Dexterity ring counts. That is the whole
+   * lesson of the gear-Constitution bug: a stat read anywhere but
+   * `actor.combat` is a second opinion that will eventually disagree with the
+   * character sheet.
+   */
+  /**
+   * `?? {}` AND NOT A GUARD ON `undefined`. `derived.ts` states the rule: an
+   * absent sheet means ToME's own defaults, and `stat` answers `STAT_BASE` for
+   * a missing primary. So every body shrugs off 3% of critical hits at the base
+   * Dexterity of 10, which is exactly what upstream does — its
+   * `ignore_direct_crits` reaches 3 the moment birth sets DEX and its projector
+   * rolls against it on every crit thereafter.
+   *
+   * The first draft guarded on `combat === undefined`, which gave a fixture with
+   * `{ mods: {...} }` a 3% shrug and one with no sheet 0% — two answers to "what
+   * is this body's Dexterity" separated by nothing a player could see.
+   */
+  const shrug = ignoreDirectCrits(target.combat ?? {});
   const resolved = resolveDamage(
-    { ...spec, base: amount, type },
+    { ...spec, base: amount, type, ...(shrug > 0 ? { ignoreDirectCrits: shrug } : {}) },
     target.combat?.profile ?? {},
     rng,
     `combat.damage.${type}`,

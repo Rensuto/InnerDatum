@@ -68,7 +68,7 @@
  * identical code and be guaranteed to agree.
  */
 
-import { bound, rescaleCombatStats } from '../../shared/scale.ts';
+import { bound, combatStatLimit, rescaleCombatStats } from '../../shared/scale.ts';
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -647,4 +647,83 @@ export function combatDamage(c: Combatant, addDamMod?: PrimaryStats): number {
   const power = combatDamagePower(c, totstat);
   const phys = combatPhysicalpower(c, { add: totstat });
   return 0.3 * phys * power;
+}
+
+// ---------------------------------------------------------------------------
+// The two things a stat buys that are not a combat number
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CONSTITUTION MAKES EVERY HEAL GO FURTHER — `healing_factor`, Actor.lua:3889.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * self.stats.hf_id = self:addTemporaryValue("healing_factor",
+ *   self:combatStatLimit("con", 1.5, 0, 0.5))          -- +0 @ 10, +0.50 @ 100
+ * ```
+ *
+ * A MULTIPLIER ON EVERY HEAL, on top of a base of 1 (Actor.lua:176). At the
+ * `STAT_BASE` of 10 it is exactly 1.0, so a body that has invested nothing is
+ * byte-for-byte where it was before this existed — which is the safety property
+ * of the whole change.
+ *
+ * ═══ WHY CONSTITUTION SHOULD BUY THIS AND NOT MORE HIT POINTS ═══
+ * It already buys hit points, flat, at four a point. A second flat channel would
+ * just be a bigger number; a multiplier on RECOVERY is a different thing to own
+ * — it makes a Watchman's Field Dressing worth more in his hands than in an
+ * Alchemist's, which is the sort of difference that makes a party feel like a
+ * set of specialists rather than a set of health bars.
+ *
+ * NOT BOUNDED HERE. Upstream bounds at the point of USE
+ * (`util.bound((self.healing_factor or 1), 0, 2.5)`, Actor.lua:2089) because
+ * other sources can push it outside the range, and a getter that clamped early
+ * would hide a debuff that had gone too far from whatever eventually reads it.
+ * `healActor` does the bounding, exactly where `onHeal` does.
+ */
+export function healingFactor(c: Combatant): number {
+  return 1 + combatStatLimit(stat(c, 'con'), 1.5, 0, 0.5);
+}
+
+/**
+ * The ceiling and floor a heal multiplier is spent through. Actor.lua:2089.
+ *
+ * 2.5 is upstream's, and it is generous on purpose: it is a bound against
+ * stacking, not a balance number. Zero is the other end — `no_healing` is a real
+ * effect upstream and this is the arithmetic that expresses it.
+ */
+export const HEAL_FACTOR_MIN = 0;
+export const HEAL_FACTOR_MAX = 2.5;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DEXTERITY SHRUGS OFF CRITICAL HITS — `ignore_direct_crits`, Actor.lua:3891.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * elseif stat == self.STAT_DEX then
+ *   self.ignore_direct_crits = (self.ignore_direct_crits or 0) + 0.3 * v
+ * ```
+ *
+ * A PERCENTAGE CHANCE, not a reduction — which is the thing to get right about
+ * it. `damage_types.lua:104-110` rolls it and, on a hit, divides the damage back
+ * down by the whole crit multiplier:
+ *
+ * ```lua
+ * if crit_power > 1 and ignore_direct_crits and rng.percent(ignore_direct_crits) then
+ *   dam = dam / crit_power
+ *   crit_power = 1
+ * ```
+ *
+ * So a body does not take slightly smaller crits; it occasionally takes none of
+ * the crit at all. The distinction matters to a player: "that should have hurt
+ * far more" is a moment, and a quiet 8% shaved off every big hit is not.
+ *
+ * `v` is the CHANGE in the stat and upstream accumulates from zero, so the total
+ * on a settled body is `0.3 x dex`. At the base 10 that is 3%, and at 100 it is
+ * 30% — which is why this is the one place a Dexterity build gets something a
+ * Strength build cannot buy at any price.
+ */
+export function ignoreDirectCrits(c: Combatant): number {
+  return bound(0.3 * stat(c, 'dex'), 0, 100);
 }

@@ -129,7 +129,7 @@ import { Faction, areEnemies, cooldownOf, setCooldown } from './actor.ts';
 import type { Sided } from './actor.ts';
 import { attackTarget, combatDistance } from './combat.ts';
 import { DamageType, applyDamage } from './damage.ts';
-import { combatDamage } from './derived.ts';
+import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, combatDamage, healingFactor } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -3185,8 +3185,35 @@ export function talentBaseDamage(self: TalentActor): number {
 /** Restore HP, clamped at max. Returns what was actually restored. */
 export function healActor(target: TalentActor, amount: number): number {
   if (!target.alive || amount <= 0) return 0;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE RECEIVER'S CONSTITUTION DECIDES WHAT A HEAL IS WORTH. Actor.lua:2086-2089.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * function _M:onHeal(value, src)
+   *   value = value * util.bound((self.healing_factor or 1), 0, 2.5)
+   * ```
+   *
+   * THE TARGET'S, NOT THE CASTER'S, and that is the whole shape of it: a bandage
+   * is worth more on somebody built to survive. It is also why this belongs HERE
+   * rather than in each of the four talents that heal — upstream puts it on
+   * `onHeal` for the same reason, so a fifth heal added later cannot forget it.
+   *
+   * BOUNDED AT THE POINT OF USE, exactly as upstream bounds it: the getter
+   * returns the raw factor so a debuff that pushes it negative stays visible to
+   * whatever reads it, and the clamp lives on the one line that spends it.
+   *
+   * ROUNDED, because hit points are integers everywhere else in this engine and
+   * a fractional heal would put a body on 41.6/72 — a number no readout in the
+   * game can draw. Rounded rather than floored so the factor cannot make a heal
+   * of 1 into a heal of 0, which would read as a talent that did nothing.
+   */
+  const factor = bound(healingFactor(combatOf(target)), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
+  const scaled = Math.round(amount * factor);
+  if (scaled <= 0) return 0;
   const before = target.hp;
-  target.hp = Math.min(target.maxHp, target.hp + amount);
+  target.hp = Math.min(target.maxHp, target.hp + scaled);
   return target.hp - before;
 }
 

@@ -278,7 +278,12 @@ describe('attackTarget — the resolution order, Combat.lua:505-546', () => {
 
   it('crits AFTER armour, at the base x1.5 — Combat.lua:544, :1951', () => {
     const target = actor('t', 2, 1);
-    const result = attackTarget(actor('a', 1, 1), target, world(), scriptedRng([1, 1]));
+    // THREE DRAWS NOW: hit, crit, and the defender's chance to shrug the crit
+    // off (`ignore_direct_crits`, Actor.lua:3891). The third is 100 so the shrug
+    // FAILS against a base-Dexterity 3% and the crit stands — this test is about
+    // the multiplier, and letting the shrug land here would be testing the other
+    // feature by accident.
+    const result = attackTarget(actor('a', 1, 1), target, world(), scriptedRng([1, 1, 100]));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.crit).toBe(true);
@@ -300,7 +305,7 @@ describe('attackTarget — the resolution order, Combat.lua:505-546', () => {
     const armoured = actor('t', 2, 1, {
       combat: { mods: { armour: 2, armourHardiness: 70 } },
     });
-    const rng = scriptedRng([1, 1]); // hit, then crit
+    const rng = scriptedRng([1, 1, 100]); // hit, crit, then a FAILED crit-shrug
     const result = attackTarget(actor('a', 1, 1), armoured, world(), rng);
 
     expect(result.ok).toBe(true);
@@ -309,7 +314,18 @@ describe('attackTarget — the resolution order, Combat.lua:505-546', () => {
     expect(result.damage).toBe(3);
     expect(result.damage).not.toBe(4);
     expect(armoured.hp).toBe(17); // 20 - 3, the pipeline's answer and nothing else
-    expect(drawCount(rng)).toBe(2);
+    /**
+     * THREE, AND IT WAS TWO. The third is the defender's crit-shrug roll
+     * (`ignore_direct_crits`, Actor.lua:3891 / damage_types.lua:104-110), taken
+     * on every landed crit because every body has SOME Dexterity — 3% at the
+     * base 10, which is upstream's behaviour exactly.
+     *
+     * PINNED RATHER THAN LEFT LOOSE, for the reason the whiff case above gives
+     * about its own single draw: a stage that quietly started or stopped drawing
+     * would diverge every replay from that blow onward, and nothing else in the
+     * suite would go red.
+     */
+    expect(drawCount(rng)).toBe(3);
   });
 
   it('applies the talent multiplier last — Combat.lua:546', () => {

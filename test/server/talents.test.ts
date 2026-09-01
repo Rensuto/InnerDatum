@@ -2,6 +2,8 @@ import { isMonsterTalent } from '../../src/server/talents/monster.ts';
 import { treeById } from '../../src/server/content/talent-trees.ts';
 import { trained } from '../helpers/trained.ts';
 import { TALENTS_PER_CLASS_MAX, TALENTS_PER_CLASS_MIN } from '../../src/shared/progression.ts';
+import { healingFactor } from '../../src/server/engine/derived.ts';
+import type { Combatant } from '../../src/server/engine/derived.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -1745,8 +1747,25 @@ describe('the Alchemist — AoE that never touches an ally, and the party heal',
     // for why a literal 0.2 stopped being right once ministration was graded.
     const healSheet = f.engine.sheetOf('rey');
     const healAt = healSheet === undefined ? 1 : talentLevelOf(healSheet, mendWounds);
-    expect(alchemist.hp).toBe(10 + Math.round(ALCHEMIST.maxHp * healFraction(healAt)));
-    expect(watchman.hp).toBe(10 + Math.round(WATCHMAN.maxHp * healFraction(healAt)));
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE RECEIVER'S CONSTITUTION IS PART OF THE ANSWER. Actor.lua:2089.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * These two lines were `10 + round(maxHp * fraction)` and the Watchman's
+     * went one point light the day `healing_factor` landed. That is the feature
+     * rather than a regression: he stands at Constitution 20 to the Alchemist's
+     * 12, so the same bandage is worth ~8% more on him and only ~2% more on her
+     * — which rounds away on hers and does not on his.
+     *
+     * ASKED OF THE SHIPPED GETTER rather than restated as a number, for the same
+     * reason the fraction below it is asked of `healFraction`: a second copy of
+     * the curve is a second thing to keep in step, and this file already says so.
+     */
+    const healed = (body: { readonly combat?: Combatant }, maxHp: number): number =>
+      Math.round(Math.round(maxHp * healFraction(healAt)) * healingFactor(body.combat ?? {}));
+    expect(alchemist.hp).toBe(10 + healed(alchemist, ALCHEMIST.maxHp));
+    expect(watchman.hp).toBe(10 + healed(watchman, WATCHMAN.maxHp));
     expect(farAway.hp).toBe(10); // out of the disc
     expect(husk.hp).toBe(10); // a heal is Affinity.Ally, and a husk is not one
     expect(result.hits).toHaveLength(2);
@@ -1804,9 +1823,13 @@ describe('the Alchemist — AoE that never touches an ally, and the party heal',
        */
       const sheet = f.engine.sheetOf('rey');
       const at = sheet === undefined ? 1 : talentLevelOf(sheet, mendWounds);
+      // The receiver's Constitution scales it — see the party case above.
       const expected = Math.min(
         WATCHMAN.maxHp,
-        startingHp + Math.round(WATCHMAN.maxHp * healFraction(at)),
+        startingHp +
+          Math.round(
+            Math.round(WATCHMAN.maxHp * healFraction(at)) * healingFactor(ally.combat ?? {}),
+          ),
       );
       useTalent(f.engine, alchemist, talentId('mend_wounds'), { x: 5, y: 5 }, f.ctx);
 
