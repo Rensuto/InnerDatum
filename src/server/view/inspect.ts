@@ -68,6 +68,8 @@ import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
 import { hasLineOfSight } from '../world/world.ts';
+import { effectDef, effectsOn } from '../engine/effects.ts';
+import type { EffectState } from '../engine/effects.ts';
 
 // `InspectRow` and `InspectView` WERE DECLARED HERE and now live in
 // src/shared/protocol.ts: the tooltip painter has to name them and eslint's
@@ -156,6 +158,63 @@ function pushResistRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup
       ...(group === undefined ? {} : { group }),
     });
   }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH ONE IS SIGILED? — the question six identical husks made unanswerable.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `render/canvas.ts#paintStatusPips` draws a 4-pixel square per status,
+ * coloured ONLY by whether it is harmful. So a husk that is Marked, one that is
+ * Stunned and one that is Bleeding are three identical orange dots, and the
+ * server has been sending each status's name and badge letter the whole time
+ * (`projectEffects` covers every actor, not just the party).
+ *
+ * A four-pixel pip cannot carry a letter legibly, and inventing an icon per
+ * status is art this project does not have. THE CARD IS WHERE IDENTITY GOES —
+ * it is already the surface a player points at a monster to read, and a row is
+ * a shape the client already draws.
+ *
+ * ═══ NAME AND TURNS, WHICH IS WHAT A DECISION NEEDS ═══
+ * "Stunned · 2 turns" answers both halves of the question a player is actually
+ * asking: what is wrong with it, and is it worth waiting out. Upstream's own
+ * tooltip leads with exactly this pair.
+ *
+ * CLAMPED AT ZERO for `projectEffects`'s stated reason: `dur` reaches 0 for one
+ * pass before an effect is reaped, and a negative number on a card is a bug
+ * report.
+ */
+function pushEffectRows(rows: InspectRow[], state: EffectState | undefined, target: Actor): void {
+  if (state === undefined) return;
+  for (const instance of effectsOn(state, target.id)) {
+    const def = effectDef(state, instance.effectId);
+    // A definition that is gone is a content reload under a live game — the
+    // engine reaps the instance on its next tick and there is nothing honest to
+    // draw until it does. Same rule `projectEffects` follows.
+    if (def === undefined) continue;
+    const turns = Math.max(0, instance.dur);
+    rows.push({
+      label: def.displayName,
+      value: turns === 1 ? '1 turn' : `${String(turns)} turns`,
+    });
+  }
+}
+
+/**
+ * The ids of what is on this body, for `InspectView.effects`.
+ *
+ * THAT FIELD WAS DECLARED, DOCUMENTED AND HARDCODED TO `[]`. Its own comment
+ * calls it *"effect ids the viewer can see on this actor, for the badge row"*
+ * and `inspectActor` was never given a way to know them — so it has been an
+ * empty array on every card the game has ever drawn, and no client reads it.
+ * It is filled now because a field that lies about being empty is worse than no
+ * field, and because the rows above are a rendering decision that a future
+ * badge row should not have to reverse-engineer.
+ */
+function liveEffectIds(state: EffectState | undefined, target: Actor): readonly string[] {
+  if (state === undefined) return [];
+  return effectsOn(state, target.id).map((instance) => instance.effectId);
 }
 
 /**
@@ -485,7 +544,20 @@ function damageBand(c: Combatant): string {
  * `InspectView.className` documents itself as SELF-ONLY and cites this split by
  * name; the two must be edited together or that doc becomes a lie.
  */
-export function inspectActor(world: World, viewer: Actor, target: Actor): InspectView | null {
+export function inspectActor(
+  world: World,
+  viewer: Actor,
+  target: Actor,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LIVE STATUSES, so the card can say WHICH ones. Optional.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A build with no status system passes nothing and gets the card it has
+   * always had, which is what keeps every fixture in the tree working.
+   */
+  effects?: EffectState,
+): InspectView | null {
   if (!target.alive && target.kind !== ActorKind.Player) return null;
   if (target.id !== viewer.id && !hasLineOfSight(world.level, viewer, target)) return null;
 
@@ -536,6 +608,8 @@ export function inspectActor(world: World, viewer: Actor, target: Actor): Inspec
      */
     pushResistRows(rows, combatantOf(target));
 
+    pushEffectRows(rows, effects, target);
+
     rows.push({ label: 'Distance', value: `${chebyshev(viewer, target)} tiles` });
   } else {
     // ALLY — BYTE FOR BYTE WHAT IT HAS ALWAYS BEEN. Two rows, and the reason it
@@ -558,7 +632,7 @@ export function inspectActor(world: World, viewer: Actor, target: Actor): Inspec
     kind: target.kind,
     hp: target.hp,
     maxHp: target.maxHp,
-    effects: [],
+    effects: liveEffectIds(effects, target),
     rows,
   };
 }

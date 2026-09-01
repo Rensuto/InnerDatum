@@ -7,6 +7,10 @@ import { AiProfile } from '../../src/server/engine/actor.ts';
 import { INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import { AttackRefusal, canAttack, combatDistance } from '../../src/server/engine/combat.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
+import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
+import { createRng } from '../../src/shared/rng.ts';
+import { MVP_EFFECTS, STUNNED } from '../../src/server/content/effects.ts';
+import type { EffectState } from '../../src/server/engine/effects.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { attackBlockedReason } from '../../src/server/view/inspect.ts';
@@ -148,6 +152,8 @@ async function connect(port: number): Promise<Client> {
 type Harness = {
   readonly port: number;
   readonly world: World;
+  /** The live status table, so a test can put something on a body. */
+  readonly effects: EffectState;
   close(): Promise<void>;
 };
 
@@ -155,10 +161,15 @@ async function boot(seed: string): Promise<Harness> {
   const app = Fastify({ logger: false });
   const world = createWorld(seed);
   const downed = createDownedState();
+  // THE STATUS TABLE IS WIRED NOW. It was absent, so `inspectActor` could not
+  // have named a status even after it was taught how — and no test in this file
+  // could have noticed.
+  const effects = createEffectState(MVP_EFFECTS);
   await app.register(wsGateway, {
     world,
     engine: createTurnEngine({ world, downed }),
     downed,
+    effects,
     disconnectGraceMs: 30_000,
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -169,6 +180,7 @@ async function boot(seed: string): Promise<Harness> {
   return {
     port: address.port,
     world,
+    effects,
     close: async (): Promise<void> => {
       await app.close();
     },
@@ -894,5 +906,61 @@ describe('the three numbers the engine knew and no screen printed', () => {
     const shrug = await sheetValue('Crit. shrug off');
     expect(shrug).toMatch(/^\d+%$/);
     expect(shrug).toBe(`${String(Math.round(0.3 * (WATCHMAN.combat.stats?.dex ?? 0)))}%`);
+  });
+});
+
+describe('which one is sigiled?', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SIX HUSKS, SIX IDENTICAL ORANGE DOTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `render/canvas.ts#paintStatusPips` draws a FOUR-PIXEL square per status,
+   * coloured only by whether it is harmful — so Marked, Stunned and Bleeding
+   * are the same dot. The server has been sending every status's name and badge
+   * letter the whole time (`projectEffects` covers every actor, not only the
+   * party); nothing displayed them, and a four-pixel pip cannot carry a letter.
+   *
+   * The card is where identity goes. It is already the surface a player points
+   * a monster at to read, and a row is a shape the client already draws.
+   *
+   * ═══ AND `InspectView.effects` HAD BEEN `[]` SINCE IT WAS DECLARED ═══
+   * Its own comment calls it "effect ids the viewer can see on this actor" and
+   * `inspectActor` was never given the status table, so it could not have been
+   * anything else. This suite could not have caught that either: its harness
+   * registered the gateway with no `effects` at all.
+   */
+  it('names the status on a hostile, with how long it has left', async () => {
+    const floor = await scene();
+    setEffect(server.effects, actorOf(floor.adjacent.id), STUNNED.id, 3, {}, createRng('stun'));
+
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.adjacent.id)));
+    const stun = rows.find((r) => String(r['label']) === STUNNED.displayName);
+    expect(stun, 'the card said nothing about the status on it').toBeDefined();
+    expect(stun?.['value']).toBe('3 turns');
+  });
+
+  it('says "1 turn" rather than "1 turns"', async () => {
+    // A HUD that cannot count is a HUD a player stops reading.
+    const floor = await scene();
+    setEffect(server.effects, actorOf(floor.adjacent.id), STUNNED.id, 1, {}, createRng('stun'));
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.adjacent.id)));
+    expect(rows.find((r) => String(r['label']) === STUNNED.displayName)?.['value']).toBe('1 turn');
+  });
+
+  it('fills the effect ids that had been an empty array since they were declared', async () => {
+    const floor = await scene();
+    setEffect(server.effects, actorOf(floor.adjacent.id), STUNNED.id, 2, {}, createRng('stun'));
+    const view = viewOf(await floor.client.inspect(floor.adjacent.id));
+    expect(view?.['effects']).toEqual([STUNNED.id]);
+  });
+
+  it('says nothing at all about a body with nothing on it', async () => {
+    // Absence is the statement. A card that listed "no statuses" would spend a
+    // row on the common case and push the rows that matter off a narrow panel.
+    const floor = await scene();
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.adjacent.id)));
+    expect(rows.find((r) => String(r['label']) === STUNNED.displayName)).toBeUndefined();
+    expect(viewOf(await floor.client.inspect(floor.adjacent.id))?.['effects']).toEqual([]);
   });
 });

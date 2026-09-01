@@ -11520,7 +11520,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     const target = world.getActor(msg.targetId);
-    const view = target === undefined ? null : inspectActor(world, viewer, target);
+    // THE STATUS STATE GOES IN, so the card can name what is on the thing
+    // rather than leaving six husks as six identical pips. See `pushEffectRows`.
+    const view = target === undefined ? null : inspectActor(world, viewer, target, opts.effects);
     // `target === undefined` is re-tested rather than asserted away with `!`:
     // it is what NARROWS `target` for the call, and `view !== null` already
     // implies it. A non-null assertion would be telling the compiler to stop
