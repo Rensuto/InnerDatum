@@ -69,6 +69,7 @@ import {
   combatArmorHardiness,
   combatAttack,
   combatCrit,
+  combatCritPower,
   combatDamage,
   combatDamageRange,
   combatDefense,
@@ -1500,6 +1501,21 @@ const COMPARE_ROWS: readonly (readonly [string, (c: Combatant) => number, Compar
   ['Damage', combatDamage, CompareShape.Band],
   ['APR', combatAPR, CompareShape.Scalar],
   ['Crit. chance', combatCrit, CompareShape.Percent],
+  /**
+   * CRIT POWER, and it was the one foldable wielder mod with no row.
+   *
+   * `criticalPower` is in `WIELDER_MOD_KEYS` (equipment.ts) and an ego grants it
+   * — `egos.ts:296`, `{floor: 6, step: 4}` — so a player could pick up a ring
+   * that raises the biggest offensive multiplier in the game and see the swap
+   * strip print NOTHING. Every other channel gear can move has been on this
+   * table since it was written.
+   *
+   * SCALED TO A PERCENTAGE to match the character sheet's own row, which is
+   * upstream's `150 + combat_critical_power` (CharacterSheet.lua:1116). The
+   * getter carries a 1.5 multiplier and the two surfaces must not disagree about
+   * the units of the same number.
+   */
+  ['Crit. power', (c: Combatant): number => combatCritPower(c) * 100, CompareShape.Percent],
   ['Armour', combatArmor, CompareShape.Scalar],
   ['Hardiness', combatArmorHardiness, CompareShape.Percent],
   ['Defence', combatDefense, CompareShape.Scalar],

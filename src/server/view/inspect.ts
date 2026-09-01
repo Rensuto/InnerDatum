@@ -50,6 +50,7 @@ import {
   combatArmorHardiness,
   combatAttack,
   combatCrit,
+  combatCritPower,
   combatDamage,
   combatDamageRange,
   combatDefense,
@@ -59,6 +60,8 @@ import {
   combatPhysicalpower,
   combatSpellResist,
   combatSpellpower,
+  healingFactor,
+  ignoreDirectCrits,
   stat,
 } from '../engine/derived.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
@@ -269,6 +272,35 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
     rows.push({ label, value: whole(stat(c, key)), group: InspectGroup.General });
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT CONSTITUTION BUYS BESIDES HIT POINTS — CharacterSheet.lua:715.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every heal in the game is multiplied by the RECEIVER's factor
+   * (`talents.ts#healActor`), which runs from 100% at the base Constitution of
+   * 10 to 150% at 100. `derived.ts` makes it the design point that *"a
+   * Watchman's Field Dressing is worth more in his hands than in an
+   * Alchemist's"* — a party of specialists rather than a set of health bars.
+   *
+   * Without this row the same bandage landing for 18 on one detective and 24 on
+   * another reads as a bug rather than as a build, and nobody can answer "who
+   * should I patch first". `shared/leveling.ts` records that Constitution being
+   * *"close to dead currency"* was a real problem here; half the fix was still
+   * invisible until this line.
+   *
+   * ═══ THE FIRST DERIVED ROW THE GENERAL TAB HAS EVER HAD ═══
+   * It was the six primaries and nothing else. This belongs with them rather
+   * than under Attack or Defence because it is neither: it is what one of those
+   * six numbers is worth, which is the question a player is asking when they are
+   * looking at that tab at all.
+   */
+  rows.push({
+    label: 'Healing mod.',
+    value: pct(healingFactor(c) * 100),
+    group: InspectGroup.General,
+  });
+
   // ═══ 2. ATTACK — CharacterSheet.lua:935-1120 ═══
   // "Accuracy" (:935), "Damage" (:941), "APR" (:1111), "Crit. chance" (:1113),
   // in that order. ToME's own labels, in ToME's own sequence.
@@ -276,6 +308,33 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
   rows.push({ label: 'Damage', value: damageBand(c), group: InspectGroup.Attack });
   rows.push({ label: 'APR', value: whole(combatAPR(c)), group: InspectGroup.Attack });
   rows.push({ label: 'Crit. chance', value: pct(combatCrit(c)), group: InspectGroup.Attack });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND HOW MUCH A CRIT IS WORTH — CharacterSheet.lua:1115-1116, same tab, same
+   * place: directly under the chance.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combatCritPower` has been live since the damage pipeline was written —
+   * `combat.ts` passes it into every melee resolve — and no screen in the game
+   * printed it. SIX talents sell themselves on it (Set in Stone, Soft Places,
+   * Steady Hands, Cold Case, Leverage and a Load) and an ego grants it
+   * (`egos.ts:296`, `criticalPower {floor: 6, step: 4}`), so a player could
+   * spend a point or wear a ring, be told "your crits land harder", and find
+   * every number on this sheet unchanged.
+   *
+   * That is the `equipment.ts` failure exactly — an item that changes no number
+   * a player can see — reached through the readout rather than the fold.
+   *
+   * AS A PERCENTAGE, `150 + combat_critical_power`, which is upstream's own
+   * presentation: the getter carries 1.5 as a multiplier and a sheet reading
+   * "Crit. power 1.5" would be the only number on it that is not a percentage
+   * or a whole.
+   */
+  rows.push({
+    label: 'Crit. power',
+    value: pct(combatCritPower(c) * 100),
+    group: InspectGroup.Attack,
+  });
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE THREE POWERS — CharacterSheet.lua:1161, :1167-1168, :1179-1181.
@@ -345,6 +404,29 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
    * percentage off the DAMAGE once it has. A player who has just read three
    * saves is in exactly the right frame to be told the difference.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT DEXTERITY BUYS THAT NOTHING ELSE DOES — CharacterSheet.lua:1312.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ignoreDirectCrits` is rolled on every incoming critical hit and cancels the
+   * multiplier outright when it lands. Its own docblock calls it *"the one place
+   * a Dexterity build gets something a Strength build cannot buy at any price"*
+   * — and it shipped this morning with no row, which made that sentence true of
+   * the code and invisible to the player.
+   *
+   * THE MISTAKE IS MINE AND IT IS THE ONE I HAD JUST WRITTEN DOWN. The elemental
+   * resistance change earlier the same day shipped its readout in the same
+   * commit precisely because *"a channel with no readout is invisible and a
+   * readout with no channel is unactionable"*. The next commit added two
+   * channels and no readout at all.
+   */
+  rows.push({
+    label: 'Crit. shrug off',
+    value: pct(ignoreDirectCrits(c)),
+    group: InspectGroup.Defence,
+  });
+
   pushResistRows(rows, c, InspectGroup.Defence);
 }
 

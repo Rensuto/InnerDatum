@@ -593,10 +593,18 @@ const SELF_SHEET_LABELS = [
   'Magic',
   'Willpower',
   'Cunning',
+  // CharacterSheet.lua:715. The first DERIVED row the General tab has ever had,
+  // and it is what Constitution buys besides hit points: every heal in the game
+  // is multiplied by the receiver's factor.
+  'Healing mod.',
   'Accuracy',
   'Damage',
   'APR',
   'Crit. chance',
+  // CharacterSheet.lua:1115-1116, directly under the chance because that is
+  // where upstream puts it. Six talents and an ego move this number and no
+  // screen printed it, so "your crits land harder" was unverifiable.
+  'Crit. power',
   // The three powers — CharacterSheet.lua:1161, :1167-1168, :1179-1181. Upstream
   // prints all three for every character; so does this. `indelible.ts` raises
   // Mindpower and, until these rows, no screen in the game could show it.
@@ -611,6 +619,10 @@ const SELF_SHEET_LABELS = [
   'Physical save',
   'Spell save',
   'Mental save',
+  // CharacterSheet.lua:1312. What Dexterity buys that nothing else does — the
+  // chance to cancel an incoming crit outright. It shipped the same day as this
+  // row and, for a few hours, without it.
+  'Crit. shrug off',
 ];
 
 /** Every row a HOSTILE or an ALLY card must never grow. */
@@ -834,5 +846,53 @@ describe('what a body shrugs off is finally on a screen', () => {
 
     const rows = rowsOf(viewOf(await floor.client.inspect(floor.viewer.id)));
     expect(rows).toContainEqual(expect.objectContaining({ label: 'Fire resist', value: '40%' }));
+  });
+});
+
+describe('the three numbers the engine knew and no screen printed', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CHANNEL WITH NO READOUT IS INVISIBLE — AND IT HAD JUST BEEN WRITTEN DOWN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The elemental-resistance change shipped its rows in the same commit as its
+   * channel, on exactly that argument. The very next commit added two channels —
+   * Constitution's healing multiplier and Dexterity's crit shrug — and no rows,
+   * so both were real in the pipeline and absent from every surface a player can
+   * look at. `combatCritPower` had been in that state far longer: live in every
+   * melee resolve, moved by six talents and an ego, printed nowhere.
+   *
+   * ═══ THE VALUES, NOT THE LABELS ═══
+   * `SELF_SHEET_LABELS` above pins the order, and a row carrying the wrong
+   * number would satisfy it completely. These read what the row actually says,
+   * over a real socket, which is the only place the whole chain is visible.
+   */
+  const sheetValue = async (label: string): Promise<string> => {
+    const floor = await scene();
+    const view = viewOf(await floor.client.inspect(floor.viewer.id));
+    return String(rowsOf(view).find((row) => row['label'] === label)?.['value']);
+  };
+
+  it('prints crit power the way upstream does, at 150 and up', async () => {
+    // `150 + combat_critical_power` — CharacterSheet.lua:1116. The getter carries
+    // 1.5 as a multiplier, and a sheet reading "Crit. power 1.5" would be the
+    // only figure on it that is neither a percentage nor a whole number.
+    expect(await sheetValue('Crit. power')).toBe('150%');
+  });
+
+  it('prints what Constitution is buying beyond hit points', async () => {
+    // The Watchman stands at Constitution 20, which is +7.9% on the curve and
+    // rounds to 108%. A body at the base 10 would read exactly 100%, so this
+    // also proves the row is reading the ACTOR rather than a default.
+    const healing = await sheetValue('Healing mod.');
+    expect(healing).toMatch(/^1\d\d%$/);
+    expect(healing, 'the row is reading a base-10 default, not the Watchman').not.toBe('100%');
+  });
+
+  it('prints what Dexterity is buying that nothing else can', async () => {
+    // 0.3 x DEX. The Watchman's authored Dexterity is 14, so 4.2 -> 4%.
+    const shrug = await sheetValue('Crit. shrug off');
+    expect(shrug).toMatch(/^\d+%$/);
+    expect(shrug).toBe(`${String(Math.round(0.3 * (WATCHMAN.combat.stats?.dex ?? 0)))}%`);
   });
 });
