@@ -115,6 +115,26 @@ export const EffectId = {
    * timed effect had no way to ADD anything.
    */
   Evasive: 'effect:evasive',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE THREE CROSS-TIER EFFECTS — Combat.lua:305-309.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * One per save channel. `getTierDiff` has been in `shared/scale.ts` since the
+   * port, with a full test file and this in its docblock: *"Shipped now, used at
+   * M4"*. It was never used at M4 or since — `grep` finds the definition, the
+   * test, and no production caller at all. The eleventh finished system in this
+   * codebase with nothing pointed at it.
+   *
+   * What it buys is the thing a level number cannot say: when an attacker
+   * outranks your save by a whole tier you take a SECOND debuff on top of
+   * whatever landed, even if you shrugged the first one off. That is ToME's
+   * "you have wandered somewhere you should not be" signal, and it scales with
+   * the gap instead of being a wall.
+   */
+  OffBalance: 'effect:off_balance',
+  Spellshocked: 'effect:spellshocked',
+  Brainlocked: 'effect:brainlocked',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -808,6 +828,134 @@ export const EVASIVE: EffectDef = Object.freeze({
   wielder: (instance) => ({ mods: { def: Number(instance.params['power'] ?? 0) } }),
 } satisfies EffectDef);
 
+// ---------------------------------------------------------------------------
+// THE CROSS-TIER TRIO — Combat.lua:295-322, one per save channel
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THESE THREE SHARE, AND WHY THEY ARE AUTHORED TOGETHER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * None of them is ever applied by a talent, a monster or an item. The engine
+ * applies them, from `crossTierEffect`, when an attacker's apply power outranks
+ * the defender's save on that channel by a whole twenty-point tier. Each one
+ * DECLARES its channel via `crossTierFor` and `createEffectState` indexes it —
+ * `engine/effects.ts` never names an authored id.
+ *
+ * All three carry `noCtEffect`, so a cross-tier effect can never trigger
+ * another one, and all three take `subtypes: ['cross tier']` from upstream's
+ * `subtype = { ["cross tier"]=true }`. That subtype is deliberately NOT in
+ * `IMMUNITY_KEYS`: upstream sells no cross-tier immunity, and an affix that
+ * removed the game's "you are outclassed" signal would be the strongest
+ * defensive roll in the game by a distance.
+ *
+ * `StackMode.Refresh` for all three — upstream declares no `on_merge` on any of
+ * them, so ActorTemporaryEffects.lua:128's default applies: remove and re-add.
+ * A second cross-tier hit REPLACES rather than extends, which matters because
+ * the duration is the tier gap and the newest gap is the true one.
+ */
+
+/** physical.lua:1858 — `numbed` 15, i.e. 15% off everything you deal. */
+export const OFF_BALANCE_NUMBED = 15;
+
+export const OFF_BALANCE: EffectDef = Object.freeze({
+  id: EffectId.OffBalance,
+  badge: 'Ob',
+  displayName: 'Off-balance',
+  description: 'Badly off balance. You deal 15% less damage until you recover your footing.',
+  type: SaveChannel.Physical,
+  crossTierFor: SaveChannel.Physical,
+  noCtEffect: true,
+  status: EffectStatus.Detrimental,
+  stackMode: StackMode.Refresh,
+  subtypes: ['cross tier'],
+  decrease: 1,
+  icon: 'icon_status_off_balance',
+  /**
+   * physical.lua:1864-1866 — `addTemporaryValue("numbed", 15)`. Through the
+   * wielder channel rather than a `modifiers` flag, because `numbed` is a
+   * PERCENTAGE and `EffectModifiers` carries flags and speeds; `CombatMods` is
+   * where a number that the damage projector reads off the sheet belongs.
+   */
+  wielder: () => ({ mods: { numbed: OFF_BALANCE_NUMBED } }),
+} satisfies EffectDef);
+
+/** magical.lua:1975 — `parameters = { power=20 }`, applied as `resists.all`. */
+export const SPELLSHOCK_RESIST = 20;
+
+export const SPELLSHOCKED: EffectDef = Object.freeze({
+  id: EffectId.Spellshocked,
+  badge: 'Ss',
+  displayName: 'Spellshocked',
+  description:
+    'Overwhelming magic has interfered with your resistances, lowering all of them by 20%.',
+  type: SaveChannel.Magical,
+  crossTierFor: SaveChannel.Magical,
+  noCtEffect: true,
+  status: EffectStatus.Detrimental,
+  stackMode: StackMode.Refresh,
+  subtypes: ['cross tier'],
+  decrease: 1,
+  icon: 'icon_status_spellshocked',
+  parameters: { power: SPELLSHOCK_RESIST },
+  /**
+   * magical.lua:1979-1983 — `addTemporaryValue("resists", { all = -eff.power })`.
+   *
+   * THE `all` ROW, which is why `Wielder.resistAll` exists and why
+   * `validateItems` refuses it on gear: it composes MULTIPLICATIVELY with every
+   * typed row (Combat.lua:2227-2228), so this is not "−20 to six numbers", it is
+   * a rescale of the whole defensive column. Six typed −20s would be a different
+   * effect the moment the target resisted anything.
+   */
+  wielder: (instance) => ({
+    resistAll: -Number(instance.params['power'] ?? SPELLSHOCK_RESIST),
+  }),
+} satisfies EffectDef);
+
+/** mental.lua:2247-2253 — `for i = 1, 1 do` — exactly ONE talent goes dark. */
+export const BRAINLOCK_TALENT_LOCKOUT = 1;
+
+export const BRAINLOCKED: EffectDef = Object.freeze({
+  id: EffectId.Brainlocked,
+  // `Bl` is Bleeding's and `Br` is Breached's, so Brainlock contracts to `Bk`.
+  // Two glyphs, and the roster test proves no two statuses share a pair.
+  badge: 'Bk',
+  displayName: 'Brainlocked',
+  description:
+    'A talent is locked out, and no talent cools down until it passes. ' +
+    'The mind reels from something it could not answer.',
+  type: SaveChannel.Mental,
+  crossTierFor: SaveChannel.Mental,
+  noCtEffect: true,
+  status: EffectStatus.Detrimental,
+  stackMode: StackMode.Refresh,
+  subtypes: ['cross tier'],
+  decrease: 1,
+  icon: 'icon_status_brainlocked',
+  modifiers: {
+    // mental.lua:2246 — `addTemporaryValue("no_talents_cooldown", 1)`. The same
+    // freeze Stunned uses, and the reason a one-turn Brainlock is worse than it
+    // reads: nothing you already spent comes back while it lasts.
+    noTalentsCooldown: true,
+  },
+  parameters: {},
+
+  activate: ({ actor, eff, rng, ctx }: EffectHookArgs): void => {
+    // mental.lua:2247-2253. ONE talent, where Stunned takes three — the tier gap
+    // is usually one or two turns, so this is the lighter, more frequent cousin.
+    const candidates = ctx.activatableTalents?.(actor.id) ?? [];
+    const locked = lockoutTalents(
+      actor,
+      candidates,
+      BRAINLOCK_TALENT_LOCKOUT,
+      rng,
+      `effects.brainlocked.lockout.${actor.id}`,
+    );
+    eff.params.power = locked.length;
+  },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -816,6 +964,9 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   BREACHED,
   DAZED,
   EVASIVE,
+  OFF_BALANCE,
+  SPELLSHOCKED,
+  BRAINLOCKED,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

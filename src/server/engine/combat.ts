@@ -459,6 +459,9 @@ export function attackTarget(
     // upstream's and is why Dazed reads as the more punishing of the two.
     sourceDazed: self.flags?.dazed,
     sourceStunned: self.flags?.stunned,
+    // damage_types.lua:158-160, the same block. A percentage off the sheet
+    // rather than a flag — see `CombatMods.numbed`.
+    sourceNumbed: self.mods?.numbed,
     increase: self.increase,
     penetration: self.penetration,
   });

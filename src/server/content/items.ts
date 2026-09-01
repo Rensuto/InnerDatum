@@ -324,6 +324,30 @@ export type Wielder = {
    * from that player's game, permanently, from one slot.
    */
   readonly immunities?: Partial<Record<ImmunitySubtype, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `resists.all` — EVERY DAMAGE TYPE AT ONCE, AND NO ITEM MAY AUTHOR IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combatGetResist` composes the `all` row MULTIPLICATIVELY with the typed row
+   * (Combat.lua:2227-2228) — that is the whole reason the row exists and the
+   * reason `Wielder.resists` is typed-only: the fold stays a plain add, and
+   * "two coats at +10 fire are +20 fire" stays true.
+   *
+   * ═══ SO WHY IS THE FIELD HERE AT ALL ═══
+   * Because an EFFECT hands back the same block a worn item does
+   * (`EffectDef.wielder`), and upstream's Spellshocked is exactly
+   * `addTemporaryValue("resists", {all = -eff.power})`. The magical cross-tier
+   * debuff IS an across-the-board resistance penalty; there is no faithful way
+   * to write it as six typed rows, because six typed −20s and one `all` −20
+   * differ the moment the target already resists something.
+   *
+   * `validateItems` REFUSES this on an authored item. An effect's block never
+   * passes through that check — the same seam the ego cap has to work around —
+   * so the split is enforced where the two kinds of block actually diverge.
+   * NEGATIVE is the expected sign and the only one anything authors today.
+   */
+  readonly resistAll?: number;
 };
 
 /** Rarity, and — by construction — the drop tier. See the file header. */
@@ -1091,6 +1115,20 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
      * an item that made you EASIER to stun is a curse, which is a feature this
      * game does not have and nobody would predict from an affix name.
      */
+    /**
+     * AND THE `all` ROW IS NOT AN ITEM'S TO GRANT. See `Wielder.resistAll`: it
+     * composes multiplicatively with every typed row, so one affix carrying it
+     * would silently rescale every other resistance on the character. Effects
+     * may; gear may not; and this is the only place that can tell them apart.
+     */
+    if (item.wielder.resistAll !== undefined) {
+      throw new Error(
+        `items: ${item.id} authors wielder.resistAll — the \`all\` resist row composes ` +
+          `MULTIPLICATIVELY with every typed row, so gear uses \`resists\` and only a timed ` +
+          `effect may move \`all\` (see Wielder.resistAll)`,
+      );
+    }
+
     for (const [key, value] of Object.entries(item.wielder.immunities ?? {})) {
       if (!IMMUNITY_KEYS.includes(key as ImmunitySubtype)) {
         throw new Error(

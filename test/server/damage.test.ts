@@ -309,6 +309,41 @@ describe('resolveDamage — THE ORDERED PIPELINE', () => {
     expect(out.amount).toBeCloseTo(20, 10);
   });
 
+  it('takes `numbed` off as a percentage — damage_types.lua:158-160', () => {
+    // `dam = dam - dam * numbed / 100`. Off-balance, the physical cross-tier
+    // debuff, is the only thing that sets it: 15 means you deal 85%.
+    const out = resolveDamage(
+      { base: 100, type: DamageType.Physical, sourceNumbed: 15 },
+      OPEN,
+      scriptedRng([]),
+      'test',
+    );
+    expect(out.amount).toBeCloseTo(85, 10);
+  });
+
+  it('and `numbed` COMPOUNDS with the two flags, in upstream`s order', () => {
+    /**
+     * damage_types.lua applies each in turn to the running total — Dazed at
+     * :146-148, Stunned at :150-153, `numbed` at :158-160. So a dazed, stunned,
+     * off-balance attacker deals `100 × 0.5 × 0.4 × 0.85`, not `100 × (1 − 0.5 −
+     * 0.6 − 0.15)`. Additive stacking would floor at zero and would have made an
+     * off-balance stun a total silence.
+     */
+    const out = resolveDamage(
+      {
+        base: 100,
+        type: DamageType.Physical,
+        sourceDazed: true,
+        sourceStunned: true,
+        sourceNumbed: 15,
+      },
+      OPEN,
+      scriptedRng([]),
+      'test',
+    );
+    expect(out.amount).toBeCloseTo(17, 10);
+  });
+
   it('subtracts flat armour AFTER the percentages — damage_types.lua:404-409', () => {
     const out = resolveDamage(
       { base: 100, type: DamageType.Fire },

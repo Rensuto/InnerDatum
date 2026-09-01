@@ -81,7 +81,7 @@
 import { ActorKind } from '../../shared/protocol.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import { reentryHealFraction } from '../../shared/progression.ts';
-import { bound } from '../../shared/scale.ts';
+import { bound, getTierDiff } from '../../shared/scale.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
 import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './derived.ts';
 import { composeSheet, composeWielders, wornOf } from './equipment.ts';
@@ -322,6 +322,40 @@ export type EffectDef = {
    */
   readonly subtypes: readonly string[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * "I AM THE CROSS-TIER EFFECT FOR THIS CHANNEL" — Combat.lua:305-309.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * local cross_tier_effects = {
+   *   combatPhysicalResist = self.EFF_OFFBALANCE,
+   *   combatSpellResist    = self.EFF_SPELLSHOCKED,
+   *   combatMentalResist   = self.EFF_BRAINLOCKED,
+   * }
+   * ```
+   *
+   * Upstream hard-codes that table inside `crossTierEffect`. Here the effect
+   * DECLARES the role and `createEffectState` indexes it, for the reason the
+   * whole engine/content split exists: `engine/effects.ts` must not know the id
+   * of any authored status. A build that registers no cross-tier effect for a
+   * channel simply fires nothing on it, which is also what every pre-M5 fixture
+   * needs to keep doing.
+   *
+   * At most one per channel — `registerEffect` refuses a second.
+   */
+  readonly crossTierFor?: SaveChannel;
+  /**
+   * `e.no_ct_effect` (Actor.lua:7027). This effect never TRIGGERS a cross-tier
+   * effect when it lands.
+   *
+   * Set on the three cross-tier effects themselves. Belt and braces: the trigger
+   * already sits inside the `applyPower !== undefined` branch and
+   * `crossTierEffect` applies its effect with no power, so the recursion cannot
+   * start — but "cannot recurse because of where the call happens to sit" is a
+   * property one refactor away from being false, and upstream carries the flag.
+   */
+  readonly noCtEffect?: boolean;
+  /**
    * `t.decrease` — ActorTemporaryEffects.lua:54, defaulted to 1 upstream.
    * How much `dur` drops per game turn. 0 makes an effect permanent until
    * dispelled, which is how ToME writes sustains that live in the same table.
@@ -456,6 +490,13 @@ export type EffectParams = {
   power?: number;
   /** `p.src` — who applied it. An id, never a reference, so a save can hold it. */
   readonly srcId?: string;
+  /**
+   * `p.no_ct_effect` — Actor.lua:7027. THIS application triggers no cross-tier
+   * effect, whatever the definition says. Upstream's per-application escape
+   * hatch, for an effect re-applied by another effect that has already paid the
+   * cross-tier cost once.
+   */
+  readonly noCtEffect?: boolean;
 };
 
 /** What actually landed. `p`, after `on_set_temporary_effect` has had it. */
@@ -664,6 +705,13 @@ export type EffectState = {
   readonly baseFlags: Map<string, StatusFlags | undefined>;
   /** The pre-effect `globalSpeed`, same reason. Monsters only. */
   readonly baseGlobalSpeed: Map<string, number>;
+  /**
+   * Save channel → the effect id to apply when someone is outclassed on it.
+   * Built from `EffectDef.crossTierFor` as definitions register, so the engine
+   * never names an authored status. Empty in a build with no such content, and
+   * `crossTierEffect` then does nothing.
+   */
+  readonly crossTier: Map<SaveChannel, string>;
 };
 
 export function createEffectState(defs: readonly EffectDef[] = []): EffectState {
@@ -673,6 +721,7 @@ export function createEffectState(defs: readonly EffectDef[] = []): EffectState 
     immunities: new Map<string, Map<string, number>>(),
     baseFlags: new Map<string, StatusFlags | undefined>(),
     baseGlobalSpeed: new Map<string, number>(),
+    crossTier: new Map<SaveChannel, string>(),
   };
   for (const def of defs) registerEffect(state, def);
   return state;
@@ -685,6 +734,16 @@ export function registerEffect(state: EffectState, def: EffectDef): EffectDef {
     throw new Error(`effects: duplicate definition for '${def.id}'`);
   }
   state.defs.set(def.id, def);
+  if (def.crossTierFor !== undefined) {
+    const claimed = state.crossTier.get(def.crossTierFor);
+    if (claimed !== undefined && claimed !== def.id) {
+      throw new Error(
+        `effects: '${def.id}' and '${claimed}' both claim the ${def.crossTierFor} cross-tier ` +
+          `slot — Combat.lua:305-309 maps each save channel to exactly one`,
+      );
+    }
+    state.crossTier.set(def.crossTierFor, def.id);
+  }
   return def;
 }
 
@@ -1166,6 +1225,61 @@ function refusal(
  * consumes NONE. `test/server/effects.test.ts` pins both counts, because a
  * stage that quietly stops drawing desynchronises every later roll in the turn.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BEING OUTCLASSED COSTS SOMETHING EXTRA — Combat.lua:295-322.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * local dur = self:getTierDiff(apply_power, save)
+ * self:setEffect(ct_effect, dur, {})
+ * ```
+ *
+ * Tiers are twenty rescaled points wide. When an attacker's apply power outranks
+ * the defender's save by a WHOLE tier, the defender takes a second debuff on top
+ * of whatever landed — Off-balance, Spellshocked or Brainlocked, chosen by the
+ * save channel — and the tier gap IS its duration in turns.
+ *
+ * ═══ IT FIRES EVEN WHEN THE SAVE SUCCEEDED, AND THAT IS THE POINT ═══
+ * Actor.lua:7025-7027 calls this INSIDE `if p.dur > 0` and BEFORE the `if saved`
+ * return. So shrugging off a stun from something two tiers above you still
+ * leaves you off-balance. It is upstream's way of saying "you do not belong on
+ * this floor" without printing a level number — a soft, legible pressure that
+ * scales with the gap rather than a wall.
+ *
+ * ═══ A ZERO DURATION REMOVES, AND THAT IS UPSTREAM'S TOO ═══
+ * `setEffect(ct, 0, {})` hits ActorTemporaryEffects.lua:109 — *"Beware, setting
+ * to 0 means removing"*. So a same-tier hit CLEARS an existing cross-tier
+ * debuff. It reads like an accident of upstream's control flow and it is the
+ * behaviour fifteen years of play were tuned against, so it is ported as
+ * written; CLAUDE.md's rule is that when the docs and the Lua disagree, the Lua
+ * wins. Kept as one unconditional call rather than a `dur > 0` guard so the
+ * difference is visible rather than quietly dropped.
+ *
+ * ═══ IT CANNOT RECURSE ═══
+ * The applied effect carries no `applyPower`, so the trigger below — which sits
+ * inside `applyPower !== undefined` — is unreachable from it. The three
+ * cross-tier definitions ALSO set `noCtEffect`, because that argument depends on
+ * where a call happens to sit and is one refactor from being false.
+ */
+function crossTierEffect(
+  state: EffectState,
+  target: EffectActor,
+  applyPower: number,
+  channel: SaveChannel,
+  rng: Rng,
+  ctx: EffectCtx,
+): void {
+  const crossTierId = state.crossTier.get(channel);
+  // A build with no cross-tier content registered. Every pre-M5 fixture.
+  if (crossTierId === undefined) return;
+
+  // Combat.lua:313 — `self[apply_save or save_for_effects[e.type]](self, true)`.
+  // The DEFENDER's save on the same channel the effect was rolled against.
+  const save = saveOf(target.combat, channel);
+  setEffect(state, target, crossTierId, getTierDiff(applyPower, save), {}, rng, ctx);
+}
+
 export function setEffect(
   state: EffectState,
   target: EffectActor,
@@ -1230,6 +1344,25 @@ export function setEffect(
     // A beneficial effect keeps its scaled duration and is never refused.
     if (def.status === EffectStatus.Detrimental) {
       if (dur > 0) {
+        /**
+         * :7025-7027 — THE CROSS-TIER EFFECT, BEFORE THE `saved` CHECK BELOW.
+         *
+         * ```lua
+         * if not p.no_ct_effect and not e.no_ct_effect then
+         *   self:crossTierEffect(eff_id, p.apply_power, p.apply_save or ...)
+         * end
+         * ```
+         *
+         * The position is the rule: a shrugged-off effect has already passed
+         * `dur > 0` and still gets here, so being outclassed costs you something
+         * even when you make the save. Moving this below the `roll.hit` return
+         * would compile, pass every save test, and silently delete half of what
+         * the mechanic is for.
+         */
+        if (def.noCtEffect !== true && merged.noCtEffect !== true) {
+          crossTierEffect(state, target, applyPower, channel, rng, ctx);
+        }
+
         // :7034-7037. Note the ordering: the duration was computed FIRST and is
         // then thrown away. `saved` and the duration are two separate draws off
         // the same chance, which is why a 90% save can still occasionally eat a

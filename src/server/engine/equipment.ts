@@ -150,6 +150,9 @@ const WIELDER_STAT_KEYS: readonly (keyof AdditiveStats)[] = Object.freeze([
  * import-time check that is three independent refusals of the same mistake.
  */
 const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
+  // ADDITIVE, which is upstream's: two sources of `numbed` stack into one attr.
+  // Nothing but the Off-balance cross-tier effect grants it today.
+  'numbed',
   'atk',
   'def',
   'armour',
@@ -278,7 +281,7 @@ export function composeWielders(
 ): CombatSheet {
   const statDelta = new Map<keyof AdditiveStats, number>();
   const modDelta = new Map<keyof AdditiveMods, number>();
-  const resistDelta = new Map<DamageType, number>();
+  const resistDelta = new Map<DamageType | 'all', number>();
   // THE TWO ATTACKER-SIDE TABLES. Same shape, same fixed key list, same reason.
   const damageDelta = new Map<DamageType, number>();
   const penDelta = new Map<DamageType, number>();
@@ -361,6 +364,16 @@ export function composeWielders(
      * leave a quarter chance of being cut. Adding there instead would make two
      * mediocre immunities into a total one, and `canBe`'s docblock says so.
      */
+    /**
+     * THE `all` RESIST ROW, which only an effect reaches — `validateItems`
+     * refuses it on gear. Additive into the same delta map the typed rows use,
+     * keyed by `'all'`: `TypeTable` is `DamageType | 'all'`, and
+     * `combatGetResist` reads the row directly, so nothing downstream needs to
+     * learn a new shape.
+     */
+    if (wielder.resistAll !== undefined) {
+      resistDelta.set('all', (resistDelta.get('all') ?? 0) + wielder.resistAll);
+    }
     const immunities = wielder.immunities;
     if (immunities !== undefined) {
       for (const key of IMMUNITY_KEYS) {

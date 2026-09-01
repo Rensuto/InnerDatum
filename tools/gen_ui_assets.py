@@ -310,6 +310,25 @@ STATUS_GLYPHS = {
     "shielded": (["..#########...", ".##.......##..", ".#..#####..#..",
                   ".#.#.....#.#..", ".#.#.....#.#..", ".#..#####..#..",
                   "..##.....##...", "...#######....", ".....###......"], SILVER),
+    # --- the cross-tier trio (Combat.lua:305-309), one per save channel ------
+    # STAND-INS. Each reads at 24x24 and shares nothing with the badge above or
+    # below it; that is the whole bar a placeholder has to clear, because a
+    # missing PNG falls back to a two-letter glyph and these are the icons that
+    # replace Ob / Ss / Bk. Redraw when the real pass happens.
+    #
+    # A TILTED PLUMB LINE — the weight has swung off true. Physical.
+    "off_balance": ([".....###......", "......#.......", "......#.......",
+                     ".....#........", "....#.........", "...#..........",
+                     "..#...........", ".###..........", "..............",
+                     ], ORANGE),
+    # A BROKEN RING — the resistance column, opened up. Magical.
+    "spellshocked": (["...#######....", "..#.......#...", ".#....#....#..",
+                      "#....##.....#.", "#...##......#.", "#..##.......#.",
+                      ".#..#......#..", "..#.......#...", "...#######...."], VIOLET_HI),
+    # A CLOSED PADLOCK — one talent shut, and nothing cooling down. Mental.
+    "brainlocked": (["....#####.....", "...#.....#....", "...#.....#....",
+                     ".###########..", ".#.........#..", ".#....#....#..",
+                     ".#...###...#..", ".#....#....#..", ".###########.."], BONE),
 }
 
 

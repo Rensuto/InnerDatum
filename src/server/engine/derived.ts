@@ -193,6 +193,27 @@ export type CombatMods = {
    * wrong. Talents first.
    */
   readonly moveMp?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `numbed` — OUTGOING DAMAGE REDUCED BY A PERCENTAGE (damage_types.lua:158-160).
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * if src:attr("numbed") then
+   *   dam = dam - dam * src:attr("numbed") / 100
+   * ```
+   *
+   * Read off the ATTACKER, in the projector, in the same step-5 block as Dazed's
+   * ×0.5 and Stunned's ×0.4 — upstream puts it eight lines below them. The
+   * difference is that this one is a percentage rather than a flag, which is why
+   * it lives on `CombatMods` and not on `StatusFlags`.
+   *
+   * Off-balance is the only thing that sets it today, and Off-balance is the
+   * PHYSICAL cross-tier effect: the debuff you get for being a whole tier of
+   * save below whoever just hit you. That is what it is for — a soft, legible
+   * "you are outclassed here" that costs damage rather than turns.
+   */
+  readonly numbed?: number;
 };
 
 /**

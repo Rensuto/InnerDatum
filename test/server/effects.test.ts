@@ -1131,6 +1131,14 @@ describe('the status roster (game-design.md § 12)', () => {
       // The first beneficial one. Appended rather than slotted in, so a client
       // holding an older badge atlas keeps the indices it already has.
       EffectId.Evasive,
+      /**
+       * THE CROSS-TIER TRIO, one per save channel (Combat.lua:305-309). Appended
+       * for the same atlas reason. Nothing applies these but the engine, from
+       * `crossTierEffect`, when an attacker outranks your save by a whole tier.
+       */
+      EffectId.OffBalance,
+      EffectId.Spellshocked,
+      EffectId.Brainlocked,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1140,6 +1148,9 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_breached',
       'icon_status_dazed',
       'icon_status_evasive',
+      'icon_status_off_balance',
+      'icon_status_spellshocked',
+      'icon_status_brainlocked',
     ]);
   });
 
@@ -1210,6 +1221,17 @@ describe('the status roster (game-design.md § 12)', () => {
        * anyway so the badge and any future dispel-by-channel agree with upstream.
        */
       [EffectId.Evasive]: SaveChannel.Physical,
+      /**
+       * THE CROSS-TIER TRIO, and here the channel is the whole identity: it is
+       * both what selects the effect (`crossTierFor`) and what its own save
+       * would be rolled against. Combat.lua:305-309 pairs them exactly so.
+       */
+      // physical.lua:1858 — `type = "physical"`.
+      [EffectId.OffBalance]: SaveChannel.Physical,
+      // magical.lua:1971 — `type = "magical"`.
+      [EffectId.Spellshocked]: SaveChannel.Magical,
+      // mental.lua:2239 — `type = "mental"`.
+      [EffectId.Brainlocked]: SaveChannel.Mental,
     });
   });
 

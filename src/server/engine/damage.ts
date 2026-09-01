@@ -417,6 +417,15 @@ export type DamageSpec = {
   readonly sourceDazed?: boolean;
   /** Source is Stunned — ×0.4 (damage_types.lua:150-153). */
   readonly sourceStunned?: boolean;
+  /**
+   * Source is `numbed` — MINUS this percentage (damage_types.lua:158-160).
+   *
+   * A percentage rather than a flag, and subtractive rather than a multiplier,
+   * because that is what the Lua does: `dam - dam * numbed / 100`. At 15 it is
+   * a ×0.85, but writing it as a multiplier would lose the shape the moment two
+   * sources stack the attr to 40.
+   */
+  readonly sourceNumbed?: number;
 
   // --- step 6 ---------------------------------------------------------------
   /** Attacker's `inc_damage` table. Additive percentages. */
@@ -522,6 +531,11 @@ export function resolveDamage(
   //    they COMPOUND: a dazed-and-stunned attacker deals 20%.
   if (spec.sourceDazed === true) dam = dam * 0.5;
   if (spec.sourceStunned === true) dam = dam * 0.4;
+  //    And `numbed`, eight lines below them at damage_types.lua:158-160. It
+  //    compounds with both for the same reason they compound with each other:
+  //    upstream applies each in turn to the running total.
+  const numbed = spec.sourceNumbed ?? 0;
+  if (numbed !== 0) dam = dam - (dam * numbed) / 100;
 
   // 6. inc_damage — damage_types.lua:270, `dam = dam + (dam * inc / 100)`.
   //    ADDITIVE percentages: +20% and +30% is +50%, not +56%.
