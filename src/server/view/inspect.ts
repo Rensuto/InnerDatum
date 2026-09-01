@@ -185,7 +185,12 @@ function pushResistRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup
  * pass before an effect is reaped, and a negative number on a card is a bug
  * report.
  */
-function pushEffectRows(rows: InspectRow[], state: EffectState | undefined, target: Actor): void {
+function pushEffectRows(
+  rows: InspectRow[],
+  state: EffectState | undefined,
+  target: Actor,
+  group?: InspectGroup,
+): void {
   if (state === undefined) return;
   for (const instance of effectsOn(state, target.id)) {
     const def = effectDef(state, instance.effectId);
@@ -197,6 +202,7 @@ function pushEffectRows(rows: InspectRow[], state: EffectState | undefined, targ
     rows.push({
       label: def.displayName,
       value: turns === 1 ? '1 turn' : `${String(turns)} turns`,
+      ...(group === undefined ? {} : { group }),
     });
   }
 }
@@ -570,6 +576,18 @@ export function inspectActor(
     // the actor compiles only behind a double cast and then every number on the
     // character sheet silently resolves to ToME's level-1 default.
     pushSelfSheet(rows, combatantOf(target));
+    /**
+     * AND WHAT IS CURRENTLY ON YOU. The hostile card got this first and the self
+     * sheet did not, which was an oversight rather than a decision: "what is
+     * wrong with that husk" and "what is wrong with ME" are the same question,
+     * and the second one is the one a player asks while deciding whether to
+     * spend a turn waiting it out.
+     *
+     * IN `General`, which is where "what is currently true of this body" goes —
+     * the six primaries and the healing multiplier are already there, and a
+     * status is a fact about the body rather than about attacking or defending.
+     */
+    pushEffectRows(rows, effects, target, InspectGroup.General);
   } else if (hostile) {
     // THE NUMBER THE PLAYER IS ACTUALLY ASKING FOR. Everything else on the card
     // is context for this one.

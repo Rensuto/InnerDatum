@@ -1209,11 +1209,26 @@ export function partyPaneTipAt(
   if (!member.online) lines.push('Disconnected.');
   if (row.voice === VoiceState.Speaking) lines.push('Speaking.');
 
-  // THE EFFECTS BY NAME AND REMAINING TURNS. The row has room for a count and a
-  // badge; neither says which effect, and "2" over a stunned ally is not an
-  // answer to what is wrong with them.
+  /**
+   * THE EFFECTS BY NAME AND REMAINING TURNS. The row has room for a count and a
+   * badge; neither says which effect, and "2" over a stunned ally is not an
+   * answer to what is wrong with them.
+   *
+   * ═══ AND NOW WHAT EACH ONE DOES, WHICH THE NAME ALONE DOES NOT SAY ═══
+   * "Slowed 3t" tells a player something is wrong and not what. The sentence
+   * has been authored on every effect in the game since the status system
+   * landed and could not reach any screen until `EffectView.desc` existed —
+   * *"Dragging. Monsters act less often; detectives lose a point of
+   * movement."* is the difference between a badge and an explanation.
+   *
+   * ON ITS OWN LINE, INDENTED, rather than appended to the name: the card wraps
+   * nothing, and a name plus a sentence on one line would ellipsise away the
+   * half that is new. Two lines per effect is affordable — a body carries two
+   * or three statuses, not ten.
+   */
   for (const effect of row.effects) {
     lines.push(`${effect.name}  ${String(effect.turns)}t`);
+    if (effect.desc !== undefined) lines.push(`  ${effect.desc}`);
   }
 
   /**

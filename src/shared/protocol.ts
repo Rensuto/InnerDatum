@@ -1413,6 +1413,27 @@ export type EffectView = {
   id: string;
   /** "Stunned". Drawn beside the badge in the party panel — never colour alone. */
   name: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IT DOES TO YOU, in one sentence. `EffectDef.description`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Authored on every effect in the game and, until this field, DEAD DATA: the
+   * text existed, it was specific and good — *"Dragging. Monsters act less
+   * often; detectives lose a point of movement."* — and no screen could reach
+   * it. So a player was Slowed and nothing said it cost a movement point, or
+   * Stunned and nothing said their cooldowns had stopped ticking, which is the
+   * one a player will sit and wait out believing their abilities are coming
+   * back.
+   *
+   * ONE SENTENCE, AUTHORED, NOT COMPOSED. Unlike the talent descriptions this
+   * carries no numbers that vary per body, so there is nothing to render per
+   * viewer — it is the same sentence for everybody who has the status.
+   *
+   * OPTIONAL, so an effect authored without one, and every client that has
+   * never heard of the field, both behave exactly as they did.
+   */
+  desc?: string;
   /** An asset key, never a path. 24x24 in the manifest. */
   icon: string;
   /**

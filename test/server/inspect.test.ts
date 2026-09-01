@@ -955,6 +955,25 @@ describe('which one is sigiled?', () => {
     expect(view?.['effects']).toEqual([STUNNED.id]);
   });
 
+  it('lists what is on YOU, on your own sheet', async () => {
+    /**
+     * The hostile card got status rows first and the self sheet did not, which
+     * was an oversight rather than a decision. "What is wrong with that husk"
+     * and "what is wrong with me" are the same question, and the second is the
+     * one a player asks while deciding whether to spend a turn waiting it out.
+     */
+    const floor = await scene();
+    setEffect(server.effects, floor.viewer, STUNNED.id, 4, {}, createRng('self'));
+
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.viewer.id)));
+    const stun = rows.find((r) => String(r['label']) === STUNNED.displayName);
+    expect(stun, 'your own sheet said nothing about your own status').toBeDefined();
+    expect(stun?.['value']).toBe('4 turns');
+    // IN `General`, where "what is currently true of this body" goes. The self
+    // sheet is tabbed and a row with no group would fall off it entirely.
+    expect(stun?.['group']).toBe('general');
+  });
+
   it('says nothing at all about a body with nothing on it', async () => {
     // Absence is the statement. A card that listed "no statuses" would spend a
     // row on the common case and push the rows that matter off a narrow panel.

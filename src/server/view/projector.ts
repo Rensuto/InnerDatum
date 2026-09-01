@@ -1194,6 +1194,9 @@ export function projectEffects(
       badges.push({
         id: eff.effectId,
         name: def.displayName,
+        // WHAT IT DOES, authored on the definition and dead data until now. See
+        // `EffectView.desc`.
+        desc: def.description,
         icon: def.icon,
         // The fallback glyph. See `EffectView.badge` — the client cannot work
         // out a distinct letter from the handful of effects it can see.

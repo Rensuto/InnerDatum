@@ -987,3 +987,85 @@ describe('the death plate covers both stages', () => {
     );
   });
 });
+
+describe('a badge says what it is doing to you', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SENTENCE WAS WRITTEN AND NO SCREEN COULD REACH IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `EffectDef.description` is authored on every effect in the game, and it is
+   * specific and good — *"Dragging. Monsters act less often; detectives lose a
+   * point of movement."* `EffectView` did not carry it, so a card could name a
+   * status and never say what it did. A player was Stunned and nothing told
+   * them their cooldowns had stopped ticking, which is the one they will sit
+   * and wait out believing their abilities are coming back.
+   */
+  const SLOWED_DESC = 'Dragging. Monsters act less often; detectives lose a point of movement.';
+
+  /** The pointer over a named member. Local, because the suite's own copy is
+   *  scoped inside another block and reaching for it would be a second reason
+   *  for these tests to break. */
+  function pointOver(view: PartyPaneView, layout: PartyPaneLayout, id: string) {
+    const rect = layout.rect;
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+      const hit = partyPaneHitAt(view, layout, rect.x + Math.floor(rect.w / 2), y);
+      if (hit !== null && hit.kind === 'member' && hit.id === id) {
+        return { x: rect.x + Math.floor(rect.w / 2), y };
+      }
+    }
+    throw new Error(`no row for ${id}`);
+  }
+
+  function cardFor(effects: readonly EffectView[]) {
+    const base = trio();
+    const view: PartyPaneView = {
+      ...base,
+      rows: base.rows.map((row) => (row.member.id === 'actor_b' ? { ...row, effects } : row)),
+    };
+    const layout = wideLayout(view);
+    const point = pointOver(view, layout, 'actor_b');
+    return partyPaneTipAt(view, layout, point.x, point.y);
+  }
+
+  const SLOWED: EffectView = {
+    id: 'slow',
+    name: 'Slowed',
+    icon: 'icon_status_slow',
+    desc: SLOWED_DESC,
+    turns: 3,
+    harmful: true,
+  };
+
+  it('prints the sentence under the name', () => {
+    const card = cardFor([SLOWED]);
+    expect(card?.lines.some((l) => l.includes('Slowed'))).toBe(true);
+    expect(
+      card?.lines.some((l) => l.includes('lose a point of movement')),
+      'the card named the status and never said what it does',
+    ).toBe(true);
+  });
+
+  it('keeps the name and the turns on their own line', () => {
+    // ON SEPARATE LINES rather than appended: the card wraps nothing, so a name
+    // plus a sentence on one line would ellipsise away exactly the half that is
+    // new.
+    const lines = cardFor([SLOWED])?.lines ?? [];
+    const named = lines.findIndex((l) => l.includes('Slowed'));
+    expect(named).toBeGreaterThanOrEqual(0);
+    expect(lines[named]).toContain('3t');
+    expect(lines[named]).not.toContain('Dragging');
+    expect(lines[named + 1]).toContain('Dragging');
+  });
+
+  it('says only the name for an effect authored without a sentence', () => {
+    // `desc` is optional, so an effect with none — and every client that has
+    // never heard of the field — behaves exactly as it always did.
+    const bare: EffectView = { ...SLOWED };
+    delete (bare as { desc?: string }).desc;
+    const lines = cardFor([bare])?.lines ?? [];
+    const named = lines.findIndex((l) => l.includes('Slowed'));
+    expect(named).toBeGreaterThanOrEqual(0);
+    expect(lines[named + 1] ?? '').not.toContain('Dragging');
+  });
+});

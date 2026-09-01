@@ -139,6 +139,10 @@ describe('projectEffects', () => {
         // on the bodies in front of it, and 'Stunned' and 'Slowed' share an
         // initial. See EffectView.badge.
         badge: 'St',
+        // WHAT IT DOES, authored on the definition. It was dead data until
+        // `EffectView.desc` existed — the sentence was written, specific and
+        // good, and no screen in the game could reach it. See the field.
+        desc: STUNNED.description,
         turns: 3,
         harmful: true,
       },
@@ -150,7 +154,7 @@ describe('projectEffects', () => {
     // Spelled out as a key check because the failure mode is additive: somebody
     // spreads the instance one day and the whole effect table is on the wire.
     expect(Object.keys(row?.effects[0] ?? {}).sort()).toEqual(
-      ['badge', 'harmful', 'icon', 'id', 'name', 'turns'].sort(),
+      ['badge', 'desc', 'harmful', 'icon', 'id', 'name', 'turns'].sort(),
     );
   });
 
