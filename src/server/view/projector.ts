@@ -59,11 +59,15 @@ import { TalentEffect } from '../engine/talents.ts';
 import { Faction } from '../engine/actor.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
-import { SLOT_ORDER } from '../content/items.ts';
+import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
+import { bound } from '../../shared/scale.ts';
 import { isMoneyId, moneyAmountOf, moneyName } from '../content/money.ts';
 import { buyPrice, sellPrice } from '../content/shops.ts';
 import { resolveItem } from '../content/resolve.ts';
 import {
+  HEAL_FACTOR_MAX,
+  HEAL_FACTOR_MIN,
+  healingFactor,
   combatAPR,
   combatArmor,
   combatArmorHardiness,
@@ -115,7 +119,7 @@ import type {
   UnlockableTree,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
-import type { Item, Slot } from '../content/items.ts';
+import type { Item, ItemUse, Slot } from '../content/items.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
@@ -1423,7 +1427,7 @@ export function projectGroundItems(world: World): GroundMsg {
  * the return type says so, and every caller is made to answer the question with
  * a sheet in hand rather than being able to forget it and ship an empty list.
  */
-function toItemView(item: Item): Omit<ItemView, 'compare'> {
+function toItemView(item: Item, drinker?: Combatant): Omit<ItemView, 'compare'> {
   return {
     itemId: item.id,
     name: item.name,
@@ -1432,7 +1436,41 @@ function toItemView(item: Item): Omit<ItemView, 'compare'> {
     // Authored FOR this screen — `Item.desc` calls itself "one sentence, shown
     // in the inventory" — and this frame is the only path to it.
     desc: item.desc,
+    ...(item.use === undefined ? {} : { use: useText(item.use, drinker) }),
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A CONSUMABLE DOES, IN THE NUMBER THIS BODY WOULD ACTUALLY GET.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Item.use` never crossed the wire, so the one consumable in the game — the
+ * third way a fight can end — advertised nothing but a flavour sentence.
+ *
+ * ═══ THE VIEWER'S OWN FIGURE, NOT THE AUTHORED ONE ═══
+ * `healActor` multiplies every heal by the RECEIVER's healing factor, so the
+ * authored 40 is what nobody gets: a Watchman at Constitution 20 drinks 43. A
+ * panel printing the authored number would be wrong for every character in the
+ * game, and wrong in the direction that reads as the item under-delivering.
+ *
+ * This is the same rule `LoadoutTalent.range` follows — per-actor since v9,
+ * because one authored number stopped being the answer the moment anything
+ * could move it.
+ *
+ * ═══ THE AUTHORED FIGURE WHEN THERE IS NO BODY TO ASK ═══
+ * A shop shelf is projected without a drinker in some paths and a fixture may
+ * have no sheet at all. `healingFactor` of an empty sheet is exactly 1, so the
+ * fallback is the authored number rather than a blank — which is the honest
+ * answer to "what does this do" when nobody has picked it up.
+ */
+function useText(use: ItemUse, drinker?: Combatant): string {
+  switch (use.kind) {
+    case ItemUseKind.Heal: {
+      const factor = bound(healingFactor(drinker ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
+      return `Restores ${String(Math.round(use.amount * factor))} health.`;
+    }
+  }
 }
 
 /**
@@ -1759,7 +1797,7 @@ export function projectInventory(
     const item = resolveItem(id);
     if (item === undefined || item.slot !== slot) continue;
     equipped[slot] = {
-      ...toItemView(item),
+      ...toItemView(item, viewer.combat),
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * WHAT THIS WORN ITEM IS GIVING YOU — and it is the SAME function the bag
@@ -1796,7 +1834,7 @@ export function projectInventory(
     const item = resolveItem(id);
     if (item === undefined) continue;
     carried.push({
-      ...toItemView(item),
+      ...toItemView(item, viewer.combat),
       // NAMED HERE because a bag has no key to read it off — see `ItemView`,
       // which deliberately omits `slot` for the doll where the key IS the slot.
       // OMITTED ENTIRELY for a draught rather than sent as null: absence is what

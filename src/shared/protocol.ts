@@ -2144,6 +2144,25 @@ export type CarriedItemView = ItemView & {
   readonly slot?: Slot;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT DRINKING IT DOES, AS A SENTENCE. Absent on anything not usable.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The one consumable in the game is the third way a fight can end, and until
+   * this field nothing in the client ever said what it did: `Item.use` is
+   * server-side content and only the flavour line crossed the wire, so a player
+   * could buy a Draught of Mending, read *"Ashwick work. Whatever is written on
+   * you, this argues with it."*, and have no idea it restored forty hit points.
+   *
+   * ═══ A STRING, AND RENDERED AGAINST THE VIEWER ═══
+   * Rendered server-side for `LoadoutTalent.desc`'s reason — eslint bans the
+   * client from importing the combat maths at all — and rendered PER VIEWER for
+   * `range`'s reason: the heal a draught actually delivers is multiplied by the
+   * drinker's own Constitution (`healActor`), so one authored number is not the
+   * answer for everybody holding one. A Watchman is told what a Watchman gets.
+   */
+  readonly use?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THIS SHOP WOULD PAY FOR IT. Absent outside a room with a counter.
    * ═══════════════════════════════════════════════════════════════════════════
    *

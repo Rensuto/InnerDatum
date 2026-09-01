@@ -1590,3 +1590,55 @@ describe('the compare panel measures from where the character actually stands', 
     expect(claimed).toBe(actualDelta(body, SIGNET, combatAttack));
   });
 });
+
+describe('a consumable says what it does, in this body’s own number', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `Item.use` NEVER CROSSED THE WIRE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Draught of Mending is the third way a fight can end and the client was
+   * told only its flavour line — *"Ashwick work. Whatever is written on you,
+   * this argues with it."* — so a player could buy one, hover it, read it on a
+   * shelf, and never learn it restored anything.
+   *
+   * ═══ AND THE AUTHORED NUMBER IS THE ONE NOBODY GETS ═══
+   * `healActor` multiplies every heal by the RECEIVER's healing factor, so the
+   * authored 40 is wrong for every character in the game — and wrong in the
+   * direction that reads as the item under-delivering. The sentence is rendered
+   * per viewer for exactly `LoadoutTalent.range`'s reason.
+   */
+  const DRAUGHT = 'item_draught_mending';
+
+  function cardFor(con: number) {
+    const world = room();
+    const body = watchman(world);
+    body.combat = { ...(body.combat ?? {}), stats: { ...(body.combat?.stats ?? {}), con } };
+    body.carried = [DRAUGHT];
+    return projectInventory(body).carried[0];
+  }
+
+  it('carries a sentence at all', () => {
+    expect(cardFor(10)?.use).toBe('Restores 40 health.');
+  });
+
+  it('scales it by the drinker’s Constitution, not the author’s', () => {
+    /**
+     * THE DISCRIMINATING ASSERTION. A version printing `use.amount` verbatim
+     * passes the test above and fails this one — and it is the version that
+     * looks obviously correct, because 40 is the number written in the file.
+     */
+    const tough = cardFor(100)?.use;
+    expect(tough).toBe('Restores 60 health.');
+    expect(tough).not.toBe(cardFor(10)?.use);
+  });
+
+  it('says nothing at all about an item you cannot drink', () => {
+    // Absent on everything else, so all twenty-one wearable items produce the
+    // frame they produced before this field existed.
+    const world = room();
+    const body = watchman(world);
+    body.carried = ['item_watchmans_cap'];
+    expect(projectInventory(body).carried[0]?.use).toBeUndefined();
+  });
+});

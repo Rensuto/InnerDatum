@@ -1285,8 +1285,30 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       kind: InventoryRowKind.Detail,
       compact,
       title: carried.name,
-      meta: `${tierWord(carried.tier)} · ${carried.slot}`,
-      desc: carried.desc,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * IT READ `${tierWord(tier)} · ${carried.slot}` AND SAID "undefined".
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `ItemView.slot` is OMITTED for a consumable — deliberately, and the
+       * field's own note says why: *"absence is what tells the client there is
+       * no Equip for this row"*. Interpolating it straight into a template put
+       * the word `undefined` on the detail card of the only consumable in the
+       * game, which is also the one item a player most needs to understand.
+       *
+       * A CONSUMABLE IS NAMED FOR WHAT IT IS rather than for the slot it lacks.
+       * "uncommon · consumable" answers the same question the slot answers for
+       * everything else: what KIND of thing am I holding.
+       */
+      meta: `${tierWord(carried.tier)} · ${carried.slot ?? 'consumable'}`,
+      /**
+       * AND WHAT IT DOES, ABOVE THE FLAVOUR. `ItemView.use` is a sentence the
+       * SERVER rendered against this viewer's own Constitution, so the number
+       * is the one this body would actually get rather than the authored one.
+       * Absent on everything that is not usable, so every other row is the row
+       * it has always been.
+       */
+      desc: carried.use === undefined ? carried.desc : `${carried.use}  ${carried.desc}`,
       ...detailRows(carried.compare),
       // DROP IS OFFERED FOR A CARRIED ITEM ONLY. ToME's `playerDrop`
       // (Game.lua:2173-2176 -> `DROP_FLOOR`) drops out of INVEN, and taking a

@@ -2211,3 +2211,72 @@ describe('inventoryTipAt', () => {
     expect(detail?.kind === InventoryRowKind.Detail ? detail.focusId : null).toBe(focused.itemId);
   });
 });
+
+describe('a consumable is a thing you can read', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DETAIL CARD SAID "uncommon · undefined" ON THE ONE ITEM THAT MATTERS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ItemView.slot` is OMITTED for a consumable — deliberately, and the field's
+   * own note says why: absence is what tells the client there is no Equip for
+   * that row. The meta line interpolated it straight into a template, so the
+   * word `undefined` was printed on the card of the only consumable in the
+   * game, which is also the item a player most needs to understand.
+   *
+   * Found by a UI-parity survey reading our panels against the Lua. Nothing in
+   * four thousand tests looked at that string.
+   */
+  const DRAUGHT = {
+    itemId: 'item_draught_mending',
+    name: 'Draught of Mending',
+    icon: 'icon_active_alchemic_vial',
+    tier: ItemTier.Uncommon,
+    desc: 'Ashwick work. Whatever is written on you, this argues with it.',
+    compare: [],
+  } as const;
+
+  const cardFor = (over: Record<string, unknown>) =>
+    detailOf(
+      inventoryPanelRows(
+        view({
+          inventory: frame({ carried: [{ ...DRAUGHT, ...over }] }),
+          tab: InventoryTab.Carried,
+          focus: { kind: 'item', itemId: DRAUGHT.itemId },
+        }),
+      ),
+    );
+
+  it('never prints the word undefined where a slot would go', () => {
+    const card = cardFor({});
+    expect(card.meta).not.toContain('undefined');
+    // NAMED FOR WHAT IT IS rather than for the slot it lacks — the meta line
+    // answers "what kind of thing am I holding" for every other row and must
+    // answer it here too.
+    expect(card.meta).toBe('uncommon · consumable');
+  });
+
+  it('still names the slot for anything that has one', () => {
+    // The other half: the fix must not swallow the real answer for the twenty-one
+    // items that do cover a slot.
+    expect(cardFor({ slot: 'ring' }).meta).toBe('uncommon · ring');
+  });
+
+  it('says what drinking it does, above the flavour', () => {
+    /**
+     * `Item.use` is server-side content and only the flavour line ever crossed
+     * the wire, so the client could not say the draught healed anything at all.
+     * The sentence is rendered SERVER-side against the viewer's own
+     * Constitution — see `ItemView.use` — and the panel's job is only to show it.
+     */
+    const card = cardFor({ use: 'Restores 43 health.' });
+    expect(card.desc).toContain('Restores 43 health.');
+    expect(card.desc, 'the flavour line was dropped').toContain('Ashwick work.');
+  });
+
+  it('leaves every non-usable item exactly as it was', () => {
+    // Absent `use` must produce the byte-identical card it always produced, or
+    // this change would have touched all twenty-one wearable items.
+    expect(cardFor({ slot: 'ring' }).desc).toBe(DRAUGHT.desc);
+  });
+});
