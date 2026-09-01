@@ -7,7 +7,12 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { DEAD_MOD_KEYS } from '../../src/server/content/items.ts';
+import { DEAD_MOD_KEYS, ITEMS } from '../../src/server/content/items.ts';
+import { EGOS, egoWielder } from '../../src/server/content/egos.ts';
+import { composeWielders } from '../../src/server/engine/equipment.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
+import { rollLoot } from '../../src/server/content/loot.ts';
+import { createRng } from '../../src/shared/rng.ts';
 import { combatMindpower, combatSpellpower } from '../../src/server/engine/derived.ts';
 
 /**
@@ -127,5 +132,48 @@ describe('and an item that grants them changes the number', () => {
     const generic = { ...bare, mods: { genericPower: 12 } };
     expect(combatMindpower(generic)).toBeGreaterThan(combatMindpower(bare));
     expect(combatSpellpower(generic)).toBeGreaterThan(combatSpellpower(bare));
+  });
+});
+
+describe('and content actually reaches the channel that was unblocked', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * LIFTING A BAN AND AUTHORING NOTHING IS THE SAME BUG POINTING THE OTHER WAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `0bced47` removed `mindPower` from the forbidden list because eleven talents
+   * read it. That left a channel every one of them consults and no item could
+   * grant — a value with no writer rather than a value with no reader, and just
+   * as invisible to a player.
+   */
+  it('an ego grants mindPower, and it survives the fold onto a sheet', () => {
+    const ego = EGOS.find((e) => e.grants.mods?.mindPower !== undefined);
+    expect(ego, 'no ego grants mindPower — the channel is open and empty').toBeDefined();
+    if (ego === undefined) return;
+
+    const granted = egoWielder(ego, 3, 'rare');
+    const bare = { stats: { str: 10, dex: 10, con: 10, wil: 10, cun: 10 } };
+    const worn = composeWielders(bare, [granted]);
+    expect(worn.mods?.mindPower).toBeGreaterThan(0);
+    // THROUGH THE GETTER TEN TALENTS SPEND, not merely present on the sheet.
+    expect(combatMindpower(worn)).toBeGreaterThan(combatMindpower(bare));
+  });
+
+  it('and a player can find one — the real roller and the real resolver', () => {
+    /**
+     * The reachability question, asked the way `immunity.test.ts` asks it: if I
+     * play, will I find one, and will it work? An ego that rolls and resolves to
+     * nothing is what `resolveItem`'s field-by-field merge produced for the
+     * immunity channel, and only this shape of test caught it.
+     */
+    let found = 0;
+    for (const base of ITEMS.filter((item) => item.slot !== undefined)) {
+      for (let i = 0; i < 120; i += 1) {
+        const id = rollLoot(createRng(`${base.id}${String(i)}`), base.id, 20);
+        if (!id.includes('~')) continue;
+        if ((resolveItem(id)?.wielder?.mods?.mindPower ?? 0) > 0) found += 1;
+      }
+    }
+    expect(found, 'the ego rolls but resolves to no mindPower').toBeGreaterThan(0);
   });
 });

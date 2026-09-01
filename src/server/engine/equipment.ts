@@ -164,6 +164,25 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'criticalPower',
   'damRange',
   'genericPower',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE TWO TARGETED POWERS — THE `moveMp` MISTAKE, MADE A SECOND TIME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The note below on `moveMp` says it exactly: a field `content/items.ts` says
+   * an item may grant, missing from THIS list, is an item that type-checks,
+   * persists, prints a tooltip and changes nothing.
+   *
+   * `0bced47` lifted the ban on `spellPower` and `mindPower` in `AdditiveMods`
+   * and in both dead-key lists — three places — and not here, which is the
+   * fourth. `genericPower` was already on the list and feeds both getters, so
+   * the blanket version worked and the targeted one silently did not.
+   *
+   * Caught by the reachability test for the ego that grants `mindPower`: the
+   * value reached the item and never reached the sheet.
+   */
+  'spellPower',
+  'mindPower',
   'physResist',
   'spellResist',
   'mentalResist',

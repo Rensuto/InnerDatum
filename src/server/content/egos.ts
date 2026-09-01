@@ -584,6 +584,43 @@ const SUFFIXES: readonly Ego[] = [
     cost: 40,
   },
   {
+    code: 'mg',
+    name: ' of the Marginalia',
+    tag: EgoSlotTag.Suffix,
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE FIRST ITEM IN THE GAME THAT MAKES A STATUS LAND MORE OFTEN.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `combatMindpower` is the `applyPower` of TEN Redactor and Alchemist
+     * talents — Efface, Excise, Expunge, Deposition, Recension, Redaction,
+     * Final Draft, Strike Out, Struck From The Record, Concussion Flask. That
+     * number is what a save is rolled against (`canBe`, Actor.lua:7003), so this
+     * is not a damage roll: it is the difference between a status landing and
+     * being shrugged off.
+     *
+     * ═══ IT COULD NOT BE AUTHORED UNTIL AN HOUR AGO ═══
+     * `AdditiveMods` forbade `mindPower` on the strength of a grep pasted into a
+     * docblock years earlier, which had gone stale — see `0bced47`. Lifting the
+     * ban left a channel eleven talents read and no content could reach, which
+     * is the same failure in the other direction.
+     *
+     * ═══ CALIBRATED AGAINST ` of the Coroner` ═══
+     * That one grants `genericPower: {floor: 2, step: 2}`, which feeds BOTH
+     * power getters and tops out at 20. This is the targeted half — one getter
+     * rather than two — so it is worth slightly more per point: 3 to 21 across
+     * the power and tier grid.
+     *
+     * NO SPELLPOWER SIBLING YET. `combatSpellpower` reaches exactly one talent
+     * (`breaching_blow`), so an ego for it would be a name with almost nothing
+     * behind it. The channel is open when a second caster talent wants it.
+     */
+    rarity: 15,
+    levelRange: [6, 50],
+    grants: { mods: { mindPower: { floor: 3, step: 2 } } },
+    cost: 65,
+  },
+  {
     code: 'wc',
     name: ' of Whole Cloth',
     tag: EgoSlotTag.Suffix,

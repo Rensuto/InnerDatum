@@ -95,6 +95,10 @@ describe('the ego roster', () => {
       'kl',
       'cs',
       'er',
+      // THE FIRST EGO THAT MAKES A STATUS LAND MORE OFTEN. `mindPower` is the
+      // `applyPower` of ten talents, and it was forbidden to items until
+      // `0bced47` on the strength of a docblock that had gone stale.
+      'mg',
       // Its suffix half. `sf` and `wc` are the only two egos that reach
       // `canBe` — see test/server/immunity.test.ts for why that took a
       // channel, a fold, a merge and two readouts rather than one field.
