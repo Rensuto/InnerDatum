@@ -3226,7 +3226,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // it is a fact about the ROOM, and view/ has no business knowing what a shop
     // is. See `CarriedItemView.sell`.
     const counter = opts.realms?.get(session.realmId ?? '')?.shop;
-    send(session.socket, projectInventory(viewer, counter === undefined ? undefined : sellPrice));
+    send(
+      session.socket,
+      projectInventory(
+        viewer,
+        counter === undefined ? undefined : sellPrice,
+        // AND WHAT IS ON THE SHELF, so the panel can say whether it beats what
+        // this detective is already wearing. Ids only — view/ must not learn
+        // what a shop is, which is `sellFor`'s reason above.
+        counter?.stock.map((slot) => slot.id),
+      ),
+    );
     session.inventoryKey = inventoryKeyOf(viewer);
   };
 

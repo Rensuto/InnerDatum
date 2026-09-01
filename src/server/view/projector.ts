@@ -1838,6 +1838,14 @@ export function projectInventory(
    * both that a realm has one and how it prices things.
    */
   sellFor?: (id: string) => number,
+  /**
+   * WHAT IS ON THE SHELF, so the deltas can be computed for THIS body.
+   *
+   * IDS AND NOT THE SHELF FRAME, for `sellFor`'s reason exactly: this file must
+   * not learn what a shop is. The gateway knows the room has a counter and what
+   * is on it; this only needs the ids to price a swap against.
+   */
+  shelfIds?: readonly string[],
 ): InventoryMsg {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1954,12 +1962,36 @@ export function projectInventory(
   // could rob, which is a design nobody has made. Zero is the honest reading
   // for a body that cannot have money, unlike a bag where absent and empty are
   // different claims.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT THE SHELF WOULD DO FOR THIS BODY. See `InventoryMsg.shelf`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE SAME `compareRows` THE BAG USES, against the same baseline, so a coat on
+   * a shelf and the same coat in your bag report the identical delta. Two
+   * answers to "what would this do for me" would disagree the first time either
+   * was touched, and the shop is the one where the wrong answer costs gold.
+   *
+   * ITEMS ONLY. A consumable covers no slot, so there is no swap to price — its
+   * `use` sentence is what the shelf row has to say about it, and a comparison
+   * table of nothing would read as an item that does nothing.
+   */
+  const shelf: Record<string, readonly InspectRow[]> = {};
+  for (const id of shelfIds ?? []) {
+    const item = resolveItem(id);
+    if (item === undefined || item.slot === undefined || base === undefined) continue;
+    shelf[id] = compareRows(base, worn, item);
+  }
+
   return {
     v: PROTOCOL_VERSION,
     t: 'inventory',
     carried,
     equipped,
     money: viewer.kind === ActorKind.Player ? viewer.money : 0,
+    // ABSENT OUTSIDE A ROOM WITH A COUNTER, so the panel knows there is nothing
+    // to draw rather than drawing an empty table.
+    ...(Object.keys(shelf).length === 0 ? {} : { shelf }),
   };
 }
 
@@ -1998,6 +2030,14 @@ export function projectShop(name: string, stock: readonly string[], level: numbe
       // not already own had none — which is every coat worth looking at. See
       // `ShopItemView.desc`, which also records why there is no comparison here.
       desc: item.desc,
+      // WHERE IT WOULD GO, omitted for a consumable exactly as the bag omits it
+      // — absence is what tells the client there is no slot to compare against.
+      ...(item.slot === undefined ? {} : { slot: item.slot }),
+      // AND WHAT DRINKING IT DOES, for a consumable on a shelf. No drinker to
+      // render against here: a shelf is a broadcast and the sentence would
+      // differ per viewer, so this is the authored figure. `projectInventory`
+      // renders the viewer's own once it is in their bag.
+      ...(item.use === undefined ? {} : { use: useText(item.use) }),
     });
   }
   return { v: PROTOCOL_VERSION, t: 'shop', name, stock: items };

@@ -1367,17 +1367,40 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       kind: InventoryRowKind.Detail,
       compact,
       title: shelved.name,
-      meta: `${tierWord(shelved.tier)} · ${String(shelved.buy)} gold · sells back for ${String(shelved.sell)}`,
+      /**
+       * AND WHAT KIND OF THING IT IS. `ShopItemView.slot` — you could not tell
+       * whether the thing you were about to pay for was a ring, a coat or a
+       * drink. A consumable has no slot and is named for what it is, the same
+       * answer the bag gives.
+       */
+      meta: `${tierWord(shelved.tier)} · ${shelved.slot ?? 'consumable'} · ${String(shelved.buy)} gold · sells back for ${String(shelved.sell)}`,
       // THE SHELF'S OWN SENTENCE — `ShopItemView.desc`. This used to resolve the
       // item out of the player's OWN bag (`item?.desc`), so a coat you did not
       // already own showed no description at all, which is every coat worth
       // looking at. The fallback stays for a server too old to send one.
-      desc: shelved.desc !== '' ? shelved.desc : (item?.desc ?? ''),
-      // THE SAME COMPARISON A CARRIED ITEM GETS, which is the whole reason this
-      // is a tab on this panel rather than a shop dialog of its own: the
-      // question at a shop is never "what is this", it is "is it better than
-      // what I am wearing", and this strip already answers that.
-      rows: item?.compare ?? [],
+      desc:
+        shelved.use === undefined
+          ? shelved.desc !== ''
+            ? shelved.desc
+            : (item?.desc ?? '')
+          : `${shelved.use}  ${shelved.desc}`,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE COMPARISON, AND IT ONLY EVER WORKED FOR A COAT YOU ALREADY OWNED.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This read `item?.compare`, and `itemOnShelf` resolves the row out of the
+       * player's OWN BAG — so the strip was empty for everything on the shelf
+       * you had not already bought, which is every item worth looking at. It is
+       * the same bug the description above carries a note about, still live one
+       * field along.
+       *
+       * `InventoryMsg.shelf` is the fix `ShopItemView.desc` asked for by name: a
+       * comparison is a fact about a VIEWER, so it rides the per-viewer frame
+       * while the shelf itself stays a broadcast. The bag fallback stays for a
+       * server too old to send the map.
+       */
+      rows: inventory.shelf?.[shelved.itemId] ?? item?.compare ?? [],
       hiddenRows: 0,
       action: {
         kind: 'buy',

@@ -1726,3 +1726,85 @@ describe('what an attribute point is actually buying', () => {
     expect(mag.length).toBeGreaterThan(0);
   });
 });
+
+describe('a shelf you can actually read', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE COMPARISON ONLY EVER WORKED FOR A COAT YOU ALREADY OWNED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The shop tab resolved a shelf row's comparison out of the player's OWN BAG,
+   * so the strip was empty for everything you had not already bought — which is
+   * every item worth looking at. `ShopItemView.desc` carries a note about the
+   * identical bug one field along, fixed for the description and still live for
+   * the delta.
+   *
+   * That note also names the obstacle and the fix: *"a comparison is a fact
+   * about a VIEWER and would have to become a viewer frame first. Still
+   * missing, and named here rather than left to be re-found."*
+   */
+  const COAT = 'item_watchmans_coat';
+  const DRAUGHT = 'item_draught_mending';
+
+  function shopper() {
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { body: 'item_leather_chest' };
+    recomposeCombat(body, null, resolveItem);
+    return body;
+  }
+
+  it('prices a coat the player does NOT own', () => {
+    // THE DISCRIMINATING CASE. The old path returned rows only for an item in
+    // the bag, so a test using a carried item would pass against the bug.
+    const body = shopper();
+    expect(body.carried ?? [], 'the fixture must not already own it').not.toContain(COAT);
+
+    const rows = projectInventory(body, undefined, [COAT]).shelf?.[COAT] ?? [];
+    expect(rows.length, 'the shelf carried no comparison at all').toBeGreaterThan(0);
+    expect(rows.some((r) => r.label === 'Armour')).toBe(true);
+  });
+
+  it('gives the same answer the bag would, so the two cannot disagree', () => {
+    /**
+     * A shop row and a bag row must report the identical delta for the identical
+     * coat. Two answers to "what would this do for me" would drift the first
+     * time either was touched, and the shop is the one where being wrong costs
+     * gold.
+     */
+    const body = shopper();
+    const onShelf = projectInventory(body, undefined, [COAT]).shelf?.[COAT] ?? [];
+
+    body.carried = [COAT];
+    const inBag = projectInventory(body, undefined, []).carried[0]?.compare ?? [];
+    expect(onShelf).toEqual(inBag);
+  });
+
+  it('prices no swap for a consumable, which covers no slot', () => {
+    // A comparison table of nothing reads as an item that does nothing. The
+    // draught's `use` sentence is what its row has to say.
+    const body = shopper();
+    const msg = projectInventory(body, undefined, [COAT, DRAUGHT]);
+    expect(msg.shelf?.[DRAUGHT]).toBeUndefined();
+    expect(msg.shelf?.[COAT]).toBeDefined();
+  });
+
+  it('says nothing at all when there is no counter in the room', () => {
+    // Absent rather than empty, so the panel knows there is nothing to draw
+    // rather than drawing an empty table.
+    expect(projectInventory(shopper(), undefined, []).shelf).toBeUndefined();
+    expect(projectInventory(shopper()).shelf).toBeUndefined();
+  });
+
+  it('says which kind of thing each shelf row is, and what a drink does', () => {
+    // Standing at the counter you could not tell whether the thing you were
+    // about to pay for was a ring, a coat or a drink.
+    const stock = projectShop('Threadneedle Row', [COAT, DRAUGHT], 5).stock;
+    expect(stock.find((r) => r.itemId === COAT)?.slot).toBe('body');
+    expect(stock.find((r) => r.itemId === DRAUGHT)?.slot).toBeUndefined();
+    expect(stock.find((r) => r.itemId === DRAUGHT)?.use).toContain('Restores');
+    // THE AUTHORED FIGURE ON A SHELF, not a per-viewer one: the frame is a
+    // broadcast and the heal depends on who drinks it.
+    expect(stock.find((r) => r.itemId === DRAUGHT)?.use).toBe('Restores 40 health.');
+  });
+});

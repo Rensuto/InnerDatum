@@ -5184,6 +5184,31 @@ export type ShopItemView = {
    * named here rather than left to be re-found.
    */
   readonly desc: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE IT WOULD GO. Absent on a consumable, exactly as `ItemView.slot` is.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Standing at the counter you could not tell whether the thing you were about
+   * to pay for was a ring, a coat or a drink. `ShowStore.lua` shows the
+   * inventory category on every row for the same reason the bag does.
+   *
+   * ON THE BROADCAST, and the split above is why: a slot is a fact about the
+   * ITEM — the same one for everybody at the counter — so it rides this frame
+   * honestly, exactly as `desc` does. The COMPARISON is a fact about a viewer
+   * and lives on `InventoryMsg.shelf` instead.
+   */
+  readonly slot?: Slot;
+  /**
+   * WHAT DRINKING IT DOES — `ItemView.use`, and the same sentence.
+   *
+   * THE AUTHORED FIGURE HERE, not a per-viewer one. A shelf is a broadcast and
+   * the heal a draught delivers depends on the drinker's Constitution, so this
+   * frame cannot answer for anybody in particular. The bag's copy is rendered
+   * against the viewer once they own it; on the shelf it is what the vial
+   * holds, which is the honest answer to "what am I buying".
+   */
+  readonly use?: string;
 };
 
 /**
@@ -5297,6 +5322,35 @@ export type InventoryMsg = {
    * nothing instead of drawing zero.
    */
   money: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE SHELF WOULD DO FOR *YOU*. itemId -> the same rows a bag row carries.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ShopItemView.desc`'s own note asked for this by name: *"a comparison is a
+   * fact about a VIEWER and would have to become a viewer frame first. Still
+   * missing, and named here rather than left to be re-found."* This is that
+   * frame — the inventory is already per-viewer, already carries `compare` for
+   * every carried item, and is already the panel the shop tab lives in.
+   *
+   * So the shelf stays a broadcast and keeps the facts about the ITEM (name,
+   * price, description, slot), and the deltas — which depend entirely on what
+   * this particular detective is wearing — ride the frame that is allowed to
+   * know that.
+   *
+   * ═══ WITHOUT IT A SHOP IS A GUESS ═══
+   * Standing at the counter you could not tell whether the coat on the shelf
+   * beat the one on your back. The comparison machinery has existed since the
+   * bag got it and was simply never wired to the one screen where the decision
+   * costs gold.
+   *
+   * KEYED BY `itemId` rather than parallel to `stock`, so a shelf that restocks
+   * between the two frames cannot mis-align the rows onto the wrong coats.
+   *
+   * ABSENT outside a room with a counter, which is how the panel knows there is
+   * nothing to draw rather than drawing an empty table.
+   */
+  shelf?: Readonly<Record<string, readonly InspectRow[]>>;
 };
 
 // ---------------------------------------------------------------------------
