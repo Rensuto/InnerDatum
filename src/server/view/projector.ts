@@ -736,6 +736,11 @@ export function projectLoadout(
    * finish would put a content lookup in the view layer.
    */
   unlockable: readonly UnlockableTree[] = [],
+  /**
+   * Tree ids this body knows and has not deepened. Ids only — see
+   * `LoadoutMsg.deepenable` for why this one does not carry its talents.
+   */
+  deepenable: readonly string[] = [],
 ): LoadoutMsg {
   return {
     v: PROTOCOL_VERSION,
@@ -744,6 +749,8 @@ export function projectLoadout(
     // character who has spent all three points produces the frame they produced
     // before this field existed.
     ...(unlockable.length === 0 ? {} : { unlockable }),
+    // ABSENT WHEN THERE IS NOTHING LEFT TO DEEPEN, on the same terms.
+    ...(deepenable.length === 0 ? {} : { deepenable }),
     // ABSENT WHEN THERE ARE NONE, never an empty array: `LoadoutMsg.passives` is
     // optional, and a class with no passives must produce the frame it always
     // produced rather than one with a new empty field in it.

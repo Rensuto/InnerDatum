@@ -79,6 +79,7 @@
  * is the only layer allowed to see both.
  */
 
+import { MASTERY_STEP } from '../../shared/progression.ts';
 import { braced } from '../talents/braced.ts';
 import { deadOnYourFeet } from '../talents/dead_on_your_feet.ts';
 import { longNights } from '../talents/long_nights.ts';
@@ -925,10 +926,107 @@ export function createContentTalentEngine(): TalentEngine {
  * branch that had one we do not, must not stop somebody playing — the same
  * repair-never-reject doctrine the persistence layer applies to everything else.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY TREE THIS BODY KNOWS — its class's own, plus the ones it has bought.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `knowTalentType` upstream (ActorTalents.lua). Needed because "known" and
+ * "unlocked" are different questions and only one of them has a list: a class's
+ * own trees were never bought, and they are the commonest thing a player wants
+ * to deepen — a Watchman putting a category point into `watch/discipline` is
+ * the archetypal use of the second half of `learnType`.
+ *
+ * DERIVED FROM THE TALENTS RATHER THAN LISTED, because the talents are where
+ * the tree membership actually lives (`Talent.tree`) and a second list would be
+ * one more thing to forget when a talent moves. `GENERIC_PASSIVES` is included
+ * for the same reason `sheetForClass` includes it: everybody carries those, so
+ * everybody knows their tree.
+ */
+export function treesForClass(
+  definition: ClassDef,
+  unlocked: readonly string[] = [],
+): ReadonlySet<string> {
+  const trees = new Set<string>();
+  for (const talent of [
+    ...definition.loadout,
+    ...definition.passives,
+    ...definition.birthTalents,
+    ...GENERIC_PASSIVES,
+    ...unlockedTalents(unlocked),
+  ]) {
+    trees.add(talent.tree);
+  }
+  return trees;
+}
+
 function unlockedTalents(unlocked: readonly string[]): readonly Talent[] {
   const open = new Set(unlocked);
   return ALL_LOCKED_TALENTS.filter((talent) => open.has(talent.tree));
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CLASS'S GRANTS, PLUS WHAT THIS BODY BOUGHT — ActorTalents.lua:849-861.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ADDITIVE ONTO WHATEVER THE CLASS AUTHORED, and that is the whole reason it is
+ * a function rather than a spread. A Watchman with `watch/discipline: 1.3` who
+ * deepens it reaches 1.5, not 1.2 — reading the step as the value would silently
+ * DEMOTE a signature tree the moment somebody paid to improve it, which is the
+ * exact opposite of what the point was spent on.
+ *
+ * `?? 1` for a tree the class never graded, because an absent entry means 1.0
+ * (see `TalentSheet.mastery`) and 0 + 0.2 would be a tree worth a fifth of one.
+ *
+ * A DUPLICATE IN `deepened` WOULD PAY TWICE, so it is uniqued here rather than
+ * trusted: the list crosses the save boundary, and `parseUnlockedTrees` treats a
+ * duplicate as a file problem rather than a second purchase.
+ */
+function deepenedMastery(definition: ClassDef, deepened: readonly string[]): Map<string, number> {
+  const mastery = new Map(Object.entries(definition.masteries ?? {}));
+  for (const treeId of new Set(deepened)) {
+    mastery.set(treeId, (mastery.get(treeId) ?? 1) + MASTERY_STEP);
+  }
+  return mastery;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *      THE SHEET THIS BODY SHOULD HAVE, READ OFF WHAT IT HAS BOUGHT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `sheetForClass` takes two lists; this takes the BODY that owns them. Every
+ * caller that rebuilds a live character's sheet wants this one, and the
+ * distinction is not cosmetic — it is the whole bug.
+ *
+ * ═══ WHY IT EXISTS, WHICH IS `pools.ts`' REASON EXACTLY ═══
+ * `attachClass` — the only sheet builder on the reconnect path — called
+ * `sheetForClass(definition)` and passed neither list, for as long as the lists
+ * existed. `CharacterFile.unlockedTrees` promises the opposite in as many
+ * words: *"a reconnect rebuilds that sheet from scratch — so if this list were
+ * not the authority, a returning player would lose the discipline they paid
+ * for."* Measured: 36 talents after buying a discipline, 30 after coming back.
+ *
+ * It was untestable where it lived. `attachClass` is a closure inside
+ * `buildServer`, and every test in the tree hands the gateway its OWN
+ * `attachClass` stub — so nothing in `test/` could reach the real one, exactly
+ * as nothing could reach `refreshPassives` before `pools.ts` was extracted.
+ * A rule that cannot be stated as a test is a rule that gets to be wrong
+ * indefinitely. This module is that rule, named, with the discriminating case
+ * in test/server/deepen-tree.test.ts.
+ *
+ * A BODY WITH NEITHER LIST BUILDS EXACTLY THE SHEET IT ALWAYS DID.
+ */
+export function sheetForBody(definition: ClassDef, body?: PurchasedTrees): TalentSheet {
+  return sheetForClass(definition, body?.unlockedTrees ?? [], body?.deepenedTrees ?? []);
+}
+
+/** What `sheetForBody` needs of a body. A structural slice, for `PooledBody`'s reason. */
+export type PurchasedTrees = {
+  readonly unlockedTrees?: readonly string[];
+  readonly deepenedTrees?: readonly string[];
+};
 
 export function sheetForClass(
   definition: ClassDef,
@@ -937,6 +1035,13 @@ export function sheetForClass(
    * fixture and every existing caller builds exactly the sheet it built before.
    */
   unlocked: readonly string[] = [],
+  /**
+   * WHICH KNOWN TREES HAVE BEEN DEEPENED with a category point
+   * (LevelupDialog.lua:435-436). Defaulted to none for the same reason
+   * `unlocked` is: every existing caller and fixture builds the sheet it built
+   * before, byte for byte.
+   */
+  deepened: readonly string[] = [],
 ): TalentSheet {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -989,7 +1094,7 @@ export function sheetForClass(
      * above are: the class definition says what this class IS, and the sheet is
      * what every downstream reader consults.
      */
-    mastery: new Map(Object.entries(definition.masteries ?? {})),
+    mastery: deepenedMastery(definition, deepened),
   });
 }
 
@@ -1463,6 +1568,8 @@ export function createTalentBook(
    * character who has bought them all, and for one with no class yet.
    */
   unlockableOf(actor: Actor): readonly UnlockableTree[];
+  /** Tree ids this body knows and has not yet deepened. See the implementation. */
+  deepenableOf(actor: Actor): readonly string[];
   resourceOf(actor: Actor): ResourceView | undefined;
   /** Per-game-turn trickle on that pool. See `TalentBook.poolRegenOf`. */
   poolRegenOf(actor: Actor): number;
@@ -1587,6 +1694,32 @@ export function createTalentBook(
         });
       }
       return out;
+    },
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE TREES IT ALREADY KNOWS AND COULD DEEPEN — LevelupDialog.lua:433.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * IDS ONLY. `unlockableOf` above has to ship the talents because the player
+     * has never seen inside a locked tree; a known one is already drawn on the
+     * panel with its current mastery in the header, so sending it again would be
+     * one category rendered twice, disagreeing about ranks.
+     *
+     * ALREADY-DEEPENED TREES ARE ABSENT FOREVER — upstream's *"You can only
+     * improve a category mastery once!"* expressed as data. Stating it here
+     * rather than only in `deepenTree` means the panel never offers something
+     * the server would refuse, which is the failure `TalentCell.canUnlearn`
+     * records: a button drawn live and then refused reads as broken, not as a
+     * rule.
+     */
+    deepenableOf: (actor: Actor): readonly string[] => {
+      if (!('classId' in actor) || typeof actor.classId !== 'string') return [];
+      const definition = classById(actor.classId);
+      if (definition === undefined) return [];
+      const unlocked = 'unlockedTrees' in actor ? (actor.unlockedTrees ?? []) : [];
+      const deepened = new Set('deepenedTrees' in actor ? (actor.deepenedTrees ?? []) : []);
+      return [...treesForClass(definition, unlocked)].filter((id) => !deepened.has(id));
     },
 
     resourceOf: (actor: Actor): ResourceView | undefined => {

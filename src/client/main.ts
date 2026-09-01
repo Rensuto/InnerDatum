@@ -281,6 +281,7 @@ import {
   TalentHitKind,
   drawTalentPanel,
   pressSpend,
+  talentPanelDeepenAt,
   talentPanelDragAt,
   talentPanelHitAt,
   talentIdAt,
@@ -1178,6 +1179,8 @@ let passives: readonly LoadoutTalent[] = [];
  * already owns.
  */
 let unlockable: readonly UnlockableTree[] = [];
+/** Tree ids this body knows and could still deepen — `LoadoutMsg.deepenable`. */
+let deepenable: readonly string[] = [];
 let cooldowns: Readonly<Record<string, number>> = {};
 let resource: ResourceView | null = null;
 
@@ -3233,6 +3236,7 @@ function talentPanelView(): {
   passives: readonly LoadoutTalent[];
   progress: ProgressMsg | null;
   unlockable: readonly UnlockableTree[];
+  deepenable: readonly string[];
   categories: number;
 } {
   return {
@@ -3240,6 +3244,7 @@ function talentPanelView(): {
     passives,
     progress,
     unlockable,
+    deepenable,
     /**
      * READ OFF `progress` RATHER THAN HELD SEPARATELY, because that frame is the
      * one the server re-sends whenever a purse moves — a second copy here would
@@ -6552,8 +6557,24 @@ async function boot(): Promise<void> {
      * read off the row that was pressed rather than inferred from the talent,
      * which would need the client to hold a copy of the tree table.
      */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AN ARMED CATEGORY HEADING CARRIES A TREE ID, NOT A TALENT ID.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `talentPanelDeepenAt` arms the tree it was pressed on, and
+     * `talentCellById` finds no cell for it — so without this branch the confirm
+     * would fall through to `spend_point` naming a tree, which the server would
+     * refuse after the player had already pressed twice past "no refunds".
+     *
+     * CHECKED AGAINST THE SERVER'S OWN LIST rather than by shape. A tree id and
+     * a talent id are both strings and telling them apart by prefix would be a
+     * second authority on the id space; `deepenable` is the answer to exactly
+     * this question and it arrives on the same frame the panel was drawn from.
+     */
+    const deepening = deepenable.includes(next.spend) ? next.spend : null;
     const cell = talentCellById(next.spend);
-    const tree = cell?.unlocks ?? null;
+    const tree = deepening ?? cell?.unlocks ?? null;
     // SENT FROM THE BRANCH RATHER THAN THROUGH A SHARED VARIABLE: the two
     // frames are different members of a closed union, and widening them into
     // one object loses the literal `v` the protocol pins.
@@ -10478,6 +10499,33 @@ async function boot(): Promise<void> {
         beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Talents }, point.x, point.y, null);
         return;
       }
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A PRESS ON A CATEGORY HEADING — deepen it. Asked before the rows.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A SECOND READER over the same geometry, exactly as `talentPanelDragAt`
+       * above is and for the identical reason — see `talentDeepenAt`. Asked
+       * FIRST because the heading band sits above the icons and nothing else
+       * claims it, so there is no overlap to resolve; the ordering only makes
+       * the intent obvious.
+       *
+       * THROUGH `pressTalentPlus`, so the two-press arm/confirm is the SAME
+       * code the other irreversible spends use. This is the scarcest currency
+       * in the game and it must not have its own weaker confirmation.
+       */
+      const deepenTree = talentPanelDeepenAt(
+        layout.talents,
+        talentPanelRows(talentPanelView()),
+        point.x,
+        point.y,
+        talentScroll,
+      );
+      if (deepenTree !== null) {
+        event.preventDefault();
+        pressTalentPlus(deepenTree);
+        return;
+      }
       const hit = talentPanelHitAt(
         layout.talents,
         talentPanelRows(talentPanelView()),
@@ -11352,6 +11400,9 @@ function applyServerMessage(msg: ServerMsg): void {
       // ABSENT MEANS NONE LEFT TO BUY — a character who has spent all three
       // points, and every build where nothing is locked.
       unlockable = msg.unlockable ?? [];
+      // ABSENT MEANS NONE — an older server, or a body that has deepened
+      // everything it knows. Both read as "offer nothing".
+      deepenable = msg.deepenable ?? [];
       // ═══ AND THIS FRAME IS THE CLASS CHOOSER'S ONLY ACKNOWLEDGEMENT ═══
       //
       // There deliberately is no "you are a Watchman now" frame. On a successful

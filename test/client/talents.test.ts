@@ -21,6 +21,8 @@ import {
   statRowRects,
   talentIdAt,
   TALENT_SCROLL_STEP,
+  categoryHeadRect,
+  talentDeepenAt,
   talentPanelRows,
   talentTipAt,
 } from '../../src/client/ui/talents.ts';
@@ -1440,5 +1442,106 @@ describe('the pane says what the next rank wants, before it refuses you', () => 
   it('says nothing at all when there is nothing to require', () => {
     // A talent at its cap has no next rank, and an empty heading is furniture.
     expect(withReqs([])).not.toContain('Needs');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DEEPENING A CATEGORY — LevelupDialog.lua:433-437's `else` branch.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The other thing a category point buys, and it had no surface at all: the panel
+ * offered locked trees and nothing else, so two of the three points a character
+ * ever sees had nothing to be spent on once the disciplines they wanted were
+ * bought.
+ *
+ * THE OFFER GOES ON THE HEADER, because what is bought is the CATEGORY and not
+ * any talent in it — which is where upstream puts its own +/- as well.
+ */
+describe('the deepen offer', () => {
+  const deepenable = (over: Partial<TalentPanelView> = {}) =>
+    view({ deepenable: ['watch/discipline'], categories: 1, ...over });
+
+  it('appears on the named category and on no other', () => {
+    const rows = categories(talentPanelRows(deepenable()));
+    const offered = rows.filter((row) => row.deepen).map((row) => row.tree);
+    expect(offered).toEqual(['watch/discipline']);
+  });
+
+  it('names the NUMBER it would reach, not the step', () => {
+    // "+0.2" is arithmetic a player has to do while deciding whether to spend
+    // the scarcest currency in the game. "→ x1.20" is the answer to it.
+    const row = categories(talentPanelRows(deepenable())).find((r) => r.deepen);
+    expect(row?.text).toContain('x1.20');
+  });
+
+  it('is silent with no category point in hand', () => {
+    /**
+     * BOTH CLAUSES ARE NEEDED and this is the one that is easy to drop. The
+     * server's list answers "has this been deepened"; only the purse answers
+     * "can you afford it". An offer drawn with an empty purse is a live control
+     * the server refuses, which `TalentCell.canUnlearn` records as reading like
+     * a broken button rather than like a rule.
+     */
+    const rows = categories(talentPanelRows(deepenable({ categories: 0 })));
+    expect(rows.some((row) => row.deepen)).toBe(false);
+    expect(rows.every((row) => !row.text.includes('deepen'))).toBe(true);
+  });
+
+  it('is silent for a tree the server did not list', () => {
+    // A tree already deepened is absent from `deepenable` forever — upstream's
+    // "You can only improve a category mastery once!" stated as data.
+    const rows = categories(talentPanelRows(view({ deepenable: [], categories: 1 })));
+    expect(rows.some((row) => row.deepen)).toBe(false);
+  });
+
+  it('never offers on a LOCKED tree, whose icons already spend the same point', () => {
+    // Two live offers in one category would make "which one did I just buy"
+    // unanswerable at the moment of no return.
+    const rows = categories(
+      talentPanelRows(
+        view({
+          categories: 1,
+          deepenable: ['generic/leverage'],
+          unlockable: [
+            { id: 'generic/leverage', name: 'Leverage', blurb: 'Weight and angles.', talents: [] },
+          ],
+        }),
+      ),
+    );
+    const locked = rows.find((row) => row.tree === 'generic/leverage');
+    expect(locked?.deepen).toBe(false);
+  });
+
+  it('a press on the heading names the tree, and elsewhere names nothing', () => {
+    /**
+     * THE JOIN. Every assertion above passes with `talentDeepenAt` returning
+     * null for everything — a row flag nothing reads, which is this project's
+     * signature defect and has cost it two commits in two days.
+     */
+    const rows = talentPanelRows(deepenable());
+    const rect = rectAt(REAL);
+    const placed = talentPanelGeometry(rect, rows, NO_SCROLL).placed;
+    const target = placed.find(
+      (p) => p.row.kind === TalentRowKind.Category && p.row.deepen === true,
+    );
+    expect(target, 'no deepenable category was placed').toBeDefined();
+    if (target === undefined) return;
+
+    const head = categoryHeadRect(target.rect);
+    const hit = talentDeepenAt(
+      { x: head.x + head.w / 2, y: head.y + 1 },
+      talentPanelGeometry(rect, rows, NO_SCROLL),
+    );
+    expect(hit).toBe('watch/discipline');
+
+    // BELOW THE HEADING IS THE ICON STRIP, which spends a TALENT point. A
+    // deepen reader that claimed the whole category would silently turn every
+    // talent press in that tree into an irreversible category spend.
+    const below = talentDeepenAt(
+      { x: head.x + head.w / 2, y: head.y + head.h + 4 },
+      talentPanelGeometry(rect, rows, NO_SCROLL),
+    );
+    expect(below).toBeNull();
   });
 });

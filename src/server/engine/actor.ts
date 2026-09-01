@@ -566,6 +566,28 @@ type ActorCommon = {
    * authority, a returning player would lose the discipline they paid for.
    */
   unlockedTrees?: readonly string[];
+  /**
+   * WHICH KNOWN TREES THIS CHARACTER HAS DEEPENED — LevelupDialog.lua:435-436.
+   *
+   * The second thing a category point buys: `+0.2` mastery on a tree you
+   * already own, which is a flat 20% on every rank in it because
+   * `getTalentLevel = getTalentLevelRaw × mastery` (ActorTalents.lua:834).
+   *
+   * ═══ THE AUTHORITY, FOR `unlockedTrees`' REASON EXACTLY ═══
+   * The mastery itself lives on the SHEET (`TalentSheet.mastery`), and the
+   * sheet is rebuilt from scratch on reconnect and on class change. A bump
+   * written only there would be lost the first time somebody closed the tab —
+   * a whole category point, silently. So this list is what persists and the
+   * sheet is recomputed from it, and `sheetForClass` is the one place that
+   * turns one into the other.
+   *
+   * AT MOST ONE ENTRY PER TREE (`MASTERY_DEEPEN_LIMIT`); a duplicate would be a
+   * second +0.2 upstream refuses with *"You can only improve a category mastery
+   * once!"*. Stored as a list rather than a count-per-tree map because that is
+   * the shape `unlockedTrees` already has, the save parser already validates,
+   * and the limit makes the two equivalent.
+   */
+  deepenedTrees?: readonly string[];
 
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.

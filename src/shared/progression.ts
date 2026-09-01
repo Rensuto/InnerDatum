@@ -690,6 +690,43 @@ export function categoryPointsForLevel(level: number): number {
   return CATEGORY_POINT_LEVELS.includes(level) ? 1 : 0;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OTHER THING A CATEGORY POINT BUYS — LevelupDialog.lua:433-437.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * if not self.actor:knowTalentType(tt) then
+ *   self.actor:learnTalentType(tt)                                  -- unlock
+ * else
+ *   self.actor.__increased_talent_types[tt] = (... or 0) + 1
+ *   self.actor:setTalentTypeMastery(tt, self.actor:getTalentTypeMastery(tt) + 0.2)
+ * end
+ * ```
+ *
+ * ONE ACTION, TWO OUTCOMES, chosen by whether you already know the tree. Ours
+ * only ever did the first half — `unlockTree` refuses any tree that is not
+ * locked — so two of the three points a character ever sees were unspendable
+ * the moment they owned every discipline they wanted.
+ *
+ * ═══ WHY DEEPENING IS WORTH A WHOLE POINT ═══
+ * `getTalentLevel = getTalentLevelRaw × mastery` (ActorTalents.lua:834), so
+ * +0.2 is a flat 20% on every rank in that tree, present and future, everywhere
+ * `combatTalentScale` is read. On a tree a character has poured points into it
+ * is worth more than a sixth discipline they will spend nothing in.
+ */
+export const MASTERY_STEP = 0.2;
+
+/**
+ * `"You can only improve a category mastery once!"` — LevelupDialog.lua:422.
+ *
+ * The cap is the mechanic. Without it three points would go into one tree for
+ * +0.6, which is a bigger multiplier than any class differentiation in the game
+ * (the measured upstream spread tops out at 1.30) and would make the choice
+ * "which tree" rather than "which three trees".
+ */
+export const MASTERY_DEEPEN_LIMIT = 1;
+
 /** Every category point a character of this level has ever been granted. */
 export function totalCategoryPointsAtLevel(level: number): number {
   let total = 0;

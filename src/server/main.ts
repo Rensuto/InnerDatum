@@ -24,16 +24,18 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { startOps } from './ops/routes.ts';
 
-import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
+import { MASTERY_DEEPEN_LIMIT, TALENT_MAX_LEVEL } from '../shared/progression.ts';
 import { checkTier, tierRefusalText } from '../shared/tiers.ts';
 import { treeById } from './content/talent-trees.ts';
+import type { ClassDef } from './content/classes.ts';
 import { PLAYER_RANK } from '../shared/leveling.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
 import {
   classById,
   createContentTalentEngine,
   createTalentBook,
-  sheetForClass,
+  sheetForBody,
+  treesForClass,
 } from './content/classes.ts';
 import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
@@ -1372,6 +1374,56 @@ export function buildServer() {
     }
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REBUILD THIS BODY'S TALENT SHEET FROM ITS TWO PURCHASE LISTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Both things a category point buys end here: unlocking a discipline changes
+   * `opened`, deepening one changes `deepened`, and either way the sheet is
+   * built from scratch and everything the character had is carried across.
+   *
+   * ═══ IT IS ONE FUNCTION BECAUSE THE CARRY IS THE DANGEROUS PART ═══
+   * `unlockTree` did this inline, and its docblock spends a paragraph on why:
+   * *"THE POINTS SURVIVE THE REBUILD … the ranks are read off the OLD sheet and
+   * written onto the new one before it is attached"*, plus the stances, plus the
+   * three pools. Every one of those is a silent, unrecoverable loss if the
+   * second caller forgets it — a player would spend the scarcest currency in the
+   * game and have their ranks reset. Copying thirty lines to add a second spend
+   * is how that happens, so there is one copy and two callers.
+   *
+   * THE LISTS ARE PASSED, NOT READ OFF THE BODY, so a caller cannot rebuild
+   * against a list it has not written yet. Both callers write first.
+   */
+  const rebuildTalentSheet = (
+    actorId: string,
+    definition: ClassDef,
+    opened: readonly string[],
+    deepened: readonly string[],
+  ): void => {
+    const previous = talentEngine.sheetOf(actorId);
+    const sheet = sheetForBody(definition, {
+      unlockedTrees: opened,
+      deepenedTrees: deepened,
+    });
+    if (previous !== undefined) {
+      // EVERY RANK THE CHARACTER HAD, CARRIED ACROSS.
+      for (const [id, rank] of previous.points) {
+        if (sheet.points.has(id)) sheet.points.set(id, rank);
+      }
+      // AND THE STANCES THEY WERE HOLDING, for the same reason: a discipline
+      // bought mid-fight must not put a player's methods down.
+      for (const id of previous.sustained) {
+        if (sheet.points.has(id)) sheet.sustained.add(id);
+      }
+      sheet.resource.value = previous.resource.value;
+      sheet.ap = previous.ap;
+      sheet.mp = previous.mp;
+    }
+    talentEngine.attach(actorId, sheet);
+    refreshPassives(actorId);
+  };
+
   const wrapForGateway = (base: ReapingTurnEngine): ReapingTurnEngine => ({
     ...base,
     attachClass: (actorId: string, classId: string): void => {
@@ -1380,8 +1432,33 @@ export function buildServer() {
         app.log.warn({ actorId, classId }, 'no such class — this body gets no hotbar');
         return;
       }
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE TWO PURCHASE LISTS, WHICH THIS BUILT WITHOUT AND SHOULD NOT HAVE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This read `sheetForClass(definition)` — no unlocked trees, no deepened
+       * ones. `CharacterFile.unlockedTrees` promises the opposite in as many
+       * words: *"THE SHEET IS DERIVED FROM IT AND NEVER THE OTHER WAY ROUND …
+       * a reconnect rebuilds that sheet from scratch — so if this list were not
+       * the authority, a returning player would lose the discipline they paid
+       * for."* The list was the authority and nothing consulted it.
+       *
+       * `attachClass` is the ONLY sheet builder on the reconnect path
+       * (gateway.ts fires it, then `restoreProgression`), so a character who had
+       * bought a discipline came back without it: measured at 36 talents before
+       * and 30 after, one whole tree, and the ranks inside it dropped with it
+       * because `applyTalentPoints` skips an id the sheet does not have.
+       *
+       * A CLASS CHANGE CARRIES THEM TOO, deliberately. Every locked tree is a
+       * `generic/` one — bought with a currency that has nothing to do with the
+       * class — so taking them away on a class change would be confiscating a
+       * point the player spent on something the new class can use just as well.
+       */
+      const body = realms.realmOf(actorId)?.world.getActor(actorId) ?? world.getActor(actorId);
+      const owned = body !== undefined && isPlayer(body) ? body : undefined;
       const previous = talentEngine.sheetOf(actorId);
-      const sheet = sheetForClass(definition);
+      const sheet = sheetForBody(definition, owned);
       if (previous !== undefined) {
         const startedAt = RESOURCE_RULES[previous.resource.kind].start;
         const short = Math.max(0, startedAt - previous.resource.value);
@@ -1604,26 +1681,56 @@ export function buildServer() {
       const already = body.unlockedTrees ?? [];
       if (already.includes(treeId)) return false;
 
-      const previous = talentEngine.sheetOf(actorId);
       const opened = [...already, treeId];
-      const sheet = sheetForClass(definition, opened);
-      if (previous !== undefined) {
-        // EVERY RANK THE CHARACTER HAD, CARRIED ACROSS. See the docblock.
-        for (const [id, rank] of previous.points) {
-          if (sheet.points.has(id)) sheet.points.set(id, rank);
-        }
-        // AND THE STANCES THEY WERE HOLDING, for the same reason: a discipline
-        // bought mid-fight must not put a player's methods down.
-        for (const id of previous.sustained) {
-          if (sheet.points.has(id)) sheet.sustained.add(id);
-        }
-        sheet.resource.value = previous.resource.value;
-        sheet.ap = previous.ap;
-        sheet.mp = previous.mp;
-      }
       body.unlockedTrees = opened;
-      talentEngine.attach(actorId, sheet);
-      refreshPassives(actorId);
+      rebuildTalentSheet(actorId, definition, opened, body.deepenedTrees ?? []);
+      return true;
+    },
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * SPEND A CATEGORY POINT ON A TREE YOU ALREADY KNOW — the other half of
+     * LevelupDialog.lua:433-437.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ```lua
+     * self.actor.__increased_talent_types[tt] = (... or 0) + 1
+     * self.actor:setTalentTypeMastery(tt, self.actor:getTalentTypeMastery(tt) + 0.2)
+     * ```
+     *
+     * `unlockTree` above is the `if not knowTalentType` branch and this is the
+     * `else`. They were one action upstream and are two methods here only
+     * because the engine interface is a list of verbs; the GATEWAY still routes
+     * one message to whichever applies, as the dialog does.
+     *
+     * ═══ WHAT COUNTS AS "KNOWN" ═══
+     * A tree the class was born with, or a locked one already bought. Both are
+     * exactly "appears in the sheet's own tree list", which is what
+     * `sheetForClass` built — so the check is against the live sheet and not
+     * against `unlockedTrees`, which knows only about the second kind.
+     *
+     * REFUSES A SECOND BUMP (`MASTERY_DEEPEN_LIMIT`), which is upstream's
+     * *"You can only improve a category mastery once!"*, and refuses a tree the
+     * body does not know, which upstream's dialog cannot even render.
+     */
+    deepenTree: (actorId: string, treeId: string): boolean => {
+      const body = realms.realmOf(actorId)?.world.getActor(actorId) ?? world.getActor(actorId);
+      if (body === undefined || !isPlayer(body) || body.classId === undefined) return false;
+      const definition = classById(body.classId);
+      if (definition === undefined) return false;
+      if (treeById(treeId) === undefined) return false;
+
+      // KNOWN, which is not the same question as UNLOCKED. A class's own trees
+      // were never bought and are the commonest thing to want to deepen.
+      if (!treesForClass(definition, body.unlockedTrees ?? []).has(treeId)) return false;
+
+      const deepened = body.deepenedTrees ?? [];
+      // :422 — "You can only improve a category mastery once!"
+      if (deepened.filter((id) => id === treeId).length >= MASTERY_DEEPEN_LIMIT) return false;
+
+      const next = [...deepened, treeId];
+      body.deepenedTrees = next;
+      rebuildTalentSheet(actorId, definition, body.unlockedTrees ?? [], next);
       return true;
     },
 

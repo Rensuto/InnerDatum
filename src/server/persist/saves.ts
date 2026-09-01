@@ -636,6 +636,19 @@ export type CharacterFile = {
    */
   readonly unlockedTrees?: readonly string[];
   /**
+   * WHICH KNOWN TREES THIS CHARACTER HAS DEEPENED with a category point —
+   * `+0.2` mastery each, once per tree (LevelupDialog.lua:433-437).
+   *
+   * SAVED FOR `unlockedTrees`' REASON, and it is the stronger case of the two:
+   * a deepening leaves NO trace anywhere else. An unlocked tree at least shows
+   * up as six talents on the sheet; a mastery bump is one float on a rebuilt
+   * object, so without this line the point is gone the moment the tab closes
+   * and nothing in the game would look wrong.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly deepenedTrees?: readonly string[];
+  /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
@@ -1030,6 +1043,19 @@ export type CharacterInit = {
    */
   readonly unlockedTrees?: readonly string[];
   /**
+   * WHICH KNOWN TREES THIS CHARACTER HAS DEEPENED with a category point —
+   * `+0.2` mastery each, once per tree (LevelupDialog.lua:433-437).
+   *
+   * SAVED FOR `unlockedTrees`' REASON, and it is the stronger case of the two:
+   * a deepening leaves NO trace anywhere else. An unlocked tree at least shows
+   * up as six talents on the sheet; a mastery bump is one float on a rebuilt
+   * object, so without this line the point is gone the moment the tab closes
+   * and nothing in the game would look wrong.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly deepenedTrees?: readonly string[];
+  /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
@@ -1102,6 +1128,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     keybinds: init.keybinds,
     hotbar: init.hotbar,
     unlockedTrees: init.unlockedTrees,
+    deepenedTrees: init.deepenedTrees,
     zoom: init.zoom,
     explored: init.explored,
     // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
@@ -2012,6 +2039,10 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       keybinds: parseKeybinds(doc.keybinds, problems),
       hotbar: parseHotbar(doc.hotbar, problems),
       unlockedTrees: parseUnlockedTrees(doc.unlockedTrees, problems),
+      // THE SAME PARSER: same shape, same bounds, same repair-never-reject
+      // rule. `sheetForClass` uniques the list, so a duplicate that
+      // survives cannot buy a second +0.2.
+      deepenedTrees: parseUnlockedTrees(doc.deepenedTrees, problems),
       zoom: parseZoom(doc.zoom, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
@@ -3164,6 +3195,19 @@ export type SavedPrefs = {
    * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
    */
   readonly unlockedTrees?: readonly string[];
+  /**
+   * WHICH KNOWN TREES THIS CHARACTER HAS DEEPENED with a category point —
+   * `+0.2` mastery each, once per tree (LevelupDialog.lua:433-437).
+   *
+   * SAVED FOR `unlockedTrees`' REASON, and it is the stronger case of the two:
+   * a deepening leaves NO trace anywhere else. An unlocked tree at least shows
+   * up as six talents on the sheet; a mastery bump is one float on a rebuilt
+   * object, so without this line the point is gone the moment the tab closes
+   * and nothing in the game would look wrong.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly deepenedTrees?: readonly string[];
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *

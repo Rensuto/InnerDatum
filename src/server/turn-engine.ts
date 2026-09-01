@@ -125,6 +125,7 @@ export type TalentBook = {
    * being edited to return an empty array it does not have.
    */
   unlockableOf?(actor: Actor): readonly UnlockableTree[];
+  deepenableOf?(actor: Actor): readonly string[];
   /** This actor's class resource, or undefined for an actor that has none. */
   resourceOf(actor: Actor): ResourceView | undefined;
   /**
@@ -1836,6 +1837,11 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     passivesOf(actorId: string): readonly LoadoutTalent[] {
       const actor = world.getActor(actorId);
       return actor === undefined ? [] : (talents.passivesOf?.(actor) ?? []);
+    },
+
+    deepenableOf(actorId: string): readonly string[] {
+      const actor = world.getActor(actorId);
+      return actor === undefined ? [] : (talents.deepenableOf?.(actor) ?? []);
     },
 
     unlockableOf(actorId: string): readonly UnlockableTree[] {

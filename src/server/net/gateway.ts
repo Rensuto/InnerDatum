@@ -1181,6 +1181,12 @@ export type TurnEngine = {
    */
   unlockTree?(actorId: string, treeId: string): boolean;
   /**
+   * The other half of LevelupDialog.lua:433-437 — `+0.2` mastery on a tree the
+   * body already knows. One category point, one tree, once ever. Returns false
+   * for an unknown tree, one this body does not know, or one already deepened.
+   */
+  deepenTree?(actorId: string, treeId: string): boolean;
+  /**
    * THE LOCKED DISCIPLINES THIS BODY COULD BUY, rendered for the panel.
    *
    * OPTIONAL LIKE EVERY SEAM HERE. A build with no talent book has none, and an
@@ -1188,6 +1194,8 @@ export type TurnEngine = {
    * the frame a client got before this existed.
    */
   unlockableOf?(actorId: string): readonly UnlockableTree[];
+  /** Tree ids this body knows and could still deepen. `LoadoutMsg.deepenable`. */
+  deepenableOf?(actorId: string): readonly string[];
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * RE-DERIVE EVERYTHING THIS BODY'S NUMBERS ARE MADE OF.
@@ -1687,6 +1695,19 @@ export type CharacterSnapshot = {
    * is not.
    */
   readonly unlockedTrees?: readonly string[];
+  /**
+   * WHICH KNOWN TREES THIS CHARACTER HAS DEEPENED with a category point —
+   * `+0.2` mastery each, once per tree (LevelupDialog.lua:433-437).
+   *
+   * SAVED FOR `unlockedTrees`' REASON, and it is the stronger case of the two:
+   * a deepening leaves NO trace anywhere else. An unlocked tree at least shows
+   * up as six talents on the sheet; a mastery bump is one float on a rebuilt
+   * object, so without this line the point is gone the moment the tab closes
+   * and nothing in the game would look wrong.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly deepenedTrees?: readonly string[];
   /** base64 bitset of the overworld this character had explored. */
   readonly explored?: string;
   /** The same for every OTHER overworld, keyed by realm id. See `applyRestore`. */
@@ -1928,6 +1949,19 @@ export type CharacterRestore = {
    * is not.
    */
   readonly unlockedTrees?: readonly string[];
+  /**
+   * WHICH KNOWN TREES THIS CHARACTER HAS DEEPENED with a category point —
+   * `+0.2` mastery each, once per tree (LevelupDialog.lua:433-437).
+   *
+   * SAVED FOR `unlockedTrees`' REASON, and it is the stronger case of the two:
+   * a deepening leaves NO trace anywhere else. An unlocked tree at least shows
+   * up as six talents on the sheet; a mastery bump is one float on a rebuilt
+   * object, so without this line the point is gone the moment the tab closes
+   * and nothing in the game would look wrong.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly deepenedTrees?: readonly string[];
   /**
    * base64 bitset of the overworld this character had explored, straight off
    * the disk. Decoded against the CURRENT region's size, so a save written
@@ -3495,6 +3529,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // COPIED, NOT ALIASED, for the reason the two lines above it are: the save
     // layer holds this across a debounce while the body goes on being played.
     ...(actor.unlockedTrees === undefined ? {} : { unlockedTrees: [...actor.unlockedTrees] }),
+    ...(actor.deepenedTrees === undefined ? {} : { deepenedTrees: [...actor.deepenedTrees] }),
     // WHAT THEY HAVE WALKED. Absent when this process has never revealed
     // anything for them, which `saveCharacter` reads as "cannot say" and leaves
     // the disk alone — the same carry-forward rule the keymap gets, and the
@@ -4433,6 +4468,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // than cached, because the list SHRINKS as points are spent — a cached
         // one would go on offering a discipline the character already owns.
         engine.unlockableOf?.(actorId) ?? [],
+        // AND WHAT COULD BE DEEPENED, re-read for the same reason: the list
+        // shrinks by one every time a point is spent on a tree already known.
+        engine.deepenableOf?.(actorId) ?? [],
       ),
     );
   };
@@ -6284,6 +6322,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       app.log.info(
         { actorId: actor.id, trees: actor.unlockedTrees.length },
         'restored a character’s bought disciplines',
+      );
+    }
+    /**
+     * AND THE DEEPENED ONES, BEFORE THE SHEET IS BUILT, for the reason above
+     * exactly: `sheetForClass` reads this list to compute the mastery map, so a
+     * restore that landed after the rebuild would put the float back on an
+     * object nothing consults again until the next unlock.
+     */
+    if (restore.deepenedTrees !== undefined && restore.deepenedTrees.length > 0) {
+      actor.deepenedTrees = [...restore.deepenedTrees];
+      app.log.info(
+        { actorId: actor.id, trees: actor.deepenedTrees.length },
+        'restored a character’s deepened disciplines',
       );
     }
     if (restore.hotbar !== undefined) {
@@ -13921,13 +13972,34 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * and one already bought — three mistakes with one answer. Deducting first
      * and writing second would charge the scarcest currency in the game for a
      * typo, and there is no refund path to undo it with.
+     *
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONE MESSAGE, TWO OUTCOMES — LevelupDialog.lua:433-437's `learnType`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ```lua
+     * if not self.actor:knowTalentType(tt) then self.actor:learnTalentType(tt)
+     * else ... setTalentTypeMastery(tt, ... + 0.2) end
+     * ```
+     *
+     * Upstream branches INSIDE the one action a player takes, and so does this:
+     * `unlock_tree` means "spend a category point on this discipline", which is
+     * what its own docblock has always said, and the server decides which of the
+     * two things that means. Adding a second verb would put the branch in the
+     * client, where it would be one refresh out of date the moment the tree was
+     * bought — and would need a protocol bump to say so.
+     *
+     * UNLOCK IS TRIED FIRST because it refuses anything not locked, so the two
+     * can never both apply and the order is not a precedence rule.
      */
-    const opened = engine.unlockTree?.(actorId, msg.treeId) ?? false;
+    const opened =
+      (engine.unlockTree?.(actorId, msg.treeId) ?? false) ||
+      (engine.deepenTree?.(actorId, msg.treeId) ?? false);
     if (!opened) {
       sendError(
         session.socket,
         ErrorCode.BadMessage,
-        'unlock refused: no such locked discipline, or you already have it',
+        'refused: no such discipline, or you already have it and have already deepened it',
       );
       return;
     }

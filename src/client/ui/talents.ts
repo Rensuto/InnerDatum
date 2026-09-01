@@ -148,7 +148,12 @@ import {
   PANEL_PAD,
   PanelSkin,
 } from './panel.ts';
-import { CATEGORY_POINT_LEVELS, canRaiseStat, isGenericTree } from '../../shared/progression.ts';
+import {
+  CATEGORY_POINT_LEVELS,
+  MASTERY_STEP,
+  canRaiseStat,
+  isGenericTree,
+} from '../../shared/progression.ts';
 import type { LoadoutTalent, ProgressMsg, UnlockableTree } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
@@ -609,6 +614,15 @@ export type TalentRow =
       readonly tree: string;
       /** "Discipline", or "Discipline  (x1.30)" when the mastery is not 1. */
       readonly text: string;
+      /**
+       * A CATEGORY POINT IS IN HAND AND THIS TREE HAS NOT BEEN DEEPENED YET —
+       * LevelupDialog.lua:433-437's `else` branch, offered.
+       *
+       * FALSE ON EVERY LOCKED TREE, whose whole strip already spends the same
+       * point on the same message; two live offers in one category would make
+       * "which one did I just buy" unanswerable at the moment of no return.
+       */
+      readonly deepen: boolean;
       /** In the class table's order. `talentPanelRows` never re-sorts. */
       readonly talents: readonly TalentCell[];
     }
@@ -658,6 +672,13 @@ export type TalentPanelView = {
    * day they bought the tree.
    */
   readonly unlockable?: readonly UnlockableTree[];
+  /**
+   * Tree ids this character knows and could deepen — `LoadoutMsg.deepenable`.
+   *
+   * IDS ONLY, because the category is already on this panel: the offer is drawn
+   * INTO the header it belongs to rather than as a second copy of the tree.
+   */
+  readonly deepenable?: readonly string[];
   /**
    * Category points in hand. They arrive at the levels `CATEGORY_POINT_LEVELS`
    * names — three of them in a career, which is what makes buying one a choice.
@@ -918,7 +939,17 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
    * the grouping, never the talents.
    */
   const order: string[] = [];
-  const byTree = new Map<string, { text: string; cells: TalentCell[] }>();
+  /**
+   * WHICH KNOWN TREES THE SERVER SAYS ARE STILL DEEPENABLE, and the purse.
+   *
+   * BOTH CLAUSES, because the list answers "has this been deepened" and only the
+   * purse answers "can you afford it". Offering one with no point in hand would
+   * be a live control the server refuses, which `TalentCell.canUnlearn` records
+   * as reading like a broken button rather than a rule.
+   */
+  const deepenOffer =
+    (view.categories ?? 0) > 0 ? new Set(view.deepenable ?? []) : new Set<string>();
+  const byTree = new Map<string, { text: string; deepen: boolean; cells: TalentCell[] }>();
   for (const talent of shown) {
     const key = talent.tree ?? '';
     let group = byTree.get(key);
@@ -942,7 +973,19 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
          */
         text: `${mastery === 1 ? heading : `${heading}  (x${mastery.toFixed(2)})`}${
           isGenericTree(key) ? '  — generic' : ''
+        }${
+          /**
+           * AND THE OFFER, ON THE HEADER, because the thing bought is the
+           * CATEGORY and not any talent in it. Upstream puts the +/- on the
+           * category row for the same reason (LevelupDialog.lua:433).
+           *
+           * IT NAMES THE NEW NUMBER rather than the step. "+0.2" is arithmetic
+           * a player has to do while deciding whether to spend the scarcest
+           * currency in the game; "→ x1.20" is the answer to it.
+           */
+          deepenOffer.has(key) ? `  — deepen to x${(mastery + MASTERY_STEP).toFixed(2)}` : ''
         }`,
+        deepen: deepenOffer.has(key),
         cells: [],
       };
       byTree.set(key, group);
@@ -958,6 +1001,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       kind: TalentRowKind.Category,
       tree: key,
       text: group.text,
+      deepen: group.deepen,
       talents: group.cells,
     });
   }
@@ -1007,6 +1051,9 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     rows.push({
       kind: TalentRowKind.Category,
       tree: tree.id,
+      // A LOCKED TREE IS NOT DEEPENABLE. Its every icon already spends the
+      // category point on the same `unlock_tree` message.
+      deepen: false,
       text:
         purse > 0
           ? `${tree.name}  — locked, 1 category point`
@@ -1861,6 +1908,79 @@ export type TalentHit =
  * × is, which is the property ui/partypanel.ts:93-99 records the cost of losing.
  */
 export type TalentPanelDrag = { readonly kind: typeof TalentHitKind.Header };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CATEGORY HEADER'S OWN BAND — where a deepen press lands.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `CAT_HEAD_H` pixels off the top of a placed category, which is exactly the
+ * strip the heading text is painted into. ONE COPY of the arithmetic, read by
+ * the painter and by `talentDeepenAt`, for the reason this file's header gives
+ * about the icon rects: two authorities on where a control is will disagree, and
+ * the one that disagrees silently is the painter.
+ *
+ * IT IS THE WHOLE HEADING AND NOT A SMALL BUTTON AT ITS END. The icons below it
+ * are already 24-pixel targets in a 176-pixel strip; adding a smaller one above
+ * them would be the "five plus-buttons" failure `talentHitAt` refuses, and the
+ * heading is dead space today with nothing else to hit.
+ */
+export function categoryHeadRect(rect: PanelRect): PanelRect {
+  return { x: rect.x, y: rect.y, w: rect.w, h: CAT_HEAD_H };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A PRESS ON A CATEGORY HEADING MEANS — a second reader, as `Header` is.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Returns the tree id to spend a category point deepening, or null.
+ *
+ * ═══ WHY NOT A FOURTH `TalentHit` VARIANT ═══
+ * `TalentPanelDrag`'s docblock has the whole argument and it applies unchanged:
+ * main.ts's hover block reads `talentHit.index` for every kind but two, and a
+ * variant carrying a tree id instead of an index stops that line compiling in a
+ * file this panel does not own, for an outcome hovering has nothing to do with.
+ * The CLICK union keeps the outcomes a click can have and stays total; a press
+ * that means something else gets its own reader over the same geometry. Two
+ * precedents already: this file's `Header`, and ui/inventory.ts:1270-1300.
+ *
+ * READS `row.deepen`, WHICH IS THE SERVER'S ANSWER — the tree is known, has not
+ * been deepened, and a point is in hand. A reader that decided for itself would
+ * be a fourth authority on a rule the server enforces.
+ */
+export function talentPanelDeepenAt(
+  rect: PanelRect,
+  rows: readonly TalentRow[],
+  px: number,
+  py: number,
+  /** THE SAME OFFSET THE PAINTER USED — `talentPanelHitAt` states the cost. */
+  scroll: number,
+): string | null {
+  return talentDeepenAt({ x: px, y: py }, talentPanelGeometry(rect, rows, scroll));
+}
+
+export function talentDeepenAt(
+  point: { readonly x: number; readonly y: number },
+  geometry: TalentPanelGeometry,
+): string | null {
+  for (const placed of geometry.placed) {
+    if (placed.row.kind !== TalentRowKind.Category) continue;
+    if (!placed.row.deepen) continue;
+    const head = categoryHeadRect(placed.rect);
+    // CLIPPED AWAY IS NOT PRESSABLE, the rule `talentHitAt` applies to icons.
+    if (!cellOnScreen(head, geometry.grid.viewport)) continue;
+    if (
+      point.x >= head.x &&
+      point.x < head.x + head.w &&
+      point.y >= head.y &&
+      point.y < head.y + head.h
+    ) {
+      return placed.row.tree;
+    }
+  }
+  return null;
+}
 
 /**
  * The header strip's grabbable part. ONE copy of the reservation arithmetic.

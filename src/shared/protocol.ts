@@ -4604,6 +4604,29 @@ export type LoadoutMsg = {
    * three points and every build where nothing is locked.
    */
   unlockable?: readonly UnlockableTree[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TREES THIS CHARACTER ALREADY KNOWS AND COULD DEEPEN — tree ids.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The other thing a category point buys (LevelupDialog.lua:433-437): `+0.2`
+   * mastery, which `getTalentLevel = getTalentLevelRaw × mastery` turns into a
+   * flat 20% on every rank in that tree, present and future.
+   *
+   * IDS ONLY, unlike `unlockable`, and the asymmetry is the point. A locked
+   * tree has to carry its talents because the player has never seen inside it;
+   * a known one is already drawn on this very panel, six icons and all, with
+   * its current mastery in the header. Sending it twice would be the same
+   * category rendered in two places disagreeing about what rank things are.
+   *
+   * ONE POINT BUYS ONE, ONCE PER TREE. A tree already deepened is absent from
+   * this list forever, which is upstream's *"You can only improve a category
+   * mastery once!"* stated as data rather than as an error message.
+   *
+   * OPTIONAL AND ADDITIVE, so no protocol bump: an older client ignores it and
+   * draws the panel it always drew.
+   */
+  deepenable?: readonly string[];
 };
 
 /**
