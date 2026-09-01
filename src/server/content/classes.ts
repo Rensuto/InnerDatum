@@ -1205,7 +1205,34 @@ export function toLoadoutView(
    * correctly shows no lock, because nobody is spending points on that screen.
    */
   gate?: TalentGate,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS BODY'S MASTERY IN THIS TREE — and it read the TREE CONSTANT instead.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `mastery: treeById(talent.tree)?.mastery` was the whole of it, and
+   * `TalentTree.mastery` ships at 1.0 for every tree in the game with its own
+   * docblock saying so: *"EVERY TREE SHIPS AT 1.0 TODAY, deliberately."* So the
+   * field was the constant 1, always, and the panel header's `(x1.30)` — which
+   * `talentPanelRows` has been ready to draw the whole time — could never appear.
+   *
+   * ═══ AND IT MADE A FEATURE SHIPPED THE SAME DAY INVISIBLE ═══
+   * Mastery lives on the ACTOR (`TalentSheet.mastery`), not on the tree; that is
+   * the whole argument in `TalentSheet.mastery`'s own note. A class's authored
+   * grant goes there, and so does the `+0.2` a category point buys. Reading the
+   * tree meant deepening a discipline changed the maths (`talentLevelOf` reads
+   * the sheet and is tested) and changed nothing a player could see — the header
+   * still said x1.00 and the offer still said "deepen to x1.20" afterwards.
+   *
+   * A PARAMETER RATHER THAN A LOOKUP, for `sustained`' and `effective`'s reason
+   * exactly: the answer lives on the sheet and this function is handed a talent
+   * and an actor. Both real callers have the sheet; the class-picker preview has
+   * none and passes nothing, which correctly falls back to the tree's own figure.
+   */
+  mastery?: number,
 ): LoadoutTalent {
+  // ONE RESOLUTION OF "how good is this body at this tree", read twice below.
+  const shownMastery = mastery ?? treeById(talent.tree)?.mastery;
   return {
     // Already `talent:<id>` — the registry key IS the wire id, so the cooldown
     // map `projectCooldowns` sends verbatim matches these buttons by string.
@@ -1232,10 +1259,11 @@ export function toLoadoutView(
     tree: talent.tree,
     treeName: treeById(talent.tree)?.name ?? talent.tree,
     kind: talent.kind,
-    // THE MASTERY, so the header can say "(x1.30)" and mean it. Absent for a
-    // tree this build does not have, which reads as 1.0 — the same answer
+    // THE MASTERY, so the header can say "(x1.30)" and mean it. THE BODY'S,
+    // falling back to the tree's own figure for a caller with no sheet. Absent
+    // for a tree this build does not have, which reads as 1.0 — the same answer
     // `treeName` gives by falling back to the id.
-    ...(treeById(talent.tree) === undefined ? {} : { mastery: treeById(talent.tree)?.mastery }),
+    ...(shownMastery === undefined ? {} : { mastery: shownMastery }),
     // AND WHETHER IT IS UP. Only ever present when the caller had a sheet to
     // ask; see the parameter.
     ...(sustained === undefined ? {} : { sustained }),
@@ -1617,6 +1645,7 @@ export function createTalentBook(
             talent.sustain === undefined ? undefined : sheet.sustained.has(id),
             effective,
             gateFor(engine, sheet, talent, actor, level + 1),
+            sheet.mastery.get(talent.tree),
           ),
         );
       }
@@ -1645,6 +1674,7 @@ export function createTalentBook(
             undefined,
             talentLevelOf(sheet, talent),
             gateFor(engine, sheet, talent, actor, raw + 1),
+            sheet.mastery.get(talent.tree),
           ),
         );
       }

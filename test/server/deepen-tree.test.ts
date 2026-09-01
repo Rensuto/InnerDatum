@@ -17,6 +17,7 @@ import {
 } from '../../src/server/content/classes.ts';
 import { TALENT_TREES } from '../../src/server/content/talent-trees.ts';
 import { talentLevelOf } from '../../src/server/engine/talents.ts';
+import { toLoadoutView } from '../../src/server/content/classes.ts';
 import type { ClassDef } from '../../src/server/content/classes.ts';
 
 /**
@@ -298,5 +299,57 @@ describe('one message, two outcomes', () => {
     expect(gateway).toContain('engine.deepenTree?.(actorId, msg.treeId) ?? false');
     // AND THE POINT IS STILL DEDUCTED ONCE, after either lands.
     expect(gateway).toContain('body.unspentCategories -= 1;');
+  });
+});
+
+describe('and the panel is told the BODY`s mastery, not the tree constant', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE READOUT READ THE WRONG SOURCE, AND IT MADE THIS FEATURE INVISIBLE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `toLoadoutView` filled `LoadoutTalent.mastery` from `treeById(tree).mastery`
+   * — the TREE CONSTANT, which `TalentTree.mastery` says ships at 1.0 for every
+   * tree in the game and always has. So the panel header's `(x1.30)`, which
+   * `talentPanelRows` has been ready to draw since it was written, could never
+   * appear for anybody; and deepening a discipline moved `talentLevelOf` (tested
+   * above, correctly) while the header still said x1.00 and the offer beside it
+   * still said "deepen to x1.20" after it had been bought.
+   *
+   * Mastery is a property of the BODY, not of the tree — `TalentSheet.mastery`
+   * argues that at length. This is the readout agreeing with it.
+   */
+  const preview = { id: 'p', name: 'P', kind: 'player', x: 0, y: 0, hp: 1, maxHp: 1, alive: true };
+
+  it('carries the sheet`s figure when the caller has one', () => {
+    const definition = anyClass();
+    const tree = ownTree(definition);
+    const talent = [...definition.loadout, ...definition.passives].find((t) => t.tree === tree);
+    if (talent === undefined) throw new Error(`no talent sits in ${tree}`);
+    const deep = sheetForBody(definition, { deepenedTrees: [tree] });
+
+    const view = toLoadoutView(
+      talent,
+      1,
+      preview as never,
+      undefined,
+      1,
+      undefined,
+      deep.mastery.get(tree),
+    );
+    expect(view.mastery).toBeCloseTo(
+      (sheetForClass(definition).mastery.get(tree) ?? 1) + MASTERY_STEP,
+      10,
+    );
+  });
+
+  it('falls back to the tree`s own figure for a caller with no sheet', () => {
+    // The class-picker preview, which has no body to ask. It must keep drawing
+    // exactly what it drew before this parameter existed.
+    const definition = anyClass();
+    const talent = definition.loadout[0];
+    if (talent === undefined) return;
+    const view = toLoadoutView(talent, 1, preview as never);
+    expect(view.mastery).toBe(1);
   });
 });
