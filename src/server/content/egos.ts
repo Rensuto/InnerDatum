@@ -855,8 +855,14 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
   return egos;
 }
 
-/** The three dead `CombatMods` fields, by name. Mirrors items.ts's own list. */
-const DEAD_GRANT_KEYS: readonly string[] = Object.freeze(['physSpeed', 'spellPower', 'mindPower']);
+/**
+ * The one dead `CombatMods` field, by name. Mirrors items.ts's own list.
+ *
+ * IT WAS THREE. `spellPower` and `mindPower` are read by eleven talents and two
+ * readouts — see `AdditiveMods` in content/items.ts for how a grep pasted into
+ * a docblock kept them looking dead long after they were not.
+ */
+const DEAD_GRANT_KEYS: readonly string[] = Object.freeze(['physSpeed']);
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

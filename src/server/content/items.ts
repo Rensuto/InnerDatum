@@ -199,26 +199,45 @@ export const SLOT_ORDER: readonly Slot[] = Object.freeze([
 export type AdditiveStats = Omit<PrimaryStats, 'lck'>;
 
 /**
- * The `combat_*` mods an item may grant — every one EXCEPT the three that are
+ * The `combat_*` mods an item may grant — every one EXCEPT the ONE that is
  * verified dead in this codebase.
  *
  * ═══ WHY THE OMIT IS THE STRUCTURAL DEFENCE AGAINST "AN ITEM THAT DOES NOTHING"
- * `grep -rn 'combatSpeed\|combatSpellpower\|combatMindpower' src/` returns
- * COMMENTS ONLY — zero call sites. Nothing in this game reads attack speed,
- * spell power or mind power, so an item granting one would be inert: it would
- * type-check, persist, appear in the inventory, print a tooltip, and change no
- * number anywhere. content/classes.ts:295 already carries a dead
- * `mods: { spellPower: 4 }` on the Alchemist, which is the proof this is a
- * mistake somebody makes rather than a hypothetical.
+ * A field nothing reads makes an item that type-checks, persists, appears in
+ * the inventory, prints a tooltip, and changes no number anywhere. Removing it
+ * from the TYPE makes that a compile error instead of a design review.
  *
- * Removing them from the TYPE makes that a compile error instead of a design
- * review. The day a `combatSpeed` call site lands, deleting a name from this
- * `Omit` is the whole change.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT SAID THREE, AND TWO OF THEM HAD COME ALIVE. THE DOCBLOCK WAS THE BUG.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This paragraph used to read *"`grep -rn 'combatSpeed|combatSpellpower|
+ * combatMindpower' src/` returns COMMENTS ONLY — zero call sites"*. That was
+ * true when it was written and false by the time anybody read it:
+ * `combatMindpower` is the `applyPower` of TEN Redactor and Alchemist talents
+ * and `combatSpellpower` of `breaching_blow`, and both print on the character
+ * sheet and in the swap comparison. Both getters read the mod this type was
+ * hiding — `derived.ts:529` and `:550`.
+ *
+ * A GREP RESULT PASTED INTO A COMMENT IS A FACT WITH NO EXPIRY DATE ON IT, and
+ * this one went on being believed: it is why `mods: { spellPower: 4 }` on the
+ * Alchemist was written off as dead, and it survived two separate
+ * investigations that quoted it back rather than re-running it.
+ *
+ * ═══ AND THE DOOR WAS ALREADY OPEN ANYWAY ═══
+ * Both getters add `mods.genericPower` (`derived.ts:528`, `:547`), and two egos
+ * grant it (`egos.ts:414`, `:495`). So gear has scaled spell and mind power
+ * since those shipped; forbidding the TARGETED field while allowing the
+ * blanket one was the inconsistency, not the fix.
+ *
+ * `physSpeed` STAYS. `combatSpeed` has zero references in `src/` outside its
+ * own definition — checked with comments stripped, which is the check the
+ * original paste could not survive.
  *
  * NOTE: `mods.armourHardiness` is ADDITIVE onto a base of 30 (Combat.lua:1336),
  * not a percentage of anything, so it belongs in an additive fold like the rest.
  */
-export type AdditiveMods = Omit<CombatMods, 'physSpeed' | 'spellPower' | 'mindPower'>;
+export type AdditiveMods = Omit<CombatMods, 'physSpeed'>;
 
 /**
  * ToME's `wielder` table — ActorInventory.lua:563-572.
@@ -981,8 +1000,9 @@ export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
    * decision for a commit that is about the loot table, not this one.
    */
   'physSpeed',
-  'spellPower',
-  'mindPower',
+  // `spellPower` and `mindPower` CAME OFF THIS LIST. Both are read — see the
+  // note on `AdditiveMods` — and listing them here refused an item that would
+  // have worked perfectly.
 ]);
 
 /**

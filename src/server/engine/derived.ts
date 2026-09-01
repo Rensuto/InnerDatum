@@ -109,28 +109,38 @@ export type PrimaryStats = {
  * rescales per item has already lost.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * THIS TYPE IS THE ITEM VOCABULARY, AND THREE OF ITS FIELDS ARE INERT
+ * THIS TYPE IS THE ITEM VOCABULARY, AND ONE OF ITS FIELDS IS INERT
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `content/items.ts` defines `AdditiveMods` as this type with `physSpeed`,
- * `spellPower` and `mindPower` REMOVED, so an item cannot grant one. That is not
- * taste — it is a grep result, and it is worth repeating here so the next author
- * does not add a fourth by analogy:
+ * `content/items.ts` defines `AdditiveMods` as this type with `physSpeed`
+ * removed, so an item cannot grant it. Nothing in this game reads attack speed:
+ * `combatSpeed` has zero references in `src/` outside its own definition. An
+ * item granting it would type-check, persist, draw a tooltip and change no
+ * number a player can see — the worst failure an item system has, because it is
+ * invisible.
  *
- *     grep -rn 'combatSpeed\|combatSpellpower\|combatMindpower' src/
- *       -> COMMENTS ONLY. Zero call sites.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT SAID THREE FIELDS, AND THE PROOF IT OFFERED HAD EXPIRED.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Nothing in this game reads attack speed, spell power or mind power. Their
- * getters are ported, correct and unused. An item granting one would type-check,
- * persist, draw a tooltip and change no number a player can see — which is the
- * worst failure an item system has, because it is invisible.
- * content/classes.ts:295 already carries a dead `mods: { spellPower: 4 }` on the
- * Alchemist, so this is a mistake that has already been made once here.
+ * This block used to name `spellPower` and `mindPower` too, and to justify it
+ * by pasting a grep — *"`combatSpeed|combatSpellpower|combatMindpower` ->
+ * COMMENTS ONLY. Zero call sites."* True when written. `combatMindpower` is now
+ * the `applyPower` of ten Redactor and Alchemist talents and `combatSpellpower`
+ * of `breaching_blow`; both are on the character sheet and in the swap
+ * comparison; and both read the very mod the `Omit` was hiding (`:529`, `:550`
+ * below).
+ *
+ * A PASTED GREP RESULT IS A FACT WITH NO EXPIRY DATE ON IT. This one was
+ * believed by two separate investigations that quoted it rather than re-running
+ * it, and it is why the Alchemist's `mods: { spellPower: 4 }` was written off as
+ * dead when it had started working.
  *
  * IF YOU ADD A FIELD TO THIS TYPE, decide in the same commit whether an item may
  * grant it, and if not, add it to the `Omit` in content/items.ts. If you add a
- * CALL SITE for one of the three above, deleting its name from that `Omit` is
- * the whole change.
+ * CALL SITE for a field on that list, deleting its name is the whole change —
+ * and `test/server/live-mods.test.ts` now fails when you forget, so the next
+ * one cannot go stale the way this did.
  */
 export type CombatMods = {
   /** `combat_atk` — flat accuracy. */

@@ -194,23 +194,31 @@ describe('the item catalogue', () => {
     expect(new Set(ITEMS.map((item) => item.icon)).size).toBe(ITEMS.length);
   });
 
-  it('grants no physSpeed, spellPower or mindPower — the three verified-dead mods', () => {
+  it('grants no physSpeed — the one verified-dead mod', () => {
     // ═══════════════════════════════════════════════════════════════════════
     // A TYPE-LEVEL GUARANTEE, ASSERTED AT RUNTIME ANYWAY.
     // ═══════════════════════════════════════════════════════════════════════
     //
-    // `AdditiveMods` is `CombatMods` with these three REMOVED, so authoring one
-    // is a compile error. This test exists because a cast is not: a `wielder`
+    // `AdditiveMods` is `CombatMods` with this one REMOVED, so authoring it is a
+    // compile error. This test exists because a cast is not: a `wielder`
     // arriving as `JSON.parse(...) as Wielder` from any future content loader
     // defeats `Omit` entirely and reaches the fold with a field nothing reads.
     //
-    // `grep -rn 'combatSpeed\|combatSpellpower\|combatMindpower' src/` returns
-    // COMMENTS ONLY. An item granting one of these would type-check, persist,
-    // appear in the inventory, print a tooltip and change no number a player can
-    // see. content/classes.ts:295 already carries a dead
-    // `mods: { spellPower: 4 }`, which is the proof this is a mistake somebody
-    // makes here rather than a hypothetical.
-    expect([...DEAD_MOD_KEYS].sort()).toEqual(['mindPower', 'physSpeed', 'spellPower']);
+    // ═══════════════════════════════════════════════════════════════════════
+    // IT PINNED THREE, AND TWO OF THEM HAD COME ALIVE.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // This assertion used to read `['mindPower', 'physSpeed', 'spellPower']`
+    // and the comment above it pasted a grep proving all three were unread.
+    // `combatMindpower` is the `applyPower` of ten talents and
+    // `combatSpellpower` of `breaching_blow`; both print on the character sheet.
+    // So this test PINNED a stale fact rather than catching it, which is what a
+    // hard-coded list does when the thing it lists can change underneath it.
+    //
+    // WHICH FIELDS ARE DEAD IS NOW `live-mods.test.ts`' QUESTION — it re-runs
+    // the grep with comments stripped instead of quoting one. This asserts only
+    // that no ITEM grants whatever is on the list, which is this file's business.
+    expect([...DEAD_MOD_KEYS].sort()).toEqual(['physSpeed']);
 
     const offenders: string[] = [];
     for (const item of ITEMS) {
