@@ -13,7 +13,7 @@
  */
 
 import { creditForLanding, recomposeCombat } from './engine/effects.ts';
-import { maxLifeOf } from './engine/pools.ts';
+import { maxLifeOf, maxMoveOf } from './engine/pools.ts';
 import { resolveItem } from './content/resolve.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -1349,7 +1349,23 @@ export function buildServer() {
          */
         const sheet = talentEngine.sheetOf(actorId);
         if (sheet !== undefined) {
-          sheet.maxMp = Math.max(1, definition.maxMp + (actor.passiveCombat?.mods?.moveMp ?? 0));
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * FROM THE COMPOSED SHEET, NOT FROM `passiveCombat`.
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * This read `actor.passiveCombat?.mods?.moveMp` — the passive layer
+           * alone — which is the same shape as the bug that started this whole
+           * pass: a derived pool reaching past `recomposeCombat` to one of the
+           * layers underneath it. A `moveMp` from gear or from a timed effect
+           * paid nothing, and `equipment.ts` was dropping the gear one anyway.
+           *
+           * BOTH HALVES HAD TO LAND TOGETHER. Adding `moveMp` to
+           * `WIELDER_MOD_KEYS` without this line changes nothing; changing this
+           * line without the allow-list would have made the `legwork` passive
+           * vanish, because the fold would not have carried it into `combat`.
+           */
+          sheet.maxMp = maxMoveOf(actor, definition);
           sheet.mp = Math.min(sheet.mp, sheet.maxMp);
         }
       }

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { ALCHEMIST, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import { EGOS, egoWielder } from '../../src/server/content/egos.ts';
 import { composeWielders } from '../../src/server/engine/equipment.ts';
-import { maxLifeOf } from '../../src/server/engine/pools.ts';
+import { maxLifeOf, maxMoveOf } from '../../src/server/engine/pools.ts';
 import { LIFE_PER_CON, PLAYER_RANK } from '../../src/shared/leveling.ts';
 import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { PooledClass } from '../../src/server/engine/pools.ts';
@@ -130,7 +130,7 @@ describe('hit points follow the Constitution a body is standing at', () => {
     // version hands a Watchman a ring and takes seven points of Strength off
     // him." Both reads in `maxLifeOf` default the same way, so this nets to
     // nought rather than to minus forty hit points.
-    const plain: PooledClass = { maxHp: 50, lifeRating: 10, combat: {} };
+    const plain: PooledClass = { maxHp: 50, lifeRating: 10, maxMp: 3, combat: {} };
     expect(maxLifeOf(body(1, {}), plain, PLAYER_RANK)).toBe(50);
     expect(maxLifeOf(body(1, { stats: { con: 12 } }), plain, PLAYER_RANK)).toBe(
       50 + 2 * LIFE_PER_CON,
@@ -183,5 +183,62 @@ describe('the shipped content that this was silently ignoring', () => {
         bare(WATCHMAN) + granted * LIFE_PER_CON,
       );
     }
+  });
+});
+
+describe('how far a body gets in a turn', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LAST POOL THAT READ PAST THE FOLD, AND IT WAS UNTESTED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `main.ts` computed this as `definition.maxMp + passiveCombat?.mods?.moveMp`
+   * — the passive layer alone, reaching past `recomposeCombat` to one of the
+   * layers underneath it. The same shape as max hit points off the points
+   * ledger, the compare panel off `baseCombat`, and two clamps off a level-1
+   * ceiling.
+   *
+   * ═══ HOW IT WAS FOUND ═══
+   * Deleting `moveMp` from `WIELDER_MOD_KEYS` — which silently removes the whole
+   * effect of the `legwork` discipline — failed NOTHING in four thousand tests.
+   * Unreachable where it lived, inside the `buildServer` closure.
+   */
+  const cls: PooledClass = { maxHp: 50, lifeRating: 10, maxMp: 3, combat: {} };
+
+  it('is the class figure for a body carrying nothing', () => {
+    expect(maxMoveOf(body(1, {}), cls)).toBe(3);
+    expect(maxMoveOf({ level: 1 }, cls)).toBe(3);
+  });
+
+  it('counts a moveMp from ANY layer, because it reads the composed sheet', () => {
+    /**
+     * A passive, a worn item and a timed effect all land in `combat.mods` by the
+     * time this runs — `recomposeCombat` folds all three through the same
+     * additive combine. That is the entire point of reading the composed sheet
+     * rather than one layer of it: this function cannot tell them apart, and
+     * must not.
+     */
+    expect(maxMoveOf(body(1, composeWielders({}, [{ mods: { moveMp: 2 } }])), cls)).toBe(5);
+    expect(
+      maxMoveOf(
+        body(1, composeWielders({}, [{ mods: { moveMp: 1 } }, { mods: { moveMp: 2 } }])),
+        cls,
+      ),
+      'two sources did not add',
+    ).toBe(6);
+  });
+
+  it('survives the fold — which is the coupling that had no test at all', () => {
+    // THE DISCRIMINATING ONE. `composeWielders` only carries keys named in
+    // `WIELDER_MOD_KEYS`, so this fails the moment `moveMp` leaves that list —
+    // taking the `legwork` discipline's whole effect with it, silently, as it
+    // would have before.
+    expect(composeWielders({}, [{ mods: { moveMp: 2 } }]).mods?.moveMp).toBe(2);
+  });
+
+  it('never leaves a body unable to move', () => {
+    // A pool of zero is a state the turn system has no answer for. `mpPenalty`
+    // is how a status takes movement away and it is applied elsewhere.
+    expect(maxMoveOf(body(1, composeWielders({}, [{ mods: { moveMp: -99 } }])), cls)).toBe(1);
   });
 });

@@ -161,6 +161,29 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'physResist',
   'spellResist',
   'mentalResist',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `moveMp` WAS MISSING, AND content/items.ts SAID AN ITEM COULD GRANT IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `DEAD_MOD_KEYS`'s own note argues at length that `moveMp` is NOT a dead
+   * field — *"`refreshPassives` folds it into the movement ceiling and it
+   * works"* — and closes with *"SO AN ITEM MAY GRANT IT AND NONE DOES."*
+   *
+   * An item could not. The type permitted one (`AdditiveMods` omits only the
+   * three genuinely dead fields), so a pair of boots granting `moveMp` would
+   * type-check, pass the import-time check, persist, draw a tooltip — and be
+   * dropped right here, because this list is the belt to that type's braces and
+   * nothing in the fold reads a key it was not told about. Exactly the "item
+   * that changes no number a player can see" those two guards exist to prevent,
+   * arriving through the door neither was watching.
+   *
+   * Five of the six lenses in the 2026-08-31 stat audit flagged it independently
+   * and every one was refuted as latent, because nothing grants it today. It is
+   * fixed now rather than when somebody authors the boots, since the day it
+   * bites is the day it is hardest to see.
+   */
+  'moveMp',
 ]);
 
 /**

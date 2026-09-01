@@ -12,8 +12,11 @@
  *
  * `engine/derived.ts` answers "what can this sheet DO" — accuracy, defence,
  * damage. This file answers the other question a composed sheet implies: "how
- * much of this body IS there". One function today; `maxMp` belongs here the day
- * anything other than a passive can move it.
+ * much of this body IS there".
+ *
+ * IT SAID "one function today; `maxMp` belongs here the day anything other than
+ * a passive can move it." That day arrived when `moveMp` joined the gear fold,
+ * and `maxMoveOf` is below.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * WHY THIS IS A FILE AND NOT THE THREE LINES IT REPLACES
@@ -70,10 +73,11 @@ export type PooledBody = {
   readonly combat?: CombatSheet;
 };
 
-/** The three numbers a class contributes. `ClassDef` satisfies this. */
+/** The numbers a class contributes. `ClassDef` satisfies this. */
 export type PooledClass = {
   readonly maxHp: number;
   readonly lifeRating: number;
+  readonly maxMp: number;
   readonly combat: CombatSheet;
 };
 
@@ -108,4 +112,34 @@ export function maxLifeOf(body: PooledBody, definition: PooledClass, rank: numbe
   const classCon = definition.combat.stats?.con ?? STAT_BASE;
   const liveCon = body.combat?.stats?.con ?? classCon;
   return maxLifeFor(definition.maxHp, definition.lifeRating, body.level, rank, liveCon - classCon);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR THIS BODY GETS IN A TURN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The class's authored figure plus whatever `mods.moveMp` the composed sheet
+ * carries — a `legwork` passive, and now a worn item or a timed effect, because
+ * `moveMp` joined `WIELDER_MOD_KEYS`.
+ *
+ * ═══ IT READ `passiveCombat` AND THAT WAS THE SAME BUG AS ALL THE OTHERS ═══
+ * `main.ts` computed this as `definition.maxMp + actor.passiveCombat?.mods
+ * ?.moveMp`, which is a derived pool reaching past `recomposeCombat` to one of
+ * the layers underneath it — the shape that cost this project a whole day: max
+ * hit points off the points ledger, the compare panel off `baseCombat`, two
+ * clamps off a level-1 ceiling.
+ *
+ * ═══ AND IT WAS COMPLETELY UNTESTED, WHICH IS WHY IT IS HERE NOW ═══
+ * Removing `moveMp` from the fold's allow-list — which would have silently
+ * deleted the `legwork` passive's whole effect — failed NOTHING in a suite of
+ * four thousand tests. It was unreachable where it lived, inside the
+ * `buildServer` closure, exactly as `maxLifeOf` was.
+ *
+ * FLOORED AT ONE. A body that cannot move at all is a body the turn system has
+ * no answer for; `mpPenalty` is how a status takes movement away, and it is
+ * applied elsewhere and deliberately not here.
+ */
+export function maxMoveOf(body: PooledBody, definition: PooledClass): number {
+  return Math.max(1, definition.maxMp + (body.combat?.mods?.moveMp ?? 0));
 }
