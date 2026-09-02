@@ -177,8 +177,15 @@ const SECTION_H = 18;
  * the name on top, then cost / range / cooldown.
  */
 const TALENT_H = 22;
-/** The icon box on a talent row. See `drawTalentIcon` for why it is this small. */
-const TALENT_ICON = 18;
+/**
+ * The icon box on a talent row. See `drawTalentIcon` for why it is this small —
+ * and 16 rather than 18 because it is a DIVISOR of the 64 an ability icon is
+ * authored at. 64 -> 18 is 3.55:1, a fractional nearest-neighbour reduction,
+ * which is exactly what render/canvas.ts, ui/hotbar.ts and ui/inventory.ts each
+ * refuse in their own words. 64 -> 16 is a clean 4:1 that drops three pixels in
+ * four and keeps every edge on the grid.
+ */
+const TALENT_ICON = 16;
 
 /** Chrome lost on each side. Mirrors `panelInner`'s inset, as ui/tooltip.ts does. */
 const INSET = PANEL_PAD + 3;
@@ -1528,19 +1535,10 @@ function drawTalentIcon(
 ): void {
   const sprite = sprites.sprite(row.icon);
   if (sprite !== undefined) {
-    const sw = Math.min(sprite.w, box.w);
-    const sh = Math.min(sprite.h, box.h);
-    ctx.drawImage(
-      sprite.image,
-      Math.floor((sprite.w - sw) / 2),
-      Math.floor((sprite.h - sh) / 2),
-      sw,
-      sh,
-      box.x + Math.floor((box.w - sw) / 2),
-      box.y + Math.floor((box.h - sh) / 2),
-      sw,
-      sh,
-    );
+    // SCALED, and the box is an exact quarter of the source for it — see
+    // `TALENT_ICON`. The centre-crop this replaced showed the middle 18x18 of a
+    // 64x64 icon, which is a fragment rather than a picture.
+    ctx.drawImage(sprite.image, box.x, box.y, box.w, box.h);
     return;
   }
 

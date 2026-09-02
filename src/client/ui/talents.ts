@@ -1684,12 +1684,21 @@ export function talentPanelGeometry(
   let cursor = top;
 
   // ── the sentence rows, above the grid ────────────────────────────────────
+  //
+  // IN THE GRID'S SPACE, NOT THE PANEL'S. `afterStats` is the reserve taken off
+  // the LEFT for the attribute column, and it was applied to `gridX` and `barX`
+  // and not to these — so the sentence started at the panel's inset while
+  // carrying the already-narrowed `innerW`, and `drawStats` (which runs last)
+  // overprinted its first 42 pixels. Reported verbatim as `Stats:9to spend`,
+  // which is `Stats: 9` and `9 stat to spend` sharing an origin six pixels
+  // apart on the same baseline. Aligning to `gridX`/`gridW` also puts the
+  // sentence over the strips it is about.
   for (const row of others) {
     const h = rowHeight(row, 1);
     if (cursor + h > bottom) break;
     placed.push({
       row,
-      rect: { x, y: cursor, w: innerW, h },
+      rect: { x: gridX, y: cursor, w: gridW, h },
       plus: null,
       descLines: [],
       nextLines: [],
@@ -2665,19 +2674,25 @@ function drawTalentIcon(
 
   const sprite = sprites.sprite(icon);
   if (sprite !== undefined) {
-    const sw = Math.min(sprite.w, box.w);
-    const sh = Math.min(sprite.h, box.h);
-    ctx.drawImage(
-      sprite.image,
-      Math.floor((sprite.w - sw) / 2),
-      Math.floor((sprite.h - sh) / 2),
-      sw,
-      sh,
-      box.x + Math.floor((box.w - sw) / 2),
-      box.y + Math.floor((box.h - sh) / 2),
-      sw,
-      sh,
-    );
+    /**
+     * SCALED TO THE BOX, NOT CROPPED TO IT.
+     *
+     * Ability icons are authored 64x64 (ASSETS-REQUIRED.md) and `ICON_PX` is
+     * 32, so the old centre-crop took source rect (16, 16, 32, 32) and blitted
+     * it 1:1 — the middle quarter of every icon, with the outer ring thrown
+     * away. A sword's grip with no blade; a rune with its border cut off.
+     *
+     * `ui/hotbar.ts` draws the same `icon_active_*` files correctly and says
+     * why (`ICON_DRAW_PX`): smoothing is off for the whole buffer, so a 2:1
+     * reduction takes every other pixel and stays sharp. Both call sites here
+     * pass exactly `ICON_PX`, so this is that same exact halving and not the
+     * fractional resample this codebase refuses by name in three places.
+     *
+     * Upstream does not crop either — `tome/dialogs/elements/TalentTrees.lua:419`
+     * is `tal.entity:toScreen(self.tiles, ..., self.icon_size, self.icon_size)`,
+     * drawn SCALED to the icon size whatever the source tile is.
+     */
+    ctx.drawImage(sprite.image, box.x, box.y, box.w, box.h);
   } else {
     ctx.font = FONT_ICON_FALLBACK;
     ctx.textAlign = 'center';

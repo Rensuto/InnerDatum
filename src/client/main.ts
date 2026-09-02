@@ -2467,6 +2467,23 @@ function minimapTileAt(px: number, py: number, viewW: number): TileXY | null {
  * the player can tell WHICH cell the pointer is on: the map is three or four
  * pixels a tile, so the coordinate is the confirmation.
  */
+/**
+ * Is the pointer inside a panel the player opened?
+ *
+ * The three centred panels are drawn OVER the minimap and the zone label — see
+ * the minimap paint block — so a pointer inside one of them is pointing at it,
+ * whatever is underneath. Only the surfaces that can COVER the top-right corner
+ * are listed: the party pane and the case log are docked to edges the minimap
+ * never reaches, and the escape menu already suppresses the whole hover chain.
+ */
+function coveredByPanel(layout: HudLayout, px: number, py: number): boolean {
+  for (const rect of [layout.sheet, layout.talents, layout.inventory]) {
+    if (rect === null) continue;
+    if (px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h) return true;
+  }
+  return false;
+}
+
 function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null {
   const tile = minimapTileAt(px, py, viewW);
   if (tile === null) return null;
@@ -3886,6 +3903,90 @@ const paintHud: HudPainter = (ctx, width, height) => {
     caseLog.draw({ ctx, sprites, rect: layout.log, gameTurn: turn?.gameTurn ?? -1 });
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MINIMAP, BEFORE THE PANELS RATHER THAN AFTER THEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It used to be painted near the end of this function, under a comment
+   * claiming *"the minimap sits in the top-right corner where no panel is
+   * docked"*. That was true of the panel band it was written against and is not
+   * true of the one there is: measured at an 809x378 interface box it covered
+   * 86x84 pixels of the character sheet, taking the whole of its close button
+   * and the right half of its `[E]quip` tab — which is the "the UI pages do not
+   * fit properly" screenshot exactly. The talent panel loses its close button
+   * entirely; the inventory loses eleven of its thirteen pixels.
+   *
+   * The band (`panelBand`) reserves nothing for it the way `logPanelRect` does,
+   * so on a short box all three panels ride up underneath it. Reserving space
+   * would shrink every panel on every window to protect a corner they only
+   * sometimes reach; drawing it EARLIER costs nothing and says the true thing —
+   * a panel the player opened outranks a map they did not.
+   *
+   * THE GUARD IS NOT A BARE `if`. The world-map arm below fills with
+   * `rgba(10, 8, 19, 0.92)` — 0.92, not opaque — so an unguarded minimap would
+   * ghost through the world map at 8% and burn a `revealAround` and a `paintMap`
+   * every frame it is open.
+   *
+   * The zone label travels with it and is therefore hidden by an open panel too,
+   * which is the same rule stated once rather than twice.
+   */
+  if (!(worldMapOpen && overworldLevel !== null) && level !== null && currentRealmId !== null) {
+    const me = selfId === null ? undefined : actors.get(selfId);
+    // REVEAL FIRST, THEN PAINT. The cell you are standing on has to be part of
+    // what you have seen by the time the same frame draws it, or the player is
+    // permanently at the edge of their own fog.
+    const seen =
+      me === undefined
+        ? new Set<string>()
+        : revealAround(currentRealmId, level, { x: me.x, y: me.y });
+    paintMap({
+      ctx,
+      level,
+      rect: minimapRect(width),
+      sites,
+      self: me === undefined ? undefined : { x: me.x, y: me.y },
+      framed: true,
+      seen,
+      windowRadius: MINIMAP_RADIUS,
+    });
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND ITS NAME UNDER IT — `Game.lua:1497-1507`, drawn as upstream draws it.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A STANDING LABEL, not a flourish on arrival: "where am I" is a question a
+     * player asks on the turn after they stopped paying attention, and the
+     * arrival line has scrolled out of the Record by then. Ours reached the
+     * aria-live region and nothing else, so a player using a screen reader was
+     * told where they were and a player looking at the screen was not.
+     *
+     * In the twelve pixels `minimapReserveH` already holds below the box — see
+     * `zoneLabelBaseline` for why growing that reserve instead would have put
+     * the Case Log back on the edge of vanishing mid-fight.
+     */
+    if (realmName !== null) {
+      const box = minimapRect(width);
+      ctx.save();
+      ctx.font = ZONE_LABEL_FONT;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'alphabetic';
+      // GOLD, which is upstream's own colour for this label (`colors.GOLD`) and
+      // is already this client's word for "a thing the game is telling you".
+      ctx.fillStyle = PALETTE.GOLD;
+      const said = fitZoneLabel(
+        (text) => ctx.measureText(text).width,
+        realmName,
+        // As far left as the minimap is wide again, and no further: past that
+        // it would run under where the turn cards appear when a fight starts.
+        box.w * 2,
+      );
+      if (said !== '') ctx.fillText(said, box.x + box.w, zoneLabelBaseline(width));
+      ctx.restore();
+    }
+  }
+
   // THE CHARACTER SHEET, WITH THE OTHER DOCK SURFACES AND BEFORE THE HOTBAR.
   //
   // It therefore loses to the hotbar, the resource strip, the prose lines, the
@@ -4138,11 +4239,23 @@ const paintHud: HudPainter = (ctx, width, height) => {
        * nothing on screen would otherwise announce. A control nobody knows about
        * is very nearly no control.
        *
-       * ASKED FIRST, because the minimap sits in the top-right corner where no
-       * panel is docked — anything else answering there would be answering about
-       * the map behind it.
+       * STILL ASKED FIRST, AND NOW GATED, because the sentence this used to
+       * carry — *"the minimap sits in the top-right corner where no panel is
+       * docked"* — stopped being true. Measured at an 809x378 interface box the
+       * minimap's 99x99 square overlaps the top-right corner of all three
+       * centred panels, and the corner it takes is the one holding the close
+       * button and the last tab.
+       *
+       * HIT-TEST ORDER MIRRORS PAINT ORDER, which is this file's rule and is
+       * what makes it a gate rather than a reorder: the minimap is painted
+       * BEFORE the panels now, so a point inside an open panel belongs to that
+       * panel even when nothing in it wants a card. Answering "you are pointing
+       * at the map" over a sheet the player opened is the same fault as drawing
+       * the map on top of it.
        */
-      minimapCardAt(pointerPoint.x, pointerPoint.y, width) ??
+      (coveredByPanel(layout, pointerPoint.x, pointerPoint.y)
+        ? null
+        : minimapCardAt(pointerPoint.x, pointerPoint.y, width)) ??
       /**
        * THE PARTY PANE, AND IT IS ASKED BEFORE THE BAR FOR A REASON.
        *
@@ -4571,60 +4684,6 @@ const paintHud: HudPainter = (ctx, width, height) => {
     );
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-  } else if (level !== null && currentRealmId !== null) {
-    const me = selfId === null ? undefined : actors.get(selfId);
-    // REVEAL FIRST, THEN PAINT. The cell you are standing on has to be part of
-    // what you have seen by the time the same frame draws it, or the player is
-    // permanently at the edge of their own fog.
-    const seen =
-      me === undefined
-        ? new Set<string>()
-        : revealAround(currentRealmId, level, { x: me.x, y: me.y });
-    paintMap({
-      ctx,
-      level,
-      rect: minimapRect(width),
-      sites,
-      self: me === undefined ? undefined : { x: me.x, y: me.y },
-      framed: true,
-      seen,
-      windowRadius: MINIMAP_RADIUS,
-    });
-
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * AND ITS NAME UNDER IT — `Game.lua:1497-1507`, drawn as upstream draws it.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * A STANDING LABEL, not a flourish on arrival: "where am I" is a question a
-     * player asks on the turn after they stopped paying attention, and the
-     * arrival line has scrolled out of the Record by then. Ours reached the
-     * aria-live region and nothing else, so a player using a screen reader was
-     * told where they were and a player looking at the screen was not.
-     *
-     * In the twelve pixels `minimapReserveH` already holds below the box — see
-     * `zoneLabelBaseline` for why growing that reserve instead would have put
-     * the Case Log back on the edge of vanishing mid-fight.
-     */
-    if (realmName !== null) {
-      const box = minimapRect(width);
-      ctx.save();
-      ctx.font = ZONE_LABEL_FONT;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'alphabetic';
-      // GOLD, which is upstream's own colour for this label (`colors.GOLD`) and
-      // is already this client's word for "a thing the game is telling you".
-      ctx.fillStyle = PALETTE.GOLD;
-      const said = fitZoneLabel(
-        (text) => ctx.measureText(text).width,
-        realmName,
-        // As far left as the minimap is wide again, and no further: past that
-        // it would run under where the turn cards appear when a fight starts.
-        box.w * 2,
-      );
-      if (said !== '') ctx.fillText(said, box.x + box.w, zoneLabelBaseline(width));
-      ctx.restore();
-    }
   }
 
   combatBanner?.draw({ ctx, width, top: hudTop });

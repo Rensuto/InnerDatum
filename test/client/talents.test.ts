@@ -1545,3 +1545,61 @@ describe('the deepen offer', () => {
     expect(below).toBeNull();
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `Stats:9to spend` — TWO SENTENCES SHARING AN ORIGIN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported from a screenshot, verbatim, as the panel's heading. It is
+ * `Stats: 9` and `9 stat to spend` drawn on the same bold-10px-mono baseline
+ * six pixels apart, with `drawStats` running last and overprinting the first
+ * forty-two pixels of the sentence — so the clean tail `to spend` is all that
+ * survives.
+ *
+ * THE CAUSE IS ONE MISSING TERM. `afterStats` is the reserve taken off the LEFT
+ * for the attribute column. It was applied to `gridX` and to `barX` and not to
+ * the sentence rows, which still started at the panel's own inset while
+ * carrying the already-narrowed `innerW`. It fires at every box `HUD_MIN_W` can
+ * produce, not only wide ones — the attribute column is earned at 530 and the
+ * floor gives 560.
+ */
+describe('the points sentence is not drawn on top of the attribute column', () => {
+  for (const [name, size] of [
+    ['the 640x320 floor', FLOOR],
+    ['the reported window', REAL],
+  ] as const) {
+    it(`clears the stats box at ${name}`, () => {
+      const geometry = talentPanelGeometry(rectAt(size), talentPanelRows(view()), NO_SCROLL);
+      const stats = geometry.stats;
+      expect(stats, 'no attribute column — this case proves nothing').not.toBeNull();
+
+      const sentences = geometry.placed.filter(
+        (placed) => placed.row.kind !== TalentRowKind.Category,
+      );
+      expect(sentences.length, 'no sentence row to collide with').toBeGreaterThan(0);
+
+      for (const placed of sentences) {
+        expect(
+          placed.rect.x,
+          `a sentence starts at ${String(placed.rect.x)}, inside the stats box`,
+        ).toBeGreaterThanOrEqual((stats?.x ?? 0) + (stats?.w ?? 0));
+      }
+    });
+  }
+
+  it('and stays inside the panel it was narrowed for', () => {
+    /**
+     * THE OTHER HALF: moving a row right is only a fix if it does not then run
+     * off the end. The sentence carries `innerW`, which was already reduced by
+     * the stats column, so shifting its origin by the same reserve has to land
+     * it exactly within the grid's own span rather than past it.
+     */
+    const rect = rectAt(FLOOR);
+    const geometry = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
+    for (const placed of geometry.placed) {
+      if (placed.row.kind === TalentRowKind.Category) continue;
+      expect(placed.rect.x + placed.rect.w).toBeLessThanOrEqual(rect.x + rect.w);
+    }
+  });
+});

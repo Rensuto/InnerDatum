@@ -980,3 +980,66 @@ describe('the wipe plate does not outlive the wipe', () => {
     );
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PANEL THE PLAYER OPENED OUTRANKS A MAP THEY DID NOT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The minimap was painted near the end of `paintHud`, under a comment claiming
+ * *"the minimap sits in the top-right corner where no panel is docked"*. That
+ * was true of the panel band it was written against and stopped being true of
+ * the one there is. Measured at an 809x378 interface box, its 99x99 square
+ * covers 86x84 pixels of the character sheet — the whole of its close button
+ * and the right half of its `[E]quip` tab — 66x84 of the talent panel,
+ * including all of ITS close button, and eleven of the inventory's thirteen.
+ * That is the "even the UI pages do not fit properly" screenshot.
+ *
+ * `panelBand` reserves nothing for it the way `logPanelRect` does, so on a
+ * short box all three panels ride up underneath it. Reserving space would
+ * shrink every panel on every window to protect a corner they only sometimes
+ * reach. Painting it earlier costs nothing.
+ *
+ * ═══ WHY THIS IS AN ORDERING TEST AND NOT A PIXEL ONE ═══
+ * The fault is WHERE a line sits, which is the whole reason this file reads
+ * source: `paintHud` cannot be imported, and the property is a relation between
+ * two statements rather than a value any function returns.
+ */
+describe('the minimap is drawn under the panels, not over them', () => {
+  it('paints before all three centred panels', () => {
+    const minimap = CODE.indexOf(
+      'if (!(worldMapOpen && overworldLevel !== null) && level !== null && currentRealmId !== null) {',
+    );
+    expect(minimap, 'the minimap paint arm was renamed').toBeGreaterThan(-1);
+
+    for (const panel of ['drawCharSheet({', 'drawTalentPanel({', 'drawInventoryPanel({']) {
+      const at = CODE.indexOf(panel);
+      expect(at, `${panel} was renamed`).toBeGreaterThan(-1);
+      expect(at, `the minimap is still painted over ${panel}`).toBeGreaterThan(minimap);
+    }
+  });
+
+  it('and the world map still excludes it rather than ghosting it through', () => {
+    /**
+     * The guard is load-bearing and is not decoration. The world-map arm fills
+     * with `rgba(10, 8, 19, 0.92)` — 0.92, not opaque — so a bare `if` would
+     * show the minimap through the world map at eight percent and burn a
+     * `revealAround` and a `paintMap` every frame it is open.
+     */
+    expect(CODE).toContain('!(worldMapOpen && overworldLevel !== null)');
+    expect(CODE).toContain("ctx.fillStyle = 'rgba(10, 8, 19, 0.92)'");
+  });
+
+  it('and the hover chain mirrors the paint order it now has', () => {
+    /**
+     * HIT-TEST ORDER MIRRORS PAINT ORDER is this file's rule, and reordering the
+     * chain alone would not have fixed it: `charSheetTipAt` returns null for
+     * everything that is not a talent row, so a pointer on the `[E]quip` tab
+     * would fall straight through to the minimap again. The gate is the fix.
+     */
+    expect(CODE).toContain('coveredByPanel(layout, pointerPoint.x, pointerPoint.y)');
+    const gate = CODE.indexOf('coveredByPanel(layout, pointerPoint.x, pointerPoint.y)');
+    const ask = CODE.indexOf('minimapCardAt(pointerPoint.x, pointerPoint.y, width)');
+    expect(ask, 'the minimap card is asked ungated').toBeGreaterThan(gate);
+  });
+});
