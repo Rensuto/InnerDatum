@@ -25,9 +25,11 @@ import {
   roamerAt,
   tickRoamers,
 } from '../../src/server/world/roamers.ts';
-import { tileAt } from '../../src/shared/level.ts';
+import { INDEX_HUSK } from '../../src/server/content/monsters.ts';
+import { canWalk, tileAt } from '../../src/shared/level.ts';
+import { sightDistance } from '../../src/shared/sight.ts';
 import { ActorKind, TileCode, isHaunt, isWalkable } from '../../src/shared/protocol.ts';
-import type { Realms } from '../../src/server/world/realms.ts';
+import type { Realm, Realms, Roamer } from '../../src/server/world/realms.ts';
 
 function makeRealms(seed = 'roam-seed'): Realms {
   const downed = createDownedState();
@@ -240,5 +242,401 @@ describe('a roamer looks like a creature, not like a place', () => {
     );
     expect(canvas).toContain("sprites.sprite('ui_token_ring_hostile')");
     expect(canvas).toContain('if (site.sprite !== undefined)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The moor is not driven by the keyboard
+// ---------------------------------------------------------------------------
+
+describe('a player cannot walk the moor forward by pressing keys', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TICK RAN ONCE PER PUMP, AND A PUMP IS ONE KEY PRESS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `pumpRealm` bumped a counter every pump and handed it to `tickRoamers`, so
+   * the moor advanced at the rate the party typed: frozen when nobody moved, six
+   * times faster with six people walking, faster still for anyone holding a
+   * direction down. The SPAWN half was worse — it sits outside the
+   * `MOVE_EVERY_TURNS` gate, so one player leaning on a key filled the map as
+   * fast as they could press.
+   *
+   * A docblock directly above that line described the fix as already made. It
+   * was not, twice: the first attempt passed the realm's GAME TURN and was
+   * reverted, because a game turn advances whenever ANY body spends energy — so
+   * six players still ran the moor about six times per player action. These are
+   * the assertions that would have caught the gap between the paragraph and the
+   * code, both times.
+   */
+  it('CANNOT protect itself, which is why the gate is at the call site', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE REASON THE GUARD IS IN THE GATEWAY AND NOT IN HERE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `tickRoamers` decides whether to WANDER from `seq % MOVE_EVERY_TURNS`, so
+     * calling it repeatedly with the SAME seq either never wanders or wanders
+     * every single time, depending on which number it is. On a wander turn it
+     * happily steps the whole moor once per call.
+     *
+     * That is not a bug in this function — it is why the caller has to refuse to
+     * call it twice for one tick of the moor's clock. Stated here so nobody
+     * "fixes" it by memoising inside and leaves the real gate unguarded.
+     */
+    const realms = makeRealms('roam-spam');
+    settle(realms);
+    // A MULTIPLE OF `MOVE_EVERY_TURNS`, written out because that constant is
+    // deliberately module-private — importing it would be this test reaching for
+    // an implementation detail to describe a contract.
+    const wanderTurn = 12;
+    const before = new Map(
+      [...realms.overworld.roamers.values()].map((r) => [r.id, `${String(r.x)},${String(r.y)}`]),
+    );
+
+    for (let i = 0; i < 6; i += 1) tickRoamers(realms.overworld, wanderTurn);
+
+    const moved = [...realms.overworld.roamers.values()].filter(
+      (r) => before.get(r.id) !== `${String(r.x)},${String(r.y)}`,
+    );
+    expect(
+      moved.length,
+      'six calls on one tick moved nothing — the wander gate changed shape, and ' +
+        'the gateway guard may no longer be the thing holding the moor still',
+    ).toBeGreaterThan(0);
+  });
+
+  it('and the gateway ticks it on a WALL-CLOCK bucket, never once per pump', () => {
+    /**
+     * A SOURCE GUARD. The rule lives in a closure inside `wsGateway` that no
+     * test can reach, and the mistake it prevents is a one-word edit: bumping a
+     * local counter, or reading the game clock, instead of reading the wall
+     * clock. Both of those have shipped.
+     */
+    const gateway = readFileSync(
+      new URL('../../src/server/net/gateway.ts', import.meta.url),
+      'utf8',
+    )
+      // CODE ONLY. The docblock at the fix NAMES both things it replaced, which
+      // is the comment doing its job — matching raw text would fail on the
+      // explanation rather than on the mistake, and the obvious way to make it
+      // pass would be deleting the explanation.
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    expect(gateway, 'the per-pump counter is back').not.toContain('roamerSeq');
+    // THE CONDITION, not just the names. Every identifier below survives a
+    // mutation that replaces the guard with `if (true)` and calls the tick on
+    // every pump again, which is the whole thing this test exists to prevent.
+    expect(gateway, 'the tick is no longer gated on the bucket having CHANGED').toContain(
+      'bucket !== lastRoamerBucket.get(',
+    );
+    expect(gateway, 'the bucket is no longer wall-clock').toContain(
+      'Math.floor(Date.now() / roamerBucketMs)',
+    );
+    expect(gateway).toContain('tickRoamers(full, bucket)');
+    // AND NOT THE GAME TURN, which is the repair that looks right, shipped once
+    // and was reverted: it advances whenever any body spends energy, so a field
+    // full of players runs it once per player action rather than once per turn.
+    expect(gateway, 'the moor is back on a clock the party can type on').not.toContain(
+      'tickRoamers(full, turn)',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Aggro, the leash, and the walk home
+// ---------------------------------------------------------------------------
+
+/**
+ * The middle of the widest stretch of open haunt-able ground on the map.
+ *
+ * FOUND RATHER THAN WRITTEN DOWN, which is `instance-reap.test.ts`'s rule and
+ * its reason: the overworld is an authored map, and a coordinate pair hardcoded
+ * here is a test that breaks the next time somebody moves a tree. A leash test
+ * needs ten clear tiles in every direction or it measures the terrain.
+ */
+function openGround(realms: Realms, radius: number): { readonly x: number; readonly y: number } {
+  const level = realms.overworld.world.level;
+  const good = (x: number, y: number): boolean =>
+    canWalk(level, x, y) && isHaunt(tileAt(level, x, y));
+  for (let cy = radius; cy < level.h - radius; cy += 1) {
+    for (let cx = radius; cx < level.w - radius; cx += 1) {
+      let clear = true;
+      for (let y = cy - radius; y <= cy + radius && clear; y += 1) {
+        for (let x = cx - radius; x <= cx + radius; x += 1) {
+          if (!good(x, y)) {
+            clear = false;
+            break;
+          }
+        }
+      }
+      if (clear) return { x: cx, y: cy };
+    }
+  }
+  throw new Error(`the moor has no clear ${String(radius)}-tile disc to test a leash in`);
+}
+
+/**
+ * A moor holding exactly one roamer that matters, anchored where you asked.
+ *
+ * ═══ THE OTHERS ARE PARKED, NOT DELETED, AND THAT IS THE WHOLE TRICK ═══
+ * `tickRoamers` spawns one per call from OUTSIDE the movement gate —
+ * deliberately; it is the top-up after a roamer is walked into and consumed. So
+ * a test that emptied the map would get a fresh creature somewhere random on
+ * every beat, in a test about one creature.
+ *
+ * Keeping the population at its cap stops that. And a parked roamer is inert by
+ * construction rather than by hope: its anchor is wherever it spawned, every one
+ * of the eight steps from the corner is further from that anchor than the leash
+ * allows, and the only thing that could override the leash is seeing a player —
+ * who is standing in the middle of the map.
+ */
+function stage(realms: Realms, at: { readonly x: number; readonly y: number }): Roamer {
+  settle(realms);
+  const realm = realms.overworld;
+  const others = [...realm.roamers.values()];
+  const doomed = others[0];
+  if (doomed === undefined) throw new Error('the moor settled with no roamers on it');
+  realm.roamers.delete(doomed.id);
+
+  let park = 1;
+  for (const other of others.slice(1)) {
+    other.x = park;
+    other.y = 1;
+    park += 2;
+  }
+
+  const mine: Roamer = {
+    id: 'roam_under_test',
+    x: at.x,
+    y: at.y,
+    name: 'A Wrong Shadow',
+    templateId: INDEX_HUSK.id,
+    sprite: INDEX_HUSK.sprite,
+    homeX: at.x,
+    homeY: at.y,
+    unseen: 0,
+    goingHome: false,
+  };
+  realm.roamers.set(mine.id, mine);
+  return mine;
+}
+
+/** How far a roamer has strayed from the tile it appeared on. */
+const fromHome = (r: Roamer): number => sightDistance(r, { x: r.homeX, y: r.homeY });
+
+/**
+ * One step of the moor's clock, past the `MOVE_EVERY_TURNS` gate every time.
+ *
+ * Multiples of three, written out for the reason the spam test gives: that
+ * constant is module-private on purpose, and importing it would make this
+ * harness a description of the implementation rather than of the behaviour.
+ */
+function beater(realm: Realm): () => void {
+  let seq = 300;
+  return () => {
+    seq += 3;
+    tickRoamers(realm, seq);
+  };
+}
+
+describe('it notices you, and that is all a roamer is allowed to do about it', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SLIGHT AGGRO — `ai/simple.lua:251-266`, bounded by `Party.lua:69`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The moor's danger was a random walk that could not see you. Upstream's
+   * simplest AI is two lines of behaviour — take the nearest hostile in your
+   * FOV, walk to where you last saw it — and a leash is upstream's own idea as
+   * well (`ai_state.tactic_leash`, default 10).
+   *
+   * What makes it SLIGHT is the cadence, not a shortened radius: a roamer takes
+   * one step every six seconds while you move as fast as you press. It can never
+   * catch you at a walk. What it can do is turn towards you, which is a thing
+   * you can read at ten tiles and act on.
+   */
+  it('steps towards a player it can see', () => {
+    const realms = makeRealms('roam-aggro');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    const body = realms.overworld.world.addPlayer('p1', 'Detective');
+    body.x = spot.x + 5;
+    body.y = spot.y;
+
+    const before = sightDistance(mine, body);
+    beater(realms.overworld)();
+
+    expect(sightDistance(mine, body), 'it did not move towards the body').toBeLessThan(before);
+    expect(mine.targetId, 'it moved, but it did not TARGET anybody').toBe(body.id);
+  });
+
+  it('closes to arm`s length and stops there, so the fight is still your choice', () => {
+    /**
+     * THE ONE RULE THE CHASE MAY NOT BREAK. Walking into a roamer is how a fight
+     * starts; a roamer that walked into YOU would be the invisible encounter
+     * roll back again, wearing a sprite.
+     *
+     * This asserts both halves, and the second is what makes the first mean
+     * something: it never stands on the body, AND it does arrive — a chase that
+     * quietly stopped working would pass a "never stood on me" test forever.
+     */
+    const realms = makeRealms('roam-adjacent');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    const body = realms.overworld.world.addPlayer('p1', 'Detective');
+    body.x = spot.x + 5;
+    body.y = spot.y;
+
+    const beat = beater(realms.overworld);
+    for (let i = 0; i < 20; i += 1) {
+      beat();
+      expect(
+        roamerAt(realms.overworld, body.x, body.y),
+        'it stepped onto the body',
+      ).toBeUndefined();
+    }
+
+    expect(Math.max(Math.abs(mine.x - body.x), Math.abs(mine.y - body.y))).toBe(1);
+  });
+
+  it('follows you no further than the leash, and then walks home', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `Party.lua:69` — `tactic_leash = 10`, *"the maximum distance this
+     * creature can go from the party master"*.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Ours SNAPS where upstream's BINDS: a party pet may simply not step past
+     * its anchor and hovers at the boundary, which is right beside its owner and
+     * wrong on an open map — a creature parked at ten tiles from home is a
+     * creature parked ten tiles nearer the road than it lives.
+     *
+     * THE PLAYER RETREATS AT HALF THE ROAMER'S PACE so that this measures the
+     * LEASH and not the give-up counter. Walk away at full speed and the roamer
+     * loses sight of you and gives up (`ai/simple.lua:209-211`) — a different
+     * rule, tested below, that would make this one pass for the wrong reason.
+     */
+    const realms = makeRealms('roam-leash');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    const level = realms.overworld.world.level;
+    const body = realms.overworld.world.addPlayer('p1', 'Detective');
+    body.x = spot.x + 3;
+    body.y = spot.y;
+
+    const beat = beater(realms.overworld);
+    let furthest = 0;
+    for (let i = 0; i < 30; i += 1) {
+      beat();
+      furthest = Math.max(furthest, fromHome(mine));
+      if (i % 2 === 1 && canWalk(level, body.x + 1, body.y)) body.x += 1;
+    }
+
+    // IT REALLY WAS DRAGGED OUT. Without this the bound below passes for a
+    // roamer that never moved at all, which is the shape this whole file's
+    // history says the mistake takes.
+    expect(furthest, 'it never followed anybody anywhere').toBeGreaterThan(6);
+    expect(furthest, 'the leash did not hold').toBeLessThanOrEqual(10);
+    expect(mine.targetId, 'it is still hunting somebody past its leash').toBeUndefined();
+
+    // AND IT GOES BACK. Park the body out of the way so the return leg is not
+    // racing a re-aggro; the assertion is about the walk home, not about what it
+    // does once it gets there.
+    //
+    // THE CLOSEST IT GOT, NOT WHERE IT ENDED UP, and the difference is the whole
+    // behaviour: arriving home CLEARS the latch, and a roamer with no latch and
+    // nobody in sight goes back to drifting. Asserting on the last position
+    // instead measured how far a random walk had got in the leftover beats, and
+    // failed at 6.7 tiles for a creature that had walked home perfectly.
+    body.x = 1;
+    body.y = 1;
+    let closest = Infinity;
+    for (let i = 0; i < 20; i += 1) {
+      beat();
+      closest = Math.min(closest, fromHome(mine));
+    }
+    expect(closest, 'it never went back to where it came from').toBeLessThanOrEqual(1);
+  });
+
+  it('gives up on somebody it can no longer see — ai/simple.lua:209-211', () => {
+    /**
+     * Upstream falls back to `move_wander` once ten turns have passed since
+     * `target_last_seen`. Ours counts in STEPS of the moor's clock rather than
+     * game turns (see `GIVE_UP_STEPS`) and walks home rather than wandering,
+     * because home is a thing a roamer has and a ToME monster does not.
+     *
+     * The body is moved rather than hidden: a mountain to duck behind is not
+     * something the open ground this test needs also contains, and "out of
+     * sight" is what the rule is about either way.
+     */
+    const realms = makeRealms('roam-giveup');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    const body = realms.overworld.world.addPlayer('p1', 'Detective');
+    body.x = spot.x + 4;
+    body.y = spot.y;
+
+    const beat = beater(realms.overworld);
+    beat();
+    expect(mine.targetId, 'it never noticed the body at four tiles').toBe(body.id);
+
+    body.x = 1;
+    body.y = 1;
+    // THE CLOSEST IT GOT — see the leash test. Arriving home drops the latch and
+    // a roamer with nobody in sight goes back to drifting, so the final tile
+    // measures the drift rather than the walk.
+    let closest = Infinity;
+    for (let i = 0; i < 30; i += 1) {
+      beat();
+      closest = Math.min(closest, fromHome(mine));
+    }
+
+    expect(
+      mine.targetId,
+      'it is still hunting a body it has not seen for a minute',
+    ).toBeUndefined();
+    expect(closest, 'it gave up and then stood there').toBeLessThanOrEqual(1);
+  });
+});
+
+describe('and when nobody is about, it keeps to its own country', () => {
+  it('drifts, but never further from where it appeared than the leash', () => {
+    /**
+     * THE LEASH BOUNDS THE WANDER AS WELL AS THE CHASE, which is more than
+     * `Party.lua` asks for and is the half a player actually feels. A free random
+     * walk over seventeen thousand cells has no memory: the danger you routed
+     * around yesterday is somewhere else today, and the map has no places in it.
+     * Ten tiles is small enough that a roamer belongs to a piece of ground and
+     * large enough that where it will be is still a guess.
+     */
+    const realms = makeRealms('roam-drift');
+    settle(realms, 900);
+    const roamers = [...realms.overworld.roamers.values()];
+    expect(roamers.length).toBeGreaterThan(0);
+
+    for (const r of roamers) {
+      expect(fromHome(r), `${r.id} strayed ${fromHome(r).toFixed(1)} tiles`).toBeLessThanOrEqual(
+        10,
+      );
+    }
+    // AND THE BOUND IS NOT VACUOUS. Nine hundred steps of a walk that never left
+    // its own tile would satisfy every assertion above.
+    expect(
+      roamers.some((r) => fromHome(r) > 1),
+      'nothing wandered at all, so the bound above proves nothing',
+    ).toBe(true);
+  });
+
+  it('anchors on the tile it appeared on, not on wherever it has got to', () => {
+    // The anchor is written once at spawn and never again — a home that followed
+    // the body would be a leash that measures nothing.
+    const realms = makeRealms('roam-anchor');
+    settle(realms, 60);
+    const level = realms.overworld.world.level;
+    for (const r of realms.overworld.roamers.values()) {
+      expect(canWalk(level, r.homeX, r.homeY)).toBe(true);
+      expect(isHaunt(tileAt(level, r.homeX, r.homeY))).toBe(true);
+    }
   });
 });

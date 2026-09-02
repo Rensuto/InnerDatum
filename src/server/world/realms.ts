@@ -203,6 +203,52 @@ export type Roamer = {
    * as the creature itself will be one screen later.
    */
   readonly sprite: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE IT LIVES. The anchor a leash is measured from.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from `Party.lua:68-69` — `ai_state.tactic_leash_anchor` and
+   * `tactic_leash = 10`, described upstream as *"the maximum distance this
+   * creature can go from the party master"*. A roamer has no master, so the
+   * anchor is the tile it appeared on, and everything it does — the wander, the
+   * chase, the walk back — is bounded by ten tiles of it.
+   *
+   * ═══ WHY AN ANCHOR AT ALL, WHEN THE OLD WALK WAS FREE ═══
+   * An unbounded random walk over seventeen thousand cells has no memory, so the
+   * moor had no PLACES in it: the danger you routed around yesterday is
+   * somewhere else today, and there is nothing to learn. Ten tiles is small
+   * enough that a roamer belongs to a piece of ground and large enough that
+   * where it will be is a guess rather than a fact.
+   */
+  readonly homeX: number;
+  readonly homeY: number;
+  /**
+   * Who it is following, and where it last had them.
+   *
+   * `ai_target.actor` and `ai_state.target_last_seen` (`ai/simple.lua:28-35`),
+   * which is why the chase walks to a REMEMBERED tile rather than to a live
+   * position: a roamer that loses sight of you keeps going to where you were,
+   * which is both what upstream does and the only version a player can read.
+   */
+  targetId?: string;
+  seenX?: number;
+  seenY?: number;
+  /**
+   * Steps since the target was last actually in sight. `ai/simple.lua:209-211`
+   * gives up after ten and falls back to `move_wander`.
+   */
+  unseen: number;
+  /**
+   * The leash has snapped: walk home and look at nothing on the way.
+   *
+   * NOT DERIVABLE FROM POSITION, which is why it is stored. Without a latch a
+   * roamer at exactly ten tiles turns for home, immediately sees the player
+   * again on the next step, and oscillates on the boundary forever — the
+   * player's screen shows a creature vibrating, and the leash reads as a bug
+   * rather than as the thing that lets them escape.
+   */
+  goingHome: boolean;
 };
 
 /**

@@ -234,6 +234,14 @@ async function walkIntoAnAmbush(client: Client, actorId: string): Promise<void> 
     // what it was before roamers carried an identity.
     templateId: INDEX_HUSK.id,
     sprite: 'enemy_index_husk_s',
+    // ANCHORED WHERE IT STANDS. This one is placed by hand for a body to walk
+    // into and is never ticked, so the leash never runs — but `homeX/homeY`
+    // being the tile it is on is what a spawned roamer always has, and a
+    // fixture that differs from the real thing is a fixture testing itself.
+    homeX: from.x + 1,
+    homeY: from.y,
+    unseen: 0,
+    goingHome: false,
   });
 
   client.send({ t: 'move', dir: 'e' });

@@ -4962,18 +4962,52 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * invariant failing in one party's instance must not stop the city.
    */
   /**
-   * How many times the overworld has pumped. Drives the roamers' cadence and
-   * their ids.
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE MOOR'S OWN CLOCK. WALL TIME, BECAUSE A KEYBOARD CANNOT REACH IT.
+   * ═════════════════════════════════════════════════════════════════════════
    *
-   * ═══ THIS SHOULD BE THE REALM'S GAME TURN AND IS NOT YET ═══
-   * Counting PUMPS means the moor drifts at the rate the party types: frozen
-   * when nobody walks, six times faster with six people. The tide fixes the
-   * realm's CLOCK, and pointing this at `world.turn.clock.gameTurn` is the
-   * remaining half — held back deliberately, because it moves every roamer to a
-   * different tile and `killer-named.test.ts` scripts a 106-tile walk that
-   * turns out to depend on where they are. See DECISIONS.md.
+   * The tick bucket each overworld last advanced on, keyed by realm — a second
+   * landmass is a thing this codebase has been caught assuming away four times
+   * (`test/server/realms.test.ts`), and one shared counter would be the fifth.
+   *
+   * WHAT WAS HERE: `let roamerSeq = 0`, bumped once per pump, under a docblock
+   * that described this fix as *"the remaining half"*. A pump is one key press.
+   *
+   * WHAT WAS TRIED AND REVERTED: `world.turn.clock.gameTurn`. Honest-looking,
+   * and still wrong for the thing that was actually asked for — a field that
+   * holds many players. A game turn advances whenever ANY body spends energy,
+   * so six people walking run the clock about six times per player action and
+   * the moor speeds up with the crowd exactly as before, just less visibly.
+   *
+   * WALL TIME IS THE ONLY CLOCK NOBODY CAN TYPE ON. `handleTalk` reached the
+   * same conclusion from the other end and wrote it down: *"the natural key for
+   * 'recently' is the game turn and A TOWN'S CLOCK IS FROZEN... hence
+   * `Date.now()`, which runs whether or not anybody is moving."*
+   *
+   * The bucket is `TIDE_MS` wide, so the cadence is the one `TIDE_MS`'s own
+   * essay already promises the moor: `MOVE_EVERY_TURNS` (3) buckets to a step,
+   * six seconds. The tide guarantees a pump inside every bucket while anybody
+   * is standing there, so nothing is missed by only checking on a pump — and a
+   * realm nobody is in stops advancing, which is correct rather than a gap.
    */
-  let roamerSeq = 0;
+  const lastRoamerBucket = new Map<string, number>();
+
+  /**
+   * How wide one of those buckets is.
+   *
+   * `tideMs` NORMALLY, so the two clocks on a shared realm are the same clock
+   * and the six-second step `TIDE_MS`'s essay promises stays true when a test
+   * or an operator changes the tide.
+   *
+   * ═══ AND `TIDE_MS` WHEN THE TIDE IS OFF, WHICH IS NOT A FALLBACK ═══
+   * Zero disables the tide (`WsGatewayOptions.tideMs`) and tests set it
+   * deliberately, to stop the world advancing underneath a scripted walk. It
+   * must not also stop the moor: an overworld with no roamers has no danger on
+   * it at all, and the tests that disable the tide are exactly the ones that
+   * walk out looking for some. Dividing by zero would hand `tickRoamers` an
+   * Infinity that never changes, which is that outcome written as a silent one.
+   */
+  const roamerBucketMs = tideMs > 0 ? tideMs : TIDE_MS;
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -5459,19 +5493,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * at the rate the party typed: frozen when nobody moved, six times faster
      * with six people walking, and faster still for anyone holding a key.
      *
-     * The counter is the realm's GAME TURN now, which the tide advances every
-     * `TIDE_MS` whether or not anybody is acting. Two consequences worth stating:
-     * a roamer's step is a fixed six seconds of wall clock (`MOVE_EVERY_TURNS`
-     * is 3), and a pump that advances no game turn — every ordinary keystroke —
-     * passes the SAME number it passed last time, so `seq % MOVE_EVERY_TURNS`
-     * cannot be walked forward by acting.
+     * The counter is a WALL-CLOCK BUCKET now — see `lastRoamerBucket`, which
+     * carries the argument, including why the obvious repair (the realm's game
+     * turn) was shipped and reverted. Two consequences worth stating: a roamer's
+     * step is a fixed six seconds no matter who is on the field, and a pump
+     * inside a bucket that has already ticked passes nothing at all, so
+     * `seq % MOVE_EVERY_TURNS` cannot be walked forward by acting.
+     *
+     * GUARDED AROUND THE CALL AND NOT INSIDE IT. `tickRoamers` SPAWNS on every
+     * call regardless of `seq` — deliberately, it is the top-up after one is
+     * walked into — so a guard in its wander half would leave a key-masher
+     * populating the map. The caller has to refuse to call twice for one tick.
      */
     const full = opts.realms?.get(realm.id);
     if (full !== undefined && full.kind === RealmKind.Overworld) {
-      roamerSeq += 1;
-      if (tickRoamers(full, roamerSeq)) {
-        for (const session of sessions.values()) {
-          if (session.helloDone && session.realmId === full.id) sendSites(session);
+      const bucket = Math.floor(Date.now() / roamerBucketMs);
+      if (bucket !== lastRoamerBucket.get(full.id)) {
+        lastRoamerBucket.set(full.id, bucket);
+        if (tickRoamers(full, bucket)) {
+          for (const session of sessions.values()) {
+            if (session.helloDone && session.realmId === full.id) sendSites(session);
+          }
         }
       }
     }

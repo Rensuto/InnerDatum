@@ -178,12 +178,60 @@ describe('a death in a room that resets', () => {
       expect(target, 'no dangerous room on the map to die in').toBeDefined();
       if (target === undefined) return;
 
-      // WALK ROUND THE OTHER DOORS. Stepping onto a site's cell enters it, so a
-      // straight line to a far marker is swallowed by the first town it crosses.
-      const closed = new Set(
-        sites.filter((s) => s.name !== target.name).map((s) => `${String(s.x)},${String(s.y)}`),
-      );
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE WALK, AND IT SPENT THIS FILE'S WHOLE LIFE NEVER ARRIVING.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This planned 106 steps once, fired them at 22ms intervals, and never
+       * looked at where the body actually was. Two things it therefore could not
+       * see, both printed by one instrumented run:
+       *
+       *   `rate_limited` — "too many commands, the limit is 20 a second". At one
+       *   move every 22ms this probe was asking for FORTY-FIVE. The server threw
+       *   away half of them: 106 planned steps produced 67 moves.
+       *
+       *   `illegal_move: refused at resolution: terrain`, twenty of them. Once a
+       *   move is dropped the body is one tile behind the plan, so every
+       *   direction after it is measured from a tile nobody is standing on, and
+       *   the walk grinds itself into whatever is beside the route.
+       *
+       * It got 27 tiles from the target and stopped. The test PASSED anyway,
+       * because it used to blunder into a wandering roamer inside the first
+       * sixty steps and die there — so the assertion at the bottom was true of a
+       * fight this file never chose, in a room it never named, and the day the
+       * moor stopped filling one roamer per keystroke it went red.
+       *
+       * ═══ SO: UNDER THE RATE LIMIT, AND RE-PLANNED FROM THE REAL POSITION ═══
+       * Sixty milliseconds is sixteen commands a second against a limit of
+       * twenty. And the plan is re-cut from `moved` frames the moment the body
+       * is not where the plan says — which also makes this walk indifferent to
+       * how many roamers are on the map, the one variable that has now derailed
+       * two live probes and this test.
+       */
       const board = level();
+      const here = (): { x: number; y: number } => {
+        const last = frames.filter((f) => f['t'] === 'moved' && f['id'] === selfId).at(-1);
+        return last === undefined ? me : { x: last['x'] as number, y: last['y'] as number };
+      };
+
+      /**
+       * EVERY DOOR EXCEPT THE ONE WE WANT, plus every roamer standing on the
+       * route. Stepping onto either opens something, and an ambush the probe
+       * walked into by accident is exactly the fight this file must not measure.
+       * Re-read on each re-plan, because roamers move.
+       */
+      const blocked = (): Set<string> => {
+        const now = (frames.filter((f) => f['t'] === 'sites').at(-1)?.['sites'] ?? []) as {
+          x: number;
+          y: number;
+          name?: string;
+        }[];
+        return new Set(
+          now.filter((s) => s.name !== target.name).map((s) => `${String(s.x)},${String(s.y)}`),
+        );
+      };
+      let closed = blocked();
       const passable = (x: number, y: number): boolean =>
         x >= 0 &&
         y >= 0 &&
@@ -191,30 +239,75 @@ describe('a death in a room that resets', () => {
         y < board.h &&
         canWalk(board, x, y) &&
         !closed.has(`${String(x)},${String(y)}`);
-      const steps = findPath(me, { x: target.x, y: target.y }, passable, { maxNodes: 400_000 });
-      expect(steps, 'no route to anywhere dangerous').not.toBeNull();
 
-      let cursor = me;
-      for (const step of steps ?? []) {
-        const dx = Math.sign(step.x - cursor.x);
-        const dy = Math.sign(step.y - cursor.y);
+      const cut = (from: { x: number; y: number }) => {
+        closed = blocked();
+        return findPath(from, { x: target.x, y: target.y }, passable, { maxNodes: 400_000 });
+      };
+      let plan = cut(me);
+      expect(plan, 'no route to anywhere dangerous').not.toBeNull();
+
+      let leg = 0;
+      for (let guard = 0; guard < 600; guard += 1) {
+        if (realm()?.['kind'] === 'inner') break;
+        const at = here();
+        if (at.x === target.x && at.y === target.y) break;
+        // WHERE THE PLAN SAYS WE ARE. Anything else and the plan is stale.
+        const want = plan?.[leg];
+        if (want === undefined) break;
+        if (at.x === want.x && at.y === want.y) {
+          leg += 1;
+          continue;
+        }
+        const step = want;
+        const dx = Math.sign(step.x - at.x);
+        const dy = Math.sign(step.y - at.y);
+        // NOT ADJACENT: a dropped command, or something refused. Re-cut from the
+        // tile the body is actually standing on rather than pressing on with a
+        // route measured from somewhere else.
+        if (Math.abs(step.x - at.x) > 1 || Math.abs(step.y - at.y) > 1) {
+          plan = cut(at);
+          leg = 0;
+          continue;
+        }
         const dir = `${dy < 0 ? 'n' : dy > 0 ? 's' : ''}${dx < 0 ? 'w' : dx > 0 ? 'e' : ''}`;
         if (dir !== '') send({ t: 'move', dir });
-        cursor = step;
-        await sleep(22);
-        if (realm()?.['kind'] === 'inner') break;
+        await sleep(60);
       }
       await sleep(600);
 
       // STAND STILL AND LET IT HAPPEN. `hold` is a real action and spends the
       // turn, so the room gets to act; a died-of-nothing setup would not.
-      for (let i = 0; i < 400; i += 1) {
+      //
+      // TWO COMMANDS PER TICK against a limit of twenty a second — this used to
+      // sleep 35ms and ask for fifty-seven, so the server was dropping most of
+      // the holds this loop believes it sent.
+      for (let i = 0; i < 200; i += 1) {
         send({ t: 'hold' });
         send({ t: 'commit' });
-        await sleep(35);
+        await sleep(130);
         if (lines.some((l) => /is DOWN|erased/i.test(l))) break;
       }
       await sleep(800);
+
+      /**
+       * ═══ IT ARRIVED WHERE IT SET OUT FOR, WHICH NOTHING HERE USED TO CHECK ═══
+       *
+       * This file picks the WORST room on the map so that a level-1 Watchman
+       * reliably loses, and then never asked whether it got there. It did not:
+       * an instrumented run had it stopping 27 tiles short, and the death that
+       * made the test green came from bumping a wandering roamer somewhere along
+       * the way. A different room, a different roster, and an attribution claim
+       * measured against a fight this file did not choose.
+       *
+       * The realm's own name is the cheapest possible proof, so it is asserted
+       * before anything else — a walk that ends anywhere but the named room now
+       * fails HERE, saying so, instead of failing four assertions later for a
+       * reason that reads like a bug in the server.
+       */
+      expect(realm()?.['name'], `walked into the wrong fight — meant to reach ${target.name}`).toBe(
+        target.name,
+      );
 
       // ═══ THE SETUP HAS TO HAVE WORKED BEFORE THE CLAIM MEANS ANYTHING ═══
       // A run that never reached a fight would pass the assertion below by

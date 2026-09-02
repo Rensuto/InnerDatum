@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Dalton Barraclough
+// Ported from t-engine4 game/engines/default/engine/ai/simple.lua:28-35 (target_last_seen)
+//                       game/engines/default/engine/ai/simple.lua:209-211 (give up and wander)
+//                       game/engines/default/engine/ai/simple.lua:251-266 (target_simple)
+//                       game/modules/tome/class/Party.lua:68-69 (ai_state.tactic_leash = 10)
+// T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 /**
  * Roamers — the danger you can see coming on the overworld.
  *
@@ -34,7 +41,8 @@
  */
 
 import { REDACTION_SITE_ID, canWalk } from '../../shared/level.ts';
-import { isHaunt } from '../../shared/protocol.ts';
+import { DEFAULT_SIGHT_RADIUS, hasLineOfSight, sightDistance } from '../../shared/sight.ts';
+import { ActorKind, isHaunt } from '../../shared/protocol.ts';
 import {
   INDEX_CAIRN,
   INDEX_GLUT,
@@ -112,8 +120,57 @@ export function maxRoamersFor(realm: Realm): number {
   return cap;
 }
 
-/** One step every this many game turns, so they drift rather than chase. */
+/** One step every this many ticks of the moor's clock, so they drift. */
 const MOVE_EVERY_TURNS = 3;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR IT MAY GET FROM HOME. `Party.lua:69` — `tactic_leash = 10`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's own default, and upstream's own words for what it means: *"the
+ * maximum distance this creature can go from the party master"*. A roamer has
+ * no master, so the anchor is where it appeared (`Roamer.homeX/homeY`).
+ *
+ * IT BOUNDS THE WANDER AS WELL AS THE CHASE, which is more than upstream asks
+ * for and is the half a player actually feels. A leash that only caught a chase
+ * would still let a free random walk carry a creature across the moor over an
+ * hour, so the ground it belongs to would drift away underneath it and the
+ * anchor would mean nothing to anyone watching.
+ */
+const LEASH = 10;
+
+/**
+ * How far it notices you. `ai/simple.lua:251-266` (`target_simple`) picks the
+ * nearest hostile out of `self.fov.actors_dist`, so upstream's aggro radius IS
+ * the creature's sight — and the module's sight is 10 (`tome/class/Actor.lua:178`,
+ * NOT the engine's `or 20` at `engine/Actor.lua:47`).
+ *
+ * ═══ "SLIGHT" IS THE CADENCE, NOT A SHORTENED RADIUS ═══
+ * The aggro asked for was a slight one, and the temptation is to cut this to
+ * three or four tiles. That would be the wrong knob: a roamer takes ONE step
+ * every `MOVE_EVERY_TURNS` ticks of the moor's clock — six seconds — while a
+ * player moves as fast as they press. So a creature that has noticed you can
+ * never catch you at a walk; what it can do is TURN TOWARDS YOU, which is a
+ * warning you can read at ten tiles and act on, and close on you if you stand
+ * still reading your inventory. Shortening the radius would delete the warning
+ * and keep the harmlessness.
+ */
+const AGGRO = DEFAULT_SIGHT_RADIUS;
+
+/**
+ * Steps of not seeing the target before it gives up. `ai/simple.lua:209-211`
+ * falls back to `move_wander` once `game.turn - target_last_seen.turn` exceeds
+ * ten turns.
+ *
+ * TEN OF OUR STEPS, NOT TEN GAME TURNS, and the units genuinely differ: a step
+ * is `MOVE_EVERY_TURNS` ticks, so this is a full minute of having lost you
+ * rather than upstream's ten turns. Kept at ten because the LEASH is what
+ * actually ends a chase here — this counter only matters for a player who
+ * breaks line of sight without moving away, and a minute of a creature still
+ * heading for the rock you ducked behind is the readable answer.
+ */
+const GIVE_UP_STEPS = 10;
 
 /**
  * Where one may stand.
@@ -262,11 +319,33 @@ function canHauntTile(level: LevelView, x: number, y: number): boolean {
 }
 
 /**
- * Advance the roamers on one realm. Call once per pump; a no-op anywhere but
- * the overworld, and a no-op on any turn that is not a movement turn.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ADVANCE THE MOOR ONE TICK. `seq` IS A CLOCK, AND IT IS NOT THE PARTY'S.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Returns true when anything moved or appeared, so the caller can decide
- * whether to send a frame rather than sending one every pump.
+ * THIS SAID "CALL ONCE PER PUMP" AND THE CALLER DID, WHICH WAS THE BUG. A pump
+ * is one KEY PRESS, so the danger on a shared map advanced at the rate the party
+ * typed: frozen when nobody moved, six times faster with six people walking, and
+ * faster still for anyone holding a direction down. The spawn half never even
+ * reached the `MOVE_EVERY_TURNS` gate below, so one player leaning on a key
+ * filled the map to its cap as fast as they could press.
+ *
+ * ═══ AND THE GAME TURN IS NOT THE FIX EITHER, WHICH COST A COMMIT TO LEARN ═══
+ * The obvious repair — pass `world.turn.clock.gameTurn` — was shipped and
+ * reverted. A game turn advances when ANY body spends energy, so with six
+ * players on the field it runs roughly six times per player action: the moor
+ * still speeds up with the crowd, just less obviously. The clock this needs is
+ * the one thing a keyboard cannot reach, so the caller hands it WALL-CLOCK
+ * TIME divided into buckets (`net/gateway.ts`). Six players cannot make time
+ * pass; neither can one holding a key.
+ *
+ * `seq` therefore means: which tick of the moor's own clock this is. It must
+ * increase by one per bucket and never repeat — `MOVE_EVERY_TURNS` is read off
+ * it, and the SPAWN below sits outside that gate, so a caller that passes the
+ * same number twice populates the map twice as fast.
+ *
+ * A no-op anywhere but an overworld (nothing else has roamers). Returns true
+ * when anything moved or appeared, so the caller sends a frame only then.
  */
 export function tickRoamers(realm: Realm, seq: number): boolean {
   let changed = false;
@@ -299,6 +378,11 @@ export function tickRoamers(realm: Realm, seq: number): boolean {
         // separately edited into disagreeing.
         templateId: template.id,
         sprite: template.sprite,
+        // WHERE IT LIVES, fixed here and never written again. See `Roamer.homeX`.
+        homeX: x,
+        homeY: y,
+        unseen: 0,
+        goingHome: false,
       });
       changed = true;
       break;
@@ -309,22 +393,174 @@ export function tickRoamers(realm: Realm, seq: number): boolean {
   if (seq % MOVE_EVERY_TURNS !== 0) return changed;
 
   for (const roamer of realm.roamers.values()) {
-    const step = STEPS[realm.world.rng.int('roamer.step', 0, STEPS.length - 1)];
-    if (step === undefined) continue;
-    const nx = roamer.x + step[0];
-    const ny = roamer.y + step[1];
-    if (!canHaunt(realm, nx, ny)) continue;
-    // A roamer does not walk ONTO a player. Being caught by something that
-    // moved into you is a fight you did not choose, and choosing is the point.
-    // It waits; you decide.
-    if (realm.world.actorAt(nx, ny) !== undefined) continue;
-    if ([...realm.roamers.values()].some((r) => r !== roamer && r.x === nx && r.y === ny)) continue;
-    roamer.x = nx;
-    roamer.y = ny;
-    changed = true;
+    if (stepRoamer(realm, roamer)) changed = true;
   }
 
   return changed;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE ROAMER'S TURN: LOOK, CHASE, LEASH, GO HOME, OTHERWISE DRIFT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported in pieces, and each piece is upstream's:
+ *
+ *   `ai/simple.lua:251-266`  target_simple — the nearest hostile in FOV.
+ *   `ai/simple.lua:28-35`    the chase walks to `target_last_seen`, not to a
+ *                            live position.
+ *   `ai/simple.lua:209-211`  give up after ten turns of not seeing them.
+ *   `Party.lua:68-69`        `tactic_leash`: how far from the anchor it may go.
+ *
+ * ═══ WHAT IS OURS AND WHY ═══
+ * Upstream's leash is a BOUND — a party member simply may not step past it, and
+ * hovers there. That is right for a pet standing beside its owner and wrong for
+ * a thing on an open world map, because a creature parked at exactly ten tiles
+ * from home is a creature parked ten tiles closer to the road than it lives. So
+ * the leash SNAPS here: it drops the target, latches `goingHome`, and walks
+ * back. The latch is the whole of it — see `Roamer.goingHome` for the
+ * oscillation it prevents.
+ *
+ * ═══ AND WHAT IS UNCHANGED, WHICH IS THE PART THAT MATTERS ═══
+ * It still cannot step onto a player. A roamer that has chased you down stops
+ * ADJACENT and waits, so walking into it remains the only way a fight starts —
+ * the whole reason these are visible instead of a d100. The chase changes what
+ * you have to decide, never who decides it.
+ *
+ * Returns true if the marker moved.
+ */
+function stepRoamer(realm: Realm, roamer: Roamer): boolean {
+  // ─── LEASHED: walk home, and look at nothing on the way ───
+  if (roamer.goingHome) {
+    /**
+     * ADJACENT COUNTS AS ARRIVED, and the exact-tile version is a permanent
+     * bug: another roamer can be standing on the home tile, `placeRoamer`
+     * correctly refuses it, and that creature then hovers beside its own anchor
+     * for the rest of the session with `goingHome` latched — never drifting,
+     * never noticing anybody. Within one tile is home.
+     */
+    if (sightDistance(roamer, { x: roamer.homeX, y: roamer.homeY }) <= 1) {
+      roamer.goingHome = false;
+      return false;
+    }
+    return walkToward(realm, roamer, roamer.homeX, roamer.homeY);
+  }
+
+  // ─── LOOK. `target_simple`, against the module's sight radius. ───
+  const prey = nearestSeen(realm, roamer);
+  if (prey !== undefined) {
+    roamer.targetId = prey.id;
+    roamer.seenX = prey.x;
+    roamer.seenY = prey.y;
+    roamer.unseen = 0;
+  } else if (roamer.targetId !== undefined) {
+    roamer.unseen += 1;
+  }
+
+  if (roamer.targetId !== undefined) {
+    // ─── GIVE UP. `ai/simple.lua:209-211`. ───
+    if (roamer.unseen > GIVE_UP_STEPS) return goHome(roamer);
+    // ─── THE LEASH. `Party.lua:69`, and it snaps rather than binds. ───
+    if (sightDistance(roamer, { x: roamer.homeX, y: roamer.homeY }) >= LEASH) {
+      return goHome(roamer);
+    }
+    // ─── CHASE, to where it last SAW them (`ai/simple.lua:28-35`). ───
+    if (roamer.seenX !== undefined && roamer.seenY !== undefined) {
+      return walkToward(realm, roamer, roamer.seenX, roamer.seenY);
+    }
+  }
+
+  // ─── DRIFT, inside the leash. The original random walk, bounded. ───
+  const step = STEPS[realm.world.rng.int('roamer.step', 0, STEPS.length - 1)];
+  if (step === undefined) return false;
+  const nx = roamer.x + step[0];
+  const ny = roamer.y + step[1];
+  if (sightDistance({ x: nx, y: ny }, { x: roamer.homeX, y: roamer.homeY }) > LEASH) return false;
+  return placeRoamer(realm, roamer, nx, ny);
+}
+
+/** Drop the target and start walking back. Always a still turn — it turns round. */
+function goHome(roamer: Roamer): boolean {
+  roamer.goingHome = true;
+  roamer.targetId = undefined;
+  roamer.seenX = undefined;
+  roamer.seenY = undefined;
+  roamer.unseen = 0;
+  return false;
+}
+
+/**
+ * The nearest player this roamer can actually see.
+ *
+ * BOTH TERMS, exactly as `projectActors` applies them (`Actor.lua:520`): the
+ * Euclidean radius AND line of sight. A creature that "noticed" you through a
+ * mountain would be the overworld's version of the bug per-player FOV exists to
+ * prevent, and the same two functions answer it here as answer it there.
+ *
+ * ONLY LIVING PLAYERS. A downed body is `alive === false` (engine/downed.ts) and
+ * is not something to walk towards; upstream's `target_simple` skips `act.dead`
+ * for the same reason.
+ */
+function nearestSeen(
+  realm: Realm,
+  roamer: Roamer,
+): { readonly id: string; readonly x: number; readonly y: number } | undefined {
+  let best: { id: string; x: number; y: number } | undefined;
+  let bestAt = Infinity;
+  for (const actor of realm.world.allActors()) {
+    if (actor.kind !== ActorKind.Player || !actor.alive) continue;
+    const away = sightDistance(roamer, actor);
+    if (away > AGGRO || away >= bestAt) continue;
+    if (!hasLineOfSight(realm.world.level, roamer, actor)) continue;
+    best = { id: actor.id, x: actor.x, y: actor.y };
+    bestAt = away;
+  }
+  return best;
+}
+
+/**
+ * One greedy step towards a tile. `ai/simple.lua`'s `move_simple` — upstream
+ * reaches for A* and a distance map when that is blocked, and this does not:
+ * a marker that cannot find its way round a boulder this turn tries again in
+ * six seconds, and there is no fight waiting on it.
+ *
+ * THE SIDESTEP IS WHAT STOPS IT STICKING. Trying the three steps that reduce
+ * the larger axis first, then the diagonal, is enough to get round anything the
+ * moor has; without it a roamer pinned against a lake edge never comes home and
+ * the leash silently stops existing for that creature.
+ */
+function walkToward(realm: Realm, roamer: Roamer, tx: number, ty: number): boolean {
+  const dx = Math.sign(tx - roamer.x);
+  const dy = Math.sign(ty - roamer.y);
+  if (dx === 0 && dy === 0) return false;
+  const tries: readonly (readonly [number, number])[] = [
+    [dx, dy],
+    [dx, 0],
+    [0, dy],
+  ];
+  for (const [sx, sy] of tries) {
+    if (sx === 0 && sy === 0) continue;
+    if (placeRoamer(realm, roamer, roamer.x + sx, roamer.y + sy)) return true;
+  }
+  return false;
+}
+
+/**
+ * Put a roamer on a tile if every rule allows it. The single place those rules
+ * live, so the chase, the walk home and the drift cannot disagree about them.
+ */
+function placeRoamer(realm: Realm, roamer: Roamer, nx: number, ny: number): boolean {
+  if (!canHaunt(realm, nx, ny)) return false;
+  // A roamer does not walk ONTO a player. Being caught by something that
+  // moved into you is a fight you did not choose, and choosing is the point.
+  // It waits; you decide.
+  if (realm.world.actorAt(nx, ny) !== undefined) return false;
+  if ([...realm.roamers.values()].some((r) => r !== roamer && r.x === nx && r.y === ny)) {
+    return false;
+  }
+  roamer.x = nx;
+  roamer.y = ny;
+  return true;
 }
 
 /** The roamer standing on this tile, if any. */
