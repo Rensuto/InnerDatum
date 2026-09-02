@@ -30,7 +30,7 @@
  *
  * The ONE exception is the elite's shoulder manoeuvre below, which deliberately
  * hands A* an actor-aware predicate because routing AROUND its own swarm is the
- * entire point of it. That is ToME's `move_blocked_astar` (simple.lua:153-181),
+ * entire point of it. That is ToME's `move_blocked_astar` (ai/simple.lua:153-181),
  * and it is opt-in per creature there too.
  *
  * ===========================================================================
@@ -75,8 +75,8 @@
  *     scan re-sorts that list without ever consulting the stream.
  *   - Every random draw goes through the world's seeded PCG32 with a LABEL.
  *     There are exactly four, all ported: the 90% target-keep at
- *     simple.lua:253, the two coin flips that order the flanking sidesteps at
- *     simple.lua:79 and :85, and the 1-in-`talent_in` fire roll at
+ *     ai/simple.lua:253, the two coin flips that order the flanking sidesteps at
+ *     ai/simple.lua:79 and :85, and the 1-in-`talent_in` fire roll at
  *     ai/talented.lua:122. The fourth is CONDITIONAL on the creature declaring a
  *     `talentIn` at all, so a monster that does not (every melee creature in the
  *     roster) consumes the stream exactly as it did before that draw existed.
@@ -157,7 +157,7 @@ export type AiCtx = {
  * After a failed shoulder attempt, `ai.shoulderTurns` is driven this far
  * negative so the elite waits before re-running A* against the same wall.
  *
- * simple.lua:176 — `self.ai_state.blocked_turns = -5`, upstream's own penalty
+ * ai/simple.lua:176 — `self.ai_state.blocked_turns = -5`, upstream's own penalty
  * for an escalation that did not work. Without it a boxed-in elite pays for a
  * full actor-aware pathfind every single turn for the rest of the fight, which
  * is free with one elite on a 30x30 map and is not with eight on a 40x40 one.
@@ -263,7 +263,7 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
  * noise: without it a monster standing equidistant from two players re-picks
  * the nearest every turn, and a one-tile shuffle by either player makes it
  * oscillate on the spot instead of committing to anyone. ToME writes this as
- * `rng.percent(90)` at simple.lua:253.
+ * `rng.percent(90)` at ai/simple.lua:253.
  *
  * The draw happens ONLY when there is still a live, visible, hostile target —
  * mirroring Lua's short-circuit at that line, so the number of draws per turn
@@ -285,7 +285,7 @@ function acquireTarget(self: MonsterActor, ctx: AiCtx): EngineActor | undefined 
   }
 
   // `visible` is nearest-first, so the plain case is ToME's walk down
-  // `fov.actors_dist` (simple.lua:259-267) taking the closest live hostile.
+  // `fov.actors_dist` (ai/simple.lua:259-267) taking the closest live hostile.
   const chosen = self.ai.huntsIsolated ? mostIsolated(visible, ctx) : visible[0];
 
   /**
@@ -313,7 +313,7 @@ function acquireTarget(self: MonsterActor, ctx: AiCtx): EngineActor | undefined 
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * NOT A ToME PORT. ToME's targeting is strictly nearest-first
- * (simple.lua:259-267) because ToME is a single-player game and "nearest" and
+ * (ai/simple.lua:259-267) because ToME is a single-player game and "nearest" and
  * "you" are the same actor. This is a four-humans-in-a-voice-channel game, and
  * the design is explicitly trying to manufacture the sentence "get over here"
  * (game-design.md § 10, and the co-op rationale in PLAN.md § M3).
@@ -370,8 +370,8 @@ function supportOf(actor: EngineActor, ctx: AiCtx): number {
 /**
  * Close the distance and hit it.
  *
- * A* first (simple.lua:135-152 `move_astar`), then ToME's own fallback to
- * `move_simple` (simple.lua:142) when there is no path — around a corner a
+ * A* first (ai/simple.lua:135-152 `move_astar`), then ToME's own fallback to
+ * `move_simple` (ai/simple.lua:142) when there is no path — around a corner a
  * straight step is usually still progress, and a monster that freezes because
  * A* gave up looks broken in a way a monster that shuffles does not.
  *
@@ -399,13 +399,13 @@ function chase(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
  * ELITE BEHAVIOUR 2 — YOU CANNOT PLUG THE DOOR ON IT
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Ported from ToME's `move_complex` escalation ladder (simple.lua:199-247) plus
- * the `move_blocked_astar` it switches to (simple.lua:153-181). The M2 header of
+ * Ported from ToME's `move_complex` escalation ladder (ai/simple.lua:199-247) plus
+ * the `move_blocked_astar` it switches to (ai/simple.lua:153-181). The M2 header of
  * this file listed it as the known gap and said it was "worth having once there
  * are enough monsters per room for a queue to form". A room with an elite and
  * three husks in it is that room.
  *
- * The rule, verbatim from simple.lua:222-228: a monster that could not advance
+ * The rule, verbatim from ai/simple.lua:222-228: a monster that could not advance
  * counts the turn, and after five such turns it re-runs A* with
  * `check_all_block_move` (:163-170) — a predicate under which the TARGET's tile
  * is passable and every other body is a wall. That produces a route AROUND its
@@ -501,14 +501,14 @@ function forget(self: MonsterActor): Intent {
 function advance(self: MonsterActor, target: EngineActor, ctx: AiCtx, keepAway: number): Intent {
   const ai = self.ai;
 
-  // 1. A LIVE ESCALATION OWNS THE ROUTE. simple.lua:153-161 — while
+  // 1. A LIVE ESCALATION OWNS THE ROUTE. ai/simple.lua:153-161 — while
   //    `ai_move` is `move_blocked_astar` it is the only mover, and it counts
   //    itself down. The mode has to outlive the turn that armed it: a
   //    one-turn escalation walks the elite a tile sideways and straight back
   //    into the queue it just left.
   if (ai.shoulderTurns > 0) return shoulder(self, target, ctx, keepAway);
 
-  // 2. simple.lua:176's penalty ticking back toward zero. Captured BEFORE the
+  // 2. ai/simple.lua:176's penalty ticking back toward zero. Captured BEFORE the
   //    increment so a monster that is still cooling down cannot re-arm on the
   //    very turn its counter reaches 0.
   const cooling = ai.shoulderTurns < 0;
@@ -521,7 +521,7 @@ function advance(self: MonsterActor, target: EngineActor, ctx: AiCtx, keepAway: 
     return step;
   }
 
-  // 4. Blocked. Count the turn (simple.lua:224-227) and, if that was the fifth,
+  // 4. Blocked. Count the turn (ai/simple.lua:224-227) and, if that was the fifth,
   //    arm the escalation and RUN IT NOW — upstream arms and runs in the same
   //    pass at :225-228 rather than wasting the turn that armed it.
   ai.blockedTurns += 1;
@@ -538,20 +538,20 @@ function advance(self: MonsterActor, target: EngineActor, ctx: AiCtx, keepAway: 
 /** One turn of the shoulder manoeuvre. Only called while `shoulderTurns > 0`. */
 function shoulder(self: MonsterActor, target: EngineActor, ctx: AiCtx, keepAway: number): Intent {
   const ai = self.ai;
-  // simple.lua:155-157 — the mode counts itself down and reverts at zero.
+  // ai/simple.lua:155-157 — the mode counts itself down and reverts at zero.
   ai.shoulderTurns -= 1;
 
   const flank = approach(self, target, ctx, { keepAway, route: aroundKin(ctx, target) });
   if (flank !== undefined) return flank;
 
-  // simple.lua:174-177 — A* did not work either, so take the penalty rather than
+  // ai/simple.lua:174-177 — A* did not work either, so take the penalty rather than
   // paying for an actor-aware pathfind every turn for the rest of the fight.
   ai.shoulderTurns = -SHOULDER_FAILURE_PENALTY;
   return HOLD_INTENT;
 }
 
 /**
- * `check_all_block_move` — simple.lua:163-170.
+ * `check_all_block_move` — ai/simple.lua:163-170.
  *
  * ```lua
  * local actor = game.level.map(nx, ny, engine.Map.ACTOR)
@@ -893,7 +893,7 @@ function dirToward(from: TileXY, to: TileXY): Dir | undefined {
   });
 }
 
-/** The four flanking directions — ToME's `util.dirSides` (simple.lua:76). */
+/** The four flanking directions — ToME's `util.dirSides` (ai/simple.lua:76). */
 type DirSides = {
   /** 45 degrees counter-clockwise of `dir`. */
   readonly left: Dir | undefined;

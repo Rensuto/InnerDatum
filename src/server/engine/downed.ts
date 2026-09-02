@@ -424,7 +424,7 @@ export type DownedTick = (typeof DownedTick)[keyof typeof DownedTick];
  * once per game turn per body, at any speed.
  *
  * ═══ THE ORDER IN THAT PASS IS EFFECTS FIRST, THEN THIS ═══
- * `timedEffects` (Actor.lua:597) runs first because **bleeding can down you**:
+ * `timedEffects` (tome/class/Actor.lua:597) runs first because **bleeding can down you**:
  * physical.lua:149-151's `on_timeout` projects its damage inside that call, so a
  * body that bled out is already at 0 HP by the time the survival pass looks at
  * it — and the scheduler enrols it THERE, on the turn it fell, instead of a turn

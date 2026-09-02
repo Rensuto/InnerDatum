@@ -619,7 +619,7 @@ function drawCard(
    * so every class ended in an ellipsis with its last clause unreachable, ON
    * THE ONE SCREEN WHERE THE DECISION IS PERMANENT AND THERE IS NO SCROLL, NO
    * TOOLTIP AND NO EXPAND. Upstream's equivalent pane is a scrollable
-   * `TextzoneList` fed the whole descriptor (Birther.lua:113, :516-520), and
+   * `TextzoneList` fed the whole descriptor (tome/dialogs/Birther.lua:113, :516-520), and
    * ToME's descriptors are far longer than ours.
    *
    * ═══ THE BUDGET IS WHAT IS LEFT AFTER EVERYTHING BELOW IS PAID FOR ═══

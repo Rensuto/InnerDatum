@@ -6372,7 +6372,7 @@ async function boot(): Promise<void> {
     // (src/server/content/items.ts:231-234), all 22 authored items are passive,
     // and a verb shipped with nothing to invoke is the dead control this whole
     // pass was told to avoid. Upstream agrees a wearable on a hotkey is not a
-    // use — Object.lua:169-173's `canUseObject` answers "This object has no
+    // use — tome/class/Object.lua:169-173's `canUseObject` answers "This object has no
     // usable power." Equip/remove is a real act with a visible effect on the
     // paper doll and the character sheet.
     //

@@ -11,7 +11,7 @@
  *        A SHOP RESTOCKS WHEN YOU OPEN THE DOOR, AND NEVER OTHERWISE
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `Store.lua:54-61` lets a shop restock iff `last_filled < stores_restock`, and
+ * `engine/Store.lua:54-61` lets a shop restock iff `last_filled < stores_restock`, and
  * `loadup` is a catch-up `while` loop run lazily when the player walks in.
  * There is no timer, no scheduler entry and no per-pump work: a shop nobody
  * visits costs exactly nothing, and a shop visited after four level-ups catches

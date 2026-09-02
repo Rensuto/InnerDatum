@@ -16,7 +16,7 @@
  * ToME's object model is two fields and the rest is decoration:
  *
  * ```lua
- * -- Object.lua:104-107
+ * -- engine/Object.lua:104-107
  * function _M:wornInven()
  *   if not self.slot then return nil end
  *   return invens["INVEN_"..self.slot]        -- `slot` is a STRING naming an inventory

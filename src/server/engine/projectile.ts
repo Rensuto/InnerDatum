@@ -41,7 +41,7 @@
  * for anything without the field.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * IT IS AN ENTITY, NOT AN ACTOR — Projectile.lua:27, :32, :96
+ * IT IS AN ENTITY, NOT AN ACTOR — engine/Projectile.lua:27, :32, :96
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Upstream's `Projectile` inherits `Entity` (not `Actor`), declares

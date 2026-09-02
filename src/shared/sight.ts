@@ -9,7 +9,7 @@
  *                    HOW FAR A BODY CAN SEE, AND PAST WHAT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `Actor.lua:520`:
+ * `engine/Actor.lua:520`:
  *
  * ```lua
  * local sees_target = (self.sight and core.fov.distance(sx, sy, tx, ty) <= self.sight
@@ -154,9 +154,9 @@ export function canSee(
  * MAY THIS CHARACTER BE SHOWN WHAT IS LYING ON THIS TILE? SEEN, OR REMEMBERED.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `Object.lua:28-29` gives objects `display_on_seen = true` AND
- * `display_on_remember = true` — the same pair `Grid.lua:30-32` gives TERRAIN,
- * and the opposite of `Actor.lua:30-34`, which is remember-FALSE. You remember a
+ * `engine/Object.lua:28-29` gives objects `display_on_seen = true` AND
+ * `display_on_remember = true` — the same pair `engine/Grid.lua:30-32` gives TERRAIN,
+ * and the opposite of `engine/Actor.lua:30-34`, which is remember-FALSE. You remember a
  * coat you walked past; you do not remember where a husk was standing.
  *
  * ═══ TWO TERMS, AND THE SIGHT ONE IS ALMOST ALWAYS SUBSUMED ═══
@@ -166,7 +166,7 @@ export function canSee(
  *
  * SIGHT IS INSIDE REVEAL, so once a character has taken one step, everything
  * they can see is already remembered and the second term adds nothing. It is
- * kept because upstream ORs the two (`Object.lua:28-29`) and because "before
+ * kept because upstream ORs the two (`engine/Object.lua:28-29`) and because "before
  * the first step" is a real state — not because it is load-bearing.
  *
  * ═══ AND THIS PARAGRAPH USED TO SAY THE OPPOSITE ═══

@@ -31,7 +31,7 @@
  * stop finding the starting gear almost immediately — which is what makes loot
  * feel like it is tracking you rather than being rolled at you.
  *
- * `ood_factor` defaults to 3 (Zone.lua:65) and ToME never overrides it.
+ * `ood_factor` defaults to 3 (engine/Zone.lua:65) and ToME never overrides it.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * ONE FUNCTION FOR BOTH BASE ITEMS AND EGOS, WHICH IS WHY THERE ARE NO TIERS

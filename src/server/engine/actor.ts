@@ -219,7 +219,7 @@ export type MonsterAi = {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * WHERE IT LAST SAW YOU — `ai_state.target_last_seen` (ActorAI.lua:130-135).
+   * WHERE IT LAST SAW YOU — `ai_state.target_last_seen` (engine/ActorAI.lua:130-135).
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * Upstream stamps this every turn the target is in view, and `move_simple`
@@ -265,12 +265,12 @@ export type MonsterAi = {
    * ToME's `move_complex` escalation (ai/simple.lua:199-247): count the turns a
    * monster spent unable to advance and, past a threshold, re-run A* with an
    * actor-aware predicate so it stops stacking up in a chokepoint. Upstream's
-   * threshold is 5 (simple.lua:225).
+   * threshold is 5 (ai/simple.lua:225).
    */
   readonly shoulderAfter: number;
   /**
    * Turns spent unable to advance — ToME's `ai_state.blocked_turns`
-   * (simple.lua:224-227). Reset to 0 by any successful move or attack.
+   * (ai/simple.lua:224-227). Reset to 0 by any successful move or attack.
    */
   blockedTurns: number;
   /**
@@ -278,13 +278,13 @@ export type MonsterAi = {
    * cooldown after one failed.
    *
    * ToME splits the same state across two places — it swaps `ai_state.ai_move`
-   * to `move_blocked_astar` (simple.lua:226-227) and lets THAT ai count
+   * to `move_blocked_astar` (ai/simple.lua:226-227) and lets THAT ai count
    * `blocked_turns` down and swap back at zero (:155-161) — because the mode has
    * to OUTLIVE the turn that armed it. An escalation lasting a single turn walks
    * the elite one tile sideways and straight back into the queue it just left,
    * which is the first thing that happened when this was written without it.
    *
-   * The negative half is simple.lua:176's `blocked_turns = -5`: a failed
+   * The negative half is ai/simple.lua:176's `blocked_turns = -5`: a failed
    * escalation must not be retried every turn for the rest of the fight.
    */
   shoulderTurns: number;
@@ -323,7 +323,7 @@ type ActorCommon = {
   // --- vitals ---------------------------------------------------------------
   hp: number;
   maxHp: number;
-  /** Restored per GAME TURN on the base clock (Actor.lua:525 `regenLife`). */
+  /** Restored per GAME TURN on the base clock (tome/class/Actor.lua:525 `regenLife`). */
   hpRegen: number;
   /**
    * False once hp reaches 0. THE BODY IS NOT REMOVED: it stops being ticked
@@ -791,7 +791,7 @@ export type PlayerActor = ActorCommon & {
   unspentGenerics: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   *   CATEGORY POINTS IN HAND — `unused_talents_types` (Actor.lua:173).
+   *   CATEGORY POINTS IN HAND — `unused_talents_types` (tome/class/Actor.lua:173).
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * A THIRD CURRENCY, and it buys something the other two cannot: a whole
@@ -861,7 +861,7 @@ export type PlayerActor = ActorCommon & {
    * GOLD. A WHOLE NUMBER, NEVER NEGATIVE, AND NOT A DERIVED VALUE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `Actor.lua:260` (`money = 0`) with the birth grant from
+   * `tome/class/Actor.lua:260` (`money = 0`) with the birth grant from
    * `descriptors.lua:74` — a character starts with `STARTING_MONEY`.
    *
    * ON THE BODY, for the same reason `level`, `xp` and `carried` are: the save
@@ -1336,7 +1336,7 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     classId: init.classId,
     // PROGRESSION STARTS AT THE BOTTOM AND EMPTY. Level 1 with no spare points
     // is the whole birth grant argument: ToME hands a fresh character 2 unused
-    // points on top of its free birth talents (Actor.lua:171, warrior.lua:80-86),
+    // points on top of its free birth talents (tome/class/Actor.lua:171, warrior.lua:80-86),
     // and OUR birth grant is the four loadout talents themselves, already
     // learned at level 1 — see `pointsForLevel` in src/shared/progression.ts for
     // the budget arithmetic that falls out of dropping the 2.
@@ -1610,10 +1610,10 @@ export function setCooldown(actor: CooldownHolder, talentId: string, turns: numb
 }
 
 /**
- * The status pass `actBase` runs at Actor.lua:597, injected rather than imported.
+ * The status pass `actBase` runs at tome/class/Actor.lua:597, injected rather than imported.
  *
  * Returns ToME's `no_talents_cooldown` attr — true when this actor's cooldowns
- * must NOT tick this turn (Actor.lua:606). `engine/effects.ts#statusPass` builds
+ * must NOT tick this turn (tome/class/Actor.lua:606). `engine/effects.ts#statusPass` builds
  * one of these; a caller with no status system passes nothing and gets the M2/M3
  * behaviour unchanged.
  *
@@ -1636,7 +1636,7 @@ export type StatusPass = (actor: EngineActor) => boolean;
  * across 10 game turns while cooldowns tick exactly 10 times.
  *
  * WHAT IS NOT HERE YET, and where it goes when it lands:
- *   - `checkStillInCombat` (Actor.lua:608) — engagement is LEVEL-WIDE in this
+ *   - `checkStillInCombat` (tome/class/Actor.lua:608) — engagement is LEVEL-WIDE in this
  *     game rather than per-actor, so it lives in the scheduler's game-turn hook
  *     instead of here. See scheduler.ts.
  */
@@ -1644,7 +1644,7 @@ export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
   if (!actor.alive) return;
 
   /**
-   * Actor.lua:525 `regenLife`. Clamped rather than accumulated past max so a
+   * tome/class/Actor.lua:525 `regenLife`. Clamped rather than accumulated past max so a
    * long rest cannot bank overheal.
    *
    * ═══ AND THE HEALING FACTOR, WHICH UPSTREAM APPLIES HERE TOO ═══
@@ -1666,12 +1666,12 @@ export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
     actor.hp = Math.min(actor.maxHp, actor.hp + actor.hpRegen * factor);
   }
 
-  // Actor.lua:597 — `self:timedEffects()`. Status durations tick HERE, before
+  // tome/class/Actor.lua:597 — `self:timedEffects()`. Status durations tick HERE, before
   // the cooldown pass, because upstream's own comment at :605 says so: "Cooldown
   // talents after effects, because some of them involve breaking sustains."
   const frozen = statusPass?.(actor) ?? false;
 
-  // Actor.lua:606 — `if not self:attr("no_talents_cooldown") then
+  // tome/class/Actor.lua:606 — `if not self:attr("no_talents_cooldown") then
   // self:cooldownTalents() end`. THIS IS WHY A STUNNED ACTOR'S COOLDOWNS FREEZE,
   // and it is the difference between stun ending a fight and stun being a mild
   // damage debuff the victim waits out with a full bar of talents ready.

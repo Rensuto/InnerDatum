@@ -308,7 +308,7 @@ export type MonsterTemplate = {
   readonly maxHp: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   *   HOW THIS BODY GROWS. `life_rating` — Actor.lua:187.
+   *   HOW THIS BODY GROWS. `life_rating` — tome/class/Actor.lua:187.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * Upstream never authors a monster's power; it authors a monster's SHAPE and
@@ -728,7 +728,7 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
     // authors no `resists` table whatsoever — a giant brown ant resists nothing
     // — so the invention comes out with the rest of them. `resistsCap` was
     // already absent and stays absent: the ENGINE default is `{ all = 100 }`
-    // (Actor.lua:211) and the familiar 70 is a PLAYER birth descriptor
+    // (tome/class/Actor.lua:211) and the familiar 70 is a PLAYER birth descriptor
     // (descriptors.lua:63) that monsters do not get.
     range: 1.5,
     minRange: 0,
@@ -1337,7 +1337,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
  *   `huntsIsolated`  it goes for whoever is standing ALONE, not whoever is
  *                    nearest. The ring means "close ranks".
  *   `shoulderAfter`  after five turns of being unable to advance it re-routes
- *                    AROUND its own swarm (simple.lua:199-247). The ring means
+ *                    AROUND its own swarm (ai/simple.lua:199-247). The ring means
  *                    "you cannot plug the door on this one".
  *
  * These two are OUR analogue of the ghoulking's third lever, which is an AI
@@ -1479,7 +1479,7 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   attackRange: 1,
   // ═══ THE TWO BEHAVIOURS THAT ARE THE ELITE ═══ (ai/npc.ts owns both)
   huntsIsolated: true,
-  // simple.lua:225 — "Wait at least 5 turns of not moving before switching to
+  // ai/simple.lua:225 — "Wait at least 5 turns of not moving before switching to
   // blocked_astar". Upstream's own number, upstream's own reason.
   shoulderAfter: 5,
   // No `projSpeed` (melee) and no `talentIn`. The ghoulking DOES tighten the

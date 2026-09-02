@@ -520,7 +520,7 @@ export function restock(
  * The epoch a party's level implies. `Actor.lua:3740` fires a restock when a
  * character hits level 5 or a multiple of 10.
  *
- * AN INTEGER, NOT A TIMER. `Store.lua:54-61` lets a shop restock iff
+ * AN INTEGER, NOT A TIMER. `engine/Store.lua:54-61` lets a shop restock iff
  * `last_filled < game.state.stores_restock`, and `loadup` is a catch-up `while`
  * loop run lazily when you open the door. Zero background work, no scheduler
  * involvement — which matters given non-negotiable #2 — and it persists as two

@@ -178,7 +178,7 @@ export type DelveSpec = {
    */
   readonly levelRange: ZoneLevelRange;
   /**
-   * WHO DECIDES — `Zone.lua:118`. Absent is upstream's own default, `fixed`,
+   * WHO DECIDES — `engine/Zone.lua:118`. Absent is upstream's own default, `fixed`,
    * which is every delve in the game: a place you walked to is as dangerous as
    * it is. The overworld ambush is the one that is `player`, and it is not in
    * this table at all. See `zoneBaseLevel` for the whole argument.

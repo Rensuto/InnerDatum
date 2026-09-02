@@ -510,7 +510,7 @@ export type World = {
 
   // --- projectiles ----------------------------------------------------------
   // ═══════════════════════════════════════════════════════════════════════════
-  // A SECOND TABLE, NOT A ROW IN `actors`. Projectile.lua:27, :32, :96.
+  // A SECOND TABLE, NOT A ROW IN `actors`. engine/Projectile.lua:27, :32, :96.
   // ═══════════════════════════════════════════════════════════════════════════
   //
   // Upstream's `Projectile` inherits Entity rather than Actor (:27), declares

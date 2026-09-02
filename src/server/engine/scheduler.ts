@@ -2036,7 +2036,7 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
   // do not move at all until somebody walks into an aggro radius with line of
   // sight. There is no patrolling and no wandering — a husk nine tiles down a
   // corridor stands perfectly still until you are eight. ToME has `move_wander`
-  // (simple.lua:184-195) for this and it is genuinely nicer, but it costs the
+  // (ai/simple.lua:184-195) for this and it is genuinely nicer, but it costs the
   // idle fixed point: something has to spend energy for the level to keep
   // ticking, and then the server has a game loop and a home PC has a fan. When
   // wandering lands it needs its own budget — a wander pump the caller drives on
@@ -3698,7 +3698,7 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
  * talent level, and `combatTalentScale` reads raw talent levels — so the points
  * are banked in `pendingLevels` and handed out HERE, beside `actBase`, which is
  * the once-per-game-turn-per-actor hook everything speed-independent already uses
- * (`TalentResolution.actBase`, and Actor.lua:476-609 for the pass itself).
+ * (`TalentResolution.actBase`, and tome/class/Actor.lua:476-609 for the pass itself).
  *
  * The levels being paid for are the TOP `pendingLevels` levels of the character:
  * a second kill later in the same pump raises both numbers together, so the

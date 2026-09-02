@@ -241,7 +241,7 @@ export type ClassDef = {
    *   HOW MUCH TOUGHER THIS CLASS GETS PER LEVEL. `life_rating`.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Actor.lua:187 defaults it to 10 and each class adjusts it: upstream ships
+   * tome/class/Actor.lua:187 defaults it to 10 and each class adjusts it: upstream ships
    * Bulwark 16, Berserker 13, Archer 10, Rogue 10, Alchemist 9, Archmage 6.
    * Every level multiplies this by a rank coefficient that itself grows with
    * level, so the SPREAD between classes widens across a career rather than

@@ -1342,7 +1342,7 @@ export function projectEffects(
    * console and every fixture written before FOV.
    *
    * A BADGE IS A FACT ABOUT A BODY, so it is gated exactly as the body is
-   * (`Actor.lua:30-34` — `display_on_seen` true, `display_on_remember` FALSE).
+   * (`engine/Actor.lua:30-34` — `display_on_seen` true, `display_on_remember` FALSE).
    * Shipping the row for an unseen monster told a client that something it
    * could not see was Off-balance, which names it and roughly places it.
    */

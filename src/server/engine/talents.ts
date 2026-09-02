@@ -38,7 +38,7 @@
  * ───────────────────────────────────────────────────────────────────────────
  * `energyBase` accrues a flat ENERGY_PER_TICK and is NEVER multiplied by
  * anything, so `actBase` fires exactly once per game turn at any speed
- * (Actor.lua:476-609). Cooldowns live there — `tickCooldowns` in
+ * (tome/class/Actor.lua:476-609). Cooldowns live there — `tickCooldowns` in
  * engine/actor.ts, called from `actBase`, ported from
  * ActorTalents.lua:1002-1013 — and therefore a hasted actor gets more ACTIONS
  * and never a faster cooldown.
@@ -236,9 +236,9 @@ export type TalentKind = (typeof TalentKind)[keyof typeof TalentKind];
  * What the reversal is careful NOT to do is make Reagents continuous:
  *
  *   RESOLVE, FOCUS — continuous, 0-100, `regenPerTurn` FRACTIONAL. Ported from
- *     ToME's `stamina_regen`/`psi_regen` defaults (Actor.lua:227-241), applied
+ *     ToME's `stamina_regen`/`psi_regen` defaults (tome/class/Actor.lua:227-241), applied
  *     once per BASE turn by `regenResources` (ActorResource.lua:201-211) from
- *     `actBase` (Actor.lua:558). Standing next to people and holding still are
+ *     `actBase` (tome/class/Actor.lua:558). Standing next to people and holding still are
  *     still where the real income is; the trickle is the floor under them.
  *
  *   REAGENTS — COUNTABLE, 0-8. Refilled one per kill, topped up at stairs, and
@@ -502,14 +502,14 @@ export function combatTalentSpellDamage(
 // ---------------------------------------------------------------------------
 
 /**
- * ToME's `stamina_regen` 0.3 (Actor.lua:230) x `TOME_ACTIONS_PER_TURN`.
+ * ToME's `stamina_regen` 0.3 (tome/class/Actor.lua:230) x `TOME_ACTIONS_PER_TURN`.
  *
  * Named rather than inlined so a balance pass has one symbol to grep and the
  * tests can assert the DERIVATION rather than a copied decimal.
  */
 export const RESOLVE_PER_TURN = 0.3 * TOME_ACTIONS_PER_TURN;
 
-/** ToME's `psi_regen` 0.2 (Actor.lua:239) x `TOME_ACTIONS_PER_TURN`. */
+/** ToME's `psi_regen` 0.2 (tome/class/Actor.lua:239) x `TOME_ACTIONS_PER_TURN`. */
 export const FOCUS_PER_TURN = 0.2 * TOME_ACTIONS_PER_TURN;
 
 /**
@@ -572,7 +572,7 @@ export const RESOURCE_RULES: Readonly<
        * mana"), `psi_regen = 0.2` ("Energy regens slowly") — and added by
        * `regenResources` (ActorResource.lua:201-211), which is ONE bounded add
        * and contains no rng anywhere in the file. Its clock is `actBase`
-       * (Actor.lua:558), driven by `energyBase`, which GameEnergyBased.lua:114-121
+       * (tome/class/Actor.lua:558), driven by `energyBase`, which GameEnergyBased.lua:114-121
        * grants FLAT while :125 multiplies the ACT clock by `global_speed`. A
        * hasted actor therefore gets more actions and exactly the same
        * regeneration — which is our energy.ts:621-629 invariant, and why

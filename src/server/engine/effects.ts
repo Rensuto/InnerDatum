@@ -53,7 +53,7 @@
  * IT RUNS ON THE BASE CLOCK, ONCE PER GAME TURN, AT ANY SPEED
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `timedEffects` is called from `actBase` (Actor.lua:597) and NEVER from `act`.
+ * `timedEffects` is called from `actBase` (tome/class/Actor.lua:597) and NEVER from `act`.
  * Nothing in this file may read `globalSpeed` or `speedFactor`: haste grants
  * more ACTIONS and must never shorten a debuff. That is the same invariant
  * engine/actor.ts and engine/talents.ts already carry, restated because a
@@ -257,7 +257,7 @@ export type EffectModifiers = {
   readonly breached?: boolean;
   /**
    * ToME's `no_talents_cooldown` (physical.lua:492). While ANY live effect sets
-   * it, Actor.lua:606 skips `cooldownTalents()` entirely and the actor's
+   * it, tome/class/Actor.lua:606 skips `cooldownTalents()` entirely and the actor's
    * cooldowns FREEZE. This is what makes stun a threat rather than a nuisance.
    */
   readonly noTalentsCooldown?: boolean;
@@ -1650,7 +1650,7 @@ export type TickReport = {
   /** Effect ids removed this turn — expired, or `onTimeout` returned true. */
   readonly expired: readonly string[];
   /**
-   * Is `no_talents_cooldown` set AFTER the pass? Actor.lua:606 reads it AFTER
+   * Is `no_talents_cooldown` set AFTER the pass? tome/class/Actor.lua:606 reads it AFTER
    * :597's `timedEffects()`, so an effect that expired this turn has already
    * released the freeze by the time cooldowns tick.
    */
@@ -2207,7 +2207,7 @@ export function noteBaseline(state: EffectState, actor: EffectActor): void {
  * The callback `engine/actor.ts#actBase` takes, bound to a state and a context.
  *
  * ═══ WHY A CALLBACK AND NOT AN IMPORT ═══
- * `actBase` must run `timedEffects` (Actor.lua:597) BEFORE `cooldownTalents`
+ * `actBase` must run `timedEffects` (tome/class/Actor.lua:597) BEFORE `cooldownTalents`
  * (:606) and must skip the latter when the former leaves `no_talents_cooldown`
  * set. If actor.ts imported this module the graph would close a cycle — this
  * module imports `setCooldown` from actor.ts for STUNNED's talent lockout. A

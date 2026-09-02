@@ -1528,7 +1528,7 @@ export type ProjectileView = {
   /**
    * WHO FIRED IT — OPTIONAL SINCE FOV, AND ABSENT MEANS "NOT SAID".
    *
-   * An orb is drawn whenever its own tile is visible (`Projectile.lua:29-31` —
+   * An orb is drawn whenever its own tile is visible (`engine/Projectile.lua:29-31` —
    * `display_on_seen`, and remember is FALSE), which is right: a shot coming out
    * of the dark is the counterplay signal, and withholding it would delete from
    * the screen a fact the engine is still acting on. But the SHOOTER may be

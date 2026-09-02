@@ -259,7 +259,7 @@ const COLS = 4;
  * WHAT FRACTION OF THE WINDOW THE BAG TAKES. UPSTREAM'S NUMBER.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Ported from ShowInventory.lua:34 — `Dialog.init(self, title or "Inventory",
+ * Ported from tome/dialogs/ShowInventory.lua:34 — `Dialog.init(self, title or "Inventory",
  * math.max(800, game.w * 0.8), math.max(600, game.h * 0.8))`. Four fifths of the
  * screen, with a floor.
  *

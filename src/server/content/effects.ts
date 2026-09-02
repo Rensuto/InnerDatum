@@ -260,7 +260,7 @@ export const SLOW_PLAYER_AP_PENALTY = 0;
  * ```
  *
  * ───────────────────────────────────────────────────────────────────────────
- * `no_talents_cooldown` — line 492, and Actor.lua:606 is where it bites
+ * `no_talents_cooldown` — line 492, and tome/class/Actor.lua:606 is where it bites
  * ───────────────────────────────────────────────────────────────────────────
  * ```lua
  * -- Cooldown talents after effects, because some of them involve breaking sustains.
@@ -274,7 +274,7 @@ export const SLOW_PLAYER_AP_PENALTY = 0;
  * It arrives here as `modifiers.noTalentsCooldown`, is aggregated by
  * `noTalentsCooldown(state, actorId)`, and is consumed by
  * `engine/actor.ts#actBase` via the `statusPass` callback. The read happens
- * AFTER `timedEffects` (Actor.lua:597 before :606), so the turn a stun expires
+ * AFTER `timedEffects` (tome/class/Actor.lua:597 before :606), so the turn a stun expires
  * is a turn cooldowns tick normally.
  *
  * ───────────────────────────────────────────────────────────────────────────
@@ -409,7 +409,7 @@ export const STUNNED: EffectDef = Object.freeze({
  * ON THE BASE CLOCK, WHICH IS THE ONLY REASON A DoT IS BALANCEABLE
  * ───────────────────────────────────────────────────────────────────────────
  * `on_timeout` is driven by `timedEffects`, which runs in `actBase`
- * (Actor.lua:597) on `energyBase`. So "3 damage per turn for 4 turns" is 12
+ * (tome/class/Actor.lua:597) on `energyBase`. So "3 damage per turn for 4 turns" is 12
  * damage at ANY speed. Put it on the act clock and a hasted target takes 40%
  * more from the same bleed while a slowed one takes less — a DoT that rewards
  * the victim for being slowed is the wrong direction on every axis.

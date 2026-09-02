@@ -56,7 +56,7 @@
  *   Entity.lua:985      `mult`     removes by DIVISION
  *   Entity.lua:990-992  `perc_inv` removes by `1 - (1 - b) / (1 - v)`
  *
- * Both are float round trips and both drift. Upstream knows: Actor.lua:105-108
+ * Both are float round trips and both drift. Upstream knows: tome/class/Actor.lua:105-108
  * is a retrofit forcing four speed properties back to plain `add` —
  * `movement_speed`, `combat_physspeed`, `combat_spellspeed`, `combat_mindspeed`
  * — the second of them commented *"Prevent excessive attack speed compounding"*.
