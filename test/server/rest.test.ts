@@ -19,7 +19,10 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { DEFAULT_SIGHT_RADIUS } from '../../src/shared/sight.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
-import { REST_MAX_TURNS, RestStop } from '../../src/shared/rest.ts';
+import { REST_MAX_TURNS, RestStop, restStopText } from '../../src/shared/rest.ts';
+import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
+import { BLEEDING } from '../../src/server/content/effects.ts';
+import { createRng } from '../../src/shared/rng.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 
 /**
@@ -45,10 +48,14 @@ function scene(name: string) {
   const talents = createContentTalentEngine();
   const downed = createDownedState();
   const parties = createPartyState();
+  // The catalogue the rest's own affliction arm reads, and what lets a bleed
+  // actually tick during a rest — see the damage stop below.
+  const effects = createEffectState([BLEEDING]);
   const engine = createTurnEngine({
     world,
     downed,
     parties,
+    effects,
     talents: createTalentBook(talents, world),
     talentRuntime: talentRuntimeFor(talents, world),
   });
@@ -63,7 +70,7 @@ function scene(name: string) {
   // hand out, and the state a player standing about actually sits in is the one
   // after that has been spent.
   engine.pump();
-  return { world, engine, body, talents, downed, parties, sheet: talents.sheetOf('p1') };
+  return { world, engine, body, talents, downed, parties, effects, sheet: talents.sheetOf('p1') };
 }
 
 describe('rest passes turns the way holding would, without the hundred keys', () => {
@@ -442,5 +449,79 @@ describe('a rest heals the whole party', () => {
       husk.hp,
       'the husk gained more than one a turn — the rest bonus reached a monster',
     ).toBeLessThanOrEqual(3 + result.turns);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Any damage ends a rest — Player.lua:722-724
+// ---------------------------------------------------------------------------
+
+describe('a rest stops when something lands a hit', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BODY BLED AT TWO A TURN, REGENERATED AT THREE, AND RESTED IT OFF FREE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream hangs this off `onTakeHit` (Player.lua:722-724), so ANY damage ends
+   * a rest before the blow is even applied. The gap it left here is not the
+   * obvious one — a monster walking up is caught by `Hostile` long before it
+   * swings, and that arm has worked since the rest shipped.
+   *
+   * IT IS THE BLEED. `restCheck` deliberately CONTINUES while a detrimental
+   * effect ticks down (Player.lua:1023-1029) — waiting one out is most of why
+   * the key exists — and `Bleeding` only fires when the REGEN RATE itself goes
+   * negative, which a damage-over-time never touches. So the wound healed itself
+   * for nothing, and the screen said "Ready."
+   */
+  it('a bleed ticking during a rest ends it', () => {
+    const { engine, body, effects } = scene('rest-bleed');
+    body.hp = 20;
+    // Twenty turns of it, so the wound outlasts any plausible rest and the stop
+    // has to come from the DAMAGE rather than from the effect expiring.
+    setEffect(effects, body, BLEEDING.id, 20, {}, createRng('rest-bleed'));
+
+    const result = engine.rest('p1');
+
+    expect(result.stop, 'the wound was rested off for free').toBe(RestStop.Hurt);
+    expect(body.hp, 'and it stopped early rather than at full health').toBeLessThan(body.maxHp);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THREE NARROWING TERMS THIS HARNESS CANNOT DRIVE, NAMED RATHER THAN FAKED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The scan is `event.k === 'damage' && event.id === actorId && event.healed
+   * === undefined`, over `playerEvents` AND `sweep`. Deleting the whole arm is
+   * caught above. These three mutations SURVIVE, and each is worth a sentence so
+   * the hole is a known one:
+   *
+   *   `event.id === actorId`  A pump carries everybody's events, so without it a
+   *     detective resting in a quiet room stands up whenever a friend two rooms
+   *     away takes a scratch — and since the rest is what heals the party, that
+   *     friend is denied the healing by their own misfortune. Driving it needs a
+   *     second player hurt at a distance, and every attempt ended in `Budget`
+   *     after one turn: a second body has to be joined, connected, PARTIED and
+   *     pumped before the game turn can complete, and even then this fixture
+   *     stopped early for reasons unrelated to the claim.
+   *
+   *   `.sweep` as well as `playerEvents`  A bleed lands in `playerEvents`, so
+   *     dropping the sweep arm changes nothing here. It is not decoration: a
+   *     monster's blow arrives in the sweep. It is hard to reach because
+   *     `restCheck` runs BEFORE the pump and `Hostile` catches anything close
+   *     enough to swing, so the arm is for what hits without being seen.
+   *
+   *   `event.healed === undefined`  A heal rides the same `DamageEvent` (its own
+   *     docblock: one frame kind for "an actor's hp changed"), so without this a
+   *     teammate mending the rester would read as a hit and end the rest that
+   *     was doing them good. Nothing in this harness heals a resting body.
+   *
+   * A green test for any of the three would have asserted nothing, which is the
+   * failure this file keeps finding. The gap is the harness, not the rule.
+   */
+  it('says so, rather than stopping silently', () => {
+    // Every stop has a sentence — `restStopText`. A rest that ended for a reason
+    // the player cannot see is a rest that looks broken.
+    expect(restStopText({ rest: false, stop: RestStop.Hurt }, 4, 'here')).toContain('hit');
   });
 });

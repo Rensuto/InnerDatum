@@ -146,10 +146,21 @@ describe('a rest and a shot in the air', () => {
   it('does not break for the player`s OWN shot', () => {
     // "trust ourselves but not our friends" — Player.lua:868, verbatim.
     const { world, engine, body } = scene('rest-own-orb');
+    /**
+     * AIMED PAST THE BODY, NOT AT IT — and the first version of this fixture
+     * aimed it at the rester's own tile, which was fine until a rest learned to
+     * stop for damage: the shot LANDED, the blow ended the rest, and a test
+     * about `sourceId` failed for a reason that had nothing to do with it.
+     *
+     * (5,4) is one tile short of the body at (4,4) on the same lane, so this orb
+     * is squarely on the line and inbound — `orbOnMyLine` says yes — and it
+     * stops before it arrives. The claim under test is that being OURS is what
+     * excuses it, so it has to be a shot that would otherwise interrupt.
+     */
     world.addProjectile({
       sourceId: 'p1',
       origin: { x: 10, y: 4 },
-      to: { x: 4, y: 4 },
+      to: { x: 5, y: 4 },
       projSpeed: 1,
       range: 20,
       damage: { dam: 5, type: DamageType.Physical, apr: 0 },

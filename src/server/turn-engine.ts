@@ -2553,7 +2553,30 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          */
         const beforeTurn = world.turn.clock.gameTurn;
         self.pendingIntent = HOLD_INTENT;
-        api.pump();
+        const outcome = api.pump();
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * ANYTHING LANDED A HIT — Player.lua:722-724, `onTakeHit`.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * READ OFF THE EVENTS RATHER THAN OFF THE HIT POINTS. A body being
+         * chewed on is also regenerating, and at the rest's accelerated rate
+         * the regen usually WINS — so `hp` after the pump is often higher than
+         * before it and a net comparison would miss the blow entirely. The
+         * events say what happened; the hit points say who is winning.
+         *
+         * `healed` MARKS THE OTHER DIRECTION. A heal rides the same
+         * `DamageEvent` (see its docblock: one frame kind for "an actor's hp
+         * changed"), so a teammate mending the rester mid-rest would otherwise
+         * read as a hit and end the rest that was doing them good.
+         */
+        const hurt = (event: TurnEvent): boolean =>
+          event.k === 'damage' && event.id === actorId && event.healed === undefined;
+        if (outcome.playerEvents.some(hurt) || outcome.sweep.some(hurt)) {
+          turns += 1;
+          return { turns, stop: RestStop.Hurt };
+        }
 
         /**
          * THE CLOCK IS THE PROOF THE TURN HAPPENED, and checking it is what

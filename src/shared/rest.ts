@@ -47,6 +47,27 @@ export const RestStop = {
   /** Player.lua:1003 — `life_regen <= 0`, "losing health!". */
   Bleeding: 'bleeding',
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SOMETHING HIT YOU. Player.lua:722-724 — `restStop("taken damage")`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream hangs this off `onTakeHit`, so ANY damage ends a rest before the
+   * blow is even applied. Ours had no such arm, and the gap it left is not the
+   * obvious one — a monster walking up is caught by `Hostile` long before it
+   * swings.
+   *
+   * IT IS THE BLEED. `restCheck` deliberately CONTINUES while a detrimental
+   * effect ticks down (Player.lua:1023-1029) — waiting one out is most of why
+   * the key exists — and `Bleeding` above only fires when the REGEN RATE itself
+   * goes negative, which a damage-over-time never touches. So a body bleeding at
+   * two a turn and regenerating at three rested the bleed off for free, gaining
+   * health the whole time, with nothing on screen suggesting anything was wrong.
+   *
+   * Upstream forbids exactly that: the debuff may be waited out, the DAMAGE may
+   * not be.
+   */
+  Hurt: 'hurt',
+  /**
    * Nothing left to gain: full health, a full pool, no affliction still running
    * and no cooldown still turning. Upstream reaches this by falling off the end
    * of every `return true`.
@@ -193,6 +214,11 @@ export function restStopText(answer: RestAnswer, turnsRested: number, bearing: s
       return `${spent} — ${answer.threat?.name ?? 'something'} to the ${bearing}.`;
     case RestStop.Bleeding:
       return `${spent} — you are losing blood faster than you make it.`;
+    case RestStop.Hurt:
+      // Upstream's own reason string is "taken damage"; this is that sentence in
+      // the Record lane's voice. It does not name the source — the log line for
+      // the blow itself is directly above it and says so.
+      return `${spent} — something got a hit in.`;
     case RestStop.Budget:
       return `${spent}, and stop there.`;
     case RestStop.Done:
