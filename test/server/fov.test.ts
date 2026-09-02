@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_SIGHT_RADIUS, canSee } from '../../src/server/world/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, canSee } from '../../src/shared/sight.ts';
 import { projectActors, visibleActorIds } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';

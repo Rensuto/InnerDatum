@@ -87,8 +87,8 @@ import type {
 } from './net/gateway.ts';
 import { toDisplayName } from './view/projector.ts';
 import type { TurnState } from './view/projector.ts';
-import { hasLineOfSight } from './world/world.ts';
-import { canSee, sightDistance } from './world/sight.ts';
+import { hasLineOfSight } from '../shared/sight.ts';
+import { canSee, sightDistance } from '../shared/sight.ts';
 import { currentTile, orbOnMyLine } from './engine/projectile.ts';
 import type { Actor, World } from './world/world.ts';
 

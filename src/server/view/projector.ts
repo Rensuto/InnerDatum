@@ -142,7 +142,7 @@ import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
-import { canSee } from '../world/sight.ts';
+import { canSee } from '../../shared/sight.ts';
 import type { TileXY } from '../../shared/coords.ts';
 
 /**

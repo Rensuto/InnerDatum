@@ -44,9 +44,9 @@
  * close.
  */
 
-import { bresenham, step } from '../../shared/coords.ts';
+import { step } from '../../shared/coords.ts';
 import { createTurnClock } from '../../shared/energy.ts';
-import { blocksSightAt, canWalk, makeTestMap } from '../../shared/level.ts';
+import { canWalk, makeTestMap } from '../../shared/level.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -168,70 +168,18 @@ const FALLBACK_SPRITE = 'chr_player_watchman_s';
 const SPAWN_SEARCH_RADIUS = 8;
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- * HOW FAR A BODY NOTICES THINGS — ported from `self.sight or 10`
- * (Player.lua:854, inside `spotHostiles`).
- * ═══════════════════════════════════════════════════════════════════════════
+ * SIGHT LIVES IN `shared/sight.ts` NOW, and this note is here because it lived
+ * here for five milestones and every FOV trail leads back to this file.
  *
- * ═══ WHY THIS HAD TO EXIST BEFORE REST COULD ═══
- * `hasLineOfSight` answers "is anything solid between these two tiles" and
- * NOTHING ELSE — no range at all. On an open floor that is true across the whole
- * map, so the first thing built on it that means "can see" rather than "can
- * shoot" discovered the gap immediately: a rest was interrupted by a husk
- * EIGHTEEN TILES AWAY, which on any open level means nobody can ever rest.
- *
- * Upstream never had that problem because its `spotHostiles` walks a
- * `calc_circle` of radius `sight` and asks about line of sight only INSIDE it.
- * This is that radius.
- *
- * ═══ A DEFAULT, NOT A CONSTANT ═══
- * Upstream reads it off the actor (`self.sight`) and only falls back to 10, so
- * blindness, a lit radius and a telescope all have somewhere to live. Nothing
- * here carries a per-body sight yet, so every body uses this — and when one
- * does, the name already says which end wins.
- *
- * ═══ AND IT IS NOT `aggroRange` ═══
- * Monsters have their own (8 for a MeleeChaser, `AI_RANGES` in engine/actor.ts),
- * and it is a different question: how far something will START HUNTING, tuned
- * per profile so a pack does not all wake at once. This is how far a body can
- * SEE, and the asymmetry is deliberate — a husk you can see from ten tiles has
- * not necessarily noticed you.
+ * `DEFAULT_SIGHT_RADIUS` and `hasLineOfSight` moved because the consumers had
+ * grown to four and one of them could not reach a server module: the FOV
+ * projection, the rest check, travel, and the client's targeting ring — which
+ * carried a BYTE-IDENTICAL REIMPLEMENTATION of the line walk, correctly
+ * reasoning that `client -> server` imports are banned and wrongly concluding
+ * it therefore had to copy. `shared/` was always the answer: the walk is
+ * `bresenham` over `blocksSightAt` and both are shared already, so there is no
+ * boundary to violate and never was.
  */
-export const DEFAULT_SIGHT_RADIUS = 10;
-
-/**
- * Line of sight between two tiles, walls blocking.
- *
- * Bresenham's symmetry is what makes this usable as a visibility test: the walk
- * is done from a canonical endpoint and reversed, so `hasLineOfSight(a, b)` and
- * `hasLineOfSight(b, a)` cannot disagree. Without that you get the oldest
- * roguelike bug report there is — the archer shoots you through a corner you
- * cannot shoot back through.
- *
- * Endpoints are excluded: standing IN a wall (a phasing monster, a door being
- * opened) must not blind you, and the target's own tile is what you are looking
- * at.
- *
- * FOV SEAM — CLOSED. This function used to trace with `canWalk`, and the note
- * here said opacity and passability were the same thing "because every blocker
- * on the M2 map is a wall", to be split "when glass, chasms and open doors
- * arrive". Alderbrook's canal is that case: solid to a body, transparent to an
- * eye. So the trace now asks `blocksSightAt`, which is the predicate protocol.ts
- * keeps beside `isWalkable` precisely so the two cannot drift.
- *
- * NOTHING ON THE M1 MAP CHANGES. Its only blocker is WALL, which is opaque and
- * solid in both predicates, so every existing FOV test still describes the same
- * game — the split is observable only where WATER or BRIDGE exists.
- */
-export function hasLineOfSight(level: LevelView, from: TileXY, to: TileXY): boolean {
-  const line = bresenham(from, to);
-  for (let i = 1; i < line.length - 1; i += 1) {
-    const tile = line[i];
-    if (tile === undefined) continue;
-    if (blocksSightAt(level, tile.x, tile.y)) return false;
-  }
-  return true;
-}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

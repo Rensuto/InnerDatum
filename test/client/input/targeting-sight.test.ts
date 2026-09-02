@@ -1,7 +1,9 @@
+import { readFileSync, readdirSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { TargetAdvice, createTargeting } from '../../../src/client/input/targeting.ts';
-import { hasLineOfSight } from '../../../src/server/world/world.ts';
+import { hasLineOfSight } from '../../../src/shared/sight.ts';
 import { TalentShape, TileCode } from '../../../src/shared/protocol.ts';
 import type { LevelView, LoadoutTalent } from '../../../src/shared/protocol.ts';
 
@@ -26,12 +28,21 @@ import type { LevelView, LoadoutTalent } from '../../../src/shared/protocol.ts';
  * ═══════════════════════════════════════════════════════════════════════════
  * THE ASSERTION IS AGREEMENT, NOT A SECOND OPINION
  * ═══════════════════════════════════════════════════════════════════════════
- * These tests import BOTH traces and compare them. A test that only asserted
- * "the client refuses a mountain" would pass just as well if the server started
- * allowing one — and the property that matters is not what either says, it is
- * that they say the same thing. Production code may not import across that line
- * (`client -> server` is banned and eslint enforces it); a test may, and this is
- * exactly what that freedom is for.
+ * THIS PARAGRAPH USED TO SAY THE TESTS IMPORT **BOTH** TRACES AND COMPARE THEM,
+ * and that was the whole design: production code may not import across
+ * `client -> server`, a test may, and comparing the two copies was what that
+ * freedom was for.
+ *
+ * THERE IS ONLY ONE TRACE NOW. `hasLineOfSight` moved to `shared/sight.ts`,
+ * which both sides may import, so the copy in `targeting.ts` is gone and a test
+ * that compared them would be importing the same function twice — vacuously
+ * green, exactly the trap `talent-kinds.test.ts` documents ("renaming the enum
+ * moves both sides").
+ *
+ * So what these assertions test is no longer AGREEMENT but INTEGRATION: that the
+ * ring's published advice matches the trace it is built on. The agreement
+ * property is now carried by the guard at the bottom of this file, which asserts
+ * there is exactly one definition to agree with.
  */
 
 const W = 24;
@@ -141,5 +152,40 @@ describe('the aim preview and the server agree about what blocks an eye', () => 
     put(view, to.x, to.y, TileCode.MOUNTAIN);
 
     expect(adviceThrough(view, from, to)).toBe(TargetAdvice.Blocked);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The guard that replaced the comparison
+// ---------------------------------------------------------------------------
+
+describe('there is exactly one line-of-sight trace', () => {
+  it('no module defines its own', () => {
+    /**
+     * The property the old two-trace comparison existed to protect, asserted
+     * directly and cheaply. A second copy could not be caught by a test that
+     * imports one of them — it would simply not be the one under test.
+     *
+     * `targeting.ts` carried such a copy for two milestones, byte-identical to
+     * the server's, on the reasoning that `client -> server` imports are banned.
+     * They are, and `shared/` was always the third option.
+     */
+    const dir = new URL('../../../src/', import.meta.url);
+    const offenders: string[] = [];
+    const walk = (at: URL): void => {
+      for (const entry of readdirSync(at, { withFileTypes: true })) {
+        const child = new URL(entry.name + (entry.isDirectory() ? '/' : ''), at);
+        if (entry.isDirectory()) {
+          walk(child);
+          continue;
+        }
+        if (!entry.name.endsWith('.ts')) continue;
+        if (child.pathname.endsWith('shared/sight.ts')) continue;
+        const text = readFileSync(child, 'utf8');
+        if (/function hasLineOfSight\s*\(/.test(text)) offenders.push(child.pathname);
+      }
+    };
+    walk(dir);
+    expect(offenders, 'a second line-of-sight trace exists — import shared/sight.ts').toEqual([]);
   });
 });

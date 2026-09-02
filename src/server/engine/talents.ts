@@ -124,7 +124,7 @@ import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, rescaleDamage } from '../../shared/scale.ts';
-import { hasLineOfSight } from '../world/world.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
 import { Faction, areEnemies, cooldownOf, setCooldown } from './actor.ts';
 import type { Sided } from './actor.ts';
 import { attackTarget, combatDistance } from './combat.ts';

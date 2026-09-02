@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// Ported from t-engine4 game/engines/default/engine/Actor.lua:47 (`self.sight = t.sight or 20`)
+// Ported from t-engine4 game/modules/tome/class/Actor.lua:178 (`t.sight = t.sight or 10`)
 //                       game/engines/default/engine/Actor.lua:520 (canSee: distance AND line)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
@@ -49,12 +49,77 @@
  * the diagonal corners of a square visible at 20 while the cardinal edge at 21
  * was not, which is the wrong shape for a torch.
  */
-export { DEFAULT_SIGHT_RADIUS } from './world.ts';
+import { blocksSightAt } from './level.ts';
+import { bresenham } from './coords.ts';
+import { fogHas } from './fog.ts';
+import type { LevelView } from './protocol.ts';
+import type { TileXY } from './coords.ts';
 
-import { DEFAULT_SIGHT_RADIUS, hasLineOfSight } from './world.ts';
-import type { LevelView } from '../../shared/protocol.ts';
-import type { TileXY } from '../../shared/coords.ts';
-import { fogHas } from '../../shared/fog.ts';
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR A BODY NOTICES THINGS — ported from `self.sight or 10`
+ * (Player.lua:854, inside `spotHostiles`).
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WHY THIS HAD TO EXIST BEFORE REST COULD ═══
+ * `hasLineOfSight` answers "is anything solid between these two tiles" and
+ * NOTHING ELSE — no range at all. On an open floor that is true across the whole
+ * map, so the first thing built on it that means "can see" rather than "can
+ * shoot" discovered the gap immediately: a rest was interrupted by a husk
+ * EIGHTEEN TILES AWAY, which on any open level means nobody can ever rest.
+ *
+ * Upstream never had that problem because its `spotHostiles` walks a
+ * `calc_circle` of radius `sight` and asks about line of sight only INSIDE it.
+ * This is that radius.
+ *
+ * ═══ A DEFAULT, NOT A CONSTANT ═══
+ * Upstream reads it off the actor (`self.sight`) and only falls back to 10, so
+ * blindness, a lit radius and a telescope all have somewhere to live. Nothing
+ * here carries a per-body sight yet, so every body uses this — and when one
+ * does, the name already says which end wins.
+ *
+ * ═══ AND IT IS NOT `aggroRange` ═══
+ * Monsters have their own (8 for a MeleeChaser, `AI_RANGES` in engine/actor.ts),
+ * and it is a different question: how far something will START HUNTING, tuned
+ * per profile so a pack does not all wake at once. This is how far a body can
+ * SEE, and the asymmetry is deliberate — a husk you can see from ten tiles has
+ * not necessarily noticed you.
+ */
+export const DEFAULT_SIGHT_RADIUS = 10;
+
+/**
+ * Line of sight between two tiles, walls blocking.
+ *
+ * Bresenham's symmetry is what makes this usable as a visibility test: the walk
+ * is done from a canonical endpoint and reversed, so `hasLineOfSight(a, b)` and
+ * `hasLineOfSight(b, a)` cannot disagree. Without that you get the oldest
+ * roguelike bug report there is — the archer shoots you through a corner you
+ * cannot shoot back through.
+ *
+ * Endpoints are excluded: standing IN a wall (a phasing monster, a door being
+ * opened) must not blind you, and the target's own tile is what you are looking
+ * at.
+ *
+ * FOV SEAM — CLOSED. This function used to trace with `canWalk`, and the note
+ * here said opacity and passability were the same thing "because every blocker
+ * on the M2 map is a wall", to be split "when glass, chasms and open doors
+ * arrive". Alderbrook's canal is that case: solid to a body, transparent to an
+ * eye. So the trace now asks `blocksSightAt`, which is the predicate protocol.ts
+ * keeps beside `isWalkable` precisely so the two cannot drift.
+ *
+ * NOTHING ON THE M1 MAP CHANGES. Its only blocker is WALL, which is opaque and
+ * solid in both predicates, so every existing FOV test still describes the same
+ * game — the split is observable only where WATER or BRIDGE exists.
+ */
+export function hasLineOfSight(level: LevelView, from: TileXY, to: TileXY): boolean {
+  const line = bresenham(from, to);
+  for (let i = 1; i < line.length - 1; i += 1) {
+    const tile = line[i];
+    if (tile === undefined) continue;
+    if (blocksSightAt(level, tile.x, tile.y)) return false;
+  }
+  return true;
+}
 
 /** `core.fov.distance` — the straight line between two tiles, in tiles. */
 export function sightDistance(from: TileXY, to: TileXY): number {

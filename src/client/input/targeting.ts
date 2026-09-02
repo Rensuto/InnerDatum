@@ -56,7 +56,8 @@
  * bare floor.
  */
 
-import { bresenham, DIR_VECTORS, inBounds } from '../../shared/coords.ts';
+import { DIR_VECTORS, inBounds } from '../../shared/coords.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
 import { blocksSightAt } from '../../shared/level.ts';
 import { TalentShape } from '../../shared/protocol.ts';
 import { MarkerKind } from '../render/canvas.ts';
@@ -159,48 +160,19 @@ function distance(a: TileXY, b: TileXY): number {
 }
 
 /**
- * WHAT BLOCKS SIGHT BLOCKS SIGHT. Endpoints excluded.
+ * SIGHT IS SHARED NOW. This file carried a byte-identical REIMPLEMENTATION of
+ * `hasLineOfSight`, whose docblock argued — correctly — that `client -> server`
+ * imports are banned, and concluded — wrongly — that copying was therefore the
+ * only option. It was not: the walk is `bresenham` over `blocksSightAt`, both
+ * already in `shared/`, so the rule could always have lived where both sides
+ * can reach it. It does now (`shared/sight.ts`), along with the sight RADIUS,
+ * which this file will want the day the ring is bounded by sight as well as by
+ * a talent's range.
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * IT SAID `=== TileCode.WALL`, AND THAT WAS A LIVE BUG ON THE OVERWORLD
- * ═══════════════════════════════════════════════════════════════════════════
- * The server's trace (`world.ts:199`) asks `blocksSightAt`, which is
- * `protocol.ts`'s closed-default predicate: MOUNTAIN, CRAG, TREES, roofs and
- * ERASED all stop an eye, and water does not. This file compared to ONE code.
- *
- * So on the 170x100 overworld — where `TileCode.WALL` does not appear at all —
- * the ring offered a clear shot straight through a mountain range, the player
- * took it, and the server refused with `NoLos`. The doc block below calls that
- * out as the one thing this reimplementation must never do: *"the ring never
- * offers a shot the server will refuse for a corner the player cannot see."*
- * It has been doing exactly that everywhere outside a two-code room.
- *
- * Interiors were the only place it was ever right, because every interior is
- * built out of FLOOR and WALL and nothing else. That stops being true the moment
- * a room's walls are trees or crag.
- *
- * A DELIBERATE REIMPLEMENTATION of `hasLineOfSight` in src/server/world/world.ts
- * — six lines over the shared, symmetric `bresenham`, which coords.ts says in as
- * many words exists for "line of sight, bolt paths and targeting previews". It
- * is not a second copy of a FORMULA: there is no arithmetic here that could
- * diverge into a wrong number, only the same integer walk over the same tile
- * array, and the alternative is a client that cannot draw the one thing M3's
- * definition of done asks it to draw. `client -> server` imports are banned and
- * correctly so.
- *
- * Bresenham's forced symmetry is what makes it usable: `los(a, b)` and
- * `los(b, a)` cannot disagree, so the ring never offers a shot the server will
- * refuse for a corner the player cannot see.
+ * The old note's reasoning about symmetry still holds and now holds ONCE:
+ * bresenham is walked from a canonical endpoint, so `los(a, b)` and `los(b, a)`
+ * cannot disagree, and the ring never offers a shot the server will refuse.
  */
-function hasLineOfSight(level: LevelView, from: TileXY, to: TileXY): boolean {
-  const line = bresenham(from, to);
-  for (let i = 1; i < line.length - 1; i += 1) {
-    const tile = line[i];
-    if (tile === undefined) continue;
-    if (blocksSightAt(level, tile.x, tile.y)) return false;
-  }
-  return true;
-}
 
 /**
  * Which tiles a talent stamps when aimed at `at`.

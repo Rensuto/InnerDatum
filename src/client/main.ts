@@ -2469,10 +2469,14 @@ function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null 
  * The same shape `RestView.threat` uses, so `bearingWord` serves the rest
  * sentence and the explore sentence without either converting.
  *
- * ═══ IT IS NOT LINE OF SIGHT, AND THE COMMENT IS THE HONEST PART ═══
- * The client has no LOS — `hasLineOfSight` is the server's, and this file may
- * not import it. So this bounds by DISTANCE and lets `exploreTarget` apply
- * `EXPLORE_SIGHT`.
+ * ═══ IT IS NOT LINE OF SIGHT, AND IT COULD BE NOW ═══
+ * This said *"the client has no LOS — `hasLineOfSight` is the server's, and this
+ * file may not import it"*. Both halves are false. `targeting.ts` had carried a
+ * byte-identical copy for two milestones, so the client always had one; and the
+ * trace now lives in `shared/sight.ts`, which this file may import like any
+ * other shared module. So the reason to bound by DISTANCE here is no longer that
+ * the answer is unavailable — it is simply that nothing has needed the sharper
+ * one yet. `exploreTarget` still applies `EXPLORE_SIGHT` on top.
  *
  * IT USED TO SAY `projectActors` *"sends them all today and says so"*. It no
  * longer does: FOV filters the actor list to what the party can see, so the

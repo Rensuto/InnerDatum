@@ -10,7 +10,7 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { actorsNamedBy, fogEvent } from '../../src/server/view/projector.ts';
-import { DEFAULT_SIGHT_RADIUS, sightDistance } from '../../src/server/world/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, sightDistance } from '../../src/shared/sight.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -18,7 +18,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { canWalk } from '../../src/shared/level.ts';
-import { hasLineOfSight } from '../../src/server/world/world.ts';
+import { hasLineOfSight } from '../../src/shared/sight.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { TurnEvent } from '../../src/shared/protocol.ts';
 import type { Realms } from '../../src/server/world/realms.ts';

@@ -87,7 +87,7 @@
  */
 
 import { checkHit } from '../../shared/checkhit.ts';
-import { hasLineOfSight } from '../world/world.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
 import { DamageType, applyDamage } from './damage.ts';
 import {
   combatAPR,

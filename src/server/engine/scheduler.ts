@@ -75,7 +75,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 import { raiseAlarm } from '../ai/alarm.ts';
 import { decideNpcAction } from '../ai/npc.ts';
 import type { MonsterCast } from '../ai/npc.ts';
-import { hasLineOfSight } from '../world/world.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
 import {
   HOLD_INTENT,
   IntentKind,

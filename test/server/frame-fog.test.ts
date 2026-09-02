@@ -19,7 +19,7 @@ import {
   projectProjectiles,
 } from '../../src/server/view/projector.ts';
 import { visibleActorIds } from '../../src/server/view/projector.ts';
-import { DEFAULT_SIGHT_RADIUS, knownTile, sightDistance } from '../../src/server/world/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, knownTile, sightDistance } from '../../src/shared/sight.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';

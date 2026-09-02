@@ -68,7 +68,7 @@ import {
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
-import { hasLineOfSight } from '../world/world.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
 import { effectDef, effectsOn } from '../engine/effects.ts';
 import type { EffectState } from '../engine/effects.ts';
 

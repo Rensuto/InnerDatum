@@ -212,7 +212,7 @@ import { membersOf, partyIdOf, sameParty } from '../engine/party.ts';
 // saves.ts's only reference back to this file is `import type`, so this arrow
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
-import { knownTile } from '../world/sight.ts';
+import { knownTile } from '../../shared/sight.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   fogEvent,

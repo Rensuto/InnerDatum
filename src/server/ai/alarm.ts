@@ -75,7 +75,7 @@
 import { PURSUIT_TURNS } from './npc.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { isHostile, isMonster } from '../engine/actor.ts';
-import { hasLineOfSight } from '../world/world.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
 import type { EngineActor, MonsterActor } from '../engine/actor.ts';
 import type { World } from '../world/world.ts';
 
