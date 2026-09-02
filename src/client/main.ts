@@ -152,6 +152,7 @@ import {
 import { MouseIntentKind, mouseIntentAt, travelTargetAllowed } from './input/mouseintent.ts';
 import { createTargeting } from './input/targeting.ts';
 import {
+  TravelHalt,
   TravelObservation,
   TravelStart,
   createTravel,
@@ -175,6 +176,7 @@ import {
   orbsAimedAt,
   soonestImpact,
 } from './state/projectiles.ts';
+import { orbsOnMyLine } from '../shared/flight.ts';
 import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
 import {
   charSheetHitAt,
@@ -5643,9 +5645,16 @@ async function boot(): Promise<void> {
    * of all — and a notice printed for every one of them would sit on top of the
    * server's own typed refusal, which is the one sentence with the number in it.
    */
-  cancelTravel = (why) => {
-    const wasWalking = travel !== null && travel.active();
-    travel?.cancel();
+  /**
+   * The tail of a stopped walk: drop the pending tick, say why, repaint.
+   *
+   * Extracted because there are TWO ways a walk ends and only one of them can
+   * use `cancelTravel`. When the machine halts ITSELF (`takeHalt`) it has
+   * already cleared its own state, so `cancelTravel` would find `active()`
+   * false and swallow the sentence — which is exactly how those four stops came
+   * to be silent in the first place.
+   */
+  function finishTravel(why?: string): void {
     // Unconditionally, even when nothing was walking: a pending tick for a walk
     // that has just been cancelled would wake up, find `active()` false and do
     // nothing — but a handle left set is a tick that never gets scheduled again.
@@ -5653,9 +5662,38 @@ async function boot(): Promise<void> {
       window.clearTimeout(travelTimer);
       travelTimer = 0;
     }
-    if (!wasWalking) return;
     if (why !== undefined) showNotice(why);
     requestDraw();
+  }
+
+  /** What the machine's own halts are called, in the player's words. */
+  const TRAVEL_HALT_TEXT: Readonly<Record<TravelHalt, string>> = {
+    [TravelHalt.Blocked]: 'the way ahead closed — travel stopped',
+    [TravelHalt.Occupied]: 'somebody is standing in the way — travel stopped',
+    [TravelHalt.Displaced]: 'you are not where the route left you — travel stopped',
+    [TravelHalt.Unexpected]: 'you moved off the route — travel stopped',
+  };
+
+  /** Say whatever the machine stopped itself for, if anything. */
+  function announceTravelHalt(): boolean {
+    const why = travel?.takeHalt() ?? null;
+    if (why === null) return false;
+    finishTravel(TRAVEL_HALT_TEXT[why]);
+    return true;
+  }
+
+  cancelTravel = (why) => {
+    const wasWalking = travel !== null && travel.active();
+    travel?.cancel();
+    // A reason the machine had queued is now moot — main.ts is stopping the walk
+    // for its own, already-phrased reason, and two sentences about one stop is
+    // worse than one.
+    travel?.takeHalt();
+    if (!wasWalking) {
+      finishTravel();
+      return;
+    }
+    finishTravel(why);
   };
 
   onSelfMoved = (x, y) => {
@@ -5671,7 +5709,10 @@ async function boot(): Promise<void> {
      * player cannot act on is just a walk that stopped.
      */
     const underfoot = ground.some((item) => item.cell[0] === x && item.cell[1] === y);
-    if (travel?.observeSelfMoved({ x, y }, underfoot) === TravelObservation.Notable) {
+    const seen = travel?.observeSelfMoved({ x, y }, underfoot);
+    // The `moved`-for-an-unasked-tile halt lives on this path, not the step one.
+    if (announceTravelHalt()) return;
+    if (seen === TravelObservation.Notable) {
       cancelTravel(`something on the ground here — ${keyHint('pickup')} to take it`);
     }
   };
@@ -5733,6 +5774,11 @@ async function boot(): Promise<void> {
     }
 
     const walk = travel.nextStep(travelWorld());
+    // BEFORE the null check, because a halt IS a null and the two are exactly
+    // what this call has to tell apart. `nextStep` returns null for half a dozen
+    // benign reasons too — no board yet, a step already in flight, the turn not
+    // yet ours — and none of those is a stop worth a sentence.
+    if (announceTravelHalt()) return;
     if (walk === null) return;
     nextStepAtMs = now + TRAVEL_STEP_MS;
     // A SEND THAT DID NOT HAPPEN MUST NOT LOOK LIKE A STEP IN FLIGHT. `send`
@@ -11741,6 +11787,26 @@ function applyServerMessage(msg: ServerMsg): void {
       // earlier — every turn, for as long as anything was in the air. The
       // refusal is the rarer and more urgent fact and it wins; the orb re-offers
       // its sentence on the next pump, because it is still coming.
+      /**
+       * ═══ AND A WALK STOPS FOR A SHOT ON ITS LINE — Player.lua:973 AND :1131 ═══
+       *
+       * OUTSIDE the `notice === null` gate below, deliberately. That gate is a
+       * PRIORITY rule about one line of text — whether the orb sentence may take
+       * a slot a server refusal wants — and whether a walk should stop has
+       * nothing to do with whether there is room to say so. Gating the cancel on
+       * it would mean a walk that carried on through a bolt because an unrelated
+       * refusal happened to be on screen.
+       *
+       * `orbsOnMyLine`, not `orbsAimedAt`: upstream stops a run for anything
+       * within 1.0 of the line of flight and still inbound, which includes the
+       * bolt that will pass a tile to your left. The narrower "aimed at this
+       * exact tile" question stays below, where it belongs — it is the sentence
+       * whose counterplay is "step off this square".
+       */
+      if (orbsOnMyLine(projectiles, selfTile()) > 0) {
+        cancelTravel('a shot is on its way — travel stopped');
+      }
+
       if (notice === null) {
         // AND HOW LONG YOU HAVE, which is the half of the sentence that says
         // whether moving is still an option. `turnsToImpact` has been computed

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  TRAVEL_ALERT_RADIUS,
+  TravelHalt,
   TravelObservation,
   TravelStart,
   createTravel,
@@ -486,27 +486,34 @@ describe('travel.observeTurn', () => {
 
 describe('hostileAlert', () => {
   const self: TileXY = { x: 5, y: 5 };
+  /**
+   * A LARGE OPEN FIELD, because the rule is `canSee` now and `canSee` needs a
+   * map. Open so that only DISTANCE decides these cases; the wall case gets its
+   * own fixture below, where the wall is the thing under test.
+   */
+  const FIELD: LevelView = { w: 40, h: 40, tiles: new Array<number>(40 * 40).fill(TileCode.FLOOR) };
   const sense = (
     inCombat: boolean,
     actors: readonly ActorView[],
     at: TileXY = self,
-  ): HostileSense => ({ inCombat, actors, self: at });
+    level: LevelView = FIELD,
+  ): HostileSense => ({ inCombat, actors, self: at, level });
 
   it('is quiet on a steady state', () => {
     const near = sense(true, [husk('m1', 7, 7)]);
-    expect(hostileAlert(near, near, TRAVEL_ALERT_RADIUS)).toBe(false);
+    expect(hostileAlert(near, near)).toBe(false);
   });
 
   it('fires when inCombat crosses false -> true', () => {
     // `anyContact` arms the engagement clock the moment a monster has line of
     // sight and is inside its own aggro range.
-    expect(hostileAlert(sense(false, []), sense(true, []), TRAVEL_ALERT_RADIUS)).toBe(true);
+    expect(hostileAlert(sense(false, []), sense(true, []))).toBe(true);
   });
 
   it('fires when a live hostile enters the radius', () => {
     const before = sense(false, [husk('m1', 29, 29)]);
     const after = sense(false, [husk('m1', 7, 7)]);
-    expect(hostileAlert(before, after, TRAVEL_ALERT_RADIUS)).toBe(true);
+    expect(hostileAlert(before, after)).toBe(true);
   });
 
   /**
@@ -525,7 +532,7 @@ describe('hostileAlert', () => {
     // was already true at both ends.
     const before = sense(true, stationary, { x: 5, y: 5 });
     const after = sense(true, stationary, { x: 13, y: 5 });
-    expect(hostileAlert(before, after, TRAVEL_ALERT_RADIUS)).toBe(true);
+    expect(hostileAlert(before, after)).toBe(true);
   });
 
   it('stays quiet while the traveller walks with a hostile already in range', () => {
@@ -536,17 +543,46 @@ describe('hostileAlert', () => {
     const stationary = [husk('m1', 10, 5)];
     const before = sense(true, stationary, { x: 5, y: 5 });
     const after = sense(true, stationary, { x: 6, y: 5 });
-    expect(hostileAlert(before, after, TRAVEL_ALERT_RADIUS)).toBe(false);
+    expect(hostileAlert(before, after)).toBe(false);
   });
 
-  it('ignores a corpse entering the radius', () => {
+  it('fires for a hostile at NINE tiles, which the old radius of 8 missed', () => {
+    /**
+     * The gap the constant left. `TRAVEL_ALERT_RADIUS` was 8 and answered "how
+     * far can something notice ME"; the question travel asks is "what have I
+     * just noticed", which upstream bounds by SIGHT (Player.lua:854). A husk
+     * that walked into view at nine tiles down a corridor used to be watched in
+     * silence while the walk carried on toward it.
+     */
+    const before = sense(false, [husk('m1', 30, 5)]);
+    const after = sense(false, [husk('m1', 14, 5)]);
+    expect(hostileAlert(before, after)).toBe(true);
+  });
+
+  it('stays quiet for one that is close but behind a wall', () => {
+    /**
+     * And the half a radius could never express at all: chebyshev has no idea
+     * what a wall is. Two tiles away through solid rock is not a sighting, and
+     * a walk that stopped for it would stop in every corridor in the game.
+     */
+    const walled = mapOf(['##########', '#....#...#', '#....#...#', '#....#...#', '##########']);
+    const at: TileXY = { x: 3, y: 2 };
+    const before = sense(false, [], at, walled);
+    const after = sense(false, [husk('m1', 7, 2)], at, walled);
+    expect(hostileAlert(before, after)).toBe(false);
+    // ...and the control: the SAME distance with no wall between does fire.
+    const open2 = sense(false, [husk('m1', 7, 2)], at, FIELD);
+    expect(hostileAlert(sense(false, [], at, FIELD), open2)).toBe(true);
+  });
+
+  it('ignores a corpse entering sight', () => {
     const after = sense(false, [husk('m1', 6, 6, false)]);
-    expect(hostileAlert(sense(false, []), after, TRAVEL_ALERT_RADIUS)).toBe(false);
+    expect(hostileAlert(sense(false, []), after)).toBe(false);
   });
 
   it('ignores a player entering the radius', () => {
     const after = sense(false, [detective('p2', 6, 6)]);
-    expect(hostileAlert(sense(false, []), after, TRAVEL_ALERT_RADIUS)).toBe(false);
+    expect(hostileAlert(sense(false, []), after)).toBe(false);
   });
 });
 
@@ -602,5 +638,92 @@ describe('a walk that crosses something worth stopping for', () => {
 
     expect(travel.observeSelfMoved({ x: 2, y: 3 }, true)).toBe(TravelObservation.Continue);
     expect(travel.active()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// takeHalt() — the four stops that used to say nothing
+// ---------------------------------------------------------------------------
+
+describe('travel.takeHalt', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A WALK THAT STOPS WITHOUT A SENTENCE IS A DROPPED INPUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Four conditions cancelled the walk and returned `null`, main.ts's driver
+   * returned on `null`, and the route line vanished with nothing said. The
+   * cancels were right — the reasoning is beside each one — but none of them
+   * ever argued for the silence, and main.ts's own header calls a refusal that
+   * never reaches the player the worst failure mode in a turn-based game.
+   */
+  function walking() {
+    const travel = createTravel();
+    travel.begin({ from: { x: 2, y: 2 }, to: { x: 6, y: 2 }, level: OPEN, stopShort: false });
+    return travel;
+  }
+
+  it('says nothing while the walk is going fine', () => {
+    const travel = walking();
+    expect(travel.nextStep(world())).toEqual({ dir: 'e' });
+    expect(travel.takeHalt()).toBeNull();
+  });
+
+  it('reports a route tile that stopped being walkable', () => {
+    const travel = walking();
+    const shut = mapOf(['##########', '#........#', '#..#.....#', '#........#', '##########']);
+    // The wall is at (3,2), one east of the traveller.
+    expect(travel.nextStep(world({ level: shut }))).toBeNull();
+    expect(travel.takeHalt()).toBe(TravelHalt.Blocked);
+  });
+
+  it('reports a body standing on the next route tile', () => {
+    const travel = walking();
+    expect(travel.nextStep(world({ actors: [husk('m1', 3, 2)] }))).toBeNull();
+    expect(travel.takeHalt()).toBe(TravelHalt.Occupied);
+  });
+
+  it('reports being somewhere the route does not expect', () => {
+    // Shoved, teleported or resynced: the route is about somebody else's
+    // position now, and re-routing them somewhere they did not ask for is the
+    // one thing a travel system must never do.
+    const travel = walking();
+    expect(travel.nextStep(world({ self: { x: 8, y: 6 } }))).toBeNull();
+    expect(travel.takeHalt()).toBe(TravelHalt.Displaced);
+  });
+
+  it('reports a move to a tile it never asked for', () => {
+    const travel = walking();
+    expect(travel.nextStep(world())).toEqual({ dir: 'e' });
+    travel.observeSelfMoved({ x: 2, y: 5 });
+    expect(travel.takeHalt()).toBe(TravelHalt.Unexpected);
+  });
+
+  it('gives the reason ONCE, so a polling driver cannot repeat it', () => {
+    // Read-and-clear: the reason describes a TRANSITION. A sticky field would
+    // re-announce the same stop on every tick after it.
+    const travel = walking();
+    travel.nextStep(world({ actors: [husk('m1', 3, 2)] }));
+    expect(travel.takeHalt()).toBe(TravelHalt.Occupied);
+    expect(travel.takeHalt()).toBeNull();
+  });
+
+  it('does not carry a stale reason into the next walk', () => {
+    const travel = walking();
+    travel.nextStep(world({ actors: [husk('m1', 3, 2)] }));
+    travel.begin({ from: { x: 2, y: 2 }, to: { x: 5, y: 2 }, level: OPEN, stopShort: false });
+    expect(travel.takeHalt(), 'a new walk owes no explanation for the last one').toBeNull();
+  });
+
+  it('stays quiet when MAIN cancels, because main has already said why', () => {
+    /**
+     * `cancel` is the public verb and main.ts calls it for reasons it has
+     * already phrased ("you were hit — travel stopped"). A halt queued here
+     * would make the driver announce the same stop again, one frame later, in
+     * different words.
+     */
+    const travel = walking();
+    travel.cancel();
+    expect(travel.takeHalt()).toBeNull();
   });
 });

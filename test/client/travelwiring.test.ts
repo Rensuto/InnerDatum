@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  TRAVEL_ALERT_RADIUS,
   TravelObservation,
   TravelStart,
   createTravel,
@@ -401,9 +400,8 @@ describe('the three interrupts the machine detects for itself', () => {
     // one implementation and this is it.
     expect(
       hostileAlert(
-        { inCombat: false, actors: [], self },
-        { inCombat: false, actors: arrived, self },
-        TRAVEL_ALERT_RADIUS,
+        { inCombat: false, actors: [], self, level: OPEN },
+        { inCombat: false, actors: arrived, self, level: OPEN },
       ),
     ).toBe(true);
     expect(travel.observeTurn(world({ actors: arrived }))).toBe(TravelObservation.Hostile);

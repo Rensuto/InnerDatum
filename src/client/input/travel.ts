@@ -86,8 +86,9 @@
  * which is idempotent precisely so eleven call sites can all be careless.
  */
 
-import { DIR_ORDER, chebyshev, sameTile, step } from '../../shared/coords.ts';
+import { DIR_ORDER, sameTile, step } from '../../shared/coords.ts';
 import { canWalk } from '../../shared/level.ts';
+import { canSee } from '../../shared/sight.ts';
 import { findPath } from '../../shared/path.ts';
 import { ActorKind, TurnActorState } from '../../shared/protocol.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -122,16 +123,32 @@ function travelMaxNodes(level: LevelView): number {
 }
 
 /**
- * How close a hostile has to be for travel to stop — see `hostileAlert`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THERE IS NO TRAVEL RADIUS ANY MORE. `hostileAlert` ASKS `canSee`.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * 8 because that is the authored `aggroRange` of the M2 monsters
- * (src/server/content/monsters.ts:248 and :350) and it is the same number
- * `anyContact` uses to arm the engagement clock (scheduler.ts:1539). Lining the
- * two up means the radius arm and the `inCombat` arm of the alert tend to fire
- * on the SAME turn, so the walk stops as the thing notices you rather than a
- * turn or two after it started closing.
+ * `TRAVEL_ALERT_RADIUS` was 8, measured with `chebyshev`, and the reasoning was
+ * sound for the game it was written in: 8 is the authored `aggroRange` of the M2
+ * monsters (monsters.ts:248, :350) and the number `anyContact` arms the
+ * engagement clock with (scheduler.ts:1539), so the radius arm and the
+ * `inCombat` arm tended to fire on the same turn.
+ *
+ * TWO THINGS MADE IT WRONG. It answers "how far can something notice ME", and
+ * the question travel asks is "what have I just NOTICED" — upstream stops a run
+ * for anything `spotHostiles` returns, which is bounded by sight, not by the
+ * monster's aggro range (Player.lua:854). And the client used to be sent every
+ * actor on the map, so a radius was the only filter available; since FOV the
+ * list is already fogged and the radius is a second, narrower one on top.
+ *
+ * The two did not line up in either direction. A husk that walks into view at 9
+ * tiles down a corridor never tripped it, so the walk carried on toward
+ * something the player could see; and chebyshev 8 on a pure diagonal is
+ * euclidean 11.3, further than the server would ever have sent.
+ *
+ * So the rule is `canSee` from `shared/sight.ts` — the same function the FOV
+ * projection and the rest check spend, at the same radius, measured the same
+ * way. One sight rule.
  */
-export const TRAVEL_ALERT_RADIUS = 8;
 
 /** What `begin` did. Three answers, never conflated — see path.ts:303-311. */
 export const TravelStart = {
@@ -168,6 +185,38 @@ export type TravelStart = (typeof TravelStart)[keyof typeof TravelStart];
  * `error` frame (see `PumpResult.refusals`), and travel interrupt 10 keys off
  * that instead — main.ts's `case 'error'` already calls `cancel()`.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY THE MACHINE STOPPED ITSELF. FOUR CANCELS THAT USED TO SAY NOTHING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `nextStep` and `observeSelfMoved` can each decide the route is no longer
+ * walkable and cancel on the spot. The reasoning for cancelling is written out
+ * beside each one and is right — *"the plan the player agreed to no longer
+ * exists, and re-routing them somewhere they did not ask for is the one thing a
+ * travel system must never do"* — but none of them ever argued for the SILENCE.
+ *
+ * They returned `null`, main.ts's driver returned on `null`, and the route line
+ * vanished with nothing in the log or the status line. main.ts's own header
+ * calls a refusal that never reaches the player the worst failure mode in a
+ * turn-based game, and travel broke that rule four times.
+ *
+ * A CODE, NOT A SENTENCE, because main.ts owns travel's prose — every other
+ * stop is a `cancelTravel('...')` there, and splitting the voice across two
+ * modules is how two of them end up phrased differently.
+ */
+export const TravelHalt = {
+  /** The next route tile stopped being walkable — a door closed, terrain moved. */
+  Blocked: 'blocked',
+  /** A body is standing on the next route tile. */
+  Occupied: 'occupied',
+  /** We are not where the route says we are: shoved, teleported or resynced. */
+  Displaced: 'displaced',
+  /** A `moved` frame arrived for a tile the machine never asked for. */
+  Unexpected: 'unexpected',
+} as const;
+export type TravelHalt = (typeof TravelHalt)[keyof typeof TravelHalt];
+
 export const TravelObservation = {
   Continue: 'continue',
   /** Something hostile arrived. See `hostileAlert`. */
@@ -224,6 +273,13 @@ export type Travel = {
   /** Idempotent. Safe to call when nothing is travelling — most callers do. */
   readonly cancel: () => void;
   /** THE ONLY PRODUCER OF A STEP. Null means "not this frame", not "never". */
+  /**
+   * Why the machine stopped ITSELF since this was last asked, or null.
+   *
+   * Read-and-clear. The driver asks after every `nextStep` and after every
+   * `observeSelfMoved`, because either can halt, and main.ts owns the sentence.
+   */
+  readonly takeHalt: () => TravelHalt | null;
   readonly nextStep: (world: TravelWorld) => { readonly dir: Dir } | null;
   /**
    * A `moved` frame naming the viewer arrived.
@@ -257,6 +313,12 @@ export type HostileSense = {
    * old news — see that function's header.
    */
   readonly self: TileXY;
+  /**
+   * The map, because the rule this feeds is now `canSee` and `canSee` asks
+   * about walls. Nullable for the same reason `TravelWorld.level` is: there is
+   * a window before the first board arrives, and a walk cannot be running in it.
+   */
+  readonly level: LevelView | null;
 };
 
 /**
@@ -326,18 +388,23 @@ export function liveActorAt(actors: readonly ActorView[], tile: TileXY): ActorVi
  * becomes "an id in `next.actors` that was not in `prev.actors` at all", and
  * every caller and every other rule in this file stays exactly as it is.
  */
-export function hostileAlert(prev: HostileSense, next: HostileSense, radius: number): boolean {
+export function hostileAlert(prev: HostileSense, next: HostileSense): boolean {
   if (!prev.inCombat && next.inCombat) return true;
 
-  const before = new Set<string>();
-  for (const actor of prev.actors) {
-    if (!actor.alive || !isHostileBody(actor)) continue;
-    if (chebyshev(prev.self, actor) <= radius) before.add(actor.id);
-  }
-  for (const actor of next.actors) {
-    if (!actor.alive || !isHostileBody(actor)) continue;
-    if (chebyshev(next.self, actor) > radius) continue;
-    if (!before.has(actor.id)) return true;
+  const spotted = (sense: HostileSense): Set<string> => {
+    const out = new Set<string>();
+    if (sense.level === null) return out;
+    for (const actor of sense.actors) {
+      if (!actor.alive || !isHostileBody(actor)) continue;
+      if (!canSee(sense.level, sense.self, actor)) continue;
+      out.add(actor.id);
+    }
+    return out;
+  };
+
+  const before = spotted(prev);
+  for (const id of spotted(next)) {
+    if (!before.has(id)) return true;
   }
   return false;
 }
@@ -383,6 +450,8 @@ export function createTravel(): Travel {
    * not news, they could see it.
    */
   let sense: HostileSense | null = null;
+  /** Set by `halt`, drained by `takeHalt`. See `TravelHalt`. */
+  let pendingHalt: TravelHalt | null = null;
   /**
    * The `gameTurn` the last step this machine issued was stamped against, or
    * null before it has issued any.
@@ -403,11 +472,38 @@ export function createTravel(): Travel {
     sense = null;
   }
 
+  /**
+   * Cancel AND leave a reason for main.ts to say out loud.
+   *
+   * Separate from `cancel` on purpose: `cancel` is also the PUBLIC verb, called
+   * when main.ts stops the walk for a reason it already knows and has already
+   * phrased. Setting a halt there would make the driver announce a stop the
+   * player had just been told about, one frame later, in different words.
+   */
+  function halt(why: TravelHalt): void {
+    cancel();
+    pendingHalt = why;
+  }
+
+  /**
+   * The reason, once. Read-and-clear because it describes a TRANSITION, and a
+   * driver that polled a sticky field would re-announce the same stop on every
+   * tick after it.
+   */
+  function takeHalt(): TravelHalt | null {
+    const why = pendingHalt;
+    pendingHalt = null;
+    return why;
+  }
+
   function active(): boolean {
     return destination !== null;
   }
 
   function begin(opts: TravelBegin): TravelStart {
+    // A NEW WALK OWES NO EXPLANATION FOR THE LAST ONE. Draining here means a
+    // reason nobody read cannot surface against a route it was never about.
+    pendingHalt = null;
     const { from, to, level, stopShort } = opts;
     cancel();
 
@@ -485,11 +581,11 @@ export function createTravel(): Travel {
     // plan the player agreed to no longer exists, and re-routing them somewhere
     // they did not ask for is the one thing a travel system must never do.
     if (!canWalk(level, next.x, next.y)) {
-      cancel();
+      halt(TravelHalt.Blocked);
       return null;
     }
     if (liveActorAt(world.actors, next) !== undefined) {
-      cancel();
+      halt(TravelHalt.Occupied);
       return null;
     }
 
@@ -501,7 +597,7 @@ export function createTravel(): Travel {
     if (dir === undefined) {
       // We are not standing where the route says we are — shoved, teleported,
       // or resynced. The route is about somebody else's position now.
-      cancel();
+      halt(TravelHalt.Displaced);
       return null;
     }
 
@@ -520,7 +616,7 @@ export function createTravel(): Travel {
     // respawn). The server put us somewhere else, so the rest of the path is a
     // route from a tile we are not on.
     if (want === null || !sameTile(want, at)) {
-      cancel();
+      halt(TravelHalt.Unexpected);
       return TravelObservation.Continue;
     }
 
@@ -569,20 +665,21 @@ export function createTravel(): Travel {
     if (!active()) return TravelObservation.Continue;
 
     const self = world.self;
-    // No body on the board. Nothing to measure a radius from — and recording an
+    // No body on the board. Nothing to look out FROM — and recording an
     // observation with a guessed tile would make the NEXT one a false alarm.
     if (self === null) return TravelObservation.Continue;
 
     const now: HostileSense = {
       inCombat: world.turn?.inCombat ?? false,
       actors: world.actors,
+      level: world.level,
       self,
     };
     const before = sense;
     sense = now;
 
     if (before === null) return TravelObservation.Continue;
-    if (!hostileAlert(before, now, TRAVEL_ALERT_RADIUS)) return TravelObservation.Continue;
+    if (!hostileAlert(before, now)) return TravelObservation.Continue;
 
     cancel();
     return TravelObservation.Hostile;
@@ -592,6 +689,7 @@ export function createTravel(): Travel {
     begin,
     active,
     cancel,
+    takeHalt,
     nextStep,
     observeSelfMoved,
     observeTurn,

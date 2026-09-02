@@ -159,6 +159,7 @@ import { DamageType, applyDamage } from './damage.ts';
 import type { OnHitStatus } from './actor.ts';
 import { combatArmor, combatArmorHardiness } from './derived.ts';
 import type { TileXY } from '../../shared/coords.ts';
+import { onFlightPath } from '../../shared/flight.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -850,18 +851,14 @@ export const DEFAULT_PROJECTILE_DAMAGE_TYPE = DamageType.Physical;
  * the situation a body should stand up for.
  */
 export function orbOnMyLine(proj: Projectile, self: TileXY): boolean {
-  const start = proj.origin;
-  const aim = aimTile(proj);
-  const at = currentTile(proj);
-
-  // `core.fov.distance(sx, sy, tx, ty)` — the divisor of upstream's formula. A
-  // zero-length flight has no line to be near; it also cannot be inbound.
-  const flight = Math.sqrt((aim.x - start.x) ** 2 + (aim.y - start.y) ** 2);
-  if (flight === 0) return false;
-
-  const distToLine =
-    Math.abs((self.x - start.x) * (aim.y - start.y) - (self.y - start.y) * (aim.x - start.x)) /
-    flight;
-  const ourWay = (self.x - at.x) * (aim.x - at.x) + (self.y - at.y) * (aim.y - at.y) > 0;
-  return ourWay && distToLine < 1;
+  // THE GEOMETRY IS `shared/flight.ts` NOW, because the CLIENT needs the same
+  // answer to stop a walk and cannot import this file. Upstream stops both a
+  // rest and a run by one rule (`spotHostiles` with `actors_only` false at
+  // Player.lua:973 and :1131); having two copies of it here would have been the
+  // fourth duplicated rule in as many days.
+  //
+  // The origin is passed because that is what the Lua divides by. The client
+  // passes the orb's CURRENT tile, which lies on the same line and so names the
+  // same perpendicular distance — see `onFlightPath`.
+  return onFlightPath(proj.origin, aimTile(proj), currentTile(proj), self);
 }
