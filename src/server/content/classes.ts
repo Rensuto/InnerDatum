@@ -156,6 +156,7 @@ import { TALENT_TREES, treeById } from './talent-trees.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
+  gainResource,
   ClassId,
   RESOURCE_RULES,
   ResourceKind,
@@ -1701,6 +1702,8 @@ export function createTalentBook(
   resourceOf(actor: Actor): ResourceView | undefined;
   /** Per-game-turn trickle on that pool. See `TalentBook.poolRegenOf`. */
   poolRegenOf(actor: Actor): number;
+  /** Add to that pool, clamped. See `TalentBook.gainPool`. */
+  gainPool(actor: Actor, amount: number): number;
   check(actor: Actor, talentId: string, target: TileXY | undefined): RefusalCode | null;
 } {
   return {
@@ -1855,6 +1858,18 @@ export function createTalentBook(
     resourceOf: (actor: Actor): ResourceView | undefined => {
       const sheet = engine.sheetOf(actor.id);
       return sheet === undefined ? undefined : toResourceView(sheet);
+    },
+    /**
+     * THE ONE WRITE, and it goes through `gainResource` rather than touching
+     * `pool.value` — that function is where the clamp to the ceiling lives, and
+     * a second copy of it here is how a pool ends up over its own maximum.
+     *
+     * A body with no sheet gains nothing rather than throwing: the rest loop
+     * walks every player in the realm and a classless one is a real state.
+     */
+    gainPool: (actor: Actor, amount: number): number => {
+      const sheet = engine.sheetOf(actor.id);
+      return sheet === undefined ? 0 : gainResource(sheet.resource, amount);
     },
 
     /**

@@ -20,6 +20,7 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { DEFAULT_SIGHT_RADIUS } from '../../src/shared/sight.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
 import { REST_MAX_TURNS, RestStop, restStopText } from '../../src/shared/rest.ts';
+import { RESOLVE_PER_TURN } from '../../src/server/engine/talents.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
 import { BLEEDING } from '../../src/server/content/effects.ts';
 import { createRng } from '../../src/shared/rng.ts';
@@ -46,6 +47,11 @@ function scene(name: string) {
   const world = createWorld(name);
   world.level.tiles.fill(TileCode.FLOOR);
   const talents = createContentTalentEngine();
+  // The BOOK, kept so a test can reach its one write (`gainPool`). `talents`
+  // above is the ENGINE — a distinction that cost a green test asserting
+  // nothing, because `engine.gainPool` does not exist and the optional call
+  // silently answered undefined.
+  const book = createTalentBook(talents, world);
   const downed = createDownedState();
   const parties = createPartyState();
   // The catalogue the rest's own affliction arm reads, and what lets a bleed
@@ -56,7 +62,7 @@ function scene(name: string) {
     downed,
     parties,
     effects,
-    talents: createTalentBook(talents, world),
+    talents: book,
     talentRuntime: talentRuntimeFor(talents, world),
   });
 
@@ -70,7 +76,17 @@ function scene(name: string) {
   // hand out, and the state a player standing about actually sits in is the one
   // after that has been spent.
   engine.pump();
-  return { world, engine, body, talents, downed, parties, effects, sheet: talents.sheetOf('p1') };
+  return {
+    world,
+    engine,
+    body,
+    talents,
+    book,
+    downed,
+    parties,
+    effects,
+    sheet: talents.sheetOf('p1'),
+  };
 }
 
 describe('rest passes turns the way holding would, without the hundred keys', () => {
@@ -416,6 +432,47 @@ describe('a rest heals the whole party', () => {
     expect(ratio, 'part of the healing was paid at the wrong Constitution').toBeCloseTo(1.5, 2);
   });
 
+  it('fills a TEAMMATE`s pool at the rest`s rate too', () => {
+    /**
+     * Upstream's loop pays `incStamina`/`incMana`/`incPsi` to every member in
+     * the same breath as the heal (Player.lua:983-993) — the pool half is not
+     * the rester's alone any more than the hit points are.
+     *
+     * Measured on the TEAMMATE's pool rather than the rester's, because that is
+     * the half a mutation confining the payment to `self` would quietly drop.
+     */
+    const { engine, body, talents, mate } = party('rest-party-pool');
+    body.hp = 10;
+    /**
+     * AND NOT STANDING NEXT TO THE RESTER. Resolve's own clause builds it "when
+     * struck and when adjacent to an ally" (`regenResource`), and `party` places
+     * the teammate one tile away — so the pool refilled from ADJACENCY and a
+     * mutation confining the rest bonus to the rester passed twice before this
+     * line existed.
+     */
+    mate.x = 15;
+    mate.y = 15;
+    const mine = talents.sheetOf('p2')?.resource;
+    expect(mine, 'the teammate needs a class with a pool').toBeDefined();
+    if (mine === undefined) return;
+    /**
+     * DRAINED INTO THE WINDOW BETWEEN THE TWO RATES, which is narrower than it
+     * looks and took three tries to land in.
+     *
+     * The rest runs about twenty-seven turns (it ends when the RESTER's hit
+     * points are full). Flat, Resolve trickles 0.6 a turn — sixteen points in
+     * that time. Accelerated it is `0.6 x restBonus(turn)`, which ramps, and
+     * comes to roughly forty. So thirty is short enough for the bonus to finish
+     * and too deep for the trickle: at ninety NEITHER could, and the correct
+     * code failed alongside the mutation.
+     */
+    mine.value = mine.max - 30;
+
+    engine.rest('p1');
+
+    expect(mine.value, 'the teammate was left on the flat trickle').toBe(mine.max);
+  });
+
   it('heals nobody who is down, which is what makes standing them up urgent', () => {
     // Upstream's guard is `hasEntity(act) and not act.dead`.
     const { engine, world, body, mate, downed } = party('rest-party-downed');
@@ -618,5 +675,94 @@ describe('a rest stops when something lands a hit', () => {
     // Every stop has a sentence — `restStopText`. A rest that ended for a reason
     // the player cannot see is a rest that looks broken.
     expect(restStopText({ rest: false, stop: RestStop.Hurt }, 4, 'here')).toContain('hit');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The pool accelerates too — Player.lua:983-993
+// ---------------------------------------------------------------------------
+
+describe('a rest fills the pool at the rest`s rate', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * RESTING FOR FOCUS NEARLY RAN OUT OF BUDGET.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream pays `incStamina`/`incMana`/`incPsi` at the same `perc` as the
+   * heal, in the same loop over the same members (Player.lua:983-993). Ours
+   * accelerated hit points and nothing else, for anybody.
+   *
+   * `restCheck` keeps resting while a pool can still rise, and Focus trickles at
+   * `FOCUS_PER_TURN` — 0.2 x `TOME_ACTIONS_PER_TURN`, so 0.4 a turn. Sixty
+   * points took a hundred and fifty turns against a `REST_MAX_TURNS` of two
+   * hundred. The symptom is the LENGTH of the rest, so that is what this
+   * measures.
+   */
+  it('reaches a full pool in far fewer turns than the flat trickle needs', () => {
+    const { engine, body, sheet } = scene('rest-pool');
+    // Full health, so the rest is entirely about the pool and cannot end early
+    // on hit points.
+    body.hp = body.maxHp;
+    const pool = sheet?.resource;
+    expect(pool, 'the fixture needs a class with a pool').toBeDefined();
+    if (pool === undefined) return;
+
+    const missing = 60;
+    pool.value = pool.max - missing;
+    const trickle = RESOLVE_PER_TURN;
+    expect(trickle, 'a pool with no trickle cannot be accelerated').toBeGreaterThan(0);
+    const flatTurns = missing / trickle;
+
+    const result = engine.rest('p1');
+
+    expect(pool.value, 'the rest did not finish the job').toBe(pool.max);
+    // NOT "fewer than 150" — derived, so a change to the trickle or the pool
+    // cannot leave this asserting a number that no longer means anything.
+    expect(
+      result.turns,
+      `filling ${String(missing)} at ${String(trickle)} a turn is ${String(flatTurns)} turns flat; ` +
+        `an accelerated rest must be materially shorter`,
+    ).toBeLessThan(flatTurns / 2);
+  });
+
+  it('and the write seam clamps, so a pool cannot exceed its ceiling', () => {
+    /**
+     * TESTED DIRECTLY, because a rest cannot reach the overshoot. The ORDINARY
+     * per-turn trickle runs first and fills the last fraction before the
+     * accelerated payment is due (`restBonus(0)` is 0 — the first turn of a rest
+     * is worth an ordinary one), so through `engine.rest` the clamp is never
+     * exercised and a mutation deleting it sails through.
+     *
+     * `gainPool` is the only WRITE on `TalentBook`, and it delegates to
+     * `gainResource` precisely so the ceiling lives in one place.
+     */
+    const { world, book, sheet } = scene('rest-pool-clamp');
+    const pool = sheet?.resource;
+    const body = world.getActor('p1');
+    if (pool === undefined || body === undefined) return;
+    pool.value = pool.max - 1;
+
+    const landed = book.gainPool(body, 10_000);
+
+    expect(pool.value, 'the pool went over its own ceiling').toBe(pool.max);
+    expect(landed, 'and it reports what actually landed, not what was asked for').toBe(1);
+  });
+
+  it('and does not push a pool past its ceiling over a whole rest', () => {
+    // `gainResource` owns the clamp, which is why `gainPool` goes through it
+    // rather than touching `pool.value`.
+    const { engine, body, sheet } = scene('rest-pool-cap');
+    // HURT, so the rest actually runs — and the pool a WHISKER short, so the
+    // first payment overshoots the ceiling. Setting it exactly full made the
+    // rest end before `gainPool` was ever called, and a mutation removing the
+    // clamp sailed through.
+    body.hp = body.maxHp - 20;
+    const pool = sheet?.resource;
+    if (pool === undefined) return;
+    pool.value = pool.max - 0.1;
+
+    engine.rest('p1');
+
+    expect(pool.value, 'the pool went over its own ceiling').toBe(pool.max);
   });
 });

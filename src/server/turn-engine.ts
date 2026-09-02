@@ -155,6 +155,15 @@ export type TalentBook = {
    */
   poolRegenOf?(actor: Actor): number;
   /**
+   * Add to that pool, clamped to its ceiling. Returns what actually landed.
+   *
+   * THE ONLY WRITE ON THIS INTERFACE, and it exists for one caller: a rest pays
+   * the accelerated trickle to every party member (`Player.lua:983-993` pays
+   * `incStamina`/`incMana`/`incPsi` beside the heal). Everything else here
+   * READS, because the talent engine owns spending.
+   */
+  gainPool?(actor: Actor, amount: number): number;
+  /**
    * THE AUTHORITATIVE LEGALITY CHECK, when one exists. Null means legal.
    *
    * OPTIONAL, AND THE REASON IS WORTH THE PARAGRAPH. `canUseTalent` in
@@ -2514,18 +2523,52 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         if (bonus > 0) {
           for (const member of world.allActors()) {
             if (member.kind !== ActorKind.Player || !member.alive) continue;
-            if (member.hp >= member.maxHp) continue;
             // AND THE HEALING FACTOR, on `actBase`'s terms: this is the SAME
             // `life_regen` upstream multiplies by `healing_factor` at
             // Actor.lua:2055, just paid at the rest's accelerated rate. Without
             // it a rest and an ordinary turn would disagree about what
             // Constitution is worth, which is the kind of split nobody notices.
-            const factor = bound(
-              healingFactor(member.combat ?? {}),
-              HEAL_FACTOR_MIN,
-              HEAL_FACTOR_MAX,
-            );
-            member.hp = Math.min(member.maxHp, member.hp + member.hpRegen * bonus * factor);
+            /**
+             * THE FULL-HEALTH GUARD COVERS THE HEAL ONLY, and putting it a line
+             * higher was a real bug that a test caught: the pool payment below
+             * sat inside it, so a body at full health got no acceleration at all
+             * — which is the COMMON case, since a player who has healed up and
+             * is still resting is resting for the pool.
+             */
+            if (member.hp < member.maxHp) {
+              const factor = bound(
+                healingFactor(member.combat ?? {}),
+                HEAL_FACTOR_MIN,
+                HEAL_FACTOR_MAX,
+              );
+              member.hp = Math.min(member.maxHp, member.hp + member.hpRegen * bonus * factor);
+            }
+
+            /**
+             * ═══════════════════════════════════════════════════════════════
+             * AND THE POOL, WHICH UPSTREAM ACCELERATES IN THE SAME BREATH.
+             * ═══════════════════════════════════════════════════════════════
+             *
+             * `Player.lua:983-993` pays `incStamina`, `incMana` and `incPsi` at
+             * the same `perc` as the heal, on the same members. Ours accelerated
+             * hit points and nothing else — for anybody, including the rester.
+             *
+             * IT IS NOT A SMALL DIFFERENCE. `restCheck` keeps resting while a
+             * pool can still rise, and Focus trickles at 0.4 a turn: filling
+             * sixty points took a hundred and fifty turns of real game clock
+             * against a `REST_MAX_TURNS` of two hundred, where upstream's cap
+             * would take about nineteen. A rest for Focus was a rest that
+             * nearly ran out of budget.
+             *
+             * ═══ AND IT IS A PORT, NOT A BALANCE CHANGE ═══
+             * DECISIONS.md refuses WIL→pool at length, and the argument there is
+             * about pool SIZE — *"ours is EARNED so a bigger pool is only more
+             * banking"*. This is the TRICKLE, which three of our four pools
+             * already have and which already runs every turn; resting only pays
+             * it faster, exactly as it already does for hit points.
+             */
+            const trickle = talents.poolRegenOf?.(member) ?? 0;
+            if (trickle > 0) talents.gainPool?.(member, trickle * bonus);
           }
         }
 
