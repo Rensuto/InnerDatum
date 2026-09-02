@@ -816,3 +816,52 @@ export function aimTile(proj: Projectile): TileXY {
 
 /** The default an attack with no authored damage type deals. Combat.lua:396. */
 export const DEFAULT_PROJECTILE_DAMAGE_TYPE = DamageType.Physical;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THIS ORB COMING AT ME? THE TEST THAT BREAKS A REST.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from Player.lua:872-882, inside `spotHostiles`. Upstream stops a rest
+ * for a PROJECTILE as well as for a monster, and ours only ever looked at
+ * bodies — so a detective could sit and regenerate while a bolt crossed the
+ * room at them, which is the exact moment resting is worst.
+ *
+ * ═══ AND IT IS NOT "IS THERE AN ORB IN SIGHT" — THAT IS THE TUNING ═══
+ * Two terms, both from upstream, and together they mean "on my line, still
+ * inbound":
+ *
+ *   dist_to_line  the PERPENDICULAR distance from the body to the orb's line of
+ *                 flight, `< 1.0`. An orb crossing the far side of the room on
+ *                 its way somewhere else does not interrupt anybody. Upstream's
+ *                 own comment gives the reason it is a line test and not a tile
+ *                 test: *"Bresenham is too so check if we're anywhere near the
+ *                 mathematical line of flight"* — the drawn path is a staircase
+ *                 and the real trajectory is not.
+ *
+ *   our_way       a DOT PRODUCT from the orb's current tile: is the body on the
+ *                 same side as the target? An orb that has already passed you is
+ *                 not a threat, and without this term every shot that ever flew
+ *                 down your corridor would keep you standing.
+ *
+ * ═══ "TRUST OURSELVES BUT NOT OUR FRIENDS" ═══
+ * Upstream's words, at :868. Your own shot never interrupts you; a TEAMMATE'S
+ * does. That is not an oversight — a friend firing along your line is exactly
+ * the situation a body should stand up for.
+ */
+export function orbOnMyLine(proj: Projectile, self: TileXY): boolean {
+  const start = proj.origin;
+  const aim = aimTile(proj);
+  const at = currentTile(proj);
+
+  // `core.fov.distance(sx, sy, tx, ty)` — the divisor of upstream's formula. A
+  // zero-length flight has no line to be near; it also cannot be inbound.
+  const flight = Math.sqrt((aim.x - start.x) ** 2 + (aim.y - start.y) ** 2);
+  if (flight === 0) return false;
+
+  const distToLine =
+    Math.abs((self.x - start.x) * (aim.y - start.y) - (self.y - start.y) * (aim.x - start.x)) /
+    flight;
+  const ourWay = (self.x - at.x) * (aim.x - at.x) + (self.y - at.y) * (aim.y - at.y) > 0;
+  return ourWay && distToLine < 1;
+}

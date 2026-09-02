@@ -22,7 +22,7 @@
  * counters, the countdown's start time) must outlive any single pump.
  */
 
-import { chebyshev, inBounds, step } from '../shared/coords.ts';
+import { inBounds, step } from '../shared/coords.ts';
 import { bound } from '../shared/scale.ts';
 import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './engine/derived.ts';
 import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
@@ -87,7 +87,9 @@ import type {
 } from './net/gateway.ts';
 import { toDisplayName } from './view/projector.ts';
 import type { TurnState } from './view/projector.ts';
-import { DEFAULT_SIGHT_RADIUS, hasLineOfSight } from './world/world.ts';
+import { hasLineOfSight } from './world/world.ts';
+import { canSee, sightDistance } from './world/sight.ts';
+import { currentTile, orbOnMyLine } from './engine/projectile.ts';
 import type { Actor, World } from './world/world.ts';
 
 /**
@@ -1437,19 +1439,49 @@ function buildRestView(
   let best = Infinity;
   for (const other of world.allActors()) {
     if (other === self || !other.alive || !isHostile(self, other)) continue;
-    // `chebyshev` and `hasLineOfSight` are the same pair `visibleEnemies` uses
-    // for monster aggro (scheduler.ts:3772-3785) — one measure of "can see", so
-    // a rest cannot end for a husk that could not have noticed you, or continue
-    // through one that has.
-    const dist = chebyshev(self, other);
-    // RANGE FIRST, then walls. `hasLineOfSight` alone is unbounded — see
-    // `DEFAULT_SIGHT_RADIUS`, which exists because this call site found that out
-    // the hard way: on open floor every husk on the level was "in sight" and no
-    // rest could ever begin.
-    if (dist > DEFAULT_SIGHT_RADIUS) continue;
-    if (dist >= best || !hasLineOfSight(world.level, self, other)) continue;
+    /**
+     * ONE SIGHT RULE, and this call site no longer spells its own.
+     *
+     * It used to measure with `chebyshev` and then test `hasLineOfSight`
+     * separately — the pair `visibleEnemies` uses for monster AGGRO, which is a
+     * different question. Upstream asks this one with `core.fov.calc_circle`
+     * (Player.lua:854), a CIRCLE, so a husk at a diagonal 10 was interrupting
+     * rests here at a true distance of 14. `canSee` is that circle plus the
+     * wall test, and it is the same function the FOV projection spends.
+     */
+    const dist = sightDistance(self, other);
+    if (dist >= best || !canSee(world.level, self, other)) continue;
     best = dist;
     threat = { name: toDisplayName(other.name), dx: other.x - self.x, dy: other.y - self.y };
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND A SHOT ALREADY IN THE AIR. Player.lua:861-885, the half we never had.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `spotHostiles` takes an `actors_only` flag and rest passes it FALSE, so
+   * upstream stops a rest for an inbound projectile as well as for a body. Ours
+   * scanned actors alone, which meant a detective could sit regenerating while a
+   * bolt crossed the room at them — the precise moment resting is worst.
+   *
+   * The geometry is `orbOnMyLine` (engine/projectile.ts), which carries the two
+   * terms and the reason for each. Here: your own shot is trusted, a friend's is
+   * not, and the orb must be somewhere you can actually see.
+   */
+  for (const proj of world.projectilesInFlight()) {
+    if (proj.landed || proj.sourceId === self.id) continue;
+    const at = currentTile(proj);
+    if (!canSee(world.level, self, at)) continue;
+    if (!orbOnMyLine(proj, self)) continue;
+    // NEAREST WINS, shared with the actor pass above, so the sentence names
+    // whichever thing is closest rather than whichever was scanned last.
+    const dist = sightDistance(self, at);
+    if (dist >= best) continue;
+    best = dist;
+    // Upstream names the projectile (`proj:getName() or proj.name`); ours have
+    // no names, and "a shot" is what the Record lane calls one everywhere else.
+    threat = { name: 'a shot', dx: at.x - self.x, dy: at.y - self.y };
   }
 
   /**
