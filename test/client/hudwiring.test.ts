@@ -746,8 +746,12 @@ describe('auto-explore walks through the travel system', () => {
      * copy of those rules would be a second traveller, and the first one to
      * drift would be the one that stops for monsters.
      */
-    const start = at('case TurnCommand.Explore: {');
-    const arm = CODE.slice(start, CODE.indexOf('case TurnCommand.Rest:', start));
+    // SLICED AT `exploreLeg` NOW, not at the key's case arm. The body moved out
+    // of the switch when auto-explore became continuous, because the ARRIVAL
+    // calls the same leg the key does — the whole point being that there is one
+    // explorer and not two.
+    const start = at('function exploreLeg(): void {');
+    const arm = CODE.slice(start, CODE.indexOf('function beginTravel(', start));
     expect(arm).toContain('exploreTarget({');
     expect(arm).toContain('beginTravel(answer.to, false)');
     // NO FRAME OF ITS OWN. The server is never told an explore happened; it sees
@@ -758,16 +762,62 @@ describe('auto-explore walks through the travel system', () => {
   it('asks the SAME walkability question the verb menu greys its row on', () => {
     // "Somewhere I can walk" is one question and must have one answer, or the
     // explorer aims at a tile travel will then refuse.
-    const start = at('case TurnCommand.Explore: {');
-    const arm = CODE.slice(start, CODE.indexOf('case TurnCommand.Rest:', start));
+    // SLICED AT `exploreLeg` NOW, not at the key's case arm. The body moved out
+    // of the switch when auto-explore became continuous, because the ARRIVAL
+    // calls the same leg the key does — the whole point being that there is one
+    // explorer and not two.
+    const start = at('function exploreLeg(): void {');
+    const arm = CODE.slice(start, CODE.indexOf('function beginTravel(', start));
     expect(arm).toContain('travelTargetAllowed(here, { x, y })');
+  });
+
+  it('is CONTINUOUS: the arrival asks for the next frontier', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONE PRESS USED TO BUY ONE FRONTIER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream's `checkAutoExplore` runs INSIDE `runStep` (PlayerExplore.lua)
+     * and re-plans until something stops it; ours ran `exploreTarget` once at
+     * the keypress and handed the result to travel, so a floor was a dozen
+     * presses.
+     *
+     * The loop must be the SAME leg the key calls — a second explorer with its
+     * own stopping rules is exactly what the design note in `exploreLeg`
+     * forbids — so this pins that `onSelfMoved` calls `exploreLeg` and does not
+     * grow a copy of the flood.
+     */
+    // BOUNDED BY THE NEXT DECLARATION, not by a character count: a fixed slice
+    // ran past the end of `onSelfMoved` and swallowed `exploreLeg` itself, so
+    // the "no second flood" assertion below failed against the very function it
+    // is meant to permit.
+    const start = at('onSelfMoved = (x, y) => {');
+    const body = CODE.slice(start, CODE.indexOf('function cancelTravelIfActive', start));
+    expect(body, 'the arrival must re-plan through the same leg').toContain('exploreLeg()');
+    expect(body, 'and only while an explore is what is walking').toContain('exploring');
+    expect(body, 'a second flood here would be a second explorer').not.toContain('exploreTarget(');
+  });
+
+  it('drops the latch on every ending that is not an arrival', () => {
+    // Otherwise an ordinary click-to-walk finishing would ask for a frontier
+    // nobody requested. `finishTravel` is the one door every non-arrival stop
+    // goes through; the hostile arm cancels inside the machine and so has to
+    // drop it itself.
+    const stop = at('function finishTravel(');
+    expect(CODE.slice(stop, stop + 400)).toContain('exploring = false');
+    const hostile = at('case TravelObservation.Hostile:');
+    expect(CODE.slice(hostile, hostile + 400)).toContain('exploring = false');
   });
 
   it('refuses in words rather than doing nothing', () => {
     // Three reasons and three sentences — see `exploreStopText`. A key that
     // appears to do nothing is indistinguishable from one that is not bound.
-    const start = at('case TurnCommand.Explore: {');
-    const arm = CODE.slice(start, CODE.indexOf('case TurnCommand.Rest:', start));
+    // SLICED AT `exploreLeg` NOW, not at the key's case arm. The body moved out
+    // of the switch when auto-explore became continuous, because the ARRIVAL
+    // calls the same leg the key does — the whole point being that there is one
+    // explorer and not two.
+    const start = at('function exploreLeg(): void {');
+    const arm = CODE.slice(start, CODE.indexOf('function beginTravel(', start));
     expect(arm).toContain('exploreStopText(');
     expect(arm).toContain('bearingWord(');
   });

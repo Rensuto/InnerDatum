@@ -949,6 +949,19 @@ function setMarginText(speaker: string | undefined, text: string): void {
 
 const actors = new Map<string, ActorView>();
 let level: LevelView | null = null;
+
+/**
+ * Is the current walk a leg of an auto-explore?
+ *
+ * Set by the key, dropped by every ending that is not an arrival — see
+ * `exploreLeg`. Without it, an ordinary click-to-walk finishing would ask for a
+ * frontier nobody requested.
+ *
+ * MODULE SCOPE, beside `level`, because the two readers are in different
+ * closures: `exploreLeg` and `finishTravel` live in the input closure, and the
+ * hostile arm that has to drop the latch is in `applyServerMessage`.
+ */
+let exploring = false;
 let selfId: string | null = null;
 /**
  * WHERE THIS CLIENT IS, as the server last stated it.
@@ -5663,6 +5676,9 @@ async function boot(): Promise<void> {
    * to be silent in the first place.
    */
   function finishTravel(why?: string): void {
+    // ANY stop that is not an arrival ends the chain. Arrival is the one path
+    // that does not come through here, which is exactly the distinction.
+    exploring = false;
     // Unconditionally, even when nothing was walking: a pending tick for a walk
     // that has just been cancelled would wake up, find `active()` false and do
     // nothing — but a handle left set is a tick that never gets scheduled again.
@@ -5722,6 +5738,39 @@ async function boot(): Promise<void> {
     if (announceTravelHalt()) return;
     if (seen === TravelObservation.Notable) {
       cancelTravel(`something on the ground here — ${keyHint('pickup')} to take it`);
+      return;
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ARRIVED, AND STILL EXPLORING — ASK FOR THE NEXT FRONTIER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream's `checkAutoExplore` runs INSIDE `runStep` and re-plans until
+     * something stops it; ours explored one frontier per keypress, so a floor
+     * was a dozen presses. This is that loop, and it is the same `exploreLeg`
+     * the key calls — no second walker, which is the rule the design note in
+     * `exploreLeg` sets out.
+     *
+     * ARRIVAL IS `active()` GOING FALSE, which `observeSelfMoved` documents as
+     * the caller's signal ("a normal end rather than an interrupt"). Every OTHER
+     * ending drops `exploring` on its way out, so reaching here with the latch
+     * still set means the walk finished rather than stopped.
+     *
+     * ═══ EXCEPT ON LOOT, WHICH IS AN ARRIVAL WORTH STOPPING FOR ═══
+     * `exploreTarget` aims AT item tiles, so the arrival check inside
+     * `observeSelfMoved` deliberately fires before its `Notable` arm — arriving
+     * on a coat is the plan working. But re-planning immediately would walk
+     * straight off it, and the player would never be told the thing they were
+     * routed to is under their feet. Upstream stops at items too.
+     */
+    if (exploring && travel !== null && !travel.active()) {
+      if (underfoot) {
+        exploring = false;
+        showNotice(`something on the ground here — ${keyHint('pickup')} to take it`);
+        return;
+      }
+      exploreLeg();
     }
   };
 
@@ -5807,6 +5856,71 @@ async function boot(): Promise<void> {
    * are standing on it) and "no route" (a sentence, because an unreachable tile
    * looks identical to a click that did not register).
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE LEG OF AN AUTO-EXPLORE — `RUN_AUTO`, Game.lua:2064-2098.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * NO FRAME GOES OUT. `input/explore.ts` picks a tile and the existing travel
+   * system walks to it, which is the whole design: travel already stops for a
+   * hostile coming into view, for being hit, for a refusal from the server and
+   * for a disconnect, and an explorer with its own copy of those rules would be
+   * a second traveller whose stopping rules drift from the first.
+   *
+   * ═══ AND THE ARRIVAL ASKS FOR THE NEXT LEG, WHICH IS WHY THIS IS A FUNCTION ═══
+   * It was inline in the keypress, so one press explored one frontier and the
+   * player pressed again at every corner. Upstream does not: `checkAutoExplore`
+   * is called from INSIDE `runStep` (PlayerExplore.lua) and re-plans until
+   * something stops it.
+   *
+   * The re-plan is the SAME call, from `onSelfMoved`, and that is the whole of
+   * the loop — still no second walker. It ends by itself, because every way a
+   * floor can be finished is already an `exploreTarget` refusal: nothing left
+   * unseen, or something in sight. `exploring` is the latch, and every path that
+   * ends a walk without arriving drops it.
+   */
+  function exploreLeg(): void {
+    const me = selfTile();
+    if (me === null || level === null || currentRealmId === null) {
+      showNotice('the floor has not arrived yet');
+      exploring = false;
+      return;
+    }
+    // CAPTURED, because `level` is a mutable module binding and the predicate
+    // below is a closure — TypeScript is right to refuse the narrowing, and a
+    // frame landing mid-flood would be a real hazard.
+    const here = level;
+    const answer = exploreTarget({
+      from: me,
+      w: here.w,
+      h: here.h,
+      // THE SAME PREDICATE THE VERB MENU GREYS ITS TRAVEL ROW ON, so
+      // "somewhere I can walk" is one question with one answer.
+      passable: (x, y) => travelTargetAllowed(here, { x, y }),
+      seen: explored.get(currentRealmId) ?? new Set<string>(),
+      items: ground
+        .filter((item) => item.cell[0] !== me.x || item.cell[1] !== me.y)
+        .map((item) => ({ x: item.cell[0], y: item.cell[1] })),
+      threat: nearestVisibleHostile(me),
+    });
+    if (!answer.go) {
+      showNotice(
+        exploreStopText(
+          answer.stop,
+          answer.threat === undefined ? 'here' : bearingWord(answer.threat.dx, answer.threat.dy),
+          answer.threat?.name,
+        ),
+      );
+      exploring = false;
+      return;
+    }
+    beginTravel(answer.to, false);
+    // NO ROUTE, or already standing on it. `beginTravel` has said whatever there
+    // is to say; what matters here is that a chain cannot spin on a leg that
+    // never started.
+    if (travel === null || !travel.active()) exploring = false;
+  }
+
   function beginTravel(to: TileXY, stopShort: boolean): void {
     const from = selfTile();
     if (travel === null || from === null || level === null) {
@@ -8528,57 +8642,11 @@ async function boot(): Promise<void> {
         case TurnCommand.Hold:
           socket.send({ v: PROTOCOL_VERSION, t: 'hold' });
           return;
-        case TurnCommand.Explore: {
-          /**
-           * ═══════════════════════════════════════════════════════════════════
-           * AUTO-EXPLORE — `RUN_AUTO`, Game.lua:2064-2098.
-           * ═══════════════════════════════════════════════════════════════════
-           *
-           * NO FRAME GOES OUT. `input/explore.ts` picks a tile and the existing
-           * travel system walks to it, which is the whole design: travel already
-           * stops for a hostile coming into view, for being hit, for a refusal
-           * from the server and for a disconnect, and an explorer with its own
-           * copy of those rules would be a second traveller whose stopping rules
-           * drift from the first.
-           */
-          const me = selfTile();
-          if (me === null || level === null || currentRealmId === null) {
-            showNotice('the floor has not arrived yet');
-            return;
-          }
-          // CAPTURED, because `level` is a mutable module binding and the
-          // predicate below is a closure — TypeScript is right to refuse the
-          // narrowing, and a frame landing mid-flood would be a real hazard.
-          const here = level;
-          const near = nearestVisibleHostile(me);
-          const answer = exploreTarget({
-            from: me,
-            w: here.w,
-            h: here.h,
-            // THE SAME PREDICATE THE VERB MENU GREYS ITS TRAVEL ROW ON, so
-            // "somewhere I can walk" is one question with one answer.
-            passable: (x, y) => travelTargetAllowed(here, { x, y }),
-            seen: explored.get(currentRealmId) ?? new Set<string>(),
-            items: ground
-              .filter((item) => item.cell[0] !== me.x || item.cell[1] !== me.y)
-              .map((item) => ({ x: item.cell[0], y: item.cell[1] })),
-            threat: near,
-          });
-          if (!answer.go) {
-            showNotice(
-              exploreStopText(
-                answer.stop,
-                answer.threat === undefined
-                  ? 'here'
-                  : bearingWord(answer.threat.dx, answer.threat.dy),
-                answer.threat?.name,
-              ),
-            );
-            return;
-          }
-          beginTravel(answer.to, false);
+        case TurnCommand.Explore:
+          // ONE LEG, AND THEN THE ARRIVAL ASKS FOR THE NEXT — see `exploreLeg`.
+          exploring = true;
+          exploreLeg();
           return;
-        }
         case TurnCommand.Rest:
           // ONE FRAME FOR THE WHOLE REST. The server decides how many turns pass
           // and stops for the right reasons (`restCheck`); the client's only job
@@ -11376,6 +11444,9 @@ function applyServerMessage(msg: ServerMsg): void {
       // the notice's timer lives inside boot().
       switch (travel?.observeTurn(travelWorld()) ?? TravelObservation.Continue) {
         case TravelObservation.Hostile:
+          // `observeTurn` has already cancelled the machine, so this does not go
+          // through `finishTravel` and has to drop the latch itself.
+          exploring = false;
           onRefusal('something is moving nearby — travel stopped');
           break;
         case TravelObservation.Notable:
