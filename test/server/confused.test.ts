@@ -13,11 +13,16 @@ import {
   createTalentBook,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
-import { CONFUSE_POWER, EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
+import {
+  CONFUSE_FLOOR,
+  CONFUSE_POWER,
+  EffectId,
+  createMvpEffectState,
+} from '../../src/server/content/effects.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
-import { setEffect } from '../../src/server/engine/effects.ts';
+import { grantImmunity, setEffect } from '../../src/server/engine/effects.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -312,5 +317,83 @@ describe('a confused talent fails, and the turn goes with it', () => {
     const muddledLanded = swing(muddled, 40);
 
     expect(muddledLanded, 'confusion cost the caster nothing').toBeLessThan(clearLanded);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Immunity — mental.lua:78-79, the subtype that pays twice
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply until it sticks, and report the power that landed.
+ *
+ * ═══ THE RETRY IS THE POINT, NOT A WORKAROUND ═══
+ * Confusion immunity feeds `canBe` as well, so an immune body REFUSES some
+ * applications outright — that is the first of its two payments and is already
+ * covered by `immunity.test.ts`. This file is about the second, so it keeps
+ * asking until one lands and then reads how strong it was.
+ */
+function landedPower(scene: ReturnType<typeof floor>, asked?: number): number {
+  for (let i = 0; i < 200; i += 1) {
+    const out = setEffect(
+      scene.effects,
+      scene.body,
+      EffectId.Confused,
+      20,
+      asked === undefined ? {} : { power: asked },
+      scene.world.rng,
+    );
+    if (out.dur > 0) return scene.body.combat?.flags?.confused ?? 0;
+  }
+  throw new Error('two hundred applications and none of them landed');
+}
+
+describe('confusion immunity makes it weaker as well as rarer', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `mental.lua:78-79` — THE ONLY IMMUNITY IN THE GAME THAT PAYS TWICE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     eff.power = math.floor(math.max(eff.power - (self:attr("confusion_immune") or 0) * 100, 10))
+   *     eff.power = util.bound(eff.power, 0, 50)
+   *
+   * Every other subtype only feeds `canBe`: a chance the status does not land.
+   * Against a base chance of fifty percent that alone would make twenty points
+   * of immunity worth almost nothing — a fifth of the landings refused and no
+   * difference whatever to the four fifths that stick. This is what makes
+   * ` of Plain Reading` worth a slot.
+   */
+  it('lands at fifty on a body with no immunity, which is the control', () => {
+    const scene = floor('confuse-bare');
+    expect(landedPower(scene)).toBe(CONFUSE_POWER);
+  });
+
+  it('subtracts the immunity from the power that lands', () => {
+    const scene = floor('confuse-immune');
+    grantImmunity(scene.effects, 'p1', 'confusion', 20);
+    expect(landedPower(scene)).toBe(CONFUSE_POWER - 20);
+  });
+
+  it('never grinds it below ten, however much is worn', () => {
+    /**
+     * `math.max(..., 10)`. Total immunity comes from `canBe` refusing the effect
+     * outright, never from taking the power to nothing — keeping the two apart
+     * is what stops one deep affix from quietly deleting a status the bestiary
+     * is built around.
+     *
+     * NINETY RATHER THAN A HUNDRED, because at a hundred `canBe` refuses every
+     * application and the loop above would never find one to measure. That is
+     * the separation working, and it is why this asks at ninety.
+     */
+    const scene = floor('confuse-floored');
+    grantImmunity(scene.effects, 'p1', 'confusion', 90);
+    expect(landedPower(scene)).toBe(CONFUSE_FLOOR);
+  });
+
+  it('and the ceiling still bounds a caller who asked for more', () => {
+    // `util.bound(eff.power, 0, 50)` runs AFTER the subtraction, so it bounds
+    // the CALLER rather than the immunity's work.
+    const scene = floor('confuse-ceiling');
+    expect(landedPower(scene, 90)).toBe(CONFUSE_POWER);
   });
 });

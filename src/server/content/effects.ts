@@ -51,6 +51,7 @@
  * new object in this file.
  */
 
+import { bound } from '../../shared/scale.ts';
 import { DamageType, applyDamage } from '../engine/damage.ts';
 import {
   EffectStatus,
@@ -58,6 +59,7 @@ import {
   StackMode,
   createEffectState,
   effectModifiers,
+  immunityAgainst,
   lockoutTalents,
 } from '../engine/effects.ts';
 import type { EffectDef, EffectHookArgs, EffectInstance, EffectState } from '../engine/effects.ts';
@@ -186,6 +188,16 @@ export const BLEED_POWER = 3;
  * chance, so the mechanic keeps meaning what it means everywhere else.
  */
 export const CONFUSE_POWER = 50;
+
+/**
+ * The least confusion this path may leave — `mental.lua:78`'s `math.max(..., 10)`.
+ *
+ * However much `confusion_immune` is worn, the POWER never falls below one step
+ * in ten. Total immunity is `canBe`'s job (it refuses the effect outright), and
+ * keeping the two apart is what stops a single deep affix from quietly deleting
+ * a status the bestiary is built around.
+ */
+export const CONFUSE_FLOOR = 10;
 
 /**
  * physical.lua:500 — `for i = 1, 3 do ... end`. Three talents, not four.
@@ -1051,9 +1063,51 @@ export const CONFUSED: EffectDef = Object.freeze({
     // :80 — `addTemporaryValue("confused", eff.power)`.
     confusedPercent: CONFUSE_POWER,
   },
-  // :74 — kept so the log and the tooltip can print the chance; the modifier
-  // above is what the engine reads.
+  // :74 — AND IT IS WHAT THE ENGINE READS. `effectModifiers` prefers this
+  // instance's `power` over the definition's, because `activate` below lowers
+  // it; see the note there and at the composer.
   parameters: { power: CONFUSE_POWER },
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `mental.lua:78-79` — IMMUNITY MAKES IT WEAKER AS WELL AS RARER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * eff.power = math.floor(math.max(eff.power - (self:attr("confusion_immune") or 0) * 100, 10))
+   * eff.power = util.bound(eff.power, 0, 50)
+   * ```
+   *
+   * CONFUSION IS THE ONLY STATUS IN THE GAME WHOSE IMMUNITY PAYS TWICE. Every
+   * other subtype only feeds `canBe` — a chance the thing does not land at all.
+   * This one is subtracted from the landed instance's own power as well, so a
+   * body wearing ` of Plain Reading` shrugs it off more often AND is less
+   * confused when it does not.
+   *
+   * That is not a generosity, it is what makes the affix worth a slot: against
+   * a base chance of fifty percent, twenty points of `canBe` alone would be a
+   * fifth of the landings refused and no difference whatever to the four fifths
+   * that stick.
+   *
+   * ═══ THE FLOOR IS TEN, AND IT IS UPSTREAM'S ═══
+   * `math.max(..., 10)` — so this path can never take confusion below one step
+   * in ten, however much immunity is worn. Total immunity comes from `canBe`
+   * refusing it outright, never from grinding the power to nothing; that
+   * separation is what stops one deep affix from deleting a status.
+   *
+   * ═══ AND THE CEILING IS FIFTY ═══
+   * `util.bound(eff.power, 0, 50)` runs AFTER the subtraction, so it bounds a
+   * caller who asked for more rather than the immunity's work. Applied in the
+   * same order here.
+   */
+  activate: ({ state, actor, eff }: EffectHookArgs): void => {
+    const asked = Number(eff.params['power'] ?? CONFUSE_POWER);
+    // `immunityAgainst` composes the WORN sheet with anything an effect granted
+    // and bounds the pair to 0..100 — upstream's single `confusion_immune`
+    // attr, which is a percentage there expressed as a fraction (`* 100`).
+    const immune = immunityAgainst(state, actor, 'confusion');
+    eff.params.power = bound(Math.floor(Math.max(asked - immune, CONFUSE_FLOOR)), 0, CONFUSE_POWER);
+  },
 } satisfies EffectDef);
 
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([

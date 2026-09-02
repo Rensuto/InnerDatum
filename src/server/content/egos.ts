@@ -639,6 +639,43 @@ const SUFFIXES: readonly Ego[] = [
     grants: { immunities: { cut: { floor: 5, step: 2 } } },
     cost: 55,
   },
+  {
+    code: 'pr',
+    name: ' of Plain Reading',
+    tag: EgoSlotTag.Suffix,
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ANSWER TO BEING SCRAMBLED — and it is worth more per point than the
+     * other two immunities, because of what upstream does with it.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * An archivist's idiom for a document that cannot be misread. `CONFUSED`
+     * (content/effects.ts) is the status that takes the step you asked for and
+     * puts it somewhere else, and it is the only one in the game that does.
+     *
+     * ═══ IT PAYS TWICE, WHICH IS WHY IT IS THE RAREST OF THE THREE ═══
+     * `Shockproof` and ` of Whole Cloth` buy one thing: a chance `canBe` refuses
+     * the status outright. This buys that AND `mental.lua:78`'s power
+     * subtraction — `power = max(power - confusion_immune * 100, 10)` — so 20%
+     * here is a fifth of the landings refused and every survivor arriving at 30%
+     * confusion instead of 50%. That second half is upstream's, not an
+     * invention, and it is the whole reason partial confusion immunity is worth
+     * a slot when the base chance is a coin flip.
+     *
+     * SAME `{floor: 5, step: 2}` GRID AS THE OTHER TWO, capped at
+     * `MAX_ITEM_IMMUNITY` like everything else — the extra value is in the
+     * mechanic, not in a bigger number, so the cap stays comparable and the
+     * RARITY is what prices it.
+     *
+     * LEVEL 8 RATHER THAN 5, matching `Shockproof`: nothing in the game confuses
+     * you until an Index Eidolon does, and those live in the thickets rather
+     * than on the first road out of town.
+     */
+    rarity: 10,
+    levelRange: [8, 50],
+    grants: { immunities: { confusion: { floor: 5, step: 2 } } },
+    cost: 60,
+  },
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * THE ANSWER TO A BESTIARY THAT RESISTS YOU. `resists_pen` reaches content.

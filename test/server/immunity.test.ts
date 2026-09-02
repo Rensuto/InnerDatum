@@ -346,9 +346,19 @@ describe('a player can actually FIND one', () => {
       carrying,
       'egos roll but resolve to nothing — see resolve.ts#immunities',
     ).toBeGreaterThan(0);
-    // Both authored subtypes are reachable, and neither exceeds what one slot
-    // may carry. `5 + 2 × 3 × 3 = 23` is the ego cap arithmetic.
-    expect([...seen.keys()].sort()).toEqual(['cut', 'stun']);
+    /**
+     * All THREE authored subtypes are reachable, and none exceeds what one slot
+     * may carry. `5 + 2 × 3 × 3 = 23` is the ego cap arithmetic.
+     *
+     * `confusion` is the newest and this line is the reason it is trusted:
+     * adding a `Wielder` channel is a SIX-place checklist, and the place that
+     * has been missed before is `content/resolve.ts`'s field-by-field ego merge
+     * — the immunity channel rolled 532 times in a 5,938-item sample and every
+     * one resolved to nothing, with five of six layers correct. This test rolls
+     * real loot through the real roller and the real resolver, so a channel that
+     * reaches no player fails here rather than in play.
+     */
+    expect([...seen.keys()].sort()).toEqual(['confusion', 'cut', 'stun']);
     for (const [key, value] of seen) {
       expect(value, `${key} resolved above the cap`).toBeLessThanOrEqual(MAX_ITEM_IMMUNITY);
     }

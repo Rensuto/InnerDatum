@@ -53,9 +53,27 @@ export const IMMUNITY_KEYS = Object.freeze([
   'slow',
   'acid',
   'temporal',
+  /**
+   * THE EIGHTH, AND IT ARRIVED WITH THE STATUS RATHER THAN BEFORE IT.
+   *
+   * `CONFUSED` (content/effects.ts) shipped one commit without this key on
+   * purpose: an immunity subtype with no ego granting it is a channel with
+   * nothing pointed at it, which is the failure this whole list was written to
+   * end. The ego (` of Plain Reading`) lands in the same commit as the key.
+   *
+   * ═══ IT IS THE ONE SUBTYPE THAT DOES TWO THINGS ═══
+   * Every other key here only feeds `canBe` — a chance the status does not land
+   * at all. `mental.lua:78` ALSO subtracts it from the effect's own power:
+   * `power = max(power - confusion_immune * 100, 10)`. So a body wearing this
+   * both shrugs confusion off more often AND is less confused when it does not.
+   * Upstream is the only reason to believe that, and it is worth believing: it
+   * is what makes partial confusion immunity feel like anything at all, given
+   * the base chance is a coin flip.
+   */
+  'confusion',
 ] as const);
 
-/** One of the seven. `Wielder.immunities` is keyed by this. */
+/** One of the eight. `Wielder.immunities` is keyed by this. */
 export type ImmunitySubtype = (typeof IMMUNITY_KEYS)[number];
 
 /**

@@ -846,7 +846,7 @@ export function immunityOf(state: EffectState, actorId: string, key: string): nu
  * ADDITIVE between the two sources and then bounded, which is what upstream's
  * single `stun_immune` attr is: one number every source adds into.
  */
-function immunityAgainst(state: EffectState, actor: EffectActor, key: string): number {
+export function immunityAgainst(state: EffectState, actor: EffectActor, key: string): number {
   const worn = actor.combat?.immunities?.[key] ?? 0;
   return bound(immunityOf(state, actor.id, key) + worn, 0, 100);
 }
@@ -1778,7 +1778,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
   let movementSpeedAdd = 0;
   let confusedPercent = 0;
 
-  for (const effectId of table.keys()) {
+  for (const [effectId, live] of table) {
     const mods = state.defs.get(effectId)?.modifiers;
     if (mods === undefined) continue;
     stunned = stunned || mods.stunned === true;
@@ -1790,7 +1790,25 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     apPenalty += mods.apPenalty ?? 0;
     mpPenalty += mods.mpPenalty ?? 0;
     movementSpeedAdd += mods.movementSpeedAdd ?? 0;
-    confusedPercent += mods.confusedPercent ?? 0;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE MODIFIER READ OFF THE INSTANCE RATHER THAN THE DEFINITION.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `mental.lua:80` is `addTemporaryValue("confused", eff.power)` — `eff`,
+     * not the definition — and the two genuinely differ, because `:78` REDUCES
+     * that instance's power by the wearer's `confusion_immune` before storing
+     * it. Reading the definition's fifty here would compose the number the
+     * effect was authored with rather than the one that actually landed, and
+     * partial confusion immunity would show on the sheet and do nothing.
+     *
+     * The definition's value is still the fallback, so an effect that declares
+     * `confusedPercent` without a `power` parameter behaves as written.
+     */
+    if (mods.confusedPercent !== undefined) {
+      const own = live.params['power'];
+      confusedPercent += typeof own === 'number' ? own : mods.confusedPercent;
+    }
   }
 
   return {
