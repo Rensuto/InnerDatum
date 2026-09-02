@@ -327,6 +327,39 @@ export function tickRoamers(realm: Realm, seq: number): boolean {
   return changed;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FILL AN OVERWORLD TO ITS CAP AT BUILD TIME. THE MOOR IS NEVER EMPTY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tickRoamers` spawns ONE per call and its comment gives the reason — *"so the
+ * map fills gradually rather than at boot"*. That was right when the tick ran
+ * once per PUMP: a keystroke apart, so the moor reached its cap within a few
+ * seconds of anybody moving, and "gradual" cost nothing.
+ *
+ * It stopped being right the moment the tick became once per GAME TURN, which
+ * is what stops a player driving the world by leaning on a key. At one spawn a
+ * turn the moor takes a minute of real play to become dangerous, and the first
+ * person to log in walks an empty map for exactly as long as it takes to stop
+ * being interesting.
+ *
+ * So the population is SEEDED here, once, from the realm's own labelled stream.
+ * `world.rng` on an overworld has no other consumer — the file header states it
+ * — so these draws shift nothing downstream. The tick's one-at-a-time spawn
+ * stays and becomes what it always should have been: the TOP-UP after something
+ * is walked into and consumed.
+ */
+export function populateRoamers(realm: Realm): void {
+  const cap = maxRoamersFor(realm);
+  for (let i = 0; i < cap; i += 1) {
+    if (realm.roamers.size >= cap) break;
+    // THROUGH THE ONE SPAWNER, so haunt ground, never-under-a-body and
+    // never-on-another-roamer stay in a single place. The seq is chosen to miss
+    // the wander gate: a body placed this turn has nowhere to have walked from.
+    tickRoamers(realm, i * MOVE_EVERY_TURNS + 1);
+  }
+}
+
 /** The roamer standing on this tile, if any. */
 export function roamerAt(realm: Realm, x: number, y: number): Roamer | undefined {
   for (const r of realm.roamers.values()) {

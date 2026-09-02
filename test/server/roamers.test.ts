@@ -242,3 +242,99 @@ describe('a roamer looks like a creature, not like a place', () => {
     expect(canvas).toContain('if (site.sprite !== undefined)');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The moor is not driven by the keyboard
+// ---------------------------------------------------------------------------
+
+describe('a player cannot walk the moor forward by pressing keys', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TICK RAN ONCE PER PUMP, AND A PUMP IS ONE KEY PRESS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `pumpRealm` bumped a counter every pump and handed it to `tickRoamers`, so
+   * the moor advanced at the rate the party typed: frozen when nobody moved, six
+   * times faster with six people walking, faster still for anyone holding a
+   * direction down. The SPAWN half was worse — it sits outside the
+   * `MOVE_EVERY_TURNS` gate, so one player leaning on a key filled the map as
+   * fast as they could press.
+   *
+   * A docblock directly above that line described the fix as already made. It
+   * was not; this is it, and these are the assertions that would have caught the
+   * gap between the paragraph and the code.
+   */
+  it('CANNOT protect itself, which is why the gate is at the call site', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE REASON THE GUARD IS IN THE GATEWAY AND NOT IN HERE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `tickRoamers` decides whether to WANDER from `seq % MOVE_EVERY_TURNS`, so
+     * calling it repeatedly with the SAME seq either never wanders or wanders
+     * every single time, depending on which number it is. On a wander turn it
+     * happily steps the whole moor once per call.
+     *
+     * That is not a bug in this function — it is why the caller has to refuse to
+     * call it twice for one game turn. Stated here so nobody "fixes" it by
+     * memoising inside and leaves the real gate unguarded.
+     */
+    const realms = makeRealms('roam-spam');
+    settle(realms);
+    // A MULTIPLE OF `MOVE_EVERY_TURNS`, written out because that constant is
+    // deliberately module-private — importing it would be this test reaching for
+    // an implementation detail to describe a contract.
+    const wanderTurn = 12;
+    const before = new Map(
+      [...realms.overworld.roamers.values()].map((r) => [r.id, `${String(r.x)},${String(r.y)}`]),
+    );
+
+    for (let i = 0; i < 6; i += 1) tickRoamers(realms.overworld, wanderTurn);
+
+    const moved = [...realms.overworld.roamers.values()].filter(
+      (r) => before.get(r.id) !== `${String(r.x)},${String(r.y)}`,
+    );
+    expect(
+      moved.length,
+      'six calls on one turn moved nothing — the wander gate changed shape, and ' +
+        'the gateway guard may no longer be the thing holding the moor still',
+    ).toBeGreaterThan(0);
+  });
+
+  it('is seeded at build, so the danger does not arrive one keystroke at a time', () => {
+    /**
+     * `populateRoamers` exists because the gate above made "one spawn per call"
+     * mean "one spawn per game turn" — a minute of empty moor at the old drip
+     * rate, and an empty one for ever in a realm built with the tide disabled.
+     */
+    const realms = makeRealms('roam-seeded');
+    expect(realms.overworld.roamers.size).toBe(maxRoamersFor(realms.overworld));
+  });
+
+  it('and the gateway ticks it on a CHANGED turn, never once per pump', () => {
+    /**
+     * A SOURCE GUARD. The rule lives in a closure inside `wsGateway` that no
+     * test can reach, and the mistake it prevents is a one-word edit: bumping a
+     * local counter instead of reading the clock. That is exactly what was there
+     * before, underneath a paragraph claiming otherwise.
+     */
+    const gateway = readFileSync(
+      new URL('../../src/server/net/gateway.ts', import.meta.url),
+      'utf8',
+    )
+      // CODE ONLY. The docblock at the fix NAMES the counter it replaced, which
+      // is the comment doing its job — matching raw text would fail on the
+      // explanation rather than on the mistake, and the obvious way to make it
+      // pass would be deleting the explanation.
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    expect(gateway, 'the per-pump counter is back').not.toContain('roamerSeq');
+    // THE CONDITION, not just the names. Both identifiers survive a mutation
+    // that replaces the guard with `if (true)` and calls the tick every pump
+    // again, which is the whole thing this test exists to prevent.
+    expect(gateway, 'the tick is no longer gated on the turn having CHANGED').toContain(
+      'turn !== lastRoamerTurn.get(',
+    );
+    expect(gateway).toContain('tickRoamers(full, turn)');
+  });
+});
