@@ -4973,14 +4973,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * different tile and `killer-named.test.ts` scripts a 106-tile walk that
    * turns out to depend on where they are. See DECISIONS.md.
    */
-  /**
-   * The game turn each overworld last moved its roamers on.
-   *
-   * REPLACED `roamerSeq`, a per-pump counter — see the call site. Keyed by realm
-   * because a second overworld is a thing this codebase has already been caught
-   * assuming away.
-   */
-  const lastRoamerTurn = new Map<string, number>();
+  let roamerSeq = 0;
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -5475,37 +5468,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     const full = opts.realms?.get(realm.id);
     if (full !== undefined && full.kind === RealmKind.Overworld) {
-      /**
-       * ═══════════════════════════════════════════════════════════════════════
-       * ONCE PER GAME TURN, NEVER ONCE PER KEYSTROKE.
-       * ═══════════════════════════════════════════════════════════════════════
-       *
-       * THE PARAGRAPH ABOVE DESCRIBED THIS AS ALREADY DONE and the code did the
-       * opposite: `roamerSeq += 1` on every pump. A pump happens per KEY PRESS,
-       * so the moor advanced at the rate the party typed — frozen when nobody
-       * moved, six times faster with six people walking, faster still for
-       * anyone holding a direction down. The SPAWN half was worse: it sits
-       * outside the `MOVE_EVERY_TURNS` gate, so one player leaning on a key
-       * filled the map as fast as they could press.
-       *
-       * The realm's GAME TURN is the honest clock. The tide advances it every
-       * `TIDE_MS` whether or not anybody is acting, and a pump that resolves no
-       * turn leaves it alone — so a keystroke that changes nothing moves
-       * nothing, and six players sharing a turn get ONE step of the moor
-       * between them rather than six.
-       *
-       * GUARDED ON THE NUMBER HAVING CHANGED rather than passed straight in.
-       * `tickRoamers` spawns on every call regardless of `seq`, so passing a
-       * repeated turn would still let a key-masher populate the map; the gate
-       * has to be here, around the call, not inside its wander half.
-       */
-      const turn = full.world.turn.clock.gameTurn;
-      if (turn !== lastRoamerTurn.get(full.id)) {
-        lastRoamerTurn.set(full.id, turn);
-        if (tickRoamers(full, turn)) {
-          for (const session of sessions.values()) {
-            if (session.helloDone && session.realmId === full.id) sendSites(session);
-          }
+      roamerSeq += 1;
+      if (tickRoamers(full, roamerSeq)) {
+        for (const session of sessions.values()) {
+          if (session.helloDone && session.realmId === full.id) sendSites(session);
         }
       }
     }

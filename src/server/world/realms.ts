@@ -54,8 +54,6 @@
  */
 
 import { arenaGround, makeArena } from '../../shared/arena.ts';
-// `roamers.ts` imports only TYPES back from here, so this is not a runtime cycle.
-import { populateRoamers } from './roamers.ts';
 import { ShopShelf } from '../content/shops.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
 import type { Ground } from '../../shared/level.ts';
@@ -772,16 +770,6 @@ export function createRealms(opts: RealmsOptions): Realms {
       sealed: false,
       ...extra,
     };
-
-    /**
-     * AND THE DANGER ON IT, seeded now rather than dripped in by keystrokes.
-     *
-     * The roamers used to appear one per PUMP, so the moor filled within a few
-     * presses of anybody moving. Gating that on the GAME TURN — so input cannot
-     * drive the world — turned the same drip into a minute of empty map. See
-     * `populateRoamers`.
-     */
-    if (kind === RealmKind.Overworld) populateRoamers(realm);
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * AND THE PEOPLE WHO LIVE HERE — IN `build`, FOR THE `shop` FIELD'S REASON.

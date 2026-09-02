@@ -167,64 +167,21 @@ describe('a death in a room that resets', () => {
        * THE WORST ROOM ON THE MAP, so a level-1 character reliably loses. The
        * grade is on the wire precisely so this does not have to name a site.
        */
-      /**
-       * FROM EITHER FRAME THAT CARRIES MARKERS — the idiom `casefile-wire`
-       * already uses. A `sites` frame is only sent when the markers CHANGE, and
-       * with the roamer tick gated on the game turn a still moor never sends
-       * one; `realm` carries the same list on arrival.
-       */
-      const sites = ([...frames]
-        .reverse()
-        .find((f) => (f['t'] === 'sites' || f['t'] === 'realm') && Array.isArray(f['sites']))?.[
-        'sites'
-      ] ?? []) as {
+      const sites = (frames.filter((f) => f['t'] === 'sites').at(-1)?.['sites'] ?? []) as {
         x: number;
         y: number;
         name: string;
-        marker?: string;
         danger?: string;
       }[];
-
-      /**
-       * ═══════════════════════════════════════════════════════════════════════
-       * WALK INTO A ROAMER, NOT ACROSS THE MOOR HOPING TO MEET ONE.
-       * ═══════════════════════════════════════════════════════════════════════
-       *
-       * This used to path 106 tiles to the worst-graded ROOM on the map and wait
-       * to die there. Instrumenting it showed it NEVER ARRIVED: after all 106
-       * steps the body was still on the overworld, and the death that made this
-       * test pass came from bumping a ROAMER somewhere along the way.
-       *
-       * That worked only because roamers spawned once per PUMP and wandered
-       * every third one, so a hundred keystrokes both filled the moor and stirred
-       * it constantly, and the walker met one by luck. Gating that tick on the
-       * GAME TURN — so a player leaning on a key cannot drive the world — ended
-       * the luck, and the walk finished alone in the open.
-       *
-       * `instance-reap.test.ts` states the principle: *"the roamer is planted
-       * rather than waited for — `tickRoamers` moves them on a schedule this test
-       * has no business depending on."* This file cannot plant one, because it
-       * drives a real server process over a socket. It does not need to: roamers
-       * ride the marker list as `marker: 'breach'`, so the NEAREST one is a
-       * visible, deterministic thing to walk onto.
-       *
-       * WHAT THIS FILE CLAIMS is that a death names whoever struck the blow, and
-       * an ambush arena is a room that resets exactly as a site is. The graded
-       * room was only ever a pretext for a long walk.
-       */
-      const breaches = sites.filter((s) => s.marker === 'breach');
-      const target = breaches
-        .slice()
-        .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))[0];
-      expect(target, 'no roamer on the moor to walk into').toBeDefined();
+      const target =
+        sites.find((s) => s.danger === 'grim') ?? sites.find((s) => s.danger === 'dangerous');
+      expect(target, 'no dangerous room on the map to die in').toBeDefined();
       if (target === undefined) return;
 
       // WALK ROUND THE OTHER DOORS. Stepping onto a site's cell enters it, so a
       // straight line to a far marker is swallowed by the first town it crosses.
       const closed = new Set(
-        sites
-          .filter((s) => !(s.x === target.x && s.y === target.y))
-          .map((s) => `${String(s.x)},${String(s.y)}`),
+        sites.filter((s) => s.name !== target.name).map((s) => `${String(s.x)},${String(s.y)}`),
       );
       const board = level();
       const passable = (x: number, y: number): boolean =>
