@@ -297,7 +297,14 @@ function makeTracker(v) {
       if (f.t === 'realm') {
         at.clear();
         for (const x of f.actors ?? []) {
-          at.set(x.id, { x: x.x, y: x.y, alive: x.alive !== false, name: x.name, kind: x.kind });
+          at.set(x.id, {
+            x: x.x,
+            y: x.y,
+            alive: x.alive !== false,
+            name: x.name,
+            kind: x.kind,
+            seen: true,
+          });
         }
       }
       if (f.t === 'sweep') {
@@ -308,10 +315,60 @@ function makeTracker(v) {
       }
       if (f.t === 'moved') step(f.id, f.x, f.y);
       if (f.t === 'died') kill(f.id);
-      if (f.t === 'left') at.delete(f.id);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * `left` IS NOT DEATH. IT IS PER-PLAYER FOV, AND THIS DELETED THE BODY.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `reconcileSight` sends `left` when a body leaves the viewer's sight, and
+       * this tracker forgot it entirely — so a husk that stepped round a corner
+       * vanished from the cast, the search below found no foe, and the probe
+       * printed "CLEARED the floor" about a room it had merely lost track of.
+       * Measured: "B took 0 turns and CLEARED the floor", on arrival, before it
+       * had swung at anything.
+       *
+       * It is kept and marked UNSEEN instead, so "nothing I can see" and
+       * "nothing left alive" stay different questions — which is the whole
+       * distinction FOV introduced and this file predates.
+       */
+      if (f.t === 'left') {
+        const gone = at.get(f.id);
+        if (gone !== undefined) gone.seen = false;
+      }
+      if (f.t === 'joined' && f.actor !== undefined) {
+        at.set(f.actor.id, {
+          x: f.actor.x,
+          y: f.actor.y,
+          alive: f.actor.alive !== false,
+          name: f.actor.name,
+          kind: f.actor.kind,
+          seen: true,
+        });
+      }
     }
     return at;
   };
+}
+
+/**
+ * The walkable tile furthest from `from`, by straight-line distance.
+ *
+ * A SEARCH TARGET THAT EXISTS. See its caller for the version that did not.
+ */
+function furthestWalkable(level, from) {
+  let best = null;
+  let far = -1;
+  for (let y = 0; y < level.h; y += 1) {
+    for (let x = 0; x < level.w; x += 1) {
+      if (!isWalkable(level.tiles[y * level.w + x])) continue;
+      const d = (x - from.x) ** 2 + (y - from.y) ** 2;
+      if (d > far) {
+        far = d;
+        best = { x, y };
+      }
+    }
+  }
+  return best;
 }
 
 /** @returns true when the engine ACCEPTED the step, so a refusal ends the walk. */
@@ -368,21 +425,67 @@ if (target === undefined) {
 
   // …and bumps whatever is in there until nothing is left standing.
   const track = makeTracker(b);
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * "CLEARED" IS THE SERVER'S WORD, NOT THIS FILE'S GUESS.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `shouldAnnounceCleared` (world/cleared.ts) will not fire until a monster
+   * kill has been SEEN, and it prints `Filed. N of M.` — so it cannot be true of
+   * a room nobody has fought in. This file inferred it from an empty cast list,
+   * which per-player FOV turned into a lie: see the `left` note in the tracker.
+   */
+  const sawCleared = () => b.log().some((line) => /^Filed[.] |is quiet now/.test(line));
   let bumps = 0;
   let cleared = false;
+  let blind = 0;
+  let sweepTo = null;
   for (let i = 0; i < 400; i += 1) {
     const at = track();
     const me = posOf(b);
     if (me === undefined) break;
     // A foe on your own tile is not a foe you can swing at.
-    const foe = [...at.entries()]
+    const foes = [...at.entries()]
       .filter(([id, e]) => id !== b.id && e.alive && e.kind !== 'player')
       .map(([, e]) => ({ e, d: Math.max(Math.abs(e.x - me.x), Math.abs(e.y - me.y)) }))
       .filter((c) => c.d > 0)
-      .sort((p, q) => p.d - q.d)[0];
+      .sort((p, q) => p.d - q.d);
+    // WHAT IS IN SIGHT FIRST, then whatever is merely REMEMBERED — walking to a
+    // body's last known tile is how you find it again, and it is what this
+    // probe used to do by accident before `left` deleted the entry.
+    const foe = foes.find((c) => c.e.seen !== false) ?? foes[0];
     if (foe === undefined) {
-      cleared = true;
-      break;
+      // NOTHING KNOWN AT ALL. Either the room really is done — ask the server —
+      // or nothing has come into sight yet, in which case walking is the answer
+      // and declaring victory is not.
+      if (sawCleared()) {
+        cleared = true;
+        break;
+      }
+      blind += 1;
+      if (blind > 120) break;
+      /**
+       * SWEEP THE ROOM, and it has to be a REAL target. The first version of
+       * this walked to `(x + 7) % w, (y + 5) % h`, which is a tile chosen by
+       * arithmetic rather than by the map: mostly a wall, sometimes off the
+       * walkable region entirely, so `firstStep` answered null and B stood
+       * perfectly still for sixty turns while reporting that it was searching.
+       *
+       * THE FURTHEST WALKABLE TILE is a real sweep, and it matters here more
+       * than it looks: monsters in this engine do not move at all until
+       * somebody walks into an aggro radius with line of sight
+       * (`actMonster`'s own note), so a probe that does not cross the room
+       * never meets anything and cannot tell an empty floor from a shy one.
+       */
+      const lvl = b.latest('realm')?.level;
+      if (lvl !== undefined) {
+        if (sweepTo === null || (me.x === sweepTo.x && me.y === sweepTo.y)) {
+          sweepTo = furthestWalkable(lvl, me);
+        }
+        if (sweepTo !== null && !(await stepTo(b, sweepTo))) sweepTo = null;
+      }
+      await sleep(COMMAND_GAP_MS);
+      continue;
     }
     if (foe.d <= 1) {
       // Adjacent: the move IS the attack, and it is refused-looking either way.
@@ -395,7 +498,9 @@ if (target === undefined) {
     bumps += 1;
   }
   console.log(
-    `  B took ${String(bumps)} turns and ${cleared ? 'CLEARED the floor' : 'never finished'}`,
+    `  B took ${String(bumps)} turns and ` +
+      `${cleared ? 'the server filed the room' : 'never got a filed line'}` +
+      `${blind > 0 ? ` (${String(blind)} turns with nothing in sight)` : ''}`,
   );
   console.log(`  B's last lines: ${JSON.stringify(b.log().slice(-3))}`);
   /**
