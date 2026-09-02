@@ -746,9 +746,29 @@ if (shop !== undefined && (shop.stock ?? []).length > 0) {
   beat('TRIES TO BUY SOMETHING');
   show(mark, 5);
   const errs = frames.filter((f) => f.t === 'error').slice(errsBefore);
-  console.log(
-    `  refusal: ${errs.length === 0 ? 'NONE — the key did nothing' : errs.map((e) => `${e.code}: ${e.message}`).join(' | ')}`,
-  );
+  const moneyAfter = frames.filter((f) => f.t === 'inventory').at(-1)?.money ?? money;
+  /**
+   * WHAT ACTUALLY HAPPENED, then whether a refusal was DUE.
+   *
+   * This line used to print "refusal: NONE — the key did nothing" on the happy
+   * path, because it reported the absence of an error without saying whether an
+   * error was expected. The probe buys the first AFFORDABLE item when there is
+   * one, so silence is the correct outcome — and reading that line cost a real
+   * investigation into a bug that was not there. Only the fallback branch (
+   * nothing affordable, so it tries anyway) is entitled to call silence a fault.
+   */
+  const spent = money - moneyAfter;
+  const outcome =
+    spent > 0
+      ? `bought it — ${String(money)}g -> ${String(moneyAfter)}g`
+      : 'nothing left the purse';
+  const refusal =
+    errs.length > 0
+      ? errs.map((e) => `${e.code}: ${e.message}`).join(' | ')
+      : affordable.length > 0
+        ? 'none, and none was due'
+        : 'NONE — and one WAS due: the shelf was unaffordable and the key did nothing';
+  console.log(`  ${outcome}  ·  refusal: ${refusal}`);
 }
 
 /**
