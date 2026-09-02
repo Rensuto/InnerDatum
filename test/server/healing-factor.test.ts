@@ -167,7 +167,10 @@ describe('the one door, so a fifth heal cannot forget', () => {
       new URL('../../src/server/turn-engine.ts', import.meta.url),
       'utf8',
     );
-    expect(engine).toContain('self.hpRegen * bonus * factor');
+    // `member`, not `self`, since the rest bonus went party-wide — upstream
+    // pays it to every member (Player.lua:983-993) and each one's own
+    // Constitution decides what it is worth.
+    expect(engine).toContain('member.hpRegen * bonus * factor');
     const actor = readFileSync(
       new URL('../../src/server/engine/actor.ts', import.meta.url),
       'utf8',

@@ -12,8 +12,8 @@ import {
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
-import { createDownedState } from '../../src/server/engine/downed.ts';
-import { createPartyState } from '../../src/server/engine/party.ts';
+import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
+import { accept, createPartyState, invite } from '../../src/server/engine/party.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -43,10 +43,12 @@ function scene(name: string) {
   const world = createWorld(name);
   world.level.tiles.fill(TileCode.FLOOR);
   const talents = createContentTalentEngine();
+  const downed = createDownedState();
+  const parties = createPartyState();
   const engine = createTurnEngine({
     world,
-    downed: createDownedState(),
-    parties: createPartyState(),
+    downed,
+    parties,
     talents: createTalentBook(talents, world),
     talentRuntime: talentRuntimeFor(talents, world),
   });
@@ -61,7 +63,7 @@ function scene(name: string) {
   // hand out, and the state a player standing about actually sits in is the one
   // after that has been spent.
   engine.pump();
-  return { world, engine, body, talents, sheet: talents.sheetOf('p1') };
+  return { world, engine, body, talents, downed, parties, sheet: talents.sheetOf('p1') };
 }
 
 describe('rest passes turns the way holding would, without the hundred keys', () => {
@@ -259,5 +261,186 @@ describe('what stops it', () => {
   it('answers rather than throwing for a body that is not there', () => {
     const { engine } = scene('rest-nobody');
     expect(engine.rest('nobody').turns).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The party rests together — Player.lua:983-993
+// ---------------------------------------------------------------------------
+
+describe('a rest heals the whole party', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE PLAYER PRESSED THE KEY AND ONLY THAT PLAYER GOT THE ACCELERATION.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream pays the bonus inside `restCheck` and pays it to every member:
+   * `for act, def in pairs(game.party.members) ... act:heal(act.life_regen *
+   * perc)` (Player.lua:983-993). Ours paid `self` alone.
+   *
+   * The others were never FROZEN — a rest pumps real turns, so `actBase` gave
+   * them their ordinary trickle. They simply got 1x while the rester got up to
+   * the cap, so two detectives sitting in the same room recovered at visibly
+   * different rates for no reason either could see. That is why the assertion
+   * below is about the SHAPE of the recovery and not merely "did they heal".
+   */
+  function party(name: string) {
+    const made = scene(name);
+    const mate = made.world.addPlayer('p2', 'p2', { maxHp: 40 });
+    mate.x = 5;
+    mate.y = 4;
+    made.talents.attach('p2', sheetForClass(WATCHMAN));
+    made.engine.join('p2');
+    made.engine.setConnected('p2', true);
+    /**
+     * AND THEY ARE ACTUALLY IN ONE PARTY, which the first version of this
+     * fixture skipped — with expensive consequences. `checkWipe` surveys ONE
+     * PARTY, so two joined-but-unpartied players are two parties of one; downing
+     * `p2` wiped THEIR party, `resetFloorParty` stood them straight back up at
+     * full hp, and a test about the rest bonus failed against engine behaviour
+     * that was entirely correct.
+     */
+    invite(made.parties, 'p1', 'p2', 0);
+    accept(made.parties, 'p2', 'p1', 0);
+    made.engine.pump();
+    return { ...made, mate };
+  }
+
+  it('brings a hurt teammate up too', () => {
+    const { engine, body, mate } = party('rest-party');
+    body.hp = 10;
+    mate.hp = 10;
+
+    engine.rest('p1');
+
+    expect(body.hp, 'the rester').toBe(body.maxHp);
+    expect(mate.hp, 'and the one who did not press the key').toBe(mate.maxHp);
+  });
+
+  it('and pays them the ACCELERATION, not just the ordinary trickle', () => {
+    /**
+     * THE ASSERTION THE COMMIT IS FOR. A teammate healed to full either way,
+     * given enough turns — what changed is how many turns it takes, so the
+     * claim has to be about the rate.
+     *
+     * The rest stops when the RESTER is done, so a teammate hurt by the same
+     * amount must arrive at the same time. Before this, the rester finished in a
+     * fraction of the turns and the teammate was left part-healed.
+     */
+    const { engine, body, mate } = party('rest-party-rate');
+    body.hp = 10;
+    mate.hp = 10;
+
+    const result = engine.rest('p1');
+
+    expect(result.stop).toBe(RestStop.Done);
+    // A flat trickle over that many turns would leave the teammate short: 0.5 a
+    // turn against 30 points missing needs 60 turns, and an accelerated rest
+    // finishes well inside that.
+    expect(result.turns, 'the acceleration is what makes this a short rest').toBeLessThan(60);
+    expect(mate.hp).toBe(mate.maxHp);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NOT ASSERTED HERE: THAT EACH MEMBER PAYS THEIR OWN CONSTITUTION.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The heal reads `healingFactor(member.combat ?? {})`, so a sturdy teammate
+   * should get more out of somebody else's rest than a frail one. A mutation
+   * that reads the RESTER's factor for everybody SURVIVES this file, and it is
+   * worth saying why rather than leaving a hole nobody can see.
+   *
+   * `actor.combat` is written by `recomposeCombat`, which this harness never
+   * runs — `createTurnEngine` plus `talents.attach` leaves the field undefined,
+   * so `healingFactor({})` answers 1 for every body and the two branches of the
+   * mutation are numerically identical. Two attempts confirmed it: assigning
+   * `combat` by hand (wiped), and giving the teammates different CLASSES
+   * (Watchman con 20 against Inspector con 12 — both still came out at 224.2).
+   *
+   * A green test here would have asserted nothing, which is the failure this
+   * file exists to avoid. What IS covered: `healing-factor.test.ts` pins
+   * `healingFactor` itself at both ends of its range and pins that `healActor`
+   * pays the RECEIVER, and the line here is the same expression the rester used
+   * before the bonus went party-wide — `member` in place of `self` and nothing
+   * else. The gap is the harness, not the rule.
+   */
+  it('heals nobody who is down, which is what makes standing them up urgent', () => {
+    // Upstream's guard is `hasEntity(act) and not act.dead`.
+    const { engine, world, body, mate, downed } = party('rest-party-downed');
+    /**
+     * A SHORT REST, and the reason is a second thing this test found.
+     *
+     * With the rester at 10 of 40 the rest runs for dozens of turns — long
+     * enough for the downed teammate's own countdown (`DOWNED_TURNS`) to expire,
+     * at which point they are erased, the floor resets and `standUp` returns
+     * them at FULL health. The teammate ended at 40 and the assertion failed
+     * against a guard that was working perfectly.
+     *
+     * So the rester is one point short: the rest is over in a turn or two, well
+     * inside the countdown, and what the teammate's hit points say at the end is
+     * about the rest bonus and nothing else.
+     */
+    body.hp = body.maxHp - 1;
+    /**
+     * THROUGH `goDown`, NOT BY HAND. The first version of this test set
+     * `mate.alive = false` and left `hp` at 10 — a state no code path produces —
+     * and something repaired it mid-rest, so the teammate healed to full and the
+     * test failed against a guard that was actually correct.
+     *
+     * `goDown` sets `hp = 0`, `alive = false`, clears the pending intent and
+     * swaps the sprite. Registering the record is what makes this a downed
+     * detective rather than a contradiction.
+     */
+    // AND STANDING WELL CLEAR. Adjacent, a downed ally is a rescue candidate,
+    // and the rest's own pumps were standing them back up — which is the
+    // downed system working and had nothing to do with the bonus.
+    mate.x = 20;
+    mate.y = 20;
+    goDown(downed, mate, world.turn.clock.gameTurn);
+    expect(mate.alive, 'the fixture must actually be down').toBe(false);
+
+    engine.rest('p1');
+
+    expect(body.hp).toBe(body.maxHp);
+    expect(mate.alive, 'the countdown must not have run out mid-test').toBe(false);
+    expect(mate.hp, 'a downed detective recovers nothing from somebody else resting').toBe(0);
+  });
+
+  it('does not heal a MONSTER standing in the room', () => {
+    // `world.allActors()` is everything in the realm, so the kind test is the
+    // whole of the party filter — and getting it wrong would heal the thing you
+    // are resting to fight.
+    const { engine, world, body } = party('rest-party-husk');
+    body.hp = 10;
+    const husk = world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 20,
+      y: 20,
+      profile: AiProfile.MeleeChaser,
+    });
+    /**
+     * A DEEP POOL AND AN HONEST TRICKLE, which is the only shape that can tell
+     * the two apart.
+     *
+     * The first version set `hpRegen = 0` so the husk could not gain at all —
+     * and a mutation that DELETED the `kind` test still passed, because zero
+     * times the bonus is zero. The second left `hpRegen = 1` with a small pool
+     * and the husk simply filled up over sixty honest turns.
+     *
+     * So: a pool it cannot fill, a trickle of exactly one a turn, and an
+     * assertion that it gained no more than the turns it lived through.
+     */
+    husk.maxHp = 10000;
+    husk.hp = 3;
+    husk.hpRegen = 1;
+
+    const result = engine.rest('p1');
+
+    expect(
+      husk.hp,
+      'the husk gained more than one a turn — the rest bonus reached a monster',
+    ).toBeLessThanOrEqual(3 + result.turns);
   });
 });

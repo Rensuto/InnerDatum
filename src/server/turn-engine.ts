@@ -2475,15 +2475,58 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * earns rather than something it starts with. Upstream does the same:
          * `cnt` is incremented after the check that reads it.
          */
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * THE WHOLE PARTY HEALS, NOT ONLY THE BODY THAT PRESSED THE KEY.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `Player.lua:983-993` pays the bonus inside `restCheck` and pays it to
+         * every member:
+         *
+         * ```lua
+         * for act, def in pairs(game.party.members) do
+         *   if game.level:hasEntity(act) and not act.dead then
+         *     local perc = math.min(self.resting.cnt / 10, 8)
+         *     act:heal(act.life_regen * perc)
+         * ```
+         *
+         * OURS PAID ONLY `self`, and in a game built for three to six friends
+         * that is the wrong half of the mechanic. The others were not frozen —
+         * a rest pumps real turns, so `actBase` gave them their ordinary
+         * trickle — they simply got 1x while the rester got up to the cap. Two
+         * detectives sitting in the same room recovered at different rates for
+         * no reason either of them could see.
+         *
+         * ═══ EACH MEMBER'S OWN REGEN AND OWN CONSTITUTION ═══
+         * Upstream reads `act.life_regen` and calls `act:heal`, which applies
+         * the RECEIVER's `healing_factor` (Actor.lua:2089) — so the shared thing
+         * is the rest's ACCELERATION, not the amount. `healing-factor.test.ts`
+         * already pins that a bandage is worth more on somebody built to
+         * survive; this is the same rule at the rest's rate.
+         *
+         * ═══ THE GUARD IS UPSTREAM'S ═══
+         * `hasEntity(act) and not act.dead` — same level, still up.
+         * `world.allActors()` is this realm's actors, so the level half is
+         * structural here; `alive` is the rest of it. A downed detective heals
+         * nothing, which is what makes standing them up urgent.
+         */
         const bonus = restBonus(turns);
-        if (bonus > 0 && self.hp < self.maxHp) {
-          // AND THE HEALING FACTOR, on `actBase`'s terms: this is the SAME
-          // `life_regen` upstream multiplies by `healing_factor` at
-          // Actor.lua:2055, just paid at the rest's accelerated rate. Without it
-          // a rest and an ordinary turn would disagree about what Constitution
-          // is worth, which is the kind of split nobody would ever notice.
-          const factor = bound(healingFactor(self.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
-          self.hp = Math.min(self.maxHp, self.hp + self.hpRegen * bonus * factor);
+        if (bonus > 0) {
+          for (const member of world.allActors()) {
+            if (member.kind !== ActorKind.Player || !member.alive) continue;
+            if (member.hp >= member.maxHp) continue;
+            // AND THE HEALING FACTOR, on `actBase`'s terms: this is the SAME
+            // `life_regen` upstream multiplies by `healing_factor` at
+            // Actor.lua:2055, just paid at the rest's accelerated rate. Without
+            // it a rest and an ordinary turn would disagree about what
+            // Constitution is worth, which is the kind of split nobody notices.
+            const factor = bound(
+              healingFactor(member.combat ?? {}),
+              HEAL_FACTOR_MIN,
+              HEAL_FACTOR_MAX,
+            );
+            member.hp = Math.min(member.maxHp, member.hp + member.hpRegen * bonus * factor);
+          }
         }
 
         /**
