@@ -43,7 +43,7 @@ import { dirname, resolve } from 'node:path';
 
 import { WebSocket } from 'ws';
 
-import { PROTOCOL_VERSION } from '../src/shared/version.ts';
+import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
 import { EFFECT_IDS } from '../src/server/content/effects.ts';
 import { canWalk } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
@@ -51,8 +51,23 @@ import { firstStep } from './walk.mjs';
 const PORT = process.argv[2] ?? '31977';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Long enough for an orb to cross a room; short enough to notice a hang. */
-const TURN_WAIT_MS = 45;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SERVER'S OWN LIMIT, IMPORTED RATHER THAN GUESSED AT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was 45 — twenty-two commands a second against a bucket that allows
+ * TWENTY, and the walk loop below halved it again to send forty-five. The
+ * gateway drops everything past the limit and says so at most once a second, so
+ * a probe going too fast loses commands with nothing to show for it: the loop
+ * below thought it was taking four hundred steps and was taking about two
+ * hundred, at positions it never re-read.
+ *
+ * `killer-named.test.ts` had the identical fault and it cost that test its
+ * meaning for months — it stopped 27 tiles short of the room it names and passed
+ * by dying to something it met on the way.
+ */
+const TURN_WAIT_MS = COMMAND_GAP_MS;
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -346,7 +361,7 @@ for (let i = 0; i < 400 && !inFight; i += 1) {
   const targets = roamers();
   if (targets.length === 0) {
     send({ t: 'move', dir: 'n' });
-    await sleep(TURN_WAIT_MS / 2);
+    await sleep(TURN_WAIT_MS);
   } else {
     const near = targets
       .map((s) => ({ s, d: Math.max(Math.abs(s.x - pos.x), Math.abs(s.y - pos.y)) }))
@@ -357,7 +372,7 @@ for (let i = 0; i < 400 && !inFight; i += 1) {
         ? 'n'
         : (firstStep((x, y) => canWalk(realm.level, x, y), pos, { x: near.x, y: near.y }) ?? 'n');
     send({ t: 'move', dir });
-    await sleep(TURN_WAIT_MS / 2);
+    await sleep(TURN_WAIT_MS);
   }
   const moved = frames.filter((f) => f.t === 'moved' && f.id === selfId).at(-1);
   if (moved !== undefined) pos = { x: moved.x, y: moved.y };

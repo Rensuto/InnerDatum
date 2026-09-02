@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { WebSocket } from 'ws';
-import { PROTOCOL_VERSION } from '../src/shared/version.ts';
+import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
 import { canWalk } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 
@@ -78,7 +78,7 @@ for (let i = 0; i < 400; i += 1) {
     dir = firstStep((x, y) => canWalk(r.level, x, y), pos, { x: n.x, y: n.y }) ?? 'n';
   }
   send({ t: 'move', dir });
-  await sleep(20);
+  await sleep(COMMAND_GAP_MS);
   const mv = frames.filter((f) => f.t === 'moved' && f.id === selfId).at(-1);
   if (mv) pos = { x: mv.x, y: mv.y };
 }
@@ -97,7 +97,7 @@ for (let i = 0; i < 80; i += 1) {
   if (Math.max(Math.abs(pos.x - foe.x), Math.abs(pos.y - foe.y)) <= 1) break;
   const d = firstStep((x, y) => canWalk(arena.level, x, y), pos, { x: foe.x, y: foe.y }) ?? 'e';
   send({ t: 'move', dir: d });
-  await sleep(45);
+  await sleep(COMMAND_GAP_MS);
   const mv = frames.filter((f) => f.t === 'moved' && f.id === selfId).at(-1);
   if (mv) pos = { x: mv.x, y: mv.y };
 }

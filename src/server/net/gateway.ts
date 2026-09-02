@@ -95,7 +95,7 @@ import {
   genericPointsForLevel,
   categoryPointsForLevel,
 } from '../../shared/progression.ts';
-import { PROTOCOL_VERSION } from '../../shared/version.ts';
+import { COMMAND_BURST, COMMAND_RATE_PER_SEC, PROTOCOL_VERSION } from '../../shared/version.ts';
 /**
  * THE ONE CONTENT IMPORT IN THIS FILE, AND IT IS DATA ONLY.
  *
@@ -360,9 +360,15 @@ const MAX_FRAME_BYTES = 16 * 1024;
  * forty frames across a boundary in 2 ms and stay "within 20/s". The burst is
  * the same as the rate: a client may spend a second's worth at once — which is
  * exactly what a reconnect replay does — and then refills at 20/s.
+ *
+ * ═══ THE NUMBERS MOVED TO `shared/version.ts`, AND THAT IS THE FIX ═══
+ * They were declared here, module-private, so every scripted client in `tools/`
+ * chose its own send interval by feel — and several chose one too fast, lost a
+ * third of their commands to a bucket they could not see, and carried on
+ * believing they had sent them. See `COMMAND_GAP_MS` beside them for what that
+ * cost. A limit only one side of a wire can read is a limit the other side
+ * breaks.
  */
-const COMMAND_RATE_PER_SEC = 20;
-const COMMAND_BURST = 20;
 
 /**
  * How often a throttled socket is TOLD it is throttled.

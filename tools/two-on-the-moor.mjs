@@ -33,7 +33,7 @@ import { isWalkable } from '../src/shared/protocol.ts';
 // handshake was refused with `version_mismatch` and the fixed sleep after it
 // turned that into "Cannot read properties of undefined". Eight gameplay
 // verification tools were dead and silent about it.
-import { PROTOCOL_VERSION } from '../src/shared/version.ts';
+import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
 
 const PORT = process.argv[2] ?? '31981';
 const CWD = fileURLToPath(new URL('..', import.meta.url));
@@ -324,7 +324,7 @@ async function stepTo(v, target) {
   if (dir === null) return false;
   const before = v.frames.filter((f) => f.t === 'moved' && f.id === v.id).length;
   v.send({ t: 'move', dir });
-  await sleep(45);
+  await sleep(COMMAND_GAP_MS);
   return v.frames.filter((f) => f.t === 'moved' && f.id === v.id).length > before;
 }
 
@@ -388,9 +388,9 @@ if (target === undefined) {
       // Adjacent: the move IS the attack, and it is refused-looking either way.
       const dir = firstStep(b.latest('realm').level, me, { x: foe.e.x, y: foe.e.y });
       if (dir !== null) b.send({ t: 'move', dir });
-      await sleep(45);
+      await sleep(COMMAND_GAP_MS);
     } else if (!(await stepTo(b, { x: foe.e.x, y: foe.e.y }))) {
-      await sleep(45);
+      await sleep(COMMAND_GAP_MS);
     }
     bumps += 1;
   }

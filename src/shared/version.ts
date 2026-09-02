@@ -719,3 +719,39 @@ export const ZOOM_MAX = 1;
  */
 export const ENERGY_TO_ACT = 1000;
 export const ENERGY_PER_TICK = 100;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAST A SOCKET MAY TALK. PART OF THE WIRE CONTRACT, NOT AN INTERNAL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A token bucket in `net/gateway.ts` drops any command past this and tells the
+ * sender AT MOST ONCE A SECOND (`RATE_NOTICE_INTERVAL_MS`) — so a client going
+ * too fast sees one error and silently loses everything after it. The burst
+ * equals the rate: a client may spend a second's worth at once, which is what a
+ * reconnect replay does, and then refills.
+ *
+ * ═══ IT LIVES HERE BECAUSE THE SENDERS HAVE TO KNOW IT AND COULD NOT ═══
+ * These were module-private in the gateway, so every scripted client in
+ * `tools/` picked its own interval by feel and several picked one too fast.
+ * `killer-named.test.ts` fired a move every 22 milliseconds — FORTY-FIVE a
+ * second — lost a third of them, and then walked a route measured from a tile
+ * nobody was standing on. It stopped 27 tiles short of the room it names and
+ * passed for months by dying to something it met on the way.
+ *
+ * Nothing about that is visible: one error line, and an end state that still
+ * satisfies every assertion, about a fight the probe did not choose.
+ */
+export const COMMAND_RATE_PER_SEC = 20;
+export const COMMAND_BURST = 20;
+
+/**
+ * The smallest gap a well-behaved client leaves between two commands.
+ *
+ * ROUNDED UP AND THEN GIVEN HEADROOM. The arithmetic floor is fifty
+ * milliseconds, which is exactly the limit and therefore fails on any jitter in
+ * either direction — a scheduler hiccup on the sender, a slow read on the
+ * server, and a burst that was "exactly twenty" is twenty-one. Sixty is the same
+ * number with somewhere to go wrong.
+ */
+export const COMMAND_GAP_MS = Math.ceil(1000 / COMMAND_RATE_PER_SEC) + 10;

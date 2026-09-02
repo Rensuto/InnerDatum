@@ -59,7 +59,7 @@ import { helloAndChoose } from './handshake.mjs';
 // handshake was refused with `version_mismatch` and the fixed sleep after it
 // turned that into "Cannot read properties of undefined". Eight gameplay
 // verification tools were dead and silent about it.
-import { PROTOCOL_VERSION } from '../src/shared/version.ts';
+import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
 
 const PORT = process.argv[2] ?? '32051';
 const CWD = fileURLToPath(new URL('..', import.meta.url));
@@ -178,7 +178,7 @@ async function stepTo(target) {
   if (dir === null) return false;
   const before = frames.filter((f) => f.t === 'moved' && f.id === selfId).length;
   send({ t: 'move', dir });
-  await sleep(40);
+  await sleep(COMMAND_GAP_MS);
   return frames.filter((f) => f.t === 'moved' && f.id === selfId).length > before;
 }
 function makeTracker() {
@@ -371,9 +371,9 @@ async function fightRoom() {
     if (foe.d <= 1) {
       const dir = firstStep(latest('realm').level, mine, { x: foe.e.x, y: foe.e.y });
       if (dir !== null) send({ t: 'move', dir });
-      await sleep(45);
+      await sleep(COMMAND_GAP_MS);
     } else if (!(await stepTo({ x: foe.e.x, y: foe.e.y }))) {
-      await sleep(45);
+      await sleep(COMMAND_GAP_MS);
     }
   }
 }

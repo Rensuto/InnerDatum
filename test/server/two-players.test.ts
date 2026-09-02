@@ -13,7 +13,7 @@ import { createPartyState, membersOf } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
-import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
+import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { STAT_POINTS_PER_LEVEL } from '../../src/shared/progression.ts';
 import type { PartyState } from '../../src/server/engine/party.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
@@ -1652,7 +1652,7 @@ describe('the moor hears when somebody does not come back', () => {
     let died = false;
     for (let turn = 0; turn < 120 && !died; turn += 1) {
       diver.send({ t: 'hold' });
-      await sleep(45);
+      await sleep(COMMAND_GAP_MS);
       died = diver.lines().some((line) => /erased/i.test(line));
     }
     expect(died, 'the room never killed the diver').toBe(true);
