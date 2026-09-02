@@ -84,7 +84,7 @@ function asItShipped(deviceW: number, deviceH: number): { css: number; tilesW: n
 describe('how big a cell is', () => {
   it('is what the shipped constants say, at every window in the table', () => {
     for (const w of WINDOWS) {
-      const got = viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0);
+      const got = viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0, w.dpr);
       expect((TILE_PX * got.scale) / w.dpr, `${w.name} cell`).toBe(w.css);
       expect(got.logicalW / TILE_PX, `${w.name} across`).toBe(w.tilesW);
       expect(got.logicalH / TILE_PX, `${w.name} down`).toBe(w.tilesH);
@@ -100,7 +100,7 @@ describe('how big a cell is', () => {
      */
     for (const w of WINDOWS) {
       expect(
-        (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0).scale) / w.dpr,
+        (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0, w.dpr).scale) / w.dpr,
         w.name,
       ).toBeGreaterThanOrEqual(64);
     }
@@ -123,7 +123,8 @@ describe('how big a cell is', () => {
     let improved = 0;
     for (const w of WINDOWS) {
       const before = asItShipped(w.deviceW, w.deviceH);
-      const after = (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0).scale) / w.dpr;
+      const after =
+        (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0, w.dpr).scale) / w.dpr;
       const beforeCss = before.css / w.dpr;
       if (beforeCss < 64) {
         expect(after, `${w.name} was ${String(beforeCss)}`).toBeGreaterThan(beforeCss);
@@ -146,7 +147,7 @@ describe('how big a cell is', () => {
      * upstream recomputes — `viewport.mwidth`, the count of cells in a fixed
      * rectangle.
      */
-    const iframe = viewLayout(1248, 860, DEFAULT_VIEWPORT, 0);
+    const iframe = viewLayout(1248, 860, DEFAULT_VIEWPORT, 0, 1);
     expect(asItShipped(1248, 860).tilesW).toBe(39);
     expect(iframe.logicalW / TILE_PX).toBe(19);
   });

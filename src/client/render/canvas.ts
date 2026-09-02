@@ -461,6 +461,50 @@ export const HUD_MIN_W = 640;
 export const HUD_MIN_H = 320;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE LARGEST BOX IT MAY LAY OUT IN — WHICH IS WHAT KEEPS IT A UI.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `hudScale` used to come from the floor, `floor(min(device / 640, device / 320))`,
+ * and that is a rule for making the interface FILL the window: on a 1080p screen
+ * it lands on 3, on 1440p on 4, on a 4K screen on 6. The interface was then laid
+ * out in a 640x360 box and magnified six times, which is a hotbar three quarters
+ * of the screen wide and a 12-pixel label at 72 pixels.
+ *
+ * Reported, with a screenshot, one deploy after the map cell doubled: *"everything
+ * feels too zoomed in now. it feels unnatural. this might be because the UI is
+ * massive at this zoom level."* And the arithmetic agrees with the eye — on that
+ * window the interface was drawn at 2x while the MAP was at 1x, so the panels
+ * were literally at twice the world's magnification.
+ *
+ * ═══ UPSTREAM'S INTERFACE DOES NOT GROW WITH THE WINDOW ═══
+ * `tome/class/Game.lua:571` asks `self.uiset:getMapSize()` — the UI takes the
+ * space it needs and hands the map the rest, rather than being scaled to fit.
+ * A bigger screen in ToME means MORE MAP, not a bigger hotbar.
+ *
+ * ═══ SO THE FACTOR TRACKS THE DEVICE RATIO, NOT THE WINDOW ═══
+ * `round(dpr)` keeps the interface a constant PHYSICAL size: a 12-pixel label is
+ * 12 CSS pixels at dpr 1 and 12 CSS pixels at dpr 2, which is the whole point of
+ * the ratio. `HUD_MAX_*` is the second term, and it stops the interface becoming
+ * a postage stamp on a very large display: the box may not exceed 1920x1080, so
+ * past that the factor climbs again.
+ *
+ *     window                 was            now
+ *     1619x757  dpr 1        2x  809x378    1x  1619x757
+ *     1159x551  dpr 2        3x  772x367    2x  1159x551
+ *     1920x1080 dpr 1        3x  640x360    1x  1920x1080
+ *     3840x2160 dpr 2        6x  640x360    2x  1920x1080
+ *     800x600   dpr 1        1x  800x600    1x  800x600
+ *
+ * HEIGHT IS WHAT THIS REALLY BUYS. Every panel in `ui/` fights for vertical room
+ * — `ui/inventory.ts` sheds paper-doll rows, `ui/charsheet.ts` drops whole
+ * sections — and the old rule handed them 360 pixels on any screen bigger than a
+ * laptop. They get the window now.
+ */
+const HUD_MAX_W = 1920;
+const HUD_MAX_H = 1080;
+
+/**
  * Guardrail: past this the tiles are too small to read on a laptop.
  *
  * 30x20, DOWN FROM 48x32 WHEN THE CELL DOUBLED. It is a cap on how many cells
@@ -496,15 +540,18 @@ export type ViewLayout = {
  * integer scale, the adaptive tile count, the letterbox, and now two scales
  * instead of one — was checked by looking at the game.
  *
- * PURE, and it has to stay pure: no canvas, no `window`, no dpr. `deviceW` and
- * `deviceH` are already-measured device pixels, which is what makes the whole
- * of this testable in the `node` environment the client tests run in.
+ * PURE, and it has to stay pure: no canvas, no `window`. `deviceW`, `deviceH`
+ * and `dpr` are already-measured — nothing here reads the DOM — which is what
+ * makes the whole of it testable in the `node` environment the client tests run
+ * in. `dpr` is an input rather than a lookup for exactly that reason, and the
+ * interface's factor is the only thing that uses it: see `HUD_MAX_W`.
  */
 export function viewLayout(
   deviceW: number,
   deviceH: number,
   viewport: Viewport,
   zoomStep: number,
+  dpr: number,
 ): ViewLayout {
   const minTilesW = Math.max(1, Math.floor(viewport.tilesW));
   const minTilesH = Math.max(1, Math.floor(viewport.tilesH));
@@ -527,14 +574,25 @@ export function viewLayout(
   const logicalH = tilesH * TILE_PX;
 
   /**
-   * THE INTERFACE, ON ITS OWN. The same shape of sum and deliberately not the
-   * same inputs: its own floor (`HUD_MIN_W`), no tile grid to be a multiple of,
-   * and NO `zoomStep` term — zoom is a map control, which is the whole point.
+   * THE INTERFACE, ON ITS OWN — see `HUD_MAX_W` for why the factor is this and
+   * not `floor(min(device / HUD_MIN))`, which magnified the UI to fill the
+   * window. No `zoomStep` term either: zoom is a map control, which is the
+   * point of the whole split.
+   *
+   * `round(dpr)` is the size a person sees; the `ceil` terms are the cap, and
+   * they are `ceil` rather than `floor` because the constraint runs the other
+   * way — the box must not EXCEED `HUD_MAX_*`, so the factor must be at least
+   * `device / max`.
    *
    * Rounding the box down to a tile multiple is what used to leave the hotbar
    * inside the map's letterbox instead of spanning the window, so it does not.
    */
-  const hudScale = Math.max(1, Math.floor(Math.min(deviceW / HUD_MIN_W, deviceH / HUD_MIN_H)));
+  const hudScale = Math.max(
+    1,
+    Math.round(dpr),
+    Math.ceil(deviceW / HUD_MAX_W),
+    Math.ceil(deviceH / HUD_MAX_H),
+  );
   const hudW = Math.max(HUD_MIN_W, Math.floor(deviceW / hudScale));
   const hudH = Math.max(HUD_MIN_H, Math.floor(deviceH / hudScale));
 
@@ -1546,7 +1604,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     canvas.height = deviceH;
     viewCtx.imageSmoothingEnabled = false;
 
-    const next = viewLayout(deviceW, deviceH, viewport, zoomStep);
+    const next = viewLayout(deviceW, deviceH, viewport, zoomStep, dpr);
     scale = next.scale;
     hudScale = next.hudScale;
     offsetX = next.offsetX;
