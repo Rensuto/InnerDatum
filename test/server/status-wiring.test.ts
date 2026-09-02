@@ -7,12 +7,17 @@ import {
   createTalentBook,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
-import { BLEEDING, EffectId, SLOWED, STUNNED } from '../../src/server/content/effects.ts';
+import { EffectId, MVP_EFFECTS } from '../../src/server/content/effects.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { MOVE_MP_COST } from '../../src/server/engine/talents.ts';
 import { SLOW_PLAYER_MP_PENALTY, createMvpEffectState } from '../../src/server/content/effects.ts';
 import { createDownedState, isDowned } from '../../src/server/engine/downed.ts';
-import { INDEX_HUSK_ELITE, INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
+import {
+  INDEX_EIDOLON,
+  INDEX_HUSK_ELITE,
+  INDEX_WRAITH,
+  monsterInit,
+} from '../../src/server/content/monsters.ts';
 import {
   budgetPenalty,
   createEffectState,
@@ -75,11 +80,21 @@ function arena(seed: string): { world: World; effects: EffectState } {
   const world = createWorld(seed);
   world.level.tiles.fill(TileCode.FLOOR);
 
-  // THE PRODUCTION SHAPE, not `createMvpEffectState`: main.ts registers the
-  // three by hand, and a test that used the convenience constructor would keep
-  // passing if main.ts registered none of them.
+  /**
+   * THE PRODUCTION SHAPE, not `createMvpEffectState` — a test that used the
+   * convenience constructor would keep passing if main.ts registered none of
+   * them, which is the exact failure this file exists to guard.
+   *
+   * ═══ IT ITERATES `MVP_EFFECTS`, AND IT USED TO NAME THREE BY HAND ═══
+   * The hand-written list was the production shape when main.ts also wrote three
+   * out. It does not any more — *"`MVP_EFFECTS` is the one list that already has
+   * to be right... iterating it here means a seventh effect is registered by
+   * existing, with nothing for anyone to remember"* — so a hand list here had
+   * quietly become the thing it was written to avoid: a fixture that cannot see
+   * an effect production has.
+   */
   const effects = createEffectState();
-  for (const def of [STUNNED, BLEEDING, SLOWED]) registerEffect(effects, def);
+  for (const def of MVP_EFFECTS) registerEffect(effects, def);
 
   return { world, effects };
 }
@@ -420,5 +435,52 @@ describe('SLOWED, which was a badge and nothing else', () => {
     // holds its stand-off at range 4, so a third less closing speed is the
     // difference between walking at it and needing a plan.
     expect(stepsInARound(penalty)).toBe(2);
+  });
+
+  it('an Index Eidolon’s touch confuses the body it reaches', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE THIRD RIDER, AND THE FIRST MENTAL ONE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `INDEX_EIDOLON.onHit` carries `EffectId.Confused` at the creature's own
+     * `combatMindpower` — but `monsters.test.ts` only asserts the TEMPLATE's
+     * fields, which is two correct halves and no join. Every link between them
+     * is somewhere else: `monsterInit` has to carry `onHit` onto the actor,
+     * `strike` has to read it off the attacker, `PumpCtx.applyStatus` has to
+     * exist, and `arena` above has to have registered the effect at all — and
+     * that last one was FALSE until this test was written, because the fixture
+     * named three effects by hand and confusion is the eleventh.
+     *
+     * A LANDED HIT AND A FAILED SAVE, so this is a window rather than one turn:
+     * the eidolon can miss, and a mental save can shrug the touch off. The check
+     * is inside the loop because the confusion is short.
+     */
+    const { world, effects } = arena('status-touch');
+    const dalt = world.addPlayer('p1', 'Dalt', { maxHp: 900 });
+    dalt.x = REALM_TILES.x;
+    dalt.y = REALM_TILES.y;
+    dalt.hpRegen = 0;
+
+    // THE REAL TEMPLATE THROUGH THE REAL MAPPER, for the reason the elite's
+    // test gives: a hand-built monster with an `onHit` glued on would pass while
+    // `monsterInit` dropped the field.
+    world.addMonster(
+      'm_eidolon',
+      monsterInit(INDEX_EIDOLON, { x: REALM_TILES.x + 1, y: REALM_TILES.y }),
+    );
+
+    const engine = createTurnEngine({ world, now: () => 0, effects });
+    engine.join('p1');
+    world.turn.engagement = 3;
+
+    let muddled = false;
+    for (let i = 0; i < 60 && !muddled; i += 1) {
+      expect(engine.hold('p1').ok).toBe(true);
+      engine.pump();
+      if (hasEffect(effects, 'p1', EffectId.Confused)) muddled = true;
+    }
+
+    expect(muddled, 'sixty turns of being touched and never once confused').toBe(true);
   });
 });
