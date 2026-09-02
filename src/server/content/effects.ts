@@ -98,6 +98,12 @@ export const EffectId = {
    */
   Dazed: 'effect:dazed',
   /**
+   * THE FIRST STATUS THAT CHANGES WHAT AN ACTION DOES RATHER THAN WHAT IT IS
+   * WORTH. Every other entry on this list moves a number; this one takes the
+   * step you asked for and puts it somewhere else. `mental.lua:67-87`.
+   */
+  Confused: 'effect:confused',
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE FIRST BENEFICIAL EFFECT IN THE GAME, AND THE POINT IS THE CATEGORY.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -161,6 +167,25 @@ export const SLOW_POWER = 0.3;
  * making it better than swinging again.
  */
 export const BLEED_POWER = 3;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW OFTEN A CONFUSED BODY GETS IT WRONG — `mental.lua:74`, `power = 50`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's own default and upstream's own ceiling: `activate` runs
+ * `util.bound(eff.power, 0, 50)` (`mental.lua:79`), so fifty percent is the most
+ * confusion ToME will ever apply however it was rolled. Taken unchanged.
+ *
+ * ═══ WHY IT IS NOT TURNED DOWN FOR BEING HARSH ═══
+ * A coin flip on every step reads as enormous, and the instinct is to soften it
+ * to twenty. That would be the wrong edit twice over: it is the number fifteen
+ * years of play settled on, and — more to the point here — the DURATION is what
+ * this game controls. A two-turn confusion at fifty percent is a scare; a
+ * ten-turn one is a death sentence. Tune the turns at the call site, not the
+ * chance, so the mechanic keeps meaning what it means everywhere else.
+ */
+export const CONFUSE_POWER = 50;
 
 /**
  * physical.lua:500 — `for i = 1, 3 do ... end`. Three talents, not four.
@@ -956,6 +981,81 @@ export const BRAINLOCKED: EffectDef = Object.freeze({
   },
 } satisfies EffectDef);
 
+// ---------------------------------------------------------------------------
+// CONFUSED — mental.lua:67-87
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CONFUSED. THE STEP YOU TAKE IS NOT THE STEP YOU ASKED FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEffect{
+ *   name = "CONFUSED", image = "effects/confused.png",
+ *   long_desc = "The target is confused, acting randomly (chance %d%%) and unable
+ *                to perform complex actions.",
+ *   type = "mental", subtype = { confusion=true }, status = "detrimental",
+ *   parameters = { power=50 },                                        -- :74
+ *   on_gain = "#Target# wanders around!.",                            -- :75
+ *   activate = function(self, eff)
+ *     eff.power = math.floor(math.max(eff.power - (self:attr("confusion_immune") or 0) * 100, 10))
+ *     eff.power = util.bound(eff.power, 0, 50)                        -- :79
+ *     eff.tmpid = self:addTemporaryValue("confused", eff.power)       -- :80
+ *   end,
+ * }
+ * ```
+ *
+ * ═══ IT IS THE FIRST STATUS HERE THAT CHANGES AN ACTION'S MEANING ═══
+ * Everything else on this list is a modifier: Slowed moves a speed, Effaced
+ * divides eight rolls, Breached halves a bound. A player reads those on their
+ * sheet. Confusion is read on the FLOOR — you press east and go north-west —
+ * and it is the only status in the game whose whole expression is that the
+ * board did not do what you told it.
+ *
+ * ═══ THE TWO CONSUMERS, AND BOTH ARE AT RESOLUTION ═══
+ * `Actor.lua:1316-1321` scrambles a step inside `move`, and `Actor.lua:5499-5504`
+ * makes a talent fail inside `preUseTalent` AND SPENDS THE ENERGY. Ours are in
+ * `engine/scheduler.ts` for the reason the talent gate's own docblock gives:
+ * `submitTalent` checks only what CANNOT CHANGE between the packet and the tick,
+ * because a refusal there costs zero and re-prompts. A confusion roll must not
+ * be a free re-roll, so it belongs where the turn is actually spent.
+ *
+ * ═══ NO `confusion_immune` YET, DELIBERATELY ═══
+ * Upstream's `activate` subtracts one. `IMMUNITY_KEYS` (shared/immunity.ts) has
+ * seven subtypes and confusion is not among them, and adding an eighth with no
+ * ego granting it would be the ninth time this codebase has built a finished
+ * channel with no content pointed at it — the failure `Effaced` and `Breached`
+ * were written to end. The subtype below is already `'confusion'`, so the day an
+ * ego wants to grant it, the key is the only thing missing.
+ */
+export const CONFUSED: EffectDef = Object.freeze({
+  id: EffectId.Confused,
+  // `Cn` — `Cf` reads as "cold/fire" at a glance on a 24-pixel badge, and the
+  // roster test proves no two statuses share a pair.
+  badge: 'Cn',
+  displayName: 'Confused',
+  description:
+    'Acting at random, and unable to do anything complicated. ' +
+    'Half the steps you take are somebody else’s idea.',
+  // mental.lua:71 — the MENTAL save, whatever delivered it. See the file header.
+  type: SaveChannel.Mental,
+  status: EffectStatus.Detrimental,
+  // mental.lua declares no `on_merge` for CONFUSED, so upstream replaces (:128).
+  stackMode: StackMode.Refresh,
+  // mental.lua:72 — `subtype = { confusion=true }`.
+  subtypes: ['confusion'],
+  decrease: 1,
+  icon: 'icon_status_confused',
+  modifiers: {
+    // :80 — `addTemporaryValue("confused", eff.power)`.
+    confusedPercent: CONFUSE_POWER,
+  },
+  // :74 — kept so the log and the tooltip can print the chance; the modifier
+  // above is what the engine reads.
+  parameters: { power: CONFUSE_POWER },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -967,6 +1067,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   OFF_BALANCE,
   SPELLSHOCKED,
   BRAINLOCKED,
+  CONFUSED,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

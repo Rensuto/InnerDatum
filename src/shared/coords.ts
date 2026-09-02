@@ -95,6 +95,28 @@ export function dirVector(dir: Dir): Vec2 {
   return DIR_VECTORS[dir];
 }
 
+/**
+ * The direction a unit displacement names, or undefined for (0, 0).
+ *
+ * THE INVERSE OF `dirVector`, and it exists because one caller needs to turn a
+ * pair of random offsets back into a `Dir`: `Actor.lua:1319` scrambles a
+ * confused body's step as `self.x + rng.range(-1,1), self.y + rng.range(-1,1)`,
+ * which is nine outcomes over two axes rather than a choice among eight names.
+ *
+ * UNDEFINED FOR (0, 0) RATHER THAN A DEFAULT, because that ninth outcome is a
+ * real one — a body that stumbles and goes nowhere — and silently answering
+ * north would delete it. The caller decides what standing still means.
+ *
+ * Offsets outside [-1, 1] are undefined too: this maps a STEP, not a vector.
+ */
+export function dirFromVector(dx: number, dy: number): Dir | undefined {
+  for (const dir of DIR_ORDER) {
+    const v = DIR_VECTORS[dir];
+    if (v.dx === dx && v.dy === dy) return dir;
+  }
+  return undefined;
+}
+
 /** The tile one step from `from` in `dir`. Does not bounds-check; callers do. */
 export function step(from: TileXY, dir: Dir): TileXY {
   const v = DIR_VECTORS[dir];

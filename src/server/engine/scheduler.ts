@@ -56,7 +56,7 @@
  * seeded PCG32 with a label; nothing here reads a clock.
  */
 
-import { chebyshev, step } from '../../shared/coords.ts';
+import { chebyshev, dirFromVector, step } from '../../shared/coords.ts';
 import { ActResult, tickLevel } from '../../shared/energy.ts';
 import { canWalk } from '../../shared/level.ts';
 // THE ONLY NEW IMPORT PROGRESSION NEEDS, AND IT IS FROM src/shared/ (CLAUDE.md
@@ -102,7 +102,7 @@ import {
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
-import type { TileXY } from '../../shared/coords.ts';
+import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
 import type { TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
@@ -2182,6 +2182,64 @@ type Resolution =
  * whole of the refund rule. It is why an intent submitted three seconds ago
  * against a monster that has since died costs nothing.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DID THE CONFUSION TAKE THIS ACTION? `mental.lua:80`'s attribute, rolled.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `StatusFlags.confused` is a PERCENT — see its docblock in engine/derived.ts —
+ * and both of upstream's consumers roll it the same way, `rng.percent(...)`.
+ *
+ * BOUNDED AT THE ROLL RATHER THAN WHERE IT IS COMPOSED, so a tooltip prints the
+ * number the effects actually granted while the die stays a die: two confusions
+ * summing past a hundred would otherwise be an unrollable certainty expressed as
+ * arithmetic nobody can see.
+ *
+ * ONE LABELLED DRAW, and only when there is something to roll — a body with no
+ * confusion consumes nothing from the stream, so adding this status changes no
+ * existing seed's sequence.
+ */
+function confusionTakes(actor: EngineActor, world: World, label: string): boolean {
+  const pct = actor.combat?.flags?.confused ?? 0;
+  if (pct <= 0) return false;
+  return world.rng.int(label, 1, 100) <= Math.min(pct, 100);
+}
+
+/**
+ * WHERE A CONFUSED BODY ACTUALLY STEPS — `Actor.lua:1316-1321`.
+ *
+ * ```lua
+ * if not force and self:attr("confused") then
+ *   if rng.percent(self:attr("confused")) then
+ *     x, y = self.x + rng.range(-1, 1), self.y + rng.range(-1, 1)
+ *   end
+ * end
+ * ```
+ *
+ * TWO INDEPENDENT AXES, not a pick from eight names, which is why the ninth
+ * outcome exists at all: both offsets can come up zero, and upstream's `move`
+ * then walks the body onto its own tile — moved, energy spent, nowhere gained.
+ * That is returned here as `null`, and the caller turns it into a HOLD, which is
+ * this engine's existing word for "the turn is spent and the board did not
+ * change". Collapsing it into a seventh direction would quietly delete an
+ * eleventh of the mechanic; making it a REFUSAL would be worse, because a
+ * refusal refunds the turn and re-prompts — confusion would become a free
+ * re-roll, which is the opposite of what it is for.
+ *
+ * AND THE SCRAMBLED STEP KEEPS EVERY OTHER RULE. Upstream substitutes the
+ * destination at the TOP of `move` and lets the rest of it run, so a confused
+ * body that stumbles into a hostile bump-attacks it and one that stumbles into a
+ * wall is refused. Ours returns a DIRECTION for the same reason: everything
+ * below reads `dir`, so the bump, the ally swap and the terrain check all see
+ * the tile the body is really going to.
+ */
+function confusedStep(actor: EngineActor, dir: Dir, run: Run): Dir | null {
+  if (!confusionTakes(actor, run.world, `confused.move.${actor.id}`)) return dir;
+  const dx = run.world.rng.int(`confused.dx.${actor.id}`, -1, 1);
+  const dy = run.world.rng.int(`confused.dy.${actor.id}`, -1, 1);
+  return dirFromVector(dx, dy) ?? null;
+}
+
 function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution {
   const { world } = run;
   switch (intent.kind) {
@@ -2241,6 +2299,37 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
     case IntentKind.Talent: {
       const talents = run.ctx.talents;
       if (talents === undefined) return { ok: false, reason: Refusal.NoTalentEffect };
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * CONFUSED — LOSE THE TURN. `Actor.lua:5499-5504`, and the energy is the
+       * whole of it.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ```lua
+       * if self:attr("confused") and ... then
+       *   if rng.percent(self:attr("confused")) then
+       *     game.logSeen(self, "%s is confused and fails to use %s.", ...)
+       *     self:useEnergy()
+       *     return false
+       * ```
+       *
+       * ═══ HERE AND NOT IN `submitTalent`, WHICH IS THE POINT ═══
+       * The talent GATE (turn-engine.ts) checks only what cannot change between
+       * the packet and the tick, because a refusal there costs zero and
+       * re-prompts — that refund is what removes hesitation from a co-op turn. A
+       * confusion roll checked there would be a free re-roll: press again, roll
+       * again, until it works. It has to sit where the turn is actually spent.
+       *
+       * A HOLD, so the turn is spent and the board does not change — this
+       * engine's existing word for exactly upstream's `useEnergy(); return
+       * false`. The Confused badge on the caster's own HUD is what explains it;
+       * a dedicated log line would be a new wire variant, and the badge carries
+       * its own sentence already (`EffectView.desc`).
+       */
+      if (confusionTakes(actor, world, `confused.talent.${actor.id}`)) {
+        return { ok: true, effect: { kind: 'hold' } };
+      }
 
       const used = talents.use(actor, intent.talentId, intent.target);
       if (!used.ok) return { ok: false, reason: talentRefusalToRefusal(used.reason) };
@@ -2335,7 +2424,22 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
 
     case IntentKind.Move: {
       const from: TileXY = { x: actor.x, y: actor.y };
-      const to = step(actor, intent.dir);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * CONFUSED FIRST, BEFORE EVERY OTHER RULE — `Actor.lua:1316-1321`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Upstream substitutes the destination at the very top of `move`, ahead of
+       * the bump, the swap and the terrain test, so a scrambled step is a real
+       * step in a different direction rather than a special case. This line is
+       * that placement; `confusedStep` is the roll.
+       *
+       * `null` is the stumble-in-place — see `confusedStep` for why it is a hold
+       * and not a refusal.
+       */
+      const dir = confusedStep(actor, intent.dir, run);
+      if (dir === null) return { ok: true, effect: { kind: 'hold' } };
+      const to = step(actor, dir);
 
       // BUMP-ATTACK. Walking into a hostile IS the attack input in M2, and it
       // is what makes terrain-only pathing produce monsters that hit things
@@ -2448,7 +2552,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
 
       // `tryMove` remains the ONLY thing in the process allowed to change a
       // position, so terrain and occupancy are decided in exactly one place.
-      const moved = world.tryMove(actor.id, intent.dir);
+      const moved = world.tryMove(actor.id, dir);
       if (!moved.ok) return { ok: false, reason: moved.reason };
       // `TalentSheet.movedThisTurn` — the flag Focus regen reads, set from the
       // one place in the process where an actor's tile actually changes. Cleared

@@ -277,6 +277,24 @@ export type StatusFlags = {
    * `cooldownTalents()` while it is set, so a stunned actor's cooldowns FREEZE.
    */
   readonly stunned?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * CONFUSED — A PERCENTAGE, NOT A FLAG, AND UPSTREAM'S IS TOO.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `mental.lua:80` — `addTemporaryValue("confused", eff.power)` — so ToME's
+   * `confused` attribute is the CHANCE, in percent, that an action comes out
+   * wrong. Everything else on this object is a boolean because everything else
+   * upstream sets to 1; this one is genuinely a number and is kept as one rather
+   * than flattened into "confused: true" plus a constant somewhere else.
+   *
+   * Read by NO getter in this file — it is not a defensive number. It is read at
+   * RESOLUTION (engine/scheduler.ts), twice: once to scramble a step
+   * (Actor.lua:1316-1321) and once to make a talent fizzle for its full turn
+   * (Actor.lua:5499-5504). It lives here for the reason `stunned` gives beside
+   * it: a status system needs one place to write.
+   */
+  readonly confused?: number;
 };
 
 /**

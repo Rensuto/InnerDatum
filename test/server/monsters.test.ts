@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { BLEED_POWER, EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
-import { combatPhysicalpower } from '../../src/server/engine/derived.ts';
+import { combatMindpower, combatPhysicalpower } from '../../src/server/engine/derived.ts';
 import { setEffect } from '../../src/server/engine/effects.ts';
 
 import { decideNpcAction } from '../../src/server/ai/npc.ts';
 import { ALCHEMIST, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import {
   INDEX_HUSK,
+  INDEX_EIDOLON,
   INDEX_HUSK_ELITE,
   INDEX_WRAITH,
   MONSTER_TEMPLATES,
@@ -973,7 +974,7 @@ describe('the elite’s claw — the roster’s one melee rider', () => {
     expect(INDEX_HUSK_ELITE.onHit?.power).toBe(combatPhysicalpower(INDEX_HUSK_ELITE.combat));
   });
 
-  it('three riders on the roster, and the husk has none', () => {
+  it('four riders on the roster, and the husk has none', () => {
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * TWO, AND THE ONE THAT MATTERS IS THE ONE WITHOUT.
@@ -1007,15 +1008,54 @@ describe('the elite’s claw — the roster’s one melee rider', () => {
      * unavoidable ranged stun that outlasts the gap between shots is not a hard
      * fight, it is a player who never acts again.
      */
+    /**
+     * FOUR NOW, AND THE FOURTH IS THE FIRST MENTAL ONE.
+     *
+     * The three above are all `type: physical`, so the whole bestiary rolled
+     * against one save and a party's Willpower bought it nothing but mindpower.
+     * `INDEX_EIDOLON` confuses (mental.lua:67-87), which is the first thing in
+     * the game a mental save has ever been asked about.
+     *
+     * It goes on THAT creature because its own description was already the
+     * mechanic — *"it moves the way a misremembered thing moves"* — and on a
+     * MELEE one because contact is the counterplay: the answer to the eidolon
+     * stays "do not let it reach you". Not on the Inquisitor, which is already
+     * the roster's pure-debuff creature.
+     */
     const withRiders = MONSTER_TEMPLATES.filter((t) => t.onHit !== undefined).map((t) => t.id);
-    expect(withRiders.toSorted()).toEqual(['index_husk_elite', 'index_watcher', 'index_wraith']);
+    expect(withRiders.toSorted()).toEqual([
+      'index_eidolon',
+      'index_husk_elite',
+      'index_watcher',
+      'index_wraith',
+    ]);
     expect(INDEX_HUSK.onHit).toBeUndefined();
 
     // AND EACH ONE IS THE STATUS ITS HEADER ARGUES FOR. Bleeding ignores armour,
     // so it punishes the body that stands still; Slowed costs a third of a
-    // player's legs, so it punishes the body trying to close.
+    // player's legs, so it punishes the body trying to close; Confused takes
+    // away the one thing melee range was supposed to guarantee you, which is
+    // knowing which way you are stepping.
     expect(INDEX_HUSK_ELITE.onHit?.effectId).toBe(EffectId.Bleeding);
     expect(INDEX_WRAITH.onHit?.effectId).toBe(EffectId.Slowed);
+    expect(INDEX_EIDOLON.onHit?.effectId).toBe(EffectId.Confused);
+  });
+
+  it('the eidolon’s touch applies at its MINDPOWER, not its physical power', () => {
+    /**
+     * THE ONE ROW WHERE READING THE WRONG GETTER WOULD LOOK RIGHT.
+     *
+     * `combatMindpower` is 11 here and `combatPhysicalpower` is 10 — one apart,
+     * so a test written against either passes and a fixture proves nothing. The
+     * claim is not the number, it is WHICH DERIVATION: the effect is
+     * `type: mental` (mental.lua:71) and `Actor.lua:6981-6986` keys the save off
+     * the EFFECT rather than off the attack that delivered it, so what this
+     * creature does to you is not a matter of how hard it hits.
+     */
+    expect(INDEX_EIDOLON.onHit?.power).toBe(combatMindpower(INDEX_EIDOLON.combat));
+    expect(combatMindpower(INDEX_EIDOLON.combat)).not.toBe(
+      combatPhysicalpower(INDEX_EIDOLON.combat),
+    );
   });
 
   it('the wraith’s orb applies at the wraith’s real physical power', () => {

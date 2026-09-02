@@ -1617,6 +1617,29 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
  * No new art: `enemy_index_eidolon_s` has been cut, in the manifest and drawing
  * nothing since the day it was made.
  */
+/**
+ * GAME TURNS the eidolon's touch asks for, before any save scales it down.
+ *
+ * THREE, WHICH IS THE ROSTER'S OWN NUMBER — `CLAW_BLEED_TURNS` and
+ * `ORB_SLOW_TURNS` are both three, and matching them is a better argument than
+ * a duration invented out of caution about a new mechanic. The mental save
+ * shortens it from there, and `CONFUSE_POWER` (content/effects.ts) explains why
+ * the CHANCE is upstream's fifty and untouched: duration is the knob a game
+ * controls, chance is the one ToME already settled.
+ */
+const TOUCH_CONFUSE_TURNS = 3;
+/**
+ * The eidolon's own `combatMindpower`, as a literal — see `CLAW_APPLY_POWER`
+ * for the full reason a template may not call a derived getter.
+ *
+ * MINDPOWER AND NOT PHYSICAL POWER, because the effect is `type: mental`
+ * (mental.lua:71) and `Actor.lua:6981-6986` keys the save off the EFFECT rather
+ * than off the attack that delivered it. They are 11 and 10 here, close enough
+ * that reading the wrong one would look right in a test and be wrong in the
+ * fiction: what this creature does to you is not a matter of how hard it hits.
+ */
+const TOUCH_APPLY_POWER = 11;
+
 export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
   /**
    * THE BASE WOLF HAS EXACTLY ONE TALENT AND THIS CREATURE IS THE BASE WOLF.
@@ -1664,6 +1687,40 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
   shoulderAfter: 0,
 
   drops: { chance: 100, pick: idsOfTier('common') },
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TOUCH — and it is the creature's own sentence, made mechanical.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * *"A reading of somebody that the Index kept after it stopped keeping them.
+   * It moves the way a misremembered thing moves."* It has had a description
+   * about misremembering and a stat line about speed, and nothing joining them.
+   *
+   * CONFUSED is that join: the thing that moves like a misremembering makes YOU
+   * misremember which way you were going (mental.lua:67-87 — half your steps
+   * come out somewhere else, and a talent can fail outright for its full turn).
+   * `icon_status_confused.png` has been on disk since the status atlas was cut
+   * and had never been referenced by anything.
+   *
+   * ═══ WHY THIS CREATURE AND NOT ANOTHER ═══
+   * Three of eight already carry an `onHit` — the wraith slows, the elite
+   * bleeds, the boss stuns — and all three are PHYSICAL. This is the first
+   * mental one, and it goes on the body it belongs to rather than onto the
+   * Inquisitor, which is already the roster's pure-debuff creature and would
+   * become two debuffs wearing one robe.
+   *
+   * ═══ AND IT IS MELEE, WHICH IS THE COUNTERPLAY ═══
+   * Confusion arriving on CONTACT means the answer is the answer this creature
+   * already had: do not let it reach you. A ranged confusion would have no
+   * counter but the save. The eidolon only lives on `THICKET` ground, so this is
+   * a property of one place rather than of the whole moor.
+   */
+  onHit: {
+    effectId: EffectId.Confused,
+    turns: TOUCH_CONFUSE_TURNS,
+    power: TOUCH_APPLY_POWER,
+  },
 
   combat: {
     // canine.lua:41, VERBATIM.

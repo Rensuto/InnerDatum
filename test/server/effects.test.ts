@@ -1184,6 +1184,12 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.OffBalance,
       EffectId.Spellshocked,
       EffectId.Brainlocked,
+      /**
+       * THE FIRST STATUS THAT CHANGES WHAT AN ACTION DOES rather than what it is
+       * worth, and the first whose art was already on disk waiting for it —
+       * `icon_status_confused.png` shipped and was referenced by nothing.
+       */
+      EffectId.Confused,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1196,6 +1202,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_off_balance',
       'icon_status_spellshocked',
       'icon_status_brainlocked',
+      'icon_status_confused',
     ]);
   });
 
@@ -1277,6 +1284,9 @@ describe('the status roster (game-design.md § 12)', () => {
       [EffectId.Spellshocked]: SaveChannel.Magical,
       // mental.lua:2239 — `type = "mental"`.
       [EffectId.Brainlocked]: SaveChannel.Mental,
+      // mental.lua:71 — `type = "mental"`. The channel the WILL save answers,
+      // which is what makes a Redactor harder to scramble than a Watchman.
+      [EffectId.Confused]: SaveChannel.Mental,
     });
   });
 

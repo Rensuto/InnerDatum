@@ -291,6 +291,12 @@ export type EffectModifiers = {
    * gets its own cost, this is where it reads from.
    */
   readonly movementSpeedAdd?: number;
+  /**
+   * Sets `StatusFlags.confused` — the PERCENT chance an action comes out wrong.
+   * `mental.lua:80`, `addTemporaryValue("confused", eff.power)`. Summed across
+   * live effects exactly as upstream's temporary values sum.
+   */
+  readonly confusedPercent?: number;
 };
 
 /** Arguments handed to every lifecycle hook. One object, so adding a field is additive. */
@@ -1770,6 +1776,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
   let apPenalty = 0;
   let mpPenalty = 0;
   let movementSpeedAdd = 0;
+  let confusedPercent = 0;
 
   for (const effectId of table.keys()) {
     const mods = state.defs.get(effectId)?.modifiers;
@@ -1783,6 +1790,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     apPenalty += mods.apPenalty ?? 0;
     mpPenalty += mods.mpPenalty ?? 0;
     movementSpeedAdd += mods.movementSpeedAdd ?? 0;
+    confusedPercent += mods.confusedPercent ?? 0;
   }
 
   return {
@@ -1795,6 +1803,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     apPenalty,
     mpPenalty,
     movementSpeedAdd,
+    confusedPercent,
   };
 }
 
@@ -1906,6 +1915,11 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     scoured: (base?.scoured ?? false) || mods.scoured === true,
     breached: (base?.breached ?? false) || mods.breached === true,
     stunned: (base?.stunned ?? false) || mods.stunned === true,
+    // ADDED, NOT OR'D, because it is a percentage — `mental.lua:80` sums it
+    // through `addTemporaryValue` like any other temporary attribute. Bounded
+    // where it is ROLLED rather than here, so the number a tooltip prints is
+    // the number the effects actually granted.
+    confused: (base?.confused ?? 0) + (mods.confusedPercent ?? 0),
   };
   // A FRESH OBJECT, never a write into `sheet`. Stage two hands this stage a
   // FROZEN sheet (`composeSheet` freezes its output), and an in-place write onto
