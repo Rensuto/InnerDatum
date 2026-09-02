@@ -13,7 +13,7 @@
  * WHAT IS FILTERED NOW, AND WHAT IS STILL AN ACCEPTED LEAK.
  *
  * FILTERED: `projectActors`. Every player-facing snapshot passes the party's
- * eyes and a monster out of sight is not in it — `Actor.lua:520`'s two terms,
+ * eyes and a monster out of sight is not in it — `engine/Actor.lua:520`'s two terms,
  * range AND line. `fov.test.ts` drives it over a real socket.
  *
  * STILL UNFILTERED, and each is written down as a LEAK rather than dressed up
@@ -24,8 +24,8 @@
  *   - `projectLevel` alone. Everything else is fogged.
  *
  * `projectGroundItems` closed the last of them, and NOT the way the others did:
- * `Object.lua:28-29` gives objects `display_on_remember = true`, exactly as
- * `Grid.lua:30-32` does for terrain, so a pile shows on any tile that CHARACTER
+ * `engine/Object.lua:28-29` gives objects `display_on_remember = true`, exactly as
+ * `engine/Grid.lua:30-32` does for terrain, so a pile shows on any tile that CHARACTER
  * has walked past. Gating it on current sight would have been a deviation
  * dressed as a fidelity fix. The predicate is `knownTile` — seen, or
  * remembered — and because memory is per player there is no realm-wide answer
@@ -1159,7 +1159,7 @@ export function projectClassOptions(): ClassOptionsMsg {
  * ═══ BOTH ASSET KEYS ARE CARRIED, NEITHER IS DERIVED FROM THE NAME ═══
  * `sprite` is `ClassDef.sprite` verbatim and `portrait` is a lookup in the
  * table this file already keeps. ToME derives its own birther icon by mangling
- * the class name (`t.name:lower():gsub("[^a-z0-9]", "_")`, Birther.lua:47-48)
+ * the class name (`t.name:lower():gsub("[^a-z0-9]", "_")`, tome/dialogs/Birther.lua:47-48)
  * and survives a miss because it ships `unknown_32_bg.png`. We have no such
  * asset and cannot add one — client/public/assets/ is gitignored wholesale and
  * an unresolved key renders as the LOUD violet missing-asset box, on a bare
@@ -1427,7 +1427,7 @@ export function projectEffects(
  * ═══ FOV SEAM, AND IT IS THE ONE PLACE THE FILTER WILL GO (M6) ═══
  *
  * Upstream marks a projectile `display_on_seen = true`, `display_on_remember =
- * false`, `display_on_unknown = false` (Projectile.lua:29-31): an orb is drawn
+ * false`, `display_on_unknown = false` (engine/Projectile.lua:29-31): an orb is drawn
  * on tiles you can SEE RIGHT NOW and is never remembered, because where a bolt
  * was two turns ago is not where it is. Ours ships the whole sky to everybody,
  * and the sentence that used to excuse that — *"leaks nothing `projectActors`
@@ -1488,7 +1488,7 @@ export function projectProjectiles(world: World, eyes?: readonly TileXY[]): Proj
      * THE ORB IS GATED ON ITS OWN TILE, NEVER ON ITS SHOOTER.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * `Projectile.lua:29-31` — `display_on_seen = true`,
+     * `engine/Projectile.lua:29-31` — `display_on_seen = true`,
      * `display_on_remember = false`, `display_on_unknown = false`. Drawn where
      * you can see RIGHT NOW and never remembered, because where a bolt was two
      * turns ago is not where it is.
@@ -1589,9 +1589,9 @@ export function projectGroundItems(
    * Absent means every tile — the GM console, and every fixture.
    *
    * ═══ A PILE IS NOT GATED LIKE A BODY, AND THE DIFFERENCE IS UPSTREAM'S ═══
-   * `Object.lua:28-29` sets `display_on_seen = true` AND
-   * `display_on_remember = true` — the same pair `Grid.lua:30-32` gives
-   * TERRAIN, and the opposite of `Actor.lua:30-34`, which is remember-FALSE.
+   * `engine/Object.lua:28-29` sets `display_on_seen = true` AND
+   * `display_on_remember = true` — the same pair `engine/Grid.lua:30-32` gives
+   * TERRAIN, and the opposite of `engine/Actor.lua:30-34`, which is remember-FALSE.
    * You remember a coat you walked past; you do not remember where a husk was
    * standing. Gating loot on current sight would therefore be a DEVIATION
    * dressed as a fidelity fix, and it is the obvious wrong move here.

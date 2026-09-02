@@ -101,7 +101,7 @@ export type PrimaryStats = {
 };
 
 /**
- * The flat `combat_*` fields. Actor.lua:141-162 initialises all of them to 0,
+ * The flat `combat_*` fields. tome/class/Actor.lua:141-162 initialises all of them to 0,
  * except the two speeds which start at 1 — so every default here is ToME's.
  *
  * These are the SUM of gear, class base and buffs. They arrive pre-summed
@@ -273,7 +273,7 @@ export type StatusFlags = {
    *
    * It lives on the same flags object anyway so that a status system has one
    * place to write, and so nobody adds a `stunned` halving to `combatAttack` by
-   * analogy with Dazed. Stun's real teeth are elsewhere: Actor.lua:606 skips
+   * analogy with Dazed. Stun's real teeth are elsewhere: tome/class/Actor.lua:606 skips
    * `cooldownTalents()` while it is set, so a stunned actor's cooldowns FREEZE.
    */
   readonly stunned?: boolean;
@@ -712,7 +712,7 @@ export function combatDamage(c: Combatant, addDamMod?: PrimaryStats): number {
  *   self:combatStatLimit("con", 1.5, 0, 0.5))          -- +0 @ 10, +0.50 @ 100
  * ```
  *
- * A MULTIPLIER ON EVERY HEAL, on top of a base of 1 (Actor.lua:176). At the
+ * A MULTIPLIER ON EVERY HEAL, on top of a base of 1 (tome/class/Actor.lua:176). At the
  * `STAT_BASE` of 10 it is exactly 1.0, so a body that has invested nothing is
  * byte-for-byte where it was before this existed — which is the safety property
  * of the whole change.

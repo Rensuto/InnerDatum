@@ -197,7 +197,7 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * IT CAN SEE YOU — REMEMBER WHERE. `ActorAI.lua:130-135`.
+   * IT CAN SEE YOU — REMEMBER WHERE. `engine/ActorAI.lua:130-135`.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * Stamped on every turn the target is in view, which is upstream's own cadence

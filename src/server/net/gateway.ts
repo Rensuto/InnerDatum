@@ -536,7 +536,7 @@ type Session = {
    * The last `ground` frame this socket was sent, as its own memo key.
    *
    * PER SESSION RATHER THAN PER REALM, because since FOV the frame is per
-   * viewer: loot shows on tiles that character REMEMBERS (`Object.lua:28-29`),
+   * viewer: loot shows on tiles that character REMEMBERS (`engine/Object.lua:28-29`),
    * and no two characters have walked the same map. A realm-wide memo would
    * compare one player's frame against another's and suppress a send.
    */
@@ -5333,9 +5333,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * WHICH TILES A CHARACTER MAY BE SHOWN LOOT ON: SEEN NOW, OR REMEMBERED.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `Object.lua:28-29` — `display_on_seen = true` AND `display_on_remember =
-   * true`, the same pair `Grid.lua:30-32` gives terrain. A coat you walked past
-   * stays on your map; a husk you walked past does not (`Actor.lua:30-34` is
+   * `engine/Object.lua:28-29` — `display_on_seen = true` AND `display_on_remember =
+   * true`, the same pair `engine/Grid.lua:30-32` gives terrain. A coat you walked past
+   * stays on your map; a husk you walked past does not (`engine/Actor.lua:30-34` is
    * remember-FALSE). The rule itself is `knownTile` in `world/sight.ts`, which
    * carries the argument for both terms — briefly: sight (10) sits inside
    * reveal (12), so after one step the seen term is subsumed and is kept
@@ -5375,7 +5375,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * THE PARTY'S EYES, AND THE FRAMES EACH CLIENT IS OWED BECAUSE OF THEM.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `Actor.lua:520` gates sight on TWO terms — `core.fov.distance <= self.sight`
+   * `engine/Actor.lua:520` gates sight on TWO terms — `core.fov.distance <= self.sight`
    * AND a clear line — and this codebase had only the second. `hasLineOfSight`
    * has gated combat, talents and AI since M2; nothing anywhere bounded how FAR
    * a body could see, so on a 30x30 overworld every client was shown every

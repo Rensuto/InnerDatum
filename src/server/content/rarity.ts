@@ -58,7 +58,7 @@
 import type { Rng } from '../../shared/rng.ts';
 
 /**
- * Zone.lua:65. Never overridden anywhere in the tree, so it is a constant here
+ * engine/Zone.lua:65. Never overridden anywhere in the tree, so it is a constant here
  * rather than a field on something.
  */
 export const OOD_FACTOR = 3;

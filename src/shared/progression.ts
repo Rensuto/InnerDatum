@@ -538,7 +538,7 @@ export function gainExp(level: number, xp: number, award: number): ExpGain {
  *
  *   THE LEVEL-50 BONUS (:3767-3774). Above the cap, same as prodigies.
  *
- * ═══ AND THE BIRTH GRANT OF 2 IS DROPPED TOO — Actor.lua:171 ═══
+ * ═══ AND THE BIRTH GRANT OF 2 IS DROPPED TOO — tome/class/Actor.lua:171 ═══
  *     self.unused_talents = self.unused_talents or 2
  * ToME hands a fresh character 2 spare points ON TOP of its free birth talents
  * (data/birth/classes/warrior.lua:80-86 hands a Berserker five outright, at

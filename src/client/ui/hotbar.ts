@@ -50,7 +50,7 @@
  *   in neither     → caption GONE,   click clears the binding and says so
  *
  * The flip between the first two is computed, never remembered — see
- * `itemSlotAction`. Upstream agrees a wearable is not a "use": Object.lua:169-173
+ * `itemSlotAction`. Upstream agrees a wearable is not a "use": tome/class/Object.lua:169-173
  * answers "This object has no usable power." for anything with no activatable,
  * and HotkeysIconsDisplay.lua:232-234 draws a bound object that is currently
  * `o.wielded` in a DIFFERENT frame from one sitting in the pack, which is the

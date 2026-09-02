@@ -325,7 +325,7 @@ export const STUNNED: EffectDef = Object.freeze({
   modifiers: {
     // :491 — the ×0.4 outgoing damage flag (damage_types.lua:150-153).
     stunned: true,
-    // :492 — THE FREEZE. Actor.lua:606.
+    // :492 — THE FREEZE. tome/class/Actor.lua:606.
     noTalentsCooldown: true,
     // :493 — carried, not yet read. See the header.
     movementSpeedAdd: STUN_MOVEMENT_SPEED_ADD,

@@ -1069,7 +1069,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // misc/npcs.lua:733 `proj_speed = 2` on T_VOID_BLAST — the slowest projectile
   // in ToME, and the one the losgoroth actually grants (losgoroth.lua:67-69), so
   // the creature and its orb arrive as one package. Two tiles per game turn: the
-  // orb is born holding a full turn of energy (Projectile.lua:37-38) so its
+  // orb is born holding a full turn of energy (engine/Projectile.lua:37-38) so its
   // first tile is free and every tile after it costs half a turn. Upstream's own
   // tooltip calls it "a blast of void energies that slowly travel to their
   // target" (misc/npcs.lua:744).
@@ -1252,8 +1252,8 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
         // DEVIATION 6 OF 7 — OURS, KEPT. Upstream's equivalent is losgoroth.lua:46
         // `[DamageType.ARCANE] = 100` — total immunity to its own element. We do
         // not have Arcane and we would not want a 100 on the first floor
-        // regardless (`resistsCap` is absent, so the engine default of 100 makes
-        // that genuinely immune, Actor.lua:211). Darkness is our damage type and
+        // regardless (`resistsCap` is absent, so the module default of 100 makes
+        // that genuinely immune, tome/class/Actor.lua:211). Darkness is our damage type and
         // half of it sliding off is our identity, not a port.
         [DamageType.Darkness]: 50,
         // losgoroth.lua:46 `[DamageType.PHYSICAL] = -30`, VERBATIM. This field
@@ -1265,7 +1265,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
         // `minRange`: the answer to a wraith is to reach it.
         [DamageType.Physical]: -30,
       },
-      // `resistsCap` deliberately absent — Actor.lua:211, the engine default is
+      // `resistsCap` deliberately absent — tome/class/Actor.lua:211, the module default is
       // `{ all = 100 }`. The familiar 70 is a PLAYER birth descriptor
       // (descriptors.lua:63) and monsters do not get it.
     },

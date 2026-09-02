@@ -1080,7 +1080,7 @@ export function spendByPurse(
  * resists_cap = {all=70},
  * ```
  *
- * `Actor.lua:211` gives every body an engine default of `{ all = 100 }`, and
+ * `tome/class/Actor.lua:211` gives every body a MODULE default of `{ all = 100 }`, and
  * the PLAYER birth descriptor overrides it to 70. `DEFAULT_RESIST_CAP`'s own
  * docblock in `engine/damage.ts` has recorded that distinction since it was
  * written — *"it matters because a monster authored with 100 fire resist is

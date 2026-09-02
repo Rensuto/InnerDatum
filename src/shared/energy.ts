@@ -526,7 +526,7 @@ const EMPTY_PARKED: readonly string[] = [];
  * Per tick, in ARRAY ORDER, per actor, in exactly this sequence:
  *
  *   1. base clock  — grant a flat ENERGY_PER_TICK; at ENERGY_TO_ACT run
- *                    `actBase` and subtract    (Lua :114-121, Actor.lua:512)
+ *                    `actBase` and subtract    (Lua :114-121, tome/class/Actor.lua:512)
  *   2. act clock   — grant `energyGainPerTick`, but only while below the
  *                    threshold                                (Lua :124-126)
  *   3. act         — at or above the threshold: park if blocking, otherwise

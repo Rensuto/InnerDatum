@@ -492,7 +492,7 @@ function goHome(roamer: Roamer): boolean {
 /**
  * The nearest player this roamer can actually see.
  *
- * BOTH TERMS, exactly as `projectActors` applies them (`Actor.lua:520`): the
+ * BOTH TERMS, exactly as `projectActors` applies them (`engine/Actor.lua:520`): the
  * Euclidean radius AND line of sight. A creature that "noticed" you through a
  * mountain would be the overworld's version of the bug per-player FOV exists to
  * prevent, and the same two functions answer it here as answer it there.

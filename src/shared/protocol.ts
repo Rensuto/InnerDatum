@@ -2124,7 +2124,7 @@ export type ItemView = {
    * A worn item reached the client as a name, a tier and one line of flavour and
    * NOTHING ELSE — so "what is this coat actually giving me?" could not be
    * answered from the paper doll, on the tab the panel opens on, every single
-   * time it opens. `ShowEquipment.lua:89` renders the full description for the
+   * time it opens. `tome/dialogs/ShowEquipment.lua:89` renders the full description for the
    * selected worn item; ours rendered a sentence.
    *
    * ═══ ONE QUESTION, ASKED FROM TWO PLACES ═══
@@ -4717,7 +4717,7 @@ export type InspectedMsg = {
  * ONE CLASS ON THE PICKER, as a player deciding between three sees it.
  *
  * ═══ THE ORDER OF THE FIELDS IS ToME'S BIRTHER, REDUCED ═══
- * `Birther.lua:131-143` builds the subclass list as `display_prop="name"` rows
+ * `tome/dialogs/Birther.lua:131-143` builds the subclass list as `display_prop="name"` rows
  * (:132) carrying a 32px icon merged by `on_drawitem` (:137-142) off
  * `setSubclassIcon` (:46-55), and the list's own `select` callback (:135) pushes
  * the highlighted item's `desc` into the side pane through `updateDesc`
@@ -4734,7 +4734,7 @@ export type InspectedMsg = {
  * invalidate anything and the server never learns a filename.
  *
  * NO KEY HERE MAY BE DERIVED FROM A CLASS NAME. ToME derives its own by
- * mangling (`t.name:lower():gsub("[^a-z0-9]", "_")`, Birther.lua:47-48) and
+ * mangling (`t.name:lower():gsub("[^a-z0-9]", "_")`, tome/dialogs/Birther.lua:47-48) and
  * survives a miss because it ships `unknown_32_bg.png` as a fallback. This
  * project has no such asset and cannot add one — client/public/assets/ is
  * gitignored wholesale and an unresolved key renders as the LOUD violet
@@ -5216,7 +5216,7 @@ export type ShopItemView = {
    *
    * The panel prints a shelf row's description by resolving the item out of the
    * player's OWN bag — so a coat you do not already own showed no description at
-   * all, which is every coat worth looking at. `ShowStore.lua:145` renders the
+   * all, which is every coat worth looking at. `tome/dialogs/ShowStore.lua:145` renders the
    * full text for every row on the shelf.
    *
    * ═══ AND WHY THERE IS NO `compare` HERE ═══
@@ -6007,7 +6007,7 @@ export type ViewerMsg =
   | SweepMsg
   // ═══ AND GROUND LOOT, FOR A DIFFERENT REASON THAN THOSE TWO ═══
   // `state` and `sweep` are per viewer because of what a viewer can SEE. This
-  // one is per viewer because of what a viewer REMEMBERS: `Object.lua:28-29`
+  // one is per viewer because of what a viewer REMEMBERS: `engine/Object.lua:28-29`
   // gives objects `display_on_remember = true`, so a pile shows on any tile
   // that character has personally walked past, and no two characters have
   // walked the same map. There is no realm-wide answer to build.

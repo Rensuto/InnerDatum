@@ -90,7 +90,7 @@
  * ~70 lines of `core.fov.calc_circle` / `calc_beam_any_angle` / `calc_wall` for
  * AoE talents none of which exist; only the `-- Deal damage: single` branch at
  * :497-500 is ported. PARTICLES and trails. SAVE/LOAD line re-import
- * (Projectile.lua:44-59) — the world is rebuilt at every boot, so an in-flight
+ * (engine/Projectile.lua:44-59) — the world is rebuilt at every boot, so an in-flight
  * orb simply evaporates and no SCHEMA_VERSION moves. `on_project_acquire` /
  * `on_projectile_target` / `slow_projectiles`. The `__project_source`
  * attribution chain (Actor.lua:5727-5789), replaced by one `sourceId` string.
@@ -218,7 +218,7 @@ export type Projectile = {
 
   // --- the scheduler's view (EnergyActor) -----------------------------------
   /**
-   * THE ACT CLOCK, and it is BORN FULL — Projectile.lua:37-39,
+   * THE ACT CLOCK, and it is BORN FULL — engine/Projectile.lua:37-39,
    * `self.energy.value = self.energy.value or game.energy_to_act`.
    *
    * That single line is why a shot visibly leaves the muzzle. `grantEnergy`'s
@@ -236,7 +236,7 @@ export type Projectile = {
   energyBase: number;
   /**
    * TILES PER GAME TURN, as an energy GAIN multiplier — `energy.mod`,
-   * Projectile.lua:37 and :304-305, granted at GameEnergyBased.lua:125.
+   * engine/Projectile.lua:37 and :304-305, granted at GameEnergyBased.lua:125.
    *
    * The arithmetic, once: a tick grants `ENERGY_PER_TICK * energyMod *
    * globalSpeed` = `100 * projSpeed * 1`; ten ticks make a game turn; a tile
@@ -394,7 +394,7 @@ export function createProjectile(id: string, init: ProjectileInit): Projectile {
 
   return {
     id,
-    // BORN HOLDING A FULL TURN — Projectile.lua:37-39. See the field's note.
+    // BORN HOLDING A FULL TURN — engine/Projectile.lua:37-39. See the field's note.
     energy: ENERGY_TO_ACT,
     // Never used. GameEnergyBased.lua:113-114.
     energyBase: 0,

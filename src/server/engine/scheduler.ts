@@ -1670,7 +1670,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
      * THE ORDER IS REGEN → EFFECTS → COOLDOWNS → THE DOWNED COUNTDOWN
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * The first three are `actBase` itself (Actor.lua:525, :597, :606), and its
+     * The first three are `actBase` itself (tome/class/Actor.lua:525, :597, :606), and its
      * own ordering is upstream's, including the comment at :605 explaining why
      * effects come before cooldowns. The fourth is ours, and it goes LAST for
      * one concrete reason:

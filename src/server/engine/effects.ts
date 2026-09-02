@@ -1697,7 +1697,7 @@ const EMPTY_REPORT: TickReport = Object.freeze({
  * is still the single easiest thing in the file to get backwards.
  *
  * ═══ IT RUNS ON THE BASE CLOCK ═══
- * Called from `actBase` (Actor.lua:597), between `regenLife` (:525) and
+ * Called from `actBase` (tome/class/Actor.lua:597), between `regenLife` (:525) and
  * `cooldownTalents` (:606). Once per GAME TURN at any speed. Nothing in here
  * reads a speed multiplier.
  *
@@ -1826,7 +1826,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
 }
 
 /**
- * ═══ THE COOLDOWN FREEZE — Actor.lua:606 ═══
+ * ═══ THE COOLDOWN FREEZE — tome/class/Actor.lua:606 ═══
  *
  * ```lua
  * -- Cooldown talents after effects, because some of them involve breaking sustains.

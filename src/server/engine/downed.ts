@@ -67,7 +67,7 @@
  *                             fell with is the wound you get up with, and a
  *                             talent that was cooling is still cooling — being
  *                             on the floor costs you progress, which is exactly
- *                             the argument Actor.lua:606 makes for a stun.
+ *                             the argument tome/class/Actor.lua:606 makes for a stun.
  *
  * The one thing that does NOT fall out is the countdown itself, because
  * `tickLevel`'s `isActive` gate skips a non-alive actor entirely. The scheduler

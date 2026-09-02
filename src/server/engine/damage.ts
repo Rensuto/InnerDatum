@@ -145,7 +145,7 @@ function tableAll(table: TypeTable | undefined): number {
 // ---------------------------------------------------------------------------
 
 /**
- * ToME's engine default for `resists_cap` — tome/class/Actor.lua:211, `{ all = 100 }`.
+ * ToME's MODULE default for `resists_cap` — tome/class/Actor.lua:211, `{ all = 100 }`.
  *
  * The familiar 70% figure is a PLAYER birth descriptor
  * (data/birth/descriptors.lua:63, `resists_cap = {all=70}`), not an engine

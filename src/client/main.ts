@@ -2565,7 +2565,7 @@ function pileAt(tile: TileXY): readonly { id: string; name?: string }[] {
  * THE BAG'S ROWS, CHUNKED TO THE WIDTH THE PANEL ACTUALLY GOT.
  *
  * The panel is no longer one fixed width — `inventoryPanelRect` takes upstream's
- * four fifths of the window (ShowInventory.lua:34) and snaps to whole columns —
+ * four fifths of the window (tome/dialogs/ShowInventory.lua:34) and snaps to whole columns —
  * so the row builder has to be told how many cells go on a line. It defaults to
  * the four-column floor, which would draw a four-wide grid inside a six-wide
  * panel: not wrong, just the waste this was changed to remove.

@@ -516,7 +516,7 @@ export const FOCUS_PER_TURN = 0.2 * TOME_ACTIONS_PER_TURN;
  * GAME TURNS PER ONE WHOLE REAGENT. The Alchemist's floor, and only her floor.
  *
  * ═══ WHERE 12 COMES FROM, AND WHY IT IS NOT 6 ═══
- * Upstream's mana regen is 0.5/turn (Actor.lua:229) and the cheapest attack
+ * Upstream's mana regen is 0.5/turn (tome/class/Actor.lua:229) and the cheapest attack
  * spell in the game costs `mana = 12` (data/talents/spells/fire.lua:26), so a
  * ToME caster buys one cast every 24 ToME turns. Divide by
  * `TOME_ACTIONS_PER_TURN` for our turn density and one 1-Reagent cast is 12 of
@@ -567,7 +567,7 @@ export const RESOURCE_RULES: Readonly<
        * per-class clauses in `regenResource`.
        *
        * ═══ PORTED, WITH THE TURN-DENSITY FACTOR APPLIED EXACTLY ONCE ═══
-       * ToME's per-turn defaults are authored at Actor.lua:227-241 —
+       * ToME's per-turn defaults are authored at tome/class/Actor.lua:227-241 —
        * `mana_regen = 0.5`, `stamina_regen = 0.3` ("Stamina regens slower than
        * mana"), `psi_regen = 0.2` ("Energy regens slowly") — and added by
        * `regenResources` (ActorResource.lua:201-211), which is ONE bounded add
@@ -1988,7 +1988,7 @@ export type TalentSheetInit = {
  * ToME's own pattern: data/birth/classes/warrior.lua:80-86 hands a fresh
  * Berserker five talents outright, already learned, before a single point is
  * spent. Ours hands four — `ClassDef.loadout` — and `pointsForLevel` therefore
- * drops upstream's separate 2-point birth grant (Actor.lua:171), because these
+ * drops upstream's separate 2-point birth grant (tome/class/Actor.lua:171), because these
  * four ARE that gift, paid in talents instead of points. See
  * src/shared/progression.ts for the budget arithmetic that falls out of it.
  *
@@ -2072,7 +2072,7 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
  *     ["technique/combat-training"]={true, 0.3},
  *
  * where `true` is "start with this tree open" and 0.3 is the bonus.
- * Birther.lua:408 ACCUMULATES it (`talents_types_mastery[t] = (existing or 0) +
+ * engine/Birther.lua:408 ACCUMULATES it (`talents_types_mastery[t] = (existing or 0) +
  * mastery`, so two descriptors contributing to one tree add up) and the `+ 1`
  * above is what turns 0.3 into a 1.3 multiplier at read time. The distinction
  * matters for anybody restoring this: store multipliers where ToME stores

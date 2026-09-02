@@ -43,7 +43,7 @@
  * `ShowEquipInven` dialog. There is one key and one screen upstream, so there is
  * one key and one screen here.
  *
- * THE TAB PAIR IS PORTED AS A CONTROL: `ShowEquipInven.lua:44-45` builds two
+ * THE TAB PAIR IS PORTED AS A CONTROL: `tome/dialogs/ShowEquipInven.lua:44-45` builds two
  * `Tab`s and `:103-104` places them side by side above the doll, which is where
  * ours sit. WHAT THE TWO TABS SELECT IS A DEVIATION AND IS LABELLED ONE. Upstream
  * they are Main Set / Off Set — a weapon-set switch — because that dialog is
@@ -55,7 +55,7 @@
  * protocol.ts's `Slot`) — so the upstream axis has nothing to mean here.
  *
  * EQUIPPED IS THE TAB THAT OPENS, and that is ToME's own choice for the doll
- * dialog: `ShowEquipment.lua:54` is `self:setFocus(self.c_doll)`. It is also the
+ * dialog: `tome/dialogs/ShowEquipment.lua:54` is `self:setFocus(self.c_doll)`. It is also the
  * only one of the two that is never empty — seven slots are seven slots whether
  * or not anything is in them, while the bag is empty for most of a delve, and a
  * screen that opens onto a blank grid teaches nothing.
@@ -493,7 +493,7 @@ const DETAIL_H = ROW_H * (2 + DESC_LINES + DETAIL_ROWS_MAX);
  *
  * `compare` is on `ItemView` now, so the doll tab produces exactly the same
  * rows the bag does — "what is this coat giving me" — and a one-line strip would
- * be throwing them away. `ShowEquipment.lua:89` renders the full description for
+ * be throwing them away. `tome/dialogs/ShowEquipment.lua:89` renders the full description for
  * the selected worn item; ours rendered a name.
  *
  * ═══ SO IT IS A FLOOR RATHER THAN THE SIZE, AND THE DOLL STILL WINS ═══
@@ -1854,7 +1854,7 @@ export function inventoryPanelGeometry(
 
   // The strip LAST and at the bottom of the panel, so it holds still while the
   // grid above it grows and shrinks. ToME puts its description zone beside the
-  // list rather than under it (ShowInventory.lua:37, :56-60) because an 800-pixel
+  // list rather than under it (tome/dialogs/ShowInventory.lua:37, :56-60) because an 800-pixel
   // dialog can afford two columns; at 320 the only free edge is the bottom one.
   if (detail !== undefined && stripped) {
     const stripRect: PanelRect = { x, y: bottom - stripH, w: innerW, h: stripH };
@@ -2184,7 +2184,7 @@ export function focusForHit(hit: InventoryHit | null): InventoryFocus | null {
  * A template literal would be a sprite key built from a wire field, which
  * test/client/assets.test.ts:285-313 pins against for every panel it knows about
  * and which ToME itself got away with only because it ships a fallback PNG
- * (Birther.lua:47-48's `t.name:lower():gsub(...)`). We ship none —
+ * (tome/dialogs/Birther.lua:47-48's `t.name:lower():gsub(...)`). We ship none —
  * client/public/assets/ is gitignored wholesale — so every id this file can ask
  * for is written out here, greppable, and exhaustive over `ItemTier`.
  *

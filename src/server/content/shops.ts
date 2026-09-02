@@ -160,7 +160,7 @@ export function priceOf(id: string): number {
 /**
  * The percentage a player PAYS, as a function of item level. 123 → 135.
  *
- * `Store.lua:34-36` is
+ * `tome/class/Store.lua:34-36` is
  * `combatTalentScale(max(1, o.__store_level or 1), 123, 135, "log")`, and
  * `Combat.lua:1521-1530` fits `m = (135 - 123) / (log10(5) - log10(1))` with
  * `b = 123`.
@@ -185,7 +185,7 @@ export function buyPercent(level: number): number {
 }
 
 /**
- * The percentage a player RECEIVES. `Store.lua:33`, flat.
+ * The percentage a player RECEIVES. `tome/class/Store.lua:33`, flat.
  *
  * The gem branch — 40% for `type == "gem"` — has no analogue here and is cut.
  */
@@ -254,7 +254,7 @@ export function sellPrice(id: string): number {
    * being told the shop wants none of them.
    *
    * ═══ THE RATIO IS THE DESIGN. THE ROUNDING WAS THE BUG. ═══
-   * `SELL_PERCENT` is 5, ported flat from `Store.lua:33`, and
+   * `SELL_PERCENT` is 5, ported flat from `tome/class/Store.lua:33`, and
    * `shops.test.ts` pins `BUY_LOW / SELL_PERCENT` between 24 and 25 with a
    * reason worth keeping: *"the ratio is what stops arbitrage and it is why shop
    * stock can afford to be strictly better than floor loot."* Both of those hold
@@ -470,7 +470,7 @@ function rollStockItem(rng: Rng, level: number, shelf: ShopShelf): string | unde
  * `empty_before_restock = false` on every shop in `basic.lua`, so stock
  * ACCUMULATES: a player who walked past something at level 9 can still find it
  * at level 40. The only thing ever removed is inventory the player sold, which
- * is flagged at sale time (`Store.lua:171-178`) — two lines that stop the shop
+ * is flagged at sale time (`tome/class/Store.lua:171-178`) — two lines that stop the shop
  * becoming a free storage chest and stop sell-then-rebuy loops persisting junk.
  *
  * @param keep what survived the restock — shop-generated stock, never
@@ -529,7 +529,7 @@ export function restock(
  * PARTY MAX LEVEL is the input, for the reason recorded in DECISIONS.md: it
  * cannot be gamed by benching a high-level character.
  *
- * `Store.lua:74`'s `or 8` fallback and its `stores_restock_levels[0]` nil-index
+ * `tome/class/Store.lua:74`'s `or 8` fallback and its `stores_restock_levels[0]` nil-index
  * are accidents of Lua's 1-based tables. Batch 0 is explicit here.
  */
 export function epochFor(partyMaxLevel: number): number {

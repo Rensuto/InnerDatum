@@ -47,7 +47,7 @@
  * So what ports is the CONSEQUENCE upstream's reaction change produces: the
  * ally starts hunting the attacker. It is handed the attacker as its target and
  * the attacker's tile as `lastSeen`, which is the same pair a sighting stamps
- * (`ai/npc.ts`, `ActorAI.lua:130-135`).
+ * (`ai/npc.ts`, `engine/ActorAI.lua:130-135`).
  *
  * ═══ AND THAT IS WHY THIS COULD NOT HAVE BEEN BUILT BEFORE PURSUIT MEMORY ═══
  * A target handed to a monster that cannot remember it is worth almost nothing:

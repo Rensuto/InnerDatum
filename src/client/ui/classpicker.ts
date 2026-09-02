@@ -7,7 +7,7 @@
  * ===========================================================================
  * `dialogs/Birther.lua` builds its subclass list as a `TreeList` of
  * `display_prop="name"` rows carrying a 32px class icon (`setSubclassIcon`,
- * Birther.lua:46-56; the list at :131-140), and pushes the SELECTED item's
+ * tome/dialogs/Birther.lua:46-56; the list at :131-140), and pushes the SELECTED item's
  * `desc` into a side pane (`updateDesc`, :516-520). The descriptors themselves
  * put prose before numbers — `data/birth/classes/warrior.lua:46-56` is two
  * sentences of identity, then "Their most important stats are…", then the stat
@@ -50,7 +50,7 @@
  * ===========================================================================
  * `ClassOptionView` carries `sprite`, `portrait` and `talents[].icon`, all asset
  * KEYS that arrive on the wire. ToME derives its own by mangling the class name
- * (`t.name:lower():gsub("[^a-z0-9]", "_")`, Birther.lua:47-48) and survives a
+ * (`t.name:lower():gsub("[^a-z0-9]", "_")`, tome/dialogs/Birther.lua:47-48) and survives a
  * miss because it ships `unknown_32_bg.png`. THIS PROJECT HAS NO SUCH FALLBACK
  * ASSET AND CANNOT ADD ONE — client/public/assets/ is gitignored wholesale and
  * an unresolved key renders as the LOUD violet missing-asset box, on a bare

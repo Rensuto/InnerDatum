@@ -961,7 +961,7 @@ export function itemsForSlot(slot: Slot): readonly Item[] {
 /**
  * The most one item may move one resistance, either way.
  *
- * `combatGetResist` caps a resistance at 100 by default (Actor.lua:211,
+ * `combatGetResist` caps a resistance at 100 by default (tome/class/Actor.lua:211,
  * `resists_cap = { all = 100 }`), so a single slot granting more than a quarter
  * of that is a slot that decides an element on its own. Upstream's strongest
  * TYPED wielder rolls on ordinary gear sit in the teens and low twenties; the
@@ -1095,7 +1095,7 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
      * table contributing to nothing.
      *
      * The magnitude is bounded because `combatGetResist` caps at 100 by default
-     * (Actor.lua:211) and a single item granting more than that would be handing
+     * (tome/class/Actor.lua:211) and a single item granting more than that would be handing
      * out immunity in one slot — upstream's own strongest typed rolls sit in the
      * teens and twenties.
      */
@@ -1191,7 +1191,7 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
           `items: ${item.id} resists ${key} = ${String(value)}%, beyond the ` +
             `${String(MAX_ITEM_RESIST)}% one item may AUTHOR for a resistance — the grade doubles ` +
             `it (a Bespoke one resolves to twice this) and the ceiling is 100 ` +
-            `(Actor.lua:211) and one slot must not spend it all`,
+            `(tome/class/Actor.lua:211) and one slot must not spend it all`,
         );
       }
     }

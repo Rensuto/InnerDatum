@@ -49,13 +49,20 @@ import path from 'node:path';
 const REFERENCE = 'reference/t-engine4';
 
 /**
- * The engine/module debt, and it may only go DOWN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ZERO. THE DEBT IS PAID, SO THIS IS A RULE RATHER THAN A RATCHET NOW.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Lower this whenever a file's citations are qualified — writing
- * `tome/class/Actor.lua:178` or `engine/Actor.lua:47` instead of the bare name
- * is the whole fix, and it is a comment edit with no behaviour attached.
+ * It started at 590 raw, was 112 once the two refinements below were applied,
+ * and reached 0 by reading the remainder one at a time against both candidate
+ * files. Every citation in `src/` now names which of the two it means.
+ *
+ * DO NOT RAISE IT. A bare `Actor.lua:NNN` is the sight-radius bug's exact shape,
+ * and the fix is four characters: write `engine/` or `tome/class/` in front. The
+ * value of the rule is entirely in its being absolute — at 1 it is a number
+ * somebody argues about, at 0 it is a thing the gate simply will not accept.
  */
-const MAX_AMBIGUOUS = 63;
+const MAX_AMBIGUOUS = 0;
 
 /** A citation: a lua basename, a line, and optionally a range end. */
 const CITE = /([A-Za-z0-9_-]+\.lua):(\d+)(?:-(\d+))?/g;
@@ -188,11 +195,7 @@ if (outOfRange.length === 0) {
 
 const debt = ambiguous.length;
 if (debt <= MAX_AMBIGUOUS) {
-  const slack = MAX_AMBIGUOUS - debt;
-  console.log(
-    `  ok    ${String(debt)} citation(s) are ambiguous between the engine and the module` +
-      (slack > 0 ? ` — ${String(slack)} under the ratchet, lower MAX_AMBIGUOUS` : ''),
-  );
+  console.log(`  ok    no citation is ambiguous between the engine and the module`);
 } else {
   failed = true;
   console.log(

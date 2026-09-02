@@ -9,7 +9,7 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Two schemes and no third, because upstream has two and fifteen years of
- * content fits inside them (`Zone.lua:118`, `:141-148`). Every room in this
+ * content fits inside them (`engine/Zone.lua:118`, `:141-148`). Every room in this
  * game was implicitly the FIRST one at a level of 1 — nothing ever passed a
  * level to `monsterInit`, so a husk at the far end of the road had the
  * twenty-five hit points of the husk in the tutorial room.
