@@ -388,23 +388,74 @@ export function liveActorAt(actors: readonly ActorView[], tile: TileXY): ActorVi
  * becomes "an id in `next.actors` that was not in `prev.actors` at all", and
  * every caller and every other rule in this file stays exactly as it is.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LIVING HOSTILES THIS BODY CAN SEE. ONE ANSWER, THREE QUESTIONS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `hostileAlert` asks whether the set GREW, and `nearestSeenHostile` asks which
+ * member is closest; both used to spell their own scan and one of them forgot
+ * the sight term for two milestones.
+ *
+ * ═══ "CAN SEE" IS NOT "IS ON THE BOARD", AND THAT IS NEW ═══
+ * Since FOV the actor list is the PARTY'S union — `reconcileSight` computes it
+ * once per realm from every player's eyes — so a husk only a teammate can see is
+ * legitimately on this client's board. Upstream draws the same line for the same
+ * reason: `spotHostiles` walks the player's OWN circle, commenting *"only see LOS
+ * actors, so telepathy wont prevent resting"* (Player.lua:853). Somebody else's
+ * eyes are our telepathy.
+ *
+ * NO LEVEL MEANS NOTHING IS SEEN. Before the first board there is nothing to
+ * trace through, and an empty answer stops a walk from starting rather than
+ * letting one run on a frame that cannot be reasoned about.
+ */
+export function seenHostiles(
+  level: LevelView | null,
+  from: TileXY,
+  actors: readonly ActorView[],
+): ActorView[] {
+  if (level === null) return [];
+  // `isHostileBody` already excludes every Player, so the viewer's own body
+  // needs no special case here.
+  return actors.filter(
+    (actor) => actor.alive && isHostileBody(actor) && canSee(level, from, actor),
+  );
+}
+
+/**
+ * The nearest hostile this body can SEE, as an offset, or null.
+ *
+ * The offset shape is `RestView.threat`'s, so one `bearingWord` serves the rest
+ * sentence and the explore sentence without either converting.
+ *
+ * NEAREST BY KING-MOVE, which is only a tie-break among things already seen —
+ * `seenHostiles` decides membership. Chebyshev because the bearing sentence this
+ * feeds reads in king directions.
+ */
+export function nearestSeenHostile(
+  level: LevelView | null,
+  from: TileXY,
+  actors: readonly ActorView[],
+): { readonly name: string; readonly dx: number; readonly dy: number } | null {
+  let best: { name: string; dx: number; dy: number } | null = null;
+  let bestDist = Infinity;
+  for (const actor of seenHostiles(level, from, actors)) {
+    const dx = actor.x - from.x;
+    const dy = actor.y - from.y;
+    const dist = Math.max(Math.abs(dx), Math.abs(dy));
+    if (dist >= bestDist) continue;
+    bestDist = dist;
+    best = { name: actor.name, dx, dy };
+  }
+  return best;
+}
+
 export function hostileAlert(prev: HostileSense, next: HostileSense): boolean {
   if (!prev.inCombat && next.inCombat) return true;
 
-  const spotted = (sense: HostileSense): Set<string> => {
-    const out = new Set<string>();
-    if (sense.level === null) return out;
-    for (const actor of sense.actors) {
-      if (!actor.alive || !isHostileBody(actor)) continue;
-      if (!canSee(sense.level, sense.self, actor)) continue;
-      out.add(actor.id);
-    }
-    return out;
-  };
-
-  const before = spotted(prev);
-  for (const id of spotted(next)) {
-    if (!before.has(id)) return true;
+  const before = new Set(seenHostiles(prev.level, prev.self, prev.actors).map((a) => a.id));
+  for (const actor of seenHostiles(next.level, next.self, next.actors)) {
+    if (!before.has(actor.id)) return true;
   }
   return false;
 }

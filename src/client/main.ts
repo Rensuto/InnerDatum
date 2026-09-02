@@ -154,6 +154,7 @@ import { createTargeting } from './input/targeting.ts';
 import {
   TravelHalt,
   TravelObservation,
+  nearestSeenHostile,
   TravelStart,
   createTravel,
   isHostileBody,
@@ -2471,14 +2472,28 @@ function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null 
  * The same shape `RestView.threat` uses, so `bearingWord` serves the rest
  * sentence and the explore sentence without either converting.
  *
- * ═══ IT IS NOT LINE OF SIGHT, AND IT COULD BE NOW ═══
- * This said *"the client has no LOS — `hasLineOfSight` is the server's, and this
- * file may not import it"*. Both halves are false. `targeting.ts` had carried a
- * byte-identical copy for two milestones, so the client always had one; and the
- * trace now lives in `shared/sight.ts`, which this file may import like any
- * other shared module. So the reason to bound by DISTANCE here is no longer that
- * the answer is unavailable — it is simply that nothing has needed the sharper
- * one yet. `exploreTarget` still applies `EXPLORE_SIGHT` on top.
+ * ═══ IT IS LINE OF SIGHT NOW, AND THE NAME FINALLY MEANS SOMETHING ═══
+ * This function has been called `nearestVisibleHostile` since M3 while scanning
+ * by distance alone, and two successive docblocks said so honestly — first that
+ * *"the client has no LOS"* (untrue: `targeting.ts` carried a byte-identical
+ * copy), then that the sharper answer was available but unneeded.
+ *
+ * IT BECAME NEEDED THE DAY FOV LANDED, and in a direction nobody predicted.
+ * `actors` is no longer everything on the map, but it is not MY sight either —
+ * `reconcileSight` computes `visibleActorIds(world, eyesIn(world))` once for the
+ * whole realm, so the list is the PARTY'S union. A husk that only a teammate
+ * across the floor can see is legitimately on my board, and a distance scan
+ * would hand it to `exploreTarget` as a reason I may not walk.
+ *
+ * Upstream draws exactly this line and says why: `spotHostiles` walks the
+ * player's OWN `calc_circle` and its comment is *"only see LOS actors, so
+ * telepathy wont prevent resting"* (Player.lua:853). Someone else's eyes are our
+ * telepathy.
+ *
+ * So the test is `canSee` from THIS body — the same rule travel and the rest
+ * check spend. NO BOARD, NO SIGHT: before the first `state` there is nothing to
+ * trace through, and refusing to explore is the safe direction on a frame where
+ * we cannot answer.
  *
  * IT USED TO SAY `projectActors` *"sends them all today and says so"*. It no
  * longer does: FOV filters the actor list to what the party can see, so the
@@ -2489,18 +2504,11 @@ function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null 
 function nearestVisibleHostile(
   me: TileXY,
 ): { readonly name: string; readonly dx: number; readonly dy: number } | null {
-  let best: { name: string; dx: number; dy: number } | null = null;
-  let bestDist = Infinity;
-  for (const actor of actors.values()) {
-    if (!actor.alive || actor.id === selfId || !isHostileBody(actor)) continue;
-    const dx = actor.x - me.x;
-    const dy = actor.y - me.y;
-    const dist = Math.max(Math.abs(dx), Math.abs(dy));
-    if (dist >= bestDist) continue;
-    bestDist = dist;
-    best = { name: actor.name, dx, dy };
-  }
-  return best;
+  // THE RULE IS `input/travel.ts` NOW, shared with `hostileAlert`, because both
+  // ask "what can this body see" and one of them forgot the sight term for two
+  // milestones. main.ts's closure is unreachable from `test/`, so a rule that
+  // lived here could only ever be checked by scraping the source.
+  return nearestSeenHostile(level, me, [...actors.values()]);
 }
 
 function lootAt(tile: TileXY): TileLoot {

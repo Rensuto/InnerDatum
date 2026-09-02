@@ -6,12 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  EXPLORE_SIGHT,
-  ExploreStop,
-  exploreStopText,
-  exploreTarget,
-} from '../../src/client/input/explore.ts';
+import { ExploreStop, exploreStopText, exploreTarget } from '../../src/client/input/explore.ts';
 import type { ExploreView } from '../../src/client/input/explore.ts';
 
 /**
@@ -146,25 +141,37 @@ describe('when it refuses', () => {
 
   it('ignores a hostile too far away to have been seen', () => {
     /**
-     * `projectActors` sends EVERY actor today — its own docblock calls that an
-     * accepted leak — so a rule that refused for any hostile in the map would
-     * make this key useless on a populated floor. The bound is what a body has
-     * personally lit.
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS USED TO ASSERT A RADIUS, AND THE RADIUS'S REASON HAD EXPIRED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The old pair checked `EXPLORE_SIGHT` (12) on either side of its boundary,
+     * justified here in as many words: *"`projectActors` sends EVERY actor today
+     * — its own docblock calls that an accepted leak — so a rule that refused
+     * for any hostile in the map would make this key useless on a populated
+     * floor."* Every clause was true when written and none of it is now.
+     *
+     * `threat` is a hostile the VIEWER CAN SEE, decided by `canSee` in
+     * `main.ts#nearestVisibleHostile`, so distance is no longer this module's
+     * question. What it tests is that a threat — any threat — stops the key, and
+     * that its absence does not.
      */
-    const far = exploreTarget(
-      scene(['#####', '#..?#', '#.@.#', '#####'], {
-        threat: { name: 'Index Husk', dx: EXPLORE_SIGHT + 1, dy: 0 },
-      }),
-    );
-    expect(far.go).toBe(true);
+    const clear = exploreTarget(scene(['#####', '#..?#', '#.@.#', '#####'], { threat: null }));
+    expect(clear.go, 'nothing in sight, so the key works').toBe(true);
 
-    // ...and the boundary itself still stops it.
-    const edge = exploreTarget(
+    const spotted = exploreTarget(
       scene(['#####', '#..?#', '#.@.#', '#####'], {
-        threat: { name: 'Index Husk', dx: EXPLORE_SIGHT, dy: 0 },
+        // Far enough that the OLD rule would have let it through, which is the
+        // point: the caller only hands over what can be seen, and something
+        // seen at any distance is a reason not to walk.
+        threat: { name: 'Index Husk', dx: 20, dy: 0 },
       }),
     );
-    expect(edge.go).toBe(false);
+    expect(spotted.go, 'a hostile the viewer can see stops it, however far').toBe(false);
+    // Narrowed rather than asserted through, so the refusal's SHAPE is checked
+    // too — a `go: false` with no reason would satisfy the line above.
+    if (spotted.go) throw new Error('unreachable');
+    expect(spotted.stop).toBe(ExploreStop.Hostile);
   });
 
   it('says the floor is finished when every cell has been seen', () => {

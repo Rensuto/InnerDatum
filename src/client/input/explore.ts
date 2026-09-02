@@ -43,7 +43,6 @@
  * behaviour a player expects the first hundred times.
  */
 
-import { chebyshev } from '../../shared/coords.ts';
 import type { TileXY } from '../../shared/coords.ts';
 
 /** Why auto-explore did not move anybody. */
@@ -81,31 +80,43 @@ export type ExploreView = {
   /** Tiles holding something on the floor. Upstream's "unvisited items". */
   readonly items: readonly TileXY[];
   /** The nearest hostile the viewer can see, or null. Resolved by the caller. */
+  /**
+   * The nearest hostile THE VIEWER CAN SEE, as an offset, or null.
+   *
+   * "Can see" is the caller's job and is load-bearing: since FOV the actor list
+   * is the PARTY'S union, so a body being on the board is not evidence that this
+   * player can see it. `main.ts#nearestVisibleHostile` applies `canSee`.
+   */
   readonly threat: { readonly name: string; readonly dx: number; readonly dy: number } | null;
 };
 
 /**
- * How far a hostile has to be before it stops being "in sight" for this purpose.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THERE IS NO EXPLORE RADIUS ANY MORE. `threat` MEANS "I CAN SEE IT".
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * ═══ IT IS THE REVEAL RADIUS, AND THAT IS NOT AN ACCIDENT ═══
- * `REVEAL_RADIUS` is how far a body uncovers the map as it walks, so a hostile
- * inside it is standing on ground this player has personally lit. Anything
- * further is something the client happens to hold a frame about, and refusing to
- * explore because of a husk three rooms away would make the key useless on a
- * populated floor.
+ * `EXPLORE_SIGHT` was 12, chosen to equal `REVEAL_RADIUS` on the argument that a
+ * hostile inside it stands on ground this player has personally lit — and the
+ * argument was right for its time, because `projectActors` sent every actor on
+ * the map and a radius was the only filter there was.
  *
- * THAT SENTENCE USED TO READ *"`projectActors` is documented as sending
- * everybody today"*, and it stopped being true when FOV landed: the client is
- * now only handed monsters the party can see. This radius therefore does LESS
- * work than it used to — most of what it filtered never arrives — but it is
- * still the right predicate, because a monster your SCOUT can see is on your
- * board and is not on ground you have personally lit.
+ * IT OUTLIVED THAT TWICE OVER. FOV made the list the PARTY'S union, so the
+ * radius started answering a question nobody asked: it let through a husk only a
+ * teammate could see (any distance, as long as it was within 12 of ME) and shut
+ * out one I could see plainly at 11, because sight is 10 and the radius was 12.
+ * Two filters, neither of them "can I see it".
  *
- * NOT IMPORTED FROM `REVEAL_RADIUS` DIRECTLY, because they answer different
- * questions and are equal only today: one is "what have I mapped", this is "what
- * would make me stop". A future lit radius moves one and not the other.
+ * So the caller now hands in only what the viewer can SEE — `canSee` from this
+ * body, the same rule travel and the rest check spend — and this module tests
+ * `threat !== null` and nothing else. That is a CONTRACT and it is stated on the
+ * field: `ExploreView.threat` is a hostile the viewer can see, or null.
+ *
+ * ═══ WHY THE TEST DID NOT MOVE IN HERE ═══
+ * `canSee` needs a `LevelView` to ask `blocksSightAt`, and this module
+ * deliberately takes a `passable` PREDICATE rather than a map — that is what
+ * makes "does it stop for a husk" a unit test rather than a session. Handing it
+ * a level to keep the rule local would trade that for tidiness.
  */
-export const EXPLORE_SIGHT = 12;
 
 /**
  * Where to go next, or why not.
@@ -120,13 +131,9 @@ export function exploreTarget(view: ExploreView): ExploreAnswer {
    * identical reason: everything below is about where to walk, and walking is
    * the thing you must not do with something in the room.
    */
-  if (
-    view.threat !== null &&
-    // `chebyshev` OVER THE OFFSET, because the threat carries a delta rather
-    // than a position — the same shape `RestView.threat` uses, so one bearing
-    // helper serves both refusals.
-    chebyshev({ x: 0, y: 0 }, { x: view.threat.dx, y: view.threat.dy }) <= EXPLORE_SIGHT
-  ) {
+  // ONE TEST, because `threat` is already defined as something the viewer can
+  // see — see the note above the view's field.
+  if (view.threat !== null) {
     return { go: false, stop: ExploreStop.Hostile, threat: view.threat };
   }
 

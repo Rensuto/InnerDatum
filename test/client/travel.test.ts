@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
+  nearestSeenHostile,
   TravelHalt,
   TravelObservation,
   TravelStart,
@@ -725,5 +728,95 @@ describe('travel.takeHalt', () => {
     const travel = walking();
     travel.cancel();
     expect(travel.takeHalt()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nearestSeenHostile — the rule the explore refusal spends
+// ---------------------------------------------------------------------------
+
+describe('nearestSeenHostile', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * "ON MY BOARD" STOPPED MEANING "I CAN SEE IT" THE DAY FOV LANDED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `reconcileSight` computes the visible set ONCE per realm from every player's
+   * eyes, so the actor list a client holds is the PARTY'S union. main.ts's
+   * `nearestVisibleHostile` scanned it by distance alone — named for a sight it
+   * did not apply since M3 — and handed `exploreTarget` husks that only a
+   * teammate could see as reasons this player may not walk.
+   *
+   * Upstream refuses the same thing in the same words: `spotHostiles` walks the
+   * player's own circle because *"telepathy wont prevent resting"*.
+   */
+  const me: TileXY = { x: 2, y: 2 };
+
+  it('finds a hostile in the open', () => {
+    expect(nearestSeenHostile(OPEN, me, [husk('m1', 5, 2)])?.name).toBe('Index Husk');
+  });
+
+  it('gives the offset, so one bearing helper serves rest and explore', () => {
+    expect(nearestSeenHostile(OPEN, me, [husk('m1', 5, 4)])).toEqual({
+      name: 'Index Husk',
+      dx: 3,
+      dy: 2,
+    });
+  });
+
+  it('IGNORES one behind a wall that a teammate can see', () => {
+    // The whole point. It is on the board legitimately — somebody else is
+    // looking at it — and it is not a reason THIS body may not walk.
+    const walled = mapOf(['#######', '#..#..#', '#..#..#', '#..#..#', '#######']);
+    expect(nearestSeenHostile(walled, { x: 2, y: 2 }, [husk('m1', 5, 2)])).toBeNull();
+  });
+
+  it('ignores one beyond sight, however much of the board it is on', () => {
+    const field = mapOf(
+      Array.from({ length: 30 }, (_, y) =>
+        y === 0 || y === 29 ? '#'.repeat(30) : `#${'.'.repeat(28)}#`,
+      ),
+    );
+    expect(nearestSeenHostile(field, { x: 2, y: 2 }, [husk('m1', 25, 2)])).toBeNull();
+    expect(nearestSeenHostile(field, { x: 2, y: 2 }, [husk('m1', 9, 2)])?.name).toBe('Index Husk');
+  });
+
+  it('ignores a corpse and ignores a teammate', () => {
+    expect(nearestSeenHostile(OPEN, me, [husk('m1', 4, 2, false)])).toBeNull();
+    expect(nearestSeenHostile(OPEN, me, [detective('p2', 4, 2)])).toBeNull();
+  });
+
+  it('picks the NEAREST of several', () => {
+    const near = nearestSeenHostile(OPEN, me, [husk('far', 6, 2), husk('near', 3, 2)]);
+    expect(near?.dx).toBe(1);
+  });
+
+  it('sees nothing at all before the first board', () => {
+    // Refusing to explore is the safe direction on a frame that cannot be
+    // reasoned about.
+    expect(nearestSeenHostile(null, me, [husk('m1', 3, 2)])).toBeNull();
+  });
+
+  it('and main.ts spends it rather than scanning again', () => {
+    /**
+     * A SOURCE GUARD, on `healing-factor.test.ts`' terms — *"the weakest kind of
+     * test, chosen because the alternative is none"*. main.ts's closure is
+     * unreachable from `test/`, so a mutation that reverts
+     * `nearestVisibleHostile` to its own distance scan passes every runtime
+     * assertion in this file: the shared rule stays correct and simply stops
+     * being called.
+     *
+     * That is not hypothetical. The scan it replaced lived beside a docblock
+     * admitting it was not line of sight, through two rewrites of that docblock,
+     * for two milestones.
+     */
+    const main = readFileSync(new URL('../../src/client/main.ts', import.meta.url), 'utf8');
+    const at = main.indexOf('function nearestVisibleHostile(');
+    expect(at, 'nearestVisibleHostile was renamed — this guard is now blind').toBeGreaterThan(-1);
+    const body = main.slice(at, main.indexOf('\n}', at));
+    expect(
+      body.includes('nearestSeenHostile('),
+      'nearestVisibleHostile stopped delegating — the sight test is bypassed',
+    ).toBe(true);
   });
 });
