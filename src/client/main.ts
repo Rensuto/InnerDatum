@@ -6169,7 +6169,7 @@ async function boot(): Promise<void> {
     // "nothing happened" is indistinguishable from a dropped input, and here the
     // player did not even press a key — they dragged a window edge.
     if (menuOpen) {
-      const { logicalW, logicalH } = renderer.metrics();
+      const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
       if (hudLayout(logicalW, logicalH).menu === null) {
         closeMenu();
         showNotice('no room for the menu — make the window taller');
@@ -7401,7 +7401,7 @@ async function boot(): Promise<void> {
     });
     if (menu.items.length === 0) return false;
 
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     tokenMenu.open({
       x: px,
       y: py,
@@ -7649,7 +7649,7 @@ async function boot(): Promise<void> {
   /** The cards, in the SERVER'S ORDER, from the geometry the pointer also hits. */
   function pickerCards(): readonly PanelRect[] {
     if (classOptions === null) return [];
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     return classPickerCards(classOptions, classPickerRect(logicalW, logicalH, classOptions.length));
   }
 
@@ -7963,7 +7963,7 @@ async function boot(): Promise<void> {
     // need to be: the three head links in `onCancel` do not consult the rect, so
     // Escape still closes it, and Escape is frozen against rebinding.
     menuOpen = true;
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     if (hudLayout(logicalW, logicalH).menu === null) {
       menuOpen = false;
       showNotice('no room for the menu — make the window taller');
@@ -8112,7 +8112,7 @@ async function boot(): Promise<void> {
    * to come back from, on a screen that stopped moving several presses ago.
    */
   function pageMenu(delta: number): void {
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const rect = hudLayout(logicalW, logicalH).menu;
     if (rect === null) return;
     const paging = escapeMenuPaging(rect, menuRows());
@@ -9107,7 +9107,7 @@ async function boot(): Promise<void> {
   function slotUnder(event: MouseEvent): number {
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
     if (point === null) return -1;
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     return hotbarSlotAt(point.x, point.y, hotbarView().slots.length, logicalW, logicalH);
   }
 
@@ -9139,7 +9139,7 @@ async function boot(): Promise<void> {
     // ABOVE the `point === null` guard, deliberately: "not on the backbuffer" is
     // not a reason to let a gesture through while one is in flight.
     if (drag !== null) return true;
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
     // ═══ THE CHOOSER ANSWERS TRUE FOR THE WHOLE SCREEN, LETTERBOX INCLUDED ═══
     // Above the `point === null` guard on purpose: "not on the backbuffer" is not
@@ -9228,7 +9228,7 @@ async function boot(): Promise<void> {
     pointerPoint = point;
     if (point !== null) {
       tokenMenu?.hoverAt(point.x, point.y);
-      const { logicalW, logicalH } = renderer.metrics();
+      const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
       const layout = hudLayout(logicalW, logicalH);
       const over = respawnPromptHit(layout.respawn, point.x, point.y);
       if (over !== respawnHovered) {
@@ -9462,7 +9462,7 @@ async function boot(): Promise<void> {
       // either, so there is nothing to zoom TOWARD. Leave it alone.
       if (point === null) return;
 
-      const { logicalW, logicalH } = renderer.metrics();
+      const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
       const wheelLayout = hudLayout(logicalW, logicalH);
       // ═══ THE ESCAPE MENU FIRST, MIRRORING THE PAINT ORDER, AND IT IS AN
       //     OCCLUSION GUARD RATHER THAN A SCROLL GATE ═══
@@ -9728,7 +9728,7 @@ async function boot(): Promise<void> {
    * a tab is client-local, as `runInventoryHit`'s Tab case says.
    */
   function springInventoryTab(point: TileXY): void {
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
     if (!inRect(layout.inventory, point.x, point.y) || layout.inventory === null) return;
     const hit = inventoryPanelHitAt(
@@ -9771,7 +9771,7 @@ async function boot(): Promise<void> {
     // `settlePanel` is about to bank.
     if (subject.kind === DragKind.Panel || point === null) return;
 
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const drop = hotbarDropTargetAt(
       point.x,
       point.y,
@@ -9937,7 +9937,7 @@ async function boot(): Promise<void> {
    */
   function settlePanel(subject: DragSubject): void {
     if (subject.kind !== DragKind.Panel) return;
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const band = panelBand(logicalH, turnHudHeight(turnView()));
     const unmoved = unmovedPanelRect(subject.panel, logicalW, logicalH, band);
     // NULL MEANS THE PANEL IS NOT DRAWABLE — shut, or a band too short to hold it.
@@ -10126,7 +10126,7 @@ async function boot(): Promise<void> {
       return;
     }
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
-    const { logicalW, logicalH } = renderer.metrics();
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
 
     // ═══ -1. THE SELECT SCREEN TAKES EVERY CLICK BEFORE ANYTHING ELSE ═══
@@ -10308,7 +10308,7 @@ async function boot(): Promise<void> {
        */
       if (event.button === 1) {
         const pt = renderer.backbufferPoint(event.clientX, event.clientY);
-        const { logicalW: mw } = renderer.metrics();
+        const { hudW: mw } = renderer.metrics();
         if (pt !== null && minimapTileAt(pt.x, pt.y, mw) !== null && overworldLevel !== null) {
           worldMapOpen = true;
           requestDraw();

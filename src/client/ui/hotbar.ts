@@ -231,9 +231,9 @@ export const HOTBAR_TOTAL_H = HOTBAR_H + HOTBAR_LABEL_H;
  * many there are is how many FIT.
  *
  * ═══ NINE, BECAUSE THIRTEEN IS WHAT THE FLOOR HOLDS ═══
- * `hotbarRowWidth(n)` is `44n + 4(n-1)`, and the backbuffer floors at 640
- * logical pixels (render/canvas.ts, `DEFAULT_VIEWPORT.tilesW` 20 x `TILE_PX`
- * 32). Solving `48n - 4 <= 640` gives thirteen slots. Four of those are the
+ * `hotbarRowWidth(n)` is `44n + 4(n-1)`, and the interface floors at 640
+ * logical pixels (render/canvas.ts, `HUD_MIN_W`). Solving `48n - 4 <= 640`
+ * gives thirteen slots. Four of those are the
  * item half, so the talents get NINE and the whole row is 620 — twenty pixels
  * of slack at the SMALLEST viewport this client can produce, which means no
  * window size loses a drop target.
@@ -536,9 +536,9 @@ export function hotbarRowWidth(count: number): number {
  * and nothing happens for a reason nothing on screen states.
  *
  * So the decision is made once, here, for the whole row, and `drawHotbar` says
- * out loud what it did. Eight slots need 604 logical pixels; the backbuffer
- * floors at 640 (render/canvas.ts:344, `DEFAULT_VIEWPORT.tilesW` 20 x 32), so the
- * full row fits everywhere this client can render, with 36px of slack. The
+ * out loud what it did. Eight slots need 604 logical pixels; the interface
+ * floors at 640 (render/canvas.ts, `HUD_MIN_W`), so the full row fits
+ * everywhere this client can render, with 36px of slack. The
  * fallbacks below are therefore for a viewport that should not exist — which is
  * exactly the kind of case that shows up on somebody else's window.
  *

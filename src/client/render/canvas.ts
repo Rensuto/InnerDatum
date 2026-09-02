@@ -169,10 +169,15 @@ export type TargetCell = {
 /**
  * The HUD layer, as a PAINTER rather than as data.
  *
- * It is handed the BACKBUFFER context and the logical size, and runs after the
- * world and before the present blit — so the party strip is magnified by the
- * same integer factor as the art, sits on the same pixel grid, and cannot
- * shimmer independently of it.
+ * It is handed the INTERFACE buffer and the interface size, and runs after the
+ * map has been presented. It is still a pixel-art layer on its own integer
+ * scale — the party strip is magnified by a whole factor, sits on a whole pixel
+ * grid, and cannot shimmer — but that factor is `hudScale` and NOT the map's.
+ *
+ * ═══ IT USED TO BE THE MAP'S BUFFER, AND THAT IS THE BUG IT FIXES ═══
+ * See `HUD_MIN_W` below: while the two shared a buffer, every lever that made
+ * the map bigger made the interface smaller by exactly the same factor, and
+ * zooming resized the whole game rather than the map.
  *
  * A function rather than a `hud: TurnBarView` field because the direction of
  * knowledge is ui/ -> render/ and must never be both: the renderer would
@@ -373,12 +378,137 @@ export type Viewport = {
  * and on an ordinary 1280x720 at dpr 1, 720/320 = 2.25 clears scale 2 with room
  * to spare, so a window a little under 720 does not fall back to 1x.
  *
- * WIDTH STAYS AT 20 ON PURPOSE. `ui/hotbar.ts` and `ui/xpbar.ts` both lay out
- * against a 640-pixel floor and name `DEFAULT_VIEWPORT.tilesW` while doing it;
- * narrowing the guarantee would quietly eat their slack. Height was the binding
- * constraint anyway, so there is nothing to buy by touching width.
+ * WIDTH STAYED AT 20 because `ui/hotbar.ts` and `ui/xpbar.ts` laid out against
+ * a 640-pixel floor and named `DEFAULT_VIEWPORT.tilesW` while doing it, so
+ * narrowing the guarantee would have eaten their slack. THAT REASON IS GONE:
+ * the interface has its own floor now (`HUD_MIN_W`) and those panels name it
+ * instead, so this number is once again only about how much MAP is guaranteed.
  */
 export const DEFAULT_VIEWPORT: Viewport = { tilesW: 20, tilesH: 10 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE INTERFACE HAS ITS OWN SCALE. IT WAS WEARING THE MAP'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The HUD used to paint into the map's backbuffer, so its size on screen was
+ * `hudLogicalPx * scale` — the map's integer magnification. That coupling has
+ * two consequences and both are wrong:
+ *
+ *   ZOOMING RESIZED THE WHOLE GAME. `setZoom` moves `scale`, so pressing `=`
+ *   did not magnify the map: it magnified the map AND the hotbar AND the party
+ *   strip AND every panel, together, as if the window had shrunk.
+ *
+ *   ANY LEVER THAT MADE THE MAP BIGGER MADE THE INTERFACE SMALLER. On-screen
+ *   HUD size is proportional to `scale`, and `scale` is
+ *   `floor(device / (minTiles * TILE_PX))` — so raising `TILE_PX` to draw the
+ *   world larger divides the interface by the same factor. Measured on the
+ *   window a player complained from (1159x551 CSS at dpr 2): the map moving to
+ *   a 64-pixel cell takes `scale` from 3 to 2, and a 12-pixel label from 36
+ *   device pixels to 24. The world gets bigger by making the words smaller.
+ *
+ * ═══ UPSTREAM SEPARATES THEM, AND IN THIS DIRECTION ═══
+ * `tome/class/Game.lua:571` reads `local map_x, map_y, map_w, map_h = self.uiset:getMapSize()`
+ * — the UI SET hands the map its rectangle, so the interface is never sized
+ * from the map. And `engine/Map.lua:148-158`'s `setZoom` only recomputes
+ * `viewport.mwidth`/`mheight`, the count of CELLS inside a pixel rectangle it
+ * does not touch: in ToME zoom changes how much map fits, never how big the
+ * interface is.
+ *
+ * ═══ 640x320 BECAUSE THAT IS WHAT IT HAS ALWAYS BEEN ═══
+ * `DEFAULT_VIEWPORT` is 20x10 and `TILE_PX` was 32, so the shared buffer's
+ * floor was exactly 640x320 and every panel in `ui/` is laid out against it —
+ * `ui/hotbar.ts`, `ui/xpbar.ts` and `ui/talents.ts` all say so in prose. Naming
+ * the same numbers here is what makes this a pure decoupling: at every window
+ * size the interface keeps the scale and the box it had, and only the map is
+ * free to move. It is deliberately NOT derived from `DEFAULT_VIEWPORT * TILE_PX`
+ * any more — that product is about to change, and the interface must not.
+ */
+const HUD_MIN_W = 640;
+const HUD_MIN_H = 320;
+
+/** Guardrail: past this the tiles are too small to read on a laptop. */
+const MAX_TILES_W = 48;
+const MAX_TILES_H = 32;
+
+/** What `resize` decides. Two spaces, each with its own whole-number factor. */
+export type ViewLayout = {
+  /** The MAP backbuffer and the factor it is presented at, centred by `offset`. */
+  readonly scale: number;
+  readonly logicalW: number;
+  readonly logicalH: number;
+  readonly offsetX: number;
+  readonly offsetY: number;
+  /** The INTERFACE buffer, blitted at the origin. See `HUD_MIN_W`. */
+  readonly hudScale: number;
+  readonly hudW: number;
+  readonly hudH: number;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WHOLE OF THE SIZING ARITHMETIC, AS A FUNCTION OF THE DEVICE BOX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * EXPORTED FOR THE REASON `pathCellOrigin` IS: it is the only way a test can
+ * reach it. `resize()` writes its answers into closure variables that nothing
+ * outside `draw` reads, so until this was pulled out, every number below — the
+ * integer scale, the adaptive tile count, the letterbox, and now two scales
+ * instead of one — was checked by looking at the game.
+ *
+ * PURE, and it has to stay pure: no canvas, no `window`, no dpr. `deviceW` and
+ * `deviceH` are already-measured device pixels, which is what makes the whole
+ * of this testable in the `node` environment the client tests run in.
+ */
+export function viewLayout(
+  deviceW: number,
+  deviceH: number,
+  viewport: Viewport,
+  zoomStep: number,
+): ViewLayout {
+  const minTilesW = Math.max(1, Math.floor(viewport.tilesW));
+  const minTilesH = Math.max(1, Math.floor(viewport.tilesH));
+  const minLogicalW = minTilesW * TILE_PX;
+  const minLogicalH = minTilesH * TILE_PX;
+
+  // Scale first, from the MINIMUM viewport — this is what keeps the factor a
+  // whole number and the pixels sharp.
+  const fitScale = Math.floor(Math.min(deviceW / minLogicalW, deviceH / minLogicalH));
+  const scale = Math.max(1, fitScale + zoomStep);
+
+  // Then fill the box with whole tiles at that scale. Clamped below by the
+  // requested minimum (never show LESS than was asked for) and above by
+  // MAX_TILES_* (never shrink the world to unreadable specks).
+  const fitTilesW = Math.floor(deviceW / (TILE_PX * scale));
+  const fitTilesH = Math.floor(deviceH / (TILE_PX * scale));
+  const tilesW = Math.min(MAX_TILES_W, Math.max(minTilesW, fitTilesW));
+  const tilesH = Math.min(MAX_TILES_H, Math.max(minTilesH, fitTilesH));
+  const logicalW = tilesW * TILE_PX;
+  const logicalH = tilesH * TILE_PX;
+
+  /**
+   * THE INTERFACE, ON ITS OWN. The same shape of sum and deliberately not the
+   * same inputs: its own floor (`HUD_MIN_W`), no tile grid to be a multiple of,
+   * and NO `zoomStep` term — zoom is a map control, which is the whole point.
+   *
+   * Rounding the box down to a tile multiple is what used to leave the hotbar
+   * inside the map's letterbox instead of spanning the window, so it does not.
+   */
+  const hudScale = Math.max(1, Math.floor(Math.min(deviceW / HUD_MIN_W, deviceH / HUD_MIN_H)));
+  const hudW = Math.max(HUD_MIN_W, Math.floor(deviceW / hudScale));
+  const hudH = Math.max(HUD_MIN_H, Math.floor(deviceH / hudScale));
+
+  return {
+    scale,
+    logicalW,
+    logicalH,
+    offsetX: Math.floor((deviceW - logicalW * scale) / 2),
+    offsetY: Math.floor((deviceH - logicalH * scale) / 2),
+    hudScale,
+    hudW,
+    hudH,
+  };
+}
 
 export type RendererOptions = {
   readonly canvas: HTMLCanvasElement;
@@ -388,12 +518,24 @@ export type RendererOptions = {
 
 /** Exposed for the status line and for eyeballing the scaling maths in devtools. */
 export type RendererMetrics = {
+  /**
+   * The MAP backbuffer, in its own logical pixels, and the whole-number factor
+   * it is presented at. `logicalW / TILE_PX` is how many tiles are on screen.
+   */
   readonly logicalW: number;
   readonly logicalH: number;
+  readonly scale: number;
+  /**
+   * The INTERFACE box, in its own logical pixels, and its own whole-number
+   * factor. THIS is the space every panel lays out in and the space
+   * `backbufferPoint` answers in — see `HUD_MIN_W`.
+   */
+  readonly hudW: number;
+  readonly hudH: number;
+  readonly hudScale: number;
   readonly deviceW: number;
   readonly deviceH: number;
   readonly dpr: number;
-  readonly scale: number;
   readonly offsetX: number;
   readonly offsetY: number;
 };
@@ -413,12 +555,13 @@ export type Renderer = {
   readonly metrics: () => RendererMetrics;
   /**
    * A pointer position (a MouseEvent's `clientX`/`clientY`) -> the point in the
-   * LOGICAL BACKBUFFER it lands on, or null when it is on the letterbox bars.
+   * INTERFACE buffer it lands on, or null when it is outside it.
    *
-   * This is the coordinate space the HUD is drawn in, so it is what a hotbar
-   * hit test wants. `tileAtClient` is this plus the camera; having one inverse
-   * transform with two exits is what stops the HUD and the world from
-   * disagreeing about where the pointer is by an integer scale factor.
+   * This is the coordinate space the HUD is drawn in and the space
+   * `metrics().hudW`/`hudH` measures, so it is what a hotbar hit test wants.
+   * It is NOT `tileAtClient` minus the camera any more: the two spaces have
+   * their own scales since `HUD_MIN_W`, and they share only the CSS -> device
+   * step, which is why that step is a function of its own.
    */
   readonly backbufferPoint: (clientX: number, clientY: number) => TileXY | null;
   /**
@@ -1224,21 +1367,14 @@ export function createRenderer(options: RendererOptions): Renderer {
    * right trade for a tactical game where seeing another tile of the room
    * matters more than seeing the same room larger.
    */
-  const minTilesW = Math.max(1, Math.floor(viewport.tilesW));
-  const minTilesH = Math.max(1, Math.floor(viewport.tilesH));
-  const minLogicalW = minTilesW * TILE_PX;
-  const minLogicalH = minTilesH * TILE_PX;
-  /** Guardrail: past this the tiles are too small to read on a laptop. */
   /**
    * How thick the barrier contour is. Two pixels at 32 reads at every integer
    * scale this game uses; one disappears at 1x on a laptop screen.
    */
   const BARRIER_EDGE_PX = 2;
 
-  const MAX_TILES_W = 48;
-  const MAX_TILES_H = 32;
-  let logicalW = minLogicalW;
-  let logicalH = minLogicalH;
+  let logicalW = Math.max(1, Math.floor(viewport.tilesW)) * TILE_PX;
+  let logicalH = Math.max(1, Math.floor(viewport.tilesH)) * TILE_PX;
 
   // The backbuffer. Exactly the logical size, forever: it is never resized by
   // the window, which is what keeps the world's pixel grid stable.
@@ -1250,6 +1386,23 @@ export function createRenderer(options: RendererOptions): Renderer {
   const viewCtx = require2dContext(canvas);
   backCtx.imageSmoothingEnabled = false;
   viewCtx.imageSmoothingEnabled = false;
+
+  /**
+   * The INTERFACE buffer — see `HUD_MIN_W`. A second canvas rather than a
+   * transform on `viewCtx`, and the difference is the look: drawing the HUD
+   * straight onto the visible canvas would rasterise its TEXT at device
+   * resolution, which is smoother than the art beside it and reads as two
+   * games. Painting into a small buffer and blitting it at a whole factor keeps
+   * the interface on the same chunky grid it has always had.
+   */
+  const hudBack = document.createElement('canvas');
+  let hudScale = 1;
+  let hudW = HUD_MIN_W;
+  let hudH = HUD_MIN_H;
+  hudBack.width = hudW;
+  hudBack.height = hudH;
+  const hudCtx = require2dContext(hudBack);
+  hudCtx.imageSmoothingEnabled = false;
 
   let deviceW = 0;
   let deviceH = 0;
@@ -1331,24 +1484,15 @@ export function createRenderer(options: RendererOptions): Renderer {
     canvas.height = deviceH;
     viewCtx.imageSmoothingEnabled = false;
 
-    // Scale first, from the MINIMUM viewport — this is what keeps the factor a
-    // whole number and the pixels sharp.
-    const fitScale = Math.floor(Math.min(deviceW / minLogicalW, deviceH / minLogicalH));
-    scale = Math.max(1, fitScale + zoomStep);
+    const next = viewLayout(deviceW, deviceH, viewport, zoomStep);
+    scale = next.scale;
+    hudScale = next.hudScale;
+    offsetX = next.offsetX;
+    offsetY = next.offsetY;
 
-    // Then fill the box with whole tiles at that scale. Clamped below by the
-    // requested minimum (never show LESS than was asked for) and above by
-    // MAX_TILES_* (never shrink the world to unreadable specks).
-    const fitTilesW = Math.floor(deviceW / (TILE_PX * scale));
-    const fitTilesH = Math.floor(deviceH / (TILE_PX * scale));
-    const tilesW = Math.min(MAX_TILES_W, Math.max(minTilesW, fitTilesW));
-    const tilesH = Math.min(MAX_TILES_H, Math.max(minTilesH, fitTilesH));
-
-    const nextLogicalW = tilesW * TILE_PX;
-    const nextLogicalH = tilesH * TILE_PX;
-    if (nextLogicalW !== logicalW || nextLogicalH !== logicalH) {
-      logicalW = nextLogicalW;
-      logicalH = nextLogicalH;
+    if (next.logicalW !== logicalW || next.logicalH !== logicalH) {
+      logicalW = next.logicalW;
+      logicalH = next.logicalH;
       // Same caveat as the visible canvas: assigning width/height resets the
       // context, so imageSmoothingEnabled must be re-applied.
       back.width = logicalW;
@@ -1356,8 +1500,14 @@ export function createRenderer(options: RendererOptions): Renderer {
       backCtx.imageSmoothingEnabled = false;
     }
 
-    offsetX = Math.floor((deviceW - logicalW * scale) / 2);
-    offsetY = Math.floor((deviceH - logicalH * scale) / 2);
+    if (next.hudW !== hudW || next.hudH !== hudH) {
+      hudW = next.hudW;
+      hudH = next.hudH;
+      hudBack.width = hudW;
+      hudBack.height = hudH;
+      hudCtx.imageSmoothingEnabled = false;
+    }
+
     return true;
   }
 
@@ -2155,12 +2305,6 @@ export function createRenderer(options: RendererOptions): Renderer {
     }
     lastLevel = level;
 
-    // The HUD is painted OUTSIDE the level guard, deliberately: whose turn it is
-    // must be legible in the seconds before `welcome` lands and during a
-    // reconnect, and a turn indicator that vanishes whenever the map does is one
-    // nobody trusts afterwards.
-    scene.hud?.(backCtx, logicalW, logicalH);
-
     // Present: clear the letterbox, then ONE integer-scaled blit of the whole
     // backbuffer. Destination origin and size are whole device pixels by
     // construction.
@@ -2177,14 +2321,42 @@ export function createRenderer(options: RendererOptions): Renderer {
       logicalW * scale,
       logicalH * scale,
     );
+
+    // The HUD is painted OUTSIDE the level guard, deliberately: whose turn it is
+    // must be legible in the seconds before `welcome` lands and during a
+    // reconnect, and a turn indicator that vanishes whenever the map does is one
+    // nobody trusts afterwards.
+    //
+    // AFTER the present, on its own buffer at its own factor — see `HUD_MIN_W`.
+    // `clearRect` and not a fill: the interface is mostly transparent and the
+    // map is what shows through it.
+    if (scene.hud !== undefined) {
+      hudCtx.clearRect(0, 0, hudW, hudH);
+      scene.hud(hudCtx, hudW, hudH);
+      viewCtx.drawImage(hudBack, 0, 0, hudW, hudH, 0, 0, hudW * hudScale, hudH * hudScale);
+    }
   }
 
   function metrics(): RendererMetrics {
-    return { logicalW, logicalH, deviceW, deviceH, dpr, scale, offsetX, offsetY };
+    return {
+      logicalW,
+      logicalH,
+      scale,
+      hudW,
+      hudH,
+      hudScale,
+      deviceW,
+      deviceH,
+      dpr,
+      offsetX,
+      offsetY,
+    };
   }
 
   /**
-   * Undo the present blit, then the camera. See `Renderer.tileAtClient`.
+   * A pointer position -> DEVICE pixels. The half of the inverse both spaces
+   * share, and the only half they share: past this point the interface undoes
+   * `hudScale` and the map undoes `scale` plus the letterbox plus the camera.
    *
    * The CSS -> device conversion is `deviceW / rect.width` rather than `dpr`,
    * and the difference is not pedantry: those two agree only while the canvas is
@@ -2194,20 +2366,29 @@ export function createRenderer(options: RendererOptions): Renderer {
    * number and dpr is not. Getting this wrong puts the cursor a tile off near
    * the edges of the map, which reads as "clicking is inaccurate".
    */
-  function backbufferPoint(clientX: number, clientY: number): TileXY | null {
+  function devicePoint(clientX: number, clientY: number): { x: number; y: number } | null {
     if (deviceW === 0 || deviceH === 0) return null;
 
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
 
-    const deviceX = (clientX - rect.left) * (deviceW / rect.width);
-    const deviceY = (clientY - rect.top) * (deviceH / rect.height);
+    return {
+      x: (clientX - rect.left) * (deviceW / rect.width),
+      y: (clientY - rect.top) * (deviceH / rect.height),
+    };
+  }
 
-    const backX = Math.floor((deviceX - offsetX) / scale);
-    const backY = Math.floor((deviceY - offsetY) / scale);
-    // On the letterbox bars: nothing was drawn there, and snapping to the
-    // nearest edge would let a click outside the playfield hit a slot or a tile.
-    if (backX < 0 || backY < 0 || backX >= logicalW || backY >= logicalH) return null;
+  function backbufferPoint(clientX: number, clientY: number): TileXY | null {
+    const device = devicePoint(clientX, clientY);
+    if (device === null) return null;
+
+    // NO LETTERBOX TERM. The interface buffer is blitted at the origin and
+    // covers the device box — it is the MAP that is centred and may leave bars,
+    // and reading the map's offsets here is what would put a click on the
+    // hotbar one slot out at any window size where the two disagree.
+    const backX = Math.floor(device.x / hudScale);
+    const backY = Math.floor(device.y / hudScale);
+    if (backX < 0 || backY < 0 || backX >= hudW || backY >= hudH) return null;
     return { x: backX, y: backY };
   }
 
@@ -2215,8 +2396,15 @@ export function createRenderer(options: RendererOptions): Renderer {
     const level = lastLevel;
     if (level === null) return null;
 
-    const point = backbufferPoint(clientX, clientY);
-    if (point === null) return null;
+    const device = devicePoint(clientX, clientY);
+    if (device === null) return null;
+
+    const backX = Math.floor((device.x - offsetX) / scale);
+    const backY = Math.floor((device.y - offsetY) / scale);
+    // On the letterbox bars: nothing was drawn there, and snapping to the
+    // nearest edge would let a click outside the playfield hit a tile.
+    if (backX < 0 || backY < 0 || backX >= logicalW || backY >= logicalH) return null;
+    const point = { x: backX, y: backY };
 
     const tx = Math.floor((point.x + lastCamX) / TILE_PX);
     const ty = Math.floor((point.y + lastCamY) / TILE_PX);

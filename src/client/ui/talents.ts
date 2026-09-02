@@ -284,8 +284,8 @@ const CLOSE_PX = 13;
  * line and the next-rank line under it.
  *
  * WIDER *AND* WRAPPED, because widening alone only moves the cut. 480 still
- * fits the guaranteed floor with room (`DEFAULT_VIEWPORT` is 20 tiles = 640
- * logical pixels, and this needs 480 + 12 of margin), and the height grows with
+ * fits the guaranteed floor with room (`HUD_MIN_W` is 640 logical pixels, and
+ * this needs 480 + 12 of margin), and the height grows with
  * the text rather than the text being trimmed to the height.
  */
 /**
@@ -309,8 +309,7 @@ const CLOSE_PX = 13;
  * fixed columns and a third will not fit.
  *
  * ═══ AND IT IS CONDITIONAL, SO THE FLOOR STILL WORKS ═══
- * `DEFAULT_VIEWPORT` is 20 tiles — 640 logical pixels — and a 760-wide panel
- * does not fit in it. Below the threshold the panel is exactly what it was and
+ * `HUD_MIN_W` is 640 logical pixels and a 760-wide panel does not fit in it. Below the threshold the panel is exactly what it was and
  * the hover card is still the answer, which is the honest degradation: a
  * description squeezed into 90 pixels would be the cut-off-mid-sentence bug the
  * width above this was widened to fix.

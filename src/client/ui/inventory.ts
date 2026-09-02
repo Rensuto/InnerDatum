@@ -263,8 +263,8 @@ const COLS = 4;
  * math.max(800, game.w * 0.8), math.max(600, game.h * 0.8))`. Four fifths of the
  * screen, with a floor.
  *
- * OURS CANNOT TAKE THE 800 FLOOR and must not try: this client's logical
- * backbuffer floors at 640 (`DEFAULT_VIEWPORT.tilesW` 20 x `TILE_PX` 32), so an
+ * OURS CANNOT TAKE THE 800 FLOOR and must not try: this client's interface
+ * box floors at 640 (`HUD_MIN_W`), so an
  * 800-pixel minimum would be wider than the whole screen on the viewport the
  * game is guaranteed to render. `COLS` is our floor instead — the four columns
  * this panel has always had — and the fraction is what it grows by.
@@ -303,9 +303,8 @@ const CAPTION_BASELINE = 6;
  * ═══ THE FLOOR IN THIS ARITHMETIC IS 480 AND THE REAL ONE IS 320 ═══
  * Read the rest of this block as a budget against a COMFORTABLE window, not
  * against the smallest one. It cites `minTilesH` for a 480-pixel backbuffer
- * floor; `minTilesH` is `viewport.tilesH`, `DEFAULT_VIEWPORT` is
- * `{ tilesW: 20, tilesH: 10 }`, and `minLogicalH = minTilesH * TILE_PX` is
- * 10 * 32 = 320. Every figure below is 160 pixels too generous.
+ * floor; the interface's floor is `HUD_MIN_H`, which is 320. Every figure
+ * below is 160 pixels too generous.
  *
  * At the real floor the band is about 183 and three rows plus this panel's own
  * chrome need 284, so THE DOLL SHEDS ROWS THERE — which is exactly what the
@@ -1779,8 +1778,8 @@ export function inventoryPanelGeometry(
       //
       // THIS SAID "UNREACHABLE AT ANY VIEWPORT THIS CLIENT RENDERS", citing
       // `DOLL_ROWS`' budget "against the 480-pixel floor". The floor is 320 —
-      // `DEFAULT_VIEWPORT.tilesH` is 10 and `minLogicalH = tilesH * TILE_PX` —
-      // and at 320 this branch runs and sheds three cells. It is the ordinary
+      // render/canvas.ts's `HUD_MIN_H` — and at 320 this branch runs and sheds
+      // three cells. It is the ordinary
       // case on the smallest window, not a defensive guard, which is why the
       // note it produces has to be right.
       const fit = dollRowsThatFit(limit - cursor);

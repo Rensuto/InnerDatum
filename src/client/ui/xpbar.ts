@@ -210,7 +210,7 @@ function fraction(progress: ProgressMsg): number {
  * RIGHT-ALIGNED INSIDE `[x, x + width)`, which is the whole placement decision:
  * the pip row is left-aligned and is at most ten pips plus a label, so the right
  * end of this strip is empty at every viewport this game supports (the narrowest
- * backbuffer is 640 logical pixels — render/canvas.ts's `DEFAULT_VIEWPORT`).
+ * interface box is 640 logical pixels — render/canvas.ts's `HUD_MIN_W`).
  *
  * NULL RATHER THAN AN OVERLAP when the strip is too narrow. A widget that
  * printed itself on top of the pips would make the resource unreadable to save
