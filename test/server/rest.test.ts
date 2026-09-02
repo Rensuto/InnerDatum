@@ -348,30 +348,74 @@ describe('a rest heals the whole party', () => {
     expect(mate.hp).toBe(mate.maxHp);
   });
 
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * NOT ASSERTED HERE: THAT EACH MEMBER PAYS THEIR OWN CONSTITUTION.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * The heal reads `healingFactor(member.combat ?? {})`, so a sturdy teammate
-   * should get more out of somebody else's rest than a frail one. A mutation
-   * that reads the RESTER's factor for everybody SURVIVES this file, and it is
-   * worth saying why rather than leaving a hole nobody can see.
-   *
-   * `actor.combat` is written by `recomposeCombat`, which this harness never
-   * runs — `createTurnEngine` plus `talents.attach` leaves the field undefined,
-   * so `healingFactor({})` answers 1 for every body and the two branches of the
-   * mutation are numerically identical. Two attempts confirmed it: assigning
-   * `combat` by hand (wiped), and giving the teammates different CLASSES
-   * (Watchman con 20 against Inspector con 12 — both still came out at 224.2).
-   *
-   * A green test here would have asserted nothing, which is the failure this
-   * file exists to avoid. What IS covered: `healing-factor.test.ts` pins
-   * `healingFactor` itself at both ends of its range and pins that `healActor`
-   * pays the RECEIVER, and the line here is the same expression the rester used
-   * before the bonus went party-wide — `member` in place of `self` and nothing
-   * else. The gap is the harness, not the rule.
-   */
+  it('pays each member THEIR OWN Constitution, not the rester`s', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SHARED THING IS THE ACCELERATION, NOT THE AMOUNT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream reads `act.life_regen` and calls `act:heal`, which applies the
+     * RECEIVER's `healing_factor` (Actor.lua:2089) — so a sturdy teammate gets
+     * more out of somebody else's rest than a frail one does.
+     *
+     * ═══ THE POOLS MUST NOT FILL, WHICH IS WHY THEY ARE ABSURD ═══
+     * An earlier version of this test gave both teammates 400 maximum and a
+     * long rest. Both reached full, both ended equal, and a mutation reading the
+     * RESTER's factor for everybody passed — because "equal at the ceiling" is
+     * true whatever the factor was. That failure was misdiagnosed at the time as
+     * `recomposeCombat` wiping a hand-set `combat`; it does not, and a probe
+     * confirmed the field survives a rest intact.
+     *
+     * So: a ceiling neither can approach, and a SHORT rest, so what is compared
+     * is the rate rather than the destination.
+     */
+    const { engine, world, body, talents, parties, mate: sturdy } = party('rest-party-con');
+    const frail = world.addPlayer('p3', 'p3', { maxHp: 100000 });
+    frail.x = 6;
+    frail.y = 4;
+    talents.attach('p3', sheetForClass(WATCHMAN));
+    engine.join('p3');
+    engine.setConnected('p3', true);
+    invite(parties, 'p1', 'p3', 0);
+    accept(parties, 'p3', 'p1', 0);
+    engine.pump();
+
+    sturdy.maxHp = 100000;
+    sturdy.hp = 100;
+    frail.hp = 100;
+    sturdy.hpRegen = 2;
+    frail.hpRegen = 2;
+    // The one difference between them.
+    sturdy.combat = { stats: { str: 10, dex: 10, con: 100, wil: 10, cun: 10 } };
+    frail.combat = { stats: { str: 10, dex: 10, con: 10, wil: 10, cun: 10 } };
+    body.hp = 10;
+
+    engine.rest('p1');
+
+    expect(sturdy.hp, 'both were still climbing, so this is about the rate').toBeLessThan(100000);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE RATIO, BECAUSE "THE STURDY ONE GAINS MORE" IS TRUE EITHER WAY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * That was the first assertion here and it caught nothing. `actBase`'s
+     * ORDINARY per-turn regeneration also pays the healing factor (`f0c7678`),
+     * and it always reads each body's OWN Constitution — so a mutation making
+     * the rest bonus use the RESTER's factor still leaves the sturdy teammate
+     * ahead on the trickle alone. Measured: 286.3 against 224.2 correct, and
+     * 251.2 against 224.2 mutated. Both satisfy "greater than".
+     *
+     * Both paths scale by the same factor, so with the rule intact the TOTAL
+     * gain scales by exactly the ratio of the two factors — `healingFactor` is
+     * 1.5 at con 100 and 1.0 at con 10. Any share of the healing paid at the
+     * wrong factor drags that ratio down, which is what makes this the
+     * assertion rather than the inequality.
+     */
+    const ratio = (sturdy.hp - 100) / (frail.hp - 100);
+    expect(ratio, 'part of the healing was paid at the wrong Constitution').toBeCloseTo(1.5, 2);
+  });
+
   it('heals nobody who is down, which is what makes standing them up urgent', () => {
     // Upstream's guard is `hasEntity(act) and not act.dead`.
     const { engine, world, body, mate, downed } = party('rest-party-downed');
@@ -486,38 +530,89 @@ describe('a rest stops when something lands a hit', () => {
     expect(body.hp, 'and it stopped early rather than at full health').toBeLessThan(body.maxHp);
   });
 
+  it('but NOT when the blow lands on somebody else', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ID FILTER, AND IT IS NOT PEDANTRY IN A CO-OP GAME.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A pump carries EVERYBODY's events. Without `event.id === actorId` a
+     * detective resting in a quiet room is hauled to their feet whenever a
+     * friend two rooms away takes a scratch — and since the rest is what heals
+     * the party, that friend is denied the healing by their own misfortune.
+     *
+     * ═══ THE BYSTANDER IS DISCONNECTED, AND THAT IS THE WHOLE FIXTURE ═══
+     * Three earlier attempts ended in `Budget` after one turn, and the engine
+     * was right every time: with a monster engaged, the barrier waits for every
+     * player who still owes a decision, so an idle second body FREEZES the world
+     * and the rest advances no game turn at all.
+     *
+     * `setConnected(false)` is the realistic answer rather than a workaround —
+     * game-design.md § 4 leaves a dropped player's body standing where it fell
+     * and puts them on Standing By, which is exactly a body that can be hit and
+     * cannot hold anybody up.
+     */
+    const { engine, world, body, talents, parties } = scene('rest-other-hurt');
+    body.hp = 20;
+    const mate = world.addPlayer('p2', 'p2', { maxHp: 400 });
+    mate.x = 26;
+    mate.y = 26;
+    mate.hp = 200;
+    talents.attach('p2', sheetForClass(WATCHMAN));
+    engine.join('p2');
+    invite(parties, 'p1', 'p2', 0);
+    accept(parties, 'p2', 'p1', 0);
+    engine.setConnected('p2', true);
+    engine.pump();
+    // ...and then they drop. The body stays; the barrier stops waiting for it.
+    engine.setConnected('p2', false);
+
+    const husk = world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 27,
+      y: 26,
+      profile: AiProfile.MeleeChaser,
+    });
+    expect(
+      Math.hypot(husk.x - body.x, husk.y - body.y),
+      'the husk must be out of the RESTER`s sight, or `Hostile` ends this instead',
+    ).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
+
+    const result = engine.rest('p1');
+
+    expect(mate.hp, 'the fixture must actually have hurt the bystander').toBeLessThan(200);
+    expect(result.stop, 'a friend being hit is not my reason to stand up').not.toBe(RestStop.Hurt);
+    expect(body.hp).toBe(body.maxHp);
+  });
+
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THREE NARROWING TERMS THIS HARNESS CANNOT DRIVE, NAMED RATHER THAN FAKED.
+   * TWO TERMS STILL UNDRIVEN, AND BOTH ARE STRUCTURAL RATHER THAN LAZY.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * The scan is `event.k === 'damage' && event.id === actorId && event.healed
-   * === undefined`, over `playerEvents` AND `sweep`. Deleting the whole arm is
-   * caught above. These three mutations SURVIVE, and each is worth a sentence so
-   * the hole is a known one:
-   *
-   *   `event.id === actorId`  A pump carries everybody's events, so without it a
-   *     detective resting in a quiet room stands up whenever a friend two rooms
-   *     away takes a scratch — and since the rest is what heals the party, that
-   *     friend is denied the healing by their own misfortune. Driving it needs a
-   *     second player hurt at a distance, and every attempt ended in `Budget`
-   *     after one turn: a second body has to be joined, connected, PARTIED and
-   *     pumped before the game turn can complete, and even then this fixture
-   *     stopped early for reasons unrelated to the claim.
+   * === undefined`, over `playerEvents` AND `sweep`. Deleting the arm and
+   * dropping the id filter are both caught above. These two survive:
    *
    *   `.sweep` as well as `playerEvents`  A bleed lands in `playerEvents`, so
-   *     dropping the sweep arm changes nothing here. It is not decoration: a
-   *     monster's blow arrives in the sweep. It is hard to reach because
-   *     `restCheck` runs BEFORE the pump and `Hostile` catches anything close
-   *     enough to swing, so the arm is for what hits without being seen.
+   *     dropping the sweep arm changes nothing here. It is NOT decoration — a
+   *     monster's blow arrives in the sweep — but a monster cannot reach the
+   *     rester to swing: `restCheck` runs BEFORE each pump and `Hostile` catches
+   *     anything close enough, and nothing crosses from unseen to adjacent and
+   *     attacks inside one pump. The arm is for a blow that lands without being
+   *     seen coming, which no content produces today.
    *
    *   `event.healed === undefined`  A heal rides the same `DamageEvent` (its own
    *     docblock: one frame kind for "an actor's hp changed"), so without this a
    *     teammate mending the rester would read as a hit and end the rest that
-   *     was doing them good. Nothing in this harness heals a resting body.
+   *     was doing them good. Nothing in this harness heals a resting body, and
+   *     driving it means a second player casting a heal mid-rest — which the
+   *     barrier will not allow while the rester holds.
    *
-   * A green test for any of the three would have asserted nothing, which is the
-   * failure this file keeps finding. The gap is the harness, not the rule.
+   * Named rather than faked, and the list is shorter than it was: the id filter
+   * and the per-member Constitution were on it until a disconnected bystander
+   * and a ratio assertion closed them.
    */
   it('says so, rather than stopping silently', () => {
     // Every stop has a sentence — `restStopText`. A rest that ended for a reason
