@@ -80,7 +80,13 @@ MILESTONE = [
 # Map-space art is doubled to the 64-pixel cell by the generators (see
 # `MAP_SPACE` in gen_content_assets.py). Anything whose every 2x2 block is one
 # flat colour came through that double and has no detail at this size.
-MAP_SPACE = ("characters/", "enemies/", "props/")
+#
+# `ui/markers/` is in the list and the rest of `ui/` is not, which looks odd
+# until you ask what the sprite is addressed BY: everything under markers/ is a
+# mark on a CELL -- the targeting squares, the area fill, the token rings, the
+# downed silhouette, the ping -- drawn on the map grid at TILE_PX. The frames,
+# chrome and icons are interface art drawn at `hudScale`, a different number.
+MAP_SPACE = ("characters/", "enemies/", "props/", "ui/markers/")
 
 
 def is_upscaled(im: Image.Image, rel: str) -> bool:

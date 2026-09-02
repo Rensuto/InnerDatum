@@ -1694,8 +1694,10 @@ export function createRenderer(options: RendererOptions): Renderer {
        * look like a door, which is exactly what that art was drawn to be.
        */
       if (site.sprite !== undefined) {
-        const ring = sprites.sprite('ui_token_ring_hostile');
-        if (ring !== undefined) backCtx.drawImage(ring.image, sx, sy, TILE_PX, TILE_PX);
+        // The ring is a CELL and the roamer standing in it is a BODY — see
+        // `blitCell`. This call site scaled its ring by hand before there was a
+        // blit that knew the difference.
+        blitCell('ui_token_ring_hostile', sx, sy);
         blitSprite(site.sprite, sx, sy);
         continue;
       }
@@ -1786,6 +1788,43 @@ export function createRenderer(options: RendererOptions): Renderer {
     if (isWalkable(tileAt(level, tx, ty + 1))) backCtx.fillRect(sx, sy + TILE_PX - W, TILE_PX, W);
     if (isWalkable(tileAt(level, tx - 1, ty))) backCtx.fillRect(sx, sy, W, TILE_PX);
     if (isWalkable(tileAt(level, tx + 1, ty))) backCtx.fillRect(sx + TILE_PX - W, sy, W, TILE_PX);
+  }
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A MARK ON A CELL IS THE CELL. DRAWN TO FILL IT, WHATEVER SIZE THE ART IS.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `blitSprite` draws at the sprite's NATURAL size with a bottom-centre
+   * anchor, which is right for a body: a creature is a thing STANDING on a
+   * cell, it may be bigger than one, and its feet are what say which cell it
+   * occupies. It is wrong for everything that IS a cell — the targeting
+   * markers, the area-of-effect squares, the token rings, the downed
+   * silhouette, the ping.
+   *
+   * ═══ WHAT IT LOOKED LIKE WHEN THEY SHARED A BLIT ═══
+   * Reported with a screenshot the day the cell went to 64: *"the area boxes
+   * when using abilities should be seamless and they are far apart now."* All
+   * thirteen marks in `ui/markers/` are authored 32x32, so every one drew at
+   * quarter area in the middle of its cell — an area-of-effect that looked like
+   * scattered confetti rather than a contiguous shape, and a token ring half
+   * the width of the body standing in it.
+   *
+   * ═══ SCALED RATHER THAN ANCHORED, AND THAT IS THE INVARIANT, NOT A PATCH ═══
+   * The art is being regenerated at 64 so this draws 1:1 — but the rule has to
+   * be "a cell mark fills the cell" rather than "the art happens to be the
+   * right size", because the second one is what just broke. `paintTerrain`
+   * makes the identical argument for ground tiles and has always been written
+   * this way; `paintSites` already scaled its ring by hand at the one call site
+   * somebody noticed. This is that, once, for all of them.
+   */
+  function blitCell(id: string, cellX: number, cellY: number): void {
+    const sprite: Sprite | undefined = sprites.sprite(id);
+    if (sprite === undefined) {
+      blitSprite(id, cellX, cellY);
+      return;
+    }
+    backCtx.drawImage(sprite.image, cellX, cellY, TILE_PX, TILE_PX);
   }
 
   function blitSprite(id: string, cellX: number, cellY: number): void {
@@ -1890,7 +1929,7 @@ export function createRenderer(options: RendererOptions): Renderer {
         backCtx.fillRect(cellX, cellY, TILE_PX, TILE_PX);
         backCtx.restore();
       }
-      if (cell.marker !== null) blitSprite(`ui_tile_marker_${cell.marker}`, cellX, cellY);
+      if (cell.marker !== null) blitCell(`ui_tile_marker_${cell.marker}`, cellX, cellY);
     }
   }
 
@@ -2233,7 +2272,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     const cellY = ping.y * TILE_PX - camY;
     if (!visible(cellX, cellY)) return;
 
-    blitSprite('ui_marker_point', cellX, cellY);
+    blitCell('ui_marker_point', cellX, cellY);
     if (ping.label === '') return;
 
     backCtx.save();
@@ -2303,7 +2342,7 @@ export function createRenderer(options: RendererOptions): Renderer {
         const cellX = actor.x * TILE_PX - camX;
         const cellY = actor.y * TILE_PX - camY;
         if (visible(cellX, cellY)) {
-          blitSprite(underTokenIdFor(actor, scene.selfId, scene.downed), cellX, cellY);
+          blitCell(underTokenIdFor(actor, scene.selfId, scene.downed), cellX, cellY);
         }
       }
       for (const actor of ordered) {
@@ -2362,7 +2401,7 @@ export function createRenderer(options: RendererOptions): Renderer {
       for (const overlay of scene.overlays ?? []) {
         const cellX = overlay.x * TILE_PX - camX;
         const cellY = overlay.y * TILE_PX - camY;
-        if (visible(cellX, cellY)) blitSprite(`ui_tile_marker_${overlay.kind}`, cellX, cellY);
+        if (visible(cellX, cellY)) blitCell(`ui_tile_marker_${overlay.kind}`, cellX, cellY);
       }
 
       // Pings LAST, above even the sweep. A person pointing is the one overlay

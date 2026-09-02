@@ -67,10 +67,38 @@ def img(w: int, h: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
     return im, ImageDraw.Draw(im)
 
 
+# --------------------------------------------------------------------------
+# `ui/markers/` IS MAP SPACE, WHATEVER DIRECTORY IT LIVES IN.
+# --------------------------------------------------------------------------
+# Everything under it is a mark ON A CELL -- the targeting squares, the
+# area-of-effect fill, the token rings, the downed silhouette, the ping. They
+# are addressed by tile and drawn on the map's grid, so they belong to the
+# 64-pixel cell (shared/version.ts's TILE_PX) and not to the interface buffer,
+# whose scale is a different number entirely (render/canvas.ts's HUD_MIN_W).
+#
+# The rest of `ui/` -- frames, chrome, icons, the item slots -- is interface art
+# and is deliberately NOT doubled: it is drawn at `hudScale`, and doubling it
+# would make every panel twice the size it is meant to be.
+#
+# The renderer scales a cell mark to the cell regardless (see `blitCell`), so
+# this is about SHARPNESS rather than correctness: a 32-pixel mark stretched
+# over a 64-pixel cell is seamless and chunky, and this makes it seamless and
+# clean.
+MAP_SPACE = ("ui/markers/",)
+MAP_SCALE = 2
+
+
+def to_cell(im: Image.Image, rel: str) -> Image.Image:
+    """Nearest-neighbour double, for map-space art only."""
+    if not rel.startswith(MAP_SPACE):
+        return im
+    return im.resize((im.width * MAP_SCALE, im.height * MAP_SCALE), Image.NEAREST)
+
+
 def save(im: Image.Image, rel: str) -> None:
     dest = OUT / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    im.save(dest, "PNG", optimize=True)
+    to_cell(im, rel).save(dest, "PNG", optimize=True)
     MADE.append(rel)
 
 

@@ -240,7 +240,15 @@ describe('a roamer looks like a creature, not like a place', () => {
       new URL('../../src/client/render/canvas.ts', import.meta.url),
       'utf8',
     );
-    expect(canvas).toContain("sprites.sprite('ui_token_ring_hostile')");
+    //
+    // BOTH HALVES, because the pair IS the claim: the ring is a CELL and the
+    // roamer standing in it is a BODY. This used to name
+    // `sprites.sprite('ui_token_ring_hostile')`, the hand-rolled scale that
+    // existed at this one call site before `blitCell` knew the difference —
+    // a spelling rather than the behaviour, and it broke when the spelling
+    // improved. test/client/cellmarks.test.ts asserts the sizes for real.
+    expect(canvas).toContain("blitCell('ui_token_ring_hostile'");
+    expect(canvas).toContain('blitSprite(site.sprite');
     expect(canvas).toContain('if (site.sprite !== undefined)');
   });
 });

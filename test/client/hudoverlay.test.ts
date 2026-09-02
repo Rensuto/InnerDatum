@@ -6,6 +6,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createRenderer } from '../../src/client/render/canvas.ts';
+import { installDom, removeDom, stubCanvas } from './canvasstub.ts';
+import type { StubCanvas } from './canvasstub.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -32,95 +34,12 @@ import { createRenderer } from '../../src/client/render/canvas.ts';
  * composites, rather than of a canvas named in advance.
  */
 
-type Ctx = {
-  readonly canvas: StubCanvas;
-  readonly drawn: StubCanvas[];
-};
-
-type StubCanvas = {
-  width: number;
-  height: number;
-  /** The `alpha` this canvas's context was requested with. */
-  alpha: boolean | null;
-  ctx: Ctx | null;
-  getContext: (kind: string, opts?: { alpha?: boolean }) => unknown;
-  getBoundingClientRect: () => { width: number; height: number; left: number; top: number };
-};
-
-/**
- * A 2D context that records `drawImage` sources and shrugs at everything else.
- *
- * The Proxy is deliberate: the renderer calls something like thirty context
- * methods and a test that had to name them all would break every time a painter
- * grew a gradient. What this file asserts is composition, and `drawImage` is the
- * whole of composition.
- */
-function stubContext(canvas: StubCanvas): Ctx {
-  const drawn: StubCanvas[] = [];
-  const real: Record<string, unknown> = { canvas, drawn };
-  const proxy = new Proxy(real, {
-    get(target, prop) {
-      if (prop === 'canvas') return canvas;
-      if (prop === 'drawn') return drawn;
-      if (prop === 'drawImage') {
-        return (source: unknown) => {
-          if (typeof source === 'object' && source !== null && 'alpha' in source) {
-            drawn.push(source as StubCanvas);
-          }
-        };
-      }
-      if (prop === 'measureText') return () => ({ width: 0 });
-      if (prop === 'createLinearGradient' || prop === 'createRadialGradient') {
-        return () => ({ addColorStop: () => undefined });
-      }
-      if (typeof prop === 'string' && prop in target) return target[prop];
-      // Every other property is either a no-op method or a style field being
-      // assigned. Returning a function covers the first and is harmless for the
-      // second, because the renderer only ever writes those.
-      return () => undefined;
-    },
-    set() {
-      return true;
-    },
-  });
-  return proxy as unknown as Ctx;
-}
-
-function stubCanvas(cssW = 0, cssH = 0): StubCanvas {
-  const canvas: StubCanvas = {
-    width: 0,
-    height: 0,
-    alpha: null,
-    ctx: null,
-    getContext(kind, opts) {
-      if (kind !== '2d') return null;
-      canvas.alpha = opts?.alpha ?? true;
-      canvas.ctx ??= stubContext(canvas);
-      return canvas.ctx;
-    },
-    getBoundingClientRect: () => ({ width: cssW, height: cssH, left: 0, top: 0 }),
-  };
-  return canvas;
-}
-
-const made: StubCanvas[] = [];
-
 beforeEach(() => {
-  made.length = 0;
-  (globalThis as Record<string, unknown>).document = {
-    createElement: (tag: string) => {
-      if (tag !== 'canvas') throw new Error(`unexpected createElement(${tag})`);
-      const c = stubCanvas();
-      made.push(c);
-      return c;
-    },
-  };
-  (globalThis as Record<string, unknown>).window = { devicePixelRatio: 1 };
+  installDom(1);
 });
 
 afterEach(() => {
-  delete (globalThis as Record<string, unknown>).document;
-  delete (globalThis as Record<string, unknown>).window;
+  removeDom();
 });
 
 function render() {
@@ -149,13 +68,13 @@ describe('the interface is an overlay', () => {
     // The HUD really ran, or everything below is vacuous.
     expect(handed).not.toBeNull();
 
-    const composited = visible.ctx?.drawn ?? [];
+    const composited = visible.ctx?.blits.map((b) => b.source) ?? [];
     expect(composited.length, 'the map and the interface are both blitted').toBe(2);
 
     // Whatever went down LAST is on top of the world, and it must be
     // transparent. Asserted of the canvas the renderer actually chose rather
     // than of one named here.
-    const onTop = composited[composited.length - 1];
+    const onTop = composited[composited.length - 1] as StubCanvas | undefined;
     expect(onTop?.alpha, 'the layer over the map is opaque — it will black it out').toBe(true);
   });
 
@@ -168,8 +87,9 @@ describe('the interface is an overlay', () => {
     const { renderer, visible } = render();
     renderer.draw({ level: null, actors: [], selfId: null, hud: () => undefined });
 
-    const composited = visible.ctx?.drawn ?? [];
-    expect(composited[0]?.alpha, 'the map backbuffer should be opaque').toBe(false);
+    const composited = visible.ctx?.blits.map((b) => b.source) ?? [];
+    const under = composited[0] as StubCanvas | undefined;
+    expect(under?.alpha, 'the map backbuffer should be opaque').toBe(false);
     expect(visible.alpha, 'the visible canvas should be opaque').toBe(false);
   });
 
