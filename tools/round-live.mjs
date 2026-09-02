@@ -57,9 +57,28 @@ send({ t: 'choose_class', classId: watchman.id });
 await sleep(700);
 
 const hotbar = last('loadout')?.talents ?? [];
-const cheap = hotbar.filter((t) => (t.cost?.ap ?? 99) <= 3).sort((a, b) => a.cost.ap - b.cost.ap);
-console.log('hotbar:', hotbar.map((t) => `${t.name}(${t.cost.ap}ap)`).join(' '));
-console.log('cheap enough to chain:', cheap.map((t) => t.name).join(' ') || 'NONE');
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LEARNED, NOT JUST CHEAP — AND THIS PROBE SPENT ITS LIFE CASTING NEITHER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The hotbar draws the whole LOADOUT: nine talents for a Watchman, of which a
+ * level-1 character has RAISED two. This filtered on AP alone, so it picked Ward
+ * Rush and Move Along — both at rank 0 — and was refused every time. It then
+ * read `casts landed: 0` and concluded `CLOSED: each cast still cost a whole
+ * turn`, which is a verdict about a feature it never exercised.
+ *
+ * `LoadoutTalent.level` is the rank. Zero is a button you can see and cannot
+ * press yet.
+ */
+const cheap = hotbar
+  .filter((t) => (t.cost?.ap ?? 99) <= 3 && (t.level ?? 0) >= 1)
+  .sort((a, b) => a.cost.ap - b.cost.ap);
+console.log(
+  'hotbar:',
+  hotbar.map((t) => `${t.name}(${t.cost.ap}ap, L${String(t.level ?? 0)})`).join(' '),
+);
+console.log('learned AND cheap enough to chain:', cheap.map((t) => t.name).join(' ') || 'NONE');
 
 // walk into a fight
 let pos = (() => {
@@ -149,10 +168,19 @@ const apMid = last('resource')?.resource?.ap;
 console.log(`\ncasts landed: ${usedAfter - usedBefore}`);
 console.log(`game turns advanced: ${turnAfter - turnBefore}`);
 console.log(`AP: ${apBefore} -> ${apMid}`);
+/**
+ * ═══ ZERO CASTS IS NOT A VERDICT, AND THIS PRINTED ONE ═══
+ * "CLOSED" was reported for a run in which nothing was ever cast — the same
+ * vacuous green a probe gives whenever the thing it measures did not happen.
+ * The three outcomes are now distinct, and the middle one is the honest answer
+ * when the setup failed rather than the feature.
+ */
 console.log(
-  usedAfter - usedBefore >= 2 && turnAfter - turnBefore <= 1
-    ? '  OPEN ROUND: two casts inside one turn.'
-    : '  CLOSED: each cast still cost a whole turn.',
+  usedAfter - usedBefore === 0
+    ? '  INCONCLUSIVE: nothing was cast at all — see the errors below.'
+    : usedAfter - usedBefore >= 2 && turnAfter - turnBefore <= 1
+      ? '  OPEN ROUND: two casts inside one turn.'
+      : '  CLOSED: each cast still cost a whole turn.',
 );
 const errs = frames.filter((f) => f.t === 'error').map((f) => f.message);
 if (errs.length) console.log('errors:', errs.slice(0, 3).join(' | '));

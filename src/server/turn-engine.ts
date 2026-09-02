@@ -404,6 +404,45 @@ function talentIntent(talent: LoadoutTalent, target: TileXY | undefined): Intent
  * Both are needed and neither substitutes for the other — a client cannot flash
  * the ring's hole for a sentence, and a player cannot act on `too_close` alone.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT TO SAY WHEN THE AUTHORITATIVE CHECKER REFUSES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The checker answers a CODE and nothing else, and the code used to be printed
+ * at the player — see the call site. The client rewrites most categories itself
+ * (`refusalText`), so these matter most for the arms where it defers; they are
+ * all written as the sentence a player would want either way.
+ *
+ * `bad_message` IS THE ONE THAT HAD TO CHANGE and the one this exists for: at
+ * that call site it can only mean "you have not raised this yet", because the
+ * loadout-membership check has already refused anything the body does not have.
+ */
+function refusalSentence(name: string, code: TalentRefusal): string {
+  switch (code) {
+    case ErrorCode.BadMessage:
+      return `${name}: you have not learned that yet`;
+    case ErrorCode.OnCooldown:
+      return `${name} is still cooling down`;
+    case ErrorCode.NoResource:
+      return `${name}: not enough to pay for it`;
+    case ErrorCode.OutOfRange:
+      return `${name}: too far away`;
+    case ErrorCode.TooClose:
+      return `${name}: too close`;
+    case ErrorCode.NoLos:
+      return `${name}: no line of sight to that tile`;
+    case ErrorCode.NotYourTurn:
+      return `${name}: not now`;
+    case ErrorCode.IllegalMove:
+      // "NOT AT THAT" IS WHAT EVERY TARGETING REFUSAL MEANS — blocked terrain,
+      // an empty tile, yourself, an ally under a hostile talent. See
+      // `REFUSAL_TO_CODE`, which collapses five of them onto this code for the
+      // reason a targeting UI can act on: ask for another tile.
+      return `${name}: not at that`;
+  }
+}
+
 function refuseTalent(code: TalentRefusal, reason: string): TalentResult {
   return { ok: false, code, reason };
 }
@@ -2016,7 +2055,38 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // that is wrong about a corner tile.
       const authoritative = talents.check?.(actor, talent.id, target) ?? null;
       if (authoritative !== null) {
-        return refuseTalent(authoritative, `${talent.name}: ${authoritative}`);
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * A SENTENCE, NOT THE CODE. THIS PRINTED `Ward Rush: bad_message`.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * It read `${talent.name}: ${authoritative}` — the wire code, rendered
+         * as prose. For most codes the client rewrites the category itself
+         * (`refusalText` turns `out_of_range` into "too far away"), but
+         * `bad_message` is the one arm where it deliberately DEFERS: *"a game
+         * rule, and the server already wrote the sentence."* Here the server had
+         * not written one, so a player pressing a hotbar button they have not
+         * learned yet was told, verbatim, `Ward Rush: bad_message`.
+         *
+         * MEASURED with `tools/round-live.mjs`, which reported `casts landed: 0`
+         * and three of those errors — and then concluded from zero casts that
+         * the multi-action round was "CLOSED".
+         *
+         * ═══ AND AT THIS CALL SITE `bad_message` HAS EXACTLY ONE MEANING ═══
+         * `REFUSAL_TO_CODE` (content/classes.ts) maps two refusals onto it,
+         * `NotLearned` and `UnknownTalent` — but the loadout-membership check
+         * eight lines above has already refused anything this body does not
+         * carry, so a talent reaching the checker is always one it HAS. The only
+         * thing left for the checker to object to is that it has never been
+         * raised above rank 0, which is a GAME RULE and reads as one now.
+         *
+         * (That mapping's own justification — *"M3 loadouts are FIXED, so a
+         * frame naming a talent that is not in your four was hand-crafted rather
+         * than clicked"* — is the same stale sentence the membership check above
+         * already corrected: the points landed, a loadout carries nine talents
+         * and two of them are learned.)
+         */
+        return refuseTalent(authoritative, refusalSentence(talent.name, authoritative));
       }
       if (talents.check !== undefined) {
         return queue(actorId, talentIntent(talent, target));
