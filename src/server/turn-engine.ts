@@ -2834,6 +2834,28 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         // is narrated exactly once and a kill acted on exactly once, and neither
         // can survive into the turn after the one that caused it.
         drainHits: () => statusHits.splice(0, statusHits.length),
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * THE SECOND QUESTION `checkStillInCombat` ASKS — see `stillFighting`.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `tome/class/Actor.lua:7658-7662`. A detrimental effect that is still
+         * counting down means the fight is not over, and the scheduler could not
+         * ask that on its own: `PumpCtx` deliberately hands it closures rather
+         * than the effect table, exactly as `applyStatus` above does.
+         *
+         * READS THE DEFINITION, NOT THE INSTANCE, for `status` and `decrease` —
+         * both are properties of the effect rather than of one application, and
+         * `effectDef` is the one lookup that turns an id into it.
+         */
+        stillFighting:
+          opts.effects === undefined
+            ? undefined
+            : (actorId: string): boolean =>
+                effectsOn(opts.effects as EffectState, actorId).some((live) => {
+                  const def = effectDef(opts.effects as EffectState, live.effectId);
+                  return def?.status === EffectStatus.Detrimental && def.decrease > 0;
+                }),
       });
       /**
        * THE DEBT IS SPENT, whatever the pump made of it.

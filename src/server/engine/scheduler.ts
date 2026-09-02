@@ -1067,6 +1067,36 @@ export type PumpCtx = {
    */
   readonly drainHits?: () => readonly StatusHit[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IS THIS BODY STILL CARRYING SOMETHING THAT COUNTS AS THE FIGHT?
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tome/class/Actor.lua:7658-7662`, inside `checkStillInCombat` and the one
+   * clause of it this engine did not have:
+   *
+   * ```lua
+   * -- Status effects need rechecking
+   * for eff_id, p in pairs(self.tmp) do
+   *   local e = self:getEffectFromId(eff_id)
+   *   if e.status == "detrimental" and e.decrease > 0 then self:enterCombatStatus() break end
+   * end
+   * ```
+   *
+   * A DETRIMENTAL EFFECT THAT IS STILL COUNTING DOWN MEANS THE FIGHT IS NOT
+   * OVER. Ours asked only whether a hostile was in view, so the last husk dying
+   * ended combat while somebody was still bleeding out from it.
+   *
+   * `decrease > 0` is upstream's own guard and it is doing work: an effect that
+   * does not tick down is a PERMANENT one, and a permanent debuff would
+   * otherwise hold a level in combat for the rest of the session.
+   *
+   * A CLOSURE RATHER THAN THE EFFECT TABLE, for the reason `applyStatus` beside
+   * it gives: this module must not learn what an effect IS. Absent means the
+   * clause is skipped, which is every fixture that wires no effects and is
+   * exactly the engine those fixtures were written against.
+   */
+  readonly stillFighting?: (actorId: string) => boolean;
+  /**
    * Take everything `EffectCtx.log` has recorded since the last call, and CLEAR
    * it. `pump` turns each line into a `status` event, in place.
    *
@@ -1573,7 +1603,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
 
   // Engagement first: it is the only co-op-specific clause in `isBlocking`, so
   // it has to be true BEFORE anybody is asked whether they are blocking.
-  updateEngagement(world, actors, sink, false);
+  updateEngagement(world, actors, ctx, sink, false);
 
   // The Bell is checked ON ENTRY, ONCE PER PARTY. The caller sets a real timer
   // for the deadline this returns and re-enters when it fires; expiry is applied
@@ -1750,7 +1780,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       sink.push({ t: 'turn_ended', gameTurn: clock.gameTurn });
       // The level-wide port of `checkStillInCombat` (Actor.lua:7648-7669).
       // Per-turn rather than per-pump, so decay counts turns and not commands.
-      updateEngagement(world, actors, sink, true);
+      updateEngagement(world, actors, ctx, sink, true);
     },
 
     maxTicks: ctx.maxTicks ?? DEFAULT_MAX_TICKS,
@@ -3966,12 +3996,36 @@ function applyBellExpiry(
 function updateEngagement(
   world: World,
   actors: readonly EngineActor[],
+  ctx: PumpCtx,
   sink: EventSink,
   decay: boolean,
 ): void {
   const before = world.turn.engagement;
 
   if (anyContact(world, actors)) {
+    world.turn.engagement = ENGAGEMENT_TURNS;
+  } else if (before > 0 && stillAfflicted(actors, ctx)) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * IT EXTENDS COMBAT AND CANNOT START IT — `tome/class/Actor.lua:7649`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `checkStillInCombat` opens `if not self.in_combat then return end`, so
+     * upstream's effect clause only ever stops combat LAPSING. The first draft
+     * of this put it beside `anyContact` in the same `if`, where it can also
+     * BEGIN combat — and that version is a catastrophe rather than a bug.
+     *
+     * A SHARED REALM'S `engagement` MUST STAY AT ZERO. It is the last clause of
+     * `isBlocking` (engine/barrier.ts), and today that holds structurally: a
+     * town has no hostiles, so `anyContact` is false and nothing else could
+     * raise it. Let a bleeding player raise it and the first detective to walk
+     * out of a delve with a wound puts every unrelated person in Alderbrook into
+     * a single barrier, waiting on a stranger, with a Bell running and nothing
+     * on screen to explain it. That is the precise failure roamers are markers
+     * to avoid and `assertNoCombatInSharedSpace` throws over.
+     *
+     * `before > 0` is the whole guard, and it is upstream's own line.
+     */
     world.turn.engagement = ENGAGEMENT_TURNS;
   } else if (decay && world.turn.engagement > 0) {
     world.turn.engagement -= 1;
@@ -4125,6 +4179,33 @@ function applyRoundTails(
  * `areEnemies` is the one answer. A townsfolk is nobody's enemy, so she is not
  * contact, so a town stays a town.
  */
+/**
+ * Is anybody still carrying the fight on them? `tome/class/Actor.lua:7658-7662`.
+ *
+ * THE HALF OF `checkStillInCombat` THIS ENGINE DID NOT HAVE. Upstream asks twice
+ * whether combat is over — once for contact, and then again for any detrimental
+ * effect still counting down — and only lets it lapse if BOTH are quiet. Ours
+ * asked the first question and stopped, so the last husk dying ended combat
+ * while the person it had opened up was still bleeding.
+ *
+ * ═══ PLAYERS ONLY, WHICH IS OURS AND NOT UPSTREAM'S ═══
+ * `checkStillInCombat` runs per actor and a bleeding MONSTER keeps its own
+ * `in_combat` flag up. Ours is level-wide (see `updateEngagement`), so asking
+ * about monsters would mean one husk limping away with a bleed on it holds the
+ * whole floor in lockstep — an empty room that will not release the party
+ * because something they already beat is dying somewhere else. The clause is
+ * about the person in danger, and the person in danger is a player.
+ */
+function stillAfflicted(actors: readonly EngineActor[], ctx: PumpCtx): boolean {
+  const carrying = ctx.stillFighting;
+  if (carrying === undefined) return false;
+  for (const actor of actors) {
+    if (actor.kind !== ActorKind.Player || !actor.alive) continue;
+    if (carrying(actor.id)) return true;
+  }
+  return false;
+}
+
 function anyContact(world: World, actors: readonly EngineActor[]): boolean {
   for (const monster of actors) {
     if (monster.kind !== ActorKind.Monster || !monster.alive) continue;
