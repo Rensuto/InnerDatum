@@ -26,11 +26,17 @@ describe('shared constants', () => {
     expect(ENERGY_TO_ACT / ENERGY_PER_TICK).toBe(10);
   });
 
-  it('keeps the tile size a power of two', () => {
+  it('keeps the tile size a power of two, and the default upstream uses', () => {
     // The atlas packer addresses by pure arithmetic (px = index * TILE_PX) and
     // the client upscales by integer factors. A non-power-of-two tile makes
     // both of those produce half-pixel seams.
-    expect(TILE_PX).toBe(32);
+    //
+    // 64 IS NOT A TASTE. `tome/class/Game.lua:565-567` parses the configured
+    // tileset size and falls back with `if not tw then tw, th = 64, 64 end`,
+    // so it is the cell size the game being ported draws at, and the size the
+    // orthographic art for this port is authored at. It was 32, and a 64-pixel
+    // sprite in a 32-pixel cell is half the picture thrown away every frame.
+    expect(TILE_PX).toBe(64);
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 

@@ -48,8 +48,14 @@ function cameraAxis(worldPx: number, viewPx: number, focusPx: number): number {
 
 describe('pathCellOrigin — tile to backbuffer pixel', () => {
   it('offsets a tile by the camera, mid-map', () => {
-    // 12 * 32 = 384, less a camera of 224. 9 * 32 = 288, less 160.
-    expect(pathCellOrigin({ x: 12, y: 9 }, 224, 160)).toEqual({ x: 160, y: 128 });
+    // Stated in TILES on both sides so the case survives a changed cell size:
+    // the twelfth column, less a camera parked seven columns in, is the fifth.
+    const camX = 7 * TILE_PX;
+    const camY = 5 * TILE_PX;
+    expect(pathCellOrigin({ x: 12, y: 9 }, camX, camY)).toEqual({
+      x: 5 * TILE_PX,
+      y: 4 * TILE_PX,
+    });
   });
 
   it('is the identity at the origin with a zero camera', () => {
@@ -72,42 +78,50 @@ describe('pathCellOrigin — tile to backbuffer pixel', () => {
    * survive playtesting and then land in a real session.
    */
   it('handles the negative camera a small map produces', () => {
+    // A 10x8 map in a 16x12 viewport: three spare columns and two spare rows
+    // either side, expressed in tiles so the cell size may move under it.
     const mapW = 10;
     const mapH = 8;
-    const viewW = 640;
-    const viewH = 480;
+    const viewW = 16 * TILE_PX;
+    const viewH = 12 * TILE_PX;
     // The focus is ignored on this branch, so any tile does.
     const camX = cameraAxis(mapW * TILE_PX, viewW, 5 * TILE_PX);
     const camY = cameraAxis(mapH * TILE_PX, viewH, 4 * TILE_PX);
-    expect(camX).toBe(-160);
-    expect(camY).toBe(-112);
+    expect(camX).toBe(-3 * TILE_PX);
+    expect(camY).toBe(-2 * TILE_PX);
 
     // The top-left tile of the map is NOT at backbuffer 0,0 — it is inset by
     // half the leftover viewport.
-    expect(pathCellOrigin({ x: 0, y: 0 }, camX, camY)).toEqual({ x: 160, y: 112 });
+    expect(pathCellOrigin({ x: 0, y: 0 }, camX, camY)).toEqual({
+      x: 3 * TILE_PX,
+      y: 2 * TILE_PX,
+    });
     // And the bottom-right tile sits well inside the buffer, not off its edge.
-    expect(pathCellOrigin({ x: mapW - 1, y: mapH - 1 }, camX, camY)).toEqual({ x: 448, y: 336 });
+    expect(pathCellOrigin({ x: mapW - 1, y: mapH - 1 }, camX, camY)).toEqual({
+      x: (mapW - 1 + 3) * TILE_PX,
+      y: (mapH - 1 + 2) * TILE_PX,
+    });
   });
 
   /**
-   * THE REGRESSION TEST FOR THE OFF-BY-32 CLASS OF BUG.
+   * THE REGRESSION TEST FOR THE OFF-BY-A-CELL CLASS OF BUG.
    *
    * `tileAtClient` inverts this transform with `Math.floor((point + cam) /
    * TILE_PX)`, where `point` is a LOGICAL BACKBUFFER coordinate. The two spaces
    * are one multiplication apart and both are plain `{x, y}` numbers, so passing
    * a backbuffer point where a tile was expected — or the reverse — type-checks
-   * perfectly and lands 32 times too far out. Composing the two here pins them
+   * perfectly and lands TILE_PX times too far out. Composing the two here pins them
    * together: any change to either that is not made to both breaks this.
    */
   it('round-trips a tile through the inverse tileAtClient uses', () => {
     const cases: readonly { readonly cam: TileXY; readonly tile: TileXY }[] = [
       { cam: { x: 0, y: 0 }, tile: { x: 0, y: 0 } },
       { cam: { x: 0, y: 0 }, tile: { x: 19, y: 14 } },
-      { cam: { x: 224, y: 160 }, tile: { x: 7, y: 5 } },
-      { cam: { x: 224, y: 160 }, tile: { x: 39, y: 31 } },
+      { cam: { x: 7 * TILE_PX, y: 5 * TILE_PX }, tile: { x: 7, y: 5 } },
+      { cam: { x: 7 * TILE_PX, y: 5 * TILE_PX }, tile: { x: 39, y: 31 } },
       // The small-map camera again, this time through the full round trip.
-      { cam: { x: -160, y: -112 }, tile: { x: 0, y: 0 } },
-      { cam: { x: -160, y: -112 }, tile: { x: 9, y: 7 } },
+      { cam: { x: -3 * TILE_PX, y: -2 * TILE_PX }, tile: { x: 0, y: 0 } },
+      { cam: { x: -3 * TILE_PX, y: -2 * TILE_PX }, tile: { x: 9, y: 7 } },
     ];
 
     for (const { cam, tile } of cases) {
@@ -123,12 +137,16 @@ describe('pathCellOrigin — tile to backbuffer pixel', () => {
     }
   });
 
-  it('is a pixel origin, not a tile — feeding it back in lands 32x out', () => {
+  it('is a pixel origin, not a tile — feeding it back in lands a cell out', () => {
     // Stated as an assertion rather than as a comment because it is the exact
     // mistake the round trip above is guarding: a backbuffer point handed to
-    // something expecting a tile is silently accepted and is 32 times too far.
+    // something expecting a tile is silently accepted and is TILE_PX times too
+    // far. The factor is the cell size, not the 32 it happened to be.
     const origin = pathCellOrigin({ x: 3, y: 2 }, 0, 0);
-    expect(origin).toEqual({ x: 96, y: 64 });
-    expect(pathCellOrigin({ x: origin.x, y: origin.y }, 0, 0)).toEqual({ x: 3072, y: 2048 });
+    expect(origin).toEqual({ x: 3 * TILE_PX, y: 2 * TILE_PX });
+    expect(pathCellOrigin({ x: origin.x, y: origin.y }, 0, 0)).toEqual({
+      x: 3 * TILE_PX * TILE_PX,
+      y: 2 * TILE_PX * TILE_PX,
+    });
   });
 });

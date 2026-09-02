@@ -1260,9 +1260,9 @@ describe('the sheet shows what it says it shows', () => {
    * ═══ THE VIEWPORT IS NOT THE WINDOW, AND ASSUMING IT WAS COST A ROUND ═══
    * The screenshot came from a 1538-pixel window, so the first fix widened the
    * panel against 1538 and reported a 1200-pixel sheet. The panel never sees
-   * that number. `createRenderer` draws into a LOGICAL BACKBUFFER of
-   * `tilesW * TILE_PX`, and a 20x10-tile floor at integer scale on that window
-   * is 768x384 — so the sheet is 729 wide, and the band between the HUD docks
+   * that number. Every panel lays out in the INTERFACE buffer, whose floor is
+   * `HUD_MIN_W`x`HUD_MIN_H` and which on that window lands at 769x384 — so the
+   * sheet is 729 wide, and the band between the HUD docks
    * caps it at 214 TALL however wide the monitor is.
    *
    * Height is the binding constraint and no sizing rule can move it. What fixes
@@ -1272,8 +1272,13 @@ describe('the sheet shows what it says it shows', () => {
    * These cases assert at the real backbuffer rather than a flattering one.
    */
   describe('at the backbuffer this game actually renders', () => {
-    /** 20x10 tiles at TILE_PX 32 — the floor every device lands on or above. */
-    const REAL_W = 768;
+    /**
+     * What a 1538x769 device lands on: `hudScale` 2, so `floor(1538/2)` by
+     * `floor(769/2)`. One pixel narrower than the 768 this said while the
+     * interface was quantised to the map's tile grid, and the assertions below
+     * are about what fits rather than about the number.
+     */
+    const REAL_W = 769;
     const REAL_H = 384;
 
     it('hides no section, and says so about nothing', () => {
@@ -1287,8 +1292,8 @@ describe('the sheet shows what it says it shows', () => {
      * ═══════════════════════════════════════════════════════════════════════
      *
      * `REAL_W x REAL_H` is what a 1538x769 device lands on. It is not the
-     * smallest: `DEFAULT_VIEWPORT` is `{ tilesW: 20, tilesH: 10 }` and
-     * `minLogicalH = tilesH * TILE_PX`, so 640x320 is the floor.
+     * smallest: render/canvas.ts's `HUD_MIN_W` and `HUD_MIN_H` are 640 and 320,
+     * and that is the floor no window goes below.
      *
      * The distinction is not academic. `ui/inventory.ts` worked its paper-doll
      * budget against a 480-pixel floor, concluded that shedding slots was
@@ -1333,7 +1338,7 @@ describe('the sheet shows what it says it shows', () => {
      *
      * `TALENTS_PER_CLASS_MAX` is the most actives a class may own, and the Talents
      * tab has to draw all of them on the smallest window this client renders
-     * (`DEFAULT_VIEWPORT` is `tilesH: 10`, so 640x320).
+     * (`HUD_MIN_W`x`HUD_MIN_H`, so 640x320).
      *
      * ═══ WHY THIS IS WORTH A TEST RATHER THAN A GLANCE ═══
      * `DROP_ORDER` sheds a WHOLE SECTION, so the failure mode is not "the last two

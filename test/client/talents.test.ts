@@ -110,7 +110,7 @@ function progress(unspent: number, generics = 0): ProgressMsg {
 /** A generic tree, which spends the OTHER purse. See `isGenericTree`. */
 const GROUNDWORK = { tree: 'generic/groundwork', treeName: 'Groundwork' };
 
-/** The floor every window clears: `DEFAULT_VIEWPORT` is 20x10 tiles. */
+/** The floor every window clears: `HUD_MIN_W`x`HUD_MIN_H`, 640x320. */
 const FLOOR = { width: 640, height: 320, top: 40, bottom: 280 };
 /** The window the player's screenshot came from, in logical pixels. */
 const REAL = { width: 772, height: 367, top: 40, bottom: 320 };
@@ -764,7 +764,7 @@ describe('the description column', () => {
 
     expect(talentPanelGeometry(wide, talentPanelRows(view()), NO_SCROLL).detail).not.toBeNull();
     // ═══ THE FLOOR STILL WORKS ═══
-    // `DEFAULT_VIEWPORT` is 20 tiles — 640 logical pixels — and a description
+    // `HUD_MIN_W` is 640 interface pixels — and a description
     // squeezed into what is left there would be the cut-off-mid-sentence bug the
     // panel was widened to fix. Below the threshold there is no column and the
     // hover card is still the answer.
@@ -988,7 +988,7 @@ describe('the attribute column', () => {
   it('is drawn even on the guaranteed floor, because spending has no other route', () => {
     /**
      * ═══ THE ORDER THE THREE COLUMNS ARE EARNED IN IS A JUDGEMENT ═══
-     * `DEFAULT_VIEWPORT` is 20 tiles — 640 logical pixels. Spending a point is a
+     * `HUD_MIN_W` is 640 interface pixels. Spending a point is a
      * REQUIRED action with no command, no key and no other panel behind it; if
      * the column is not drawn, a levelled character cannot spend what they were
      * granted. Reading a description has the hover card. So the attributes are

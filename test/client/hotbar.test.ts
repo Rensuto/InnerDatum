@@ -2,19 +2,20 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_VIEWPORT } from '../../src/client/render/canvas.ts';
-import { TILE_PX } from '../../src/shared/version.ts';
+import { HUD_MIN_W } from '../../src/client/render/canvas.ts';
 import { PANEL_CORNER } from '../../src/client/ui/panel.ts';
 
 /**
- * THE NARROWEST BACKBUFFER THIS CLIENT CAN PRODUCE, DERIVED RATHER THAN TYPED.
+ * THE NARROWEST INTERFACE BOX THIS CLIENT CAN PRODUCE, DERIVED RATHER THAN TYPED.
  *
- * This was the literal 640 at four call sites. 640 is not a constant anybody
- * chose — it is `DEFAULT_VIEWPORT.tilesW * TILE_PX`, and if either moves, a
- * typed 640 keeps passing while asserting something about a floor that no
- * longer exists. Both are exported; there is no reason to hold a copy.
+ * This was the literal 640 at four call sites, then
+ * `DEFAULT_VIEWPORT.tilesW * TILE_PX` — which was the same number by
+ * coincidence and stopped being so when the map's cell doubled. The hotbar has
+ * never been laid out against the MAP; it is laid out against the box the
+ * interface is drawn in, and that box has its own floor now. `HUD_MIN_W` is
+ * exported for exactly this: there is no reason to hold a copy.
  */
-const FLOOR_W = DEFAULT_VIEWPORT.tilesW * TILE_PX;
+const FLOOR_W = HUD_MIN_W;
 
 import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import {
@@ -256,8 +257,8 @@ describe('geometry', () => {
   });
 
   it('fits every slot on the narrowest backbuffer this client can render', () => {
-    // 13*44 + 12*4 = 620 against the 640 floor render/canvas.ts pins with
-    // DEFAULT_VIEWPORT.tilesW 20. Twenty pixels of slack — down from 164 when
+    // 13*44 + 12*4 = 620 against the 640 floor render/canvas.ts pins as
+    // `HUD_MIN_W`. Twenty pixels of slack — down from 164 when
     // the bar was ten, and the reason the talent half stopped at NINE rather
     // than ten: fourteen slots is 668 and the floor stops holding them.
     //

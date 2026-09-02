@@ -243,14 +243,20 @@ function collect(dir) {
 }
 collect(ASSETS);
 
-// Provenance, when the manifest is here. A stand-in is PRESENT but replaceable.
+// Provenance, when the manifest is here. A stand-in is PRESENT but replaceable;
+// so is a token drawn for the old 32-pixel cell and doubled to fit the 64 one —
+// present, correct, and carrying no detail at the size it is drawn at. The
+// manifest MEASURES that (`is_upscaled`), so this list empties itself as native
+// art lands rather than needing anybody to strike a line off it.
 const standIns = new Set();
+const upscaled = new Set();
 const manifestPath = join(ASSETS, 'manifest.placeholders.json');
 if (existsSync(manifestPath)) {
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     for (const a of manifest.assets ?? []) {
       if (a.provenance === 'stand-in') standIns.add(a.id);
+      if (a.provenance === 'upscaled') upscaled.add(a.id);
     }
   } catch {
     /* a manifest we cannot read is the same as no manifest */
@@ -259,6 +265,7 @@ if (existsSync(manifestPath)) {
 
 const missing = [...referenced.keys()].filter((id) => !present.has(id)).sort();
 const placeholder = [...referenced.keys()].filter((id) => standIns.has(id)).sort();
+const forTheOldCell = [...referenced.keys()].filter((id) => upscaled.has(id)).sort();
 const unused = [...present.keys()].filter((id) => !referenced.has(id)).sort();
 
 const byCategory = (ids) => {
@@ -291,6 +298,7 @@ if (argv.includes('--json')) {
           referencedBy: [...(referenced.get(id) ?? [])],
         })),
         placeholder,
+        forTheOldCell,
         unused,
         dynamicIdFiles: [...new Set(dynamic)],
       },
@@ -310,6 +318,7 @@ if (argv.includes('--json')) {
   );
   console.log(`  STILL NEEDED                   : ${String(missing.length)}`);
   if (!bare) console.log(`  present but a stand-in         : ${String(placeholder.length)}`);
+  if (!bare) console.log(`  drawn for the old 32px cell    : ${String(forTheOldCell.length)}`);
   console.log(`  on disk, referenced by nothing : ${String(unused.length)}`);
   console.log();
 
@@ -340,6 +349,20 @@ if (argv.includes('--json')) {
     console.log('  Correct size, correct name, correct palette. Replacing one is a');
     console.log('  file overwrite — no code, manifest or pipeline change.');
     console.log(`  ${placeholder.slice(0, 12).join(', ')}${placeholder.length > 12 ? ', …' : ''}`);
+    console.log();
+  }
+
+  if (forTheOldCell.length > 0) {
+    console.log(`DRAWN FOR THE OLD 32-PIXEL CELL (${String(forTheOldCell.length)})`);
+    console.log('-'.repeat(64));
+    console.log('  Real art, doubled to the 64-pixel cell shared/version.ts now draws.');
+    console.log('  Every pixel is duplicated, so a token carries the detail of a sprite');
+    console.log('  a quarter its area. WANTED: native 48x64 tokens and 64-wide props,');
+    console.log('  same names, same bottom-centre anchor — a file overwrite and nothing');
+    console.log('  else. The flag is measured from the pixels and clears itself.');
+    console.log(
+      `  ${forTheOldCell.slice(0, 12).join(', ')}${forTheOldCell.length > 12 ? ', …' : ''}`,
+    );
     console.log();
   }
 

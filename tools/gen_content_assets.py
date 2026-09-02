@@ -77,10 +77,35 @@ def img(w, h):
     return im, ImageDraw.Draw(im)
 
 
+# --------------------------------------------------------------------------
+# Map-space art is drawn on a 64-pixel cell (shared/version.ts's TILE_PX), and
+# every token here is authored on the 32-pixel grid the game used to draw. A
+# whole-number NEAREST double is the honest answer for pixel art: it changes no
+# colour, invents no pixel, and keeps a token exactly the same size RELATIVE to
+# the cell it stands on -- which is the property that matters, because the
+# renderer anchors a sprite bottom-centre at its natural size rather than
+# stretching it to fit.
+#
+# ONLY MAP SPACE. `items/` and `ui/` are drawn in the INTERFACE buffer, whose
+# scale did not change (render/canvas.ts's `HUD_MIN_W`), and the item atlas is
+# addressed as `px = (i % 10) * 64` with no rect table -- doubling those would
+# break the grid and shrink nothing.
+# --------------------------------------------------------------------------
+MAP_SPACE = ("characters/", "enemies/", "props/")
+MAP_SCALE = 2
+
+
+def to_cell(im, rel):
+    """Nearest-neighbour double, for map-space art only."""
+    if not rel.startswith(MAP_SPACE):
+        return im
+    return im.resize((im.width * MAP_SCALE, im.height * MAP_SCALE), Image.NEAREST)
+
+
 def save(im, rel):
     p = OUT / rel
     p.parent.mkdir(parents=True, exist_ok=True)
-    im.save(p, "PNG", optimize=True)
+    to_cell(im, rel).save(p, "PNG", optimize=True)
     MADE.append(rel)
 
 
@@ -265,7 +290,8 @@ def props():
         meta = {
             "id": f"prop_eldritch_{name}_01",
             "category": "eldritch",
-            "sprite_envelope_px": [w, h],
+            # In shipped pixels, so it moves with `MAP_SCALE`.
+            "sprite_envelope_px": [w * MAP_SCALE, h * MAP_SCALE],
             "footprint_tiles": [1, 1],
             "anchor": "bottom_center",
             "z_layer": 3,

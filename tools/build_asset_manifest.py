@@ -29,6 +29,10 @@ OUT = ASSETS / "manifest.placeholders.json"
 # provenance:
 #   derived  — cropped/composited from real Outer Index art. FINAL QUALITY.
 #   stand-in — procedurally generated. Replace with hand-drawn art.
+#   upscaled — real art, but DRAWN FOR A SMALLER CELL and doubled to fit this
+#              one. Not final: the pixels are duplicated, not painted. This is
+#              DETECTED rather than declared (see `is_upscaled`), so it clears
+#              itself the moment native art is dropped in its place.
 PROVENANCE = [
     ("characters/chr_player_watchman_s.png",        "derived",  "crop col0 chr_player_watchman_s"),
     ("characters/chr_player_inspector_s.png",       "derived",  "crop col0 chr_player_detective_s"),
@@ -73,6 +77,27 @@ MILESTONE = [
 ]
 
 
+# Map-space art is doubled to the 64-pixel cell by the generators (see
+# `MAP_SPACE` in gen_content_assets.py). Anything whose every 2x2 block is one
+# flat colour came through that double and has no detail at this size.
+MAP_SPACE = ("characters/", "enemies/", "props/")
+
+
+def is_upscaled(im: Image.Image, rel: str) -> bool:
+    if not rel.startswith(MAP_SPACE):
+        return False
+    w, h = im.size
+    if w % 2 or h % 2 or w < 2 or h < 2:
+        return False
+    px = im.convert("RGBA").load()
+    for y in range(0, h, 2):
+        for x in range(0, w, 2):
+            a = px[x, y]
+            if px[x + 1, y] != a or px[x, y + 1] != a or px[x + 1, y + 1] != a:
+                return False
+    return True
+
+
 def match(rel: str, table):
     best = None
     for prefix, *rest in table:
@@ -94,7 +119,9 @@ def build():
             "path": rel,
             "w": w,
             "h": h,
-            "provenance": prov[1] if prov else "unknown",
+            "provenance": (
+                "upscaled" if is_upscaled(im, rel) else (prov[1] if prov else "unknown")
+            ),
             "method": prov[2] if prov else "",
             "milestone": ms[1] if ms else "?",
             "sha256_16": hashlib.sha256(p.read_bytes()).hexdigest()[:16],
@@ -102,6 +129,7 @@ def build():
 
     stand_ins = [r for r in records if r["provenance"] == "stand-in"]
     derived = [r for r in records if r["provenance"] == "derived"]
+    upscaled = [r for r in records if r["provenance"] == "upscaled"]
 
     doc = {
         "_comment": (
@@ -110,12 +138,16 @@ def build():
             "and are final quality. 'stand-in' assets are procedurally "
             "generated placeholders: correct dimensions, correct names, correct "
             "palette, meant to be overwritten by hand-drawn art. Replacing one "
-            "is a file overwrite -- no code, manifest or pipeline change."
+            "is a file overwrite -- no code, manifest or pipeline change. "
+            "'upscaled' assets are real art drawn for a smaller cell and "
+            "doubled to fit this one; the flag is measured from the pixels, so "
+            "it clears itself when native art replaces them."
         ),
         "counts": {
             "total": len(records),
             "derived_final": len(derived),
             "stand_in_replaceable": len(stand_ins),
+            "upscaled_for_the_cell": len(upscaled),
         },
         "by_milestone": {
             m: sum(1 for r in records if r["milestone"] == m)
@@ -139,6 +171,7 @@ if __name__ == "__main__":
     print(f"{c['total']} assets indexed -> {OUT.relative_to(REPO)}")
     print(f"  {c['derived_final']:3d} derived from real art (final quality)")
     print(f"  {c['stand_in_replaceable']:3d} procedural stand-ins (replace at leisure)")
+    print(f"  {c['upscaled_for_the_cell']:3d} drawn for the old cell and doubled (needs native art)")
     print("  by milestone: " + ", ".join(
         f"{k}={v}" for k, v in sorted(doc["by_milestone"].items())))
 

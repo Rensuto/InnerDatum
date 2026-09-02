@@ -683,8 +683,30 @@ export const PROTOCOL_VERSION = 19;
  */
 export const SCHEMA_VERSION = 1 as const;
 
-/** Tile size in pixels. The atlas grid, prop metadata and camera all assume this. */
-export const TILE_PX = 32;
+/**
+ * Tile size in pixels. The atlas grid, prop metadata and camera all assume this.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 64, WHICH IS UPSTREAM'S OWN DEFAULT — IT WAS 32
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `tome/class/Game.lua:565-567` parses the configured tileset size and falls
+ * back with `if not tw then tw, th = 64, 64 end`. Sixty-four is what the game
+ * being ported draws a cell at, and the orthographic art this project has been
+ * generating for the port is authored at 64 as well; drawing it into a 32-pixel
+ * cell threw half of every sprite away.
+ *
+ * ═══ IT IS ALSO WHY THE WORLD READ SMALL, AND THE SUM IS NOT THE OBVIOUS ONE ═══
+ * A cell's size on screen is `TILE_PX * scale`, and `scale` is
+ * `floor(device / (minTiles * TILE_PX))` — so raising this alone changes almost
+ * nothing: the floor divides the magnification by the same factor it multiplies
+ * the cell by. What makes the world bigger is the MINIMUM VIEWPORT, and
+ * `DEFAULT_VIEWPORT` in client/render/canvas.ts moved with this number and
+ * carries the measurements.
+ *
+ * The interface does NOT move with it. It has its own floor and its own factor
+ * since `HUD_MIN_W`, which is the entire reason this constant could change.
+ */
+export const TILE_PX = 64;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

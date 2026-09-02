@@ -292,7 +292,7 @@ export type Scene = {
    *
    * It replaces the under-token RING rather than sitting on top of it: a body
    * with a countdown running is not "an ally, but faint", it is a different kind
-   * of thing on the board and it gets its own 32x32 silhouette
+   * of thing on the board and it gets its own one-cell silhouette
    * (`ui_marker_downed` / `ui_marker_erased`, carried in `DownedView.marker`).
    * The prone sprite itself needs nothing here — the server swaps
    * `ActorView.sprite` to `chr_player_<class>_downed_s` when the body goes down,
@@ -384,7 +384,40 @@ export type Viewport = {
  * the interface has its own floor now (`HUD_MIN_W`) and those panels name it
  * instead, so this number is once again only about how much MAP is guaranteed.
  */
-export const DEFAULT_VIEWPORT: Viewport = { tilesW: 20, tilesH: 10 };
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 16x8, AND IT IS THIS NUMBER THAT MAKES THE WORLD BIGGER — NOT `TILE_PX`
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A cell's size on screen is `TILE_PX * scale`, and `scale` is
+ * `floor(device / (minTiles * TILE_PX))`. `TILE_PX` therefore appears on both
+ * sides and very nearly cancels: raising it to 64 without touching this would
+ * have made the world SMALLER on the window the complaint came from, because
+ * the coarser quantisation loses more to the floor. What is left as a lever is
+ * this pair.
+ *
+ * MEASURED, at 64, across the windows this game is actually played in — CSS
+ * pixels per cell, which is what a player sees:
+ *
+ *     1159x551 at dpr 2 (the reported window)   48 -> 64   24x11 -> 18x8 tiles
+ *     1248x860 iframe at dpr 1                  32 -> 64   39x26 -> 19x13
+ *     800x600                                   32 -> 64   25x18 -> 16x9
+ *     2560x1440                                128 -> 128  20x11 -> 20x11
+ *     3840x2160 at dpr 2                        96 -> 96   20x11 -> 20x11
+ *
+ * 16x8 is the LARGEST minimum that still clears scale 2 on the reported window:
+ * that needs `1102 / (8 * 64) >= 2`, so eight rows is the binding number and
+ * nine would drop it back to 32 CSS pixels a cell.
+ *
+ * ═══ THE ONE WINDOW THAT GETS SMALLER, STATED PLAINLY ═══
+ * 1920x1080 at dpr 1 goes from 96 CSS pixels a cell to 64, and from 20x11 tiles
+ * to 30x16. That is not a regression to fix by tuning: 64 real pixels a cell IS
+ * what Tales of Maj'Eyal looks like at 1080p with its own tileset, and what the
+ * old number produced was this project's 32-pixel art blown up three times. A
+ * player who wants the old framing has `zoom_in`, which is a real setting there
+ * rather than a no-op.
+ */
+export const DEFAULT_VIEWPORT: Viewport = { tilesW: 16, tilesH: 8 };
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -424,12 +457,19 @@ export const DEFAULT_VIEWPORT: Viewport = { tilesW: 20, tilesH: 10 };
  * free to move. It is deliberately NOT derived from `DEFAULT_VIEWPORT * TILE_PX`
  * any more — that product is about to change, and the interface must not.
  */
-const HUD_MIN_W = 640;
-const HUD_MIN_H = 320;
+export const HUD_MIN_W = 640;
+export const HUD_MIN_H = 320;
 
-/** Guardrail: past this the tiles are too small to read on a laptop. */
-const MAX_TILES_W = 48;
-const MAX_TILES_H = 32;
+/**
+ * Guardrail: past this the tiles are too small to read on a laptop.
+ *
+ * 30x20, DOWN FROM 48x32 WHEN THE CELL DOUBLED. It is a cap on how many cells
+ * the surplus of a very wide window may be spent on, and 48 of them was a
+ * 3072-pixel backbuffer at the new size. It binds on one shape of window and
+ * that is the shape it is for: 5120x1440 fits 40 cells across and gets 30.
+ */
+const MAX_TILES_W = 30;
+const MAX_TILES_H = 20;
 
 /** What `resize` decides. Two spaces, each with its own whole-number factor. */
 export type ViewLayout = {
@@ -1368,8 +1408,10 @@ export function createRenderer(options: RendererOptions): Renderer {
    * matters more than seeing the same room larger.
    */
   /**
-   * How thick the barrier contour is. Two pixels at 32 reads at every integer
-   * scale this game uses; one disappears at 1x on a laptop screen.
+   * How thick the barrier contour is, in map-buffer pixels. Two read at every
+   * integer scale this game uses; one disappears at 1x on a laptop screen. It
+   * is a hairline against a 64-pixel cell, which is the intent — a contour, not
+   * a border.
    */
   const BARRIER_EDGE_PX = 2;
 
@@ -1594,8 +1636,11 @@ export function createRenderer(options: RendererOptions): Renderer {
     if (sprite === undefined) return false;
 
     // Scaled to TILE_PX rather than drawn at the sprite's own size: a tile that
-    // is not 32x32 is an authoring mistake (the brief is explicit), and letting
-    // it tear the grid would be a worse way to report that than a stretched cell.
+    // is not TILE_PX square is an authoring mistake (the brief is explicit), and
+    // letting it tear the grid would be a worse way to report that than a
+    // stretched cell. Terrain authored at 32 therefore draws as a whole-number
+    // double into the 64-pixel cell — chunky, never blurred, and correct the
+    // moment the 64-pixel family for that tile is installed.
     backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
     return true;
   }
@@ -1641,7 +1686,7 @@ export function createRenderer(options: RendererOptions): Renderer {
        * `SITE_MARKERS` draws a marker per KIND — three size tiers for
        * village/town/city — so every city on the map looked identical. A player
        * reported the result plainly: hard to tell the area you are standing in
-       * is a town. `SiteView.landmark` is the same 32x32 slot with Alderbrook's
+       * is a town. `SiteView.landmark` is the same one-cell slot with Alderbrook's
        * own clocktower in it.
        *
        * A PREFERENCE, NOT A REPLACEMENT. `site:redaction` ships no landmark, so
@@ -1736,8 +1781,10 @@ export function createRenderer(options: RendererOptions): Renderer {
       return;
     }
 
-    // BOTTOM-CENTRE ANCHOR, written generally rather than as the +4 that a
-    // 24x32 sprite on a 32x32 tile happens to need today. A creature sprite is
+    // BOTTOM-CENTRE ANCHOR, written generally rather than as the offset any one
+    // sprite size happens to need today — and the cell is 64 now, so every
+    // token authored at 24x32 is one this arithmetic centres in a cell twice
+    // its size until the 48x64 tokens land. A creature sprite is
     // allowed to be bigger than its tile — the M6 bestiary has 48x64 ogres —
     // and when it is, it must overflow UPWARD and sideways, never downward:
     // the feet are what tell the player which tile the thing occupies.
@@ -1892,10 +1939,14 @@ export function createRenderer(options: RendererOptions): Renderer {
    * re-asserts the five-member pin for exactly this reason.
    *
    * SECOND, AND IT IS SPECIFIC TO THIS OVERLAY: the item's own 64x64 icon IS in
-   * the manifest and would be the tempting thing to draw. A tile is 32x32. Fitting
-   * one into the other means a downscale, which is precisely the resampling the
-   * backbuffer exists to prevent (see the header) — or a centre crop, which shows
-   * a quarter of a picture and identifies nothing. The panel is where an icon is
+   * the manifest and would be the tempting thing to draw. THAT ARGUMENT USED TO
+   * BE ABOUT RESAMPLING — a 64-pixel icon in a 32-pixel cell is a downscale, and
+   * the backbuffer exists to prevent exactly that — and the cell is 64 now, so
+   * it would fit. What remains is the reason that did not depend on the size:
+   * the pile is a QUANTITY as much as a thing, and one item's picture standing
+   * for a heap of six is a worse answer than a mark. Drawing the icon is a real
+   * option now rather than an impossible one, and it is a design call, not a
+   * pipeline constraint. The panel is where an icon is
    * legible; the map gets a mark that says "something is here, roughly how much of
    * it, and roughly how good it is", and the player presses `,` or opens the
    * panel for the rest.

@@ -203,8 +203,8 @@ const ROOMY = { width: 800, height: 800, top: 20, bottom: 700 };
  *
  * `DOLL_ROWS`' budget was worked out "against the 480-pixel floor", and the
  * doll's shed-a-row branch called itself "unreachable at any viewport this
- * client renders". The floor is 320: `DEFAULT_VIEWPORT` is `tilesH: 10` and
- * `minLogicalH = tilesH * TILE_PX`. Three doll rows are 226 pixels plus 58 of
+ * client renders". The floor is 320 — render/canvas.ts's `HUD_MIN_H`. Three
+ * doll rows are 226 pixels plus 58 of
  * panel chrome against a band of about 183, so the branch is the ORDINARY case
  * on the smallest window.
  *
@@ -2111,8 +2111,8 @@ describe('an item description fits the room the strip reserves for it', () => {
      * decide not to place at all — which would trade a truncated sentence for no
      * sentence, on the smallest screen, which is worse.
      *
-     * `DEFAULT_VIEWPORT` is 20x10 tiles, so 640x320 logical pixels is the floor
-     * every window clears.
+     * `HUD_MIN_W`x`HUD_MIN_H` is 640x320 interface pixels — the floor every
+     * window clears.
      */
     const rect = inventoryPanelRect({ width: 640, height: 320, top: 40, bottom: 280 });
     expect(rect).not.toBeNull();
