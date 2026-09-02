@@ -775,6 +775,9 @@ function toWireEvents(
             healed: ev.healed,
             crit: ev.crit,
             type: ev.type,
+            // THE SNAPSHOT, forwarded. Without this line the field exists and
+            // every caller declines to use it — which is how it was lost.
+            maxHp: ev.maxHp,
           }),
         );
         break;
@@ -1123,7 +1126,13 @@ function hitToWire(
    *   character-for-character like a graze.
    * `type`  — computed since M3 and dropped a hop earlier, in `Blow`.
    */
-  extra: { healed?: number; crit?: boolean; type?: DamageType } = {},
+  extra: {
+    /** The victim's maximum at the instant the blow landed. See the use below. */
+    readonly maxHp?: number;
+    healed?: number;
+    crit?: boolean;
+    type?: DamageType;
+  } = {},
 ): TurnEvent[] {
   const healed = extra.healed ?? 0;
   /**
@@ -1201,7 +1210,29 @@ function hitToWire(
     id: targetId,
     amount,
     hp,
-    maxHp: victim?.maxHp ?? 0,
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SNAPSHOT FIRST, AND THE WORLD ONLY AS A FALLBACK.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This was `victim?.maxHp ?? 0` alone, under the note above saying *"maxHp
+     * genuinely cannot change during a fight, so there is nothing to snapshot"*.
+     * True of the NUMBER and false of the BODY. This function runs AFTER the
+     * pump, and a party wipe runs a floor reset inside the same pump — which
+     * removes every hostile in the room. The lookup then answers undefined and
+     * the fallback ships ZERO.
+     *
+     * MEASURED, in `tools/first-death.mjs`, on every run: *"11 physical damage.
+     * Index Eidolon 67/0."* in the Case Log — the game's most-read line, saying
+     * a creature has no maximum health. It is the same root cause as
+     * `killer-named.test.ts`'s "someone", one field along, and the same fix the
+     * paragraph above already applied to `hp` and the tile.
+     *
+     * THE WORLD IS STILL ASKED when no snapshot came — every fixture that
+     * builds a blow by hand, and the narrow projectile actor whose `maxHp` is
+     * optional (damage.ts explains why).
+     */
+    maxHp: extra.maxHp ?? victim?.maxHp ?? 0,
     sourceId: attackerId,
     // Both omitted rather than defaulted when the blow has nothing to say:
     // absent means "do not name it", which is not the same as "physical" or
@@ -1265,7 +1296,7 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
             step.killed,
             step.hp,
             step.at,
-            { crit: step.crit, type: step.type },
+            { crit: step.crit, type: step.type, maxHp: step.maxHp },
           ),
         );
         break;

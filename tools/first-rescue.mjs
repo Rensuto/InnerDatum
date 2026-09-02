@@ -343,7 +343,19 @@ const readBoard = () => {
       const e = board.get(f.id);
       if (e) e.alive = false;
     }
-    if (f.t === 'left') board.delete(f.id);
+    /**
+     * `left` IS PER-PLAYER FOV, NOT DEATH — and in THIS probe it is the body
+     * being rescued. `reconcileSight` sends it when somebody leaves the
+     * viewer's sight; deleting the entry loses the ally the whole probe exists
+     * to reach, and the failure it produced before ("victim B not on the
+     * tracked board") is written up twenty lines above.
+     *
+     * Kept and marked UNSEEN, so a rescuer can still walk to where they fell.
+     */
+    if (f.t === 'left') {
+      const gone = board.get(f.id);
+      if (gone !== undefined) gone.seen = false;
+    }
   }
 };
 

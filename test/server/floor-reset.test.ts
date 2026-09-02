@@ -10,7 +10,7 @@ import { accept, createPartyState, invite } from '../../src/server/engine/party.
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
-import { chebyshev } from '../../src/shared/coords.ts';
+import { DIR_ORDER, chebyshev, step } from '../../src/shared/coords.ts';
 import { ErasedReason, TileCode } from '../../src/shared/protocol.ts';
 import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { DownedState } from '../../src/server/engine/downed.ts';
@@ -357,6 +357,73 @@ describe('the wipe is narrated in the order it happened', () => {
     // And the body really is back at full — both numbers are true, at different
     // instants, which is exactly why one of them had to be snapshotted.
     expect(ren.hp).toBe(ren.maxHp);
+  });
+
+  it('reports the victim`s real MAXIMUM too, after the reset has removed them', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE SAME LIE ONE FIELD ALONG, AND IT SURVIVED THE FIX ABOVE FOR MONTHS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `hp` and the tile are snapshotted; `maxHp` was read off the world after
+     * the pump, under a note in `hitToWire` saying it *"genuinely cannot change
+     * during a fight, so there is nothing to snapshot"*. True of the NUMBER and
+     * false of the BODY: the wipe's floor reset removes every HOSTILE in the
+     * same pump, so a blow the party landed on a monster looked its victim up
+     * and found nothing.
+     *
+     * MEASURED, in `tools/first-death.mjs`, on every run:
+     *
+     *     11 physical damage. Index Eidolon 67/0.
+     *
+     * The game's most-read line, saying a creature has no maximum health.
+     *
+     * ═══ SO THE BLOW HAS TO BE THE PLAYER'S, ON THE MONSTER ═══
+     * The test above stages a monster killing REN, and Ren is restored by the
+     * reset rather than removed — so his `maxHp` was always findable and the
+     * hole stayed open. The victim has to be the thing the reset deletes.
+     */
+    const stuck = scene('order-maxhp');
+    const ren = stuck.actor('p1');
+    const wraith = stuck.actor('m_wraith');
+    const wraithMax = wraith.maxHp;
+    // ONE HIT POINT, so the wraith's counter-swing wipes the party inside the
+    // same pump that carries Ren's own blow.
+    ren.hp = 1;
+    // AND REN CONNECTS. `NEVER_MISSES` is the fixture's own answer to a to-hit
+    // roll in a test about what a LANDED blow reports; without it this passes or
+    // fails on a die.
+    ren.combat = { ...ren.combat, mods: { ...ren.combat?.mods, atk: 40 } };
+    stuck.world.turn.engagement = 3;
+    /**
+     * A BUMP IS AN ATTACK (`resolveIntent`'s Move case), so this is Ren hitting
+     * the wraith through the real path rather than a hand-built blow.
+     *
+     * THE DIRECTION IS DERIVED, NOT WRITTEN. `addMonster` relocates to the
+     * nearest free tile, so the wraith is not reliably east: hard-coding `'e'`
+     * got `refused at resolution: terrain` and a pump with no events at all,
+     * which reads exactly like the blow not being reported.
+     */
+    const dir = DIR_ORDER.find((d) => {
+      const to = step(ren, d);
+      return to.x === wraith.x && to.y === wraith.y;
+    });
+    expect(dir, 'the wraith is not adjacent to Ren').toBeDefined();
+    expect(stuck.engine.submitMove('p1', dir ?? 'e').ok).toBe(true);
+
+    const result = stuck.engine.pump();
+    const events = [...result.playerEvents, ...result.sweep];
+    const onWraith = events.filter((event) => event.k === 'damage' && event.id === 'm_wraith');
+    expect(onWraith.length, 'Ren never landed a blow — the fixture proves nothing').toBeGreaterThan(
+      0,
+    );
+    // AND THE RESET REALLY DID REMOVE IT, which is what makes the lookup fail.
+    expect(stuck.world.getActor('m_wraith'), 'the wraith survived the reset').toBeUndefined();
+    for (const hit of onWraith) {
+      expect(hit.k === 'damage' ? hit.maxHp : -1, 'a blow reported no maximum health').toBe(
+        wraithMax,
+      );
+    }
   });
 
   it('flashes the blow on the tile it landed on, not where the reset put the body', () => {

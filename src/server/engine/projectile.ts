@@ -494,6 +494,15 @@ export type ProjectileImpact = {
   readonly type: DamageType;
   /** The victim's hp and tile the instant this landed — `GameEvent.attacked`'s rule. */
   readonly hp: number;
+  /**
+   * And its maximum, snapshotted for the same reason. See `Blow.maxHp`.
+   *
+   * OPTIONAL because the narrow actor this module is handed makes `maxHp`
+   * optional too (damage.ts says why: dozens of fixtures pass `{ hp, alive }`).
+   * Absent means "ask the world", which is what `hitToWire` did for everybody
+   * before the snapshot existed.
+   */
+  readonly maxHp?: number;
   readonly at: TileXY;
 };
 
@@ -692,6 +701,7 @@ function projectDoStop(
     // Read HERE, one line after the blow, and never again — `GameEvent.attacked`
     // has the Case Log transcript that produced that rule.
     hp: foe.hp,
+    maxHp: foe.maxHp,
     at: { x: foe.x, y: foe.y },
   };
 }

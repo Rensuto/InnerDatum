@@ -201,7 +201,14 @@ function makeTracker() {
       if (f.t === 'realm') {
         at.clear();
         for (const a of f.actors ?? []) {
-          at.set(a.id, { x: a.x, y: a.y, alive: a.alive !== false, name: a.name, kind: a.kind });
+          at.set(a.id, {
+            x: a.x,
+            y: a.y,
+            alive: a.alive !== false,
+            name: a.name,
+            kind: a.kind,
+            seen: true,
+          });
         }
       }
       if (f.t === 'sweep') {
@@ -212,7 +219,36 @@ function makeTracker() {
       }
       if (f.t === 'moved') step(f.id, f.x, f.y);
       if (f.t === 'died') kill(f.id);
-      if (f.t === 'left') at.delete(f.id);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * `left` IS PER-PLAYER FOV, NOT DEATH — AND IT COST THIS PROBE ITS ANSWER.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `reconcileSight` sends `left` when a body leaves the viewer's sight.
+       * Deleting it made `fightRoom` believe the room was empty the moment the
+       * last husk stepped behind a wall, so this probe walked out of five delves
+       * in a row without finishing one. Its own header claims *"measured a solo
+       * character clearing restless floors 7 times in 8"* — that measurement
+       * predates FOV, and the run before this change filed ZERO out of eleven
+       * visits.
+       *
+       * Kept and marked UNSEEN, so "nothing I can see" and "nothing left alive"
+       * stay different questions.
+       */
+      if (f.t === 'left') {
+        const gone = at.get(f.id);
+        if (gone !== undefined) gone.seen = false;
+      }
+      if (f.t === 'joined' && f.actor !== undefined) {
+        at.set(f.actor.id, {
+          x: f.actor.x,
+          y: f.actor.y,
+          alive: f.actor.alive !== false,
+          name: f.actor.name,
+          kind: f.actor.kind,
+          seen: true,
+        });
+      }
     }
     return at;
   };
@@ -334,19 +370,65 @@ async function ask(topic) {
  * A BUFF, THEN THE BEST STRIKE, THEN A BUMP. `fightlib` owns which strike and in
  * what order; this owns only the turn.
  */
+/**
+ * The walkable tile furthest from `from`. A search target that EXISTS — see the
+ * caller for why an arithmetic one is not good enough.
+ */
+function furthestWalkable(level, from) {
+  let best = null;
+  let far = -1;
+  for (let y = 0; y < level.h; y += 1) {
+    for (let x = 0; x < level.w; x += 1) {
+      if (!isWalkable(level.tiles[y * level.w + x])) continue;
+      const d = (x - from.x) ** 2 + (y - from.y) ** 2;
+      if (d > far) {
+        far = d;
+        best = { x, y };
+      }
+    }
+  }
+  return best;
+}
+
 async function fightRoom() {
   const track = makeTracker();
-  for (let i = 0; i < 500; i += 1) {
+  let blind = 0;
+  let sweepTo = null;
+  for (let i = 0; i < 900; i += 1) {
     const at = track();
     const mine = posOf();
     if (mine === undefined) break;
-    const standing = [...at.entries()]
+    const known = [...at.entries()]
       .filter(([id, e]) => id !== selfId && e.alive && e.kind !== 'player')
       .map(([, e]) => ({ e, d: gap(e, mine) }))
       .filter((c) => c.d > 0)
       .sort((p, q) => p.d - q.d);
-    const foe = standing[0];
-    if (foe === undefined) break;
+    // WHAT IS IN SIGHT FIRST, then whatever is only remembered — walking to a
+    // body's last known tile is how you find it again. See the `left` note in
+    // the tracker for why the difference exists at all.
+    const standing = known.filter((c) => c.e.seen !== false);
+    const foe = standing[0] ?? known[0];
+    if (foe === undefined) {
+      /**
+       * NOTHING KNOWN. Either the room is done — and the SERVER says so, with
+       * `Filed.` — or nothing has come into sight yet, and monsters here do not
+       * move until somebody walks into an aggro radius with line of sight
+       * (`actMonster`). So the answer to an empty screen is to cross the room,
+       * not to leave it.
+       */
+      if (/Filed\./.test(logLines().slice(-14).join(' '))) break;
+      blind += 1;
+      if (blind > 120) break;
+      const lvl = latest('realm')?.level;
+      if (lvl !== undefined) {
+        if (sweepTo === null || (mine.x === sweepTo.x && mine.y === sweepTo.y)) {
+          sweepTo = furthestWalkable(lvl, mine);
+        }
+        if (sweepTo !== null && !(await stepTo(sweepTo))) sweepTo = null;
+      }
+      await sleep(COMMAND_GAP_MS);
+      continue;
+    }
 
     const cooling = coolingNow();
     // A BUFF FIRST WHEN ONE IS UP: it costs the turn a bump would have cost, and

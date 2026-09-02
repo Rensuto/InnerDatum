@@ -353,7 +353,20 @@ if (breach !== null) {
         const e = at.get(f.id);
         if (e) e.alive = false;
       }
-      if (f.t === 'left') at.delete(f.id);
+      /**
+       * `left` IS PER-PLAYER FOV, NOT DEATH. `reconcileSight` sends it when a
+       * body leaves the viewer's sight, and deleting the entry made the loop below
+       * break as soon as the last foe stepped behind a wall — a fight abandoned and
+       * reported as finished. Measured in `the-long-road`, which filed ZERO delves
+       * out of eleven visits on exactly this.
+       *
+       * Kept and marked UNSEEN, so "nothing I can see" and "nothing left alive"
+       * stay different questions.
+       */
+      if (f.t === 'left') {
+        const gone = at.get(f.id);
+        if (gone !== undefined) gone.seen = false;
+      }
     }
   };
   mark = log.length;
@@ -417,9 +430,13 @@ if (breach !== null) {
      * it was. Skipping the coincident entity makes it walk to the foe it can
      * actually hit, which is what the beat was always meant to measure.
      */
-    const foes = [...at.entries()].filter(
+    const known = [...at.entries()].filter(
       ([id, e]) => id !== selfId && e.alive && (e.x !== pos.x || e.y !== pos.y),
     );
+    // WHAT IS IN SIGHT FIRST, then whatever is only remembered.
+    const foes = known.some(([, e]) => e.seen !== false)
+      ? known.filter(([, e]) => e.seen !== false)
+      : known;
     if (foes.length === 0) break;
     rounds += 1;
     const [, f0] = foes.sort(

@@ -274,6 +274,21 @@ export type SweepStep =
        * off the body later.
        */
       readonly hp: number;
+      /**
+       * AND ITS MAXIMUM, SNAPSHOTTED FOR THE SAME REASON AND IT WAS NOT.
+       *
+       * `hitToWire` read this off the world AFTER the pump, under a note saying
+       * *"`maxHp` genuinely cannot change during a fight, so there is nothing to
+       * snapshot"*. True of the NUMBER and false of the BODY: a party wipe runs a
+       * floor reset in the same pump as the blow and the reset removes every
+       * hostile, so the lookup answered undefined and the fallback shipped ZERO.
+       *
+       * MEASURED, in `tools/first-death.mjs`, every run: *"11 physical damage.
+       * Index Eidolon 67/0."* — the game's most-read line, saying a creature has
+       * no maximum health. Same root cause as `killer-named.test.ts`'s
+       * "someone", one field along.
+       */
+      readonly maxHp?: number;
       readonly at: TileXY;
     }
   | { readonly t: 'hold'; readonly id: string }
@@ -469,6 +484,21 @@ export type GameEvent =
        * it and there is nothing to snapshot.
        */
       readonly hp: number;
+      /**
+       * AND ITS MAXIMUM, SNAPSHOTTED FOR EXACTLY THE SAME REASON.
+       *
+       * The paragraph above explains why `hp` may not be read off the body
+       * afterwards; `maxHp` was left to be, under a note in `hitToWire` saying
+       * it *"genuinely cannot change during a fight"*. True of the NUMBER and
+       * false of the BODY — a party wipe runs a floor reset inside the same
+       * pump, the reset removes every hostile, the lookup answers undefined and
+       * the fallback ships ZERO. `tools/first-death.mjs` printed *"11 physical
+       * damage. Index Eidolon 67/0."* on every run.
+       *
+       * OPTIONAL so every fixture that builds a blow by hand keeps compiling;
+       * absent means "ask the world", which is what everybody did before.
+       */
+      readonly maxHp?: number;
       /**
        * ═══ AND THE TILE IT LANDED ON, FOR THE SAME REASON ═══
        *
@@ -2150,6 +2180,8 @@ type Blow = {
   readonly killed: boolean;
   /** The victim's hp and tile the instant this landed. See `GameEvent.attacked`. */
   readonly hp: number;
+  /** And its maximum, snapshotted for the same reason — see the sweep step. */
+  readonly maxHp?: number;
   readonly at: TileXY;
 };
 
@@ -2381,6 +2413,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
           ...(hit.healed > 0 ? { healed: hit.healed } : {}),
           killed: hit.killed,
           hp: victim?.hp ?? 0,
+          maxHp: victim?.maxHp ?? 0,
           at: victim === undefined ? used.landing.at : { x: victim.x, y: victim.y },
         };
       });
@@ -2779,6 +2812,7 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
       damage: 0,
       killed: false,
       hp: target.hp,
+      maxHp: target.maxHp,
       at: { x: target.x, y: target.y },
     };
   }
@@ -2802,6 +2836,7 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
     damage: outcome.damage,
     killed: outcome.killed,
     hp: target.hp,
+    maxHp: target.maxHp,
     at: { x: target.x, y: target.y },
   };
 }
@@ -2988,6 +3023,7 @@ function actProjectile(proj: Projectile, run: Run): ActResult {
     damage: impact.damage,
     killed: impact.killed,
     hp: impact.hp,
+    maxHp: impact.maxHp,
     at: impact.at,
   };
 
@@ -3355,6 +3391,7 @@ function noteGuardCounter(
     damage: counter.hit.damage,
     killed: counter.hit.killed,
     hp: victim?.hp ?? 0,
+    maxHp: victim?.maxHp ?? 0,
     at: { x: victim?.x ?? 0, y: victim?.y ?? 0 },
   };
 
