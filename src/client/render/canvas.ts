@@ -829,8 +829,24 @@ function clamp(value: number, min: number, max: number): number {
  * `alpha: false` on both contexts — nothing behind either canvas is ever
  * visible, and it lets the compositor skip a blend per frame.
  */
-function require2dContext(target: HTMLCanvasElement): CanvasRenderingContext2D {
-  const ctx = target.getContext('2d', { alpha: false });
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `alpha` IS A PARAMETER BECAUSE ONE OF THE THREE CANVASES IS AN OVERLAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `{ alpha: false }` is right for the two canvases that are BACKGROUNDS — the
+ * visible canvas and the map backbuffer both paint every pixel every frame, and
+ * telling the browser there is nothing behind them is free speed.
+ *
+ * IT IS CATASTROPHIC FOR THE INTERFACE BUFFER, and it shipped that way for one
+ * deploy: an opaque canvas has no transparent state to clear TO, so
+ * `clearRect` leaves opaque black, and blitting that over the presented map
+ * covered the entire world. The interface drew correctly on top of a black
+ * rectangle — which looks exactly like a renderer that has stopped drawing the
+ * map, and is why the first three guesses were about the camera.
+ */
+function require2dContext(target: HTMLCanvasElement, alpha: boolean): CanvasRenderingContext2D {
+  const ctx = target.getContext('2d', { alpha });
   if (ctx === null) throw new Error('canvas 2D context unavailable');
   return ctx;
 }
@@ -1424,8 +1440,9 @@ export function createRenderer(options: RendererOptions): Renderer {
   back.width = logicalW;
   back.height = logicalH;
 
-  const backCtx = require2dContext(back);
-  const viewCtx = require2dContext(canvas);
+  // Opaque: both are backgrounds that repaint every pixel every frame.
+  const backCtx = require2dContext(back, false);
+  const viewCtx = require2dContext(canvas, false);
   backCtx.imageSmoothingEnabled = false;
   viewCtx.imageSmoothingEnabled = false;
 
@@ -1443,7 +1460,10 @@ export function createRenderer(options: RendererOptions): Renderer {
   let hudH = HUD_MIN_H;
   hudBack.width = hudW;
   hudBack.height = hudH;
-  const hudCtx = require2dContext(hudBack);
+  // TRANSPARENT, and it is the whole reason `alpha` is a parameter: this buffer
+  // is blitted OVER the presented map, so every pixel the interface does not
+  // paint has to let the world through.
+  const hudCtx = require2dContext(hudBack, true);
   hudCtx.imageSmoothingEnabled = false;
 
   let deviceW = 0;
