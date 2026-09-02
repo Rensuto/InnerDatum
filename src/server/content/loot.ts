@@ -138,7 +138,7 @@ export const QUALITY_BANDS: readonly (readonly { quality: LootQuality; weight: n
  * `bound(ceil(level / 10), 1, 5)` — GameState.lua:1324, ported verbatim, and
  * verbatim was wrong here for a reason that is invisible from inside this file:
  * **ToME's characters go to level 50 and this game's cap is 10.**
- * `MAX_CHARACTER_LEVEL` is 10, so `ceil(10 / 10)` is 1 and EVERY CHARACTER AT
+ * `MAX_CHARACTER_LEVEL` was 10, so `ceil(10 / 10)` is 1 and EVERY CHARACTER AT
  * EVERY LEVEL FROM THE FIRST HUSK TO THE LAST CASE WAS BAND 1.
  *
  * Measured over twenty thousand rolls a band, which is what the table was

@@ -543,7 +543,7 @@ export function epochFor(partyMaxLevel: number): number {
    * Same fault as `bandFor` and found by asking the same question: does this
    * formula's input span the range it did upstream? ToME fires on level 5 and
    * then each multiple of ten across a 1..50 career — SEVEN epochs, a shelf that
-   * turns over half a dozen times. `MAX_CHARACTER_LEVEL` here is 10, so the same
+   * turns over half a dozen times. `MAX_CHARACTER_LEVEL` was 10, so the same
    * arithmetic gave THREE, and the two that a player actually lives through land
    * at level 5 and level 10.
    *

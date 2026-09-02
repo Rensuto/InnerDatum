@@ -198,11 +198,23 @@ export type TownsfolkSpec = {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WHEN SOMEBODY STOPS BEING A STRANGER. HALF WAY.
+ * WHEN SOMEBODY STOPS BEING A STRANGER.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `MAX_CHARACTER_LEVEL` is 10, so this is the midpoint, and it is chosen
- * against what is actually on the other side rather than for tidiness. The
+ * ═══ THIS SAID "HALF WAY", AND THE CAP MOVED UNDERNEATH IT ═══
+ * The sentence here read *"`MAX_CHARACTER_LEVEL` was 10, so this is the
+ * midpoint"*. The cap is FIFTY — `shared/progression.ts` raised it, because
+ * *"raising the cap is what makes the port a port"* — so five is a TENTH of the
+ * ladder and the midpoint argument was never true of the game as it now is.
+ *
+ * THE NUMBER STAYS, because what follows is the reason it was chosen and that
+ * reason never mentions the cap: it is priced against what is on the other side
+ * of the walk. What changes is that anybody retuning it argues from the right
+ * premise. The `MAX_CHARACTER_LEVEL` half was decoration, and decoration that
+ * states a constant is decoration that goes stale.
+ *
+ * It is chosen against what is actually on the other side rather than for
+ * tidiness. The
  * Redaction's roamers are half elite — `INDEX_INSPECTOR` hunts whoever is alone
  * and `INDEX_INQUISITOR` out-walks the party — and its delves carry
  * `redactedSpec`'s +2. Measured: a lone level-1 opening the redacted Underworks

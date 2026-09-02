@@ -936,16 +936,22 @@ function toWireEvents(
        * phantom coat forever. A phantom floor item sends somebody walking across
        * the map to a thing that is not there.
        *
-       * That frame does not exist yet. `PROTOCOL_VERSION` is 9, the wire has no
-       * `ground` message and no `pickup` verb, and adding either is a version
-       * bump — which src/shared/version.ts requires be argued on ONE stated
-       * reason, in its own commit. So this event is real, logged, tested
-       * (test/server/loot.test.ts) and deliberately not drawn. The drop lands on
-       * the floor either way; the pass that adds the frame will find it there.
+       * THAT FRAME EXISTS NOW, AND THIS PARAGRAPH SAID IT DID NOT. It read
+       * *"`PROTOCOL_VERSION` was 9, the wire has no `ground` message and no
+       * `pickup` verb... so this event is real, logged, tested and deliberately
+       * not drawn"*. All three clauses have since stopped being true — the
+       * version is 19, `ground` is a `ViewerMsg` with a per-session memo, and
+       * `pickup` is a client verb — so the note was telling the next reader that
+       * floor loot is invisible in a game where it is drawn.
+       *
+       * WHAT STAYS TRUE IS WHY THIS EVENT MAPS TO NOTHING: the floor is carried
+       * by that SNAPSHOT rather than by a per-drop delta, for the reason above.
+       * `spilled` is the server-side record of the drop; the frame a player sees
+       * is the ground snapshot the gateway sends after it.
        *
        * The five below it are the older bookkeeping group: real, logged
-       * server-side, and with nothing to draw. `spilled` joins them at the wire
-       * and leaves them the day the ground frame lands.
+       * server-side, and with nothing to draw. `spilled` sits with them at the
+       * wire and is the one of the six that a player can now see the RESULT of.
        */
       case 'spilled':
       case 'held':
