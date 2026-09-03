@@ -238,6 +238,16 @@ const BAR_MIN_THUMB = 8;
 /** Between the two columns of categories. */
 const COL_GAP = 14;
 /**
+ * The caption strip over each tree pane. One bold line and air under it.
+ *
+ * IT DOES NOT SCROLL. Upstream's `b_class` and `b_generic` sit in the layout
+ * table at `top=0`, outside the `TalentTrees` widget they label
+ * (`tome/dialogs/LevelupDialog.lua:814-836`), so the counter stays put while
+ * the trees under it move. A caption that scrolled away would leave the player
+ * looking at two unlabelled columns of disciplines that spend different purses.
+ */
+const PANE_HEAD_H = 15;
+/**
  * How many icons a strip is sized for.
  *
  * ═══ FIVE, THEN SIX, AND THE GRID DOES NOT DISCOVER THIS FOR ITSELF ═══
@@ -636,6 +646,21 @@ export type TalentRow =
       readonly unspent: number;
       /** The whole sentence, composed by `pointsText`. One copy, read by the painter. */
       readonly text: string;
+      /**
+       * THE TWO PURSES, SEPARATELY, because the panes are captioned with them.
+       *
+       * `unspent` above is their SUM — it exists to light the plate, and a plate
+       * that lit for one purse and not the other left four level-ups in five
+       * looking like nothing had happened. It cannot caption a pane, because a
+       * pane can only be spent from one of the two.
+       *
+       * Upstream keeps them apart the whole way down: `b_class` and `b_generic`
+       * are separate buttons placed directly over their own tree pane
+       * (`tome/dialogs/LevelupDialog.lua:814-836`), so "Class points: 2" is read
+       * above the column those points can be spent in.
+       */
+      readonly classPoints: number;
+      readonly genericPoints: number;
     }
   | { readonly kind: typeof TalentRowKind.Note; readonly text: string };
 
@@ -861,6 +886,8 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       kind: TalentRowKind.Points,
       unspent: unspent + generics,
       text: pointsText(progress),
+      classPoints: unspent,
+      genericPoints: generics,
     });
   }
 
@@ -1385,6 +1412,23 @@ export type TalentPanelGeometry = {
    * point spent on the wrong attribute — which nothing refunds.
    */
   readonly stats: PanelRect | null;
+  /**
+   * THE TWO TREE PANES AND THEIR CAPTIONS — class on the left, generic on the
+   * right. Always two, in that order, even when one holds nothing.
+   *
+   * See `paneOf`. Upstream places its counter directly over its own pane
+   * (`tome/dialogs/LevelupDialog.lua:814-836`), and an empty pane still carries
+   * its caption there, because "Generic points: 0" over an empty column is the
+   * answer to "where do generic points go" and a missing column is not.
+   */
+  readonly panes: readonly TalentPaneView[];
+};
+
+/** One tree pane's caption strip. The categories themselves scroll beneath it. */
+export type TalentPaneView = {
+  readonly rect: PanelRect;
+  readonly text: string;
+  readonly generic: boolean;
 };
 
 /**
@@ -1670,7 +1714,40 @@ export function talentPanelGeometry(
    * shape.
    */
   const gridSpace = Math.max(0, innerW - (BAR_W + BAR_GAP));
-  const columns = Math.max(1, Math.floor((gridSpace + COL_GAP) / (COL_W + COL_GAP)));
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TWO PANES — CLASS AND GENERIC — AND NOT A FLOW OF WHATEVER FITS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This used to be `floor((gridSpace + COL_GAP) / (COL_W + COL_GAP))`: as many
+   * columns as the width allowed, two at the floor and five on a wide window,
+   * with class and generic disciplines mixed through them in one flow. The two
+   * purses were distinguished only by a text suffix on the heading, and this
+   * file's own note admitted the gap — *"ours mixes both kinds into one flow
+   * grid, so without the mark there is nothing on screen that says why one strip
+   * is live and the one under it is grey."*
+   *
+   * Reported by the player twice, and the second time as the shape of the fix:
+   * *"we have a middle category that is two columns wide and should only be 1,
+   * even if the player has to scroll down. this should be 1:1 port from tales of
+   * maj eyal."*
+   *
+   * ═══ UPSTREAM'S SEPARATION IS STRUCTURAL, NOT TYPOGRAPHIC ═══
+   * `tome/dialogs/LevelupDialog.lua:485-486` declares two lists,
+   * `local ctree = {}` and `local gtree = {}`; :505-506 dispatches every
+   * category into one or the other (`if isgeneric then gtree[#gtree+1] = node
+   * else ctree[#ctree+1] = node end`); :694 and :715 build a `TalentTrees`
+   * widget for each; and :822 and :826 place them side by side in the layout
+   * table. Each pane is exactly ONE category wide and scrolls on its own, and
+   * the matching point counter sits directly over it (:814-836).
+   *
+   * So the player's "one column" and the 1:1 port are the same request: each
+   * pane is one category wide, and there are two of them because there are two
+   * purses. The count is fixed at two rather than fitted to the width — the
+   * grid a player learned the shape of stays that shape, which is the argument
+   * the gutter below already makes.
+   */
+  const columns = 2;
   const gridW = columns * COL_W + (columns - 1) * COL_GAP;
   /** CENTRED. A left-aligned grid in a wider panel reads as a layout bug. */
   const gridX = x + afterStats + Math.max(0, Math.floor((gridSpace - gridW) / 2));
@@ -1739,12 +1816,46 @@ export function talentPanelGeometry(
    * ported here. Where upstream disagrees with itself, the version that cannot
    * strand the reader wins.
    */
-  const gridLines = Math.ceil(categories.length / columns);
-  const contentH = gridLines * CAT_H;
-  const viewportH = Math.max(0, gridBottom - cursor);
+  /**
+   * WHICH PANE A CATEGORY BELONGS TO. `isGenericTree` is the same predicate the
+   * rows builder uses for the heading suffix, so the column and the mark can
+   * never disagree about a tree.
+   */
+  const paneOf = (row: TalentRow): number =>
+    row.kind === TalentRowKind.Category && isGenericTree(row.tree) ? 1 : 0;
+  const stacks: TalentRow[][] = [[], []];
+  for (const row of categories) {
+    const stack = stacks[paneOf(row)];
+    if (stack !== undefined) stack.push(row);
+  }
+
+  /**
+   * THE CAPTIONS, ABOVE THE PANES AND OUTSIDE THE SCROLL.
+   *
+   * Composed from the two purses the `Points` row carries separately. A missing
+   * `Points` row means no `progress` frame has arrived, and a caption that
+   * claimed a count then would be claiming one it does not have.
+   */
+  const points = rows.find((row) => row.kind === TalentRowKind.Points);
+  const purse = (generic: boolean): string => {
+    if (points === undefined || points.kind !== TalentRowKind.Points) {
+      return generic ? 'GENERIC' : 'CLASS';
+    }
+    const n = generic ? points.genericPoints : points.classPoints;
+    return `${generic ? 'GENERIC' : 'CLASS'}  ${String(n)} point${n === 1 ? '' : 's'}`;
+  };
+
+  const contentH = Math.max(stacks[0]?.length ?? 0, stacks[1]?.length ?? 0) * CAT_H;
+  const viewportH = Math.max(0, gridBottom - cursor - PANE_HEAD_H);
   const maxScroll = Math.max(0, contentH - viewportH);
   const applied = Math.max(0, Math.min(Math.floor(scroll), maxScroll));
-  const gridViewport: PanelRect = { x: gridX, y: cursor, w: gridW, h: viewportH };
+  const gridTop = cursor + PANE_HEAD_H;
+  const gridViewport: PanelRect = { x: gridX, y: gridTop, w: gridW, h: viewportH };
+  const panes: TalentPaneView[] = [0, 1].map((pane) => ({
+    rect: { x: gridX + pane * (COL_W + COL_GAP), y: cursor, w: COL_W, h: PANE_HEAD_H },
+    text: purse(pane === 1),
+    generic: pane === 1,
+  }));
 
   /**
    * THE THUMB IS PROPORTIONAL, and its travel is `track - thumb` rather than
@@ -1753,7 +1864,7 @@ export function talentPanelGeometry(
    * the player they have more to read when they are at the end.
    */
   const bar: PanelRect | null =
-    maxScroll > 0 && viewportH > 0 ? { x: barX, y: cursor, w: BAR_W, h: viewportH } : null;
+    maxScroll > 0 && viewportH > 0 ? { x: barX, y: gridTop, w: BAR_W, h: viewportH } : null;
   const thumb: PanelRect | null =
     bar === null
       ? null
@@ -1771,47 +1882,56 @@ export function talentPanelGeometry(
           };
         })();
 
-  for (let i = 0; i < categories.length; i += 1) {
-    const row = categories[i];
-    if (row === undefined || row.kind !== TalentRowKind.Category) continue;
-    const col = i % columns;
-    const line = Math.floor(i / columns);
-    /**
-     * ALREADY IN POINTER SPACE. Every rect this loop produces is where the
-     * strip actually IS on screen, scroll included — see `TalentGridView` for
-     * why the offset is applied here and not with a `ctx.translate` in the
-     * painter.
-     */
-    const y = cursor + line * CAT_H - applied;
-    /**
-     * A STRIP ENTIRELY ABOVE OR BELOW THE WINDOW IS NOT PLACED AT ALL.
-     *
-     * Not merely invisible: UNPLACED. A rect the painter clips away is still in
-     * the list the HIT TEST walks, and the hazard is not hypothetical — the
-     * sentence rows are laid out immediately above `cursor`, so a strip scrolled
-     * off the top of the window carries a negative-ish `y` that lands squarely
-     * on top of them. A player clicking the points sentence would spend a point
-     * on a discipline that is not on the screen, and there is no refund gesture.
-     *
-     * Clipping in the painter would hide the strip and leave that click armed.
-     * The cheapest way to disarm it is for the row not to exist.
-     */
-    if (y + CAT_H <= cursor || y >= gridBottom) continue;
-    const bx = gridX + col * (COL_W + COL_GAP);
-    const cells: PanelRect[] = row.talents.map((_, n) => ({
-      x: bx + n * (ICON_PX + CELL_GAP),
-      y: y + CAT_HEAD_H,
-      w: ICON_PX,
-      h: ICON_PX,
-    }));
-    placed.push({
-      row,
-      rect: { x: bx, y, w: COL_W, h: CAT_H },
-      plus: null,
-      descLines: [],
-      nextLines: [],
-      cells,
-    });
+  for (let pane = 0; pane < columns; pane += 1) {
+    const stack = stacks[pane] ?? [];
+    for (let line = 0; line < stack.length; line += 1) {
+      const row = stack[line];
+      if (row === undefined || row.kind !== TalentRowKind.Category) continue;
+      const col = pane;
+      /**
+       * ALREADY IN POINTER SPACE. Every rect this loop produces is where the
+       * strip actually IS on screen, scroll included — see `TalentGridView` for
+       * why the offset is applied here and not with a `ctx.translate` in the
+       * painter.
+       */
+      const y = gridTop + line * CAT_H - applied;
+      /**
+       * A STRIP ENTIRELY ABOVE OR BELOW THE WINDOW IS NOT PLACED AT ALL.
+       *
+       * Not merely invisible: UNPLACED. A rect the painter clips away is still in
+       * the list the HIT TEST walks, and the hazard is not hypothetical — the
+       * sentence rows are laid out immediately above `cursor`, so a strip scrolled
+       * off the top of the window carries a negative-ish `y` that lands squarely
+       * on top of them. A player clicking the points sentence would spend a point
+       * on a discipline that is not on the screen, and there is no refund gesture.
+       *
+       * Clipping in the painter would hide the strip and leave that click armed.
+       * The cheapest way to disarm it is for the row not to exist.
+       */
+      if (y + CAT_H <= gridTop || y >= gridBottom) continue;
+      const bx = gridX + col * (COL_W + COL_GAP);
+      /**
+       * SLICED AT `CELLS_PER_CAT`, which the docblock has always claimed and
+       * the code never did. `.map` produced a rect for EVERY talent, so a
+       * seventh landed at `bx + 216` — four pixels past `COL_W` — in the gutter,
+       * and an eighth landed squarely on the neighbouring pane's first icon.
+       * Two live spend targets on the same pixels, on a panel with no refund.
+       */
+      const cells: PanelRect[] = row.talents.slice(0, CELLS_PER_CAT).map((_, n) => ({
+        x: bx + n * (ICON_PX + CELL_GAP),
+        y: y + CAT_HEAD_H,
+        w: ICON_PX,
+        h: ICON_PX,
+      }));
+      placed.push({
+        row,
+        rect: { x: bx, y, w: COL_W, h: CAT_H },
+        plus: null,
+        descLines: [],
+        nextLines: [],
+        cells,
+      });
+    }
   }
   /**
    * AND `cursor` IS NOT ADVANCED, BECAUSE THE GRID IS THE LAST THING PLACED.
@@ -1842,6 +1962,7 @@ export function talentPanelGeometry(
     placed,
     detail,
     stats,
+    panes,
   };
 }
 
@@ -3012,6 +3133,26 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
     ctx.fillRect(bar.x, bar.y, bar.w, bar.h);
     ctx.fillStyle = PALETTE.GREY_HI;
     ctx.fillRect(thumb.x, thumb.y, thumb.w, thumb.h);
+  }
+
+  /**
+   * THE TWO PANE CAPTIONS, OUTSIDE THE CLIP because they do not scroll.
+   *
+   * `CLASS  2 points` over the left column and `GENERIC  3 points` over the
+   * right, which is upstream's `b_class` and `b_generic` placed directly over
+   * their own tree pane (`tome/dialogs/LevelupDialog.lua:814-836`). Before
+   * this the two purses were told apart only by a `· generic` suffix on a
+   * heading, and this file's own note admitted that left nothing on screen
+   * saying why one strip was live and the one under it grey.
+   *
+   * A PANE WITH NOTHING IN IT STILL CARRIES ITS CAPTION. "GENERIC 0 points"
+   * over an empty column answers "where do generic points go"; a missing
+   * column answers nothing.
+   */
+  for (const pane of geometry.panes) {
+    ctx.font = FONT_LEVEL;
+    ctx.fillStyle = pane.generic ? PALETTE.GREY_HI : PALETTE.GOLD;
+    ctx.fillText(pane.text, pane.rect.x, pane.rect.y + pane.rect.h - 4);
   }
 
   // AND EVERYTHING THAT IS NOT A STRIP, OUTSIDE THE CLIP.

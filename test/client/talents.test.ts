@@ -245,12 +245,81 @@ describe('the grid lays out in columns', () => {
     }
   });
 
-  it('puts two categories side by side when there is width for them', () => {
+  it('stacks two CLASS categories in one column, not side by side', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS CASE USED TO ASSERT THE OPPOSITE, AND THE OPPOSITE WAS THE BUG.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read *"same row, different columns — which is the whole shape of the
+     * screenshot"*, and it was true of a grid that packed as many columns as
+     * fitted and flowed class and generic disciplines through them together.
+     * The player's second screenshot is of that shape and the words under it
+     * are *"we have a middle category that is two columns wide and should only
+     * be 1"*.
+     *
+     * A column here means a PURSE, not a slot: `tome/dialogs/LevelupDialog.lua`
+     * :505-506 dispatches every category into `ctree` or `gtree` and :822/:826
+     * place the two side by side. Both of `view()`'s trees are class trees, so
+     * they belong in the same pane, one under the other.
+     */
     const cats = placedAt(REAL).filter((p) => p.row.kind === TalentRowKind.Category);
     expect(cats).toHaveLength(2);
-    // Same row, different columns — which is the whole shape of the screenshot.
-    expect(cats[0]?.rect.y).toBe(cats[1]?.rect.y);
-    expect(cats[0]?.rect.x).not.toBe(cats[1]?.rect.x);
+    expect(cats[0]?.rect.x, 'two class trees landed in different columns').toBe(cats[1]?.rect.x);
+    expect(cats[0]?.rect.y).toBeLessThan(cats[1]?.rect.y ?? 0);
+  });
+
+  it('and puts a generic category in the other column, beside the class one', () => {
+    /**
+     * THE OTHER HALF, and without it the case above is satisfied by a layout
+     * with one column — which is not what was asked for and not what upstream
+     * does. `GROUNDWORK` is a generic tree, so it heads the second pane at the
+     * same height the first class tree heads the first.
+     */
+    const withGeneric = view({
+      loadout: [
+        talent({ id: 'talent:crude_blow', name: 'Crude Blow', ...DISCIPLINE }),
+        talent({ id: 'talent:shore_up', name: 'Shore Up', ...GROUNDWORK }),
+      ],
+      passives: [],
+    });
+    const cats = talentPanelGeometry(
+      rectAt(REAL),
+      talentPanelRows(withGeneric),
+      NO_SCROLL,
+    ).placed.filter((p) => p.row.kind === TalentRowKind.Category);
+    expect(cats).toHaveLength(2);
+    expect(cats[0]?.rect.y, 'the two purses are not level').toBe(cats[1]?.rect.y);
+    expect(cats[0]?.rect.x).toBeLessThan(cats[1]?.rect.x ?? 0);
+  });
+
+  it('captions each column with the purse it spends', () => {
+    /**
+     * `tome/dialogs/LevelupDialog.lua:814-836` places `b_class` and `b_generic`
+     * directly over their own pane, so "Class points: 2" is read above the
+     * column those points can be spent in. Ours had one merged sentence and a
+     * `· generic` suffix on the heading, which this file's own note called out
+     * as the reason nothing on screen said why one strip was live and the one
+     * under it grey.
+     */
+    const geometry = talentPanelGeometry(
+      rectAt(REAL),
+      talentPanelRows(view({ progress: progress(2, 3) })),
+      NO_SCROLL,
+    );
+    expect(geometry.panes).toHaveLength(2);
+    expect(geometry.panes[0]?.generic).toBe(false);
+    expect(geometry.panes[1]?.generic).toBe(true);
+    expect(geometry.panes[0]?.text).toContain('2');
+    expect(geometry.panes[1]?.text).toContain('3');
+    // Each caption sits over its own column, and neither scrolls with it.
+    const cats = geometry.placed.filter((p) => p.row.kind === TalentRowKind.Category);
+    expect(geometry.panes[0]?.rect.x).toBe(cats[0]?.rect.x);
+    for (const cat of cats) {
+      expect(cat.rect.y).toBeGreaterThanOrEqual(
+        (geometry.panes[0]?.rect.y ?? 0) + (geometry.panes[0]?.rect.h ?? 0),
+      );
+    }
   });
 });
 
@@ -490,11 +559,50 @@ describe('the panel has room for the categories a class carries', () => {
     }
   });
 
-  it('has room for a FOURTH, which is the headroom rather than the requirement', () => {
+  it('has room for a FOURTH at every window but the floor, where it scrolls', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE COST OF ONE COLUMN PER PURSE, STATED RATHER THAN DISCOVERED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This used to demand four at every viewport including the floor, and it
+     * was true of a width-packed grid that flowed four class trees into two
+     * columns of two. A pane is one category wide now — `ctree` and `gtree`,
+     * `tome/dialogs/LevelupDialog.lua:822` and :826 — so four class trees are
+     * four rows deep in one column, and at the 640x320 floor the panel is 228
+     * tall and holds three of them.
+     *
+     * The player asked for exactly this trade in the same sentence as the
+     * layout: *"should only be 1, even if the player has to scroll down."* So
+     * the assertion is that the fourth is REACHABLE, not that it is on screen
+     * at the smallest window this client can produce.
+     */
     for (const [w, h] of VIEWPORTS) {
+      if (w === 640 && h === 320) continue;
       const size = { width: w, height: h, top: 40, bottom: h - 40 };
       expect(categoriesPlacedAt(size, 4), `${String(w)}x${String(h)}`).toBe(4);
     }
+  });
+
+  it('and at the floor the fourth is reachable by scrolling, not lost', () => {
+    const size = { width: 640, height: 320, top: 40, bottom: 280 };
+    const rect = talentPanelRect(size);
+    expect(rect).not.toBeNull();
+    if (rect === null) return;
+    const rows = talentPanelRows(nCategories(4));
+
+    const unscrolled = talentPanelGeometry(rect, rows, NO_SCROLL);
+    expect(unscrolled.placed.filter((p) => p.row.kind === TalentRowKind.Category)).toHaveLength(3);
+    expect(unscrolled.grid.maxScroll, 'nothing to scroll, so the fourth is LOST').toBeGreaterThan(
+      0,
+    );
+
+    // Scrolled to the end, the last category is on screen.
+    const scrolled = talentPanelGeometry(rect, rows, unscrolled.grid.maxScroll);
+    const last = scrolled.placed
+      .filter((p) => p.row.kind === TalentRowKind.Category)
+      .map((p) => (p.row.kind === TalentRowKind.Category ? p.row.tree : ''));
+    expect(last, 'the fourth category is unreachable at any scroll').toContain('t/3');
   });
 
   /**
@@ -836,20 +944,19 @@ describe('the description column', () => {
     }
 
     /**
-     * ═══ AND WHERE IT APPEARS, THE GRID IS STILL WORTH LOOKING AT ═══
-     * The pane costs about a column wherever it lands (see the note above), so
-     * the guard is a FLOOR on what is left rather than a comparison against a
-     * layout that does not exist. Two columns is the floor the original
-     * `PANEL_W_STATS` argument was built on — a panel that can hold the pane and
-     * only ONE strip has become the reserved strip that was deleted, on the
-     * other axis.
+     * ═══ AND IT NOW COSTS THE GRID NOTHING AT ALL ═══
+     * The measurement above and the whole "the pane costs about a column"
+     * argument belonged to a width-packed grid. The grid is two panes wide at
+     * every window — one per purse, `tome/dialogs/LevelupDialog.lua:822` and
+     * :826 — so its width is a constant and the description takes only slack
+     * the disciplines were never going to use. That is a stronger property than
+     * the floor this used to assert, so it is asserted as an equality.
      */
+    const narrowGrid = at(1100);
     for (const width of [1280, 1440, 1920]) {
-      expect(at(width).cols, `${String(width)} columns beside the pane`).toBeGreaterThanOrEqual(2);
+      expect(at(width).cols, `${String(width)} columns beside the pane`).toBe(narrowGrid.cols);
     }
-
-    // ═══ AND THE GRID STILL GROWS WITH THE WINDOW OVERALL ═══
-    expect(at(1920).cols).toBeGreaterThan(at(640).cols);
+    expect(narrowGrid.cols, 'both purses are on screen without the pane').toBeGreaterThanOrEqual(1);
   });
 
   it('takes width from the panel and never a row from the grid', () => {
@@ -1601,5 +1708,41 @@ describe('the points sentence is not drawn on top of the attribute column', () =
       if (placed.row.kind === TalentRowKind.Category) continue;
       expect(placed.rect.x + placed.rect.w).toBeLessThanOrEqual(rect.x + rect.w);
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO PURSES ARE TWO COLUMNS, AND EACH SAYS WHAT IT SPENDS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tome/dialogs/LevelupDialog.lua:505-506` dispatches every category into
+ * `ctree` or `gtree`; :694 and :715 build a tree pane for each; :822 and :826
+ * place them side by side; and :814-836 put `b_class` and `b_generic` directly
+ * over their own pane. Ours flowed both kinds through one width-packed grid and
+ * distinguished them with a `· generic` suffix on the heading.
+ */
+describe('the pane captions', () => {
+  it('are painted, one per purse, with their own counts', () => {
+    const texts = paintPanel({ rows: talentPanelRows(view({ progress: progress(2, 3) })) });
+    expect(texts.some((t) => t.startsWith('CLASS') && t.includes('2'))).toBe(true);
+    expect(texts.some((t) => t.startsWith('GENERIC') && t.includes('3'))).toBe(true);
+  });
+
+  it('say `1 point` rather than `1 points`', () => {
+    const texts = paintPanel({ rows: talentPanelRows(view({ progress: progress(1, 0) })) });
+    expect(texts).toContain('CLASS  1 point');
+    expect(texts).toContain('GENERIC  0 points');
+  });
+
+  it('and a pane with nothing in it still carries its caption', () => {
+    /**
+     * "GENERIC 0 points" over an empty column answers "where do generic points
+     * go". A missing column answers nothing, and this character has no generic
+     * tree at all — which is the ordinary state before the first generic
+     * discipline is bought.
+     */
+    const texts = paintPanel({ rows: talentPanelRows(view()) });
+    expect(texts.some((t) => t.startsWith('GENERIC'))).toBe(true);
   });
 });
