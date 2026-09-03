@@ -238,6 +238,31 @@ export function tooltipRect(
 export type LootTipItem = {
   readonly name: string;
   readonly tier: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IT IS AND WHAT IT WOULD CHANGE — drawn only when the tile holds ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The card used to carry a name and a tier colour and nothing else, so the
+   * floor was a set of labelled dots: the only way to learn what a coat did was
+   * to pick it up, and `pickup` COSTS A TURN. That is the same complaint
+   * `GroundItemView.name` was added for, one field further along — reported from
+   * play as the floor tooltip showing no stats.
+   *
+   * ═══ ONE ITEM ONLY, AND THAT IS A GEOMETRY RULE, NOT A POLICY ═══
+   * `LOOT_MAX_ROWS` already caps this card at four names plus a count, because a
+   * tile may legally hold any number of things and an eleven-row card covers the
+   * fight underneath it. A stat block PER item on a pile of four would be forty
+   * rows. So a pile stays a list of names — which is what you need in order to
+   * choose one — and a single item, which is the overwhelmingly common case,
+   * gets the full answer.
+   *
+   * Optional, so a frame from a server that does not send them draws the card it
+   * always drew.
+   */
+  readonly meta?: string;
+  readonly desc?: string;
+  readonly rows?: readonly { readonly label: string; readonly value: string }[];
 };
 
 export type LootTipOptions = {
@@ -268,6 +293,63 @@ function lootHint(underfoot: boolean): string {
 }
 
 /**
+ * How many characters of description a floor card will wrap to.
+ *
+ * DERIVED FROM THE BOX, not chosen: `MAX_W` less an inset each side, divided by
+ * `CHAR_W`. Writing a number here instead would be a fourth thing to re-measure
+ * the day the card's width moves, and the symptom would be prose running under
+ * the border — which is the failure `LABELS ARE SIZED IN CHARACTERS` in
+ * ui/verbs.ts exists to stop on the other card.
+ */
+const LOOT_DESC_CHARS = Math.floor((MAX_W - INSET * 2) / CHAR_W);
+
+/**
+ * A greedy wrap on whole words, in CHARACTERS rather than pixels.
+ *
+ * The rest of this file sizes itself with `CHAR_W` and no measurement — see
+ * `tooltipRect`'s note — so a wrap that measured would be the one thing on the
+ * card whose height the rect could not predict, and the box would be the wrong
+ * size for its own contents.
+ */
+function wrapChars(text: string, chars: number): readonly string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const word of text.split(/\s+/).filter((w) => w !== '')) {
+    const candidate = line === '' ? word : `${line} ${word}`;
+    if (candidate.length <= chars) {
+      line = candidate;
+      continue;
+    }
+    if (line !== '') lines.push(line);
+    line = word;
+  }
+  if (line !== '') lines.push(line);
+  return lines;
+}
+
+/**
+ * THE SINGLE-ITEM DETAIL BLOCK, or nothing. One builder, two readers — the rect
+ * that sizes the card and the painter that fills it, which is the invariant this
+ * file already keeps for the names: *"the card's box, from the strings alone"*.
+ * Two copies of this decision would be a box the wrong height for its contents.
+ *
+ * See `LootTipItem` for why a PILE is deliberately still a list of names.
+ */
+function lootDetail(items: readonly LootTipItem[]): {
+  readonly meta: readonly string[];
+  readonly desc: readonly string[];
+  readonly rows: readonly { readonly label: string; readonly value: string }[];
+} {
+  const only = items.length === 1 ? items[0] : undefined;
+  if (only === undefined) return { meta: [], desc: [], rows: [] };
+  return {
+    meta: only.meta === undefined || only.meta === '' ? [] : [only.meta],
+    desc: only.desc === undefined || only.desc === '' ? [] : wrapChars(only.desc, LOOT_DESC_CHARS),
+    rows: only.rows ?? [],
+  };
+}
+
+/**
  * The card's box, from the strings alone. No context, no measurement — the same
  * rule `tooltipRect` states and for the same reason.
  */
@@ -285,10 +367,23 @@ export function lootTipRect(
   if (overflow > 0) names.push(`+${String(overflow)} more`);
   const hint = lootHint(underfoot);
 
-  const widest = Math.max(HEADER_CHARS, hint.length, ...names.map((name) => name.length));
+  const detail = lootDetail(items);
+  // A STAT ROW IS A LABEL AND A VALUE ON ONE LINE, drawn from both edges the way
+  // `drawTooltip` draws its own — so the width it needs is both, plus a space.
+  const statWidths = detail.rows.map((row) => row.label.length + row.value.length + 2);
+  const widest = Math.max(
+    HEADER_CHARS,
+    hint.length,
+    ...names.map((name) => name.length),
+    ...detail.meta.map((line) => line.length),
+    ...detail.desc.map((line) => line.length),
+    ...statWidths,
+  );
   const w = Math.min(MAX_W, Math.max(MIN_W, widest * CHAR_W + INSET * 2));
-  // One row per name, one for the hint, plus the header.
-  const h = HEADER_H + INSET * 2 + (names.length + 1) * ROW_H;
+  // One row per name, one for the hint, plus the header — and the detail block
+  // where there is one. Counted here and drawn there from the same builder.
+  const detailRowCount = detail.meta.length + detail.desc.length + detail.rows.length;
+  const h = HEADER_H + INSET * 2 + (names.length + 1 + detailRowCount) * ROW_H;
 
   // FLIPPED TO THE OTHER SIDE OF THE POINTER WHEN IT WOULD OVERFLOW, which is
   // `tooltipRect`s rule character for character (:198-199). Two cards that place
@@ -340,6 +435,40 @@ export function drawLootTip(opts: LootTipOptions): void {
     // has stopped showing everything must not make the reader infer it.
     ctx.fillStyle = PALETTE.BONE;
     ctx.fillText(fitText(ctx, `+${String(overflow)} more`, inner.w), inner.x, y);
+    y += ROW_H;
+  }
+
+  /**
+   * ═══ WHAT THE ONE THING ON THIS TILE ACTUALLY IS ═══
+   * From the same `lootDetail` the rect measured, so the box is exactly the
+   * height of what gets painted into it. Empty for a pile — see `LootTipItem`.
+   */
+  const detail = lootDetail(items);
+  for (const line of detail.meta) {
+    // The kind-of-thing line, in the same muted ink the actor card gives its
+    // rank: it classifies, it is not the answer.
+    ctx.fillStyle = PALETTE.BONE;
+    ctx.fillText(fitText(ctx, line, inner.w), inner.x, y);
+    y += ROW_H;
+  }
+  for (const line of detail.desc) {
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillText(fitText(ctx, line, inner.w), inner.x, y);
+    y += ROW_H;
+  }
+  const right = inner.x + inner.w;
+  for (const row of detail.rows) {
+    // LABEL LEFT, VALUE RIGHT — `drawTooltip`'s own arrangement a few lines
+    // down, because two cards that laid a label-and-number out differently
+    // would read as two different features.
+    const valueW = ctx.measureText(row.value).width;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillText(fitText(ctx, row.label, inner.w - valueW - CHAR_W), inner.x, y);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = PALETTE.PARCHMENT;
+    ctx.fillText(row.value, right, y);
+    ctx.textAlign = 'left';
     y += ROW_H;
   }
 

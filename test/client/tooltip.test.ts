@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { tooltipRect } from '../../src/client/ui/tooltip.ts';
+import { lootTipRect, tooltipRect } from '../../src/client/ui/tooltip.ts';
 import type { InspectRow, InspectView } from '../../src/shared/protocol.ts';
 
 /**
@@ -133,5 +133,88 @@ describe('tooltipRect — its height is one row per line', () => {
     // Bold is the same 10px face at the same leading. If this ever diverges the
     // card would jitter as the server started or stopped emphasising a number.
     expect(bold.h).toBe(plain.h);
+  });
+});
+
+describe('lootTipRect — the floor card answers "what is it"', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FLOOR WAS A SET OF LABELLED DOTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The card carried a name and a tier and nothing else, so the only way to find
+   * out what a coat did was to walk onto it and spend a turn on `pickup`.
+   * Reported from play: "if you hover the tooltip on the ground it doesnt show
+   * stats". `GroundItemView.compare` is the wire half; this is the card growing
+   * to hold it.
+   */
+  const AT = { px: 10, py: 10, w: 800, h: 600 };
+  const bare = { name: 'Watchman Coat', tier: 'uncommon' } as const;
+
+  it('grows by a row for each stat on a single item', () => {
+    const without = lootTipRect([bare], true, AT.px, AT.py, AT.w, AT.h);
+    const with2 = lootTipRect(
+      [
+        {
+          ...bare,
+          rows: [
+            { label: 'Armour', value: '+3' },
+            { label: 'Defence', value: '+1' },
+          ],
+        },
+      ],
+      true,
+      AT.px,
+      AT.py,
+      AT.w,
+      AT.h,
+    );
+    expect(with2.h).toBeGreaterThan(without.h);
+  });
+
+  /**
+   * A PILE STAYS A LIST OF NAMES, and that is geometry rather than policy — a
+   * stat block per item on a pile of four would be forty rows drawn over the
+   * fight underneath. See `LootTipItem`.
+   */
+  it('ignores the detail block when the tile holds more than one thing', () => {
+    const rows = [{ label: 'Armour', value: '+3' }];
+    const one = lootTipRect([{ ...bare, rows }], true, AT.px, AT.py, AT.w, AT.h);
+    const two = lootTipRect(
+      [
+        { ...bare, rows },
+        { name: 'Hobnailed Boots', tier: 'common', rows },
+      ],
+      true,
+      AT.px,
+      AT.py,
+      AT.w,
+      AT.h,
+    );
+    // Two names is one more NAME row than one name plus one stat row is... so
+    // assert the thing that matters instead: the second card is not carrying two
+    // stat blocks. One name + one stat = 2 rows; two names + no stats = 2 rows.
+    expect(two.h).toBe(one.h);
+  });
+
+  it('stays inside the viewport once it has grown', () => {
+    const rect = lootTipRect(
+      [
+        {
+          ...bare,
+          desc: 'Heavy wool over a mail lining. Rain runs off it; so does most of a blow.',
+          rows: [{ label: 'Armour', value: '+3' }],
+        },
+      ],
+      true,
+      790,
+      590,
+      AT.w,
+      AT.h,
+    );
+    expect(rect.x).toBeGreaterThanOrEqual(0);
+    expect(rect.y).toBeGreaterThanOrEqual(0);
+    expect(rect.x + rect.w).toBeLessThanOrEqual(AT.w);
+    expect(rect.y + rect.h).toBeLessThanOrEqual(AT.h);
   });
 });

@@ -961,8 +961,25 @@ describe('projectGroundItems', () => {
      * The name was added so the floor can be READ without walking onto it —
      * a pickup costs a turn, so "walk over and find out" is a real price for a
      * question the frame can answer for free.
+     *
+     * ═══ `desc` AND `slot` JOIN `name` ON THE FORMER SIDE ═══
+     * Both are display strings the bag and the shelf already show for the same
+     * item, out of the same `resolveItem`. Neither is something to compute with:
+     * knowing a coat is worn on the body, and reading the sentence written about
+     * it, tells a player exactly as much as knowing it is called a coat.
+     *
+     * ═══ AND `compare` IS THE ANSWER, WHICH IS WHY IT IS NOT THE ARITHMETIC ═══
+     * It is absent here because this call passes no viewer — a comparison is a
+     * fact about a BODY. When one is passed, the rows are the SAME finished rows
+     * `CarriedItemView.compare` carries, reduced by `compareRows` on the server
+     * against that viewer's own doll. That is not a relaxation of this guard, it
+     * is the thing the paragraph above says compare "exists to have already
+     * done". `wielder` is still the forbidden field and still never sent — the
+     * test below the next one asserts exactly that.
      */
-    expect(Object.keys(row ?? {}).sort()).toEqual(['cell', 'id', 'itemId', 'name', 'tier'].sort());
+    expect(Object.keys(row ?? {}).sort()).toEqual(
+      ['cell', 'desc', 'id', 'itemId', 'name', 'slot', 'tier'].sort(),
+    );
   });
 });
 
@@ -1908,5 +1925,54 @@ describe('a shelf you can actually read', () => {
     // THE AUTHORED FIGURE ON A SHELF, not a per-viewer one: the frame is a
     // broadcast and the heal depends on who drinks it.
     expect(stock.find((r) => r.itemId === DRAUGHT)?.use).toBe('Restores 40 health.');
+  });
+});
+
+describe('the floor says what a thing would do, not just what it is called', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CARD USED TO BE A NAME AND A COLOURED DOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This function deliberately withheld the comparison, and its comment gave two
+   * reasons. The first — never ship the `wielder` table, never make the client do
+   * the arithmetic — STILL HOLDS and is still enforced: these are finished rows.
+   * The second, that it would be "a preview of a decision the player has not
+   * earned yet", was overruled on report from play: the SHELF already prints a
+   * full comparison for something you have not bought, and picking a thing up to
+   * look at it costs a TURN. See `GroundItemView.compare`.
+   */
+  it('gives a viewer the swap rows, and gives a caller without one nothing', () => {
+    const world = room();
+    const body = watchman(world);
+    world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_coat');
+
+    const anonymous = projectGroundItems(world).items[0];
+    expect(anonymous, 'the floor row vanished').toBeDefined();
+    // NO BODY, NO COMPARISON. An invented baseline would be a promise about
+    // numbers no body has — the same rule `projectInventory` keeps.
+    expect(anonymous?.compare).toBeUndefined();
+
+    const mine = projectGroundItems(world, undefined, body).items[0];
+    expect(mine?.compare, 'a viewer was given no comparison').toBeDefined();
+    expect((mine?.compare ?? []).length).toBeGreaterThan(0);
+    // AND ENOUGH TO SAY WHAT IT IS. `desc` is the catalogue sentence and `slot`
+    // is where it would go; the card reads as a labelled dot without them.
+    expect(mine?.desc, 'the floor row carries no description').toBeTruthy();
+    expect(mine?.slot).toBe('body');
+  });
+
+  /**
+   * THE `wielder` TABLE IS STILL NOT ON THE WIRE, and that is the half of the
+   * old omission that was never up for debate. A row carries rows; it does not
+   * carry the item's fold table for the browser to add up.
+   */
+  it('never ships the wielder table', () => {
+    const world = room();
+    const body = watchman(world);
+    world.addGroundItem({ x: 4, y: 4 }, 'item_watchmans_coat');
+    const row = projectGroundItems(world, undefined, body).items[0];
+    expect(row).toBeDefined();
+    expect(Object.keys(row ?? {})).not.toContain('wielder');
   });
 });

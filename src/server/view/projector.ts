@@ -1605,8 +1605,22 @@ export function projectGroundItems(
    * reads that character's own persisted fog bitset.
    */
   known?: (x: number, y: number) => boolean,
+  /**
+   * WHOSE FLOOR THIS IS, so a row can say what picking the thing up would
+   * change. Absent means "no comparison" — the GM console and every fixture —
+   * and a row then carries the name and tier it always carried.
+   *
+   * See `GroundItemView.compare` for why this frame may now answer a question it
+   * used to withhold, and for the half of that old argument which still holds:
+   * the `wielder` table is never sent, only rows this file has already reduced.
+   */
+  viewer?: Actor,
 ): GroundMsg {
   const items: GroundItemView[] = [];
+  // HOISTED OUT OF THE LOOP. `swapBaselineFor` folds the whole body — bought
+  // points, passives, the lot — and it is the same answer for every item on the
+  // floor. Inside the loop it would be recomputed once per coin pile.
+  const baseline = viewer === undefined ? undefined : swapBaselineFor(viewer);
 
   for (const dropped of world.groundItems()) {
     if (known !== undefined && !known(dropped.x, dropped.y)) continue;
@@ -1644,13 +1658,27 @@ export function projectGroundItems(
       // `resolveItem`. The same string the shop shelf and the bag show, from the
       // same call — see `GroundItemView.name`.
       name: item.name,
+      // ═══ AND ENOUGH TO ANSWER "WHAT IS IT" WITHOUT PICKING IT UP ═══
+      // OMITTED for a consumable rather than sent as null, which is the absence
+      // `CarriedItemView.slot` relies on to mean "there is no Equip for this".
+      ...(item.slot === undefined ? {} : { slot: item.slot }),
+      desc: item.desc,
+      /**
+       * WHAT PUTTING IT ON WOULD CHANGE — the SAME `compareRows` the bag and the
+       * shelf call, with this item as the candidate.
+       *
+       * The `wielder` table is still not sent; these are rows this file has
+       * already reduced. That was always the load-bearing half of the omission
+       * that used to sit here, and it is unchanged. See
+       * `GroundItemView.compare` for the half that was overruled and why.
+       *
+       * A body with no sheet compares against nothing, exactly as the bag does:
+       * an invented baseline is a promise about numbers that body does not have.
+       */
+      ...(baseline?.base === undefined
+        ? {}
+        : { compare: compareRows(baseline.base, baseline.worn, item) }),
     });
-    // NOT COPIED, and the omission is the same field-by-field discipline
-    // `toActorView` and `projectProjectiles` keep: the catalogue row also holds
-    // the `wielder` table, which is what equipping the thing would DO. Shipping
-    // it would hand the client the arithmetic `CarriedItemView.compare` exists
-    // to have already done — and it would do it for an item nobody has picked
-    // up, which is a preview of a decision the player has not earned yet.
   }
 
   return { v: PROTOCOL_VERSION, t: 'ground', items };
@@ -1987,6 +2015,38 @@ function damageBandDelta(
  * satisfies the sentence above in letter and breaks it in fact. That is what
  * `CompareShape` tags and what `damageBandDelta` measures.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO HALVES EVERY SWAP COMPARISON NEEDS: the body without its gear, and
+ * the gear it has on.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONE OPINION, THREE CALLERS — the bag, the shelf and now the FLOOR. It was
+ * inlined in `projectInventory` while that was the only place a comparison
+ * happened. A second copy in `projectGroundItems` would be a second answer to
+ * "what is this body before it put anything on", and the two would part company
+ * the first time the fold grew a stage — which has already happened three times
+ * here (`boughtSheet`, then `passiveCombat`, then `composeWielders`).
+ *
+ * `base` is undefined for a body with no sheet at all (an M2-era fixture, a
+ * classless e2e body). Callers must treat that as "no comparison is possible"
+ * rather than inventing a baseline, because an invented one is a promise about
+ * numbers that body does not have.
+ */
+function swapBaselineFor(viewer: Actor): {
+  base: CombatSheet | undefined;
+  worn: readonly Item[];
+} {
+  const classSheet = viewer.baseCombat ?? viewer.combat;
+  const bought = boughtSheet(viewer, classSheet);
+  const passive = viewer.passiveCombat;
+  return {
+    base:
+      bought === undefined || passive === undefined ? bought : composeWielders(bought, [passive]),
+    worn: wornOf(viewer.equipped, resolveItem),
+  };
+}
+
 function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item): InspectRow[] {
   // THE SWAP, NOT THE ADDITION. Whatever is already in this item's slot comes
   // OFF — that is what `equip` will do — so the "after" set is the worn set with
@@ -2225,12 +2285,7 @@ export function projectInventory(
    * player stands. That is bounded and temporary, where the old error was
    * permanent and grew with every point spent all career.
    */
-  const classSheet = viewer.baseCombat ?? viewer.combat;
-  const bought = boughtSheet(viewer, classSheet);
-  const passive = viewer.passiveCombat;
-  const base =
-    bought === undefined || passive === undefined ? bought : composeWielders(bought, [passive]);
-  const worn = wornOf(viewer.equipped, resolveItem);
+  const { base, worn } = swapBaselineFor(viewer);
 
   const equipped: { [K in Slot]?: ItemView } = {};
   for (const slot of SLOT_ORDER) {

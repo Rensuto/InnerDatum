@@ -3170,7 +3170,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // One frame per viewer, each against that viewer's own memory of the floor.
     for (const session of sessions.values()) {
       if (!session.helloDone || realmFor(session).id !== realm.id) continue;
-      const msg = projectGroundItems(realm.world, knownTilesFor(session, realm));
+      // THE VIEWER'S OWN BODY, so each row can say what picking the thing up
+      // would change for THEM — see `GroundItemView.compare`. The frame was
+      // already per-viewer and already memoised on its own contents, so a delta
+      // that moves because this player changed coats invalidates the memo by
+      // itself and the floor is resent.
+      const msg = projectGroundItems(
+        realm.world,
+        knownTilesFor(session, realm),
+        session.actorId === null ? undefined : realm.world.getActor(session.actorId),
+      );
       const key = JSON.stringify(msg.items);
       if (key === (session.lastGroundKey ?? NO_GROUND_KEY)) continue;
       session.lastGroundKey = key;
@@ -3269,7 +3278,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *   pump correctly sends nothing.
    */
   const sendGroundIfAny = (realm: PumpTarget, session: Session): void => {
-    const msg = projectGroundItems(realm.world, knownTilesFor(session, realm));
+    const msg = projectGroundItems(
+      realm.world,
+      knownTilesFor(session, realm),
+      session.actorId === null ? undefined : realm.world.getActor(session.actorId),
+    );
     if (msg.items.length === 0) return;
     // THE MEMO IS WRITTEN HERE TOO. It was not before, because the realm-wide
     // version had a separate `broadcast` arm that did it; sending a frame and

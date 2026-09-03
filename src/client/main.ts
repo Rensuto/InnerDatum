@@ -4529,6 +4529,29 @@ const paintHud: HudPainter = (ctx, width, height) => {
           // which would read as a name and be wrong.
           name: item.name ?? 'something here',
           tier: item.tier,
+          /**
+           * ═══ AND WHAT IT IS, WHERE THE SERVER SAID ═══
+           * All three are optional on the wire, so an older server still draws
+           * the name-and-tier card it always drew. `tooltip.ts` shows them only
+           * when the tile holds ONE thing — a stat block per item on a pile of
+           * four would be forty rows over the fight underneath it.
+           *
+           * The meta line is assembled here rather than on the server for the
+           * reason the bag's is: it is presentation, and `slot` is absent for a
+           * consumable precisely so a surface can say what KIND of thing it is
+           * instead of naming a slot that does not exist.
+           *
+           * ═══ AND A COIN PILE IS NOT A CONSUMABLE ═══
+           * Money is not an `Item` at all — `projectGroundItems` says so in as
+           * many words, because `resolveItem` cannot answer for it and it has no
+           * slot. Keyed off `desc`, which the catalogue always supplies and money
+           * never does, so gold keeps the bare "47 gold" card it has always had
+           * rather than being classified as a drink.
+           */
+          ...(item.desc === undefined
+            ? {}
+            : { meta: `${item.tier} · ${item.slot ?? 'consumable'}`, desc: item.desc }),
+          ...(item.compare === undefined ? {} : { rows: item.compare }),
         })),
         underfoot: lootAt(lootTile) === TileLoot.Underfoot,
         px: pointerPoint.x,

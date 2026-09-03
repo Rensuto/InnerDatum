@@ -2315,6 +2315,47 @@ export type GroundItemView = {
    * force a bump.
    */
   readonly name?: string;
+  /**
+   * WHICH SLOT IT WOULD GO IN, or absent for a consumable — the same absence
+   * `CarriedItemView.slot` uses, and for the same reason: it is what tells the
+   * client there is no Equip for this thing.
+   */
+  readonly slot?: Slot;
+  /** The catalogue sentence — the same string the bag and the shelf show. */
+  readonly desc?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT PICKING IT UP AND PUTTING IT ON WOULD CHANGE. Per viewer.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `projectGroundItems` used to withhold exactly this, and said why: shipping
+   * the `wielder` table *"would hand the client the arithmetic
+   * `CarriedItemView.compare` exists to have already done — and it would do it
+   * for an item nobody has picked up, which is a preview of a decision the
+   * player has not earned yet."*
+   *
+   * THE FIRST HALF OF THAT STILL STANDS AND IS STILL ENFORCED: the `wielder`
+   * table is never sent. These are FINISHED ROWS, computed by `compareRows` on
+   * the server, exactly as the bag's and the shelf's are.
+   *
+   * THE SECOND HALF WAS OVERRULED, deliberately and on request. "A decision you
+   * have not earned" describes a game where identifying an item is itself a
+   * cost; ours has no identification step, the SHELF already prints a full
+   * comparison for something you have not bought, and picking a thing up to look
+   * at it COSTS A TURN — so the rule was charging a player a turn to ask a
+   * question every other surface answers for free. Reported from play: the floor
+   * tooltip showed a name and a tier and nothing else.
+   *
+   * PER VIEWER, WHICH IS WHAT THIS FRAME ALREADY IS. `GroundMsg` is a
+   * `ViewerMsg` — each viewer gets their own, gated on their own remembered
+   * tiles — and `broadcastGroundIfChanged` memoises on the frame's own contents,
+   * so a delta that moves because you changed coats invalidates that memo by
+   * itself and the floor is re-sent. There is no new invalidation to forget.
+   *
+   * Optional, so `PROTOCOL_VERSION` does not move: a client that does not read
+   * it draws the card it always drew.
+   */
+  readonly compare?: readonly InspectRow[];
 };
 
 // ---------------------------------------------------------------------------
