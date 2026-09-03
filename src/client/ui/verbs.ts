@@ -175,6 +175,24 @@ export type VerbContext = {
   readonly selfLeads: boolean;
   /** chebyshev(self, target) === 1. Decides only whether Attack is greyed. */
   readonly adjacent: boolean;
+  /**
+   * WHAT THE VIEWER IS CARRYING, for the `Give` rows. Newest last, as the bag
+   * holds it.
+   *
+   * OPTIONAL, AND ABSENT MEANS "THIS CALLER CANNOT SAY" — the same distinction
+   * `tile.loot` draws. A caller that does not hold the inventory frame offers no
+   * handover rather than an empty one, and the rows simply do not appear.
+   */
+  readonly bag?: readonly { readonly id: string; readonly name?: string }[];
+  /**
+   * WHETHER THE TARGET'S BAG IS FULL — `PartyStateMember.bagFull`, which is the
+   * port of `PartySendItem`'s ` #YELLOW#[NO ROOM]#LAST#` label.
+   *
+   * Optional for the same reason as `bag`: undefined is "not known", and an
+   * unknown bag is treated as having room, because the server refuses in a
+   * sentence anyway and a row greyed on a guess is worse than a refusal.
+   */
+  readonly targetBagFull?: boolean;
 };
 
 export type VerbMenu = {
@@ -196,6 +214,10 @@ const LEAVE = 'Leave party';
 const KICK = 'Remove from party';
 const INVITE = 'Invite to party';
 const ATTACK = 'Attack';
+/** The bare handover, for an item the frame did not name. See `giveRows`. */
+const GIVE = 'Give';
+/** `PartySendItem.lua#generateList`'s ` #YELLOW#[NO ROOM]#LAST#`, as a sentence. */
+const NO_ROOM = 'their bag is full';
 const WALK_UP_TO = 'Walk up to';
 const INSPECT = 'Inspect';
 const TALK_TO = 'Talk to';
@@ -266,6 +288,69 @@ const PILE_ROWS_MAX = 6;
  * player learns what is on a tile they are not standing on, which is what makes
  * walking there a decision.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * YOUR BAG AS ROWS, ON A TEAMMATE — `PartySendItem`, in the menu that exists.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `MapVerb.Give` argues why this is a menu rather than the two nested modals
+ * upstream uses. This function is the list half.
+ *
+ * ═══ IT IS BOUNDED BY THE SAME GEOMETRY `pickupRows` IS ═══
+ * `INVENTORY_CAP` is 12 and the menu has no scroll, so an unbounded bag would
+ * draw a box taller than the smallest viewport this client renders. `PILE_ROWS_MAX`
+ * is reused rather than doubled: it was chosen against the box, not against
+ * loot, and a second constant for the same six rows is a second thing to keep
+ * true. What is cut off says so, in `pickupRows`' words and for its reason.
+ *
+ * ═══ EVERY ROW GREYS TOGETHER, AND ONLY FOR REASONS THE CLIENT CAN SEE ═══
+ * Two of them: out of reach, because `give` names a DIRECTION and there are only
+ * eight, so a teammate across the room has no direction to send; and their bag
+ * being full, which is upstream's `[NO ROOM]`. Anything else — a downed
+ * recipient, an item that left the bag between the frame and the click — is the
+ * server's refusal to make, in a sentence, and guessing at it here would grey a
+ * row the server would have accepted.
+ *
+ * ═══ AN EMPTY BAG PRODUCES NO ROWS AT ALL, not a greyed one ═══
+ * A greyed row exists to teach that something is possible and needs one more
+ * step. "Give" with nothing to give teaches nothing, and it would push Kick down
+ * a line on every teammate for the whole of a game somebody plays without
+ * picking anything up.
+ */
+function giveRows(ctx: VerbContext, targetId: string): readonly MenuItem[] {
+  const bag = ctx.bag ?? [];
+  if (bag.length === 0 || targetId === ctx.selfId) return [];
+
+  // `enabled` IS COMPUTED ONCE FOR THE WHOLE LIST, because both reasons it can
+  // be false are facts about the PAIR of you rather than about any one item.
+  const enabled = ctx.adjacent && ctx.targetBagFull !== true;
+  const rows: MenuItem[] = bag.slice(0, PILE_ROWS_MAX).map((entry) => ({
+    action: MapVerb.Give,
+    // `Give` IS FOUR CHARACTERS, leaving twenty-three of the twenty-eight for
+    // the name — the same arithmetic `Take` is chosen by above. A nameless item
+    // still gets a row: the bare verb, so the bag's shape is never misreported.
+    label: entry.name === undefined ? GIVE : `Give ${entry.name}`,
+    enabled,
+    bagItemId: entry.id,
+  }));
+
+  // ═══ NOTHING IS DROPPED SILENTLY ═══ caselog.ts's rule, as `pickupRows` says.
+  if (bag.length > PILE_ROWS_MAX) {
+    rows.push({
+      action: MapVerb.Give,
+      label: `…and ${String(bag.length - PILE_ROWS_MAX)} more in your bag`,
+      enabled: false,
+    });
+  }
+  // AND THE REASON, WHERE THERE IS ONE THE CLIENT KNOWS. A row greyed with no
+  // explanation is the "unexplained refusal" main.ts calls the worst failure
+  // mode in a turn-based game; upstream prints `[NO ROOM]` for exactly this.
+  if (ctx.targetBagFull === true) {
+    rows.push({ action: MapVerb.Give, label: NO_ROOM, enabled: false });
+  }
+  return rows;
+}
+
 function pickupRows(
   pile: readonly { readonly id: string; readonly name?: string }[],
   loot: TileLoot,
@@ -348,9 +433,22 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
         // `MenuItem.enabled`: a row that vanishes teaches nothing about why.
         return {
           title,
-          items: [{ action: PartyAction.Kick, label: KICK, enabled: ctx.selfLeads }],
+          items: [
+            // ═══ THE HANDOVER GOES ABOVE THE PARTY ROW, for `pickupRows`'
+            // reason: it acts on the WORLD, and Kick acts on the party. ═══
+            ...giveRows(ctx, target.actor.id),
+            { action: PartyAction.Kick, label: KICK, enabled: ctx.selfLeads },
+          ],
         };
       }
+      // NO `Give` ROW FOR A NON-MEMBER, and the asymmetry with `handleGive` — which
+      // accepts any adjacent player — is deliberate. The server is permissive
+      // because `drop` plus `pickup` already is, and being stricter would be a
+      // restriction with no citation. The MENU is quiet because a stranger's bag
+      // is not on any frame this client holds: `bagFull` rides
+      // `PartyStateMember`, so a row here could not carry `[NO ROOM]` and would
+      // be the one handover row that guesses. Dropping it is still available and
+      // still unowned.
       return { title, items: [{ action: PartyAction.Invite, label: INVITE, enabled: true }] };
     }
 

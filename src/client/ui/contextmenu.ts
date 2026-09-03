@@ -89,6 +89,24 @@ export const MapVerb = {
    * new surface to lay out, theme and dismiss for something the menu does.
    */
   Ask: 'ask',
+  /**
+   * HAND ONE CARRIED THING TO THE PERSON UNDER THE CURSOR.
+   *
+   * ═══ THE RECIPIENT LIST IS THE MENU, NOT A DIALOG ═══
+   * Upstream reaches this through two nested modals: `ShowInventory` opens
+   * `UseItemDialog` on an item, whose `transfer` action opens `PartySendItem`,
+   * which lists the party. We have neither modal, and the reason not to build
+   * them is the one `Ask` gives four lines up: the context menu already renders
+   * rows, already closes on a click, already greys what is out of reach.
+   *
+   * SO THE TWO CHOICES ARE THE SAME TWO, IN THE OTHER ORDER — you name the
+   * PERSON by right-clicking them and the ITEM by picking a row, where upstream
+   * names the item first and then the person. Both are one pick each and the
+   * information on screen is the same; this order is the one that fits a mouse
+   * and a map, and it is the same collapse `pickupRows` already made of
+   * `ShowPickupFloor`.
+   */
+  Give: 'give',
 } as const;
 export type MapVerb = (typeof MapVerb)[keyof typeof MapVerb];
 
@@ -141,6 +159,19 @@ export type MenuItem = {
    * that list.
    */
   readonly groundId?: string;
+  /**
+   * WHICH ITEM OUT OF YOUR OWN BAG, for a `Give` row and nothing else.
+   *
+   * SEPARATE FROM `groundId` BECAUSE THEY NAME DIFFERENT THINGS, and the two
+   * would be indistinguishable at the call site. `groundId` is a
+   * `GroundItemView.id` — one physical pile entry, minted by the world. This is
+   * an ITEM ID: a row in the catalogue, the same string `drop` and `equip` take,
+   * and the server resolves it against the sender's own bag. One field for both
+   * would mean a `Give` row whose payload the handler had to guess the meaning
+   * of, which is exactly the ambiguity `topic` and `groundId` were each split out
+   * to avoid.
+   */
+  readonly bagItemId?: string;
 };
 
 export type ContextMenuOptions = {

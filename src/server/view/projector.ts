@@ -66,6 +66,7 @@ import {
 import { TalentEffect } from '../engine/talents.ts';
 import { Faction } from '../engine/actor.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
+import { INVENTORY_CAP } from '../../shared/progression.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
 import { bound } from '../../shared/scale.ts';
@@ -2622,6 +2623,21 @@ export function projectPartyState(
       // uses — see `PartyStateMember.downed` for why the party pane needs it on
       // this frame as well as that one.
       downed: downed === undefined ? null : (downedView(downed, actor.id) ?? null),
+      // AND WHETHER THERE IS ROOM IN THEIR BAG, so the `give` rows in the
+      // inventory's context menu can carry upstream's `[NO ROOM]` label rather
+      // than offering a handover the server is about to refuse.
+      //
+      // NARROWED ON `kind` for the reason `level` above is: `carried` lives on
+      // `PlayerActor`. A row that is not a player omits the field entirely
+      // instead of claiming an empty bag, which would invite the menu to offer a
+      // handover to something that cannot hold anything.
+      //
+      // `>=` AND THE CAP, NOT A COUNT ON THE WIRE — see
+      // `PartyStateMember.bagFull`. The comparison happens here, once, against
+      // the same constant `handleGive` enforces.
+      ...(actor.kind === ActorKind.Player
+        ? { bagFull: (actor.carried ?? []).length >= INVENTORY_CAP }
+        : {}),
     });
   }
 

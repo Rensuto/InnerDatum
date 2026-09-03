@@ -291,6 +291,7 @@ import type {
   BroadcastMsg,
   ClientChooseClass,
   ClientDrop,
+  ClientGive,
   ClientFollow,
   ClientShopBuy,
   ClientShopSell,
@@ -13228,7 +13229,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * multiplied.
    */
   const saveLoot = (
-    verb: 'pickup' | 'equip' | 'unequip' | 'drop' | 'buy' | 'sell' | 'use',
+    verb: 'pickup' | 'equip' | 'unequip' | 'drop' | 'give' | 'buy' | 'sell' | 'use',
   ): void => {
     if (verb === 'pickup') saveNow('loot');
     else queueSave('loot');
@@ -13891,8 +13892,116 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // something down and does NOT exempt it under `quick_wear_takeoff`, which is
     // the right call for us too: a free drop is a free handover, and handing a
     // coat to the person the wraith is standing next to is a real tactical act.
+    // `give` is that handover now, and pays the same turn for the same reason.
     spendLootTurn(body, 'drop');
     saveLoot('drop');
+    pumpAndBroadcast(realmFor(session));
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `give` — "TAKE THIS." The coat handed over, in one turn instead of two.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from t-engine4 game/modules/tome/dialogs/PartySendItem.lua. The wire
+   * contract, what upstream checks, and why this one names a DIRECTION rather
+   * than a player are all argued in `GiveSchema` (src/shared/protocol.ts).
+   *
+   * ═══ IT IS THE SAME SHAPE AS `drop`, ON PURPOSE ═══
+   * Same guard (`lootActor`), same "you are not carrying that", same turn cost,
+   * same save. The only difference is the destination: `drop` hands the item to
+   * the FLOOR, which is unowned and therefore anybody's, and this hands it to a
+   * named body. Reading the two side by side should show one changed line, so
+   * that a future rule about putting something down cannot land on one and miss
+   * the other — which is exactly how the four damage paths drifted into four
+   * different subsets before `b99b2d6`.
+   *
+   * ═══ ANY ADJACENT PLAYER, NOT ONLY A PARTY MEMBER — A DEVIATION ═══
+   * `PartySendItem#generateList` walks `game.party.m_list`. It has to: in ToME
+   * every other body you could hand something to IS a party member, because the
+   * party is your followers and there is no second player. On a shared floor the
+   * nearest analogue of "the others" is "whoever is standing next to you", and
+   * restricting this to a formed party would make `give` STRICTER than the
+   * mechanism it replaces — `drop` plus `pickup` already moves an item to any
+   * player at all, with no party and no adjacency. A new restriction with no
+   * citation behind it is not a port.
+   *
+   * ═══ ONE ENTRY, WHERE UPSTREAM MOVES A STACK ═══
+   * `removeObject(inven, item, true)` and its *"force full stack transfer"*
+   * comment move a whole SLOT holding N identical things. Our bag has no stacks:
+   * it is a flat array where two coats are two entries and `INVENTORY_CAP`
+   * counts entries. So one entry IS the analogue of one slot here, it matches
+   * `withoutOneCopy` and therefore `drop`, and it keeps the recipient's cap
+   * check honest — a stack transfer could put six things into a bag with room
+   * for one and no per-entry check would notice.
+   */
+  const handleGive = (session: Session, msg: ClientGive): void => {
+    const { world } = realmFor(session);
+    const body = lootActor(session, 'give');
+    if (body === undefined) return;
+
+    const bag = bagOf(body);
+    if (!bag.includes(msg.itemId)) {
+      sendError(session.socket, ErrorCode.BadMessage, 'you are not carrying that');
+      return;
+    }
+    const item = resolveItem(msg.itemId);
+    if (item === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
+      return;
+    }
+
+    // THE TILE, RESOLVED SERVER-SIDE FROM ONE OF EIGHT DIRECTIONS. See
+    // `GiveSchema`: the wire never carries the recipient's id, so there is no
+    // attacker-supplied target to range-check.
+    const to = step({ x: body.x, y: body.y }, msg.dir);
+    const recipient = world.actorAt(to.x, to.y);
+    if (recipient === undefined || recipient.kind !== ActorKind.Player) {
+      sendError(session.socket, ErrorCode.Refused, 'there is nobody there to hand it to');
+      return;
+    }
+    // UPSTREAM'S ASLEEP CLAUSE, ON THE STATE WE ACTUALLY HAVE. `PartySendItem`
+    // refuses both directions of a transfer involving a sleeping body; ours is
+    // Downed, and the sender's half is already covered by `lootActor`, which
+    // refuses a body that is not on its feet.
+    if (!recipient.alive || (opts.downed !== undefined && isDowned(opts.downed, recipient.id))) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        `${nameOf(recipient.id)} is on the floor — get them up first`,
+      );
+      return;
+    }
+    // `canAddToInven`, which for us is one number in src/shared/progression.ts.
+    // Answered privately rather than through `noteBagFull`: that notice exists so
+    // somebody ELSE on the tile learns they can take the thing, and here the
+    // person who would be told is the one already holding it.
+    if (bagOf(recipient).length >= INVENTORY_CAP) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        `${nameOf(recipient.id)}'s evidence bag is full`,
+      );
+      return;
+    }
+
+    // ═══ ONE STEP, NO AWAIT, NOTHING BETWEEN THEM ═══ Non-negotiable 2 is what
+    // makes this safe without a lock: no frame can interleave between the two
+    // assignments, so the item is never in both bags and never in neither.
+    body.carried = withoutOneCopy(bag, msg.itemId);
+    recipient.carried = [...bagOf(recipient), msg.itemId];
+
+    broadcastRecordLine(
+      homeOf(body.id),
+      `${nameOf(body.id)} hands the ${item.name} to ${nameOf(recipient.id)}.`,
+    );
+    // THE SENDER PAYS, AND ONLY THE SENDER. Upstream charges nothing here at all
+    // (its dialog never calls `useEnergy`), but upstream also has no second
+    // player whose turn could be spent — and `drop`'s comment above already
+    // settled that a free handover is the thing to avoid. Charging the recipient
+    // too would make accepting a coat cost a turn nobody chose to spend.
+    spendLootTurn(body, 'give');
+    saveLoot('give');
     pumpAndBroadcast(realmFor(session));
   };
 
@@ -14707,6 +14816,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'drop':
         handleDrop(session, msg);
+        return;
+      // THE FIFTH LOOT VERB, and the only one that names a subject — a
+      // DIRECTION, resolved server-side. See `handleGive` and `GiveSchema`.
+      case 'give':
+        handleGive(session, msg);
         return;
       // NAMES A TARGET, NOT A SUBJECT — see `handleFollow`. Who is asking comes
       // from the session; what is named is checked with `sameParty`, which the

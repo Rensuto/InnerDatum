@@ -1911,6 +1911,24 @@ export type PartyStateMember = {
    * it always drew.
    */
   downed?: DownedView | null;
+  /**
+   * WHETHER THIS MEMBER'S BAG IS FULL, so `give` can say so before it is used.
+   *
+   * Ported from `PartySendItem.lua#generateList`, which lists a party member who
+   * cannot take the item ANYWAY and labels the row ` #YELLOW#[NO ROOM]#LAST#`.
+   * That is the right shape and worth keeping: hiding the row would make a
+   * teammate who is standing right there vanish out of the menu, which reads as
+   * a bug in the menu rather than a fact about their bag.
+   *
+   * A BOOLEAN AND NOT A COUNT, deliberately. `INVENTORY_CAP` is the server's to
+   * enforce and the only question the menu asks is "will this fit"; shipping
+   * `carried.length` would put a second copy of the cap in the client to compare
+   * it against, and the first divergence would grey a row the server accepts.
+   *
+   * OPTIONAL, so no protocol bump — a client that does not know it draws the row
+   * unlabelled and the server still refuses, in a sentence.
+   */
+  bagFull?: boolean;
 };
 
 /**
@@ -3107,6 +3125,55 @@ const DropSchema = z.strictObject({
 });
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `give` — HAND A CARRIED ITEM TO THE PERSON STANDING NEXT TO YOU.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 game/modules/tome/dialogs/PartySendItem.lua — the
+ * *"Give item to a party member"* dialog, which lists every party member but the
+ * player and moves the whole stack.
+ *
+ * ═══ WE ALREADY HAD AN ANSWER TO THIS, AND IT COST TWO TURNS ═══
+ * `drop` names it in its own docblock: *"AND IT IS HOW 'YOU TAKE IT, I'VE GOT A
+ * COAT' ACTUALLY HAPPENS — the floor pile is unowned; anything dropped is
+ * anybody's."* That path still works and is still the right one across a room.
+ * What it cannot be is a single act: it is two verbs, two turns and two people's
+ * attention, and the moment it matters — a coat for the person the wraith is
+ * standing next to — is exactly the moment neither player has a turn to spare.
+ * `drop`'s own comment made that argument before this verb existed: *"a free
+ * drop is a free handover, and handing a coat to the person the wraith is
+ * standing next to is a real tactical act."*
+ *
+ * ═══ IT NAMES A DIRECTION, NEVER A PLAYER ═══
+ * The loot verbs' rule is written down beside them: *"NONE OF THEM NAMES A
+ * SUBJECT."* This one has to name a recipient, and it does it the way `revive`
+ * does — a `dir`, which names a TILE. The server reads whoever is standing there
+ * off its own world. A `toActorId` on the wire would be the first player id in
+ * this protocol (non-negotiable 5) and would need an adjacency check on an
+ * attacker-supplied value; a direction has eight possibilities and the server
+ * resolves all of them itself.
+ *
+ * ═══ WHAT UPSTREAM CHECKS, AND WHAT IT DOES NOT ═══
+ * `PartySendItem` refuses when the recipient cannot take it — `canAddToInven`,
+ * which is our `INVENTORY_CAP` — and when either side is ASLEEP. It checks no
+ * adjacency and charges no turn, because ToME's party members are FOLLOWERS
+ * standing on the leader's heels; co-location is implicit and there is no
+ * separate body to be far away. Ours are independent players on a shared floor,
+ * so adjacency is a real question and the answer is the same one `revive` gives.
+ * The turn cost is `Actor.lua:7323`, the rule `drop` and `unequip` already pay.
+ *
+ * We have no sleep. DOWNED is the analogue that exists — a body on the floor
+ * with a countdown — and it is refused for upstream's reason: an unconscious
+ * person cannot take a coat off you. `revive` is the verb for that body.
+ */
+const GiveSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('give'),
+  itemId: z.string().min(1).max(ITEM_ID_MAX_CHARS),
+  dir: z.enum(DIR_ORDER),
+});
+
+/**
  * The five things a player may do about a party. A closed enum on the wire, so
  * an unknown verb is refused by zod rather than reaching a switch that has no
  * case for it.
@@ -3577,6 +3644,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   UseSchema,
   UnequipSchema,
   DropSchema,
+  GiveSchema,
   ShopBuySchema,
   ShopSellSchema,
   FollowSchema,
@@ -3611,6 +3679,7 @@ export type ClientEquip = z.infer<typeof EquipSchema>;
 export type ClientUse = z.infer<typeof UseSchema>;
 export type ClientUnequip = z.infer<typeof UnequipSchema>;
 export type ClientDrop = z.infer<typeof DropSchema>;
+export type ClientGive = z.infer<typeof GiveSchema>;
 export type ClientShopBuy = z.infer<typeof ShopBuySchema>;
 export type ClientShopSell = z.infer<typeof ShopSellSchema>;
 export type ClientFollow = z.infer<typeof FollowSchema>;

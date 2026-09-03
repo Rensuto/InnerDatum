@@ -295,6 +295,14 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // thing somebody has to decide to grow, which is the whole point of this
       // assertion: every entry is a frame the barrier can be made to wait for.
       'follow',
+      // NOT THE KEYS SCREEN'S EITHER, and listed here for `follow`'s reason.
+      // `give` is the context menu's — the port of ToME's `PartySendItem`
+      // dialog, reached by right-clicking a teammate rather than through the two
+      // nested modals upstream uses. It is a genuine new verb and the barrier
+      // CAN be made to wait for it: it costs the sender a turn, exactly as
+      // `drop` does (Actor.lua:7323), because a free handover is the thing
+      // `drop`'s own comment argues against.
+      'give',
       'hold',
       'inspect',
       'move',

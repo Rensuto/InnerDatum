@@ -1856,4 +1856,85 @@ describe('what you put on changes how much of you there is', () => {
     await ren.settle();
     expect(server.refreshed, 'unequip never refreshed the body').toContain(body.id);
   });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `give` — THE HANDOVER, DRIVEN OVER A REAL SOCKET BY TWO REAL PLAYERS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A port of t-engine4 dialogs/PartySendItem.lua. Every assertion here is about
+   * the JOIN rather than either half, because that is the defect this repository
+   * ships: `sourceNumbed` deleted from combat.ts passed all 4,083 tests, and an
+   * ego channel that resolved to nothing rolled 532 times before anybody noticed.
+   * A unit test of `handleGive` would pass with the switch case missing.
+   *
+   * So the coat starts in one bag, crosses a socket, and is asserted to be in
+   * the OTHER bag and gone from the first — one item, two bodies, one frame.
+   */
+  it('hands an item to the player next door, and refuses every way it should', async () => {
+    server = await boot('give-handover');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const renBody = bodyOf(await ren.hello('ren-handle'));
+    const alex = await connect(server.port);
+    playsThe(WATCHMAN);
+    const alexBody = bodyOf(await alex.hello('alex-handle'));
+
+    // SHOULDER TO SHOULDER. `give` names a DIRECTION, so the whole verb is only
+    // reachable from one of the eight tiles around the sender.
+    standAt(renBody, 10, 10);
+    standAt(alexBody, 11, 10);
+    renBody.carried = ['item_watchmans_coat'];
+    alexBody.carried = [];
+    await ren.settle();
+    await alex.settle();
+    ren.clear();
+
+    ren.send({ t: 'give', itemId: 'item_watchmans_coat', dir: 'e' });
+    await ren.settle();
+    await alex.settle();
+
+    // THE ONE ASSERTION THE WHOLE FEATURE IS FOR.
+    expect(renBody.carried, 'the coat never left the giver').toEqual([]);
+    expect(alexBody.carried, 'the coat never arrived').toEqual(['item_watchmans_coat']);
+    expect(ren.last('error'), 'a legal handover was refused').toBeUndefined();
+
+    // ═══ AND IT COST THE TURN ═══ `drop` pays for putting something down
+    // (Actor.lua:7323) and its own comment says why a free handover would be
+    // wrong. If this ever stops being charged, handing a coat round the party
+    // becomes a free action mid-fight.
+    expect(server.saves.queued.length, 'the handover was never saved').toBeGreaterThan(0);
+
+    // ═══ NOBODY THERE ═══ the tile west of Ren is empty floor.
+    ren.clear();
+    alexBody.carried = [];
+    renBody.carried = ['item_watchmans_coat'];
+    await ren.settle();
+    ren.clear();
+    ren.send({ t: 'give', itemId: 'item_watchmans_coat', dir: 'w' });
+    await ren.settle();
+    expect(ren.last('error')?.['code']).toBe('refused');
+    expect(renBody.carried, 'a refused handover still moved the item').toEqual([
+      'item_watchmans_coat',
+    ]);
+
+    // ═══ NOT CARRYING IT ═══ the id is resolved against the SENDER'S own bag,
+    // which is what stops a frame naming somebody else's coat.
+    ren.clear();
+    ren.send({ t: 'give', itemId: 'item_watchmans_cap', dir: 'e' });
+    await ren.settle();
+    expect(ren.last('error')?.['code']).toBe('bad_message');
+
+    // ═══ THEIR BAG IS FULL ═══ upstream's `canAddToInven`, which for us is
+    // INVENTORY_CAP. The coat must stay exactly where it was.
+    ren.clear();
+    alexBody.carried = Array.from({ length: INVENTORY_CAP }, () => 'item_watchmans_cap');
+    await ren.settle();
+    ren.clear();
+    ren.send({ t: 'give', itemId: 'item_watchmans_coat', dir: 'e' });
+    await ren.settle();
+    expect(ren.last('error')?.['code']).toBe('refused');
+    expect(renBody.carried, 'a full bag still took the coat').toEqual(['item_watchmans_coat']);
+    expect(alexBody.carried, 'a full bag grew by one').toHaveLength(INVENTORY_CAP);
+  });
 });

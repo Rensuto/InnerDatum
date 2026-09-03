@@ -7457,6 +7457,27 @@ async function boot(): Promise<void> {
       // Decides ONLY whether Attack is greyed. Chebyshev, because a diagonal
       // step costs the same as an orthogonal one everywhere in this game.
       adjacent: me !== null && chebyshev(me, at) === 1,
+      // ═══ THE BAG, FOR THE `Give` ROWS — see `giveRows` ═══
+      // `itemId` and NOT `id`: the catalogue's key, which is what `give`
+      // resolves against the sender's own bag, exactly as `drop` does. `id` is
+      // the world's per-drop mint and means nothing inside a bag. protocol.ts
+      // spells the distinction out beside `GroundItemView.id`.
+      //
+      // OMITTED RATHER THAN EMPTY when no inventory frame has landed: the field
+      // means "this caller cannot say", and an empty array would claim the bag
+      // is empty and silently offer no handover on a full one.
+      ...(inventory === null
+        ? {}
+        : { bag: inventory.carried.map((entry) => ({ id: entry.itemId, name: entry.name })) }),
+      // AND WHETHER THEIRS IS FULL — `PartySendItem`'s `[NO ROOM]`. Read off the
+      // party frame rather than counted here, because the cap is the server's:
+      // see `PartyStateMember.bagFull`. Absent for anyone not in the party,
+      // which is why `giveRows` offers nothing there.
+      ...(target.kind === 'player'
+        ? {
+            targetBagFull: partyState?.members.find((m) => m.id === target.actor.id)?.bagFull,
+          }
+        : {}),
     });
     if (menu.items.length === 0) return false;
 
@@ -7646,6 +7667,37 @@ async function boot(): Promise<void> {
         // unreachable here whenever the top was something you already owned.
         sendPickup(item.groundId);
         return;
+      case MapVerb.Give: {
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * A DIRECTION AND AN ITEM. NEVER THE RECIPIENT'S ID.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `GiveSchema` argues it in full: the loot verbs never name a subject,
+         * so this names the TILE the subject is standing on, the way `revive`
+         * does. The server reads whoever is there off its own world, which is
+         * strictly stronger than range-checking a supplied id.
+         *
+         * The row carries `bagItemId` — an ITEM id, resolved server-side against
+         * the SENDER'S OWN bag, exactly as `drop` and `equip` are. A row naming
+         * something the sender is not carrying is refused, not sanitised.
+         */
+        const actor = targetId === null ? undefined : actors.get(targetId);
+        const me = selfTile();
+        if (actor === undefined || me === null || item.bagItemId === undefined) return;
+        // The sanctioned idiom, as `Attack` above: walk DIR_ORDER and compare
+        // `step()`, never a hand-rolled dx/dy table.
+        const dir = DIR_ORDER.find((candidate) => sameTile(step(me, candidate), actor));
+        if (dir === undefined) {
+          // They walked off between the menu opening and the row being clicked.
+          // Said out loud for `Attack`'s reason: the row was enabled when it was
+          // drawn, so silence here is a click that visibly did nothing.
+          showNotice('too far to hand it over — step closer first');
+          return;
+        }
+        socket.send({ v: PROTOCOL_VERSION, t: 'give', itemId: item.bagItemId, dir });
+        return;
+      }
       case MapVerb.Talk:
         /**
          * ═══════════════════════════════════════════════════════════════════
