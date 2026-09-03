@@ -985,6 +985,12 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     ...(talent.treeName === undefined ? {} : { treeName: talent.treeName }),
     ...(talent.kind === undefined ? {} : { kind: talent.kind }),
     ...(talent.mastery === undefined ? {} : { mastery: talent.mastery }),
+    // …AND WHETHER ITS CATEGORY IS DRAWN AT ALL (`hide = true`, misc.lua:23).
+    // This would have been the FIFTH field this function dropped in silence —
+    // the levelup panel filters on it, so losing it here would have put the
+    // Inscriptions heading back on the sheet with the server still believing it
+    // had hidden it. Caught by the key-set comparison, again.
+    ...(talent.hidden === undefined ? {} : { hidden: talent.hidden }),
     // WHETHER THE STANCE IS UP. Absent on everything that is not sustained —
     // `false` on an active would claim it could be one. This function copies
     // field by field and has silently dropped a new one twice; see
