@@ -113,6 +113,41 @@ export type VerbTarget =
     }
   | { readonly kind: 'hostile'; readonly actor: ActorView }
   | { readonly kind: 'body'; readonly actor: ActorView }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE THING IN YOUR OWN BAG OR ON YOUR OWN BODY — `UseItemDialog`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Not a tile and not a body, which is why it is its own variant rather than a
+   * field on one: every other target here is something on the MAP, and this one
+   * is a cell in a panel. `targetAt` never produces it; the inventory's own hit
+   * test does.
+   *
+   * `worn` DECIDES A VERB RATHER THAN A LABEL. ToME's dialog offers "Take off"
+   * for something already on and "Wield/Wear" for something in the pack, and the
+   * two are different acts here as well — `unequip` names a SLOT and `equip`
+   * names an ITEM, which is exactly why ui/inventory.ts's click handler branches
+   * on the same two facts.
+   */
+  | {
+      readonly kind: 'item';
+      readonly itemId: string;
+      readonly name: string;
+      /** On the doll rather than in the bag. Absent for a shelf row. */
+      readonly worn: boolean;
+      /** Where it goes, or absent for a consumable — see `ItemView.slot`. */
+      readonly slot?: string;
+      /**
+       * WHO IS STANDING NEXT TO YOU, so `Give` can be offered from the bag the
+       * way upstream offers `transfer` from `UseItemDialog`. Empty when nobody
+       * is, and the rows simply do not appear.
+       */
+      readonly recipients?: readonly {
+        readonly id: string;
+        readonly name: string;
+        readonly bagFull?: boolean;
+      }[];
+    }
   | {
       readonly kind: 'tile';
       readonly tile: TileXY;
@@ -216,6 +251,11 @@ const INVITE = 'Invite to party';
 const ATTACK = 'Attack';
 /** The bare handover, for an item the frame did not name. See `giveRows`. */
 const GIVE = 'Give';
+/** `UseItemDialog`'s three, in this game's words. See the `item` case. */
+const EQUIP = 'Put it on';
+const TAKE_OFF = 'Take it off';
+const USE = 'Use it';
+const DROP = 'Put it down';
 /** `PartySendItem.lua#generateList`'s ` #YELLOW#[NO ROOM]#LAST#`, as a sentence. */
 const NO_ROOM = 'their bag is full';
 const WALK_UP_TO = 'Walk up to';
@@ -450,6 +490,71 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
       // be the one handover row that guesses. Dropping it is still available and
       // still unowned.
       return { title, items: [{ action: PartyAction.Invite, label: INVITE, enabled: true }] };
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `UseItemDialog`, AS ROWS — what can be done to one thing you own.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream's list, minus the systems this game does not have: wear/wield,
+     * use, drop, transfer. `transmo` and the tinkers have nothing behind them
+     * here, and a row that can never become enabled is a lie with a tooltip —
+     * the rule this file states for `Attack` on a townsfolk.
+     *
+     * THE ORDER IS UPSTREAM'S: the thing you most likely meant first, the
+     * irreversible one last. Give sits between them because it is the one that
+     * needs somebody else to be standing there, so it reads as the conditional
+     * offer it is.
+     */
+    case 'item': {
+      const items: MenuItem[] = [];
+      if (target.worn) {
+        // TAKE OFF NAMES A SLOT, NOT AN ITEM — `unequip` carries one of seven
+        // slots and `equip` carries an item id, which is why these are two verbs
+        // in this menu exactly as they are two handlers in the gateway.
+        items.push({
+          action: MapVerb.Equip,
+          label: TAKE_OFF,
+          enabled: true,
+          bagItemId: target.itemId,
+        });
+      } else if (target.slot === undefined) {
+        // NO SLOT MEANS A CONSUMABLE, and `ItemView.slot`'s absence is what says
+        // so — the same test ui/inventory.ts's click handler makes.
+        items.push({ action: MapVerb.Use, label: USE, enabled: true, bagItemId: target.itemId });
+      } else {
+        items.push({
+          action: MapVerb.Equip,
+          label: EQUIP,
+          enabled: true,
+          bagItemId: target.itemId,
+        });
+      }
+
+      // TRANSFER, and only for something in the BAG. Upstream's dialog offers it
+      // off `self.inven`; taking a coat off your own back to hand over is two
+      // acts here, exactly as dropping a worn thing is.
+      if (!target.worn) {
+        for (const to of target.recipients ?? []) {
+          items.push({
+            action: MapVerb.Give,
+            label: `Give to ${to.name}`,
+            enabled: to.bagFull !== true,
+            bagItemId: target.itemId,
+            recipientId: to.id,
+          });
+        }
+      }
+
+      // DROP LAST, because it is the one that puts the thing on the floor for
+      // anybody to take — ui/inventory.ts argues the same placement for the same
+      // reason, and offers it for a CARRIED item only.
+      if (!target.worn) {
+        items.push({ action: MapVerb.Drop, label: DROP, enabled: true, bagItemId: target.itemId });
+      }
+
+      return { title: target.name, items };
     }
 
     case 'hostile': {

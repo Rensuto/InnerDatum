@@ -7517,11 +7517,87 @@ async function boot(): Promise<void> {
    * are both `MapVerb.Travel`, and they differ only in whether the open menu
    * answers `targetId()` or `targetTile()`.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BAG OR DOLL CELL, AS A VERB TARGET — the anchor for `UseItemDialog`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Null for anything that is not an item: the panel frame, the tabs, the DROP
+   * control, an empty slot. The caller relies on that — a null here leaves the
+   * panel's occlusion guard to swallow the click, so a right-click on furniture
+   * cannot fall through to the party pane behind it.
+   *
+   * THE SHELF IS DELIBERATELY EXCLUDED. A shop row is not yours: `UseItemDialog`
+   * is opened on `self.inven`, and the verbs here — wear it, hand it over, put
+   * it down — are all things you can only do to something you own. Buying has
+   * its own control on the strip and is a different act.
+   */
+  function inventoryTargetAt(rect: PanelRect, px: number, py: number): VerbTarget | null {
+    const hit = inventoryPanelHitAt(rect, inventoryRowsFor(rect), px, py);
+    if (hit === null || hit.kind !== InventoryHitKind.Item) return null;
+    if (invTab === InventoryTab.Shop) return null;
+
+    const bag = inventory?.carried ?? [];
+    const doll = inventory?.equipped ?? {};
+    const worn = wornSlotOf(hit.itemId, doll);
+    const carried = worn === null ? bag.find((e) => e.itemId === hit.itemId) : undefined;
+    const row = worn === null ? carried : doll[worn];
+    if (row === undefined) return null;
+    // WHERE IT GOES. For something already on, the answer IS the slot it is
+    // in; `ItemView` on the doll carries no `slot` field precisely because the
+    // key it is filed under already says. For a bag row it is
+    // `CarriedItemView.slot`, absent for a consumable — which is what tells
+    // the menu to offer `Use it` instead of `Put it on`.
+    const slot = worn ?? carried?.slot;
+
+    /**
+     * WHO COULD TAKE IT — the same rule `giveRows` applies on the map, read from
+     * the same two frames. Party members only, because `bagFull` rides
+     * `PartyStateMember` and a row for a stranger could not carry `[NO ROOM]`;
+     * adjacent only, because `give` names one of eight directions.
+     */
+    const me = selfTile();
+    const recipients =
+      me === null
+        ? []
+        : [...actors.values()]
+            .filter(
+              (a) =>
+                a.id !== selfId &&
+                a.kind === 'player' &&
+                partyIds().has(a.id) &&
+                chebyshev(me, a) === 1,
+            )
+            .map((a) => ({
+              id: a.id,
+              name: a.name,
+              bagFull: partyState?.members.find((m) => m.id === a.id)?.bagFull,
+            }));
+
+    return {
+      kind: 'item',
+      itemId: hit.itemId,
+      name: row.name,
+      worn: worn !== null,
+      ...(slot === undefined ? {} : { slot }),
+      recipients,
+    };
+  }
+
   function openVerbMenu(target: VerbTarget, px: number, py: number): boolean {
     if (tokenMenu === null || selfId === null) return false;
 
     const me = selfTile();
-    const at = target.kind === 'tile' ? target.tile : target.actor;
+    /**
+     * WHERE THE TARGET IS, or null for one that is not on the map at all.
+     *
+     * An `item` target is a cell in a panel — there is no tile to be adjacent
+     * TO, and its `Give` rows carry their own recipients, each already chosen
+     * for standing next to you. `adjacent` therefore answers false for it, which
+     * is correct rather than merely safe: the only rows that read it are the
+     * map's, and the item menu builds none of them.
+     */
+    const at = target.kind === 'tile' ? target.tile : target.kind === 'item' ? null : target.actor;
     const menu = verbsFor({
       target,
       // From the local session's own id, never from a field on a frame.
@@ -7530,7 +7606,7 @@ async function boot(): Promise<void> {
       selfLeads: selfLeads(),
       // Decides ONLY whether Attack is greyed. Chebyshev, because a diagonal
       // step costs the same as an orthogonal one everywhere in this game.
-      adjacent: me !== null && chebyshev(me, at) === 1,
+      adjacent: at !== null && me !== null && chebyshev(me, at) === 1,
       // ═══ THE BAG, FOR THE `Give` ROWS — see `giveRows` ═══
       // `itemId` and NOT `id`: the catalogue's key, which is what `give`
       // resolves against the sender's own bag, exactly as `drop` does. `id` is
@@ -7563,7 +7639,14 @@ async function boot(): Promise<void> {
       items: menu.items,
       viewportW: logicalW,
       viewportH: logicalH,
-      ...(target.kind === 'tile' ? { targetTile: target.tile } : { targetId: target.actor.id }),
+      // AN ITEM MENU NAMES NEITHER. Its rows carry what they need —
+      // `bagItemId` and, for a handover, `recipientId` — because the menu is
+      // anchored on a bag cell and there is no actor or tile under it.
+      ...(target.kind === 'tile'
+        ? { targetTile: target.tile }
+        : target.kind === 'item'
+          ? {}
+          : { targetId: target.actor.id }),
     });
     return true;
   }
@@ -7756,7 +7839,13 @@ async function boot(): Promise<void> {
          * the SENDER'S OWN bag, exactly as `drop` and `equip` are. A row naming
          * something the sender is not carrying is refused, not sanitised.
          */
-        const actor = targetId === null ? undefined : actors.get(targetId);
+        // THE ROW'S RECIPIENT WINS, and only an ITEM menu sets one. Right-
+        // clicking a teammate names them by the menu's target; right-clicking a
+        // bag cell has no target actor at all, so the row carries the id — see
+        // `MenuItem.recipientId`. Either way it is resolved to a DIRECTION here
+        // and the wire never learns a player id.
+        const toId = item.recipientId ?? targetId;
+        const actor = toId === null || toId === undefined ? undefined : actors.get(toId);
         const me = selfTile();
         if (actor === undefined || me === null || item.bagItemId === undefined) return;
         // The sanctioned idiom, as `Attack` above: walk DIR_ORDER and compare
@@ -7772,6 +7861,42 @@ async function boot(): Promise<void> {
         socket.send({ v: PROTOCOL_VERSION, t: 'give', itemId: item.bagItemId, dir });
         return;
       }
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * `UseItemDialog`'S THREE. They send the frames the panel already sends.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * NOT NEW VERBS ON THE WIRE. `equip`, `use`, `unequip` and `drop` have
+       * existed since v10 and the inventory's own click handler sends all four;
+       * these rows are a second DOOR to them, which is the whole of what porting
+       * this dialog means here. `keybindwiring.test.ts`'s verb ratchet does not
+       * move, and that is the tell that this is a UI change rather than a
+       * protocol one.
+       */
+      case MapVerb.Equip: {
+        if (item.bagItemId === undefined) return;
+        // ONE ROW, TWO FRAMES, TOLD APART BY THE BAG. Taking a coat OFF names a
+        // slot; putting one on names an item. `itemSlotFor` asks the inventory
+        // the same question ui/inventory.ts's click handler asks.
+        // `wornSlotOf` IS ui/hotbar.ts's, ALREADY SHARED WITH THE BAR. A second
+        // walk of `SLOT_ORDER` here would be a second answer to "is this on me",
+        // and the two would disagree the first time a slot was added.
+        const worn = wornSlotOf(item.bagItemId, inventory?.equipped ?? {});
+        if (worn !== null) sendUnequip(worn);
+        else sendEquip(item.bagItemId);
+        return;
+      }
+      case MapVerb.Use:
+        if (item.bagItemId === undefined) return;
+        sendUse(item.bagItemId);
+        return;
+      case MapVerb.Drop:
+        // ONE PRESS, NO CONFIRMATION — ui/inventory.ts argues it at the control:
+        // the item lands on the tile you are standing on and `pickup` takes it
+        // straight back for the price of a turn.
+        if (item.bagItemId === undefined) return;
+        sendDrop(item.bagItemId);
+        return;
       case MapVerb.Talk:
         /**
          * ═══════════════════════════════════════════════════════════════════
@@ -10583,6 +10708,27 @@ async function boot(): Promise<void> {
         // pane than any of its siblings can. Same treatment, same reason: pure
         // occlusion, no right-click branch of its own — there is no verb this
         // panel offers that a right-click could mean.
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * ...EXCEPT THE INVENTORY, WHICH NOW HAS SOMETHING TO SAY.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The paragraph above used to end "there is no verb this panel offers
+         * that a right-click could mean". There is now: `UseItemDialog` is
+         * ported as rows on a bag cell — put it on, take it off, hand it over,
+         * put it down. So this one panel gets a branch before the occlusion
+         * test, and the other three keep the treatment the comment describes.
+         *
+         * IT STILL OCCLUDES WHEN IT HAS NO ROW. A right-click on the panel's
+         * frame, its tabs or an empty slot must not fall through to the party
+         * pane underneath — that is the shipped bug this guard exists for — so
+         * `openVerbMenu` answering false leaves `overSheet` true and the click
+         * is swallowed exactly as before.
+         */
+        if (layout.inventory !== null && inRect(layout.inventory, point.x, point.y)) {
+          const target = inventoryTargetAt(layout.inventory, point.x, point.y);
+          if (target !== null && openVerbMenu(target, point.x, point.y)) return;
+        }
         const overSheet =
           inRect(layout.sheet, point.x, point.y) ||
           inRect(layout.talents, point.x, point.y) ||

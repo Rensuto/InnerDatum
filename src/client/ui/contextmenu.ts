@@ -107,6 +107,30 @@ export const MapVerb = {
    * `ShowPickupFloor`.
    */
   Give: 'give',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE THREE AN ITEM IN YOUR OWN BAG OFFERS — `UseItemDialog`, as rows.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream opens `UseItemDialog` on a click in `ShowInventory` and lists what
+   * this object can have done to it: wear/wield, use, drop, transfer, plus the
+   * systems we do not have (transmo, tinkers). These are that list.
+   *
+   * ═══ THEY ARE AN ADDITION, NOT A REPLACEMENT ═══
+   * Left-click still equips, drinks and unequips in ONE press — ui/inventory.ts
+   * calls that "the one interaction" and it is the right default for a mouse.
+   * A modal that turned every wear into two clicks would be a worse game in
+   * exchange for a more faithful screen. So the dialog is ported where it costs
+   * nothing: on the button that currently does nothing at all over a bag cell.
+   *
+   * `Equip` AND `Use` ARE TWO VERBS AND NOT ONE, because `ItemView.slot` decides
+   * which is legal and the row has to say which it is — "Equip" on a draught
+   * would be a row that reads as possible and is refused, which is the failure
+   * ui/verbs.ts spends a paragraph forbidding for `Attack` on a townsfolk.
+   */
+  Equip: 'equip',
+  Use: 'use',
+  Drop: 'drop',
 } as const;
 export type MapVerb = (typeof MapVerb)[keyof typeof MapVerb];
 
@@ -172,6 +196,20 @@ export type MenuItem = {
    * to avoid.
    */
   readonly bagItemId?: string;
+  /**
+   * WHO IS RECEIVING, for a `Give` row raised from the BAG and nothing else.
+   *
+   * ═══ THE MAP'S GIVE ROWS DO NOT NEED IT AND MUST NOT USE IT ═══
+   * Right-clicking a teammate names the recipient by the menu's own target, and
+   * `runMenuItem` already has that id in hand. Right-clicking an ITEM names no
+   * actor at all — the menu is anchored on a bag cell — so the recipient has to
+   * ride the row instead. One verb, two origins, and the payload says which.
+   *
+   * STILL AN ACTOR ID AND STILL NOT ON THE WIRE. `give` carries a DIRECTION;
+   * this is resolved to one client-side against the sender's own live position,
+   * exactly as the map rows are. See `GiveSchema`.
+   */
+  readonly recipientId?: string;
 };
 
 export type ContextMenuOptions = {

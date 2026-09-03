@@ -463,3 +463,99 @@ describe('a pile is a list, not a lid', () => {
     expect(rowsHere[0]?.groundId, 'it still names WHICH one').toBe('g0');
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `UseItemDialog` — what can be done to one thing you own.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 dialogs/UseItemDialog.lua, minus the systems this game
+ * does not have (transmo, tinkers): a row that can never become enabled is a lie
+ * with a tooltip, which is the rule this file states for `Attack` on a
+ * townsfolk.
+ *
+ * IT IS AN ADDITION, NOT A REPLACEMENT. Left-click still equips and drinks in
+ * one press; these rows are on the button that did nothing at all over a bag
+ * cell until now.
+ */
+describe('verbsFor — one item in your own bag', () => {
+  const COAT = {
+    kind: 'item',
+    itemId: 'item_watchmans_coat',
+    name: 'Watchman Coat',
+    worn: false,
+    slot: 'body',
+  } as const;
+
+  it('offers put it on, and put it down, for something in the pack', () => {
+    const menu = verbsFor(ctxFor(COAT));
+    expect(menu.title).toBe('Watchman Coat');
+    expect(actionsOf(menu.items)).toEqual([MapVerb.Equip, MapVerb.Drop]);
+    // EVERY ROW NAMES THE ITEM. `bagItemId` is what `runMenuItem` sends, and a
+    // row without one is a row that would do nothing when pressed.
+    for (const item of menu.items) expect(item.bagItemId).toBe(COAT.itemId);
+    for (const item of menu.items) expect(item.enabled).toBe(true);
+  });
+
+  /**
+   * TAKING A COAT OFF IS A DIFFERENT ACT FROM PUTTING ONE ON — `unequip` names a
+   * SLOT and `equip` names an ITEM — so the menu says which, and offers neither
+   * Drop nor Give: both are for something in the pack, exactly as upstream opens
+   * its dialog on `self.inven`.
+   */
+  it('offers only take it off for something already worn', () => {
+    const menu = verbsFor(ctxFor({ ...COAT, worn: true }));
+    expect(actionsOf(menu.items)).toEqual([MapVerb.Equip]);
+    expect(menu.items[0]?.label).toBe('Take it off');
+  });
+
+  /**
+   * NO SLOT MEANS A CONSUMABLE. `ItemView.slot`'s ABSENCE is what says so — the
+   * same test the panel's click handler makes — and offering "Put it on" for a
+   * draught would be a row that reads as possible and is refused.
+   */
+  it('offers use it for a thing with no slot', () => {
+    const menu = verbsFor(
+      ctxFor({ kind: 'item', itemId: 'item_draught_mending', name: 'Draught', worn: false }),
+    );
+    expect(actionsOf(menu.items)).toEqual([MapVerb.Use, MapVerb.Drop]);
+    expect(menu.items[0]?.label).toBe('Use it');
+  });
+
+  /**
+   * ═══ `transfer`, WHICH IS WHERE UPSTREAM PUTS IT ═══
+   * `UseItemDialog`'s transfer action opens `PartySendItem`. Ours lists the
+   * recipients inline for the reason contextmenu.ts gives — the menu already
+   * renders rows and greys what cannot be pressed, and a second modal would be a
+   * whole surface to lay out for something this does.
+   */
+  it('offers a handover row per adjacent teammate, greyed when their bag is full', () => {
+    const menu = verbsFor(
+      ctxFor({
+        ...COAT,
+        recipients: [
+          { id: 'actor_b', name: 'Alex' },
+          { id: 'actor_c', name: 'Ren', bagFull: true },
+        ],
+      }),
+    );
+    expect(actionsOf(menu.items)).toEqual([
+      MapVerb.Equip,
+      MapVerb.Give,
+      MapVerb.Give,
+      MapVerb.Drop,
+    ]);
+    const gives = menu.items.filter((row) => row.action === MapVerb.Give);
+    expect(gives[0]?.label).toBe('Give to Alex');
+    expect(gives[0]?.enabled).toBe(true);
+    expect(gives[0]?.recipientId).toBe('actor_b');
+    // GREYED, NOT DROPPED. A row that vanishes teaches nothing about why — and
+    // this is the port of PartySendItem's own `[NO ROOM]` label.
+    expect(gives[1]?.enabled, 'a full bag was still offered as possible').toBe(false);
+  });
+
+  it('offers no handover when nobody is standing next to you', () => {
+    const menu = verbsFor(ctxFor({ ...COAT, recipients: [] }));
+    expect(actionsOf(menu.items)).not.toContain(MapVerb.Give);
+  });
+});
