@@ -232,6 +232,19 @@ export type LootMarker = {
 export type Scene = {
   readonly level: LevelView | null;
   /**
+   * The visual scale of `level`, exactly as the server named it.
+   *
+   * Tile codes describe gameplay material, not camera scale: COBBLE is still
+   * cobble both on the moor and after stepping into a town.  The pictures are
+   * not interchangeable, though.  An overworld cell can contain a whole road
+   * junction or settlement; a local cell is one player-sized patch of street,
+   * roof or wall.  Keeping this beside the level lets the renderer choose the
+   * right art without inventing new collision/protocol codes for a visual fact.
+   * Null is the honest pre-`realm` state and deliberately draws the flat
+   * fallback rather than guessing either scale.
+   */
+  readonly realmKind: string | null;
+  /**
    * Places on THIS map you can walk into, drawn as markers over the terrain.
    *
    * THE OVERWORLD'S WHOLE JOB IS TELLING YOU WHERE THINGS ARE. The first
@@ -940,7 +953,7 @@ function require2dContext(target: HTMLCanvasElement, alpha: boolean): CanvasRend
  * TileCode -> the sprite id(s) that may draw it. The ART SEAM, finally open.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * INTERIORS STAY FLAT. FLOOR AND WALL ARE ABSENT HERE ON PURPOSE, FOREVER.
+ * VIEWING SCALE IS EXPLICIT. FLOOR AND WALL ALONE REMAIN ART-FREE.
  * ═══════════════════════════════════════════════════════════════════════════
  * The overworld is a fixed, hand-authored city, so it can afford — and wants —
  * real terrain art. An inner-world is the opposite: instanced, disposable, and
@@ -1154,7 +1167,10 @@ export function transportMask(
  * than copied: a second hand-written copy of a table one file owns is the exact
  * shape this codebase has been bitten by repeatedly.
  */
-export const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
+export type TerrainSpriteTable = Partial<Record<TileCode, readonly string[]>>;
+
+/** World-map art. Exported because `tools/look.mjs` renders this exact table. */
+export const TILE_SPRITES: TerrainSpriteTable = {
   [TileCode.COBBLE]: ['tile_ow_cobble', 'tile_ow_cobble_b'],
   [TileCode.PAVING]: ['tile_ow_paving'],
   [TileCode.GREEN]: ['tile_ow_green'],
@@ -1263,6 +1279,55 @@ export const TILE_SPRITES: Partial<Record<TileCode, readonly string[]>> = {
     'tile_ow_charred_f',
   ],
 };
+
+/**
+ * Player-scale terrain for every world material currently used by a Common or
+ * Inner realm.
+ *
+ * THIS IS A SEPARATE NAMESPACE, NOT A SECOND SKIN FOR THE SAME PICTURE.  The
+ * regression photographed in Alderbrook came from feeding the world renderer's
+ * complete 64px civic-building symbol to every solid cell inside the city.  A
+ * 5x3 block therefore became fifteen doll houses beside a one-cell-tall human.
+ * These ids instead name seamless, close-scale material slices: one cell of
+ * paving, masonry, roof, rock or vegetation.  Repeating them joins a mass; it
+ * never repeats a complete building.
+ *
+ * No entry falls back to `TILE_SPRITES`.  Missing local art deliberately takes
+ * `tileFill`'s clear flat-colour path, because a plain wall at the correct scale
+ * is more truthful than a beautifully drawn mountain or house at the wrong one.
+ * FLOOR and WALL remain absent for the same reason they always were: abstract
+ * generated chambers need no commissioned surface.
+ */
+export const LOCAL_TILE_SPRITES: TerrainSpriteTable = {
+  [TileCode.COBBLE]: ['tile_local_cobble', 'tile_local_cobble_b'],
+  [TileCode.PAVING]: ['tile_local_paving'],
+  [TileCode.GREEN]: ['tile_local_green'],
+  [TileCode.MIRE]: ['tile_local_mire'],
+  [TileCode.SOOT]: ['tile_local_soot'],
+  [TileCode.TERRACE]: ['tile_local_terrace'],
+  [TileCode.CIVIC]: ['tile_local_civic'],
+  [TileCode.WORKS]: ['tile_local_works'],
+  [TileCode.TREES]: ['tile_local_trees'],
+  [TileCode.ERASED]: ['tile_local_erased'],
+  [TileCode.WATER]: ['tile_local_water'],
+  [TileCode.PLAINS]: ['tile_local_plains', 'tile_local_plains_b'],
+  [TileCode.HILLS]: ['tile_local_hills'],
+  [TileCode.HEATH]: ['tile_local_heath'],
+  [TileCode.SHORE]: ['tile_local_shore'],
+  [TileCode.YARD]: ['tile_local_yard'],
+  [TileCode.TOWN_WALL]: ['tile_local_town_wall'],
+  [TileCode.MOUNTAIN]: ['tile_local_mountain'],
+  [TileCode.CRAG]: ['tile_local_crag'],
+};
+
+const NO_TILE_SPRITES: TerrainSpriteTable = {};
+
+/** The only scale switch. Unknown/pre-realm state fails to the flat palette. */
+export function tileSpritesForRealm(realmKind: string | null): TerrainSpriteTable {
+  if (realmKind === 'overworld') return TILE_SPRITES;
+  if (realmKind === 'common' || realmKind === 'inner') return LOCAL_TILE_SPRITES;
+  return NO_TILE_SPRITES;
+}
 
 function tileFill(code: TileCode): string {
   switch (code) {
@@ -1703,8 +1768,15 @@ export function createRenderer(options: RendererOptions): Renderer {
     backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
   }
 
-  function paintTerrain(code: TileCode, tx: number, ty: number, sx: number, sy: number): boolean {
-    const ids = TILE_SPRITES[code];
+  function paintTerrain(
+    table: TerrainSpriteTable,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    sx: number,
+    sy: number,
+  ): boolean {
+    const ids = table[code];
     if (ids === undefined) return false;
 
     const id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
@@ -1718,7 +1790,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     // letting it tear the grid would be a worse way to report that than a
     // stretched cell. Terrain authored at 32 therefore draws as a whole-number
     // double into the 64-pixel cell — chunky, never blurred, and correct the
-    // moment the 64-pixel family for that tile is installed.
+    // moment the native 64-pixel family for that scale is installed.
     backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
     return true;
   }
@@ -1912,7 +1984,14 @@ export function createRenderer(options: RendererOptions): Renderer {
     backCtx.drawImage(sprite.image, dx, dy, sprite.w, sprite.h);
   }
 
-  function paintTiles(level: LevelView, camX: number, camY: number): void {
+  function paintTiles(
+    level: LevelView,
+    realmKind: string | null,
+    camX: number,
+    camY: number,
+  ): void {
+    const table = tileSpritesForRealm(realmKind);
+    const paintsWorldTopology = realmKind === 'overworld';
     const minTx = Math.max(0, Math.floor(camX / TILE_PX));
     const minTy = Math.max(0, Math.floor(camY / TILE_PX));
     const maxTx = Math.min(level.w - 1, Math.floor((camX + logicalW - 1) / TILE_PX));
@@ -1930,8 +2009,12 @@ export function createRenderer(options: RendererOptions): Renderer {
         // cell — no flat fill under it, no grid line over it. See `paintTerrain`.
         // THE LINE OVER THE GROUND. Only when a terrain sprite actually
         // drew — see `paintTransport`.
-        if (paintTerrain(code, tx, ty, sx, sy)) {
-          paintTransport(level, code, tx, ty, sx, sy);
+        if (paintTerrain(table, code, tx, ty, sx, sy)) {
+          // Road/rail/bridge overlays describe whole overworld connections.
+          // Reusing them inside a town puts a map-scale junction on one patch
+          // of player-scale paving, the same category error this table split
+          // exists to prevent. Local topology gets its own family if needed.
+          if (paintsWorldTopology) paintTransport(level, code, tx, ty, sx, sy);
         } else {
           backCtx.fillStyle = tileFill(code);
           backCtx.fillRect(sx, sy, TILE_PX, TILE_PX);
@@ -2362,7 +2445,7 @@ export function createRenderer(options: RendererOptions): Renderer {
       const camX = cameraAxis(level.w * TILE_PX, logicalW, focusX);
       const camY = cameraAxis(level.h * TILE_PX, logicalH, focusY);
 
-      paintTiles(level, camX, camY);
+      paintTiles(level, scene.realmKind, camX, camY);
 
       // THE LANDMARKS, directly on the terrain and under everything else. A
       // marker is part of the map rather than a thing standing on it, so a

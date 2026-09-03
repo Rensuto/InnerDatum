@@ -4890,6 +4890,13 @@ function scene(): Scene {
     level,
     actors: [...actors.values()],
     selfId,
+    // WHICH REALM IS UNDER THE CAMERA, so the renderer can pick a terrain table
+    // — an overworld tile and a dungeon tile are drawn at different scales.
+    // The variable already existed and already carried exactly this: it is set
+    // from the `realm` frame and is null until one arrives, which is the same
+    // `string | null` the painter takes. The table and its reader landed without
+    // this line, so every scene painted as though the realm were unknown.
+    realmKind,
     sites,
     targeting: targeting?.cells(),
     cursor: targeting?.cursor() ?? null,

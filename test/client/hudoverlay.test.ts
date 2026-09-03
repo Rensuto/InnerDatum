@@ -60,6 +60,7 @@ describe('the interface is an overlay', () => {
       level: null,
       actors: [],
       selfId: null,
+      realmKind: null,
       hud: (_ctx, w, h) => {
         handed = { w, h };
       },
@@ -85,7 +86,7 @@ describe('the interface is an overlay', () => {
      * the browser there is nothing behind them is free speed worth keeping.
      */
     const { renderer, visible } = render();
-    renderer.draw({ level: null, actors: [], selfId: null, hud: () => undefined });
+    renderer.draw({ level: null, actors: [], selfId: null, realmKind: null, hud: () => undefined });
 
     const composited = visible.ctx?.blits.map((b) => b.source) ?? [];
     const under = composited[0] as StubCanvas | undefined;
@@ -100,6 +101,7 @@ describe('the interface is an overlay', () => {
       level: null,
       actors: [],
       selfId: null,
+      realmKind: null,
       hud: (_ctx, w, h) => {
         handed = { w, h };
       },
