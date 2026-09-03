@@ -2600,14 +2600,49 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        * (Combat.lua:53), and a guard that costs a Map lookup is a cheap price
        * for a bug that would present as bodies teleporting out of dungeons.
        */
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * ONCE PER PAIR PER GAME TURN — the clause upstream has no need of.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `Combat.lua:32-74` is the PLAYER pushing a FOLLOWER, and a follower has
+       * no opinion about where it is going. Ours are two people at two keyboards,
+       * and every swap moves BOTH bodies — so two friends walking the same way
+       * undo each other, forever.
+       *
+       * MEASURED, two real sockets on one moor: A and B adjacent, both walking
+       * east, ten commands each. Twenty position changes, NET ZERO, alternating
+       * between exactly two tiles. Walking down a corridor together is the most
+       * ordinary thing a party does and it did not work.
+       *
+       * ═══ WHY ONE EXCHANGE IS THE WHOLE FIX ═══
+       * The second swap of a pair is always the one that undoes the first, so
+       * refusing it is enough. What happens next is the behaviour we wanted all
+       * along: the body that was pushed back is blocked for that one move, and on
+       * the NEXT turn the one in front steps into free floor and the one behind
+       * follows it. One move lost at the moment they collide, then clean travel.
+       *
+       * ═══ AND THE DOORWAY IS UNTOUCHED ═══
+       * The case this swap exists for — *"my friend is in the doorway"*, which the
+       * comment above measured at twelve consecutive refused steps — is a friend
+       * STANDING STILL. They swap once and are through, and the second exchange
+       * this refuses never happens because nobody is pushing back.
+       */
+      const wouldUndo = occupant !== undefined && occupant.lastSwap?.withId === actor.id;
       if (
         occupant !== undefined &&
+        !wouldUndo &&
         actor.kind === ActorKind.Player &&
         occupant.kind === ActorKind.Player &&
         !(run.ctx.downed !== undefined && isDowned(run.ctx.downed, occupant.id))
       ) {
         const theirs: TileXY = { x: occupant.x, y: occupant.y };
         if (world.swapPlaces(actor.id, occupant.id)) {
+          // STAMPED ON BOTH, because the rule is about the PAIR and either of
+          // them may be the next mover. One-sided marking would let the shoved
+          // body immediately shove back, which is the loop this closes.
+          actor.lastSwap = { withId: occupant.id };
+          occupant.lastSwap = { withId: actor.id };
           run.ctx.talents?.noteMoved(actor.id);
           return { ok: true, effect: { kind: 'swapped', from, to: theirs, otherId: occupant.id } };
         }
@@ -2617,6 +2652,11 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       // position, so terrain and occupancy are decided in exactly one place.
       const moved = world.tryMove(actor.id, dir);
       if (!moved.ok) return { ok: false, reason: moved.reason };
+      // A STEP ONTO FREE FLOOR ENDS THE EXCHANGE. See `Actor.lastSwap`: the mark
+      // exists only to stop the shoved body shoving straight back, and once
+      // either of them has gone somewhere under their own power there is nothing
+      // left to undo.
+      actor.lastSwap = undefined;
       // `TalentSheet.movedThisTurn` — the flag Focus regen reads, set from the
       // one place in the process where an actor's tile actually changes. Cleared
       // by the talent `actBase` pass at the top of the next game turn.

@@ -105,6 +105,47 @@ describe('bumping into a body', () => {
     expect({ x: world.getActor('p2')?.x, y: world.getActor('p2')?.y }).toEqual(was.a);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TWO FRIENDS WALKING THE SAME WAY MUST BOTH GET SOMEWHERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Combat.lua:32-74` is the PLAYER pushing a FOLLOWER, and a follower has no
+   * opinion about where it is going. Ours are two people at two keyboards, and
+   * every swap moves BOTH bodies — so without a guard they undo each other.
+   *
+   * MEASURED over two real sockets before the fix: ten commands each, twenty
+   * position changes, NET ZERO, alternating between exactly two tiles. This is
+   * that, in the engine, in four moves.
+   */
+  it('does not let two players walking the same way undo each other', () => {
+    const { world, engine, a, b } = twoPlayers();
+    // WHICHEVER WAY `b` LIES, that is the way they are both walking: the mover
+    // walks INTO the other, which is the collision the guard is about.
+    const dir = b.x > a.x ? 'e' : b.x < a.x ? 'w' : b.y > a.y ? 's' : 'n';
+    const axis = dir === 'e' || dir === 'w' ? 'x' : 'y';
+    const sign = dir === 'e' || dir === 's' ? 1 : -1;
+    const startA = a[axis];
+    const startB = b[axis];
+
+    // FOUR EXCHANGES, which is twice as many as it takes to deadlock: the old
+    // behaviour is a two-cycle, so any even number of them returns to the start.
+    for (let i = 0; i < 4; i += 1) {
+      engine.submitMove('p1', dir);
+      engine.pump();
+      engine.submitMove('p2', dir);
+      engine.pump();
+    }
+
+    const endA = world.getActor('p1')?.[axis] ?? startA;
+    const endB = world.getActor('p2')?.[axis] ?? startB;
+    // THE ASSERTION IS PROGRESS, NOT A POSITION. How far they get depends on the
+    // one move the shoved body loses when they first collide, and pinning an
+    // exact tile would be pinning that incidental rather than the property.
+    expect((endA - startA) * sign, 'the mover made no ground').toBeGreaterThan(0);
+    expect((endB - startB) * sign, 'the body that was shoved made no ground').toBeGreaterThan(0);
+  });
+
   it('will not shove a townsfolk out of the way', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

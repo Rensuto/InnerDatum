@@ -619,6 +619,32 @@ type ActorCommon = {
    * `unlockedTrees` already chose.
    */
   knownLore?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHO THIS BODY LAST TRADED PLACES WITH, AND ON WHICH GAME TURN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE ONE THING UPSTREAM NEVER NEEDS, because upstream never has two bodies
+   * that both decide where to walk. `Combat.lua:32-74`'s swap is the PLAYER
+   * pushing a FOLLOWER, and a follower does not push back.
+   *
+   * MEASURED, two real sockets on one moor: A and B adjacent, both walking
+   * east, ten commands each. Twenty position changes and NET ZERO — A shoves B
+   * backwards, B shoves A backwards, forever, because every swap moves BOTH
+   * bodies and each undoes the last. Two friends walking down a corridor
+   * together is the most ordinary thing in a co-op roguelike and it did not
+   * work.
+   *
+   * ═══ NOT KEYED ON THE GAME TURN, AND THAT WAS THE FIRST ATTEMPT ═══
+   * `gameTurn` advances whenever ANY body spends energy, and shared-realm
+   * players are free-running — so two people walking together are almost never
+   * in the same turn as each other and a per-turn guard never fired. Measured:
+   * still net zero. The mark is cleared by a NORMAL move instead, which is the
+   * event that actually means *"I got where I was going"*.
+   *
+   * See the swap branch in `scheduler.ts` for the rule this feeds.
+   */
+  lastSwap?: { readonly withId: string };
 
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.
