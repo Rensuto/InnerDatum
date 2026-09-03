@@ -44,7 +44,7 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { SetEffectOutcome } from '../engine/effects.ts';
-import { combatPhysicalpower } from '../engine/derived.ts';
+import { combatPhysicalpower, TalentPower } from '../engine/derived.ts';
 import { EffectId } from '../content/effects.ts';
 import { DamageType } from '../engine/damage.ts';
 import { Affinity, ClassId, TalentKind, TargetShape, talentId } from '../engine/talents.ts';
@@ -129,6 +129,7 @@ function load(bare: string, name: string, tier: number, blurb: string, rider: st
       affinity: Affinity.Ally,
     },
     damageType: DamageType.Physical,
+    scalesWith: { lands: TalentPower.Physical },
     /**
      * NO `passive` BLOCK, AND THAT IS THE DIFFERENCE FROM THE INSPECTOR'S
      * METHODS. A method is a set of numbers on the body; a load is a fact the

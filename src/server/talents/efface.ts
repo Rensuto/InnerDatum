@@ -11,7 +11,7 @@
 import { combatTalentScale } from '../../shared/scale.ts';
 import { EffectId } from '../content/effects.ts';
 import { SetEffectOutcome } from '../engine/effects.ts';
-import { combatMindpower } from '../engine/derived.ts';
+import { combatMindpower, TalentPower } from '../engine/derived.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -96,6 +96,7 @@ export const efface: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Physical,
+  scalesWith: { lands: TalentPower.Mind },
 
   onUse: (ctx, self, target) => {
     const victim = targetActor(ctx.world, target);

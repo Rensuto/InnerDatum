@@ -33,7 +33,7 @@ import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { DamageType } from '../engine/damage.ts';
 import { EffectId } from '../content/effects.ts';
-import { combatPhysicalpower } from '../engine/derived.ts';
+import { combatPhysicalpower, TalentPower } from '../engine/derived.ts';
 import {
   Affinity,
   ClassId,
@@ -144,6 +144,7 @@ export const pistolWhip: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Physical,
+  scalesWith: { damage: TalentPower.Weapon, lands: TalentPower.Physical },
 
   onUse: (ctx, self, target) => {
     const victim = targetActor(ctx.world, target);

@@ -42,7 +42,7 @@ import { combatTalentScale } from '../../shared/scale.ts';
 import { healActor } from '../engine/talents.ts';
 import { EffectId } from '../content/effects.ts';
 import { EffectStatus, SetEffectOutcome } from '../engine/effects.ts';
-import { combatPhysicalpower } from '../engine/derived.ts';
+import { combatPhysicalpower, TalentPower } from '../engine/derived.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -269,6 +269,13 @@ const OVERREACH_AP = 3;
  */
 export const overreach: Talent = {
   ...SHARED,
+  /**
+   * THE ONE TALENT IN THIS TREE THAT LANDS ANYTHING, so it is the only one that
+   * declares a scaling. It went on `SHARED` first, which would have told a
+   * player that Weak Points and Second Look scale on Physical power — they are
+   * passives that roll nothing at all.
+   */
+  scalesWith: { lands: TalentPower.Physical },
   id: talentId('overreach'),
   name: 'Overreach',
   /** Tier 2 of its tree. See `src/shared/tiers.ts`. */

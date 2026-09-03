@@ -117,7 +117,7 @@
  * Every draw goes through the `Rng` the caller passes, with a label.
  */
 
-import type { PrimaryStats } from './derived.ts';
+import type { PrimaryStats, TalentScaling } from './derived.ts';
 import type { PassiveContribution } from './equipment.ts';
 import { createTurnProcs, fireTurnStart } from './hooks.ts';
 import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
@@ -1678,6 +1678,24 @@ export type Talent = {
    * gate whether you have been shouted at before.
    */
   readonly statGate?: keyof PrimaryStats;
+  /**
+   * WHICH ATTRIBUTE MAKES IT BIGGER — which is NOT `statGate` above.
+   *
+   * The gate answers "may I buy this"; this answers "what should I level".
+   * They disagree on most talents here and upstream keeps them apart for the
+   * same reason (`tome/class/interface/Combat.lua:2095-2103` takes the scaling
+   * stat as an explicit argument, entirely independent of `require.stat`).
+   *
+   * ABSENT MEANS THE SCREEN SAYS NOTHING, which is the right default: a
+   * declaration that has not been checked against what the talent actually does
+   * is worse than a silence. `test/server/talent-power.test.ts` drives every
+   * talent that declares one and fails when the number it hands `ctx.status`
+   * disagrees, and holds a ratchet on how many declare one so coverage cannot
+   * go backwards.
+   *
+   * See `TalentScaling` in engine/derived.ts for why there are two halves.
+   */
+  readonly scalesWith?: TalentScaling;
   /** GAME TURNS. 0 is at-will and gated by AP alone. See the conversions above. */
   readonly cooldownTurns: number;
   readonly targeting: TalentTargeting;

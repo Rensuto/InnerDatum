@@ -41,6 +41,7 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
+import { TalentPower } from '../engine/derived.ts';
 import {
   Affinity,
   ClassId,
@@ -121,6 +122,7 @@ export const backdraft: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Fire,
+  scalesWith: { damage: TalentPower.Weapon },
 
   onUse: (ctx, self, target) => {
     const victim = targetActor(ctx.world, target);

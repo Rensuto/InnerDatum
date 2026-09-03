@@ -163,6 +163,7 @@ import {
   TalentKind,
   TalentRefusal,
   canUseTalent,
+  combatOf,
   createTalentEngine,
   createTalentRegistry,
   createTalentSheet,
@@ -170,6 +171,7 @@ import {
   getTalentLevelRaw,
   talentLevelOf,
 } from '../engine/talents.ts';
+import { scalingText } from '../engine/derived.ts';
 import { alchemicVial } from '../talents/alchemic_vial.ts';
 import { ashwickFlare } from '../talents/ashwick_flare.ts';
 import { backdraft } from '../talents/backdraft.ts';
@@ -1381,6 +1383,17 @@ export function toLoadoutView(
     // renders the current description alone).
     descNext: level < TALENT_MAX_LEVEL ? talent.describe(self, level + 1) : null,
     desc: talent.describe(self, level),
+    /**
+     * ═══ AND WHAT MAKES IT BIGGER, RESOLVED AGAINST THIS BODY ═══
+     * Composed here rather than in each `describe` because the weapon half is
+     * not a property of the talent at all: `'weapon'` means "ask the caster's
+     * `dammod`", which is the class's, or an item's if it carries one. Sixty
+     * hand-written variants of one sentence would drift, and the one that
+     * mattered would drift silently. Absent when the talent declares nothing.
+     */
+    ...(scalingText(combatOf(self), talent.scalesWith) === null
+      ? {}
+      : { scales: scalingText(combatOf(self), talent.scalesWith) ?? '' }),
     /**
      * ABSENT WHEN NOBODY ASKED, AND ABSENT WHEN THE ANSWER IS YES. The first
      * keeps the class picker's preview exactly as it was; the second keeps the

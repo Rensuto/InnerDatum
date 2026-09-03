@@ -68,6 +68,7 @@
  * identical code and be guaranteed to agree.
  */
 
+import { statName } from '../../shared/stats.ts';
 import { bound, combatStatLimit, rescaleCombatStats } from '../../shared/scale.ts';
 
 // ---------------------------------------------------------------------------
@@ -682,6 +683,122 @@ export function combatDamagePower(c: Combatant, add = 0): number {
  * rounds damage (ActorLife.lua:69-77 subtracts the raw value); rounding early
  * compounds through the armour and resist stages.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH STAT MAKES A TALENT BIGGER — THE QUESTION NOTHING ON SCREEN ANSWERED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked directly: *"talents/abilities should show what stat scales it. it needs
+ * to show exactly like tales of maj eyal."*
+ *
+ * ═══ THE ANSWER IS NOT `statGate`, AND SHIPPING IT WOULD HAVE BEEN A LIE ═══
+ * A talent's `statGate` is the REQUIREMENT — "you are not that person yet" —
+ * and upstream keeps the two apart for the same reason: `require.stat` is a
+ * table, and the scaling stat is a literal ARGUMENT passed at the call site
+ * (`tome/class/interface/Combat.lua:2095-2103`,
+ * `combatTalentStatDamage(t, stat, base, max)`). They disagree on at least six
+ * shipped talents here. Lockdown gates on Constitution and lands on
+ * Physical power, which is Strength; Concussion Flask gates on Magic and lands
+ * on Mindpower, which contains no Magic at all. A player told "Lockdown scales
+ * with Constitution" would spend levels on the one stat that moves none of its
+ * numbers.
+ *
+ * ═══ AND A TALENT HAS UP TO TWO OF THEM ═══
+ * Its DAMAGE goes through the weapon's `dammod` (`combatDamage` below); its
+ * EFFECT's landing roll goes through `applyPower`, which is Physical, Spell or
+ * Mind power. Those are different stats on most talents, so one sentence for
+ * both would be wrong on nearly all of them. `TalentScaling` carries the two
+ * separately and each renders its own clause.
+ *
+ * ═══ THE WEAPON HALF IS RESOLVED HERE RATHER THAN AUTHORED ═══
+ * `Revolver Shot` scales 0.7 Dexterity + 0.3 Strength because of the
+ * INSPECTOR's `damMod`, not because of anything in the talent — and an item can
+ * carry its own (`Weapon.damMod`). Hard-coding a stat name into a weapon
+ * talent's text would go stale the first time a dropped revolver disagreed with
+ * the class. So `'weapon'` means "ask the body", and the fallback is the same
+ * `DEFAULT_DAMMOD` `combatDamage` applies — a body with no weapon still hits
+ * with Strength, and rendering an empty list for it would be a second lie.
+ */
+export const TalentPower = {
+  /** The weapon's own `dammod`. Resolved against the caster, never authored. */
+  Weapon: 'weapon',
+  Physical: 'physical',
+  Spell: 'spell',
+  Mind: 'mind',
+  /** `combatAttack` — accuracy, which is what Shin Crack's trip rolls against. */
+  Accuracy: 'accuracy',
+} as const;
+export type TalentPower = (typeof TalentPower)[keyof typeof TalentPower];
+
+/** What a talent's damage and its effect roll each scale on. Either may be absent. */
+export type TalentScaling = {
+  /** What makes its DAMAGE bigger. Absent on a talent that deals none. */
+  readonly damage?: TalentPower;
+  /** What makes its EFFECT LAND and last. Absent on a talent that applies none. */
+  readonly lands?: TalentPower;
+};
+
+/** The stats a power reads, heaviest first, as a player names them. */
+export function powerStats(c: Combatant, power: TalentPower): readonly string[] {
+  switch (power) {
+    case TalentPower.Weapon: {
+      const damMod = c.weapon?.damMod ?? DEFAULT_DAMMOD;
+      return STAT_KEYS.filter((key) => (damMod[key] ?? 0) > 0)
+        .sort((a, b) => (damMod[b] ?? 0) - (damMod[a] ?? 0))
+        .map((key) => statName(key));
+    }
+    case TalentPower.Physical:
+      return [statName('str')];
+    case TalentPower.Spell:
+      return [statName('mag')];
+    // 0.7 Willpower + 0.4 Cunning — the only power fed by two stats, and the
+    // order is the weight. See `combatMindpower`.
+    case TalentPower.Mind:
+      return [statName('wil'), statName('cun')];
+    // `combatAttack` — Combat.lua:1445's `getDex()`.
+    case TalentPower.Accuracy:
+      return [statName('dex')];
+  }
+}
+
+/** "your weapon (Dexterity, Strength)" / "Mindpower (Willpower, Cunning)". */
+function powerPhrase(c: Combatant, power: TalentPower): string {
+  const stats = powerStats(c, power).join(', ');
+  const head =
+    power === TalentPower.Weapon
+      ? 'your weapon'
+      : power === TalentPower.Accuracy
+        ? 'Accuracy'
+        : `${power.charAt(0).toUpperCase()}${power.slice(1)}power`;
+  return stats === '' ? head : `${head} (${stats})`;
+}
+
+/**
+ * The whole sentence, or null when a talent declares no scaling at all.
+ *
+ * ONE STRING, COMPOSED SERVER-SIDE, because `LoadoutTalent` says so in its own
+ * words: every sentence on that type is pre-formatted so the browser never
+ * holds a second copy of a ladder. Shipping the enum would make the client
+ * carry the 0.7/0.4 Mind weights and the weapon's `dammod`, which is exactly
+ * the duplication that rule exists to prevent.
+ */
+export function scalingText(c: Combatant, scaling: TalentScaling | undefined): string | null {
+  if (scaling === undefined) return null;
+  const parts: string[] = [];
+  if (scaling.damage !== undefined) {
+    parts.push(`damage from ${powerPhrase(c, scaling.damage)}`);
+  }
+  if (scaling.lands !== undefined) {
+    // "LANDS", NOT "DAMAGE", and the distinction is load-bearing:
+    // `applyPower` feeds `checkHitOld` and decides whether the effect sticks
+    // and for how long. Concussion Flask's own description already says "It
+    // deals no damage." — calling its Mindpower a damage stat would replace one
+    // silence with one contradiction.
+    parts.push(`lands on ${powerPhrase(c, scaling.lands)}`);
+  }
+  return parts.length === 0 ? null : parts.join('; ');
+}
+
 export function combatDamage(c: Combatant, addDamMod?: PrimaryStats): number {
   const damMod = c.weapon?.damMod ?? DEFAULT_DAMMOD;
 

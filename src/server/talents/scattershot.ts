@@ -32,6 +32,7 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
+import { TalentPower } from '../engine/derived.ts';
 import {
   Affinity,
   ClassId,
@@ -96,6 +97,7 @@ export const scattershot: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Physical,
+  scalesWith: { damage: TalentPower.Weapon },
 
   onUse: (ctx, self, target) => {
     // The same constant the wire sent as `radius`, so the preview and the tiles

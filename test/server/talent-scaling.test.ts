@@ -1,3 +1,10 @@
+import {
+  TalentPower,
+  combatAttack,
+  combatMindpower,
+  combatPhysicalpower,
+  combatSpellpower,
+} from '../../src/server/engine/derived.ts';
 import { isMonsterTalent } from '../../src/server/talents/monster.ts';
 import { trained } from '../helpers/trained.ts';
 import { describe, expect, it } from 'vitest';
@@ -37,6 +44,13 @@ type StatusRequest = {
   readonly duration: number;
   /** The magnitude, for effects that carry one. See the note at the recorder. */
   readonly power?: unknown;
+  /**
+   * THE NUMBER THE EFFECT WAS ROLLED AGAINST — `applyPower`, which decides
+   * whether it lands and for how long. Recorded because it is the only place a
+   * talent's declared `scalesWith.lands` can be checked against what it
+   * actually does; see `the scaling a talent declares is the one it uses`.
+   */
+  readonly applyPower?: number;
 };
 import type { ClassDef } from '../../src/server/content/classes.ts';
 import type {
@@ -247,7 +261,13 @@ function fixture(): Fixture {
       // POWER TOO. A buff's magnitude travels in `params.power` rather than in
       // the duration, so a case that measured only the duration would report a
       // flat number for a talent that scales perfectly well.
-      statusCalls.push({ targetId: target.id, effectId, duration, power: params?.power });
+      statusCalls.push({
+        targetId: target.id,
+        effectId,
+        duration,
+        power: params?.power,
+        applyPower: params?.applyPower,
+      });
       return applier(target, effectId, duration, params);
     },
     cure: (target, status) => {
@@ -1253,9 +1273,15 @@ describe('THE FROZEN NUMBERS — a rank buys damage, never a discount or a solut
       useTalent(f.engine, watchman, talentId('lockdown'), { x: 6, y: 5, actorId: 'husk' }, f.ctx);
 
       // WHAT IT ASKED FOR, not what survived the save. See `statusCalls`.
-      expect(f.statusCalls).toEqual([
-        { targetId: 'husk', effectId: EffectId.Stunned, duration: STUN_TURNS },
-      ]);
+      //
+      // THE FROZEN NUMBER IS THE DURATION, so the assertion names it rather
+      // than comparing whole records: `applyPower` is on every request now and
+      // is deliberately NOT frozen — it rises with Strength, which is the whole
+      // point of `scalesWith.lands` and is checked in its own case below.
+      expect(f.statusCalls).toHaveLength(1);
+      expect(f.statusCalls[0]?.targetId).toBe('husk');
+      expect(f.statusCalls[0]?.effectId).toBe(EffectId.Stunned);
+      expect(f.statusCalls[0]?.duration).toBe(STUN_TURNS);
     }
   });
 
@@ -1420,5 +1446,92 @@ describe('the sheet is where a rank lives', () => {
     });
     expect(getTalentLevelRaw(loaded, talentId('crude_blow'))).toBe(4);
     expect(getTalentLevelRaw(loaded, talentId('ward_rush'))).toBe(1);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SCALING A TALENT DECLARES IS THE ONE IT ACTUALLY USES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Talent.scalesWith` is authored, reaches the player as a sentence
+ * (`LoadoutTalent.scales`), and answers the question they asked: what should I
+ * level to make this better. An authored answer nobody checks is a lie waiting
+ * to be believed — and the obvious cheap version of this feature, printing
+ * `statGate`, WOULD have been one: Lockdown is gated on Constitution and lands
+ * on Physical power, which is Strength.
+ *
+ * ═══ THE SEAM IS `applyPower`, AND IT IS THE ONLY HONEST ONE ═══
+ * `ctx.status`'s `applyPower` is the number `checkHitOld` rolls the effect
+ * against — whether it sticks, and for how long. Reading it here compares the
+ * declaration against the arithmetic the talent really performed, on a real
+ * caster, rather than against a string in its source. Comments cannot
+ * false-positive it and a factory that builds six talents from one object
+ * cannot hide behind it.
+ */
+describe('the scaling a talent declares is the one it uses', () => {
+  /** What each power computes for a given body, so the winner can be named. */
+  function powersOf(actor: TalentActor): Record<string, number> {
+    const c = actor.combat ?? {};
+    return {
+      [TalentPower.Physical]: combatPhysicalpower(c),
+      [TalentPower.Spell]: combatSpellpower(c),
+      [TalentPower.Mind]: combatMindpower(c),
+      [TalentPower.Accuracy]: combatAttack(c),
+    };
+  }
+
+  const DECLARED: readonly { bare: string; definition: ClassDef; offset: number }[] = [
+    { bare: 'lockdown', definition: WATCHMAN, offset: 1 },
+    { bare: 'pistol_whip', definition: INSPECTOR, offset: 1 },
+    { bare: 'line_of_enquiry', definition: INSPECTOR, offset: 4 },
+    { bare: 'shin_crack', definition: WATCHMAN, offset: 1 },
+  ];
+
+  it.each(DECLARED)(
+    '$bare rolls its effect on the power it names',
+    ({ bare, definition, offset }) => {
+      const f = fixture();
+      const caster = f.add(definition, 'caster', 5, 5);
+      const husk = f.addMonster('husk', 5 + offset, 5);
+      f.setLevel('caster', bare, 5);
+      f.refill('caster');
+      useTalent(
+        f.engine,
+        caster,
+        talentId(bare),
+        { x: husk.x, y: husk.y, actorId: husk.id },
+        f.ctx,
+      );
+
+      const talent = f.engine.registry.get(talentId(bare));
+      expect(talent, `${bare} is not registered`).toBeDefined();
+      const lands = talent?.scalesWith?.lands;
+      expect(lands, `${bare} declares no landing power`).toBeDefined();
+
+      const rolled = f.statusCalls.map((call) => call.applyPower).find((v) => v !== undefined);
+      expect(rolled, `${bare} applied no effect, so this case proves nothing`).toBeDefined();
+
+      const powers = powersOf(caster);
+      expect(rolled, `${bare} says it lands on ${String(lands)} and did not`).toBeCloseTo(
+        powers[String(lands)] ?? -1,
+        5,
+      );
+    },
+  );
+
+  it('and the declaration is not merely whatever number happened to be handy', () => {
+    /**
+     * THE CASE ABOVE PASSES VACUOUSLY IF THE POWERS ALL AGREE. A body whose
+     * Strength, Magic and Willpower happen to produce the same figure would
+     * satisfy every declaration at once, and the four talents above would be
+     * asserting nothing. So: the fixture's caster must have powers that
+     * genuinely differ.
+     */
+    const f = fixture();
+    const caster = f.add(WATCHMAN, 'caster', 5, 5);
+    const powers = powersOf(caster);
+    const distinct = new Set(Object.values(powers).map((n) => Math.round(n * 100)));
+    expect(distinct.size, 'every power computes the same number on this body').toBeGreaterThan(1);
   });
 });

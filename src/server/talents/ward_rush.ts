@@ -37,6 +37,7 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
+import { TalentPower } from '../engine/derived.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
@@ -176,6 +177,7 @@ export const wardRush: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Physical,
+  scalesWith: { damage: TalentPower.Weapon },
 
   onUse: (ctx, self, target) => {
     const victim = targetActor(ctx.world, target);

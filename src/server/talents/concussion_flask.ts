@@ -38,7 +38,7 @@ import { applyLoad } from './loads.ts';
 import { combatTalentLimit, combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import { EffectId } from '../content/effects.ts';
-import { combatMindpower } from '../engine/derived.ts';
+import { combatMindpower, TalentPower } from '../engine/derived.ts';
 import {
   Affinity,
   ClassId,
@@ -183,6 +183,7 @@ export const concussionFlask: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Physical,
+  scalesWith: { damage: TalentPower.Weapon, lands: TalentPower.Mind },
 
   onUse: (ctx, self, target) => {
     const victim = targetActor(ctx.world, target);

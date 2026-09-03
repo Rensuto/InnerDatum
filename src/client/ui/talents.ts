@@ -585,6 +585,14 @@ export type TalentCell = {
    */
   readonly lockedReason: string | null;
   /**
+   * WHAT MAKES IT BIGGER — `LoadoutTalent.scales`, pre-rendered server-side.
+   *
+   * NULL MEANS SAY NOTHING. The talent declares no scaling, or the server is
+   * older than the field. Both print no line, which is the honest answer: a
+   * claim nobody has checked against what the talent does is worse than none.
+   */
+  readonly scales: string | null;
+  /**
    * EVERY REQUIREMENT OF THE NEXT RANK, met or not — `LoadoutTalent.requires`.
    *
    * `lockedReason` above is a REFUSAL and exists only while one applies. This is
@@ -939,6 +947,9 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     // `?? []` — absent means a server that does not send them, and the pane then
     // shows exactly what it showed before this existed.
     requires: talent.requires ?? [],
+    // `?? null` — absent means the talent declares no scaling, or a server too
+    // old to send one, and the pane prints no line either way.
+    scales: talent.scales ?? null,
     passive: talent.kind === 'passive',
     desc: talent.desc,
     descNext: talent.descNext,
@@ -1107,6 +1118,14 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
          * being actionable.
          */
         requires: [],
+        /**
+         * BUT THE SCALING DOES SHOW, and the asymmetry with `requires` above is
+         * the point. A requirement on a tree you cannot buy is four things to
+         * fix when one of them is the answer; what a talent scales with is the
+         * reason to WANT the discipline, which is exactly the decision being
+         * offered here.
+         */
+        scales: talent.scales ?? null,
         lockedReason:
           purse > 0
             ? `Unlock ${tree.name} — 1 category point. ${tree.blurb}`
@@ -2687,6 +2706,25 @@ function drawDetail(
     field('Range', cell.range >= 2 ? `${String(cell.range)} tiles` : 'melee');
     field('Cooldown', cell.cooldownTurns > 0 ? `${String(cell.cooldownTurns)} turns` : 'none');
   }
+
+  /**
+   * ═══ AND WHAT MAKES IT BIGGER, WHICH IS NOT WHAT GATES IT ═══
+   *
+   * Asked for directly, and it is the one thing this pane could not answer: the
+   * Needs list below is the GATE, and on most talents it names a different stat
+   * from the one that moves the numbers. Lockdown is gated on Constitution and
+   * lands on Physical power, which is Strength.
+   *
+   * OUTSIDE THE `passive` GUARD, deliberately. A passive has no cost, range or
+   * cooldown to print — and for several of them the scaling is the only
+   * interesting fact there is.
+   *
+   * `Scales` rather than upstream's `Is:` tag (`tome/class/Actor.lua:6309-6315`
+   * renders `Is: a spell` from `Talents.is_a_type`). The tag names a SCHOOL and
+   * leaves the player to know which stat the school reads; the question asked
+   * here was the stat, so the row names both.
+   */
+  if (cell.scales !== null && cell.scales !== '') field('Scales', cell.scales);
 
   y += 4;
   ctx.font = FONT_BODY;

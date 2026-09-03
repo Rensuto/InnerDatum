@@ -43,7 +43,7 @@
 import { combatTalentScale } from '../../shared/scale.ts';
 import { EffectId } from '../content/effects.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
-import { combatPhysicalpower } from '../engine/derived.ts';
+import { combatPhysicalpower, TalentPower } from '../engine/derived.ts';
 import { SetEffectOutcome } from '../engine/effects.ts';
 import type { SetEffectResult } from '../engine/effects.ts';
 import { DamageType } from '../engine/damage.ts';
@@ -222,6 +222,7 @@ export const lockdown: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Physical,
+  scalesWith: { damage: TalentPower.Weapon, lands: TalentPower.Physical },
 
   onUse: (ctx, self, target) => {
     const victim = targetActor(ctx.world, target);

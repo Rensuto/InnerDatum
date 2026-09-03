@@ -45,6 +45,7 @@
 import { applyLoad } from './loads.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
+import { TalentPower } from '../engine/derived.ts';
 import {
   Affinity,
   ClassId,
@@ -126,6 +127,7 @@ export const alchemicVial: Talent = {
     affinity: Affinity.Hostile,
   },
   damageType: DamageType.Fire,
+  scalesWith: { damage: TalentPower.Weapon },
 
   onUse: (ctx, self, target) => {
     // The arm length is the SAME constant the wire sends as `radius`, so the

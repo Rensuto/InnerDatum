@@ -1175,6 +1175,26 @@ export type LoadoutTalent = {
    * shows what it always showed, which is `lockedReason` alone.
    */
   requires?: readonly { readonly text: string; readonly met: boolean }[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT MAKES IT BIGGER — the question the requirement list does NOT answer.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `requires` above is the GATE: "you are not that person yet". This is the
+   * other half, asked for directly — *"talents/abilities should show what stat
+   * scales it"* — and the two disagree on most talents. Lockdown is gated on
+   * Constitution and lands on Physical power, which is Strength.
+   *
+   * PRE-FORMATTED, for the reason stated three fields up: the browser must not
+   * hold a second copy of a ladder. Shipping a `'mind'` enum would make it carry
+   * the 0.7 Willpower / 0.4 Cunning weights, and the weapon half is not a
+   * constant at all — it is the caster's `dammod`, which an item may replace.
+   *
+   * ABSENT MEANS THE TALENT DECLARES NO SCALING and the panel prints no line.
+   * That is a real answer and not a gap: a claim that has not been checked
+   * against what the talent actually does is worse than a silence.
+   */
+  scales?: string;
 };
 
 /**

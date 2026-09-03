@@ -1348,6 +1348,7 @@ describe('the loadout projection loses no field', () => {
       // It is here because this fixture is the compile-time reminder that a field
       // added to the wire has to survive the projector; `locked` was added, dropped
       // and unnoticed for months before that was made a compile error.
+      scales: 'damage from your weapon (Strength); lands on Mindpower (Willpower, Cunning)',
       requires: [{ text: 'level 4', met: true }],
     };
 

@@ -1027,6 +1027,10 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     // as the two above so an absent list stays absent rather than becoming `[]`,
     // which the wire type reserves for "this server does not send them".
     ...(talent.requires === undefined ? {} : { requires: talent.requires }),
+    // AND WHAT MAKES IT BIGGER — `LoadoutTalent.scales`, spread the same way and
+    // for the same reason. It is the answer to a different question from
+    // `requires` and disagrees with it on most talents; see `TalentScaling`.
+    ...(talent.scales === undefined ? {} : { scales: talent.scales }),
   };
 }
 

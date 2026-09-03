@@ -1525,10 +1525,29 @@ export function hotbarTipAt(
         ]
           .filter((part) => part !== null)
           .join('  ·  ');
+    /**
+     * ═══ AND WHAT MAKES IT BIGGER, WHICH THIS CARD COULD NOT SAY ═══
+     *
+     * The talents panel is a screen a player opens on level-up; THIS is what
+     * they read mid-fight, and it carried the description alone. `scales`
+     * arrives on the same wire object as everything else here and was simply
+     * not read.
+     *
+     * IN `lines`, NOT IN `meta`, and both halves of that matter. `meta` is
+     * built only on the non-passive arm — a passive gets the literal string
+     * `always on` and never reaches the cost clause — so a meta insertion
+     * would omit the scaling from exactly the talents whose only interesting
+     * fact it is. And `meta` is one line that truncates from the right, where
+     * the scaling would be the first thing cut.
+     */
+    const scales = talent.scales ?? '';
     return {
       title: `${talent.name}  ${String(talent.level)}/${String(talent.maxLevel)}`,
       meta,
-      lines: wrapForCard(talent.desc),
+      lines:
+        scales === ''
+          ? wrapForCard(talent.desc)
+          : [...wrapForCard(talent.desc), ...wrapForCard(`Scales: ${scales}`)],
       nextLines: [],
     };
   }
