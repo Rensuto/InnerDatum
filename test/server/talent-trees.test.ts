@@ -124,6 +124,23 @@ describe('the tree grid is full', () => {
     const counts = byTree();
     const wrong: string[] = [];
     for (const tree of TALENT_TREES) {
+      /**
+       * …EXCEPT ONE THAT IS NEVER DRAWN. The rule above is about a STRIP OF
+       * BOXES with a gap in it, and a hidden tree draws no strip: `hidden` is
+       * `hide = true` (`misc.lua:23`) and `ui/talents.ts` filters on it exactly
+       * as `LevelupDialog.lua:490` does, before any grouping happens.
+       *
+       * An inscription tree can never hold six — a character carries at most
+       * `MAX_INSCRIPTIONS` of them — so without this the guard would be asking
+       * a category to fill a grid it never appears in.
+       *
+       * SKIPPED ON THE FLAG THE PANEL ITSELF READS, not on the tree's id. That
+       * is the whole difference between an exemption and a hole: the day
+       * somebody drops `hidden` to put this category on the sheet, the same edit
+       * puts it back under this rule, and the short strip fails here instead of
+       * shipping.
+       */
+      if (tree.hidden === true) continue;
       const held = counts.get(tree.id) ?? [];
       if (held.length !== CELLS_PER_CAT) {
         wrong.push(`${tree.id}: ${String(held.length)} (${held.join(', ')})`);

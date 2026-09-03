@@ -621,6 +621,25 @@ type ActorCommon = {
   knownLore?: readonly string[];
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IS WRITTEN ON THIS BODY — `ActorInscriptions.lua:26-32`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ON THE ACTOR BECAUSE THAT IS WHERE UPSTREAM PUTS IT. `self.inscriptions` is
+   * its own table with its own cap (`max_inscriptions = 3`) and never touches
+   * `INVEN_INVEN`: an inscription is a fact about a person, not an object they
+   * are carrying. Assuming otherwise cost a whole design — see
+   * `content/inscriptions.ts`.
+   *
+   * WHAT IT GRANTS IS JOINED AT THE SHEET, not stored here: `sheetForClass`
+   * turns these ids into loadout entries, exactly as it turns `unlockedTrees`
+   * into talents. This list is the authority and the bar is derived, which is
+   * the rule `unlockedTrees` states at length two fields up.
+   *
+   * ABSENT MEANS THE BIRTH SET, not an empty one — see `sheetForClass`.
+   */
+  inscriptions?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHO THIS BODY LAST TRADED PLACES WITH, AND ON WHICH GAME TURN.
    * ═══════════════════════════════════════════════════════════════════════════
    *

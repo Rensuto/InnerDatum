@@ -83,6 +83,11 @@ import type {
 import type { Dir } from '../../src/shared/coords.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
 import type { Rng } from '../../src/shared/rng.ts';
+import {
+  BIRTH_INSCRIPTIONS,
+  INSCRIPTION_TALENTS,
+  talentsFor,
+} from '../../src/server/content/inscriptions.ts';
 
 /**
  * ===========================================================================
@@ -457,9 +462,25 @@ describe('the loadout cap — PLAN.md § 5', () => {
      * next one needs no edit here.
      */
     const lockedActives = ALL_LOCKED_TALENTS.filter((talent) => talent.onUse !== undefined).length;
+    /**
+     * PLUS THE ACTIVES AN INSCRIPTION GRANTS, which no class loadout holds and
+     * no category point buys. `ActorInscriptions.lua:26-32` keeps inscriptions
+     * on the ACTOR, so `sheetForClass` joins `talentsFor(inscribed)` into the
+     * loadout — the THIRD route to a button, beside "your class has it" and
+     * "you bought the tree", and the one this sum predates.
+     *
+     * Counted from `INSCRIPTION_TALENTS` — the same list the registry is built
+     * from — rather than from the BIRTH set, so the registry and this count
+     * cannot disagree, and an inscription found later in the dungeon is still
+     * counted as reachable.
+     */
+    const inscriptionActives = INSCRIPTION_TALENTS.filter(
+      (talent) => talent.onUse !== undefined,
+    ).length;
     expect(everyTalent).toHaveLength(
       CLASSES.flatMap((c) => c.loadout).filter((talent) => talent.onUse !== undefined).length +
-        lockedActives,
+        lockedActives +
+        inscriptionActives,
     );
     /**
      * …AND THE REGISTRY AS A WHOLE IS EVERY AUTHORED TALENT — COUNTED, NOT
@@ -595,12 +616,16 @@ describe('the loadout cap — PLAN.md § 5', () => {
       }
     }
 
-    // …and the loadout the sheet carries is the class definition's, by id, so
-    // "in the loadout" means the same thing on both sides of `attach`.
+    // …and the loadout the sheet carries is the class definition's PLUS WHAT IS
+    // WRITTEN ON THE BODY, by id, so "in the loadout" means the same thing on
+    // both sides of `attach`. The inscription's button is the one entry with no
+    // `ClassDef` behind it — `sheetForClass` joins it on for every class alike,
+    // which is why it is counted from the birth list and not from `definition`.
     for (const { definition, actor } of owners) {
-      expect(f.engine.sheetOf(actor.id)?.loadout).toEqual(
-        definition.loadout.map((talent) => talent.id),
-      );
+      expect(f.engine.sheetOf(actor.id)?.loadout).toEqual([
+        ...definition.loadout.map((talent) => talent.id),
+        ...talentsFor(BIRTH_INSCRIPTIONS).map((talent) => talent.id),
+      ]);
     }
   });
 

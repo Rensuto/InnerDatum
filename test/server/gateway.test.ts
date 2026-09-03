@@ -31,6 +31,7 @@ import type { TurnState } from '../../src/server/view/projector.ts';
 import type { World } from '../../src/server/world/world.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import type { TurnEvent } from '../../src/shared/protocol.ts';
+import { BIRTH_INSCRIPTIONS, talentsFor } from '../../src/server/content/inscriptions.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -752,10 +753,18 @@ describe('the hotbar, on a server with the talent book wired in', () => {
     const talents = loadout?.['talents'];
     if (!Array.isArray(talents)) throw new Error('the loadout frame carried no talents');
 
-    // The first fresh join takes the first place in the rotation.
-    expect(talents.map((row: { id?: unknown }) => String(row.id))).toEqual(
-      WATCHMAN.loadout.map((talent) => talent.id),
-    );
+    // The first fresh join takes the first place in the rotation — AND WHATEVER
+    // IS WRITTEN ON THE BODY COMES WITH IT. `sheetForClass` joins
+    // `talentsFor(inscribed)` onto every sheet's loadout, with `inscribed`
+    // defaulting to the birth set, because an inscription grants a BUTTON and
+    // the sheet is where buttons are assembled. It is owned by no class, so it
+    // can never appear in `WATCHMAN.loadout`. Derived from the birth list rather
+    // than spelled: the claim here is "the welcome frame carries this body's
+    // whole bar", and a second inscription must not need an edit to keep it.
+    expect(talents.map((row: { id?: unknown }) => String(row.id))).toEqual([
+      ...WATCHMAN.loadout.map((talent) => talent.id),
+      ...talentsFor(BIRTH_INSCRIPTIONS).map((talent) => talent.id),
+    ]);
 
     // …and the two viewer-private frames that keep it honest come with it: the
     // cooldown map the buttons grey out from, and the resource the cost readout

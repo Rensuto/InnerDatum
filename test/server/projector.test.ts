@@ -1356,6 +1356,12 @@ describe('the loadout projection loses no field', () => {
       descNext: null,
       tree: 'watch/the-line',
       treeName: 'The Line',
+      // FALSE, NOT OMITTED, and the `Required` above is why: this fixture's job
+      // is to carry every key the wire type has, so the key-set comparison
+      // below can prove the projector drops none of them. `watch/the-line` is a
+      // drawn category — a hidden one would be `true` and would still have to
+      // survive the trip. See `TalentTree.hidden`.
+      hidden: false,
       kind: 'passive',
       mastery: 1.3,
       sustained: false,

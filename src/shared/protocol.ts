@@ -976,6 +976,21 @@ export type LoadoutTalent = {
    */
   tree?: string;
   treeName?: string;
+
+  /**
+   * TRUE WHEN THE TREE THIS CAME FROM IS NEVER DRAWN AS A CATEGORY.
+   *
+   * `hide = true` on the category upstream (`misc.lua:23`), read by
+   * `LevelupDialog.lua:490`. The talent panel groups by `tree`, so the fact has
+   * to ride the talent row — there is no separate tree list on the wire.
+   *
+   * IT HIDES A HEADING, NOT A BUTTON, and the split is the whole point: the row
+   * is still in `loadout`, so the hotbar still draws it and the player still
+   * presses it. Only the levelup panel skips it, which is where upstream puts
+   * the line too. A client that ignores this field shows one extra category
+   * rather than losing a talent — the additive-field contract holding.
+   */
+  hidden?: boolean;
   kind?: string;
   /**
    * THE CATEGORY'S MASTERY — the "(x1.30)" in a ToME category header.

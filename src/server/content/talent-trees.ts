@@ -111,6 +111,35 @@ export type TalentTree = {
    * ABSENT MEANS OPEN, which is every tree that shipped before this field.
    */
   readonly locked?: boolean;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NOT DRAWN IN THE LEVELUP PANEL AT ALL. Ported from `hide = true`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `data/talents/misc/misc.lua:23` marks `inscriptions/infusions` — and runes,
+   * and taints, and `base/class`, and `base/race` — with `hide = true`, and
+   * `dialogs/LevelupDialog.lua:490` filters the category list on `not tt.hide`
+   * before it draws a single row. So upstream's own answer to "where does the
+   * healing infusion appear on the levelup screen" is: NOWHERE. The button is on
+   * the hotbar; the category is not on the sheet.
+   *
+   * ═══ WHY THIS IS A REAL PROPERTY AND NOT AN EXEMPTION FOR ONE TREE ═══
+   * `talent-trees.test.ts` requires every tree to hold exactly `CELLS_PER_CAT`
+   * talents, because the panel slices at six and a short strip reads as content
+   * that failed to load rather than as a tree with room in it. That rule is
+   * right, and an inscription tree can never satisfy it: a character carries at
+   * most `MAX_INSCRIPTIONS` of them, which is three. The two facts are only
+   * compatible because the tree is never drawn — so the guard is exempted
+   * THROUGH THE SAME FLAG THE PANEL READS, and a tree that starts drawing
+   * itself starts being counted again in the same edit. An exemption keyed on
+   * the tree's id would have let the strip come back unmeasured.
+   *
+   * A HIDDEN TREE STILL GRANTS ITS BUTTONS. This hides a heading, not a talent:
+   * `sheetForClass` joins the actives on regardless and the bar draws them, which
+   * is exactly the split upstream has.
+   */
+  readonly hidden?: boolean;
 };
 
 /**
@@ -340,6 +369,33 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     name: 'Groundwork',
     classId: null,
     blurb: 'What everyone is taught, whatever they went on to become.',
+  },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * WHAT IS WRITTEN ON YOU — the category no class owns and no point buys.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Ported from `inscriptions/infusions` (ToME's own category path). Upstream
+     * keeps inscriptions on the ACTOR (`ActorInscriptions.lua:26-32`), so a
+     * talent in here reaches a bar through `Actor.inscriptions` and
+     * `sheetForClass` rather than through any `ClassDef` — the third route to a
+     * button, beside 'your class has it' and 'you bought it'.
+     *
+     * `classId: null` for `generic/groundwork`'s reason: it is shared rather
+     * than tripled. Unlike that one it is NOT entirely passive — an infusion is
+     * a button — which is fine here because the all-passive allowance
+     * `talent-trees.test.ts` grants the shared trees is a permission, not a
+     * requirement.
+     */
+    id: 'generic/inscriptions',
+    // `hide = true` (misc.lua:23) — see `TalentTree.hidden`. An infusion is not
+    // a discipline you train; it is a thing written on you.
+    hidden: true,
+    mastery: 1,
+    name: 'Inscriptions',
+    classId: null,
+    blurb: 'Written on the skin, and it answers when you ask.',
   },
   {
     /**

@@ -5,6 +5,7 @@ import {
   createContentTalentEngine,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
+import { Affinity } from '../../src/server/engine/talents.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -112,7 +113,15 @@ describe('the 6-AP round admits a decision, for every class', () => {
     const all = CLASSES.flatMap((c) =>
       sheetForClass(c).loadout.flatMap((id) => {
         const t = engine.registry.get(id);
-        return t === undefined || t.onUse === undefined
+        // AND AN INFUSION IS NOT AN ENGAGE EITHER — IT IS NOT IN THE ROUND AT
+        // ALL. The paragraph above draws the line at "things that resolve", and
+        // every entry on a loadout used to be a class active priced against the
+        // turn it costs. An ally-affinity button granted by an inscription is
+        // `no_energy = true` upstream (`inscriptions.lua:104`) — it costs 0 AP by
+        // definition, so it would win "cheapest engage" every time while
+        // engaging nobody. Filtered on AFFINITY, the field targeting dispatches
+        // on, and not on a cost of zero: a free ATTACK must still fail this.
+        return t === undefined || t.onUse === undefined || t.targeting?.affinity === Affinity.Ally
           ? []
           : [{ name: t.name, ap: t.cost.ap ?? 0 }];
       }),

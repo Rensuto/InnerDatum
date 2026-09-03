@@ -62,6 +62,7 @@ import type {
 } from '../../src/server/engine/talents.ts';
 import type { Dir } from '../../src/shared/coords.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
+import { BIRTH_INSCRIPTIONS, talentsFor } from '../../src/server/content/inscriptions.ts';
 
 /**
  * ===========================================================================
@@ -1040,10 +1041,25 @@ describe('every talent level moves a number — the honesty gate', () => {
      * so a table of damage curves is the wrong instrument for one. Filtering on
      * the same field the engine dispatches on means a passive cannot be quietly
      * skipped here AND quietly pressed there.
+     *
+     * AND A TALENT THAT CANNOT LEVEL HAS NO CURVE TO TABLE. `CASES` is a table
+     * of damage per rank; `maxLevel: 1` says the engine will refuse every point
+     * ever offered - `gateway.ts` compares against the cap that `classes.ts`
+     * reads off this same field - so ranks 2 to 5 are not untested here, they
+     * are unreachable. An inscription draws its power from the inscription, not
+     * from points poured into the button.
+     *
+     * FILTERED ON THE FIELD THE SPEND PATH REFUSES ON, deliberately - not on an
+     * id and not on a tree. The day somebody gives this talent a real curve they
+     * must raise `maxLevel` to do it, and that same edit drags it back onto this
+     * table. An id-shaped exemption would have let the new curve go untested.
      */
     const registered = engine.registry
       .all()
-      .filter((talent) => talent.onUse !== undefined && !isMonsterTalent(talent))
+      .filter(
+        (talent) =>
+          talent.onUse !== undefined && !isMonsterTalent(talent) && talent.maxLevel !== 1,
+      )
       .map((talent) => talent.id);
     // COUNTED, NOT SPELLED. This read `18` — three classes of six — and the
     // line below it already asserts the two SETS are equal, which is the whole
@@ -1398,9 +1414,17 @@ describe('the sheet is where a rank lives', () => {
     for (const definition of [WATCHMAN, INSPECTOR, ALCHEMIST]) {
       const sheet = trained(sheetForClass(definition));
       // The class's own, plus the six every class carries — `sheetForClass`
-      // joins `GENERIC_PASSIVES` on, so the birth grant covers them too.
+      // joins `GENERIC_PASSIVES` on, so the birth grant covers them too — plus
+      // WHAT IS WRITTEN ON THE BODY. An inscription is granted at birth the way
+      // a passive is (`ActorInscriptions.lua:26-32` keeps it on the actor), so
+      // its button is seeded at rank 1 by the same grant and is in this map.
+      // Counted from the birth list rather than spelled: a second inscription
+      // needs no edit here.
       expect(sheet.points.size).toBe(
-        definition.loadout.length + definition.passives.length + GENERIC_PASSIVES.length,
+        definition.loadout.length +
+          definition.passives.length +
+          GENERIC_PASSIVES.length +
+          talentsFor(BIRTH_INSCRIPTIONS).length,
       );
       for (const talent of definition.passives) {
         expect({ talent: talent.id, level: getTalentLevelRaw(sheet, talent.id) }).toEqual({

@@ -101,6 +101,7 @@ import { workingFast } from '../talents/working_fast.ts';
 import { causticLoad, concussiveLoad, frostLoad } from '../talents/loads.ts';
 import { fullBandolier, practisedHands, steadyPour } from '../talents/load_passives.ts';
 import { LEGWORK } from '../talents/legwork.ts';
+import { BIRTH_INSCRIPTIONS, INSCRIPTION_TALENTS, talentsFor } from './inscriptions.ts';
 import { MONSTER_TALENTS } from '../talents/monster.ts';
 import { COMPOSURE } from '../talents/composure.ts';
 import { NERVE } from '../talents/nerve.ts';
@@ -852,6 +853,7 @@ export function allTalents(): readonly Talent[] {
   return [
     ...CLASSES.flatMap((definition) => [...definition.loadout, ...definition.passives]),
     ...GENERIC_PASSIVES,
+    ...INSCRIPTION_TALENTS,
     // AND THE LOCKED ONES, WHICH NO CLASS OWNS AND NOBODY STARTS WITH. The
     // same correction this docblock already records, one tree later: a talent
     // that ships is a talent that ships, whether or not a character can reach
@@ -865,6 +867,9 @@ export function registerAllTalents(): TalentRegistry {
   const registry = createTalentRegistry();
   // THE SHARED SIX FIRST, AND EXACTLY ONCE. See `GENERIC_PASSIVES`.
   for (const talent of GENERIC_PASSIVES) registry.register(talent);
+  // AND THE INSCRIPTION TALENTS, which no class owns: they reach a bar through
+  // `Actor.inscriptions` and `sheetForClass`, never through a `ClassDef`.
+  for (const talent of INSCRIPTION_TALENTS) registry.register(talent);
   // AND THE LOCKED ONES. The registry holds every talent that EXISTS; whether a
   // given body may reach one is the SHEET's question, and `sheetForClass`
   // answers it from `PlayerActor.unlockedTrees`.
@@ -1122,13 +1127,21 @@ export function playerCombat(base: CombatSheet): CombatSheet {
 }
 
 export function sheetForBody(definition: ClassDef, body?: PurchasedTrees): TalentSheet {
-  return sheetForClass(definition, body?.unlockedTrees ?? [], body?.deepenedTrees ?? []);
+  return sheetForClass(
+    definition,
+    body?.unlockedTrees ?? [],
+    body?.deepenedTrees ?? [],
+    // ABSENT MEANS BORN WITH IT — see `sheetForClass`'s fourth parameter.
+    body?.inscriptions ?? BIRTH_INSCRIPTIONS,
+  );
 }
 
 /** What `sheetForBody` needs of a body. A structural slice, for `PooledBody`'s reason. */
 export type PurchasedTrees = {
   readonly unlockedTrees?: readonly string[];
   readonly deepenedTrees?: readonly string[];
+  /** What is written on this body — `Actor.inscriptions`. Absent means the birth set. */
+  readonly inscriptions?: readonly string[];
 };
 
 export function sheetForClass(
@@ -1145,6 +1158,25 @@ export function sheetForClass(
    * before, byte for byte.
    */
   deepened: readonly string[] = [],
+  /**
+   * WHAT IS WRITTEN ON THIS BODY — `Actor.inscriptions`.
+   *
+   * A FOURTH LIST RATHER THAN A FLAG, because an inscription grants a TALENT
+   * and the sheet is where talents are assembled. Upstream's `setInscription`
+   * does the same from the other end: it writes the slot and the talent
+   * appears.
+   *
+   * ═══ DEFAULTED TO THE BIRTH SET, WHICH IS THE ONE PLACE IT DIFFERS FROM
+   *     `unlocked` AND `deepened` ═══
+   * Those default to none because a body that has bought nothing HAS nothing.
+   * An inscription is the other way round: `human.lua:55` gives every character
+   * a healing infusion at birth, so a body nobody has said anything about HAS
+   * one. Defaulting to `[]` would make every probe and fixture build a
+   * character without the button every character owns — a measurement of a
+   * person who does not exist, which is the failure `first-fight.mjs`'s header
+   * was written about.
+   */
+  inscribed: readonly string[] = BIRTH_INSCRIPTIONS,
 ): TalentSheet {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1168,6 +1200,12 @@ export function sheetForClass(
     classId: definition.id,
     loadout: [
       ...definition.loadout,
+      // ═══ AND WHATEVER IS WRITTEN ON THIS BODY ═══
+      // `talentsFor` resolves ids through `content/inscriptions.ts` and skips
+      // any this build no longer ships. On the LOADOUT because an inscription
+      // grants a BUTTON — `canUseTalent` refuses anything outside it — and not
+      // in `passives`, which is where a fact about the body goes.
+      ...talentsFor(inscribed),
       ...bought.filter((talent) => talent.kind !== TalentKind.Passive),
     ].map((talent) => talent.id),
     /**
@@ -1361,6 +1399,10 @@ export function toLoadoutView(
     // travels rather than being assumed.
     tree: talent.tree,
     treeName: treeById(talent.tree)?.name ?? talent.tree,
+    // ONLY WHEN TRUE, so the common talent carries no extra key at all. See
+    // `TalentTree.hidden` for why a category can be worth granting and not
+    // worth drawing.
+    ...(treeById(talent.tree)?.hidden === true ? { hidden: true } : {}),
     kind: talent.kind,
     // THE MASTERY, so the header can say "(x1.30)" and mean it. THE BODY'S,
     // falling back to the tree's own figure for a caller with no sheet. Absent
@@ -1375,13 +1417,19 @@ export function toLoadoutView(
     // a client that hard-coded 5 would keep drawing "3/5" and a live `+` the
     // day the cap moved, on the one screen whose job is saying how much room a
     // talent has left.
-    maxLevel: TALENT_MAX_LEVEL,
+    // THE TALENT'S OWN CAP WHERE IT HAS ONE — see `Talent.maxLevel`. Absent is
+    // `TALENT_MAX_LEVEL`, which is every authored talent but the inscriptions.
+    maxLevel: talent.maxLevel ?? TALENT_MAX_LEVEL,
     // THE CURRENT -> NEXT DIFF (LevelupDialog.lua:963-970). Rendered here
     // because eslint blocks src/client/** from importing the combat formulas at
     // all, so a server-rendered sentence is the only honest way to show what
     // one point buys. Null at the cap is upstream's own at-cap branch (:971-975
     // renders the current description alone).
-    descNext: level < TALENT_MAX_LEVEL ? talent.describe(self, level + 1) : null,
+    // AND THE NEXT-RANK SENTENCE STOPS AT THE SAME CAP. Reading the constant
+    // here while `maxLevel` read the talent's own would print 'what one more
+    // point buys' on a talent no point can reach.
+    descNext:
+      level < (talent.maxLevel ?? TALENT_MAX_LEVEL) ? talent.describe(self, level + 1) : null,
     desc: talent.describe(self, level),
     /**
      * ═══ AND WHAT MAKES IT BIGGER, RESOLVED AGAINST THIS BODY ═══

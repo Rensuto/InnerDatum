@@ -1573,6 +1573,26 @@ export type Talent = {
    * look at than a letter and worse to reason about than a gap.
    */
   readonly iconId: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY RANKS THIS TALENT HAS. Absent means `TALENT_MAX_LEVEL`, which is
+   * every authored talent in the game and stays the default for that reason.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ IT EXISTS BECAUSE A ONE-RANK TALENT IS A POINT SINK WITHOUT IT ═══
+   * `maxLevel` reaches the wire as a constant (`loadoutViewFor`), the panel
+   * draws a live `+` while `level < maxLevel`, and `handleSpendPoint` refuses
+   * only at `level >= talent.maxLevel`. So a talent whose `describe()` ignores
+   * its level — an inscription, whose power comes from the inscription and not
+   * from points — would sell five irreversible generic points for nothing, and
+   * show the buyer two identical sentences while it did.
+   *
+   * UPSTREAM SAYS ONE IN SO MANY WORDS: every `newInscription` in
+   * `data/talents/misc/inscriptions.lua` is `points = 1`. This is that number,
+   * and it is the field the spend path already refuses on rather than a second
+   * rule beside it.
+   */
+  readonly maxLevel?: number;
   readonly cost: TalentCost;
   /**
    * ═══════════════════════════════════════════════════════════════════════════

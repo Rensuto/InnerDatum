@@ -905,7 +905,21 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
    * nothing to press; the PANEL is the surface where they are all just talents
    * the player owns and can raise, which is what ToME's tree view is.
    */
-  const shown = [...view.loadout, ...(view.passives ?? [])];
+  /**
+   * EVERYTHING THE CHARACTER CARRIES, LESS THE CATEGORIES THAT ARE NEVER DRAWN.
+   *
+   * `LoadoutTalent.hidden` is `hide = true` on the tree upstream, and this line
+   * is `LevelupDialog.lua:490`'s `not tt.hide` — the filter runs BEFORE the
+   * grouping, so a hidden tree contributes no heading, no strip and no cell.
+   *
+   * THE HOTBAR IS BUILT FROM `view.loadout` SEPARATELY AND IS UNTOUCHED BY THIS.
+   * The infusion stays on the bar and stays pressable; what it loses is a
+   * one-icon row under a heading, on a screen whose whole job is telling you
+   * where your next point can go — and no point can go there.
+   */
+  const shown = [...view.loadout, ...(view.passives ?? [])].filter(
+    (talent) => talent.hidden !== true,
+  );
 
   if (shown.length === 0) {
     // NEVER A BLANK BOX. `loadout` is unicast in the `hello` block, so this is a

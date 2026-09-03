@@ -42,6 +42,7 @@ import type {
   SaveStore,
 } from '../../src/server/persist/saves.ts';
 import type { World } from '../../src/server/world/world.ts';
+import { BIRTH_INSCRIPTIONS, talentsFor } from '../../src/server/content/inscriptions.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -849,9 +850,17 @@ describe('choose_class, accepted', () => {
     expect(loadout).toHaveLength(1);
     const talents = loadout[0]?.['talents'];
     if (!Array.isArray(talents)) throw new Error('the loadout frame carried no talents');
-    expect(talents.map((row: { id?: unknown }) => String(row.id))).toEqual(
-      ALCHEMIST.loadout.map((talent) => talent.id),
-    );
+    // AND WHAT IS WRITTEN ON HER, IN `sheetForClass`'s ORDER: the class's own
+    // actives, then the inscription's. Counted from the two source lists rather
+    // than spelled, so a second inscription needs no edit here. RE-CLOTHING DOES
+    // NOT SCRAPE A BODY CLEAN: an inscription lives on the actor
+    // (`ActorInscriptions.lua:26-32`), not in a `ClassDef`, so the button
+    // survives a class change — which this line now pins as well as pinning that
+    // the Watchman's four are gone.
+    expect(talents.map((row: { id?: unknown }) => String(row.id))).toEqual([
+      ...ALCHEMIST.loadout.map((talent) => talent.id),
+      ...talentsFor(BIRTH_INSCRIPTIONS).map((talent) => talent.id),
+    ]);
 
     // …and the two viewer-private frames that keep it honest: a different pool
     // with a different maximum, and the cooldown map the buttons grey out from.
