@@ -179,8 +179,11 @@ function view(over: Partial<HotbarView> = {}): HotbarView {
 }
 
 function itemView(itemId: string): ItemView {
-  // `compare: []` — a hotbar binding never draws stat rows, and an empty list
-  // is the honest answer for a fixture with no body behind it.
+  // `compare: []` — an empty list is the honest answer for a fixture with no
+  // body behind it. It no longer means "a bar slot cannot show rows": it can,
+  // and `hotbarTipAt` draws them under the prose. The rows a slot shows are
+  // joined in main.ts out of the bag the binding names, so this fixture — which
+  // has no bag — has nothing to join and says so.
   return { itemId, name: itemId, icon: itemId, tier: 'common', desc: '', compare: [] };
 }
 
@@ -930,6 +933,35 @@ describe('hotbarTipAt', () => {
 
   it('says nothing off the bar', () => {
     expect(hotbarTipAt(barView(), 2, 2, W, H)).toBeNull();
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAR IS WHERE A DRAUGHT IS ACTUALLY DRUNK, and it used to name it and
+   * stop.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `hotbarTipAt` returned `{ title, meta, lines: [] }` for an item slot: a name
+   * and the word "drink". So the one surface a consumable is used from was the
+   * one surface that never said what using it would do — while the bag's card,
+   * reading the same wire field, said it in full. Reported from play as part of
+   * "inventory, equipped items, floor items and anything i may be missing".
+   */
+  it('says what a bound item does, not just its name', () => {
+    // A BOUND SLOT BUILT ON PURPOSE. `barSlots()` fills the item half with
+    // EMPTY_SLOT, so the bar has no binding to hover unless one is supplied.
+    const bound = itemSlot(ItemSlotAction.Use, {
+      desc: 'Restores 24 hit points.  Ashwick work.',
+      rows: [{ label: 'Armour', value: '+3' }],
+    });
+    const withFacts: HotbarView = { slots: barSlots([bound]), hovered: -1, armed: -1 };
+    const index = withFacts.slots.findIndex((slot) => slot.kind === HotbarSlotKind.Item);
+    expect(index, 'the fixture bar has no bound item').toBeGreaterThanOrEqual(0);
+    const rect = slotRect(index, withFacts.slots.length, W, H);
+    const card = hotbarTipAt(withFacts, rect.x + 2, rect.y + 2, W, H);
+    expect(card, 'the bound item produced no card').not.toBeNull();
+    expect(card?.lines.join(' ')).toContain('Restores 24 hit points.');
+    expect(card?.lines.join(' ')).toContain('Armour');
   });
 });
 

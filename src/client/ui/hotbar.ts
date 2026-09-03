@@ -456,6 +456,27 @@ export type HotbarItemSlot = {
   readonly icon: string;
   /** Recomputed every frame by `itemSlotAction`. */
   readonly action: ItemSlotAction;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IT IS AND WHAT IT WOULD CHANGE — the same two the bag's card shows.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `hotbarTipAt` returned `{ title, meta, lines: [] }` for an item: a name and
+   * the word "drink". The bar is where a consumable actually gets used, so it
+   * was the one surface that named a thing without ever saying what it does —
+   * and the draught's whole sentence, the one written against THIS body's
+   * Constitution, was already on the wire and read by the panel next door.
+   *
+   * Passed in rather than resolved here, for this file's standing rule: the
+   * hotbar does not hold the inventory frame and must not learn to. main.ts
+   * joins them at the construction site, where `carried` is already in hand for
+   * `itemSlotAction`.
+   *
+   * Optional, so a caller that has no inventory frame yet builds the slot it
+   * always built.
+   */
+  readonly desc?: string;
+  readonly rows?: readonly { readonly label: string; readonly value: string }[];
 };
 
 /** An item slot with nothing in it. Still a slot, still a drop target. */
@@ -1557,7 +1578,23 @@ export function hotbarTipAt(
     // else — `HotbarItemSlot` carries no description, by design, because the
     // binding is the only thing remembered between frames. A short card that is
     // true beats a long one that would need the bag's catalogue on the bar.
-    return { title: slot.name, meta: itemActionWord(slot.action), lines: [] };
+    /**
+     * ═══ IT SAID THE NAME AND THE VERB AND STOPPED ═══
+     * `lines: []` meant the bar — which is where a consumable is actually USED —
+     * was the one surface that could name a draught without ever saying what it
+     * does. The sentence was already on the wire and already rendered against
+     * this body's own Constitution; the bag's card next door was reading it.
+     *
+     * The stats come last, under the prose, in the order and the `label  value`
+     * shape `inventoryTipAt` uses — two cards about one item laid out two ways
+     * would read as two different features.
+     */
+    const stats = (slot.rows ?? []).map((row) => `${row.label}  ${row.value}`);
+    return {
+      title: slot.name,
+      meta: itemActionWord(slot.action),
+      lines: [...(slot.desc === undefined || slot.desc === '' ? [] : [slot.desc]), ...stats],
+    };
   }
 
   return null;

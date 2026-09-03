@@ -357,11 +357,13 @@ import { PROTOCOL_VERSION, ZOOM_MAX, ZOOM_MIN } from '../shared/version.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type {
   ActorView,
+  CarriedItemView,
   ClassOptionView,
   RosterMsg,
   DownedView,
   EffectView,
   GroundItemView,
+  InspectRow,
   InspectView,
   InventoryMsg,
   ShopMsg,
@@ -3511,6 +3513,30 @@ function hotbarView(): HotbarView {
 
   const carried = inventory?.carried ?? [];
   const equipped = inventory?.equipped ?? {};
+
+  /**
+   * WHAT A BOUND ITEM IS, out of the bag it is bound to.
+   *
+   * A hotbar binding names a CARRIED item by construction, so the row the bag
+   * already holds is the answer — no second lookup path and no invented text.
+   * Absent while the binding points at something no longer carried, which
+   * `itemSlotAction` is already the authority on; the card then says the name
+   * and the verb, which is what it always said.
+   */
+  const itemTipFacts = (
+    itemId: string,
+    bag: readonly CarriedItemView[],
+  ): { desc?: string; rows?: readonly InspectRow[] } => {
+    const row = bag.find((entry) => entry.itemId === itemId);
+    if (row === undefined) return {};
+    return {
+      // `use` AHEAD OF THE FLAVOUR, the same order `detailRow` assembles: the
+      // server rendered that sentence against this body's own Constitution, so
+      // it is the number this drinker would actually get.
+      desc: row.use === undefined ? row.desc : `${row.use}  ${row.desc}`,
+      rows: row.compare,
+    };
+  };
   const items: HotbarSlot[] = hotbarBindings.map((binding) =>
     binding === null
       ? { kind: HotbarSlotKind.Empty }
@@ -3520,6 +3546,13 @@ function hotbarView(): HotbarView {
           name: binding.name,
           icon: binding.icon,
           action: itemSlotAction(binding.itemId, carried, equipped),
+          // ═══ AND WHAT IT DOES, JOINED HERE ═══ ui/hotbar.ts does not hold the
+          // inventory frame and must not learn to, so the join happens at the
+          // construction site where `carried` is already in hand for
+          // `itemSlotAction`. `use` first, exactly as the bag's card builds it:
+          // the sentence the server rendered against THIS body beats the
+          // catalogue's flavour when both exist.
+          ...itemTipFacts(binding.itemId, carried),
         },
   );
 
