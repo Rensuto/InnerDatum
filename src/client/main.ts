@@ -2592,11 +2592,24 @@ function pileAt(tile: TileXY): readonly { id: string; name?: string }[] {
  * six call sites each deriving a column count, which is how a click lands on the
  * cell beside the one under the pointer.
  */
+/**
+ * ONE VIEW, TWO READERS — the rows and the hover card.
+ *
+ * `inventoryTipAt` asks `detailRow` about the item under the pointer, so it needs
+ * the same view the ROWS were built from. Two calls to `inventoryPanelView()`
+ * would be two views that agree today and could stop agreeing the first time one
+ * of them grew a field the other did not — and the symptom would be a card
+ * describing an item by different numbers than the strip beside it.
+ */
+function inventoryViewFor(rect: PanelRect | null): InventoryPanelView {
+  // THE HEIGHT TRAVELS WITH THE WIDTH. `equippedStripFits` reads it to decide
+  // whether the doll tab can afford a full detail strip — see that function.
+  return { ...inventoryPanelView(), ...(rect === null ? {} : { panelH: rect.h }) };
+}
+
 function inventoryRowsFor(rect: PanelRect | null): readonly InventoryRow[] {
   return inventoryPanelRows(
-    // THE HEIGHT TRAVELS WITH THE WIDTH. `equippedStripFits` reads it to decide
-    // whether the doll tab can afford a full detail strip — see that function.
-    { ...inventoryPanelView(), ...(rect === null ? {} : { panelH: rect.h }) },
+    inventoryViewFor(rect),
     rect === null ? undefined : inventoryColumnsFor(rect.w),
   );
 }
@@ -4228,6 +4241,11 @@ const paintHud: HudPainter = (ctx, width, height) => {
         : inventoryTipAt(
             layout.inventory,
             inventoryRowsFor(layout.inventory),
+            // THE VIEW, so the card can ask about the item under the POINTER
+            // rather than only the one the strip is focused on — see
+            // `inventoryTipAt`. It carries the `inventory` frame itself, so this
+            // is the same view the rows were built from and not a second one.
+            inventoryViewFor(layout.inventory),
             pointerPoint.x,
             pointerPoint.y,
           )) ??

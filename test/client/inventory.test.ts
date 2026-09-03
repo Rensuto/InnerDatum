@@ -33,6 +33,7 @@ import { INVENTORY_CAP } from '../../src/shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { SpriteSource } from '../../src/client/render/assets.ts';
 import type {
+  InventoryCell,
   InventoryFocus,
   InventoryPanelView,
   InventoryRow,
@@ -148,6 +149,15 @@ function frame(over: Partial<InventoryMsg> = {}): InventoryMsg {
 
 function view(over: Partial<InventoryPanelView> = {}): InventoryPanelView {
   return { inventory: frame(), tab: InventoryTab.Equipped, focus: null, ...over };
+}
+
+/**
+ * The item id in a cell, or undefined. `InventoryCell` is a union and an empty
+ * slot carries no item, so the narrowing is written once rather than guessed at
+ * by each hover test.
+ */
+function cellItemId(cell: InventoryCell | undefined): string | undefined {
+  return cell !== undefined && cell.kind === 'item' ? cell.itemId : undefined;
 }
 
 /**
@@ -2164,9 +2174,11 @@ describe('inventoryTipAt', () => {
 
     // FOCUSED AND HOVERED ARE THE SAME ITEM HERE, which is the case the card is
     // for: the strip knows about this item, so the card can project it.
-    const rows = inventoryPanelRows(
-      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: carried.itemId } }),
-    );
+    const panelView = view({
+      tab: InventoryTab.Carried,
+      focus: { kind: 'item', itemId: carried.itemId },
+    });
+    const rows = inventoryPanelRows(panelView);
     const placed = inventoryPanelGeometry(rect, rows).placed;
     const cell = placed
       .flatMap((entry) => entry.cells.map((box, i) => ({ box, entry, i })))
@@ -2176,7 +2188,7 @@ describe('inventoryTipAt', () => {
       );
     if (cell === undefined) return;
 
-    const card = inventoryTipAt(rect, rows, cell.box.x + 2, cell.box.y + 2);
+    const card = inventoryTipAt(rect, rows, panelView, cell.box.x + 2, cell.box.y + 2);
     // Either it names the focused item, or it declines — never a card about a
     // DIFFERENT item, which is the one wrong answer available here.
     if (card !== null) expect(card.title.length).toBeGreaterThan(0);
@@ -2185,8 +2197,9 @@ describe('inventoryTipAt', () => {
   it('says nothing when the pointer is not on an item', () => {
     const rect = rectFor();
     if (rect === null) return;
-    const rows = inventoryPanelRows(view());
-    expect(inventoryTipAt(rect, rows, rect.x + 1, rect.y + 1)).toBeNull();
+    const bare = view();
+    const rows = inventoryPanelRows(bare);
+    expect(inventoryTipAt(rect, rows, bare, rect.x + 1, rect.y + 1)).toBeNull();
   });
 
   it('never describes an item other than the one under the pointer', () => {
@@ -2209,6 +2222,82 @@ describe('inventoryTipAt', () => {
     );
     const detail = rows.find((row) => row.kind === InventoryRowKind.Detail);
     expect(detail?.kind === InventoryRowKind.Detail ? detail.focusId : null).toBe(focused.itemId);
+  });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CARD ANSWERS FOR THE ITEM UNDER THE POINTER, FOCUSED OR NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It used to return null unless the hovered item WAS the focused one, so every
+   * cell in the bag but the one you last clicked — and every cell on the doll —
+   * produced no card at all. Reported from play: *"if you hover the tooltip on
+   * the ground it doesnt show stats, same for equipped gear"*.
+   *
+   * The property this pins is the one the old guard was reaching for and got
+   * backwards: never a card about a DIFFERENT item. Describing the RIGHT one is
+   * how you satisfy that, not declining to describe any.
+   */
+  it('describes an item the strip is not focused on', () => {
+    const rect = rectFor();
+    if (rect === null) return;
+    const carried = frame().carried;
+    if (carried.length < 2) return;
+    const focused = carried[0];
+    const other = carried[1];
+    if (focused === undefined || other === undefined) return;
+
+    // FOCUS ON ONE, HOVER THE OTHER — the disagreement that used to blank it.
+    const panelView = view({
+      tab: InventoryTab.Carried,
+      focus: { kind: 'item', itemId: focused.itemId },
+    });
+    const rows = inventoryPanelRows(panelView);
+    const placed = inventoryPanelGeometry(rect, rows).placed;
+    const target = placed
+      .flatMap((entry) => entry.cells.map((box, i) => ({ box, entry, i })))
+      .find(
+        ({ entry, i }) =>
+          entry.row.kind === InventoryRowKind.Cells &&
+          cellItemId(entry.row.cells[i]) === other.itemId,
+      );
+    if (target === undefined) return;
+
+    const card = inventoryTipAt(rect, rows, panelView, target.box.x + 2, target.box.y + 2);
+    expect(card, 'hovering an unfocused item produced no card').not.toBeNull();
+    expect(card?.title).toBe(other.name);
+    expect(card?.title).not.toBe(focused.name);
+  });
+
+  /**
+   * AND THE DOLL ANSWERS TOO, which is the half the strip structurally cannot
+   * show: `equippedStripFits` collapses the Equipped strip to one line on a small
+   * panel, and `drawDetail`'s compact branch returns before it reads `rows`. The
+   * card has no such budget, and `detailRows` *"does not know about compact"* by
+   * design — so what a worn item gives you is readable at any panel size.
+   */
+  it('describes a worn item on the doll', () => {
+    const rect = rectFor();
+    if (rect === null) return;
+    const slot = SLOT_ORDER.find((s) => DOLL[s] !== undefined);
+    if (slot === undefined) return;
+    const worn = DOLL[slot];
+    if (worn === undefined) return;
+
+    const panelView = view({ tab: InventoryTab.Equipped, focus: null });
+    const rows = inventoryPanelRows(panelView);
+    const placed = inventoryPanelGeometry(rect, rows).placed;
+    const target = placed
+      .flatMap((entry) => entry.cells.map((box, i) => ({ box, entry, i })))
+      .find(
+        ({ entry, i }) =>
+          entry.row.kind === InventoryRowKind.Doll &&
+          cellItemId(entry.row.cells[i]) === worn.itemId,
+      );
+    if (target === undefined) return;
+
+    const card = inventoryTipAt(rect, rows, panelView, target.box.x + 2, target.box.y + 2);
+    expect(card, 'the doll produced no card').not.toBeNull();
+    expect(card?.title).toBe(worn.name);
   });
 });
 

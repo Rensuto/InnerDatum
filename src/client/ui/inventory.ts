@@ -2776,6 +2776,7 @@ export const INVENTORY_PANEL_CARRIED_MAX = CARRIED_MAX;
 export function inventoryTipAt(
   rect: PanelRect,
   rows: readonly InventoryRow[],
+  view: InventoryPanelView,
   px: number,
   py: number,
 ): HoverCard | null {
@@ -2783,24 +2784,56 @@ export function inventoryTipAt(
   if (hit === null || hit.kind !== InventoryHitKind.Item) return null;
 
   /**
-   * THE DETAIL ROW IS ABOUT THE FOCUSED ITEM, WHICH MAY NOT BE THIS ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT ASKS ABOUT THE ITEM UNDER THE POINTER. IT USED TO ASK ABOUT THE FOCUS.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Hovering is not focusing — the strip follows a click and the card follows
-   * the pointer — so the row is only usable when the two happen to agree. When
-   * they do not, the card says the one thing it can know for certain from the
-   * hit itself rather than describing the wrong item, which is the failure worth
-   * avoiding here.
+   * This read the Detail row out of `rows` and then returned null unless
+   * `detail.focusId === hit.itemId` — *"hovering is not focusing"*, which is
+   * true and was the wrong conclusion. The strip follows a CLICK and the card
+   * follows the POINTER, so the two agree only on the one item you last clicked;
+   * every other cell in the bag, and every cell on the doll, produced NO CARD AT
+   * ALL. Hovering a coat to find out what it does is the whole reason this
+   * function exists, and it answered only for the coat you had already asked
+   * about another way.
+   *
+   * ═══ AND IT IS STILL ONE OPINION, BECAUSE IT ASKS THE SAME FUNCTION ═══
+   * The old comment's real point stands: re-deriving what an item is worth here
+   * would be a second opinion that drifts from the strip's. So this does not
+   * re-derive it — it calls `detailRow` with the HOVERED item as the focus and
+   * reads the answer. Same builder, same three lookups (bag, doll, shelf), same
+   * `detailRows` cap. A card and a strip describing one item can never disagree,
+   * because there is one function and it is this one.
+   *
+   * ═══ WHICH IS ALSO WHY THE DOLL FINALLY ANSWERS ═══
+   * `detailRow` fills `rows` from `ItemView.compare` for a worn item as readily
+   * as for a carried one, and `detailRows` *"does not know about `compact`"* by
+   * design — only `drawDetail` does, and only for the STRIP's reserved height.
+   * So a card over the doll carries the stats the one-line strip cannot show,
+   * which is exactly the case `equippedStripFits` gives up on at small panel
+   * sizes and the one a player most needs answered.
    */
-  const detail = rows.find((row) => row.kind === InventoryRowKind.Detail);
-  if (detail === undefined || detail.kind !== InventoryRowKind.Detail) return null;
-  if (detail.focusId !== hit.itemId) return null;
+  const detail = detailRow(
+    { ...view, focus: { kind: 'item', itemId: hit.itemId } },
+    view.inventory,
+  );
+  if (detail.kind !== InventoryRowKind.Detail) return null;
+  // THE BLANK ROW HAS AN EMPTY TITLE, and it is what `detailRow` returns for an
+  // item that has left the inventory between the frame and the pointer. A card
+  // with no name is a box of stats about nothing.
+  if (detail.title === '') return null;
 
   const lines = wrapForCard(detail.desc);
   const stats = detail.rows.map((row) => `${row.label}  ${row.value}`);
+  // ═══ NOTHING IS DROPPED SILENTLY ═══ caselog.ts's rule, which the strip
+  // already follows through `hiddenRows`. The card is capped by the same
+  // `detailRows` call, so it must own up to the same concession.
+  const more =
+    detail.hiddenRows > 0 ? [`…and ${String(detail.hiddenRows)} more`] : ([] as readonly string[]);
   return {
     title: detail.title,
     meta: detail.meta,
-    lines: [...lines, ...stats],
+    lines: [...lines, ...stats, ...more],
     nextLines: [],
   };
 }
