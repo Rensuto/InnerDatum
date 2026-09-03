@@ -53,7 +53,7 @@ import { itemById } from '../src/server/content/items.ts';
 import { parseItemId } from '../src/server/content/resolve.ts';
 import { sellPrice } from '../src/server/content/shops.ts';
 import { STEPS, firstStep } from './walk.mjs';
-import { classStrikes, firingSpot, takeShot } from './fightlib.mjs';
+import { classStrikes, firingSpot, nearestQuarry, takeShot } from './fightlib.mjs';
 
 const RUNS = Number(process.argv[2] ?? 8);
 
@@ -270,9 +270,10 @@ function run(site, size, seed) {
       }
 
       const living = foes.filter((f) => f.alive);
-      const near = living
-        .map((f) => ({ f, d: Math.max(Math.abs(f.x - b.x), Math.abs(f.y - b.y)) }))
-        .sort((x, y) => x.d - y.d)[0];
+      // WHAT TO WALK AT — nearest thing that will stand and fight, and only
+      // then the nearest thing at all. See `fightlib.mjs#nearestQuarry`: every
+      // stall row in this table was a party towed around a room by a kiter.
+      const near = nearestQuarry(living, b);
       if (near === undefined) break;
 
       /**

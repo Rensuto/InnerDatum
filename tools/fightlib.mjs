@@ -140,6 +140,42 @@ function reachable(attack, self, foes, level) {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH FOE TO WALK AT — and it is not always the nearest one.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ CHASING A KITER IS HOW A PARTY SPENDS NINE HUNDRED TURNS ═══
+ * Measured in The Outer Index with a level-20 party of three: four foes, two
+ * `ranged_kiter` wraiths beside the party and two husks across the map. The
+ * party fought the wraiths — which flee as fast as anyone can follow — for the
+ * whole turn cap and never touched the husks, finishing at 99% health with
+ * three foes alive. Every "stall" row in `delve-run`'s table is that shape.
+ *
+ * A KITER IS NOT UNKILLABLE, IT IS UNCHASEABLE. `takeShot` still fires at one
+ * the moment it strays into a band, and it strays constantly because its own
+ * profile wants a preferred distance rather than the horizon. What does not work
+ * is WALKING at it: it steps away on the same tick, so the gap never closes and
+ * the party is towed around the room.
+ *
+ * ═══ SO THE WALK PREFERS SOMETHING THAT WILL STAND AND FIGHT ═══
+ * Nearest non-kiter first, nearest anything second. It is the choice a player
+ * makes without thinking — deal with what you can catch, shoot the wraith when
+ * it drifts past — and it converts a stall into progress rather than into a
+ * different stall. When every foe on the floor kites, the fallback is the old
+ * behaviour exactly, because then there is nothing better to walk at.
+ *
+ * READS `ai.profile` DIRECTLY, which is server state a probe may see and a
+ * PLAYER may not. That asymmetry is fine here and would not be in the client:
+ * this is a measuring instrument deciding where to point itself, not a body
+ * deciding what it knows.
+ */
+export function nearestQuarry(foes, self) {
+  const byDistance = foes.map((f) => ({ f, d: sightDistance(self, f) })).sort((a, b) => a.d - b.d);
+  const standing = byDistance.find((c) => c.f.ai?.profile !== 'ranged_kiter');
+  return standing ?? byDistance[0];
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE NEAREST TILE THIS BODY COULD ACTUALLY SHOOT FROM, OR `null`.
  * ═══════════════════════════════════════════════════════════════════════════
  *
