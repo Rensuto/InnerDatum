@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 
+import { STAT_NAMES, statName } from '../../src/shared/stats.ts';
 import { describe, expect, it } from 'vitest';
 
 import { MAX_CHARACTER_LEVEL, TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
@@ -201,11 +202,24 @@ describe('what the player is told', () => {
       expect(text, 'a refusal with no sentence is a button that does nothing').not.toBeNull();
       expect((text ?? '').length).toBeGreaterThan(10);
     }
-    // The stat refusal names the stat and both figures, so a panel can print
-    // "Needs 24 str; you have 1" rather than a shrug.
+    /**
+     * The stat refusal names the stat and both figures, so a panel can print
+     * "Needs 24 Strength; you have 1" rather than a shrug.
+     *
+     * ═══ THE NAME, AND THIS CASE USED TO ACCEPT THE KEY ═══
+     * It asserted `toContain('str')`, which the sentence `Needs 24 str; you
+     * have 1.` satisfied — and so does `Strength`, which is why the key
+     * survived here for as long as it did. Upstream prints
+     * `self.stats_def[s].name` (engine/interface/ActorTalents.lua:769), so this
+     * now asserts the WORD and refuses the bare key beside a digit.
+     */
     const statCase = cases[2];
     expect(statCase, 'the stat case vanished').toBeDefined();
-    if (statCase !== undefined) expect(tierRefusalText(statCase)).toContain('str');
+    if (statCase !== undefined) {
+      const text = tierRefusalText(statCase) ?? '';
+      expect(text).toContain('Strength');
+      expect(text, 'the three-letter key is being shown to a player').not.toContain('str;');
+    }
   });
 
   it('says nothing at all when the answer is yes', () => {
@@ -305,5 +319,53 @@ describe('every requirement, met or not — what a player reads BEFORE spending'
     expect(unmet).toBeDefined();
     if (met === undefined || unmet === undefined) return;
     expect(tierRequirementText(met)).toBe(tierRequirementText(unmet));
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A REQUIREMENT NAMES THE STAT — IT WAS PRINTING THE DATABASE KEY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The requirement listing is the ONE place in this game where a talent already
+ * names a stat, and it read `20 wil (18)`. Upstream spells it out and puts the
+ * name first: `engine/interface/ActorTalents.lua:769` formats
+ * `("- %s %d"):format(self.stats_def[s].name, v)` against the table
+ * `tome/load.lua:181-188` defines.
+ *
+ * The names existed already, in the client's `STAT_ROWS`. They were unreachable
+ * from here because `shared ← client` is the forbidden direction, which is why
+ * `src/shared/stats.ts` exists rather than a second copy.
+ */
+describe('a requirement names the stat rather than keying it', () => {
+  const req = (stat: string, needed: number, have: number) =>
+    tierRequirementText({ kind: TierRefusal.Stat, needed, have, met: have >= needed, stat });
+
+  it('prints the full name, in upstream order', () => {
+    expect(req('wil', 20, 18)).toBe('Willpower 20 (18)');
+    expect(req('str', 24, 1)).toBe('Strength 24 (1)');
+  });
+
+  it('covers every stat a talent may gate on, luck included', () => {
+    /**
+     * `PrimaryStats` admits `lck` and nothing gates on it today. A table that
+     * omitted it would print the key for exactly that talent, on the day
+     * somebody wrote it — which is the shape of the bug this is fixing.
+     */
+    for (const key of ['str', 'dex', 'mag', 'wil', 'cun', 'con', 'lck']) {
+      expect(STAT_NAMES[key], `${key} has no name`).toBeDefined();
+      expect(req(key, 10, 10), key).not.toContain(` ${key} `);
+    }
+  });
+
+  it('falls back to the key rather than to a word, when the key is unknown', () => {
+    /**
+     * An unknown key is a bug and printing it is what makes the bug findable.
+     * Substituting prose would hide which stat the server actually meant — and
+     * `undefined` is a different case: a talent that names no stat is not gated
+     * on one, which the generic trees genuinely are.
+     */
+    expect(statName('zzz')).toBe('zzz');
+    expect(statName(undefined)).toBe('aptitude');
   });
 });

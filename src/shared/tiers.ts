@@ -70,6 +70,8 @@
  * that has cost this codebase six bugs. One module, imported by both.
  */
 
+import { statName } from './stats.ts';
+
 /** Tier 1 is the entry talent of a tree; tier 4 is its deepest. */
 export const MIN_TIER = 1;
 export const MAX_TIER = 4;
@@ -217,7 +219,10 @@ export function tierRefusalText(check: TierCheck): string | null {
     case TierRefusal.Level:
       return `Not yet — this opens at level ${String(check.needed)}.`;
     case TierRefusal.Stat:
-      return `Needs ${String(check.needed)} ${String(check.stat ?? 'aptitude')}; you have ${String(check.have)}.`;
+      // THE NAME, NOT THE KEY — see `statName`. This sentence is the one a
+      // player gets when the server actually refuses the spend (main.ts's
+      // `tierRefusalText(gate)`), and it read `Needs 20 wil; you have 18.`
+      return `Needs ${String(check.needed)} ${statName(check.stat)}; you have ${String(check.have)}.`;
   }
 }
 
@@ -317,6 +322,11 @@ export function tierRequirementText(req: TierRequirement): string {
     case TierRefusal.Level:
       return `level ${String(req.needed)}`;
     case TierRefusal.Stat:
-      return `${String(req.needed)} ${String(req.stat ?? 'aptitude')} (${String(req.have)})`;
+      // NAME FIRST, WHICH IS UPSTREAM'S ORDER: `("- %s %d"):format(self.stats_def[s].name, v)`
+      // at engine/interface/ActorTalents.lua:769. The bracketed figure is ours
+      // and has no upstream counterpart — ToME carries met/unmet in the colour,
+      // and a list that only coloured would be unreadable in one glance here,
+      // where the same strip also carries depth and level.
+      return `${statName(req.stat)} ${String(req.needed)} (${String(req.have)})`;
   }
 }
