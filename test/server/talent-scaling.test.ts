@@ -1057,8 +1057,7 @@ describe('every talent level moves a number — the honesty gate', () => {
     const registered = engine.registry
       .all()
       .filter(
-        (talent) =>
-          talent.onUse !== undefined && !isMonsterTalent(talent) && talent.maxLevel !== 1,
+        (talent) => talent.onUse !== undefined && !isMonsterTalent(talent) && talent.maxLevel !== 1,
       )
       .map((talent) => talent.id);
     // COUNTED, NOT SPELLED. This read `18` — three classes of six — and the
