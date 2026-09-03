@@ -74,6 +74,10 @@ const FULL = {
   hotbar: ['talent:crude_blow', null, 'talent:lockdown'],
   unlockedTrees: ['generic/leverage'],
   deepenedTrees: ['watch/discipline'],
+  // AND THE CASE NOTES. A note is never carried (`content/lore.ts` — the pickup
+  // READS it), so this list is the only record that a party ever found one; the
+  // guard below is exactly what stops it reaching production unreturned.
+  knownLore: ['lore_intake_form', 'lore_canal_survey'],
   explored: 'AAAABBBB',
   exploredElsewhere: { 'realm:site:redaction': 'CCCCDDDD' },
   filed: ['site:underworks', 'site:cairnfoot'],

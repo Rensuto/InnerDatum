@@ -590,6 +590,35 @@ type ActorCommon = {
    * and the limit makes the two equivalent.
    */
   deepenedTrees?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH CASE NOTES THIS CHARACTER HAS READ — `PartyLore.lore_known`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ON THE BODY for `unlockedTrees`' first reason: `snapshotPlayers` runs over
+   * BODIES, so anything the save file has to write down must be readable from
+   * one.
+   *
+   * ═══ AND IT IS THE ONLY RECORD THERE IS ═══
+   * A note is never carried — `Item.lore` makes the pickup READ it rather than
+   * bag it, exactly as `Object.lua:2313-2315` does — so unlike a discipline
+   * there is no six-talent trace on a sheet to infer it from. Without this list
+   * a party that read every note on the floor has read none of them the moment
+   * the tab closes.
+   *
+   * ═══ THE PARTY LEARNS, THE CHARACTER REMEMBERS ═══
+   * Upstream mixes `PartyLore` into the PARTY, not into Actor, so one member
+   * picking a note up teaches everybody. Ours does the same at the moment of the
+   * find — every body in the finder's party gets the id — and then each of them
+   * persists their own copy, because our party is a transient group and ToME's
+   * "party" is really the save file. A shared table would be a shared table
+   * nobody owns the lifetime of.
+   *
+   * IDS ARE NOT VALIDATED HERE. `loreById` answers undefined for a note this
+   * build no longer ships, which is the honest behaviour and the one
+   * `unlockedTrees` already chose.
+   */
+  knownLore?: readonly string[];
 
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.

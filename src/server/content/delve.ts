@@ -68,6 +68,7 @@ import { ActorRank } from '../../shared/protocol.ts';
 import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
 import { canWalk } from '../../shared/level.ts';
+import { LORE, noteIdFor } from './lore.ts';
 import { rollDrop } from './encounter.ts';
 import { rollLoot } from './loot.ts';
 import type { MonsterTemplate } from './monsters.ts';
@@ -1099,6 +1100,40 @@ export function populateDelve(
       at,
       rollLoot(world.lootRng.fork(`delve.litter:${String(i)}`), base, party.level),
     );
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND SOMETIMES SOMEBODY LEFT SOMETHING WRITTEN DOWN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME scatters its lore through authored zones — a note is placed because
+   * somebody decided that room should have one. We generate our floors, so the
+   * nearest honest equivalent is a seeded roll: the same delve always has the
+   * same note in the same place, and a different one does not.
+   *
+   * ═══ ONE IN THREE, AND NOT IN THE DRAWN ROOM ═══
+   * The vault already holds the best piece of litter, and stacking the note
+   * there too would make every other tile on the floor not worth walking —
+   * which is the argument the litter loop above makes for itself. A note is a
+   * reason to look in a corner.
+   *
+   * ═══ A REPEAT IS HARMLESS BY CONSTRUCTION ═══
+   * `learnLore` marks a note known UNCONDITIONALLY and announces only when it
+   * is new to the party — upstream's own order — so a party that walks the same
+   * delve twice reads it once and picks up nothing the second time. There is
+   * deliberately no 'have they read it' check here: the generator does not know
+   * which party is about to arrive, and a floor that changed shape depending on
+   * who opened it would not be the same delve.
+   */
+  if (world.rng.int('delve.note', 0, 2) === 0 && candidates.length > 0) {
+    const at = candidates[world.rng.int('delve.note.at', 0, candidates.length - 1)];
+    const note = LORE[world.rng.int('delve.note.which', 0, LORE.length - 1)];
+    if (at !== undefined && note !== undefined) {
+      // A FLOOR ID, not a catalogue id. A note is not an `Item` — see
+      // content/lore.ts, and `money.ts` for the shape it is copied from.
+      world.addGroundItem(at, noteIdFor(note.id));
+    }
   }
 
   return placed;

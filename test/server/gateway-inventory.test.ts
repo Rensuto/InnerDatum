@@ -12,6 +12,7 @@ import {
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
+import { LORE_IDS, noteIdFor } from '../../src/server/content/lore.ts';
 import { moneyIdFor } from '../../src/server/content/money.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { recomposeCombat } from '../../src/server/engine/effects.ts';
@@ -1936,5 +1937,67 @@ describe('what you put on changes how much of you there is', () => {
     expect(ren.last('error')?.['code']).toBe('refused');
     expect(renBody.carried, 'a full bag still took the coat').toEqual(['item_watchmans_coat']);
     expect(alexBody.carried, 'a full bag grew by one').toHaveLength(INVENTORY_CAP);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CASE NOTE IS READ, NOT CARRIED — over a real socket, by two players.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from `Object.lua:2312-2316` and `PartyLore.lua:102-131`. Three facts
+   * make it the feature rather than three half-features, and a unit test of any
+   * one of them would pass with the others missing: it never reaches the bag, it
+   * leaves the floor, and the finder knows it afterwards.
+   *
+   * ═══ THE PARTY FAN-OUT IS NOT ASSERTED HERE, AND THE REASON IS THE HARNESS ═══
+   * `learnLore` teaches every member of the finder's party, which is upstream's
+   * shape and the point of putting `PartyLore` on the party rather than on
+   * Actor. This `boot` wires no party table, so `membersOf` is never consulted
+   * and the fan-out reduces to the finder alone. What IS asserted below is the
+   * boundary that follows from it: a second player standing one tile away, in no
+   * party, learns nothing — the note is scoped to a PARTY and never to a floor.
+   * Stated rather than left implied, because a reader who assumed this test
+   * covered the fan-out would delete the wrong thing later.
+   */
+  it('reads a note off the floor instead of bagging it, and the party learns it', async () => {
+    server = await boot('lore-find');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const renBody = bodyOf(await ren.hello('ren-handle'));
+    const alex = await connect(server.port);
+    playsThe(WATCHMAN);
+    const alexBody = bodyOf(await alex.hello('alex-handle'));
+
+    standAt(renBody, 10, 10);
+    standAt(alexBody, 11, 10);
+    renBody.carried = [];
+    alexBody.carried = [];
+    // THE NOTE GOES ON REN'S OWN TILE. `pickup` carries no coordinate — the
+    // server reads the sender's live x/y — so this is the only place it can be.
+    server.world.addGroundItem({ x: 10, y: 10 }, noteIdFor(LORE_IDS[0] ?? ''));
+    await ren.settle();
+    await alex.settle();
+    ren.clear();
+
+    ren.send({ t: 'pickup' });
+    await ren.settle();
+    await alex.settle();
+
+    // 1. IT NEVER REACHED THE BAG. The whole point of the `on_prepickup` branch.
+    expect(renBody.carried, 'the note was put in the bag').toEqual([]);
+    expect(ren.last('error'), 'reading a note off the floor was refused').toBeUndefined();
+    // AND IT IS OFF THE FLOOR, so it cannot be read twice.
+    expect(
+      server.world.itemsAt(10, 10).length,
+      'the note is still lying there after being read',
+    ).toBe(0);
+
+    // 2 and 3. THE FINDER KNOWS IT, AND SO DOES THE PERSON NEXT TO THEM.
+    expect(renBody.knownLore, 'the finder did not learn it').toContain(LORE_IDS[0]);
+    // THE BOUNDARY — see the docblock. Alex is adjacent and in no party, so the
+    // note is not theirs. A floor-scoped fan-out would light this up.
+    expect(alexBody.knownLore ?? [], 'a stranger on the next tile learned it').not.toContain(
+      LORE_IDS[0],
+    );
   });
 });

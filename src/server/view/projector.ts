@@ -67,6 +67,7 @@ import { TalentEffect } from '../engine/talents.ts';
 import { Faction } from '../engine/actor.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { INVENTORY_CAP } from '../../shared/progression.ts';
+import { loreById, loreIdOfNote } from '../content/lore.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
 import { bound } from '../../shared/scale.ts';
@@ -1628,6 +1629,32 @@ export function projectGroundItems(
     // a coin pile has no `slot`, so it is not an `Item` (content/money.ts). It
     // draws at the plainest tier: a pile of gold is not a rare find, it is the
     // most ordinary thing on the floor.
+    /**
+     * A CASE NOTE, WHICH `resolveItem` ALSO CANNOT ANSWER FOR — see
+     * content/lore.ts. Above the money branch and above the catalogue for the
+     * same reason money is: it is an item id that is not an `Item`.
+     *
+     * IT CARRIES THE NOTE'S NAME AND NOTHING ELSE. No `slot` (it is never
+     * worn), no `desc` (the FLOOR must not print what the paper says — that is
+     * the whole of the reward for picking it up), and no `compare`, because
+     * there is no swap to describe. `tier: 'common'` because a note is not a
+     * rare find and colouring it like one would walk a party to it expecting a
+     * coat.
+     */
+    const noteId = loreIdOfNote(dropped.itemId);
+    if (noteId !== undefined) {
+      const note = loreById(noteId);
+      if (note !== undefined) {
+        items.push({
+          id: dropped.id,
+          cell: [dropped.x, dropped.y],
+          itemId: dropped.itemId,
+          tier: 'common',
+          name: note.name,
+        });
+      }
+      continue;
+    }
     if (isMoneyId(dropped.itemId)) {
       items.push({
         id: dropped.id,

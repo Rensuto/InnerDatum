@@ -205,6 +205,7 @@ import { boughtSheet, recomposeCombat, restoreOnReentry } from '../engine/effect
  * already owns, it returns a string, it draws no RNG and it queues nothing.
  */
 import { membersOf, partyIdOf, sameParty } from '../engine/party.ts';
+import { loreById, loreIdOfNote } from '../content/lore.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
 // difference between "this file predates classes" and "this file names a class
@@ -1770,6 +1771,11 @@ export type CharacterSnapshot = {
    * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
    */
   readonly deepenedTrees?: readonly string[];
+  /**
+   * WHICH CASE NOTES THIS CHARACTER HAS READ. See `Actor.knownLore`: a note is
+   * never carried, so this list is the only record that one was ever found.
+   */
+  readonly knownLore?: readonly string[];
   /** base64 bitset of the overworld this character had explored. */
   readonly explored?: string;
   /** The same for every OTHER overworld, keyed by realm id. See `applyRestore`. */
@@ -2024,6 +2030,11 @@ export type CharacterRestore = {
    * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
    */
   readonly deepenedTrees?: readonly string[];
+  /**
+   * WHICH CASE NOTES THIS CHARACTER HAS READ. See `Actor.knownLore`: a note is
+   * never carried, so this list is the only record that one was ever found.
+   */
+  readonly knownLore?: readonly string[];
   /**
    * base64 bitset of the overworld this character had explored, straight off
    * the disk. Decoded against the CURRENT region's size, so a save written
@@ -3612,6 +3623,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // layer holds this across a debounce while the body goes on being played.
     ...(actor.unlockedTrees === undefined ? {} : { unlockedTrees: [...actor.unlockedTrees] }),
     ...(actor.deepenedTrees === undefined ? {} : { deepenedTrees: [...actor.deepenedTrees] }),
+    // AND WHAT THEY HAVE READ. Copied for the same reason: a note filed while
+    // the save layer holds this across a debounce must not alias the live list.
+    ...(actor.knownLore === undefined ? {} : { knownLore: [...actor.knownLore] }),
     // WHAT THEY HAVE WALKED. Absent when this process has never revealed
     // anything for them, which `saveCharacter` reads as "cannot say" and leaves
     // the disk alone — the same carry-forward rule the keymap gets, and the
@@ -6622,6 +6636,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       app.log.info(
         { actorId: actor.id, trees: actor.deepenedTrees.length },
         'restored a character’s deepened disciplines',
+      );
+    }
+    /**
+     * AND WHAT THEY HAVE READ. No ordering constraint, unlike the two above:
+     * nothing is DERIVED from this list — no sheet is rebuilt from it — so it
+     * only has to be on the body before the next note is found.
+     */
+    if (restore.knownLore !== undefined && restore.knownLore.length > 0) {
+      actor.knownLore = [...restore.knownLore];
+      app.log.info(
+        { actorId: actor.id, notes: actor.knownLore.length },
+        'restored a character’s case notes',
       );
     }
     if (restore.hotbar !== undefined) {
@@ -13319,6 +13345,88 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
   };
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * `learnLore` — a note is found ONCE and known by the whole party forever.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from t-engine4 game/modules/tome/class/interface/PartyLore.lua:102-131.
+   *
+   * ═══ THE PARTY LEARNS, NOT THE READER ═══
+   * `PartyLore` is mixed into the PARTY upstream, never into Actor, so one
+   * member picking a note up teaches everybody. That is ported as written and it
+   * matters more here than there: four people are in a voice channel and one of
+   * them is holding the paper. A version where the others had to queue up to
+   * read it would be a version that produces silence.
+   *
+   * ═══ THE ORDER OF THE TWO HALVES IS UPSTREAM'S, AND IT IS NOT ARBITRARY ═══
+   * `learnLore` announces and pops only `if not self:knownLore(lore)`, then
+   * marks it known UNCONDITIONALLY — outside that branch. So a second copy of a
+   * note found later is silently absorbed rather than announced twice, and the
+   * "already known" case still costs nothing. Ours does the same: `announce` is
+   * decided BEFORE anybody's list is written.
+   *
+   * ═══ AND IT STOPS YOU WALKING ═══
+   * `runStop("learnt lore")` and `restStop("learnt lore")` are the last thing
+   * upstream does here. Finding something to read is exactly the kind of event
+   * travel exists to interrupt — a party that auto-explored past a note and
+   * kept going would have read it without anyone seeing it.
+   */
+  const learnLore = (finder: PlayerActor, loreId: string): void => {
+    const note = loreById(loreId);
+    if (note === undefined) {
+      // A content reload dropped a note out from under a live floor. The item is
+      // already gone from the map by the time we are called, so there is nothing
+      // to put back; say nothing rather than announcing a blank.
+      app.log.warn({ actorId: finder.id, loreId }, 'lore: no such note in this build');
+      return;
+    }
+    const home = homeOf(finder.id);
+    const party = opts.parties === undefined ? [finder.id] : membersOf(opts.parties, finder.id);
+
+    // DECIDED BEFORE ANYTHING IS WRITTEN — see the order note above. "New to
+    // this party" is the question, so a member who already had it does not
+    // silence the announcement for the one who did not.
+    const announce = party.some((id) => {
+      const body = homeOf(id).world.getActor(id);
+      return body?.kind === ActorKind.Player && !(body.knownLore ?? []).includes(loreId);
+    });
+
+    for (const id of party) {
+      const body = homeOf(id).world.getActor(id);
+      if (body === undefined || body.kind !== ActorKind.Player) continue;
+      const known = body.knownLore ?? [];
+      if (known.includes(loreId)) continue;
+      body.knownLore = [...known, loreId];
+    }
+
+    if (!announce) return;
+    /**
+     * THE NOTE IS READ INTO THE CASE LOG, which is where this game puts prose.
+     * Upstream opens `LorePopup` over the map; ours has a panel whose whole
+     * design is two lanes of text and a reserved band, and a second modal for
+     * one paragraph would be a surface to lay out, theme and dismiss for
+     * something the log already does. The name first, then the body, so the
+     * heading survives a scroll even when the paragraph does not.
+     */
+    broadcastRecordLine(home, `${nameOf(finder.id)} reads: ${note.name}`);
+    broadcastRecordLine(home, note.text);
+    /**
+     * ═══ `runStop` AND `restStop` HAVE NOTHING TO INTERRUPT HERE ═══
+     * Upstream ends `learnLore` by stopping the run and the rest, and it needs
+     * to: its lore arrives INCIDENTALLY — walked over as a grid, dropped by a
+     * dying monster (`Actor.lua:3005`), revealed by identifying an item
+     * (`Object.lua:2335`) — so a player can find something to read in the
+     * middle of a hundred-step run and never see it.
+     *
+     * OURS ARRIVES ONLY BY `pickup`, which is a deliberate command that ends a
+     * travel by being pressed and cannot be sent while resting at all. There is
+     * no run to stop. The clause is not dropped for convenience — it is
+     * unreachable, and it becomes reachable the day a note is learned from a
+     * kill or a tile, which is the day to port it.
+     */
+  };
+
   /** Say it once a turn, to the room. See `bagFullNoticeTurn`. */
   const noteBagFull = (body: PlayerActor): void => {
     const home = homeOf(body.id);
@@ -13427,6 +13535,42 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * slot. Not `INVENTORY_CAP` — a full bag must never stop you
      * picking up gold, or the cap becomes an economic penalty nobody designed.
      */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A CASE NOTE IS READ, NOT CARRIED. `Object.lua:2312-2316`, exactly.
+     * ═══════════════════════════════════════════════════════════════════════
+     * Upstream's lore object has an `on_prepickup` that removes it from the
+     * map and calls `game.party:learnLore(self.lore)` — it never reaches an
+     * inventory. It sits BESIDE the coin branch below and above
+     * `resolveItem` for the same structural reason money does: a note is an
+     * item id that is NOT an `Item` (see content/lore.ts), so the catalogue
+     * cannot answer for it and must not be asked.
+     *
+     * SAME ORDER AS THE COINS — remove from the floor FIRST, file second, so
+     * a race that loses the removal cannot file it for anybody.
+     *
+     * IT SKIPS EVERY RULE BELOW, and each skip is deliberate. Not
+     * `INVENTORY_CAP` — a full bag must never stop you reading something off
+     * the floor, and paper occupies no slot. Not the duplicate check — you
+     * cannot already be carrying a note, because no note is ever carried.
+     */
+    const noteLoreId = loreIdOfNote(top.itemId);
+    if (noteLoreId !== undefined) {
+      if (!world.removeGroundItem(top.id)) {
+        sendError(session.socket, ErrorCode.Refused, 'somebody got there first');
+        return;
+      }
+      learnLore(body, noteLoreId);
+      // IT COSTS THE TURN, like every other pickup (Player.lua:1313-1315), and
+      // it saves immediately for the coin branch's reason: the floor is not
+      // persisted, so an unsaved read does not put the note back — it destroys
+      // it, and with it the only copy of something a player found.
+      spendLootTurn(body, 'pickup');
+      saveLoot('pickup');
+      pumpAndBroadcast(realmFor(session));
+      return;
+    }
+
     const coins = moneyAmountOf(top.itemId);
     if (coins !== undefined) {
       if (!world.removeGroundItem(top.id)) {

@@ -649,6 +649,23 @@ export type CharacterFile = {
    */
   readonly deepenedTrees?: readonly string[];
   /**
+   * WHICH CASE NOTES THIS CHARACTER HAS READ — `PartyLore.lore_known`.
+   *
+   * SAVED FOR `deepenedTrees`' REASON, and it is the same shape of fact: a note
+   * leaves NO trace anywhere else. It is never carried (`Item.lore` — the pickup
+   * READS it and files it), so there is no bag entry to infer it from, and
+   * without this line every note a party found is unread again the moment the
+   * tab closes.
+   *
+   * IDS ARE NOT VALIDATED, exactly as `unlockedTrees`' are not. This layer has
+   * no lore table and must not grow one; a note this build no longer ships comes
+   * back verbatim and `loreById` answers undefined for it, which is the honest
+   * behaviour — the day it returns, so does the reading.
+   *
+   * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
+   */
+  readonly knownLore?: readonly string[];
+  /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
@@ -1053,6 +1070,7 @@ export type CharacterInit = {
    * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
    */
   readonly deepenedTrees?: readonly string[];
+  readonly knownLore?: readonly string[];
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
@@ -1127,6 +1145,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     hotbar: init.hotbar,
     unlockedTrees: init.unlockedTrees,
     deepenedTrees: init.deepenedTrees,
+    knownLore: init.knownLore,
     zoom: init.zoom,
     explored: init.explored,
     // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
@@ -2041,6 +2060,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // rule. `sheetForClass` uniques the list, so a duplicate that
       // survives cannot buy a second +0.2.
       deepenedTrees: parseUnlockedTrees(doc.deepenedTrees, problems),
+      knownLore: parseUnlockedTrees(doc.knownLore, problems),
       zoom: parseZoom(doc.zoom, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
@@ -2147,6 +2167,7 @@ export function serialiseCharacter(file: CharacterFile): string {
   const hotbar = file.hotbar === undefined ? undefined : [...file.hotbar];
   const unlockedTrees = file.unlockedTrees === undefined ? undefined : [...file.unlockedTrees];
   const deepenedTrees = file.deepenedTrees === undefined ? undefined : [...file.deepenedTrees];
+  const knownLore = file.knownLore === undefined ? undefined : [...file.knownLore];
   // ═══ THE ACTION KEYS ARE SORTED; THE KEY STRINGS INSIDE ONE ARE NOT ═══
   // Exactly the asymmetry `equipped` and `carried` have, and for the identical
   // reasons. The MAP's key order follows whichever order the player happened to
@@ -2231,6 +2252,7 @@ export function serialiseCharacter(file: CharacterFile): string {
     hotbar,
     unlockedTrees,
     deepenedTrees,
+    knownLore,
     zoom: file.zoom,
     /**
      * ═════════════════════════════════════════════════════════════════════════
@@ -3241,6 +3263,7 @@ export type SavedPrefs = {
    * NO SCHEMA BUMP: an OPTIONAL field needs none (docs/data-schemas.md:48-49).
    */
   readonly deepenedTrees?: readonly string[];
+  readonly knownLore?: readonly string[];
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
    *
@@ -3375,6 +3398,7 @@ type Binding = {
   readonly hotbar?: readonly (string | null)[];
   readonly unlockedTrees?: readonly string[];
   readonly deepenedTrees?: readonly string[];
+  readonly knownLore?: readonly string[];
 };
 
 export type CharacterBridgeOptions = {
@@ -3503,6 +3527,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       hotbar: snapshot.hotbar ?? binding.hotbar,
       unlockedTrees: snapshot.unlockedTrees ?? binding.unlockedTrees,
       deepenedTrees: snapshot.deepenedTrees ?? binding.deepenedTrees,
+      knownLore: snapshot.knownLore ?? binding.knownLore,
       // THE SAME CARRY-FORWARD RULE. A producer with no opinion about the zoom
       // leaves the disk exactly as it found it.
       zoom: snapshot.zoom ?? binding.zoom,
@@ -3639,6 +3664,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       hotbar: file?.hotbar,
       unlockedTrees: file?.unlockedTrees,
       deepenedTrees: file?.deepenedTrees,
+      knownLore: file?.knownLore,
     });
 
     if (file === null) {
@@ -3741,6 +3767,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       hotbar: file.hotbar,
       unlockedTrees: file.unlockedTrees,
       deepenedTrees: file.deepenedTrees,
+      knownLore: file.knownLore,
       // AND THE MAP THEY WALKED, on the same argument the line above makes:
       // nobody should have to re-explore a region because they closed a tab.
       // Named in this literal DELIBERATELY -- saves.ts:1366-1369 warns that a
