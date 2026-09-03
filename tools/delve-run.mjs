@@ -35,6 +35,8 @@ import { SITES, RealmKind, createRealms } from '../src/server/world/realms.ts';
 import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
 import { createMvpEffectState } from '../src/server/content/effects.ts';
+import { recomposeCombat } from '../src/server/engine/effects.ts';
+import { resolveItem } from '../src/server/content/resolve.ts';
 import {
   CLASSES,
   createContentTalentEngine,
@@ -44,15 +46,36 @@ import {
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { ActorKind, ErasedReason } from '../src/shared/protocol.ts';
 import { canWalk } from '../src/shared/level.ts';
+import { growTo, dressFor, spendPointsTo } from './grown.mjs';
 import { areEnemies } from '../src/server/engine/actor.ts';
 import { moneyAmountOf } from '../src/server/content/money.ts';
 import { itemById } from '../src/server/content/items.ts';
 import { parseItemId } from '../src/server/content/resolve.ts';
 import { sellPrice } from '../src/server/content/shops.ts';
 import { STEPS, firstStep } from './walk.mjs';
-import { rangedAttacks, takeShot } from './fightlib.mjs';
+import { firingSpot, rangedAttacks, takeShot } from './fightlib.mjs';
 
 const RUNS = Number(process.argv[2] ?? 8);
+
+/**
+ * WHAT LEVEL THE PARTY IS — `node tools/delve-run.mjs 8 6`.
+ *
+ * ═══ EVERY NUMBER THIS TOOL EVER PRINTED WAS A LEVEL-1 BODY WEARING NOTHING ═══
+ * The bodies below were built the way every probe here builds one: `addPlayer`,
+ * the class combat sheet, `sheetForClass`. That is a character with four birth
+ * talents at rank 1 and an empty paper doll — which the gateway's own note
+ * confirms is what a NEW character is (*"the classes have no starting kit at
+ * all"*) and is therefore exactly right for the opening ambush.
+ *
+ * It is the wrong body for a DELVE. This tool sent it into all sixteen,
+ * including the ones a party reaches after twenty levels and a lot of gear, and
+ * reported 0 of 8 on every row. A row measured against a character nobody has
+ * ever played is a measurement of the probe.
+ *
+ * Defaults to 1, so running it bare prints what it has always printed and every
+ * number anybody wrote down still compares.
+ */
+const LEVEL = Number(process.argv[3] ?? 1);
 /** Long enough to cross a 34x30 room several times and kill ten things. */
 const TURN_CAP = 900;
 
@@ -109,7 +132,18 @@ function run(site, size, seed) {
     realm.engine.setConnected(p.id, true);
     // THE SHEET IS WHAT MAKES THE BOOK ANSWER: without one `loadoutOf` is empty
     // and every talent is refused as "no such talent in this loadout".
-    talentEngine.attach(p.id, sheetForClass(cls));
+    // GROWN FIRST, THEN DRESSED, THEN THE SHEET — see tools/grown.mjs for why
+    // the order is `monsters.ts`'s: a pool sized before the stats exist cannot
+    // include the Constitution they bought.
+    growTo(p, cls, LEVEL);
+    if (LEVEL > 1) dressFor(p, LEVEL, realm.world.lootRng.fork(`delve.dress.p${String(i)}`));
+    const sheet = sheetForClass(cls);
+    spendPointsTo(sheet, cls, LEVEL);
+    talentEngine.attach(p.id, sheet);
+    // THE DOLL FOLDED INTO THE SHEET. Without this the gear is worn and
+    // contributes nothing, which is the 'correct value with no reader' this
+    // repository keeps shipping.
+    if (LEVEL > 1) recomposeCombat(p, effects, resolveItem);
     bodies.push({ body: p, attacks: rangedAttacks(cls) });
   }
 
@@ -247,11 +281,22 @@ function run(site, size, seed) {
        * at the nearest monster is not the party this game ships. See
        * `fightlib.mjs`.
        */
-      const { fired, gap } = takeShot(realm.engine, b.id, attacks, b, living, (id, shot) => {
-        if (process.env.DELVE_DIAG === '3') {
-          refusals.set(String(shot?.code), (refusals.get(String(shot?.code)) ?? 0) + 1);
-        }
-      });
+      const { fired, gap } = takeShot(
+        realm.engine,
+        b.id,
+        attacks,
+        b,
+        living,
+        (id, shot) => {
+          if (process.env.DELVE_DIAG === '3') {
+            refusals.set(String(shot?.code), (refusals.get(String(shot?.code)) ?? 0) + 1);
+          }
+        },
+        // THE LEVEL, so the band can ask about WALLS. Without it a foe behind
+        // one counts as a shot and this driver paces between two tiles — the
+        // stall `first-fight.mjs` was measured doing for 200 iterations.
+        realm.world.level,
+      );
       if (fired) {
         tally.shot += 1;
         continue;
@@ -286,9 +331,20 @@ function run(site, size, seed) {
       // Nothing was in a band this turn: back out of a dead zone, or close.
       const shortest = attacks[attacks.length - 1] ?? null;
       const away = shortest !== null && gap === null && near.d < shortest.minRange;
-      const goal = away
-        ? { x: b.x + Math.sign(b.x - near.f.x), y: b.y + Math.sign(b.y - near.f.y) }
-        : { x: near.f.x, y: near.f.y };
+      // ═══ AND THE THIRD OPTION `first-fight.mjs` LEARNED IT NEEDED ═══
+      // Close and back off are both moves along the line to the foe, so neither
+      // answers a WALL. `firingSpot` names a tile with a real shot from it.
+      const spot = away
+        ? null
+        : firingSpot(attacks, b, living, realm.world.level, (x, y) =>
+            canWalk(realm.world.level, x, y),
+          );
+      const goal =
+        spot !== null
+          ? spot
+          : away
+            ? { x: b.x + Math.sign(b.x - near.f.x), y: b.y + Math.sign(b.y - near.f.y) }
+            : { x: near.f.x, y: near.f.y };
       // PATHFOUND, NOT STRAIGHT-LINE — see tools/walk.mjs.
       /**
        * ═══════════════════════════════════════════════════════════════════════
