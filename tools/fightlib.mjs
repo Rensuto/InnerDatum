@@ -198,6 +198,48 @@ export function firingSpot(attacks, self, foes, level, walkable, radius = 6) {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY SINGLE-TARGET ATTACK A CLASS OWNS, REACHING OR NOT — `loadoutStrikes`'
+ * twin, for a driver holding a CLASS DEFINITION rather than a wire frame.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ WITHOUT IT, ONE CLASS IN FOUR NEVER USED ITS KIT ═══
+ * `rangedAttacks` filters `range >= 2`, which this file's header already warns
+ * is a trap: *"The Watchman's entire kit is range 1.5, so the reaching filter
+ * returns NOTHING and a driver built around 'shoot, then close' spends the whole
+ * game walking into people."* That warning was written for the SOCKET readers
+ * and `loadoutStrikes` was the answer — but the in-process drivers
+ * (`first-fight.mjs`, `delve-run.mjs`) hold a `ClassDef`, not a frame, so they
+ * had no such function and kept calling `rangedAttacks`.
+ *
+ * MEASURED, over the four classes: The Watchman owns six single-target talents
+ * and `rangedAttacks` offers ONE. The Inspector and the Alchemist lose one each
+ * (their melee answer); the Redactor loses none. So every difficulty number this
+ * repository has printed for the Watchman was a body bump-attacking with five of
+ * its six buttons untouched — the same defect `first-fight.mjs`'s header records
+ * as *"a game where NO CLASS HAD ANY TALENTS"*, still true for melee.
+ *
+ * ═══ THE 1.5 TRAP IS HANDLED IN THE BAND, NOT BY A FILTER ═══
+ * `loadoutStrikes` argues this in full and it holds here: `reachable` asks
+ * whether the foe is within `range`, and 1.5 admits a diagonal neighbour (1.41)
+ * and nothing further. Turning that number into a category test is what produced
+ * three wrong answers in this repo; leaving it a distance is what makes one
+ * function serve a truncheon and a revolver.
+ */
+export function classStrikes(cls, known) {
+  return (cls.loadout ?? [])
+    .filter((t) => known === undefined || known.has(t.id))
+    .filter((t) => t.targeting?.shape === 'single')
+    .filter((t) => t.targeting?.affinity !== 'ally')
+    .map((t) => ({
+      id: t.id,
+      range: t.targeting.range ?? 1,
+      minRange: t.targeting.minRange ?? 0,
+    }))
+    .sort((a, b) => b.range - a.range);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * EVERY SINGLE-TARGET ATTACK IN A `loadout` FRAME THAT REACHES, LONGEST FIRST.
  * ═══════════════════════════════════════════════════════════════════════════
  *

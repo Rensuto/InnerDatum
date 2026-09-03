@@ -53,7 +53,7 @@ import { itemById } from '../src/server/content/items.ts';
 import { parseItemId } from '../src/server/content/resolve.ts';
 import { sellPrice } from '../src/server/content/shops.ts';
 import { STEPS, firstStep } from './walk.mjs';
-import { firingSpot, rangedAttacks, takeShot } from './fightlib.mjs';
+import { classStrikes, firingSpot, takeShot } from './fightlib.mjs';
 
 const RUNS = Number(process.argv[2] ?? 8);
 
@@ -144,7 +144,7 @@ function run(site, size, seed) {
     // contributes nothing, which is the 'correct value with no reader' this
     // repository keeps shipping.
     if (LEVEL > 1) recomposeCombat(p, effects, resolveItem);
-    bodies.push({ body: p, attacks: rangedAttacks(cls) });
+    bodies.push({ body: p, attacks: classStrikes(cls) });
   }
 
   /**

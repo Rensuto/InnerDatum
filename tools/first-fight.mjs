@@ -70,7 +70,7 @@ import {
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { canWalk, Ground } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
-import { firingSpot, rangedAttacks, takeShot } from './fightlib.mjs';
+import { classStrikes, firingSpot, takeShot } from './fightlib.mjs';
 
 /** Enough that one lucky seed cannot carry a column. */
 const RUNS = Number(process.argv[2] ?? 24);
@@ -179,7 +179,7 @@ function fight(cls, seed) {
    */
   // RANK 1 IS "LEARNED"; the engine's own test is `getTalentLevelRaw >= 1`
   // (`TalentRefusal.NotLearned`), so this reads the same map it does.
-  const attacks = rangedAttacks(
+  const attacks = classStrikes(
     cls,
     new Set([...sheet.points].filter(([, rank]) => rank >= 1).map(([id]) => id)),
   );
