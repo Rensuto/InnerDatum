@@ -144,6 +144,7 @@
  */
 
 import { PartyAction } from '../../shared/protocol.ts';
+import type { LoreView } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import {
@@ -380,6 +381,16 @@ export const MenuScreen = {
   Root: 'root',
   /** Every action, its two keys, and the controls that change them. */
   Keys: 'keys',
+  /**
+   * EVERY CASE NOTE THIS CHARACTER HAS READ — the port of `ShowLore.lua`.
+   *
+   * A SCREEN ON THIS SURFACE AND NOT A PANEL OF ITS OWN, which is upstream's
+   * own placement: `learnLore` tells the player *"You can read all your
+   * collected lore in the game menu, by pressing Escape"*. One rect, one
+   * geometry, one hit test — the header's rule, and the reason `Keys` is here
+   * rather than in a second modal.
+   */
+  Notes: 'notes',
 } as const;
 export type MenuScreen = (typeof MenuScreen)[keyof typeof MenuScreen];
 
@@ -402,6 +413,16 @@ export type MenuScreen = (typeof MenuScreen)[keyof typeof MenuScreen];
 export type MenuEffect =
   | { readonly kind: 'resume' }
   | { readonly kind: 'keys' }
+  /** Open the archive. See `MenuScreen.Notes`. */
+  | { readonly kind: 'notes' }
+  /**
+   * READ ONE, or fold it away again if it is the one already open.
+   *
+   * The id rides the effect for `MenuItem.topic`'s reason: one verb with a
+   * payload keeps the caller's switch total, where one effect per note would
+   * make the union grow with the content.
+   */
+  | { readonly kind: 'note'; readonly id: string }
   /**
    * PUT THIS CHARACTER DOWN AND GO BACK TO THE LIST.
    *
@@ -623,6 +644,16 @@ export type EscapeMenuView = {
    */
   readonly unspent?: number;
   /**
+   * EVERY NOTE THIS CHARACTER HAS READ, in `LORE` order — `LoreMsg.notes`.
+   *
+   * Optional, and absent means "no frame yet" rather than "none found": a
+   * client that has not been told draws the launcher greyed with a reason,
+   * which is this file's rule everywhere (see `LEAVE PARTY`).
+   */
+  readonly notes?: readonly LoreView[];
+  /** Which one is unfolded, or null. At most one, so the panel never pages. */
+  readonly openNote?: string | null;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHICH ROOT ROW IS ONE PRESS FROM HAPPENING — or null.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -744,8 +775,9 @@ function entryRow(
  * the confirmation would silently move to `INVENTORY` — a guard protecting the
  * wrong thing is worse than no guard, because it reads as protection.
  */
-export const ROW_LEAVE_PARTY = 7;
-export const ROW_SWITCH_CHARACTER = 8;
+export const ROW_CASE_NOTES = 7;
+export const ROW_LEAVE_PARTY = 8;
+export const ROW_SWITCH_CHARACTER = 9;
 
 /**
  * How the three zoom steps read. `ZOOM_MIN`..`ZOOM_MAX` is -1..1, and the row is
@@ -842,6 +874,20 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       labelFor('show_inventory', keymap),
       true,
       null,
+    ),
+    /**
+     * THE ARCHIVE. Greyed until there is something in it, with the reason on the
+     * row — the same treatment `RESET PANELS` gets, and for the same argument:
+     * a row that vanished would teach nothing about why, and a player who has
+     * never found a note should still learn that notes exist.
+     */
+    entryRow(
+      ROW_CASE_NOTES,
+      { kind: 'notes' },
+      `CASE NOTES${(view.notes ?? []).length > 0 ? ` (${String((view.notes ?? []).length)})` : ''}`,
+      '',
+      (view.notes ?? []).length > 0,
+      (view.notes ?? []).length > 0 ? null : 'nothing found yet',
     ),
     // GREYED, NOT DROPPED. Everybody is always in a party — a solo player is a
     // party of one — so leaving alone is a no-op the server would refuse, which
@@ -1004,8 +1050,87 @@ function keysRows(view: EscapeMenuView): readonly MenuRow[] {
  * below pulls the Status and Footer rows out of the list rather than being told
  * which screen it is looking at, which is what lets it take no context at all.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `ShowLore`, AS ROWS — the archive, and one note unfolded inside it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream lists the party's known lore and opens the one you pick in its own
+ * dialog. Ours unfolds it IN PLACE, under the row, because this surface is one
+ * rect with one hit test and a second dialog would be the thing `MenuScreen`
+ * exists to avoid.
+ *
+ * IN `LORE` ORDER, which the server already applied — `projectLore` iterates the
+ * table and filters, so the archive reads the same way for everybody rather than
+ * in whatever order a particular party happened to find things.
+ *
+ * THE CATEGORY IS A HEADING ROW, not a `Section`: `MenuRow`'s `Section` carries a
+ * `KeyGroup`, which is the keybind screen's vocabulary and has no business
+ * learning what a lore category is.
+ */
+function notesRows(view: EscapeMenuView): readonly MenuRow[] {
+  const notes = view.notes ?? [];
+  const rows: MenuRow[] = [];
+  let heading: string | null = null;
+  let index = 0;
+  for (const note of notes) {
+    if (note.category !== heading) {
+      heading = note.category;
+      rows.push({ kind: MenuRowKind.Note, text: note.category.toUpperCase() });
+    }
+    const open = view.openNote === note.id;
+    rows.push(
+      entryRow(
+        index,
+        { kind: 'note', id: note.id },
+        `${open ? '- ' : '+ '}${note.name}`,
+        '',
+        true,
+        null,
+      ),
+    );
+    index += 1;
+    // THE BODY, ONLY WHILE IT IS THE OPEN ONE. Every note unfolded at once would
+    // be a panel taller than the window on the fifth find, and this surface has
+    // no scroll — see the header's row budget.
+    if (open)
+      for (const line of wrapNote(note.text)) rows.push({ kind: MenuRowKind.Note, text: line });
+  }
+  if (rows.length === 0) {
+    rows.push({ kind: MenuRowKind.Note, text: 'Nothing written down yet.' });
+  }
+  return rows;
+}
+
+/**
+ * A greedy wrap on whole words, in CHARACTERS.
+ *
+ * This panel sizes itself from row COUNTS and never measures — see
+ * `escapeMenuRect` — so a wrap that measured would be the one thing whose height
+ * the rect could not predict, and the box would be the wrong size for its own
+ * contents.
+ */
+const NOTE_WRAP_CHARS = 58;
+function wrapNote(text: string): readonly string[] {
+  const out: string[] = [];
+  let line = '';
+  for (const word of text.split(/\s+/).filter((w) => w !== '')) {
+    const next = line === '' ? word : `${line} ${word}`;
+    if (next.length <= NOTE_WRAP_CHARS) {
+      line = next;
+      continue;
+    }
+    if (line !== '') out.push(line);
+    line = word;
+  }
+  if (line !== '') out.push(line);
+  return out;
+}
+
 export function escapeMenuRows(view: EscapeMenuView): readonly MenuRow[] {
-  return view.screen === MenuScreen.Keys ? keysRows(view) : rootRows(view);
+  if (view.screen === MenuScreen.Keys) return keysRows(view);
+  if (view.screen === MenuScreen.Notes) return notesRows(view);
+  return rootRows(view);
 }
 
 // ---------------------------------------------------------------------------

@@ -4800,6 +4800,50 @@ export type CooldownsMsg = {
   cooldowns: Readonly<Record<string, number>>;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE CASE NOTE THIS PLAYER HAS READ.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from `PartyLore.lua`'s lore record — an id, a category, a name and the
+ * body. `ShowLore` lists them and lets you re-read one.
+ *
+ * THE BODY RIDES ALONG, and it is the only reason this frame exists. The client
+ * cannot hold the lore table: `src/server/content/lore.ts` is server content, and
+ * shipping it to the browser would put authored text in front of a player who
+ * has not found it — which is the whole of what finding one is worth.
+ */
+export type LoreView = {
+  readonly id: string;
+  /** `LoreCategory` — a heading to group under, never a key to switch on. */
+  readonly category: string;
+  readonly name: string;
+  readonly text: string;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS CHARACTER HAS READ. A `ViewerMsg`, and it has to be.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `PartyLore` is on the PARTY upstream, so a find teaches everybody — but what
+ * a given character KNOWS is persisted per character (`CharacterFile.knownLore`),
+ * because ToME's "party" is really the save file and ours is a transient group.
+ * Two people in one room can therefore have read different things, which makes
+ * this frame per viewer by construction rather than by preference.
+ *
+ * ═══ WHOLE-LIST REPLACEMENT, LIKE `party` AND `cooldowns` ═══
+ * A client that dropped one frame is corrected by the next instead of showing an
+ * archive with a hole in it. It is low-frequency by construction: notes are found
+ * a handful of times in a career, and the frame is sent on attach and on each
+ * find rather than per pump.
+ */
+export type LoreMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'lore';
+  notes: readonly LoreView[];
+};
+
 /** THE VIEWER'S OWN class resource. */
 export type ResourceMsg = {
   v: typeof PROTOCOL_VERSION;
@@ -5958,6 +6002,7 @@ export type ServerMsg =
   | RosterMsg
   | ProgressMsg
   | GroundMsg
+  | LoreMsg
   | ShopMsg
   | InventoryMsg
   | HotbarMsg
@@ -6142,6 +6187,7 @@ export type ViewerMsg =
   // that character has personally walked past, and no two characters have
   // walked the same map. There is no realm-wide answer to build.
   | GroundMsg
+  | LoreMsg
   | CooldownsMsg
   | ResourceMsg
   | TurnMsg

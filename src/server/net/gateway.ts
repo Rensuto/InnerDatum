@@ -224,6 +224,7 @@ import {
   projectEffects,
   projectGroundItems,
   projectInventory,
+  projectLore,
   projectLoadout,
   statGainLines,
   projectParty,
@@ -3342,6 +3343,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * panel. Used where the CONTENT of a frame can change without either id list
    * moving — see `handleChooseClass`.
    */
+  /**
+   * WHAT THIS CHARACTER HAS READ — `ShowLore`'s list.
+   *
+   * SENT ON ATTACH AND ON EACH FIND, never per pump. A note is found a handful
+   * of times in a career and the frame is a whole-list replacement, so there is
+   * nothing to memoise and no change-detection to get wrong. Contrast
+   * `broadcastGroundIfChanged`, which needs one because a floor moves constantly.
+   */
+  const sendLore = (session: Session): void => {
+    const actorId = session.actorId;
+    if (actorId === null) return;
+    const viewer = realmFor(session).world.getActor(actorId);
+    if (viewer === undefined || viewer.kind !== 'player') return;
+    send(session.socket, projectLore(viewer));
+  };
+
   const sendInventory = (session: Session): void => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -8529,6 +8546,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendKeybinds(session);
     // AND HOW BIG THEY LIKE THEIR TILES, beside it and for its reasons.
     sendSettings(session);
+    // AND THE ARCHIVE, on the same breath. `knownLore` is read off the body and
+    // is restored before this runs, so a returning player's notes are here; a
+    // client that did not get them would draw an empty case file for somebody
+    // who has read five things — and there is no later frame to correct it,
+    // because the list only moves when a note is FOUND.
+    sendLore(session);
 
     // THE TWO SNAPSHOTS, unicast, and again outside the on-change rule for the
     // same reason: this socket has seen nothing. The memo compares against the
@@ -13387,6 +13410,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // DECIDED BEFORE ANYTHING IS WRITTEN — see the order note above. "New to
     // this party" is the question, so a member who already had it does not
     // silence the announcement for the one who did not.
+    // AND WHETHER THIS IS THE FIRST THING THEY HAVE EVER READ, decided before
+    // anything is written for `announce`'s reason. See the hint below.
+    const firstEver = party.every((id) => {
+      const body = homeOf(id).world.getActor(id);
+      return body?.kind !== ActorKind.Player || (body.knownLore ?? []).length === 0;
+    });
     const announce = party.some((id) => {
       const body = homeOf(id).world.getActor(id);
       return body?.kind === ActorKind.Player && !(body.knownLore ?? []).includes(loreId);
@@ -13411,6 +13440,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     broadcastRecordLine(home, `${nameOf(finder.id)} reads: ${note.name}`);
     broadcastRecordLine(home, note.text);
+    /**
+     * WHERE TO FIND IT AGAIN — upstream's own second line: *"You can read all
+     * your collected lore in the game menu, by pressing Escape."*
+     *
+     * ONCE, ON THE FIRST NOTE THIS PARTY EVER READS, where upstream says it on
+     * every find. Its log is a scrolling console and ours is a PANEL with a
+     * reserved band the Margin cannot spend (ui/caselog.ts), so a hint repeated
+     * on every find would spend that band on something the player learned the
+     * first time. The deviation is the surface, not the intent.
+     */
+    if (firstEver) {
+      broadcastRecordLine(
+        home,
+        'Case notes are kept in the menu — press Escape to read them again.',
+      );
+    }
+    // AND THE ARCHIVE EACH OF THEM CAN RE-READ IT IN — upstream's own line,
+    // `learnLore`: *"You can read all your collected lore in the game menu, by
+    // pressing Escape."* The frame goes to every member who just learned it,
+    // because `knownLore` is per character and one list would be one player's.
+    for (const member of sessions.values()) {
+      if (member.actorId !== null && party.includes(member.actorId)) sendLore(member);
+    }
     /**
      * ═══ `runStop` AND `restStop` HAVE NOTHING TO INTERRUPT HERE ═══
      * Upstream ends `learnLore` by stopping the run and the rest, and it needs

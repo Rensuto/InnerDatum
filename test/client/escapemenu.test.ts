@@ -192,7 +192,7 @@ describe('escapeMenuRect', () => {
 // ---------------------------------------------------------------------------
 
 describe('the root screen', () => {
-  it('has exactly seven entries, in the ported order, and every one names an effect', () => {
+  it('has exactly ten entries, in the ported order, and every one names an effect', () => {
     // ToME's own list drops a row it cannot resolve (GameMenu.lua:125-133), which
     // is how a dead "highscores" entry ships upstream. Carrying the effect ON the
     // row makes that unrepresentable — so this asserts the shape as well as the
@@ -208,7 +208,13 @@ describe('the root screen', () => {
     // are the only rows that change how the game is SET UP — the five below them
     // open a panel — and two rows is not a settings screen, so they group here
     // rather than behind a sixth surface.
-    expect(rows).toHaveLength(9);
+    // TEN SINCE CASE NOTES, which is the port of `ShowLore` and lands here
+    // because upstream's `learnLore` names this exact surface: *"You can read
+    // all your collected lore in the game menu, by pressing Escape."* It is
+    // greyed rather than dropped for a player who has found nothing, on the
+    // rule LEAVE PARTY already sets — a row that vanished would teach nothing
+    // about why, and no row may move under a pointer.
+    expect(rows).toHaveLength(10);
     expect(rows.map((row) => row.label)).toEqual([
       'RESUME',
       'KEY BINDINGS',
@@ -217,6 +223,7 @@ describe('the root screen', () => {
       'CHARACTER SHEET',
       'TALENTS',
       'INVENTORY',
+      'CASE NOTES',
       'LEAVE PARTY',
       'SWITCH CHARACTER',
     ]);
@@ -236,6 +243,8 @@ describe('the root screen', () => {
       { kind: 'ui', command: UiCommand.ShowSheet },
       { kind: 'ui', command: UiCommand.ShowTalents },
       { kind: 'ui', command: UiCommand.ShowInventory },
+      // THE ARCHIVE — `ShowLore`, on the surface upstream's own text names.
+      { kind: 'notes' },
       { kind: 'party', action: PartyAction.Leave },
       // NOT A `ui` COMMAND, and the distinction is load-bearing: every UiCommand
       // opens a panel over a live world and this one ENDS the world. Folding it
@@ -243,7 +252,7 @@ describe('the root screen', () => {
       // the first thing to go wrong would be a keybinding for it.
       { kind: 'leave-character' },
     ]);
-    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it('draws SWITCH CHARACTER greyed for a player with no account', () => {
@@ -280,7 +289,7 @@ describe('the root screen', () => {
     const labels = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.label);
 
     const waiting = escapeMenuRows(view({ unspent: 2 }));
-    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(labels(waiting)).toEqual([
       'RESUME',
       'KEY BINDINGS',
@@ -289,6 +298,7 @@ describe('the root screen', () => {
       'CHARACTER SHEET',
       'TALENTS (2)',
       'INVENTORY',
+      'CASE NOTES',
       'LEAVE PARTY',
       'SWITCH CHARACTER',
     ]);
@@ -310,7 +320,7 @@ describe('the root screen', () => {
     // row you were reaching for, and a player who cannot see the row at all
     // learns nothing about why they cannot use it.
     const alone = entryRows(escapeMenuRows(view({ inParty: false })));
-    expect(alone).toHaveLength(9);
+    expect(alone).toHaveLength(10);
     const leave = alone[ROW_LEAVE_PARTY];
     expect(leave?.label).toBe('LEAVE PARTY');
     expect(leave?.enabled).toBe(false);
@@ -355,7 +365,11 @@ describe('escapeMenuHitAt on the root screen', () => {
     // RESET PANELS is greyed in the fixture (nothing moved) and so is SWITCH
     // CHARACTER (not signed in) — both unpressable STRUCTURALLY, which is why
     // the scan skips them.
-    expect(seen).toEqual([0, 1, 2, 4, 5, 6, 7]);
+    // AND SO IS CASE NOTES, at 7: the fixture has found nothing, and an empty
+    // archive is greyed with its reason rather than dropped. The gap between 6
+    // and 8 is that row being drawn and refusing the pointer, which is the
+    // property this scan exists to show.
+    expect(seen).toEqual([0, 1, 2, 4, 5, 6, 8]);
   });
 
   it('answers the × in the header and nothing else up there', () => {
@@ -1191,7 +1205,7 @@ describe('the escape menu is sized for the screen it is showing', () => {
 
   it('ellipsises nothing on either screen at any viewport', () => {
     const bad: string[] = [];
-    for (const screen of [MenuScreen.Root, MenuScreen.Keys]) {
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Notes]) {
       for (const [w, h] of VIEWPORTS) {
         for (const text of paintAt(w, h, screen)) {
           if (text.includes('…')) bad.push(`${String(screen)} ${String(w)}x${String(h)}: ${text}`);
@@ -1202,7 +1216,7 @@ describe('the escape menu is sized for the screen it is showing', () => {
   });
 
   it('never draws outside the window it is centred in', () => {
-    for (const screen of [MenuScreen.Root, MenuScreen.Keys]) {
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Notes]) {
       for (const [w, h] of VIEWPORTS) {
         const rect = rectAt(w, h, screen);
         expect(rect?.x ?? -1, `${String(screen)} ${String(w)} left`).toBeGreaterThanOrEqual(0);
@@ -1218,7 +1232,7 @@ describe('the escape menu is sized for the screen it is showing', () => {
     // The growth rule must not have widened what the panel ACCEPTS — a keys
     // screen that opened into a band the root refuses would draw over the
     // hotbar.
-    for (const screen of [MenuScreen.Root, MenuScreen.Keys]) {
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Notes]) {
       expect(
         escapeMenuRect({ width: 640, height: 400, top: 0, bottom: 10, screen }),
         String(screen),
@@ -1383,5 +1397,68 @@ describe('the reset-panels row', () => {
     // A player who has dragged a panel somewhere awkward has a working pointer
     // by construction. A binding would be a key nobody presses on purpose.
     expect(rowAt({ panelsMoved: true })?.keyLabel).toBe('');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `ShowLore` — the archive, on the surface upstream's own text names.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `learnLore` tells the player *"You can read all your collected lore in the game
+ * menu, by pressing Escape"*, so this screen is the port and the escape menu is
+ * where it belongs. Upstream opens the note you pick in a second dialog; ours
+ * unfolds it in place, because this surface is one rect with one hit test.
+ */
+describe('the case notes screen', () => {
+  const NOTES = [
+    { id: 'a', category: 'the index', name: 'Intake Form', text: 'One two three.' },
+    { id: 'b', category: 'the index', name: 'A Ledger Page', text: 'Four five six.' },
+    { id: 'c', category: 'alderbrook', name: 'Canal Survey', text: 'Seven eight nine.' },
+  ];
+  const notesView = (over: Partial<EscapeMenuView> = {}) =>
+    view({ screen: MenuScreen.Notes, notes: NOTES, ...over });
+
+  it('lists every note, under a heading per category', () => {
+    const rows = escapeMenuRows(notesView());
+    expect(entryRows(rows).map((row) => row.label)).toEqual([
+      '+ Intake Form',
+      '+ A Ledger Page',
+      '+ Canal Survey',
+    ]);
+    // THE HEADINGS ARE `Note` ROWS, not `Section`: a `Section` carries a
+    // `KeyGroup`, which is the keybind screen's vocabulary and has no business
+    // learning what a lore category is.
+    const headings = rows.flatMap((row) => (row.kind === MenuRowKind.Note ? [row.text] : []));
+    expect(headings).toContain('THE INDEX');
+    expect(headings).toContain('ALDERBROOK');
+    // ONE HEADING PER RUN, not one per note — two notes share `the index`.
+    expect(headings.filter((h) => h === 'THE INDEX')).toHaveLength(1);
+  });
+
+  /**
+   * THE BODY IS ONLY THERE WHILE ITS ROW IS OPEN. Every note unfolded at once
+   * would be a panel taller than the window on the fifth find, and this surface
+   * has no scroll — see the header's row budget.
+   */
+  it('shows one note body at a time, and only the open one', () => {
+    const folded = escapeMenuRows(notesView());
+    const text = (rows: readonly MenuRow[]) =>
+      rows.flatMap((row) => (row.kind === MenuRowKind.Note ? [row.text] : [])).join(' ');
+    expect(text(folded)).not.toContain('One two three.');
+
+    const open = escapeMenuRows(notesView({ openNote: 'a' }));
+    expect(text(open)).toContain('One two three.');
+    expect(text(open), 'a note that is not open printed its body').not.toContain('Four five six.');
+    // AND THE OPEN ROW SAYS SO, so the same row is the opener and the closer.
+    expect(entryRows(open)[0]?.label).toBe('- Intake Form');
+  });
+
+  it('says so plainly when nothing has been found', () => {
+    const rows = escapeMenuRows(notesView({ notes: [] }));
+    expect(entryRows(rows)).toHaveLength(0);
+    expect(rows.flatMap((row) => (row.kind === MenuRowKind.Note ? [row.text] : []))).toContain(
+      'Nothing written down yet.',
+    );
   });
 });

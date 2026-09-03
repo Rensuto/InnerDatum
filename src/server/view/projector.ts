@@ -67,7 +67,7 @@ import { TalentEffect } from '../engine/talents.ts';
 import { Faction } from '../engine/actor.ts';
 import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { INVENTORY_CAP } from '../../shared/progression.ts';
-import { loreById, loreIdOfNote } from '../content/lore.ts';
+import { LORE, loreById, loreIdOfNote } from '../content/lore.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
 import { bound } from '../../shared/scale.ts';
@@ -127,6 +127,7 @@ import type {
   PartyMember,
   PartyMsg,
   PartyStateMember,
+  LoreMsg,
   PartyStateMsg,
   ProjectileView,
   ProjectilesMsg,
@@ -2757,4 +2758,40 @@ function toInviteViews(world: World, offers: readonly PartyOffer[]): PartyInvite
     });
   }
   return views;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS CHARACTER HAS READ — `ShowLore`'s list, already resolved.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 game/modules/tome/dialogs/ShowLore.lua, which walks the
+ * party's `lore_known` set and shows the record behind each id.
+ *
+ * ═══ IN `LORE` ORDER, NOT IN THE ORDER THEY WERE FOUND ═══
+ * `newLore` stamps `t.order = #self.lore_defs+1` and upstream lists by it, so an
+ * archive reads the same way for everybody. Finding order would make one
+ * player's screen a different document from another's, and neither would match
+ * whatever a note said about the one before it. So this iterates `LORE` and
+ * filters, rather than iterating what the body knows.
+ *
+ * ═══ AN ID THIS BUILD NO LONGER SHIPS IS DROPPED, SILENTLY AND ON PURPOSE ═══
+ * `Actor.knownLore` is deliberately unvalidated — the save layer has no lore
+ * table and must not grow one — so a file written by a build with a note this
+ * one lacks comes back carrying its id. `loreById` answers undefined and the
+ * filter below removes it. It reappears the day the note does, which is the
+ * behaviour `unlockedTrees` already chose for a tree.
+ */
+export function projectLore(viewer: Actor): LoreMsg {
+  const known = new Set(viewer.kind === ActorKind.Player ? (viewer.knownLore ?? []) : []);
+  return {
+    v: PROTOCOL_VERSION,
+    t: 'lore',
+    notes: LORE.filter((note) => known.has(note.id)).map((note) => ({
+      id: note.id,
+      category: note.category,
+      name: note.name,
+      text: note.text,
+    })),
+  };
 }

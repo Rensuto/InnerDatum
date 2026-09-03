@@ -358,6 +358,7 @@ import type { Dir, TileXY } from '../shared/coords.ts';
 import type {
   ActorView,
   CarriedItemView,
+  LoreView,
   ClassOptionView,
   RosterMsg,
   DownedView,
@@ -1736,6 +1737,17 @@ let menuArmed: ArmedCapture | null = null;
  * a half-pressed SWITCH CHARACTER the same piece of state.
  */
 let menuConfirm: number | null = null;
+
+/**
+ * EVERY CASE NOTE THIS CHARACTER HAS READ — the last `lore` frame.
+ *
+ * A WHOLE-LIST REPLACEMENT, like `party` and `cooldowns`: a client that dropped
+ * one frame is corrected by the next rather than showing an archive with a hole
+ * in it. Sent on attach and on each find, never per pump — see `sendLore`.
+ */
+let knownNotes: readonly LoreView[] = [];
+/** Which note is unfolded on the archive screen, or null. See `notesRows`. */
+let openNoteId: string | null = null;
 /**
  * THE LAST THING THE CAPTURE SAID — a refusal, a conflict, or what was bound.
  *
@@ -2926,6 +2938,11 @@ function inParty(): boolean {
 function escapeMenuView(zoom: number): EscapeMenuView {
   return {
     screen: menuScreen,
+    // THE ARCHIVE AND WHICH PAGE OF IT IS OPEN — see `notesRows`. Both come off
+    // module state rather than a frame lookup, so the launcher's count and the
+    // screen's rows are read from one place and cannot disagree.
+    notes: knownNotes,
+    openNote: openNoteId,
     keymap: gameKeymap.current,
     persisted: keybindsPersisted,
     inParty: inParty(),
@@ -8541,6 +8558,19 @@ async function boot(): Promise<void> {
       case 'keys':
         showMenuScreen(MenuScreen.Keys);
         return;
+      case 'notes':
+        // THE ARCHIVE OPENS FOLDED. Nothing is unfolded until a row is pressed,
+        // so the screen is a list first and a document second — which is what
+        // `ShowLore` is, and what keeps the panel inside its row budget.
+        openNoteId = null;
+        showMenuScreen(MenuScreen.Notes);
+        return;
+      case 'note':
+        // PRESSING THE OPEN ONE FOLDS IT AWAY, so the same row is both the
+        // opener and the closer and there is no second control to find.
+        openNoteId = openNoteId === effect.id ? null : effect.id;
+        requestDraw();
+        return;
       case 'reset-panels':
         /**
          * ═══ PUT ALL FOUR BACK — `Minimalist.lua:354-359`'s `resetPlaces` ═══
@@ -12019,6 +12049,18 @@ function applyServerMessage(msg: ServerMsg): void {
       // not named here is READY. Merging would leave a button grey forever the
       // first time a frame went missing.
       cooldowns = msg.cooldowns;
+      break;
+    case 'lore':
+      // COMPLETE AND ABSOLUTE, for `cooldowns`' reason exactly. It arrives on
+      // attach and on each find; a merge would leave a note in the archive that
+      // this character never read, on the one screen whose whole job is to say
+      // what they did.
+      knownNotes = msg.notes;
+      // AND THE UNFOLDED ONE IS CLEARED IF IT IS NO LONGER THERE, so the screen
+      // cannot be left holding a body whose row has gone.
+      if (openNoteId !== null && !msg.notes.some((note) => note.id === openNoteId)) {
+        openNoteId = null;
+      }
       break;
     case 'resource':
       resource = msg.resource;
