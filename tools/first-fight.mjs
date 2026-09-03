@@ -30,14 +30,31 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT IT CANNOT TELL YOU
  * ═══════════════════════════════════════════════════════════════════════════
- * The driver walks at the nearest monster and bump-attacks. That is what a new
- * player does and it is the honest baseline — but it is NOT how a class with a
- * dead zone plays. The Inspector cannot shoot adjacent (deliberately: see
- * content/classes.ts), so it stalls here, at 0 wins, forever. That number is
- * about this driver, not about the class, and it is printed as `stalled` rather
- * than folded into a loss so nobody reads it as "the Inspector cannot win".
+ * The driver SHOOTS — it has since the dead zone was understood — and it now
+ * walks to a tile it could shoot from when a wall is in the way. What it still
+ * cannot tell you is how a class plays with points spent: the body is always
+ * level 1 (see `LEVEL`), and nothing here spends a talent point.
  *
- * Usage:  node tools/first-fight.mjs [runs]
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT IT ONCE TOLD ME, CONFIDENTLY, AND WRONGLY
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Three separate readings of this tool have been wrong ABOUT THE INSPECTOR
+ * specifically, because it is the only class whose kit interacts with geometry:
+ *
+ *   1. "0/24, 24 stalls" — the driver bump-attacked and could not play a gun.
+ *   2. "23 turns to kill one monster" — the `turns` column averaged two stalls
+ *      at the 200-iteration cap in with the wins. Its real winning fight is 6.
+ *      That number reached a planning document as a balance problem.
+ *   3. The two stalls behind (2) — the band was a Chebyshev square that ignored
+ *      walls, so a foe behind one counted as a shot and the driver paced
+ *      between two tiles for 200 iterations.
+ *
+ * Every one of those read as a fact about the class. None of them was. When a
+ * column here disagrees with the other three classes by a factor, suspect this
+ * file first: the dead zone makes The Inspector the canary for every geometry
+ * bug the driver has.
+ *
+ * Usage:  node tools/first-fight.mjs [runs] [ground] [room-level]
  */
 
 import { createRealms, ENCOUNTER_SITE } from '../src/server/world/realms.ts';
@@ -53,7 +70,7 @@ import {
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { canWalk, Ground } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
-import { rangedAttacks, takeShot } from './fightlib.mjs';
+import { firingSpot, rangedAttacks, takeShot } from './fightlib.mjs';
 
 /** Enough that one lucky seed cannot carry a column. */
 const RUNS = Number(process.argv[2] ?? 24);
@@ -80,6 +97,18 @@ const GROUND = process.argv[3] ?? Ground.Upland;
  * answers: the first is a deliberate on-ramp, the second is a game that never
  * threatens anybody. `seedAmbush` scales its roster with `PartyStrength`, so this
  * is the knob that shows which one is true.
+ *
+ * ═══ IT SCALES THE ROOM ONLY. THE BODY IS ALWAYS LEVEL 1. ═══
+ * This number reaches `realms.open` and nothing else. The character is whatever
+ * `sheetForClass(cls)` builds — four birth talents, no points spent, base stats,
+ * base hp — at every value of this argument. So `first-fight 24 upland 8` is a
+ * LEVEL-1 BODY IN A LEVEL-8 ROOM.
+ *
+ * That is a legitimate question ("how far can an unlevelled character walk
+ * before the world kills them") and it is NOT the question the paragraph above
+ * claims to answer, which needs the party to grow too. No probe in `tools/`
+ * levels a character; every one of them calls `sheetForClass` and stops. Reading
+ * a high row here as "the endgame is too easy" would be reading it backwards.
  */
 const LEVEL = Number(process.argv[4] ?? 1);
 
@@ -127,7 +156,10 @@ function fight(cls, seed) {
   // THE SHEET IS WHAT MAKES THE BOOK ANSWER. `createTalentBook` reads a per-actor
   // sheet; without one, `loadoutOf` is empty and every talent is refused as "no
   // such talent in this loadout" — which is exactly what The Inspector got.
-  talentEngine.attach('p1', sheetForClass(cls));
+  // HELD, NOT JUST HANDED OVER: `rangedAttacks` needs to know which of the
+  // class's talents this body has actually learned. See that function.
+  const sheet = sheetForClass(cls);
+  talentEngine.attach('p1', sheet);
   // THE COMBAT SHEET. See the header — this one line is the whole reason the
   // tool exists.
   p.combat = cls.combat;
@@ -145,7 +177,12 @@ function fight(cls, seed) {
    * `delve-run.mjs` needs both, and two copies of a rule is how one of them
    * stops being true.
    */
-  const attacks = rangedAttacks(cls);
+  // RANK 1 IS "LEARNED"; the engine's own test is `getTalentLevelRaw >= 1`
+  // (`TalentRefusal.NotLearned`), so this reads the same map it does.
+  const attacks = rangedAttacks(
+    cls,
+    new Set([...sheet.points].filter(([, rank]) => rank >= 1).map(([id]) => id)),
+  );
 
   // HOW MANY WERE ACTUALLY IN THERE. `seedAmbush`'s own note says "exactly one
   // monster in the room" at level 1, which is a claim worth printing rather than
@@ -188,6 +225,9 @@ function fight(cls, seed) {
           console.log(`  [diag] ${cls.name} ${id}: ${JSON.stringify(shot)}`);
         }
       },
+      // THE LEVEL, so the band can ask about walls. Without it `takeShot` counted
+      // a foe behind a wall as a shot and this driver never backed off.
+      arena.world.level,
     );
     const gap = near.d;
     const nearest = attacks[attacks.length - 1] ?? null;
@@ -202,9 +242,34 @@ function fight(cls, seed) {
       // backing off is the whole answer; `shootableGap` being null means nothing
       // at all was in a band this turn.
       const away = nearest !== null && shootableGap === null && gap < nearest.minRange;
-      const goal = away
-        ? { x: p.x + Math.sign(p.x - near.f.x), y: p.y + Math.sign(p.y - near.f.y) }
-        : { x: near.f.x, y: near.f.y };
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WALK TO SOMEWHERE YOU CAN SHOOT FROM. The third option, and the one
+       * whose absence was the whole of The Inspector's stall.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * "Close" and "back off" are both moves along the line to the foe, so
+       * neither can answer a WALL — and a class with a dead zone spends its life
+       * at exactly the distance where a wall is the difference between a shot and
+       * nothing. Seeds 11 and 13 paced between 2.24 and 3.61 tiles for all 200
+       * iterations of the cap. See `fightlib.mjs#firingSpot` for the log.
+       *
+       * It goes FIRST because it is strictly better informed than the other two:
+       * it only answers when a real tile exists with a real shot from it. When it
+       * answers `null` — nothing within six tiles works — the old two-way choice
+       * is still the right fallback.
+       */
+      const spot = away
+        ? null
+        : firingSpot(attacks, p, foes, arena.world.level, (x, y) =>
+            canWalk(arena.world.level, x, y),
+          );
+      const goal =
+        spot !== null
+          ? spot
+          : away
+            ? { x: p.x + Math.sign(p.x - near.f.x), y: p.y + Math.sign(p.y - near.f.y) }
+            : { x: near.f.x, y: near.f.y };
       // PATHFOUND, NOT STRAIGHT-LINE. See tools/walk.mjs: a straight-line walker
       // pins itself on the first wall and reports the room as unclearable.
       const dir =
@@ -231,7 +296,7 @@ function fight(cls, seed) {
 
 console.log(`the opening ambush at level ${String(LEVEL)}, ${RUNS} runs per class\n`);
 console.log(
-  `${'class'.padEnd(30)} ${'won'.padStart(7)} ${'down'.padStart(5)} ${'stall'.padStart(5)}  ${'foes'.padStart(4)}  ${'turns'.padStart(5)}  ${'hp end'.padStart(6)}  ${'hp low'.padStart(6)}`,
+  `${'class'.padEnd(30)} ${'won'.padStart(7)} ${'down'.padStart(5)} ${'stall'.padStart(5)}  ${'foes'.padStart(4)}  ${'turns/win'.padStart(9)}  ${'hp end'.padStart(6)}  ${'hp low'.padStart(6)}`,
 );
 
 for (const cls of CLASSES) {
@@ -248,7 +313,7 @@ for (const cls of CLASSES) {
       `${avg(results.map((r) => r.roster))
         .toFixed(1)
         .padStart(4)}  ` +
-      `${String(Math.round(avg(results.map((r) => r.turns)))).padStart(5)}  ` +
+      `${String(Math.round(avg(wins.map((r) => r.turns)))).padStart(9)}  ` +
       `${`${Math.round(100 * avg(wins.map((r) => r.hp)))}%`.padStart(6)}  ` +
       `${`${Math.round(100 * avg(wins.map((r) => r.worst)))}%`.padStart(6)}`,
   );
@@ -258,10 +323,22 @@ console.log(
   `\nhp low is the LOW-WATER MARK across the fight. A high "hp end" with a high\n` +
     `"hp low" is an encounter that never threatened anybody; a high "hp end" with\n` +
     `a low "hp low" is one that did and was regenerated out of afterwards.\n\n` +
-    `A stall is still this driver rather than the class. It shoots now, takes the\n` +
-    `best shot that is off cooldown, and steps out of a dead zone -- which was\n` +
-    `worth three fixes: aiming at the nearest foe rather than a reachable one,\n` +
-    `and picking one talent rather than trying each, both read as 'this class\n` +
-    `cannot win'. It still stalls against THREE pursuers, so the level-8 row is\n` +
-    `a fact about kiting in a small room and not about The Inspector.`,
+    `EVERY AVERAGE HERE IS OVER THE WINS, and the column says so now. It used to\n` +
+    `say "turns" and average the STALLS IN TOO, at the 200-iteration cap, while\n` +
+    `the two hp columns beside it were already wins-only. Two stalls out of 24\n` +
+    `therefore printed The Inspector as 23 turns when its winning fights took 7.2,\n` +
+    `and that number was written down and nearly acted on as a balance problem.\n` +
+    `The Inspector is in fact the second-fastest opener of the four. A mean over a\n` +
+    `capped failure is not a duration, it is the cap.\n\n` +
+    `A stall is still this driver rather than the class, and the two that were\n` +
+    `left had one cause: "close" and "back off" are both moves along the line to\n` +
+    `the foe, so neither answers a WALL. The driver now walks to a tile it could\n` +
+    `actually shoot from (fightlib.mjs#firingSpot), and the band it asks about is\n` +
+    `the engine's -- Euclidean, line of sight included -- rather than a Chebyshev\n` +
+    `square that called a foe 7.07 tiles away a shot.\n\n` +
+    `THE LEVEL ARGUMENT SCALES THE ROOM, NOT THE PARTY. seedAmbush grows its\n` +
+    `roster, and the body stays exactly the level-1 character sheetForClass\n` +
+    `builds -- no points spent, no stats grown. So "first-fight 24 upland 8" is a\n` +
+    `level-1 body in a level-8 room, which is a real question but not the one the\n` +
+    `argument's name implies. Levelling the body is not built yet.`,
 );
