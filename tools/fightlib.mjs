@@ -73,15 +73,36 @@ import { hasLineOfSight, sightDistance } from '../src/shared/sight.ts';
  * Optional, so every existing caller keeps the list it had.
  */
 export function rangedAttacks(cls, known) {
-  return (cls.loadout ?? [])
-    .filter((t) => known === undefined || known.has(t.id))
-    .filter((t) => t.targeting?.shape === 'single' && (t.targeting.range ?? 0) >= 2)
-    .map((t) => ({
-      id: t.id,
-      range: t.targeting.range ?? 1,
-      minRange: t.targeting.minRange ?? 0,
-    }))
-    .sort((a, b) => b.range - a.range);
+  return (
+    (cls.loadout ?? [])
+      .filter((t) => known === undefined || known.has(t.id))
+      .filter((t) => t.targeting?.shape === 'single' && (t.targeting.range ?? 0) >= 2)
+      /**
+       * ═══ AND IT HAS TO POINT AT SOMETHING YOU WANT TO HIT ═══
+       * `Affinity.Ally` talents are `shape: 'single'` with a real range, so shape
+       * and range alone let them through and this list offered them as ATTACKS.
+       * Measured in one 200-turn delve: `On My Whistle` — the Watchman's rally,
+       * `affinity: Ally` — was submitted at a monster and refused 183 times.
+       *
+       * THE NOISE IS THE SMALL HALF. `first-fight.mjs` reads
+       * `attacks[attacks.length - 1]` as "my shortest-reaching gun" to decide
+       * whether to back out of a dead zone, so a rally in that slot makes the
+       * retreat decision on a talent that is not a weapon. That is the `sigil`
+       * bug (see `known` above) one field along, and it was invisible for the
+       * same reason: the numbers still came out, they were just about the wrong
+       * thing.
+       *
+       * `Any` IS KEPT. It can legitimately be pointed at a monster; only `Ally`
+       * is refused by `checkTargeting` for every foe on the floor.
+       */
+      .filter((t) => t.targeting?.affinity !== 'ally')
+      .map((t) => ({
+        id: t.id,
+        range: t.targeting.range ?? 1,
+        minRange: t.targeting.minRange ?? 0,
+      }))
+      .sort((a, b) => b.range - a.range)
+  );
 }
 
 /**
