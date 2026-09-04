@@ -99,6 +99,7 @@ import {
   PanelSkin,
   wrapText,
 } from './panel.ts';
+import { maxLifeFor } from '../../shared/leveling.ts';
 import type { ClassOptionView, LoadoutTalent, OriginOptionView } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
@@ -465,7 +466,10 @@ function originNoteText(origin: OriginOptionView): string {
   return [
     `${origin.name.toUpperCase()} — ${SELECTED_WORD}`,
     ...(mods.length === 0 ? [] : [mods.join(' ')]),
-    `${String(origin.lifeRating)} life/lv`,
+    // SIGNED, because it is a CONTRIBUTION now and not a total — see
+    // `OriginOptionView.lifeRating`. An unsigned 1 beside the class's 16 reads
+    // as an alternative to it rather than an addition.
+    `${origin.lifeRating >= 0 ? '+' : ''}${String(origin.lifeRating)} life/lv`,
     origin.experiencePenaltyPct === 0
       ? 'no xp penalty'
       : `${String(origin.experiencePenaltyPct)}% xp penalty`,
@@ -692,6 +696,12 @@ function drawCard(
   index: number,
   selected: boolean,
   hovered: boolean,
+  /**
+   * THE ORIGIN CURRENTLY CHOSEN, because `Life` is not a fact about the class
+   * alone. Absent before anything is picked, which reads as the baseline — the
+   * origin that contributes nothing.
+   */
+  origin?: OriginOptionView,
 ): void {
   if (rect.w <= 0 || rect.h <= 0) return;
 
@@ -835,7 +845,30 @@ function drawCard(
     y += ROW_H;
   };
 
-  field('Life', `${option.maxHp}`);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LIFE A BODY IS ACTUALLY BORN WITH, WHICH IS NOT `option.maxHp`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This drew `option.maxHp` flat, and that number is only true for an origin
+   * with no Constitution modifier. An Archived Watchman is created with 84 and
+   * the card promised 72 — measured, and wrong for three of the five origins,
+   * always in the direction of the player getting MORE than they were told,
+   * which is the direction nobody reports.
+   *
+   * ═══ THE SAME FUNCTION THE SERVER USES, NOT A SECOND COPY ═══
+   * `maxLifeFor` lives in `src/shared/`, so the browser runs the arithmetic the
+   * engine runs (`pools.ts#maxLifeOf`) rather than a re-derivation that can
+   * drift. CLAUDE.md forbids a second copy of a formula in the client; this is
+   * the first copy, imported.
+   *
+   * AT LEVEL 1 ONLY CONSTITUTION MOVES IT — `lifeGainedTo` is zero at the first
+   * level — so the rating is passed for correctness rather than for effect, and
+   * the `/lv` figure beside it is what the rating is FOR.
+   */
+  const perLevel = (option.lifeRating ?? 0) + (origin?.lifeRating ?? 0);
+  const born = maxLifeFor(option.maxHp, perLevel, 1, 1, origin?.statMods['con'] ?? 0);
+  field('Life', `${String(born)}  ·  ${String(perLevel)}/lv`);
   field(resourceLabel(option.resource.kind), `${option.resource.current}/${option.resource.max}`);
   y += 3;
 
@@ -1052,7 +1085,7 @@ export function drawClassPicker(options: ClassPickerDrawOptions): void {
     const option = cards[i];
     const cardRect = geometry.cards[i];
     if (option === undefined || cardRect === undefined) continue;
-    drawCard(ctx, sprites, option, cardRect, i, selected === i, hovered === i);
+    drawCard(ctx, sprites, option, cardRect, i, selected === i, hovered === i, chosenOrigin);
   }
 
   // DRAWN DISABLED-BUT-PRESENT when nothing is picked, never hidden. A button

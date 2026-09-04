@@ -69,7 +69,7 @@ import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { INVENTORY_CAP } from '../../shared/progression.ts';
 import { LORE, loreById, loreIdOfNote } from '../content/lore.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
-import { ORIGINS } from '../content/origins.ts';
+import { ORIGINS, originLifeDelta } from '../content/origins.ts';
 import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
 import { bound } from '../../shared/scale.ts';
 import { LIFE_PER_CON } from '../../shared/leveling.ts';
@@ -1228,7 +1228,10 @@ function toOriginOptionView(origin: OriginDef): OriginOptionView {
     name: origin.name,
     description: origin.description,
     statMods,
-    lifeRating: origin.lifeRating,
+    // THE DELTA, NOT THE TOTAL — see `OriginOptionView.lifeRating`. The class
+    // half already carries the baseline ten, so sending the total here would
+    // put it on screen twice.
+    lifeRating: originLifeDelta(origin),
     experiencePenaltyPct: Math.round((origin.experienceMult - 1) * 100),
     // SPREAD ONLY WHEN THERE IS ONE, so an origin with no bonus carries no keys
     // at all rather than a table of noughts — the same choice `statMods` makes
@@ -1267,6 +1270,8 @@ function toClassOptionView(definition: ClassDef): ClassOptionView {
     // The first number anybody compares. NOT rounded: `ClassDef.maxHp` is an
     // authored integer, unlike a live actor's fractional `hp`.
     maxHp: definition.maxHp,
+    // The other half of what a body is worth per level — see the field's note.
+    lifeRating: definition.lifeRating,
     // A FRESH sheet, so the card shows the pool a new detective STARTS with —
     // Reagents 8/8 because you walked in carrying eight vials, Resolve and Focus
     // at 0 because a fresh sheet has earned nothing yet.

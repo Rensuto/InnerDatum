@@ -4983,6 +4983,19 @@ export type ClassOptionView = {
   readonly portrait: string;
   /** Starting and maximum hit points. The first number anybody compares. */
   readonly maxHp: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS CLASS ADDS PER LEVEL, and the other half of the sum `maxHp` is.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ClassDef.lifeRating` — 16 for the Watchman, 9 for the Alchemist — and it
+   * INCLUDES the baseline ten by construction (DECISIONS.md D24). The origin's
+   * figure beside it is a delta and the two are meant to be added.
+   *
+   * OPTIONAL AND ADDITIVE, so no version bump: an older client ignores it and
+   * draws the card it always drew.
+   */
+  readonly lifeRating?: number;
   /** Which pool this class spends, and how much of it it starts with. */
   readonly resource: ResourceView;
   /** EXACTLY FOUR, in hotbar order. The same shape the hotbar already draws. */
@@ -5146,7 +5159,23 @@ export type OriginOptionView = {
    * too (it declares no `inc_stats` at all).
    */
   readonly statMods: Readonly<Record<string, number>>;
-  /** Life per level. The number ToME's own card prints (human.lua:124). */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ORIGIN'S CONTRIBUTION to life per level, NOT its total.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This carried `OriginDef.lifeRating` — 11 for the Indexed, 12 for the
+   * Archived — which is ToME's own race card (`human.lua:124` prints the
+   * absolute). It could not stay, because OUR SPLIT IS NOT UPSTREAM'S:
+   * `ClassDef.lifeRating` has carried the baseline ten since before origins
+   * existed (Watchman 16 = Bulwark 6 + 10), so the class number and the origin
+   * number both contained it and a player adding the two visible figures got
+   * 27 where the game uses 17.
+   *
+   * SO THIS IS `originLifeDelta` — +1, +2, 0 — and it ADDS to the class's
+   * figure. The divergence from upstream's presentation is forced by a
+   * difference in where the baseline lives, which is argued in DECISIONS.md D24.
+   */
   readonly lifeRating: number;
   /**
    * The experience PENALTY as a percentage — 0 for the baseline, 15 for one

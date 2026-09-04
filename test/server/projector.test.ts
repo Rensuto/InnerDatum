@@ -820,7 +820,20 @@ describe('projectClassOptions', () => {
     // somebody stops copying field by field.
     const [option] = projectClassOptions().options;
     expect(Object.keys(option ?? {}).sort()).toEqual(
-      ['description', 'id', 'maxHp', 'name', 'portrait', 'resource', 'sprite', 'talents'].sort(),
+      // `lifeRating` is the class's own life-per-level. The card drew `maxHp`
+      // flat and that number is false for any origin with a Constitution
+      // modifier — see `ClassOptionView.lifeRating`.
+      [
+        'description',
+        'id',
+        'lifeRating',
+        'maxHp',
+        'name',
+        'portrait',
+        'resource',
+        'sprite',
+        'talents',
+      ].sort(),
     );
   });
 });

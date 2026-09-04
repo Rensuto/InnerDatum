@@ -621,7 +621,10 @@ const ORIGIN_VIEWS: readonly OriginOptionView[] = [
     name: 'Cityborn',
     description: 'Raised in the Common realm, on a street with a name and a number.',
     statMods: {},
-    lifeRating: 10,
+    // A DELTA, NOT A TOTAL — see `OriginOptionView.lifeRating`. The baseline
+    // origin contributes nothing, where it used to send the baseline ten and
+    // the class card carried that same ten a second time.
+    lifeRating: 0,
     experiencePenaltyPct: 0,
   },
   {
@@ -629,10 +632,80 @@ const ORIGIN_VIEWS: readonly OriginOptionView[] = [
     name: 'The Indexed',
     description: 'Someone wrote you down before you ever went looking.',
     statMods: { str: 1, dex: 1, mag: 1, wil: 1 },
-    lifeRating: 11,
+    lifeRating: 1,
     experiencePenaltyPct: 15,
   },
 ];
+
+describe('the Life a card promises is the Life the birth delivers', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE NUMBER ON THIS SCREEN THAT WAS WRONG RATHER THAN MISSING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The card drew `option.maxHp` flat. Real life is
+   * `maxLifeFor(maxHp, rating, level, rank, liveCon - classCon)`
+   * (`pools.ts#maxLifeOf`), and an origin moves BOTH the Constitution and the
+   * rating — so an Archived Watchman is created with 84 where the card said 72.
+   * Wrong for three of the five shipped origins, always in the direction of the
+   * player receiving MORE than promised, which nobody reports as a bug.
+   *
+   * ═══ DRIVEN THROUGH THE PAINTER, WHICH IS THE ONLY PLACE THE SUM HAPPENS ═══
+   * The composition lives in `drawCard`; there is no function to unit-test. So
+   * this reads the text the card actually paints.
+   */
+  const rect = classPickerRect(640, 400);
+
+  function painted(originIndex: number | null): string[] {
+    const texts: string[] = [];
+    drawClassPicker({
+      ctx: measuringCtx(texts),
+      sprites: { sprite: () => undefined },
+      rect,
+      options: OPTIONS,
+      selected: 0,
+      hovered: null,
+      origins: STURDY_ORIGINS,
+      selectedOrigin: originIndex,
+    });
+    return texts;
+  }
+
+  /** +3 Constitution and +2 a level — the Archived, whose numbers this is about. */
+  const STURDY_ORIGINS: readonly OriginOptionView[] = [
+    {
+      id: 'origin_cityborn',
+      name: 'The Cityborn',
+      description: 'The baseline.',
+      statMods: {},
+      lifeRating: 0,
+      experiencePenaltyPct: 0,
+    },
+    {
+      id: 'origin_archived',
+      name: 'The Archived',
+      description: 'Filed deep and kept.',
+      statMods: { str: 4, con: 3 },
+      lifeRating: 2,
+      experiencePenaltyPct: 25,
+    },
+  ];
+
+  it('adds the origin’s Constitution to the life it promises', () => {
+    // OPTIONS[0] is `zeta`, maxHp 90. `LIFE_PER_CON` is 4, so +3 CON is +12.
+    const baseline = painted(0).find((t) => t.startsWith('90'));
+    expect(baseline, 'the baseline card should read its own maxHp').toBeDefined();
+
+    const sturdy = painted(1).find((t) => t.startsWith('102'));
+    expect(sturdy, 'the card still promises the class figure alone').toBeDefined();
+  });
+
+  it('shows a life-per-level that is the two halves added', () => {
+    // The class fixture carries no `lifeRating`, so the visible figure is the
+    // origin's contribution alone — which is the arithmetic being asserted.
+    expect(painted(1).some((t) => t.includes('2/lv'))).toBe(true);
+  });
+});
 
 describe('the origin strip', () => {
   const rect = classPickerRect(640, 400);
