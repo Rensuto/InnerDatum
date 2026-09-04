@@ -290,9 +290,13 @@ function run(site, size, seed) {
        * BEFORE the shot, because a heal that costs no turn and a heal that costs
        * one are both worth more than a swing you take at 30% health.
        */
-      if (takeHelp(realm.engine, b.id, helps, b)) {
+      const helpCost = takeHelp(realm.engine, b.id, helps, b);
+      if (helpCost !== null) {
         tally.helped = (tally.helped ?? 0) + 1;
-        continue;
+        // ONLY A PRESS THAT COST A TURN ENDS THE TURN. `no_energy = true` is
+        // two of the three infusions, and a driver that stopped to drink one
+        // was throwing away an attack the engine never charged for.
+        if (helpCost > 0) continue;
       }
 
       const living = foes.filter((f) => f.alive);

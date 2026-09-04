@@ -391,10 +391,15 @@ export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level)
  * rather than left to whoever reads it next.
  */
 export function selfHelp(cls, known, inscribed) {
-  return [...(cls.loadout ?? []), ...inscribed]
-    .filter((t) => known === undefined || known.has(t.id))
-    .filter((t) => t.targeting?.affinity === 'ally')
-    .map((t) => t.id);
+  return (
+    [...(cls.loadout ?? []), ...inscribed]
+      .filter((t) => known === undefined || known.has(t.id))
+      .filter((t) => t.targeting?.affinity === 'ally')
+      // THE PRICE COMES WITH IT, because `no_energy` is the difference between a
+      // button you press WHILE fighting and one you spend your turn on. See
+      // `takeHelp`, which returns it so the caller can decide whether to swing.
+      .map((t) => ({ id: t.id, ap: t.cost?.ap ?? 0 }))
+  );
 }
 
 /**
@@ -410,13 +415,28 @@ export function selfHelp(cls, known, inscribed) {
  * FIRST THAT THE ENGINE ACCEPTS, in bar order. A refusal is ordinary: the
  * healing infusion refuses at full health and everything refuses on cooldown, so
  * this walks the list rather than giving up on the first no.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT RETURNS THE AP THE PRESS COST, AND null FOR "NOTHING PRESSED".
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NOT A BOOLEAN, and the first version was — which quietly wrecked the table it
+ * was written to fix. The caller ended its turn on any success, so a body below
+ * the threshold healed INSTEAD of swinging. Two of the three infusions are
+ * `no_energy = true` and cost nothing at all, so the engine would happily have
+ * taken the attack as well: the party stopped fighting for a reason that exists
+ * nowhere in the game. Every row became a 900-turn stall and the probe could no
+ * longer tell one delve from another.
+ *
+ * A FREE PRESS MUST NOT COST THE DRIVER ITS TURN. That is what `no_energy`
+ * MEANS, and a probe that spends a turn the engine did not charge for is
+ * measuring a game nobody is playing.
  */
 export function takeHelp(engine, actorId, helps, body, threshold = 0.6) {
-  if (helps.length === 0) return false;
-  if (body.maxHp <= 0 || body.hp / body.maxHp > threshold) return false;
-  for (const id of helps) {
-    const out = engine.submitTalent(actorId, id, { x: body.x, y: body.y });
-    if (out?.ok !== false) return true;
+  if (helps.length === 0) return null;
+  if (body.maxHp <= 0 || body.hp / body.maxHp > threshold) return null;
+  for (const help of helps) {
+    const out = engine.submitTalent(actorId, help.id, { x: body.x, y: body.y });
+    if (out?.ok !== false) return help.ap;
   }
-  return false;
+  return null;
 }
