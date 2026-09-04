@@ -1497,9 +1497,35 @@ export function toLoadoutView(
     // AND THE NEXT-RANK SENTENCE STOPS AT THE SAME CAP. Reading the constant
     // here while `maxLevel` read the talent's own would print 'what one more
     // point buys' on a talent no point can reach.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * RENDERED AT THE LEVEL THE MATHS RUNS AT — the same rule `range` follows
+     * eleven lines up, which used to be stated there and broken here.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `describe` was handed the RAW rank while every number it describes is
+     * computed from `effective` (`talentLevelOf` = raw x mastery). So a
+     * deepened discipline hit for 110% and said 100%, on the very screen where
+     * the category point was spent. `Actor.lua:6200-6217` renders every value
+     * through the mastery-aware `getTalentLevel` for this reason.
+     *
+     * ═══ THE NEXT RANK IS `(raw + 1) * mastery`, NOT `effective + 1` ═══
+     * Upstream asks `getTalentFullDescription(t, 1)` — it adds the POINT and
+     * lets mastery apply to the sum. Adding one to the effective level would
+     * describe a rank no point can buy.
+     *
+     * ═══ `mastery`, NOT `shownMastery` ═══
+     * The fallback below is for DISPLAY and reads the tree's authored figure
+     * when the caller names none. The engine's `talentLevelOf` reads the SHEET
+     * and defaults to 1, so borrowing the display fallback here would describe
+     * a body at a multiplier the engine is not using. The cap still reads the
+     * raw level, because the cap is on points spent.
+     */
     descNext:
-      level < (talent.maxLevel ?? TALENT_MAX_LEVEL) ? talent.describe(self, level + 1) : null,
-    desc: talent.describe(self, level),
+      level < (talent.maxLevel ?? TALENT_MAX_LEVEL)
+        ? talent.describe(self, (level + 1) * (mastery ?? 1))
+        : null,
+    desc: talent.describe(self, effective),
     /**
      * ═══ AND WHAT MAKES IT BIGGER, RESOLVED AGAINST THIS BODY ═══
      * Composed here rather than in each `describe` because the weapon half is

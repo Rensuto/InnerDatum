@@ -64,8 +64,10 @@ import {
   combatSpellpower,
   healingFactor,
   ignoreDirectCrits,
+  sightRadiusOf,
   stat,
 } from '../engine/derived.ts';
+import { bound } from '../../shared/scale.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
@@ -78,6 +80,12 @@ import type { EffectState } from '../engine/effects.ts';
 // NO_SERVER_PATTERNS bans client/** -> server/** outright, so the browser can
 // never reach a type declared under src/server/. Only the DECLARATIONS moved —
 // this file remains the one and only implementation of what they contain.
+
+/**
+ * `util.bound(healing_factor, 0, 2.5)` — CharacterSheet.lua:721. The PRODUCT is
+ * capped at two and a half times; the `Healing mod.` row itself is not.
+ */
+const HEAL_MOD_CAP = 2.5;
 
 function pct(n: number): string {
   return `${Math.round(n)}%`;
@@ -418,7 +426,7 @@ function whole(n: number): string {
  * prevent. The disagreement with upstream is at most one display point and it
  * is written down here rather than discovered.
  */
-function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
+function pushSelfSheet(rows: InspectRow[], c: Combatant, hpRegen: number): void {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * EACH BLOCK NAMES ITS TAB NOW. The grouping was always here; it was thrown
@@ -465,6 +473,61 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant): void {
   rows.push({
     label: 'Healing mod.',
     value: pct(healingFactor(c) * 100),
+    group: InspectGroup.General,
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE MULTIPLIER ABOVE HAS TO MULTIPLY — CharacterSheet.lua:719-721.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream prints these three together and in this order, and it prints the
+   * PRODUCT as its own line rather than leaving the reader to do it:
+   *
+   *     text = ... "life_regen", "%.1f"                            (:719)
+   *     text = ... actor.life_regen * util.bound(healing_factor, 0, 2.5)  (:721)
+   *
+   * `Healing mod.` shipped alone, so the row said a body mends 30% better and
+   * no screen said better than WHAT. Constitution's second half was a percentage
+   * of an invisible number.
+   *
+   * ═══ THE CLAMP IS UPSTREAM'S AND IS NOT DECORATION ═══
+   * `util.bound(healing_factor, 0, 2.5)` — the product is capped at two and a
+   * half times, where the `Healing mod.` row above is not. So the two rows can
+   * legitimately disagree at extreme values, and reproducing the cap is what
+   * makes the second line the number the game actually uses.
+   */
+  rows.push({
+    label: 'Life regen',
+    value: hpRegen.toFixed(1),
+    group: InspectGroup.General,
+  });
+  rows.push({
+    label: '(with heal mod)',
+    value: (hpRegen * bound(healingFactor(c), 0, HEAL_MOD_CAP)).toFixed(2),
+    group: InspectGroup.General,
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW FAR THIS BODY SEES — CharacterSheet.lua:731, under its `Vision:` heading
+   * at :724.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE CHANNEL EXISTED AND REACHED NO SCREEN. `CombatMods.sight` is folded,
+   * `sightRadiusOf` is what FOV spends, and `overseer_of_nations.ts` grants a
+   * tile of it in shipped content — so the one talent in the game that widens
+   * your sight moved no number anywhere and read as a no-op. A grep for the
+   * concept across `src/client/` returned nothing at all.
+   *
+   * `lite` (light radius) and `infravision` are upstream's other two vision
+   * rows and are NOT ported: this game has no light system and no second FOV
+   * pass. Named rather than dropped, exactly as `overseer_of_nations.ts` names
+   * the two thirds of itself that are missing.
+   */
+  rows.push({
+    label: 'Vision range',
+    value: whole(sightRadiusOf({ combat: c })),
     group: InspectGroup.General,
   });
 
@@ -679,7 +742,10 @@ export function inspectActor(
     // THE SHEET, NOT THE ACTOR — `combatantOf`, always. See its note: passing
     // the actor compiles only behind a double cast and then every number on the
     // character sheet silently resolves to ToME's level-1 default.
-    pushSelfSheet(rows, combatantOf(target));
+    // `hpRegen` AS A NUMBER, NOT THE ACTOR. The note above forbids handing the
+    // actor to this builder; a single value off it carries no such risk and is
+    // the only thing the regen rows need that a sheet does not have.
+    pushSelfSheet(rows, combatantOf(target), target.hpRegen);
     /**
      * AND WHAT IS CURRENTLY ON YOU. The hostile card got this first and the self
      * sheet did not, which was an oversight rather than a decision: "what is

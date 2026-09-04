@@ -267,6 +267,38 @@ describe('and the player can SEE it, on both cards', () => {
     expect(rows).toContainEqual(expect.objectContaining({ label: 'Cut immunity', value: '15%' }));
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE VISION ROW READS THE CHANNEL, not a constant that happens to match.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Vision range` is asserted as `10` on the reduced sheet in
+   * `inspect.test.ts`, which pins the MODULE's default against the engine's
+   * twenty — a distinction this game got wrong for three commits. But ten is
+   * also what `sightRadiusOf` returns for a body it never looked at, so that
+   * assertion passes against a row wired to nothing. MEASURED: replacing the
+   * argument with `{}` leaves the whole of `inspect.test.ts` green.
+   *
+   * This is the half that can only be seen with a body that actually differs.
+   * `overseer_of_nations.ts` grants exactly this one tile in shipped content, so
+   * the fixture is the real case rather than an invented one.
+   */
+  it('shows a wider vision range for a body that has one', () => {
+    const world = createWorld('vision-readout');
+    const viewer = world.addPlayer('p1', 'Dalt');
+    const before = inspectActor(world, viewer, viewer)?.rows ?? [];
+    expect(before).toContainEqual(expect.objectContaining({ label: 'Vision range', value: '10' }));
+
+    viewer.combat = {
+      ...(viewer.combat ?? bare),
+      mods: { ...(viewer.combat?.mods ?? {}), sight: 1 },
+    };
+    const after = inspectActor(world, viewer, viewer)?.rows ?? [];
+    expect(after, 'the row is wired to a constant, not to `CombatMods.sight`').toContainEqual(
+      expect.objectContaining({ label: 'Vision range', value: '11' }),
+    );
+  });
+
   it('says nothing at all when there is nothing to say', () => {
     // Seven rows of 0% on every husk in the game is how a card stops being read.
     const { world, viewer, target } = staged({ stun: 0 });

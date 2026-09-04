@@ -321,6 +321,99 @@ describe('and the panel is told the BODY`s mastery, not the tree constant', () =
    */
   const preview = { id: 'p', name: 'P', kind: 'player', x: 0, y: 0, hp: 1, maxHp: 1, alive: true };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SENTENCE MUST BE RENDERED AT THE LEVEL THE MATHS RUNS AT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `toLoadoutView` computes `range` through `effective` under a comment saying
+   * "AT THIS RANK ... never `talent.targeting.range`" — and then rendered `desc`
+   * and `descNext` through the RAW `level` two lines below it. The invariant was
+   * stated on one field and broken on the next.
+   *
+   * ═══ WHY IT MATTERS MORE THAN A ROUNDING ERROR ═══
+   * A category point is the scarcest currency in the game. Spend one deepening a
+   * discipline and every talent in it genuinely hits harder — `talentLevelOf` is
+   * `raw * mastery` and the engine uses it — while every sentence on the screen
+   * where you spent the point keeps printing the pre-deepen numbers. The player
+   * concludes the point did nothing.
+   *
+   * ═══ ASSERTED AS AN IDENTITY AGAINST THE TALENT'S OWN `describe` ═══
+   * No number is written down here, so the curve can be retuned without editing
+   * this test. The second assertion is what stops it passing vacuously: the
+   * talent picked must actually SAY something different at the two levels, or
+   * the first assertion is true of any implementation.
+   */
+  it('renders the description at the effective level, not the raw one', () => {
+    const definition = anyClass();
+    const tree = ownTree(definition);
+    const deep = sheetForBody(definition, { deepenedTrees: [tree] });
+    const mastery = deep.mastery.get(tree) ?? 1;
+    expect(mastery, 'the fixture is not actually deepened').toBeGreaterThan(1);
+
+    // THE FIRST TALENT IN THE TREE THAT SAYS ANYTHING DIFFERENT AT 1 vs 1*mastery.
+    // Not every talent's prose moves with rank — a flat one would make this test
+    // true of any implementation, which is the trap it exists to avoid.
+    const speaks = [...definition.loadout, ...definition.passives].find(
+      (t) =>
+        t.tree === tree &&
+        t.describe(preview as never, 1) !== t.describe(preview as never, 1 * mastery),
+    );
+    if (speaks === undefined) {
+      throw new Error(`no talent in ${tree} renders differently at rank 1 vs ${String(mastery)}`);
+    }
+
+    const view = toLoadoutView(
+      speaks,
+      1,
+      preview as never,
+      undefined,
+      1 * mastery,
+      undefined,
+      mastery,
+    );
+
+    expect(view.desc, 'the sentence is stuck at the pre-deepen rank').toBe(
+      speaks.describe(preview as never, 1 * mastery),
+    );
+    expect(view.desc, 'and it is genuinely a different sentence').not.toBe(
+      speaks.describe(preview as never, 1),
+    );
+  });
+
+  /**
+   * AND "WHAT ONE MORE POINT BUYS" IS THE NEXT RANK THROUGH THE SAME MULTIPLIER.
+   * `getTalentFullDescription(t, 1)` upstream adds the point and then lets
+   * mastery apply, which is `(raw + 1) * mastery` and not `effective + 1`.
+   */
+  it('renders the next-rank sentence at (raw + 1) * mastery', () => {
+    const definition = anyClass();
+    const tree = ownTree(definition);
+    const deep = sheetForBody(definition, { deepenedTrees: [tree] });
+    const mastery = deep.mastery.get(tree) ?? 1;
+
+    const speaks = [...definition.loadout, ...definition.passives].find(
+      (t) =>
+        t.tree === tree &&
+        t.describe(preview as never, 2 * mastery) !== t.describe(preview as never, 1 * mastery),
+    );
+    if (speaks === undefined) {
+      throw new Error(`no talent in ${tree} renders differently at rank 1 vs 2`);
+    }
+
+    const view = toLoadoutView(
+      speaks,
+      1,
+      preview as never,
+      undefined,
+      1 * mastery,
+      undefined,
+      mastery,
+    );
+
+    expect(view.descNext).toBe(speaks.describe(preview as never, 2 * mastery));
+  });
+
   it('carries the sheet`s figure when the caller has one', () => {
     const definition = anyClass();
     const tree = ownTree(definition);

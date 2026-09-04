@@ -609,6 +609,13 @@ const SELF_SHEET_LABELS = [
   // and it is what Constitution buys besides hit points: every heal in the game
   // is multiplied by the receiver's factor.
   'Healing mod.',
+  // CharacterSheet.lua:719-721. The multiplier above had nothing to multiply
+  // until these two: upstream prints the regen and then the CAPPED product.
+  'Life regen',
+  '(with heal mod)',
+  // CharacterSheet.lua:731, under its `Vision:` heading. `CombatMods.sight` was
+  // folded, spent by FOV and granted by a shipped talent while reaching no screen.
+  'Vision range',
   'Accuracy',
   'Damage',
   'APR',
@@ -700,6 +707,21 @@ describe('inspecting yourself', () => {
     for (const label of ['Accuracy', 'APR', 'Armour', 'Defence', 'Physical save']) {
       expect(value(label)).toMatch(/^-?\d+$/);
     }
+
+    /**
+     * ═══ VISION IS THE MODULE'S TEN, NOT THE ENGINE'S TWENTY ═══
+     * `tome/class/Actor.lua:178` sets `t.sight = t.sight or 10` before delegating,
+     * so the engine's `or 20` never fires. This game shipped 20 for three commits
+     * on exactly that mistake, and until this row existed the number was on no
+     * screen where anybody could have noticed.
+     */
+    expect(value('Vision range')).toBe('10');
+
+    // AND THE REGEN PAIR: the second is the first through a capped multiplier,
+    // so on a body with no heal modifier they read as the same number to two
+    // and one decimal place respectively.
+    expect(value('Life regen')).toMatch(/^-?\d+\.\d$/);
+    expect(value('(with heal mod)')).toMatch(/^-?\d+\.\d\d$/);
   });
 
   it('emphasises nothing, because emphasis belongs to the hit chance', async () => {
