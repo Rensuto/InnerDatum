@@ -272,7 +272,17 @@ describe('the kill is narrated before the body leaves', () => {
     await client.settle({ t: 'move', dir: 'e' });
 
     const lines = logLines(client);
-    expect(lines).toContain('Index Husk is unfiled.');
+    /**
+     * NAMED, BECAUSE THE SERVER HAS ALWAYS KNOWN. `Game.lua:1686` writes
+     * "#Source# killed #Target#!"; ours dropped `killerId` on the floor while
+     * `turn-engine.ts:923` and `:1325` both populated it.
+     *
+     * THE ABSENT CASE IS REAL and is pinned in `gateway-record.test.ts` rather
+     * than here: `OPTIONAL_ACTOR_IDS` redacts `killerId` for a killer the viewer
+     * cannot see, and a death from an effect whose source is gone carries none
+     * at all — the line degrades to the bare sentence in both.
+     */
+    expect(lines).toContain('Index Husk is unfiled by Player 1.');
     expect(lines.some((line) => line.includes('someone'))).toBe(false);
     // The damage line carries the victim's ABSOLUTE vitals, and the maximum is
     // read off the body. `0/0` is what a reaped-too-early body reports.

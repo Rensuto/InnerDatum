@@ -10761,11 +10761,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           },
         ];
       }
-      case 'death':
+      case 'death': {
         // "Unfiled" is the game's own word for it — game-design.md § 11's sample
         // log reads "Index Wraith is unfiled", and using the fiction's noun in
         // the mechanical lane is most of what gives the Record its voice.
-        return [{ text: `${nameOf(event.id)} is unfiled.`, depth: 1 }];
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * WHO DID IT — `Game.lua:1686`, `#Source# killed #Target#!`
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The server has computed the killer since the scheduler was written —
+         * `turn-engine.ts:923` and `:1325` both populate `killerId` — and this
+         * line dropped it on the floor. A husk killed by a bleed it took three
+         * turns ago, or by an ally's talent across the room, read as having
+         * simply stopped existing.
+         *
+         * ═══ NAMED, OR NOT MENTIONED — the `downed` clause's rule exactly ═══
+         * `nameOrNull`, so a killer the viewer cannot see is omitted rather than
+         * rendered as "someone". `OPTIONAL_ACTOR_IDS` REDACTS `killerId` for a
+         * body out of sight (projector.ts:472), which is a real and ordinary
+         * case: a kill out of the dark still prints, and names nobody.
+         *
+         * ═══ THE VICTIM LEADS, WHERE UPSTREAM'S SOURCE DOES ═══
+         * Upstream writes "#Source# killed #Target#!". Ours keeps the shape of
+         * the line directly below it — "X is DOWN by Y" — because a log that
+         * words its two death sentences differently reads as two systems. The
+         * information is the same; the grammar is this file's.
+         */
+        const killer = event.killerId === undefined ? null : nameOrNull(event.killerId);
+        const by = killer === null ? '' : ` by ${killer}`;
+        return [{ text: `${nameOf(event.id)} is unfiled${by}.`, depth: 1 }];
+      }
       case 'talent':
         return [
           { text: `${nameOf(event.id)} uses ${talentName(event.id, event.talentId)}.`, depth: 0 },
