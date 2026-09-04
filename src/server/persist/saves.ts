@@ -366,6 +366,19 @@ export type CharacterFile = {
    * a persist layer that imports the class registry cannot let them.
    */
   readonly classId: string;
+  /**
+   * WHICH ORIGIN — `content/origins.ts`, ToME's `race` descriptor.
+   *
+   * A SOFT REFERENCE like `classId`, and for the identical reason: an origin
+   * this build no longer ships must not make somebody's character unloadable.
+   *
+   * OPTIONAL, UNLIKE `classId`, and that is the whole compatibility story. Every
+   * save written before origins existed has no such field, and `originOf` reads
+   * absent as the baseline — which is the origin those characters have always
+   * had, since `ClassDef.lifeRating` already carried its ten. So an old file
+   * loads to a body with byte-identical hit points and stats.
+   */
+  readonly origin?: string;
 
   // ═════════════════════════════════════════════════════════════════════════
   // PROGRESSION. FOUR OPTIONAL FIELDS — see the header for why the version did
@@ -966,6 +979,8 @@ export type CharacterInit = {
   readonly ownerId: string;
   readonly name: string;
   readonly classId: string;
+  /** Omit to birth a body at the baseline origin. See `CharacterFile.origin`. */
+  readonly origin?: string;
   /** Omit for a fresh character — see "WHAT ABSENCE MEANS" above. */
   readonly level?: number;
   readonly xp?: number;
@@ -1118,6 +1133,12 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     ownerId: init.ownerId,
     name: init.name,
     classId: init.classId,
+    // OMITTED WHEN ABSENT rather than written as a default, which is the
+    // opposite of the four progression fields below and deliberately so: a file
+    // with no `origin` is exactly what every pre-origins save looks like, so the
+    // absent case has to stay a real, tested shape rather than one this build
+    // can no longer produce.
+    ...(init.origin === undefined ? {} : { origin: init.origin }),
     // FILLED IN EXPLICITLY rather than left undefined, so every file this build
     // writes names all four and a human reading one never has to know what an
     // absent field would have meant. The defaults are the decision recorded
@@ -1995,6 +2016,12 @@ export function parseCharacterFile(doc: unknown): ParseResult {
   const classId = asString(doc.classId);
   if (classId === null || classId === '') return { ok: false, problems: ['classId: missing'] };
 
+  // NOT VALIDATED AGAINST THE REGISTRY, and not required: a soft reference like
+  // `classId`, but optional, so an absent or empty one is the baseline rather
+  // than a problem. See `CharacterFile.origin`.
+  const originRaw = asString(doc.origin);
+  const origin = originRaw === null || originRaw === '' ? undefined : originRaw;
+
   const resources = parseResources(doc.resources, problems);
   if (resources === null) return { ok: false, problems };
 
@@ -2034,6 +2061,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       ownerId,
       name,
       classId,
+      ...(origin === undefined ? {} : { origin }),
       // NAMED HERE OR SILENTLY DELETED. This function copies nothing it does not
       // name: a field on `CharacterFile` that is missing from this literal is
       // dropped on every load and written away by the next autosave, with no
@@ -2197,6 +2225,9 @@ export function serialiseCharacter(file: CharacterFile): string {
     ownerId: file.ownerId,
     name: file.name,
     classId: file.classId,
+    // AND NOT UNCONDITIONALLY, unlike the block below: see `newCharacterFile`
+    // for why an absent origin has to stay absent through a rewrite.
+    ...(file.origin === undefined ? {} : { origin: file.origin }),
     // ═══ WRITTEN UNCONDITIONALLY, EVEN THOUGH THE TYPE SAYS OPTIONAL ═══
     // A field missing from this literal is never written at ALL — the canonical
     // object is rebuilt from scratch for byte-stability, so it silently drops
@@ -3293,6 +3324,12 @@ type Binding = {
   readonly createdAt: string;
   readonly classId: string;
   /**
+   * Carried forward exactly as `classId` is, and for its stated reason: the
+   * binding remembers what the file said, so a snapshot that cannot speak for
+   * the origin does not downgrade a saved one. See `CharacterFile.origin`.
+   */
+  readonly origin?: string;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * PROGRESSION AS THE FILE HAD IT WHEN IT WAS OPENED — NOW ONLY THE FALLBACK.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -3440,6 +3477,11 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // downgrading a saved Watchman to `unassigned` because a fixture joined
       // without one.
       classId: snapshot.classId ?? binding.classId,
+      // THE SAME FALLBACK, and the binding is the one that remembers: a snapshot
+      // taken while the chooser is still owed deliberately omits the origin.
+      ...((snapshot.origin ?? binding.origin) === undefined
+        ? {}
+        : { origin: snapshot.origin ?? binding.origin }),
       // ═══ THE SNAPSHOT WINS FOR THESE FOUR TOO, OR A LEVEL NEVER LANDS ═══
       // These lines used to read `binding.level` and friends unconditionally,
       // which froze the file at whatever it said when it was OPENED. That was
@@ -3690,6 +3732,10 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // the only layer that knows what the three classes are. See
       // `classForJoin` in content/classes.ts.
       classId: file.classId,
+      // HANDED BACK VERBATIM TOO — a soft reference this layer does not resolve.
+      // Dropping it here would be the `knownLore` bug again: stored on disk,
+      // never returned, and silently written away by the next autosave.
+      ...(file.origin === undefined ? {} : { origin: file.origin }),
       // ═══ AND PROGRESSION COMING BACK, WHICH IS THE OTHER HALF OF THE LOOP ═══
       // This return used to be `{hp, cooldowns, classId}` and nothing else, so
       // `CharacterRestore.level` was ALWAYS undefined and the gateway's

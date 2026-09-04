@@ -771,6 +771,29 @@ export type PlayerActor = ActorCommon & {
    * on somebody's character.
    */
   classId?: string;
+  /**
+   * WHICH ORIGIN THIS BODY IS — `content/origins.ts`. ToME's `race` descriptor.
+   *
+   * A plain `string` and OPTIONAL, for exactly the two reasons `classId` above
+   * gives: a save written by an older build names an origin this build may not
+   * have, and every save written before origins existed names none at all.
+   * `originOf` reads absent as `Cityborn`, which is the origin those characters
+   * have always actually had — see that file's header on the hidden ten.
+   */
+  origin?: string;
+  /**
+   * THE ORIGIN'S EXPERIENCE MULTIPLIER, CACHED AS A BARE NUMBER.
+   *
+   * Upstream's `exp_mod` (`engine/Birther.lua:419`), which `getExpChart` multiplies the
+   * XP REQUIRED by. DERIVED FROM `origin` AND NOT A SECOND SOURCE OF TRUTH: it
+   * is stamped wherever the origin is applied, exactly as `maxHp` is derived and
+   * stored rather than recomputed at every read.
+   *
+   * IT IS A NUMBER RATHER THAN THE ORIGIN ITSELF because the scheduler is the
+   * thing that spends it and `engine/` may not import `content/`. The same
+   * boundary that keeps `globalSpeed` a number on a monster instead of a profile.
+   */
+  expMod?: number;
 
   // --- progression ----------------------------------------------------------
   /**
@@ -1301,6 +1324,10 @@ export type PlayerInit = {
   readonly combat?: CombatSheet;
   /** Which class this is, as a LABEL for the save file. See `PlayerActor.classId`. */
   readonly classId?: string;
+  /** Which origin this is, as a LABEL for the save file. See `PlayerActor.origin`. */
+  readonly origin?: string;
+  /** The origin's `exp_mod`, cached. See `PlayerActor.expMod`. */
+  readonly expMod?: number;
 };
 
 export type MonsterInit = {

@@ -120,6 +120,13 @@ describe('the wiring', () => {
       new URL('../../src/server/net/gateway.ts', import.meta.url),
       'utf8',
     );
-    expect(gateway).toContain('combat: playerCombat(definition.combat)');
+    /**
+     * AND THE CAP IS THE OUTERMOST CALL, which now says something it did not
+     * have to before origins existed. `combatWithOrigin` adds the origin's
+     * `inc_stats` on top of the class sheet, so the argument here is the body
+     * that will actually exist; capping first and adding after would cap a body
+     * nobody plays and let the additions land outside the cap.
+     */
+    expect(gateway).toContain('combat: playerCombat(combatWithOrigin(definition.combat, origin))');
   });
 });

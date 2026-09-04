@@ -3775,7 +3775,11 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
      * point is the opposite: it can be spent, and a spent point changes
      * `combatTalentScale`'s answer. See `applyPendingLevels`.
      */
-    const gained = gainExp(member.level, member.xp, award);
+    // `member.expMod` IS THE ORIGIN'S PENALTY, and it belongs on the recipient
+    // rather than the killer: upstream multiplies the CHART, which is a fact
+    // about whose levels these are. A party of two origins levels at two rates
+    // off the same kill, which is exactly what upstream does.
+    const gained = gainExp(member.level, member.xp, award, member.expMod ?? 1);
     member.level = gained.level;
     member.xp = gained.xp;
     member.pendingLevels += gained.levelsGained;

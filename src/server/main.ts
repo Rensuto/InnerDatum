@@ -38,6 +38,7 @@ import {
   spendByPurse,
   treesForClass,
 } from './content/classes.ts';
+import { originLifeDelta, originOf } from './content/origins.ts';
 import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
@@ -1323,7 +1324,23 @@ export function buildServer() {
          * contract of this block: the resize must follow the refold, or it sizes
          * the body the player had a moment ago.
          */
-        actor.maxHp = maxLifeOf(actor, definition, PLAYER_RANK);
+        /**
+         * AND THE ORIGIN'S HALF OF THE LIFE RATING. `ClassDef.lifeRating` is the
+         * class's rating with the BASELINE origin already folded into it — see
+         * `content/origins.ts` on the hidden ten — so what an origin contributes
+         * here is its difference from that baseline, which is 0 for the origin
+         * every existing character has and +1 for the Indexed.
+         *
+         * COMPOSED HERE RATHER THAN INSIDE `maxLifeOf`, because `engine/pools.ts`
+         * may not import `content/`. `PooledClass` is a structural slice for
+         * exactly this: the caller supplies the numbers, whoever they came from.
+         */
+        const origin = originOf(actor.origin);
+        actor.maxHp = maxLifeOf(
+          actor,
+          { ...definition, lifeRating: definition.lifeRating + originLifeDelta(origin) },
+          PLAYER_RANK,
+        );
         actor.hp = Math.min(actor.hp, actor.maxHp);
 
         /**

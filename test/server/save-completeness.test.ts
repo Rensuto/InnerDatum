@@ -48,6 +48,11 @@ const FULL = {
   ownerId: OWNER,
   name: 'Ren',
   classId: 'class:watchman',
+  // A NON-BASELINE ORIGIN ON PURPOSE. The baseline is what an ABSENT field
+  // already means, so a fixture carrying it would round-trip whether or not the
+  // writer named the field — which is the exact blindness this guard exists to
+  // stop. See CharacterFile.origin.
+  origin: 'origin_indexed',
   level: 7,
   xp: 313,
   unspentPoints: 3,

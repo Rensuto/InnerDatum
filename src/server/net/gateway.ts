@@ -107,6 +107,8 @@ import { COMMAND_BURST, COMMAND_RATE_PER_SEC, PROTOCOL_VERSION } from '../../sha
  * of a boundary this file may not reach across.
  */
 import { classById, classForJoin, playerCombat } from '../content/classes.ts';
+import { DEFAULT_ORIGIN, combatWithOrigin } from '../content/origins.ts';
+import type { OriginDef } from '../content/origins.ts';
 /**
  * THE SECOND CONTENT IMPORT, AND IT IS DATA ONLY — THE SAME TERMS AS THE FIRST.
  *
@@ -1589,6 +1591,12 @@ export type CharacterSnapshot = {
    * still round-trips through this one.
    */
   readonly classId?: string;
+  /**
+   * WHICH ORIGIN, under exactly the class rule above: optional, a soft
+   * reference, and OMITTED while the owner still owes a choice. Absent already
+   * means the baseline, so this needs no sentinel of its own.
+   */
+  readonly origin?: string;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * PROGRESSION — LEVEL, XP, POINTS IN HAND, AND THE RAW SPREAD.
@@ -3885,6 +3893,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ...(actor.classId === undefined
           ? {}
           : { classId: classChoiceOwed.has(actor.id) ? UNASSIGNED_CLASS : actor.classId }),
+        // ═══ AND THE ORIGIN, UNDER THE SAME PROVISIONAL RULE ═══
+        // Omitted while the owner still owes a choice, for the reason above: a
+        // provisional body wears whatever the rotation handed it, and writing
+        // that origin would put an answer on disk to a question nobody has been
+        // asked. There is no sentinel here because ABSENT already means the
+        // baseline — `originOf` reads it that way, and that is exactly what a
+        // pre-origins save says too.
+        ...(actor.origin === undefined || classChoiceOwed.has(actor.id)
+          ? {}
+          : { origin: actor.origin }),
         // ═══ PROGRESSION, STRAIGHT OFF THE BODY ═══
         // `level`, `xp` and `unspentPoints` are plain fields on `PlayerActor`
         // precisely so that this pass can read them without asking the talent
@@ -7641,15 +7659,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return definition;
   };
 
-  /** A `ClassDef` as `world.addPlayer` takes it. See `PlayerOverlay`. */
-  const overlayFor = (definition: ClassDef): PlayerOverlay => ({
+  /**
+   * A `ClassDef` AND AN `OriginDef` as `world.addPlayer` takes them. See
+   * `PlayerOverlay`.
+   *
+   * TWO ANSWERS, ONE BODY — `Birther.lua` asks for a race and a class and every
+   * starting number is the sum. The origin defaults to `Cityborn` because a
+   * `hello` arrives before any choice has been made, and because that is the
+   * origin every character written before origins existed already had.
+   */
+  const overlayFor = (definition: ClassDef, origin: OriginDef = DEFAULT_ORIGIN): PlayerOverlay => ({
     sprite: definition.sprite,
     maxHp: definition.maxHp,
     hpRegen: definition.hpRegen,
     // THE BIRTH DESCRIPTOR'S RESIST CAP (descriptors.lua:63). One door, because
     // it is a PLAYER rule rather than a class one — see `playerCombat`.
-    combat: playerCombat(definition.combat),
+    // The origin's `inc_stats` go on BEFORE the cap, so the cap is applied to
+    // the body that will actually exist.
+    combat: playerCombat(combatWithOrigin(definition.combat, origin)),
     classId: definition.id,
+    origin: origin.id,
+    // `engine/Birther.lua:419` — the multiplier the exp chart is scaled by. Cached as a
+    // number because the scheduler spends it and may not read `content/`.
+    expMod: origin.experienceMult,
   });
 
   /**

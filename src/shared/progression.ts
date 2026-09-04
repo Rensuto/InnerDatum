@@ -268,7 +268,7 @@ export const INVENTORY_CAP = 12;
  * Values, and the test pins all of them: 27, 61, 110, 174, 254, 346, 453, 572,
  * 703 for levels 2..10.
  */
-export function expChart(level: number): number {
+export function expChart(level: number, expMod = 1): number {
   let exp = 10;
   let mult = 8.5;
   const min = 3;
@@ -288,7 +288,18 @@ export function expChart(level: number): number {
   // load.lua:205 — `math.ceil`. The chart is fractional internally (level 3 is
   // 60.4) and integral on the way out. Drop it and every threshold is a hair
   // low, which never fails anything and quietly shortens the game.
-  return Math.ceil(exp);
+  //
+  // ═══ THEN THE ORIGIN'S `exp_mod`, AND THE ORDER IS UPSTREAM'S ═══
+  // `ActorLevel.lua:85-90` is `exp_chart[level] * self.exp_mod`, and the chart
+  // it indexes is the already-ceiled one from load.lua. So the multiply comes
+  // AFTER the rounding, never before, or a penalised body pays a threshold
+  // rounded from a different number than everybody else's.
+  //
+  // CEILED A SECOND TIME so the threshold stays a whole number: ToME's exp is
+  // fractional and ours is not, and a chart returning 808.45 would put fractions
+  // into every save and every "1,240 / 2,700" the panel draws. At most one point
+  // of divergence, on a number that is 15% larger to begin with.
+  return Math.ceil(Math.ceil(exp) * expMod);
 }
 
 /**
@@ -489,7 +500,7 @@ export type ExpGain = {
  * @param xp current PER-LEVEL xp — never a cumulative total.
  * @param award xp to add. May be negative.
  */
-export function gainExp(level: number, xp: number, award: number): ExpGain {
+export function gainExp(level: number, xp: number, award: number, expMod = 1): ExpGain {
   // ActorLevel.lua:97 — the floor is on the SUM, so a drain larger than the
   // balance empties it rather than going negative.
   let nextXp = Math.max(0, xp + award);
@@ -497,11 +508,13 @@ export function gainExp(level: number, xp: number, award: number): ExpGain {
   let levelsGained = 0;
 
   // ActorLevel.lua:98-106. `while`, not `if` — see the docblock.
-  while (nextLevel < MAX_CHARACTER_LEVEL && nextXp >= expChart(nextLevel + 1)) {
+  while (nextLevel < MAX_CHARACTER_LEVEL && nextXp >= expChart(nextLevel + 1, expMod)) {
     nextLevel = nextLevel + 1;
     // ActorLevel.lua:104 subtracts AFTER the increment, so the threshold spent
-    // is `expChart(newLevel)` — the same number the comparison just used.
-    nextXp = nextXp - expChart(nextLevel);
+    // is `expChart(newLevel)` — the same number the comparison just used, which
+    // means `expMod` must be passed to BOTH or a penalised body would pay a
+    // raised threshold and be refunded an unraised one.
+    nextXp = nextXp - expChart(nextLevel, expMod);
     levelsGained = levelsGained + 1;
   }
 

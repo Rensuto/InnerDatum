@@ -215,7 +215,7 @@ const SPAWN_SEARCH_RADIUS = 8;
  * pin the derivation against all three authored values instead.
  */
 export type PlayerOverlay = Partial<
-  Pick<PlayerInit, 'sprite' | 'maxHp' | 'hpRegen' | 'combat' | 'classId'>
+  Pick<PlayerInit, 'sprite' | 'maxHp' | 'hpRegen' | 'combat' | 'classId' | 'origin' | 'expMod'>
 >;
 
 /**
@@ -961,6 +961,10 @@ export function createWorld(
       recomposeCombat(actor, null, resolveItem);
     }
     if (overlay.classId !== undefined) actor.classId = overlay.classId;
+    // AND THE ORIGIN BESIDE THE CLASS, because `reclothePlayer` is how a
+    // provisional body becomes a chosen one and both answers arrive together.
+    if (overlay.origin !== undefined) actor.origin = overlay.origin;
+    if (overlay.expMod !== undefined) actor.expMod = overlay.expMod;
 
     // AFTER `maxHp`, or a Watchman chosen over a provisional Alchemist starts at
     // the Alchemist's ceiling. See the doc block: a body that was whole a line
