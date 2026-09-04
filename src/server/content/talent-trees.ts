@@ -448,6 +448,36 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * THE SAME UNREACHABLE PURSE as `race/higher` — see the note there. Inert
      * for the same reason (`maxLevel: 1`) and covered by the same tripwire.
      */
+    id: 'race/footnoted',
+    mastery: 1,
+    name: 'Footnoted',
+    classId: null,
+    size: 1,
+    blurb: 'What the margin knows that the entry does not.',
+  },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE FOURTH ORIGIN TREE — `newTalentType{ type="race/halfling" }`,
+     * misc/races.lua:552.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ONE TALENT OF UPSTREAM'S FOUR, and the three that are missing all want the
+     * SAME two things — a LUCK stat and an on-being-hit hook:
+     *
+     *   Duck and Dodge   triggers when a single blow takes a fifth of your life
+     *                    and grants Evasion scaled by `getStat("lck")`. We have
+     *                    an Evasive effect; we have neither the trigger nor the
+     *                    stat.
+     *   Militant Mind    scales six powers by how many foes are IN SIGHT, and a
+     *                    talent cannot see the actor list — `TalentWorld` is
+     *                    deliberately narrowed to the level.
+     *   Indomitable      strips N stun/pin effects. We have effect subtypes and
+     *                    a `stun` immunity key, but no `pin` status to strip.
+     *
+     * `size` is that declared, exactly as the other three race trees declare
+     * theirs. THE SAME UNREACHABLE PURSE — see the note on `race/higher`.
+     */
     id: 'race/unfiled',
     mastery: 1,
     name: 'Unfiled',

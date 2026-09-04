@@ -185,6 +185,11 @@ export const EffectId = {
    * by the same number, and they do not compose the same way downstream.
    */
   EternalWrath: 'effect:eternal_wrath',
+  /**
+   * THE ONLY EFFECT THAT MOVES ALL THREE SAVES AT ONCE, and the only one that
+   * touches critical chance at all.
+   */
+  FootnotedLuck: 'effect:footnoted_luck',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1459,6 +1464,50 @@ export const ETERNAL_WRATH: EffectDef = Object.freeze({
   },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FOOTNOTED LUCK — mental.lua:1631-1647, upstream's `HALFLING_LUCK`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     self:effectTemporaryValue(eff, "combat_generic_crit", eff.crit)
+ *     self:effectTemporaryValue(eff, "combat_physresist",   eff.save)
+ *     self:effectTemporaryValue(eff, "combat_spellresist",  eff.save)
+ *     self:effectTemporaryValue(eff, "combat_mentalresist", eff.save)
+ *
+ * FOUR CHANNELS AND NOT ONE OF THEM IS NEW. `genericCrit` arrived with the stat
+ * work and the three saves with the cross-tier effects, so this whole racial
+ * talent is a pure content port — the first one where that was true of every
+ * clause rather than most of them.
+ *
+ * ═══ `genericCrit`, NOT `physCrit` ═══
+ * Upstream writes `combat_generic_crit`, which is the crit chance for
+ * EVERYTHING — spells and mind powers as well as blows. `physCrit` would have
+ * been the wrong channel and would have looked right on a melee character.
+ *
+ * DECLARED ONCE upstream, checked across all five timed-effect files.
+ */
+export const FOOTNOTED_LUCK: EffectDef = Object.freeze({
+  id: EffectId.FootnotedLuck,
+  /** 'Lk'. Every other two-letter mark in this file is taken. */
+  badge: 'Lk',
+  displayName: 'Footnoted Luck',
+  description: 'Everything is going your way, briefly. You crit more and shrug off more.',
+  // mental.lua:1635-1636 — `type = "mental"`, `subtype = { focus = true }`.
+  type: SaveChannel.Mental,
+  status: EffectStatus.Beneficial,
+  // No `on_merge` upstream, so a re-press replaces. See `PAIN_SUPPRESSION`.
+  stackMode: StackMode.Refresh,
+  subtypes: ['focus'],
+  decrease: 1,
+  icon: 'icon_status_footnoted_luck',
+  // mental.lua:1638 — `parameters = { crit = 10, save = 10 }`, carried into
+  // `EffectParams.grants` under the channel names our fold uses.
+  parameters: {
+    grants: { genericCrit: 10, physResist: 10, spellResist: 10, mentalResist: 10 },
+  },
+  wielder: (instance) => ({ mods: instance.params.grants ?? {} }),
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1477,6 +1526,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   HIGHBORNS_BLOOM,
   ARCHIVAL_RESILIENCE,
   ETERNAL_WRATH,
+  FOOTNOTED_LUCK,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

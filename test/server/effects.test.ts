@@ -1209,6 +1209,7 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.HighbornsBloom,
       EffectId.ArchivalResilience,
       EffectId.EternalWrath,
+      EffectId.FootnotedLuck,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1228,6 +1229,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_highborns_bloom',
       'icon_status_archival_resilience',
       'icon_status_eternal_wrath',
+      'icon_status_footnoted_luck',
     ]);
   });
 
@@ -1336,6 +1338,9 @@ describe('the status roster (game-design.md § 12)', () => {
       [EffectId.ArchivalResilience]: SaveChannel.Physical,
       // physical.lua:805 — `type = "physical"`, upstream's own.
       [EffectId.EternalWrath]: SaveChannel.Physical,
+      // mental.lua:1635 — `type = "mental"`, and the only beneficial effect on
+      // that channel so far.
+      [EffectId.FootnotedLuck]: SaveChannel.Mental,
     });
   });
 

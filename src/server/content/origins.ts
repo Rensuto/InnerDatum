@@ -70,6 +70,7 @@ import { highbornsBloom } from '../talents/highborns_bloom.ts';
 import { resilienceOfTheArchived } from '../talents/resilience_of_the_archived.ts';
 import { unshackled } from '../talents/unshackled.ts';
 import { wrathOfTheWoods } from '../talents/wrath_of_the_woods.ts';
+import { luckOfTheFootnoted } from '../talents/luck_of_the_footnoted.ts';
 import { overseerOfNations } from '../talents/overseer_of_nations.ts';
 import type { Talent } from '../engine/talents.ts';
 import type { PointBonus } from '../../shared/progression.ts';
@@ -282,11 +283,50 @@ export const UNFILED: OriginDef = Object.freeze({
 });
 
 /**
+ * HALFLING. Quick, sharp, physically slight, and briefly luckier than anyone
+ * has any right to be.
+ */
+export const FOOTNOTED: OriginDef = Object.freeze({
+  id: 'origin_footnoted',
+  name: 'The Footnoted',
+  description:
+    'You are in the record, at the bottom, in the smaller type. ' +
+    'Nobody reads down that far and you have made a life out of it — quick hands, ' +
+    'quicker eyes, and a habit of being where the entry above is not looking. ' +
+    'You are not built to take a hit. You are built to have already moved.',
+  // `inc_stats = { str=-3, dex=3, con=1, cun=3, lck=5 }` (halfling.lua).
+  //
+  // ═══ `lck = 5` IS DROPPED, AND IT IS A REAL LOSS RATHER THAN A ROUNDING ═══
+  // There is no Luck stat in this game. Upstream's halfling is the luckiest
+  // thing in it and spends that on crit, on defence and on its own tier-2
+  // talent; ours gets none of it and still pays the twenty per cent. Said out
+  // loud rather than quietly compensated for — inventing a substitute bonus
+  // would be a balance decision wearing a port's citation.
+  statMods: { str: -3, dex: 3, con: 1, cun: 3 },
+  // `life_rating = 12` (halfling.lua), two over the baseline — tied with the
+  // Archived for the sturdiest, which reads oddly for the smallest people in
+  // the game and is upstream's number.
+  lifeRating: BASELINE_LIFE_RATING + 2,
+  // `experience = 1.20` (halfling.lua). Between the Indexed's fifteen and the
+  // Archived's twenty-five.
+  experienceMult: 1.2,
+  // No `copy_add`, no `extra_*_every` — see the note on the Indexed.
+  // `talents = { [T_HALFLING_LUCK] = 1 }` (halfling.lua).
+  talents: [luckOfTheFootnoted],
+});
+
+/**
  * AUTHORED ORDER, and the picker never re-sorts it — the same promise
  * `ClassOptionsMsg.options` makes and for the same reason: this choice is
  * written to a file and the chooser does not come back.
  */
-export const ORIGINS: readonly OriginDef[] = Object.freeze([CITYBORN, INDEXED, ARCHIVED, UNFILED]);
+export const ORIGINS: readonly OriginDef[] = Object.freeze([
+  CITYBORN,
+  INDEXED,
+  ARCHIVED,
+  UNFILED,
+  FOOTNOTED,
+]);
 
 const BY_ID = new Map<string, OriginDef>(ORIGINS.map((origin) => [origin.id, origin]));
 
