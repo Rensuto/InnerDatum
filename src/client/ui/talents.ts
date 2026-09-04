@@ -593,6 +593,14 @@ export type TalentCell = {
    */
   readonly scales: string | null;
   /**
+   * THE TREE'S MULTIPLIER, or 1. `getTalentLevel = getTalentLevelRaw x mastery`
+   * (`ActorTalents.lua:826`), so this is what separates the rank a player BUYS
+   * from the level the game COMPUTES — and every class in this game authors a
+   * signature tree at 1.3 and a supporting one at 1.15, so the two numbers
+   * differ for most talents rather than for an exotic few.
+   */
+  readonly mastery: number;
+  /**
    * EVERY REQUIREMENT OF THE NEXT RANK, met or not — `LoadoutTalent.requires`.
    *
    * `lockedReason` above is a REFUSAL and exists only while one applies. This is
@@ -964,6 +972,9 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     // `?? null` — absent means the talent declares no scaling, or a server too
     // old to send one, and the pane prints no line either way.
     scales: talent.scales ?? null,
+    // `?? 1` — the tree header one screen up makes the same default for the
+    // same reason: a server too old to send one has no mastery to apply.
+    mastery: talent.mastery ?? 1,
     passive: talent.kind === 'passive',
     desc: talent.desc,
     descNext: talent.descNext,
@@ -1123,6 +1134,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         // A LOCKED TREE HAS NOTHING TO TAKE BACK. Its ranks were never bought,
         // so no spend of theirs is in the ledger and the server would refuse.
         canUnlearn: false,
+        mastery: talent.mastery ?? 1,
         /**
          * NO REQUIREMENT LIST ON A TREE YOU DO NOT OWN. The only thing standing
          * between the player and these icons is the DISCIPLINE — a category
@@ -2734,6 +2746,38 @@ function drawDetail(
         : `${String(cell.level)} ${ARROW} ${String(cell.level + 1)}  (of ${String(cell.maxLevel)})`,
     cell.canSpend ? PALETTE.GOLD : PALETTE.PARCHMENT,
   );
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LEVEL THE GAME COMPUTES WITH — `Actor.lua:6217`, and it is the FIRST
+   * line of every talent description upstream.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     d:add(..., "Effective talent level: ", ..., ("%.1f"):format(self:getTalentLevel(t)))
+   *
+   * The row above is the rank a player BUYS. `getTalentLevel` is
+   * `getTalentLevelRaw x mastery` (`ActorTalents.lua:826`) and that is what
+   * every number in the description below is computed from — so on a signature
+   * tree a rank-3 talent is a 3.9, and the pane said 3 and printed 3.9's
+   * numbers without ever naming the gap.
+   *
+   * ═══ IT IS NOT AN EXOTIC CASE HERE ═══
+   * Every class in the game authors a signature tree at 1.3 and a supporting
+   * one at 1.15 (`classes.ts:367-368`), so the two figures differ for MOST
+   * talents rather than for a few. The tree header already prints `(x1.30)`;
+   * this is the multiplication the player was being asked to do themselves.
+   *
+   * ═══ SHOWN ONLY WHERE IT SAYS SOMETHING ═══
+   * Upstream prints it unconditionally. Ours skips an unlearned talent, whose
+   * effective level is a truthful and useless 0.0, and skips a tree at mastery
+   * 1 where the row would restate the rank in a second format. That is a
+   * divergence in PRESENTATION for a screen that has a fixed height and a
+   * "when they do not all fit" concession already; the information is upstream's
+   * exactly.
+   */
+  if (cell.level >= 1 && cell.mastery !== 1) {
+    field('Effective level', (cell.level * cell.mastery).toFixed(1));
+  }
 
   if (!cell.passive) {
     field('Cost', `${String(cell.cost.ap)} AP`);

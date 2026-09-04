@@ -182,6 +182,64 @@ describe('talentPanelRows builds categories', () => {
     expect(categories(tuned)[0]?.text).toBe('Discipline  (x1.30)');
   });
 
+  describe('the level the game computes with', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * `Actor.lua:6217` — "Effective talent level: %.1f", upstream's FIRST line.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The `Talent level` row is the rank a player BUYS. `getTalentLevel` is
+     * `raw x mastery` and that is what every number in the description below is
+     * computed from, so the pane printed 3 beside numbers derived from 3.9 and
+     * never named the gap. Not exotic here: every class authors a signature tree
+     * at 1.3 (`classes.ts:367`).
+     */
+    it('prints the raw rank times the tree mastery', () => {
+      const texts = paintPanel({
+        rows: talentPanelRows(
+          view({
+            loadout: [talent({ id: 'a', name: 'A', ...DISCIPLINE, mastery: 1.3, level: 3 })],
+            passives: [],
+          }),
+        ),
+        focusId: 'a',
+      });
+      expect(texts, 'the effective level is nowhere on the pane').toContain('3.9');
+    });
+
+    /**
+     * AND NOT WHERE IT WOULD ONLY RESTATE THE RANK. A tree at mastery 1 makes
+     * the two figures identical, and a second row saying "3.0" beside "3 → 4" is
+     * the furniture the mastery header refuses for `(x1.00)` one screen up.
+     */
+    it('says nothing on a tree with no mastery', () => {
+      const texts = paintPanel({
+        rows: talentPanelRows(
+          view({
+            loadout: [talent({ id: 'a', name: 'A', ...DISCIPLINE, mastery: 1, level: 3 })],
+            passives: [],
+          }),
+        ),
+        focusId: 'a',
+      });
+      expect(texts).not.toContain('3.0');
+    });
+
+    /** NOR ON AN UNLEARNED ONE, whose effective level is a truthful 0.0. */
+    it('says nothing before the talent is learned', () => {
+      const texts = paintPanel({
+        rows: talentPanelRows(
+          view({
+            loadout: [talent({ id: 'a', name: 'A', ...DISCIPLINE, mastery: 1.3, level: 0 })],
+            passives: [],
+          }),
+        ),
+        focusId: 'a',
+      });
+      expect(texts).not.toContain('0.0');
+    });
+  });
+
   it('degrades to one unnamed category when the server sends no tree', () => {
     // The additive-field contract: an old server loses the GROUPING, never the
     // talents. `tree` is optional on the wire precisely so no bump was needed.
