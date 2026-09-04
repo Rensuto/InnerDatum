@@ -1026,6 +1026,64 @@ describe('projectInventory', () => {
     expect(msg.carried.map((row) => row.itemId)).toEqual(['item_watchmans_cap']);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT A WORN ITEM IS GIVING YOU, FOR AN ITEM THAT CAME OUT OF THE LOOT ROLL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The doll asks `compareRows(base, worn WITHOUT this item, this item)` so the
+   * swap it computes is the item against nothing. Removing "this item" from the
+   * worn set was written as `other !== item` — REFERENCE equality — and
+   * `resolveItem` only returns a shared frozen object for a PLAIN id: an ego or
+   * a raised material builds a fresh object per call (resolve.ts:406). So for
+   * every rolled item the filter removed nothing, `before` still contained it,
+   * every delta measured zero and the doll sent an EMPTY row list.
+   *
+   * ═══ WHICH IS WHY NOBODY SAW IT ═══
+   * Every fixture in this file wears catalogue items — `item_watchmans_boots`,
+   * `item_watchmans_coat` — and those DO come back as the same frozen object, so
+   * the identity check held and the stats appeared. The bug was invisible to
+   * every test and visible on every rare item a player actually finds.
+   *
+   * The two cases are asserted TOGETHER on purpose: the plain one is the control
+   * that was always passing, and without it a future regression that emptied
+   * both would still fail this test for the wrong reason.
+   */
+  it('tells a worn EGO item what it is giving you, not only a plain one', () => {
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { body: 'item_leather_chest~rf1' };
+
+    const rolled = projectInventory(body).equipped['body'];
+    expect(rolled?.name, 'the fixture really is a rolled item').toContain('Reinforced');
+    expect(
+      rolled?.compare.length,
+      'a worn rolled item reported no stats at all — resolve.ts:406 hands back a NEW object',
+    ).toBeGreaterThan(0);
+
+    body.equipped = { body: 'item_leather_chest' };
+    const plain = projectInventory(body).equipped['body'];
+    expect(plain?.compare.length, 'the control that was always passing').toBeGreaterThan(0);
+  });
+
+  /**
+   * AND IT IS THE ITEM'S OWN CONTRIBUTION, not a comparison against itself.
+   * Asserted by SIGN rather than by a pinned number: armour from a chestpiece is
+   * a gain, and a body wearing it compared against itself would measure zero —
+   * which is precisely the state this pair of tests exists to refuse.
+   */
+  it('measures a worn item against an empty slot, so the numbers are positive', () => {
+    const world = room();
+    const body = watchman(world);
+    body.equipped = { body: 'item_leather_chest~rf1' };
+
+    const rows = projectInventory(body).equipped['body']?.compare ?? [];
+    // NOT VACUOUS: `[].every()` is true, so the length assertion is what stops
+    // this passing against the very emptiness the test above is about.
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.value !== '' && row.value !== '0')).toBe(true);
+  });
+
   it('names the slot on a carried row and NOT on a worn one', () => {
     // In `equipped` the map KEY is the slot, so a `slot` field in the value
     // would be a second copy of the same fact that can disagree with the first.

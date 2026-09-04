@@ -2427,7 +2427,25 @@ export function projectInventory(
           ? []
           : compareRows(
               base,
-              worn.filter((other) => other !== item),
+              /**
+               * BY SLOT, NOT BY OBJECT IDENTITY. This read `other !== item` and
+               * silently did nothing for most of the items in the game.
+               *
+               * `resolveItem` returns the SHARED FROZEN catalogue entry only for
+               * a plain id; an ego or a raised material builds a fresh object per
+               * call (content/resolve.ts:406). `worn` comes from its own
+               * `wornOf` pass, so for every rolled item the object here and the
+               * object in `worn` were two equal-valued strangers — the filter
+               * removed nothing, `before` still contained this item, every delta
+               * measured zero, and the doll sent an EMPTY row list. A player
+               * hovering a rare coat was told nothing about it.
+               *
+               * A slot holds one item, which is what `compareRows` itself
+               * assumes one line down (`item.slot !== candidate.slot`), so this
+               * is the same rule read the same way on both sides rather than a
+               * second one that can drift.
+               */
+              worn.filter((other) => other.slot !== slot),
               item,
             ),
     };
