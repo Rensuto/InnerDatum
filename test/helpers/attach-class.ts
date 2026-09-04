@@ -32,18 +32,14 @@ import type { World } from '../../src/server/world/world.ts';
  * `sheetForBody` does with `undefined` anyway — stated here so the narrowing
  * reads as deliberate rather than as a null check somebody added.
  *
- * ═══ SIX HARNESSES STILL COPY THE OLD ONE, AND THAT IS NOT AN OVERSIGHT ═══
- * `character-delete`, `character-id-race`, `character-swap`,
- * `gateway-inventory`, `gateway` and `select-screen` still inline
- * `sheetForClass(definition)`. Moving them was tried in one pass and abandoned:
- * each drives a differently-shaped world — some hold a bare `world`, some only
- * `realms.overworld.world`, some neither in that scope — so the change is six
- * separate edits rather than one, and none of those files is currently testing
- * anything a body-derived sheet would change.
+ * ═══ EVERY HARNESS USES IT NOW ═══
+ * All seven did their own `sheetForClass(definition)`. The first sweep to move
+ * them failed and was reverted — not because the worlds were unreachable but
+ * because the import was not being added, which read at the time as "six
+ * differently-shaped scopes". They are two shapes: four hold
+ * `realms.overworld.world` and two hold a local `world`.
  *
- * They are blind in the same way this one was. The day one of them starts
- * caring about a bought tree, an inscription or an origin, this is the function
- * it should call rather than a seventh copy.
+ * There is no eighth copy to write. A new harness calls this.
  */
 export function attachClassFor(
   talents: TalentEngine,

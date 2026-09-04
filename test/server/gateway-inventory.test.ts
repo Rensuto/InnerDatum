@@ -1,6 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { attachClassFor } from '../helpers/attach-class.ts';
+
 import Fastify from 'fastify';
 
 import {
@@ -9,7 +11,6 @@ import {
   classById,
   createContentTalentEngine,
   createTalentBook,
-  sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
 import { LORE_IDS, noteIdFor } from '../../src/server/content/lore.ts';
@@ -318,10 +319,9 @@ async function boot(seed: string): Promise<Harness> {
 
   const engine: TurnEngine = {
     ...base,
-    attachClass: (actorId: string, classId: string): void => {
-      const definition = classById(classId);
-      if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
-    },
+    // THE SHARED STUB, which goes through `sheetForBody` exactly as
+    // production does — see `test/helpers/attach-class.ts`.
+    attachClass: attachClassFor(talents, world),
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE SEAM THAT RESIZES A BODY — COPIED FROM main.ts LIKE THE OTHERS.

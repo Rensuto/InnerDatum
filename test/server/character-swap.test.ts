@@ -9,12 +9,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  classById,
-  createContentTalentEngine,
-  createTalentBook,
-  sheetForClass,
-} from '../../src/server/content/classes.ts';
+import { attachClassFor } from '../helpers/attach-class.ts';
+
+import { createContentTalentEngine, createTalentBook } from '../../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createCharacterBridge, createSaveStore } from '../../src/server/persist/saves.ts';
@@ -176,10 +173,9 @@ async function start(): Promise<Harness> {
     world: realms.overworld.world,
     engine: {
       ...realms.overworld.engine,
-      attachClass: (actorId: string, classId: string): void => {
-        const definition = classById(classId);
-        if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
-      },
+      // THE SHARED STUB, which goes through `sheetForBody` exactly as
+      // production does — see `test/helpers/attach-class.ts`.
+      attachClass: attachClassFor(talents, realms.overworld.world),
     },
     realms,
     sessions: identityPort(),

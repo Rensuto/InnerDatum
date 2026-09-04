@@ -1,14 +1,14 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { attachClassFor } from '../helpers/attach-class.ts';
+
 import Fastify from 'fastify';
 
 import {
   WATCHMAN,
-  classById,
   createContentTalentEngine,
   createTalentBook,
-  sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
@@ -675,10 +675,9 @@ async function bootLive(seed: string): Promise<Harness> {
       // The lines main.ts writes. The gateway may not import engine/talents.ts —
       // it states its engine contract structurally — so the capability is
       // injected by whoever can see both sides.
-      attachClass: (actorId: string, classId: string): void => {
-        const definition = classById(classId);
-        if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
-      },
+      // THE SHARED STUB, which goes through `sheetForBody` exactly as
+      // production does — see `test/helpers/attach-class.ts`.
+      attachClass: attachClassFor(talents, world),
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * AND THE STANCE SEAM, WHICH THIS HARNESS USED TO LEAVE OUT.
