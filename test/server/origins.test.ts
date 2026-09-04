@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { WATCHMAN } from '../../src/server/content/classes.ts';
+import { CLASSES, WATCHMAN, sheetForClass } from '../../src/server/content/classes.ts';
+import { BIRTH_INSCRIPTIONS } from '../../src/server/content/inscriptions.ts';
+import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import {
   BASELINE_LIFE_RATING,
   CITYBORN,
@@ -223,5 +225,52 @@ describe('the adaptable origin is paid, and paid exactly once', () => {
         `categories at ${String(level)}`,
       ).toBe(1);
     }
+  });
+});
+
+describe('the Indexed carry a gift no class teaches', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `talents = { [T_HIGHER_HEAL] = 1 }` — human.lua:99-101.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * RANK, NOT MEMBERSHIP. `membership-is-not-a-rank` was learned on the three
+   * infusions, which shipped in `loadout` and not in `birth` and so sat at rank
+   * 0 refusing every press. The assertion that would have caught it is this one,
+   * so it is the first one written here.
+   */
+  it('grants it at a rank the engine will accept', () => {
+    const sheet = sheetForClass(WATCHMAN, [], [], BIRTH_INSCRIPTIONS, INDEXED);
+    expect(sheet.points.get(higherHeal.id)).toBe(1);
+    expect(sheet.loadout).toContain(higherHeal.id);
+  });
+
+  /** …and the origin that pays in points instead does not get it at all. */
+  it('is absent from a Cityborn body entirely', () => {
+    const sheet = sheetForClass(WATCHMAN, [], [], BIRTH_INSCRIPTIONS, CITYBORN);
+    expect(sheet.loadout).not.toContain(higherHeal.id);
+    expect(sheet.points.has(higherHeal.id)).toBe(false);
+  });
+
+  /** Every class, because an origin is not a class and must not favour one. */
+  it('reaches every class the same way', () => {
+    for (const definition of CLASSES) {
+      const sheet = sheetForClass(definition, [], [], BIRTH_INSCRIPTIONS, INDEXED);
+      expect(sheet.points.get(higherHeal.id), definition.name).toBe(1);
+    }
+  });
+
+  /**
+   * ONE RANK ONLY. The `race/higher` tree that would raise it is not ported, so
+   * the panel must not draw a live `+` over a rank no purse can buy — the same
+   * point sink `talent-scaling.test.ts` caught on the healing infusion.
+   */
+  it('cannot be raised, because the tree that raises it is not here', () => {
+    expect(higherHeal.maxLevel).toBe(1);
+  });
+
+  /** `no_energy = true` (races.lua:45) — the turn goes on around it. */
+  it('costs no time at all', () => {
+    expect(higherHeal.cost.ap).toBe(0);
   });
 });

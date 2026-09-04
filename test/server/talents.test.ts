@@ -88,6 +88,7 @@ import {
   INSCRIPTION_TALENTS,
   talentsFor,
 } from '../../src/server/content/inscriptions.ts';
+import { ORIGINS, ORIGIN_TALENTS } from '../../src/server/content/origins.ts';
 
 /**
  * ===========================================================================
@@ -477,10 +478,19 @@ describe('the loadout cap — PLAN.md § 5', () => {
     const inscriptionActives = INSCRIPTION_TALENTS.filter(
       (talent) => talent.onUse !== undefined,
     ).length;
+    /**
+     * …AND THE ACTIVES AN ORIGIN GRANTS — the FOURTH route to a button, after
+     * "your class has it", "you bought the tree" and "it is written on you".
+     * `human.lua:99-101` hands the Higher a talent outright, so no class loadout
+     * holds it and no point buys it. Counted from `ORIGIN_TALENTS`, the same
+     * list the registry is built from.
+     */
+    const originActives = ORIGIN_TALENTS.filter((talent) => talent.onUse !== undefined).length;
     expect(everyTalent).toHaveLength(
       CLASSES.flatMap((c) => c.loadout).filter((talent) => talent.onUse !== undefined).length +
         lockedActives +
-        inscriptionActives,
+        inscriptionActives +
+        originActives,
     );
     /**
      * …AND THE REGISTRY AS A WHOLE IS EVERY AUTHORED TALENT — COUNTED, NOT
@@ -542,6 +552,15 @@ describe('the loadout cap — PLAN.md § 5', () => {
          */
         const tree = treeById(talent.tree);
         const locked = tree?.locked === true;
+        /**
+         * ═══ AND A THIRD KIND OF SHARED TALENT: ONE AN ORIGIN GRANTS ═══
+         * `human.lua:99-101` hands the Higher a talent outright, so it is owned
+         * by no class (`classId === null`) and carried by SOME bodies rather
+         * than all of them — which is neither of the two cases below. The rule
+         * for it is the locked tree's shape with a different key: absent unless
+         * you are that origin, present when you are.
+         */
+        const grantedBy = ORIGINS.filter((o) => (o.talents ?? []).some((t) => t.id === talent.id));
         for (const definition of CLASSES) {
           // BOTH LISTS. `sheetForClass` splits a bought tree by kind — an
           // active has to reach `loadout` or `canUseTalent` refuses it — so
@@ -551,7 +570,21 @@ describe('the loadout cap — PLAN.md § 5', () => {
           const boughtSheet = trained(sheetForClass(definition, [talent.tree]));
           const fresh = [...freshSheet.loadout, ...freshSheet.passives];
           const bought = [...boughtSheet.loadout, ...boughtSheet.passives];
-          if (locked) {
+          if (grantedBy.length > 0) {
+            // BOTH HALVES, exactly as the locked case takes both: "absent from a
+            // baseline sheet" alone would pass for a talent nothing grants, and
+            // "present for its origin" alone would pass for one everybody has.
+            expect(fresh, `${definition.id} carries origin-only ${talent.id}`).not.toContain(
+              talent.id,
+            );
+            for (const origin of grantedBy) {
+              const owned = trained(sheetForClass(definition, [], [], BIRTH_INSCRIPTIONS, origin));
+              expect(
+                [...owned.loadout, ...owned.passives],
+                `${definition.id} as ${origin.id}`,
+              ).toContain(talent.id);
+            }
+          } else if (locked) {
             expect(fresh, `${definition.id} carries locked ${talent.id}`).not.toContain(talent.id);
             expect(bought, `${definition.id} bought ${talent.tree}`).toContain(talent.id);
           } else {
@@ -587,7 +620,22 @@ describe('the loadout cap — PLAN.md § 5', () => {
        */
       if (talent.classId === null) {
         expect(holders, talent.id).toEqual([]);
+        /**
+         * ═══ UNLESS AN ORIGIN GRANTS IT, IN WHICH CASE THE TREE IS NOT THE KEY ═══
+         * Buying `generic/inscriptions` does not hand you Gift of the Highborn;
+         * BEING the Indexed does. So the claim for an origin-granted active is
+         * "every class reaches it AS THAT ORIGIN", which is the same strength of
+         * claim — it would still catch the grant being wired to a single class.
+         */
+        const granted = ORIGINS.filter((o) => (o.talents ?? []).some((t) => t.id === talent.id));
         for (const definition of CLASSES) {
+          if (granted.length > 0) {
+            for (const origin of granted) {
+              const owned = trained(sheetForClass(definition, [], [], BIRTH_INSCRIPTIONS, origin));
+              expect(owned.loadout, `${definition.id} as ${origin.id}`).toContain(talent.id);
+            }
+            continue;
+          }
           const boughtSheet = trained(sheetForClass(definition, [talent.tree]));
           expect(boughtSheet.loadout, `${definition.id} bought ${talent.tree}`).toContain(
             talent.id,

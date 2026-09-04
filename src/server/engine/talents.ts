@@ -140,7 +140,7 @@ import {
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
-import type { StatusApply, StatusCure, StatusExtend } from './effects.ts';
+import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './effects.ts';
 import type { World } from '../world/world.ts';
 import type { CombatSheet } from './combat.ts';
 
@@ -1384,6 +1384,16 @@ export type TalentCallCtx = {
    * an ally who was fine.
    */
   readonly cure?: StatusCure;
+  /**
+   * IS THIS EFFECT ALREADY ON THIS BODY — `self:hasEffect(...)`.
+   *
+   * OPTIONAL, like every other seam in this file: absent means a fixture with
+   * no status table, and a talent that asks gets `false` — which is the answer
+   * that lets it act rather than the one that blocks it. A guard that refused
+   * on an absent seam would make every hand-built test fixture unable to press
+   * the button it was built to test.
+   */
+  readonly hasStatus?: StatusHas;
   /**
    * THE THIRD DOOR: make what is already wrong last longer.
    *

@@ -1202,6 +1202,9 @@ describe('the status roster (game-design.md § 12)', () => {
        * other direction of the same channel.
        */
       EffectId.PainSuppression,
+      // The first effect that moves `healing_factor`. Appended, as every one
+      // before it has been.
+      EffectId.EmpoweredHealing,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1217,6 +1220,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_confused',
       'icon_status_regeneration',
       'icon_status_pain_suppression',
+      'icon_status_empowered_healing',
     ]);
   });
 
@@ -1312,6 +1316,10 @@ describe('the status roster (game-design.md § 12)', () => {
       // and not merely a label: `Infusion: Wild` cures on `what = {physical=true}`,
       // so this is the field that decides what a wild infusion can shake off.
       [EffectId.PainSuppression]: SaveChannel.Physical,
+      // magical.lua:1300 — `type = "magical"`. The only BENEFICIAL effect on
+      // the magical channel, and a label here as it is for the other two: a
+      // buff is never rolled against.
+      [EffectId.EmpoweredHealing]: SaveChannel.Magical,
     });
   });
 

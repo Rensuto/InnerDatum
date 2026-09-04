@@ -50,9 +50,10 @@ import {
   registerEffect,
   statusApplier,
   statusCurer,
+  statusHolder,
   statusExtender,
 } from './engine/effects.ts';
-import type { StatusApply, StatusCure, StatusExtend } from './engine/effects.ts';
+import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './engine/effects.ts';
 import type { BudgetPenalty } from './engine/talents.ts';
 import { MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
@@ -204,6 +205,12 @@ export function talentRuntimeFor(
    * same null an unafflicted ally would give it.
    */
   cure?: StatusCure,
+  /**
+   * THE FOURTH STATUS DOOR — `statusHolder`, beside `status`, `cure` and
+   * `extend`. Gift of the Highborn asks it before re-applying a regeneration it
+   * may already have put there. Optional for the reason the three above are.
+   */
+  hasStatus?: StatusHas,
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * RUN AFTER EVERY BASE TURN. This is what makes a conditional passive real.
@@ -365,6 +372,7 @@ export function talentRuntimeFor(
           rng: world.rng,
           ...(status === undefined ? {} : { status }),
           ...(cure === undefined ? {} : { cure }),
+          ...(hasStatus === undefined ? {} : { hasStatus }),
           ...(extend === undefined ? {} : { extend }),
         },
       );
@@ -900,6 +908,12 @@ export function buildServer() {
   /** The same per-realm rng, for the same reason. See `statusFor` above. */
   const cureFor = (forWorld: World): StatusCure => statusCurer(effects, forWorld.rng);
   /**
+   * NO WORLD AND NO RNG. Asking whether an effect is on a body reads the table
+   * and draws nothing, so unlike its three neighbours this one is not per-world
+   * — but it is built here beside them so the four doors stay in one place.
+   */
+  const hasStatusFor = (): StatusHas => statusHolder(effects);
+  /**
    * NO RNG, UNLIKE ITS TWO NEIGHBOURS. `statusFor` and `cureFor` both take the
    * per-realm stream because applying rolls a save and removing runs the
    * effect's own `onRemove`. Lengthening rolls nothing — upstream does not make
@@ -926,6 +940,7 @@ export function buildServer() {
         statusFor(forWorld),
         (actorId) => budgetPenalty(effects, actorId),
         cureFor(forWorld),
+        hasStatusFor(),
         /**
          * ONCE PER BASE TURN, THE PASSIVES ARE FOLDED AGAIN.
          *

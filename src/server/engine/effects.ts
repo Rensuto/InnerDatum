@@ -2321,6 +2321,29 @@ export type StatusCure = (
   options?: StatusCureOptions,
 ) => string | null;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THIS ALREADY ON? — upstream's `self:hasEffect(self.EFF_…)`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME guards several talents with `on_pre_use = ... not self:hasEffect(...)`,
+ * and this project deliberately did NOT build the seam when the first of them
+ * was ported: `regeneration_infusion.ts` records that its guard "CANNOT happen"
+ * because the cooldown outlasts the effect and there was no second source, and
+ * that "building one to answer a question nothing can ask would be a correct
+ * value with no reader".
+ *
+ * THERE IS A SECOND SOURCE NOW. `higher_heal.ts` puts the same regeneration on
+ * the same body from a different button, so the question is askable and the
+ * guard is load-bearing: without it a press mid-regeneration REFRESHES a
+ * `StackMode.Refresh` effect and throws away the heal still owed.
+ */
+export type StatusHas = (target: EffectActor, effectId: string) => boolean;
+
+export function statusHolder(state: EffectState): StatusHas {
+  return (target, effectId) => hasEffect(state, target.id, effectId);
+}
+
 export function statusCurer(state: EffectState, rng: Rng, ctx: EffectCtx = NO_CTX): StatusCure {
   return (target, status, options) => {
     const held = effectsOn(state, target.id);

@@ -65,6 +65,8 @@
 export const BASELINE_LIFE_RATING = 10;
 
 import { STAT_BASE } from '../engine/derived.ts';
+import { higherHeal } from '../talents/higher_heal.ts';
+import type { Talent } from '../engine/talents.ts';
 import type { PointBonus } from '../../shared/progression.ts';
 import type { PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
@@ -123,6 +125,21 @@ export type OriginDef = {
    * levels"*.
    */
   readonly extraPointEvery?: number;
+  /**
+   * ═══ WHAT THIS ORIGIN CAN DO THAT NO CLASS TEACHES — `talents = { … }` ═══
+   *
+   *     talents = { [ActorTalents.T_HIGHER_HEAL] = 1 },   -- human.lua:99-101
+   *
+   * GRANTED AT RANK 1, exactly as an inscription is, and by the same route: the
+   * sheet joins these onto `loadout` AND onto `birth`, so the button arrives
+   * pressable rather than merely present. `membership-is-not-a-rank` was learned
+   * the hard way on the inscriptions and this list is wired the same way from
+   * the start.
+   *
+   * SEPARATE FROM THE TREE upstream grants alongside it (`talents_types`), which
+   * is four more talents and is not ported — `higher_heal.ts` says why.
+   */
+  readonly talents?: readonly Talent[];
 };
 
 /**
@@ -179,6 +196,9 @@ export const INDEXED: OriginDef = Object.freeze({
   // Higher declares no `copy_add` and no `extra_*_every`: it pays for its stats
   // in experience, not in points. Both fields absent rather than zeroed, which
   // is the same choice `statMods: {}` makes one origin up.
+  //
+  // WHAT IT HAS INSTEAD: `talents = { [T_HIGHER_HEAL] = 1 }` (human.lua:99-101).
+  talents: [higherHeal],
 });
 
 /**
@@ -279,3 +299,19 @@ export function genericPointBonus(origin: OriginDef): PointBonus {
 export function birthCategoryPoints(origin: OriginDef): number {
   return origin.birthPoints?.categories ?? 0;
 }
+
+/**
+ * THE TALENTS AN ORIGIN GRANTS, or an empty list.
+ *
+ * A FUNCTION RATHER THAN A FIELD READ, so every caller goes through one place
+ * and the absent case is answered once. `talentsFor` in `content/inscriptions.ts`
+ * is the same shape for the same reason.
+ */
+export function originTalents(origin: OriginDef): readonly Talent[] {
+  return origin.talents ?? [];
+}
+
+/** Every talent any origin can grant — what the registry must know about. */
+export const ORIGIN_TALENTS: readonly Talent[] = Object.freeze(
+  ORIGINS.flatMap((origin) => origin.talents ?? []),
+);

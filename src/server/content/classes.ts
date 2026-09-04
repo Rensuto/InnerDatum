@@ -102,6 +102,8 @@ import { causticLoad, concussiveLoad, frostLoad } from '../talents/loads.ts';
 import { fullBandolier, practisedHands, steadyPour } from '../talents/load_passives.ts';
 import { LEGWORK } from '../talents/legwork.ts';
 import { BIRTH_INSCRIPTIONS, INSCRIPTION_TALENTS, talentsFor } from './inscriptions.ts';
+import { DEFAULT_ORIGIN, ORIGIN_TALENTS, originOf, originTalents } from './origins.ts';
+import type { OriginDef } from './origins.ts';
 import { MONSTER_TALENTS } from '../talents/monster.ts';
 import { COMPOSURE } from '../talents/composure.ts';
 import { NERVE } from '../talents/nerve.ts';
@@ -854,6 +856,9 @@ export function allTalents(): readonly Talent[] {
     ...CLASSES.flatMap((definition) => [...definition.loadout, ...definition.passives]),
     ...GENERIC_PASSIVES,
     ...INSCRIPTION_TALENTS,
+    // AND WHAT AN ORIGIN GRANTS, which no class owns either. `human.lua:99-101`
+    // hands the Higher a talent outright, beside the tree it also opens.
+    ...ORIGIN_TALENTS,
     // AND THE LOCKED ONES, WHICH NO CLASS OWNS AND NOBODY STARTS WITH. The
     // same correction this docblock already records, one tree later: a talent
     // that ships is a talent that ships, whether or not a character can reach
@@ -870,6 +875,9 @@ export function registerAllTalents(): TalentRegistry {
   // AND THE INSCRIPTION TALENTS, which no class owns: they reach a bar through
   // `Actor.inscriptions` and `sheetForClass`, never through a `ClassDef`.
   for (const talent of INSCRIPTION_TALENTS) registry.register(talent);
+  // AND THE ORIGIN'S, for the identical reason: it reaches a bar through
+  // `PlayerActor.origin` and `sheetForClass`, never through a `ClassDef`.
+  for (const talent of ORIGIN_TALENTS) registry.register(talent);
   // AND THE LOCKED ONES. The registry holds every talent that EXISTS; whether a
   // given body may reach one is the SHEET's question, and `sheetForClass`
   // answers it from `PlayerActor.unlockedTrees`.
@@ -1144,6 +1152,9 @@ export function sheetForBody(definition: ClassDef, body?: PurchasedTrees): Talen
     body?.deepenedTrees ?? [],
     // ABSENT MEANS BORN WITH IT — see `sheetForClass`'s fourth parameter.
     body?.inscriptions ?? BIRTH_INSCRIPTIONS,
+    // …AND ABSENT MEANS THE BASELINE ORIGIN, which is what a body with none
+    // recorded has always actually been. `originOf` reads it that way.
+    originOf(body?.origin),
   );
 }
 
@@ -1153,6 +1164,8 @@ export type PurchasedTrees = {
   readonly deepenedTrees?: readonly string[];
   /** What is written on this body — `Actor.inscriptions`. Absent means the birth set. */
   readonly inscriptions?: readonly string[];
+  /** Which origin — `PlayerActor.origin`. Absent means the baseline. */
+  readonly origin?: string;
 };
 
 export function sheetForClass(
@@ -1188,6 +1201,15 @@ export function sheetForClass(
    * was written about.
    */
   inscribed: readonly string[] = BIRTH_INSCRIPTIONS,
+  /**
+   * WHICH ORIGIN THIS BODY IS — `PlayerActor.origin`, resolved.
+   *
+   * A FIFTH PARAMETER RATHER THAN A FLAG, and defaulted, so every existing
+   * caller and fixture builds the sheet it built before. An origin grants
+   * talents the way an inscription does (`human.lua:99-101`), and this is where
+   * talents are assembled.
+   */
+  origin: OriginDef = DEFAULT_ORIGIN,
 ): TalentSheet {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1217,6 +1239,9 @@ export function sheetForClass(
       // grants a BUTTON — `canUseTalent` refuses anything outside it — and not
       // in `passives`, which is where a fact about the body goes.
       ...talentsFor(inscribed),
+      // AND WHAT THE ORIGIN GRANTS — the fourth route to a button, beside the
+      // class's own, a bought tree, and an inscription.
+      ...originTalents(origin),
       ...bought.filter((talent) => talent.kind !== TalentKind.Passive),
     ].map((talent) => talent.id),
     /**
@@ -1252,7 +1277,14 @@ export function sheetForClass(
      * hands the talent over already learned. An inscription is not a talent you
      * raise; it is one you either have written on you or do not.
      */
-    birth: [...definition.birthTalents, ...talentsFor(inscribed)].map((talent) => talent.id),
+    birth: [
+      ...definition.birthTalents,
+      ...talentsFor(inscribed),
+      // BOTH LISTS, ALWAYS. Joining a talent onto `loadout` and forgetting
+      // `birth` is exactly how the three infusions shipped at rank 0 and could
+      // not be pressed — see this field's note above.
+      ...originTalents(origin),
+    ].map((talent) => talent.id),
     resource: definition.resource,
     maxAp: definition.maxAp,
     maxMp: definition.maxMp,

@@ -158,6 +158,11 @@ export type CombatMods = {
   readonly dam?: number;
   /** `combat_physcrit` — flat physical crit chance, in percentage points. */
   readonly physCrit?: number;
+  /**
+   * `healing_factor` — a FRACTION added to the heal multiplier, not a percent.
+   * `0.1` is a tenth more healing received. See `healingFactor`, which reads it.
+   */
+  readonly healMod?: number;
   /** `combat_generic_crit` — crit chance that applies to every school. */
   readonly genericCrit?: number;
   /** `combat_critical_power` — crit MULTIPLIER bonus, in percent (Combat.lua:1951). */
@@ -848,7 +853,26 @@ export function combatDamage(c: Combatant, addDamMod?: PrimaryStats): number {
  * `healActor` does the bounding, exactly where `onHeal` does.
  */
 export function healingFactor(c: Combatant): number {
-  return 1 + combatStatLimit(stat(c, 'con'), 1.5, 0, 0.5);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHATEVER ELSE IS MOVING IT — `addTemporaryValue("healing_factor", …)`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The note above this function has always said "other sources can push it
+   * outside the range", and until now there were none: the factor was
+   * Constitution and nothing else, so every effect upstream writes to
+   * `healing_factor` — EMPOWERED_HEALING at magical.lua:1305, and `no_healing`
+   * at the other end — had nowhere to land.
+   *
+   * ADDITIVE, and a FRACTION rather than a percent, because that is what
+   * upstream stores: `parameters = { power = 0.1 }` is a tenth more healing.
+   *
+   * NOT CLAMPED HERE. `healActor` bounds through `HEAL_FACTOR_MIN`/`MAX` exactly
+   * where `onHeal` does, and clamping early would hide a debuff that had gone
+   * too far from whatever eventually reads it — which is the argument the
+   * docblock above already makes.
+   */
+  return 1 + combatStatLimit(stat(c, 'con'), 1.5, 0, 0.5) + (c.mods?.healMod ?? 0);
 }
 
 /**

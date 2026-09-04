@@ -164,6 +164,12 @@ export const EffectId = {
    * the other way.
    */
   PainSuppression: 'effect:pain_suppression',
+  /**
+   * THE FIRST THING THAT MOVES `healing_factor`. `derived.ts`'s note has said
+   * "other sources can push it outside the range" since the defensive maths was
+   * ported, and there were none — the factor was Constitution and nothing else.
+   */
+  EmpoweredHealing: 'effect:empowered_healing',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1253,6 +1259,45 @@ export const PAIN_SUPPRESSION: EffectDef = Object.freeze({
   }),
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EMPOWERED HEALING — magical.lua:1297-1310. Every heal lands harder.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     activate = function(self, eff)
+ *         eff.tmpid = self:addTemporaryValue("healing_factor", eff.power)
+ *
+ * ═══ A FRACTION, NOT A PERCENT, AND UPSTREAM'S DEFAULT SAYS SO ═══
+ * `parameters = { power = 0.1 }` is a TENTH more healing, and `healing_factor`
+ * is a multiplier that starts at 1. Storing 10 here and dividing at the reader
+ * would put the same number in two units and make the day somebody stacks two
+ * sources a debugging session.
+ *
+ * ═══ IT MULTIPLIES WHAT ARRIVES, SO IT IS WORTH NOTHING ALONE ═══
+ * Unlike every other beneficial effect in this file it does nothing on its own:
+ * a body with no heal coming is a body at the same hit points. That is exactly
+ * why upstream hands it out WITH a regeneration rather than by itself — see
+ * `higher_heal.ts`, which applies both in one press.
+ */
+export const EMPOWERED_HEALING: EffectDef = Object.freeze({
+  id: EffectId.EmpoweredHealing,
+  badge: 'Em',
+  displayName: 'Empowered Healing',
+  description: 'Every mending lands harder while it lasts.',
+  // magical.lua:1300-1301 — `type = "magical"`, `subtype = { light = true }`.
+  type: SaveChannel.Magical,
+  status: EffectStatus.Beneficial,
+  stackMode: StackMode.Refresh,
+  subtypes: ['light'],
+  decrease: 1,
+  icon: 'icon_status_empowered_healing',
+  // magical.lua:1303 — `parameters = { power = 0.1 }`.
+  parameters: { power: 0.1 },
+  wielder: (instance) => ({
+    mods: { healMod: Number(instance.params['power'] ?? 0.1) },
+  }),
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1267,6 +1312,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   CONFUSED,
   REGENERATION,
   PAIN_SUPPRESSION,
+  EMPOWERED_HEALING,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

@@ -175,14 +175,24 @@ describe('breaking on damage', () => {
   it('is driven by noteStruck, through the real runtime', () => {
     const world = createWorld('struck');
     const struck: string[] = [];
+    /**
+     * POSITIONAL, AND THE COUNT OF `undefined`s IS LOAD-BEARING.
+     *
+     * `talentRuntimeFor` takes nine parameters and this call reaches the SEVENTH
+     * by counting past six. A parameter inserted anywhere before it silently
+     * re-binds this argument to its neighbour — which is exactly what happened
+     * when `hasStatus` landed after `cure`: `breakOnDamage` stopped being called
+     * and nothing about the call site looked wrong.
+     */
     const runtime = talentRuntimeFor(
       createContentTalentEngine(),
       world,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      (actorId: string) => struck.push(actorId),
+      undefined, // status
+      undefined, // penaltyFor
+      undefined, // cure
+      undefined, // hasStatus
+      undefined, // onActBase
+      (actorId: string) => struck.push(actorId), // breakOnDamage
     );
 
     runtime.noteStruck('a1');

@@ -15,6 +15,9 @@ import {
 import type { EffectActor, EquippedActor } from '../../src/server/engine/effects.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { wildInfusion } from '../../src/server/talents/wild_infusion.ts';
+import { higherHeal } from '../../src/server/talents/higher_heal.ts';
+import { regenerationInfusion } from '../../src/server/talents/regeneration_infusion.ts';
+import { healActor } from '../../src/server/engine/talents.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -203,5 +206,111 @@ describe('the talent itself', () => {
     expect(applied).toBe(EffectId.PainSuppression);
     // `ok: false` IS THE REFUSAL SHAPE. A clean body must still get its window.
     expect(result?.ok, 'a clean body must still get its window').not.toBe(false);
+  });
+});
+
+describe('empowered healing multiplies what arrives', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `addTemporaryValue("healing_factor", eff.power)` — magical.lua:1305.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ASSERTED THROUGH `healActor`, which is the function every heal in the game
+   * goes through, rather than off the sheet: `derived.ts`'s note has promised
+   * "other sources can push it outside the range" since the defensive maths was
+   * ported, and until this effect there were none — so the channel could have
+   * been folded correctly and read by nothing.
+   */
+  it('makes a heal land harder while it is up', () => {
+    const state = createMvpEffectState();
+    const rng = createRng('empowered');
+    const apply = statusApplier(state, rng);
+
+    const plain = body();
+    plain.hp = 100;
+    plain.maxHp = 1000;
+    recomposeCombat(plain, state, resolveItem);
+    const bare = healActor(plain, 100);
+
+    const blessed = body();
+    blessed.hp = 100;
+    blessed.maxHp = 1000;
+    apply(blessed, EffectId.EmpoweredHealing, 5, { power: 0.5 });
+    recomposeCombat(blessed, state, resolveItem);
+    const boosted = healActor(blessed, 100);
+
+    expect(boosted, 'the heal mod never reached healActor').toBeGreaterThan(bare);
+  });
+
+  /**
+   * AND IT IS WORTH NOTHING ON ITS OWN, which is why upstream hands it out in
+   * the same press as a regeneration. Stated as a test so the pairing in
+   * `higher_heal.ts` reads as deliberate rather than incidental.
+   */
+  it('moves no hit points by itself', () => {
+    const state = createMvpEffectState();
+    const rng = createRng('empowered-alone');
+    const apply = statusApplier(state, rng);
+    const target = body();
+    target.hp = 100;
+    target.maxHp = 1000;
+
+    apply(target, EffectId.EmpoweredHealing, 5, { power: 0.5 });
+    recomposeCombat(target, state, resolveItem);
+    expect(target.hp).toBe(100);
+  });
+});
+
+describe('two sources of one regeneration', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE GUARD THAT WAS UNREACHABLE UNTIL THE GIFT EXISTED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `regeneration_infusion.ts` recorded upstream's `on_pre_use` as impossible to
+   * reach — "there is no second source of `effect:regeneration` in the game" —
+   * and said the day one appeared, the clause had to come back. It has. Without
+   * the guard a press mid-regeneration REFRESHES a `StackMode.Refresh` effect
+   * and throws away the healing still owed, so pressing twice heals for LESS
+   * than pressing once.
+   */
+  it('both buttons refuse while a regeneration is already running', () => {
+    const ctx = {
+      talentLevel: 1,
+      hasStatus: (_t: unknown, id: string) => id === EffectId.Regeneration,
+      status: () => {
+        throw new Error('applied a second regeneration over a running one');
+      },
+    } as unknown as Parameters<NonNullable<typeof higherHeal.onUse>>[0];
+    const self = { id: 'p1', name: 'Dalt', combat: {} } as unknown as Parameters<
+      NonNullable<typeof higherHeal.onUse>
+    >[1];
+
+    expect(higherHeal.onUse?.(ctx, self, { x: 0, y: 0 })?.ok).toBe(false);
+    expect(regenerationInfusion.onUse?.(ctx, self, { x: 0, y: 0 })?.ok).toBe(false);
+  });
+
+  /** …and both act normally when nothing is running. */
+  it('both act when the body is clear', () => {
+    const applied: string[] = [];
+    const ctx = {
+      talentLevel: 1,
+      hasStatus: () => false,
+      status: (_t: unknown, id: string) => {
+        applied.push(id);
+        return { outcome: 'applied' };
+      },
+    } as unknown as Parameters<NonNullable<typeof higherHeal.onUse>>[0];
+    const self = { id: 'p1', name: 'Dalt', combat: {} } as unknown as Parameters<
+      NonNullable<typeof higherHeal.onUse>
+    >[1];
+
+    higherHeal.onUse?.(ctx, self, { x: 0, y: 0 });
+    // THE GIFT APPLIES BOTH HALVES IN ONE PRESS — races.lua:51-52.
+    expect(applied).toEqual([EffectId.Regeneration, EffectId.EmpoweredHealing]);
+
+    applied.length = 0;
+    regenerationInfusion.onUse?.(ctx, self, { x: 0, y: 0 });
+    expect(applied).toEqual([EffectId.Regeneration]);
   });
 });

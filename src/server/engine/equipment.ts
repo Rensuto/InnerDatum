@@ -161,6 +161,8 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'apr',
   'dam',
   'physCrit',
+  // A FRACTION, unlike every other row here — see `CombatMods.healMod`.
+  'healMod',
   'genericCrit',
   'criticalPower',
   'damRange',

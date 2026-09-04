@@ -52,21 +52,22 @@
  * THE TOTAL IS PRESERVED AND THE PACING MOVES, which is the right way round: 60
  * is the tuned number and 2.5 turns is not something this engine can schedule.
  *
- * ═══ UPSTREAM'S `on_pre_use` IS UNREACHABLE HERE, RATHER THAN SKIPPED ═══
+ * ═══ UPSTREAM'S `on_pre_use`, WHICH WAS UNREACHABLE AND IS NOT ANY MORE ═══
  * `on_pre_use = function(self, t) return not self:hasEffect(self.EFF_REGENERATION) end`
  * (:71) stops you restarting the clock and throwing away healing still owed —
  * our `StackMode.Refresh` would do exactly that.
  *
- * IT CANNOT HAPPEN. The cooldown is `tomeCooldownToTurns(10)` = 5 turns and the
- * effect runs for 3, so the button is unavailable for two full turns after the
- * last tick. There is no second source of `effect:regeneration` in the game.
+ * THIS PARAGRAPH USED TO SAY IT COULD NOT HAPPEN, and gave the reason: the
+ * cooldown outlasts the effect, and "there is no second source of
+ * `effect:regeneration` in the game". It ended "the day a second source of
+ * regeneration exists ... this is the clause that has to come back, and this
+ * paragraph is where to start."
  *
- * SO NO SEAM WAS ADDED FOR IT. `TalentCtx` has no "is this status up" query, and
- * building one to answer a question nothing can ask would be a correct value
- * with no reader — the defect this codebase keeps finding. The day a second
- * source of regeneration exists, or a cooldown drops under the duration, this is
- * the clause that has to come back, and this paragraph is where to start. Same
- * judgement `healing_infusion.ts` records for upstream's poison clause.
+ * `higher_heal.ts` IS THAT SECOND SOURCE. An Indexed body can be regenerating
+ * from its origin's gift when this button comes off cooldown, so the guard is
+ * live and load-bearing: without it, pressing here mid-regeneration refreshes
+ * the effect and heals you for LESS than not pressing at all. `TalentCtx.hasStatus`
+ * was added with that talent and this is its second reader.
  */
 
 import { EffectId } from '../content/effects.ts';
@@ -138,6 +139,15 @@ export const regenerationInfusion: Talent = {
   damageType: DamageType.Physical,
 
   onUse: (ctx, self) => {
+    /**
+     * `on_pre_use` (:71), now that it can fire — see the header. Refusing costs
+     * the player nothing: the cooldown is not spent on a refusal, so this is
+     * "not while one is already running", never "your button is gone".
+     */
+    if (ctx.hasStatus?.(self, EffectId.Regeneration) === true) {
+      return talentRefused(TalentRefusal.NoTarget);
+    }
+
     /**
      * NO SAVE IS ROLLED AND NONE SHOULD BE — `applySave` never rolls for a
      * beneficial effect, which is the note `legwork.ts` makes where it puts
