@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
+import { hoverCardRect } from '../../src/client/ui/panel.ts';
 import {
   INVENTORY_DRAG_PANEL,
   INVENTORY_PANEL_CARRIED_MAX,
@@ -27,7 +28,6 @@ import {
   hasSomethingToWear,
   inventoryTipAt,
 } from '../../src/client/ui/inventory.ts';
-import { ITEMS } from '../../src/server/content/items.ts';
 import { ItemTier, SLOT_ORDER } from '../../src/shared/protocol.ts';
 import { INVENTORY_CAP } from '../../src/shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -1388,15 +1388,27 @@ describe('the comparison strip', () => {
     expect(row.hiddenRows).toBe(3);
   });
 
-  it('has no numbers at all for a WORN item, because the wire has none', () => {
-    // `compare` lives on `CarriedItemView` and not on `ItemView`: "what would
-    // change if I put this on" is meaningless for something already on. The panel
-    // must not invent the answer.
+  it('shows a worn item the rows the wire sent, and never says the word worn', () => {
+    /**
+     * ═══ THIS TEST'S OLD PREMISE IS FALSE AND ITS TITLE SAID SO ═══
+     * It was 'has no numbers at all for a WORN item, because the wire has none',
+     * and argued that *"`compare` lives on `CarriedItemView` and not on
+     * `ItemView`"*. It lives on both now, and the doll's rows are the point of
+     * the whole panel. The `[]` below is a fact about THIS FIXTURE — `worn()`
+     * builds its view with `compare: []` — not about the wire, and it is
+     * asserted against the fixture's own input so it cannot drift into the old
+     * claim again.
+     *
+     * ═══ AND THE META NO LONGER SAYS `worn` ═══
+     * The item is on the doll, which is what the word meant. ToME conveys
+     * worn-state by which grid a thing sits in and never writes it.
+     */
     const row = detailOf(
       inventoryPanelRows(view({ focus: { kind: 'item', itemId: 'item_watchmans_cap' } })),
     );
     expect(row.rows).toEqual([]);
-    expect(row.meta).toContain('worn');
+    expect(row.meta).toBe('uncommon · head');
+    expect(row.meta, 'position says it; the line should not').not.toContain('worn');
     // NO CONTROL ON A WORN ITEM, in a shop or out of one — selling the coat off
     // your own back is one click from being an accident.
     expect(row.action).toBeNull();
@@ -1667,6 +1679,60 @@ describe('drawing', () => {
     });
     return { clips, calls, texts, rect };
   }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CARD MUST NOT COVER THE THING IT IS DESCRIBING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * NOTHING IN `test/` HAD EVER MEASURED A HOVER CARD — no reference to
+   * `drawHoverCard` or `hoverCardWidth` anywhere in the suite — so the card was
+   * free to land wherever it liked. It landed centred on the pointer
+   * (`px - w / 2`), and a card of stats is nearer 250 pixels wide than the 72 of
+   * the cell it describes, so hovering a coat hid the coat, its neighbour and
+   * the row above. Every time, at every window size.
+   *
+   * ═══ IT ASSERTS THE RECTANGLES, NOT THE PIXELS ═══
+   * `hoverCardRect` is the same function `drawHoverCard` places with, so this
+   * cannot pass against a painter that puts the card somewhere else.
+   *
+   * ═══ AND THE SECOND HALF IS WHAT STOPS THE CHEAP FIX ═══
+   * "Do not overlap" is satisfiable by pushing the card off-screen. The viewport
+   * assertion refuses that, which is `inventory.test.ts`'s own habit of pinning
+   * the negative beside the positive.
+   */
+  it('never covers the cell it is describing', () => {
+    const rect = roomyRect();
+    const panelView = view({ focus: { kind: 'item', itemId: 'item_watchmans_cap' } });
+    const rows = inventoryPanelRows(panelView);
+    const ctx = recorder([], [], []);
+
+    const placed = inventoryPanelGeometry(rect, rows).placed.find(
+      (entry) => entry.row.kind === InventoryRowKind.Doll,
+    );
+    const cell = placed?.cells.find((box) => box !== undefined && box.w > 0);
+    if (cell === undefined) throw new Error('unreachable: the doll must place a cell');
+
+    const px = cell.x + Math.floor(cell.w / 2);
+    const py = cell.y + Math.floor(cell.h / 2);
+    const card = inventoryTipAt(rect, rows, panelView, px, py);
+    if (card === null) throw new Error('unreachable: a doll cell must produce a card');
+
+    const box = hoverCardRect(ctx, card, px, py, ROOMY.width, ROOMY.height);
+
+    const overlaps =
+      box.x < cell.x + cell.w &&
+      cell.x < box.x + box.w &&
+      box.y < cell.y + cell.h &&
+      cell.y < box.y + box.h;
+    expect(overlaps, 'the card is drawn over the cell it describes').toBe(false);
+
+    // AND IT IS STILL ON SCREEN — the fix may not be "push it out of the way".
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.w).toBeLessThanOrEqual(ROOMY.width);
+    expect(box.y + box.h).toBeLessThanOrEqual(ROOMY.height);
+  });
 
   it('clips to its own rect and pairs every save with a restore', () => {
     const { clips, calls, rect } = paint(view());
@@ -1965,7 +2031,9 @@ describe('drawing', () => {
      */
     const doll = paint(view({ focus: { kind: 'item', itemId: 'item_watchmans_cap' } }));
     expect(doll.texts).toContain("Watchman's Cap");
-    expect(doll.texts.some((t) => t.includes('worn'))).toBe(true);
+    // THE KIND, which is the tier and the slot — and not the word "worn", which
+    // the doll's own geometry already says.
+    expect(doll.texts.some((t) => t.includes('head'))).toBe(true);
     expect(doll.texts).not.toContain("Watchman's Cap, worn.");
 
     const bag = paint(

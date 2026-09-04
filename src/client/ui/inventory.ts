@@ -1364,7 +1364,9 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       kind: InventoryRowKind.Detail,
       compact,
       title: worn.name,
-      meta: `${tierWord(worn.tier)} · ${slot} · worn`,
+      // NO `· worn`. The item is ON THE DOLL, which is what the word says; ToME
+      // conveys worn-state by which grid a thing is in and never writes it.
+      meta: `${tierWord(worn.tier)} · ${slot}`,
       // NOTHING IS WEARABLE AND DRINKABLE, so the doll never has prose at all.
       useText: '',
       /**
@@ -2802,6 +2804,40 @@ export const INVENTORY_PANEL_CARRIED_MAX = CARRIED_MAX;
  * deciding. Upstream keeps both for the same reason. This is an addition rather
  * than a replacement, and the strip's eight reserved rows are not reclaimed.
  */
+/**
+ * THE BOX OF THE CELL UNDER THE POINTER, or null.
+ *
+ * ═══ A SECOND WALK RATHER THAN A FIELD ON `InventoryHit` ═══
+ * The hit test has this box in hand at the moment it decides
+ * (`inventoryPanelHitAt`), and returning it from there would be one lookup
+ * instead of two. It is deliberately not done: four tests assert the whole hit
+ * with `toEqual`, so a new field would either break them or push them to
+ * `toMatchObject`, which stops them pinning that NOTHING ELSE rides on a hit.
+ * That guarantee is worth more than one loop over at most a few dozen boxes,
+ * once per frame, for the cell the pointer is already on.
+ *
+ * IT WALKS THE SAME GEOMETRY IN THE SAME ORDER, so it cannot disagree with the
+ * hit test about which cell the pointer is in.
+ */
+function cellBoxAt(
+  rect: PanelRect,
+  rows: readonly InventoryRow[],
+  px: number,
+  py: number,
+): PanelRect | null {
+  for (const placed of inventoryPanelGeometry(rect, rows).placed) {
+    const row = placed.row;
+    if (row.kind !== InventoryRowKind.Cells && row.kind !== InventoryRowKind.Doll) continue;
+    for (let i = 0; i < placed.cells.length; i += 1) {
+      const box = placed.cells[i];
+      if (box === undefined) continue;
+      if (px < box.x || px >= box.x + box.w || py < box.y || py >= box.y + box.h) continue;
+      return box;
+    }
+  }
+  return null;
+}
+
 export function inventoryTipAt(
   rect: PanelRect,
   rows: readonly InventoryRow[],
@@ -2811,6 +2847,7 @@ export function inventoryTipAt(
 ): HoverCard | null {
   const hit = inventoryPanelHitAt(rect, rows, px, py);
   if (hit === null || hit.kind !== InventoryHitKind.Item) return null;
+  const box = cellBoxAt(rect, rows, px, py);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -2861,11 +2898,24 @@ export function inventoryTipAt(
   // `detailRows` call, so it must own up to the same concession.
   const more =
     detail.hiddenRows > 0 ? [`…and ${String(detail.hiddenRows)} more`] : ([] as readonly string[]);
+  /**
+   * ═══ STATS FIRST, PROSE LAST — `Object.lua:2027-2028` ═══
+   * Upstream merges `getUseDesc` at the very END of `getTextualDesc`, after the
+   * wielder block. Ours led with the prose, so on the one row that has both, the
+   * numbers were pushed down by a sentence.
+   *
+   * INERT AGAINST TODAY'S CATALOGUE and changed anyway: `item_draught_mending`
+   * is the only item with a `use`, and it carries `wielder: {}`, so nothing in
+   * the game currently has both. `eternal-wrath`-style vacuous passes are what a
+   * synthetic fixture is for — see the test.
+   */
   return {
     title: detail.title,
     meta: detail.meta,
-    lines: [...lines, ...stats, ...more],
+    lines: [...stats, ...more, ...lines],
     nextLines: [],
+    // BESIDE THE CELL, NEVER OVER IT. See `HoverCard.anchor`.
+    ...(box === null ? {} : { anchor: box }),
   };
 }
 

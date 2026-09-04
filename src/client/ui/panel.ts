@@ -350,10 +350,17 @@ export function wrapClamped(
  * about a body. This is a card of prose about a thing, which is what an item, a
  * talent and a hotbar slot all need and none of them is a body.
  *
- * ═══ IT CLAMPS RATHER THAN FLIPS ═══
+ * ═══ IT CLAMPS RATHER THAN FLIPS, WHEN IT FOLLOWS THE POINTER ═══
  * A card that flipped sides near an edge would move under the pointer while the
  * pointer stood still, which reads as flicker. Clamping keeps it still: it slides
  * along the edge instead, and the pointer never loses the thing it is over.
+ *
+ * ═══ AND THAT ARGUMENT DOES NOT REACH AN ANCHORED CARD ═══
+ * `anchor` places the card beside a FIXED RECT instead of centred on the
+ * pointer, so the side it picks is a function of the rect and not of the cursor.
+ * Moving the pointer within one cell cannot move the card at all; it moves when
+ * you point at a different cell, which is the moment it is supposed to. So an
+ * anchored card DOES flip, and gains nothing from clamping in its place.
  */
 export type HoverCard = {
   readonly title: string;
@@ -363,6 +370,26 @@ export type HoverCard = {
   readonly lines: readonly string[];
   /** A second block, drawn in gold — "what one more point buys". */
   readonly nextLines?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PLACE THE CARD BESIDE THIS RECT instead of centred on the pointer.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A card centred on the pointer COVERS THE THING IT DESCRIBES whenever that
+   * thing is smaller than the card. An inventory cell is 72 pixels and a card of
+   * stats is nearer 250, so hovering a coat hid the coat, the cell beside it and
+   * the row above — every time, at every window size. That is what the panel was
+   * reported for.
+   *
+   * `ShowEquipInven.lua:65` is the same rule upstream:
+   * `last_display_x = ui.ui.last_display_x + ui.ui.w` — the slot's tooltip is
+   * anchored past the slot's right edge rather than at the mouse.
+   *
+   * ABSENT KEEPS THE OLD BEHAVIOUR. The map, the minimap and the party pane
+   * describe things that are either under the pointer already or too large to
+   * hide, and they pass no anchor.
+   */
+  readonly anchor?: PanelRect;
 };
 
 const CARD_PAD = 6;
@@ -380,6 +407,67 @@ export function hoverCardWidth(ctx: CanvasRenderingContext2D, card: HoverCard): 
   return Math.ceil(widest) + CARD_PAD * 2;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THE CARD LANDS. Separated from the painting so it can be ASSERTED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was inline in `drawHoverCard`, which meant the one rule that matters —
+ * a card must not cover the thing it describes — was reachable only by painting
+ * to a canvas and reading pixels. Nothing in `test/` referenced this file, and
+ * the overlap it produced for every inventory cell could never have failed a
+ * test.
+ *
+ * `drawHoverCard` calls this and paints; a test calls this and measures. Neither
+ * has its own copy of the arithmetic, so they cannot disagree.
+ */
+export function hoverCardRect(
+  ctx: CanvasRenderingContext2D,
+  card: HoverCard,
+  px: number,
+  py: number,
+  viewportW: number,
+  viewportH: number,
+): PanelRect {
+  const body = [...card.lines, ...(card.nextLines ?? [])];
+  const rows = 1 + (card.meta === undefined ? 0 : 1) + body.length;
+  const w = Math.min(hoverCardWidth(ctx, card), Math.max(80, viewportW - CARD_GAP * 2));
+  const h = CARD_PAD * 2 + rows * CARD_LINE_H;
+
+  const anchor = card.anchor;
+  /**
+   * BESIDE THE ANCHOR, ON WHICHEVER SIDE HAS ROOM — and to the RIGHT first,
+   * which is `ShowEquipInven.lua:65`'s side. The flip is decided by the rect, so
+   * it cannot happen while the pointer is still (see the note on the type).
+   *
+   * The final `Math.max(CARD_GAP, …)` is the same clamp the pointer path uses
+   * and matters for the same reason: a viewport narrower than the card plus its
+   * gaps must still draw the card's left edge on screen rather than off it.
+   */
+  const x =
+    anchor === undefined
+      ? // Centred on the pointer — a card under the cursor covers the next thing
+        // the player is about to point at.
+        Math.min(Math.max(CARD_GAP, px - Math.floor(w / 2)), viewportW - w - CARD_GAP)
+      : Math.max(
+          CARD_GAP,
+          anchor.x + anchor.w + CARD_GAP + w + CARD_GAP <= viewportW
+            ? anchor.x + anchor.w + CARD_GAP
+            : Math.min(anchor.x - w - CARD_GAP, viewportW - w - CARD_GAP),
+        );
+  // ABOVE THE POINTER BY PREFERENCE, below it when there is no room above, and
+  // clamped either way — a card that ran off the bottom would be a description
+  // the player can see the top two lines of.
+  //
+  // AN ANCHORED CARD LINES UP WITH ITS ANCHOR'S TOP instead, so the card and the
+  // thing it describes read as one row rather than as two stacked objects.
+  const above = py - h - CARD_GAP;
+  const preferred = anchor === undefined ? (above < CARD_GAP ? py + CARD_GAP : above) : anchor.y;
+  const y = Math.min(Math.max(CARD_GAP, preferred), Math.max(CARD_GAP, viewportH - h - CARD_GAP));
+
+  return { x, y, w, h };
+}
+
 export function drawHoverCard(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
@@ -389,22 +477,7 @@ export function drawHoverCard(
   viewportW: number,
   viewportH: number,
 ): void {
-  const body = [...card.lines, ...(card.nextLines ?? [])];
-  const rows = 1 + (card.meta === undefined ? 0 : 1) + body.length;
-  const w = Math.min(hoverCardWidth(ctx, card), Math.max(80, viewportW - CARD_GAP * 2));
-  const h = CARD_PAD * 2 + rows * CARD_LINE_H;
-
-  // Above the pointer by preference — a card under the cursor covers the next
-  // thing the player is about to point at.
-  const x = Math.min(Math.max(CARD_GAP, px - Math.floor(w / 2)), viewportW - w - CARD_GAP);
-  // ABOVE THE POINTER BY PREFERENCE, below it when there is no room above, and
-  // clamped either way — a card that ran off the bottom would be a description
-  // the player can see the top two lines of.
-  const above = py - h - CARD_GAP;
-  const y = Math.min(
-    Math.max(CARD_GAP, above < CARD_GAP ? py + CARD_GAP : above),
-    Math.max(CARD_GAP, viewportH - h - CARD_GAP),
-  );
+  const { x, y, w, h } = hoverCardRect(ctx, card, px, py, viewportW, viewportH);
 
   // THE INSET SKIN — this card sits ON another surface rather than being one.
   drawPanel(ctx, sprites, PanelSkin.Inset, { x, y, w, h });
@@ -422,14 +495,19 @@ export function drawHoverCard(
     ctx.fillText(fitText(ctx, card.meta, w - CARD_PAD * 2), x + CARD_PAD, cursor);
     cursor += CARD_LINE_H;
   }
+  // ═══ THROUGH `fitText`, LIKE THE TITLE AND THE META ABOVE ═══
+  // These two loops were the only raw `fillText` calls in the card. `w` is
+  // `hoverCardWidth` clamped against the viewport, so a card wider than the
+  // screen silently painted its stat rows past its own right edge. Latent while
+  // every card was narrow; the anchored placement makes a clamped card ordinary.
   ctx.fillStyle = PALETTE.BONE;
   for (const line of card.lines) {
-    ctx.fillText(line, x + CARD_PAD, cursor);
+    ctx.fillText(fitText(ctx, line, w - CARD_PAD * 2), x + CARD_PAD, cursor);
     cursor += CARD_LINE_H;
   }
   ctx.fillStyle = PALETTE.GOLD;
   for (const line of card.nextLines ?? []) {
-    ctx.fillText(line, x + CARD_PAD, cursor);
+    ctx.fillText(fitText(ctx, line, w - CARD_PAD * 2), x + CARD_PAD, cursor);
     cursor += CARD_LINE_H;
   }
 }
