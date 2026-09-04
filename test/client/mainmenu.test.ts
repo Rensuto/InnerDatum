@@ -39,7 +39,7 @@ import type { CharacterRow } from '../../src/shared/protocol.ts';
 const ROW: CharacterRow = {
   id: 'chr_main',
   name: 'Ren',
-  className: 'The Alchemist of Ashwick Row',
+  className: 'The Alchemist',
   level: 2,
   filed: 0,
   money: 15,

@@ -630,7 +630,7 @@ const MONSTERS_DISPLAY_NAME = 'The Filed';
  * Class icon per player sprite family — KEYED OFF THE REAL CLASSES.
  *
  * These rows are exactly `CLASSES` in content/classes.ts: the Watchman, the
- * Inspector, the Alchemist of Ashwick Row and the Redactor, which is every class
+ * Inspector, the Alchemist and the Redactor, which is every class
  * a joining body can now be handed (`classForJoin`). A player who has a class
  * always finds their own face here, because the sprite came off the same
  * `ClassDef`.

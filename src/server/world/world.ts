@@ -125,7 +125,7 @@ export type MoveResult =
  *
  * ONLY THE FIRST THREE ARE REAL CLASSES. `chr_player_watchman_s`,
  * `chr_player_inspector_s` and `chr_player_alchemist_s` are the Watchman, the
- * Inspector and the Alchemist of Ashwick Row (content/classes.ts). The other
+ * Inspector and the Alchemist (content/classes.ts). The other
  * three are art for classes that do not exist: there is no Enforcer, no
  * Voidling and no Cipher Clerk in `CLASSES`, they have no `_downed_s` variant
  * (engine/downed.ts derives that key by appending the infix) and no portrait

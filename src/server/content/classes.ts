@@ -531,7 +531,7 @@ export const INSPECTOR: ClassDef = {
 };
 
 // ---------------------------------------------------------------------------
-// The Alchemist of Ashwick Row — AoE and the only healer · Reagents
+// The Alchemist — AoE and the only healer · Reagents
 // ---------------------------------------------------------------------------
 
 /**
@@ -560,7 +560,14 @@ export const INSPECTOR: ClassDef = {
  */
 export const ALCHEMIST: ClassDef = {
   id: ClassId.Alchemist,
-  name: 'The Alchemist of Ashwick Row',
+  // THE SHORT NAME IS A UI CONSTRAINT, not a loss of flavour. The class
+  // picker sizes every card to the longest name in the set, so at twenty-
+  // eight characters against `The Watchman`'s twelve this one class was
+  // setting the width of a modal that shows four. The Row is still where
+  // she trained, still the street in content/places.ts and lore.ts, and
+  // still the name of her signature talent -- it is just not something a
+  // menu has to print. `description` below is where that belongs.
+  name: 'The Alchemist',
   description:
     'Trained on the Row, where the apothecaries mix something different every week. ' +
     'Carries eight vials and a field kit, and counts both.',

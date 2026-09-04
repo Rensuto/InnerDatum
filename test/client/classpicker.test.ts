@@ -11,6 +11,7 @@ import {
   drawClassPicker,
   talentShorthand,
 } from '../../src/client/ui/classpicker.ts';
+import { CLASSES } from '../../src/server/content/classes.ts';
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type {
@@ -540,8 +541,33 @@ describe('the modal is sized for the classes that exist, not for three', () => {
    * silent the day the fact moves.
    */
 
-  /** The real Alchemist name and blurb — 28 characters and 133. */
-  const REAL = option('alchemist', 'The Alchemist of Ashwick Row', {
+  /**
+   * THE LONGEST NAME THE DERIVED CAP PROMISES TO HOLD — NOT ONE THAT SHIPS.
+   *
+   * `The Alchemist of Ashwick Row` WAS the real name, at twenty-eight characters
+   * and a 133-character blurb. It is `The Alchemist` now — thirteen — for
+   * consistency with the other three, and that is exactly why this fixture keeps
+   * the old string instead of following the rename.
+   *
+   * BE EXACT ABOUT WHICH TEST HAS THE TEETH, because it is not the obvious one.
+   * Mutating `pickerMaxW` back to a flat 880 turns `gives four cards the width
+   * three used to get` red and leaves the no-clip test below GREEN -- measured,
+   * not assumed. A flat 880 across four is a 210-pixel card, and a class name is
+   * drawn across the whole card (the portrait is centred above it, not beside
+   * it), so 28 characters at `CHAR_W` 6 is 168 pixels and still fits.
+   *
+   * So the no-clip test is a RENDERING guard, not a proof of the cap: it says
+   * that whatever width the modal ends up with, the longest name this file
+   * claims to hold comes out whole. Driving it with the shipped thirteen-
+   * character name would weaken even that, to something true of today's four
+   * strings rather than of the promise -- which is why the old string stays.
+   *
+   * `holds every name that actually ships` below is the other half: this one
+   * fixes the worst case the layout promises to hold, that one checks the real
+   * data against it, and is what catches the next class named like this one was.
+   */
+  const LONGEST_HELD = 'The Alchemist of Ashwick Row';
+  const REAL = option('alchemist', LONGEST_HELD, {
     description:
       'Trained on the Row, where the apothecaries mix something different every week. ' +
       'Carries eight vials and a field kit, and counts both.',
@@ -571,11 +597,39 @@ describe('the modal is sized for the classes that exist, not for three', () => {
   });
 
   it('does not cut a class name on a monitor with room to spare', () => {
-    // `The Alchemist of Ashwick Row` is 28 characters. At the old flat cap it
-    // landed in a 210-pixel card and clipped at 1920x1080.
+    // `LONGEST_HELD` is 28 characters. At the old flat cap it landed in a
+    // 210-pixel card and clipped at 1920x1080.
     const texts = paintFour(1920, 1080);
     expect(texts.filter((t) => t.includes('…'))).toEqual([]);
-    expect(texts).toContain('The Alchemist of Ashwick Row');
+    expect(texts).toContain(LONGEST_HELD);
+  });
+
+  /**
+   * ═══ THE SHIPPED NAMES, AGAINST THE SAME MODAL ═══
+   * The test above proves the cap is derived from the card count. This one
+   * proves the four strings we actually print still fit inside it — the check
+   * that would have caught `The Alchemist of Ashwick Row` on the day it shipped,
+   * and the one that catches the next name like it.
+   *
+   * It reads `CLASSES` rather than restating the names, because a literal here
+   * would be one more copy of a fact that lives in content/classes.ts — which is
+   * the exact failure this whole describe block was written about.
+   */
+  it('holds every name that actually ships', () => {
+    const shipped = CLASSES.map((definition) => option(definition.id, definition.name));
+    const texts: string[] = [];
+    drawClassPicker({
+      ctx: measuringCtx(texts),
+      sprites: { sprite: () => undefined },
+      rect: classPickerRect(1920, 1080, shipped.length),
+      options: shipped,
+      selected: 0,
+      hovered: null,
+    });
+
+    for (const definition of CLASSES) {
+      expect(texts, `${definition.name} was cut in the picker`).toContain(definition.name);
+    }
   });
 
   it('shows a whole blurb where there is room for one', () => {

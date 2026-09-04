@@ -807,7 +807,7 @@ const INSPECTOR_KIT: readonly Item[] = [
  * THE ALCHEMIST KIT — the `inquisitors_*` art, and the naming needs saying out
  * loud: THERE IS NO INQUISITOR PLAYER CLASS. `enemy_high_inquisitor_s` is a
  * MONSTER sprite; the three classes are the Watchman, the Inspector and the
- * Alchemist of Ashwick Row (content/classes.ts). This kit is cowled, sealed and
+ * Alchemist (content/classes.ts). This kit is cowled, sealed and
  * full of ciphers, which is the Alchemist, so it is hers. The ids stay as the
  * art names them because renaming a sprite id to match a class would break the
  * one link between this file and a PNG nobody can see from here.

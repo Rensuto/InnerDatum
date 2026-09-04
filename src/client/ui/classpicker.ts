@@ -153,10 +153,24 @@ const INSET = PANEL_PAD + 3;
  * ═══ IT WAS A FLAT 880 AND THAT NUMBER WAS SIZED FOR THREE CARDS ═══
  * The paragraph above used to end *"because there are only three cards"*. A
  * fourth class shipped. 880 across four is a card of 210 pixels, and
- * `The Alchemist of Ashwick Row` is twenty-eight characters -- so the modal went
- * straight back to clipping a class name mid-word on a 1920-pixel monitor, which
- * is the exact failure this whole block was written to kill, re-created by the
- * one number that still counted the cards.
+ * `The Alchemist of Ashwick Row` WAS twenty-eight characters -- so the modal
+ * went straight back to clipping a class name mid-word on a 1920-pixel monitor,
+ * which is the exact failure this whole block was written to kill, re-created by
+ * the one number that still counted the cards.
+ *
+ * THAT NAME IS `The Alchemist` NOW, and the derivation stays anyway. A cap that
+ * happens to be wide enough for today's four strings is the same latent bug the
+ * flat 880 was; what makes it safe is that it is DERIVED from the count.
+ *
+ * ONE CORRECTION TO THE PARAGRAPH ABOVE, MEASURED RATHER THAN REMEMBERED. The
+ * clipping it describes was real, but a class NAME is not what 880 cut: the
+ * name is drawn across the WHOLE card (`--- the name ---` passes `w` straight
+ * to `fitText`, because the portrait is centred ABOVE it, not set beside it),
+ * so twenty-eight characters at `CHAR_W` 6 is 168 pixels inside the 210-pixel
+ * card a flat 880 gives four. What the icon-and-gap sentence at the top of this
+ * block describes is the TALENT rows, which do subtract `TALENT_ICON` -- and
+ * `Iron Curtain` is a talent. The cap still needs to be derived, and the test
+ * that proves it is `gives four cards the width three used to get`.
  *
  * SO THE CAP IS DERIVED FROM THE COUNT NOW. `CARD_MAX_W` is what a card is
  * allowed to be, the cap is whatever holds that many of them, and a fifth class
