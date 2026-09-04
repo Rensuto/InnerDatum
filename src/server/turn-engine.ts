@@ -24,7 +24,12 @@
 
 import { inBounds, step } from '../shared/coords.ts';
 import { bound } from '../shared/scale.ts';
-import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './engine/derived.ts';
+import {
+  HEAL_FACTOR_MAX,
+  HEAL_FACTOR_MIN,
+  healingFactor,
+  sightRadiusOf,
+} from './engine/derived.ts';
 import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
 import type { RestResult, RestView } from '../shared/rest.ts';
 import {
@@ -1541,7 +1546,7 @@ function buildRestView(
      * wall test, and it is the same function the FOV projection spends.
      */
     const dist = sightDistance(self, other);
-    if (dist >= best || !canSee(world.level, self, other)) continue;
+    if (dist >= best || !canSee(world.level, self, other, sightRadiusOf(self))) continue;
     best = dist;
     threat = { name: toDisplayName(other.name), dx: other.x - self.x, dy: other.y - self.y };
   }
@@ -1563,7 +1568,7 @@ function buildRestView(
   for (const proj of world.projectilesInFlight()) {
     if (proj.landed || proj.sourceId === self.id) continue;
     const at = currentTile(proj);
-    if (!canSee(world.level, self, at)) continue;
+    if (!canSee(world.level, self, at, sightRadiusOf(self))) continue;
     if (!orbOnMyLine(proj, self)) continue;
     // NEAREST WINS, shared with the actor pass above, so the sentence names
     // whichever thing is closest rather than whichever was scanned last.

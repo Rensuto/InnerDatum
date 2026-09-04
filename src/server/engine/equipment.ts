@@ -163,6 +163,8 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'physCrit',
   // A FRACTION, unlike every other row here — see `CombatMods.healMod`.
   'healMod',
+  // TILES, and additive for the same reason: two sources of vision stack.
+  'sight',
   'genericCrit',
   'criticalPower',
   'damRange',

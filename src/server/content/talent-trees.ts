@@ -385,11 +385,11 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * THE ORIGIN'S OWN — `newTalentType{ type="race/higher" }`, misc/races.lua:37.
      * ═════════════════════════════════════════════════════════════════════════
      *
-     * ONE TALENT OF UPSTREAM'S FOUR. `race/higher` ships Gift of the Highborn,
-     * Overseer of Nations, and two more; only the first is ported, because the
-     * other three want mechanics this game does not have (a sight bonus, a
-     * per-subtype immunity). `size: 1` is that fact declared rather than a guard
-     * quietly relaxed — see `TalentTree.size`.
+     * TWO TALENTS OF UPSTREAM'S FOUR. `race/higher` ships Gift of the Highborn,
+     * Overseer of Nations, Born into Magic and Highborn's Bloom; the first two
+     * are ported. The other two want an ARCANE damage type and a spell-save
+     * channel that this game does not have. `size` is that fact declared rather
+     * than a guard quietly relaxed — see `TalentTree.size`.
      *
      * NOT HIDDEN, unlike `generic/inscriptions`. Upstream marks the inscription
      * categories `hide = true` (misc/misc.lua:23) and does NOT mark this one: it
@@ -413,7 +413,7 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     mastery: 1,
     name: 'Higher',
     classId: null,
-    size: 1,
+    size: 2,
     blurb: 'What was written into you before you went looking.',
   },
   {

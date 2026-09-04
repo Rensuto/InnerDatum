@@ -70,6 +70,7 @@
 
 import { statName } from '../../shared/stats.ts';
 import { bound, combatStatLimit, rescaleCombatStats } from '../../shared/scale.ts';
+import { DEFAULT_SIGHT_RADIUS } from '../../shared/sight.ts';
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -158,6 +159,23 @@ export type CombatMods = {
   readonly dam?: number;
   /** `combat_physcrit` — flat physical crit chance, in percentage points. */
   readonly physCrit?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `sight` — TILES ADDED TO HOW FAR THIS BODY CAN SEE. tome/class/Actor.lua:178.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's `self.sight` is a per-ACTOR number that every FOV call reads
+   * (`self.sight or 10`), and talents move it with
+   * `talentTemporaryValue(p, "sight", …)` — Overseer of Nations does exactly
+   * that (misc/races.lua:72). Ours was the constant `DEFAULT_SIGHT_RADIUS` and
+   * nothing else, so nothing in the game could see further than anything else.
+   *
+   * A BONUS, NOT THE RADIUS ITSELF. `sightRadiusOf` adds it to the default, so a
+   * body with no sheet at all still sees ten and every existing fixture is
+   * unchanged. Upstream stores the total; storing the delta is what keeps the
+   * fold additive, which is the whole contract of `composeWielders`.
+   */
+  readonly sight?: number;
   /**
    * `healing_factor` — a FRACTION added to the heal multiplier, not a percent.
    * `0.1` is a tenth more healing received. See `healingFactor`, which reads it.
@@ -916,4 +934,25 @@ export const HEAL_FACTOR_MAX = 2.5;
  */
 export function ignoreDirectCrits(c: Combatant): number {
   return bound(0.3 * stat(c, 'dex'), 0, 100);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR THIS BODY SEES — `self.sight or 10`, tome/class/Actor.lua:178.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * CLAMPED AT ONE, not at zero. A body that could see nothing at all would not
+ * see the tile it is standing on, and `canSee` answers TRUE for distance 0 on
+ * purpose — "a rule that hid you from yourself would be very confusing". A
+ * blinding effect that drove this negative should leave you groping at your own
+ * feet, not erase the floor.
+ *
+ * THE CONSTANT IS THE MODULE'S 10 AND NOT THE ENGINE'S 20. `shared/sight.ts`
+ * records that mistake in full: `engine/Actor.lua:47` is `t.sight or 20` and
+ * `tome/class/Actor.lua:178` overrides it to 10 before delegating, so the
+ * engine's default never fires and the module's is the game's. It shipped as 20
+ * for three commits.
+ */
+export function sightRadiusOf(body: { readonly combat?: { readonly mods?: CombatMods } }): number {
+  return Math.max(1, DEFAULT_SIGHT_RADIUS + (body.combat?.mods?.sight ?? 0));
 }

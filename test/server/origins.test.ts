@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { CLASSES, WATCHMAN, sheetForClass } from '../../src/server/content/classes.ts';
 import { BIRTH_INSCRIPTIONS } from '../../src/server/content/inscriptions.ts';
 import { higherHeal } from '../../src/server/talents/higher_heal.ts';
+import { overseerOfNations } from '../../src/server/talents/overseer_of_nations.ts';
+import { sightRadiusOf } from '../../src/server/engine/derived.ts';
+import { DEFAULT_SIGHT_RADIUS } from '../../src/shared/sight.ts';
 import {
   BASELINE_LIFE_RATING,
   CITYBORN,
@@ -272,5 +275,53 @@ describe('the Indexed carry a gift no class teaches', () => {
   /** `no_energy = true` (races.lua:45) — the turn goes on around it. */
   it('costs no time at all', () => {
     expect(higherHeal.cost.ap).toBe(0);
+  });
+});
+
+describe('the Indexed see further', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `talentTemporaryValue(p, "sight", …)` — misc/races.lua:72.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ASSERTED THROUGH `sightRadiusOf`, which is what every FOV call spends —
+   * a mod that reached the sheet and not the getter would be a bonus nobody
+   * could see with.
+   */
+  it('folds the passive into a bigger sight radius', () => {
+    const bare = sightRadiusOf({});
+    expect(bare).toBe(DEFAULT_SIGHT_RADIUS);
+    expect(sightRadiusOf({ combat: { mods: { sight: 1 } } })).toBe(bare + 1);
+  });
+
+  /**
+   * NEVER BELOW ONE. `canSee` answers true at distance 0 on purpose — "a rule
+   * that hid you from yourself would be very confusing" — so a body driven
+   * negative gropes at its own feet rather than losing the floor.
+   */
+  it('never lets a body see less than its own tile', () => {
+    expect(sightRadiusOf({ combat: { mods: { sight: -999 } } })).toBe(1);
+  });
+
+  /**
+   * A PASSIVE, SO IT MUST BE IN `passives` AND NOT ON THE BAR. `loadout` IS the
+   * hotbar, and `refreshPassives` folds `sheet.passives` — a passive filed in
+   * the loadout would be a key that does nothing AND a bonus never folded. It
+   * landed in the wrong list on the first attempt.
+   */
+  it('is a passive, filed where passives are folded from', () => {
+    const sheet = sheetForClass(WATCHMAN, [], [], BIRTH_INSCRIPTIONS, INDEXED);
+    expect(sheet.passives).toContain(overseerOfNations.id);
+    expect(sheet.loadout, 'a passive on the hotbar is a key that does nothing').not.toContain(
+      overseerOfNations.id,
+    );
+    expect(sheet.points.get(overseerOfNations.id)).toBe(1);
+  });
+
+  /** …and the Cityborn get neither of the origin's two talents. */
+  it('gives the Cityborn neither gift', () => {
+    const sheet = sheetForClass(WATCHMAN, [], [], BIRTH_INSCRIPTIONS, CITYBORN);
+    expect([...sheet.loadout, ...sheet.passives]).not.toContain(overseerOfNations.id);
+    expect([...sheet.loadout, ...sheet.passives]).not.toContain(higherHeal.id);
   });
 });

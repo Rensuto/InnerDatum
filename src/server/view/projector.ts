@@ -96,6 +96,7 @@ import {
   combatMentalResist,
   combatPhysicalResist,
   combatSpellResist,
+  sightRadiusOf,
   stat,
 } from '../engine/derived.ts';
 import { downedView } from '../engine/downed.ts';
@@ -143,7 +144,7 @@ import type {
 import type { ClassDef } from '../content/classes.ts';
 import type { OriginDef } from '../content/origins.ts';
 import type { Item, ItemUse, Slot } from '../content/items.ts';
-import type { Combatant, PrimaryStats } from '../engine/derived.ts';
+import type { CombatMods, Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { CombatSheet } from '../engine/combat.ts';
@@ -388,7 +389,7 @@ export function projectLevel(world: World): LevelView {
  * `fov.test.ts` asserts that, by scraping the gateway, so a future unfiltered
  * send is a red test rather than a silent leak.
  */
-export function projectActors(world: World, eyes?: readonly TileXY[]): ActorView[] {
+export function projectActors(world: World, eyes?: readonly SightEye[]): ActorView[] {
   if (eyes === undefined) return world.allActors().map(toActorView);
   const seen = visibleActorIds(world, eyes);
   return world
@@ -510,7 +511,36 @@ export function fogEvent(event: TurnEvent, held: ReadonlySet<string>): TurnEvent
   return out;
 }
 
-export function visibleActorIds(world: World, eyes: readonly TileXY[]): Set<string> {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PAIR OF EYES: WHERE IT IS, AND — OPTIONALLY — HOW FAR IT SEES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `eyesIn` hands these projections the ACTORS themselves, so an eye already
+ * carries its own sheet and `sightRadiusOf` can ask it. Upstream's `sight` is a
+ * per-actor number every FOV call reads (`tome/class/Actor.lua:178`); ours was
+ * one constant for everybody, so nothing in the game could see further than
+ * anything else.
+ *
+ * `combat` IS OPTIONAL AND THAT IS THE COMPATIBILITY STORY. A caller with only
+ * a tile — a projectile's flight path, a fixture — passes one and gets exactly
+ * the ten it always got.
+ */
+export type SightEye = TileXY & { readonly combat?: { readonly mods?: CombatMods } };
+
+export function visibleActorIds(
+  world: World,
+  /**
+   * EACH EYE MAY SEE FURTHER THAN THE LAST. `eyesIn` hands this the ACTORS, so
+   * an eye already carries its own sheet and `sightRadiusOf` can ask it —
+   * upstream's `self.sight` is per-actor and every FOV call reads it
+   * (`tome/class/Actor.lua:178`), where ours was one constant for everybody.
+   *
+   * THE SLICE IS STRUCTURAL AND `combat` IS OPTIONAL, so every caller that
+   * passes bare tiles still compiles and still sees exactly ten.
+   */
+  eyes: readonly SightEye[],
+): Set<string> {
   const out = new Set<string>();
   for (const actor of world.allActors()) {
     // See the header: teammates are never fogged.
@@ -518,7 +548,7 @@ export function visibleActorIds(world: World, eyes: readonly TileXY[]): Set<stri
       out.add(actor.id);
       continue;
     }
-    if (eyes.some((eye) => canSee(world.level, eye, actor))) out.add(actor.id);
+    if (eyes.some((eye) => canSee(world.level, eye, actor, sightRadiusOf(eye)))) out.add(actor.id);
   }
   return out;
 }
@@ -527,7 +557,7 @@ export function visibleActorIds(world: World, eyes: readonly TileXY[]): Set<stri
  * The full snapshot sent in `welcome`, and the recovery path when the server is
  * unsure what a client knows.
  */
-export function projectWorld(world: World, eyes?: readonly TileXY[]): WorldView {
+export function projectWorld(world: World, eyes?: readonly SightEye[]): WorldView {
   return {
     level: projectLevel(world),
     actors: projectActors(world, eyes),
@@ -1521,7 +1551,7 @@ export function projectEffects(
  * field. The compiler stopping here and asking whether the client is allowed to
  * know IS the point.
  */
-export function projectProjectiles(world: World, eyes?: readonly TileXY[]): ProjectilesMsg {
+export function projectProjectiles(world: World, eyes?: readonly SightEye[]): ProjectilesMsg {
   const projectiles: ProjectileView[] = [];
   // Resolved once rather than per orb: `sourceId` is redacted against it below.
   const seen = eyes === undefined ? undefined : visibleActorIds(world, eyes);
@@ -1553,7 +1583,8 @@ export function projectProjectiles(world: World, eyes?: readonly TileXY[]): Proj
      * still going to resolve either way. So the shot shows and the shooter is
      * redacted — see `ProjectileView.sourceId`.
      */
-    if (eyes !== undefined && !eyes.some((eye) => canSee(world.level, eye, at))) continue;
+    if (eyes !== undefined && !eyes.some((eye) => canSee(world.level, eye, at, sightRadiusOf(eye))))
+      continue;
     const shooterSeen = seen === undefined || seen.has(proj.sourceId);
 
     projectiles.push({

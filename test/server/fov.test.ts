@@ -178,6 +178,39 @@ describe('the projected board', () => {
     expect(shown).not.toContain(far);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BODY THAT SEES FURTHER ACTUALLY SEES FURTHER — `self.sight`, tome/class/Actor.lua:178.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `CombatMods.sight` folds and `sightRadiusOf` reads it, and BOTH of those can
+   * be right while the projection still spends the constant — which is exactly
+   * what happened: reverting this call site to the bare `canSee(level, eye,
+   * actor)` left the whole suite green. A channel the FOV does not spend is a
+   * bonus nobody can see with.
+   *
+   * THE MONSTER SITS ONE TILE PAST THE DEFAULT, so the assertion is the
+   * difference the talent makes and nothing else.
+   */
+  it('lets an eye with a sight bonus reach one tile further', () => {
+    const world = createWorld('fov-sight');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const beyond = 'beyond';
+    world.addMonster(beyond, {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 1 + DEFAULT_SIGHT_RADIUS + 1,
+      y: 1,
+      profile: AiProfile.MeleeChaser,
+    });
+
+    const plain = { x: 1, y: 1 };
+    expect(projectActors(world, [plain]).map((a) => a.id)).not.toContain(beyond);
+
+    const keen = { x: 1, y: 1, combat: { mods: { sight: 1 } } };
+    expect(projectActors(world, [keen]).map((a) => a.id)).toContain(beyond);
+  });
+
   it('never withholds a teammate, however far away they are', () => {
     /**
      * Upstream's party is always on the map because it is always `game.party`.

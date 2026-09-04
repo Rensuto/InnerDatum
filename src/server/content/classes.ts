@@ -1239,9 +1239,18 @@ export function sheetForClass(
       // grants a BUTTON — `canUseTalent` refuses anything outside it — and not
       // in `passives`, which is where a fact about the body goes.
       ...talentsFor(inscribed),
-      // AND WHAT THE ORIGIN GRANTS — the fourth route to a button, beside the
-      // class's own, a bought tree, and an inscription.
-      ...originTalents(origin),
+      /**
+       * AND WHAT THE ORIGIN GRANTS — the fourth route to a button, beside the
+       * class's own, a bought tree, and an inscription.
+       *
+       * ACTIVES ONLY, SPLIT BY KIND exactly as `bought` is two lines down.
+       * `loadout` IS the hotbar and `ClassDef.passives`' note is blunt about it:
+       * "a passive on the hotbar is a key that does nothing". Worse than the key
+       * would be the silence — `refreshPassives` folds `sheet.passives`, so a
+       * passive filed here would never be folded and Overseer of Nations would
+       * grant a sight bonus nothing ever read.
+       */
+      ...originTalents(origin).filter((talent) => talent.kind !== TalentKind.Passive),
       ...bought.filter((talent) => talent.kind !== TalentKind.Passive),
     ].map((talent) => talent.id),
     /**
@@ -1257,6 +1266,8 @@ export function sheetForClass(
       ...definition.passives,
       ...GENERIC_PASSIVES,
       ...bought.filter((talent) => talent.kind === TalentKind.Passive),
+      // …and the origin's, by the same split. See the loadout join above.
+      ...originTalents(origin).filter((talent) => talent.kind === TalentKind.Passive),
     ].map((talent) => talent.id),
     /**
      * AND THE FOUR IT IS BORN WITH — PLUS WHAT IS WRITTEN ON THE BODY.
