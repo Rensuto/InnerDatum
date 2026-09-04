@@ -477,6 +477,33 @@ export function drawHoverCard(
   viewportW: number,
   viewportH: number,
 ): void {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SELF-CONTAINED, WHICH IT WAS NOT. This was the only painter in ui/ with no
+   * save/restore pair and no explicit `textBaseline`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * IT LEAKED `font`, `textAlign` and `fillStyle` into whatever painted next —
+   * the trap `inventory.test.ts` pins for the inventory panel by name, and
+   * `turncards.ts:786-790` records having been bitten by.
+   *
+   * AND IT READ A BASELINE IT NEVER SET. `cursor = y + CARD_PAD + 9` is
+   * measured from the TOP of the box, which is only true while the ambient
+   * baseline is `alphabetic`. Six painters in this directory set `middle`
+   * (caselog, charsheet, classpicker, combatbanner, contextmenu, escapemenu) and
+   * every one of them happens to restore it — so this worked by their good
+   * manners rather than by anything here. Stated, not inherited.
+   */
+  ctx.save();
+  ctx.textBaseline = 'alphabetic';
+
+  /**
+   * THE SNAPSHOT IS TAKEN BEFORE THE MEASUREMENT, not after it. `hoverCardRect`
+   * calls `hoverCardWidth`, which ASSIGNS `ctx.font` twice in order to measure —
+   * so a `save()` placed after the rect was computed would restore the font the
+   * measurer left rather than the caller's, and leak just as surely while
+   * looking balanced. A test pins the ordering because nothing else can see it.
+   */
   const { x, y, w, h } = hoverCardRect(ctx, card, px, py, viewportW, viewportH);
 
   // THE INSET SKIN — this card sits ON another surface rather than being one.
@@ -510,6 +537,8 @@ export function drawHoverCard(
     ctx.fillText(fitText(ctx, line, w - CARD_PAD * 2), x + CARD_PAD, cursor);
     cursor += CARD_LINE_H;
   }
+
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
