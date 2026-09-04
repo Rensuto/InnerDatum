@@ -1207,6 +1207,7 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.EmpoweredHealing,
       // The only effect that changes what a talent COSTS. Appended, as ever.
       EffectId.HighbornsBloom,
+      EffectId.ArchivalResilience,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1224,6 +1225,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_pain_suppression',
       'icon_status_empowered_healing',
       'icon_status_highborns_bloom',
+      'icon_status_archival_resilience',
     ]);
   });
 
@@ -1327,6 +1329,9 @@ describe('the status roster (game-design.md § 12)', () => {
       // Magical is the nearest true label and nothing ever rolls against a
       // beneficial effect, so the choice costs nothing but should be said.
       [EffectId.HighbornsBloom]: SaveChannel.Magical,
+      // physical.lua:3535 — `type = "physical"`, and unlike Highborn's Bloom
+      // this one's channel is upstream's own rather than a nearest match.
+      [EffectId.ArchivalResilience]: SaveChannel.Physical,
     });
   });
 

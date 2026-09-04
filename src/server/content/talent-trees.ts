@@ -421,6 +421,42 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
   },
   {
     /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE SECOND ORIGIN TREE — `newTalentType{ type="race/dwarf" }`,
+     * misc/races.lua:450.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ONE TALENT OF UPSTREAM'S FOUR, and this is the widest gap of any tree in
+     * the table — so the reason is spelled out rather than left to `size`.
+     * Upstream ships Resilience of the Dwarves, Stoneskin, Power is Money and
+     * Stone Walking. Only the first is a pure content port; the other three each
+     * need a system this game does not have:
+     *
+     *   Stoneskin       an on-melee-hit trigger that can CANCEL the blow that
+     *                   fired it ("fully ignore the attack triggering it",
+     *                   races.lua:494). We have no hook that can refuse a hit
+     *                   after it lands.
+     *   Power is Money  saves scaled by CARRIED GOLD (races.lua:511). Money
+     *                   exists (`content/money.ts`) but nothing reads it as a
+     *                   combat input, and making wealth a defensive stat is a
+     *                   balance decision rather than a transcription.
+     *   Stone Walking   `probabilityTravel` through a wall (races.lua:530). A
+     *                   movement mode, not a number.
+     *
+     * `size` is that declared, exactly as `race/higher` declares its three.
+     *
+     * THE SAME UNREACHABLE PURSE as `race/higher` — see the note there. Inert
+     * for the same reason (`maxLevel: 1`) and covered by the same tripwire.
+     */
+    id: 'race/archived',
+    mastery: 1,
+    name: 'Archived',
+    classId: null,
+    size: 1,
+    blurb: 'What kept, down where they filed you.',
+  },
+  {
+    /**
      * THE ONE EVERY CLASS CARRIES. See `TalentTree.classId` for why it is shared
      * rather than tripled, and `talent-trees.test.ts` for why it is allowed to
      * be entirely passive when a class tree is not.

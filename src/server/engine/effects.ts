@@ -85,6 +85,7 @@ import { bound, getTierDiff } from '../../shared/scale.ts';
 import { recomputeGlobalSpeed } from '../../shared/energy.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
 import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './derived.ts';
+import type { CombatMods } from './derived.ts';
 import { composeSheet, composeWielders, wornOf } from './equipment.ts';
 import type { PassiveContribution } from './equipment.ts';
 import { setCooldown } from './actor.ts';
@@ -501,6 +502,25 @@ export type EffectParams = {
   readonly minDur?: number;
   /** Magnitude. Bleed's damage per turn, Slow's fraction. `eff.power` upstream. */
   power?: number;
+  /**
+   * DERIVED VALUES FROZEN AT THE MOMENT OF APPLICATION, for the effects that
+   * grant more than one number.
+   *
+   * ═══ WHY A BLOCK AND NOT MORE FIELDS BESIDE `power` ═══
+   * `ARCHIVAL_RESILIENCE` writes four channels at once (armour, hardiness, and
+   * both saves), and upstream's params table is arbitrary per effect. Four named
+   * fields here would be four talent-specific names in a shared type, and the
+   * fifth effect would want a fifth. A `CombatMods` block cannot drift from the
+   * channel names because it IS the channel names.
+   *
+   * ═══ FROZEN IS THE POINT, NOT AN ACCIDENT ═══
+   * Upstream computes these in the talent's `getParams` and stores the RESULT
+   * (physical.lua:3541-3544 reads `eff.armor`, not the stat). So a body that
+   * loses Constitution mid-effect keeps the buff it was granted. Storing the
+   * stat and recomputing at read time would look equivalent and quietly diverge
+   * the first time someone unequipped a ring inside the window.
+   */
+  readonly grants?: CombatMods;
   /** `p.src` — who applied it. An id, never a reference, so a save can hold it. */
   readonly srcId?: string;
   /**

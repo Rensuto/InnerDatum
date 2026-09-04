@@ -67,6 +67,7 @@ export const BASELINE_LIFE_RATING = 10;
 import { STAT_BASE } from '../engine/derived.ts';
 import { higherHeal } from '../talents/higher_heal.ts';
 import { highbornsBloom } from '../talents/highborns_bloom.ts';
+import { resilienceOfTheArchived } from '../talents/resilience_of_the_archived.ts';
 import { overseerOfNations } from '../talents/overseer_of_nations.ts';
 import type { Talent } from '../engine/talents.ts';
 import type { PointBonus } from '../../shared/progression.ts';
@@ -204,11 +205,49 @@ export const INDEXED: OriginDef = Object.freeze({
 });
 
 /**
+ * DWARF. The sturdiest body in the game, the slowest to learn anything, and the
+ * only one that can make itself harder on demand.
+ */
+export const ARCHIVED: OriginDef = Object.freeze({
+  id: 'origin_archived',
+  name: 'The Archived',
+  description:
+    'You were filed, sealed and left somewhere deep, and you kept. ' +
+    'Whatever the record wanted you for, it did not want you changed — ' +
+    'so you came out of storage thicker in the arm and harder to amend than anything ' +
+    'that stayed in circulation. Nothing down there taught you anything, and it shows.',
+  // `inc_stats = { str=4, con=3, wil=3, mag=-2, dex=-2 }` (dwarf.lua:71).
+  // VERBATIM, INCLUDING THE TWO NEGATIVES, which are the whole shape of the
+  // origin: this is the first origin in the game that takes a stat AWAY, and a
+  // build that wanted Dexterity or Magic should feel that it chose wrong.
+  statMods: { str: 4, dex: -2, con: 3, mag: -2, wil: 3 },
+  // `life_rating = 12` (dwarf.lua:80), two over the baseline — the largest life
+  // delta of any origin, and it compounds every level.
+  lifeRating: BASELINE_LIFE_RATING + 2,
+  // `experience = 1.25` (dwarf.lua:87). THE STEEPEST PENALTY SO FAR: a quarter
+  // more experience for every level, against the Indexed's fifteen per cent.
+  // That is the counterweight for +10 raw stat points and the life rating.
+  experienceMult: 1.25,
+  // No `copy_add`, no `extra_*_every` — same as the Indexed, and see the note
+  // there. What it has instead: `talents = { [T_DWARF_RESILIENCE] = 1 }`
+  // (dwarf.lua:74-76).
+  //
+  // ONE TALENT WHERE THE INDEXED HAVE THREE, and that is not an oversight or a
+  // half-finished tree. `race/dwarf` has four upstream and the other three each
+  // need machinery this game does not have: Stoneskin wants an on-melee-hit
+  // trigger that can cancel the blow outright, Power is Money scales saves off
+  // carried gold, and Stone Walking phases through a wall. Each is a system, not
+  // a number, so the origin ships with the one that is a pure content port and
+  // the rest are named here rather than silently missing.
+  talents: [resilienceOfTheArchived],
+});
+
+/**
  * AUTHORED ORDER, and the picker never re-sorts it — the same promise
  * `ClassOptionsMsg.options` makes and for the same reason: this choice is
  * written to a file and the chooser does not come back.
  */
-export const ORIGINS: readonly OriginDef[] = Object.freeze([CITYBORN, INDEXED]);
+export const ORIGINS: readonly OriginDef[] = Object.freeze([CITYBORN, INDEXED, ARCHIVED]);
 
 const BY_ID = new Map<string, OriginDef>(ORIGINS.map((origin) => [origin.id, origin]));
 

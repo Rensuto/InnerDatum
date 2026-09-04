@@ -175,6 +175,11 @@ export const EffectId = {
    * changes what a body IS; this changes the price of acting.
    */
   HighbornsBloom: 'effect:highborns_bloom',
+  /**
+   * THE ONLY EFFECT THAT WRITES FOUR CHANNELS AT ONCE, and the first to move
+   * `armourHardiness` from anywhere but worn gear and a sustain.
+   */
+  ArchivalResilience: 'effect:archival_resilience',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1344,6 +1349,66 @@ export const HIGHBORNS_BLOOM: EffectDef = Object.freeze({
   modifiers: { freeResources: true },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ARCHIVAL RESILIENCE — physical.lua:3524-3559. Upstream's "Dwarven Resilience".
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     eff.aid = self:addTemporaryValue("combat_armor", eff.armor)
+ *     eff.hid = self:addTemporaryValue("combat_armor_hardiness", eff.armor_hardiness)
+ *     eff.pid = self:addTemporaryValue("combat_physresist", eff.physical)
+ *     eff.sid = self:addTemporaryValue("combat_spellresist", eff.spell)
+ *
+ * ═══ READ THE SECOND DEFINITION, NOT THE FIRST ═══
+ * `DWARVEN_RESILIENCE` is declared TWICE in physical.lua — once at :666 and
+ * again at :3524 — and a later `newEffect` replaces the earlier one. The two are
+ * not the same: the early one writes three channels and the live one writes
+ * FOUR. Porting :666 would have quietly dropped armour hardiness, which is the
+ * half of the effect that decides whether the armour matters against a big hit.
+ * The talent's own `getParams` passes `armor_hardiness`, which is how the
+ * duplicate was caught — the early definition never reads it.
+ *
+ * ═══ FOUR VALUES AND ALL FOUR ARE THE PRESSER'S ═══
+ * Three are computed from Constitution when the talent fires, so a body that
+ * gained CON since the last press gets a stronger one. They ride in `params`
+ * rather than being recomputed here, because an effect must keep the number it
+ * was granted with — `higher_heal.ts` carries its heal the same way.
+ *
+ * ═══ `mid_ac` IS NOT PORTED, AND IT IS UNREACHABLE RATHER THAN SKIPPED ═══
+ * The `activate` branch at :3546-3550 adds `flat_damage_armor` when the body
+ * knows `T_STONE_FORTRESS` — a prodigy we have not ported, so the condition can
+ * never be true. Named here for `overseer_of_nations.ts`'s reason: the next
+ * reader gets a list of what is missing rather than having to measure it.
+ */
+export const ARCHIVAL_RESILIENCE: EffectDef = Object.freeze({
+  id: EffectId.ArchivalResilience,
+  /** 'Ar'. Every other two-letter mark in this file is taken; the panel needs a unique one. */
+  badge: 'Ar',
+  displayName: 'Archival Resilience',
+  description: 'Hardened against alteration. More armour, and harder to move or unmake.',
+  // physical.lua:3535-3536 — `type = "physical"`, `subtype = { earth = true }`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Beneficial,
+  // No `on_merge` upstream, so a re-press replaces. That is the right rule here
+  // for `PAIN_SUPPRESSION`'s reason and one more: the params are recomputed from
+  // CON at each press, so a refresh is how a stronger body upgrades its own buff.
+  stackMode: StackMode.Refresh,
+  subtypes: ['earth'],
+  decrease: 1,
+  icon: 'icon_status_archival_resilience',
+  /**
+   * physical.lua:3537 — `parameters = { armor=10, spell=10, physical=10 }`,
+   * carried into `EffectParams.grants` under the channel names our fold uses.
+   *
+   * UPSTREAM DECLARES NO DEFAULT FOR `armor_hardiness` even though `activate`
+   * reads it (:3542), so a press that omitted it would add `nil`. Ours leaves it
+   * out of the defaults too rather than inventing a number — the talent always
+   * passes all four, and an absent channel folds as nothing.
+   */
+  parameters: { grants: { armour: 10, physResist: 10, spellResist: 10 } },
+  wielder: (instance) => ({ mods: instance.params.grants ?? {} }),
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1360,6 +1425,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   PAIN_SUPPRESSION,
   EMPOWERED_HEALING,
   HIGHBORNS_BLOOM,
+  ARCHIVAL_RESILIENCE,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

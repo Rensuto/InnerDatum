@@ -295,6 +295,63 @@ export function combatStatLimit(
 }
 
 /**
+ * `combatStatScale` — Combat.lua:1545-1560. The STAT curve, `combatScale`'s
+ * sibling.
+ *
+ * `combatTalentScale` fits `y(1)=low, y(5)=high` on talent level. This fits
+ * `y(10)=low, y(100)=high` on a STAT, which is the pair upstream uses whenever a
+ * number grows with Constitution or Cunning rather than with points spent.
+ * Same `m·x^power + b` shape, different implied endpoints (:1548).
+ *
+ * ═══ WHY IT IS NOT WRITTEN AS A `combatScale` CALL ═══
+ * It could be — `combatScale(stat, low, 10, high, 100, power)` is the same
+ * arithmetic for a numeric `power`. Upstream still writes the m/b out longhand
+ * (:1556-1557) rather than delegating, BECAUSE OF THE LOG BRANCH: `power` may be
+ * the string `'log'`, which `combatScale` has no case for. Delegating would port
+ * four fifths of a function and leave the fifth to fail as `NaN` the first time
+ * somebody passed upstream's own argument. `combatTalentScale` carries the same
+ * branch for the same reason.
+ *
+ * ═══ `power` DEFAULTS TO 0.5, NOT 1 ═══
+ * (:1547.) The curve is a square root, so the tenth point of a stat is worth
+ * much more than the ninetieth. Passing `1` to "keep it simple" would silently
+ * make every high-stat build stronger than upstream's.
+ *
+ * @param stat the stat VALUE. Upstream accepts a name and looks it up; we have
+ *   no actor here — `shared/` is pure — so callers pass `stat(combat, 'con')`.
+ */
+export function combatStatScale(
+  stat: number,
+  low: number,
+  high: number,
+  power: number | 'log' = 0.5,
+  add = 0,
+  shift = 0,
+): number {
+  /** :1548 — the implied stat values the two ends are matched at. */
+  const xLow = 10;
+  const xHigh = 100;
+
+  let x = stat;
+  let xLowAdj: number;
+  let xHighAdj: number;
+  if (power === 'log') {
+    xLowAdj = Math.log10(xLow + shift);
+    xHighAdj = Math.log10(xHigh + shift);
+    // :1552 — a stat below 1 would send log10 negative or to -Infinity.
+    x = Math.max(1, x);
+  } else {
+    xLowAdj = (xLow + shift) ** power;
+    xHighAdj = (xHigh + shift) ** power;
+  }
+
+  const m = (high - low) / (xHighAdj - xLowAdj);
+  const b = low - m * xLowAdj;
+  const xAdj = power === 'log' ? Math.log10(x + shift) : (x + shift) ** power;
+  return m * xAdj + b + add;
+}
+
+/**
  * `combatTalentWeaponDamage` — Combat.lua:1782-1788.
  *
  * The weapon-damage MULTIPLIER a talent applies, `base + (max-base)·sqrt(tl/5)`.

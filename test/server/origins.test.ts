@@ -147,7 +147,11 @@ describe('the Indexed pay for what they get', () => {
 
 describe('the roster', () => {
   it('is authored order and every id is distinct', () => {
-    expect(ORIGINS.map((origin) => origin.id)).toEqual(['origin_cityborn', 'origin_indexed']);
+    expect(ORIGINS.map((origin) => origin.id)).toEqual([
+      'origin_cityborn',
+      'origin_indexed',
+      'origin_archived',
+    ]);
     expect(new Set(ORIGINS.map((origin) => origin.id)).size).toBe(ORIGINS.length);
   });
 
