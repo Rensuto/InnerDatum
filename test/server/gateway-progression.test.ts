@@ -1481,3 +1481,53 @@ describe('a returning character keeps the origin it was born with', () => {
     expect(server.talents.sheetOf(body.id)?.points.has(higherHeal.id)).toBe(false);
   });
 });
+
+describe('the extra-point period a returning character comes back holding', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PURSES THEMSELVES ARE NOT ASSERTED HERE, AND THE HELPER SAYS WHY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `applyRestore` derives every purse as `earned - spent`, and this harness
+   * attaches `trained()` sheets — every talent at full rank. `trained`'s own
+   * docblock is explicit: "USE IT FOR MECHANICS. Do NOT use it in a test that is
+   * about progression." A purse assertion here reads 0 unspent and is RIGHT to:
+   * the fixture has spent everything. That arithmetic is covered where it
+   * belongs — `origins.test.ts` pins the totals against the bonuses and
+   * `point-purses.test.ts` pins that the gateway asks with the bonus at all.
+   *
+   * WHAT IS LEFT is the input those cannot see. `extraPointEvery` is a CACHED
+   * NUMBER on the body rather than something derived at read time, so it has to
+   * ride the overlay home the way `origin` and `expMod` do (both pinned above).
+   * A cache that does not survive a reconnect stops the scheduler granting the
+   * bonus on every tenth level thereafter, and nothing else would notice.
+   */
+
+  /**
+   * ═══ THE INDEXED CASE IS THE ONE THAT CAN FAIL, AND IT IS THE ONLY ONE HERE ═══
+   * The obvious test — reconnect a Cityborn and assert a period of 10 — CANNOT
+   * FAIL. `CITYBORN` is `DEFAULT_ORIGIN`, so a body that lost its origin entirely
+   * falls back to exactly the origin being asserted and reads 10 anyway. It would
+   * have passed against the reconnect bug this very file was written for.
+   *
+   * `INDEXED` grants NO period at all, which makes absence the assertion: if the
+   * origin is dropped on the way back, the default supplies a 10 that this body
+   * is not entitled to and the body starts collecting points it never earned.
+   * The failure direction is a CHARACTER GETTING MORE, which is the direction
+   * nobody reports as a bug.
+   */
+  it('gives a returning Indexed no extra-point period, because it has none', async () => {
+    server = await boot('restore-period-indexed');
+    playsThe(WATCHMAN, { origin: INDEXED.id, level: 20 });
+
+    const ren = await connect(server.port);
+    const body = bodyOf(await ren.hello('ren-handle'));
+
+    expect(INDEXED.extraPointEvery, 'the premise: this origin grants no period').toBeUndefined();
+    expect(
+      body.extraPointEvery,
+      'the default origin’s period leaked onto a body that does not get one',
+    ).toBeUndefined();
+    expect(body.origin, 'and it is the Indexed that came back, not the fallback').toBe(INDEXED.id);
+  });
+});
