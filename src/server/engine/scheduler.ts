@@ -2128,9 +2128,26 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     // ═══ AND THE PUNISH — THE LANE IRON CURTAIN WAS WRITTEN FOR ═══
     // A husk swings at the detective a Watchman is guarding and eats a free
     // counter for it. AFTER `noteCasualty`, so that a blow which put the guarded
-    // ally on the floor narrates in that order and so that a guardian who was
-    // himself downed by the same pump cannot swing (`resolveGuardCounter`
-    // requires a live guardian, and a downed body is `alive === false`).
+    // ally on the floor narrates in that order, and so that a guardian downed by
+    // that same blow cannot swing — `resolveGuardCounter` requires a live
+    // guardian (talents.ts:3465) and a downed body is `alive === false`.
+    //
+    // ═══ EXCEPT ON A WIPE, AND THE ORDER IS WHY ═══
+    // That second guarantee held for an ordinary downing and was stated flatly
+    // here, which was wrong. `noteCasualty` reaches `checkWipe`, and on a FULL
+    // wipe `resetFloorParty` → `standUp` sets `alive = true` on every party body
+    // (downed.ts:692) before this line reads it. `standUp` touches no effects
+    // and the only production `dispel` is in `resetFloor` (turn-engine.ts:665),
+    // which runs after the pump — so `Guarding` is still on the guardian too.
+    // A Watchman put on the floor by the wiping blow therefore CAN counter.
+    //
+    // Left as it is rather than guarded against. The restoration landing before
+    // the remaining monsters swing is deliberate and load-bearing — moving it to
+    // the end of the pump was tried and reverted, and `wipe-recovery.test.ts`
+    // caught it (tools/first-death.mjs's header records both). Suppressing the
+    // counter would need a "was this body restored this pump" flag invented for
+    // one near-inert case: the countered monster is reaped and re-seeded by
+    // `resetFloor` moments later.
     noteGuardCounter(outcome.effect, run, gameTurn, actor.id);
   }
 
