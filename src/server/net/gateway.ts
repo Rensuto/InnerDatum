@@ -1899,6 +1899,17 @@ export type CharacterRestore = {
    */
   readonly classId: string | null;
   /**
+   * WHICH ORIGIN THE FILE NAMES, or null for one written before origins existed.
+   *
+   * `saves.ts` has handed this back since origins shipped and this type did not
+   * declare it, so the gateway could not see it: every reconnect rebuilt an
+   * Indexed body with `overlayFor`'s DEFAULT origin and silently took away its
+   * stat modifiers, its experience penalty, its sight and both of its racial
+   * talents. The tests for choosing an origin and for persisting one both passed
+   * throughout — they cover the way IN.
+   */
+  readonly origin?: string | null;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * PROGRESSION COMING BACK. THE OTHER HALF OF WHAT MUST NOT BE RE-DERIVED.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -7781,7 +7792,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return { actor: existing, resumed: true, renamed };
       }
       const definition = classFor(restore, verified.actorId);
-      const actor = place.addPlayer(verified.actorId, verified.displayName, overlayFor(definition));
+      /**
+       * THE ORIGIN COMES OFF THE FILE, HERE AND NOT IN `applyRestore`.
+       *
+       * The overlay is what folds an origin's `inc_stats` into `baseCombat` and
+       * what stamps `expMod` and `extraPointEvery`, and it runs BEFORE the
+       * restore lands — so an origin applied afterwards would be a name on a
+       * body that had been built as somebody else.
+       */
+      const actor = place.addPlayer(
+        verified.actorId,
+        verified.displayName,
+        overlayFor(definition, originOf(restore?.origin ?? undefined)),
+      );
       connByActor.set(actor.id, session.connId);
       // AFTER the class, never before: `applyRestore` clamps the saved hp to
       // `actor.maxHp`, so a Watchman restored at 70 would be filed down to 60
@@ -9424,10 +9447,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     restoreRealm(to, body);
 
     const definition = body.classId === undefined ? undefined : classById(body.classId);
+    // AND ITS ORIGIN, off the body it is carried from. `carryAcross` copies LIVE
+    // state — hp, purses, trees — and an origin is not live state, it is what
+    // the body was BUILT as. Without this a door did what a reconnect did:
+    // rebuild an Indexed detective as the baseline.
     const placed = to.world.addPlayer(
       actorId,
       body.name,
-      definition === undefined ? undefined : overlayFor(definition),
+      definition === undefined ? undefined : overlayFor(definition, originOf(body.origin)),
     );
     carryAcross(body, placed);
     // BACK WHERE THEY WENT IN, when the tile is still free. `placeAtSpawn` has
@@ -9751,10 +9778,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     restoreRealm(to, body);
 
     const definition = body.classId === undefined ? undefined : classById(body.classId);
+    // AND ITS ORIGIN, off the body it is carried from. `carryAcross` copies LIVE
+    // state — hp, purses, trees — and an origin is not live state, it is what
+    // the body was BUILT as. Without this a door did what a reconnect did:
+    // rebuild an Indexed detective as the baseline.
     const placed = to.world.addPlayer(
       actorId,
       body.name,
-      definition === undefined ? undefined : overlayFor(definition),
+      definition === undefined ? undefined : overlayFor(definition, originOf(body.origin)),
     );
     carryAcross(body, placed);
 

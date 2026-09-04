@@ -11,7 +11,7 @@ import {
   classById,
   createContentTalentEngine,
   createTalentBook,
-  sheetForClass,
+  sheetForBody,
 } from '../../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { recomposeCombat } from '../../src/server/engine/effects.ts';
@@ -25,7 +25,8 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { TALENT_MAX_LEVEL, totalPointsAtLevel } from '../../src/shared/progression.ts';
-import { DEFAULT_ORIGIN, classPointBonus } from '../../src/server/content/origins.ts';
+import { DEFAULT_ORIGIN, INDEXED, classPointBonus } from '../../src/server/content/origins.ts';
+import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
@@ -297,9 +298,23 @@ async function boot(seed: string): Promise<Harness> {
 
   const engine: TurnEngine = {
     ...base,
+    /**
+     * THROUGH `sheetForBody`, LIKE PRODUCTION — and still `trained`, which is
+     * this harness's own reason for keeping a stub of its own rather than
+     * calling `test/helpers/attach-class.ts`.
+     *
+     * It read `sheetForClass(definition)` with no body, so it could not see a
+     * bought tree, an inscription or an ORIGIN: a returning Indexed body came
+     * back without either of its racial talents and this file was blind to it.
+     */
     attachClass: (actorId: string, classId: string): void => {
       const definition = classById(classId);
-      if (definition !== undefined) talents.attach(actorId, trained(sheetForClass(definition)));
+      if (definition === undefined) return;
+      const body = world.getActor(actorId);
+      talents.attach(
+        actorId,
+        trained(sheetForBody(definition, body?.kind === ActorKind.Player ? body : undefined)),
+      );
     },
     /**
      * THE FOURTH SEAM, copied from main.ts like the other three.
@@ -1411,5 +1426,58 @@ describe('a mis-clicked point can be taken back, for a little while', () => {
     // AND NOT ON EVERYTHING ELSE. An always-true flag would satisfy the
     // assertion above while telling the player they can refund their career.
     expect(rows.filter((t) => t.unlearnable === true).map((t) => t.id)).toEqual([CRUDE]);
+  });
+});
+
+describe('a returning character keeps the origin it was born with', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE HALF OF THE ORIGIN SYSTEM NOTHING WAS ASKING ABOUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `choose_class` writes the origin onto the body and `CharacterFile.origin`
+   * persists it — both tested. What sat between them untested is the way BACK:
+   * `hello` builds the body with `overlayFor(definition)`, which defaults to the
+   * baseline, and `applyRestore` runs AFTER it. If the restore cannot carry an
+   * origin, a returning Indexed body is rebuilt as Cityborn — losing its stat
+   * modifiers, its experience penalty, its sight and both of its racial talents,
+   * silently, on every reconnect.
+   *
+   * ASSERTED ON THE BODY AND THE SHEET, because they fail for different reasons:
+   * the stats come from the overlay and the talents from `sheetForBody`.
+   */
+  it('rebuilds an Indexed body as the Indexed, not as the baseline', async () => {
+    server = await boot('origin-restore');
+    playsThe(WATCHMAN, { origin: INDEXED.id });
+
+    const ren = await connect(server.port);
+    const body = bodyOf(await ren.hello('ren-handle'));
+
+    expect(body.origin, 'the origin never came back off the file').toBe(INDEXED.id);
+
+    // `inc_stats = { str=1, mag=1, dex=1, wil=1 }` — the modifiers the overlay
+    // is supposed to have folded in.
+    const base = WATCHMAN.combat.stats ?? {};
+    expect(body.combat?.stats?.str).toBe((base.str ?? 0) + 1);
+    expect(body.combat?.stats?.wil).toBe((base.wil ?? 0) + 1);
+
+    // …and `exp_mod`, which decides whether the next level ever arrives.
+    expect(body.expMod).toBeCloseTo(INDEXED.experienceMult, 5);
+
+    // …and the two talents the origin grants, on the sheet the engine reads.
+    const sheet = server.talents.sheetOf(body.id);
+    expect(sheet?.points.get(higherHeal.id), 'the gift did not survive the trip').toBe(1);
+  });
+
+  /** …and a body whose file names no origin is the baseline, as it always was. */
+  it('rebuilds a file with no origin as the baseline', async () => {
+    server = await boot('origin-restore-absent');
+    playsThe(WATCHMAN);
+
+    const ren = await connect(server.port);
+    const body = bodyOf(await ren.hello('ren-handle'));
+
+    expect(body.combat?.stats).toEqual(WATCHMAN.combat.stats);
+    expect(server.talents.sheetOf(body.id)?.points.has(higherHeal.id)).toBe(false);
   });
 });

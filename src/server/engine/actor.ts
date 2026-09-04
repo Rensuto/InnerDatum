@@ -1451,6 +1451,13 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     combat: sheet,
     baseCombat: sheet,
     classId: init.classId,
+    // AND WHAT THE BODY WAS BUILT AS. These three ride the overlay together:
+    // `origin` is the label a save and the sheet read, and the two numbers are
+    // the engine-facing caches derived from it. Copying the class and not these
+    // is how a returning Indexed body came back as the baseline.
+    ...(init.origin === undefined ? {} : { origin: init.origin }),
+    ...(init.expMod === undefined ? {} : { expMod: init.expMod }),
+    ...(init.extraPointEvery === undefined ? {} : { extraPointEvery: init.extraPointEvery }),
     // PROGRESSION STARTS AT THE BOTTOM AND EMPTY. Level 1 with no spare points
     // is the whole birth grant argument: ToME hands a fresh character 2 unused
     // points on top of its free birth talents (tome/class/Actor.lua:171, warrior.lua:80-86),
