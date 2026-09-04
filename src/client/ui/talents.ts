@@ -1950,8 +1950,29 @@ export function talentPanelGeometry(
        * and an eighth landed squarely on the neighbouring pane's first icon.
        * Two live spend targets on the same pixels, on a panel with no refund.
        */
-      const cells: PanelRect[] = row.talents.slice(0, CELLS_PER_CAT).map((_, n) => ({
-        x: bx + n * (ICON_PX + CELL_GAP),
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A SHORT STRIP IS CENTRED, NOT LEFT-ALIGNED WITH A HOLE AFTER IT.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `talent-trees.test.ts` used to demand six talents in every tree, and its
+       * reason was this row: *"a tree with four draws a gap in a row of boxes,
+       * which reads as a talent that failed to load rather than as a tree with
+       * room in it"*. That is true of a LEFT-ALIGNED short row beside full ones
+       * — the eye reads the blank on the right as missing content.
+       *
+       * The column stays `COL_W` wide so the grid arithmetic is untouched, and
+       * the icons sit in the middle of it. Blank on BOTH sides reads as a
+       * smaller tree; blank on one reads as a broken one. That is what lets
+       * `TalentTree.size` exist at all, and it is why upstream can draw
+       * `race/higher`'s four beside a class tree's six without either looking
+       * wrong.
+       */
+      const shown = row.talents.slice(0, CELLS_PER_CAT);
+      const stripW = shown.length * ICON_PX + Math.max(0, shown.length - 1) * CELL_GAP;
+      const inset = Math.max(0, Math.floor((COL_W - stripW) / 2));
+      const cells: PanelRect[] = shown.map((_, n) => ({
+        x: bx + inset + n * (ICON_PX + CELL_GAP),
         y: y + CAT_HEAD_H,
         w: ICON_PX,
         h: ICON_PX,

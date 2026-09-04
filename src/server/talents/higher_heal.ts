@@ -104,7 +104,13 @@ export const higherHeal: Talent = {
   name: 'Gift of the Highborn',
   /** NO CLASS OWNS IT — an ORIGIN grants it. See the header. */
   classId: null,
-  tree: 'generic/inscriptions',
+  /**
+   * ITS OWN CATEGORY — `type = {"race/higher", 1}` (races.lua:42). It sat in
+   * `generic/inscriptions` while that tree was the only hidden one, which kept
+   * a one-icon strip off the panel at the cost of filing a racial gift under
+   * "things written on you". `TalentTree.size` makes the honest home drawable.
+   */
+  tree: 'race/higher',
   tier: 1,
   kind: TalentKind.Active,
   /** Undrawn; the bar draws a letter and `npm run art:needs` lists it. */

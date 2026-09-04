@@ -142,8 +142,18 @@ describe('the tree grid is full', () => {
        */
       if (tree.hidden === true) continue;
       const held = counts.get(tree.id) ?? [];
-      if (held.length !== CELLS_PER_CAT) {
-        wrong.push(`${tree.id}: ${String(held.length)} (${held.join(', ')})`);
+      /**
+       * …AND A TREE MAY DECLARE A SHORTER LENGTH. `TalentTree.size` is a
+       * DECLARATION, not a relaxation: the comparison below is still exact, so a
+       * tree that loses a talent fails and a tree that is short by accident
+       * fails. What stops failing is a tree that is short on purpose and says
+       * how short — `race/higher` ships one of upstream's four, and
+       * `ui/talents.ts` centres a strip below the full width so it reads as
+       * deliberate rather than truncated.
+       */
+      const want = tree.size ?? CELLS_PER_CAT;
+      if (held.length !== want) {
+        wrong.push(`${tree.id}: ${String(held.length)} of ${String(want)} (${held.join(', ')})`);
       }
     }
     expect(wrong).toEqual([]);
@@ -177,6 +187,35 @@ describe('the tree grid is full', () => {
       const passives = held.filter((talent) => talent.kind === TalentKind.Passive);
       expect(passives.length, `${tree.id} passives`).toBeGreaterThan(0);
       expect(passives.length, `${tree.id} all-passive`).toBeLessThan(held.length);
+    }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TRIPWIRE UNDER `race/` — a purse question that is not askable yet.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream marks `race/higher` `generic = true` (misc/races.lua:37), so its
+ * talents are bought with the GENERIC purse. Ours decides that from the
+ * `generic/` PREFIX, because `isGenericTree` lives in `src/shared/` and may not
+ * read the tree table — so a `race/` tree reads as a CLASS tree and would charge
+ * the wrong purse.
+ *
+ * IT IS INERT WHILE NOTHING THERE CAN BE RAISED. Every talent in a `race/` tree
+ * is `maxLevel: 1` today, so no point is ever spent and neither purse is ever
+ * touched. This test is what stops that being quietly untrue: the day somebody
+ * adds a raisable talent to a racial tree, they get a red test naming the
+ * problem rather than a player charged from the wrong pocket.
+ */
+describe('a racial tree cannot yet be spent in', () => {
+  it('holds nothing that a talent point could raise', () => {
+    for (const talent of allTalents()) {
+      if (!talent.tree.startsWith('race/')) continue;
+      expect(
+        talent.maxLevel,
+        `${talent.id} is raisable in a race/ tree — see this file's tripwire note`,
+      ).toBe(1);
     }
   });
 });

@@ -1746,3 +1746,77 @@ describe('the pane captions', () => {
     expect(texts.some((t) => t.startsWith('GENERIC'))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A tree shorter than the grid
+// ---------------------------------------------------------------------------
+
+describe('a short strip is centred, not left with a hole', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHY THIS IS THE TEST THAT LETS `TalentTree.size` EXIST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `talent-trees.test.ts` demanded six talents in EVERY tree, and its reason was
+   * this row: "a tree with four draws a gap in a row of boxes, which reads as a
+   * talent that failed to load rather than as a tree with room in it". That is
+   * true of a LEFT-ALIGNED short row — the blank on the right reads as missing.
+   *
+   * Centring is what makes a declared-short tree honest, so the rule could change
+   * from "always six" to "exactly what you declared".
+   *
+   * SYMMETRY IS ASSERTED, NOT A PIXEL COUNT. It is the property that matters and
+   * the only one true at every length: a FULL strip is symmetric with zero on
+   * both sides, so this covers the "a full row must not move" case without
+   * needing a six-talent fixture to exist.
+   */
+  function stripsOf(count: number) {
+    const rows = talentPanelRows(view());
+    const trimmed = categories(rows).map((row) => ({
+      ...row,
+      talents: row.talents.slice(0, count),
+    }));
+    return placedAt(REAL, trimmed).filter((p) => p.row.kind === TalentRowKind.Category);
+  }
+
+  it('leaves the same blank on both sides, at every length', () => {
+    for (const count of [1, 2, 3]) {
+      for (const placed of stripsOf(count)) {
+        const first = placed.cells[0];
+        const last = placed.cells[placed.cells.length - 1];
+        if (first === undefined || last === undefined) continue;
+        const leftGap = first.x - placed.rect.x;
+        const rightGap = placed.rect.x + placed.rect.w - (last.x + last.w);
+        // WITHIN A PIXEL, because the inset floors — an odd remainder cannot split.
+        expect(
+          Math.abs(leftGap - rightGap),
+          `at ${String(count)}: ${String(leftGap)} vs ${String(rightGap)}`,
+        ).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  /** A shorter strip is inset FURTHER — the centring actually moves with length. */
+  it('insets a shorter strip more than a longer one', () => {
+    const one = stripsOf(1)[0];
+    const three = stripsOf(3)[0];
+    if (one === undefined || three === undefined) return;
+    const gap = (p: typeof one) => (p.cells[0]?.x ?? 0) - p.rect.x;
+    expect(gap(one), 'a lone icon sits no further in than three').toBeGreaterThan(gap(three));
+  });
+
+  /** …and it is still clickable where it is drawn, which is the whole contract. */
+  it('keeps the press on the icon after the move', () => {
+    const rows = talentPanelRows(view());
+    const trimmed = categories(rows).map((row) => ({ ...row, talents: row.talents.slice(0, 1) }));
+    const rect = rectAt(REAL);
+    const placed = talentPanelGeometry(rect, trimmed, NO_SCROLL).placed.find(
+      (p) => p.row.kind === TalentRowKind.Category,
+    );
+    const box = placed?.cells[0];
+    if (box === undefined) return;
+    expect(talentPanelHitAt(rect, trimmed, box.x + 2, box.y + 2, NO_SCROLL)?.kind).toBe(
+      TalentHitKind.Row,
+    );
+  });
+});

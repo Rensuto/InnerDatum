@@ -140,6 +140,27 @@ export type TalentTree = {
    * is exactly the split upstream has.
    */
   readonly hidden?: boolean;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY TALENTS THIS TREE SHIPS. Absent means the usual six.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `talent-trees.test.ts` requires every tree to hold exactly `CELLS_PER_CAT`,
+   * and the reason is drawn rather than arithmetic: *"a tree with four draws a
+   * gap in a row of boxes, which reads as a talent that failed to load rather
+   * than as a tree with room in it"*. That rule is right about accidents and
+   * wrong about upstream, where tree sizes vary freely — `race/higher` has four
+   * (misc/races.lua:37-140) and `LevelupDialog` draws a variable-length list.
+   *
+   * ═══ IT IS A DECLARATION, NOT A RELAXATION ═══
+   * The guard still demands an EXACT count; this only says which count. A tree
+   * that loses a talent still fails, and a tree that is short by accident still
+   * fails — what stops failing is a tree that is short ON PURPOSE and says so.
+   * `ui/talents.ts` centres a strip below the full width, so a declared-short
+   * tree reads as deliberate rather than truncated.
+   */
+  readonly size?: number;
 };
 
 /**
@@ -357,6 +378,43 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     name: 'Errata',
     classId: ClassId.Redactor,
     blurb: 'Corrections to the record, including where you were standing.',
+  },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ORIGIN'S OWN — `newTalentType{ type="race/higher" }`, misc/races.lua:37.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ONE TALENT OF UPSTREAM'S FOUR. `race/higher` ships Gift of the Highborn,
+     * Overseer of Nations, and two more; only the first is ported, because the
+     * other three want mechanics this game does not have (a sight bonus, a
+     * per-subtype immunity). `size: 1` is that fact declared rather than a guard
+     * quietly relaxed — see `TalentTree.size`.
+     *
+     * NOT HIDDEN, unlike `generic/inscriptions`. Upstream marks the inscription
+     * categories `hide = true` (misc/misc.lua:23) and does NOT mark this one: it
+     * is a category a Higher can see, and this is where Gift of the Highborn
+     * belongs. It sat in the hidden inscriptions tree until this commit, which
+     * kept it off a stub strip at the cost of filing it under something it is
+     * not.
+     *
+     * ═══ THE PURSE IS UNREACHABLE, AND THERE IS A TRIPWIRE FOR THE DAY IT IS NOT ═══
+     * Upstream's type carries `generic = true`, and ours decides the purse from
+     * the `generic/` PREFIX — `isGenericTree` lives in `src/shared/`, which may
+     * not read this table, so the prefix is the only signal it has. A `race/`
+     * tree therefore reads as a CLASS tree.
+     *
+     * That is inert today: the one talent here is `maxLevel: 1`, so no point can
+     * ever be spent on it and neither purse is ever charged. `talent-trees.test.ts`
+     * FAILS if a `race/` tree ever holds a raisable talent, so the day this
+     * becomes a real question it is a red test rather than a wrong purse.
+     */
+    id: 'race/higher',
+    mastery: 1,
+    name: 'Higher',
+    classId: null,
+    size: 1,
+    blurb: 'What was written into you before you went looking.',
   },
   {
     /**
