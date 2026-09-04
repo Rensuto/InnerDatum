@@ -978,7 +978,7 @@ describe('projectGroundItems', () => {
      * test below the next one asserts exactly that.
      */
     expect(Object.keys(row ?? {}).sort()).toEqual(
-      ['cell', 'desc', 'id', 'itemId', 'name', 'slot', 'tier'].sort(),
+      ['cell', 'fromCatalogue', 'id', 'itemId', 'name', 'slot', 'tier'].sort(),
     );
   });
 });
@@ -1098,10 +1098,10 @@ describe('projectInventory', () => {
     // claim this test is making. A worn item's key IS its slot; what it is
     // GIVING you is a fact neither side can read off a key.
     expect(Object.keys(msg.equipped['feet'] ?? {}).sort()).toEqual(
-      ['compare', 'desc', 'icon', 'itemId', 'name', 'tier'].sort(),
+      ['compare', 'icon', 'itemId', 'name', 'tier'].sort(),
     );
     expect(Object.keys(msg.carried[0] ?? {}).sort()).toEqual(
-      ['compare', 'desc', 'icon', 'itemId', 'name', 'slot', 'tier'].sort(),
+      ['compare', 'icon', 'itemId', 'name', 'slot', 'tier'].sort(),
     );
     expect(msg.carried[0]?.slot).toBe('head');
   });
@@ -1675,14 +1675,6 @@ describe('what an item is worth, wherever it appears', () => {
     const worn = projectInventory(body).equipped['feet'];
     expect(worn?.compare).not.toEqual([]);
   });
-
-  it('gives a shelf row the sentence the catalogue authored for it', () => {
-    // A shelf was a picture, a name and a price: the panel resolved a row's
-    // description out of the player's OWN bag, so a coat you did not already own
-    // had none. `ShowStore.lua:145` renders the text for every row.
-    const shop = projectShop('Threadneedle Row', ['item_watchmans_boots'], 1);
-    expect(shop.stock[0]?.desc).toContain('Hobnailed');
-  });
 });
 
 describe('the compare panel measures from where the character actually stands', () => {
@@ -2020,9 +2012,15 @@ describe('the floor says what a thing would do, not just what it is called', () 
     const mine = projectGroundItems(world, undefined, body).items[0];
     expect(mine?.compare, 'a viewer was given no comparison').toBeDefined();
     expect((mine?.compare ?? []).length).toBeGreaterThan(0);
-    // AND ENOUGH TO SAY WHAT IT IS. `desc` is the catalogue sentence and `slot`
-    // is where it would go; the card reads as a labelled dot without them.
-    expect(mine?.desc, 'the floor row carries no description').toBeTruthy();
+    // AND ENOUGH TO SAY WHAT IT IS. `slot` is where it would go, and
+    // `fromCatalogue` is what separates a coat from a coin pile.
+    //
+    // THIS ASSERTED `desc` UNTIL THE FLAVOUR WENT. That field was doing two jobs:
+    // carrying a sentence nobody needed, and — by being required on catalogue
+    // items and absent on money and lore notes — telling the floor card which of
+    // the three it had. Only the second job was load-bearing, and it is stated
+    // outright now rather than inferred from prose happening to be present.
+    expect(mine?.fromCatalogue, 'the floor row cannot say what kind of thing it is').toBe(true);
     expect(mine?.slot).toBe('body');
   });
 

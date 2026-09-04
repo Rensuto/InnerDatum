@@ -99,7 +99,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 function worn(itemId: string, name: string, tier: ItemTier): ItemView {
-  return { itemId, name, icon: itemId, tier, desc: `${name}, worn.`, compare: [] };
+  return { itemId, name, icon: itemId, tier, compare: [] };
 }
 
 function bagged(
@@ -109,7 +109,7 @@ function bagged(
   slot: Slot,
   compare: readonly { label: string; value: string }[] = [],
 ): CarriedItemView {
-  return { itemId, name, icon: itemId, tier, desc: `${name}, in the bag.`, slot, compare };
+  return { itemId, name, icon: itemId, tier, slot, compare };
 }
 
 /**
@@ -291,9 +291,6 @@ describe('knowing when to point at the bag', () => {
     name: 'Thing',
     icon: 'icon',
     tier: ItemTier.Common,
-    desc: '',
-    // REQUIRED ON `CarriedItemView`, so a `Partial<>` spread cannot supply it.
-    // The predicate never reads it; the type does.
     compare: [],
     ...over,
   });
@@ -303,7 +300,6 @@ describe('knowing when to point at the bag', () => {
     name: itemId,
     icon: 'i',
     tier: ItemTier.Common,
-    desc: '',
     compare: [],
   });
 
@@ -367,7 +363,6 @@ describe('hasSomethingToBuy', () => {
     tier: 'common',
     buy,
     sell: Math.floor(buy / 20),
-    desc: `${itemId}, on the shelf.`,
   });
 
   it('points at the counter when the purse covers something on it', () => {
@@ -1699,13 +1694,6 @@ describe('drawing', () => {
     expect(texts).toContain('rare · body');
   });
 
-  it('draws the catalogue’s own sentence, which is what that field exists for', () => {
-    const { texts } = paint(
-      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_boots' } }),
-    );
-    expect(texts).toContain('Boots, in the bag.');
-  });
-
   it('says how to use the panel while nothing is pointed at, and stops once it is', () => {
     const quiet = paint(view());
     expect(quiet.texts.some((t) => t.includes('point at an item'))).toBe(true);
@@ -1968,20 +1956,23 @@ describe('drawing', () => {
     expect(bare.calls.filter((c) => c.startsWith('drawImage('))).toHaveLength(0);
   });
 
-  it('draws the doll strip as ONE line and the bag strip as seven', () => {
-    // The Equipped tab's strip cannot carry comparison rows — `compare` lives on
-    // `CarriedItemView` alone — so it carries the name and the meta on one line.
+  it('draws a name and a kind on both strips, and prose on neither', () => {
+    /**
+     * THIS USED THE CATALOGUE SENTENCE AS ITS MARKER — it asserted the bag strip
+     * drew "Boots, in the bag." and the doll strip did not. There is no sentence
+     * to look for now, and the claim underneath it survives intact: both strips
+     * name the thing and say what kind it is, and NEITHER prints prose about it.
+     */
     const doll = paint(view({ focus: { kind: 'item', itemId: 'item_watchmans_cap' } }));
     expect(doll.texts).toContain("Watchman's Cap");
     expect(doll.texts.some((t) => t.includes('worn'))).toBe(true);
-    // The catalogue sentence is a THIRD line and there is no third line here.
     expect(doll.texts).not.toContain("Watchman's Cap, worn.");
 
     const bag = paint(
       view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_boots' } }),
     );
     expect(bag.texts).toContain('Boots');
-    expect(bag.texts).toContain('Boots, in the bag.');
+    expect(bag.texts, 'a coat is its name and its numbers').not.toContain('Boots, in the bag.');
   });
 
   it('keeps DROP reachable on the doll tab, where the focus can still be a bag item', () => {
@@ -2081,70 +2072,6 @@ describe('the inventory frame re-asks for the character sheet', () => {
  * tail on somebody's screen. It reads the real content for the same reason
  * `assets.test.ts` and `hotbar.test.ts` do.
  */
-describe('an item description fits the room the strip reserves for it', () => {
-  /** The strip's prose column, and ~6px is what `10px ui-monospace` measures. */
-  const PROSE_PX = 304;
-  const CHAR_PX = 6;
-  const PER_LINE = Math.floor(PROSE_PX / CHAR_PX);
-  const DESC_LINES = 2;
-
-  /** Word-wrapped line count, by the same rule `wrapText` uses. */
-  const linesFor = (text: string): number => {
-    let lines = 1;
-    let width = 0;
-    for (const word of text.split(' ')) {
-      const next = width === 0 ? word.length : width + 1 + word.length;
-      if (next <= PER_LINE) {
-        width = next;
-        continue;
-      }
-      lines += 1;
-      width = word.length;
-    }
-    return lines;
-  };
-
-  it('every authored description fits in the lines reserved', () => {
-    const tooLong: string[] = [];
-    for (const item of ITEMS) {
-      const desc = item.desc;
-      if (typeof desc !== 'string' || desc === '') continue;
-      if (linesFor(desc) > DESC_LINES) tooLong.push(`${item.id}: ${String(desc.length)} chars`);
-    }
-    expect(tooLong).toEqual([]);
-  });
-
-  it('still shows the strip at the smallest window the game guarantees', () => {
-    /**
-     * THE RULE THIS FIX COULD HAVE BROKEN. Giving the description a second line
-     * makes the strip taller, and a taller strip is one the drop policy can
-     * decide not to place at all — which would trade a truncated sentence for no
-     * sentence, on the smallest screen, which is worse.
-     *
-     * `HUD_MIN_W`x`HUD_MIN_H` is 640x320 interface pixels — the floor every
-     * window clears.
-     */
-    const rect = inventoryPanelRect({ width: 640, height: 320, top: 40, bottom: 280 });
-    expect(rect).not.toBeNull();
-    if (rect === null) return;
-
-    const placed = inventoryPanelGeometry(
-      rect,
-      inventoryPanelRows(view({ tab: InventoryTab.Carried })),
-    ).placed;
-    expect(placed.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(true);
-  });
-
-  it('and the catalogue really does have descriptions worth the room', () => {
-    // The guard above passes trivially against an empty catalogue, which is
-    // exactly how a test like this rots into decoration.
-    const described = ITEMS.filter(
-      (item) => typeof item.desc === 'string' && item.desc.length > PER_LINE,
-    );
-    expect(described.length).toBeGreaterThan(0);
-  });
-});
-
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * HOVERING AN ITEM EXPLAINS IT
@@ -2351,21 +2278,21 @@ describe('a consumable is a thing you can read', () => {
     expect(cardFor({ slot: 'ring' }).meta).toBe('uncommon · ring');
   });
 
-  it('says what drinking it does, above the flavour', () => {
+  it('says what drinking it does, and says only that', () => {
     /**
-     * `Item.use` is server-side content and only the flavour line ever crossed
-     * the wire, so the client could not say the draught healed anything at all.
-     * The sentence is rendered SERVER-side against the viewer's own
+     * `Item.use` is server-side content and it is now the ONLY prose the panel
+     * carries: the flavour sentence that used to sit beside it is gone with the
+     * field behind it. The line is rendered SERVER-side against the viewer's own
      * Constitution — see `ItemView.use` — and the panel's job is only to show it.
      */
     const card = cardFor({ use: 'Restores 43 health.' });
-    expect(card.desc).toContain('Restores 43 health.');
-    expect(card.desc, 'the flavour line was dropped').toContain('Ashwick work.');
+    expect(card.useText).toBe('Restores 43 health.');
   });
 
-  it('leaves every non-usable item exactly as it was', () => {
-    // Absent `use` must produce the byte-identical card it always produced, or
-    // this change would have touched all twenty-one wearable items.
-    expect(cardFor({ slot: 'ring' }).desc).toBe(DRAUGHT.desc);
+  it('gives a wearable item no prose at all', () => {
+    // THE HALF THAT IS THE POINT OF THE CHANGE. A coat is its name, its kind and
+    // its numbers; an empty string here is what lets `drawDetail` skip the gap
+    // and start the stats immediately under the name.
+    expect(cardFor({ slot: 'ring' }).useText).toBe('');
   });
 });

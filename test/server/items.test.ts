@@ -103,7 +103,6 @@ function sampleItem(over: Partial<Item> = {}): Item {
     icon: 'item_watchmans_cap',
     tier: 'uncommon',
     wielder: { mods: { armour: 3 } },
-    desc: 'A cap.',
     ...over,
   };
 }

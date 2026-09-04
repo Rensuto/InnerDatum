@@ -464,22 +464,29 @@ const DETAIL_ROWS_MAX = 4;
  * HOW MANY LINES THE ITEM'S OWN SENTENCE GETS. TWO, AND IT USED TO GET ONE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * MEASURED ACROSS THE WHOLE CATALOGUE: all twenty-three authored descriptions
- * are longer than the strip's prose column, which is about fifty monospace
- * characters. Every one. Median seventy-three characters, longest ninety-seven —
- * so the bag has never once shown a player the whole of what an item is, and
- * "Hobnailed and half a size too big. Twenty years of beat…" was as much as
- * anybody ever read.
+ * ═══ IT USED TO RESERVE ROOM FOR FLAVOUR, AND THERE IS NO FLAVOUR NOW ═══
+ * Every item carried an authored sentence and this block was sized for it:
+ * *"all twenty-three authored descriptions are longer than the strip's prose
+ * column... median seventy-three characters, longest ninety-seven"*. Gear says
+ * what it DOES now and nothing else, so the only prose left in this panel is a
+ * consumable's effect line — what drinking the thing actually does, which is a
+ * stat in a sentence rather than a mood.
  *
- * TWO LINES COVERS NINETY-SEVEN with room, and `test/client/inventory.test.ts`
- * asserts that against the REAL catalogue rather than against a guess — so a
- * description written longer than this reservation fails a test instead of
- * quietly losing its tail on somebody's screen.
+ * TWO LINES IS KEPT AS THE RESERVATION rather than trimmed to one, because a
+ * draught that heals and cures runs to two lines and the space costs a piece of
+ * GEAR nothing: `drawDetail` skips the gap entirely when there is no use text,
+ * so a coat's stats start immediately under its name.
+ *
+ * THE RESERVATION IS A LAYOUT NUMBER AND THE SKIP IS A PAINT ONE, which is why
+ * the two may disagree. `rowHeight` must stay constant across whatever is
+ * focused — the header says so: *"a strip that grew when a cell was pointed at
+ * would drop the tail row of the grid at that instant"* — so the strip still
+ * MEASURES the same for a coat and for a draught, and only the ink moves up.
  */
-const DESC_LINES = 2;
+const USE_LINES = 2;
 
-/** Name, meta, the description's lines, then the comparison rows. */
-const DETAIL_H = ROW_H * (2 + DESC_LINES + DETAIL_ROWS_MAX);
+/** Name, meta, a consumable's effect line, then the comparison rows. */
+const DETAIL_H = ROW_H * (2 + USE_LINES + DETAIL_ROWS_MAX);
 
 /**
  * THE EQUIPPED TAB'S STRIP WHEN THE PANEL CANNOT AFFORD MORE: ONE LINE.
@@ -514,7 +521,21 @@ const DETAIL_COMPACT_H = ROW_H;
  * changed height.
  */
 function equippedStripFits(panelH: number): boolean {
-  const inner = panelH - INSET * 2;
+  /**
+   * ═══ THE HEADER COMES OFF FIRST, AND IT USED NOT TO ═══
+   * This read `panelH - INSET * 2` and was therefore OPTIMISTIC BY EXACTLY
+   * `HEADER_H`. The layout it is predicting subtracts the header itself —
+   * `const top = rect.y + HEADER_H + INSET` — so the predicate promised room the
+   * geometry did not have, across a 24-pixel band that `PANEL_MAX_H` makes
+   * reachable. Inside that band the strip was declared to fit while
+   * `dollRowsThatFit` had already shed the doll's bottom row: the tab lost a row
+   * of the thing it exists to show, to make space for a strip that was measured
+   * against a budget nobody has.
+   *
+   * `PANEL_MIN_H` and `PANEL_MAX_H` both include `HEADER_H`. This was the one
+   * place that did not.
+   */
+  const inner = panelH - HEADER_H - INSET * 2;
   return inner - TAB_ROW_H - DETAIL_H >= DOLL_H;
 }
 
@@ -939,8 +960,16 @@ export type InventoryRow =
       readonly title: string;
       /** "uncommon · body", "empty", or the hint. Never a number. */
       readonly meta: string;
-      /** `ItemView.desc` — the catalogue's one sentence — or ''. */
-      readonly desc: string;
+      /**
+       * WHAT USING IT DOES, or '' for anything that is not a consumable.
+       *
+       * This was `desc`, the catalogue's flavour sentence, and it is gone with
+       * the field behind it: a piece of gear communicates its stats and its
+       * name, and prose about how the leather was boiled crowded out the rows a
+       * player opened the panel to read. A draught's effect line stays because
+       * it is not flavour — it is the only place its numbers appear.
+       */
+      readonly useText: string;
       /** THE SERVER'S ROWS, IN THE SERVER'S ORDER. A prefix of them when capped. */
       readonly rows: readonly InspectRow[];
       /** How many the cap held back. 0 in every ordinary case. */
@@ -1247,7 +1276,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
     compact,
     title: '',
     meta: DETAIL_HINT,
-    desc: '',
+    useText: '',
     rows: [] as readonly InspectRow[],
     hiddenRows: 0,
     action: null,
@@ -1271,7 +1300,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       focusId: null,
       title: focus.slot,
       meta: 'empty',
-      desc: '',
+      useText: '',
       rows: [],
       hiddenRows: 0,
       action: null,
@@ -1307,7 +1336,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
        * Absent on everything that is not usable, so every other row is the row
        * it has always been.
        */
-      desc: carried.use === undefined ? carried.desc : `${carried.use}  ${carried.desc}`,
+      useText: carried.use ?? '',
       ...detailRows(carried.compare),
       // DROP IS OFFERED FOR A CARRIED ITEM ONLY. ToME's `playerDrop`
       // (Game.lua:2173-2176 -> `DROP_FLOOR`) drops out of INVEN, and taking a
@@ -1336,7 +1365,8 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       compact,
       title: worn.name,
       meta: `${tierWord(worn.tier)} · ${slot} · worn`,
-      desc: worn.desc,
+      // NOTHING IS WEARABLE AND DRINKABLE, so the doll never has prose at all.
+      useText: '',
       /**
        * ═══ WHAT THIS COAT IS ACTUALLY GIVING YOU ═══
        * `rows: []` was here because the wire had nothing to put in them —
@@ -1373,16 +1403,11 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
        * answer the bag gives.
        */
       meta: `${tierWord(shelved.tier)} · ${shelved.slot ?? 'consumable'} · ${String(shelved.buy)} gold · sells back for ${String(shelved.sell)}`,
-      // THE SHELF'S OWN SENTENCE — `ShopItemView.desc`. This used to resolve the
-      // item out of the player's OWN bag (`item?.desc`), so a coat you did not
-      // already own showed no description at all, which is every coat worth
-      // looking at. The fallback stays for a server too old to send one.
-      desc:
-        shelved.use === undefined
-          ? shelved.desc !== ''
-            ? shelved.desc
-            : (item?.desc ?? '')
-          : `${shelved.use}  ${shelved.desc}`,
+      // A SHELF ROW NEEDS NO FALLBACK NOW. This used to reach into the player's
+      // OWN bag for a description when the shelf sent none, which answered for a
+      // coat you already owned and for nothing else. `use` rides the shelf frame
+      // directly, and gear on a shelf is described by its name and its price.
+      useText: shelved.use ?? '',
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * THE COMPARISON, AND IT ONLY EVER WORKED FOR A COAT YOU ALREADY OWNED.
@@ -1590,7 +1615,7 @@ function closeRect(rect: PanelRect): PanelRect {
 }
 
 /** How many vertical pixels one row wants, given the description's line budget. */
-function rowHeight(row: InventoryRow, descLines: number = DESC_LINES): number {
+function rowHeight(row: InventoryRow, useLines: number = USE_LINES): number {
   switch (row.kind) {
     case InventoryRowKind.Tabs:
       return TAB_ROW_H;
@@ -1599,7 +1624,7 @@ function rowHeight(row: InventoryRow, descLines: number = DESC_LINES): number {
     case InventoryRowKind.Doll:
       return DOLL_H;
     case InventoryRowKind.Detail:
-      return row.compact ? DETAIL_COMPACT_H : ROW_H * (2 + descLines + DETAIL_ROWS_MAX);
+      return row.compact ? DETAIL_COMPACT_H : ROW_H * (2 + useLines + DETAIL_ROWS_MAX);
     case InventoryRowKind.Note:
       return NOTE_ROW_H;
   }
@@ -1618,7 +1643,7 @@ export type PlacedInventoryRow = {
    * painter that decided for itself would draw two lines into one line's room on
    * exactly the window where the budget had to shrink.
    */
-  readonly descLines?: number;
+  readonly useLines?: number;
   /**
    * Cell boxes in the ROW'S OWN ORDER, index for index. Empty for every row but
    * `Cells` and `Doll`.
@@ -1756,11 +1781,11 @@ export function inventoryPanelGeometry(
    * one where they do not, and the painter clamps to THIS number — with an
    * ellipsis, so a cut sentence still says it was cut.
    */
-  let descLines = DESC_LINES;
-  let stripH = detail === undefined ? 0 : rowHeight(detail, descLines);
-  while (descLines > 1 && room < CELL_ROW_H + stripH) {
-    descLines -= 1;
-    stripH = detail === undefined ? 0 : rowHeight(detail, descLines);
+  let useLines = USE_LINES;
+  let stripH = detail === undefined ? 0 : rowHeight(detail, useLines);
+  while (useLines > 1 && room < CELL_ROW_H + stripH) {
+    useLines -= 1;
+    stripH = detail === undefined ? 0 : rowHeight(detail, useLines);
   }
   const stripped = detail !== undefined && room >= CELL_ROW_H + stripH;
   const limit = stripped ? bottom - stripH : bottom;
@@ -1860,7 +1885,7 @@ export function inventoryPanelGeometry(
     placed.push({
       row: detail,
       rect: stripRect,
-      descLines,
+      useLines,
       cells: [],
       tabs: [],
       drop:
@@ -2463,7 +2488,7 @@ function drawDetail(
   const right = rect.x + rect.w;
   // THE BUDGET THE GEOMETRY RESERVED FOR THIS SENTENCE, never a fresh opinion:
   // the strip's height was computed against this number.
-  const lines = placed.descLines ?? DESC_LINES;
+  const lines = placed.useLines ?? USE_LINES;
 
   // A rule above the strip, so it reads as a different KIND of thing from the
   // grid rather than as a fourth row of something.
@@ -2531,19 +2556,23 @@ function drawDetail(
   ctx.fillText(fitText(ctx, row.meta, rect.w), rect.x, y);
   y += ROW_H;
 
-  if (row.desc !== '') {
+  if (row.useText !== '') {
     ctx.font = FONT_BODY;
     ctx.fillStyle = PALETTE.BONE;
     // BOUNDED BY THE SAME NUMBER THE STRIP RESERVED. `wrapClamped` says so with
-    // an ellipsis if it ever has to, which is the honest failure — but the test
-    // over the catalogue is what keeps it from happening.
-    let descY = y;
-    for (const line of wrapClamped(ctx, row.desc, rect.w, lines)) {
-      ctx.fillText(line, rect.x, descY);
-      descY += ROW_H;
+    // an ellipsis if it ever has to.
+    let useY = y;
+    for (const line of wrapClamped(ctx, row.useText, rect.w, lines)) {
+      ctx.fillText(line, rect.x, useY);
+      useY += ROW_H;
     }
+    // ═══ THE GAP IS SKIPPED ENTIRELY FOR GEAR ═══
+    // Inside the branch, not after it. `rowHeight` still reserves these lines so
+    // the strip MEASURES the same whatever is focused, but a coat has no prose
+    // and painting two blank rows above its stats is the clutter this panel was
+    // reported for. The ink moves up; the geometry does not.
+    y += ROW_H * lines;
   }
-  y += ROW_H * lines;
 
   for (const line of row.rows) {
     const emphasis = line.emphasis === true;
@@ -2823,7 +2852,9 @@ export function inventoryTipAt(
   // with no name is a box of stats about nothing.
   if (detail.title === '') return null;
 
-  const lines = wrapForCard(detail.desc);
+  // PROSE ONLY WHERE THERE IS ANY — a consumable's effect line. A coat goes
+  // straight from its name to its numbers, which is the whole point of the card.
+  const lines = detail.useText === '' ? [] : wrapForCard(detail.useText);
   const stats = detail.rows.map((row) => `${row.label}  ${row.value}`);
   // ═══ NOTHING IS DROPPED SILENTLY ═══ caselog.ts's rule, which the strip
   // already follows through `hiddenRows`. The card is capped by the same

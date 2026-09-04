@@ -462,7 +462,6 @@ export type Item = {
    * nothing until it is drunk, and `wornOf` folds it over nobody.
    */
   readonly wielder: Wielder;
-  /** One sentence, shown in the inventory. Flavour; it decides nothing. */
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT DRINKING IT DOES. Absent on everything that is not a consumable.
@@ -481,7 +480,6 @@ export type Item = {
    * two kinds of id, which is the change this field exists to avoid.
    */
   readonly use?: ItemUse;
-  readonly desc: string;
 };
 
 /**
@@ -631,7 +629,6 @@ const WATCHMAN_KIT: readonly Item[] = [
     // +3 IS THE THRESHOLD PIECE. Armour 6 → 9 clears the husk's apr 7 and the
     // elite's 8; at +2 the whole item measures as zero against both.
     wielder: { mods: { armour: 3 } },
-    desc: 'Reinforced felt with a brass band. It has been dented and beaten flat again.',
   },
   {
     id: 'item_watchmans_coat',
@@ -643,7 +640,6 @@ const WATCHMAN_KIT: readonly Item[] = [
     // slice of each blow armour is allowed to bite into, 40% → 50%
     // (Combat.lua:1336, base 30 + the Watchman's authored 10 + this).
     wielder: { mods: { armour: 4, armourHardiness: 10 } },
-    desc: 'Heavy wool over a mail lining. Rain runs off it; so does most of a blow.',
   },
   {
     id: 'item_watchmans_trousers',
@@ -652,7 +648,6 @@ const WATCHMAN_KIT: readonly Item[] = [
     icon: 'item_watchmans_trousers',
     tier: 'common',
     wielder: { mods: { armour: 2 } },
-    desc: 'Serge, double-seated, with a strip of boiled leather down each shin.',
   },
   {
     id: 'item_watchmans_boots',
@@ -664,7 +659,6 @@ const WATCHMAN_KIT: readonly Item[] = [
     // of the attacker's hit chance and works against every creature in the game;
     // +2 armour would be exactly zero against all three of them.
     wielder: { mods: { def: 2 } },
-    desc: 'Hobnailed and half a size too big. Twenty years of beat walking is in the sole.',
   },
   {
     id: 'item_watchmans_buckler',
@@ -673,7 +667,6 @@ const WATCHMAN_KIT: readonly Item[] = [
     icon: 'item_watchmans_buckler',
     tier: 'uncommon',
     wielder: { mods: { def: 3, armour: 1 } },
-    desc: 'A small round shield, strapped to the forearm. Meant for a doorway.',
   },
   {
     id: 'item_watchmans_badge',
@@ -682,7 +675,6 @@ const WATCHMAN_KIT: readonly Item[] = [
     icon: 'item_watchmans_badge',
     tier: 'uncommon',
     wielder: { mods: { atk: 3 } },
-    desc: 'Numbered, tarnished, and still legible. People stop moving when they see it.',
   },
   {
     id: 'item_watchmans_brass_ring',
@@ -729,7 +721,6 @@ const WATCHMAN_KIT: readonly Item[] = [
       stats: { str: 3 },
       onHit: { effectId: 'effect:bleeding', turns: 2, power: 8, magnitude: RING_BLEED },
     },
-    desc: 'Issued on the day of the oath. The band has worn thin from the inside.',
   },
 ];
 
@@ -749,7 +740,6 @@ const INSPECTOR_KIT: readonly Item[] = [
     icon: 'item_inspectors_deerstalker',
     tier: 'uncommon',
     wielder: { mods: { atk: 3 } },
-    desc: 'Checked tweed with both flaps down. Nobody has ever taken it seriously and it has never mattered.',
   },
   {
     id: 'item_inspectors_longcoat',
@@ -762,7 +752,6 @@ const INSPECTOR_KIT: readonly Item[] = [
     // at 0 against a roster whose lowest apr is 7. A "+2 armour" longcoat would
     // read as an upgrade on the sheet and be inert in the fight.
     wielder: { mods: { def: 4 } },
-    desc: 'Oilcloth to the ankle. It moves a half-second after you do, which is the point.',
   },
   {
     id: 'item_inspectors_slacks',
@@ -771,7 +760,6 @@ const INSPECTOR_KIT: readonly Item[] = [
     icon: 'item_inspectors_slacks',
     tier: 'common',
     wielder: { mods: { def: 2 } },
-    desc: 'Pressed, unfashionable, and cut wide enough to run in.',
   },
   {
     id: 'item_inspectors_oxfords',
@@ -782,7 +770,6 @@ const INSPECTOR_KIT: readonly Item[] = [
     // Dex is the Inspector's double-dip: +1 accuracy AND +0.35 defence per
     // point (Combat.lua:1355 and :1245), so a stat grant here beats a flat one.
     wielder: { stats: { dex: 3 } },
-    desc: 'Thin soles, perfect polish. You can hear a floorboard through them.',
   },
   {
     id: 'item_inspectors_dossier',
@@ -795,7 +782,6 @@ const INSPECTOR_KIT: readonly Item[] = [
     // item, the Inspector has a locket and no shield — and forcing them to match
     // would mean inventing art that does not exist.
     wielder: { mods: { dam: 4 } },
-    desc: 'Every page a name, every name crossed out but one. You keep finding new margins.',
   },
   {
     id: 'item_inspectors_signet',
@@ -806,7 +792,6 @@ const INSPECTOR_KIT: readonly Item[] = [
     // `combatCrit` is NOT rescaled (Combat.lua:1415-1427 returns max(crit, 0)),
     // so +4 here is four whole percentage points and reads exactly as written.
     wielder: { mods: { physCrit: 4 } },
-    desc: 'A seal for warrants. The die is worn to the point where only you can read it.',
   },
   {
     id: 'item_inspectors_locket',
@@ -815,7 +800,6 @@ const INSPECTOR_KIT: readonly Item[] = [
     icon: 'item_inspectors_locket',
     tier: 'uncommon',
     wielder: { mods: { mentalResist: 8 } },
-    desc: 'It does not open any more. Whatever is inside is the reason you are still down here.',
   },
 ];
 
@@ -842,7 +826,6 @@ const ALCHEMIST_KIT: readonly Item[] = [
     icon: 'item_inquisitors_cowl',
     tier: 'uncommon',
     wielder: { stats: { mag: 4 } },
-    desc: 'Waxed canvas, chemical-burned at the hem. It keeps the fumes out of your eyes.',
   },
   {
     id: 'item_inquisitors_mantle',
@@ -853,7 +836,6 @@ const ALCHEMIST_KIT: readonly Item[] = [
     // Again NO ARMOUR: the Alchemist's armour is 0 and the roster's floor apr is
     // 7, so anything short of +7 on one item is arithmetic that never fires.
     wielder: { mods: { def: 3, spellResist: 8 } },
-    desc: 'Layered oilskin, stitched with lead thread. The Veil slides off it.',
   },
   {
     id: 'item_inquisitors_breeches',
@@ -862,7 +844,6 @@ const ALCHEMIST_KIT: readonly Item[] = [
     icon: 'item_inquisitors_breeches',
     tier: 'common',
     wielder: { mods: { def: 3 } },
-    desc: 'Cut short and bound at the knee, so nothing catches when a vial goes off.',
   },
   {
     id: 'item_inquisitors_treads',
@@ -871,7 +852,6 @@ const ALCHEMIST_KIT: readonly Item[] = [
     icon: 'item_inquisitors_treads',
     tier: 'common',
     wielder: { mods: { def: 3 } },
-    desc: 'Cork soles over iron shanks. Silent on stone, and they do not conduct.',
   },
   {
     id: 'item_inquisitors_tome',
@@ -881,7 +861,6 @@ const ALCHEMIST_KIT: readonly Item[] = [
     tier: 'uncommon',
     // OFFHAND for the same reason as the dossier: it is held, not worn.
     wielder: { mods: { dam: 5 } },
-    desc: 'Formulae in four hands, none of them yours. The last twenty pages are blank.',
   },
   {
     id: 'item_inquisitors_seal',
@@ -890,7 +869,6 @@ const ALCHEMIST_KIT: readonly Item[] = [
     icon: 'item_inquisitors_seal',
     tier: 'rare',
     wielder: { stats: { mag: 3 } },
-    desc: 'Bone set in silver. Warm before a reaction, cold for an hour afterwards.',
   },
   {
     id: 'item_inquisitors_cipher',
@@ -901,7 +879,6 @@ const ALCHEMIST_KIT: readonly Item[] = [
     // Cunning feeds `combatCrit` at 0.3/point OUTSIDE the rescale, so +4 is a
     // clean +1.2 crit chance that no floor can eat.
     wielder: { stats: { cun: 4 } },
-    desc: 'A brass wheel of substitutions. Turning it makes the Index legible for a moment.',
   },
 ];
 
@@ -927,7 +904,6 @@ const GENERIC_ITEMS: readonly Item[] = [
     icon: 'item_leather_chest',
     tier: 'common',
     wielder: { mods: { armour: 3, def: 1 } },
-    desc: 'Boiled, riveted, and salvaged off somebody who stopped needing it.',
   },
 ];
 
@@ -985,7 +961,6 @@ const DRAUGHTS: readonly Item[] = Object.freeze([
     wielder: {},
     // scrolls.lua:142 `resolvers.mbonus_level(80, 40, ...)` = 40 at level 1.
     use: { kind: ItemUseKind.Heal, amount: resolveMBonus(80, 40) },
-    desc: 'Ashwick work. Whatever is written on you, this argues with it.',
   },
 ]);
 

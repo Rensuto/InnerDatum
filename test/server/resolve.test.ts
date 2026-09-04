@@ -213,11 +213,10 @@ describe('resolveItem folds egos onto a base', () => {
     );
   });
 
-  it('keeps the base icon and description — there is no ego art', () => {
+  it('keeps the base icon — there is no ego art', () => {
     const ego = resolveItem(`${PLAIN}~rf2${EGO_DELIMITER}lg2`);
     if (ego === undefined || COAT === undefined) throw new Error('unreachable');
     expect(ego.icon).toBe(COAT.icon);
-    expect(ego.desc).toBe(COAT.desc);
     expect(ego.slot).toBe(COAT.slot);
     // And the id it reports is the INSTANCE id, not the base's — otherwise an
     // equip intent built from a view would name the wrong item.

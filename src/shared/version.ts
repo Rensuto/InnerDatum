@@ -478,6 +478,23 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 19 -> 20 (GEAR SAYS WHAT IT DOES, NOT WHAT IT IS). `ItemView.desc`,
+ * `GroundItemView.desc` and `ShopItemView.desc` are GONE, along with the
+ * authored sentence behind them: a piece of gear now communicates its stats and
+ * nothing else, and its NAME carries the description it used to need prose for.
+ *
+ * A REMOVAL AN OLD CLIENT READS, WHICH IS THE NARROWING CASE. The rule set at
+ * 1 -> 2 is that a field an old client still reads may not quietly change
+ * meaning, and this one does worse than that: `drawDetail` guards on
+ * `row.desc !== ''`, which `undefined` PASSES, and then hands it to
+ * `wrapClamped`. A v19 client would throw inside the inventory paint rather than
+ * draw a shorter panel — the whole frame, not one line.
+ *
+ * So this is not the 19-era `damage` case a few paragraphs up, which declined a
+ * bump because unknown keys are simply not read. An absent key that a live code
+ * path DOES read is the opposite shape, and refusing the connection is the
+ * behaviour this constant exists for.
+ *
  * 18 -> 19 (WHO ARE YOU TONIGHT). `RosterMsg` is a new outbound frame,
  * `hello` gains `characterId` and `newCharacter`, and an account may now own
  * more than one character.
@@ -672,7 +689,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

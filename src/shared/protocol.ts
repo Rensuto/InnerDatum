@@ -2171,18 +2171,6 @@ export type ItemView = {
   readonly icon: string;
   readonly tier: ItemTier;
   /**
-   * ONE SENTENCE OF FLAVOUR. It decides nothing, and it travels anyway.
-   *
-   * `Item.desc` in src/server/content/items.ts is declared, in its own words, as
-   * "one sentence, shown in the inventory" — so the field was authored FOR this
-   * screen and this frame is the only path to it. Leaving it off would mean the
-   * pass that draws the panel could not show the line the catalogue exists to
-   * carry without bumping the protocol a second time; adding it inside the bump
-   * that is already happening costs one string per item, on a frame that is sent
-   * when somebody's inventory changes rather than on every pump.
-   */
-  readonly desc: string;
-  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THIS ITEM IS WORTH TO **THIS** BODY, PRE-FORMATTED.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -2350,8 +2338,28 @@ export type GroundItemView = {
    * client there is no Equip for this thing.
    */
   readonly slot?: Slot;
-  /** The catalogue sentence — the same string the bag and the shelf show. */
-  readonly desc?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS PILE IS A CATALOGUE ITEM, not gold and not a lore note.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `projectGroundItems` emits three shapes down one array — a note, a coin
+   * pile, and a thing `resolveItem` answered for — and the floor card has to
+   * tell them apart to decide whether "common · body" is a true line or
+   * nonsense stamped on a heap of coins.
+   *
+   * IT USED TO READ `desc !== undefined`, WHICH WORKED BY ACCIDENT. The flavour
+   * sentence happened to be required on every catalogue item and absent on the
+   * other two, so a field that decided nothing was quietly load-bearing. Deleting
+   * the flavour would have made every pile on the floor look like a coin pile,
+   * and nothing would have failed — the card would simply have stopped saying
+   * what things were.
+   *
+   * So the distinction is stated rather than inferred. Absent means "not a
+   * catalogue item", which is the same absence-carries-meaning shape as `slot`
+   * one field up.
+   */
+  readonly fromCatalogue?: true;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT PICKING IT UP AND PUTTING IT ON WOULD CHANGE. Per viewer.
@@ -5488,23 +5496,19 @@ export type ShopItemView = {
   readonly sell: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THE SENTENCE. A shelf was a picture, a name and a price.
+   * WHY THERE IS NO `compare` ON THIS FRAME. Kept where the prose used to be.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * The panel prints a shelf row's description by resolving the item out of the
-   * player's OWN bag — so a coat you do not already own showed no description at
-   * all, which is every coat worth looking at. `tome/dialogs/ShowStore.lua:145` renders the
-   * full text for every row on the shelf.
-   *
-   * ═══ AND WHY THERE IS NO `compare` HERE ═══
    * A delta depends on who is wearing what, and this frame is a BROADCAST: two
    * players at one counter see the same four coats at the same prices, and one
-   * of them buying is a fact the other needs immediately. `desc` is a fact about
-   * the ITEM and rides that broadcast honestly; a comparison is a fact about a
-   * VIEWER and would have to become a viewer frame first. Still missing, and
-   * named here rather than left to be re-found.
+   * of them buying is a fact the other needs immediately. A comparison is a fact
+   * about a VIEWER and would have to become a viewer frame first. It rides
+   * `InventoryMsg.shelf` instead, which is per-viewer.
+   *
+   * THIS BLOCK USED TO DOCUMENT A `desc` FIELD. The shelf carried the catalogue's
+   * flavour sentence and that is gone; a shelf row is a name, a kind and two
+   * prices, and the stats a buyer actually wants are on the viewer frame.
    */
-  readonly desc: string;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHERE IT WOULD GO. Absent on a consumable, exactly as `ItemView.slot` is.
@@ -5516,8 +5520,8 @@ export type ShopItemView = {
    *
    * ON THE BROADCAST, and the split above is why: a slot is a fact about the
    * ITEM — the same one for everybody at the counter — so it rides this frame
-   * honestly, exactly as `desc` does. The COMPARISON is a fact about a viewer
-   * and lives on `InventoryMsg.shelf` instead.
+   * honestly. The COMPARISON is a fact about a viewer and lives on
+   * `InventoryMsg.shelf` instead.
    */
   readonly slot?: Slot;
   /**

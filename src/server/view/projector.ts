@@ -1769,7 +1769,9 @@ export function projectGroundItems(
       // OMITTED for a consumable rather than sent as null, which is the absence
       // `CarriedItemView.slot` relies on to mean "there is no Equip for this".
       ...(item.slot === undefined ? {} : { slot: item.slot }),
-      desc: item.desc,
+      // ONLY THIS BRANCH RESOLVED AN ITEM. The two above it — a lore note and a
+      // coin pile — `continue` before reaching here. See `GroundItemView.fromCatalogue`.
+      fromCatalogue: true,
       /**
        * WHAT PUTTING IT ON WOULD CHANGE — the SAME `compareRows` the bag and the
        * shelf call, with this item as the candidate.
@@ -1811,9 +1813,6 @@ function toItemView(item: Item, drinker?: Combatant): Omit<ItemView, 'compare'> 
     name: item.name,
     icon: item.icon,
     tier: item.tier,
-    // Authored FOR this screen — `Item.desc` calls itself "one sentence, shown
-    // in the inventory" — and this frame is the only path to it.
-    desc: item.desc,
     ...(item.use === undefined ? {} : { use: useText(item.use, drinker) }),
   };
 }
@@ -2540,11 +2539,6 @@ export function projectShop(name: string, stock: readonly string[], level: numbe
       tier: item.tier,
       buy: buyPrice(itemId, level),
       sell: sellPrice(itemId),
-      // THE SENTENCE THE CATALOGUE WAS AUTHORED FOR. The panel used to resolve a
-      // shelf row's description out of the player's own bag, so a coat you did
-      // not already own had none — which is every coat worth looking at. See
-      // `ShopItemView.desc`, which also records why there is no comparison here.
-      desc: item.desc,
       // WHERE IT WOULD GO, omitted for a consumable exactly as the bag omits it
       // — absence is what tells the client there is no slot to compare against.
       ...(item.slot === undefined ? {} : { slot: item.slot }),

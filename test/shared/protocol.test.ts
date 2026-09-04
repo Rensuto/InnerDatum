@@ -1362,7 +1362,6 @@ describe('the floor is broadcast and the bag is not', () => {
         name: "Watchman's Coat",
         icon: 'item_watchmans_coat',
         tier: ItemTier.Rare,
-        desc: 'Heavy wool over a mail lining.',
         slot: Slot.Body,
         // PRE-FORMATTED, SERVER-SIDE. Ported in spirit from ShowEquipInven.lua:54,
         // which passes the destination inventory into `getDesc` as `compare_with`
@@ -1381,7 +1380,6 @@ describe('the floor is broadcast and the bag is not', () => {
         name: "Watchman's Cap",
         icon: 'item_watchmans_cap',
         tier: ItemTier.Uncommon,
-        desc: 'Reinforced felt with a brass band.',
         // WHAT THE CAP IS GIVING THIS BODY — `ItemView.compare`, which the doll
         // needs and used to be carried only for items still in the bag.
         compare: [{ label: 'Armour', value: '+2' }],
@@ -1531,9 +1529,7 @@ describe('the floor is broadcast and the bag is not', () => {
     // it is the arithmetic already done, which is exactly why the raw table can
     // stay off the wire. It used to live on `CarriedItemView` alone, so the doll
     // could not answer "what is this coat giving me" at all.
-    expect(Object.keys(worn).sort()).toEqual(
-      ['compare', 'desc', 'icon', 'itemId', 'name', 'tier'].sort(),
-    );
+    expect(Object.keys(worn).sort()).toEqual(['compare', 'icon', 'itemId', 'name', 'tier'].sort());
     expect('wielder' in worn).toBe(false);
     expect('mods' in worn).toBe(false);
   });

@@ -40,7 +40,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 19 — you choose who you are tonight', () => {
+  it('pins PROTOCOL_VERSION at 20 — gear says what it does', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -100,7 +100,7 @@ describe('shared constants', () => {
     // Every earlier bump argued about a client drawing a LIE. This one is about
     // a client drawing NOTHING, which is the same failure the gate exists to
     // convert into an honest "your client is out of date".
-    expect(PROTOCOL_VERSION).toBe(19);
+    expect(PROTOCOL_VERSION).toBe(20);
   });
 
   it('keeps the 18 -> 19 changelog entry beside the constant, and non-empty', () => {

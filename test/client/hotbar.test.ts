@@ -184,7 +184,7 @@ function itemView(itemId: string): ItemView {
   // and `hotbarTipAt` draws them under the prose. The rows a slot shows are
   // joined in main.ts out of the bag the binding names, so this fixture — which
   // has no bag — has nothing to join and says so.
-  return { itemId, name: itemId, icon: itemId, tier: 'common', desc: '', compare: [] };
+  return { itemId, name: itemId, icon: itemId, tier: 'common', compare: [] };
 }
 
 /**

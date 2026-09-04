@@ -3568,10 +3568,11 @@ function hotbarView(): HotbarView {
     const row = bag.find((entry) => entry.itemId === itemId);
     if (row === undefined) return {};
     return {
-      // `use` AHEAD OF THE FLAVOUR, the same order `detailRow` assembles: the
-      // server rendered that sentence against this body's own Constitution, so
-      // it is the number this drinker would actually get.
-      desc: row.use === undefined ? row.desc : `${row.use}  ${row.desc}`,
+      // WHAT DRINKING IT DOES, and nothing else. The flavour sentence that used
+      // to lead this line is gone with the field behind it; the server renders
+      // `use` against this body's own Constitution, so it is the number this
+      // drinker would actually get rather than the authored one.
+      ...(row.use === undefined ? {} : { desc: row.use }),
       rows: row.compare,
     };
   };
@@ -4615,13 +4616,15 @@ const paintHud: HudPainter = (ctx, width, height) => {
            * ═══ AND A COIN PILE IS NOT A CONSUMABLE ═══
            * Money is not an `Item` at all — `projectGroundItems` says so in as
            * many words, because `resolveItem` cannot answer for it and it has no
-           * slot. Keyed off `desc`, which the catalogue always supplies and money
-           * never does, so gold keeps the bare "47 gold" card it has always had
-           * rather than being classified as a drink.
+           * slot. This keyed off `desc`, which the catalogue always supplied and
+           * money never did; that was an accident of a flavour field being
+           * required, and it is `fromCatalogue` now, which says it on purpose.
+           *
+           * NO PROSE ON THE CARD. Gear is its name, its kind and its numbers.
            */
-          ...(item.desc === undefined
-            ? {}
-            : { meta: `${item.tier} · ${item.slot ?? 'consumable'}`, desc: item.desc }),
+          ...(item.fromCatalogue === true
+            ? { meta: `${item.tier} · ${item.slot ?? 'consumable'}` }
+            : {}),
           ...(item.compare === undefined ? {} : { rows: item.compare }),
         })),
         underfoot: lootAt(lootTile) === TileLoot.Underfoot,
