@@ -802,6 +802,20 @@ export type InspectView = {
    * class line", never "unknown".
    */
   readonly className?: string;
+  /**
+   * WHERE THIS BODY IS FROM — `content/origins.ts`, ToME's race descriptor.
+   *
+   * SELF ONLY AND OPTIONAL, under exactly `className`'s rule and for its
+   * reasons: a monster has no origin, another player's is not the viewer's to
+   * read off a hover card, and an old client ignores the field. Absent means "do
+   * not draw the line", never "unknown".
+   *
+   * IT SITS BESIDE `className` BECAUSE IT IS THE SAME KIND OF FACT.
+   * `CharacterSheet.lua:604-606` prints Sex, Race and Class as one identity
+   * block, and this sheet has cited that line since it was written while having
+   * only one of the three to show.
+   */
+  readonly originName?: string;
   readonly kind: string;
   readonly hp: number;
   readonly maxHp: number;

@@ -43,6 +43,7 @@ import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
 import { combatGetDamageIncrease, combatGetResist, combatGetResistPen } from '../engine/damage.ts';
 import { ActorKind, InspectGroup } from '../../shared/protocol.ts';
 import { classById } from '../content/classes.ts';
+import { originOf } from '../content/origins.ts';
 import { MELEE_REACH, combatDistance } from '../engine/combat.ts';
 import type { InspectRow, InspectView } from '../../shared/protocol.ts';
 import {
@@ -321,6 +322,22 @@ function liveEffectIds(state: EffectState | undefined, target: Actor): readonly 
 function classNameOf(actor: Actor): string | undefined {
   if (actor.kind !== ActorKind.Player) return undefined;
   return classById(actor.classId)?.name;
+}
+
+/**
+ * WHERE A BODY IS FROM, or undefined for anything that cannot be from anywhere.
+ *
+ * THE SAME SHAPE AS `classNameOf` ABOVE, deliberately: one kind check, one
+ * lookup, and the narrowing is what makes `actor.origin` readable at all —
+ * `origin` is a `PlayerActor` field and `EngineActor` is the union.
+ *
+ * `originOf` AND NOT `originById`: this is a body that already exists, so an
+ * origin deleted from content must degrade to the baseline rather than blank the
+ * identity block. Only the birth frame wants the strict lookup.
+ */
+function originNameOf(actor: Actor): string | undefined {
+  if (actor.kind !== ActorKind.Player) return undefined;
+  return originOf(actor.origin).name;
 }
 
 /**
@@ -740,11 +757,20 @@ export function inspectActor(
   // doc on `InspectView` argues — a header must not have to scan `rows` for a
   // label to find out who it is drawing.
   const className = self ? classNameOf(target) : undefined;
+  /**
+   * AND WHERE THEY ARE FROM, under the identical rule. `originOf` rather than
+   * `originById` because this is a body that already exists: an origin deleted
+   * from content must degrade to the baseline on a hover card, never blank out
+   * the identity block. Reading a save and reading a body want the forgiving
+   * lookup; only the birth frame wants the strict one.
+   */
+  const originName = self ? originNameOf(target) : undefined;
 
   return {
     id: target.id,
     name: target.name,
     ...(className === undefined ? {} : { className }),
+    ...(originName === undefined ? {} : { originName }),
     kind: target.kind,
     hp: target.hp,
     maxHp: target.maxHp,

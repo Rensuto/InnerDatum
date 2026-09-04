@@ -316,6 +316,29 @@ describe('charSheetRows follows ToME’s sheet, reduced', () => {
     ]);
   });
 
+  it('draws the origin above the class, which is CharacterSheet.lua:604-606 order', () => {
+    // Sex, Race, Class is upstream's identity block and its sequence: what you
+    // were born as before what you took up. Both come from top-level fields, so
+    // neither goes hunting through `rows`.
+    const rows = charSheetRows(
+      sheet({ view: selfView({ originName: 'Cityborn', className: 'The Watchman' }) }),
+      SheetTab.General,
+    );
+    const labels = fieldLabels(rows);
+    expect(labels).toContain('Origin');
+    expect(labels.indexOf('Origin')).toBeLessThan(labels.indexOf('Class'));
+  });
+
+  it('draws no origin line at all when the server sent none', () => {
+    // The additive-field contract: an older server sends no `originName` and the
+    // sheet loses a line rather than printing "Origin: unknown".
+    const rows = charSheetRows(
+      sheet({ view: selfView({ originName: undefined }) }),
+      SheetTab.General,
+    );
+    expect(fieldLabels(rows)).not.toContain('Origin');
+  });
+
   it('draws the class from the top-level field and never from a row labelled Class', () => {
     // protocol.ts makes `className` a field precisely so the header cannot go
     // hunting through `rows`. Absent means "no class line", never "unknown".

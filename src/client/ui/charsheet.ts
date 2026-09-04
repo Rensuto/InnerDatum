@@ -755,6 +755,13 @@ export function charSheetRows(
     // row order is the server's to change and a header that hunted for 'Class'
     // would silently draw a nameless detective. Absent means "no class line",
     // never "unknown", so nothing is drawn when it is missing.
+    // ═══ ORIGIN ABOVE CLASS — `CharacterSheet.lua:604-606`'s OWN ORDER ═══
+    // Upstream prints Sex, Race, Class in that sequence: what you were born as
+    // comes before what you took up. This sheet has cited that line since it was
+    // written and had only the last of the three to show.
+    if (self.originName !== undefined) {
+      rows.push({ kind: SheetRowKind.Field, label: 'Origin', value: self.originName });
+    }
     if (self.className !== undefined) {
       rows.push({ kind: SheetRowKind.Field, label: 'Class', value: self.className });
     }
