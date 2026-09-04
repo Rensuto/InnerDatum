@@ -381,7 +381,7 @@ export type HoverCard = {
    * the row above — every time, at every window size. That is what the panel was
    * reported for.
    *
-   * `ShowEquipInven.lua:65` is the same rule upstream:
+   * `tome/dialogs/ShowEquipInven.lua:65` is the same rule upstream:
    * `last_display_x = ui.ui.last_display_x + ui.ui.w` — the slot's tooltip is
    * anchored past the slot's right edge rather than at the mouse.
    *
@@ -437,7 +437,7 @@ export function hoverCardRect(
   const anchor = card.anchor;
   /**
    * BESIDE THE ANCHOR, ON WHICHEVER SIDE HAS ROOM — and to the RIGHT first,
-   * which is `ShowEquipInven.lua:65`'s side. The flip is decided by the rect, so
+   * which is `tome/dialogs/ShowEquipInven.lua:65`'s side. The flip is decided by the rect, so
    * it cannot happen while the pointer is still (see the note on the type).
    *
    * The final `Math.max(CARD_GAP, …)` is the same clamp the pointer path uses
