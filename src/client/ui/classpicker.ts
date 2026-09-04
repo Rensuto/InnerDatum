@@ -257,6 +257,17 @@ const SELECTED_WORD = 'SELECTED';
  */
 const ORIGIN_ROW_H = 18;
 const ORIGIN_NOTE_H = 12;
+/**
+ * A SECOND LINE, FOR THE PROSE.
+ *
+ * `OriginOptionView.description` was crossing the wire and being drawn NOWHERE —
+ * a correct value with no reader, which is this project's recurring defect and
+ * was introduced here by the commit that added the strip. The numbers line
+ * cannot absorb it: it is already near what `fitText` will ellipsise, and a
+ * description clipped to "Raised in the Common realm, on a str…" is worse than
+ * no description.
+ */
+const ORIGIN_DESC_H = 12;
 const ORIGIN_GAP = 4;
 const ORIGIN_CHIP_GAP = 6;
 
@@ -337,6 +348,8 @@ type PickerGeometry = {
   readonly origins: readonly PanelRect[];
   /** The one shared line under the chips, where the selected origin's numbers go. */
   readonly originNote: PanelRect;
+  /** And the line under THAT, where its description goes. */
+  readonly originDesc: PanelRect;
 };
 
 /**
@@ -379,7 +392,8 @@ function pickerGeometry(
    * zero pixels, and the screen is laid out exactly as it was before origins
    * existed rather than with a band of empty panel where a strip would go.
    */
-  const stripH = origins.length === 0 ? 0 : ORIGIN_ROW_H + ORIGIN_NOTE_H + ORIGIN_GAP;
+  const stripH =
+    origins.length === 0 ? 0 : ORIGIN_ROW_H + ORIGIN_DESC_H + ORIGIN_NOTE_H + ORIGIN_GAP;
   const stripTop = top + HINT_H;
   const originRects: PanelRect[] = [];
   if (origins.length > 0) {
@@ -393,9 +407,18 @@ function pickerGeometry(
       });
     }
   }
-  const originNote: PanelRect = {
+  // THE PROSE FIRST AND THE NUMBERS SECOND, which is `ClassOptionView`'s own
+  // order and its argument: a player who has never played this game is answering
+  // "who am I" before "what are my numbers".
+  const originDesc: PanelRect = {
     x,
     y: stripTop + ORIGIN_ROW_H,
+    w: innerW,
+    h: ORIGIN_DESC_H,
+  };
+  const originNote: PanelRect = {
+    x,
+    y: stripTop + ORIGIN_ROW_H + ORIGIN_DESC_H,
     w: innerW,
     h: ORIGIN_NOTE_H,
   };
@@ -404,7 +427,7 @@ function pickerGeometry(
   const cardsH = Math.max(0, confirm.y - CONFIRM_GAP - cardsTop);
   const count = options.length;
   if (count === 0 || cardsH <= 0) {
-    return { cards: [], confirm, hint, origins: originRects, originNote };
+    return { cards: [], confirm, hint, origins: originRects, originNote, originDesc };
   }
 
   const cardW = Math.floor((innerW - CARD_GAP * (count - 1)) / count);
@@ -412,7 +435,7 @@ function pickerGeometry(
   for (let i = 0; i < count; i += 1) {
     cards.push({ x: x + i * (cardW + CARD_GAP), y: cardsTop, w: Math.max(0, cardW), h: cardsH });
   }
-  return { cards, confirm, hint, origins: originRects, originNote };
+  return { cards, confirm, hint, origins: originRects, originNote, originDesc };
 }
 
 /**
@@ -436,13 +459,22 @@ function originNoteText(origin: OriginOptionView): string {
     .filter(([, value]) => typeof value === 'number' && value !== 0)
     .map(([key, value]) => `${Number(value) > 0 ? '+' : ''}${String(value)} ${key.toUpperCase()}`);
 
+  const birth = origin.birthPoints;
+  const birthTotal = (birth?.points ?? 0) + (birth?.generics ?? 0) + (birth?.categories ?? 0);
+
   return [
     `${origin.name.toUpperCase()} — ${SELECTED_WORD}`,
-    mods.length === 0 ? 'no stat modifiers' : mods.join(' '),
-    `${String(origin.lifeRating)} life/level`,
+    ...(mods.length === 0 ? [] : [mods.join(' ')]),
+    `${String(origin.lifeRating)} life/lv`,
     origin.experiencePenaltyPct === 0
-      ? 'no experience penalty'
-      : `${String(origin.experiencePenaltyPct)}% experience penalty`,
+      ? 'no xp penalty'
+      : `${String(origin.experiencePenaltyPct)}% xp penalty`,
+    // ABBREVIATED HARD, because this is one line and `fitText` ellipsises what
+    // does not fit — a truncated bonus is a bonus a player cannot compare.
+    ...(birthTotal === 0 ? [] : [`+${String(birthTotal)} points at birth`]),
+    ...(origin.extraPointEvery === undefined
+      ? []
+      : [`+2 every ${String(origin.extraPointEvery)} lv`]),
   ].join('  ·  ');
 }
 
@@ -1002,6 +1034,12 @@ export function drawClassPicker(options: ClassPickerDrawOptions): void {
       : origins[options.selectedOrigin];
   if (chosenOrigin !== undefined) {
     ctx.font = FONT_BODY;
+    ctx.fillStyle = PALETTE.BONE;
+    ctx.fillText(
+      fitText(ctx, chosenOrigin.description, geometry.originDesc.w),
+      geometry.originDesc.x,
+      geometry.originDesc.y + ORIGIN_DESC_H / 2,
+    );
     ctx.fillStyle = PALETTE.GREY_HI;
     ctx.fillText(
       fitText(ctx, originNoteText(chosenOrigin), geometry.originNote.w),

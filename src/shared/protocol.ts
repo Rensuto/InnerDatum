@@ -5119,10 +5119,11 @@ export type ClassOptionsMsg = {
  * exactly as `ClassOptionView` does for `maxHp` and `resource` — one place
  * decides how a number looks, and it is the place that knows the font.
  *
- * ═══ WHAT IS DELIBERATELY NOT HERE ═══
- * `OriginDef.adaptable` does not cross. It is declared server-side and nothing
- * reads it yet, and a card advertising a bonus the server does not grant would
- * be worse than a card that stays quiet about it. It crosses the day it works.
+ * ═══ THE BONUS CROSSES NOW, BECAUSE IT WORKS NOW ═══
+ * This block used to say `OriginDef.adaptable` deliberately did not cross —
+ * "a card advertising a bonus the server does not grant would be worse than a
+ * card that stays quiet about it. It crosses the day it works." That day is
+ * this one: the purse actually pays it, so the card actually says it.
  */
 export type OriginOptionView = {
   /** The authored origin id. What a `choose_class` frame names. */
@@ -5146,6 +5147,20 @@ export type OriginOptionView = {
    * (human.lua:94), and 1.15 is not a number anybody reads.
    */
   readonly experiencePenaltyPct: number;
+  /**
+   * WHAT THIS ORIGIN IS HANDED AT BIRTH, by purse — Cornac's `copy_add`
+   * (human.lua:128-132). Absent means none, and none is the common case.
+   */
+  readonly birthPoints?: {
+    readonly points?: number;
+    readonly generics?: number;
+    readonly categories?: number;
+  };
+  /**
+   * ONE EXTRA CLASS AND GENERIC POINT EVERY N LEVELS —
+   * `extra_talent_point_every` (Actor.lua:3485-3486). Absent means never.
+   */
+  readonly extraPointEvery?: number;
 };
 
 // ---------------------------------------------------------------------------

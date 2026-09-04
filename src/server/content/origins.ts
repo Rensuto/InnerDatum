@@ -65,6 +65,7 @@
 export const BASELINE_LIFE_RATING = 10;
 
 import { STAT_BASE } from '../engine/derived.ts';
+import type { PointBonus } from '../../shared/progression.ts';
 import type { PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 
@@ -93,18 +94,35 @@ export type OriginDef = {
    */
   readonly experienceMult: number;
   /**
-   * Cornac's `copy_add` (`human.lua:128-132`): one extra category point, one
-   * class point and one generic point AT BIRTH — and, per its own description,
-   * again every ten levels.
+   * ═══ WHAT THIS ORIGIN IS HANDED AT BIRTH — `copy_add` (human.lua:128-132) ═══
    *
-   * ALL THREE OR NONE, because upstream grants them as one block and the block
-   * IS the identity: *"Humans are an inherently very adaptable race and as such
-   * they gain a talent category point (others only gain one at levels 10, 20 and
-   * 36) and both a class and a generic talent point at birth and every 10
-   * levels."* `CATEGORY_POINT_LEVELS` already holds that 10/20/36, ported before
-   * anything read it against a race.
+   *     copy_add = { unused_talents_types = 1, unused_talents = 1, unused_generics = 1 }
+   *
+   * Keyed by OUR purse names rather than upstream's so the grant is a 1:1 read
+   * with no translation table in between: `points` is `unspentPoints`,
+   * `generics` is `unspentGenerics`, `categories` is `unspentCategories`.
    */
-  readonly adaptable: boolean;
+  readonly birthPoints?: {
+    readonly points?: number;
+    readonly generics?: number;
+    readonly categories?: number;
+  };
+  /**
+   * ═══ AND ONE MORE OF EACH EVERY N LEVELS — Actor.lua:3485-3486 ═══
+   * `extra_talent_point_every` / `extra_generic_point_every`, which Cornac sets
+   * to 10 (`human.lua:142-143`).
+   *
+   * A PERIOD RATHER THAN A FLAG, because that is what upstream stores. This
+   * field replaced a boolean called `adaptable` that nothing ever read: the
+   * boolean could only ever express Cornac, and the number expresses the
+   * mechanism. See `PointBonus`.
+   *
+   * IT DRIVES BOTH PURSES TOGETHER, because upstream's two fields are set
+   * together everywhere they are set at all, and the description sells them as
+   * one thing: *"both a class and a generic talent point at birth and every 10
+   * levels"*.
+   */
+  readonly extraPointEvery?: number;
 };
 
 /**
@@ -127,7 +145,13 @@ export const CITYBORN: OriginDef = Object.freeze({
   // `experience = 1.0` (human.lua:127). No penalty, and the only origin so far
   // that pays nothing for what it gets.
   experienceMult: 1.0,
-  adaptable: true,
+  // `copy_add` (human.lua:128-132) and `extra_*_point_every` (human.lua:142-143).
+  // THE WHOLE IDENTITY OF THIS ORIGIN: no modifiers, no penalty, and a third
+  // more points than anybody else to spend on whatever the work turns out to
+  // need. The category point is the loudest of the three — a whole discipline,
+  // when everyone else waits until level 10 for their first.
+  birthPoints: { points: 1, generics: 1, categories: 1 },
+  extraPointEvery: 10,
 });
 
 /**
@@ -152,7 +176,9 @@ export const INDEXED: OriginDef = Object.freeze({
   // `experience = 1.15` (human.lua:97). Fifteen per cent, and it is the whole
   // counterweight — see `OriginDef.experienceMult`.
   experienceMult: 1.15,
-  adaptable: false,
+  // Higher declares no `copy_add` and no `extra_*_every`: it pays for its stats
+  // in experience, not in points. Both fields absent rather than zeroed, which
+  // is the same choice `statMods: {}` makes one origin up.
 });
 
 /**
@@ -227,4 +253,29 @@ export function combatWithOrigin(base: CombatSheet, origin: OriginDef): CombatSh
     stats[key] = (stats[key] ?? STAT_BASE) + value;
   }
   return { ...base, stats };
+}
+
+/**
+ * THE ORIGIN'S CLASS-POINT BONUS, in the shape `src/shared/progression.ts` takes.
+ *
+ * THREE TINY FUNCTIONS RATHER THAN ONE THAT RETURNS THREE, because every caller
+ * wants exactly one purse and a caller that reached for the wrong field of a
+ * combined object would be spending the wrong currency — which is a bug no test
+ * catches, because both numbers are 1.
+ */
+export function classPointBonus(origin: OriginDef): PointBonus {
+  return { every: origin.extraPointEvery, atBirth: origin.birthPoints?.points };
+}
+
+/** The generic-point bonus. Upstream drives both purses off the same period. */
+export function genericPointBonus(origin: OriginDef): PointBonus {
+  return { every: origin.extraPointEvery, atBirth: origin.birthPoints?.generics };
+}
+
+/**
+ * The category points granted at birth. A BARE NUMBER, not a `PointBonus`, and
+ * the asymmetry is upstream's: there is no `extra_category_point_every`.
+ */
+export function birthCategoryPoints(origin: OriginDef): number {
+  return origin.birthPoints?.categories ?? 0;
 }

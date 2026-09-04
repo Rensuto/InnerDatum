@@ -567,10 +567,25 @@ export function gainExp(level: number, xp: number, award: number, expMod = 1): E
  * 2 and it is 13/16 = 81%, at which point there is nothing to decide and the
  * panel is a checklist you tick until it is empty.
  *
+ * ═══ AN ORIGIN MAY ADD ONE, AND THAT IS NOT THIS DECISION BEING REVERSED ═══
+ * `PointBonus` exists now and an adaptable origin carries `atBirth: 1` plus one
+ * every ten levels. That is a RACE bonus (`human.lua:128-132`), which is a
+ * different thing from the universal birth grant argued away above: upstream
+ * gives EVERY character 2 and then gives a Cornac one MORE. The 2 is still
+ * dropped — our four loadout talents are still what a character is born with —
+ * and what an origin restores is only the RELATIVE gap that makes one origin
+ * different from another.
+ *
+ * The arithmetic moves accordingly and stays inside the argument: through level
+ * 10 an adaptable origin holds 12 of 16 steps (75%) against a plain one's 11
+ * (69%). Both leave steps unbought and a choice to make; neither is a checklist.
+ * If a future origin ever pushes that past ~80%, this paragraph is the one that
+ * says why it should not.
+ *
  * @param level the level just REACHED. Level 1 grants nothing — it is where a
  *   character starts, not somewhere it levelled up to.
  */
-export function pointsForLevel(level: number): number {
+export function pointsForLevel(level: number, bonus: PointBonus = {}): number {
   if (level <= 1) return 0;
 
   // Actor.lua:3749 — the flat point.
@@ -582,8 +597,42 @@ export function pointsForLevel(level: number): number {
   // Actor.lua:3768 — and three more at the cap. See `CAP_BONUS_CLASS_POINTS`.
   if (level === MAX_CHARACTER_LEVEL) points = points + CAP_BONUS_CLASS_POINTS;
 
+  // Actor.lua:3485 — `extra_talent_point_every`. See `PointBonus`.
+  if (bonus.every !== undefined && bonus.every > 0 && level % bonus.every === 0) {
+    points = points + 1;
+  }
+
   return points;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT AN ORIGIN ADDS TO A TALENT PURSE. Actor.lua:3485-3486 and `copy_add`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream has exactly two mechanisms and this is both of them:
+ *
+ *     if self.extra_talent_point_every and level % self.extra_talent_point_every == 0
+ *         then self.unused_talents = self.unused_talents + 1 end
+ *
+ * — a PERIOD, not a flag, which is why `every` is a number. Cornac sets it to 10
+ * (`human.lua:142-143`); an origin that granted one every 15 needs no new code.
+ *
+ *     copy_add = { unused_talents = 1, unused_generics = 1, unused_talents_types = 1 }
+ *
+ * — a one-off at BIRTH (`human.lua:128-132`), which `atBirth` is.
+ *
+ * ═══ THIS FILE STAYS PURE AND KNOWS NOTHING ABOUT ORIGINS ═══
+ * It takes the two numbers, never an `OriginDef`: `src/shared/` may not import
+ * from `src/server/`, and the caller that has the origin is the one that reads
+ * it. Same shape as `expChart`'s `expMod`.
+ */
+export type PointBonus = {
+  /** Grant one extra every N levels. Absent or 0 is "no such grant". */
+  readonly every?: number;
+  /** Grant this many once, at character creation. */
+  readonly atBirth?: number;
+};
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -633,10 +682,14 @@ export const CAP_BONUS_GENERIC_POINTS = 3;
  *
  * At `MAX_CHARACTER_LEVEL` it is 11 — 9 from levels 2-10, plus 1 each at 5 and 10.
  */
-export function totalPointsAtLevel(level: number): number {
-  let total = 0;
+export function totalPointsAtLevel(level: number, bonus: PointBonus = {}): number {
+  // THE BIRTH GRANT IS PART OF THE TOTAL, and forgetting it is not cosmetic:
+  // `applyRestore` derives points-in-hand as this total MINUS everything spent,
+  // so a birth point that has been spent would come back negative, be clamped to
+  // zero, and be confiscated on every single reload. See `PointBonus.atBirth`.
+  let total = bonus.atBirth ?? 0;
   for (let l = 2; l <= level; l++) {
-    total = total + pointsForLevel(l);
+    total = total + pointsForLevel(l, bonus);
   }
   return total;
 }
@@ -695,6 +748,15 @@ export function totalPointsAtLevel(level: number): number {
  * A category point buys a WHOLE DISCIPLINE — six talents nobody starts with.
  * Three across fifty levels is what makes which one a build decision rather
  * than a shopping list, and it is why upstream spends them so rarely.
+ *
+ * ═══ FOUR FOR AN ADAPTABLE ORIGIN, AND THE FOURTH ARRIVES FIRST ═══
+ * Cornac's `copy_add` hands one over at BIRTH (`human.lua:128-132`), which is
+ * upstream's loudest race bonus precisely because of the scarcity above: it is
+ * the difference between choosing your second discipline at level 10 and
+ * choosing it before you have taken a step. `totalCategoryPointsAtLevel` takes
+ * that as its `atBirth` argument; the LEVELS in this list are unchanged, because
+ * there is no `extra_category_point_every` upstream and inventing one would turn
+ * a build decision back into a drip.
  */
 export const CATEGORY_POINT_LEVELS: readonly number[] = Object.freeze([10, 20, 36]);
 
@@ -780,15 +842,20 @@ export function spentFromSpread(ranks: Iterable<number>, birthGrants: number): n
 }
 
 /** Every category point a character of this level has ever been granted. */
-export function totalCategoryPointsAtLevel(level: number): number {
-  let total = 0;
+export function totalCategoryPointsAtLevel(level: number, atBirth = 0): number {
+  // NO `every` FOR THIS ONE, and that is upstream rather than an omission:
+  // `extra_talent_point_every` and `extra_generic_point_every` exist
+  // (Actor.lua:3485-3486) and there is no category equivalent. An adaptable
+  // origin gets ONE extra discipline, at birth, for its whole career — which is
+  // what makes it a build decision rather than a slow drip.
+  let total = atBirth;
   for (const at of CATEGORY_POINT_LEVELS) {
     if (level >= at) total += 1;
   }
   return total;
 }
 
-export function genericPointsForLevel(level: number): number {
+export function genericPointsForLevel(level: number, bonus: PointBonus = {}): number {
   if (level <= 1) return 0;
   // Actor.lua:3750 — the flat point, then :3752 takes it back on every fifth.
   const points = level % 5 === 0 ? 0 : 1;
@@ -800,14 +867,28 @@ export function genericPointsForLevel(level: number): number {
    * swap fires first and takes the ordinary generic point away, then the cap
    * bonus lands on top of nothing.
    */
-  return level === MAX_CHARACTER_LEVEL ? points + CAP_BONUS_GENERIC_POINTS : points;
+  const capped = level === MAX_CHARACTER_LEVEL ? points + CAP_BONUS_GENERIC_POINTS : points;
+
+  /**
+   * Actor.lua:3486 — `extra_generic_point_every`, the mirror of the class one.
+   *
+   * ON TOP OF THE FIFTH-LEVEL SWAP RATHER THAN INSTEAD OF IT, which is what
+   * makes level 10 the interesting one for an adaptable origin: the ordinary
+   * generic point is taken away by :3752 and this hands one straight back, so a
+   * tenth level pays 1 generic where everybody else's pays 0.
+   */
+  if (bonus.every !== undefined && bonus.every > 0 && level % bonus.every === 0) {
+    return capped + 1;
+  }
+  return capped;
 }
 
 /** Every generic point a character of this level has been handed. */
-export function totalGenericPointsAtLevel(level: number): number {
-  let total = 0;
+export function totalGenericPointsAtLevel(level: number, bonus: PointBonus = {}): number {
+  // The birth grant, for `totalPointsAtLevel`'s stated reason.
+  let total = bonus.atBirth ?? 0;
   for (let l = 2; l <= level; l++) {
-    total = total + genericPointsForLevel(l);
+    total = total + genericPointsForLevel(l, bonus);
   }
   return total;
 }

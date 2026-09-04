@@ -1200,6 +1200,11 @@ function toOriginOptionView(origin: OriginDef): OriginOptionView {
     statMods,
     lifeRating: origin.lifeRating,
     experiencePenaltyPct: Math.round((origin.experienceMult - 1) * 100),
+    // SPREAD ONLY WHEN THERE IS ONE, so an origin with no bonus carries no keys
+    // at all rather than a table of noughts — the same choice `statMods` makes
+    // three lines up.
+    ...(origin.birthPoints === undefined ? {} : { birthPoints: origin.birthPoints }),
+    ...(origin.extraPointEvery === undefined ? {} : { extraPointEvery: origin.extraPointEvery }),
   };
 }
 

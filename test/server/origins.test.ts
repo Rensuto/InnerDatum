@@ -7,12 +7,22 @@ import {
   DEFAULT_ORIGIN,
   INDEXED,
   ORIGINS,
+  birthCategoryPoints,
+  classPointBonus,
   combatWithOrigin,
+  genericPointBonus,
   originLifeDelta,
   originOf,
 } from '../../src/server/content/origins.ts';
 import { PLAYER_RANK, maxLifeFor } from '../../src/shared/leveling.ts';
-import { expChart, gainExp } from '../../src/shared/progression.ts';
+import {
+  expChart,
+  gainExp,
+  pointsForLevel,
+  totalCategoryPointsAtLevel,
+  totalGenericPointsAtLevel,
+  totalPointsAtLevel,
+} from '../../src/shared/progression.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -147,6 +157,71 @@ describe('the roster', () => {
     for (const origin of ORIGINS) {
       expect(origin.name.length, origin.id).toBeGreaterThan(0);
       expect(origin.description.length, origin.id).toBeGreaterThan(40);
+    }
+  });
+});
+
+describe('the adaptable origin is paid, and paid exactly once', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Cornac's `copy_add` and `extra_talent_point_every` — human.lua:128-143.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * These read the TOTALS rather than the per-level grant, because the totals are
+   * what `applyRestore` derives every purse from: a bonus that the per-level
+   * function grants and the total does not know about is a point confiscated on
+   * the next reload, silently, and only from the players who earned it.
+   */
+  it('hands over one of each at birth', () => {
+    expect(totalPointsAtLevel(1, classPointBonus(CITYBORN))).toBe(1);
+    expect(totalGenericPointsAtLevel(1, genericPointBonus(CITYBORN))).toBe(1);
+    expect(totalCategoryPointsAtLevel(1, birthCategoryPoints(CITYBORN))).toBe(1);
+  });
+
+  /** …and the origin that pays in experience instead gets none of it. */
+  it('hands the Indexed nothing at birth', () => {
+    expect(totalPointsAtLevel(1, classPointBonus(INDEXED))).toBe(0);
+    expect(totalGenericPointsAtLevel(1, genericPointBonus(INDEXED))).toBe(0);
+    expect(totalCategoryPointsAtLevel(1, birthCategoryPoints(INDEXED))).toBe(0);
+  });
+
+  /**
+   * ONE MORE OF EACH EVERY TEN LEVELS, and the gap is measured against the SAME
+   * function with no bonus rather than against a spelled number — so this still
+   * means "one more than everybody else" the day the base curve is retuned.
+   */
+  it('adds one class and one generic point every ten levels', () => {
+    for (const level of [10, 20, 30, 40, 50]) {
+      const plain = totalPointsAtLevel(level);
+      const adaptable = totalPointsAtLevel(level, classPointBonus(CITYBORN));
+      // birth 1, plus one per completed decade.
+      expect(adaptable - plain, `class points at ${String(level)}`).toBe(1 + level / 10);
+
+      const plainGen = totalGenericPointsAtLevel(level);
+      const adaptableGen = totalGenericPointsAtLevel(level, genericPointBonus(CITYBORN));
+      expect(adaptableGen - plainGen, `generic points at ${String(level)}`).toBe(1 + level / 10);
+    }
+  });
+
+  /** Nothing at level 9, one at level 10 — the period is a period, not a rate. */
+  it('pays on the tenth level and not before it', () => {
+    expect(pointsForLevel(9, classPointBonus(CITYBORN))).toBe(pointsForLevel(9));
+    expect(pointsForLevel(10, classPointBonus(CITYBORN))).toBe(pointsForLevel(10) + 1);
+  });
+
+  /**
+   * ═══ AND NO EXTRA DISCIPLINES ON A CLOCK ═══
+   * There is no `extra_category_point_every` upstream. The adaptable origin gets
+   * ONE more category point for its whole career, at birth, and inventing a
+   * periodic one would turn upstream's rarest currency into a drip.
+   */
+  it('never grants a second category point on a timer', () => {
+    for (const level of [10, 20, 36, 50]) {
+      expect(
+        totalCategoryPointsAtLevel(level, birthCategoryPoints(CITYBORN)) -
+          totalCategoryPointsAtLevel(level),
+        `categories at ${String(level)}`,
+      ).toBe(1);
     }
   });
 });

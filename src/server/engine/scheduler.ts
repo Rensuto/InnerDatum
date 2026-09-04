@@ -3829,10 +3829,14 @@ function applyPendingLevels(actor: EngineActor, run: Run): void {
   for (let level = from; level <= actor.level; level += 1) {
     // ONE GRANT PER LEVEL CROSSED, never one per award: a boss that carries a
     // character from 4 to 6 owes the level-5 pair AND the level-6 single.
-    actor.unspentPoints += pointsForLevel(level);
+    // `extra_talent_point_every` RIDES ALONG, and `atBirth` deliberately does
+    // not: a birth grant is paid once into the purse when the origin is chosen,
+    // not re-granted on every level crossed.
+    const originBonus = { every: actor.extraPointEvery };
+    actor.unspentPoints += pointsForLevel(level, originBonus);
     // AND THE GENERIC POINT, which is the same grant seen from the other side:
     // two a level, always, and a fifth level moves one of them across.
-    actor.unspentGenerics += genericPointsForLevel(level);
+    actor.unspentGenerics += genericPointsForLevel(level, originBonus);
     // AND, AT TEN, TWENTY AND THIRTY-SIX, A WHOLE DISCIPLINE. Actor.lua:3757-3760.
     // In the same loop and on the same per-level-crossed rule as the other
     // three: a boss that carries a character from 9 to 11 owes the level-10

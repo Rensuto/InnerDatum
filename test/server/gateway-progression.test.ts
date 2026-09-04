@@ -25,6 +25,7 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { TALENT_MAX_LEVEL, totalPointsAtLevel } from '../../src/shared/progression.ts';
+import { DEFAULT_ORIGIN, classPointBonus } from '../../src/server/content/origins.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
@@ -530,7 +531,24 @@ describe('the three game rules', () => {
     const ren = await connect(server.port);
     playsThe(WATCHMAN);
     const body = bodyOf(await ren.hello('ren-handle'));
-    // A fresh character: four talents at rank 1 and NOTHING granted yet.
+    /**
+     * A FRESH CHARACTER HOLDS EXACTLY ONE POINT, and it is the ORIGIN'S.
+     *
+     * This read `toBe(0)` and "NOTHING granted yet" while every body was
+     * implicitly Cornac with its `copy_add` unported. The universal birth grant
+     * of 2 is still dropped — `pointsForLevel`'s docblock argues that at length
+     * and nothing here reverses it; what arrives is the one point an ADAPTABLE
+     * ORIGIN is owed (`human.lua:128-132`), which is why it is counted off the
+     * origin rather than spelled as a literal.
+     */
+    expect(body.unspentPoints).toBe(totalPointsAtLevel(1, classPointBonus(DEFAULT_ORIGIN)));
+    ren.clear();
+
+    // SPEND IT, so the purse is genuinely empty — which is the state this test
+    // is about. A test that asserted the refusal without draining first would
+    // pass for the wrong reason the day the grant changes again.
+    ren.send({ t: 'spend_point', talentId: 'talent:crude_blow' });
+    await ren.settle();
     expect(body.unspentPoints).toBe(0);
     ren.clear();
 
@@ -538,7 +556,9 @@ describe('the three game rules', () => {
     await ren.settle();
 
     expect(ren.last('error')?.['code']).toBe('bad_message');
-    expect(server.talents.sheetOf(body.id)?.points.get('talent:crude_blow')).toBe(1);
+    // …and the rank the FIRST, legal spend bought is still there: a refusal must
+    // not roll back the purchase before it.
+    expect(server.talents.sheetOf(body.id)?.points.get('talent:crude_blow')).toBe(2);
   });
 
   it('refuses a spend on a talent already at the cap', async () => {
@@ -1079,14 +1099,21 @@ describe('progression survives a snapshot and a restore', () => {
     const restored = bodyOf(await second.hello('ren-handle'));
     expect(restored.level).toBe(6);
     expect(restored.xp).toBe(42);
-    // 5 granted by levels 2..6, minus 2 spent. The 99 in the file is ignored.
-    expect(restored.unspentPoints).toBe(totalPointsAtLevel(6) - 2);
+    // Granted by levels 2..6 AND by the origin, minus 2 spent. The 99 in the
+    // file is ignored. COUNTED OFF THE ORIGIN rather than spelled: the body is
+    // implicitly the baseline one, which is adaptable, so a bare total here
+    // would be short by the birth point and nobody would know which half moved.
+    expect(restored.unspentPoints).toBe(totalPointsAtLevel(6, classPointBonus(DEFAULT_ORIGIN)) - 2);
     expect(server.talents.sheetOf(restored.id)?.points.get('talent:fog_step')).toBe(2);
     expect(server.talents.sheetOf(restored.id)?.points.get('talent:snipers_mark')).toBe(2);
 
     // AND THE PANEL AGREES, off the frames the restored socket actually got.
     expect(second.last('progress')?.['level']).toBe(6);
-    expect(second.last('progress')?.['unspent']).toBe(totalPointsAtLevel(6) - 2);
+    // THE SAME NUMBER THE BODY HOLDS, origin included — the panel and the body
+    // disagreeing is the bug this pair of assertions exists to catch.
+    expect(second.last('progress')?.['unspent']).toBe(
+      totalPointsAtLevel(6, classPointBonus(DEFAULT_ORIGIN)) - 2,
+    );
     const rows = loadoutRows(second);
     expect(rows.find((r) => r['id'] === 'talent:fog_step')?.['level']).toBe(2);
 
@@ -1139,9 +1166,10 @@ describe('progression survives a snapshot and a restore', () => {
     expect(server.talents.sheetOf(body.id)?.points.has('talent:removed_in_a_later_build')).toBe(
       false,
     );
-    // ...and its 3 points came back, so the character is 5 - 1 = 4 in hand
-    // rather than 5 - 4 = 1. The file's stored 0 is ignored entirely.
-    expect(body.unspentPoints).toBe(totalPointsAtLevel(6) - 1);
+    // ...and its 3 points came back, so the character is (earned - 1) in hand
+    // rather than (earned - 4). The file's stored 0 is ignored entirely, and
+    // `earned` includes what the origin is owed — see the note above.
+    expect(body.unspentPoints).toBe(totalPointsAtLevel(6, classPointBonus(DEFAULT_ORIGIN)) - 1);
   });
 
   it('leaves the birth defaults alone when the port cannot say', async () => {
@@ -1161,7 +1189,10 @@ describe('progression survives a snapshot and a restore', () => {
 
     expect(body.level).toBe(1);
     expect(body.xp).toBe(0);
-    expect(body.unspentPoints).toBe(0);
+    // BIRTH DEFAULTS, which now includes what the baseline origin is born with.
+    // Still derived, so this says "the defaults" rather than a number that has
+    // to be re-guessed every time the origins change.
+    expect(body.unspentPoints).toBe(totalPointsAtLevel(1, classPointBonus(DEFAULT_ORIGIN)));
     expect(server.talents.sheetOf(body.id)?.points.get('talent:crude_blow')).toBe(1);
   });
 });

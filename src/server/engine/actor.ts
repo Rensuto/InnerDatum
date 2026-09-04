@@ -794,6 +794,20 @@ export type PlayerActor = ActorCommon & {
    * boundary that keeps `globalSpeed` a number on a monster instead of a profile.
    */
   expMod?: number;
+  /**
+   * THE ORIGIN'S `extra_talent_point_every`, CACHED AS A BARE NUMBER.
+   *
+   * Actor.lua:3485-3486, through `content/origins.ts`. Derived from `origin` and
+   * stamped where the origin is applied, exactly as `expMod` above is, and for
+   * the identical reason: the SCHEDULER is what grants a level's points and
+   * `engine/` may not import `content/`.
+   *
+   * THE BIRTH GRANT IS NOT HERE. It is paid once, into the purse, at the moment
+   * the origin is chosen — a number already spent cannot also be a rule the
+   * scheduler re-applies every level. What the scheduler needs is only the
+   * PERIOD.
+   */
+  extraPointEvery?: number;
 
   // --- progression ----------------------------------------------------------
   /**
@@ -1328,6 +1342,8 @@ export type PlayerInit = {
   readonly origin?: string;
   /** The origin's `exp_mod`, cached. See `PlayerActor.expMod`. */
   readonly expMod?: number;
+  /** The origin's extra-point period, cached. See `PlayerActor.extraPointEvery`. */
+  readonly extraPointEvery?: number;
 };
 
 export type MonsterInit = {

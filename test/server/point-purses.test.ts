@@ -234,8 +234,17 @@ describe('the wiring, which no unit test can drive', () => {
       'utf8',
     );
     expect(gateway).toContain('engine.talentSpendOf?.(actor.id)');
-    expect(gateway).toContain('totalGenericPointsAtLevel(actor.level)');
-    expect(gateway).toContain('totalCategoryPointsAtLevel(actor.level)');
+    // …AND EACH IS ASKED WITH THE ORIGIN'S BONUS, not bare. A purse derived
+    // without it is `earned - spent` computed against the wrong `earned`, which
+    // confiscates an adaptable character's points on every single reload —
+    // `PointBonus` records that failure from the other end. The argument is
+    // named here so the guard fails if somebody drops it back to the bare call.
+    expect(gateway).toContain(
+      'totalGenericPointsAtLevel(actor.level, genericPointBonus(originHere))',
+    );
+    expect(gateway).toContain(
+      'totalCategoryPointsAtLevel(actor.level, birthCategoryPoints(originHere))',
+    );
     expect(gateway).toContain('to.unspentGenerics = from.unspentGenerics;');
     expect(gateway).toContain('to.unspentCategories = from.unspentCategories;');
   });

@@ -107,7 +107,15 @@ import { COMMAND_BURST, COMMAND_RATE_PER_SEC, PROTOCOL_VERSION } from '../../sha
  * of a boundary this file may not reach across.
  */
 import { classById, classForJoin, playerCombat } from '../content/classes.ts';
-import { DEFAULT_ORIGIN, combatWithOrigin, originById } from '../content/origins.ts';
+import {
+  DEFAULT_ORIGIN,
+  birthCategoryPoints,
+  classPointBonus,
+  combatWithOrigin,
+  genericPointBonus,
+  originById,
+  originOf,
+} from '../content/origins.ts';
 import type { OriginDef } from '../content/origins.ts';
 /**
  * THE SECOND CONTENT IMPORT, AND IT IS DATA ONLY — THE SAME TERMS AS THE FIRST.
@@ -6873,12 +6881,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     const spentClass =
       split?.class ?? Object.values(spread).reduce((sum, raw) => sum + Math.max(0, raw - 1), 0);
-    const ledger = Math.max(0, totalPointsAtLevel(actor.level) - spentClass);
+    /**
+     * THE ORIGIN'S SHARE IS PART OF THE TOTAL, and leaving it out is not
+     * cosmetic: this ledger is `earned - spent`, so an adaptable character who
+     * had SPENT their birth point and their every-tenth-level points would come
+     * back short by exactly that many, every reload, silently. `PointBonus`
+     * records the same warning from the other end.
+     */
+    const originHere = originOf(actor.origin);
+    const ledger = Math.max(
+      0,
+      totalPointsAtLevel(actor.level, classPointBonus(originHere)) - spentClass,
+    );
     // THE GENERIC PURSE. Only the split seam can say, because a total cannot be
     // partitioned after the fact; a build without it leaves the purse alone
     // rather than guessing, which is the pre-existing behaviour.
     if (split !== undefined) {
-      actor.unspentGenerics = Math.max(0, totalGenericPointsAtLevel(actor.level) - split.generic);
+      actor.unspentGenerics = Math.max(
+        0,
+        totalGenericPointsAtLevel(actor.level, genericPointBonus(originHere)) - split.generic,
+      );
     }
     /**
      * AND THE CATEGORY PURSE, off the two lists that record every way one can be
@@ -6889,7 +6911,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const categoriesSpent = (actor.unlockedTrees?.length ?? 0) + (actor.deepenedTrees?.length ?? 0);
     actor.unspentCategories = Math.max(
       0,
-      totalCategoryPointsAtLevel(actor.level) - categoriesSpent,
+      totalCategoryPointsAtLevel(actor.level, birthCategoryPoints(originHere)) - categoriesSpent,
     );
     const claimed = restore.unspentPoints;
     if (claimed !== undefined && Math.floor(claimed) !== ledger) {
@@ -7682,6 +7704,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `engine/Birther.lua:419` — the multiplier the exp chart is scaled by. Cached as a
     // number because the scheduler spends it and may not read `content/`.
     expMod: origin.experienceMult,
+    // Actor.lua:3485-3486 — the extra-point period, cached for the same reason.
+    // THE BIRTH GRANT IS NOT STAMPED HERE: it is paid into the purse in
+    // `handleChooseClass`, once, because it is an amount rather than a rule.
+    ...(origin.extraPointEvery === undefined ? {} : { extraPointEvery: origin.extraPointEvery }),
   });
 
   /**
@@ -10956,7 +10982,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
        * granted it — a literal "1" here would be wrong on every fifth level,
        * silently, and only for the players who got the better one.
        */
-      const granted = pointsForLevel(note.level);
+      // THE SAME BONUS THE GRANT USED, or the line understates it for exactly
+      // the players who got the better one — which is the failure the comment
+      // above already describes for the fifth-level pair.
+      // THE BODY THAT LEVELLED, WHEREVER IT IS — `nameOrNull`'s own lookup, for
+      // its stated reason: a level-up is a fact about an actor, not about a floor.
+      const leveller = homeOf(note.id).world.getActor(note.id);
+      const levelBonus = {
+        every: leveller?.kind === ActorKind.Player ? leveller.extraPointEvery : undefined,
+      };
+      const granted = pointsForLevel(note.level, levelBonus);
       if (granted > 0) {
         logSeq += 1;
         lines.push({
@@ -11032,7 +11067,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
        * can only spend one of them on the thing they are looking at is the kind
        * of line that reads as a bug.
        */
-      const generics = genericPointsForLevel(note.level);
+      const generics = genericPointsForLevel(note.level, levelBonus);
       if (generics > 0) {
         logSeq += 1;
         lines.push({
@@ -12309,6 +12344,51 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // by importing engine/talents.ts into net/. Same reason `hello` attaches it
     // this way: this file knows WHICH class a body is and must not learn what a
     // class DOES.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE PURSES MOVE BY THE DIFFERENCE THE ORIGIN MAKES. NOT A GRANT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The obvious version — "hand over Cornac's `copy_add` here" — PAYS TWICE.
+     * `applyRestore` already derives every purse as
+     * `totalPointsAtLevel(level, bonus) - spent`, and that total now includes
+     * the birth grant; it has run for this body already, with the BASELINE
+     * origin, because no origin was chosen when the socket said hello. So the
+     * birth point is in the purse before this handler is reached.
+     *
+     * WHAT IS ACTUALLY OWED IS THE DELTA between what the baseline earned and
+     * what the chosen origin earns. It is 0 for the baseline itself — the common
+     * case does nothing at all — and negative for an origin with no bonus, which
+     * is a player correctly handing back a point they were provisionally holding.
+     *
+     * COMPUTED FROM THE TOTALS RATHER THAN FROM `birthPoints`, so it is right at
+     * any level and not just at 1. A returning character can reach this handler:
+     * every file written before classes existed holds `UNASSIGNED_CLASS`, so a
+     * level-20 body gets the chooser too, and it is owed its every-tenth-level
+     * points as well as its birth one.
+     */
+    if (body !== undefined && body.kind === ActorKind.Player) {
+      const was = DEFAULT_ORIGIN;
+      const level = body.level;
+      body.unspentPoints = Math.max(
+        0,
+        body.unspentPoints +
+          totalPointsAtLevel(level, classPointBonus(origin)) -
+          totalPointsAtLevel(level, classPointBonus(was)),
+      );
+      body.unspentGenerics = Math.max(
+        0,
+        body.unspentGenerics +
+          totalGenericPointsAtLevel(level, genericPointBonus(origin)) -
+          totalGenericPointsAtLevel(level, genericPointBonus(was)),
+      );
+      body.unspentCategories = Math.max(
+        0,
+        body.unspentCategories +
+          totalCategoryPointsAtLevel(level, birthCategoryPoints(origin)) -
+          totalCategoryPointsAtLevel(level, birthCategoryPoints(was)),
+      );
+    }
     engine.attachClass?.(actorId, definition.id);
     // ONCE PER BODY. Deleting the id is the whole of that guarantee; from here
     // on this socket gets the `not_your_turn` above.
