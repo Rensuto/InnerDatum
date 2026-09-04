@@ -390,6 +390,32 @@ export type Wielder = {
    * NEGATIVE is the expected sign and the only one anything authors today.
    */
   readonly resistAll?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `inc_damage.all` — EVERY DAMAGE TYPE AT ONCE, AND THIS ONE IS ADDITIVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The offensive mirror of `resistAll`, and READ THE DIFFERENCE BEFORE
+   * TREATING THE TWO AS A PAIR: `combatGetResist` composes its `all` row
+   * MULTIPLICATIVELY (Combat.lua:2227-2228), which is why gear may not author
+   * one. `inc_damage` does not — damage_types.lua:202 is
+   * `(src.inc_damage.all or 0) + (src.inc_damage[type] or 0)`, a plain sum. So
+   * the argument that forbids `resistAll` on an item DOES NOT APPLY here, and
+   * `validateItems` does not refuse this one.
+   *
+   * ═══ NOTHING AUTHORS IT ON GEAR YET, WHICH IS NOT THE SAME AS FORBIDDEN ═══
+   * No item and no ego grants it today; the only writer is `WRATH_OF_THE_WOODS`.
+   * That is a content decision with room to change, not a rule — upstream puts
+   * `inc_damage = {all=...}` on real objects. Written down because the field
+   * sits directly under one that IS forbidden, and the next reader would
+   * otherwise reasonably assume the restriction was meant to cover both.
+   *
+   * ═══ THE ENGINE SIDE WAS ALREADY DONE ═══
+   * `combatGetDamageIncrease` has read `tableAll(inc) + tableValue(inc, type)`
+   * since damage.ts was written. This channel is the WRITER for a reader that
+   * has been correct and unreachable — the shape this codebase keeps producing.
+   */
+  readonly damageAll?: number;
 };
 
 /** Rarity, and — by construction — the drop tier. See the file header. */

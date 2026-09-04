@@ -1208,6 +1208,7 @@ describe('the status roster (game-design.md § 12)', () => {
       // The only effect that changes what a talent COSTS. Appended, as ever.
       EffectId.HighbornsBloom,
       EffectId.ArchivalResilience,
+      EffectId.EternalWrath,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1226,6 +1227,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_empowered_healing',
       'icon_status_highborns_bloom',
       'icon_status_archival_resilience',
+      'icon_status_eternal_wrath',
     ]);
   });
 
@@ -1332,6 +1334,8 @@ describe('the status roster (game-design.md § 12)', () => {
       // physical.lua:3535 — `type = "physical"`, and unlike Highborn's Bloom
       // this one's channel is upstream's own rather than a nearest match.
       [EffectId.ArchivalResilience]: SaveChannel.Physical,
+      // physical.lua:805 — `type = "physical"`, upstream's own.
+      [EffectId.EternalWrath]: SaveChannel.Physical,
     });
   });
 

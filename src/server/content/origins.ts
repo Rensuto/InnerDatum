@@ -68,6 +68,8 @@ import { STAT_BASE } from '../engine/derived.ts';
 import { higherHeal } from '../talents/higher_heal.ts';
 import { highbornsBloom } from '../talents/highborns_bloom.ts';
 import { resilienceOfTheArchived } from '../talents/resilience_of_the_archived.ts';
+import { unshackled } from '../talents/unshackled.ts';
+import { wrathOfTheWoods } from '../talents/wrath_of_the_woods.ts';
 import { overseerOfNations } from '../talents/overseer_of_nations.ts';
 import type { Talent } from '../engine/talents.ts';
 import type { PointBonus } from '../../shared/progression.ts';
@@ -243,11 +245,48 @@ export const ARCHIVED: OriginDef = Object.freeze({
 });
 
 /**
+ * THALORE. Quick and hard to pin down, hopeless with anything written, and the
+ * slowest learner in the game by a long way.
+ */
+export const UNFILED: OriginDef = Object.freeze({
+  id: 'origin_unfiled',
+  name: 'The Unfiled',
+  description:
+    'Nobody ever took your details. You grew up outside the index, in the parts of the ' +
+    'moor where the record thins out and then stops, and you learned what those places ' +
+    'teach — to move first and to be very hard to hold. What you did not learn is ' +
+    'anything the record could have told you, and every lesson since has cost you double.',
+  // `inc_stats = { str=2, mag=-2, wil=1, cun=0, dex=3, con=1 }` (elf.lua). THE
+  // LUA TABLE, NOT THE BLURB BESIDE IT: upstream's own description lists only
+  // "+2 Strength, +3 Dexterity, +1 Constitution" and omits both the Willpower
+  // and the Magic penalty. CLAUDE.md's rule — when the docs and the Lua
+  // disagree, the Lua wins — applies to ToME's own docs too.
+  //
+  // `cun = 0` is dropped rather than written: upstream states it to be explicit
+  // in a table where absence and zero are the same thing, and ours would put a
+  // zero on the character sheet that means nothing.
+  statMods: { str: 2, dex: 3, con: 1, mag: -2, wil: 1 },
+  // `life_rating = 11` (elf.lua), one over the baseline — the same body as the
+  // Indexed, reached from the other direction.
+  lifeRating: BASELINE_LIFE_RATING + 1,
+  // `experience = 1.35` (elf.lua). THE STEEPEST PENALTY IN THE GAME: a third
+  // again for every level, against the Archived's quarter and the Indexed's
+  // fifteen per cent. Upstream charges it for the speed.
+  experienceMult: 1.35,
+  // No `copy_add`, no `extra_*_every` — see the note on the Indexed.
+  // `talents = { [T_THALOREN_WRATH] = 1 }` (elf.lua).
+  //
+  // TWO TALENTS, the most of any origin but the Indexed, and the tree entry
+  // names the two that are missing with the system each would need.
+  talents: [wrathOfTheWoods, unshackled],
+});
+
+/**
  * AUTHORED ORDER, and the picker never re-sorts it — the same promise
  * `ClassOptionsMsg.options` makes and for the same reason: this choice is
  * written to a file and the chooser does not come back.
  */
-export const ORIGINS: readonly OriginDef[] = Object.freeze([CITYBORN, INDEXED, ARCHIVED]);
+export const ORIGINS: readonly OriginDef[] = Object.freeze([CITYBORN, INDEXED, ARCHIVED, UNFILED]);
 
 const BY_ID = new Map<string, OriginDef>(ORIGINS.map((origin) => [origin.id, origin]));
 

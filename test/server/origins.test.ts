@@ -151,6 +151,7 @@ describe('the roster', () => {
       'origin_cityborn',
       'origin_indexed',
       'origin_archived',
+      'origin_unfiled',
     ]);
     expect(new Set(ORIGINS.map((origin) => origin.id)).size).toBe(ORIGINS.length);
   });

@@ -448,6 +448,35 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * THE SAME UNREACHABLE PURSE as `race/higher` — see the note there. Inert
      * for the same reason (`maxLevel: 1`) and covered by the same tripwire.
      */
+    id: 'race/unfiled',
+    mastery: 1,
+    name: 'Unfiled',
+    classId: null,
+    size: 2,
+    blurb: 'What grew where nobody was writing it down.',
+  },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE THIRD ORIGIN TREE — `newTalentType{ type="race/thalore" }`,
+     * misc/races.lua:310.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * TWO TALENTS OF UPSTREAM'S FOUR — the widest tree so far, and both of the
+     * ported ones are pure content ports. The two that are missing:
+     *
+     *   Guardian of the Wood  needs a BLIGHT damage type and a `disease`
+     *                         immunity subtype; two of its three clauses have
+     *                         nothing to write to. Porting the third alone
+     *                         (`resists {all}`) would ship a third of a passive
+     *                         under its full name.
+     *   Nature's Pride        summons a treant. There is no summoning system,
+     *                         and one is not a number.
+     *
+     * `size` is that declared. THE SAME UNREACHABLE PURSE as the other two race
+     * trees — see the note on `race/higher`, and the tripwire that fires the day
+     * a `race/` tree holds a raisable talent.
+     */
     id: 'race/archived',
     mastery: 1,
     name: 'Archived',

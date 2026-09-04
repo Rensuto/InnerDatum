@@ -180,6 +180,11 @@ export const EffectId = {
    * `armourHardiness` from anywhere but worn gear and a sustain.
    */
   ArchivalResilience: 'effect:archival_resilience',
+  /**
+   * THE ONLY EFFECT THAT MOVES BOTH `all` ROWS — offence and defence at once,
+   * by the same number, and they do not compose the same way downstream.
+   */
+  EternalWrath: 'effect:eternal_wrath',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1409,6 +1414,51 @@ export const ARCHIVAL_RESILIENCE: EffectDef = Object.freeze({
   wielder: (instance) => ({ mods: instance.params.grants ?? {} }),
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WRATH OF THE WOODS — physical.lua:801-819, upstream's `ETERNAL_WRATH`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     eff.pid1 = self:addTemporaryValue("inc_damage", {all=eff.power})
+ *     eff.pid2 = self:addTemporaryValue("resists",    {all=eff.power})
+ *
+ * ONE NUMBER SPENT TWICE, which is the whole shape of the effect: the same
+ * `power` is how much harder you hit and how much less you take.
+ *
+ * ═══ THE TWO ROWS COMPOSE DIFFERENTLY, AND BOTH ARE UPSTREAM'S ═══
+ * `combatGetResist` multiplies the `all` row against the typed one
+ * (Combat.lua:2227-2228); `combatGetDamageIncrease` SUMS them
+ * (damage_types.lua:202). Reading this block and expecting a symmetric result is
+ * the mistake it invites, so: the damage half is worth exactly its number, the
+ * resistance half is worth less on a body that already resists that type.
+ *
+ * ═══ DECLARED ONCE UPSTREAM, WHICH WAS CHECKED ═══
+ * `ARCHIVAL_RESILIENCE` is the cautionary tale — its name is declared twice in
+ * physical.lua and the later one wins. `ETERNAL_WRATH` appears once across all
+ * five timed-effect files.
+ */
+export const ETERNAL_WRATH: EffectDef = Object.freeze({
+  id: EffectId.EternalWrath,
+  /** 'Ww'. Every other two-letter mark in this file is taken. */
+  badge: 'Ww',
+  displayName: 'Wrath of the Woods',
+  description: 'Everything you do lands harder, and everything done to you lands softer.',
+  // physical.lua:805-806 — `type = "physical"`, `subtype = { nature = true }`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Beneficial,
+  // No `on_merge` upstream, so a re-press replaces. See `PAIN_SUPPRESSION`.
+  stackMode: StackMode.Refresh,
+  subtypes: ['nature'],
+  decrease: 1,
+  icon: 'icon_status_eternal_wrath',
+  // physical.lua:808 — `parameters = { power = 10 }`.
+  parameters: { power: 10 },
+  wielder: (instance) => {
+    const power = Number(instance.params['power'] ?? 10);
+    return { resistAll: power, damageAll: power };
+  },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1426,6 +1476,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   EMPOWERED_HEALING,
   HIGHBORNS_BLOOM,
   ARCHIVAL_RESILIENCE,
+  ETERNAL_WRATH,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

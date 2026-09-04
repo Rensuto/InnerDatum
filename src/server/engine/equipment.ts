@@ -307,7 +307,7 @@ export function composeWielders(
   const modDelta = new Map<keyof AdditiveMods, number>();
   const resistDelta = new Map<DamageType | 'all', number>();
   // THE TWO ATTACKER-SIDE TABLES. Same shape, same fixed key list, same reason.
-  const damageDelta = new Map<DamageType, number>();
+  const damageDelta = new Map<DamageType | 'all', number>();
   const penDelta = new Map<DamageType, number>();
   const immunityDelta = new Map<ImmunitySubtype, number>();
   /**
@@ -411,6 +411,16 @@ export function composeWielders(
 
     if (wielder.resistAll !== undefined) {
       resistDelta.set('all', (resistDelta.get('all') ?? 0) + wielder.resistAll);
+    }
+    /**
+     * THE `all` DAMAGE-INCREASE ROW. Same shape as the line above and a
+     * DIFFERENT algebra downstream — `combatGetDamageIncrease` SUMS the `all`
+     * row with the typed one, where `combatGetResist` multiplies. The fold is
+     * identical either way because the fold's job is only to total the sources;
+     * see `Wielder.damageAll` for why gear is not refused this one.
+     */
+    if (wielder.damageAll !== undefined) {
+      damageDelta.set('all', (damageDelta.get('all') ?? 0) + wielder.damageAll);
     }
     const immunities = wielder.immunities;
     if (immunities !== undefined) {
