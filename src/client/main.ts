@@ -12682,6 +12682,39 @@ function applyServerMessage(msg: ServerMsg): void {
       // can happen to a turn in a turn-based game.
       lastError = `${msg.code}: ${msg.message}`;
       onRefusal(refusalText(msg.code, msg.message));
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND IT GOES IN THE RECORD, because the notice is gone in four seconds.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The banner above is immediate feedback and stays exactly as it is — it
+       * is what stops a refusal reading as a dropped packet, which the comment
+       * above calls the worst thing that can happen to a turn. But it is erased
+       * after `NOTICE_MS`, so the log that reports every blow said nothing at
+       * all about the swing that never happened. "Why did my talent not fire"
+       * was unanswerable five seconds later.
+       *
+       * UPSTREAM'S REFUSALS ARE PERMANENT LINES. `Actor.lua:1341` ("You are
+       * unable to move!"), `:5423` ("You do not have enough %s to use %s") and
+       * `:5501` are all `logPlayer`/`logSeen` — the same log that carries the
+       * damage, not a transient overlay.
+       *
+       * ═══ THE RECORD LANE, NOT THE MARGIN ═══
+       * `LogLane` splits on WHO IS SPEAKING: the Record is "what the rules did",
+       * the Margin is "what a PERSON said". A refusal is the rules declining,
+       * and it is machine-generated and terse, which is the Record's whole
+       * character. Putting it in the Margin would push a person's sentence off a
+       * lane that gets three lines a minute.
+       *
+       * THE SAME SENTENCE THE BANNER SHOWS, from the same `refusalText`. Two
+       * renderings of one refusal would drift, and the player would be told two
+       * different things about one keypress.
+       */
+      caseLog?.note({
+        lane: LogLane.Record,
+        gameTurn: turn?.gameTurn ?? -1,
+        text: refusalText(msg.code, msg.message),
+      });
       // THE ARMED `+` IS DISARMED BY ANY REFUSAL AT ALL, and deliberately not
       // only by a refused spend: nothing on this wire says which frame an
       // `error` is about, and a row left armed under a refusal banner is one

@@ -1043,3 +1043,33 @@ describe('the minimap is drawn under the panels, not over them', () => {
     expect(ask, 'the minimap card is asked ungated').toBeGreaterThan(gate);
   });
 });
+
+describe('a refusal outlives its banner', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE NOTICE IS ERASED AFTER `NOTICE_MS`; THE LOG IS NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's refusals are permanent lines — `Actor.lua:1341` ("You are unable
+   * to move!"), `:5423` ("You do not have enough %s to use %s"), `:5501` — on
+   * the same log that carries the damage. Ours were a four-second banner and
+   * nothing else, so the log that reports every blow said nothing about the
+   * swing that never happened.
+   *
+   * ═══ A SOURCE GUARD, FOR `xp-bar.test.ts`'s REASON ═══
+   * The `error` arm is a closure inside `boot()` and no test in this tree can
+   * drive it. The invariant is not "a log line exists somewhere" — it is that
+   * THIS arm writes one, from the SAME `refusalText` the banner uses. Two
+   * renderings of one refusal would drift and tell the player two different
+   * things about one keypress.
+   */
+  it('writes the refused sentence into the Record as well as the banner', () => {
+    const banner = at('onRefusal(refusalText(msg.code, msg.message));');
+    const logged = at('text: refusalText(msg.code, msg.message),');
+    expect(logged, 'the log line must follow the banner, not replace it').toBeGreaterThan(banner);
+    // THE RECORD, not the Margin: `LogLane`'s own note splits them on who is
+    // speaking, and a refusal is the rules declining rather than a person
+    // talking. The Margin gets three lines a minute and this would bury them.
+    expect(CODE.slice(banner, logged + 200)).toContain('LogLane.Record');
+  });
+});
