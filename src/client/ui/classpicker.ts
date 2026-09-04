@@ -97,6 +97,7 @@ import {
   HEADER_H,
   PANEL_PAD,
   PanelSkin,
+  wrapClamped,
   wrapText,
 } from './panel.ts';
 import { maxLifeFor } from '../../shared/leveling.ts';
@@ -268,7 +269,31 @@ const ORIGIN_NOTE_H = 12;
  * description clipped to "Raised in the Common realm, on a str…" is worse than
  * no description.
  */
-const ORIGIN_DESC_H = 12;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THREE LINES, WHERE IT USED TO BE ONE AND MOST OF THE SENTENCE WAS GONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The description was drawn through `fitText` into a single 12-pixel line while
+ * the five authored origins run 188 to 325 characters. MEASURED: between a half
+ * and three quarters of every one of them was ellipsised away, on the screen
+ * where the choice is made and never revisited.
+ *
+ * `tome/dialogs/Birther.lua:113` gives its descriptor a `TextzoneList` — a scrolling,
+ * multi-line box — for exactly this text. Three lines is what covers the longest
+ * authored origin at this panel's width; the last is still clamped, so a
+ * description written longer than the box is shortened visibly rather than
+ * silently.
+ *
+ * ═══ THE HEIGHT COMES OUT OF THE CARDS, WHICH CAN AFFORD IT ═══
+ * A card already concedes talents it cannot fit and says so. A truncated
+ * sentence says nothing at all, and it is the half of this screen that answers
+ * "who am I" — `pickerGeometry`'s own note calls that the question a new player
+ * is asking first.
+ */
+const ORIGIN_DESC_LINES = 3;
+const ORIGIN_DESC_LINE_H = 12;
+const ORIGIN_DESC_H = ORIGIN_DESC_LINE_H * ORIGIN_DESC_LINES;
 const ORIGIN_GAP = 4;
 const ORIGIN_CHIP_GAP = 6;
 
@@ -1068,11 +1093,21 @@ export function drawClassPicker(options: ClassPickerDrawOptions): void {
   if (chosenOrigin !== undefined) {
     ctx.font = FONT_BODY;
     ctx.fillStyle = PALETTE.BONE;
-    ctx.fillText(
-      fitText(ctx, chosenOrigin.description, geometry.originDesc.w),
-      geometry.originDesc.x,
-      geometry.originDesc.y + ORIGIN_DESC_H / 2,
-    );
+    /**
+     * WRAPPED, NOT ELLIPSISED. `wrapClamped` keeps the last line honest — a
+     * description longer than the box ends in a visible ellipsis rather than
+     * stopping mid-sentence as though it had finished.
+     */
+    let descY = geometry.originDesc.y + ORIGIN_DESC_LINE_H / 2;
+    for (const line of wrapClamped(
+      ctx,
+      chosenOrigin.description,
+      geometry.originDesc.w,
+      ORIGIN_DESC_LINES,
+    )) {
+      ctx.fillText(line, geometry.originDesc.x, descY);
+      descY += ORIGIN_DESC_LINE_H;
+    }
     ctx.fillStyle = PALETTE.GREY_HI;
     ctx.fillText(
       fitText(ctx, originNoteText(chosenOrigin), geometry.originNote.w),

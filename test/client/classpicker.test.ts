@@ -637,6 +637,68 @@ const ORIGIN_VIEWS: readonly OriginOptionView[] = [
   },
 ];
 
+describe('an origin description is read, not glimpsed', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT WAS ONE `fitText` LINE FOR A FOUR-SENTENCE PARAGRAPH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The five authored origins run 188 to 325 characters and the box was a single
+   * 12-pixel line, so between a half and three quarters of every one of them was
+   * ellipsised away — on the screen where the choice is made and never revisited.
+   * `tome/dialogs/Birther.lua:113` gives its descriptor a multi-line `TextzoneList`.
+   *
+   * ASSERTED ON THE TAIL, not the head. A truncating implementation draws the
+   * FIRST words correctly, so a test that looked for those would pass against
+   * the bug it exists to catch.
+   */
+  const rect = classPickerRect(640, 400);
+
+  const LONG =
+    'You were filed, sealed and left somewhere deep, and you kept. ' +
+    'Whatever the record wanted you for, it did not want you changed, ' +
+    'so you came out of storage thicker in the arm and harder to amend ' +
+    'than anything that stayed in circulation. ENDMARKER';
+
+  function paintedOrigin(): string[] {
+    const texts: string[] = [];
+    drawClassPicker({
+      ctx: measuringCtx(texts),
+      sprites: { sprite: () => undefined },
+      rect,
+      options: OPTIONS,
+      selected: 0,
+      hovered: null,
+      origins: [
+        {
+          id: 'origin_long',
+          name: 'The Wordy',
+          description: LONG,
+          statMods: {},
+          lifeRating: 0,
+          experiencePenaltyPct: 0,
+        },
+      ],
+      selectedOrigin: 0,
+    });
+    return texts;
+  }
+
+  it('paints the end of the sentence, not only its opening', () => {
+    const texts = paintedOrigin();
+    expect(
+      texts.some((line) => line.includes('ENDMARKER')),
+      'the description is still being cut off at one line',
+    ).toBe(true);
+  });
+
+  it('spends more than one line on it', () => {
+    const texts = paintedOrigin();
+    const fragments = texts.filter((line) => LONG.includes(line.trim()) && line.trim().length > 8);
+    expect(fragments.length, 'the paragraph is drawn as a single line').toBeGreaterThan(1);
+  });
+});
+
 describe('the Life a card promises is the Life the birth delivers', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
