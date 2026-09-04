@@ -4843,6 +4843,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // ═══ THE DENOMINATOR, AND THE CAP IS WHY IT TRAVELS AT ALL ═══
     // Below the ceiling it is `expChart(level + 1)` — the very threshold
     // `gainExp` compares against, so the bar fills exactly as the level does.
+    //
+    // ═══ WITH THE BODY'S OWN `expMod`, AND IT SHIPPED WITHOUT ONE ═══
+    // That sentence above is an INVARIANT, not a description, and it went false
+    // the day an origin could raise the cost of a level: `gainExp` scaled its
+    // threshold by `exp_mod` and this bar did not, so an Indexed character
+    // watched it reach the end and stay where it was. The two arguments must be
+    // the same or the bar is lying — `xp-bar.test.ts` now asserts they are.
     // AT THE CEILING THERE IS NO NEXT LEVEL and `xp` goes on accumulating
     // (`gainExp` stops looping and keeps the remainder), so any positive
     // denominator would draw a bar creeping towards a level that is never
@@ -4859,7 +4866,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       t: 'progress',
       level: viewer.level,
       xp: viewer.xp,
-      xpToNext: atCap ? 0 : expChart(viewer.level + 1),
+      xpToNext: atCap ? 0 : expChart(viewer.level + 1, viewer.expMod ?? 1),
       unspent: viewer.unspentPoints,
       unspentGenerics: viewer.unspentGenerics,
       unspentCategories: viewer.unspentCategories,
