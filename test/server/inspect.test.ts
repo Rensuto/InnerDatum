@@ -803,6 +803,63 @@ describe('inspecting a hostile', () => {
     expect(labels[0]).toBe('Chance to hit');
     expect(labels[labels.length - 1]).toBe('Distance');
     for (const label of SHEET_ONLY_LABELS) expect(labels).not.toContain(label);
+
+    /**
+     * ═══ AND THE CARD ANSWERS THE OTHER HALF OF THE TRADE ═══
+     * Every other row here is about YOUR swing. `Game.lua:2246` opens the same
+     * CharacterSheet on the actor under the cursor as on yourself, so upstream
+     * prints a monster's Accuracy and Damage; ours answered "will I hit it" and
+     * refused "will it kill me".
+     *
+     * A BAND, not an average — the two numbers the dice can actually produce.
+     */
+    const value = (label: string): string =>
+      String(rowsOf(view).find((row) => row['label'] === label)?.['value']);
+    expect(labels).toContain('Its damage');
+    // A BAND, OR A SINGLE NUMBER WHEN IT COLLAPSES. `damageBand` prints one
+    // figure where `damRange` is 1, which is the husk — so a strict band
+    // pattern here would be asserting a property of that fixture's spread
+    // rather than of the row.
+    expect(value('Its damage')).toMatch(/^\d+(–\d+)?$/);
+    expect(labels).toContain('Its chance to hit');
+    expect(value('Its chance to hit')).toMatch(/^\d+%$/);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE THREAT ROWS READ THE MONSTER, not the body doing the looking.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The shape assertions above cannot see this: MEASURED, pointing `Its damage`
+   * at `combatantOf(viewer)` instead of the target leaves them green, because a
+   * detective's damage is also a run of digits. Every row on this card is about
+   * one of two actors and swapping them is the single likeliest mistake here —
+   * `combatDefense(combatantOf(target))` and `combatAttack(combatantOf(viewer))`
+   * sit four lines apart in the same block.
+   *
+   * So this moves the MONSTER and demands the row move with it.
+   */
+  it('reads the monster’s own damage, not the viewer’s', async () => {
+    const floor = await scene();
+    const before = viewOf(await floor.client.inspect(floor.adjacent.id));
+    const bandOf = (view: Frame | null): string =>
+      String(rowsOf(view).find((row) => row['label'] === 'Its damage')?.['value']);
+
+    // A number nothing else on the card produces, so a row reading the wrong
+    // body cannot coincide with it.
+    floor.adjacent.combat = {
+      ...(floor.adjacent.combat ?? {}),
+      mods: { ...(floor.adjacent.combat?.mods ?? {}), dam: 97 },
+    };
+    const after = viewOf(await floor.client.inspect(floor.adjacent.id));
+
+    expect(bandOf(after), 'the row is wired to the viewer, not the target').not.toBe(
+      bandOf(before),
+    );
+    // UP, not merely different — `combatDamage` scales the mod rather than
+    // adding it raw, so the exact figure is the curve's business and only the
+    // direction is this test's.
+    expect(Number.parseInt(bandOf(after), 10)).toBeGreaterThan(Number.parseInt(bandOf(before), 10));
   });
 });
 

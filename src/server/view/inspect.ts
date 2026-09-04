@@ -776,6 +776,36 @@ export function inspectActor(
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
+     * AND THE OTHER HALF OF THE TRADE — WHAT IT DOES TO YOU.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Every row above is about YOUR swing: your chance to land it, its armour
+     * against it, your crit. The card answered "will I hit it" and refused to
+     * answer "will it kill me", which is the half a player actually weighs
+     * before spending a turn standing next to something.
+     *
+     * ═══ UPSTREAM SHOWS BOTH BECAUSE IT SHOWS THE WHOLE SHEET ═══
+     * `Game.lua:2246` and `:2405` open `CharacterSheet.new(a)` on the actor
+     * under the cursor — the SAME dialog as your own — so a monster's Accuracy
+     * (`CharacterSheet.lua:935`) and Damage (`:941`) are printed exactly as
+     * yours are. Ours is a compact card rather than a full dialog, which is a
+     * deliberate difference of surface; withholding what the thing hits for is
+     * a difference of INFORMATION and was not deliberate.
+     *
+     * ═══ THE BAND, NOT AN AVERAGE ═══
+     * `damageBand` is what the self sheet already prints and what
+     * `Combat.lua:511` actually rolls between. An average would be a number the
+     * dice cannot produce, and this card's own note on the hit chance argues
+     * against exactly that kind of tidying.
+     */
+    rows.push({ label: 'Its damage', value: damageBand(combatantOf(target)) });
+    rows.push({
+      label: 'Its chance to hit',
+      value: pct(hitChance(combatAttack(combatantOf(target)), combatDefense(combatantOf(viewer)))),
+    });
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
      * WHAT THIS THING SHRUGS OFF — the row that makes an element a DECISION.
      * ═══════════════════════════════════════════════════════════════════════
      *
