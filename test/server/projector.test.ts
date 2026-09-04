@@ -9,6 +9,7 @@ import type { LoadoutTalent } from '../../src/shared/protocol.ts';
 import { DOWNED_TURNS, createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
 import { BLEEDING, STUNNED } from '../../src/server/content/effects.ts';
+import { moneyIdFor } from '../../src/server/content/money.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { stepProjectile } from '../../src/server/engine/projectile.ts';
 import {
@@ -2022,6 +2023,29 @@ describe('the floor says what a thing would do, not just what it is called', () 
     // outright now rather than inferred from prose happening to be present.
     expect(mine?.fromCatalogue, 'the floor row cannot say what kind of thing it is').toBe(true);
     expect(mine?.slot).toBe('body');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE OTHER SIDE OF THE DISCRIMINANT, WHICH IS THE ONE THAT GOES WRONG
+   * QUIETLY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The floor card stamps a `tier · slot` line on anything it believes is a
+   * catalogue item. Money is not an `Item` at all — `resolveItem` refuses it —
+   * so a coin pile reading as one would draw "common · consumable" over a heap
+   * of gold. Absence is the whole assertion, and absence is what nobody writes a
+   * test for: the previous discriminant (`desc`) was never pinned from this
+   * side either, which is why deleting it could have gone unnoticed.
+   */
+  it('does not call a coin pile a catalogue item', () => {
+    const world = room();
+    world.addGroundItem({ x: 4, y: 4 }, moneyIdFor(47));
+
+    const pile = projectGroundItems(world).items[0];
+    expect(pile, 'the pile vanished').toBeDefined();
+    expect(pile?.fromCatalogue, 'gold would draw a slot line it does not have').toBeUndefined();
+    expect(pile?.slot, 'and it has no slot to name').toBeUndefined();
   });
 
   /**
