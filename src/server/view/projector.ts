@@ -1232,6 +1232,12 @@ function toOriginOptionView(origin: OriginDef): OriginOptionView {
     // half already carries the baseline ten, so sending the total here would
     // put it on screen twice.
     lifeRating: originLifeDelta(origin),
+    // AUTHORED ORDER, which is the order the tree lists them and the order they
+    // are learned. `?? []` spreads to nothing for an origin that grants none —
+    // the Cityborn — rather than sending an empty array for the client to test.
+    ...(origin.talents === undefined || origin.talents.length === 0
+      ? {}
+      : { talents: origin.talents.map((talent) => talent.name) }),
     experiencePenaltyPct: Math.round((origin.experienceMult - 1) * 100),
     // SPREAD ONLY WHEN THERE IS ONE, so an origin with no bonus carries no keys
     // at all rather than a table of noughts — the same choice `statMods` makes

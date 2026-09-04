@@ -10,6 +10,7 @@ import { DOWNED_TURNS, createDownedState, goDown } from '../../src/server/engine
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
 import { BLEEDING, STUNNED } from '../../src/server/content/effects.ts';
 import { moneyIdFor } from '../../src/server/content/money.ts';
+import { ORIGINS } from '../../src/server/content/origins.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { stepProjectile } from '../../src/server/engine/projectile.ts';
 import {
@@ -708,6 +709,56 @@ describe('projectTurn', () => {
 
 // ---------------------------------------------------------------------------
 // projectClassOptions — the picker
+//
+// (See also the origin-grant block below: the picker is the only screen that
+// names what an origin gives you, and the choice cannot be revisited.)
+
+describe('the picker is told what an origin grants', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY ToME RACE DESCRIPTOR NAMES ITS TALENT — races/human.lua:89.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * *"They possess the #GOLD#Gift of the Highborn#WHITE# which allows them to
+   * regenerate their wounds once in a while"*, and the same sentence in
+   * dwarf.lua:64, elf.lua and halfling.lua. Ours sent every NUMBER about an
+   * origin and never the thing a player would pick one for — the Indexed grant
+   * three talents and the picker named none of them.
+   *
+   * DRIVEN THROUGH `projectClassOptions`, the real entry: `toOriginOptionView`
+   * is module-private and exporting it to be tested would widen the surface for
+   * the test's convenience.
+   */
+  const originOf = (id: string) =>
+    (projectClassOptions().origins ?? []).find((origin) => origin.id === id);
+
+  it('names every talent an origin grants, in authored order', () => {
+    expect(originOf('origin_indexed')?.talents).toEqual([
+      'Gift of the Highborn',
+      'Overseer of Nations',
+      "Highborn's Bloom",
+    ]);
+  });
+
+  /**
+   * AND SENDS NO KEY AT ALL for an origin that grants none, rather than an
+   * empty array for the client to test — the same absence `statMods` and
+   * `birthPoints` already use.
+   */
+  it('sends nothing for an origin with no talents', () => {
+    expect(originOf('origin_cityborn')?.talents).toBeUndefined();
+  });
+
+  /** THE NAMES ARE THE TALENTS' OWN, so a rename cannot leave the picker stale. */
+  it('reads the names off the talents rather than repeating them', () => {
+    for (const origin of ORIGINS) {
+      expect(originOf(origin.id)?.talents ?? []).toEqual(
+        (origin.talents ?? []).map((talent) => talent.name),
+      );
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 /**

@@ -637,6 +637,64 @@ const ORIGIN_VIEWS: readonly OriginOptionView[] = [
   },
 ];
 
+describe('the note names what the origin gives you', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND NAMES IT BEFORE THE NUMBERS — races/human.lua:89's own order.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's descriptor puts the granted talent in a sentence ahead of the
+   * "Stat modifiers:" block. The ORDER carries weight here that it does not
+   * upstream: this is one `fitText` line, so the tail is what disappears on a
+   * narrow panel. Talents last would make the most differentiating thing about
+   * an origin the first thing to go.
+   */
+  const rect = classPickerRect(640, 400);
+
+  function noteFor(origin: OriginOptionView): string {
+    const texts: string[] = [];
+    drawClassPicker({
+      ctx: measuringCtx(texts),
+      sprites: { sprite: () => undefined },
+      rect,
+      options: OPTIONS,
+      selected: 0,
+      hovered: null,
+      origins: [origin],
+      selectedOrigin: 0,
+    });
+    return texts.find((line) => line.includes('SELECTED')) ?? '';
+  }
+
+  const GRANTING: OriginOptionView = {
+    id: 'origin_indexed',
+    name: 'The Indexed',
+    description: 'Someone wrote you down.',
+    statMods: { str: 1, wil: 1 },
+    lifeRating: 1,
+    experiencePenaltyPct: 15,
+    talents: ['Gift of the Highborn', 'Overseer of Nations'],
+  };
+
+  it('names every granted talent', () => {
+    const note = noteFor(GRANTING);
+    expect(note).toContain('Gift of the Highborn');
+    expect(note).toContain('Overseer of Nations');
+  });
+
+  it('puts them ahead of the stat modifiers', () => {
+    const note = noteFor(GRANTING);
+    expect(note.indexOf('Gift of the Highborn')).toBeLessThan(note.indexOf('+1 STR'));
+  });
+
+  /** AND SAYS NOTHING EXTRA for an origin that grants none. */
+  it('adds no separator for an origin with no talents', () => {
+    const note = noteFor({ ...GRANTING, name: 'The Cityborn', talents: undefined });
+    expect(note).not.toContain('Gift of the Highborn');
+    expect(note, 'a bare separator was left behind').not.toContain('·  ·');
+  });
+});
+
 describe('an origin description is read, not glimpsed', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════

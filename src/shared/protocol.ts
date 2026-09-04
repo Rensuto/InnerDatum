@@ -5161,6 +5161,29 @@ export type OriginOptionView = {
   readonly statMods: Readonly<Record<string, number>>;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS ORIGIN GIVES YOU THAT NO OTHER DOES — by name.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every ToME race descriptor names its granted talent in gold:
+   * *"They possess the #GOLD#Gift of the Highborn#WHITE# which allows them to
+   * regenerate their wounds once in a while"* (races/human.lua:89, and the same
+   * line in dwarf.lua:64, elf.lua and halfling.lua).
+   *
+   * Ours sent the stat modifiers, the life rating and the experience penalty —
+   * every number, and not the thing a player would actually pick an origin FOR.
+   * The Indexed grant three talents and the picker named none of them, on the
+   * one screen where the choice cannot be revisited.
+   *
+   * NAMES ONLY, NOT DESCRIPTIONS. A talent's `describe` is written against a
+   * BODY, and at the picker there is no body to describe it to — the numbers
+   * would be a level-1 stranger's. The talent pane says what they do, in full,
+   * the moment the character exists.
+   *
+   * OPTIONAL AND ADDITIVE, so no version bump.
+   */
+  readonly talents?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * THE ORIGIN'S CONTRIBUTION to life per level, NOT its total.
    * ═══════════════════════════════════════════════════════════════════════════
    *

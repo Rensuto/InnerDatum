@@ -490,6 +490,20 @@ function originNoteText(origin: OriginOptionView): string {
 
   return [
     `${origin.name.toUpperCase()} — ${SELECTED_WORD}`,
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TALENTS FIRST, AHEAD OF THE NUMBERS — races/human.lua:89's own order.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream's descriptor names the granted talent in a sentence BEFORE the
+     * "Stat modifiers:" block, and the order matters here for a reason upstream
+     * does not have: this line is one `fitText` line and the tail is what gets
+     * ellipsised on a narrow panel. Putting the talents last would make the
+     * most differentiating thing about an origin the first thing to disappear.
+     */
+    ...(origin.talents === undefined || origin.talents.length === 0
+      ? []
+      : [origin.talents.join(', ')]),
     ...(mods.length === 0 ? [] : [mods.join(' ')]),
     // SIGNED, because it is a CONTRIBUTION now and not a total — see
     // `OriginOptionView.lifeRating`. An unsigned 1 beside the class's 16 reads
