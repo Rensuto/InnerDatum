@@ -271,6 +271,10 @@ describe('the fillRect overlays stay art-free', () => {
       'item_',
       'ui_inventory_cell_',
       'ui_item_frame_',
+      // THE DRESSING. Six prop ids are in the manifest and on disk; three are
+      // placed today and the other three wait for the machinery their own
+      // metadata asks for (see src/shared/props.ts).
+      'prop_eldritch_',
     ]);
   });
 

@@ -4203,6 +4203,38 @@ export type TurnEvent =
   | RevivedEvent
   | ErasedEvent;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A SECOND PICTURE ON ONE CELL. Dressing, and nothing else.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's altar is a FLOOR grid carrying its pentagram as an `add_displays`
+ * (grids/burntland.lua:64-71) — the floor underneath is unchanged and the
+ * decoration is a second draw. This is that, on the wire.
+ *
+ * ═══ IT IS NOT A `TileCode`, AND THAT IS THE WHOLE DESIGN ═══
+ * A code is ONE CELL'S ONE PICTURE and it carries the FLOOR's appearance too, so
+ * "sigil on soot" and "sigil on plains" would be two codes. `paintTerrain` also
+ * forces a tile sprite to exactly `TILE_PX` square — *"a ground tile that
+ * overflowed anywhere would tear the grid"* — and `sitemap.test.ts` asserts a
+ * finished grid holds exactly the two codes it was given. See `shared/props.ts`.
+ *
+ * ═══ IT IS NOT A `SiteView` EITHER ═══
+ * A site cell is a DOOR: `crossInto` looks the cell up in the realm's
+ * `"x,y" -> siteId` map and moves you. Dressing you can stand on must not.
+ *
+ * ═══ AND IT RIDES THE LEVEL'S OWN FRAMES BECAUSE IT NEVER MOVES ═══
+ * `SitesMsg` exists to re-send markers as roamers wander; a prop is placed once
+ * when the floor is built and is then as static as the walls. Putting it on the
+ * two frames that already carry the whole map costs nothing per turn.
+ */
+export type PropView = {
+  readonly x: number;
+  readonly y: number;
+  /** An asset KEY, never a path — the same contract as `ActorView.sprite`. */
+  readonly sprite: string;
+};
+
 /** First frame after a successful `hello`. Full snapshot: level plus everyone. */
 export type WelcomeMsg = {
   v: typeof PROTOCOL_VERSION;
@@ -4236,6 +4268,11 @@ export type WelcomeMsg = {
   characterId?: string;
   level: LevelView;
   actors: ActorView[];
+  /**
+   * THE DRESSING ON THIS FLOOR. Absent where there is none, which is every map
+   * but a dressed delve — see `PropView`.
+   */
+  props?: readonly PropView[];
 };
 
 /**
@@ -6069,6 +6106,8 @@ export type RealmMsg = {
   name: string;
   level: LevelView;
   actors: ActorView[];
+  /** The dressing on this floor — see `PropView`. Absent where there is none. */
+  props?: readonly PropView[];
   /** Everywhere on THIS map you can walk into. Drawn as markers. */
   sites: SiteView[];
   /**

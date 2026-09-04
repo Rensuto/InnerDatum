@@ -7539,6 +7539,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       name: realm.name,
       level: view.level,
       actors: view.actors,
+      // THE DRESSING RIDES THE MAP FRAME. `projectWorld` omits the key entirely
+      // where a floor has none, and spreading rather than assigning keeps that
+      // absence — see `PropView`.
+      ...(view.props === undefined ? {} : { props: view.props }),
       sites: markersFor(realm, actorId),
       /**
        * THE NAMES OF THE COUNTRY, on an overworld only — see `RealmMsg.regions`.

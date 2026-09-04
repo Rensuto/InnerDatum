@@ -69,6 +69,7 @@ import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
 import { canWalk } from '../../shared/level.ts';
 import { LORE, noteIdFor } from './lore.ts';
+import { PROP_IDS } from '../../shared/props.ts';
 import { rollDrop } from './encounter.ts';
 import { rollLoot } from './loot.ts';
 import type { MonsterTemplate } from './monsters.ts';
@@ -1029,6 +1030,54 @@ export function populateDelve(
        */
       const prize = embellish(world, boss.id, spec.boss.drops?.pick[0], party.level);
       if (prize !== undefined) boss.carried = [prize];
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE ROOM IT IS STANDING IN LOOKS LIKE SOMETHING HAPPENED THERE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Dressing, not content: a chalk sigil, an offering bowl and a drift of
+       * loose pages, scattered on the floor around the Watcher. They block
+       * nothing, do nothing and can be walked over — see `shared/props.ts`, which
+       * argues why these three and not the other three.
+       *
+       * ═══ TIED TO THE BOSS RATHER THAN TO A SPEC FIELD ═══
+       * There is exactly ONE boss in the game and it is the Watcher's Altar
+       * (`redactedSpec`, which says in as many words that a second "should be
+       * argued for here"). A `DelveSpec.dressing` list would be a second way to
+       * say "this is the special room" with nothing else to put in it. The day a
+       * second boss lands, that is the moment the field earns itself.
+       *
+       * ═══ A FORKED STREAM, AND THAT IS THE WHOLE CARE HERE ═══
+       * `fork` does NOT advance the parent — `rng.ts` states it outright — so
+       * this pass consumes zero draws from the delve stream and every floor any
+       * player has ever walked stays byte-identical. Calling `world.rng.int`
+       * here would re-roll the monsters, the litter and the lore note of every
+       * delve in the game. Forking LAST, after every other placement, also means
+       * no earlier change can move the state this child derives from.
+       */
+      const dressing = world.rng.fork('delve.dressing');
+      const taken = new Set<string>([`${String(far.x)},${String(far.y)}`]);
+      for (const propId of PROP_IDS) {
+        // A RING AROUND THE BOSS, walked in the room's own order. The draw picks
+        // WHERE in that order to start, so the three props do not always land on
+        // the same three cells while the walk itself stays deterministic.
+        const from = dressing.int(`delve.dressing.${propId}`, 0, candidates.length - 1);
+        for (let step = 0; step < candidates.length; step += 1) {
+          const cell = candidates[(from + step) % candidates.length];
+          if (cell === undefined) continue;
+          const key = `${String(cell.x)},${String(cell.y)}`;
+          // NOT ON THE BOSS, NOT ON A BODY, NOT ON A PILE, NOT ON EACH OTHER.
+          // Two props on one tile would draw one over the other with no way to
+          // tell, and a prop under the boss is a prop nobody sees.
+          if (taken.has(key)) continue;
+          if (world.actorAt(cell.x, cell.y) !== undefined) continue;
+          if (world.itemsAt(cell.x, cell.y).length > 0) continue;
+          taken.add(key);
+          world.addProp(cell, propId);
+          break;
+        }
+      }
     }
   }
 

@@ -109,6 +109,7 @@ import { combatGetDamageIncrease, combatGetResist, combatGetResistPen } from '..
 import type {
   ActorEffects,
   ActorView,
+  PropView,
   CarriedItemView,
   ClassOptionView,
   OriginOptionView,
@@ -240,6 +241,8 @@ export function toDisplayName(raw: string): string {
 export type WorldView = {
   level: LevelView;
   actors: ActorView[];
+  /** The dressing, absent where the floor has none. See `projectProps`. */
+  props?: readonly PropView[];
 };
 
 /**
@@ -359,6 +362,32 @@ export function toActorView(actor: Actor): ActorView {
  */
 export function projectLevel(world: World): LevelView {
   return world.level;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DRESSING ON THIS FLOOR. Beside `projectLevel`, because it is the map.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * NOT FOG-GATED, and that is a decision rather than an oversight. `projectLevel`
+ * sends the WHOLE map and always has — CLAUDE.md states it outright: terrain is
+ * remembered by `Grid.lua` and the client owns its explored mask. A prop is part
+ * of the floor's picture, so gating it would make dressing the one piece of
+ * terrain that pops into existence as you walk, which reads as a rendering bug
+ * rather than as fog.
+ *
+ * The day dressing becomes something you can INTERACT with, that is the day it
+ * stops being terrain and needs the treatment `projectGroundItems` gets — and
+ * this note is where that argument starts.
+ *
+ * ABSENT RATHER THAN EMPTY. Every map but a dressed delve has none, and an empty
+ * array on every frame is a key the client has to test for nothing — the same
+ * choice `statMods` and `birthPoints` make one file over.
+ */
+export function projectProps(world: World): readonly PropView[] | undefined {
+  const placed = world.props();
+  if (placed.length === 0) return undefined;
+  return placed.map((prop) => ({ x: prop.x, y: prop.y, sprite: prop.propId }));
 }
 
 /**
@@ -558,9 +587,11 @@ export function visibleActorIds(
  * unsure what a client knows.
  */
 export function projectWorld(world: World, eyes?: readonly SightEye[]): WorldView {
+  const props = projectProps(world);
   return {
     level: projectLevel(world),
     actors: projectActors(world, eyes),
+    ...(props === undefined ? {} : { props }),
   };
 }
 

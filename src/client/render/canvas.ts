@@ -215,6 +215,17 @@ export type PingMarker = {
  * `count` and `tier` are the two things the mark says, and both are drawn as
  * SHAPE as well as colour — see `paintLoot`.
  */
+/**
+ * ONE PIECE OF DRESSING, ready to draw. The wire's `PropView` with nothing
+ * added: a prop is a cell and a picture, and there is no third fact about one.
+ */
+export type PropMarker = {
+  readonly x: number;
+  readonly y: number;
+  /** A manifest asset key — see `paintProps` on why a missing one is loud. */
+  readonly sprite: string;
+};
+
 export type LootMarker = {
   readonly x: number;
   readonly y: number;
@@ -337,6 +348,8 @@ export type Scene = {
    * was drawn towards.
    */
   readonly loot?: readonly LootMarker[];
+  /** The floor's dressing. Absent where there is none — see `paintProps`. */
+  readonly props?: readonly PropMarker[];
   /**
    * v7 — WHAT IS IN THE AIR. Every orb currently in flight, at the tile it is on
    * RIGHT NOW, complete and absolute (shared/protocol.ts's `ProjectilesMsg`):
@@ -2075,6 +2088,50 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
+   * DEFINED ABOVE `paintPath`, DRAWN AFTER IT. The call sits in the ground
+   * band just before `paintLoot`; only the DEFINITION is here, because
+   * `assets.test.ts` guards three consecutive source windows —
+   * `paintPath`->`paintLoot`, `paintLoot`->`paintProjectiles` and
+   * `paintProjectiles`->`cornerTicks` — and each asserts `blitSprite` does
+   * not appear in it. Those guards say the route, the floor piles and the
+   * orbs are all DRAWN rather than blitted, which is true and worth keeping.
+   * A painter that legitimately blits has to live outside all three, and
+   * `paintSites` overhead is the neighbour that already does.
+   */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DRESSING. A second picture on a floor cell, and nothing more.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's altar is a FLOOR grid whose pentagram rides as an `add_displays`
+   * (grids/burntland.lua:64-71): the ground keeps its own picture and the
+   * decoration is drawn over it. This is that pass.
+   *
+   * ═══ IT USES `blitSprite`, SO A MISSING PROP DRAWS THE VIOLET BOX ═══
+   * That is correct rather than an oversight. A prop IS its art and carries a
+   * manifest id; if the id is absent the manifest is broken and the loud box is
+   * the alarm working. It differs from the travel path — which deliberately
+   * draws no sprite at all — because a path is a computed overlay with no art of
+   * its own. A bare clone never reaches this pass: the server omits the field
+   * where a floor has no dressing, so `scene.props` is undefined.
+   *
+   * ═══ ABOVE THE FLOOR, BELOW EVERYTHING THAT MOVES ═══
+   * In the ground band and before `paintLoot`, so a coat dropped on a sigil
+   * reads on top of it. Dressing is the least urgent thing on the screen and
+   * must never sit over a body, an orb or a marker.
+   */
+  function paintProps(props: readonly PropMarker[], camX: number, camY: number): void {
+    if (props.length === 0) return;
+
+    for (const prop of props) {
+      // THE SAME CULL every other per-cell painter uses.
+      const origin = pathCellOrigin({ x: prop.x, y: prop.y }, camX, camY);
+      if (!visible(origin.x, origin.y)) continue;
+      blitSprite(prop.sprite, origin.x, origin.y);
+    }
+  }
+
+  /**
    * THE TRAVEL PATH PREVIEW. NO ART, DELIBERATELY — `fillRect` and nothing else.
    *
    * THE OBVIOUS IMPLEMENTATION IS A TRAP AND MUST NOT BE WRITTEN. Adding a
@@ -2464,6 +2521,8 @@ export function createRenderer(options: RendererOptions): Renderer {
       // a route drawn across a pile does not hide the pile, which is frequently
       // what the route was drawn towards. See `Scene.loot` for why this is not
       // above the tokens the way the orbs are.
+      // THE FURNITURE, under everything that moves and under the loot on it.
+      if (scene.props !== undefined) paintProps(scene.props, camX, camY);
       if (scene.loot !== undefined) paintLoot(scene.loot, camX, camY);
 
       // Y-SORT. Painter's algorithm down the screen, so an actor standing lower

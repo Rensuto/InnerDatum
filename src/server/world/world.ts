@@ -248,6 +248,28 @@ export type PlayerOverlay = Partial<
  * `content/items.ts` — an id, never the resolved object, for the same reason
  * `actor.equipped` holds ids.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A FOURTH TABLE, and the argument is the ground item's above, one step further.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A prop is furniture: it never moves, never acts, never takes a turn and never
+ * changes. It is NOT an actor for every reason `Projectile` is not one — the
+ * note on that table lists them and each applies verbatim: `actorAt` would make
+ * it block movement by the wrong mechanism, `isFree` would refuse to spawn on
+ * it, `allActors` would hand it to the AI, and the projector would ship it as a
+ * body with a hit-point bar.
+ *
+ * So: its own table, its own accessors, exactly as that note concludes.
+ */
+export type Prop = {
+  readonly id: string;
+  /** A `PropId` from `shared/props.ts`, and also its sprite key. */
+  readonly propId: string;
+  readonly x: number;
+  readonly y: number;
+};
+
 export type GroundItem = {
   /** Unique within this world, monotonic, never reused. */
   readonly id: string;
@@ -563,6 +585,17 @@ export type World = {
    * error anywhere, which is the worst of the three outcomes.
    */
   addGroundItem(cell: TileXY, itemId: string): string;
+  /**
+   * PLACE DRESSING. Called once while a floor is being built and never again.
+   *
+   * NO `removeProp`, DELIBERATELY. Nothing in this slice destroys a prop, and an
+   * accessor for a verb that does not exist is a lie about what this table
+   * supports — the day a brazier can be broken, the remover lands beside the
+   * mutation that needs it.
+   */
+  addProp(cell: TileXY, propId: string): string;
+  /** Every prop on this map, in the order it was placed. */
+  props(): readonly Prop[];
   /** Somebody took it, or the floor reset. @returns false for an unknown id. */
   removeGroundItem(id: string): boolean;
   /**
@@ -667,6 +700,8 @@ export function createWorld(
    * `actorAt` makes for its linear scan a few lines down.
    */
   const ground = new Map<string, GroundItem>();
+  // THE FOURTH TABLE. See `Prop` for why furniture is not an actor.
+  const props = new Map<string, Prop>();
   /**
    * Monotonic, never reused, and the ONLY legal id source in this directory:
    * `Date.now` and `Math.random` are ESLint errors here (the determinism block
@@ -676,6 +711,7 @@ export function createWorld(
   let projectileSeq = 0;
   /** Same rule, its own counter, so a projectile id and an item id never collide. */
   let groundSeq = 0;
+  let propSeq = 0;
 
   const turn: TurnState = {
     clock: createTurnClock(),
@@ -1103,6 +1139,18 @@ export function createWorld(
     return proj;
   };
 
+  const addProp = (cell: TileXY, propId: string): string => {
+    propSeq += 1;
+    // `dressing_`, NOT `prop_`: this is the TABLE KEY and not a sprite, and the
+    // art ledger reads a composed `prop_...` literal as a runtime-built asset
+    // family (test/tools/art-needs.test.ts). The picture is `propId`.
+    const id = `dressing_${propSeq}`;
+    // FROZEN, for `addGroundItem`'s reason one function down and more strongly:
+    // a prop is the most inert thing in the world table. Nothing edits one.
+    props.set(id, Object.freeze({ id, propId, x: cell.x, y: cell.y }));
+    return id;
+  };
+
   const addGroundItem = (cell: TileXY, itemId: string): string => {
     groundSeq += 1;
     const id = `ground_${groundSeq}`;
@@ -1158,6 +1206,8 @@ export function createWorld(
     addGroundItem,
     removeGroundItem: (id: string): boolean => ground.delete(id),
     groundItems: (): readonly GroundItem[] => [...ground.values()],
+    addProp,
+    props: (): readonly Prop[] => [...props.values()],
     itemsAt,
   };
 }

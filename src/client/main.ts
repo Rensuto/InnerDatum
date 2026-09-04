@@ -382,6 +382,7 @@ import type {
   ServerMsg,
   ItemView,
   RegionView,
+  PropView,
   SiteView,
   Slot,
   TurnEvent,
@@ -518,6 +519,16 @@ const NEEDED_ASSET_PREFIXES = [
   'item_',
   'ui_inventory_cell_',
   'ui_item_frame_',
+  /**
+   * THE SIX PROP SPRITES, of which three are placed today.
+   *
+   * VERIFIED PRESENT before adding, exactly as the three families above were:
+   * all six are ids in `client/public/assets/manifest.placeholders.json` AND
+   * PNGs under `client/public/assets/props/`. A prefix does not create a PNG,
+   * and the three that are not placed yet cost nothing — nothing asks for them,
+   * so `isNeeded` never resolves one.
+   */
+  'prop_eldritch_',
 ] as const;
 
 /**
@@ -989,6 +1000,14 @@ let realmName: string | null = null;
  * does not know where anything is and must not draw guesses.
  */
 let sites: readonly SiteView[] = [];
+/**
+ * THE FLOOR'S DRESSING, and it is REPLACED whole like `sites` and `level`.
+ *
+ * A prop never moves and is never added after the floor is built, so there is no
+ * delta frame for one and there deliberately is not: it arrives on `welcome` and
+ * on `realm`, which are the two frames that carry the map itself.
+ */
+let props: readonly PropView[] = [];
 /**
  * Which realm the markers above belong to, so a `sites` frame that crossed a
  * realm change in flight is dropped rather than painting another map's towns
@@ -4944,6 +4963,8 @@ function scene(): Scene {
     // `lootMarkers`, which is also what the right-click menu's row reads through
     // `lootAt`. An empty array and an absent one mean the same thing to the
     // painter, so a floor being cleared needs nothing reset here.
+    // THE DRESSING, under the loot on it — see `paintProps`.
+    ...(props.length === 0 ? {} : { props }),
     loot: lootMarkers(),
     // PASSED STRAIGHT THROUGH, with no guard and no mapping. The list is already
     // exactly what the painter wants — a tile per orb — and an empty array and
@@ -11713,6 +11734,9 @@ function applyServerMessage(msg: ServerMsg): void {
       realmKind = msg.kind;
       realmName = msg.name;
       sites = msg.sites;
+      // `?? []` — a floor with no dressing omits the key, and a server too old
+      // to send one is the same absence. Both mean "draw nothing".
+      props = msg.props ?? [];
       currentRealmId = msg.realmId;
       if (msg.kind === 'overworld') {
         overworldLevel = msg.level;
