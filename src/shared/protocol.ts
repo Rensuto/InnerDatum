@@ -2787,6 +2787,16 @@ const ChooseClassSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('choose_class'),
   classId: z.string().min(1).max(CLASS_ID_MAX_CHARS),
+  /**
+   * AND WHICH ORIGIN — `Birther.lua` asks two questions and this frame is the
+   * answer to both. OPTIONAL, which is the compatibility story in one word: a
+   * client built before origins sends only a class, and the server reads that
+   * as the baseline — the origin every character already had.
+   *
+   * SAME LENGTH CAP as the class id, from the same constant, because both are
+   * authored content ids and there is one number to move if that ever changes.
+   */
+  originId: z.string().min(1).max(CLASS_ID_MAX_CHARS).optional(),
 });
 
 /**
@@ -5073,6 +5083,55 @@ export type ClassOptionsMsg = {
    * card somebody misclicks, and this one is irreversible.
    */
   options: readonly ClassOptionView[];
+  /**
+   * THE OTHER LIST. `Birther.lua` puts a race list beside the class list and
+   * every starting number is the sum of the two answers; this is that list.
+   *
+   * OPTIONAL AND ADDITIVE, so no protocol bump: a client built before origins
+   * ignores the field, sends no `originId`, and gets the baseline — which is
+   * what it would have got anyway. Authored order, never sorted, for the same
+   * reason `options` says so.
+   */
+  origins?: readonly OriginOptionView[];
+};
+
+/**
+ * ONE ORIGIN, as the birth screen draws it.
+ *
+ * ═══ THE NUMBERS ARE STRUCTURED, NOT PROSE ═══
+ * Upstream's descriptor ships its stat modifiers as pre-formatted `desc` lines
+ * ("#LIGHT_BLUE# * +1 Strength, +1 Dexterity…", human.lua:90-94) because a Lua
+ * dialog prints strings. Ours carries the values and lets the client format,
+ * exactly as `ClassOptionView` does for `maxHp` and `resource` — one place
+ * decides how a number looks, and it is the place that knows the font.
+ *
+ * ═══ WHAT IS DELIBERATELY NOT HERE ═══
+ * `OriginDef.adaptable` does not cross. It is declared server-side and nothing
+ * reads it yet, and a card advertising a bonus the server does not grant would
+ * be worse than a card that stays quiet about it. It crosses the day it works.
+ */
+export type OriginOptionView = {
+  /** The authored origin id. What a `choose_class` frame names. */
+  readonly id: string;
+  /** "Cityborn". The display name, as the fiction spells it. */
+  readonly name: string;
+  /** Two or three sentences of identity. `OriginDef.description`, verbatim. */
+  readonly description: string;
+  /**
+   * The stat modifiers, by key, ABSENT WHERE ZERO — so the baseline sends an
+   * empty object rather than six noughts, which is what upstream's Cornac does
+   * too (it declares no `inc_stats` at all).
+   */
+  readonly statMods: Readonly<Record<string, number>>;
+  /** Life per level. The number ToME's own card prints (human.lua:124). */
+  readonly lifeRating: number;
+  /**
+   * The experience PENALTY as a percentage — 0 for the baseline, 15 for one
+   * that levels slower. Sent as the penalty rather than as the raw multiplier
+   * because "Experience penalty: 15%" is the line upstream's card prints
+   * (human.lua:94), and 1.15 is not a number anybody reads.
+   */
+  readonly experiencePenaltyPct: number;
 };
 
 // ---------------------------------------------------------------------------

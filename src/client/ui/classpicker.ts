@@ -21,9 +21,20 @@
  *   the portrait -> the name -> the description -> Life -> the resource pool ->
  *   the four talents
  *
- * Everything ToME's birther has that we do not — races, sex, difficulty,
- * permadeath, campaign, stat rolls, a name field — is ABSENT rather than shown
- * disabled. There is exactly one decision on this screen.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THERE ARE TWO DECISIONS ON THIS SCREEN, AND THERE USED TO BE ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This block read "there is exactly one decision on this screen" and listed
+ * races among the things upstream has that we do not. Origins landed, and the
+ * change is TOWARDS `Birther.lua` rather than away from it: upstream shows a
+ * race list and a class list at once, and every number a character starts with
+ * is the sum of the two answers. See `ORIGIN_ROW_H` for why the second list is
+ * a strip of chips and not a second row of cards.
+ *
+ * STILL ABSENT rather than shown disabled: sex, difficulty, permadeath,
+ * campaign and stat rolls. A NAME FIELD IS ABSENT PERMANENTLY AND BY RULING —
+ * a character is its Discord identity here, never a typed name, so that one is
+ * not a gap waiting to be filled.
  *
  * ===========================================================================
  * THE ORDER OF THE CARDS IS THE SERVER'S AND IS NEVER RE-SORTED
@@ -88,7 +99,7 @@ import {
   PanelSkin,
   wrapText,
 } from './panel.ts';
-import type { ClassOptionView, LoadoutTalent } from '../../shared/protocol.ts';
+import type { ClassOptionView, LoadoutTalent, OriginOptionView } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 
@@ -214,13 +225,40 @@ const PICKER_TITLE = 'WHO ARE YOU?';
  * The same drift this codebase keeps catching: a literal restating a fact that
  * lives somewhere else, silent the day the fact moves.
  */
-function pickerHint(count: number): string {
+function pickerHint(count: number, hasOrigins = false): string {
   const keys = count <= 1 ? '1' : `1-${String(count)}`;
-  return `pick with ${keys} or the arrows · Enter confirms · this choice is permanent`;
+  // THE AXIS IS NAMED ONLY WHEN THERE IS ONE. A hint that mentioned an origin
+  // row an older server never sent would be instructions for a control that is
+  // not on the screen.
+  const arrows = hasOrigins ? 'left/right' : 'the arrows';
+  const origin = hasOrigins ? ' · up/down picks where you are from' : '';
+  return `pick with ${keys} or ${arrows}${origin} · Enter confirms · this choice is permanent`;
 }
 const CONFIRM_LABEL = 'CONFIRM';
 /** The word half of the selection mark. See the header: never colour alone. */
 const SELECTED_WORD = 'SELECTED';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ORIGIN STRIP. `Birther.lua`'s OTHER list, and this screen now has two.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The docblock at the top of this file used to end "There is exactly one
+ * decision on this screen." That was true and is not any more, and the change is
+ * TOWARDS upstream rather than away: `Birther.lua` shows a race list and a class
+ * list at once, and every number a character starts with is the sum of the two.
+ *
+ * ═══ A STRIP OF CHIPS, NOT A SECOND ROW OF CARDS ═══
+ * The class cards are the expensive half of this screen — a portrait, a
+ * description, a pool and four talents each — and there is not room for two of
+ * those. An origin is three numbers and a sentence, so it gets a chip with the
+ * sentence and the numbers on ONE shared line beneath. That also keeps the class
+ * cards the visual answer to "WHO ARE YOU?", which is the question in the header.
+ */
+const ORIGIN_ROW_H = 18;
+const ORIGIN_NOTE_H = 12;
+const ORIGIN_GAP = 4;
+const ORIGIN_CHIP_GAP = 6;
 
 // ---------------------------------------------------------------------------
 // Hit results
@@ -228,12 +266,15 @@ const SELECTED_WORD = 'SELECTED';
 
 export const ClassPickerHitKind = {
   Card: 'card',
+  /** A chip in the origin strip. `index` is into `origins`, never into `options`. */
+  Origin: 'origin',
   Confirm: 'confirm',
 } as const;
 export type ClassPickerHitKind = (typeof ClassPickerHitKind)[keyof typeof ClassPickerHitKind];
 
 export type ClassPickerHit =
   | { readonly kind: typeof ClassPickerHitKind.Card; readonly index: number }
+  | { readonly kind: typeof ClassPickerHitKind.Origin; readonly index: number }
   | { readonly kind: typeof ClassPickerHitKind.Confirm };
 
 // ---------------------------------------------------------------------------
@@ -292,6 +333,10 @@ type PickerGeometry = {
   readonly confirm: PanelRect;
   /** The prose line under the header. Carried so the painter never re-derives it. */
   readonly hint: PanelRect;
+  /** One chip per origin, in the server's order. Empty when the server sent none. */
+  readonly origins: readonly PanelRect[];
+  /** The one shared line under the chips, where the selected origin's numbers go. */
+  readonly originNote: PanelRect;
 };
 
 /**
@@ -307,7 +352,11 @@ type PickerGeometry = {
  * viewport would move card 3 under card 1, which is exactly the "card that moved
  * between two frames" protocol.ts refuses.
  */
-function pickerGeometry(options: readonly ClassOptionView[], rect: PanelRect): PickerGeometry {
+function pickerGeometry(
+  options: readonly ClassOptionView[],
+  rect: PanelRect,
+  origins: readonly OriginOptionView[] = [],
+): PickerGeometry {
   const x = rect.x + INSET;
   const innerW = Math.max(0, rect.w - INSET * 2);
   const top = rect.y + HEADER_H + INSET;
@@ -323,17 +372,78 @@ function pickerGeometry(options: readonly ClassOptionView[], rect: PanelRect): P
 
   const hint: PanelRect = { x, y: top, w: innerW, h: HINT_H };
 
-  const cardsTop = top + HINT_H;
+  /**
+   * THE STRIP TAKES ITS HEIGHT OFF THE TOP OF THE CARDS, and it takes NOTHING
+   * when the server sent no origins. That is the additive-field contract holding
+   * at the layout layer: an older server sends no `origins`, this block reserves
+   * zero pixels, and the screen is laid out exactly as it was before origins
+   * existed rather than with a band of empty panel where a strip would go.
+   */
+  const stripH = origins.length === 0 ? 0 : ORIGIN_ROW_H + ORIGIN_NOTE_H + ORIGIN_GAP;
+  const stripTop = top + HINT_H;
+  const originRects: PanelRect[] = [];
+  if (origins.length > 0) {
+    const chipW = Math.floor((innerW - ORIGIN_CHIP_GAP * (origins.length - 1)) / origins.length);
+    for (let i = 0; i < origins.length; i += 1) {
+      originRects.push({
+        x: x + i * (chipW + ORIGIN_CHIP_GAP),
+        y: stripTop,
+        w: Math.max(0, chipW),
+        h: ORIGIN_ROW_H,
+      });
+    }
+  }
+  const originNote: PanelRect = {
+    x,
+    y: stripTop + ORIGIN_ROW_H,
+    w: innerW,
+    h: ORIGIN_NOTE_H,
+  };
+
+  const cardsTop = stripTop + stripH;
   const cardsH = Math.max(0, confirm.y - CONFIRM_GAP - cardsTop);
   const count = options.length;
-  if (count === 0 || cardsH <= 0) return { cards: [], confirm, hint };
+  if (count === 0 || cardsH <= 0) {
+    return { cards: [], confirm, hint, origins: originRects, originNote };
+  }
 
   const cardW = Math.floor((innerW - CARD_GAP * (count - 1)) / count);
   const cards: PanelRect[] = [];
   for (let i = 0; i < count; i += 1) {
     cards.push({ x: x + i * (cardW + CARD_GAP), y: cardsTop, w: Math.max(0, cardW), h: cardsH });
   }
-  return { cards, confirm, hint };
+  return { cards, confirm, hint, origins: originRects, originNote };
+}
+
+/**
+ * THE ONE LINE UNDER THE CHIPS: what the selected origin actually does.
+ *
+ * ═══ IT CARRIES THE WORD `SELECTED`, AND THAT IS THE THIRD SIGNAL ═══
+ * A chip is too small for the word the class cards print, and this file's own
+ * rule is that a selection is marked "by shape and by word, never by colour
+ * alone" — roughly one man in twelve cannot separate the gold from the grey. The
+ * chip supplies the shape (a 2px border) and the colour (gold); this line
+ * supplies the word.
+ *
+ * ═══ THE NUMBERS ARE THE ONES UPSTREAM'S CARD PRINTS ═══
+ * `human.lua:90-94` lists stat modifiers, then "Life per level", then
+ * "Experience penalty". Same three, same order, in one line instead of five —
+ * and the zeroes stay unsaid, because a baseline reading "+0 Strength, +0
+ * Dexterity…" is furniture rather than information.
+ */
+function originNoteText(origin: OriginOptionView): string {
+  const mods = Object.entries(origin.statMods)
+    .filter(([, value]) => typeof value === 'number' && value !== 0)
+    .map(([key, value]) => `${Number(value) > 0 ? '+' : ''}${String(value)} ${key.toUpperCase()}`);
+
+  return [
+    `${origin.name.toUpperCase()} — ${SELECTED_WORD}`,
+    mods.length === 0 ? 'no stat modifiers' : mods.join(' '),
+    `${String(origin.lifeRating)} life/level`,
+    origin.experiencePenaltyPct === 0
+      ? 'no experience penalty'
+      : `${String(origin.experiencePenaltyPct)}% experience penalty`,
+  ].join('  ·  ');
 }
 
 /**
@@ -346,8 +456,25 @@ function pickerGeometry(options: readonly ClassOptionView[], rect: PanelRect): P
 export function classPickerCards(
   options: readonly ClassOptionView[],
   rect: PanelRect,
+  origins: readonly OriginOptionView[] = [],
 ): readonly PanelRect[] {
-  return pickerGeometry(options, rect).cards;
+  return pickerGeometry(options, rect, origins).cards;
+}
+
+/**
+ * The origin chip rects, in the SERVER'S ORDER. Index i is `origins[i]`, always.
+ *
+ * Exported for the same reason `classPickerCards` is: main.ts and the tests must
+ * read the strip off the ONE function that lays it out, never re-derive it. Two
+ * copies of this arithmetic is a chip drawn in one place and clicked in another,
+ * and this choice is written to a file and never offered again.
+ */
+export function classPickerOriginChips(
+  options: readonly ClassOptionView[],
+  rect: PanelRect,
+  origins: readonly OriginOptionView[],
+): readonly PanelRect[] {
+  return pickerGeometry(options, rect, origins).origins;
 }
 
 /**
@@ -370,12 +497,17 @@ export function classPickerHitAt(
   rect: PanelRect,
   px: number,
   py: number,
+  origins: readonly OriginOptionView[] = [],
 ): ClassPickerHit | null {
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
 
-  const geometry = pickerGeometry(options, rect);
+  const geometry = pickerGeometry(options, rect, origins);
   if (inside(geometry.confirm)) return { kind: ClassPickerHitKind.Confirm };
+  for (let i = 0; i < geometry.origins.length; i += 1) {
+    const chip = geometry.origins[i];
+    if (chip !== undefined && inside(chip)) return { kind: ClassPickerHitKind.Origin, index: i };
+  }
   for (let i = 0; i < geometry.cards.length; i += 1) {
     const card = geometry.cards[i];
     if (card !== undefined && inside(card)) return { kind: ClassPickerHitKind.Card, index: i };
@@ -758,7 +890,57 @@ export type ClassPickerDrawOptions = {
   readonly selected: number | null;
   /** Index under the pointer, or null. */
   readonly hovered: number | null;
+  /**
+   * The origin list, in the server's order. EMPTY IS A REAL STATE, not a bug: a
+   * server built before origins sends none, and the strip disappears entirely
+   * rather than drawing an empty band.
+   */
+  readonly origins?: readonly OriginOptionView[];
+  /** Index into `origins`. Never null once the strip is up — see main.ts. */
+  readonly selectedOrigin?: number | null;
+  /** Chip under the pointer, or null. */
+  readonly hoveredOrigin?: number | null;
 };
+
+/**
+ * ONE ORIGIN CHIP. The name, and the three-signal selection this file requires.
+ *
+ * SHAPE AND COLOUR HERE, THE WORD IN `originNoteText`. See that function for why
+ * the word cannot live on the chip and why it has to live somewhere.
+ */
+function drawOriginChip(
+  ctx: CanvasRenderingContext2D,
+  origin: OriginOptionView,
+  rect: PanelRect,
+  selected: boolean,
+  hovered: boolean,
+): void {
+  if (rect.w <= 0 || rect.h <= 0) return;
+
+  ctx.fillStyle = selected ? PALETTE.SLATE : PALETTE.INK;
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+  if (selected) {
+    ctx.strokeStyle = PALETTE.GOLD;
+    ctx.lineWidth = SELECT_BORDER;
+    // INSET BY HALF THE LINE WIDTH, so a 2px stroke lands inside the chip
+    // rather than straddling its edge and bleeding into the neighbour.
+    ctx.strokeRect(
+      rect.x + SELECT_BORDER / 2,
+      rect.y + SELECT_BORDER / 2,
+      rect.w - SELECT_BORDER,
+      rect.h - SELECT_BORDER,
+    );
+  }
+
+  ctx.font = FONT_META;
+  ctx.fillStyle = selected ? PALETTE.GOLD : hovered ? PALETTE.PARCHMENT : PALETTE.GREY_HI;
+  ctx.fillText(
+    fitText(ctx, origin.name.toUpperCase(), rect.w - CARD_PAD * 2),
+    rect.x + CARD_PAD,
+    rect.y + rect.h / 2,
+  );
+}
 
 /**
  * Paint the modal: the scrim, then the panel, then the cards, then the button.
@@ -795,15 +977,38 @@ export function drawClassPicker(options: ClassPickerDrawOptions): void {
 
   drawHeader(ctx, sprites, PICKER_TITLE, rect, FONT_META);
 
-  const geometry = pickerGeometry(cards, rect);
+  const origins = options.origins ?? [];
+  const geometry = pickerGeometry(cards, rect, origins);
 
   ctx.font = FONT_BODY;
   ctx.fillStyle = PALETTE.GREY_HI;
   ctx.fillText(
-    fitText(ctx, pickerHint(options.options.length), geometry.hint.w),
+    fitText(ctx, pickerHint(options.options.length, origins.length > 1), geometry.hint.w),
     geometry.hint.x,
     geometry.hint.y + HINT_H / 2,
   );
+
+  // THE STRIP BEFORE THE CARDS, in reading order: an origin is what you were
+  // before the class is what you became.
+  for (let i = 0; i < origins.length; i += 1) {
+    const origin = origins[i];
+    const chip = geometry.origins[i];
+    if (origin === undefined || chip === undefined) continue;
+    drawOriginChip(ctx, origin, chip, options.selectedOrigin === i, options.hoveredOrigin === i);
+  }
+  const chosenOrigin =
+    options.selectedOrigin === null || options.selectedOrigin === undefined
+      ? undefined
+      : origins[options.selectedOrigin];
+  if (chosenOrigin !== undefined) {
+    ctx.font = FONT_BODY;
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillText(
+      fitText(ctx, originNoteText(chosenOrigin), geometry.originNote.w),
+      geometry.originNote.x,
+      geometry.originNote.y + ORIGIN_NOTE_H / 2,
+    );
+  }
 
   for (let i = 0; i < cards.length; i += 1) {
     const option = cards[i];

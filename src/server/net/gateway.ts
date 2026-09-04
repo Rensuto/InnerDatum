@@ -107,7 +107,7 @@ import { COMMAND_BURST, COMMAND_RATE_PER_SEC, PROTOCOL_VERSION } from '../../sha
  * of a boundary this file may not reach across.
  */
 import { classById, classForJoin, playerCombat } from '../content/classes.ts';
-import { DEFAULT_ORIGIN, combatWithOrigin } from '../content/origins.ts';
+import { DEFAULT_ORIGIN, combatWithOrigin, originById } from '../content/origins.ts';
 import type { OriginDef } from '../content/origins.ts';
 /**
  * THE SECOND CONTENT IMPORT, AND IT IS DATA ONLY — THE SAME TERMS AS THE FIRST.
@@ -12241,6 +12241,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
+    /**
+     * AND THE OTHER ANSWER. `Birther.lua` asks two questions; this frame carries
+     * both and this handler is where they become one body.
+     *
+     * ABSENT IS THE BASELINE, A NAMED-BUT-UNKNOWN ONE IS A REFUSAL, and the
+     * asymmetry is deliberate. Absent means an older client that never knew to
+     * ask, and the baseline is what such a client's character would have been
+     * anyway — so it is a correct answer rather than a fallback. But an id this
+     * build does not have was TYPED BY SOMEBODY, and silently substituting would
+     * hand them a character they did not pick, once, with no way back: the
+     * chooser never comes again. `classById` above draws exactly this line.
+     *
+     * NOT `originOf`, WHICH FALLS BACK. That function exists for reading a SAVE,
+     * where an origin deleted from content must never make a character
+     * unloadable. A save is a fact about the past and a frame is a request about
+     * the future, and the two want opposite failure modes.
+     */
+    const origin = msg.originId === undefined ? DEFAULT_ORIGIN : originById(msg.originId);
+    if (origin === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'no such origin');
+      return;
+    }
+
     if (!classChoiceOwed.has(actorId)) {
       sendError(
         session.socket,
@@ -12278,7 +12301,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // burn the one choice, and `saveNow` would write a class onto a body that no
     // longer exists. Answering `internal` and changing NOTHING is the honest
     // outcome — the same shape `handleInspect` uses for the same cause.
-    if (!world.reclothePlayer(actorId, overlayFor(definition))) {
+    if (!world.reclothePlayer(actorId, overlayFor(definition, origin))) {
       sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
       return;
     }

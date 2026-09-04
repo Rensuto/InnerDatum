@@ -69,6 +69,7 @@ import { PROTOCOL_VERSION } from '../../shared/version.ts';
 import { INVENTORY_CAP } from '../../shared/progression.ts';
 import { LORE, loreById, loreIdOfNote } from '../content/lore.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
+import { ORIGINS } from '../content/origins.ts';
 import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
 import { bound } from '../../shared/scale.ts';
 import { LIFE_PER_CON } from '../../shared/leveling.ts';
@@ -109,6 +110,7 @@ import type {
   ActorView,
   CarriedItemView,
   ClassOptionView,
+  OriginOptionView,
   ClassOptionsMsg,
   CooldownsMsg,
   EffectView,
@@ -139,6 +141,7 @@ import type {
   UnlockableTree,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
+import type { OriginDef } from '../content/origins.ts';
 import type { Item, ItemUse, Slot } from '../content/items.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { DownedState } from '../engine/downed.ts';
@@ -1163,6 +1166,40 @@ export function projectClassOptions(): ClassOptionsMsg {
     v: PROTOCOL_VERSION,
     t: 'class_options',
     options: CLASSES.map(toClassOptionView),
+    // THE SECOND LIST, in authored order for the reason above. `Birther.lua`
+    // shows both at once and so does this frame: one round trip, one screen,
+    // one irreversible press.
+    origins: ORIGINS.map(toOriginOptionView),
+  };
+}
+
+/**
+ * One origin, field by field. Never a spread — see `toClassOptionView`.
+ *
+ * ═══ THE ZEROES ARE DROPPED ON THE WAY OUT ═══
+ * An origin with no modifiers sends `{}` rather than six noughts, because a card
+ * drawing "+0 Strength, +0 Dexterity" for the baseline is six lines of furniture
+ * saying nothing. `OriginOptionView.statMods` states that contract; upstream's
+ * Cornac declares no `inc_stats` table at all, which is the same decision made
+ * one layer earlier.
+ *
+ * ═══ THE PENALTY, NOT THE MULTIPLIER ═══
+ * `experience = 1.15` becomes 15, because "Experience penalty: 15%" is the line
+ * upstream's own card prints (human.lua:94). Rounded, because a card has no room
+ * for 14.999999999999991 and nothing downstream does arithmetic on it.
+ */
+function toOriginOptionView(origin: OriginDef): OriginOptionView {
+  const statMods: Record<string, number> = {};
+  for (const [key, value] of Object.entries(origin.statMods)) {
+    if (typeof value === 'number' && value !== 0) statMods[key] = value;
+  }
+  return {
+    id: origin.id,
+    name: origin.name,
+    description: origin.description,
+    statMods,
+    lifeRating: origin.lifeRating,
+    experiencePenaltyPct: Math.round((origin.experienceMult - 1) * 100),
   };
 }
 

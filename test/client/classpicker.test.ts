@@ -6,13 +6,18 @@ import {
   ClassPickerHitKind,
   classPickerCards,
   classPickerHitAt,
+  classPickerOriginChips,
   classPickerRect,
   drawClassPicker,
   talentShorthand,
 } from '../../src/client/ui/classpicker.ts';
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
-import type { ClassOptionView, LoadoutTalent } from '../../src/shared/protocol.ts';
+import type {
+  ClassOptionView,
+  LoadoutTalent,
+  OriginOptionView,
+} from '../../src/shared/protocol.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -603,5 +608,97 @@ describe('the modal is sized for the classes that exist, not for three', () => {
     expect(rect.w).toBeLessThanOrEqual(640);
     expect(rect.x).toBeGreaterThanOrEqual(0);
     expect(classPickerCards(FOUR, rect)).toHaveLength(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE ORIGIN STRIP — `Birther.lua`'s other list
+// ---------------------------------------------------------------------------
+
+const ORIGIN_VIEWS: readonly OriginOptionView[] = [
+  {
+    id: 'origin_cityborn',
+    name: 'Cityborn',
+    description: 'Raised in the Common realm, on a street with a name and a number.',
+    statMods: {},
+    lifeRating: 10,
+    experiencePenaltyPct: 0,
+  },
+  {
+    id: 'origin_indexed',
+    name: 'The Indexed',
+    description: 'Someone wrote you down before you ever went looking.',
+    statMods: { str: 1, dex: 1, mag: 1, wil: 1 },
+    lifeRating: 11,
+    experiencePenaltyPct: 15,
+  },
+];
+
+describe('the origin strip', () => {
+  const rect = classPickerRect(640, 400);
+
+  /**
+   * ═══ THE ADDITIVE CONTRACT, AT THE LAYOUT LAYER ═══
+   * `ClassOptionsMsg.origins` is optional, so a server built before origins
+   * sends none. The strip must then take NO pixels — not a collapsed band, not a
+   * gap — and the screen must lay out exactly as it did before it existed.
+   */
+  it('takes no room at all when the server sent no origins', () => {
+    expect(classPickerCards(OPTIONS, rect, [])).toEqual(classPickerCards(OPTIONS, rect));
+  });
+
+  /** …and when it IS there, it comes out of the cards rather than off the panel. */
+  it('pushes the cards down when it is present', () => {
+    const without = classPickerCards(OPTIONS, rect)[0];
+    const withStrip = classPickerCards(OPTIONS, rect, ORIGIN_VIEWS)[0];
+    expect(without).toBeDefined();
+    expect(withStrip).toBeDefined();
+    if (without === undefined || withStrip === undefined) return;
+    expect(withStrip.y).toBeGreaterThan(without.y);
+    // AND STAYS INSIDE THE PANEL. A strip that pushed the cards past the confirm
+    // button would draw them under it.
+    expect(withStrip.y + withStrip.h).toBeLessThanOrEqual(rect.y + rect.h);
+  });
+
+  /**
+   * A CHIP IS CLICKABLE AND ANSWERS ITS OWN INDEX — into `origins`, never into
+   * `options`. Two lists on one screen is exactly where an index gets read
+   * against the wrong one, and this choice is as irreversible as the class.
+   */
+  it('answers a chip press with the origin index', () => {
+    const chips = classPickerOriginChips(OPTIONS, rect, ORIGIN_VIEWS);
+    expect(chips).toHaveLength(ORIGIN_VIEWS.length);
+    for (let i = 0; i < ORIGIN_VIEWS.length; i += 1) {
+      const chip = chips[i];
+      expect(chip).toBeDefined();
+      if (chip === undefined) return;
+      // PROBED THROUGH THE EXPORTED GEOMETRY, never re-derived here: an offset
+      // spelled a second time in a test is the second copy this file refuses.
+      const hit = classPickerHitAt(
+        OPTIONS,
+        rect,
+        chip.x + Math.floor(chip.w / 2),
+        chip.y + Math.floor(chip.h / 2),
+        ORIGIN_VIEWS,
+      );
+      expect(hit?.kind, `chip ${String(i)}`).toBe(ClassPickerHitKind.Origin);
+      if (hit?.kind === ClassPickerHitKind.Origin) expect(hit.index).toBe(i);
+    }
+  });
+
+  /** A press on a CARD still reads as a card with the strip up. */
+  it('does not swallow the class cards', () => {
+    const card = classPickerCards(OPTIONS, rect, ORIGIN_VIEWS)[1];
+    expect(card).toBeDefined();
+    if (card === undefined) return;
+    const hit = classPickerHitAt(
+      OPTIONS,
+      rect,
+      card.x + Math.floor(card.w / 2),
+      card.y + Math.floor(card.h / 2),
+      ORIGIN_VIEWS,
+    );
+    expect(hit?.kind).toBe(ClassPickerHitKind.Card);
+    if (hit?.kind === ClassPickerHitKind.Card) expect(hit.index).toBe(1);
   });
 });

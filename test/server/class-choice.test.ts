@@ -14,6 +14,7 @@ import {
   sheetForClass,
   PLAYER_RESIST_CAP,
 } from '../../src/server/content/classes.ts';
+import { CITYBORN, INDEXED, ORIGINS } from '../../src/server/content/origins.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import {
@@ -1193,5 +1194,123 @@ describe('a player reading the chooser', () => {
     client.send({ t: 'choose_class', classId: ALCHEMIST.id });
     await client.settle();
     expect(body.classId).toBe(ALCHEMIST.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE SECOND ANSWER — `Birther.lua` asks two questions
+// ---------------------------------------------------------------------------
+
+describe('choose_class carries an origin', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE PRESS, TWO ANSWERS, AND THE BODY IS THE SUM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every assertion below is on the BODY rather than on a frame, because the
+   * join is where this feature can be individually correct at both ends and
+   * still wrong: the picker can send the id, the handler can read it, and the
+   * overlay can drop it on the floor between them.
+   */
+  it('offers the origin list beside the classes, in authored order', async () => {
+    server = await boot('origin-offer');
+    const client = await connect(server.port);
+    await client.hello('ren-handle');
+    const frame = await client.waitFor('class_options');
+
+    const origins = frame?.['origins'];
+    if (!Array.isArray(origins)) throw new Error('the chooser carried no origins');
+    // COUNTED FROM THE CONTENT, not spelled: a third origin needs no edit here.
+    expect(origins.map((row: { id?: unknown }) => String(row.id))).toEqual(
+      ORIGINS.map((origin) => origin.id),
+    );
+  });
+
+  it('writes the chosen origin onto the body, stats and all', async () => {
+    server = await boot('origin-indexed');
+    const client = await connect(server.port);
+    const welcome = await client.hello('ren-handle');
+    const body = bodyOf(welcome);
+    await client.waitFor('class_options');
+
+    client.send({ t: 'choose_class', classId: WATCHMAN.id, originId: INDEXED.id });
+    await client.settle();
+
+    expect(body.classId).toBe(WATCHMAN.id);
+    expect(body.origin).toBe(INDEXED.id);
+
+    const base = WATCHMAN.combat.stats ?? {};
+    const now = body.combat?.stats ?? {};
+    // `inc_stats = { str=1, mag=1, dex=1, wil=1 }` — four raised…
+    expect(now.str).toBe((base.str ?? 0) + 1);
+    expect(now.dex).toBe((base.dex ?? 0) + 1);
+    expect(now.mag).toBe((base.mag ?? 0) + 1);
+    expect(now.wil).toBe((base.wil ?? 0) + 1);
+    // …and two deliberately not.
+    expect(now.con).toBe(base.con);
+    expect(now.cun).toBe(base.cun);
+
+    /**
+     * AND THE EXPERIENCE PENALTY IS ON THE BODY, as the bare number the
+     * scheduler spends — `engine/` may not read `content/`, so a body that
+     * carried the id and not the multiplier would level at everyone else's rate
+     * with the card still promising otherwise.
+     */
+    expect(body.expMod).toBeCloseTo(INDEXED.experienceMult, 5);
+
+    /**
+     * THE LIFE RATING IS NOT VISIBLE YET, AND THAT IS CORRECT. `maxLifeFor`
+     * pays a rating out per LEVEL GAINED, so at level 1 an origin worth +1 a
+     * level is worth nothing at all. Asserted rather than left out, because
+     * "the hit points did not change" is exactly what a dropped life rating
+     * looks like at the only level this test can reach.
+     */
+    expect(body.maxHp).toBe(WATCHMAN.maxHp);
+  });
+
+  it('takes the baseline when the frame names no origin at all', async () => {
+    // AN OLDER CLIENT, which never knew to ask. `originId` is optional on the
+    // schema for exactly this, and the baseline is what such a character would
+    // have been anyway — so it is a correct answer, not a fallback.
+    server = await boot('origin-absent');
+    const client = await connect(server.port);
+    const welcome = await client.hello('ren-handle');
+    const body = bodyOf(welcome);
+    await client.waitFor('class_options');
+
+    client.send({ t: 'choose_class', classId: WATCHMAN.id });
+    await client.settle();
+
+    expect(body.origin).toBe(CITYBORN.id);
+    expect(body.combat?.stats).toEqual(WATCHMAN.combat.stats);
+    expect(body.maxHp).toBe(WATCHMAN.maxHp);
+  });
+
+  it('answers `bad_message` for an origin this build does not have, and the offer stands', async () => {
+    /**
+     * THE ASYMMETRY WITH "ABSENT" IS THE POINT. Absent means a client that never
+     * knew to ask; a NAMED but unknown id was typed by somebody, and silently
+     * substituting would hand them a character they did not pick, once, with no
+     * way back. `classById` above draws the identical line.
+     */
+    server = await boot('origin-unknown');
+    const client = await connect(server.port);
+    const welcome = await client.hello('ren-handle');
+    const body = bodyOf(welcome);
+    const before = { classId: body.classId, origin: body.origin };
+    await client.waitFor('class_options');
+    client.clear();
+
+    client.send({ t: 'choose_class', classId: WATCHMAN.id, originId: 'origin_that_never_was' });
+    const error = await client.waitFor('error');
+
+    expect(error?.['code']).toBe('bad_message');
+    expect({ classId: body.classId, origin: body.origin }).toEqual(before);
+
+    // AND THE ONE CHOICE IS NOT BURNED. A refused frame must leave the screen up.
+    client.send({ t: 'choose_class', classId: WATCHMAN.id, originId: CITYBORN.id });
+    await client.settle();
+    expect(body.classId).toBe(WATCHMAN.id);
+    expect(body.origin).toBe(CITYBORN.id);
   });
 });

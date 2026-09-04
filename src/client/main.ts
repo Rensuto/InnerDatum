@@ -360,6 +360,7 @@ import type {
   CarriedItemView,
   LoreView,
   ClassOptionView,
+  OriginOptionView,
   RosterMsg,
   DownedView,
   EffectView,
@@ -1920,6 +1921,26 @@ let wantsNewCharacter = false;
 let selectedClass: number | null = null;
 /** Which card is under the pointer, or null. Cosmetic. */
 let pickerHovered: number | null = null;
+/**
+ * THE ORIGIN LIST, and EMPTY IS A REAL STATE — a server built before origins
+ * sends no `origins` field and the strip does not appear at all.
+ */
+let originOptions: readonly OriginOptionView[] = [];
+/**
+ * WHICH ORIGIN IS PICKED, and it is NOT null when the strip is up.
+ *
+ * ═══ THE OPPOSITE DEFAULT TO `selectedClass`, ON PURPOSE ═══
+ * The class starts null because "one stray Enter away from choosing somebody's
+ * character for them" is the failure that argument is written against. The
+ * origin cannot fail that way: there is a correct default — the baseline, which
+ * is what every character had before this screen asked — so starting on index 0
+ * is not choosing for them, it is showing them the answer they already have. It
+ * also means the note line has something to say the moment the modal opens,
+ * which is where the numbers a player is comparing actually live.
+ */
+let selectedOrigin: number | null = null;
+/** Which chip is under the pointer, or null. Cosmetic. */
+let originHovered: number | null = null;
 
 /**
  * Live `point` markers, oldest first, each with the wall-clock instant it dies.
@@ -4806,6 +4827,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
       options: classOptions,
       selected: selectedClass,
       hovered: pickerHovered,
+      origins: originOptions,
+      selectedOrigin,
+      hoveredOrigin: originHovered,
     });
   }
 };
@@ -8117,6 +8141,32 @@ async function boot(): Promise<void> {
     const cards = pickerCards();
     if (cards.length === 0) return;
     const delta = step({ x: 0, y: 0 }, dir);
+
+    /**
+     * ═══ TWO ROWS, TWO AXES — AND ONLY WHEN THERE IS A SECOND ROW ═══
+     * The strip is a row above the cards, so the vertical keys drive it and the
+     * horizontal keys drive the classes. Without that a keyboard-only player
+     * could not reach the origin chips at all, which would make one of this
+     * screen's two decisions mouse-only.
+     *
+     * THE FALLBACK BELOW IS UNTOUCHED WHEN THE STRIP IS ABSENT, which is the
+     * additive contract holding at the input layer as well as the layout one: an
+     * older server sends no origins and every arrow key behaves exactly as it
+     * did, including the "a pure north/south key falls back to the vertical
+     * one" rule the docblock above argues for.
+     */
+    if (delta.y !== 0 && originOptions.length > 1) {
+      const from = selectedOrigin ?? 0;
+      // CLAMPED, NOT WRAPPED — `TalentTrees.lua:207`'s `util.bound`, and the
+      // same argument the cards make: this choice is written to a file once.
+      const next = Math.min(originOptions.length - 1, Math.max(0, from + delta.y));
+      if (next !== selectedOrigin) {
+        selectedOrigin = next;
+        requestDraw();
+      }
+      return;
+    }
+
     const move = delta.x !== 0 ? delta.x : delta.y;
     if (selectedClass === null) {
       // Nothing picked yet: enter the row from the end the key came from.
@@ -8151,7 +8201,24 @@ async function boot(): Promise<void> {
     // is why it answers the hit test regardless of the selection.
     const option = classOptions[selectedClass];
     if (option === undefined) return;
-    if (!socket.send({ v: PROTOCOL_VERSION, t: 'choose_class', classId: option.id })) {
+    /**
+     * BOTH ANSWERS IN ONE FRAME. `Birther.lua` asks two questions and this is
+     * the press that answers them.
+     *
+     * THE FIELD IS OMITTED, NOT NULLED, when this server sent no origins: the
+     * schema has it optional precisely so an older pairing sends nothing and the
+     * server reads that as the baseline. Sending `originId: undefined` would put
+     * the key on the wire for `strictObject` to reject.
+     */
+    const origin = selectedOrigin === null ? undefined : originOptions[selectedOrigin];
+    if (
+      !socket.send({
+        v: PROTOCOL_VERSION,
+        t: 'choose_class',
+        classId: option.id,
+        ...(origin === undefined ? {} : { originId: origin.id }),
+      })
+    ) {
       showNotice('not connected — that did not go out');
     }
   }
@@ -9750,11 +9817,14 @@ async function boot(): Promise<void> {
       const card =
         layout.picker === null || classOptions === null
           ? null
-          : classPickerHitAt(classOptions, layout.picker, point.x, point.y);
+          : classPickerHitAt(classOptions, layout.picker, point.x, point.y, originOptions);
       const hoveredCard =
         card !== null && card.kind === ClassPickerHitKind.Card ? card.index : null;
-      if (hoveredCard !== pickerHovered) {
+      const hoveredChip =
+        card !== null && card.kind === ClassPickerHitKind.Origin ? card.index : null;
+      if (hoveredCard !== pickerHovered || hoveredChip !== originHovered) {
         pickerHovered = hoveredCard;
+        originHovered = hoveredChip;
         requestDraw();
       }
     }
@@ -10575,9 +10645,19 @@ async function boot(): Promise<void> {
     if (layout.picker !== null && classOptions !== null) {
       event.preventDefault();
       const hit =
-        point === null ? null : classPickerHitAt(classOptions, layout.picker, point.x, point.y);
+        point === null
+          ? null
+          : classPickerHitAt(classOptions, layout.picker, point.x, point.y, originOptions);
       if (hit === null) return;
       switch (hit.kind) {
+        case ClassPickerHitKind.Origin:
+          // NO CONFIRM OF ITS OWN. The origin is part of the one irreversible
+          // press this screen makes, not a second one — CONFIRM sends both.
+          if (selectedOrigin !== hit.index) {
+            selectedOrigin = hit.index;
+            requestDraw();
+          }
+          return;
         case ClassPickerHitKind.Card:
           // SELECT, NEVER CONFIRM. One click is not enough for a decision that is
           // written to a file and never offered again; CONFIRM is the second act,
@@ -11928,6 +12008,12 @@ function applyServerMessage(msg: ServerMsg): void {
       classOptions = null;
       selectedClass = null;
       pickerHovered = null;
+      // …AND THE STRIP'S STATE WITH IT. A selection left behind would be read
+      // against the NEXT frame's list, which is the stale-index bug the class
+      // selection resets here to avoid.
+      originOptions = [];
+      selectedOrigin = null;
+      originHovered = null;
       // THE CHAT ROW COMES BACK HERE AND NOWHERE ELSE. This is the frame that
       // could only exist because the choice landed, so it is the one place that
       // knows the modal is genuinely gone — a refusal leaves the picker up, and
@@ -12163,6 +12249,14 @@ function applyServerMessage(msg: ServerMsg): void {
       // Nothing here arms a timer or sends anything — the picker is a screen, not
       // a negotiation.
       classOptions = msg.options;
+      // ═══ AND THE SECOND LIST, WHICH MAY NOT BE THERE ═══
+      // `origins` is additive: an older server sends none, `originOptions` stays
+      // empty, the strip is not laid out and no `originId` goes back. The
+      // selection defaults to the FIRST entry rather than to null — see
+      // `selectedOrigin` for why that is not choosing for somebody.
+      originOptions = msg.origins ?? [];
+      selectedOrigin = originOptions.length === 0 ? null : 0;
+      originHovered = null;
       // ═══ AND THE OPTIONAL SCREEN UNDERNEATH IS TORN DOWN ═══
       // A required screen arriving must dismiss the one it is covering.
       // `onCancel` returns unconditionally while `classOptions !== null` and the
