@@ -155,7 +155,10 @@ export type OriginDef = {
  */
 export const CITYBORN: OriginDef = Object.freeze({
   id: 'origin_cityborn',
-  name: 'Cityborn',
+  // 'The Cityborn', matching the four written after it. This was 'Cityborn'
+  // alone — the first origin authored, before the convention existed — so the
+  // picker showed one label in a different grammar from every other.
+  name: 'The Cityborn',
   description:
     'Raised in the Common realm, on a street with a name and a number. ' +
     'Nothing marked you out and nothing was decided for you. ' +

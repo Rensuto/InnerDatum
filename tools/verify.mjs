@@ -57,6 +57,10 @@ const RUNS = [
     argv: ['tools/class-live.mjs', 'watchman', '31984'],
   },
   {
+    what: 'origin-live — every origin is offered, and the one you pick is the one you get',
+    argv: ['tools/origin-live.mjs', '31991'],
+  },
+  {
     what: 'class-live inspector — its pool reaches its sheet',
     argv: ['tools/class-live.mjs', 'inspector', '31985'],
   },
