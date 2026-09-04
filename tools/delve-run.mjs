@@ -53,7 +53,15 @@ import { itemById } from '../src/server/content/items.ts';
 import { parseItemId } from '../src/server/content/resolve.ts';
 import { sellPrice } from '../src/server/content/shops.ts';
 import { STEPS, firstStep } from './walk.mjs';
-import { classStrikes, firingSpot, nearestQuarry, takeShot } from './fightlib.mjs';
+import {
+  classStrikes,
+  firingSpot,
+  nearestQuarry,
+  selfHelp,
+  takeHelp,
+  takeShot,
+} from './fightlib.mjs';
+import { BIRTH_INSCRIPTIONS, talentsFor } from '../src/server/content/inscriptions.ts';
 
 const RUNS = Number(process.argv[2] ?? 8);
 
@@ -144,7 +152,13 @@ function run(site, size, seed) {
     // contributes nothing, which is the 'correct value with no reader' this
     // repository keeps shipping.
     if (LEVEL > 1) recomposeCombat(p, effects, resolveItem);
-    bodies.push({ body: p, attacks: classStrikes(cls) });
+    bodies.push({
+      body: p,
+      attacks: classStrikes(cls),
+      // AND THE BUTTONS THAT HELP THE PRESSER. Read from the same two sources
+      // `sheetForClass` joins, because an inscription is in neither `ClassDef`.
+      helps: selfHelp(cls, undefined, talentsFor(BIRTH_INSCRIPTIONS)),
+    });
   }
 
   /**
@@ -244,7 +258,7 @@ function run(site, size, seed) {
             }))
             .sort((x, y) => x.d - y.d)[0]?.m;
 
-    for (const { body: b, attacks } of up) {
+    for (const { body: b, attacks, helps } of up) {
       if (fallen !== undefined && rescuer !== undefined && b.id === rescuer.body.id) {
         const gapToFallen = Math.max(Math.abs(b.x - fallen.body.x), Math.abs(b.y - fallen.body.y));
         if (gapToFallen <= 1) {
@@ -267,6 +281,18 @@ function run(site, size, seed) {
           tally.moved += 1;
           continue;
         }
+      }
+
+      /**
+       * ═══ PATCH YOURSELF UP FIRST, WHICH THIS DRIVER NEVER DID ═══
+       * Three infusions have been on every body since inscriptions shipped and
+       * this loop pressed none of them, so every row below understated survival.
+       * BEFORE the shot, because a heal that costs no turn and a heal that costs
+       * one are both worth more than a swing you take at 30% health.
+       */
+      if (takeHelp(realm.engine, b.id, helps, b)) {
+        tally.helped = (tally.helped ?? 0) + 1;
+        continue;
       }
 
       const living = foes.filter((f) => f.alive);

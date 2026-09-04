@@ -372,3 +372,51 @@ export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level)
   }
   return { fired: false, gap };
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY BUTTON THAT HELPS THE PRESSER RATHER THAN HURTING SOMEBODY ELSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `classStrikes` and `rangedAttacks` both drop `affinity === 'ally'`, which is
+ * right for them and left a hole: the probe party CARRIED three infusions from
+ * the day inscriptions shipped and pressed none of them. Every difficulty
+ * number measured since then understated survival, and the table said so
+ * nowhere — a party that never heals is not the party this game ships.
+ *
+ * ═══ IT READS THE SHEET'S SOURCES, NOT `ClassDef.loadout` ═══
+ * An inscription belongs to no class: `sheetForClass` joins `talentsFor` onto
+ * every loadout, so a helper built from `cls.loadout` alone finds nothing at all.
+ * That is exactly the bug this function exists to fix, so it is spelled out
+ * rather than left to whoever reads it next.
+ */
+export function selfHelp(cls, known, inscribed) {
+  return [...(cls.loadout ?? []), ...inscribed]
+    .filter((t) => known === undefined || known.has(t.id))
+    .filter((t) => t.targeting?.affinity === 'ally')
+    .map((t) => t.id);
+}
+
+/**
+ * PRESS ONE IF THINGS ARE GOING BADLY. Returns true if a button went down.
+ *
+ * ═══ A THRESHOLD, NOT A TACTICAL TABLE ═══
+ * Upstream's AI weighs `tactical = { HEAL = 2 }` against everything else on the
+ * bar. Our talents carry no tactical weights, so this models the one thing a
+ * competent player actually does: heal when hurt, and not before. The number is
+ * deliberately generous — a player presses at half, not at death's door — and it
+ * is the probe's OPINION rather than the game's, which is why it lives here.
+ *
+ * FIRST THAT THE ENGINE ACCEPTS, in bar order. A refusal is ordinary: the
+ * healing infusion refuses at full health and everything refuses on cooldown, so
+ * this walks the list rather than giving up on the first no.
+ */
+export function takeHelp(engine, actorId, helps, body, threshold = 0.6) {
+  if (helps.length === 0) return false;
+  if (body.maxHp <= 0 || body.hp / body.maxHp > threshold) return false;
+  for (const id of helps) {
+    const out = engine.submitTalent(actorId, id, { x: body.x, y: body.y });
+    if (out?.ok !== false) return true;
+  }
+  return false;
+}

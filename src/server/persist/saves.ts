@@ -139,7 +139,11 @@
  *   their bag, and their bag is in this file.
  */
 
-import { BIRTH_TALENT_GRANTS, spentFromSpread } from '../../shared/progression.ts';
+import {
+  BIRTH_INSCRIPTION_GRANTS,
+  BIRTH_TALENT_GRANTS,
+  spentFromSpread,
+} from '../../shared/progression.ts';
 import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { noteSpend } from '../../shared/respec.ts';
@@ -952,7 +956,14 @@ function spentTalentPoints(talentPoints: Readonly<Record<string, number>>): numb
    * note on `unspentFromLedger`: giving points back accurately is the restore
    * path's job and it has the registry to do it with.
    */
-  return spentFromSpread(Object.values(talentPoints), BIRTH_TALENT_GRANTS);
+  // BOTH GRANTS. The class's four and the body's three inscriptions are all
+  // seeded at rank 1, and a spread is just numbers by the time it reaches this
+  // file — so the free ranks have to be subtracted by COUNT or three
+  // inscriptions read as three points spent on every load.
+  return spentFromSpread(
+    Object.values(talentPoints),
+    BIRTH_TALENT_GRANTS + BIRTH_INSCRIPTION_GRANTS,
+  );
 }
 
 /**

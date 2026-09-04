@@ -158,6 +158,27 @@ export const BIRTH_TALENT_GRANTS = 4;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE FREE RANKS AN INSCRIPTION BRINGS. `human.lua:50-56` grants three.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A SECOND NUMBER RATHER THAN A BIGGER FIRST ONE, because the two are owed by
+ * different things: `BIRTH_TALENT_GRANTS` is what a CLASS hands over and this is
+ * what is written on the BODY. A single 7 would be a number no reader could take
+ * apart, and the day a body carries two inscriptions instead of three, exactly
+ * one of these moves.
+ *
+ * IN `shared/` FOR THE REASON THE CONSTANT ABOVE IS: `server/persist/saves.ts`
+ * subtracts the free ranks from a stored spread to know what was PAID for, and
+ * that file may not import the content tables — an inscription id is a soft
+ * reference there exactly as `classId` is.
+ *
+ * PINNED AGAINST `BIRTH_INSCRIPTIONS` by test, so a fourth birth inscription
+ * cannot quietly hand every returning character a free point.
+ */
+export const BIRTH_INSCRIPTION_GRANTS = 3;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  *   HOW MANY ACTIVE TALENTS A CLASS MAY OWN. A RANGE, AND IT WAS ONCE SIX.
  * ═══════════════════════════════════════════════════════════════════════════
  *

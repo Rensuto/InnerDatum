@@ -13,7 +13,8 @@ import {
   createContentTalentEngine,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
-import { BIRTH_TALENT_GRANTS } from '../../src/shared/progression.ts';
+import { BIRTH_INSCRIPTION_GRANTS, BIRTH_TALENT_GRANTS } from '../../src/shared/progression.ts';
+import { BIRTH_INSCRIPTIONS, talentsFor } from '../../src/server/content/inscriptions.ts';
 import { MIN_TIER } from '../../src/shared/tiers.ts';
 
 const CLASSES = [WATCHMAN, INSPECTOR, ALCHEMIST];
@@ -43,14 +44,56 @@ describe('what a character is born knowing', () => {
     }
   });
 
-  it('grants exactly what the class says it grants', () => {
+  it('grants exactly what the class AND THE BODY say they grant', () => {
+    /**
+     * ═══ TWO SOURCES OF A FREE RANK, AND THIS ONLY KNEW ABOUT ONE ═══
+     * The class grants its `birthTalents`. THE BODY grants its inscriptions —
+     * `points = 1` on every `newInscription`, and `resolvers.inscription` hands
+     * the talent over already learned, because an inscription is not something
+     * you raise; it is written on you or it is not.
+     *
+     * This guard read `definition.birthTalents` alone and so demanded rank 0 for
+     * everything else. That was right until inscriptions shipped and then it was
+     * the only thing standing between the bar and three buttons at rank 1 —
+     * except it never got the chance, because the sheet seeded them at 0 and
+     * this test passed. Three infusions shipped unpressable and the guard
+     * AGREED with the bug.
+     */
     for (const definition of CLASSES) {
       const sheet = sheetForClass(definition);
-      const granted = new Set(definition.birthTalents.map((talent) => talent.id));
+      const granted = new Set([
+        ...definition.birthTalents.map((talent) => talent.id),
+        ...talentsFor(BIRTH_INSCRIPTIONS).map((talent) => talent.id),
+      ]);
       for (const [id, rank] of sheet.points) {
         expect(rank, `${definition.name}: ${id}`).toBe(granted.has(id) ? 1 : 0);
       }
     }
+  });
+
+  /**
+   * ═══ AND EVERY ONE OF THEM CAN ACTUALLY BE PRESSED ═══
+   * THE ASSERTION THE OTHER ONE COULD NOT MAKE. `talent-scaling.test.ts` pinned
+   * `sheet.points.size` — that the map has an ENTRY per inscription — which is
+   * true at rank 0 as well, so membership passed while every press was refused
+   * with "you have not learned that yet". A rank is not a membership.
+   */
+  it('seeds every inscription at a rank the engine will accept', () => {
+    for (const definition of CLASSES) {
+      const sheet = sheetForClass(definition);
+      for (const talent of talentsFor(BIRTH_INSCRIPTIONS)) {
+        expect(sheet.points.get(talent.id), `${definition.name}: ${talent.id}`).toBe(1);
+      }
+    }
+  });
+
+  /**
+   * The persistence layer holds a COUNT of the free ranks because it may not
+   * import the content tables. A fourth birth inscription that did not move this
+   * number would hand every returning character a free point on every load.
+   */
+  it('keeps the persistence count in step with the birth list', () => {
+    expect(BIRTH_INSCRIPTION_GRANTS).toBe(BIRTH_INSCRIPTIONS.length);
   });
 
   it('always includes something the character can attack with', () => {
@@ -145,12 +188,20 @@ describe('the persistence ledger and the grant agree', () => {
   });
 
   it('leaves a fresh character with nothing spent', () => {
-    // The arithmetic end-to-end: four granted ranks against a grant of four is
-    // zero points spent, which is what a level-1 character has done.
+    /**
+     * The arithmetic end-to-end: every RAISED rank against every GRANTED one is
+     * zero points spent, which is what a level-1 character has done.
+     *
+     * BOTH GRANTS, and this is the assertion that would have caught the whole
+     * bug from the other side. It read `raised - BIRTH_TALENT_GRANTS` and
+     * balanced at 0 only because the inscriptions were seeded at rank 0 — the
+     * same zero that made them unpressable. Fixing the seed unbalanced this
+     * line, which is exactly what a ledger is for.
+     */
     for (const definition of CLASSES) {
       const sheet = sheetForClass(definition);
       const raised = [...sheet.points.values()].reduce((sum, rank) => sum + Math.max(0, rank), 0);
-      expect(raised - BIRTH_TALENT_GRANTS, definition.name).toBe(0);
+      expect(raised - (BIRTH_TALENT_GRANTS + BIRTH_INSCRIPTION_GRANTS), definition.name).toBe(0);
     }
   });
 });

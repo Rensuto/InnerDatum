@@ -1883,6 +1883,19 @@ export type TalentSheet = {
    */
   readonly passives: readonly string[];
   /**
+   * WHICH RANKS WERE FREE — the ids `TalentSheetInit.birth` named.
+   *
+   * CARRIED ONTO THE LIVE SHEET rather than left on the init, because the
+   * question "how many points has this body actually SPENT" is asked long after
+   * attachment and the answer is `ranks - free`. `spendByPurse` used to get the
+   * free list from `ClassDef.birthTalents` instead, which knew about the class's
+   * four and not about the three an inscription seeds — so every fresh character
+   * appeared to owe three points nobody had given them.
+   *
+   * A sheet that knows what it seeded cannot disagree with itself.
+   */
+  readonly birth?: readonly string[];
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHICH SUSTAINS ARE CURRENTLY ON.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -2070,6 +2083,8 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
     classId: init.classId,
     loadout: [...init.loadout],
     passives: [...passives],
+    // …AND WHAT IT SEEDED FOR FREE, so the purse split can subtract it later.
+    ...(init.birth === undefined ? {} : { birth: [...init.birth] }),
     // NOTHING IS UP AT BIRTH, and that is the honest state rather than a default
     // worth arguing about: a sustain reserves part of the pool, and a character
     // who has not chosen to spend that room has not spent it.

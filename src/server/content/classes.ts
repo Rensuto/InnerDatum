@@ -1056,7 +1056,18 @@ export function spendByPurse(
   definition: ClassDef | undefined,
   treeOf: (talentId: string) => string | undefined,
 ): { class: number; generic: number } {
-  const born = new Set((definition?.birthTalents ?? []).map((talent) => talent.id));
+  /**
+   * WHAT THIS SHEET ACTUALLY SEEDED, off the sheet itself.
+   *
+   * This read `definition.birthTalents` and so knew about the class's four and
+   * nothing else. The moment inscriptions started seeding at rank 1 — which is
+   * what an inscription IS — those three free ranks read as three points SPENT,
+   * and every fresh character appeared to owe three points they had never been
+   * given. `sheet.birth` is the list the sheet wrote when it seeded them, so it
+   * cannot disagree with itself; the definition is the fallback for a sheet old
+   * enough not to carry one.
+   */
+  const born = new Set(sheet.birth ?? (definition?.birthTalents ?? []).map((talent) => talent.id));
   const classRanks: number[] = [];
   const genericRanks: number[] = [];
   let classBirth = 0;
@@ -1223,10 +1234,25 @@ export function sheetForClass(
       ...bought.filter((talent) => talent.kind === TalentKind.Passive),
     ].map((talent) => talent.id),
     /**
-     * AND THE FOUR IT IS BORN WITH. Everything else on the two lines above is
-     * seeded at rank 0 — in the tree, in the panel, and not yet learned.
+     * AND THE FOUR IT IS BORN WITH — PLUS WHAT IS WRITTEN ON THE BODY.
+     * Everything else on the two lines above is seeded at rank 0: in the tree,
+     * in the panel, and not yet learned.
+     *
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE INSCRIPTIONS BELONG HERE AND WERE MISSING FOR THREE COMMITS.
+     * ═══════════════════════════════════════════════════════════════════════
+     * They were joined onto `loadout` above and nowhere else, so all three
+     * infusions sat on the bar at RANK 0 and `submitTalent` refused every press
+     * with "you have not learned that yet". Three shipped buttons that could not
+     * be pressed, and nothing failed: the guard that should have caught it
+     * asserted `points.size` — that the sheet has an ENTRY for each — which is
+     * true at rank 0 as well. Membership is not a rank.
+     *
+     * `points = 1` on every `newInscription` upstream, and `resolvers.inscription`
+     * hands the talent over already learned. An inscription is not a talent you
+     * raise; it is one you either have written on you or do not.
      */
-    birth: definition.birthTalents.map((talent) => talent.id),
+    birth: [...definition.birthTalents, ...talentsFor(inscribed)].map((talent) => talent.id),
     resource: definition.resource,
     maxAp: definition.maxAp,
     maxMp: definition.maxMp,
