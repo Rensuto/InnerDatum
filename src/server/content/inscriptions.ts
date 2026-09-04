@@ -32,6 +32,7 @@
  */
 
 import { healingInfusion } from '../talents/healing_infusion.ts';
+import { regenerationInfusion } from '../talents/regeneration_infusion.ts';
 import type { Talent } from '../engine/talents.ts';
 
 /**
@@ -70,6 +71,11 @@ export type Inscription = {
  */
 export const INSCRIPTIONS: readonly Inscription[] = Object.freeze([
   { id: 'inscription_healing_infusion', name: 'Healing Infusion', grants: healingInfusion },
+  {
+    id: 'inscription_regeneration_infusion',
+    name: 'Regeneration Infusion',
+    grants: regenerationInfusion,
+  },
 ]);
 
 /** The talents inscriptions can put on a bar. One derivation, never a second list. */
@@ -84,13 +90,26 @@ export function inscriptionById(id: string): Inscription | undefined {
 }
 
 /**
- * WHAT A NEW CHARACTER IS BORN WITH — `human.lua:55`.
+ * WHAT A NEW CHARACTER IS BORN WITH — `human.lua:50-56`.
  *
  * Every character, with no class variation, because upstream puts it on the RACE
  * and we have one kind of person.
+ *
+ * THAT ONE `copy` BLOCK IS WHERE `MAX_INSCRIPTIONS = 3` CAME FROM. It grants
+ * three: a regeneration infusion (:53), a wild infusion (:54) and a healing
+ * infusion carried as an inventory item (:55). The ceiling was read off the
+ * race and was never an arbitrary number, and this list was one entry long for
+ * exactly as long as it took to port the second.
+ *
+ * WILD IS THE ONE STILL MISSING, and it is missing for a stated reason rather
+ * than an oversight: it wants a temporary all-resistance, and `Wielder`
+ * deliberately refuses an `all` row so the gear fold stays additive-only. That
+ * is a design question, not a transcription, so it is not being answered in
+ * passing.
  */
 export const BIRTH_INSCRIPTIONS: readonly string[] = Object.freeze([
   'inscription_healing_infusion',
+  'inscription_regeneration_infusion',
 ]);
 
 /**

@@ -1190,6 +1190,12 @@ describe('the status roster (game-design.md § 12)', () => {
        * `icon_status_confused.png` shipped and was referenced by nothing.
        */
       EffectId.Confused,
+      /**
+       * THE FIRST EFFECT THAT PUTS HIT POINTS BACK. Appended, which the note at
+       * the top of this list calls the free operation — an older badge atlas
+       * keeps every index it already holds.
+       */
+      EffectId.Regeneration,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1203,6 +1209,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_spellshocked',
       'icon_status_brainlocked',
       'icon_status_confused',
+      'icon_status_regeneration',
     ]);
   });
 
@@ -1287,6 +1294,13 @@ describe('the status roster (game-design.md § 12)', () => {
       // mental.lua:71 — `type = "mental"`. The channel the WILL save answers,
       // which is what makes a Redactor harder to scramble than a Watchman.
       [EffectId.Confused]: SaveChannel.Mental,
+      /**
+       * physical.lua's EFF_REGENERATION. THE CHANNEL IS A LABEL HERE, exactly as
+       * it is for Evasive four entries up: nothing resists a heal, because
+       * `applySave` only rolls for a detrimental effect. Recorded so the badge
+       * and any future dispel-by-channel agree with upstream.
+       */
+      [EffectId.Regeneration]: SaveChannel.Physical,
     });
   });
 

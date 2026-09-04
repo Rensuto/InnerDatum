@@ -674,6 +674,18 @@ export type StatusHit = {
   readonly type?: DamageType;
   /** True on a critical. A DoT can crit — `applyDamage` rolls one either way. */
   readonly crit: boolean;
+  /**
+   * HP PUT BACK rather than taken, and `amount` is 0 when it is set — the exact
+   * contract `Blow.healed` and `DamageEvent.healed` already carry, named the
+   * same on purpose so the three read as one channel rather than three.
+   *
+   * A STATUS CAN HEAL. Every hit this type described used to take hit points,
+   * because BLEEDING was the only effect that moved a pool at all. Regeneration
+   * moves it the other way, and without this the tick would either report
+   * nothing — leaving a pool climbing 20 a turn with the transcript silent — or
+   * report a heal as damage, which is worse.
+   */
+  readonly healed?: number;
 };
 
 /** One line for the Case Log's Record lane. Terse and mechanical, by design. */

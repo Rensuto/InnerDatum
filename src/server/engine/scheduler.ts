@@ -604,6 +604,8 @@ export type GameEvent =
       /** What kind of damage the status dealt. See `Blow.type`. */
       readonly type?: DamageType;
       readonly crit: boolean;
+      /** HP PUT BACK, with `amount` 0. See `StatusHit.healed`. */
+      readonly healed?: number;
     }
   /**
    * A player hit 0 HP and went DOWN, not dead — game-design.md § 9. The five
@@ -1524,6 +1526,9 @@ function resolveStatusHits(run: Run, sweepTurn: number | null): void {
       killed: hit.killed,
       type: hit.type,
       crit: hit.crit,
+      // CARRIED, NOT DROPPED — the note `healed` earned on the talent map, for
+      // the same reason and on the third mapper to need it.
+      healed: hit.healed,
     });
 
     if (!hit.killed) continue;

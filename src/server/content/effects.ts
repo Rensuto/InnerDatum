@@ -53,6 +53,7 @@
 
 import { bound } from '../../shared/scale.ts';
 import { DamageType, applyDamage } from '../engine/damage.ts';
+import { healActor } from '../engine/talents.ts';
 import {
   EffectStatus,
   SaveChannel,
@@ -143,6 +144,18 @@ export const EffectId = {
   OffBalance: 'effect:off_balance',
   Spellshocked: 'effect:spellshocked',
   Brainlocked: 'effect:brainlocked',
+  /**
+   * THE FIRST EFFECT IN THE GAME THAT PUTS HIT POINTS BACK. Everything above
+   * either takes them (Bleeding) or moves a number on the sheet (Evasive), and
+   * that asymmetry is why `StatusHit.healed` did not exist until now.
+   *
+   * `EFF_REGENERATION`, applied by the regeneration infusion
+   * (inscriptions.lua:74). Upstream reaches it from several sources — infusions,
+   * runes, a Wyrmic talent — and we have exactly one, which is what makes that
+   * talent's `on_pre_use` clause unreachable rather than skipped. Its header
+   * says so at length.
+   */
+  Regeneration: 'effect:regeneration',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1110,6 +1123,84 @@ export const CONFUSED: EffectDef = Object.freeze({
   },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * REGENERATION — hit points put back, a turn at a time.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * BLEEDING's mirror, and deliberately built like it: one `onTimeout` that moves
+ * hit points and then REPORTS what it moved, so the Case Log accounts for every
+ * point of the pool restored the same way it accounts for every point taken.
+ *
+ * ═══ IT OWNS NO NUMBERS ═══
+ * `parameters.power` defaults to 0, and 0 does nothing — the same guard BLEEDING
+ * opens with. There is no generic regeneration in this game: every instance is
+ * written by an inscription that knows its own heal and its own duration, so a
+ * default here would be a number with no source, and the rule in this file is
+ * that every number has one.
+ *
+ * ═══ THE HEAL GOES THROUGH `healActor`, NOT THROUGH `hp +=` ═══
+ * `Actor.lua:2086-2089` scales a heal by the RECEIVER's `healing_factor`, and
+ * `healActor` is where that lives. Touching `hp` directly here would be a
+ * second, quieter heal path that ignored the one stat which modifies healing —
+ * exactly the sort of divergence that surfaces months later as "why do the
+ * numbers not match the character sheet".
+ */
+export const REGENERATION: EffectDef = Object.freeze({
+  id: EffectId.Regeneration,
+  badge: 'Rg',
+  displayName: 'Regenerating',
+  description: 'Flesh knitting closed. Restores life every turn.',
+  // The CHANNEL describes the effect and not whatever put it there, which is
+  // the note BLEEDING makes. Nothing ever rolls against this one — `applySave`
+  // does not roll for a beneficial effect — but it is still physical.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Beneficial,
+  // Upstream's EFF_REGENERATION declares no `on_merge`, so a re-application
+  // REPLACES rather than stacking. That is also exactly why the infusion refuses
+  // to re-apply while it is running; see that talent's header for why the clause
+  // is unreachable here.
+  stackMode: StackMode.Refresh,
+  subtypes: ['heal', 'regeneration'],
+  decrease: 1,
+  icon: 'icon_status_regeneration',
+  parameters: { power: 0 },
+
+  onTimeout: ({ actor, eff, ctx }: EffectHookArgs): boolean => {
+    const power = eff.params.power ?? 0;
+    if (power <= 0) return false;
+
+    const healed = healActor(actor, power);
+
+    /**
+     * NOTHING RESTORED IS NOTHING TO SAY. `healActor` answers 0 at full health,
+     * and "+0" three turns running is noise rather than a record.
+     */
+    if (healed <= 0) return false;
+
+    ctx.noteDamage?.({
+      victimId: actor.id,
+      // WHOEVER WROTE THE INFUSION — the body itself today. Carried rather than
+      // nulled because the same effect will one day arrive from an ally's rune,
+      // and the transcript should be able to say whose it was.
+      sourceId: eff.params.srcId ?? null,
+      // ZERO, AND `healed` CARRIES THE NUMBER. `DamageEvent.healed` states that
+      // contract — "when it is set, `amount` is 0" — and this is the third
+      // producer to honour it.
+      amount: 0,
+      hp: actor.hp,
+      maxHp: actor.maxHp,
+      // A HEAL CANNOT KILL. Said rather than left to the reader: `killed` is
+      // what `resolveStatusHits` reaps a body on.
+      killed: false,
+      // `applyDamage` rolls a crit either way, and this never calls it.
+      crit: false,
+      healed,
+    });
+    return false;
+  },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1122,6 +1213,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   SPELLSHOCKED,
   BRAINLOCKED,
   CONFUSED,
+  REGENERATION,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

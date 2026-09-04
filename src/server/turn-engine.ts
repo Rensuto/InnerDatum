@@ -904,6 +904,12 @@ function toWireEvents(
           ...(ev.sourceId === null ? {} : { sourceId: ev.sourceId }),
           ...(ev.type === undefined ? {} : { type: ev.type }),
           ...(ev.crit ? { crit: true } : {}),
+          // AND A HEAL IS A `damage` FRAME WITH `healed` SET, which is the
+          // contract `DamageEvent.healed` already states and the client already
+          // renders — the Case Log prints the heal instead of "0 damage" and
+          // render/sweep.ts keeps the struck-tile marker off the body. Nothing
+          // new on the wire; this mapper simply stopped dropping it.
+          ...(ev.healed === undefined || ev.healed <= 0 ? {} : { healed: ev.healed }),
         });
         if (ev.killed && world.getActor(ev.id)?.kind === ActorKind.Monster) {
           out.push({
