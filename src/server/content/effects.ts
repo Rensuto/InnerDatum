@@ -170,6 +170,11 @@ export const EffectId = {
    * ported, and there were none — the factor was Constitution and nothing else.
    */
   EmpoweredHealing: 'effect:empowered_healing',
+  /**
+   * THE ONLY EFFECT THAT CHANGES WHAT A TALENT COSTS. Everything else here
+   * changes what a body IS; this changes the price of acting.
+   */
+  HighbornsBloom: 'effect:highborns_bloom',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1298,6 +1303,47 @@ export const EMPOWERED_HEALING: EffectDef = Object.freeze({
   }),
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HIGHBORN'S BLOOM — other.lua:1574-1580. "Using talents without consuming
+ * resources."
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ IT CARRIES NO NUMBER AT ALL, WHICH IS UNUSUAL HERE ═══
+ * Upstream declares `parameters = { power = 10 }` and its own action passes `{}`
+ * — the power is never read by anything. So this effect is a FLAG: the whole of
+ * it is `modifiers.freeResources`, which `useTalent` reads at the one site where
+ * a resource is deducted.
+ *
+ * ═══ THE RESOURCE, NOT THE TURN ═══
+ * AP and MP are the turn rather than a pool, and a talent that cost no time
+ * would let a body act without end. Upstream spends energy either way; only the
+ * class resource is waived.
+ *
+ * SHORT AND EXPENSIVE. One turn at rank 1 against a 24-turn cooldown, which is
+ * upstream's shape: it is a window to spend a pool you have already emptied,
+ * not a discount you plan around.
+ */
+export const HIGHBORNS_BLOOM: EffectDef = Object.freeze({
+  id: EffectId.HighbornsBloom,
+  // 'Hb', NOT 'Bl' — BLEEDING has had that glyph since M3 and
+  // `effects.test.ts` requires every badge to be unique, because two statuses
+  // sharing a mark is a party panel that lies about what is on you.
+  badge: 'Hb',
+  displayName: "Highborn's Bloom",
+  description: 'Inner magic is paying for your talents. They cost no resource.',
+  // other.lua:1577-1578 — `type = "other"`, `subtype = { arcane = true }`. We
+  // have no `other` channel and nothing ever rolls against a beneficial effect,
+  // so the label is the nearest true one rather than an invented category.
+  type: SaveChannel.Magical,
+  status: EffectStatus.Beneficial,
+  stackMode: StackMode.Refresh,
+  subtypes: ['arcane'],
+  decrease: 1,
+  icon: 'icon_status_highborns_bloom',
+  modifiers: { freeResources: true },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1313,6 +1359,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   REGENERATION,
   PAIN_SUPPRESSION,
   EMPOWERED_HEALING,
+  HIGHBORNS_BLOOM,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

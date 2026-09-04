@@ -2112,3 +2112,71 @@ describe('a stance you can put up and take down', () => {
     expect(toggleSustain(engine, sheet, active.id).ok).toBe(false);
   });
 });
+
+describe("Highborn's Bloom waives the resource and nothing else", () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `EFF_HIGHBORN_S_BLOOM` — other.lua:1576, read at the ONE payment site.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `StatusFlags.freeResources` is how the effect reaches `useTalent` without
+   * `engine/` importing `content/` — the shape `noTalentsCooldown` already uses
+   * one site over. Both halves need asserting: the flag has to STOP the
+   * deduction, and it must not stop the turn.
+   */
+  function armed(free: boolean) {
+    const f = fixture(PLENTY);
+    const inspector = f.add(INSPECTOR, 'sam', 5, 5);
+    if (free) {
+      // THROUGH THE SHEET THE ENGINE READS, and cast because `TalentActor.combat`
+      // is readonly to talents by design — a talent may not rewrite the body it
+      // is cast from. A fixture standing in for the effect system may.
+      (inspector as { combat?: unknown }).combat = {
+        ...inspector.combat,
+        flags: { freeResources: true },
+      };
+    }
+    const sheet = f.engine.sheetOf('sam');
+    if (sheet === undefined) throw new Error('no sheet');
+    sheet.resource.value = sheet.resource.max;
+    return { f, inspector, sheet };
+  }
+
+  it('spends the resource when nothing is paying for it', () => {
+    const { f, inspector, sheet } = armed(false);
+    const husk = f.addMonster('husk', 5 + 4, 5);
+    const before = sheet.resource.value;
+    const out = useTalent(
+      f.engine,
+      inspector,
+      talentId('snipers_mark'),
+      { x: husk.x, y: husk.y, actorId: husk.id },
+      f.ctx,
+    );
+    expect(out.ok, 'the control case must actually fire').toBe(true);
+    expect(sheet.resource.value).toBeLessThan(before);
+  });
+
+  it('spends none of it when the bloom is up', () => {
+    const { f, inspector, sheet } = armed(true);
+    const husk = f.addMonster('husk', 5 + 4, 5);
+    const before = { focus: sheet.resource.value, ap: sheet.ap };
+    const out = useTalent(
+      f.engine,
+      inspector,
+      talentId('snipers_mark'),
+      { x: husk.x, y: husk.y, actorId: husk.id },
+      f.ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(sheet.resource.value, 'the bloom did not reach the payment site').toBe(before.focus);
+    /**
+     * …AND THE TURN IS STILL SPENT. Upstream waives the resource and still
+     * spends energy; AP here IS the turn, and a talent that cost no time would
+     * let a body act without end.
+     */
+    expect(sheet.ap, 'a free talent must still cost the turn').toBeLessThan(before.ap);
+    expect(inspector.cooldowns.size, 'and still go on cooldown').toBeGreaterThan(0);
+  });
+});

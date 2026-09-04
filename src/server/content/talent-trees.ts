@@ -385,11 +385,14 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * THE ORIGIN'S OWN — `newTalentType{ type="race/higher" }`, misc/races.lua:37.
      * ═════════════════════════════════════════════════════════════════════════
      *
-     * TWO TALENTS OF UPSTREAM'S FOUR. `race/higher` ships Gift of the Highborn,
-     * Overseer of Nations, Born into Magic and Highborn's Bloom; the first two
-     * are ported. The other two want an ARCANE damage type and a spell-save
-     * channel that this game does not have. `size` is that fact declared rather
-     * than a guard quietly relaxed — see `TalentTree.size`.
+     * THREE TALENTS OF UPSTREAM'S FOUR. `race/higher` ships Gift of the
+     * Highborn, Overseer of Nations, Born into Magic and Highborn's Bloom; only
+     * BORN INTO MAGIC is missing, and it is missing for a stated reason rather
+     * than an oversight: it grants `resists` in ARCANE, a damage type this game
+     * does not have, and a `combat_spellresist` bonus with no channel feeding
+     * it. Adding a whole damage type for one racial passive is a content
+     * decision, not a transcription. `size` is that fact declared rather than a
+     * guard quietly relaxed — see `TalentTree.size`.
      *
      * NOT HIDDEN, unlike `generic/inscriptions`. Upstream marks the inscription
      * categories `hide = true` (misc/misc.lua:23) and does NOT mark this one: it
@@ -413,7 +416,7 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
     mastery: 1,
     name: 'Higher',
     classId: null,
-    size: 2,
+    size: 3,
     blurb: 'What was written into you before you went looking.',
   },
   {

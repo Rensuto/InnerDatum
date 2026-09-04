@@ -66,6 +66,7 @@ export const BASELINE_LIFE_RATING = 10;
 
 import { STAT_BASE } from '../engine/derived.ts';
 import { higherHeal } from '../talents/higher_heal.ts';
+import { highbornsBloom } from '../talents/highborns_bloom.ts';
 import { overseerOfNations } from '../talents/overseer_of_nations.ts';
 import type { Talent } from '../engine/talents.ts';
 import type { PointBonus } from '../../shared/progression.ts';
@@ -199,7 +200,7 @@ export const INDEXED: OriginDef = Object.freeze({
   // is the same choice `statMods: {}` makes one origin up.
   //
   // WHAT IT HAS INSTEAD: `talents = { [T_HIGHER_HEAL] = 1 }` (human.lua:99-101).
-  talents: [higherHeal, overseerOfNations],
+  talents: [higherHeal, overseerOfNations, highbornsBloom],
 });
 
 /**

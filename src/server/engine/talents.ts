@@ -2908,7 +2908,26 @@ export function useTalent(
   // --- past this line nothing can fail, so now we pay -----------------------
   const apSpent = talent.cost.ap ?? 0;
   const mpSpent = talent.cost.mp ?? 0;
-  const resourceSpent = talent.cost.resource ?? 0;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * …UNLESS SOMETHING IS PAYING FOR IT — `EFF_HIGHBORN_S_BLOOM`, other.lua:1576.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * "All active talents will be used without resource cost." THE RESOURCE ONLY:
+   * AP and MP are the TURN, not a pool, and a talent that cost no time at all
+   * would let a body act without end. Upstream spends energy either way.
+   *
+   * READ AS A FLAG rather than by asking for an effect by id: `engine/` may not
+   * import `content/`, and `content/effects.ts` already imports this file. The
+   * flag is how an effect reaches the engine, and `noTalentsCooldown` is the
+   * same shape at the cooldown site.
+   *
+   * THE AFFORDABILITY CHECK IS UNTOUCHED, which is upstream's other half:
+   * "your resources must still be high enough to initially power the talent".
+   * It runs before the body, above this line, and this only skips the deduction.
+   */
+  const resourceSpent =
+    actor.combat?.flags?.freeResources === true ? 0 : (talent.cost.resource ?? 0);
   sheet.ap -= apSpent;
   sheet.mp -= mpSpent;
   spendResource(sheet.resource, resourceSpent);

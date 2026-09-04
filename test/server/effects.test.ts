@@ -1205,6 +1205,8 @@ describe('the status roster (game-design.md § 12)', () => {
       // The first effect that moves `healing_factor`. Appended, as every one
       // before it has been.
       EffectId.EmpoweredHealing,
+      // The only effect that changes what a talent COSTS. Appended, as ever.
+      EffectId.HighbornsBloom,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1221,6 +1223,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_regeneration',
       'icon_status_pain_suppression',
       'icon_status_empowered_healing',
+      'icon_status_highborns_bloom',
     ]);
   });
 
@@ -1320,6 +1323,10 @@ describe('the status roster (game-design.md § 12)', () => {
       // the magical channel, and a label here as it is for the other two: a
       // buff is never rolled against.
       [EffectId.EmpoweredHealing]: SaveChannel.Magical,
+      // other.lua:1577 is `type = "other"`, a channel this game does not have.
+      // Magical is the nearest true label and nothing ever rolls against a
+      // beneficial effect, so the choice costs nothing but should be said.
+      [EffectId.HighbornsBloom]: SaveChannel.Magical,
     });
   });
 

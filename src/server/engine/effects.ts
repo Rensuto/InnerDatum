@@ -262,6 +262,12 @@ export type EffectModifiers = {
    */
   readonly noTalentsCooldown?: boolean;
   /**
+   * `EFF_HIGHBORN_S_BLOOM` (other.lua:1574-1580). While ANY live effect sets it,
+   * a talent's resource cost is not deducted — see `StatusFlags.freeResources`,
+   * which is where the engine reads it.
+   */
+  readonly freeResources?: boolean;
+  /**
    * MONSTERS ONLY. Added to the energy GAIN multiplier — ToME's
    * `global_speed_add` (physical.lua:632, `-eff.power`). NEGATIVE slows.
    *
@@ -1945,6 +1951,9 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     scoured: (base?.scoured ?? false) || mods.scoured === true,
     breached: (base?.breached ?? false) || mods.breached === true,
     stunned: (base?.stunned ?? false) || mods.stunned === true,
+    // OR'D, like the four above it: one effect saying "free" is enough, and two
+    // saying it is not twice as free.
+    freeResources: (base?.freeResources ?? false) || mods.freeResources === true,
     // ADDED, NOT OR'D, because it is a percentage — `mental.lua:80` sums it
     // through `addTemporaryValue` like any other temporary attribute. Bounded
     // where it is ROLLED rather than here, so the number a tooltip prints is

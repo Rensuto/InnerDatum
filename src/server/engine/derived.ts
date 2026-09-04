@@ -292,6 +292,20 @@ export type StatusFlags = {
   /** `EFF_BREACH` — halves armour hardiness AFTER the bound (Combat.lua:1334). */
   readonly breached?: boolean;
   /**
+   * `EFF_HIGHBORN_S_BLOOM` — talents cost NO RESOURCE while this is up.
+   *
+   * A FLAG AND NOT A NUMBER, because upstream's is all-or-nothing: "all active
+   * talents will be used without resource cost" (other.lua:1576). Read at the
+   * one payment site in `useTalent`, exactly as `noTalentsCooldown` is read at
+   * the one cooldown site — a flag on this object is how an EFFECT reaches the
+   * engine without `engine/` learning what an effect is.
+   *
+   * IT DOES NOT MAKE A TALENT AFFORDABLE. Upstream is explicit: "your resources
+   * must still be high enough to initially power the talent". The check is
+   * upstream of the payment and is untouched; only the deduction is skipped.
+   */
+  readonly freeResources?: boolean;
+  /**
    * Stunned. Read by NO getter in this file — it is a flat ×0.4 applied to
    * outgoing damage inside the projector (damage_types.lua:150-153).
    *
