@@ -1,6 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { attachClassFor } from '../helpers/attach-class.ts';
+
 import Fastify from 'fastify';
 
 import {
@@ -8,13 +10,12 @@ import {
   INSPECTOR,
   WATCHMAN,
   CLASSES,
-  classById,
   createContentTalentEngine,
   createTalentBook,
-  sheetForClass,
   PLAYER_RESIST_CAP,
 } from '../../src/server/content/classes.ts';
 import { CITYBORN, INDEXED, ORIGINS } from '../../src/server/content/origins.ts';
+import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import {
@@ -417,10 +418,26 @@ async function boot(seed: string, options: BootOptions = {}): Promise<Harness> {
       // engine/talents.ts — it states its engine contract structurally — so the
       // capability is injected by whoever can see both sides. `handleChooseClass`
       // reaches the sheet through exactly this seam and no other.
-      attachClass: (actorId: string, classId: string): void => {
-        const definition = classById(classId);
-        if (definition !== undefined) talents.attach(actorId, sheetForClass(definition));
-      },
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE STUB GOES THROUGH `sheetForBody`, BECAUSE PRODUCTION DOES.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This read `sheetForClass(definition)` — no body, so no bought trees, no
+       * inscriptions and no ORIGIN. `content/classes.ts` records exactly this
+       * hazard: "every test in the tree hands the gateway its OWN `attachClass`
+       * stub — so nothing in `test/` could reach the real one", and says
+       * `sheetForBody` was extracted so the RULE could be shared instead of
+       * copied. A stub that copies it badly is worse than no stub: it passes
+       * while production is wrong, and fails while production is right.
+       *
+       * It failed the second way here. An origin-granted talent reached a real
+       * body and not this one, and the first reading was "the join is broken".
+       */
+      // THE SHARED STUB, which goes through `sheetForBody` exactly as production
+      // does. Inlined here once and then extracted, because six other harnesses
+      // still carry the blind copy — see `test/helpers/attach-class.ts`.
+      attachClass: attachClassFor(talents, world),
     },
     sessions: identityPort(),
     persist,
@@ -1312,5 +1329,54 @@ describe('choose_class carries an origin', () => {
     await client.settle();
     expect(body.classId).toBe(WATCHMAN.id);
     expect(body.origin).toBe(CITYBORN.id);
+  });
+});
+
+describe('an origin talent reaches the body that chose it', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE JOIN, NOT THE HALVES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `origins.test.ts` proves `sheetForClass(..., INDEXED)` carries Gift of the
+   * Highborn at rank 1, and the tests above prove `choose_class` writes the
+   * origin onto the body. Neither says the two meet: the sheet a player actually
+   * gets is built by `attachClass`, which is handed a CLASS ID and finds the
+   * origin by reading the body — so it works only because `reclothePlayer` runs
+   * BEFORE it in `handleChooseClass`. That ordering is a fact about one handler
+   * and nothing was asserting it.
+   *
+   * READ OFF THE ENGINE'S OWN SHEET, never a rebuilt one: `talents.sheetOf` is
+   * what `canUseTalent` consults, so this is the sheet that decides whether a
+   * press is refused.
+   */
+  it('attaches the Indexed their gift, at a rank the engine will accept', async () => {
+    server = await boot('origin-talent-join');
+    const client = await connect(server.port);
+    const welcome = await client.hello('ren-handle');
+    const body = bodyOf(welcome);
+    await client.waitFor('class_options');
+
+    client.send({ t: 'choose_class', classId: WATCHMAN.id, originId: INDEXED.id });
+    await client.settle();
+
+    const sheet = server.talents.sheetOf(body.id);
+    expect(sheet?.loadout, 'the gift never reached the attached sheet').toContain(higherHeal.id);
+    // RANK, NOT MEMBERSHIP — the distinction the three infusions shipped wrong.
+    expect(sheet?.points.get(higherHeal.id)).toBe(1);
+  });
+
+  /** …and a Cityborn body never sees it, from the same door. */
+  it('gives the Cityborn nothing of the kind', async () => {
+    server = await boot('origin-talent-absent');
+    const client = await connect(server.port);
+    const welcome = await client.hello('ren-handle');
+    const body = bodyOf(welcome);
+    await client.waitFor('class_options');
+
+    client.send({ t: 'choose_class', classId: WATCHMAN.id, originId: CITYBORN.id });
+    await client.settle();
+
+    expect(server.talents.sheetOf(body.id)?.loadout).not.toContain(higherHeal.id);
   });
 });
