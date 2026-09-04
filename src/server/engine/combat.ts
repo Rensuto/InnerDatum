@@ -100,6 +100,11 @@ import {
   combatDamageRange,
   combatDefense,
 } from './derived.ts';
+// TYPE-ONLY, so this is erased at runtime and cannot make a cycle with
+// actor.ts — which imports `CombatSheet` from here. `OnHitStatus` lives there
+// because a MONSTER declares one directly and has since M3; the sheet is the
+// second place one can come from, not the first.
+import type { OnHitStatus } from './actor.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { DamageProfile, TypeTable } from './damage.ts';
@@ -112,7 +117,30 @@ import type { Combatant } from './derived.ts';
  * together and every call site needs both halves. M4's loader hangs one of these
  * off each actor as `actor.combat`.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A WORN THING LEAVES IN THE WOUND — ToME's `melee_project`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `MonsterActor.onHit` has carried a ghoul's paralysis since M3 and `strike`
+ * applies it at one guarded site. The PLAYER side of the same idea — a serrated
+ * blade that opens a cut, upstream's `wielder = { melee_project = ... }` — had
+ * nowhere to live: `strike` read `isMonster(attacker) ? attacker.onHit`, so a
+ * rider was a fact only a creature could state.
+ *
+ * A LIST, BECAUSE A BODY WEARS MORE THAN ONE THING. Upstream folds every
+ * wielder's `melee_project` and fires all of them; two serrated weapons are two
+ * cuts, not the louder of the two. It is the one channel in this fold that is
+ * not a number, so it CONCATENATES where the rest add — which is the same
+ * "combine per channel" rule, with the combine that fits.
+ */
 export type CombatSheet = Combatant & {
+  /**
+   * `melee_project` — the riders every worn thing contributes, concatenated.
+   * ABSENT rather than empty when nothing grants one, so an empty fold still
+   * deep-equals the sheet it folded. See the block above this type.
+   */
+  readonly onHit?: readonly OnHitStatus[];
   /** Resistances, caps and flat reduction. Read when this actor is the TARGET. */
   readonly profile?: DamageProfile;
   /** `inc_damage` — additive damage bonuses. Read when this actor ATTACKS. */

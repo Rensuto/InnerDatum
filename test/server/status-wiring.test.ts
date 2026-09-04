@@ -14,15 +14,19 @@ import { SLOW_PLAYER_MP_PENALTY, createMvpEffectState } from '../../src/server/c
 import { createDownedState, isDowned } from '../../src/server/engine/downed.ts';
 import {
   INDEX_EIDOLON,
+  INDEX_HUSK,
   INDEX_HUSK_ELITE,
   INDEX_WRAITH,
   monsterInit,
 } from '../../src/server/content/monsters.ts';
+import { Slot } from '../../src/server/content/items.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
 import {
   budgetPenalty,
   createEffectState,
   effectDur,
   hasEffect,
+  recomposeCombat,
   registerEffect,
   setEffect,
   statusApplier,
@@ -482,5 +486,64 @@ describe('SLOWED, which was a badge and nothing else', () => {
     }
 
     expect(muddled, 'sixty turns of being touched and never once confused').toBe(true);
+  });
+
+  it('a brass ring on a detective’s hand opens cuts of its own', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE FIRST RIDER THAT IS NOT A CREATURE'S, AND THE JOIN IS THE WHOLE TEST.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `strike` read `isMonster(attacker) ? attacker.onHit` since M3, so a rider
+     * was a fact only a MONSTER could state and nothing a player wore could
+     * leave a mark. Every link between the ring and the wound is somewhere else:
+     * `Wielder.onHit` has to exist, `composeWielders` has to fold it onto the
+     * sheet, `recomposeCombat` has to run, and `strike` has to look somewhere it
+     * never looked. `equipment.test.ts` proves the fold and `items.test.ts`
+     * proves the content — two correct halves, exactly what the eidolon's note
+     * above warns about.
+     *
+     * IT BUMPS RATHER THAN CALLING A TALENT, because a bump IS the basic attack
+     * here and `strike` is the one site that applies a rider at all.
+     */
+    const { world, effects } = arena('status-ring');
+    const dalt = world.addPlayer('p1', 'Dalt', { maxHp: 900 });
+    dalt.x = REALM_TILES.x;
+    dalt.y = REALM_TILES.y;
+    dalt.hpRegen = 0;
+    dalt.equipped = { [Slot.Ring]: 'item_watchmans_brass_ring' };
+    // THE REAL FOLD, not a hand-set `combat.onHit`: the bug this guards against
+    // is precisely a rider that never reaches the sheet.
+    recomposeCombat(dalt, effects, resolveItem);
+    expect(dalt.combat?.onHit, 'the ring never reached the sheet').toHaveLength(1);
+
+    const husk = world.addMonster(
+      'm_husk',
+      monsterInit(INDEX_HUSK, { x: REALM_TILES.x + 1, y: REALM_TILES.y }),
+    );
+    /**
+     * DEEP ENOUGH TO SURVIVE THE SWINGS, and that is not padding. A husk has 16
+     * hit points and dies on the second blow, so the honest version of this
+     * fixture gives `strike` exactly ONE non-killing hit to roll a save on —
+     * and `!outcome.killed` is a condition the rider site is RIGHT to enforce
+     * (a corpse does not bleed). A one-sample test of a saved status is a coin
+     * toss wearing an assertion.
+     */
+    husk.maxHp = 900;
+    husk.hp = 900;
+
+    const engine = createTurnEngine({ world, now: () => 0, effects });
+    engine.join('p1');
+    world.turn.engagement = 3;
+
+    // A WINDOW, NOT ONE TURN: the swing can miss and the bleed rolls a save.
+    let cut = false;
+    for (let i = 0; i < 60 && !cut; i += 1) {
+      engine.submitMove('p1', 'e');
+      engine.pump();
+      if (hasEffect(effects, 'm_husk', EffectId.Bleeding)) cut = true;
+    }
+
+    expect(cut, 'sixty swings wearing a bleeding ring and never once a cut').toBe(true);
   });
 });

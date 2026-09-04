@@ -133,6 +133,7 @@ import { IMMUNITY_KEYS, MAX_ITEM_IMMUNITY } from '../../shared/immunity.ts';
 import type { ImmunitySubtype } from '../../shared/immunity.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import type { CombatMods, PrimaryStats } from '../engine/derived.ts';
+import type { OnHitStatus } from '../engine/actor.ts';
 
 // ---------------------------------------------------------------------------
 // Slots
@@ -286,6 +287,28 @@ export type Wielder = {
    * The import-time check below permits it for this key and no other.
    */
   readonly resists?: Partial<Record<DamageType, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `melee_project` — WHAT THIS THING LEAVES IN THE WOUND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The player's half of `MonsterActor.onHit`, which has existed since M3 and
+   * which `strike` already applies under four conditions it owns — a miss
+   * inflicts nothing, a corpse does not bleed. Nothing about that site needed
+   * changing; it simply had no way to hear about a WORN THING. It read
+   * `isMonster(attacker) ? attacker.onHit`, so a rider was a fact only a
+   * creature could state.
+   *
+   * NOT AN EGO GRANT, and that is a scope decision rather than an oversight:
+   * `Ego.grants` is numeric all the way down — `EgoGrant` is a rolled RANGE —
+   * and a rider is a discrete row that either fires or does not. An affix
+   * granting one would need a second kind of grant in a table whose whole shape
+   * is "roll a number", so the day it is wanted it gets its own argument.
+   *
+   * THE FOLD CONCATENATES THESE where it adds everything else. See
+   * `CombatSheet.onHit`.
+   */
+  readonly onHit?: OnHitStatus;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * `inc_damage` — HOW MUCH HARDER THIS ELEMENT LANDS. A percentage.
@@ -518,6 +541,18 @@ export type ItemUse = {
  * and two items that are the same image on a shop shelf is a player squinting at
  * a tooltip to tell their healing apart.
  */
+/**
+ * WHAT THE BRASS RING'S CUT IS WORTH PER TURN.
+ *
+ * BELOW THE CLAW THAT TAUGHT IT. `monsters.ts` gives its elite the shared
+ * `BLEED_POWER`; a ring is a bonus on top of a whole kit rather than the thing
+ * that makes a creature frightening, so it bleeds for less. Authored here as its
+ * OWN number rather than imported, both because the import is a cycle (see the
+ * ring) and because tying a ring to the bestiary's constant would make one a
+ * hostage of the other.
+ */
+const RING_BLEED = 2;
+
 export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
   'icon_active_alchemic_vial',
   'item_inquisitors_breeches',
@@ -631,7 +666,43 @@ const WATCHMAN_KIT: readonly Item[] = [
     tier: 'rare',
     // +3, never +1 or +2: `rescaleCombatStats` floors (scale.ts:116) and a
     // smaller grant can round away to nothing at all.
-    wielder: { stats: { str: 3 } },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIRST WORN THING IN THE GAME THAT LEAVES A MARK — `melee_project`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A ghoul's claw has opened cuts since M3 (`monsters.ts`, the elite's
+     * `onHit`) and nothing a PLAYER could wear did anything of the kind. See
+     * `Wielder.onHit`: the site that applies it never changed, it simply had no
+     * way to hear about a worn thing.
+     *
+     * ═══ WEAKER THAN THE CLAW THAT TAUGHT IT, ON PURPOSE ═══
+     * The elite's rider is 3 turns at `BLEED_POWER` behind an apply power of 12.
+     * This is TWO turns and behind a LOWER power, because a monster's rider is
+     * the thing that makes that monster frightening and a ring's is a bonus on
+     * top of a whole kit. A ring that bled like the elite would make the elite
+     * unremarkable.
+     *
+     * IT ROLLS A SAVE, which `power` is: `OnHitStatus.power`'s own note says an
+     * absent one means NO save at all, and an unsaveable bleed on every swing
+     * from a rare ring is a status that stops being a status.
+     *
+     * ═══ THE ID IS A LITERAL, AND THAT IS A CYCLE AND NOT A PREFERENCE ═══
+     * `EffectId` lives in `content/effects.ts`, which reaches this file through
+     * `engine/talents.ts` -> `engine/equipment.ts` -> `SLOT_ORDER`. Importing the
+     * VALUE closes that loop, and the symptom is not a lint error: `EffectId` is
+     * `undefined` at module-evaluation time and the whole server fails to boot
+     * with "Cannot read properties of undefined (reading 'Bleeding')".
+     *
+     * So the id is written out and `items.test.ts` pins it against the real
+     * `EffectId` — a test may import both files because a test is in neither
+     * module's graph. The same reason `classId` is a soft reference in the
+     * persistence layer.
+     */
+    wielder: {
+      stats: { str: 3 },
+      onHit: { effectId: 'effect:bleeding', turns: 2, power: 8, magnitude: RING_BLEED },
+    },
     desc: 'Issued on the day of the oath. The band has worn thin from the inside.',
   },
 ];

@@ -2816,8 +2816,23 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
    * rider consumes a suffix of the stream rather than shifting the swing that
    * produced it.
    */
-  const rider = isMonster(attacker) ? attacker.onHit : undefined;
-  if (rider !== undefined && outcome.ok && outcome.hit && !outcome.killed) {
+  /**
+   * ═══ AND THE SAME ROW OFF A WORN THING — `wielder.melee_project` ═══
+   * This read `isMonster(attacker) ? attacker.onHit` and so a rider was a fact
+   * only a CREATURE could state: a ghoul could paralyse, and no blade in the
+   * game could open a cut. `composeWielders` now folds `Wielder.onHit` onto the
+   * sheet, so a player's riders arrive by the same route their armour does.
+   *
+   * BOTH SOURCES, NOT ONE OR THE OTHER. A monster with a rider that also wore
+   * something would otherwise silently lose one of them, and the bestiary is
+   * exactly where that will happen first.
+   */
+  const riders = [
+    ...(isMonster(attacker) && attacker.onHit !== undefined ? [attacker.onHit] : []),
+    ...(attacker.combat?.onHit ?? []),
+  ];
+  for (const rider of riders) {
+    if (!(outcome.ok && outcome.hit && !outcome.killed)) break;
     run.ctx.applyStatus?.(target, rider.effectId, rider.turns, {
       ...(rider.power === undefined ? {} : { applyPower: rider.power }),
       ...(rider.magnitude === undefined ? {} : { power: rider.magnitude }),

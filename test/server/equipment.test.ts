@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { WATCHMAN } from '../../src/server/content/classes.ts';
 import { EGOS } from '../../src/server/content/egos.ts';
 import { ITEMS, SLOT_ORDER, Slot, itemById } from '../../src/server/content/items.ts';
+import { EffectId } from '../../src/server/content/effects.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { composeSheet, composeWielders, wornOf } from '../../src/server/engine/equipment.ts';
 import { applyDamage, combatGetResist } from '../../src/server/engine/damage.ts';
@@ -889,5 +890,53 @@ describe('gear can finally answer a bestiary that resists you', () => {
     const pen = EGOS.filter((ego) => ego.grants.penetration !== undefined);
     expect(pen.length).toBeGreaterThan(0);
     expect(pen.some((ego) => ego.grants.penetration?.[DARK] !== undefined)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `melee_project` — the riders a worn thing contributes
+// ---------------------------------------------------------------------------
+
+describe('the rider channel', () => {
+  const CUT = { effectId: EffectId.Bleeding, turns: 2, power: 8, magnitude: 2 } as const;
+  const BURN = { effectId: EffectId.Slowed, turns: 3, power: 6 } as const;
+
+  /**
+   * ═══ THE ROUND-TRIP PROOF, WHICH THIS CHANNEL COULD HAVE BROKEN ═══
+   * `composeSheet(base, [])` must deep-equal `base`. Every other table in this
+   * fold is emitted only when non-empty for exactly that reason, and an
+   * unconditional `onHit: []` would have made an empty fold structurally
+   * different from the sheet it folded — the one property this file exists for.
+   */
+  it('adds nothing at all when nothing grants one', () => {
+    expect(composeWielders(WATCHMAN.combat, [])).toEqual(WATCHMAN.combat);
+    expect(composeWielders(WATCHMAN.combat, [{ mods: { def: 2 } }]).onHit).toBeUndefined();
+  });
+
+  /**
+   * CONCATENATED, NOT SUMMED AND NOT REPLACED. Upstream fires every wielder's
+   * `melee_project`: two serrated things are two cuts, not the louder of them.
+   * This is the only channel in the fold that is not a number, which is why it
+   * is the only one with its own combine.
+   */
+  it('keeps every rider a body is wearing, in doll order', () => {
+    const sheet = composeWielders(WATCHMAN.combat, [{ onHit: CUT }, { onHit: BURN }]);
+    expect(sheet.onHit).toEqual([CUT, BURN]);
+  });
+
+  /** …and it does not mutate the class sheet every body of that class shares. */
+  it('leaves the shared class sheet alone', () => {
+    composeWielders(WATCHMAN.combat, [{ onHit: CUT }]);
+    expect(WATCHMAN.combat.onHit).toBeUndefined();
+  });
+
+  /**
+   * A rider rides beside the numbers rather than instead of them: the ring that
+   * prompted this grants Strength AND a cut, from one `wielder` block.
+   */
+  it('does not disturb the numeric channels beside it', () => {
+    const sheet = composeWielders(WATCHMAN.combat, [{ stats: { str: 3 }, onHit: CUT }]);
+    expect(sheet.onHit).toEqual([CUT]);
+    expect(sheet.stats?.str).toBe((WATCHMAN.combat.stats?.str ?? 0) + 3);
   });
 });

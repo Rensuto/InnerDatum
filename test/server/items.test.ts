@@ -12,6 +12,7 @@ import {
   itemsForSlot,
   validateItems,
 } from '../../src/server/content/items.ts';
+import { EFFECT_IDS, EffectId } from '../../src/server/content/effects.ts';
 import type { Item } from '../../src/server/content/items.ts';
 
 /**
@@ -400,5 +401,52 @@ describe('the import-time arity check', () => {
       wielder: { mods: { physSpeed: 4 } as unknown as Item['wielder']['mods'] },
     });
     expect(() => validateItems([...fullSlotSpread(), smuggled])).toThrow(/ZERO call sites/);
+  });
+});
+
+describe('a worn rider names a real effect', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PIN THE RING'S OWN COMMENT PROMISES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Wielder.onHit.effectId` is written out as a LITERAL in `items.ts` rather
+   * than as `EffectId.Bleeding`, because importing the value closes a cycle —
+   * `content/effects.ts` reaches `content/items.ts` through
+   * `engine/talents.ts` -> `engine/equipment.ts` -> `SLOT_ORDER` — and the
+   * symptom is not a lint error but a server that will not boot, with
+   * "Cannot read properties of undefined (reading 'Bleeding')".
+   *
+   * A TEST MAY IMPORT BOTH, because a test is in neither module's graph. So the
+   * check that the literal is a real effect id lives here, and a typo in an item
+   * is a red test rather than a rider that silently never lands.
+   */
+  it('every rider on every item is an effect this build ships', () => {
+    const known = new Set<string>(EFFECT_IDS);
+    for (const item of ITEMS) {
+      const rider = item.wielder?.onHit;
+      if (rider === undefined) continue;
+      expect(known.has(rider.effectId), `${item.id} -> ${rider.effectId}`).toBe(true);
+    }
+  });
+
+  /** The one that exists today, named outright so its removal is deliberate. */
+  it('the brass ring opens a cut', () => {
+    const ring = itemById('item_watchmans_brass_ring');
+    expect(ring?.wielder?.onHit?.effectId).toBe(EffectId.Bleeding);
+  });
+
+  /**
+   * A RIDER WITHOUT A SAVE IS A STATUS THAT STOPS BEING ONE. `OnHitStatus.power`
+   * says absent means NO save at all, which is right for a creature whose whole
+   * identity is the rider and wrong for a bonus on a ring — every swing would
+   * land it, unconditionally, forever.
+   */
+  it('rolls a save, so the wearer is not simply granted the effect', () => {
+    for (const item of ITEMS) {
+      const rider = item.wielder?.onHit;
+      if (rider === undefined) continue;
+      expect(rider.power, `${item.id} grants an unsaveable status`).toBeGreaterThan(0);
+    }
   });
 });

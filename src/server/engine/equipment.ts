@@ -119,6 +119,7 @@ import { bound } from '../../shared/scale.ts';
 import type { ImmunitySubtype } from '../../shared/immunity.ts';
 import type { AdditiveMods, AdditiveStats, Item, ItemCatalogue, Slot } from '../content/items.ts';
 import type { CombatSheet } from './combat.ts';
+import type { OnHitStatus } from './actor.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import type { TypeTable } from './damage.ts';
 import type { CombatMods, PrimaryStats } from './derived.ts';
@@ -305,6 +306,18 @@ export function composeWielders(
   const damageDelta = new Map<DamageType, number>();
   const penDelta = new Map<DamageType, number>();
   const immunityDelta = new Map<ImmunitySubtype, number>();
+  /**
+   * THE ONE CHANNEL THAT IS NOT A NUMBER. Every other delta above is a running
+   * sum; a rider either fires or it does not, so these CONCATENATE. Upstream
+   * folds every wielder's `melee_project` and fires all of them — two serrated
+   * blades are two cuts, not the louder of the two.
+   *
+   * IN BLOCK ORDER, which is doll order, so a body that wears the same things
+   * lands the same riders in the same sequence every time. `composeWielders` is
+   * on the deterministic path and an order that depended on a Map's iteration
+   * would be a replay divergence nobody could name.
+   */
+  const riders: OnHitStatus[] = [];
 
   for (const wielder of blocks) {
     if (wielder === undefined) continue;
@@ -390,6 +403,8 @@ export function composeWielders(
      * `combatGetResist` reads the row directly, so nothing downstream needs to
      * learn a new shape.
      */
+    if (wielder.onHit !== undefined) riders.push(wielder.onHit);
+
     if (wielder.resistAll !== undefined) {
       resistDelta.set('all', (resistDelta.get('all') ?? 0) + wielder.resistAll);
     }
@@ -438,6 +453,21 @@ export function composeWielders(
    * 100% (Combat.lua:2227-2228), and letting gear raise its own ceiling would be
    * an item that grants immunity in two affixes rather than one.
    */
+  /**
+   * EMITTED ONLY WHEN SOMETHING GRANTED ONE, exactly as every table above is.
+   * `composeSheet(base, [])` must deep-equal `base`, and an unconditional
+   * `onHit: []` would make an empty fold structurally different from the sheet
+   * it folded — which breaks the round-trip proof that unequipping everything
+   * restores the original.
+   *
+   * THE BASE'S OWN COME FIRST. A class sheet cannot author a rider today, but
+   * concatenating rather than replacing is what makes that a content question
+   * instead of a second edit here.
+   */
+  if (riders.length > 0) {
+    out.onHit = Object.freeze([...(base.onHit ?? []), ...riders]);
+  }
+
   if (resistDelta.size > 0) {
     const resists: { -readonly [K in keyof TypeTable]: TypeTable[K] } = {
       ...base.profile?.resists,
