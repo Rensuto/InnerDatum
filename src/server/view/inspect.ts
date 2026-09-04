@@ -72,7 +72,7 @@ import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
-import { effectDef, effectsOn } from '../engine/effects.ts';
+import { boughtSheet, effectDef, effectsOn } from '../engine/effects.ts';
 import type { EffectState } from '../engine/effects.ts';
 
 // `InspectRow` and `InspectView` WERE DECLARED HERE and now live in
@@ -426,7 +426,21 @@ function whole(n: number): string {
  * prevent. The disagreement with upstream is at most one display point and it
  * is written down here rather than discovered.
  */
-function pushSelfSheet(rows: InspectRow[], c: Combatant, hpRegen: number): void {
+function pushSelfSheet(
+  rows: InspectRow[],
+  c: Combatant,
+  hpRegen: number,
+  /**
+   * WHAT THIS BODY BOUGHT, before gear and before anything folded onto it — the
+   * same `boughtSheet` the `progress` frame sends as `statBase`. A SHEET, like
+   * `c`: the note at the call site forbids the actor, and this is the second
+   * sheet rather than an exception to it.
+   *
+   * Undefined for a body with no bought sheet at all, which reads as "no split
+   * to show" rather than as zero.
+   */
+  bought: Combatant | undefined,
+): void {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * EACH BLOCK NAMES ITS TAB NOW. The grouping was always here; it was thrown
@@ -444,7 +458,33 @@ function pushSelfSheet(rows: InspectRow[], c: Combatant, hpRegen: number): void 
    */
   // ═══ 1. THE SIX PRIMARIES — CharacterSheet.lua:815-820 ═══
   for (const [label, key] of SHEET_STATS) {
-    rows.push({ label, value: whole(stat(c, key)), group: InspectGroup.General });
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * COMPOSED, WITH WHAT YOU BOUGHT IN BRACKETS — `25 (20)`.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `CharacterSheet.lua:798` heads this block "Stats:        Base/Current" and
+     * :810 prints `%3d / %d` — the bought value and the composed one. Ours
+     * printed the composed one alone, so you could not tell how much of a stat
+     * was gear, and unequipping was a guess.
+     *
+     * ═══ THE LEVELUP PANEL'S FORMAT, NOT THIS DIALOG'S ═══
+     * Upstream uses TWO formats for one fact: `base / current` here and
+     * `current (base)` on `LevelupDialog.lua:624-627`. Ours already ships the
+     * second, cited, one keypress away — so matching this dialog literally would
+     * put two spellings of the same pair in front of one player. One format for
+     * one fact wins over a per-dialog match.
+     *
+     * ONLY WHEN THEY DIFFER, which is the levelup panel's rule verbatim:
+     * printing `(20)` beside a bare 20 on every row is furniture.
+     */
+    const now = stat(c, key);
+    const base = bought === undefined ? now : stat(bought, key);
+    rows.push({
+      label,
+      value: Math.round(base) === Math.round(now) ? whole(now) : `${whole(now)} (${whole(base)})`,
+      group: InspectGroup.General,
+    });
   }
 
   /**
@@ -745,7 +785,15 @@ export function inspectActor(
     // `hpRegen` AS A NUMBER, NOT THE ACTOR. The note above forbids handing the
     // actor to this builder; a single value off it carries no such risk and is
     // the only thing the regen rows need that a sheet does not have.
-    pushSelfSheet(rows, combatantOf(target), target.hpRegen);
+    pushSelfSheet(
+      rows,
+      combatantOf(target),
+      target.hpRegen,
+      // THE SAME EXPRESSION THE `progress` FRAME USES for `statBase`
+      // (gateway.ts:4893), so the two screens cannot disagree about what a
+      // player bought.
+      boughtSheet(target, target.baseCombat ?? target.combat),
+    );
     /**
      * AND WHAT IS CURRENTLY ON YOU. The hostile card got this first and the self
      * sheet did not, which was an oversight rather than a decision: "what is

@@ -299,6 +299,43 @@ describe('and the player can SEE it, on both cards', () => {
     );
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MUCH OF THAT STRENGTH IS YOURS — `CharacterSheet.lua:798`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream heads the block "Stats:        Base/Current" and prints `%3d / %d`
+   * (:810). Ours printed the composed figure alone, so a player could not tell
+   * what came off with the coat and unequipping was a guess.
+   *
+   * ═══ THE PAIR ONLY APPEARS WHEN THE TWO DIFFER ═══
+   * Every fixture on the reduced sheet in `inspect.test.ts` wears nothing, so
+   * bought and composed are equal there and that file asserts a bare `24` — it
+   * cannot see this branch at all. This one pulls them apart.
+   */
+  it('brackets what a body bought when gear has moved the number', () => {
+    const world = createWorld('stat-split');
+    const viewer = world.addPlayer('p1', 'Dalt');
+
+    const bare = inspectActor(world, viewer, viewer)?.rows ?? [];
+    const strengthOf = (rows: readonly { label?: unknown; value?: unknown }[]): string =>
+      String(rows.find((row) => row['label'] === 'Strength')?.['value']);
+    expect(strengthOf(bare), 'an ungeared body shows one figure').toMatch(/^\d+$/);
+
+    // THE BOUGHT SHEET IS `baseCombat`; the composed one is `combat`. Moving
+    // only the second is exactly what wearing a coat does.
+    viewer.baseCombat = { ...(viewer.combat ?? {}) };
+    viewer.combat = {
+      ...(viewer.combat ?? {}),
+      stats: { ...(viewer.combat?.stats ?? {}), str: (viewer.combat?.stats?.str ?? 10) + 6 },
+    };
+
+    const geared = inspectActor(world, viewer, viewer)?.rows ?? [];
+    expect(strengthOf(geared), 'the sheet cannot say how much of the stat is gear').toMatch(
+      /^\d+ \(\d+\)$/,
+    );
+  });
+
   it('says nothing at all when there is nothing to say', () => {
     // Seven rows of 0% on every husk in the game is how a card stops being read.
     const { world, viewer, target } = staged({ stun: 0 });
