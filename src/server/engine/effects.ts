@@ -2295,16 +2295,45 @@ export function statusApplier(state: EffectState, rng: Rng, ctx: EffectCtx = NO_
  * chose at random. The last thing that landed is the thing they just watched
  * land. `effectsOn` returns them in application order, so this is its tail.
  */
-export type StatusCure = (target: EffectActor, status: EffectStatus) => string | null;
+/**
+ * WHICH ONE TO TAKE OFF, where a caller wants to be choosy.
+ *
+ * ═══ BOTH FIELDS EXIST FOR `Infusion: Wild`, WHICH IS UPSTREAM'S FUSSIEST CURE ═══
+ * `inscriptions.lua:152-156` runs TWO removals: every CROSS-TIER effect matching
+ * a type table, and then ONE ordinary effect of that type. Without `channel` the
+ * cure would take a mental debuff off a body that asked to shake off a physical
+ * one; without `crossTierOnly` the two clauses collapse into "remove two", which
+ * removes one too many whenever the cross-tier effect is not there.
+ *
+ * ABSENT MEANS UNFILTERED, so every existing caller is unchanged — `field_dressing`,
+ * `healing_infusion` and `nerve` all mean "whatever is worst, take it off".
+ */
+export type StatusCureOptions = {
+  /** Only an effect whose `type` is this channel. */
+  readonly channel?: SaveChannel;
+  /** Only an effect that `crossTierFor` marks — `EffectState.crossTier`'s values. */
+  readonly crossTierOnly?: boolean;
+};
+
+export type StatusCure = (
+  target: EffectActor,
+  status: EffectStatus,
+  options?: StatusCureOptions,
+) => string | null;
 
 export function statusCurer(state: EffectState, rng: Rng, ctx: EffectCtx = NO_CTX): StatusCure {
-  return (target, status) => {
+  return (target, status, options) => {
     const held = effectsOn(state, target.id);
+    // THE CROSS-TIER IDS, as a set, so the filter below is a lookup rather than
+    // a scan of the map for every effect on the body.
+    const crossTierIds = new Set(state.crossTier.values());
     for (let i = held.length - 1; i >= 0; i -= 1) {
       const instance = held[i];
       if (instance === undefined) continue;
       const def = effectDef(state, instance.effectId);
       if (def === undefined || def.status !== status) continue;
+      if (options?.channel !== undefined && def.type !== options.channel) continue;
+      if (options?.crossTierOnly === true && !crossTierIds.has(instance.effectId)) continue;
       // `removeEffect` runs the effect's own `onRemove`, which is what puts back
       // whatever it took away — so a cure goes through it rather than deleting
       // the row, exactly as an expiry does.

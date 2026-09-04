@@ -1196,6 +1196,12 @@ describe('the status roster (game-design.md § 12)', () => {
        * keeps every index it already holds.
        */
       EffectId.Regeneration,
+      /**
+       * THE FIRST POSITIVE `all` RESIST ROW. Appended, like every one before it.
+       * `SPELLSHOCKED` five entries up carries the negative one; this is the
+       * other direction of the same channel.
+       */
+      EffectId.PainSuppression,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1210,6 +1216,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_brainlocked',
       'icon_status_confused',
       'icon_status_regeneration',
+      'icon_status_pain_suppression',
     ]);
   });
 
@@ -1301,6 +1308,10 @@ describe('the status roster (game-design.md § 12)', () => {
        * and any future dispel-by-channel agree with upstream.
        */
       [EffectId.Regeneration]: SaveChannel.Physical,
+      // physical.lua:842 — `type = "physical"`. THE CHANNEL IS LOAD-BEARING HERE
+      // and not merely a label: `Infusion: Wild` cures on `what = {physical=true}`,
+      // so this is the field that decides what a wild infusion can shake off.
+      [EffectId.PainSuppression]: SaveChannel.Physical,
     });
   });
 

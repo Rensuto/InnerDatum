@@ -33,6 +33,7 @@
 
 import { healingInfusion } from '../talents/healing_infusion.ts';
 import { regenerationInfusion } from '../talents/regeneration_infusion.ts';
+import { wildInfusion } from '../talents/wild_infusion.ts';
 import type { Talent } from '../engine/talents.ts';
 
 /**
@@ -76,6 +77,7 @@ export const INSCRIPTIONS: readonly Inscription[] = Object.freeze([
     name: 'Regeneration Infusion',
     grants: regenerationInfusion,
   },
+  { id: 'inscription_wild_infusion', name: 'Wild Infusion', grants: wildInfusion },
 ]);
 
 /** The talents inscriptions can put on a bar. One derivation, never a second list. */
@@ -101,15 +103,18 @@ export function inscriptionById(id: string): Inscription | undefined {
  * race and was never an arbitrary number, and this list was one entry long for
  * exactly as long as it took to port the second.
  *
- * WILD IS THE ONE STILL MISSING, and it is missing for a stated reason rather
- * than an oversight: it wants a temporary all-resistance, and `Wielder`
- * deliberately refuses an `all` row so the gear fold stays additive-only. That
- * is a design question, not a transcription, so it is not being answered in
- * passing.
+ * ALL THREE ARE HERE NOW. Wild was recorded as blocked — "it wants a temporary
+ * all-resistance, and `Wielder` deliberately refuses an `all` row" — and that
+ * was TRUE OF GEAR AND FALSE OF EFFECTS. `validateItems` refuses `resistAll` on
+ * an item with the words "only an effect may move `all`"; `composeWielders` has
+ * folded the row since the cross-tier trio landed; and `SPELLSHOCKED` has
+ * carried a negative one all along. There was no design question, only a row
+ * with no positive user. Re-check a blocker before believing it.
  */
 export const BIRTH_INSCRIPTIONS: readonly string[] = Object.freeze([
   'inscription_healing_infusion',
   'inscription_regeneration_infusion',
+  'inscription_wild_infusion',
 ]);
 
 /**

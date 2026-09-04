@@ -156,6 +156,14 @@ export const EffectId = {
    * says so at length.
    */
   Regeneration: 'effect:regeneration',
+  /**
+   * THE FIRST POSITIVE `all` ROW IN THE GAME. `SPELLSHOCKED` has carried a
+   * NEGATIVE one since the cross-tier trio landed, and `Wielder.resistAll`
+   * exists for exactly that — `validateItems` refuses it on gear and says why:
+   * "only an effect may move `all`". This is the effect that finally moves it
+   * the other way.
+   */
+  PainSuppression: 'effect:pain_suppression',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1201,6 +1209,50 @@ export const REGENERATION: EffectDef = Object.freeze({
   },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PAIN SUPPRESSION — physical.lua:838-855. "The target ignores pain."
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     activate = function(self, eff)
+ *         eff.pid = self:addTemporaryValue("resists", {all=eff.power})
+ *     end,
+ *
+ * ═══ IT IS A RESCALE OF THE WHOLE DEFENSIVE COLUMN, NOT SIX TYPED BONUSES ═══
+ * `SPELLSHOCKED`'s note states the rule from the other direction and it applies
+ * unchanged here: the `all` row composes MULTIPLICATIVELY with every typed row
+ * (Combat.lua:2227-2228), so this is not "+14 to six numbers". A body already
+ * resistant to darkness gets proportionally more out of it, which is upstream's
+ * intent and is why the row exists at all.
+ *
+ * ═══ THROUGH `Wielder.resistAll`, WHICH WAS BUILT FOR THIS AND HAD ONE USER ═══
+ * `composeWielders` has folded an `all` row since the trio landed and
+ * `combatGetResist` has read one since the defensive maths was ported. The only
+ * thing missing was something that granted it rather than taking it away.
+ */
+export const PAIN_SUPPRESSION: EffectDef = Object.freeze({
+  id: EffectId.PainSuppression,
+  badge: 'Pn',
+  displayName: 'Pain Suppression',
+  description: 'Ignoring the pain. Every kind of damage lands softer.',
+  // physical.lua:842 — `type = "physical"`, `subtype = { nature = true }`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Beneficial,
+  // No `on_merge` upstream, so a re-press replaces rather than stacking — which
+  // matters here more than usual: two stacked `all` rows would compound.
+  stackMode: StackMode.Refresh,
+  subtypes: ['nature'],
+  decrease: 1,
+  icon: 'icon_status_pain_suppression',
+  // physical.lua:844 — `parameters = { power = 20 }`. The INSCRIPTION overrides
+  // it (human.lua:54 carries 14); this is the bare effect's own default, exactly
+  // as upstream declares it.
+  parameters: { power: 20 },
+  wielder: (instance) => ({
+    resistAll: Number(instance.params['power'] ?? 20),
+  }),
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1214,6 +1266,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   BRAINLOCKED,
   CONFUSED,
   REGENERATION,
+  PAIN_SUPPRESSION,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */
