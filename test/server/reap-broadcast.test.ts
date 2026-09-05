@@ -6,6 +6,8 @@ import Fastify from 'fastify';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
+import { BLEEDING, EffectId } from '../../src/server/content/effects.ts';
+import { createEffectState, registerEffect, setEffect } from '../../src/server/engine/effects.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -161,6 +163,8 @@ async function connect(port: number): Promise<Client> {
 type Harness = {
   readonly port: number;
   readonly world: World;
+  /** Wired so a bleed can be staged — see `a bleed names the bleeder`. */
+  readonly effects: ReturnType<typeof createEffectState>;
   close(): Promise<void>;
 };
 
@@ -171,11 +175,19 @@ async function boot(seed: string): Promise<Harness> {
   // rather than wherever the authored map had room.
   world.level.tiles.fill(TileCode.FLOOR);
   const downed = createDownedState();
+  // THE STATUS TABLE IS WIRED IN THIS FILE NOW, because the Record's damage
+  // line reads differently for damage that has no `attack` above it, and a
+  // bleed is the ordinary way to produce some. Registering one effect costs
+  // nothing for the tests that do not stage it: `setEffect` is what puts it
+  // on a body, and no test here does so by accident.
+  const effects = createEffectState();
+  registerEffect(effects, BLEEDING);
 
   await app.register(wsGateway, {
     world,
-    engine: createTurnEngine({ world, downed, now: () => 0 }),
+    engine: createTurnEngine({ world, downed, effects, now: () => 0 }),
     downed,
+    effects,
     disconnectGraceMs: 30_000,
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -186,6 +198,7 @@ async function boot(seed: string): Promise<Harness> {
   return {
     port: address.port,
     world,
+    effects,
     close: async (): Promise<void> => {
       await app.close();
     },
@@ -531,5 +544,89 @@ describe('a player is never reaped', () => {
       lines.some((line) => line.includes('the party is down')),
       'a player by themselves was told a party went down',
     ).toBe(false);
+  });
+});
+
+// ===========================================================================
+
+describe('a damage line names its dealer only when nothing above it has', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `Game.lua:1673` vs `:1677` — UPSTREAM'S OWN SPLIT, FROM THE WIRE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     :1673  #Source# hits #Target# for %s damage.    -- has a headline
+   *     :1677  #Target# receives %s from #Source#.      -- has none
+   *
+   * Our `attack` arm is that headline. Both halves are asserted because they
+   * are one decision and each is the other's failure mode: name it always and
+   * melee reads "Husk hits Ren." / "7 damage from Husk."; name it never and a
+   * bleed reads as damage from nobody, which is what it did.
+   */
+
+  it('leaves a melee blow alone, because the line above already said who', async () => {
+    server = await boot('record-melee');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+    const ren = placeAt(actorOf(String(welcome?.['selfId'])), 10, 10);
+    ren.hpRegen = 0;
+    ren.combat = NEVER_MISSES;
+    husk('m_husk', 11, 10, HUSK_MAX_HP);
+    client.clear();
+
+    await client.settle({ t: 'move', dir: 'e' });
+
+    const lines = logLines(client);
+    // The premise: a blow really landed, or the assertion below finds nothing
+    // and passes for the wrong reason.
+    expect(
+      lines.some((line) => line.includes('hits')),
+      'no blow landed',
+    ).toBe(true);
+    expect(
+      lines.some((line) => line.includes('damage')),
+      'no damage line',
+    ).toBe(true);
+    expect(
+      lines.filter((line) => line.includes('damage from')),
+      'the dealer was named twice — once in the headline, once under it',
+    ).toEqual([]);
+  });
+
+  it('names the bleeder on a tick, which has no headline at all', async () => {
+    server = await boot('record-bleed');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+    const ren = placeAt(actorOf(String(welcome?.['selfId'])), 10, 10);
+    ren.hpRegen = 0;
+    // FAR AWAY AND HARMLESS. The husk must not walk over and swing, or its
+    // `attack` headline is what the damage line hangs off and this test would
+    // be measuring the melee case again under a different name.
+    const bleeder = husk('m_bleeder', 30, 30, HUSK_MAX_HP);
+    bleeder.maxHp = 400;
+    bleeder.hp = 400;
+    // The PLAYER is the one bleeding, so the tick lands on a body the viewer
+    // can always see and `nameOrNull` has a name to give.
+    setEffect(
+      server.effects,
+      ren,
+      EffectId.Bleeding,
+      20,
+      { power: 5, srcId: 'm_bleeder' },
+      server.world.rng,
+    );
+    client.clear();
+
+    // A HELD TURN IS STILL A TURN — dot-kill.test.ts records why: without it the
+    // pump parks waiting on the player and the base clock never advances.
+    for (let turn = 0; turn < 4; turn += 1) await client.settle({ t: 'hold' });
+
+    const lines = logLines(client);
+    const ticks = lines.filter((line) => line.includes('damage'));
+    expect(ticks.length, 'the bleed never ticked — the fixture is wrong').toBeGreaterThan(0);
+    expect(
+      ticks.some((line) => line.includes('damage from Index Husk')),
+      `a bleed named nobody: ${ticks.join(' | ')}`,
+    ).toBe(true);
   });
 });

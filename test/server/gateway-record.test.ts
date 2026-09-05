@@ -41,6 +41,21 @@ describe('a culprit is named or not mentioned, never invented', () => {
     ).not.toContain('nameOf(event.killerId)');
   });
 
+  /**
+   * ═══ AND THE THIRD CLAUSE, WHICH IS THE ONE A SOCKET TEST HALF-REACHES ═══
+   * `reap-broadcast.test.ts` now drives both damage cases over a real socket —
+   * a melee blow that must NOT name its dealer twice, and a bleed tick that
+   * must. Neither can reach the REDACTED case: `OPTIONAL_ACTOR_IDS` strips
+   * `sourceId` for a dealer the viewer cannot see, and the line then has to
+   * degrade to the bare sentence rather than to "damage from someone".
+   */
+  it('reads the damage dealer through nameOrNull, and only without a headline', () => {
+    expect(SOURCE).toContain(
+      'headlined || event.sourceId === undefined ? null : nameOrNull(event.sourceId);',
+    );
+    expect(SOURCE).toContain("const from = dealer === null ? '' : ` from ${dealer}`;");
+  });
+
   it('keeps the same rule on the downed line, which established it', () => {
     expect(SOURCE).toContain(
       'const culprit = event.sourceId === undefined ? null : nameOrNull(event.sourceId);',

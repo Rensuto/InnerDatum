@@ -10650,7 +10650,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * movement is narrated at all, the distinction has nothing left to decide —
    * and a parameter nothing reads is a lie about what a function depends on.
    */
-  const recordFor = (event: TurnEvent): { text: string; depth: number }[] => {
+  /**
+   * ═══ `headlined` — IS THERE A DEPTH-0 SENTENCE ABOVE THIS LINE? ═══
+   *
+   * `Game.lua:1673` vs `:1677` is upstream's own split, and it is the only
+   * thing that decides whether a damage line names who dealt it:
+   *
+   *     :1673  #Source# hits #Target# for %s damage.    -- has a headline
+   *     :1677  #Target# receives %s from #Source#.      -- has none
+   *
+   * Our `attack` and `talent` arms ARE that headline, at depth 0. A blow
+   * therefore reads "Husk hits Ren." / "7 damage." and must not read "7 damage
+   * from Husk" underneath it — the name is already on the line above, and
+   * saying it twice is how a two-line log starts reading like a receipt. A
+   * bleed tick has no line above it at all, and read as damage from nobody.
+   */
+  const recordFor = (event: TurnEvent, headlined: boolean): { text: string; depth: number }[] => {
     switch (event.k) {
       case 'move': {
         /**
@@ -10696,6 +10711,34 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // part company in words. Without it the party's only heal narrated as
         // "0 damage. Ren 41.5/54." under a line saying the Alchemist hit herself.
         const healed = event.healed ?? 0;
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * WHO DEALT IT, WHEN NOTHING ABOVE HAS SAID SO — `Game.lua:1677`.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `#Target# receives %s from #Source#.` is upstream's line for exactly
+         * the damage its `:1673` "hits" sentence does not cover.
+         * `DamageEvent.sourceId` has been populated since the scheduler was
+         * written and this arm dropped it, so a bleed taken three turns ago, a
+         * trap, or an ally's misfire all read as damage from nobody:
+         * "7 physical damage. Ren 41/58."
+         *
+         * ONLY WITHOUT A HEADLINE — see `headlined`. Melee says the name one
+         * line up already.
+         *
+         * NAMED, OR NOT MENTIONED. `nameOrNull`, exactly as the `death` arm
+         * below does it: `OPTIONAL_ACTOR_IDS` REDACTS `sourceId` for a body the
+         * viewer cannot see (projector.ts), so a hit out of the dark still
+         * prints its number and names nobody rather than inventing "someone".
+         *
+         * THE VICTIM STILL LEADS THE SECOND SENTENCE, where upstream's source
+         * leads the first. That is the `death` arm's decision repeated on
+         * purpose: a log that words its damage lines one way and its death
+         * lines another reads as two systems.
+         */
+        const dealer =
+          headlined || event.sourceId === undefined ? null : nameOrNull(event.sourceId);
+        const from = dealer === null ? '' : ` from ${dealer}`;
         if (healed > 0) {
           return [
             {
@@ -10759,7 +10802,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
              */
             text:
               `${Math.round(event.amount)}${event.type === undefined ? '' : ` ${event.type}`}` +
-              ` damage${event.crit === true ? ' (critical)' : ''}. ` +
+              ` damage${from}${event.crit === true ? ' (critical)' : ''}. ` +
               `${nameOf(event.id)} ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
             depth: 1,
           },
@@ -10987,8 +11030,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const lines: LogLine[] = [];
     const gameTurn = result.turn.gameTurn;
 
+    /**
+     * ═══ WHETHER THE NEXT DAMAGE LINE HAS A SENTENCE ABOVE IT ═══
+     *
+     * `attack` and `talent` are the two arms that emit a depth-0 headline, and
+     * both are emitted IMMEDIATELY BEFORE the damage they explain — `hitToWire`
+     * builds `[attack, damage]` in one array (turn-engine.ts) and a talent's
+     * damage events follow its own event. A `damage` does NOT clear the flag,
+     * because one talent headlines every victim of an AoE. Anything else does:
+     * a status tick reached through `resolveStatusHits` is raised in the base
+     * clock's pass rather than in an attack's, and has no headline of its own.
+     *
+     * RESET PER STREAM. `playerEvents` is the acting player's own resolution
+     * and `sweep` is the monsters' — a headline at the end of one may not adopt
+     * the first damage line of the other.
+     */
+    let headlined = false;
     const emit = (event: TurnEvent): void => {
-      for (const line of recordFor(event)) {
+      if (event.k === 'attack' || event.k === 'talent') headlined = true;
+      else if (event.k !== 'damage') headlined = false;
+      for (const line of recordFor(event, headlined)) {
         logSeq += 1;
         lines.push({
           seq: logSeq,
@@ -11001,6 +11062,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     };
 
     for (const event of result.playerEvents) emit(event);
+    headlined = false;
     for (const event of result.sweep) emit(event);
 
     /**
