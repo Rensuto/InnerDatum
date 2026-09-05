@@ -53,8 +53,25 @@ import path from 'node:path';
 
 /** `` `NAME` is 12 `` — present tense only, and never the left half of a range. */
 const CLAIM = /`([A-Z][A-Z0-9_]{3,})`\s+(?:here\s+)?is\s+(-?\d+(?:\.\d+)?)(?!\s*\.\.)/g;
+/**
+ * ═══ `10_000` IS A NUMBER, AND THIS PATTERN COULD NOT SEE ONE ═══
+ *
+ * The value group was `-?\d+(\.\d+)?`, so a numeric separator ended the match:
+ * `\d+` took "10" and then wanted `[;,]` and found `_`. Eighteen constants in
+ * src/ are written that way — every timeout and TTL in client/net/, http/auth.ts
+ * and engine/party.ts — and the gate could not check a claim about any of them.
+ *
+ * IT ALSO BROKE THE AMBIGUITY GUARD, which is the worse half. `DEFAULT_MAX_TICKS`
+ * is 200 in engine/scheduler.ts and 10_000 in shared/energy.ts. A name with two
+ * values is supposed to resolve to `null` and be SKIPPED rather than guessed at
+ * — but only one of the two declarations was ever seen, so the name looked
+ * unambiguous and a claim about it would have been checked against 200.
+ *
+ * The separators are stripped where the value is stored, because a comment
+ * states the number the way a person writes it.
+ */
 const DECL =
-  /^\s*(?:export\s+)?const\s+([A-Z][A-Z0-9_]{3,})\s*(?::[^=]+)?=\s*(-?\d+(?:\.\d+)?)\s*[;,]/gm;
+  /^\s*(?:export\s+)?const\s+([A-Z][A-Z0-9_]{3,})\s*(?::[^=]+)?=\s*(-?[\d_]+(?:\.\d+)?)\s*[;,]/gm;
 /** Any declaration of the name, numeric or not — see `OWNED` below. */
 const ANY_DECL = /^\s*(?:export\s+)?const\s+([A-Z][A-Z0-9_]{3,})\s*(?::[^=]+)?=/gm;
 
@@ -78,9 +95,10 @@ const global = new Map();
 for (const [file, src] of sources) {
   const here = new Map();
   for (const m of src.matchAll(DECL)) {
-    here.set(m[1], m[2]);
+    const value = m[2].replaceAll('_', '');
+    here.set(m[1], value);
     const seen = global.get(m[1]);
-    global.set(m[1], seen === undefined || seen === m[2] ? m[2] : null);
+    global.set(m[1], seen === undefined || seen === value ? value : null);
   }
   perFile.set(file, here);
   // EVERY declaration, including computed ones. `TALENT_ROW_H` is
