@@ -154,8 +154,14 @@ import {
   canRaiseStat,
   isGenericTree,
 } from '../../shared/progression.ts';
-import type { LoadoutTalent, ProgressMsg, UnlockableTree } from '../../shared/protocol.ts';
+import type {
+  LoadoutTalent,
+  ProgressMsg,
+  ResourceKind,
+  UnlockableTree,
+} from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
+import { resourceLabel } from './resource.ts';
 import type { PanelRect } from './panel.ts';
 
 // ---------------------------------------------------------------------------
@@ -644,6 +650,15 @@ export type TalentCell = {
   /** Cost and reach, for the detail strip's meta line. */
   readonly cost: LoadoutTalent['cost'];
   readonly cooldownTurns: number;
+  /**
+   * WHICH POOL THE COST IS IN. Carried on the CELL rather than read off the
+   * view because the two places that print a cost -- `talentTipAt` and
+   * `drawDetail` -- are handed a cell and nothing else, which is the same
+   * reason `cooldownTurns` sits here directly above.
+   *
+   * Absent omits the clause. See `TalentPanelView.pool`.
+   */
+  readonly pool?: ResourceKind;
   readonly range: number;
 };
 
@@ -754,6 +769,21 @@ export type TalentPanelView = {
   readonly focusId?: string | null;
   /** The `progress` frame, or null before the first one arrives. */
   readonly progress: ProgressMsg | null;
+  /**
+   * WHICH POOL THIS BODY SPENDS. The panel said `resolve` to EVERYONE, in
+   * BOTH places it prints a cost — the one-line meta and the detail field.
+   *
+   * Same defect as `HotbarView.pool`, found the same way and fixed one
+   * commit later: a hard-coded word for a value three of the four classes
+   * do not have. It survived here longer because the hotbar is the card you
+   * read mid-fight and this is the screen you open on level-up, so the wrong
+   * word had a smaller audience — not a smaller error.
+   *
+   * OPTIONAL for the fixtures, and absent OMITS the clause. A cost with no
+   * unit is a question; a cost with the wrong unit is an answer that is
+   * wrong.
+   */
+  readonly pool?: ResourceKind;
 };
 
 /**
@@ -997,6 +1027,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     descNext: talent.descNext,
     cost: talent.cost,
     cooldownTurns: talent.cooldownTurns,
+    ...(view.pool === undefined ? {} : { pool: view.pool }),
     range: talent.range,
     // OWNED, so nothing here unlocks anything. The locked half builds its own
     // cells below.
@@ -1179,6 +1210,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         descNext: talent.descNext,
         cost: talent.cost,
         cooldownTurns: talent.cooldownTurns,
+        ...(view.pool === undefined ? {} : { pool: view.pool }),
         range: talent.range,
         unlocks: tree.id,
       })),
@@ -2535,7 +2567,9 @@ export function talentTipAt(
           // a stance read as an attack that happened to cost nothing to aim.
           cell.sustain ? 'toggle, stays on' : null,
           `${cell.cost.ap} AP`,
-          cell.cost.resource > 0 ? `${cell.cost.resource} resolve` : null,
+          cell.cost.resource > 0 && cell.pool !== undefined
+            ? `${cell.cost.resource} ${resourceLabel(cell.pool)}`
+            : null,
           cell.cooldownTurns > 0 ? `${cell.cooldownTurns}t cooldown` : null,
           cell.range >= 2 ? `${cell.range} tiles` : 'melee',
         ]
@@ -2804,7 +2838,9 @@ function drawDetail(
 
   if (!cell.passive) {
     field('Cost', `${String(cell.cost.ap)} AP`);
-    if (cell.cost.resource > 0) field('Resource', `${String(cell.cost.resource)} resolve`);
+    if (cell.cost.resource > 0 && cell.pool !== undefined) {
+      field('Resource', `${String(cell.cost.resource)} ${resourceLabel(cell.pool)}`);
+    }
     field('Range', cell.range >= 2 ? `${String(cell.range)} tiles` : 'melee');
     field('Cooldown', cell.cooldownTurns > 0 ? `${String(cell.cooldownTurns)} turns` : 'none');
   }

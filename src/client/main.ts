@@ -377,6 +377,7 @@ import type {
   PartyMember,
   PartyStateMsg,
   ProgressMsg,
+  ResourceKind,
   UnlockableTree,
   ProjectileView,
   ResourceView,
@@ -3364,6 +3365,7 @@ function talentPanelView(): {
   unlockable: readonly UnlockableTree[];
   deepenable: readonly string[];
   categories: number;
+  pool?: ResourceKind;
 } {
   return {
     loadout,
@@ -3381,6 +3383,9 @@ function talentPanelView(): {
      * unlock that would be refused is worse than not offering one at all.
      */
     categories: progress?.unspentCategories ?? 0,
+    // WHICH POOL THE COST LINES SHOULD NAME. See `TalentPanelView.pool` —
+    // both of them said `resolve` regardless of class.
+    ...(resource === null ? {} : { pool: resource.kind }),
   };
 }
 

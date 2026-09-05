@@ -30,6 +30,7 @@ import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { TalentPanelView, TalentRow } from '../../src/client/ui/talents.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
+import { ResourceKind } from '../../src/shared/protocol.ts';
 import type { LoadoutTalent, ProgressMsg } from '../../src/shared/protocol.ts';
 /**
  * THE INJECTED WRAPPER IS GONE, ALONG WITH THE PARAMETER IT FED.
@@ -481,6 +482,40 @@ describe('hovering an icon explains it', () => {
     const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
     expect(card?.title).toContain('Crude Blow');
     expect(card?.title).toContain(`1/${String(TALENT_MAX_LEVEL)}`);
+  });
+
+  it('names the pool the cost is in, not always Resolve', () => {
+    /**
+     * Both places this panel prints a cost -- the one-line meta and the detail
+     * field -- said the literal word `resolve`, which is the Watchman's pool
+     * and wrong for three of the four classes. Same defect as the hotbar
+     * tooltip carried, in the screen you open on level-up rather than the card
+     * you read mid-fight: a smaller audience for the wrong word, not a smaller
+     * error.
+     */
+    const costed = view({
+      pool: ResourceKind.Reagents,
+      loadout: [
+        talent({
+          id: 'talent:crude_blow',
+          name: 'Crude Blow',
+          ...DISCIPLINE,
+          cost: { ap: 4, mp: 0, resource: 2 },
+        }),
+      ],
+    });
+    const costedRows = talentPanelRows(costed);
+    const cat = talentPanelGeometry(rect, costedRows, NO_SCROLL).placed.find(
+      (p) => p.row.kind === TalentRowKind.Category,
+    );
+    const box = cat?.cells[0];
+    if (box === undefined) return;
+
+    const card = talentTipAt(rect, costedRows, box.x + 2, box.y + 2, NO_SCROLL);
+    expect(card?.meta ?? '').toContain('Reagents');
+    // AND NOT THE WORD IT USED TO SAY. The bug read as correct for years of
+    // Watchman testing because Resolve is what it printed.
+    expect(card?.meta ?? '').not.toContain('resolve');
   });
 
   it('carries the whole description and the next rank, unabridged', () => {
