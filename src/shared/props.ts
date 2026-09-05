@@ -157,7 +157,3 @@ export const PROPS: ReadonlyMap<PropId, PropDef> = new Map(
 
 /** Every prop this build knows, in authored order. */
 export const PROP_IDS: readonly PropId[] = Object.freeze(Object.keys(DEFS) as PropId[]);
-
-export function propById(id: string): PropDef | undefined {
-  return PROPS.get(id as PropId);
-}

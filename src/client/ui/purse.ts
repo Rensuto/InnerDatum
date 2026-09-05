@@ -122,9 +122,13 @@ export type PurseOptions = {
  * `ui/xpbar.ts` records the same trap and `ui/turncards.ts:786-790` records it
  * for `ctx.filter`.
  *
- * NO SPRITE, for `ui/xpbar.ts`'s reason: there is no coin in the manifest,
- * `test/client/assets.test.ts` pins the loader's prefix list so adding an id is
- * forbidden, and one `fillText` is the whole widget. Gold ink is what carries
+ * NO SPRITE, for `ui/xpbar.ts`'s reason, and the accurate version of it: money
+ * DOES have art — `item_iron_ingot`, which `content/money.ts` names as "the
+ * asset the pile draws as" — but it is a 64x64 item-slot icon for a pile on the
+ * floor, and this strip is twelve pixels tall. Shrinking a bag-grid icon into
+ * furniture would be the wrong register as well as the wrong size, and
+ * `test/client/assets.test.ts` pins the loader's prefix list so inventing a
+ * second id is forbidden. One `fillText` is the whole widget. Gold ink carries
  * the meaning, which is upstream's own choice — `Minimalist.lua:1535` composes
  * the string at `255, 215, 0`.
  */

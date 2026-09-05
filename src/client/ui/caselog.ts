@@ -129,12 +129,25 @@ export type CaseLog = {
    * Write a line the CLIENT authored, into whichever lane it belongs in.
    *
    * THE ONLY THING THAT IS ALLOWED THROUGH HERE is a transcript of something the
-   * client itself observed about a frame the server sent — today, exactly one
-   * caller: the combat-start and combat-end crossing (ui/combatbanner.ts), which
-   * is a TRANSITION between two `turn` frames and therefore something no single
-   * server line describes. It is emphatically NOT a back door for narrating game
-   * rules locally: the moment the client writes its own account of a hit or a
-   * save there are two vocabularies for the same event and they drift.
+   * client itself observed about a frame the server sent. It is emphatically NOT
+   * a back door for narrating game rules locally: the moment the client writes
+   * its own account of a hit or a save there are two vocabularies for the same
+   * event and they drift.
+   *
+   * TWO CALLERS TODAY, and the line between them and the forbidden case is
+   * WHO DECIDED, not who composed the sentence:
+   *
+   *   the combat crossing (ui/combatbanner.ts) — a TRANSITION between two `turn`
+   *     frames, which no single server line describes.
+   *   a server refusal (`case 'error'`) — the server DECLINED and said so in a
+   *     frame; `refusalText` only renders that code into a sentence, and the
+   *     banner and this line use the same one so a player is not told two
+   *     different things about one keypress.
+   *
+   * Neither client COMPUTES an outcome. That is the rule, and the count above
+   * used to read "exactly one caller" long after the second one landed — which
+   * is worth more than the pedantry: this docblock is the API's rule, and a
+   * stale one sends the next reader to rebuild something that already exists.
    *
    * It carries no `seq` because the client may not mint one — `seq` is the
    * server's monotonic counter and the de-duplication key, and a local line
