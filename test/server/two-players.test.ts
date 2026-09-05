@@ -52,6 +52,40 @@ import type { Realms } from '../../src/server/world/realms.ts';
 
 const FRAME_TIMEOUT_MS = 4_000;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WAIT FOR THE FRAME, NOT FOR A NUMBER OF MILLISECONDS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `await sleep(250)` then `latest('party_state')` is a race with a deadline
+ * that happens to be long enough on an idle machine. Under the full parallel
+ * gate it is not: this file's "shows how strong the people you are playing
+ * with are" failed once there, then passed 27/27 alone and green on a full
+ * re-run — the signature of a fixed sleep rather than a defect.
+ *
+ * A FLAKE IN THE GATE IS WORSE THAN A SLOW TEST. `npm run check` is an `&&`
+ * chain, so one spurious failure skips every check after it — the secret scan,
+ * the citations, the constants. The cost of a flake is not one re-run, it is a
+ * silent hole in the rest of the gate.
+ *
+ * Polls rather than hooking the socket because `Client` deliberately exposes
+ * `latest`/`count` and not the frame stream; ten milliseconds is well under the
+ * frames this waits on, and the deadline is the one `hello` already uses.
+ */
+/** How many rows the party pane currently holds for this client. */
+function paneSize(client: Client): number {
+  const rows = client.latest('party_state')?.['members'];
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
+async function waitUntil(check: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + FRAME_TIMEOUT_MS;
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(10);
+  }
+}
+
 type Frame = Record<string, unknown>;
 
 type Client = {
@@ -1233,7 +1267,10 @@ describe('somebody else turns up', () => {
     first.send({ t: 'party', action: 'invite', targetId: secondId });
     await sleep(150);
     second.send({ t: 'party', action: 'accept', targetId: firstId });
-    await sleep(250);
+    // THE CONDITION, NOT A DURATION — see `waitUntil`. The pane is what this
+    // test is about, so waiting for the pane to hold two rows waits for exactly
+    // the thing under test rather than for long enough.
+    await waitUntil(() => paneSize(first) === 2, 'the party pane to carry both members');
 
     const rows = first.latest('party_state')?.['members'];
     expect(Array.isArray(rows)).toBe(true);
