@@ -101,10 +101,24 @@ for (const p of walk(REFERENCE, (n) => n.endsWith('.lua'), [])) {
 }
 
 const lengths = new Map();
+/**
+ * ═══ THE TRAILING NEWLINE IS NOT A LINE, AND THIS COUNTED IT AS ONE ═══
+ *
+ * `split('\n')` on a file that ends with a newline yields a final empty string,
+ * so this returned one more than the file has. Measured: 380 of 400 sampled
+ * .lua files in the reference tree end that way, and the module's Actor.lua
+ * reported 7686 against a real 7685.
+ *
+ * The effect is an off-by-one in the direction that lets something through: a
+ * citation pointing at the line just past the end of a file was in range.
+ * Nothing in the tree relies on it — all 2154 citations still pass — but this
+ * check exists precisely to catch a citation that points at nothing.
+ */
 function lineCount(p) {
   let n = lengths.get(p);
   if (n === undefined) {
-    n = fs.readFileSync(p, 'utf8').split('\n').length;
+    const text = fs.readFileSync(p, 'utf8');
+    n = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
     lengths.set(p, n);
   }
   return n;
@@ -133,11 +147,32 @@ for (const file of walk('src', (n) => n.endsWith('.ts'), [])) {
         continue;
       }
       checked += 1;
-      // IN RANGE FOR ANY CANDIDATE is the bar, because a bare basename may name
-      // either file — the ratchet below is what closes that hole, and until it
-      // reaches zero this check must not guess which one was meant.
-      if (paths.every((p) => to > lineCount(p))) {
-        outOfRange.push({ at, name, from, to, have: paths.map(lineCount) });
+      const before = line.slice(0, m.index);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A QUALIFIED CITATION IS CHECKED AGAINST THE FILE IT NAMES.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * IN RANGE FOR ANY CANDIDATE is the right bar for a BARE basename: it may
+       * name either file, and the ratchet below is what closes that hole.
+       *
+       * But `tome/class/Actor.lua:7700` is not bare — it says which one, and
+       * this still accepted it if the ENGINE's Actor.lua happened to be long
+       * enough. The qualification was computed a dozen lines down for the
+       * ambiguity test and never applied here, so the two halves of this check
+       * disagreed about which files a citation could mean.
+       *
+       * Narrowing only when the qualifier actually matches a candidate keeps a
+       * mis-typed prefix falling back to the old, laxer bar rather than
+       * reporting a citation as out of range because its path is unfamiliar.
+       */
+      const qualifier = QUALIFIED.test(before)
+        ? (/([A-Za-z0-9_/-]+)\/$/.exec(before)?.[1] ?? '')
+        : '';
+      const narrowed = qualifier === '' ? paths : paths.filter((p) => p.includes(`${qualifier}/`));
+      const candidates = narrowed.length > 0 ? narrowed : paths;
+      if (candidates.every((p) => to > lineCount(p))) {
+        outOfRange.push({ at, name, from, to, have: candidates.map(lineCount) });
         continue;
       }
       /**
@@ -153,12 +188,12 @@ for (const file of walk('src', (n) => n.endsWith('.ts'), [])) {
        * That leaves genuine ambiguity: a line number that names real code in
        * BOTH files, which is the `Actor.lua:47` case exactly.
        */
-      const fits = paths.filter((p) => to <= lineCount(p));
+      const fits = candidates.filter((p) => to <= lineCount(p));
       const engine = fits.some((p) => p.includes('/engines/default/'));
       const mod = fits.some((p) => p.includes('/modules/tome/'));
       // ALREADY QUALIFIED? Text like `tome/class/Actor.lua:178` carries its own
-      // answer, and the character before the basename is how we know.
-      const before = line.slice(0, m.index);
+      // answer, and the character before the basename is how we know. `before`
+      // is computed once above now, where the range check also needs it.
       if (engine && mod && !QUALIFIED.test(before)) ambiguous.push({ at, name });
     }
   }

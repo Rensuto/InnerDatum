@@ -42,8 +42,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** How many lines of header a declaration may hide in. Citations run long. */
-const HEADER_LINES = 20;
+/**
+ * How many lines of header a declaration may hide in. Citations run long.
+ *
+ * ═══ 20 WAS ALREADY TOO SMALL FOR A FILE IN THIS REPO ═══
+ * `content/monsters.ts` cites eleven upstream files and its citation block runs
+ * to line 23, so the closing T-Engine4 line sits at 24 — four past the old
+ * window. That did not fail anything, because the required lines were tested
+ * against the WHOLE FILE while only the DECLARATION had to be in the header
+ * (see below), so a header could be incomplete and still pass.
+ *
+ * MEASURED before changing it: at 20 exactly one required line falls outside
+ * the header; at 30 and above, none. The port count is 144 at every width from
+ * 20 to 60, so widening cannot drag in a file that was not already a port.
+ * 40 leaves real headroom over the deepest legitimate line rather than sitting
+ * six lines clear of it.
+ */
+const HEADER_LINES = 40;
 
 const DECLARES = /^\/\/\s*(Ported from|NUMBERS:|SHAPE:)/m;
 const REQUIRED = [
@@ -74,7 +89,14 @@ for (const file of files) {
   const head = src.split('\n').slice(0, HEADER_LINES).join('\n');
   if (!DECLARES.test(head)) continue;
   ports += 1;
-  const missing = REQUIRED.filter((line) => !line.re.test(src)).map((line) => line.name);
+  // ═══ AGAINST THE HEADER, WHICH IS WHAT IS ACTUALLY REQUIRED ═══
+  // This tested `src` — the whole file — so the three lines counted wherever
+  // they appeared: below the code, inside a string, anywhere. CONTRIBUTING.md's
+  // rule, quoted at the top of this file, is that "the file HEADER is complete",
+  // and a declaration already has to be in the header for the file to be
+  // checked at all. Testing the two halves against different scopes is how a
+  // file with its attribution four hundred lines down passed a header check.
+  const missing = REQUIRED.filter((line) => !line.re.test(head)).map((line) => line.name);
   if (missing.length > 0) failures.push({ file, missing });
 }
 
