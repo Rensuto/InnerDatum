@@ -622,6 +622,22 @@ export type TalentCell = {
   readonly unlocks: string | null;
   /** A passive is drawn without the pressable furniture. See `TalentKind`. */
   readonly passive: boolean;
+  /**
+   * A SUSTAIN IS THE THIRD MODE, and it was reading as the first.
+   *
+   * `Actor.lua:6219-6223` prints `Use mode: Passive` / `Sustained` /
+   * `Activated` on every talent description upstream, because the three do
+   * different things: an activated talent resolves now, a passive never
+   * resolves, and a sustain PAYS ONCE AND STAYS ON, reserving a share of the
+   * pool until it is toggled off (engine/talents.ts on `TalentKind`).
+   *
+   * This card split on `passive` alone, so all five sustains printed the
+   * activated meta line -- an AP cost, a cooldown and a reach -- with nothing
+   * saying the press is a TOGGLE. The hotbar has known the difference since
+   * stances shipped (`LoadoutTalent.sustained` is its lit state); the panel
+   * you actually read to decide what to learn did not.
+   */
+  readonly sustain: boolean;
   /** What it does now, and one point from now. Shown in the detail strip. */
   readonly desc: string;
   readonly descNext: string | null;
@@ -976,6 +992,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     // same reason: a server too old to send one has no mastery to apply.
     mastery: talent.mastery ?? 1,
     passive: talent.kind === 'passive',
+    sustain: talent.kind === 'sustained',
     desc: talent.desc,
     descNext: talent.descNext,
     cost: talent.cost,
@@ -1157,6 +1174,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
             ? `Unlock ${tree.name} — 1 category point. ${tree.blurb}`
             : `${tree.name} is locked. Category points arrive at levels ${pointLevels()}.`,
         passive: talent.kind === 'passive',
+        sustain: talent.kind === 'sustained',
         desc: talent.desc,
         descNext: talent.descNext,
         cost: talent.cost,
@@ -2511,6 +2529,11 @@ export function talentTipAt(
     meta: cell.passive
       ? 'always on'
       : [
+          // A SUSTAIN LEADS WITH WHAT THE PRESS DOES. Upstream says it as
+          // `Use mode: Sustained`; this card has one line rather than a row
+          // per fact, so it goes first and the price follows it. Without it
+          // a stance read as an attack that happened to cost nothing to aim.
+          cell.sustain ? 'toggle, stays on' : null,
           `${cell.cost.ap} AP`,
           cell.cost.resource > 0 ? `${cell.cost.resource} resolve` : null,
           cell.cooldownTurns > 0 ? `${cell.cooldownTurns}t cooldown` : null,

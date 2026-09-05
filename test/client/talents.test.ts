@@ -508,6 +508,43 @@ describe('hovering an icon explains it', () => {
     expect(card?.meta).toBe('always on');
   });
 
+  it('says a sustain is a toggle rather than pricing it like an attack', () => {
+    /**
+     * ═══ THE THIRD USE MODE, WHICH THIS CARD USED TO COLLAPSE ═══
+     * `Actor.lua:6219-6223` prints `Use mode: Passive / Sustained / Activated`
+     * on every talent upstream, because the three behave differently. This card
+     * split on `passive` alone, so all five of the game's sustains printed the
+     * ACTIVATED meta — an AP cost, a cooldown, a reach — with nothing saying the
+     * press is a toggle that stays on and reserves part of the pool.
+     *
+     * The hotbar has known the difference since stances shipped; the panel a
+     * player reads to decide what to LEARN did not.
+     */
+    const stance = view({
+      loadout: [
+        talent({
+          id: 'talent:ledger_stances',
+          name: 'Ledger Stances',
+          kind: 'sustained',
+          ...DISCIPLINE,
+        }),
+      ],
+      passives: [],
+    });
+    const stanceRows = talentPanelRows(stance);
+    const cat = talentPanelGeometry(rect, stanceRows, NO_SCROLL).placed.find(
+      (p) => p.row.kind === TalentRowKind.Category,
+    );
+    const box = cat?.cells[0];
+    if (box === undefined) throw new Error('the stance fixture drew no cell');
+
+    const card = talentTipAt(rect, stanceRows, box.x + 2, box.y + 2, NO_SCROLL);
+    expect(card?.meta, 'a sustain must say it toggles').toContain('toggle, stays on');
+    // AND IT STILL PRINTS THE PRICE. A toggle is not free; what changed is that
+    // the card leads with what the press DOES.
+    expect(card?.meta).toContain('AP');
+  });
+
   it('is null when the pointer is not on an icon', () => {
     expect(talentTipAt(rect, rows, rect.x + 1, rect.y + 1, NO_SCROLL)).toBeNull();
   });
