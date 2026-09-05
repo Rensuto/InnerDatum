@@ -681,10 +681,34 @@ console.log(`  level reached         : ${String(levelNow())} of ${String(STANDIN
 console.log(`  died on the way       : ${died ? 'YES' : 'no'}`);
 console.log(`  time                  : ${secs()}s`);
 const bothHeard = before.answered.length > 0 && after.answered.length > 0;
-const opened = bothHeard && before.answered.join(' ') !== after.answered.join(' ');
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * COMPARE THE RUMOUR, NOT THE ONE-TIME CLAUSE STUCK TO THE END OF IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `gateway.ts` appends `(<name> is on your map now.)` to a rumour ONLY when
+ * `markCountry` actually marked something — so the FIRST ask carries it and
+ * every later ask does not, whatever the rumour itself says. Comparing the
+ * whole answer therefore reported "the rumour changed: YES" for a character
+ * who heard the identical sentence twice, which is the opposite of the fact
+ * this line exists to state.
+ *
+ * Measured on a full run: before was "Folk come off the Bracken Waste having
+ * seen a thing. (the Bracken Waste is on your map now.)" and after was the same
+ * sentence bare.
+ */
+const rumourOnly = (lines) =>
+  lines.map((l) => l.replace(/\s*\([^()]* is on your map now\.\)/g, '')).join(' ');
+const opened = bothHeard && rumourOnly(before.answered) !== rumourOnly(after.answered);
 console.log(`  asked somebody twice  : ${bothHeard ? 'yes' : 'NO — the comparison is void'}`);
 console.log(`  the rumour changed    : ${opened ? 'YES' : 'no'}`);
-if (bothHeard && !opened && levelNow() < STANDING_LEVEL) {
+/**
+ * AND THE WARNING FIRED ON THE WRONG SIDE. It was guarded on `!opened`, so it
+ * announced a fault when the rumour had correctly STAYED PUT and said nothing
+ * when it had changed for a character who never earned it. The sentence it
+ * prints — "it should not have" — only ever made sense in the second case.
+ */
+if (bothHeard && opened && levelNow() < STANDING_LEVEL) {
   console.log('  (and it should not have — the character never reached standing)');
 }
 
