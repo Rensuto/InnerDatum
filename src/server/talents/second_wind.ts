@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/conditioning.lua:100-129
-//          -- Unbreakable Will, the conditioning tree's save talent.
-// NUMBERS: authored. Upstream's is a flat save; the SCALING-BY-HARM half is
-//          ours, and is `T_TRUE_GRIT`'s shape (conditioning.lua:23-49) applied
-//          to saves rather than to resistance.
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/battle-tactics.lua:100-158
+//          -- True Grit, whose resistance is paid in proportion to missing life:
+//          `getResist = (1 - life/max_life) * resistCoeff` (:114).
+//          (Was conditioning.lua:100-129 "Unbreakable Will, the conditioning
+//          tree's save talent". Those lines are Daunting Presence, that tree has
+//          no save talent, and Unbreakable Will is an uberTalent at uber/wil.lua
+//          that ignores mental effects outright rather than granting a save.)
+// NUMBERS: authored. The SCALING-BY-HARM half is `T_TRUE_GRIT`'s shape applied
+//          to saves rather than to resistance -- our `saveAt` is
+//          `fullSaveAt(level) * (1 - hpFraction)`, which is upstream's line above
+//          with a save where it has a resistance.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**

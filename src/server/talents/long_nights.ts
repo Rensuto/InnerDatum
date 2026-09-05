@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/conditioning.lua:100-129
-//          -- Unbreakable Will, whose figure is a function of the body's state.
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/battle-tactics.lua:100-158
+//          -- True Grit, whose figure is a function of the body's state:
+//          `getResist = (1 - life/max_life) * resistCoeff` (:114).
+//          (Was conditioning.lua:100-129 "Unbreakable Will". Those lines are
+//          Daunting Presence; Unbreakable Will is an uberTalent at uber/wil.lua
+//          and has no scaling figure at all.)
 // NUMBERS: authored. The RUNNING-ON-EMPTY condition is ours; it is `T_TRUE_GRIT`'s
-//          missing-resource shape (conditioning.lua:23-49) read off the class pool.
+//          missing-RESOURCE shape read off the class pool where upstream reads
+//          missing LIFE (battle-tactics.lua:114).
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**

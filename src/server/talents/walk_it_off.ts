@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/conditioning.lua:51-98
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/conditioning.lua:20-48
 //          -- Vitality, the conditioning tree's regeneration talent.
+//          (Was :51-98, which is Unflinching Resolve and the head of Daunting
+//          Presence. The talent named was always the right one.)
 // NUMBERS: authored, and deliberately small. See THE BAND below.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 

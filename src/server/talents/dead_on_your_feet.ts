@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/conditioning.lua:23-49
-//          -- True Grit, the conditioning tree's stay-upright talent.
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/conditioning.lua:20-48
+//          -- Vitality, the conditioning tree's stay-upright talent.
+//          (Was labelled True Grit. Those lines are Vitality's, and Vitality is
+//          what the NUMBERS note below describes -- "a heal on a cooldown".
+//          True Grit is not in this file: techniques/battle-tactics.lua:100-158.)
 // NUMBERS: authored. Upstream's is a heal on a cooldown; this is a floor on one
 //          blow a turn, which is the same promise made in a way this engine can
 //          keep synchronously.
