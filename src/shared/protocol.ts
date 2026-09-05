@@ -1414,7 +1414,13 @@ export type LogLine = {
   text: string;
   /**
    * Indent, in levels. 0 is a headline ("Dalt uses Ward Rush"), 1 is a
-   * consequence hanging off it ("19 physical. Bent Watchman is Off-guard").
+   * consequence hanging off it ("19 physical. Bent Watchman is Off-balance").
+   *
+   * THE EFFECT IS `Off-balance`, NOT "Off-guard". The design docs named it the
+   * second way and this example followed them, but the shipped effect is ported
+   * from `physical.lua:1858` and carries UPSTREAM's name -- which is the one a
+   * player reads on the badge. `icon_status_off_guard.png` was drawn to the
+   * docs' name and is an orphan; see ASSETS-REQUIRED.md.
    * game-design.md § 11's sample log is written with exactly these two levels.
    */
   depth?: number;

@@ -188,3 +188,31 @@ every PNG in that tree finds no alchemist, apothecary or chemist humanoid, and
 the two unconsumed humanoid sheets there are a red-hooded herbalist and a
 monocled office manager, both green-keyed in a way the magenta bake cannot
 strip.
+
+## Three status icons that are drawn and wired to nothing
+
+`icon_status_hasted`, `icon_status_off_guard` and `icon_status_shielded` are on
+disk and referenced by no source file. None of the three is a missing wiring
+job, so do not treat them as one, and do not redraw them.
+
+- **`off_guard`** is an ORPHANED NAME, not a missing effect. The mechanic ships
+  as **Off-balance** (`content/effects.ts`, ported from `physical.lua:1858`,
+  the cross-tier physical effect) and has its own `icon_status_off_balance`.
+  The design docs called it "Off-guard" and the icon was drawn to that name;
+  the code follows upstream instead, which is the name a player reads on the
+  badge. Delete it, or keep it as a spare — there is nothing to wire.
+
+- **`hasted`** is architecturally refused for a PLAYER and has no monster
+  content. A player's `globalSpeed` is the literal type `1` and readonly, and
+  `content/effects.ts` argues at length why: it is what keeps the party
+  phase-locked so the barrier parks once per turn at full quorum. Slowing a
+  player costs a movement point instead of clock speed (DECISIONS.md § D1), and
+  hasting one would break the same invariant from the other side. Monsters DO
+  carry a variable `globalSpeed`, so a hasted MONSTER is possible — it is
+  content nobody has authored, not a system that is missing.
+
+- **`shielded`** is art ahead of a mechanic. ToME's damage shield absorbs a
+  pool of damage before hit points; nothing in this game does that. Iron
+  Curtain is a guard, which is a different thing and already has `guarded`.
+
+Recorded so the next art pass does not read three unreferenced files as a gap.
