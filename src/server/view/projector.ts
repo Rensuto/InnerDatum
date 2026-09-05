@@ -71,6 +71,7 @@ import { LORE, loreById, loreIdOfNote } from '../content/lore.ts';
 import { CLASSES, loadoutViewFor, sheetForClass, toResourceView } from '../content/classes.ts';
 import { ORIGINS, originLifeDelta } from '../content/origins.ts';
 import { ItemUseKind, SLOT_ORDER } from '../content/items.ts';
+import { MVP_EFFECTS } from '../content/effects.ts';
 import { bound } from '../../shared/scale.ts';
 import { LIFE_PER_CON } from '../../shared/leveling.ts';
 import { isMoneyId, moneyAmountOf, moneyName } from '../content/money.ts';
@@ -2195,6 +2196,20 @@ function swapBaselineFor(viewer: Actor): {
   };
 }
 
+/**
+ * THE SAME NAME THE BADGE PRINTS, off the same object.
+ *
+ * `main.ts` registers exactly `MVP_EFFECTS` into the live `EffectState`, so
+ * reading `displayName` off the catalogue here and off `effectDef(state, id)`
+ * there cannot disagree. The alternative -- turning `effect:off_balance` into a
+ * label with a string transform -- would print "Off balance" against the
+ * badge's "Off-balance", and a card that names a status differently from the
+ * icon it puts on your portrait is a worse bug than the missing row.
+ */
+const EFFECT_NAMES: ReadonlyMap<string, string> = new Map(
+  MVP_EFFECTS.map((def) => [def.id, def.displayName]),
+);
+
 function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item): InspectRow[] {
   // THE SWAP, NOT THE ADDITION. Whatever is already in this item's slot comes
   // OFF — that is what `equip` will do — so the "after" set is the worn set with
@@ -2327,6 +2342,51 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
         value: both(`${signed(own)}%`, `${signed(delta)}%`),
       });
     }
+  }
+  /**
+   * ═════════════════════════════════════════════════════════════════════════════
+   * WHAT A LANDED BLOW ALSO DOES — the only thing on this card that is not a
+   * number, and the only one the card was silent about.
+   * ═════════════════════════════════════════════════════════════════════════════
+   * `Object.lua:1310` prints `Effects on melee hit: ` and then the rider's own
+   * description. Ours printed nothing, and this is NOT a latent gap: the Brass
+   * Constable Ring's `wielder.onHit` opens a cut on every landed blow
+   * (content/items.ts) and IS the reason to wear it. Against a plain +3 Str ring
+   * the two cards were identical, on the one screen whose whole job is answering
+   * "is this better than what I have on?".
+   *
+   * ═══ THE ITEM'S OWN WORTH, WITH NO DELTA HALF ═══
+   * Every other row here is `both(own, delta)` because every other row is a
+   * scalar two items can each have some of. A rider is not: you either open a
+   * cut on a hit or you do not, and "Bleeding (Bleeding)" says nothing. Upstream
+   * agrees by construction — the block above is `if found then`, the item's own
+   * table, with no compare pass at all, while the `melee_project` DAMAGE it
+   * compares runs separately through `compare_table_fields` (:1362).
+   *
+   * ═══ READ OFF THE ITEM, NOT THE COMPOSED SHEET ═══
+   * The header above says to go through the getters rather than the raw tables,
+   * because `combatGetResist` composes and caps and diffing the table would
+   * print a number the damage pipeline never spends. THAT ARGUMENT DOES NOT
+   * REACH HERE: `composeWielders` concatenates riders and does nothing else
+   * (engine/equipment.ts), so there is no getter to go through and no
+   * composition to miss — the sheet's array is the items' riders in order.
+   *
+   * ═══ THE LABEL IS SHORTENED AND THE MAGNITUDE IS LEFT OFF ═══
+   * Upstream's is a full tooltip; this is a four-row strip (`DETAIL_ROWS_MAX`)
+   * whose labels run through `fitText`, so "Effects on melee hit" would arrive
+   * as an ellipsis and cost the value half its width. The magnitude is off for
+   * the same budget — and it is safe to leave off only while ONE item in the
+   * game carries a rider at all. A second bleed ring differing only in magnitude
+   * would read identically to this one, which is precisely the ambiguity the
+   * header above is about. Put it back when that item exists.
+   */
+  const rider = candidate.wielder.onHit;
+  if (rider !== undefined) {
+    const name = EFFECT_NAMES.get(rider.effectId) ?? rider.effectId;
+    rows.push({
+      label: 'On melee hit',
+      value: `${name}, ${String(rider.turns)} turn${rider.turns === 1 ? '' : 's'}`,
+    });
   }
   return rows;
 }

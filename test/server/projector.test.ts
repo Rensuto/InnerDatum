@@ -1184,6 +1184,28 @@ describe('projectInventory', () => {
     expect(rows).toContainEqual({ label: 'Armour', value: '+3' });
   });
 
+  it('says what a landed blow leaves behind, which is the whole ring', () => {
+    /**
+     * `Object.lua:1310` prints `Effects on melee hit: ` and then the rider. Ours
+     * printed NOTHING, and the Brass Constable Ring is `{ stats: { str: 3 },
+     * onHit: bleeding }` -- so the card for the only item in the game that does
+     * something on a hit was the card for a plain +3 Str ring, on the one screen
+     * whose job is answering "is this better than what I have on?".
+     */
+    const world = room();
+    const body = watchman(world);
+    body.carried = ['item_watchmans_brass_ring'];
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    expect(rows).toContainEqual({ label: 'On melee hit', value: 'Bleeding, 2 turns' });
+    // THE NAME THE BADGE PRINTS, never the id. `effect:bleeding` reaching the
+    // card is the string-transform path `EFFECT_NAMES` exists to avoid.
+    expect(rows.some((r) => r.value.includes('effect:'))).toBe(false);
+    // AND THE STAT ROW SURVIVES. The rider is a row ADDED to the card, not the
+    // card replaced -- the ring is still +3 Str and the player still needs that.
+    expect(rows).toContainEqual({ label: 'Strength', value: '+3' });
+  });
+
   it('compares against an OCCUPIED slot as the DIFFERENCE, and it may be negative', () => {
     // ═══════════════════════════════════════════════════════════════════════
     // THIS IS THE WHOLE REASON `compare` IS COMPUTED ON THE SERVER.
