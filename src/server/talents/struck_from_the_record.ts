@@ -140,6 +140,5 @@ export const struckFromTheRecord: Talent = {
   describe: (_self, level) =>
     `Strike out something you cannot see. A target within ${String(RANGE)} tiles — through ` +
     `walls, around corners — takes ${percent(damageMult(level))} darkness damage and is ` +
-    `effaced for ${String(markTurns(level))} turns (physical save). ${String(AP_COST)} AP, ` +
-    `${String(INK_COST)} Ink, ${String(COOLDOWN)}-turn cooldown.`,
+    `effaced for ${String(markTurns(level))} turns (physical save).`,
 };

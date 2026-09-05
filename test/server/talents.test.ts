@@ -2180,3 +2180,36 @@ describe("Highborn's Bloom waives the resource and nothing else", () => {
     expect(inspector.cooldowns.size, 'and still go on cooldown').toBeGreaterThan(0);
   });
 });
+
+describe('a description says what the talent does and stops', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CARD ALREADY PRINTS THE PRICE. THE PROSE PRINTING IT AGAIN IS NOISE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Thirty-nine descriptions ended by restating their own cost -- "It deals no
+   * damage. 4 AP, 2 Reagents, 6-turn cooldown." -- directly under a meta line
+   * that says `4 AP · 2 Reagents · 6t cooldown`. Every fact twice, in a card
+   * read mid-fight, and the two could disagree: the meta line named the wrong
+   * pool for three of the four classes for as long as both existed.
+   *
+   * The prose is the only half that cannot be kept honest automatically. So the
+   * numbers live on the meta line, which is built from `LoadoutTalent` and
+   * therefore cannot drift from the talent, and the sentence says what happens.
+   *
+   * ═══ WHAT THIS DELIBERATELY ALLOWS ═══
+   * A cost the talent's EFFECT turns on stays: `careful_method` says "Holds 2
+   * Focus in reserve" because a sustain's reservation is the mechanic, not its
+   * price. The test asks about the PRICE clauses -- AP, and a cooldown in
+   * turns -- which are exactly the ones the card already carries.
+   */
+  it('never restates its own AP cost or cooldown', () => {
+    const offenders: string[] = [];
+    for (const talent of allTalents()) {
+      const text = talent.describe?.(undefined as never, 1) ?? '';
+      if (/\d+\s*AP\b/.test(text)) offenders.push(`${talent.name}: AP cost in prose`);
+      if (/\bcooldown\b/.test(text)) offenders.push(`${talent.name}: cooldown in prose`);
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+});

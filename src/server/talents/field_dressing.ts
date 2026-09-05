@@ -179,6 +179,5 @@ export const fieldDressing: Talent = {
   describe: (_self, level) =>
     `Clear the ${String(curesAt(level))} most recent harmful ` +
     `${curesAt(level) === 1 ? 'condition' : 'conditions'} from an adjacent ally and close ` +
-    `${percent(healFractionAt(level))} of their health. ${String(AP_COST)} AP, ` +
-    `${String(REAGENT_COST)} Reagent, ${String(COOLDOWN)}-turn cooldown.`,
+    `${percent(healFractionAt(level))} of their health.`,
 };

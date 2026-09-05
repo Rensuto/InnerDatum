@@ -144,6 +144,5 @@ export const redaction: Talent = {
   describe: (_self, level) =>
     `Black-bar a target up to ${String(RANGE)} tiles away for ${percent(damageMult(level))} ` +
     `darkness damage and breach its armour for ${String(breachTurns(level))} turns ` +
-    `(magical save). ${String(AP_COST)} AP, ${String(INK_COST)} Ink, ` +
-    `${String(COOLDOWN)}-turn cooldown.`,
+    `(magical save).`,
 };

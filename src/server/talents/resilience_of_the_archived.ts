@@ -180,7 +180,7 @@ export const resilienceOfTheArchived: Talent = {
       `For ${String(DURATION_TURNS)} turns, gain ${String(armourFor(con))} armour, ` +
       `${String(HARDINESS_BONUS)}% armour hardiness, and ${String(saveFor(con))} to both your ` +
       `physical and spell saves. The armour and the saves scale with Constitution. ` +
-      `Costs no time at all. ${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`
+      `Costs no time at all.`
     );
   },
 };

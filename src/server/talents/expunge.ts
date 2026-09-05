@@ -144,7 +144,6 @@ export const expunge: Talent = {
   describe: (_self, level) =>
     `Drop a block of ink on a point up to ${String(RANGE)} tiles away. Everything within ` +
     `${String(RADIUS)} tile takes ${percent(damageMult(level))} darkness damage and is slowed ` +
-    `for ${String(slowTurns(level))} turns (physical save). ${String(AP_COST)} AP, ` +
-    `${String(INK_COST)} Ink, ${String(COOLDOWN)}-turn cooldown — and every body it marks ` +
+    `for ${String(slowTurns(level))} turns (physical save). — and every body it marks ` +
     `pays its Ink back.`,
 };

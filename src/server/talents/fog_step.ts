@@ -156,5 +156,5 @@ export const fogStep: Talent = {
 
   describe: (_self, level) =>
     `Move up to ${stepRange(level)} tiles to a visible free tile. Works at any distance — ` +
-    `it is how you leave a dead zone. ${AP_COST} AP, ${MP_COST} MP.`,
+    `it is how you leave a dead zone.`,
 };

@@ -175,6 +175,5 @@ export const clearTheStreet: Talent = {
   describe: (_self, level) =>
     `Shove every enemy within ${String(RADIUS)} tiles of you up to ${String(pushTilesAt(level))} ` +
     `tiles back and slow them for ${String(slowTurnsAt(level))} turns (physical save). ` +
-    `No damage — this is the answer to being surrounded. ` +
-    `${String(AP_COST)} AP, ${String(RESOLVE_COST)} Resolve, ${String(COOLDOWN_TURNS)}-turn cooldown.`,
+    `No damage — this is the answer to being surrounded.`,
 };

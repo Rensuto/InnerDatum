@@ -314,5 +314,5 @@ export const ironCurtain: Talent = {
     `Guard the adjacent ally in the worst shape for ${GUARD_TURNS} turns — their hunters ` +
     `turn on you, and anything that strikes them anyway takes a free counter at ` +
     `${percent(counterMult(level))} weapon damage — and hit whatever is between you for ` +
-    `${percent(damageMult(level))} weapon damage. ${AP_COST} AP, ${RESOLVE_COST} Resolve.`,
+    `${percent(damageMult(level))} weapon damage.`,
 };

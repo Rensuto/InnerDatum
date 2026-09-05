@@ -151,6 +151,5 @@ export const lineOfEnquiry: Talent = {
   describe: (_self, level) =>
     `Shoot for ${percent(damageMult(level))} weapon damage and slow it for ` +
     `${String(slowTurnsAt(level))} turns (physical save). The damage is poor on purpose — ` +
-    `this is a turn spent on where the fight happens. ${String(AP_COST)} AP, ` +
-    `${String(FOCUS_COST)} Focus.`,
+    `this is a turn spent on where the fight happens.`,
 };

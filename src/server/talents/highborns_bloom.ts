@@ -128,6 +128,5 @@ export const highbornsBloom: Talent = {
 
   describe: () =>
     `For ${String(DURATION_TURNS)} turn, your talents cost no resource — though you must ` +
-    `still have enough to begin one. Costs no time at all. ` +
-    `${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`,
+    `still have enough to begin one. Costs no time at all.`,
 };

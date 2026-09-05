@@ -155,6 +155,5 @@ export const wildInfusion: Talent = {
 
   describe: () =>
     `Shake off a physical affliction and take ${String(RESIST_ALL)}% less of every kind of ` +
-    `damage for ${String(DURATION_TURNS)} turns. Costs no time at all. ` +
-    `${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`,
+    `damage for ${String(DURATION_TURNS)} turns. Costs no time at all.`,
 };

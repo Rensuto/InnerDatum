@@ -127,8 +127,7 @@ export const wrathOfTheWoods: Talent = {
     const power = powerFor(stat(self?.combat ?? {}, 'wil'));
     return (
       `For ${String(DURATION_TURNS)} turns, deal ${String(power)}% more damage of every kind ` +
-      `and take ${String(power)}% less. Scales with Willpower. Costs no time at all. ` +
-      `${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`
+      `and take ${String(power)}% less. Scales with Willpower. Costs no time at all.`
     );
   },
 };

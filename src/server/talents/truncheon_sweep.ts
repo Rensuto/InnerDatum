@@ -132,5 +132,5 @@ export const truncheonSweep: Talent = {
 
   describe: (_self, level) =>
     `Swing at every enemy standing next to you for ${percent(damageMult(level))} weapon ` +
-    `damage each. Allies are never hit. ${String(AP_COST)} AP, ${String(COOLDOWN)}-turn cooldown.`,
+    `damage each. Allies are never hit.`,
 };

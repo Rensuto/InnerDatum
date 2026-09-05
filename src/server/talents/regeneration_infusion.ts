@@ -165,6 +165,5 @@ export const regenerationInfusion: Talent = {
 
   describe: () =>
     `Heal yourself for ${String(TOTAL_HEAL)} life over ${String(DURATION_TURNS)} turns. ` +
-    `Costs an action, unlike your other infusion. ` +
-    `${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`,
+    `Costs an action, unlike your other infusion.`,
 };

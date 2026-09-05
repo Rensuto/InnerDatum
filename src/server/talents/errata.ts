@@ -116,6 +116,5 @@ export const errata: Talent = {
 
   describe: (_self, level) =>
     `Correct the record about where you were: step up to ${String(stepsAt(level))} tiles toward a ` +
-    `point within ${String(RANGE)}. It walks, so a wall still stops it. ${String(AP_COST)} AP, ` +
-    `${String(INK_COST)} Ink, ${String(COOLDOWN)}-turn cooldown.`,
+    `point within ${String(RANGE)}. It walks, so a wall still stops it.`,
 };

@@ -281,7 +281,7 @@ export const shakeItOff: Talent = {
   describe: (_self, level) =>
     `Shake off up to ${String(saveAt(level))} of the things currently wrong with you and get ` +
     `${percent(breathAt(level))} of your health back with them. Refuses when nothing is wrong. ` +
-    `${String(SHAKE_AP)} AP, ${String(SHAKE_COOLDOWN)}-turn cooldown — one way out of one bad ` +
+    ` — one way out of one bad ` +
     `chain, not a way to ignore afflictions.`,
 };
 

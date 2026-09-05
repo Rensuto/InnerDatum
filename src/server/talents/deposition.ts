@@ -130,6 +130,5 @@ export const deposition: Talent = {
   describe: (_self, level) =>
     `Take it down in full. A target up to ${String(RANGE)} tiles away takes ` +
     `${percent(damageMult(level))} darkness damage and bleeds for ` +
-    `${String(bleedTurns(level))} turns (physical save). ${String(AP_COST)} AP, ` +
-    `${String(INK_COST)} Ink, ${String(COOLDOWN)}-turn cooldown.`,
+    `${String(bleedTurns(level))} turns (physical save).`,
 };

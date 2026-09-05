@@ -159,6 +159,5 @@ export const strikeOut: Talent = {
   describe: (_self, level) =>
     `Strike a line through a target up to ${String(RANGE)} tiles away for ` +
     `${percent(damageMult(level))} darkness damage and efface it for ` +
-    `${String(markTurns(level))} turns (physical save). ${String(AP_COST)} AP, ` +
-    `${String(INK_COST)} Ink — a mark that lands pays back more than it cost.`,
+    `${String(markTurns(level))} turns (physical save).`,
 };

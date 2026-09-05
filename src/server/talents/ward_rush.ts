@@ -214,5 +214,5 @@ export const wardRush: Talent = {
 
   describe: (_self, level) =>
     `Slam an adjacent enemy for ${percent(damageMult(level))} weapon damage, drive it back ` +
-    `${KNOCKBACK_TILES} tile and step into the space. ${AP_COST} AP.`,
+    `${KNOCKBACK_TILES} tile and step into the space.`,
 };

@@ -329,8 +329,7 @@ export const overreach: Talent = {
   describe: (_self, level) =>
     `Grit, thrown at everything within ${String(GRIT_RADIUS)} tiles of you: effaced for ` +
     `${String(damageAt(level))} turns (physical save), so every roll they make and resist is ` +
-    `worse. The answer to the doorway plan having failed. ${String(OVERREACH_AP)} AP, ` +
-    `${String(OVERREACH_COOLDOWN)}-turn cooldown.`,
+    `worse. The answer to the doorway plan having failed.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -528,8 +527,7 @@ export const fullSwing: Talent = {
     `Find what is already wrong with a body in reach and make it last: up to ` +
     `${String(twistReachAt(level))} of the afflictions on them run ` +
     `${String(twistTurnsAt(level))} turns longer. No save — theirs was made when it landed. ` +
-    `Refuses a target with nothing wrong. ${String(TWIST_AP)} AP, ` +
-    `${String(TWIST_COOLDOWN)}-turn cooldown.`,
+    `Refuses a target with nothing wrong.`,
 };
 
 /** The six, in panel order. */

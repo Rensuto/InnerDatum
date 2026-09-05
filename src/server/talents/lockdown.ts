@@ -269,5 +269,5 @@ export const lockdown: Talent = {
   describe: (_self, level) =>
     `Tackle an adjacent enemy for ${percent(damageMult(level))} weapon damage, stun it for ` +
     `${String(STUN_TURNS)} turns (physical save) and force it onto you for ` +
-    `${TAUNT_TURNS} turns. ${AP_COST} AP, ${RESOLVE_COST} Resolve.`,
+    `${TAUNT_TURNS} turns.`,
 };

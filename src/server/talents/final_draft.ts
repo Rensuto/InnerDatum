@@ -139,6 +139,5 @@ export const finalDraft: Talent = {
     `File the last version. A target up to ${String(RANGE)} tiles away takes ` +
     `${percent(damageMult(level))} darkness damage and is dazed for ` +
     `${String(dazeTurns(level))} turns — every roll it makes and resists is halved ` +
-    `(physical save). ${String(AP_COST)} AP, ${String(INK_COST)} Ink, ` +
-    `${String(COOLDOWN)}-turn cooldown.`,
+    `(physical save).`,
 };

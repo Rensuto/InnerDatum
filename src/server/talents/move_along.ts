@@ -171,5 +171,5 @@ export const moveAlong: Talent = {
   describe: (_self, level) =>
     `Shove an adjacent enemy up to ${String(pushTilesAt(level))} tiles back and slow it for ` +
     `${String(slowTurnsAt(level))} turns (physical save). No damage — this is about where the ` +
-    `fight is happening. ${String(AP_COST)} AP, ${String(RESOLVE_COST)} Resolve.`,
+    `fight is happening.`,
 };

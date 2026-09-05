@@ -165,5 +165,5 @@ export const alchemicVial: Talent = {
   describe: (_self, level) =>
     `Hurl a vial up to ${RANGE} tiles. Every enemy on the target tile and its four ` +
     `orthogonal neighbours takes ${percent(damageMult(level))} fire damage. Allies are ` +
-    `never hit. ${AP_COST} AP, ${REAGENT_COST} Reagents.`,
+    `never hit.`,
 };

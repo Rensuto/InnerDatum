@@ -144,6 +144,5 @@ export const closedFile: Talent = {
 
   describe: (_self, level) =>
     `Shoot for ${percent(floorMultAt(level))} weapon damage against an untouched target, ` +
-    `rising to ${percent(multFor(level, 0))} against one at death's door. ` +
-    `${String(AP_COST)} AP, ${String(FOCUS_COST)} Focus, ${String(COOLDOWN_TURNS)}-turn cooldown.`,
+    `rising to ${percent(multFor(level, 0))} against one at death's door.`,
 };

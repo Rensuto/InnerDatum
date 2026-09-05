@@ -197,6 +197,5 @@ export const mendWounds: Talent = {
 
   describe: (_self, level) =>
     `Bind every ally within ${RADIUS} tiles — yourself included — for ` +
-    `${percent(healFraction(level))} of their maximum health. ` +
-    `${AP_COST} AP, ${REAGENT_COST} Reagents.`,
+    `${percent(healFraction(level))} of their maximum health.`,
 };

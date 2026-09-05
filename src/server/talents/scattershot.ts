@@ -147,5 +147,5 @@ export const scattershot: Talent = {
   describe: (_self, level) =>
     `Fire wide at a tile up to ${String(RANGE)} tiles away. Every enemy on it and its ` +
     `neighbours takes ${percent(damageMult(level))} damage. It does not miss, and allies ` +
-    `are never hit. ${String(AP_COST)} AP, ${String(COOLDOWN)}-turn cooldown.`,
+    `are never hit.`,
 };

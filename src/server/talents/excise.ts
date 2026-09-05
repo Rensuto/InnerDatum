@@ -142,5 +142,5 @@ export const excise: Talent = {
     `Cut a body within ${String(RANGE)} tiles out of the account — effaced for ` +
     `${String(markTurns(level))} turns (physical save) — then step up to ` +
     `${String(stepsAt(level))} tiles away from it. The mark lands even when the step ` +
-    `cannot. ${String(AP_COST)} AP, ${String(INK_COST)} Ink, ${String(COOLDOWN)}-turn cooldown.`,
+    `cannot.`,
 };

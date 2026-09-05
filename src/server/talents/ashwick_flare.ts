@@ -174,5 +174,5 @@ export const ashwickFlare: Talent = {
 
   describe: (_self, level) =>
     `Loose a flare at a target up to ${RANGE} tiles away for ${percent(damageMult(level))} ` +
-    `fire damage. It does not miss. ${AP_COST} AP, ${REAGENT_COST} Reagent.`,
+    `fire damage. It does not miss.`,
 };

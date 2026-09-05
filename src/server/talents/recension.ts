@@ -133,6 +133,5 @@ export const recension: Talent = {
   describe: (_self, level) =>
     `Revise the edition: step up to ${String(stepsAt(level))} tiles toward a point within ` +
     `${String(RANGE)}, and everything within ${String(RADIUS)} tile of where you LAND is slowed ` +
-    `for ${String(slowTurns(level))} turns (physical save). ${String(AP_COST)} AP, ` +
-    `${String(INK_COST)} Ink, ${String(COOLDOWN)}-turn cooldown.`,
+    `for ${String(slowTurns(level))} turns (physical save).`,
 };

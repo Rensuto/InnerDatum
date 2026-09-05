@@ -243,6 +243,5 @@ export const concussionFlask: Talent = {
 
   describe: (_self, level) =>
     `Burst a flask beside an enemy up to ${String(throwRange(level))} tiles away, stunning them for ` +
-    `${String(stunTurnsAt(level))} turns. It deals no damage. ${String(AP_COST)} AP, ` +
-    `${String(REAGENT_COST)} Reagents, ${String(COOLDOWN)}-turn cooldown.`,
+    `${String(stunTurnsAt(level))} turns. It deals no damage.`,
 };

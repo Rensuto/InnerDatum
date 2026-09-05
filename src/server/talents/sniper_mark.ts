@@ -167,5 +167,5 @@ export const snipersMark: Talent = {
   describe: (_self, level) =>
     `A deliberate shot at ${INSPECTOR_MIN_RANGE}-${RANGE} tiles for ` +
     `${percent(damageMult(level))} weapon damage, +${MARKED_CRIT_BONUS}% critical against ` +
-    `your own sigil. ${AP_COST} AP, ${FOCUS_COST} Focus.`,
+    `your own sigil.`,
 };

@@ -190,5 +190,5 @@ export const pistolWhip: Talent = {
 
   describe: (_self, level) =>
     `Club an adjacent enemy for ${percent(damageMult(level))} weapon damage and stun them ` +
-    `for ${String(STUN_TURNS)} turns. ${String(AP_COST)} AP, ${String(COOLDOWN)}-turn cooldown.`,
+    `for ${String(STUN_TURNS)} turns.`,
 };

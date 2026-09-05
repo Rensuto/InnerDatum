@@ -138,8 +138,7 @@ export const luckOfTheFootnoted: Talent = {
     const power = powerFor(stat(self?.combat ?? {}, 'cun'));
     return (
       `For ${String(DURATION_TURNS)} turns, gain ${String(power)}% critical chance and ` +
-      `${String(power)} to all three saves. Scales with Cunning. Costs no time at all. ` +
-      `${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`
+      `${String(power)} to all three saves. Scales with Cunning. Costs no time at all.`
     );
   },
 };

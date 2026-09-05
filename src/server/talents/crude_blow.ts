@@ -127,5 +127,5 @@ export const crudeBlow: Talent = {
   },
 
   describe: (_self, level) =>
-    `Swing at an adjacent enemy for ${percent(damageMult(level))} weapon damage. ${AP_COST} AP.`,
+    `Swing at an adjacent enemy for ${percent(damageMult(level))} weapon damage.`,
 };

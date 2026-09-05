@@ -159,6 +159,5 @@ export const healingInfusion: Talent = {
   },
 
   describe: () =>
-    `Heal yourself for ${String(HEAL)} and shake off one condition. ` +
-    `Costs no time at all. ${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`,
+    `Heal yourself for ${String(HEAL)} and shake off one condition. ` + `Costs no time at all.`,
 };

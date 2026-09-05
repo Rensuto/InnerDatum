@@ -199,6 +199,5 @@ export const shinCrack: Talent = {
 
   describe: (_self, level) =>
     `Crack an adjacent enemy below the knee for ${percent(damageMult(level))} weapon damage ` +
-    `and slow them for ${String(SLOW_TURNS)} turns. ${String(AP_COST)} AP, ` +
-    `${String(COOLDOWN)}-turn cooldown.`,
+    `and slow them for ${String(SLOW_TURNS)} turns.`,
 };

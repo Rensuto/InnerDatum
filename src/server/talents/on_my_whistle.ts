@@ -170,6 +170,5 @@ export const onMyWhistle: Talent = {
 
   describe: (_self, level) =>
     `Give a friend within ${String(rangeAt(level))} tiles ${String(apGivenAt(level))} action points, ` +
-    `up to their own maximum. ${String(AP_COST)} AP, ${String(RESOLVE_COST)} Resolve — a bad ` +
-    `trade at first, and a way to move a turn to where it is worth more once it is not.`,
+    `up to their own maximum.`,
 };

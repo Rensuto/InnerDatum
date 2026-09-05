@@ -226,8 +226,7 @@ export const movingTarget: Talent = {
 
   describe: (_self, level) =>
     `${String(defenceAt(level))} defence for ${String(EVASION_TURNS)} turns — spent on the turn ` +
-    `you expect the blow rather than owed for having walked. ${String(MOVING_TARGET_AP)} AP, ` +
-    `${String(MOVING_TARGET_COOLDOWN)}-turn cooldown.`,
+    `you expect the blow rather than owed for having walked.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -364,7 +363,7 @@ export const kickOff: Talent = {
   describe: (_self, level) =>
     `Push off a body within ${String(KICK_RANGE)} tiles and go up to ${String(disengageAt(level))} ` +
     `tiles the other way. It walks, so a wall still stops it — and a retreat that got nowhere ` +
-    `costs nothing. ${String(KICK_AP)} AP, ${String(KICK_COOLDOWN)}-turn cooldown.`,
+    `costs nothing.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -525,8 +524,7 @@ export const downhill: Talent = {
   describe: (_self, level) =>
     `Tumble up to ${String(flightAt(level))} tiles toward a point within ${String(DOWNHILL_RANGE)} ` +
     `— ${String(flightAt(level) + HURT_BONUS)} while below a quarter of your health. It walks, so ` +
-    `a wall still stops it, and a tumble that got nowhere costs nothing. ${String(DOWNHILL_AP)} AP, ` +
-    `${String(DOWNHILL_COOLDOWN)}-turn cooldown.`,
+    `a wall still stops it, and a tumble that got nowhere costs nothing.`,
 };
 
 // ---------------------------------------------------------------------------

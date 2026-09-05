@@ -123,5 +123,5 @@ export const revolverShot: Talent = {
   describe: (_self, level) =>
     `Shoot a target ${INSPECTOR_MIN_RANGE}-${RANGE} tiles away for ` +
     `${percent(damageMult(level))} weapon damage. Cannot fire inside ` +
-    `${INSPECTOR_MIN_RANGE} tiles. ${AP_COST} AP.`,
+    `${INSPECTOR_MIN_RANGE} tiles.`,
 };

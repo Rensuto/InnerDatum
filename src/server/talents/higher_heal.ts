@@ -175,8 +175,7 @@ export const higherHeal: Talent = {
     return (
       `Heal yourself for ${String(total)} life over ${String(DURATION_TURNS)} turns and take ` +
       `${String(HEAL_MOD_PCT)}% more from every other mending while it lasts. ` +
-      `Scales with Willpower. Costs no time at all. ` +
-      `${String(tomeCooldownToTurns(TOME_COOLDOWN))} turn cooldown.`
+      `Scales with Willpower. Costs no time at all.`
     );
   },
 };

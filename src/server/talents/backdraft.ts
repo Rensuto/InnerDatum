@@ -154,6 +154,5 @@ export const backdraft: Talent = {
 
   describe: (_self, level) =>
     `Blast a target up to ${RANGE} tiles away for ${percent(damageMult(level))} fire damage ` +
-    `and shove it ${PUSH_TILES} tile directly away from you. ` +
-    `${AP_COST} AP, ${REAGENT_COST} Reagent.`,
+    `and shove it ${PUSH_TILES} tile directly away from you.`,
 };

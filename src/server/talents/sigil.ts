@@ -186,5 +186,5 @@ export const sigil: Talent = {
   describe: (_self, level) =>
     `Paint a target ${INSPECTOR_MIN_RANGE}-${RANGE} tiles away for ${percent(DAMAGE_MULT)} ` +
     `weapon damage. For ${MARK_TURNS} turns everyone — not just you — deals ` +
-    `+${Math.round(markPower(level))}% damage to it. ${AP_COST} AP, ${FOCUS_COST} Focus.`,
+    `+${Math.round(markPower(level))}% damage to it.`,
 };
