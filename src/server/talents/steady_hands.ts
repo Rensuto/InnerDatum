@@ -34,16 +34,44 @@ const CRIT_LOW = 3;
 const CRIT_HIGH = 10;
 const POWER_LOW = 10;
 const POWER_HIGH = 20;
-const CURVE = 0.75;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONLY THE POWER HALF CARRIES 0.75, AND THE HEADER ABOVE ALWAYS SAID SO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream, called-shots.lua:25-26, verbatim:
+ *
+ *     bonuses.crit_chance = self:combatTalentScale(t, 3, 10)
+ *     bonuses.crit_power  = self:combatTalentScale(t, 0.1, 0.2, 0.75)
+ *
+ * The CHANCE line passes no power at all, so it takes `combatTalentScale`'s
+ * default of 0.5 (Combat.lua:1518, `power, add, shift = power or 0.5, ...`).
+ * Only the POWER line passes 0.75 — which is exactly what this file's own
+ * NUMBERS header says, "crit power 0.1 -> 0.2 AT 0.75". A single `CURVE`
+ * constant applied it to both, so the code contradicted its own citation.
+ *
+ * ═══ IT HIDES IN THE MIDDLE, WHICH IS WHY NOTHING CAUGHT IT ═══
+ * `combatTalentScale` returns `low` at rank 1 and `high` at rank 5 whatever
+ * the power, so both ends agreed and only the interior moved. Rank 4 is the
+ * one that differs after rounding: upstream 8.66 -> 9, ours 8.46 -> 8.
+ *
+ * AND IT KEEPS DIVERGING PAST RANK 5, which this codebase treats as live —
+ * scale.ts says "NEVER CLAMP THE TALENT LEVEL AT 5" because category mastery
+ * pushes effective levels above it. At an effective 10 the two rules give
+ * 15.2 and 16.8.
+ */
+const POWER_CURVE = 0.75;
 
 /** Critical chance at a rank, in percentage points. */
 export function critChanceAt(level: number): number {
-  return Math.round(combatTalentScale(level, CRIT_LOW, CRIT_HIGH, CURVE));
+  // NO CURVE ARGUMENT, deliberately — upstream omits it here and takes the
+  // 0.5 default. See `POWER_CURVE`.
+  return Math.round(combatTalentScale(level, CRIT_LOW, CRIT_HIGH));
 }
 
 /** Critical power at a rank, in percentage points. */
 export function critPowerAt(level: number): number {
-  return Math.round(combatTalentScale(level, POWER_LOW, POWER_HIGH, CURVE));
+  return Math.round(combatTalentScale(level, POWER_LOW, POWER_HIGH, POWER_CURVE));
 }
 
 export const steadyHands: Talent = {
