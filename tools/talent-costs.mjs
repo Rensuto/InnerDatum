@@ -171,6 +171,22 @@ for (const name of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
    */
   const kindHere = /kind:\s*TalentKind\.([A-Za-z]+)/.exec(src);
   const isActive = kindHere !== null && kindHere[1] === 'Active';
+  /**
+   * AND THE COST COLUMN NEEDS ITS OWN PREDICATE, NOT THIS ONE.
+   *
+   * The note above says the `weight_of_office` row is "the same shape of false
+   * positive ... and worth filtering rather than footnoting". Only the cooldown
+   * column was ever filtered; the cost column kept printing that row, and a
+   * sweep carrying a permanent known-false row is one people learn to skim.
+   *
+   * `isActive` IS THE WRONG TEST HERE. A SUSTAINED talent pays -- engine/
+   * talents.ts: "Pays once, stays on, and reserves a share of the pool" -- so
+   * filtering on Active would hide the five sustains from a comparison they
+   * belong in. Only a PASSIVE has no cost to have, which is why the cooldown
+   * filter above may exclude sustains ("a sustain's is its own affair") and
+   * this one may not.
+   */
+  const isPassive = kindHere !== null && kindHere[1] === 'Passive';
   const cdWant = cdUp === null || !isActive ? null : convert(Number(cdUp[1]));
 
   rows.push({
@@ -178,6 +194,7 @@ for (const name of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
     ours,
     upstream,
     pool,
+    isPassive,
     note: '',
     cdOurs,
     cdUpRaw: cdUp === null ? null : Number(cdUp[1]),
@@ -185,7 +202,15 @@ for (const name of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
   });
 }
 
-const dropped = rows.filter((r) => r.upstream !== null && r.upstream > 0 && r.ours === 0);
+const dropped = rows.filter(
+  (r) => !r.isPassive && r.upstream !== null && r.upstream > 0 && r.ours === 0,
+);
+// NOT SILENTLY DROPPED. A passive filtered out of the cost column is still
+// counted and named below, so a wrong guess about a talent's kind cannot hide
+// a real row -- it moves it somewhere visible instead.
+const passivesSkipped = rows.filter(
+  (r) => r.isPassive && r.upstream !== null && r.upstream > 0 && r.ours === 0,
+);
 const kept = rows.filter((r) => r.upstream !== null && r.upstream > 0 && r.ours > 0);
 const free = rows.filter((r) => r.upstream === 0 || (r.upstream === null && r.note === ''));
 
@@ -193,6 +218,13 @@ console.log(`\n═══ UPSTREAM CHARGES, OURS DOES NOT (${dropped.length}) ═
 for (const r of dropped) {
   console.log(
     `  ${r.name.padEnd(28)} upstream ${r.pool} ${String(r.upstream).padStart(3)}  ours 0`,
+  );
+}
+
+if (passivesSkipped.length > 0) {
+  console.log(
+    `  (${String(passivesSkipped.length)} passive(s) not compared, having no cost to have: ` +
+      `${passivesSkipped.map((r) => r.name.replace(/\.ts$/, '')).join(', ')})`,
   );
 }
 
