@@ -563,8 +563,15 @@ export function gainExp(level: number, xp: number, award: number, expMod = 1): E
  *   CATEGORY POINTS at levels 10, 20 and 36 (:3758-3760). They buy a NEW TREE.
  *   There are no new trees; `ClassDef.loadout` is exactly four talents.
  *
- *   PRODIGIES at 30 and 42 (:3761-3766). Above our cap of 10 — unreachable, so
- *   porting them would be porting dead code with a dialog attached.
+ *   PRODIGIES at 30 and 42 (:3761-3766). NOT unreachable — that reason was
+ *   written against a cap of 10 and `MAX_CHARACTER_LEVEL` is 50, which the
+ *   docblock on that very constant gives prodigies as one of its reasons for.
+ *   Both levels are mid-game now.
+ *
+ *   The true reason is smaller and still holds: NO PRODIGY TALENTS ARE
+ *   PORTED, so the point would be a currency with nothing to buy — which is
+ *   exactly the argument this list used against generic points before a
+ *   generic tree existed. Port the grant WITH the talents, not before them.
  *
  *   STAT POINTS, `unused_stats + (stats_per_level or 3)` (:3748). A second spend
  *   screen against six stats, and this pass ships one panel. Out of scope, not

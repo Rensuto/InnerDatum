@@ -5,6 +5,7 @@ import {
   RESCALE_INTERVAL,
   bound,
   combatScale,
+  combatStatScale,
   combatTalentLimit,
   combatTalentScale,
   combatTalentWeaponDamage,
@@ -270,5 +271,55 @@ describe('combatScale — Combat.lua:1471-1477', () => {
   it('fits the two anchors it is given', () => {
     expect(combatScale(10, 5, 10, 25, 100)).toBeCloseTo(5, 8);
     expect(combatScale(100, 5, 10, 25, 100)).toBeCloseTo(25, 8);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// combatStatScale — the only backbone curve this file did not import
+// ---------------------------------------------------------------------------
+
+describe('combatStatScale', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT NEVER RETURNS LESS THAN ZERO — Combat.lua:1559 and :1562.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream clamps both branches and says why at :1558: `-- always >= 0`. The
+   * curve is a straight line through two anchors and runs below zero to the
+   * left of its x-intercept, so the clamp is load-bearing rather than defensive.
+   *
+   * This port dropped it, and two things hid that. The function's docblock cited
+   * `Combat.lua:1545-1560`, a window that stops two lines short of the clamp;
+   * and `combatStatScale` was the one export in this module the suite never
+   * imported, so nothing measured it either way.
+   *
+   * THE PAIR IS UPSTREAM'S OWN. `combatStatScale("str", 0.8, 8)` is
+   * `tome/data/talents/celestial/combat.lua:95`, and its call site wraps the
+   * result in a SECOND `math.max(0, ...)` — upstream knew that pair dips.
+   */
+  it('clamps at zero, where upstream does', () => {
+    // b = 0.8 - 1.052978*sqrt(10) = -2.5298, so the intercept is STR 5.77.
+    expect(combatStatScale(5, 0.8, 8)).toBe(0);
+    expect(combatStatScale(4, 0.8, 8)).toBe(0);
+    expect(combatStatScale(0, 0.8, 8)).toBe(0);
+  });
+
+  it('still passes through both anchors exactly', () => {
+    // The clamp must not disturb the two points the curve is defined by:
+    // :1548 matches `low` at stat 10 and `high` at stat 100.
+    expect(combatStatScale(10, 7, 25)).toBeCloseTo(7, 10);
+    expect(combatStatScale(100, 7, 25)).toBeCloseTo(25, 10);
+    expect(combatStatScale(10, 15, 60, 0.75)).toBeCloseTo(15, 10);
+    expect(combatStatScale(100, 15, 60, 0.75)).toBeCloseTo(60, 10);
+  });
+
+  it('keeps the shipped callers where they were', () => {
+    // Resilience of the Archived — races.lua:461. Its armour reads CON, and at
+    // CON 0 the unclamped curve returned -1.32, which `Math.round` shipped as
+    // MINUS ONE ARMOUR. Every real CON is well right of the intercept, which is
+    // why this was latent rather than live.
+    expect(Math.round(combatStatScale(0, 7, 25))).toBe(0);
+    expect(Math.round(combatStatScale(12, 7, 25))).toBe(8);
+    expect(Math.round(combatStatScale(22, 7, 25))).toBe(11);
   });
 });

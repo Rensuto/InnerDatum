@@ -295,8 +295,18 @@ export function combatStatLimit(
 }
 
 /**
- * `combatStatScale` — Combat.lua:1545-1560. The STAT curve, `combatScale`'s
+ * `combatStatScale` — Combat.lua:1545-1563. The STAT curve, `combatScale`'s
  * sibling.
+ *
+ * THE RANGE USED TO STOP AT :1560, TWO LINES SHORT OF THE CLAMP. Upstream
+ * returns `math.max(0, ...)` on BOTH branches — :1559 for log and :1562 for
+ * the power case — and says so at :1558 in as many words: `-- always >= 0`.
+ * This port dropped it, and the truncated citation is why nobody noticed:
+ * the cited window excluded the line that carries it.
+ *
+ * `combatTalentScale`, the sibling twenty lines up in this same file, DOES
+ * carry the clamp (from Combat.lua:1530/:1533). Two halves of one pair
+ * disagreeing is the shape worth catching.
  *
  * `combatTalentScale` fits `y(1)=low, y(5)=high` on talent level. This fits
  * `y(10)=low, y(100)=high` on a STAT, which is the pair upstream uses whenever a
@@ -348,7 +358,10 @@ export function combatStatScale(
   const m = (high - low) / (xHighAdj - xLowAdj);
   const b = low - m * xLowAdj;
   const xAdj = power === 'log' ? Math.log10(x + shift) : (x + shift) ** power;
-  return m * xAdj + b + add;
+  // :1559 and :1562 — `math.max(0, ...)` on both branches. The curve is a
+  // line through two anchor points and is free to run below zero to the left
+  // of its x-intercept; upstream refuses to return that and so must we.
+  return Math.max(0, m * xAdj + b + add);
 }
 
 /**
