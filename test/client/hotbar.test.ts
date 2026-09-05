@@ -43,7 +43,7 @@ import {
   slotRect,
   wornSlotOf,
 } from '../../src/client/ui/hotbar.ts';
-import { TalentShape } from '../../src/shared/protocol.ts';
+import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import type { SpriteSource } from '../../src/client/render/assets.ts';
 import type { HotbarSlot, HotbarView } from '../../src/client/ui/hotbar.ts';
 import type { ItemView, LoadoutTalent, Slot } from '../../src/shared/protocol.ts';
@@ -910,6 +910,54 @@ describe('hotbarTipAt', () => {
     expect(card).not.toBeNull();
     expect(card?.title.length).toBeGreaterThan(0);
     expect(card?.meta ?? '').toContain('AP');
+  });
+
+  it('names the pool the body actually spends, not always Resolve', () => {
+    /**
+     * The cost clause was the hard-coded word `resolve`, so an Alchemist
+     * hovering Concussion Flask read "2 resolve" directly above a description
+     * that said "2 Reagents" -- one card naming two pools, and the wrong one
+     * for three of the four classes.
+     */
+    // The bar fixture's talents cost no resource, and a zero cost prints no
+    // clause at all — so the pool has to actually be spent for a word to appear.
+    const slots = barSlots();
+    slots[0] = talentSlot({
+      talent: talent({
+        id: 'talent:costed',
+        name: 'Costed',
+        cost: { ap: 10, mp: 0, resource: 2 },
+      }),
+    });
+    const rect = slotRect(0, slots.length, W, H);
+    const tipFor = (pool: ResourceKind): string => {
+      const card = hotbarTipAt(
+        { slots, hovered: -1, armed: -1, pool },
+        rect.x + 2,
+        rect.y + 2,
+        W,
+        H,
+      );
+      return card?.meta ?? '';
+    };
+
+    expect(tipFor(ResourceKind.Reagents)).toContain('Reagents');
+    expect(tipFor(ResourceKind.Focus)).toContain('Focus');
+    // AND THE WATCHMAN'S OWN WORD IS NOT SPECIAL. The bug passed every earlier
+    // reading of this card because Resolve happened to be what it said.
+    expect(tipFor(ResourceKind.Reagents)).not.toContain('Resolve');
+  });
+
+  it('prices the cooldown on a talent that is ready, not only one that is down', () => {
+    // `cooling - 3t` is STATE and shows only while the talent is down. The
+    // cooldown a talent COSTS is what a player compares two buttons on, and it
+    // was reachable only by reading the prose -- which is why 46 talents had
+    // taken to restating their own costs in a sentence.
+    const view = barView();
+    const rect = slotRect(0, view.slots.length, W, H);
+    const meta = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H)?.meta ?? '';
+    expect(meta).toContain('cooldown');
+    expect(meta).not.toContain('cooling');
   });
 
   it('still explains a slot that cannot be pressed', () => {

@@ -3652,6 +3652,10 @@ function hotbarView(): HotbarView {
     // WHICH PAGE THESE SIX ARE, so the label strip can say so. A bar that
     // silently swapped its buttons would be indistinguishable from a bug.
     page: talentPage,
+    // WHICH POOL THE TIP SHOULD NAME. See `HotbarView.pool` — the cost clause
+    // was the literal word `resolve` for every class. Absent before a loadout
+    // arrives, which is exactly when there is no card to draw.
+    ...(resource === null ? {} : { pool: resource.kind }),
     // So an empty item slot takes the hover frame and reads BIND while something
     // droppable is being carried over the bar. Cosmetic only —
     // `hotbarDropTargetAt` decides what a release actually means.

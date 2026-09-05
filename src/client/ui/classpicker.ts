@@ -86,8 +86,8 @@
  * ui/partypanel.ts:93-99 for what two copies of this arithmetic cost.
  */
 
-import { ResourceKind } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
+import { resourceLabel } from './resource.ts';
 import {
   drawButton,
   drawHeader,
@@ -607,20 +607,6 @@ export function classPickerHitAt(
 // ---------------------------------------------------------------------------
 // Painting
 // ---------------------------------------------------------------------------
-
-/** The word for a pool. A switch, so a fourth `ResourceKind` is a compile error. */
-function resourceLabel(kind: ResourceKind): string {
-  switch (kind) {
-    case ResourceKind.Resolve:
-      return 'Resolve';
-    case ResourceKind.Focus:
-      return 'Focus';
-    case ResourceKind.Reagents:
-      return 'Reagents';
-    case ResourceKind.Ink:
-      return 'Ink';
-  }
-}
 
 /** Up to two letters of a name. `The Watchman` -> `TW`. Never violet. */
 function initialsOf(name: string): string {

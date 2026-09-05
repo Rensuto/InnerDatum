@@ -124,8 +124,9 @@ import { PALETTE } from '../render/canvas.ts';
 import { SLOT_ORDER } from '../../shared/protocol.ts';
 import { DragKind } from './drag.ts';
 import { PanelSkin, drawPanel } from './panel.ts';
+import { resourceLabel } from './resource.ts';
 import type { DragSubject } from './drag.ts';
-import type { LoadoutTalent, Slot } from '../../shared/protocol.ts';
+import type { LoadoutTalent, ResourceKind, Slot } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 
 /**
@@ -504,6 +505,22 @@ export type HotbarView = {
    * from a bug.
    */
   readonly page?: number;
+  /**
+   * ════════════════════════════════════════════════════════════════════════
+   * WHICH POOL THIS BODY SPENDS — the tooltip said `resolve` to EVERYONE.
+   * ════════════════════════════════════════════════════════════════════════
+   * The cost clause was a hard-coded string, so an Alchemist hovering
+   * Concussion Flask read *"2 resolve"* over a description that said "2
+   * Reagents" — one card naming two different pools, neither of which the
+   * Watchman's word describes for three of the four classes.
+   *
+   * OPTIONAL, like `page` above and for its reason: every fixture that
+   * builds a view by hand keeps compiling. ABSENT OMITS THE CLAUSE rather
+   * than falling back to a word, because the fallback IS the bug — a
+   * tooltip that says nothing about the cost is recoverable, and one that
+   * confidently names the wrong pool is what shipped.
+   */
+  readonly pool?: ResourceKind;
   /**
    * The drag in flight, if any — so an empty slot can light up while something
    * droppable is being carried over the bar.
@@ -1535,7 +1552,19 @@ export function hotbarTipAt(
               : null,
           slot.cooldown > 0 ? `cooling — ${String(slot.cooldown)}t` : null,
           `${String(talent.cost.ap)} AP`,
-          talent.cost.resource > 0 ? `${String(talent.cost.resource)} resolve` : null,
+          talent.cost.resource > 0 && view.pool !== undefined
+            ? `${String(talent.cost.resource)} ${resourceLabel(view.pool)}`
+            : null,
+          /**
+           * THE COOLDOWN THE TALENT HAS, not the one it is serving.
+           *
+           * `cooling — 3t` above is STATE and appears only while the talent is
+           * down; this is the PRICE, and a player choosing between two buttons
+           * mid-fight needs it on the ready one. It was reachable only by
+           * reading the description prose, which is why 46 talents had taken
+           * to restating their own costs in a sentence.
+           */
+          talent.cooldownTurns > 0 ? `${String(talent.cooldownTurns)}t cooldown` : null,
           // TWO DIFFERENT FACTS, and "not affordable" is the wrong sentence for
           // the second: a player short on Resolve waits a turn, and a player who
           // has not learned the talent spends a point. Telling them the first

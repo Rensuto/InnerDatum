@@ -131,9 +131,10 @@
  */
 
 import type { HoverCard } from './panel.ts';
-import { InspectGroup, ResourceKind, SLOT_ORDER, TalentShape } from '../../shared/protocol.ts';
+import { InspectGroup, SLOT_ORDER, TalentShape } from '../../shared/protocol.ts';
 import type { ItemView, Slot } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
+import { resourceLabel } from './resource.ts';
 import { gameKeymap } from '../input/keys.ts';
 import { labelFor } from '../input/keymap.ts';
 import {
@@ -626,20 +627,6 @@ export type CharSheetView = {
    */
   readonly keymap?: Keymap;
 };
-
-/** The word for a pool. A switch, so a fourth `ResourceKind` is a compile error. */
-function resourceLabel(kind: ResourceKind): string {
-  switch (kind) {
-    case ResourceKind.Resolve:
-      return 'Resolve';
-    case ResourceKind.Focus:
-      return 'Focus';
-    case ResourceKind.Reagents:
-      return 'Reagents';
-    case ResourceKind.Ink:
-      return 'Ink';
-  }
-}
 
 /**
  * What one use costs, as one string.
