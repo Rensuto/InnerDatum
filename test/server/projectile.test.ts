@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { AiProfile, HOLD_INTENT } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
+import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import {
   ProjectileStop,
   createProjectile,
@@ -103,10 +104,24 @@ type Body = {
   hp: number;
   alive: boolean;
   pendingIntent: Intent | null;
+  /** Optional, as the real actor's is — see `armoured` below. */
+  combat?: CombatSheet;
 };
 
 function body(id: string, x: number, y: number, hp = 100): Body {
   return { id, x, y, hp, alive: true, pendingIntent: null };
+}
+
+/**
+ * A body wearing plate. `projectDoStop` reads `foe.combat`, and every other
+ * fixture here leaves it undefined — which is exactly why armour on the
+ * projector path went unmeasured in both directions for so long.
+ */
+function armoured(id: string, x: number, y: number, armour: number, hardiness: number): Body {
+  return {
+    ...body(id, x, y),
+    combat: { mods: { armour, armourHardiness: hardiness } },
+  };
 }
 
 type Arena = {
@@ -858,5 +873,46 @@ describe('replay — the number of orbs in the air cannot perturb the stream', (
     // ...and the fight itself is identical, event for event.
     expect(JSON.stringify(one.events)).toEqual(JSON.stringify(none.events));
     expect(JSON.stringify(three.events)).toEqual(JSON.stringify(none.events));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The projector wears no armour
+// ---------------------------------------------------------------------------
+
+describe('armour and the orb', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PLATE DOES NOTHING ABOUT A BOLT — damage_types.lua:48-528.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combatArmor()` is called ONCE in the module, at `Combat.lua:439`, inside
+   * `attackTargetWith` — the melee path. `defaultProjector` carries the
+   * percentage resists and `flat_damage_armor` and no armour stage at all, so a
+   * spell, a bolt and an effect are all reduced the same way and armour is not
+   * part of it.
+   *
+   * This impact used to pass `combatArmor` and `combatArmorHardiness`, which is
+   * the natural assumption and the wrong one. Against a Watchman — armour 6,
+   * hardiness 40 — a 16-point orb landed as 10.
+   *
+   * AND THE GAME'S OWN ARITHMETIC AGREED. The wraith's 12-16 is derived in
+   * content/monsters.ts as 24.14% of an upstream level-1 life bar mapped onto
+   * our median class bar, with no armour term in the derivation at all — so the
+   * armour stage was quietly taking back a third of a number that had already
+   * been scaled to be right.
+   */
+  it('lands its full damage on a body in plate', () => {
+    const bare = arena(CORRIDOR, [body('victim', 5, 1)]);
+    const plated = arena(CORRIDOR, [armoured('victim', 5, 1, 6, 40)]);
+
+    const shotAt = (scene: Arena): number => {
+      const flight = fly(orb({ from: { x: 1, y: 1 }, to: { x: 5, y: 1 } }), scene.world);
+      return flight.outcome?.impact?.damage ?? -1;
+    };
+
+    const onBare = shotAt(bare);
+    expect(onBare, 'the fixture never landed a hit').toBeGreaterThan(0);
+    expect(shotAt(plated), 'armour reduced a projector hit').toBe(onBare);
   });
 });

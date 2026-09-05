@@ -157,7 +157,6 @@ import { ENERGY_TO_ACT, canAct, spendForAction } from '../../shared/energy.ts';
 import { canWalk } from '../../shared/level.ts';
 import { DamageType, applyDamage } from './damage.ts';
 import type { OnHitStatus } from './actor.ts';
-import { combatArmor, combatArmorHardiness } from './derived.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import { onFlightPath } from '../../shared/flight.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
@@ -666,7 +665,6 @@ function projectDoStop(
   // the counterplay and it must never be softened into a re-aim.
   if (foe === undefined) return null;
 
-  const sheet: CombatSheet = foe.combat ?? {};
   const outcome = applyDamage(
     foe,
     proj.damage.dam,
@@ -674,8 +672,30 @@ function projectDoStop(
     { id: proj.sourceId },
     world.rng,
     {
-      armour: combatArmor(sheet),
-      hardiness: combatArmorHardiness(sheet),
+      /**
+       * ═════════════════════════════════════════════════════════════════
+       * NO ARMOUR HERE. THE PROJECTOR PATH DOES NOT WEAR IT.
+       * ═════════════════════════════════════════════════════════════════
+       * This passed `combatArmor` and `combatArmorHardiness`, which is the
+       * natural assumption — an orb is an attack, so armour should stop some
+       * of it — and it is not what ToME does. `combatArmor()` is called once
+       * in the module, at `Combat.lua:439`, inside `attackTargetWith`: the
+       * MELEE path. `defaultProjector` (damage_types.lua:48-528) carries the
+       * percentage resists and `flat_damage_armor` and NO armour stage at
+       * all. A spell, a bolt and an effect are all reduced the same way, and
+       * plate does nothing about any of them.
+       *
+       * ═══ AND OUR OWN DERIVATION SAYS THE SAME THING ═══
+       * The wraith's 12-16 is derived in content/monsters.ts as 24.14% of an
+       * upstream level-1 life bar mapped onto our median class bar of 60 — a
+       * FRACTION OF A HEALTH BAR, with no armour term anywhere in it. The
+       * armour stage was then quietly taking that back: against a Watchman
+       * (armour 6, hardiness 40) a 16-point orb landed as 10, so the orb hit
+       * for 14% of his bar where the derivation asked for about 24%.
+       *
+       * So removing it is not a buff invented here. It is what upstream does
+       * AND what this game's own arithmetic already intended.
+       */
       apr: proj.damage.apr,
       increase: proj.damage.increase,
       penetration: proj.damage.penetration,

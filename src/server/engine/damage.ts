@@ -551,8 +551,20 @@ export function resolveDamage(
   //    it is worth most against the many small hits and least against one big
   //    one. `min(dam, dec)` first, so it can never push damage negative.
   if (dam > 0) {
+    // THE `dec > 0` GUARD UPSTREAM IS ON THE LOG LINE, NOT ON THIS ONE.
+    // damage_types.lua:404-409 reads:
+    //
+    //     local dec = math.min(dam, target:combatGetFlatResist(type))
+    //     if dec > 0 then <log "(%d resist armour)"> end
+    //     dam = math.max(0, dam - dec)
+    //
+    // The subtraction is unconditional, so a NEGATIVE flat armour — a
+    // vulnerability rather than a resistance — raises the damage upstream.
+    // Ours had the guard on the subtraction, which made a negative value a
+    // silent no-op. Nothing in content sets one today; the guard was simply
+    // attached to the wrong statement when the block was ported.
     const dec = Math.min(dam, combatGetFlatResist(target, spec.type));
-    if (dec > 0) dam = Math.max(0, dam - dec);
+    dam = Math.max(0, dam - dec);
   }
 
   return { amount: dam, crit, beforeResists, resist };
