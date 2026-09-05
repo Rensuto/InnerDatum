@@ -54,12 +54,12 @@ import { percent } from '../engine/talents.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * UPSTREAM CHARGES Resolve FOR THIS AND WE DO NOT — RECORDED, NOT DECIDED.
+ * UPSTREAM CHARGES Resolve FOR THIS — AND SINCE 2026-09-04 SO DO WE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `archery.lua:797, Crippling Shot` is ``stamina = 15``. The NUMBERS header above carried its
  * cooldown, its damage curve and its effect across; the resource line was not
- * carried, and nothing in this file ever said so.
+ * carried, and nothing in this file said so until the probe found it.
  *
  * ═══ WHY IT MATTERS MORE THAN ONE TALENT'S PRICE ═══
  * `tools/class-live.mjs` asks each class, over a socket, what it can spend at
@@ -72,15 +72,19 @@ import { percent } from '../engine/talents.ts';
  * prominently, that cannot be spent on anything until Lockdown at tier 3 (30 Resolve) — while the
  * Alchemist and the Redactor both spend theirs on the first button they press.
  *
- * ═══ AND IT IS NOT CHANGED HERE ═══
- * Restoring the cost is a balance change to a game people are playing tonight,
- * and the CONVERSION is a real question rather than a transcription: upstream's
- * pools and ours are not the same size, and `RESOLVE_ON_STRUCK` is 6, so a cost
- * near upstream's is two or three earned clauses per press. That is somebody's
- * call to make deliberately. This note exists so it is made deliberately, at the
- * line where it would be made, rather than rediscovered by writing a socket
- * probe a third time.
+ * ═══ RULED 2026-09-04: TAKE UPSTREAM'S NUMBER, UNCONVERTED ═══
+ * Asked and answered rather than left at the line a third time. The number is
+ * TRANSCRIBED, not converted, and that is defensible on three measurements:
+ * our pool is 0-100 and so is a ToME actor's stamina (the npcs cluster 90-150);
+ * `RESOLVE_PER_TURN` is `0.3 * TOME_ACTIONS_PER_TURN`, which is
+ * `tome/class/Actor.lua:230`'s own `stamina_regen = 0.3` ported exactly; and the
+ * costs that WERE carried land in the same band -- Lockdown 30, Iron Curtain 25.
+ * A conversion factor would have been the invention here; 1:1 is the port.
  */
+/**
+ * Upstream's own number, transcribed — `archery.lua:797`. See the header's ruling.
+ */
+const RESOLVE_COST = 15;
 const AP_COST = 3;
 const COOLDOWN = 3;
 const MULT_LOW = 0.8;
@@ -137,7 +141,7 @@ export const shinCrack: Talent = {
   statGate: 'con',
   kind: TalentKind.Active,
   iconId: 'icon_active_shin_crack',
-  cost: { ap: AP_COST },
+  cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

@@ -51,9 +51,10 @@ import type { Talent, TalentHit } from '../engine/talents.ts';
 import { percent } from '../engine/talents.ts';
 
 /**
- * ═══ UPSTREAM CHARGES Resolve FOR THIS AND WE CHARGE NOTHING ═══
+ * ═══ UPSTREAM CHARGES Resolve FOR THIS, AND SO DO WE NOW ═══
  * `2hweapon.lua:22-58, Death Dance` carries ``stamina = 30``. The header above cites that
- * talent for its cooldown and its damage; the resource line was not carried.
+ * talent for its cooldown and its damage; the resource line was not carried
+ * with them, and is now.
  *
  * ONE OF FIVE, all of them Watchman or Watchman/Inspector talents — see
  * `tools/talent-costs.mjs`, which found them by reading every citation, and
@@ -61,10 +62,19 @@ import { percent } from '../engine/talents.ts';
  * why `tools/class-live.mjs` reports that neither class can spend its resource
  * at level 1.
  *
- * NOT CHANGED HERE. The conversion is a real question — the pools are not the
- * same size — and it is a balance decision on a live game. Recorded at the line
- * so it is made deliberately rather than rediscovered.
+ * ═══ RULED 2026-09-04: TAKE UPSTREAM'S NUMBER, UNCONVERTED ═══
+ * Asked and answered rather than left at the line a third time. The number is
+ * TRANSCRIBED, not converted, and that is defensible on three measurements:
+ * our pool is 0-100 and so is a ToME actor's stamina (the npcs cluster 90-150);
+ * `RESOLVE_PER_TURN` is `0.3 * TOME_ACTIONS_PER_TURN`, which is
+ * `tome/class/Actor.lua:230`'s own `stamina_regen = 0.3` ported exactly; and the
+ * costs that WERE carried land in the same band -- Lockdown 30, Iron Curtain 25.
+ * A conversion factor would have been the invention here; 1:1 is the port.
  */
+/**
+ * Upstream's own number, transcribed — `2hweapon.lua:28`. See the header's ruling.
+ */
+const RESOLVE_COST = 30;
 const AP_COST = 4;
 const COOLDOWN = 4;
 /** One tile out, which is every neighbour including the diagonals. */
@@ -89,7 +99,7 @@ export const truncheonSweep: Talent = {
   statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_truncheon_sweep',
-  cost: { ap: AP_COST },
+  cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Self,

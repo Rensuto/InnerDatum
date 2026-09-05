@@ -68,9 +68,10 @@ import type { Talent } from '../engine/talents.ts';
  * over static data.
  */
 /**
- * ═══ UPSTREAM CHARGES Resolve FOR THIS AND WE CHARGE NOTHING ═══
+ * ═══ UPSTREAM CHARGES Resolve FOR THIS, AND SO DO WE NOW ═══
  * `weaponshield.lua:23-45, Shield Pummel` carries ``stamina = 8``. The header above cites that
- * talent for its cooldown and its damage; the resource line was not carried.
+ * talent for its cooldown and its damage; the resource line was not carried
+ * with them, and is now.
  *
  * ONE OF FIVE, all of them Watchman or Watchman/Inspector talents — see
  * `tools/talent-costs.mjs`, which found them by reading every citation, and
@@ -78,10 +79,19 @@ import type { Talent } from '../engine/talents.ts';
  * why `tools/class-live.mjs` reports that neither class can spend its resource
  * at level 1.
  *
- * NOT CHANGED HERE. The conversion is a real question — the pools are not the
- * same size — and it is a balance decision on a live game. Recorded at the line
- * so it is made deliberately rather than rediscovered.
+ * ═══ RULED 2026-09-04: TAKE UPSTREAM'S NUMBER, UNCONVERTED ═══
+ * Asked and answered rather than left at the line a third time. The number is
+ * TRANSCRIBED, not converted, and that is defensible on three measurements:
+ * our pool is 0-100 and so is a ToME actor's stamina (the npcs cluster 90-150);
+ * `RESOLVE_PER_TURN` is `0.3 * TOME_ACTIONS_PER_TURN`, which is
+ * `tome/class/Actor.lua:230`'s own `stamina_regen = 0.3` ported exactly; and the
+ * costs that WERE carried land in the same band -- Lockdown 30, Iron Curtain 25.
+ * A conversion factor would have been the invention here; 1:1 is the port.
  */
+/**
+ * Upstream's own number, transcribed — `weaponshield.lua:31`. See the header's ruling.
+ */
+const RESOLVE_COST = 8;
 const AP_COST = 2;
 /**
  * MELEE REACH — 1.5, NOT 1, AND THE ARITHMETIC IS THE WHOLE JUSTIFICATION.
@@ -165,7 +175,7 @@ export const wardRush: Talent = {
   statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_shield_bash',
-  cost: { ap: AP_COST },
+  cost: { ap: AP_COST, resource: RESOLVE_COST },
   // 6 ToME actions -> 3 Inner Datum turns (an Inner Datum turn holds ~2
   // actions from a 6 AP budget). See engine/talents.ts's cooldown header.
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),

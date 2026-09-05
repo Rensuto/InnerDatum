@@ -51,12 +51,12 @@ import type { Talent } from '../engine/talents.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * UPSTREAM CHARGES Focus FOR THIS AND WE DO NOT — RECORDED, NOT DECIDED.
+ * UPSTREAM CHARGES Focus FOR THIS — AND SINCE 2026-09-04 SO DO WE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `2hweapon.lua:216, Stunning Blow` is ``stamina = 8``. The NUMBERS header above carried its
  * cooldown, its damage curve and its effect across; the resource line was not
- * carried, and nothing in this file ever said so.
+ * carried, and nothing in this file said so until the probe found it.
  *
  * ═══ WHY IT MATTERS MORE THAN ONE TALENT'S PRICE ═══
  * `tools/class-live.mjs` asks each class, over a socket, what it can spend at
@@ -77,7 +77,20 @@ import type { Talent } from '../engine/talents.ts';
  * call to make deliberately. This note exists so it is made deliberately, at the
  * line where it would be made, rather than rediscovered by writing a socket
  * probe a third time.
+ *
+ * ═══ RULED 2026-09-04: TAKE UPSTREAM'S NUMBER, UNCONVERTED ═══
+ * Asked and answered rather than left at the line a third time. The number is
+ * TRANSCRIBED, not converted, and that is defensible on three measurements:
+ * our pool is 0-100 and so is a ToME actor's stamina (the npcs cluster 90-150);
+ * `RESOLVE_PER_TURN` is `0.3 * TOME_ACTIONS_PER_TURN`, which is
+ * `tome/class/Actor.lua:230`'s own `stamina_regen = 0.3` ported exactly; and the
+ * costs that WERE carried land in the same band -- Lockdown 30, Iron Curtain 25.
+ * A conversion factor would have been the invention here; 1:1 is the port.
  */
+/**
+ * Upstream's own number, transcribed — `2hweapon.lua:219`. See the header's ruling.
+ */
+const FOCUS_COST = 8;
 const AP_COST = 4;
 const COOLDOWN = 5;
 const MULT_LOW = 0.5;
@@ -133,7 +146,7 @@ export const pistolWhip: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_pistol_whip',
-  cost: { ap: AP_COST },
+  cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,
