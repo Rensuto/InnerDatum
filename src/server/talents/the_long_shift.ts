@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/combat-training.lua:128
-//          Light Armour Training -- `getArmorHardiness` reaches 37.5 at rank 5
-//          through `combatLimit`, an asymptotic curve this game has no port of.
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/combat-training.lua:125-127
+//          Light Armour Training -- `getArmorHardiness`, an asymptotic
+//          `combatLimit` curve this game has no port of.
+//          (Was :128 "reaches 37.5 at rank 5", and BOTH halves were wrong.
+//          :128 is `getDefense` -- the next field down the same talent, which
+//          is why a name-check could not see it: the line is inside the right
+//          block, just not on the right field. And 37.5 is not a hardiness at
+//          all. `combatLimit(x, limit, y_low, x_low, y_high, x_high)` is
+//          Combat.lua:1487, so the call's trailing pair reads "x=37.5 anchors
+//          y=50" -- 37.5 is an ARGUMENT on the x axis. Upstream reaches 33.7 at
+//          rank 5, and 50 only at talent level 9.375, which mastery makes
+//          reachable. See `scale.ts`, "NEVER CLAMP THE TALENT LEVEL AT 5".)
 // OURS:    the band is 5 -> 30 on `combatTalentScale`. See below.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
@@ -16,6 +25,12 @@
  * everybody at 30. Forcing `combatLimit`'s endpoints onto `combatTalentScale`
  * would be a citation kept and a curve shape lost, so the number is ours and
  * says so.
+ *
+ * MEASURED AGAINST THE CURVE IT REPLACES, it is a deliberate shave and not a
+ * different shape -- upstream runs 5.6 / 14.7 / 22.1 / 28.4 / 33.7 over ranks
+ * 1-5 and ours runs 5 / 12.3 / 18.6 / 24.5 / 30. Worth stating because the
+ * header used to claim upstream ended at 37.5, which made the gap look four
+ * times wider than it is and this band look arbitrary rather than tuned.
  *
  * 5 TO 30 IS DELIBERATELY SHORT OF STANDING ORDERS. This sits in the same tree,
  * and a second armour talent that out-performed the one the class starts with
