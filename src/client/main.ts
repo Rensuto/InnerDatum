@@ -307,7 +307,8 @@ import {
 // that its strip is a row of COUNTABLE PIPS and not a bar, and a continuous
 // gauge authored inside it is a comment that will mislead somebody within a
 // month. They share one 18px strip and nothing else.
-import { drawXpBar } from './ui/xpbar.ts';
+import { PURSE_GAP, drawPurse } from './ui/purse.ts';
+import { drawXpBar, xpBarGeometry } from './ui/xpbar.ts';
 import {
   DeathStage,
   drawRespawnPrompt,
@@ -4447,7 +4448,45 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // the screen. ui/xpbar.ts owns that refusal for ui/charsheet.ts:344-347's
   // reason — "a row reading Level: 0 in that window would be a wrong number
   // stated confidently".
-  drawXpBar({ ctx, progress, x: 4, y: resourceY + 3, width: width - 8 });
+  const stripX = 4;
+  const stripY = resourceY + 3;
+  const stripW = width - 8;
+  drawXpBar({ ctx, progress, x: stripX, y: stripY, width: stripW });
+
+  /**
+   * ═══ AND THE PURSE, BETWEEN THE PIPS AND THE TRACK ═══
+   *
+   * `Minimalist.lua:1532-1540` blits `player.money` onto the permanent frame
+   * every pass. Ours had it only in the bag's title bar, so the number a
+   * player checks before walking into a shop was behind a keypress from
+   * every screen except the one that spends it.
+   *
+   * THE BOX IS COMPUTED FROM `xpBarGeometry`, NOT GUESSED. The experience
+   * widget right-aligns itself and its width changes with the `TOP` caption
+   * at the level cap, so a literal here would overlap it for exactly the
+   * player who reached 50. Asking the widget where it starts keeps one
+   * authority on that edge — ui/xpbar.ts's own rule for importing `PIP_PX`
+   * rather than copying it.
+   *
+   * NULL PROGRESS MEANS NO XP WIDGET, so the purse may use the whole strip;
+   * it right-aligns into it and ui/purse.ts refuses a box too narrow to hold
+   * the text.
+   *
+   * `inventory?.money ?? null` AND NOT `?? 0` — the zero at the bag's call
+   * site is right there because a closed bag draws no rows to afford. Here it
+   * would print `0 GOLD` on permanent furniture for the whole window between
+   * a welcome and the first `inventory` frame, which is a wrong number stated
+   * confidently on the screen the player is staring at.
+   */
+  const xpGeometry = xpBarGeometry(progress, stripX, stripY, stripW);
+  const xpLeft = xpGeometry === null ? stripX + stripW : (xpGeometry.caption ?? xpGeometry.track).x;
+  drawPurse({
+    ctx,
+    money: inventory?.money ?? null,
+    x: stripX,
+    y: stripY,
+    width: Math.max(0, xpLeft - PURSE_GAP - stripX),
+  });
 
   const hint = targeting?.hint() ?? '';
   const hintY = resourceY - LINE_H;

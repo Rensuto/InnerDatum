@@ -290,17 +290,28 @@ describe('the level badge and the xp track are drawn on the resource strip', () 
   it('shares one measured strip with the life readout and the pips', () => {
     /**
      * ═══ THE SHARED BOX IS THE WHOLE POINT ═══
-     * THREE widgets live on this 18-pixel row and none of them measures another:
+     * FOUR widgets live on this 18-pixel row. Three of them measure nothing:
      * life is a fixed `LIFE_W` at the left, the pips are left-aligned in what is
      * left of the box (ui/resource.ts:70-74), and ui/xpbar.ts right-aligns itself
      * inside the FULL box — so it takes the empty end without needing to know how
      * much the two on the left used. Handing any of them a different box is how
      * they start overlapping on narrow windows only.
      *
+     * ═══ THE PURSE IS THE EXCEPTION, AND IT HAS TO BE ═══
+     * ui/purse.ts is the only one with a neighbour on BOTH sides, so it is the
+     * only one that cannot be handed the full box: it asks `xpBarGeometry` where
+     * the experience widget starts and right-aligns into what is left. That edge
+     * MOVES — `TOP` appears at the level cap — so a literal there would overlap
+     * for exactly the player who reached 50. Asserted below as "derived", which
+     * is the property that matters; ui/purse.ts owns the arithmetic.
+     *
      * ASSERTED AS THE ARITHMETIC RATHER THAN AS A LITERAL LINE. This test used
      * to pin `drawResource({ ctx, sprites, resource, x: 4, … });` verbatim and
      * broke on the reformat that added the third widget, which is a test failing
-     * on whitespace rather than on the claim it is making.
+     * on whitespace rather than on the claim it is making. IT THEN DID THE SAME
+     * THING AGAIN: the `drawXpBar` line below was pinned verbatim and broke on
+     * the fourth widget, which named the strip's three numbers so two callers
+     * could share them. Same lesson, one widget later — so it is a shape now.
      */
     const strip = between('const resourceY =', 'const hint =');
     // Life first, at the left edge.
@@ -309,11 +320,18 @@ describe('the level badge and the xp track are drawn on the resource strip', () 
     expect(strip).toMatch(
       /drawResource\(\{[\s\S]*?x: 4 \+ LIFE_W,[\s\S]*?width: width - 8 - LIFE_W,/,
     );
+    // THE STRIP'S THREE NUMBERS, NAMED ONCE. This is what makes "one measured
+    // strip" true of the source rather than of four hand-copied literals.
+    expect(strip).toContain('const stripX = 4;');
+    expect(strip).toContain('const stripY = resourceY + 3;');
+    expect(strip).toContain('const stripW = width - 8;');
     // XP right-aligned inside the FULL box — deliberately NOT offset, because it
     // aligns from the far end and offsetting it would move it left by 88px.
-    expect(strip).toContain(
-      'drawXpBar({ ctx, progress, x: 4, y: resourceY + 3, width: width - 8 });',
-    );
+    expect(strip).toMatch(/drawXpBar\(\{[\s\S]*?x: stripX,[\s\S]*?y: stripY,[\s\S]*?width: stripW/);
+    // The purse into what the xp widget leaves, DERIVED and never assumed.
+    expect(strip).toMatch(/drawPurse\(\{[\s\S]*?x: stripX,[\s\S]*?y: stripY,/);
+    expect(strip).toContain('xpBarGeometry(progress, stripX, stripY, stripW)');
+    expect(strip).toContain('xpLeft - PURSE_GAP - stripX');
     // ...and all of them inside the same measured strip, not at a hand-copied y.
     expect(CODE).toContain('const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;');
   });
