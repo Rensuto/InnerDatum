@@ -87,6 +87,23 @@ import { percent } from '../engine/talents.ts';
 const RESOLVE_COST = 15;
 const AP_COST = 3;
 const COOLDOWN = 3;
+/**
+ * ═══ UNDER THE AT-WILL SWING, WHICH IS THE WHOLE WATCHMAN LADDER ═══
+ * Upstream is `combatTalentWeaponDamage(t, 1, 1.5)` — 122% at rank 1 rising to
+ * 150%. Ours is lower on purpose and for the reason `truncheon_sweep.ts` states
+ * in full: *"A talent that beat the at-will attack one-on-one would simply
+ * replace it."* The Watchman's bands read as one ladder:
+ *
+ *     crude_blow       1.0 -> 1.8   the at-will swing
+ *     lockdown         1.0 -> 1.8   tackle, and it pays 5 AP
+ *     ward_rush        0.8 -> 1.5   the cheap engage
+ *     shin_crack       0.8 -> 1.2   this: the SLOW is what you buy
+ *     truncheon_sweep  0.6 -> 1.0   pays off past two bodies
+ *
+ * Carrying upstream's pair here would put a debuff talent above the swing it is
+ * meant to set up. The band was always deliberate; only the note was missing,
+ * which is why a citation sweep read it as a dropped number.
+ */
 const MULT_LOW = 0.8;
 const MULT_HIGH = 1.2;
 /** See the header: `ENGAGEMENT_TURNS`, not upstream's seven. */

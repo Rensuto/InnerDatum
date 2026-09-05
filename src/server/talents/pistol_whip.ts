@@ -95,6 +95,20 @@ const AP_COST = 4;
 const COOLDOWN = 5;
 const MULT_LOW = 0.5;
 const MULT_HIGH = 0.9;
+/**
+ * ═══ TWO, BECAUSE A FIGHT HERE IS `ENGAGEMENT_TURNS` LONG ═══
+ * Upstream scales it: `floor(combatTalentScale(t, 3, 7))` gives 3,4,5,6,7.
+ * `ENGAGEMENT_TURNS` is 3 (engine/scheduler.ts), so upstream's rank-1 stun
+ * already outlasts a whole engagement and its rank-5 one is more than twice a
+ * fight. `shin_crack.ts` makes the same conversion out loud for its slow —
+ * *"`ENGAGEMENT_TURNS`, not upstream's seven"* — and this is that rule applied
+ * to a stun.
+ *
+ * FLAT, AND MATCHING `lockdown.ts`. Both stuns in the game are 2. On a
+ * three-turn scale the scaling has nowhere to go: 3 would be the entire fight
+ * and 4 would be a kill with extra steps, so the rank buys damage and the stun
+ * stays a tempo cost rather than a removal.
+ */
 const STUN_TURNS = 2;
 
 function damageMult(talentLevel: number): number {

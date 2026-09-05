@@ -78,6 +78,24 @@ const COOLDOWN = 4;
 const RANGE = 5;
 /** Fixed, and the header says why at length. */
 const RADIUS = 1;
+/**
+ * ═══ UNDER THE REVOLVER, FOR `pistol_whip.ts`'s REASON ═══
+ * Upstream's Fragmentation Shot is `combatTalentWeaponDamage(t, 1.0, 1.5)` —
+ * 122% at rank 1 rising to 150%. Ours is the same 0.5 -> 0.9 band `pistol_whip`
+ * carries, and for the same stated reason: what the player pays four AP and a
+ * cooldown for is the EFFECT, not the hit.
+ *
+ * The Inspector's ladder, which this sits inside:
+ *
+ *     sniper_mark      1.65 -> 3.5   one target, the whole turn
+ *     revolver_shot    0.9  -> 1.6   the at-will shot
+ *     scattershot      0.5  -> 0.9   this: several bodies, and a crowd answer
+ *     pistol_whip      0.5  -> 0.9   melee on a ranged class, and a stun
+ *
+ * At upstream's pair this would deal 122% at rank 1 against the at-will shot's
+ * 90% — an area talent out-damaging the single-target basic on every body it
+ * touches. That is the shape `truncheon_sweep.ts` argues against by name.
+ */
 const MULT_LOW = 0.5;
 const MULT_HIGH = 0.9;
 

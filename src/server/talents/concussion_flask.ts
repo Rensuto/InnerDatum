@@ -77,6 +77,23 @@ const REAGENT_COST = 2;
  * through, and "you can throw it from further back" is precisely what a rank in
  * a thrown talent should mean for the class that stands at the back.
  */
+/**
+ * ═══ IT STARTS AT FOUR TO SIT INSIDE THE ALCHEMIST'S THROWING LADDER ═══
+ * Upstream's Shockwave Bomb scales its range too — `explosives.lua:213` is
+ * `floor(combatTalentScale(t, 5, 9, 0.5, 0, 0, true))`, i.e. 5,6,7,8,9 — so the
+ * second axis is upstream's idea and not ours. What differs is where it starts
+ * and which helper draws it.
+ *
+ * The class's throwing ranges are backdraft 3, alchemic_vial 4, ashwick_flare 5.
+ * Upstream's rank-1 five would put the flask level with the flare on the turn it
+ * is learned, and the flask is the one with a stun on it. Four keeps the ladder.
+ *
+ * `combatTalentLimit` rather than `combatTalentScale` because this band wants an
+ * ASYMPTOTE: eight is a long throw on a delve floor and the curve should crowd
+ * toward it rather than run through it if an effective level ever exceeds five,
+ * which mastery makes reachable (see scale.ts, "NEVER CLAMP THE TALENT LEVEL AT
+ * 5"). Upstream's own call passes its sixth argument to get a similar effect.
+ */
 const RANGE_LOW = 4;
 const RANGE_HIGH = 8;
 /** The same shape as `fog_step`'s: one tile per rank, no dead rank. */
