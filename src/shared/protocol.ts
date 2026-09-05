@@ -980,10 +980,17 @@ export type LoadoutTalent = {
    * client may not import the server's content table to look one up from the
    * other.
    *
-   * `kind` is `activated`/`sustained`/`passive` in ToME's words. Everything
-   * shipped so far is active; the field exists so the panel and the hotbar can
-   * be built once for all three rather than rewritten when the first passive
-   * lands — a passive with a keybind is a key that does nothing.
+   * `kind` is `activated`/`sustained`/`passive` in ToME's words, and ALL THREE
+   * ship now: 52 activated, 51 passive, 5 sustained. This used to read
+   * "everything shipped so far is active", written when the field was added
+   * ahead of the first passive; it stayed after both other modes landed.
+   *
+   * IT IS THE TALENT'S TYPE, NOT ITS STATE. `sustained` below is the state —
+   * whether a stance is UP right now — and the two are read by different
+   * surfaces: the hotbar lights a stance from `sustained`, the talent panel
+   * tells an activated talent from a toggle by `kind`. Reading one for the
+   * other is how five sustains spent a milestone priced like attacks in the
+   * panel while the hotbar knew perfectly well what they were.
    *
    * ALL THREE OPTIONAL AND ADDITIVE, so no protocol bump: an older client
    * ignores fields it cannot name and draws the flat list it always drew.
