@@ -60,6 +60,20 @@ jobs:
           # produces confusing output.
           NPM_CONFIG_MIN_RELEASE_AGE: '0'
 
+      # THE BUNDLE THE SECRET SCAN NEEDS, and the reason it is a separate step.
+      #
+      # `check:secrets` compares every value in .env against the built client, and
+      # its own docblock calls that "the strongest check available". It SKIPS when
+      # client/dist is absent -- and nothing in `npm run check` builds the client,
+      # so on a runner that check had never once executed. A widened `envPrefix`
+      # could inline a client secret and CI would go green having never looked.
+      #
+      # The build is an INPUT, not a change to the gate: `npm run check` below is
+      # still the identical command the hook and a developer run, which is what
+      # the note under it insists on. It takes about a second.
+      - name: Build the client (so the secret scan has a bundle)
+        run: npm run build:client
+
       # One command, identical to the pre-push hook and to what you run locally.
       # If the local gate and the CI gate can differ, CI becomes a lottery and
       # you learn to push-and-pray.

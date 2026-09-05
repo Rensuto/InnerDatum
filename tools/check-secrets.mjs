@@ -21,6 +21,7 @@
  * Exit 0 = clean. Any other exit = do not ship.
  */
 
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,13 +93,29 @@ function walk(dir) {
   return found;
 }
 
+let incomplete = false;
 const secrets = readEnvSecrets();
 const bundleFiles = walk(DIST).filter((f) => /\.(js|mjs|css|html|map|json)$/i.test(f));
 
 console.log('\nsecret containment');
 
 if (!existsSync(DIST)) {
-  console.log('  skip  client/dist not built — run `npm run build:client` for the full check');
+  /**
+   * NOT A QUIET SKIP ANY MORE. This file's own docblock calls the bundle scan
+   * "the strongest check available" and says it "fails BEFORE the bytes leave
+   * the machine" -- and `npm run check` never builds the client, and neither
+   * does CI (`npm ci`, `npm run check`, `npm run smoke`). So on every runner
+   * this printed one grey `skip` line and the job went green having never
+   * looked for the leak it exists to find.
+   *
+   * It still does not FAIL, because a fresh clone with no build is a legitimate
+   * state and a gate people cannot run is a gate people bypass. What changes is
+   * that the run is marked INCOMPLETE, so the closing line cannot read as a
+   * clean pass over a check that never ran.
+   */
+  incomplete = true;
+  console.log('  SKIP  client/dist not built — the bundle scan DID NOT RUN');
+  console.log('        `npm run build:client` first, or trust only the checks below');
 } else if (secrets.length === 0) {
   console.log('  skip  no .env present (CI) — pattern scan below still applies');
 } else {
@@ -134,26 +151,56 @@ const PATTERNS = [
   { name: 'GitHub token', re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
 ];
 
-const SCAN_DIRS = ['src', 'tools', 'test', 'content', 'docs', '.github'];
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ASK GIT WHAT IS TRACKED. A HAND-KEPT LIST IS A LIST THAT GOES STALE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was `SCAN_DIRS = ['src', 'tools', 'test', 'content', 'docs', '.github']`
+ * plus four hard-coded root filenames, while the line below it printed "no
+ * secret-shaped strings in N tracked files". It was not scanning the tracked
+ * tree and the count was wrong in both directions: 28 tracked files were never
+ * opened and 23 untracked ones were counted.
+ *
+ * THE TWO THAT MATTER. `.env.example` is tracked, is the documented mirror of
+ * the file that holds the real bot token, and was excluded TWICE -- not in the
+ * root list, and `.example` is not in the extension filter. Root `index.html`
+ * is the page Vite serves to every player, is tracked, and was excluded because
+ * root files were only read if they were one of those four names. A token in
+ * either exited 0.
+ *
+ * `check-assets.mjs` already answers its own question this way, and says why:
+ * a rule is bypassable, `git ls-files` is the truth. Same question, same answer.
+ */
+const trackedFiles = () =>
+  execFileSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' })
+    .split('\0')
+    .filter(Boolean);
 const SKIP = /node_modules|client[\\/]dist|reference|\.git[\\/]|package-lock\.json/;
 
 let scanned = 0;
 const hits = [];
-for (const dir of SCAN_DIRS) {
-  for (const file of walk(join(REPO, dir))) {
-    if (SKIP.test(file)) continue;
-    if (!/\.(ts|mjs|js|json|md|yml|yaml|html|css|py)$/i.test(file)) continue;
-    scanned += 1;
-    const text = readFileSync(file, 'utf8');
-    for (const { name, re } of PATTERNS) {
-      const m = re.exec(text);
-      if (m) hits.push({ file: relative(REPO, file), name, sample: `${m[0].slice(0, 12)}…` });
-    }
+/**
+ * EVERY TRACKED TEXT FILE. The extension list is a BINARY filter now, not a
+ * membership one: anything git tracks that is not obviously binary gets read,
+ * so a secret in a file type nobody thought of is still found. `.example` was
+ * the one that proved the old allow-list wrong.
+ */
+const BINARY = /\.(png|jpe?g|gif|webp|ico|woff2?|ttf|otf|mp3|ogg|wav|zip|gz|pdf)$/i;
+for (const rel of trackedFiles()) {
+  if (SKIP.test(rel) || BINARY.test(rel)) continue;
+  const full = join(REPO, rel);
+  if (!existsSync(full)) continue; // deleted-but-staged
+  scanned += 1;
+  const text = readFileSync(full, 'utf8');
+  for (const { name, re } of PATTERNS) {
+    const m = re.exec(text);
+    if (m) hits.push({ file: rel, name, sample: `${m[0].slice(0, 12)}…` });
   }
 }
 
-// Root-level files that ship, checked too.
-for (const name of ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'vite.config.ts']) {
+// Retained so the loop below still compiles against its own tail.
+for (const name of []) {
   const full = join(REPO, name);
   if (!existsSync(full)) continue;
   scanned += 1;
@@ -171,16 +218,47 @@ if (hits.length === 0) pass(`no secret-shaped strings in ${scanned} tracked file
 // 3. .env must be unreachable by git. A one-character gitignore edit undoes it.
 // ---------------------------------------------------------------------------
 
-const gitignore = existsSync(join(REPO, '.gitignore'))
-  ? readFileSync(join(REPO, '.gitignore'), 'utf8')
-  : '';
-if (!/^\.env$/m.test(gitignore)) {
-  fail('.gitignore no longer contains a bare `.env` rule');
-} else {
-  pass('.env is gitignored');
+/**
+ * ═══ ASKED OF GIT, NOT OF THE TEXT OF .gitignore ═══
+ *
+ * This grepped `.gitignore` for a bare `.env` line. Two one-line changes beat
+ * that and leave the line intact: a `!.env` negation below it -- and negations
+ * are already this file's normal vocabulary, `.gitignore:11-13` is
+ * `.env` / `.env.*` / `!.env.example` -- or a `git add -f .env` that already
+ * happened, which no amount of reading .gitignore can detect.
+ *
+ * Both questions are answerable directly. `check-ignore` says whether the rule
+ * is in force RIGHT NOW, after every negation; `ls-files` says whether the file
+ * is already staged or committed, which is the failure that actually leaks.
+ */
+const ignoredNow = (rel) => {
+  try {
+    execFileSync('git', ['check-ignore', '-q', '--', rel], { cwd: REPO, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+};
+const trackedNow = (rel) => {
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', rel], { cwd: REPO, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+for (const rel of ['.env', 'config/allowlist.json']) {
+  if (trackedNow(rel)) fail(`${rel} IS TRACKED BY GIT — remove it from the index and rotate`);
+  else if (!ignoredNow(rel)) fail(`${rel} is not ignored by git — one commit from public`);
+  else pass(`${rel} is ignored by git and not tracked`);
 }
 
 console.log(
-  failures === 0 ? '\nsecret containment OK\n' : `\nSECRET CONTAINMENT FAILED (${failures})\n`,
+  failures !== 0
+    ? `\nSECRET CONTAINMENT FAILED (${failures})\n`
+    : incomplete
+      ? '\nsecret containment INCOMPLETE — the bundle scan did not run\n'
+      : '\nsecret containment OK\n',
 );
 process.exit(failures ? 1 : 0);
