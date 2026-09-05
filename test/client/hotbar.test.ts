@@ -909,7 +909,9 @@ describe('hotbarTipAt', () => {
     const card = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H);
     expect(card).not.toBeNull();
     expect(card?.title.length).toBeGreaterThan(0);
-    expect(card?.meta ?? '').toContain('AP');
+    // A LABELLED ROW IN `lines`, not a clause in `meta`: `meta` carries what
+    // is true this instant, the rows carry what the talent costs.
+    expect((card?.lines ?? []).join('\n')).toContain('AP cost:');
   });
 
   it('names the pool the body actually spends, not always Resolve', () => {
@@ -938,7 +940,7 @@ describe('hotbarTipAt', () => {
         W,
         H,
       );
-      return card?.meta ?? '';
+      return (card?.lines ?? []).join('\n');
     };
 
     expect(tipFor(ResourceKind.Reagents)).toContain('Reagents');
@@ -955,9 +957,11 @@ describe('hotbarTipAt', () => {
     // taken to restating their own costs in a sentence.
     const view = barView();
     const rect = slotRect(0, view.slots.length, W, H);
-    const meta = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H)?.meta ?? '';
-    expect(meta).toContain('cooldown');
-    expect(meta).not.toContain('cooling');
+    const card = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H);
+    expect((card?.lines ?? []).join('\n')).toContain('Cooldown:');
+    // `cooling - Nt` is STATE and belongs to `meta`, which a ready talent
+    // leaves empty. The two must not be confusable.
+    expect(card?.meta ?? '').not.toContain('cooling');
   });
 
   it('still explains a slot that cannot be pressed', () => {
@@ -1120,7 +1124,7 @@ describe('a stance that is up says so', () => {
     expect(card?.meta ?? '').not.toContain('press to raise');
     expect(card?.meta ?? '').not.toContain('UP');
     // ...and it still says the ordinary things.
-    expect(card?.meta ?? '').toContain('AP');
+    expect((card?.lines ?? []).join('\n')).toContain('AP cost:');
   });
 });
 

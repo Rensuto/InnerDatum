@@ -1551,27 +1551,12 @@ export function hotbarTipAt(
               ? 'press to raise'
               : null,
           slot.cooldown > 0 ? `cooling — ${String(slot.cooldown)}t` : null,
-          `${String(talent.cost.ap)} AP`,
-          talent.cost.resource > 0 && view.pool !== undefined
-            ? `${String(talent.cost.resource)} ${resourceLabel(view.pool)}`
-            : null,
-          /**
-           * THE COOLDOWN THE TALENT HAS, not the one it is serving.
-           *
-           * `cooling — 3t` above is STATE and appears only while the talent is
-           * down; this is the PRICE, and a player choosing between two buttons
-           * mid-fight needs it on the ready one. It was reachable only by
-           * reading the description prose, which is why 46 talents had taken
-           * to restating their own costs in a sentence.
-           */
-          talent.cooldownTurns > 0 ? `${String(talent.cooldownTurns)}t cooldown` : null,
           // TWO DIFFERENT FACTS, and "not affordable" is the wrong sentence for
-          // the second: a player short on Resolve waits a turn, and a player who
+          // the second: a player short on the pool waits a turn, and a player who
           // has not learned the talent spends a point. Telling them the first
           // when it is the second sends them to wait for something that will
           // never arrive.
           slot.talent.level < 1 ? 'not learned yet' : slot.affordable ? null : 'not affordable',
-          talent.range >= 2 ? `${String(talent.range)} tiles` : 'melee',
         ]
           .filter((part) => part !== null)
           .join('  ·  ');
@@ -1591,13 +1576,69 @@ export function hotbarTipAt(
      * the scaling would be the first thing cut.
      */
     const scales = talent.scales ?? '';
+    /**
+     * ════════════════════════════════════════════════════════════════════════
+     * ONE FACT PER LINE, LABELLED — which is what ToME does and what this card
+     * was asked for.
+     * ════════════════════════════════════════════════════════════════════════
+     * `Actor.lua:6200-6300` (`getTalentFullDescription`) prints `Use mode: `,
+     * `<pool> cost: `, `Range: `, `Cooldown: ` — each on its OWN line with its
+     * own label, and only then the effect. Ours packed all of it into one
+     * `·`-separated strip above a paragraph, which is unreadable at a glance:
+     * *"hard to tell what abilities do as they are not properly formatted"*.
+     *
+     * THE SPLIT IS PRICE vs STATE, and it is why `meta` survives at all. A
+     * label/value row is a fact about the TALENT and is true whenever you look
+     * at it; `meta` now carries only what is true THIS INSTANT — whether a
+     * stance is up, whether it is cooling, whether you can afford it. The one
+     * changes on level-up, the other between two presses, and mixing them is
+     * how `cooling — 3t` came to sit beside `4 AP` as though both were prices.
+     *
+     * `Range: melee` RATHER THAN UPSTREAM'S `melee/personal`, because this game
+     * has no personal-only talents and the slash would be an option a player
+     * cannot take.
+     *
+     * NO `Travel Speed:` ROW, though upstream prints one unconditionally. See
+     * `engine/talents.ts` on `addProjectile`: the only shooter in the game is a
+     * monster, so every player talent would read "instantaneous" — a row that
+     * is furniture on all of them.
+     */
+    const useMode = passive
+      ? 'Passive'
+      : talent.sustained === undefined
+        ? 'Activated'
+        : 'Sustained';
+    /**
+     * A PASSIVE GETS ITS MODE AND NOTHING ELSE. It is never pressed, so an
+     * `AP cost: 0` and a `Range: melee` off a range field it does not use are
+     * both answers to questions nobody asked — and `Range: melee` is worse than
+     * noise, because it reads as a claim the talent reaches something.
+     */
+    const rows = (
+      passive
+        ? [`Use mode: ${useMode}`]
+        : [
+            `Use mode: ${useMode}`,
+            talent.cost.ap > 0 ? `AP cost: ${String(talent.cost.ap)}` : null,
+            talent.cost.resource > 0 && view.pool !== undefined
+              ? `${resourceLabel(view.pool)} cost: ${String(talent.cost.resource)}`
+              : null,
+            `Range: ${talent.range >= 2 ? String(talent.range) : 'melee'}`,
+            talent.cooldownTurns > 0 ? `Cooldown: ${String(talent.cooldownTurns)}` : null,
+          ]
+    ).filter((row) => row !== null);
+
     return {
       title: `${talent.name}  ${String(talent.level)}/${String(talent.maxLevel)}`,
       meta,
-      lines:
-        scales === ''
-          ? wrapForCard(talent.desc)
-          : [...wrapForCard(talent.desc), ...wrapForCard(`Scales: ${scales}`)],
+      // A BLANK LINE BETWEEN THE FACTS AND THE SENTENCE. Without it the rows
+      // and the prose read as one block and the labelling buys nothing.
+      lines: [
+        ...rows,
+        '',
+        ...wrapForCard(talent.desc),
+        ...(scales === '' ? [] : ['', ...wrapForCard(`Scales: ${scales}`)]),
+      ],
       nextLines: [],
     };
   }
