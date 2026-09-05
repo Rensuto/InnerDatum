@@ -83,10 +83,16 @@ export const EffectId = {
    * ═══ THESE TWO ARE THE CONTENT HALF OF SOMETHING ALREADY BUILT ═══
    * `StatusFlags.scoured` and `StatusFlags.breached` have been in
    * engine/derived.ts since the defensive maths was ported — `finish()` divides
-   * accuracy, defence, all three powers and all three saves by 1.2 for a scoured
-   * body, and `combatArmorHardiness` halves the bound for a breached one, each
-   * with its upstream line number. Both were tested. Both were unreachable,
-   * because no effect in the game set either flag.
+   * ACCURACY AND THE THREE POWERS by 1.2 for a scoured body, and
+   * `combatArmorHardiness` halves the bound for a breached one, each with its
+   * upstream line number. Both were tested. Both were unreachable, because no
+   * effect in the game set either flag.
+   *
+   * THIS PARAGRAPH USED TO SAY "accuracy, defence, all three powers and all
+   * three saves", and that was the code's behaviour rather than upstream's:
+   * `combatDefense` and the three resists carry no `scoured` term in
+   * Combat.lua, so there was no line number to have cited for them. `finish()`
+   * now takes the two sides apart.
    *
    * That is the ninth time this codebase has found a finished system with no
    * content pointed at it. The expensive half was already paid for; these are

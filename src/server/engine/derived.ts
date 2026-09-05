@@ -371,13 +371,43 @@ function luckDelta(c: Combatant): number {
  *
  * Every caller that skips this is a caller that will eventually rescale in the
  * wrong order. There is no second copy of these two lines in this file.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE TWO FLAGS ARE NOT APPLIED TO THE SAME GETTERS UPSTREAM.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * `dazed` really is on all thirteen of Combat.lua's getters, so it stays
+ * unconditional here. `scoured` is NOT. Read out of the module, function by
+ * function:
+ *
+ *     combatAttack / Ranged / Str / Dex / Mag   scoured YES  (:1359-1396)
+ *     combatPhysicalpower                       scoured YES  (:1724)
+ *     combatSpellpower                          scoured YES  (:1744)
+ *     combatMindpower                           scoured YES  (:2056)
+ *     combatDefense / DefenseRanged             scoured NO
+ *     combatPhysical/Spell/MentalResist         scoured NO
+ *
+ * ACCURACY AND THE THREE POWERS — what you SWING WITH — and nothing else.
+ * This file applied it to all eight rolls, so Effaced was quietly harsher
+ * than upstream's antimagic scouring: it took a body's defence and all three
+ * saves down by a sixth as well. `content/effects.ts` even described that
+ * spread as ported "each with its upstream line number", and for defence and
+ * the saves there is no such line to have.
+ *
+ * The parameter is REQUIRED rather than defaulted, so a getter added later
+ * has to state which side it is on instead of inheriting the wrong answer.
  */
-function finish(c: Combatant, raw: number): number {
+function finish(c: Combatant, raw: number, scoured: boolean): number {
   let d = raw;
   if (c.flags?.dazed === true) d = d / 2;
-  if (c.flags?.scoured === true) d = d / 1.2;
+  if (scoured && c.flags?.scoured === true) d = d / 1.2;
   return rescaleCombatStats(d);
 }
+
+/** A getter upstream scours: accuracy and the three powers. */
+const SCOURED = true;
+/** A getter upstream does NOT scour: defence and the three saves. */
+const UNSCOURED = false;
 
 // ---------------------------------------------------------------------------
 // Offence
@@ -405,7 +435,7 @@ function finish(c: Combatant, raw: number): number {
 export function combatAttack(c: Combatant): number {
   const m = c.mods;
   const raw = 4 + (m?.atk ?? 0) + (c.weapon?.atk ?? 0) + luckDelta(c) * 0.4 + (stat(c, 'dex') - 10);
-  return finish(c, raw);
+  return finish(c, raw, SCOURED);
 }
 
 /**
@@ -431,7 +461,8 @@ export function combatAttack(c: Combatant): number {
  */
 export function combatDefense(c: Combatant, add = 0): number {
   const base = Math.max(0, (c.mods?.def ?? 0) + (stat(c, 'dex') - 10) * 0.35 + luckDelta(c) * 0.4);
-  return finish(c, Math.max(0, base + add));
+  // UNSCOURED — upstream's combatDefense has no `scoured` term. See `finish`.
+  return finish(c, Math.max(0, base + add), UNSCOURED);
 }
 
 /**
@@ -585,7 +616,7 @@ export function combatPhysicalpower(
   const mod = opts.mod ?? 1;
   const add = (opts.add ?? 0) + (c.mods?.genericPower ?? 0);
   const raw = Math.max(0, (c.mods?.dam ?? 0) + add + stat(c, 'str'));
-  return finish(c, raw) * mod;
+  return finish(c, raw, SCOURED) * mod;
 }
 
 /** SPELL POWER — Combat.lua:1744-1771. Same shape, Magic instead of Strength. */
@@ -593,7 +624,7 @@ export function combatSpellpower(c: Combatant, opts: { mod?: number; add?: numbe
   const mod = opts.mod ?? 1;
   const add = (opts.add ?? 0) + (c.mods?.genericPower ?? 0);
   const raw = Math.max(0, (c.mods?.spellPower ?? 0) + add + stat(c, 'mag'));
-  return finish(c, raw) * mod;
+  return finish(c, raw, SCOURED) * mod;
 }
 
 /**
@@ -615,7 +646,7 @@ export function combatMindpower(c: Combatant, opts: { mod?: number; add?: number
     0,
     (c.mods?.mindPower ?? 0) + add + stat(c, 'wil') * 0.7 + stat(c, 'cun') * 0.4,
   );
-  return finish(c, raw) * mod;
+  return finish(c, raw, SCOURED) * mod;
 }
 
 // ---------------------------------------------------------------------------
@@ -641,7 +672,8 @@ export function combatMindpower(c: Combatant, opts: { mod?: number; add?: number
  * cross-school build feel arbitrary.
  */
 function save(c: Combatant, flat: number, statA: number, statB: number, add: number): number {
-  return finish(c, flat + (statA + statB + luckDelta(c) * 0.5) * 0.35 + add);
+  // UNSCOURED — none of the three resists carries a `scoured` term upstream.
+  return finish(c, flat + (statA + statB + luckDelta(c) * 0.5) * 0.35 + add, UNSCOURED);
 }
 
 /** PHYSICAL SAVE — Combat.lua:2122-2148. Constitution + Strength. */

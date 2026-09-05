@@ -32,7 +32,12 @@ import {
   combatArmorHardiness,
   combatAttack,
   combatDefense,
+  combatMentalResist,
+  combatMindpower,
+  combatPhysicalResist,
   combatPhysicalpower,
+  combatSpellResist,
+  combatSpellpower,
 } from '../../src/server/engine/derived.ts';
 import type { EffectActor } from '../../src/server/engine/effects.ts';
 
@@ -83,10 +88,17 @@ describe('effaced', () => {
   });
 
   /**
-   * ═══ EVERY ROLL, WHICH IS THE ENTIRE POINT OF THE EFFECT ═══
-   * `finish()` is the shared tail of accuracy, defence, all three powers and
-   * all three saves. One flag moves all eight, and that breadth is what makes
-   * Efface worth a creature's whole turn.
+   * ═══ WHAT YOU SWING WITH, AND NOT WHAT YOU SOAK WITH ═══
+   * This test used to say "every roll that runs through the shared tail" and
+   * assert that DEFENCE dropped too. That was true of our code and not of
+   * ToME's: `scoured` is on the five accuracy getters (Combat.lua:1359-1396)
+   * and the three powers (:1724, :1744, :2056), and on NOTHING else.
+   * `combatDefense`, `combatDefenseRanged` and the three resists carry no
+   * `scoured` term at all. `dazed` is the flag that really does move all
+   * thirteen — see `finish()`.
+   *
+   * So the breadth that "makes Efface worth a creature's whole turn" is the
+   * offensive half. A body that has been scoured still guards itself normally.
    *
    * ═══ AND THE RATIO IS NOT 1.2, ON PURPOSE ═══
    * The division happens BEFORE `rescaleCombatStats`, which is upstream's order
@@ -96,19 +108,41 @@ describe('effaced', () => {
    * with how high the stat was. Asserting `/ 1.2` on the OUTPUT would be
    * asserting the rescale away.
    */
-  it('lowers every roll that runs through the shared tail', () => {
+  it('lowers what you swing with', () => {
     const clean = body();
     const marked = body();
     afflict(marked, EffectId.Effaced);
 
     for (const [what, get] of [
       ['accuracy', combatAttack],
-      ['defence', combatDefense],
       ['physical power', combatPhysicalpower],
+      ['spell power', combatSpellpower],
+      ['mind power', combatMindpower],
     ] as const) {
       const before = get(clean.combat ?? {});
       const after = get(marked.combat ?? {});
       expect(after, `${what} should drop when effaced`).toBeLessThan(before);
+    }
+  });
+
+  it('leaves defence and the three saves exactly where they were', () => {
+    // ═══ THE HALF THAT WAS WRONG, PINNED SO IT STAYS RIGHT ═══
+    // Upstream scours accuracy and the powers only. Effaced was quietly taking
+    // a sixth off a body's defence and all three saves as well, which made it
+    // strictly harsher than ToME's antimagic scouring.
+    const clean = body();
+    const marked = body();
+    afflict(marked, EffectId.Effaced);
+
+    for (const [what, get] of [
+      ['defence', combatDefense],
+      ['physical save', combatPhysicalResist],
+      ['spell save', combatSpellResist],
+      ['mental save', combatMentalResist],
+    ] as const) {
+      expect(get(marked.combat ?? {}), `${what} must not move when effaced`).toBe(
+        get(clean.combat ?? {}),
+      );
     }
   });
 });
