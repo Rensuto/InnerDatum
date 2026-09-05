@@ -151,9 +151,13 @@ for (const [id, def] of Object.entries(DEFS)) {
   }
 }
 
-export const PROPS: ReadonlyMap<PropId, PropDef> = new Map(
-  Object.entries(DEFS) as readonly (readonly [PropId, PropDef])[],
-);
-
-/** Every prop this build knows, in authored order. */
+/**
+ * Every prop this build knows, in authored order.
+ *
+ * THE ONLY ACCESSOR. A `PROPS` map over `DEFS` stood here and nothing read it,
+ * exactly as `propById` did before it (removed in `cbd8d1d`) — `DEFS` is
+ * validated at module load and the consumers (`content/delve.ts`, the dressing
+ * test) want the id list, not a lookup. A third accessor to the same three
+ * frozen entries is surface without a reader.
+ */
 export const PROP_IDS: readonly PropId[] = Object.freeze(Object.keys(DEFS) as PropId[]);

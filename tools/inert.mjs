@@ -180,12 +180,89 @@ for (const [name, homes] of declaredIn) {
   else dead.push({ name, home });
 }
 
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE DEAD LIST IS A RATCHET NOW, BECAUSE A TRIAGE ROTS AND A GATE DOES NOT.
+ * ════════════════════════════════════════════════════════════════════════════
+ * The header above records a full triage done on one day. Two weeks later the
+ * list had grown by eight and NOBODY HAD LOOKED, which is exactly how the bug
+ * this tool hunts would hide: `Wielder.immunities` reached no player because
+ * one merge did not know the field existed, and a dead symbol is the first
+ * visible symptom of that shape.
+ *
+ * A report nobody runs cannot catch it. So every dead export is either
+ * allowlisted HERE with a reason, or the tool fails.
+ *
+ * ═══ AND AN ENTRY THAT IS NO LONGER DEAD FAILS TOO ═══
+ * The reverse rot is the same rot. If something starts calling `REVIVE_AP`, the
+ * note below saying nothing does becomes a lie, and a lie in an allowlist is
+ * worse than a missing entry because it reads as considered. Wiring one up
+ * means deleting its line, and the tool says so by name.
+ *
+ * KEY IS `home name`. Every reason was re-verified on 2026-09-05, not inherited.
+ */
+const ALLOWED_DEAD = new Map([
+  [
+    'src/server/content/inscriptions.ts inscriptionById',
+    'single-id accessor; the module reaches content through BIRTH_INSCRIPTIONS, ' +
+      'INSCRIPTION_TALENTS and talentsFor, which classes.ts:104 imports.',
+  ],
+  [
+    'src/server/content/monsters.ts MONSTER_IDS',
+    'the id list beside MONSTER_TEMPLATES; every lookup goes through the BY_ID map.',
+  ],
+  [
+    'src/server/engine/downed.ts downedRecord',
+    'single-record accessor beside the live DownedState surface.',
+  ],
+  [
+    'src/server/engine/downed.ts REVIVE_AP',
+    'documented placeholder -- "CARRIED AS DATA, NOT SPENT HERE". A revive costs ' +
+      'the whole TURN today; this is the number it reads if it ever becomes AP-priced.',
+  ],
+  [
+    'src/server/engine/effects.ts noteBaseline',
+    'documented -- exists "so the intent is expressible at the call site".',
+  ],
+  [
+    'src/server/engine/effects.ts SAVE_CHANNELS',
+    'fixed-order iteration list. Every consumer today names the three channels ' +
+      'singly because each carries its own label and getter (see COMPARE_ROWS).',
+  ],
+  [
+    'src/server/engine/talents.ts bareTalentId',
+    'the inverse of talentId. Verified that NOTHING open-codes the strip -- no ' +
+      'slice(TALENT_ID_PREFIX.length) or replace() anywhere -- so it is the paired ' +
+      'spelling kept so the next log line or asset lookup does not invent one.',
+  ],
+  [
+    'src/shared/progression.ts STAT_MIN',
+    'the outer bound from load.lua:182-189. statCeilingForLevel is the one that ' +
+      'binds a player, and nothing lowers a stat below its base of 10.',
+  ],
+]);
+
 const by = (a, b) => a.home.localeCompare(b.home) || a.name.localeCompare(b.name);
 dead.sort(by);
 overExported.sort(by);
 testOnly.sort(by);
 
+/**
+ * QUIET IN THE GATE, FULL FOR A HUMAN.
+ *
+ * The three sections run to ~350 lines. This is in `npm run check` now, and a
+ * step that buries the nine before it is a step people stop reading -- so the
+ * gate passes `--quiet` and gets the verdict alone. Running it by hand, the way
+ * the header describes, still prints everything.
+ *
+ * A FAILURE PRINTS ITS ENTRIES EITHER WAY: the per-entry messages below are
+ * outside this guard, because the one time the output matters is the one time
+ * it must not be suppressed.
+ */
+const quiet = process.argv.includes('--quiet');
+
 const section = (title, rows, extra) => {
+  if (quiet) return;
   console.log(`\n═══ ${title} (${rows.length}) ═══`);
   for (const row of rows) {
     console.log(`  ${row.home.padEnd(40)} ${row.name.padEnd(30)} ${extra ? extra(row) : ''}`);
@@ -204,3 +281,34 @@ console.log(
   `\n${String(dead.length)} dead · ${String(testOnly.length)} test-only · ` +
     `${String(overExported.length)} over-exported. See this file's header on how to read them.`,
 );
+
+// ONLY `dead` IS GATED. TEST-ONLY and OVER-EXPORTED are shape, not symptom:
+// a helper its own file uses is working code, and gating 305 of them would
+// make the gate a style argument rather than a wiring check.
+const key = (r) => `${r.home} ${r.name}`;
+const unexplained = dead.filter((d) => !ALLOWED_DEAD.has(key(d)));
+const revived = [...ALLOWED_DEAD.keys()].filter((k) => !dead.some((d) => key(d) === k));
+
+for (const d of unexplained) {
+  console.log(
+    `\nNEW DEAD EXPORT — ${key(d)}\n` +
+      `  Nothing names it, not even its own file. That is the first visible\n` +
+      `  symptom of a channel wired everywhere but the one place that reads it.\n` +
+      `  Read it, then either delete it or add it to ALLOWED_DEAD with the reason.`,
+  );
+}
+for (const k of revived) {
+  console.log(
+    `\nALLOWLIST ENTRY IS NO LONGER DEAD — ${k}\n` +
+      `  Something calls it now, so the reason recorded for it is false.\n` +
+      `  Delete its line from ALLOWED_DEAD.`,
+  );
+}
+
+const broken = unexplained.length + revived.length;
+console.log(
+  broken === 0
+    ? '\ninert exports OK\n'
+    : `\nINERT FAILED — ${String(broken)} entr(y/ies) to account for.\n`,
+);
+process.exit(broken === 0 ? 0 : 1);

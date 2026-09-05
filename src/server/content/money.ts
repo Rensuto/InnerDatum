@@ -54,10 +54,22 @@ import type { Rng } from '../../shared/rng.ts';
 /** Base from amount. A third grammar character, and it never mixes with `~`. */
 export const MONEY_SEPARATOR = '@';
 
-/** The asset the pile draws as. Not in `KNOWN_ICON_IDS` — see the header. */
-export const MONEY_ICON = 'item_iron_ingot';
-
-/** The id before the amount. Shares the icon's name because it depicts it. */
+/**
+ * The id before the amount, AND the asset key — one spelling, deliberately.
+ *
+ * There were two constants here holding this same literal on adjacent lines:
+ * a `MONEY_ICON` "the asset the pile draws as" and this one, whose comment
+ * read "shares the icon's name because it depicts it". Nothing ever read
+ * `MONEY_ICON` — the floor draws a pile as the generic `ui_tile_marker_loot`
+ * blit (client/render/canvas.ts) rather than as the item's own sprite, so the
+ * icon half had no consumer and the claim had quietly stopped being true.
+ *
+ * TWO NAMES FOR ONE STRING IS A TRAP HERE and not merely redundant. New art
+ * would be renamed on the icon constant, the id would keep the old base, and
+ * nothing would break visibly — `MONEY_ICON` reaches no renderer. The reverse
+ * is worse: renaming the id alone makes `moneyAmountOf` stop recognising every
+ * coin id already written into a save.
+ */
 export const MONEY_BASE_ID = 'item_iron_ingot';
 
 /**
