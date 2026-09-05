@@ -98,7 +98,22 @@ for (const [file, src] of sources) {
   for (const [i, line] of lines.entries()) {
     const trimmed = line.trim();
     // COMMENTS ONLY. A claim in code is code, and the compiler owns it.
-    if (!trimmed.startsWith('*') && !trimmed.startsWith('//')) continue;
+    //
+    // `/*` IS IN THE LIST BECAUSE OF THE ONE-LINE DOCBLOCK. `*` catches the
+    // CONTINUATION lines of a block comment and `//` the line comments, so
+    // `/** ... */` written on a single line -- which trims to a string starting
+    // with `/` -- was silently skipped. This codebase writes that form
+    // constantly, and the gate could not see a claim in any of them.
+    //
+    // MEASURED, NOT ARGUED. The check saw 17 claims before this line and 18
+    // after: the one it had never looked at is in content/money.ts, and it
+    // happened to be TRUE, so nothing was silently false. The hole is what
+    // matters -- falsify that same comment and the committed gate printed
+    // "constants in prose OK" over it. A gate that cannot see a whole comment
+    // form is one stale edit away from mattering, and not drifting is the
+    // entire point of this check.
+    if (!trimmed.startsWith('*') && !trimmed.startsWith('//') && !trimmed.startsWith('/*'))
+      continue;
     for (const m of line.matchAll(CLAIM)) {
       const name = m[1];
       const claim = m[2];
