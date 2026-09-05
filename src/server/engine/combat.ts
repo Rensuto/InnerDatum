@@ -19,7 +19,9 @@
  * local atk, def = self:combatAttack(weapon), target:combatDefense()          -- :417
  * local dam, apr, armor = self:combatDamage(weapon), self:combatAPR(weapon),
  *                         target:combatArmor()                               -- :439
- * elseif ... self:checkHit(atk, def) ... then                                 -- :505
+ * elseif self:checkEvasion(target) then evaded = true                         -- :502
+ * elseif ... self:checkHit(atk, def)
+ *         and (self:canSee(target) or ... or rng.chance(3)) then              -- :505
  *     local pres = util.bound(target:combatArmorHardiness() / 100, 0, 1)      -- :506
  *     local damrange = self:combatDamageRange(weapon)                         -- :510
  *     dam = rng.range(dam, dam * damrange)                                    -- :511
@@ -36,6 +38,45 @@
  * deliberate: a talent that deals damage without a weapon swing (Ashwick Flare)
  * calls `resolveDamage` directly and gets the identical, identically-ordered
  * pipeline without having to skip half of this function.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO CLAUSES THE MAP ABOVE USED TO ELIDE, AND WHY NEITHER IS PORTED
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * That line read `elseif ... self:checkHit(atk, def) ... then` for a long time,
+ * and both sets of dots hid a real upstream mechanic. Written out here so the
+ * next reader finds the ANSWER where they would otherwise find the gap — the
+ * `talents.ts` note on Travel Speed exists for the same reason.
+ *
+ * ═══ `checkEvasion` (:502, defined :353) — A SECOND DODGE CHANNEL ═══
+ * `rng.percent(target:attr("evasion"))`, rolled BEFORE the to-hit roll and
+ * skipping it entirely. NOTHING HERE GRANTS `evasion`, and that is a decision
+ * rather than an omission: our `Evasive` effect returns `mods: { def }` through
+ * `EffectDef.wielder`, so "harder to hit" is expressed as DEFENCE and goes
+ * THROUGH `checkHit` instead of around it. Porting the attr would add a second
+ * dodge channel with no content feeding it, and two ways to miss that stack
+ * invisibly is worse than one that shows up on the character sheet.
+ *
+ * ═══ `canSee(target) or ... or rng.chance(3)` (:505) — SWINGING BLIND ═══
+ * A landed roll against a target you cannot see connects only one time in
+ * three. THE CASE IS UNREACHABLE HERE. Sight is radius 10 with line of sight
+ * (`DEFAULT_SIGHT_RADIUS`), and LOS to an ADJACENT tile is always true, so
+ * anything you can melee you can see. No status conceals: `Effaced` is a roll
+ * debuff — *"every roll you make and every roll you resist is worse"* — not
+ * concealment, and there is no Blind in `MVP_EFFECTS`.
+ *
+ * SO IT IS CONTENT-GATED, NOT REFUSED. The day a concealing status or a Blind
+ * lands, this clause ports WITH it — a status that hides a body and a melee
+ * path that cannot tell are the two halves of one feature, and shipping the
+ * first alone is how a stealth effect silently does nothing.
+ *
+ * The rest of `attackTargetWith` was read at the same time and needs nothing:
+ * every other branch in :380-680 is gated on a ToME talent or effect this game
+ * has no content for (`T_REPEL`, `EFF_WEAPON_WARDING`, `T_BLADE_WARD`,
+ * `EFF_GESTURE_OF_GUARDING`, `T_INTUITIVE_SHOTS`, `EFF_COUNTERSTRIKE`), and
+ * `attackTargetHitProcs` (:681-900) reaches for exactly three generic attrs —
+ * `damage_backfire`, `onslaught`, `shattering_impact` — all three likewise
+ * talent-granted upstream and unfed here.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * MIN_RANGE — THE INSPECTOR'S DEAD ZONE
