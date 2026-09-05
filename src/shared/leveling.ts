@@ -168,17 +168,63 @@ export function lifeGainedTo(lifeRating: number, level: number, rank: number): n
  * while hitting for thirteen. That is a worse outcome than leaving both flat,
  * because the tedium is invisible in a test and obvious in a session.
  *
- * `getRankStatAdjust` returns 0 for ranks 1-3 and rises for the big ones
- * (Actor.lua:1754-1764). It is folded in here rather than exposed separately
- * because nothing else needs it yet.
+ * `getRankStatAdjust` is Actor.lua:1701-1712, and the sentence that used to
+ * stand here — "returns 0 for ranks 1-3 and rises for the big ones", cited to
+ * :1754-1764 — was wrong twice: upstream returns NEGATIVE adjustments for the
+ * two weakest ranks, and that line range is a different function.
  */
 export const STATS_PER_LEVEL = 3;
 
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * UPSTREAM'S LADDER, VALUE FOR VALUE — `Actor.lua:1701-1712`.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * if self.rank == 1 then return -1
+ * elseif self.rank == 2 then return -0.5
+ * elseif self.rank == 3 then return 0
+ * elseif self.rank == 3.2 then return 0.5
+ * elseif self.rank == 3.5 then return 1
+ * elseif self.rank == 4 then return 1
+ * elseif self.rank == 5 then return 1
+ * elseif self.rank >= 10 then return 2.5
+ * else return 0 end
+ * ```
+ *
+ * ═══ IT WAS A RANGE LADDER AND UPSTREAM'S IS AN EQUALITY ONE ═══
+ * The previous version read `<= 3 -> 0, <= 3.5 -> 1, <= 4 -> 2, else 3`. That
+ * is the wrong SHAPE as well as the wrong numbers: upstream tests each rank
+ * for equality and falls through to 0, so an unlisted rank like 2.5 gets
+ * nothing rather than being swept up by the nearest bound.
+ *
+ * ═══ WHAT IT WAS ACTUALLY COSTING, IN THE THREE RANKS WE SHIP ═══
+ * `RANK_VALUE` maps our three to upstream's 2 / 3.5 / 4, and `PLAYER_RANK` is
+ * 3. Measured against `STATS_PER_LEVEL` 3, per level:
+ *
+ *     Normal  rank 2    was 3    now 2.5
+ *     Player  rank 3    was 3    now 3      (already right)
+ *     Elite   rank 3.5  was 4    now 4      (already right)
+ *     Boss    rank 4    was 5    now 4
+ *
+ * So our ordinary monsters and our bosses were both stronger than ToME's. At
+ * level 20 a boss held 95 stat points against upstream's 76 — a quarter more
+ * on every stat, which is the opposite of using somebody else's tuning.
+ *
+ * Ranks 1, 3.2, 5 and 10+ are unreachable today; they are ported anyway
+ * because a ladder with holes in it is the thing that goes wrong when a rank
+ * is added, and copying nine lines costs nothing.
+ */
 export function rankStatAdjust(rank: number): number {
-  if (rank <= 3) return 0;
-  if (rank <= 3.5) return 1;
-  if (rank <= 4) return 2;
-  return 3;
+  if (rank === 1) return -1;
+  if (rank === 2) return -0.5;
+  if (rank === 3) return 0;
+  if (rank === 3.2) return 0.5;
+  if (rank === 3.5) return 1;
+  if (rank === 4) return 1;
+  if (rank === 5) return 1;
+  if (rank >= 10) return 2.5;
+  return 0;
 }
 
 /**

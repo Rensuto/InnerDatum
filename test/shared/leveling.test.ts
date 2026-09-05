@@ -10,10 +10,12 @@ import {
   LIFE_PER_CON,
   PLAYER_RANK,
   RANK_VALUE,
+  STATS_PER_LEVEL,
   lifeGainForLevel,
   lifeGainedTo,
   maxLifeFor,
   rankLifeAdjust,
+  rankStatAdjust,
   spreadStatPoints,
   statPointsGainedTo,
 } from '../../src/shared/leveling.ts';
@@ -188,5 +190,52 @@ describe('stat points, so a scaled body can still threaten anybody', () => {
   it('leaves a body with no priorities exactly as authored', () => {
     const same = spreadStatPoints({ str: 10 }, [], 999);
     expect(same).toEqual({ str: 10 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rankStatAdjust — Actor.lua:1701-1712, value for value
+// ---------------------------------------------------------------------------
+
+describe('rankStatAdjust', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LADDER IS UPSTREAM'S, INCLUDING THE NEGATIVE RUNGS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This function had no test and the wrong numbers, and its docblock described
+   * upstream falsely ("returns 0 for ranks 1-3") while citing a different
+   * function's line range. Upstream returns NEGATIVE adjustments for the two
+   * weakest ranks, which is the half a "rises for the big ones" reading loses.
+   */
+  it('matches Actor.lua:1701-1712 at every listed rank', () => {
+    expect(rankStatAdjust(1)).toBe(-1);
+    expect(rankStatAdjust(2)).toBe(-0.5);
+    expect(rankStatAdjust(3)).toBe(0);
+    expect(rankStatAdjust(3.2)).toBe(0.5);
+    expect(rankStatAdjust(3.5)).toBe(1);
+    expect(rankStatAdjust(4)).toBe(1);
+    expect(rankStatAdjust(5)).toBe(1);
+    expect(rankStatAdjust(10)).toBe(2.5);
+    expect(rankStatAdjust(12)).toBe(2.5);
+  });
+
+  it('falls through to zero for a rank upstream does not list', () => {
+    // ═══ EQUALITY, NOT RANGES ═══
+    // The previous version was a `<=` ladder, so 2.5 was swept up by the
+    // nearest bound. Upstream tests equality and falls through, so an unlisted
+    // rank gets nothing — which is what makes adding a rank safe.
+    expect(rankStatAdjust(2.5)).toBe(0);
+    expect(rankStatAdjust(6)).toBe(0);
+    expect(rankStatAdjust(9.9)).toBe(0);
+  });
+
+  it('gives the three ranks this game ships upstream’s numbers', () => {
+    // `RANK_VALUE` maps ours to upstream's 2 / 3.5 / 4, `PLAYER_RANK` is 3.
+    // Normal was 3 stats a level and is 2.5; Boss was 5 and is 4.
+    expect(STATS_PER_LEVEL + rankStatAdjust(RANK_VALUE[ActorRank.Normal])).toBe(2.5);
+    expect(STATS_PER_LEVEL + rankStatAdjust(PLAYER_RANK)).toBe(3);
+    expect(STATS_PER_LEVEL + rankStatAdjust(RANK_VALUE[ActorRank.Elite])).toBe(4);
+    expect(STATS_PER_LEVEL + rankStatAdjust(RANK_VALUE[ActorRank.Boss])).toBe(4);
   });
 });
