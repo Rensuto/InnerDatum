@@ -39,7 +39,20 @@ const CURVE = 0.75;
 
 /** Dexterity granted at a rank. */
 export function dexterityAt(level: number): number {
-  return Math.round(combatTalentScale(level, LOW, HIGH, CURVE));
+  /**
+   * ═══ `ceil`, WHICH IS WHAT THE HEADER QUOTES ═══
+   * `ghoul.lua:26` is `math.ceil(self:combatTalentScale(t, 2, 15, 0.75))`, and
+   * the NUMBERS line at the top of this file quotes it WITH the `ceil`. This
+   * read `Math.round`.
+   *
+   * The BAND rescale (2->15 becomes 1->6, because upstream's stats run 10->60+
+   * against our 10->24) is argued above and stands. Rounding mode is not a band
+   * and was not covered by it: on our own band the two rules agree at ranks 1,
+   * 3, 4 and 5 and disagree at rank 2, where the raw value is 2.4545 — `round`
+   * gives 2 and the rule we cite gives 3. One rank, one point, silently not the
+   * cited behaviour.
+   */
+  return Math.ceil(combatTalentScale(level, LOW, HIGH, CURVE));
 }
 
 export const powderDiscipline: Talent = {
