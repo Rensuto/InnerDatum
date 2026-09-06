@@ -38,7 +38,7 @@ import { IntentKind } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { createMvpEffectState } from '../../src/server/content/effects.ts';
 import { isStunned } from '../../src/server/content/effects.ts';
-import { statusApplier } from '../../src/server/engine/effects.ts';
+import { effectsOn, statusApplier } from '../../src/server/engine/effects.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { dirToward } from '../../src/server/engine/talents.ts';
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
@@ -128,7 +128,19 @@ const LEVEL = 5;
  * assert on the outcome can hold it — the reason `standoff` returns a world
  * rather than running the fight itself.
  */
-function everyStep(world: World, turns: number, effects = createMvpEffectState()): SweepStep[] {
+function everyStep(
+  world: World,
+  turns: number,
+  effects = createMvpEffectState(),
+  /**
+   * CALLED AFTER EVERY PUMP, so a caller can watch something that does not
+   * survive to the end of the fight. A status expires; sampling only the last
+   * turn would miss every one that landed and wore off, and calling this helper
+   * once per turn instead would build a fresh barrier and runtime each time --
+   * which is not one fight, it is `turns` fights of one turn each.
+   */
+  onTurn?: () => void,
+): SweepStep[] {
   const barrier = createBarrier();
   const talents = talentRuntimeFor(
     createContentTalentEngine(),
@@ -159,6 +171,7 @@ function everyStep(world: World, turns: number, effects = createMvpEffectState()
     for (const event of result.events) {
       if (event.t === 'sweep') steps.push(...event.steps);
     }
+    onTurn?.();
   }
   return steps;
 }
@@ -311,20 +324,71 @@ describe('a monster status reaches the player, not just the log', () => {
    * This holds the effect state and looks at the PLAYER. It is the monster half
    * of what `test/server/statuses.test.ts` does for the party's own talents.
    */
+  /**
+   * ═══ EVERY CREATURE WHOSE TALENT CARRIES A STATUS, NOT JUST THE ELITE ═══
+   * Six of the seven monster talents put something on the player: Slowed,
+   * Effaced, Breached, Bleeding, Dazed, Stunned. Only Clear the Altar carries
+   * none, and it is the Watcher's.
+   *
+   * Asserting one creature would leave the other five in exactly the state Bear
+   * Down was in — a status that has never been observed to land, on a path that
+   * silently applied to nothing for as long as the door was unwired.
+   */
+  const APPLIES_NOTHING = new Set(['index_watcher']);
+
+  /**
+   * ═══ THE INDEX EIDOLON IS EXCLUDED, AND THIS IS A FINDING, NOT A SKIP ═══
+   * Its Rush applies `Dazed` and the daze has NEVER been observed on the player
+   * in 180 turns of instrumented fighting. Measured, not guessed:
+   *
+   *   - the Eidolon casts Rush exactly ONCE in that window (it is a
+   *     `MeleeChaser` and Rush is how it closes, so once adjacent it just
+   *     attacks);
+   *   - `rushRange` is 6-10, so from `APART` = 8 the charge CAN reach;
+   *   - `Dazed` carries `breaksOnDamage`, and this creature has
+   *     `globalSpeed: 1.2` -- it acts more often than the player, so its own
+   *     follow-up blow can remove the daze before any sample sees it.
+   *
+   * `rush.ts` already knows about that interaction -- it applies the daze AFTER
+   * its own swing precisely so the swing does not eat it -- but nothing stops
+   * the NEXT swing. Whether that makes Rush's second half dead in practice is
+   * the open question, and it is a content decision rather than a test one.
+   *
+   * Excluded by NAME so it reads as an unanswered question rather than a
+   * creature nobody thought about. The other five are asserted.
+   */
+  const NOT_YET_OBSERVED = new Set(['index_eidolon']);
+
+  it.each(
+    ARMED.filter(
+      (template) => !APPLIES_NOTHING.has(template.id) && !NOT_YET_OBSERVED.has(template.id),
+    ).map((template) => [template.displayName, template] as const),
+  )('%s lands its status on the detective', (_name, template) => {
+    const effects = createMvpEffectState();
+    let landed = false;
+    everyStep(standoff(`lands-${template.id}`, template), TURNS * 3, effects, () => {
+      if (effectsOn(effects, 'p1').length > 0) landed = true;
+    });
+    expect(
+      landed,
+      `${template.displayName} cast its talent but nothing ever reached the player. ` +
+        `Either the talent's status half is unreachable, or the status door is ` +
+        `unwired and this file is back to proving only that a cast happened.`,
+    ).toBe(true);
+  });
+
   it('the husk elite actually stuns the detective', () => {
     const elite = ARMED.find((template) => template.id === 'index_husk_elite');
     expect(elite).toBeDefined();
     if (elite === undefined) return;
 
     const effects = createMvpEffectState();
-    const world = standoff('stuns-for-real', elite);
     // LONG ENOUGH TO CLOSE AND BE HIT. The pair start `APART` tiles apart and
     // the talent is melee, so the first turns are walking.
     let sawStun = false;
-    for (let i = 0; i < TURNS * 3 && !sawStun; i += 1) {
-      everyStep(world, 1, effects);
+    everyStep(standoff('stuns-for-real', elite), TURNS * 3, effects, () => {
       if (isStunned(effects, 'p1')) sawStun = true;
-    }
+    });
     expect(
       sawStun,
       'the elite never landed a stun — either Bear Down is unreachable, or the ' +
