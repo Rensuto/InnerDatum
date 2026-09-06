@@ -22,7 +22,7 @@
  *
  * Usage:  node tools/world.mjs
  */
-import { ALDERBROOK_REGIONS, canWalk, makeOverworld } from '../src/shared/level.ts';
+import { ALDERBROOK_REGIONS, canWalk, makeOverworld, regionAt } from '../src/shared/level.ts';
 import { SITES } from '../src/server/world/realms.ts';
 import { TileCode } from '../src/shared/protocol.ts';
 
@@ -30,8 +30,27 @@ const NAME = new Map(Object.entries(TileCode).map(([k, v]) => [v, k]));
 const map = makeOverworld();
 const lvl = map.view;
 
-const regionOf = (x, y) =>
-  ALDERBROOK_REGIONS.find((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1)?.name ?? null;
+/**
+ * WHICH REGION A TILE IS IN — THE GAME'S OWN ANSWER, NOT A SECOND ONE.
+ *
+ * This read `x >= r.x0 && x <= r.x1 && ...` against `ALDERBROOK_REGIONS`, and a
+ * `Region` HAS NO SUCH FIELDS. It is `{ name, x, y }` — a LABEL POINT, and the
+ * ground is decided by `ALDERBROOK_REGION_ROWS`, a painted char grid that
+ * `regionAt` reads. So every comparison was against `undefined`, every loop over
+ * `y0..y1` ran zero times, and the probe printed a full table of `0/0` and
+ * "12 of 12 hold nothing to walk to" about a map with 8,346 walkable cells.
+ *
+ * It was not a boundary case: the ENTIRE measurement was dead, and it read as a
+ * content finding. A conclusion drawn from a table of zeros is the worst thing a
+ * probe can produce, because the zeros look like data.
+ *
+ * `regionAt` returns `'the moor'` for unpainted ground, which is a real answer
+ * and not a region in the list — so it is filtered rather than counted.
+ */
+const regionOf = (x, y) => {
+  const name = regionAt(x, y);
+  return name === 'the moor' ? null : name;
+};
 
 console.log('──── WHAT THE WHOLE MAP IS MADE OF');
 console.log('');
@@ -66,19 +85,24 @@ for (const [key, id] of map.sites) {
     );
 }
 
+/** What the table below measured, so the closing note reads rows rather than a literal. */
+const regionStats = new Map();
 console.log('  region                   walkable   what it is made of');
 for (const r of ALDERBROOK_REGIONS) {
   const seen = new Map();
   let cells = 0;
   let walk = 0;
-  for (let y = r.y0; y <= r.y1; y += 1) {
-    for (let x = r.x0; x <= r.x1; x += 1) {
-      if (x < 0 || y < 0 || x >= lvl.w || y >= lvl.h) continue;
+  // THE WHOLE MAP, ASKING EACH CELL WHICH REGION IT IS IN. A region is a painted
+  // shape rather than a rectangle, so there is no box to walk.
+  for (let y = 0; y < lvl.h; y += 1) {
+    for (let x = 0; x < lvl.w; x += 1) {
+      if (regionOf(x, y) !== r.name) continue;
       seen.set(lvl.tiles[y * lvl.w + x], (seen.get(lvl.tiles[y * lvl.w + x]) ?? 0) + 1);
       cells += 1;
       if (canWalk(lvl, x, y)) walk += 1;
     }
   }
+  regionStats.set(r.name, { walk, cells });
   const top = [...seen]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
@@ -101,6 +125,26 @@ console.log('');
 console.log(
   `  ${String(bare.length)} of ${String(ALDERBROOK_REGIONS.length)} hold nothing to walk to: ${bare.map((r) => r.name).join(', ')}`,
 );
-console.log('  Both are edges rather than empty rooms — the Drowned Coast is 7% walkable');
-console.log('  (water and the map border), and Ashwick Reach is the approach to Ashwick,');
-console.log('  which is what crossing it is told to you FOR.');
+/**
+ * THE LINE THAT USED TO SIT HERE WAS THE CLUE, NOT THE STALE PART.
+ *
+ * It read: *"Both are edges rather than empty rooms — the Drowned Coast is 7%
+ * walkable (water and the map border), and Ashwick Reach is the approach to
+ * Ashwick"*. When `regionOf` broke, the count above became 12 and this sentence
+ * went on saying "Both" underneath it — which is exactly how the breakage was
+ * spotted. Rewriting the prose to match 12 would have destroyed the evidence and
+ * shipped a table of zeros as a content finding.
+ *
+ * SO IT IS DERIVED NOW, and cannot drift from the rows again: Ashwick Reach has
+ * held a town for some time and was still being named here as bare, and the
+ * Drowned Coast's 7% is 0.02% on the map as it stands.
+ */
+for (const r of bare) {
+  const stat = regionStats.get(r.name);
+  const pct = stat === undefined || stat.cells === 0 ? 0 : (stat.walk / stat.cells) * 100;
+  console.log(
+    pct < 5
+      ? `  ${r.name} is an EDGE rather than an empty room — ${pct.toFixed(1)}% of it can be walked on at all.`
+      : `  ${r.name} is ${pct.toFixed(0)}% walkable and holds nothing: real ground with no reason to cross it.`,
+  );
+}
