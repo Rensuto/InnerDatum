@@ -36,6 +36,9 @@ import { describe, expect, it } from 'vitest';
 
 import { IntentKind } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
+import { createMvpEffectState } from '../../src/server/content/effects.ts';
+import { isStunned } from '../../src/server/content/effects.ts';
+import { statusApplier } from '../../src/server/engine/effects.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { dirToward } from '../../src/server/engine/talents.ts';
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
@@ -107,9 +110,31 @@ const LEVEL = 5;
  * against a player at 1.0, so closing works and is meant to. A test where
  * nobody closes is a test of half the bestiary.
  */
-function everyStep(world: World, turns: number): SweepStep[] {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE STATUS DOOR IS WIRED NOW, AND IT WAS NOT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `talentRuntimeFor(engine, world)` leaves `status` undefined, so `ctx.status?.`
+ * is a no-op and EVERY monster status in this file applied to nothing. The
+ * creatures cast; the stuns, slows and effacements landed on air.
+ *
+ * That is how Bear Down shipped stunning two turns in three: the file proved
+ * the talent was CAST and had no way to observe what a cast DID, so the number
+ * deciding threat-from-lock was unasserted, and a probe written to measure it
+ * read a state nothing was writing to.
+ *
+ * Passing the state in rather than making one here, so a caller that wants to
+ * assert on the outcome can hold it — the reason `standoff` returns a world
+ * rather than running the fight itself.
+ */
+function everyStep(world: World, turns: number, effects = createMvpEffectState()): SweepStep[] {
   const barrier = createBarrier();
-  const talents = talentRuntimeFor(createContentTalentEngine(), world);
+  const talents = talentRuntimeFor(
+    createContentTalentEngine(),
+    world,
+    statusApplier(effects, world.rng),
+  );
   const steps: SweepStep[] = [];
   for (let i = 0; i < turns; i += 1) {
     /**
@@ -270,6 +295,41 @@ describe('every armed creature casts, in a real fight', () => {
     const actor = world.getActor('m1');
     expect(actor !== undefined && 'talents' in actor ? actor.talents : undefined).toBeUndefined();
     expect(everyStep(world, TURNS).filter((step) => step.t === 'talent')).toHaveLength(0);
+  });
+});
+
+describe('a monster status reaches the player, not just the log', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ASSERTION THAT DID NOT EXIST, AND ITS ABSENCE COST A SHIPPED BUG.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Everything above proves a talent is CAST. Nothing proved a cast DID
+   * anything, because the harness wired no status door — so Bear Down went out
+   * stunning two turns in three with no test able to see a stun at all.
+   *
+   * This holds the effect state and looks at the PLAYER. It is the monster half
+   * of what `test/server/statuses.test.ts` does for the party's own talents.
+   */
+  it('the husk elite actually stuns the detective', () => {
+    const elite = ARMED.find((template) => template.id === 'index_husk_elite');
+    expect(elite).toBeDefined();
+    if (elite === undefined) return;
+
+    const effects = createMvpEffectState();
+    const world = standoff('stuns-for-real', elite);
+    // LONG ENOUGH TO CLOSE AND BE HIT. The pair start `APART` tiles apart and
+    // the talent is melee, so the first turns are walking.
+    let sawStun = false;
+    for (let i = 0; i < TURNS * 3 && !sawStun; i += 1) {
+      everyStep(world, 1, effects);
+      if (isStunned(effects, 'p1')) sawStun = true;
+    }
+    expect(
+      sawStun,
+      'the elite never landed a stun — either Bear Down is unreachable, or the ' +
+        'status door is unwired again and this file is back to proving nothing.',
+    ).toBe(true);
   });
 });
 
