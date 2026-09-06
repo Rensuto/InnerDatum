@@ -237,6 +237,7 @@ import {
 } from '../../shared/leveling.ts';
 import { STAT_BASE } from '../engine/derived.ts';
 import { ActorRank } from '../../shared/protocol.ts';
+import { DEFAULT_SIGHT_RADIUS } from '../../shared/sight.ts';
 import { ITEMS, itemById } from './items.ts';
 import { resolveLevelup, resolveMBonus, resolveRngAvg } from './resolvers.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -366,7 +367,35 @@ export type MonsterTemplate = {
 
   // --- AI -------------------------------------------------------------------
   readonly profile: AiProfile;
-  /** CHEBYSHEV. How far it notices a player. Line of sight is also required. */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * CHEBYSHEV. AND IT IS NOT A LEASH — IT IS THE CREATURE'S SIGHT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `visibleEnemies` (engine/scheduler.ts) filters on THIS and `hasLineOfSight`
+   * and nothing else. Grep the AI for `sightRadiusOf` or `DEFAULT_SIGHT_RADIUS`
+   * and you get no hits: a monster has no other eyes. So a template that authors
+   * 8 here has not given a creature a short temper, it has made it short-sighted
+   * — it cannot see a body two tiles inside the radius the ENGINE says it sees.
+   *
+   * ═══ UPSTREAM HAS NO AGGRO RANGE AT ALL ═══
+   * `target_simple` (engine/ai/simple.lua:251-268) walks `self.fov.actors_dist`
+   * — the whole field of view, ordered by distance — and targets the first
+   * hostile in it. There is no second radius, no threshold, no notice check. A
+   * ToME monster attacks what it can SEE. (The 90% target-keep in
+   * `acquireTarget` is :253's `rng.percent(90)`, ported from these same lines.)
+   *
+   * So the upstream-equivalent number is the creature's `sight`, and ToME's
+   * default for a monster is `t.sight = t.sight or 10` — tome/class/Actor.lua:178,
+   * the same line `DEFAULT_SIGHT_RADIUS` cites and for the same reason (the
+   * engine's `or 20` never fires; the module sets it first).
+   *
+   * ═══ THEREFORE 10 IS THE DEFAULT AND ANYTHING BELOW IT IS A DEVIATION ═══
+   * Argue it at the field, with the word "ours", the way the wraith's 8 is
+   * argued. Three melee templates once carried 8 describing it as "the roster's
+   * standard" — it was not the roster's standard (two of five held 10) and it
+   * was not upstream's anything.
+   */
   readonly aggroRange: number;
   /** Where a kiter wants to stand. A melee profile leaves this at 1. */
   readonly preferredRange: number;
@@ -1724,10 +1753,12 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
   speedFactor: 1,
 
   profile: AiProfile.MeleeChaser,
-  // The same eight as the rest of the roster. It is NOT given a short leash to
-  // make it an ambusher — THE TREES DO THAT, which is the entire point: the same
-  // creature on the open moor notices you at eight tiles and dies crossing them.
-  aggroRange: 8,
+  // TEN — canine.lua authors no `sight`, so tome/class/Actor.lua:178's default.
+  // It is NOT given a short leash to make it an ambusher — THE TREES DO THAT,
+  // which is the entire point and is unchanged: the same creature on the open
+  // moor notices you the moment it can see you and dies crossing the gap. On a
+  // 1.2 clock that gap is short, which is the creature.
+  aggroRange: 10,
   preferredRange: 1,
   minRange: 0,
   attackRange: 1,
@@ -2076,10 +2107,18 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
   speedFactor: 1,
 
   profile: AiProfile.MeleeChaser,
-  // The roster's standard eight. It is not given a longer leash to compensate
-  // for being slow to kill: noticing you sooner would make it a chase, and this
-  // creature is meant to be a decision you walked into on purpose.
-  aggroRange: 8,
+  // TEN — troll.lua authors no `sight`, so tome/class/Actor.lua:178's default.
+  //
+  // THIS FIELD USED TO SAY 8 AND CALL IT "the roster's standard", arguing that
+  // noticing you sooner "would make it a chase, and this creature is meant to be
+  // a decision you walked into on purpose". The intent is right and survives;
+  // the mechanism was wrong. What makes the Glut a decision rather than a chase
+  // is that it is the SLOWEST melee body in the game (`globalSpeed` 1, against
+  // the Eidolon's 1.2 and the Inspector's 1.25) and that it heals what you do
+  // not finish — you outwalk it, you do not out-hide it. A two-tile blind spot
+  // was never doing that work; it was only making the thing look broken for the
+  // two tiles it stood still while you watched it not see you.
+  aggroRange: 10,
   preferredRange: 1,
   minRange: 0,
   attackRange: 1,
@@ -2264,7 +2303,11 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
   speedFactor: 1,
 
   profile: AiProfile.MeleeChaser,
-  aggroRange: 8,
+  // TEN — feline.lua authors no `sight`, so tome/class/Actor.lua:178's default.
+  // The one template of the three that never said why it was 8. On the fastest
+  // body in the game a short sight was the most expensive: it picks a victim and
+  // does not let go, and it was spending the opening of that hunt blind.
+  aggroRange: 10,
   preferredRange: 1,
   minRange: 0,
   attackRange: 1,
@@ -2993,6 +3036,36 @@ export function validateTemplate(template: MonsterTemplate): readonly string[] {
   // Otherwise it can never see far enough to use the reach it has.
   if (template.aggroRange < template.attackRange) {
     problems.push(`${where} aggroRange ${template.aggroRange} < attackRange`);
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CHASER MAY NOT BE SHORT-SIGHTED — see the `aggroRange` field docblock.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `aggroRange` IS the monster's sight; the AI reads no other radius. Upstream
+   * has no aggro concept whatsoever (`target_simple`, engine/ai/simple.lua:251-268,
+   * takes the closest hostile anywhere in FOV) and a monster's default sight is
+   * `t.sight or 10` at tome/class/Actor.lua:178. A chaser below that is one that
+   * stands still while you walk towards it in plain view.
+   *
+   * ═══ MELEE ONLY, DELIBERATELY ═══
+   * A kiter's aggro is a genuinely different question and stays under its own
+   * argument: `INDEX_WRAITH` holds 8 because opening fire six tiles outside its
+   * own reach just means four turns of walking, and that reasoning is sound for
+   * something that wants to keep its distance. It is exactly backwards for a
+   * chaser, whose reach is 1 and for whom CROSSING the gap is the whole threat.
+   *
+   * ═══ IF THIS REFUSES YOUR TEMPLATE ═══
+   * DESIGN-WRONG in the ordinary case: raise it to 10. If you genuinely want a
+   * body that does not notice the party — a dummy, a thing that has not woken —
+   * that is not a chaser and wants its own profile, because every other chaser
+   * behaviour (pursuit, last-seen memory, the A* escalation) assumes it hunts.
+   */
+  if (template.profile === AiProfile.MeleeChaser && template.aggroRange < DEFAULT_SIGHT_RADIUS) {
+    problems.push(
+      `${where} MeleeChaser aggroRange ${template.aggroRange} < sight ${DEFAULT_SIGHT_RADIUS}`,
+    );
   }
 
   // The Euclidean circle must never be tighter than the Chebyshev square's edge,
