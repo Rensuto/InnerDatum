@@ -130,9 +130,50 @@ function lineCount(p) {
 
 const unknown = [];
 const misplaced = [];
+const notLua = [];
 const outOfRange = [];
 const ambiguous = [];
 let checked = 0;
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * A `t-engine4` PATH THAT NAMES A FILE MUST NAME A LUA FILE.
+ * ════════════════════════════════════════════════════════════════════════════
+ * `CITE` matches `.lua` basenames, so a citation naming anything else is
+ * invisible to every check above. `stable_compound.ts` used that hole for weeks:
+ *
+ *     t-engine4 game/modules/tome/data/talents/engine/derived.ts:162
+ *
+ * — a t-engine4 prefix on OUR OWN file, under a directory neither lives in. The
+ * gate reported every citation resolving because it never saw this one.
+ *
+ * ═══ WHAT IT DELIBERATELY DOES NOT FLAG, because both are correct here ═══
+ * A DIRECTORY is a legitimate reference — `t-engine4 .../data/maps/vaults/` names
+ * a place, not a file — so anything ending in `/` is skipped. And a final segment
+ * with no dot in it is PROSE: "t-engine4 talents carry...", which is English
+ * rather than a path.
+ *
+ * That leaves exactly the shape that went wrong: a segment that looks like a
+ * filename and is not Lua. `docs/engineering-standards.md` and this file's own
+ * history both say it plainly — a gate that fails a CORRECT citation is worse
+ * than one that misses a wrong one — so the bar is narrow on purpose, and it
+ * reports ZERO against the tree as it stands.
+ */
+const TENGINE_PATH = /t-engine4\s+([A-Za-z0-9_./-]+)/g;
+for (const file of walk('src', (n) => n.endsWith('.ts'), [])) {
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, i) => {
+    for (const m of line.matchAll(TENGINE_PATH)) {
+      // `:44-51` is the line range, and a sentence may end in a full stop.
+      const cited = (m[1] ?? '').replace(/:[0-9-]+$/, '').replace(/[.,]+$/, '');
+      if (cited === '' || cited.endsWith('/')) continue;
+      const seg = cited.slice(cited.lastIndexOf('/') + 1);
+      if (!seg.includes('.')) continue;
+      if (seg.endsWith('.lua')) continue;
+      notLua.push({ at: `${file}:${String(i + 1)}`, cited });
+    }
+  });
+}
 
 for (const file of walk('src', (n) => n.endsWith('.ts'), [])) {
   const lines = fs.readFileSync(file, 'utf8').split('\n');
@@ -242,6 +283,15 @@ if (unknown.length === 0) {
   failed = true;
   console.log(`  FAIL  ${String(unknown.length)} citation(s) name a file that is not there`);
   for (const u of unknown.slice(0, 12)) console.log(`          ${u.at}  ${u.name}`);
+}
+
+if (notLua.length === 0) {
+  console.log('  ok    every t-engine4 path that names a file names a .lua');
+} else {
+  failed = true;
+  console.log(`  FAIL  ${String(notLua.length)} t-engine4 citation(s) name a file that is not Lua`);
+  console.log('          a t-engine4 path pointing at one of OUR files is not a citation.');
+  for (const n of notLua.slice(0, 12)) console.log(`          ${n.at}  ${n.cited}`);
 }
 
 if (misplaced.length === 0) {
