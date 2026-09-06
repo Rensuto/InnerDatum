@@ -37,10 +37,22 @@
  * terrain, unopened doors, exits and orb portals, with GREED WEIGHTS
  * (`:1856-1859`) that let a distant item outrank a near corner. Two of those
  * have a referent here — unexplored ground, and items on the floor — and this
- * takes them. The rest name things this game does not have (there are no doors
- * to open and no orb portals), and the weights are a refinement rather than the
- * feature: nearest-first with items winning a tie is honest, and it is the
- * behaviour a player expects the first hundred times.
+ * takes them. Doors and orb portals name things this game does not have.
+ *
+ * ═══ EXITS ARE THE ODD ONE OUT: WE HAVE THEM AND DO NOT AIM AT THEM ═══
+ * This used to file all three under "things this game does not have", and a
+ * SITE CELL is exactly an exit — `crossInto` looks the cell up and walks you
+ * into the realm behind it. So that one is a CHOICE, not an absence, and it is
+ * upstream's own reason inverted: ToME aims at exits because its levels are a
+ * STACK and the stairs are how you progress. Ours is one overworld with delve
+ * doors standing on it, and every door is found by covering the ground around
+ * it — which this already does. Routing to an unentered door on top of that
+ * would make auto-explore walk the party into a fight it did not ask for, which
+ * is the one thing `threat` exists to prevent.
+ *
+ * The weights are a refinement rather than the feature: nearest-first with items
+ * winning a tie is honest, and it is the behaviour a player expects the first
+ * hundred times.
  */
 
 import type { TileXY } from '../../shared/coords.ts';
