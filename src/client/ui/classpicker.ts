@@ -92,6 +92,8 @@ import {
   drawButton,
   drawHeader,
   drawPanel,
+  BlitAnchor,
+  blitReduced,
   drawScrim,
   fitText,
   HEADER_H,
@@ -618,38 +620,6 @@ function initialsOf(name: string): string {
   return letters === '' ? '?' : letters.slice(0, 2);
 }
 
-/**
- * The face, blitted 1:1 and centre-cropped into its box.
- *
- * NEVER SCALED — nearest-neighbour downscaling is exactly the resampling
- * render/canvas.ts's backbuffer exists to prevent. The map token (`sprite`) is
- * drawn beside it at its own authored size, because a player is about to spend
- * an evening looking at that 24x32 silhouette and the portrait does not show it.
- */
-function blitCropped(
-  ctx: CanvasRenderingContext2D,
-  sprites: SpriteSource,
-  key: string,
-  box: PanelRect,
-): boolean {
-  const sprite = sprites.sprite(key);
-  if (sprite === undefined || box.w <= 0 || box.h <= 0) return false;
-  const sw = Math.min(sprite.w, box.w);
-  const sh = Math.min(sprite.h, box.h);
-  ctx.drawImage(
-    sprite.image,
-    Math.floor((sprite.w - sw) / 2),
-    Math.floor((sprite.h - sh) / 2),
-    sw,
-    sh,
-    box.x + Math.floor((box.w - sw) / 2),
-    box.y + Math.floor((box.h - sh) / 2),
-    sw,
-    sh,
-  );
-  return true;
-}
-
 /** The plate a missing picture leaves behind: a traced box and letters. */
 function drawLetterPlate(
   ctx: CanvasRenderingContext2D,
@@ -797,17 +767,33 @@ function drawCard(
     w: portraitW,
     h: Math.min(PORTRAIT_PX, Math.max(0, bottom - y)),
   };
-  if (!blitCropped(ctx, sprites, option.portrait, portrait)) {
+  /**
+   * THE WHOLE FACE OR NONE OF IT. `blitCropped` centre-CROPPED into this box,
+   * and the box is `Math.min(PORTRAIT_PX, w)` wide and shorter still near the
+   * bottom of a card — so a narrow card showed a 24-pixel slice of a face,
+   * which is a nose. `blitReduced` halves a 64x64 portrait to 32x32 when that
+   * fits and otherwise refuses, so the letters below take over. A card too
+   * small for half a face is better served by initials than by a fragment.
+   */
+  if (!blitReduced(ctx, sprites, option.portrait, portrait, BlitAnchor.Centre)) {
     drawLetterPlate(ctx, portrait, initialsOf(option.name), FONT_FALLBACK);
   }
   // The token is a courtesy, not a requirement: when it is missing nothing is
   // drawn in its place, because the portrait beside it already says who this is.
-  blitCropped(ctx, sprites, option.sprite, {
-    x: portrait.x + portrait.w + 2,
-    y: portrait.y + portrait.h - 32,
-    w: 24,
-    h: 32,
-  });
+  // BOTTOM-ANCHORED: a 48x64 token halves to exactly 24x32 here, and a
+  // silhouette is read from its feet up.
+  blitReduced(
+    ctx,
+    sprites,
+    option.sprite,
+    {
+      x: portrait.x + portrait.w + 2,
+      y: portrait.y + portrait.h - 32,
+      w: 24,
+      h: 32,
+    },
+    BlitAnchor.Bottom,
+  );
   y = portrait.y + portrait.h + 4;
 
   // --- the name -------------------------------------------------------------
@@ -947,7 +933,10 @@ function drawCard(
       w: TALENT_ICON,
       h: TALENT_ICON,
     };
-    if (!blitCropped(ctx, sprites, talent.icon, box)) {
+    // FOUR, the one call site that needs it: a 64x64 `icon_active_*` into a
+    // 16px chip. Everything else stops at a half, because a quarter of a
+    // face is a smudge and letters say more.
+    if (!blitReduced(ctx, sprites, talent.icon, box, BlitAnchor.Centre, 4)) {
       drawLetterPlate(ctx, box, initialsOf(talent.name), FONT_ICON_FALLBACK);
     }
     // The shorthand first, right-aligned, so the name is fitted to whatever is

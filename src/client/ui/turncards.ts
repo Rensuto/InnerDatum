@@ -142,7 +142,7 @@
 
 import { TurnActorKind, TurnActorState } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
-import { drawPanel, fitText, PanelSkin } from './panel.ts';
+import { BlitAnchor, blitReduced, drawPanel, fitText, PanelSkin } from './panel.ts';
 import type { TurnActor, TurnMsg } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
@@ -462,32 +462,41 @@ function blitPortrait(
 ): void {
   if (box.w <= 0 || box.h <= 0) return;
 
-  const sprite = card.portrait === undefined ? undefined : sprites.sprite(card.portrait);
-  if (sprite === undefined) {
+  const initials = (): void => {
     ctx.save();
     ctx.font = FONT_INITIALS;
     ctx.textAlign = 'center';
     ctx.fillStyle = tone.wash > 0 ? PALETTE.GREY : PALETTE.GREY_HI;
     ctx.fillText(initialsOf(card.name), box.x + box.w / 2, box.y + box.h / 2 + 1);
     ctx.restore();
+  };
+
+  // ═══ A REFUSAL IS A FALLBACK, NOT A BLANK ═══
+  // This tested only whether the sprite RESOLVED, which was enough while the
+  // blit below cropped and therefore always drew something. `blitReduced`
+  // refuses a sprite it cannot halve cleanly, so the letters have to be
+  // reachable from that answer too — otherwise the card is an empty square.
+  if (card.portrait === undefined) {
+    initials();
     return;
   }
 
-  const sw = Math.min(sprite.w, box.w);
-  const sh = Math.min(sprite.h, box.h);
-  const sx = Math.floor((sprite.w - sw) / 2);
-  // Crop from the TOP when a sprite is taller than the box: a creature's feet
-  // are the half that identifies it, and a face icon is never taller than 64.
-  const sy = sprite.h - sh;
-  const dx = box.x + Math.floor((box.w - sw) / 2);
-  const dy = box.y + (box.h - sh);
-
+  /**
+   * ═══ THE SAME CROP THE PARTY PANE HAD, ON THE SAME PERSON ═══
+   * This took the bottom `box.h` rows of the sprite, so a 64-tall portrait in
+   * a 32-tall box was a chin. The pane beside it now shows a whole face, and
+   * two surfaces showing different halves of one body is worse than either
+   * alone — the turn order is read by glancing between them.
+   *
+   * INSIDE THE `save`, so the desaturation still applies to the blit.
+   */
   ctx.save();
   // Best effort, and never the only signal: an engine without canvas filters
   // silently ignores this and the ink wash below still dims the card.
   if (tone.desaturate) ctx.filter = 'grayscale(1)';
-  ctx.drawImage(sprite.image, sx, sy, sw, sh, dx, dy, sw, sh);
+  const drew = blitReduced(ctx, sprites, card.portrait, box, BlitAnchor.Bottom);
   ctx.restore();
+  if (!drew) initials();
 }
 
 /**

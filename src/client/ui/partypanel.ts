@@ -107,7 +107,16 @@
 import type { HoverCard } from './panel.ts';
 import { DownedStatus, TurnActorState, VoiceState } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
-import { drawHeader, drawPanel, fitText, HEADER_H, PANEL_PAD, PanelSkin } from './panel.ts';
+import {
+  BlitAnchor,
+  blitReduced,
+  drawHeader,
+  drawPanel,
+  fitText,
+  HEADER_H,
+  PANEL_PAD,
+  PanelSkin,
+} from './panel.ts';
 import type {
   ActorView,
   DownedView,
@@ -127,8 +136,14 @@ import { HP_LOW } from '../../shared/vitals.ts';
 
 /** The full pane. Same width the dock has always been, so the two match. */
 export const PARTY_PANE_W = 208;
-/** Rail, gutter and one 24-wide token. Everything else is dropped. */
-export const PARTY_PANE_COMPACT_W = 44;
+/**
+ * Rail, gutter and one face. Everything else is dropped.
+ *
+ * Was 44, sized around a 24-wide token. The face box is `FACE_PX` square, so
+ * the eight extra pixels are the difference between a cropped token and a
+ * whole one -- the compact form is the one place a body is ALL the row has.
+ */
+export const PARTY_PANE_COMPACT_W = 52;
 /** One full row: a 32px token with a pixel of air, two text lines beside it. */
 export const PARTY_ROW_H = 34;
 /** One portrait-only row: the token, then a 3px hp sliver under it. */
@@ -150,9 +165,18 @@ const BUTTON_H = 14;
 const FOLLOW_W = 44;
 const FOLLOW_H = 11;
 
-/** Authored token size for `chr_player_*`. Blitted 1:1, cropped, never scaled. */
-const TOKEN_W = 24;
-const TOKEN_H = 32;
+/**
+ * THE FACE BOX. A square, because everything that goes in it halves into one.
+ *
+ * `FACE_PX` is 32: exactly half of a 64x64 `icon_character_the_*`, and a
+ * 48x64 `chr_player_*` token halves to 24x32 inside the same square. Both
+ * land through `blitReduced` at d = 2, which is an exact divisor and so stays
+ * sharp with smoothing off.
+ *
+ * This was a 24x32 TOKEN box, blitted 1:1 and cropped from the top when the
+ * sprite was taller. That is what cut the character off.
+ */
+const FACE_PX = 32;
 /** The authored badge size. Every `icon_status_*` in the manifest is 24x24. */
 const BADGE_PX = 24;
 /** The authored speaking indicator. Both `ui_icon_speaking*` are 16x16. */
@@ -541,48 +565,49 @@ function hatchOver(ctx: CanvasRenderingContext2D, box: PanelRect): void {
 }
 
 /**
- * The token: the same sprite that is standing on the map, blitted 1:1.
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE FACE. The class portrait first, the map token second, initials last.
+ * ════════════════════════════════════════════════════════════════════════════
+ * THIS DREW THE MAP TOKEN 1:1 AND CROPPED IT, and the crop is what cut the
+ * character off: `sy = sprite.h - sh` kept the bottom of a 32-tall box, so a
+ * taller sprite lost its head. It was reported that way, and the fix is to
+ * show the same face the inventory's paper doll shows.
  *
- * NEVER SCALED, and never the 64x64 class portrait — see the join note in the
- * header. When the body is out of view (which is exactly when a party pane earns
- * its keep) the fallback is INITIALS rather than a blank, so the row still says
- * who it is about.
+ * THE OLD RULE WAS *"NEVER SCALED, and never the 64x64 class portrait"*, and
+ * half of it still stands. Cropping a 64px face into a 24px box IS a nose —
+ * which is exactly why nothing here crops any more. What was wrong was the
+ * scaling half: an EXACT halving with smoothing off is not the resampling the
+ * backbuffer exists to prevent, and `blitReduced` refuses anything that is not
+ * a whole divisor.
+ *
+ * ═══ WHAT INITIALS NOW MEAN, WHICH IS THE REVERSE OF WHAT THEY MEANT ═══
+ * They used to mean "this body is out of your FOV", because `sprite` is null
+ * then. `portrait` is populated for away members too — which is precisely who
+ * a party pane is for — so initials now mean NO ART RESOLVED AT ALL: a bare
+ * clone, or a server too old to send the field.
  */
-function drawToken(
+function drawFace(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
   row: PartyPaneRow,
   box: PanelRect,
 ): void {
   if (box.w <= 0 || box.h <= 0) return;
-  const sprite = row.sprite === null ? undefined : sprites.sprite(row.sprite);
-  if (sprite === undefined) {
-    ctx.save();
-    ctx.font = FONT_INITIALS;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = PALETTE.GREY_HI;
-    ctx.fillText(initialsOf(row.member.name), box.x + box.w / 2, box.y + box.h / 2);
-    ctx.restore();
+
+  const portrait = row.member.portrait ?? null;
+  if (portrait !== null && blitReduced(ctx, sprites, portrait, box, BlitAnchor.Centre)) return;
+  // THE TOKEN IS THE FALLBACK NOW, bottom-anchored because a silhouette is
+  // read from its feet up — the one part of the deleted crop that was right.
+  if (row.sprite !== null && blitReduced(ctx, sprites, row.sprite, box, BlitAnchor.Bottom)) {
     return;
   }
 
-  const sw = Math.min(sprite.w, box.w);
-  const sh = Math.min(sprite.h, box.h);
-  const sx = Math.floor((sprite.w - sw) / 2);
-  // Crop from the TOP when the sprite is taller than the box: the feet are the
-  // half that identifies a body, which is how render/canvas.ts anchors it too.
-  const sy = sprite.h - sh;
-  ctx.drawImage(
-    sprite.image,
-    sx,
-    sy,
-    sw,
-    sh,
-    box.x + Math.floor((box.w - sw) / 2),
-    box.y + (box.h - sh),
-    sw,
-    sh,
-  );
+  ctx.save();
+  ctx.font = FONT_INITIALS;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = PALETTE.GREY_HI;
+  ctx.fillText(initialsOf(row.member.name), box.x + box.w / 2, box.y + box.h / 2);
+  ctx.restore();
 }
 
 /**
@@ -835,13 +860,13 @@ function drawRow(
     ctx.fillRect(x, y, 3, PARTY_ROW_H - 1);
   }
 
-  const token: PanelRect = { x: x + 5, y: y + 1, w: TOKEN_W, h: TOKEN_H };
-  drawToken(ctx, sprites, row, token);
+  const token: PanelRect = { x: x + 5, y: y + 1, w: FACE_PX, h: FACE_PX };
+  drawFace(ctx, sprites, row, token);
   // A body nobody is driving, and a body on the floor, are both HATCHED. The
   // hatch is the shape half of "not with us"; the word half is below.
   if (away || downed !== null || member.away !== null) hatchOver(ctx, token);
   if (member.isLeader) drawLeaderPennant(ctx, token.x, token.y);
-  drawVoice(ctx, sprites, row.voice, token.x + TOKEN_W - VOICE_PX, token.y + TOKEN_H - VOICE_PX);
+  drawVoice(ctx, sprites, row.voice, token.x + FACE_PX - VOICE_PX, token.y + FACE_PX - VOICE_PX);
 
   const right = x + w;
   // --- badges, laid out from the right edge inwards -------------------------
@@ -862,7 +887,7 @@ function drawRow(
     ctx.textAlign = 'left';
     badgeX -= 14;
   }
-  const textX = token.x + TOKEN_W + 4;
+  const textX = token.x + FACE_PX + 4;
   const contentRight = Math.max(textX, badgeX + BADGE_PX - BADGE_GAP);
 
   // --- the name line --------------------------------------------------------
@@ -1003,12 +1028,12 @@ function drawCompactRow(
     ctx.fillRect(x, y, 3, PARTY_ROW_COMPACT_H - 2);
   }
 
-  const token: PanelRect = { x: x + 4, y: y + 1, w: TOKEN_W, h: TOKEN_H };
-  drawToken(ctx, sprites, row, token);
+  const token: PanelRect = { x: x + 4, y: y + 1, w: FACE_PX, h: FACE_PX };
+  drawFace(ctx, sprites, row, token);
   if (!member.online || downed !== null) hatchOver(ctx, token);
   if (member.isLeader) drawLeaderPennant(ctx, token.x, token.y);
-  drawVoice(ctx, sprites, row.voice, token.x + TOKEN_W - VOICE_PX, token.y + TOKEN_H - VOICE_PX);
-  drawHpBar(ctx, token.x, y + TOKEN_H + 2, TOKEN_W, COMPACT_BAR_H, member, downed !== null);
+  drawVoice(ctx, sprites, row.voice, token.x + FACE_PX - VOICE_PX, token.y + FACE_PX - VOICE_PX);
+  drawHpBar(ctx, token.x, y + FACE_PX + 2, FACE_PX, COMPACT_BAR_H, member, downed !== null);
 }
 
 /** A button: a plate, a border and a centred word. Two rects and a string. */

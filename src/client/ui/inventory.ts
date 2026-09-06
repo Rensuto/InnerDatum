@@ -2345,6 +2345,51 @@ function blitCentred(
 }
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════
+ * THE FACE, FILLING ITS WINDOW. The doll's portrait, and only the doll's.
+ * ══════════════════════════════════════════════════════════════════════════
+ * `blitCentred` puts a 64x64 portrait in the middle of a 149x149 window and
+ * leaves 42 pixels of void on every side — the centre of the paper doll, which
+ * is the one place a player looks at their own character, mostly empty.
+ *
+ * ENLARGES ONLY, AND UNIFORMLY. The scale is `min(w/sw, h/sh)`, so the aspect
+ * is never touched; in the square 149x149 case that is 2.328 and the face fills
+ * the window exactly. It refuses to REDUCE — `blitCentred`'s rule that a sprite
+ * too big for its box is a pipeline fault still stands, and shrinking one here
+ * would hide it.
+ *
+ * A NON-INTEGER SCALE IS FINE *HERE* AND NOT ELSEWHERE, which is why this is a
+ * second helper rather than a change to `blitReduced` (ui/panel.ts). Smoothing
+ * is off (`drawInventoryPanel` sets it), so this is nearest-neighbour COLUMN
+ * DUPLICATION, not interpolation: nothing is averaged and nothing is blurred,
+ * and the artefact is that some source columns become three pixels wide while
+ * others become two. On a 149-pixel face that is invisible. On a 32-pixel one
+ * it would not be, which is exactly why the party pane insists on whole
+ * divisors instead.
+ */
+function blitFilled(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  id: string,
+  box: PanelRect,
+): boolean {
+  const sprite = sprites.sprite(id);
+  if (sprite === undefined || sprite.w <= 0 || sprite.h <= 0) return false;
+  const scale = Math.min(box.w / sprite.w, box.h / sprite.h);
+  if (scale < 1) return false;
+  const w = Math.floor(sprite.w * scale);
+  const h = Math.floor(sprite.h * scale);
+  ctx.drawImage(
+    sprite.image,
+    box.x + Math.floor((box.w - w) / 2),
+    box.y + Math.floor((box.h - h) / 2),
+    w,
+    h,
+  );
+  return true;
+}
+
+/**
  * ONE CELL: the frame, then either the icon or the empty plate, then the ring.
  *
  * THE FRAME IS DRAWN EITHER WAY, filled or not, which is EquipDollFrame.lua:165-
@@ -2526,7 +2571,7 @@ function drawPortrait(
   // the SERVER chose (src/server/view/projector.ts:387-393); this file could not
   // build one correctly if it wanted to, because the mapping from class to face
   // includes a generic fallback for the three classes that do not exist yet.
-  if (id !== null && blitCentred(ctx, sprites, id, box)) return;
+  if (id !== null && blitFilled(ctx, sprites, id, box)) return;
 
   // Eleven units tall: 3 head, 5 torso, 3 legs. Floored to at least one pixel so
   // an absurdly small region degrades to a smudge rather than to nothing.

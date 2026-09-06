@@ -696,3 +696,75 @@ export function drawScrim(ctx: CanvasRenderingContext2D, w: number, h: number): 
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
 }
+
+/** Which edge a reduced blit sits against when it is shorter than its box. */
+export const BlitAnchor = {
+  /** Feet on the floor of the box. A body is identified by its silhouette. */
+  Bottom: 'bottom',
+  /** Centred both ways. A face, an icon — anything with no ground line. */
+  Centre: 'centre',
+} as const;
+export type BlitAnchor = (typeof BlitAnchor)[keyof typeof BlitAnchor];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A SPRITE INTO A BOX TOO SMALL FOR IT — SHRUNK BY A WHOLE FACTOR, NEVER CUT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Three surfaces solved this by CROPPING: the party pane took the bottom 24x32
+ * of a token, the class picker centre-cropped a portrait into a narrow card,
+ * and the turn card did the same into 32x32. All three were reported as the
+ * character being cut off, and they are the same bug three times — a 64px face
+ * cropped into a 32px box is a nose.
+ *
+ * ═══ ONLY EXACT INTEGER DIVISION, WHICH IS WHY THIS IS SAFE ═══
+ * `imageSmoothingEnabled` is false everywhere this client draws, so scaling is
+ * nearest-neighbour. An EXACT divisor samples on a regular lattice — every
+ * output pixel is one input pixel, uniformly — and stays sharp. A fractional
+ * one drops rows unevenly and looks torn. So this searches 1, 2, … for the
+ * first `d` that divides BOTH dimensions and fits, and refuses if none does.
+ *
+ * REFUSING IS THE POINT. Returning false hands the caller back its own
+ * fallback — initials, a letter plate — which is a worse picture and an honest
+ * one. Cropping would look almost right, which is how this survived in three
+ * places at once.
+ *
+ * ═══ THE CAP IS THE CALLER'S ═══
+ * `maxReduction` defaults to 2 because a 64x64 face at d=4 is a 16px smudge,
+ * and a card short enough to need that should show letters instead. The talent
+ * icons genuinely want 4 (a 64x64 icon into a 16px chip) and pass it.
+ *
+ * Two ratios already ship — the hotbar halves and the character sheet quarters
+ * — but both scale to their box unconditionally rather than checking a divisor.
+ * The check is new policy here, not a restatement of theirs.
+ */
+export function blitReduced(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  id: string,
+  box: PanelRect,
+  anchor: BlitAnchor = BlitAnchor.Centre,
+  maxReduction = 2,
+): boolean {
+  if (box.w <= 0 || box.h <= 0) return false;
+  const sprite = sprites.sprite(id);
+  if (sprite === undefined) return false;
+
+  for (let d = 1; d <= maxReduction; d += 1) {
+    if (sprite.w % d !== 0 || sprite.h % d !== 0) continue;
+    const w = sprite.w / d;
+    const h = sprite.h / d;
+    if (w > box.w || h > box.h) continue;
+    // THE FIVE-ARGUMENT FORM. There is no source rectangle, so there is no
+    // crop — that is the whole contract, enforced by the call shape itself.
+    ctx.drawImage(
+      sprite.image,
+      box.x + Math.floor((box.w - w) / 2),
+      anchor === BlitAnchor.Bottom ? box.y + (box.h - h) : box.y + Math.floor((box.h - h) / 2),
+      w,
+      h,
+    );
+    return true;
+  }
+  return false;
+}

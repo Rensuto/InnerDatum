@@ -436,7 +436,23 @@ describe('the fillRect overlays stay art-free', () => {
     // against the third column, so one panel's call sites cannot vouch for
     // another's. See the array's own note.
     for (const [name, src, drawsSprites] of panels) {
-      const args = [...src.matchAll(/sprites\.sprite\(([^)]*)\)/g)].map((m) => (m[1] ?? '').trim());
+      /**
+       * ═══ TWO SHAPES REACH THE SPRITE SOURCE, AND BOTH CARRY A KEY ═══
+       * `sprites.sprite(id)` is the direct one. `blitReduced(ctx, sprites, id,
+       * …)` (ui/panel.ts) is the shared one, and when the class picker's own
+       * crop helper was deleted in favour of it this audit dropped to ZERO call
+       * sites for that file and said so — which is the guard above working.
+       *
+       * The key is what is being audited, not the function it is passed to, so
+       * follow it into the helper's third argument rather than narrowing the
+       * audit to the files that still happen to call the source themselves.
+       */
+      const args = [
+        ...[...src.matchAll(/sprites\.sprite\(([^)]*)\)/g)].map((m) => (m[1] ?? '').trim()),
+        ...[...src.matchAll(/blit(?:Reduced|Filled|Centred)\(\s*ctx,\s*sprites,\s*([^,)]*)/g)].map(
+          (m) => (m[1] ?? '').trim(),
+        ),
+      ];
       expect(
         args.length > 0,
         drawsSprites
