@@ -89,3 +89,26 @@ for (const r of rows) {
   );
 }
 console.log(`\n  ${reachable} of ${total} delves have a MEDIAN body within the whole clock.`);
+
+/**
+ * THE MEDIAN UNDERSTATES IT, AND THE NEAREST IS THE NUMBER THAT DECIDES.
+ *
+ * "0 of 27 by median" reads as a tuning problem — most bodies are a bit far.
+ * The nearest column says something categorically worse: if even the CLOSEST
+ * body on a floor is further away than the WHOLE clock, then no arrival tile, no
+ * route and no luck makes a cross-realm rescue possible there. It is not tight;
+ * it cannot happen.
+ *
+ * Measured on this seed: the nearest body is 8 or more on every delve, against a
+ * `DOWNED_TURNS` of 5.
+ *
+ * WHAT THIS IS NOT: a claim that rescue is broken. A teammate already ON the
+ * floor is a few tiles away and has always been fine — that is the common case,
+ * and this probe does not measure it. What it measures is the walk from the way
+ * out, which is where `placeAtSpawn` puts somebody who has just crossed in.
+ */
+const unreachable = rows.filter((r) => r.min !== undefined && r.min > DOWNED_TURNS).length;
+console.log(
+  `  ${unreachable} of ${total} have even their NEAREST body beyond the clock — ` +
+    `on those, crossing in cannot reach anybody in time by any route.`,
+);
