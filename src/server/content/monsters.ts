@@ -1247,6 +1247,34 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
       // orb: the orb's Magic scaling went through `combatSpellpower` instead.
       damMod: { mag: 0.8 },
     },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A SHADOW HAS NOTHING TO CUT AND NOTHING TO ADDLE.
+     * ═══════════════════════════════════════════════════════════════════════
+     * `losgoroth.lua:49-55` gives it seven `*_immune` lines: poison, disease,
+     * cut, stun, blind, knockback and confusion. We have statuses for two of
+     * those seven, and both are ported here.
+     *
+     * CUT IS THREE KEYS BECAUSE OUR `BLEEDING` DECLARES THREE. `subtypes` is
+     * `['wound', 'cut', 'bleed']` (content/effects.ts), so upstream's single
+     * `cut_immune` maps onto all three -- one key would refuse it today and
+     * silently stop refusing the day a second bleeding-family effect declared
+     * only one of the others.
+     *
+     * ═══ NOT `stun`, THOUGH UPSTREAM GIVES IT ═══
+     * This is the second creature to decline stun immunity and the reason is
+     * the same as the cairn's, which makes it a rule rather than a one-off:
+     * both are standoff shooters, and Concussion Flask is one of two answers a
+     * party has to something it will not walk to. ToME can afford to close that
+     * door because a ToME character has a dozen other ways through it; a
+     * level-three party here has the flask and the Inspector's legs. Two
+     * stun-immune kiters would not make the floor harder, they would make one
+     * talent dead weight.
+     *
+     * Upstream's other five are unreachable rather than declined: there is no
+     * poison, disease, blind or knockback status in `MVP_EFFECTS`.
+     */
+    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100 },
     profile: {
       resists: {
         // DEVIATION 6 OF 7 — OURS, KEPT. Upstream's equivalent is losgoroth.lua:46
@@ -1873,7 +1901,7 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
      * 100 IS TOTAL. `canBe` reads sheet immunities additively with the effect
      * state, so anything at or above a hundred refuses outright.
      */
-    immunities: { cut: 100, bleed: 100, confusion: 100 },
+    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100 },
     profile: {
       resists: {
         [DamageType.Darkness]: 50,

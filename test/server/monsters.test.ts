@@ -2128,3 +2128,61 @@ describe('a marker stone cannot be made to bleed', () => {
     expect(canBe(state, cairn(), stunned, createRng('cairn.stun')).can).toBe(true);
   });
 });
+
+describe('the roster carries the immunities its upstream counterparts carry', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MOST OF THE ROSTER CORRECTLY CARRIES NONE, AND THAT IS THE FINDING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every monster here is ported from a named upstream creature, and each of
+   * those creatures has an immunity list. Checked one by one:
+   *
+   *   CAIRN       crystal.lua:41-49    cut + confusion (+ blind, fear, poison,
+   *                                    disease -- no status for any of them)
+   *   WRAITH      losgoroth.lua:49-55  cut + confusion (+ stun, declined below;
+   *                                    + blind, knockback, poison, disease)
+   *   HUSK_ELITE  ghoul.lua:42         blind ONLY -- so nothing to port
+   *   GLUT        troll.lua:50         fear ONLY -- so nothing to port
+   *
+   * The seam looked bigger than it is. Two creatures take everything there was
+   * to take, and the rest are empty for a reason rather than by omission.
+   */
+  const refuses = (template: Parameters<typeof monsterInit>[0], effect: string): boolean => {
+    const state = createMvpEffectState();
+    const def = state.defs.get(effect);
+    if (def === undefined) throw new Error(`unreachable: ${effect} is in MVP_EFFECTS`);
+    const actor = createMonsterActor('m', monsterInit(template, { x: 1, y: 1 }));
+    return !canBe(state, actor, def, createRng(effect)).can;
+  };
+
+  it('makes the wraith refuse cuts and confusion, as losgoroth does', () => {
+    expect(refuses(INDEX_WRAITH, EffectId.Bleeding)).toBe(true);
+    expect(refuses(INDEX_WRAITH, EffectId.Confused)).toBe(true);
+  });
+
+  it('leaves BOTH standoff shooters stunnable, which upstream does not', () => {
+    /**
+     * losgoroth carries `stun_immune` and the crystal does not, so this is a
+     * deviation on one of the two and a port on the other -- stated once, here,
+     * because the REASON is the same for both and it is a rule now.
+     *
+     * Concussion Flask is one of two answers a party has to something that will
+     * not walk to them. ToME can close that door because a ToME character has a
+     * dozen other ways through it; a level-three party here has the flask and
+     * the Inspector's legs.
+     */
+    expect(refuses(INDEX_WRAITH, EffectId.Stunned)).toBe(false);
+    expect(refuses(INDEX_CAIRN, EffectId.Stunned)).toBe(false);
+  });
+
+  it('gives the husk elite and the glut none, because their sources have none we own', () => {
+    // ghoul.lua:42 is blind-only and troll.lua:50 is fear-only. Neither status
+    // exists here, so an immunity on either would be invented rather than
+    // ported -- and this asserts the ABSENCE so it stays a decision.
+    for (const template of [INDEX_HUSK_ELITE, INDEX_GLUT]) {
+      expect(refuses(template, EffectId.Bleeding)).toBe(false);
+      expect(refuses(template, EffectId.Confused)).toBe(false);
+    }
+  });
+});
