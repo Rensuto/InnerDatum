@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Dalton Barraclough
 // NUMBERS: Outer Index content/skills/sniper_mark.json
 //          (ap_cost 5, range 7, MIN_RANGE 3, damage_multiplier 1.65)
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/sniper.lua:260-289
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/sniper.lua:260-289 -- Snipe
 //          (Snipe: `cooldown = 10`, `combatTalentWeaponDamage(t, 1.7, 3.5)`,
 //           "very high damage as this effectively takes 2 turns", and it MARKS
 //           the target)

@@ -20,7 +20,8 @@
  * "corrects" ours to match a talent it was never ported from.
  *
  * ═══ WHAT IT DOES ═══
- * Indexes every `newTalent{` / `uberTalent{` block in the cited file, reads the
+ * Indexes every `newTalent{` / `uberTalent{` / `newInscription{` block in the
+ * cited file, reads the
  * `name = "..."` inside each, and asks whether the cited range overlaps the
  * block of the talent the citation names.
  *
@@ -39,9 +40,23 @@
  * shape of stale note this tool exists to catch, one level up.
  *
  * The count it prints is the number of citations JUDGED, not defects found, and
- * it is the number worth watching: it went 14 -> 18 when wrapped citations were
- * joined, and 18 -> 28 when the bare `SHAPE:` form was added. A drop means a
- * form stopped matching, which reads as "clean" and is not.
+ * it is the number worth watching: 14 -> 18 when wrapped citations were joined,
+ * 18 -> 28 when the bare `SHAPE:` form was added, 30 -> 41 when the QUOTED paren
+ * form was. A drop means a form stopped matching, which reads as "clean" and is
+ * not.
+ *
+ * IT NOW PRINTS ITS DENOMINATOR TOO, which is what made the last jump findable:
+ * "41 judged" beside "20 name none" says how much of the port is actually
+ * checked. It was 30 of 61 and nobody could see the 61.
+ *
+ * ═══ THE QUOTED FORM CAME WITH A LESSON WORTH KEEPING ═══
+ * Adding it turned five CORRECT citations red at once, and every one was this
+ * tool's fault rather than theirs: three Infusions are declared with
+ * `newInscription{`, which the index did not know, and two names wrap across a
+ * comment line and arrived with the join inside them. A gate that fails a
+ * correct citation is worse than one that misses a wrong one — so the rule is
+ * that a new FORM lands with whatever indexing and normalising it turns out to
+ * need, in the same commit, not after somebody trusts the red.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -63,10 +78,11 @@ const CITE = /([A-Za-z0-9_/-]+\.lua):(\d+)(?:-(\d+))?([^\n]*)/g;
 const TITLE = "[A-Z][A-Za-z']*(?:\\s+(?:of|the|a|an|and|on|in|to|for|from)|\\s+[A-Z][A-Za-z']*)+";
 
 /**
- * The name a citation claims, from any of THREE house forms:
+ * The name a citation claims, from any of FOUR house forms:
  *
  *     ...conditioning.lua:51-98 -- Vitality, the tree's regeneration talent.
  *     ...explosives.lua:207 (Shockwave Bomb) for the damage
+ *     ...races.lua:332-347 ("Unshackled" — the Yeek's own, and the reason ...)
  *     ...combat-training.lua:125-127
  *              Light Armour Training -- `getArmorHardiness`, an asymptotic ...
  *
@@ -85,11 +101,31 @@ const TITLE = "[A-Z][A-Za-z']*(?:\\s+(?:of|the|a|an|and|on|in|to|for|from)|\\s+[
 function claimedName(tail) {
   const dash = /^\s*--\s+([A-Z][A-Za-z']*(?:\s+[A-Za-z'][A-Za-z']*)*)/.exec(tail);
   const paren = /^\s*\(([A-Z][A-Za-z']*(?:\s+[A-Za-z'][A-Za-z']*)*)\)/.exec(tail);
+  /**
+   * ═══ A FOURTH FORM, AND FOUR FILES WERE ALREADY WRITING IT ═══
+   *
+   *     ...races.lua:332-347 ("Unshackled" — the Yeek's own, and the reason ...)
+   *
+   * A QUOTED name inside the parenthesis, with prose after it. The `paren` form
+   * above wants the bracket to close straight after the name, so every one of
+   * these was skipped — `unshackled`, `wrath_of_the_woods`,
+   * `overseer_of_nations` and `resilience_of_the_archived`, all of which name
+   * their talent correctly and none of which was being checked.
+   *
+   * Found by trying to "fix" the files instead: appending ` -- Unshackled` to a
+   * line that already said `("Unshackled"` produced a duplicate and taught the
+   * lesson that the tool should learn the house's forms rather than the house
+   * rewrite itself for the tool.
+   */
+  const quoted = /^\s*\("([^"]{2,})"/.exec(tail);
   const bare = new RegExp(`^\\s+(${TITLE})`).exec(tail);
-  const raw = (dash?.[1] ?? paren?.[1] ?? bare?.[1] ?? '').trim();
+  const raw = (dash?.[1] ?? paren?.[1] ?? quoted?.[1] ?? bare?.[1] ?? '').trim();
   if (raw.length < 2) return null;
   // A name runs to the first comma; the rest of the line is prose about it.
-  const name = raw.split(',')[0].trim();
+  // A WRAPPED NAME ARRIVES WITH THE JOIN IN IT: "Luck of the Little" plus a
+  // continuation line becomes "Luck of the Little              Folk" once the
+  // two are glued, and that matches nothing. Collapse runs of space first.
+  const name = raw.split(',')[0].trim().replace(/\s+/g, ' ');
   // One-word lowercase-ish tails and obvious code are not talent names.
   if (!/^[A-Z]/.test(name)) return null;
   if (name.includes('=') || name.includes('(')) return null;
@@ -101,7 +137,11 @@ function talentBlocks(luaPath) {
   const lines = fs.readFileSync(luaPath, 'utf8').split('\n');
   const starts = [];
   lines.forEach((line, i) => {
-    if (/^\s*(newTalent|uberTalent)\s*\{/.test(line)) starts.push(i);
+    // `newInscription` IS A TALENT DECLARATION TOO. `misc/inscriptions.lua`
+    // declares all five Infusions with it, so indexing only newTalent/uberTalent
+    // reported "Infusion: Healing is not in inscriptions.lua" about a name that
+    // is on line 88 of it.
+    if (/^\s*(newTalent|uberTalent|newInscription)\s*\{/.test(line)) starts.push(i);
   });
   const blocks = new Map();
   starts.forEach((start, k) => {
