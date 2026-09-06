@@ -93,14 +93,39 @@ import { helloAndChoose } from './handshake.mjs';
  *   REDACTOR   a mark can be forced in a few turns. Driven.
  *   ALCHEMIST  a kill can be forced with the flare it starts with, and the
  *              signal needs no draining — see the note at that branch. Driven.
- *   WATCHMAN   nothing a level-1 Watchman owns costs Resolve, so the pool sits
- *              at its cap and being struck credits into a full bar. There is
- *              nothing to observe.
+ *   WATCHMAN   NOT DRIVEN, and the reason below is now STALE.
  *   INSPECTOR  the same, for Focus.
  *
- * The last two are a finding rather than a gap in this file, and it is printed
- * on every run — see the `NOTHING LEARNED SPENDS` line.
+ * ═══ THE REASON THESE TWO WERE SKIPPED STOPPED BEING TRUE ═══
+ * This said: *"nothing a level-1 Watchman owns costs Resolve, so the pool sits
+ * at its cap and being struck credits into a full bar. There is nothing to
+ * observe"*, and *"the same, for Focus"* — pointing at the `NOTHING LEARNED
+ * SPENDS` line as the finding it printed on every run.
+ *
+ * THAT LINE HAS STOPPED PRINTING FOR BOTH. A level-1 Watchman now learns Shin
+ * Crack at 15 Resolve and a level-1 Inspector learns Pistol Whip at 8 Focus, so
+ * both pools CAN be drained and both earn clauses could now be driven. The
+ * justification was contradicted by this file's own output, three lines below
+ * where it was written.
+ *
+ * IT IS A THIN GAP RATHER THAN A HOLE, which is why it is recorded instead of
+ * being closed in the same breath: the RULES are pinned exactly by
+ * `test/server/class-wiring.test.ts` and `test/server/talent-resolution.test.ts`,
+ * both of which assert `FOCUS_ON_HELD_GROUND + FOCUS_PER_TURN` and the
+ * holding-minus-walking difference. What no probe drives is the LIVE path, and
+ * `ResourceMsg` arriving with the right kind and value is already checked above.
+ *
+ * SO THE GUARD BELOW KEEPS IT HONEST rather than a comment promising to. If a
+ * class this file declines to drive turns out to have a spender, the run SAYS
+ * SO, every time, instead of the reason quietly rotting for another six weeks.
  */
+/**
+ * WHICH CLASSES THIS FILE TAKES ALL THE WAY TO INCOME. The guard below reads it,
+ * so adding a driver means changing one entry rather than two places that can
+ * disagree about what has been done.
+ */
+const DRIVEN_EARNS = { redactor: true, alchemist: true, watchman: false, inspector: false };
+
 const CLASSES = {
   watchman: { pool: 'resolve', earns: 'when struck (RESOLVE_ON_STRUCK, +6) — NOT driven here' },
   inspector: {
@@ -291,6 +316,28 @@ if (opening.kind !== SPEC.pool) {
   process.exit(1);
 }
 console.log(`  earns: ${SPEC.earns}`);
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE SKIP HAS TO KEEP EARNING ITSELF.
+ * ════════════════════════════════════════════════════════════════════════════
+ * A class is skipped here on ONE claim: that nothing it owns at level 1 can
+ * drain the pool, so an income credited into a full bar is invisible. That claim
+ * is data, not a fact, and it went stale silently — see the header.
+ *
+ * NOT A FAILURE. The probe still passes: an undriven clause is a smaller thing
+ * than a broken one, and exiting non-zero here would turn a documentation debt
+ * into a red gate on a home PC at midnight. It is loud, and it is on every run.
+ */
+if (DRIVEN_EARNS[WANT] !== true && spenders.length > 0) {
+  console.log(
+    `  
+  NOTE: this class IS drainable now — ${spenders.map((t) => t.name).join(', ')} ` +
+      `costs ${SPEC.pool}. The reason this file gives for not driving its earn ` +
+      `clause ("nothing it owns spends the pool") no longer holds, and the clause ` +
+      `is still only covered by the unit tests. See the header.`,
+  );
+}
 
 /**
  * THE EARN CLAUSES THAT CAN BE DRIVEN ARE, and the ones that cannot say why
